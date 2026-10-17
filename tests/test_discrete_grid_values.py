@@ -23,6 +23,7 @@ import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 import pytest
+from beartype.roar import BeartypeCallHintParamViolation
 from numpy.testing import assert_array_almost_equal as aaae
 from pandas.testing import assert_frame_equal
 
@@ -34,6 +35,7 @@ from _lcm.regime_building.value_adapter import (
     adapt_user_function,
     collect_value_grids,
 )
+from _lcm.simulation.transitions import _count_drawn_off_grid_codes
 from lcm import (
     AgeGrid,
     AgeRange,
@@ -2487,3 +2489,43 @@ def test_off_grid_code_to_a_target_no_subject_is_drawn_to_passes(*, enable_jit):
     panel = _simulate_between_nodes(model=model, wealth=(0.5, 0.5), solution=solution)
     later = panel.loc[panel["period"] == 1].sort_values("subject_id")
     assert later["regime_name"].tolist() == ["fallback", "fallback"]
+
+
+@pytest.mark.parametrize("width", ["int32", "int64"])
+def test_drawn_code_count_is_exact_at_any_signed_width(*, width):
+    """A wide code is compared at its own width and never aliases a valid one."""
+    if width == "int64" and not jax.config.jax_enable_x64:
+        pytest.skip("An int64 code needs x64.")
+    dtype = jnp.int32 if width == "int32" else jnp.int64
+    codes = (
+        jnp.asarray([0, 2, 3, -1, 2**31 - 1], dtype=jnp.int32)
+        if width == "int32"
+        else jnp.asarray([0, 2, 3, -(2**33), 2**31 + 2], dtype=dtype),
+    )
+    counts = _count_drawn_off_grid_codes(
+        codes=codes,
+        n_codes=(jnp.int32(3),),
+        target_ids=(jnp.int32(1),),
+        subjects=jnp.ones(5, dtype=bool),
+        new_regime_ids=jnp.ones(5, dtype=jnp.int32),
+    )
+    assert counts.tolist() == [3]
+
+
+@pytest.mark.parametrize(
+    "codes",
+    [
+        jnp.asarray([0, 2, 3], dtype=jnp.uint32),
+        jnp.asarray([0.0, 0.5, 3.0]),
+    ],
+    ids=["unsigned", "float"],
+)
+def test_drawn_code_count_refuses_codes_that_are_not_signed_integers(*, codes):
+    with pytest.raises(BeartypeCallHintParamViolation):
+        _count_drawn_off_grid_codes(
+            codes=(codes,),
+            n_codes=(jnp.int32(3),),
+            target_ids=(jnp.int32(1),),
+            subjects=jnp.ones(3, dtype=bool),
+            new_regime_ids=jnp.ones(3, dtype=jnp.int32),
+        )

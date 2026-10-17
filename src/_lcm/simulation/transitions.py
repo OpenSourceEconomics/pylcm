@@ -17,6 +17,7 @@ import numpy as np
 from dags.tree import qname_from_tree_path
 from jax import numpy as jnp
 from jax import vmap
+from jaxtyping import Array, Int
 
 from _lcm.engine import Regime, StateActionSpace
 from _lcm.grids import ContinuousGrid, DiscreteGrid
@@ -56,7 +57,6 @@ from lcm.typing import (
     IntND,
     ScalarFloat,
     ScalarInt,
-    ValueND,
 )
 
 
@@ -149,6 +149,10 @@ def clip_next_states(
     )
 
 
+# A discrete state's codes at any signed integer width.
+type _SignedCodes = Int[Array, "..."]
+
+
 def drawn_code_checks(
     *,
     next_state_names: Mapping[RegimeName, tuple[StateName, ...]],
@@ -223,7 +227,7 @@ def fail_if_drawn_codes_leave_their_grids(
 
 def _count_drawn_off_grid_codes(
     *,
-    codes: tuple[ValueND, ...],
+    codes: tuple[_SignedCodes, ...],
     n_codes: tuple[ScalarInt, ...],
     target_ids: tuple[ScalarInt, ...],
     subjects: Bool1D,
@@ -231,8 +235,10 @@ def _count_drawn_off_grid_codes(
 ) -> Int1D:
     """Count, per check, the subjects drawn to its target with a code off its grid.
 
-    The codes keep their storage dtype, which a law may widen to int64 under x64;
-    they are compared as stored, never narrowed, so no wide code can alias a valid one.
+    The codes keep their signed storage dtype, which a law may widen to int64 under
+    x64; comparing with an int32 bound promotes them to that width, so no wide code
+    can alias a valid one. Unsigned and float codes are refused at the boundary: an
+    unsigned code past the int32 range would wrap when promoted without x64.
     """
     return jnp.stack(
         [
