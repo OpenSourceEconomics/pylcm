@@ -175,8 +175,9 @@ def build_exact_affine_cached(
     A hit copies the stored libraries and their `.build.log` reports into
     `output_dir`. A miss compiles with `build_exact_affine` and then stores the
     result under a temporary name that is renamed into place, so a concurrent or
-    interrupted build never leaves a partial entry. A cache that cannot be
-    written does not fail the build.
+    interrupted build never leaves a partial entry. An entry whose index does not
+    parse, or that lacks a library it lists, is removed and rebuilt as on a miss.
+    A cache that cannot be written does not fail the build.
     """
     if os.environ.get("PYLCM_NATIVE_CACHE", "") == "0":
         sys.stdout.write("exact-affine: native cache disabled; compiling.\n")
@@ -185,16 +186,21 @@ def build_exact_affine_cached(
         )
     key = native_cache_key(root=root)
     entry = native_cache_dir() / key
-    index = entry / NATIVE_CACHE_INDEX
-    if index.is_file():
-        names = json.loads(index.read_text())
+    names = _cached_library_names(entry)
+    if names is not None:
         sys.stdout.write(f"exact-affine: native cache hit {key} at {entry}.\n")
         output_dir.mkdir(parents=True, exist_ok=True)
         for path in entry.iterdir():
             if path.name != NATIVE_CACHE_INDEX:
                 shutil.copy2(path, output_dir / path.name)
         return [output_dir / name for name in names]
-    sys.stdout.write(f"exact-affine: native cache miss {key}; compiling.\n")
+    if entry.exists():
+        sys.stdout.write(
+            f"exact-affine: native cache entry {key} damaged; rebuilding.\n"
+        )
+        shutil.rmtree(entry, ignore_errors=True)
+    else:
+        sys.stdout.write(f"exact-affine: native cache miss {key}; compiling.\n")
     libraries = build_exact_affine(
         root=root, output_dir=output_dir, jax_include_dir=jax_include_dir
     )
@@ -203,6 +209,20 @@ def build_exact_affine_cached(
     except OSError as error:
         sys.stdout.write(f"exact-affine: native cache not written: {error}\n")
     return libraries
+
+
+def _cached_library_names(entry: Path) -> list[str] | None:
+    """Return the libraries `entry` lists, or None unless it holds every one."""
+    try:
+        names = json.loads((entry / NATIVE_CACHE_INDEX).read_text())
+    except OSError, ValueError:
+        return None
+    if not isinstance(names, list) or not all(
+        isinstance(name, str) and Path(name).name == name and (entry / name).is_file()
+        for name in names
+    ):
+        return None
+    return names
 
 
 def _store_in_cache(*, entry: Path, libraries: list[Path]) -> None:
