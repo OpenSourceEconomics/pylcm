@@ -238,6 +238,7 @@ def prune_broadcast_variables(
     koopmans_aggregator: UserFunction,
     ages: TimeAxis | None = None,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
+    visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
 ) -> tuple[
     MappingProxyType[RegimeName, UserRegime],
     MappingProxyType[RegimeName, frozenset[StateOrActionName]],
@@ -270,6 +271,9 @@ def prune_broadcast_variables(
             `AgeSpecializedFunction` markers to a representative age so a
             broadcast variable read only through a marker is not misread as
             unused. `None` skips resolution (no marker can appear then).
+        visited_periods_by_regime: The periods subjects can be in each regime,
+            where conditional-action pins build their simulation readers. `None`
+            builds them at the first solved period.
 
     Returns:
         Tuple of the pruned regimes and, per regime, the pruned names.
@@ -281,6 +285,7 @@ def prune_broadcast_variables(
         user_regimes=user_regimes,
         ages=ages,
         active_periods_by_regime=active_periods_by_regime,
+        visited_periods_by_regime=visited_periods_by_regime,
     )
     all_regime_names = frozenset(user_regimes)
     kept = compute_kept_variables(

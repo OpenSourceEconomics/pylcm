@@ -1064,6 +1064,7 @@ class Model:
             koopmans_aggregator=koopmans_aggregator,
             ages=self._time,
             active_periods_by_regime=schedules.coverage_by_regime,
+            visited_periods_by_regime=schedules.visited_periods_by_regime,
         )
         pruned_regimes, draw_only_processes = split_transition_only_folds(
             user_regimes=pruned_regimes,

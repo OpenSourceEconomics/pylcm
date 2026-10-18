@@ -217,18 +217,24 @@ def bind_specialized_annotations(
     user_regimes: Mapping[RegimeName, UserRegime],
     ages: TimeAxis | None,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None,
+    visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
 ) -> Mapping[RegimeName, UserRegime]:
     """Re-sign conditional-action pins whose readers are built per age or period.
 
     Every concrete callable such a reader builds has the same call signature at
-    every age or period, so the reader built at the regime's first active period
-    gives the annotations the pin must carry for the DAG's annotation check.
+    every age or period. Each phase's reader is built where that phase needs it:
+    a solve reader at the regime's first solved period, a simulation reader at the
+    first period subjects visit, since a simulation factory need not be defined at
+    a period the regime is only valued in.
 
     Args:
         user_regimes: Mapping of regime names to merged regimes.
         ages: The model's time axis; `None` leaves the regimes unchanged.
-        active_periods_by_regime: The periods each regime is active in; `None`
+        active_periods_by_regime: The periods each regime is solved in; `None`
             leaves the regimes unchanged.
+        visited_periods_by_regime: The periods subjects can be in each regime;
+            `None`, or no visited period, builds simulation readers at the first
+            solved period too.
 
     Returns:
         The regimes, with re-signed pins where a reader is built per age or period.
@@ -252,8 +258,20 @@ def bind_specialized_annotations(
         if not pins or not periods or not any(_specialized(readers)):
             bound[name] = regime
             continue
-        coordinate = specialization_coordinate_at(ages=ages, period=periods[0])
-        resolved = tuple(_resolved(readers=readers, coordinate=coordinate))
+        visited = (
+            periods
+            if visited_periods_by_regime is None
+            else visited_periods_by_regime.get(name, ()) or periods
+        )
+        resolved = tuple(
+            _resolved(
+                readers=readers,
+                coordinate=specialization_coordinate_at(ages=ages, period=periods[0]),
+                simulated_coordinate=specialization_coordinate_at(
+                    ages=ages, period=visited[0]
+                ),
+            )
+        )
         bound[name] = regime.replace(
             constraints={
                 **regime.constraints,
@@ -283,18 +301,38 @@ def _sign(*, pin: _ConditionalActionPin, readers: tuple[_Reader, ...]) -> _Signe
     )
 
 
-def _resolved(*, readers: tuple[_Reader, ...], coordinate: float) -> Iterator[_Reader]:
-    """Yield `readers` with every callable built per age or period built at
-    `coordinate`, through phased and per-target entries."""
+def _resolved(
+    *,
+    readers: tuple[_Reader, ...],
+    coordinate: float,
+    simulated_coordinate: float,
+) -> Iterator[_Reader]:
+    """Yield `readers` with every callable built per age or period built, through
+    phased and per-target entries.
+
+    The simulation side of a phased reader is built at `simulated_coordinate`;
+    everything else, including readers shared by both phases, at `coordinate`.
+    """
     for reader in readers:
         if isinstance(reader, AgeSpecializedFunction):
             yield resolve_node(node=reader, age=coordinate)
         elif isinstance(reader, Phased):
             yield from _resolved(
-                readers=(reader.solve, reader.simulate), coordinate=coordinate
+                readers=(reader.solve,),
+                coordinate=coordinate,
+                simulated_coordinate=coordinate,
+            )
+            yield from _resolved(
+                readers=(reader.simulate,),
+                coordinate=simulated_coordinate,
+                simulated_coordinate=simulated_coordinate,
             )
         elif isinstance(reader, Mapping):
-            yield from _resolved(readers=tuple(reader.values()), coordinate=coordinate)
+            yield from _resolved(
+                readers=tuple(reader.values()),
+                coordinate=coordinate,
+                simulated_coordinate=simulated_coordinate,
+            )
         else:
             yield reader
 

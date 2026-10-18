@@ -841,15 +841,20 @@ def test_folded_kernel_mutation_is_rejected_after_byte_reseal(
 
 
 _BACKWARD_SOURCE = "src/_lcm/solution/backward_induction.py"
-_COUNTER_SIZE = "size = 2 * np.dtype(np.int32).itemsize * (len(active) + 1)"
+# The continuation reservation repeats the size line, so the docstring tail
+# pins the feasibility reservation.
+_COUNTER_SIZE_PREFIX = 'a device no active regime runs on holds none.\n    """\n    '
+_COUNTER_SIZE = (
+    f"{_COUNTER_SIZE_PREFIX}size = 2 * np.dtype(np.int32).itemsize * (len(active) + 1)"
+)
 _COUNTER_DEVICES = (
     "sorted(frozenset().union(*(device_ids_by_regime[name] for name in active)))"
 )
 _COUNTER_RESERVATION_MUTATIONS = {
-    "zero_charge": (_COUNTER_SIZE, "size = 0"),
+    "zero_charge": (_COUNTER_SIZE, f"{_COUNTER_SIZE_PREFIX}size = 0"),
     "half_pair": (
         _COUNTER_SIZE,
-        "size = np.dtype(np.int32).itemsize * (len(active) + 1)",
+        f"{_COUNTER_SIZE_PREFIX}size = np.dtype(np.int32).itemsize * (len(active) + 1)",
     ),
     "omit_peer_devices": (_COUNTER_DEVICES, f"{_COUNTER_DEVICES}[:1]"),
 }
