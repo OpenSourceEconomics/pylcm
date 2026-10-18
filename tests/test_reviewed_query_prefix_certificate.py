@@ -17,7 +17,7 @@ type MutationSpec = tuple[str, str, str, str, str, int]
 _INDEPENDENT_CONTROLS: dict[str, MutationSpec] = {
     "reviewed_prefix:row_poison_not_legal": (
         "src/_lcm/egm/dcegm_query.py",
-        "DCEGMQuery._read_at_floor",
+        "DCEGMQuery._read_at_floor_with_summary",
         "expression",
         "row.supported & ~row.invalid_numeric",
         "row.supported",
@@ -25,7 +25,7 @@ _INDEPENDENT_CONTROLS: dict[str, MutationSpec] = {
     ),
     "reviewed_prefix:inactive_poison_not_reduced": (
         "src/_lcm/egm/dcegm_query.py",
-        "DCEGMQuery._read_rows",
+        "_blend_owned_rows",
         "expression",
         "jnp.any(active & result.invalid_numeric)",
         "jnp.any(result.invalid_numeric)",
@@ -65,7 +65,7 @@ _INDEPENDENT_CONTROLS: dict[str, MutationSpec] = {
     ),
     "reviewed_prefix:row_link_same_owner": (
         "src/_lcm/egm/carry.py",
-        "read_owned_row",
+        "_read_owned_row_with_support",
         "expression",
         "pair_link & (data.owner_id[lower] == data.owner_id[upper])",
         "pair_link",
@@ -73,7 +73,7 @@ _INDEPENDENT_CONTROLS: dict[str, MutationSpec] = {
     ),
     "reviewed_prefix:economic_rows_stay_live": (
         "src/_lcm/egm/carry.py",
-        "read_owned_row",
+        "_read_owned_row_with_support",
         "expression",
         "finite | economic",
         "finite",
@@ -130,9 +130,12 @@ _INDEPENDENT_CONTROLS: dict[str, MutationSpec] = {
     "reviewed_prefix:same_child_slot_activity": (
         "src/_lcm/solution/egm.py",
         "_read_one_row_dc_child",
-        "keyword",
-        "active",
-        "jnp.ones(liquid.shape, dtype=jnp.bool_)",
+        "expression",
+        "reduce_query_input_status(statuses=(status,), active=activity)",
+        (
+            "reduce_query_input_status(statuses=(status,), "
+            "active=jnp.ones(liquid.shape, dtype=jnp.bool_))"
+        ),
         1,
     ),
     "reviewed_prefix:literal_child_status_preserved": (
@@ -236,11 +239,11 @@ _INDEPENDENT_CONTROLS: dict[str, MutationSpec] = {
 _EXPECTED_DIAGNOSTICS = {
     "reviewed_prefix:row_poison_not_legal": (
         "reviewed S04/S05 dependency: "
-        "exact callable corridor 'DCEGMQuery._read_at_floor' changed"
+        "exact callable corridor 'DCEGMQuery._read_at_floor_with_summary' changed"
     ),
     "reviewed_prefix:inactive_poison_not_reduced": (
         "reviewed S04/S05 dependency: "
-        "exact callable corridor 'DCEGMQuery._read_rows' changed"
+        "exact callable corridor '_blend_owned_rows' changed"
     ),
     "reviewed_prefix:compact_corner_owner_retained": (
         "reviewed S04/S05 dependency: "
@@ -259,10 +262,12 @@ _EXPECTED_DIAGNOSTICS = {
         "exact callable corridor 'DCEGMQuery.read_prepared' changed"
     ),
     "reviewed_prefix:row_link_same_owner": (
-        "reviewed S04/S05 dependency: exact callable corridor 'read_owned_row' changed"
+        "reviewed S04/S05 dependency: "
+        "exact callable corridor '_read_owned_row_with_support' changed"
     ),
     "reviewed_prefix:economic_rows_stay_live": (
-        "reviewed S04/S05 dependency: exact callable corridor 'read_owned_row' changed"
+        "reviewed S04/S05 dependency: "
+        "exact callable corridor '_read_owned_row_with_support' changed"
     ),
     "reviewed_prefix:associated_saving_not_value": (
         "reviewed S04/S05 dependency: "
@@ -430,7 +435,12 @@ def _assert_one_owned_body_changed(
         functions = [
             node
             for node in scope
-            if isinstance(node, ast.FunctionDef) and node.name == name
+            if isinstance(node, ast.FunctionDef)
+            and node.name == name
+            and not any(
+                isinstance(decorator, ast.Name) and decorator.id == "overload"
+                for decorator in node.decorator_list
+            )
         ]
         assert len(functions) == 1
         return functions[0]

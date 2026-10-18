@@ -192,10 +192,14 @@ def expected_errors(*, source: SourcePath, diagnostic: str) -> tuple[str, ...]:
             )
         if source == "src/_lcm/solution/nbegm.py":
             errors.append("NB-EGM donation declaration: module bindings changed")
+        if source == "src/_lcm/solution/feasibility.py":
+            errors.append("native feasibility summary: module surface changed")
     elif diagnostic == (
         "final nested dependency: NBEGMQuery.read_choices overload declarations changed"
     ):
-        errors.append(surface_error)
+        # An overload edit also changes the module surface, so every surface
+        # co-owner of the source refuses it too.
+        errors.extend(expected_errors(source=source, diagnostic=surface_error))
     return tuple(sorted(errors))
 
 
