@@ -11441,8 +11441,8 @@ _S02_HELPER_MUTATIONS = {
             "(BoundedResult(output=output, bound_status=statuses, query_statu"
             "s=merge_query_input_status(left=carry.query_status, right=reduce"
             "_query_input_status(statuses=result.query_status, active=valid))"
-            ", continuation_read_counts=merge_continuation_read_counts(left=c"
-            "arry.continuation_read_counts, right=reduce_continuation_read_co"
+            ", continuation_read_counts=merge_continuation_read_counts(left="
+            "carry.continuation_read_counts, right=reduce_continuation_read_co"
             "unts(counts=result.continuation_read_counts, active=valid))), No"
             "ne)"
         ),
@@ -11450,8 +11450,8 @@ _S02_HELPER_MUTATIONS = {
             "(BoundedResult(output=output, bound_status=statuses, query_statu"
             "s=merge_query_input_status(left=carry.query_status, right=reduce"
             "_query_input_status(statuses=result.query_status, active=valid))"
-            ", continuation_read_counts=merge_continuation_read_counts(left=c"
-            "arry.continuation_read_counts, right=reduce_continuation_read_co"
+            ", continuation_read_counts=merge_continuation_read_counts(left="
+            "carry.continuation_read_counts, right=reduce_continuation_read_co"
             "unts(counts=result.continuation_read_counts, active=valid))), st"
             "atuses)"
         ),
@@ -13572,8 +13572,8 @@ _REVIEWED_PREFIX_MUTATIONS = {
 
 _REVIEWED_PREFIX_DIAGNOSTICS = {
     "reviewed_prefix:row_poison_not_legal": (
-        "reviewed S04/S05 dependency: exact callable corridor 'DCEGMQ"
-        "uery._read_at_floor_with_summary' changed"
+        "reviewed S04/S05 dependency: exact callable corridor 'DCEGM"
+        "Query._read_at_floor_with_summary' changed"
     ),
     "reviewed_prefix:inactive_poison_not_reduced": (
         "reviewed S04/S05 dependency: exact callable corridor '_blend"
