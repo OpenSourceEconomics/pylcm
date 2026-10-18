@@ -296,12 +296,14 @@ the caller's value function reports rather than extrapolating.
 
 ## Age specialization
 
-`AgeSpecializedFunction(build, signature)` and `AgeSpecializedGrid(build, signature)`
-produce age-specific declarations during model construction. `build(age)` returns the
-function or continuous grid for that age. `signature(age)` returns a stable hashable
-key; equal keys must mean identical resolved behavior because those periods may share
-one compiled program. Because model construction may resolve the same age multiple
-times, `build(age)` must also be deterministic and side-effect-free.
+`AgeSpecializedFunction(build, signature)` and
+`AgeSpecializedGrid(build, signature=None)` produce age-specific declarations during
+model construction. `build(age)` returns the function or continuous grid for that age.
+`signature(age)` returns a stable hashable key; equal keys must mean identical resolved
+behavior because those periods may share one compiled program. A function requires
+`signature`. A grid may omit it: the key is then the built grid's class, node dtype and
+exact node bytes. Because model construction may resolve the same age multiple times,
+`build(age)` must also be deterministic and side-effect-free.
 
 Exact function placement:
 

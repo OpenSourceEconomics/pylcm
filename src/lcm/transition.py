@@ -595,7 +595,8 @@ class _AgeSpecialized:
     - `AgeSpecializedFunction` — a function's closure cannot be inspected, so an
       equal signature must imply an identical resolved closure on the author's word;
       pylcm has no way to check it.
-    - `AgeSpecializedGrid` — a grid can be asked what it actually is, so an equal
+    - `AgeSpecializedGrid` — a grid can be asked what it actually is, so the
+      signature is optional and defaults to the built grid itself; an explicit
       signature is checked against the resolved nodes at build time: if two periods
       share a signature but their grids genuinely differ, construction raises
       instead of silently sharing the wrong grid.
@@ -681,8 +682,7 @@ class AgeSpecializedGrid(_AgeSpecialized):
     ages resolving to the same grid share a single compiled program.
 
         states={"assets": AgeSpecializedGrid(
-            build=lambda age: LinSpacedGrid(start=floor(age), stop=A_MAX, n_points=40),
-            signature=lambda age: floor(age))}
+            build=lambda age: LinSpacedGrid(start=floor(age), stop=A_MAX, n_points=40))}
 
     **Shape-invariance contract (validated at construction):** across the owning
     regime's active ages, every `build(age)` must return the *same grid class*, with
@@ -698,12 +698,14 @@ class AgeSpecializedGrid(_AgeSpecialized):
     states in this version). A builder may be undefined (raise) outside its regime's
     active ages; it is never called there.
 
-    `signature` is the dedup key, same as `AgeSpecializedFunction`: ages with equal
-    signatures share one compiled program. Unlike a function's closure, a grid can
-    be asked what it actually is, so an equal signature is not blindly trusted —
-    the resolved nodes of every period in a shared group are cross-checked at
-    build time, and a genuine mismatch raises `RegimeInitializationError` instead
-    of silently sharing the wrong grid.
+    `signature` is the dedup key: ages with equal signatures share one compiled
+    program. It is optional. By default the key is the grid that `build(age)`
+    returns — its class, node dtype and the exact bytes of its resolved nodes — so
+    ages share a program exactly when their grids are equal. An explicit
+    `signature` replaces that key, for example to give a group a readable name. An
+    explicit key is not blindly trusted: the resolved nodes of every period in a
+    shared group are cross-checked at build time, and a genuine mismatch raises
+    `RegimeInitializationError` instead of silently sharing the wrong grid.
 
     **Grid bounds are interpolation *support*, not hard feasibility limits.** The
     continuation value `V_{t+1}` is interpolated on period `t+1`'s grid; pylcm's
@@ -724,9 +726,9 @@ class AgeSpecializedGrid(_AgeSpecialized):
     build: Callable[[float], ContinuousGrid]
     """Factory returning the concrete continuous grid for a given age."""
 
-    signature: Callable[[float], Hashable]
+    signature: Callable[[float], Hashable] | None = None
     """Returns a hashable identity of the age's grid; the dedup key, cross-checked
-    against the resolved nodes at build time."""
+    against the resolved nodes at build time. `None` keys on the built grid itself."""
 
 
 @beartype(conf=REGIME_CONF)
@@ -760,8 +762,9 @@ class PeriodSpecializedGrid(AgeSpecializedGrid):
     build: Callable[[int], ContinuousGrid]
     """Factory returning the concrete continuous grid for an integer period."""
 
-    signature: Callable[[int], Hashable]
-    """Hashable identity of the period's grid, checked against its nodes."""
+    signature: Callable[[int], Hashable] | None = None
+    """Hashable identity of the period's grid, checked against its nodes. `None`
+    keys on the built grid itself."""
 
 
 class _Missing(Enum):

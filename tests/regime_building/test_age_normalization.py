@@ -12,6 +12,8 @@ These tests pin the contract the downstream pipeline relies on:
   rejected loudly.
 """
 
+from collections.abc import Hashable
+
 import jax.numpy as jnp
 import pytest
 
@@ -451,3 +453,79 @@ def test_age_specialized_runtime_points_grid_is_rejected() -> None:
     )
     with pytest.raises(RegimeInitializationError, match="supplied at"):
         _normalized(regimes={"work": alive, "dead": _dead()}, ages=_ages())
+
+
+def _grid_signatures_by_period(
+    grid: AgeSpecializedGrid,
+) -> dict[int, Hashable]:
+    """Normalize a one-state model on `grid`; return each period's grid key."""
+    alive = UserRegime(
+        states={"wealth": grid},
+        actions={"consumption": LinSpacedGrid(start=1.0, stop=5.0, n_points=4)},
+        functions={"utility": lambda consumption: consumption},
+        state_transitions={"wealth": _next_wealth},
+    )
+    _, result = _normalized(regimes={"work": alive, "dead": _dead()}, ages=_ages())
+    schedule = result.grid_schedule
+    return {
+        period: schedule.grid_signature(period=period, regime_name="work")
+        for period in sorted(schedule.by_period)
+    }
+
+
+def _floor_steps_at_22(age: float) -> float:
+    return 0.0 if age < 22 else 1.0
+
+
+def _stepped_floor_grid(age: float) -> LinSpacedGrid:
+    return LinSpacedGrid(start=_floor_steps_at_22(age), stop=10.0, n_points=5)
+
+
+def _distinct_signature_groups(signatures: dict[int, Hashable]) -> list[list[int]]:
+    groups: dict[Hashable, list[int]] = {}
+    for period, signature in signatures.items():
+        groups.setdefault(signature, []).append(period)
+    return sorted(groups.values())
+
+
+@pytest.mark.parametrize(
+    ("grid", "expected_groups"),
+    [
+        pytest.param(
+            AgeSpecializedGrid(build=_stepped_floor_grid),
+            [[0, 1], [2, 3, 4]],
+            id="default-key-groups-equal-grids",
+        ),
+        pytest.param(
+            AgeSpecializedGrid(
+                build=lambda _age: LinSpacedGrid(start=0.0, stop=10.0, n_points=5)
+            ),
+            [[0, 1, 2, 3, 4]],
+            id="default-key-age-invariant-grid-is-one-group",
+        ),
+        pytest.param(
+            AgeSpecializedGrid(build=_stepped_floor_grid, signature=_floor_steps_at_22),
+            [[0, 1], [2, 3, 4]],
+            id="explicit-signature-groups-by-its-key",
+        ),
+        pytest.param(
+            AgeSpecializedGrid(
+                build=lambda _age: LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
+                signature=lambda age: age,
+            ),
+            [[0], [1], [2], [3], [4]],
+            id="explicit-signature-overrides-node-equality",
+        ),
+    ],
+)
+def test_grid_signature_groups_periods(
+    *, grid: AgeSpecializedGrid, expected_groups: list[list[int]]
+) -> None:
+    """Periods share a grid key exactly when the effective signature agrees.
+
+    Without `signature`, the key derives from the grid `build(age)` returns, so
+    ages with equal resolved nodes share it and ages with different nodes do not.
+    An explicit `signature` replaces that key.
+    """
+    groups = _distinct_signature_groups(_grid_signatures_by_period(grid))
+    assert groups == expected_groups
