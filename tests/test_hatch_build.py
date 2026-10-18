@@ -14,6 +14,7 @@ Two properties the build owes its caller:
   says so at the time.
 """
 
+import json
 import subprocess
 from pathlib import Path
 from typing import Unpack
@@ -510,3 +511,374 @@ class _ToolProbeKwargs(TypedDict, closed=True):
     text: bool
     check: bool
     timeout: int
+
+
+def _fake_checkout(root: Path) -> Path:
+    """Write the smallest source tree the native build and its cache key read."""
+    source_dir = root / hatch_build.PACKAGE_DIR
+    source_dir.mkdir(parents=True)
+    (source_dir / "certified_affine_ffi_cpu.cc").write_text("// cpu source")
+    (source_dir / "certified_affine_ffi_cuda.cu").write_text("// cuda source")
+    (source_dir / "exact_affine_core.h").write_text("// header")
+    (source_dir / "handler_symbols.py").write_text("symbols")
+    (root / "hatch_build.py").write_text("hook")
+    return root
+
+
+def _pin_toolchain(
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    compiler: str = "/env-a/bin/c++",
+    nvcc: str | None = "/env-a/bin/nvcc",
+    version: str = "tool 1.0",
+) -> None:
+    """Fix the toolchain the build finds, without running any real compiler."""
+    monkeypatch.setattr(hatch_build.sys, "platform", "linux")
+    monkeypatch.delenv("LCM_SKIP_EXACT_AFFINE", raising=False)
+    monkeypatch.delenv("NVCCFLAGS", raising=False)
+    monkeypatch.setenv("CXX", compiler)
+    monkeypatch.setattr(
+        hatch_build.shutil, "which", lambda name: nvcc if name == "nvcc" else None
+    )
+    monkeypatch.setattr(
+        hatch_build, "_tool_version", lambda exe: None if exe is None else version
+    )
+    monkeypatch.setattr(
+        hatch_build,
+        "probe_gpu_architectures",
+        lambda *, nvcc: None,  # noqa: ARG005
+    )
+
+
+def _key_after(
+    *, monkeypatch: pytest.MonkeyPatch, root: Path, change: str
+) -> tuple[str, str]:
+    """Return the cache key before and after applying one named change."""
+    _pin_toolchain(monkeypatch=monkeypatch)
+    before = hatch_build.native_cache_key(root=root)
+    source_dir = root / hatch_build.PACKAGE_DIR
+    if change == "tool paths":
+        _pin_toolchain(
+            monkeypatch=monkeypatch,
+            compiler="/env-b/bin/c++",
+            nvcc="/env-b/bin/nvcc",
+        )
+    elif change == "tool versions":
+        _pin_toolchain(monkeypatch=monkeypatch, version="tool 2.0")
+    elif change == "cuda source":
+        (source_dir / "certified_affine_ffi_cuda.cu").write_text("// changed")
+    elif change == "header":
+        (source_dir / "exact_affine_core.h").write_text("// changed")
+    elif change == "nvccflags":
+        monkeypatch.setenv("NVCCFLAGS", "-arch=sm_80")
+    elif change == "nvcc presence":
+        _pin_toolchain(monkeypatch=monkeypatch, nvcc=None)
+    return before, hatch_build.native_cache_key(root=root)
+
+
+def test_the_cache_key_ignores_where_the_compilers_live(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Two environments with the same toolchain versions share one cache entry."""
+    before, after = _key_after(
+        monkeypatch=monkeypatch, root=_fake_checkout(tmp_path), change="tool paths"
+    )
+
+    assert before == after
+
+
+@pytest.mark.parametrize(
+    "change", ["tool versions", "cuda source", "header", "nvccflags", "nvcc presence"]
+)
+def test_the_cache_key_changes_with_every_build_input(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, change: str
+) -> None:
+    """Anything that can change the compiled bytes selects a different entry."""
+    before, after = _key_after(
+        monkeypatch=monkeypatch, root=_fake_checkout(tmp_path), change=change
+    )
+
+    assert before != after
+
+
+def _counting_compile(calls: list[Path]):
+    """Return a `_compile` stand-in that writes the target and records it."""
+
+    def fake_compile(*, command: list[str], target: Path) -> Path:
+        calls.append(target)
+        target.write_bytes(f"compiled by {command[0]}".encode())
+        target.with_suffix(target.suffix + ".build.log").write_text("log")
+        return target
+
+    return fake_compile
+
+
+def _build_twice(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> tuple[list[Path], list[Path]]:
+    """Build into two fresh payload directories and return compiles and output."""
+    root = _fake_checkout(tmp_path / "checkout")
+    monkeypatch.setenv("PYLCM_NATIVE_CACHE_DIR", str(tmp_path / "cache"))
+    _pin_toolchain(monkeypatch=monkeypatch)
+    calls: list[Path] = []
+    monkeypatch.setattr(hatch_build, "_compile", _counting_compile(calls))
+    for name in ("first", "second"):
+        written = hatch_build.build_exact_affine_cached(
+            root=root, output_dir=tmp_path / name, jax_include_dir="/jax/include"
+        )
+    return calls, written
+
+
+def test_a_cache_hit_does_not_compile(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The second identical build copies the stored libraries instead of compiling."""
+    monkeypatch.delenv("PYLCM_NATIVE_CACHE", raising=False)
+    calls, _ = _build_twice(monkeypatch=monkeypatch, tmp_path=tmp_path)
+
+    assert [target.parent.name for target in calls] == ["first", "first"]
+
+
+def test_a_cache_hit_installs_the_stored_libraries_and_logs(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A hit leaves the same libraries, bytes and compiler logs as the compile."""
+    monkeypatch.delenv("PYLCM_NATIVE_CACHE", raising=False)
+    _, written = _build_twice(monkeypatch=monkeypatch, tmp_path=tmp_path)
+
+    assert sorted(path.name for path in (tmp_path / "second").iterdir()) == sorted(
+        path.name for path in (tmp_path / "first").iterdir()
+    )
+    assert [path.read_bytes() for path in written] == [
+        (tmp_path / "first" / path.name).read_bytes() for path in written
+    ]
+
+
+def test_a_cache_miss_stores_the_compiled_libraries(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
+) -> None:
+    """A miss compiles once and leaves one complete entry under the key it printed."""
+    root = _fake_checkout(tmp_path / "checkout")
+    cache = tmp_path / "cache"
+    monkeypatch.setenv("PYLCM_NATIVE_CACHE_DIR", str(cache))
+    monkeypatch.delenv("PYLCM_NATIVE_CACHE", raising=False)
+    _pin_toolchain(monkeypatch=monkeypatch)
+    monkeypatch.setattr(hatch_build, "_compile", _counting_compile([]))
+
+    hatch_build.build_exact_affine_cached(
+        root=root, output_dir=tmp_path / "out", jax_include_dir="/jax/include"
+    )
+
+    key = hatch_build.native_cache_key(root=root)
+    assert f"miss {key}" in capsys.readouterr().out
+    assert sorted(path.name for path in (cache / key).iterdir()) == sorted(
+        [
+            hatch_build.CPU_LIBRARY,
+            f"{hatch_build.CPU_LIBRARY}.build.log",
+            hatch_build.CUDA_LIBRARY,
+            f"{hatch_build.CUDA_LIBRARY}.build.log",
+            hatch_build.NATIVE_CACHE_INDEX,
+        ]
+    )
+
+
+def _damage_entry(*, entry: Path, damage: str) -> None:
+    """Break a stored cache entry in one named way."""
+    index = entry / hatch_build.NATIVE_CACHE_INDEX
+    if damage == "truncated index":
+        index.write_text(index.read_text()[:5])
+    elif damage == "index not a list":
+        index.write_text('{"libraries": 1}')
+    elif damage == "missing listed library":
+        (entry / hatch_build.CUDA_LIBRARY).unlink()
+    elif damage == "listed name not a file":
+        (entry / hatch_build.CUDA_LIBRARY).unlink()
+        (entry / hatch_build.CUDA_LIBRARY).mkdir()
+    elif damage == "no index":
+        index.unlink()
+
+
+def _build_after_damage(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, damage: str
+) -> tuple[list[Path], list[Path], Path]:
+    """Store an entry, damage it, then build twice more into fresh directories.
+
+    Returns the compile targets of the two later builds, the libraries the first
+    of them returned, and the entry.
+    """
+    root = _fake_checkout(tmp_path / "checkout")
+    monkeypatch.setenv("PYLCM_NATIVE_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.delenv("PYLCM_NATIVE_CACHE", raising=False)
+    _pin_toolchain(monkeypatch=monkeypatch)
+    calls: list[Path] = []
+    monkeypatch.setattr(hatch_build, "_compile", _counting_compile(calls))
+    hatch_build.build_exact_affine_cached(
+        root=root, output_dir=tmp_path / "first", jax_include_dir="/jax/include"
+    )
+    entry = tmp_path / "cache" / hatch_build.native_cache_key(root=root)
+    _damage_entry(entry=entry, damage=damage)
+    calls.clear()
+    written = hatch_build.build_exact_affine_cached(
+        root=root, output_dir=tmp_path / "second", jax_include_dir="/jax/include"
+    )
+    hatch_build.build_exact_affine_cached(
+        root=root, output_dir=tmp_path / "third", jax_include_dir="/jax/include"
+    )
+    return calls, written, entry
+
+
+DAMAGES = [
+    "truncated index",
+    "index not a list",
+    "missing listed library",
+    "listed name not a file",
+    "no index",
+]
+
+
+@pytest.mark.parametrize("damage", DAMAGES)
+def test_a_damaged_entry_is_recompiled_once_and_then_hit(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, damage: str
+) -> None:
+    """The build after the damage compiles; the one after that hits the cache."""
+    calls, _, _ = _build_after_damage(
+        monkeypatch=monkeypatch, tmp_path=tmp_path, damage=damage
+    )
+
+    assert [target.parent.name for target in calls] == ["second", "second"]
+
+
+@pytest.mark.parametrize("damage", DAMAGES)
+def test_a_damaged_entry_still_returns_the_compiled_libraries(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, damage: str
+) -> None:
+    """The rebuild returns both libraries, written into its own output directory."""
+    _, written, _ = _build_after_damage(
+        monkeypatch=monkeypatch, tmp_path=tmp_path, damage=damage
+    )
+
+    assert [(path.parent.name, path.name, path.is_file()) for path in written] == [
+        ("second", hatch_build.CPU_LIBRARY, True),
+        ("second", hatch_build.CUDA_LIBRARY, True),
+    ]
+
+
+@pytest.mark.parametrize("damage", DAMAGES)
+def test_a_damaged_entry_is_replaced_by_a_complete_one(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, damage: str
+) -> None:
+    """After the rebuild the entry lists, and holds, every library again."""
+    _, _, entry = _build_after_damage(
+        monkeypatch=monkeypatch, tmp_path=tmp_path, damage=damage
+    )
+
+    names = json.loads((entry / hatch_build.NATIVE_CACHE_INDEX).read_text())
+    assert [(name, (entry / name).is_file()) for name in names] == [
+        (hatch_build.CPU_LIBRARY, True),
+        (hatch_build.CUDA_LIBRARY, True),
+    ]
+
+
+def test_a_damaged_entry_says_it_is_rebuilt(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
+) -> None:
+    """The build names the damaged entry it is replacing."""
+    _, _, entry = _build_after_damage(
+        monkeypatch=monkeypatch, tmp_path=tmp_path, damage="truncated index"
+    )
+
+    assert f"native cache entry {entry.name} damaged; rebuilding" in (
+        capsys.readouterr().out
+    )
+
+
+def test_a_disabled_cache_always_compiles(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`PYLCM_NATIVE_CACHE=0` compiles every time and stores nothing."""
+    monkeypatch.setenv("PYLCM_NATIVE_CACHE", "0")
+    calls, _ = _build_twice(monkeypatch=monkeypatch, tmp_path=tmp_path)
+
+    assert [target.parent.name for target in calls] == [
+        "first",
+        "first",
+        "second",
+        "second",
+    ]
+
+
+def test_a_disabled_cache_writes_no_entry(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A disabled cache leaves its directory untouched."""
+    monkeypatch.setenv("PYLCM_NATIVE_CACHE", "0")
+    _build_twice(monkeypatch=monkeypatch, tmp_path=tmp_path)
+
+    assert not (tmp_path / "cache").exists()
+
+
+@pytest.mark.parametrize(
+    ("environment", "expected"),
+    [
+        ({"PYLCM_NATIVE_CACHE_DIR": "/explicit"}, Path("/explicit")),
+        ({"XDG_CACHE_HOME": "/xdg"}, Path("/xdg/pylcm/native")),
+        ({}, Path("/someone/.cache/pylcm/native")),
+    ],
+)
+def test_the_cache_directory_follows_the_environment(
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    environment: dict[str, str],
+    expected: Path,
+) -> None:
+    """An explicit directory wins, then `XDG_CACHE_HOME`, then `~/.cache`."""
+    # `Path.home` reads `USERPROFILE` on Windows and `HOME` elsewhere.
+    monkeypatch.setattr(Path, "home", lambda: Path("/someone"))
+    for name in ("PYLCM_NATIVE_CACHE_DIR", "XDG_CACHE_HOME"):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+
+    assert hatch_build.native_cache_dir() == expected
+
+
+@pytest.mark.parametrize(
+    ("nvcc_flags", "expected"),
+    [
+        ((), ["--threads", "0"]),
+        (("--threads", "4"), []),
+        (("--threads=4",), []),
+        (("-t", "2"), []),
+        (("-t2",), []),
+        (("-arch=sm_80",), ["--threads", "0"]),
+    ],
+)
+def test_nvcc_compiles_architectures_in_parallel_unless_told_otherwise(
+    *, nvcc_flags: tuple[str, ...], expected: list[str]
+) -> None:
+    """`--threads 0` is added, and never alongside a thread count the caller set."""
+    assert hatch_build.nvcc_thread_flags(nvcc_flags=nvcc_flags) == expected
+
+
+@pytest.mark.parametrize("nvccflags", ["", "--threads 4"])
+def test_the_cuda_command_names_one_thread_count(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, nvccflags: str
+) -> None:
+    """The nvcc command line carries `--threads` exactly once."""
+    root = _fake_checkout(tmp_path)
+    _pin_toolchain(monkeypatch=monkeypatch)
+    monkeypatch.setenv("NVCCFLAGS", nvccflags)
+    commands: list[list[str]] = []
+
+    def fake_compile(*, command: list[str], target: Path) -> Path:
+        commands.append(command)
+        target.write_bytes(b"so")
+        return target
+
+    monkeypatch.setattr(hatch_build, "_compile", fake_compile)
+
+    hatch_build.build_exact_affine(
+        root=root, output_dir=tmp_path / "out", jax_include_dir="/jax/include"
+    )
+
+    assert commands[1].count("--threads") == 1

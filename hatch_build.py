@@ -22,6 +22,18 @@ for several architectures plus a virtual target; `NVCCFLAGS='-arch=sm_80'`
 replaces that set with one architecture, which builds faster and runs only
 there.
 
+nvcc compiles those architectures in parallel (`--threads 0`) unless
+`NVCCFLAGS` already sets a thread count.
+
+Compiled libraries are cached by content. The key covers everything that can
+change their bytes -- source and header digests, compiler and nvcc version
+reports, `NVCCFLAGS`, Python ABI, platform, jax and jaxlib -- but not where the
+compilers are installed, so environments with the same toolchain share one
+entry. A hit copies the stored libraries and their build logs instead of
+compiling. The cache lives in `PYLCM_NATIVE_CACHE_DIR`, else
+`$XDG_CACHE_HOME/pylcm/native`, else `~/.cache/pylcm/native`;
+`PYLCM_NATIVE_CACHE=0` disables it, and deleting the directory is always safe.
+
 Which libraries come out therefore depends on the environment the build ran in,
 and every combination exits successfully. The build states the toolchain it
 found on stdout so that a CPU-only result is read at the time rather than
@@ -37,6 +49,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 try:
@@ -50,6 +63,7 @@ except ImportError:
 PACKAGE_DIR = Path("src/_lcm/egm/upper_envelope/_exact_affine")
 NATIVE_PAYLOAD_DIR = Path("_pylcm_native")
 NATIVE_MANIFEST = "native-manifest.json"
+NATIVE_CACHE_INDEX = "libraries.json"
 
 
 def native_source_fingerprint(*, root: Path) -> str:
@@ -118,6 +132,118 @@ def native_build_inputs(*, root: Path) -> dict[str, object]:
         "nvcc_version": _tool_version(nvcc),
         "nvccflags": os.environ.get("NVCCFLAGS", ""),
     }
+
+
+def native_cache_key(*, root: Path) -> str:
+    """Return the content address of the libraries a build here would produce.
+
+    The key is `native_build_inputs` without the compiler and nvcc paths, which
+    differ between environments holding the same toolchain, plus the headers the
+    sources include and `LCM_SKIP_EXACT_AFFINE`.
+    """
+    inputs = native_build_inputs(root=root)
+    del inputs["compiler"], inputs["nvcc"]
+    source_dir = root / PACKAGE_DIR
+    inputs["cache_schema"] = 1
+    inputs["headers"] = {
+        path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in sorted(source_dir.glob("*.h"))
+    }
+    inputs["skip_exact_affine"] = os.environ.get("LCM_SKIP_EXACT_AFFINE", "")
+    encoded = json.dumps(inputs, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def native_cache_dir() -> Path:
+    """Return the directory holding cached native builds."""
+    explicit = os.environ.get("PYLCM_NATIVE_CACHE_DIR")
+    if explicit:
+        return Path(explicit)
+    xdg = os.environ.get("XDG_CACHE_HOME")
+    base = Path(xdg) if xdg else Path.home() / ".cache"
+    return base / "pylcm" / "native"
+
+
+def build_exact_affine_cached(
+    *,
+    root: Path,
+    output_dir: Path,
+    jax_include_dir: str | None = None,
+) -> list[Path]:
+    """Return the built libraries in `output_dir`, from the cache where possible.
+
+    A hit copies the stored libraries and their `.build.log` reports into
+    `output_dir`. A miss compiles with `build_exact_affine` and then stores the
+    result under a temporary name that is renamed into place, so a concurrent or
+    interrupted build never leaves a partial entry. An entry whose index does not
+    parse, or that lacks a library it lists, is removed and rebuilt as on a miss.
+    A cache that cannot be written does not fail the build.
+    """
+    if os.environ.get("PYLCM_NATIVE_CACHE", "") == "0":
+        sys.stdout.write("exact-affine: native cache disabled; compiling.\n")
+        return build_exact_affine(
+            root=root, output_dir=output_dir, jax_include_dir=jax_include_dir
+        )
+    key = native_cache_key(root=root)
+    entry = native_cache_dir() / key
+    names = _cached_library_names(entry)
+    if names is not None:
+        sys.stdout.write(f"exact-affine: native cache hit {key} at {entry}.\n")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        for path in entry.iterdir():
+            if path.name != NATIVE_CACHE_INDEX:
+                shutil.copy2(path, output_dir / path.name)
+        return [output_dir / name for name in names]
+    if entry.exists():
+        sys.stdout.write(
+            f"exact-affine: native cache entry {key} damaged; rebuilding.\n"
+        )
+        shutil.rmtree(entry, ignore_errors=True)
+    else:
+        sys.stdout.write(f"exact-affine: native cache miss {key}; compiling.\n")
+    libraries = build_exact_affine(
+        root=root, output_dir=output_dir, jax_include_dir=jax_include_dir
+    )
+    try:
+        _store_in_cache(entry=entry, libraries=libraries)
+    except OSError as error:
+        sys.stdout.write(f"exact-affine: native cache not written: {error}\n")
+    return libraries
+
+
+def _cached_library_names(entry: Path) -> list[str] | None:
+    """Return the libraries `entry` lists, or None unless it holds every one."""
+    try:
+        names = json.loads((entry / NATIVE_CACHE_INDEX).read_text())
+    except OSError, ValueError:
+        return None
+    if not isinstance(names, list) or not all(
+        isinstance(name, str) and Path(name).name == name and (entry / name).is_file()
+        for name in names
+    ):
+        return None
+    return names
+
+
+def _store_in_cache(*, entry: Path, libraries: list[Path]) -> None:
+    """Copy libraries and their build logs into `entry`, atomically."""
+    entry.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=f".{entry.name}-", dir=entry.parent))
+    for library in libraries:
+        shutil.copy2(library, staging / library.name)
+        log = library.with_suffix(library.suffix + ".build.log")
+        if log.is_file():
+            shutil.copy2(log, staging / log.name)
+    (staging / NATIVE_CACHE_INDEX).write_text(
+        json.dumps([library.name for library in libraries])
+    )
+    try:
+        staging.rename(entry)
+    except OSError:
+        # Another build stored the same key first; its entry is equivalent.
+        if not (entry / NATIVE_CACHE_INDEX).is_file():
+            raise
+        shutil.rmtree(staging, ignore_errors=True)
 
 
 def write_native_manifest(
@@ -264,6 +390,20 @@ def cuda_arch_flags(
     oldest = architectures[0]
     flags += ["-gencode", f"arch=compute_{oldest},code=compute_{oldest}"]
     return flags
+
+
+def nvcc_thread_flags(*, nvcc_flags: tuple[str, ...]) -> list[str]:
+    """Return `--threads 0` unless `nvcc_flags` already sets a thread count.
+
+    With `--threads 0` nvcc compiles the `-gencode` targets concurrently, one
+    thread per target up to the core count, instead of one after another.
+    """
+    if any(
+        flag == "-t" or flag.startswith("--threads") or re.fullmatch(r"-t=?\d+", flag)
+        for flag in nvcc_flags
+    ):
+        return []
+    return ["--threads", "0"]
 
 
 def windows_module_definition() -> str:
@@ -433,6 +573,7 @@ def build_exact_affine(
                         nvcc_flags=nvcc_flags,
                         supported_architectures=probe_gpu_architectures(nvcc=nvcc),
                     ),
+                    *nvcc_thread_flags(nvcc_flags=nvcc_flags),
                     *nvcc_flags,
                     f"-I{include_dir}",
                     str(source_dir / "certified_affine_ffi_cuda.cu"),
@@ -469,7 +610,9 @@ class CustomBuildHook(BuildHookInterface):
     def initialize(self, version: str, build_data: dict) -> None:  # noqa: ARG002
         """Compile and force-include the installed native payload."""
         output_dir = Path(self.directory) / "pylcm-native"
-        libraries = build_exact_affine(root=Path(self.root), output_dir=output_dir)
+        libraries = build_exact_affine_cached(
+            root=Path(self.root), output_dir=output_dir
+        )
         manifest = write_native_manifest(
             root=Path(self.root), output_dir=output_dir, libraries=libraries
         )
@@ -526,5 +669,8 @@ def _compile(*, command: list[str], target: Path) -> Path:
 
 
 if __name__ == "__main__":
-    for path in build_exact_affine(root=Path(__file__).parent):
+    root = Path(__file__).parent
+    for path in build_exact_affine_cached(
+        root=root, output_dir=root / ".pylcm-native-build"
+    ):
         sys.stdout.write(f"built {path}\n")
