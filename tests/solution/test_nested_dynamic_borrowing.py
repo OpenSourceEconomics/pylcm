@@ -4,15 +4,18 @@ import logging
 import math
 from collections.abc import Mapping
 from functools import partial
-from typing import Literal, TypedDict, Unpack
+from types import MappingProxyType
+from typing import Literal, TypedDict, Unpack, cast
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from dags import rename_arguments
 
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.interp import interp_on_padded_grid
 from _lcm.egm.nested_floor import PreparedNestedFloor
+from _lcm.egm.preferences import get_discount_factor_reader
 from _lcm.egm.published_policy import EGMSimPolicy, NBEGMGridPolicy
 from _lcm.execution.core_program import core_program_graph, select_programs
 from _lcm.solution import backward_induction
@@ -22,14 +25,17 @@ from _lcm.solution.kernel_output import ConsumedKernelOutput
 from _lcm.solution.nbegm import _NBEGMNestedKernelOutput, _RideAlongNBEGMPeriodKernel
 from _lcm.solution.negm import _NEGMPeriodKernel, _with_outer_post_decision
 from _lcm.solution.nnbegm import _NNBEGMPeriodKernel
+from _lcm.typing import EconFunction
 from lcm import (
     AgeGrid,
+    CESAggregator,
     IrregSpacedGrid,
     LiquidMargin,
     Model,
     NestedConsumptionSavingsRegime,
     NetOfAdjustmentCost,
     OuterContinuousMargin,
+    PowerMean,
     Regime,
     categorical,
     outer_unchanged,
@@ -474,3 +480,120 @@ def test_nested_floor_rejects_chosen_outer_ancestry(*, family: Family) -> None:
         ),
     ):
         _model(family=family, lower=chosen_floor)
+
+
+def _ces_floor(*, illiquid: ContinuousState) -> FloatND:
+    return 0.0 * illiquid
+
+
+def _ces_utility(*, consumption: ContinuousAction) -> FloatND:
+    return consumption
+
+
+def _ces_terminal(*, liquid: ContinuousState, illiquid: ContinuousState) -> FloatND:
+    return liquid + illiquid + 1.0
+
+
+def _ces_model(*, lower: float | UserFunction) -> Model:
+    """Two alive periods so the finite nested corner reads a CES continuation."""
+    margin = LiquidMargin(
+        state="liquid",
+        action="consumption",
+        resources="resources",
+        post_decision_state="savings",
+    )
+    stock = IrregSpacedGrid(points=(0.0, 1.0, 2.0))
+    liquid = IrregSpacedGrid(points=(0.0, 0.5, 1.0, 2.0, 4.0, 8.0))
+    alive = NestedConsumptionSavingsRegime(
+        states={"liquid": liquid, "illiquid": stock},
+        actions={
+            "consumption": IrregSpacedGrid(
+                points=(0.125, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0)
+            ),
+            "investment": _INVESTMENT,
+        },
+        state_transitions={"liquid": next_liquid, "illiquid": next_illiquid},
+        functions={
+            "utility": _ces_utility,
+            "savings": savings,
+            "new_illiquid": new_illiquid,
+            "resources": resources,
+        },
+        constraints={
+            "borrowing": post_decision_lower_bound(margin=margin, lower=lower)
+        },
+        solver=NNBEGM(
+            inner=NBEGM(savings_grid=_SAVINGS), outer_search=FiniteOuterGrid(grid=stock)
+        ),
+        liquid=margin,
+        koopmans_aggregator=CESAggregator(),
+        certainty_equivalent=PowerMean(),
+        outer_continuous=OuterContinuousMargin(
+            state="illiquid",
+            action="investment",
+            post_decision_state="new_illiquid",
+            no_adjustment=outer_unchanged,
+        ),
+    )
+    return Model(
+        regimes={
+            "alive": alive,
+            "done": Regime(
+                states={"liquid": liquid, "illiquid": stock},
+                functions={"utility": _ces_terminal},
+            ),
+        },
+        ages=AgeGrid(exact_values=(10, 20, 30)),
+        edges={"alive": {"alive": (10,), "done": (20,)}},
+        initial_nodes={10: "alive"},
+        regime_id_class=RegimeId,
+    )
+
+
+_CES_PARAMS = {
+    "alive": {
+        "koopmans_aggregator": {
+            "discount_factor": 0.9,
+            "intertemporal_elasticity_of_substitution": 0.5,
+        },
+        "certainty_equivalent": {"risk_aversion": 2.0},
+    }
+}
+
+
+def test_finite_nested_ces_callable_floor_matches_its_literal_value() -> None:
+    """A callable floor equal to a literal one solves the same CES model."""
+    literal = _ces_model(lower=0.0).solve(params=_CES_PARAMS, log_level="off")
+    callable_floor = _ces_model(lower=_ces_floor).solve(
+        params=_CES_PARAMS, log_level="off"
+    )
+    for period in (0, 1):
+        np.testing.assert_array_almost_equal(
+            callable_floor.values[period]["alive"],
+            literal.values[period]["alive"],
+            decimal=DECIMAL_PRECISION,
+        )
+
+
+def test_discount_factor_reader_selects_beta_among_ces_parameters() -> None:
+    """The CES aggregator's elasticity is not mistaken for its discount factor."""
+    aggregator = rename_arguments(
+        func=CESAggregator(),
+        mapper={
+            name: f"koopmans_aggregator__{name}"
+            for name in ("discount_factor", "intertemporal_elasticity_of_substitution")
+        },
+    )
+    read = get_discount_factor_reader(
+        functions=MappingProxyType({}),
+        koopmans_aggregator=cast("EconFunction", aggregator),
+    )
+    beta = read(
+        {
+            "koopmans_aggregator__discount_factor": jnp.asarray(0.9),
+            "koopmans_aggregator__intertemporal_elasticity_of_substitution": (
+                jnp.asarray(0.5)
+            ),
+        }
+    )
+    np.testing.assert_array_equal(beta, jnp.asarray(0.9))

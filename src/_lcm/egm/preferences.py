@@ -24,6 +24,7 @@ from typing import cast
 import jax
 import jax.numpy as jnp
 from dags import concatenate_functions
+from dags.tree import QNAME_DELIMITER
 
 from _lcm.egm.numeric_inverse import numeric_inverse_marginal_utility
 from _lcm.regime_building.w_dag import _get_build_W_kwargs
@@ -202,8 +203,9 @@ def get_discount_factor_reader(
     """Return a closure reading `beta` off the aggregator's own signature.
 
     The aggregator declares which parameters it consumes beyond `utility` and
-    `CE`, and `fail_if_custom_koopmans_aggregator` pins that set to the single
-    discount factor. Reading it through the aggregator rather than by a
+    `CE`: the discount factor, and for `CESAggregator` also the intertemporal
+    elasticity of substitution. The reader selects the argument whose last name
+    segment is `discount_factor`. Reading it through the aggregator rather than by a
     hard-coded qualified name keeps the modeller's spelling — including a
     `discount_factor` computed by a DAG function, e.g. one indexing a per-type
     series — the single source of the value.
@@ -380,5 +382,9 @@ class _DiscountFactorReader:
     """Assembles the aggregator's keyword arguments beyond `utility` and `CE`."""
 
     def __call__(self, params: EconFunctionKwargs) -> ScalarFloat:
-        (discount_factor,) = tuple(self.build_W_kwargs(params).values())
+        (discount_factor,) = (
+            value
+            for name, value in self.build_W_kwargs(params).items()
+            if name.rsplit(QNAME_DELIMITER, 1)[-1] == "discount_factor"
+        )
         return cast("ScalarFloat", discount_factor)
