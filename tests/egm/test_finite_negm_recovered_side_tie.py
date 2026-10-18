@@ -15,7 +15,7 @@ from _lcm.egm.upper_envelope.segment_envelope import (
 )
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.egm._finite_germ_oracle import _emitted_row
-from tests.egm.finite_germ_query_fixture import make_canonical_query
+from tests.egm._finite_germ_query_fixture import make_canonical_query
 from tests.egm.test_finite_negm_query_integrity_and_ties import _read
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)

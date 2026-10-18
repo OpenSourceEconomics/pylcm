@@ -21,7 +21,7 @@ from lcm import Model
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.typing import ContinuousState, FloatND, ScalarFloat
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
-from tests.egm.finite_germ_query_fixture import make_canonical_model
+from tests.egm._finite_germ_query_fixture import make_canonical_model
 from tests.solution._nbegm_direct_oracle import OracleContext
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)

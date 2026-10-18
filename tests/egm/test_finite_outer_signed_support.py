@@ -24,7 +24,7 @@ from _lcm.egm.upper_envelope.segment_envelope import (
 from _lcm.typing import EconFunctionKwargs
 from lcm.typing import FloatND, ScalarFloat
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
-from tests.egm.finite_germ_query_fixture import make_canonical_query
+from tests.egm._finite_germ_query_fixture import make_canonical_query
 from tests.egm.test_finite_nnbegm_query import _bank as nb_bank
 from tests.egm.test_finite_nnbegm_query import _query as nb_query
 

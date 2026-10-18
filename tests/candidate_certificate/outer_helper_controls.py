@@ -183,8 +183,8 @@ CONTROLS.update(
             "expression",
             (
                 "_fold_exact_outer_nodes(nodes=nodes, finite_values=finite_va"
-                "lues, state_shape=state_shape, n_nodes=n_nodes, node_compani"
-                "ons=node_companions)"
+                "lues, state_shape=state_shape, n_nodes=n_nodes, node_"
+                "companions=node_companions)"
             ),
             (
                 "_fold_exact_outer_nodes(nodes=nodes, finite_values=finite_va"

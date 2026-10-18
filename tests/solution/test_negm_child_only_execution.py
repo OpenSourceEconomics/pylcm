@@ -10,7 +10,7 @@ from _lcm.solution.dcegm import _DCEGMPeriodKernel
 from _lcm.solution.negm import _NEGMPeriodKernel
 from lcm.solver_api import SolutionResult
 from tests.conftest import DECIMAL_PRECISION, EXACT_KERNEL_SKIP_REASON
-from tests.egm.finite_germ_query_fixture import make_canonical_model
+from tests.egm._finite_germ_query_fixture import make_canonical_model
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
