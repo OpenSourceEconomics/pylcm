@@ -1,0 +1,1451 @@
+"""`Decoupled` chooses with one aggregator and stores the value of another.
+
+The model is small enough to solve by hand. Wealth takes the codes `0, 1, 2, 3`.
+Spending yields utility `1.5` and lowers wealth by one, and is feasible only
+with positive wealth. Saving yields nothing and raises wealth by one, capped at
+three. The last period pays `V_2 = [0, 1, 2, 4]` by wealth, and `δ = 0.9`.
+
+A present-biased agent stores the long-run value `u + δ·CE`. The selves the solve
+anticipates choose with `u + β̃δ·CE`, and the acting self in simulation chooses
+with `u + βδ·CE`, `β = 0.5`:
+
+- time-consistent: `β = β̃ = 1`;
+- naive: `β̃ = 1`;
+- sophisticated: `β̃ = β`;
+- partially naive: `β < β̃ < 1`.
+
+The expected values come from an exhaustive NumPy enumeration
+(`_enumerate_values`), which shares no code with the solve.
+"""
+
+from collections.abc import Mapping
+from typing import cast
+
+import jax.numpy as jnp
+import numpy as np
+import pandas as pd
+import pytest
+from numpy.testing import assert_array_almost_equal, assert_array_equal
+
+import lcm
+from lcm.exceptions import (
+    ModelInitializationError,
+    NoFeasibleActionError,
+    RegimeInitializationError,
+)
+from lcm.typing import (
+    BoolND,
+    ContinuousState,
+    DiscreteAction,
+    DiscreteState,
+    FloatND,
+    Intermediate,
+    IntND,
+    ScalarInt,
+    UserFunction,
+    UserParams,
+)
+from tests.conftest import DECIMAL_PRECISION
+
+pytestmark = pytest.mark.coverage(backends=("cpu",), precisions="both")
+
+DELTA = 0.9
+BETA = 0.5
+SPEND_UTILITY = 1.5
+TERMINAL_VALUES = np.array([0.0, 1.0, 2.0, 4.0])
+
+
+@lcm.categorical(ordered=False)
+class RegimeId:
+    decide: ScalarInt
+    end: ScalarInt
+
+
+@lcm.categorical(ordered=True)
+class Wealth:
+    zero: ScalarInt
+    one: ScalarInt
+    two: ScalarInt
+    three: ScalarInt
+
+
+@lcm.categorical(ordered=False)
+class Choice:
+    spend: ScalarInt
+    save: ScalarInt
+
+
+def utility(choice: DiscreteAction) -> FloatND:
+    return jnp.where(choice == Choice.spend, SPEND_UTILITY, 0.0)
+
+
+def can_afford(*, wealth: DiscreteState, choice: DiscreteAction) -> BoolND:
+    return (choice == Choice.save) | (wealth >= Wealth.one)
+
+
+def next_wealth(*, wealth: DiscreteState, choice: DiscreteAction) -> DiscreteState:
+    return jnp.where(
+        choice == Choice.spend, wealth - 1, jnp.minimum(wealth + 1, Wealth.three)
+    )
+
+
+def terminal_utility(wealth: DiscreteState) -> FloatND:
+    return jnp.asarray(TERMINAL_VALUES)[wealth]
+
+
+def long_run(*, utility: FloatND, CE: FloatND, delta: float) -> FloatND:
+    return utility + delta * CE
+
+
+def perceived_future_choice(
+    *, utility: FloatND, CE: FloatND, beta_tilde: float, delta: float
+) -> FloatND:
+    return utility + beta_tilde * delta * CE
+
+
+def current_choice(
+    *, utility: FloatND, CE: FloatND, beta: float, delta: float
+) -> FloatND:
+    return utility + beta * delta * CE
+
+
+def indifferent(*, utility: FloatND, CE: FloatND) -> FloatND:
+    return jnp.zeros_like(utility + CE)
+
+
+# The future selves choose with `β̃`, today's self in simulation with `β`.
+PRESENT_BIAS = lcm.Decoupled(
+    objective=lcm.Phased(solve=perceived_future_choice, simulate=current_choice),
+    value=long_run,
+)
+
+
+def _model(
+    *,
+    koopmans_aggregator: UserFunction | lcm.Phased | lcm.Decoupled = PRESENT_BIAS,
+) -> lcm.Model:
+    wealth = lcm.DiscreteGrid(Wealth)
+    return lcm.Model(
+        n_periods=3,
+        regimes={
+            "decide": lcm.Regime(
+                actions={"choice": lcm.DiscreteGrid(Choice)},
+                states={"wealth": wealth},
+                state_transitions={"wealth": next_wealth},
+                constraints={"can_afford": can_afford},
+                functions={"utility": utility},
+                koopmans_aggregator=koopmans_aggregator,
+            ),
+            "end": lcm.Regime(
+                states={"wealth": wealth}, functions={"utility": terminal_utility}
+            ),
+        },
+        regime_id_class=RegimeId,
+        initial_nodes=lcm.InitialNodes(by_period={0: "decide"}),
+        edges={
+            "decide": {
+                "decide": lcm.PeriodRange(exclusive_stop=1),
+                "end": lcm.Periods(values=(1,)),
+            }
+        },
+    )
+
+
+def _params(*, beta_tilde: float) -> UserParams:
+    return {
+        "decide": {
+            "koopmans_aggregator": {
+                "beta_tilde": beta_tilde,
+                "beta": BETA,
+                "delta": DELTA,
+            }
+        }
+    }
+
+
+def _enumerate_values(*, beta_tilde: float) -> dict[int, np.ndarray]:
+    """Solve the model by enumerating both choices at every wealth level."""
+    values = {2: TERMINAL_VALUES}
+    for period in (1, 0):
+        V = np.empty(4)
+        for w in range(4):
+            choices = [(0.0, min(w + 1, 3))]
+            if w >= 1:
+                choices.insert(0, (SPEND_UTILITY, w - 1))
+            perceived = [
+                u + beta_tilde * DELTA * values[period + 1][n] for u, n in choices
+            ]
+            chosen = choices[int(np.argmax(perceived))]
+            V[w] = chosen[0] + DELTA * values[period + 1][chosen[1]]
+        values[period] = V
+    return values
+
+
+AGENTS = {
+    "time-consistent": 1.0,
+    "sophisticated": BETA,
+    "partially naive": 0.7,
+}
+
+
+@pytest.mark.parametrize(
+    ("beta_tilde", "period", "expected"),
+    [
+        (1.0, 1, [0.9, 1.8, 3.6, 3.6]),
+        (1.0, 0, [1.62, 3.24, 3.24, 4.74]),
+        (BETA, 1, [0.9, 1.5, 2.4, 3.3]),
+        (BETA, 0, [1.35, 2.31, 2.85, 3.66]),
+        (0.7, 1, [0.9, 1.5, 3.6, 3.3]),
+        (0.7, 0, [1.35, 3.24, 2.85, 4.74]),
+    ],
+)
+def test_enumeration_matches_the_hand_solution(
+    *, beta_tilde: float, period: int, expected: list[float]
+) -> None:
+    """The enumeration oracle reproduces the values solved by hand."""
+    assert_array_almost_equal(
+        _enumerate_values(beta_tilde=beta_tilde)[period], expected, decimal=12
+    )
+
+
+@pytest.mark.parametrize("period", [0, 1])
+@pytest.mark.parametrize("agent", list(AGENTS))
+def test_solve_stores_the_value_at_the_objective(*, agent: str, period: int) -> None:
+    """`V_t` is `u + δ·CE` at the action that maximizes `u + β̃δ·CE`."""
+    beta_tilde = AGENTS[agent]
+    solution = _model().solve(params=_params(beta_tilde=beta_tilde), log_level="off")
+    assert_array_almost_equal(
+        solution.value(period=period, regime="decide"),
+        _enumerate_values(beta_tilde=beta_tilde)[period],
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+def test_sophisticated_value_lies_below_the_best_long_run_value() -> None:
+    """At wealth two the self spends, worth 2.85, although saving is worth 2.97."""
+    solution = _model().solve(params=_params(beta_tilde=BETA), log_level="off")
+    assert_array_almost_equal(
+        solution.value(period=0, regime="decide")[Wealth.two],
+        2.85,
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+@pytest.mark.parametrize("period", [0, 1])
+def test_identical_objective_and_value_solve_like_the_plain_aggregator(
+    *, period: int
+) -> None:
+    """`Decoupled(objective=W, value=W)` solves like `koopmans_aggregator=W`."""
+    params: UserParams = {"decide": {"koopmans_aggregator": {"delta": DELTA}}}
+    wrapped = _model(
+        koopmans_aggregator=lcm.Decoupled(objective=long_run, value=long_run)
+    ).solve(params=params, log_level="off")
+    plain = _model(koopmans_aggregator=long_run).solve(params=params, log_level="off")
+    assert_array_equal(
+        wrapped.value(period=period, regime="decide"),
+        plain.value(period=period, regime="decide"),
+    )
+
+
+@pytest.mark.parametrize("period", [0, 1])
+def test_tied_objective_takes_the_first_feasible_action(*, period: int) -> None:
+    """An objective tied across actions picks spend wherever it is feasible."""
+    solution = _model(
+        koopmans_aggregator=lcm.Decoupled(objective=indifferent, value=long_run)
+    ).solve(
+        params={"decide": {"koopmans_aggregator": {"delta": DELTA}}},
+        log_level="off",
+    )
+    next_values = (
+        TERMINAL_VALUES if period == 1 else np.array([0.9, 1.5, 2.4, 3.3])
+    )  # always spend at period 1
+    expected = [DELTA * next_values[1]] + [
+        SPEND_UTILITY + DELTA * next_values[w - 1] for w in (1, 2, 3)
+    ]
+    assert_array_almost_equal(
+        solution.value(period=period, regime="decide"),
+        expected,
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+def _simulate(*, model: lcm.Model, params: UserParams) -> pd.DataFrame:
+    return model.simulate(
+        params=params,
+        initial_conditions={
+            "wealth": jnp.array([0, 1, 2, 3]),
+            "regime_id": jnp.full(4, RegimeId.decide),
+            "period": jnp.zeros(4, dtype=jnp.int32),
+        },
+        log_level="off",
+    ).to_dataframe()
+
+
+def _first_period(df: pd.DataFrame) -> pd.DataFrame:
+    return df.loc[df["period"] == 0].sort_values("wealth")
+
+
+# A naive agent (`β̃ = 1`) whose acting self chooses with `β`: it saves at wealth
+# zero and spends otherwise, against `V_1 = [0.9, 1.8, 3.6, 3.6]`.
+NAIVE_CHOICES = ["save", "spend", "spend", "spend"]
+NAIVE_LONG_RUN_VALUES = [
+    DELTA * 1.8,
+    SPEND_UTILITY + DELTA * 0.9,
+    SPEND_UTILITY + DELTA * 1.8,
+    SPEND_UTILITY + DELTA * 3.6,
+]
+
+
+def test_simulation_chooses_with_the_simulate_variant() -> None:
+    """Today's self chooses with `β`: the naive agent spends at wealth 1, 2 and 3."""
+    df = _first_period(_simulate(model=_model(), params=_params(beta_tilde=1.0)))
+    assert list(df["choice"]) == NAIVE_CHOICES
+
+
+def test_simulation_publishes_the_stored_value_of_the_choice() -> None:
+    """The simulated value is `u + δ·CE` at the chosen action."""
+    df = _first_period(_simulate(model=_model(), params=_params(beta_tilde=1.0)))
+    assert_array_almost_equal(
+        df["value"].to_numpy(), NAIVE_LONG_RUN_VALUES, decimal=DECIMAL_PRECISION
+    )
+
+
+def test_phased_koopmans_aggregator_makes_the_same_choices() -> None:
+    """`Phased(solve=f, simulate=g)` chooses like `Decoupled(Phased(f, g), f)`."""
+    phased = _first_period(
+        _simulate(
+            model=_model(
+                koopmans_aggregator=lcm.Phased(solve=long_run, simulate=current_choice)
+            ),
+            params={"decide": {"koopmans_aggregator": {"delta": DELTA, "beta": BETA}}},
+        )
+    )
+    assert list(phased["choice"]) == NAIVE_CHOICES
+
+
+def test_phased_koopmans_aggregator_publishes_the_acting_selfs_value() -> None:
+    """A `Phased` Koopmans aggregator publishes `u + βδ·CE` at the choice."""
+    phased = _first_period(
+        _simulate(
+            model=_model(
+                koopmans_aggregator=lcm.Phased(solve=long_run, simulate=current_choice)
+            ),
+            params={"decide": {"koopmans_aggregator": {"delta": DELTA, "beta": BETA}}},
+        )
+    )
+    assert_array_almost_equal(
+        phased["value"].to_numpy(),
+        [
+            BETA * DELTA * 1.8,
+            1.5 + BETA * DELTA * 0.9,
+            1.5 + BETA * DELTA * 1.8,
+            1.5 + BETA * DELTA * 3.6,
+        ],
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+ALL_INTERMEDIATES: tuple[Intermediate, ...] = ("Q", "F", "U", "CE", "Q_objective")
+
+
+def _lookup(*, keep_intermediates: tuple[Intermediate, ...]) -> lcm.PolicyLookup:
+    model = _model()
+    params = _params(beta_tilde=1.0)
+    return model.lookup_policy(
+        params=params,
+        solution=model.solve(params=params, log_level="off"),
+        period=0,
+        regime_name="decide",
+        states={"wealth": jnp.array([0, 1, 2, 3])},
+        keep_intermediates=keep_intermediates,
+    )
+
+
+@pytest.mark.parametrize("keep_intermediates", [(), ALL_INTERMEDIATES])
+def test_lookup_chooses_with_the_simulate_variant(
+    *, keep_intermediates: tuple[Intermediate, ...]
+) -> None:
+    """Lookup chooses like simulation, with today's `β`, not the solve's `β̃`."""
+    got = _lookup(keep_intermediates=keep_intermediates)
+    actions = cast("Mapping[str, IntND]", got.actions)
+    assert_array_equal(
+        actions["choice"], [Choice.save, Choice.spend, Choice.spend, Choice.spend]
+    )
+
+
+@pytest.mark.parametrize("keep_intermediates", [(), ALL_INTERMEDIATES])
+def test_lookup_publishes_the_stored_value_of_the_choice(
+    *, keep_intermediates: tuple[Intermediate, ...]
+) -> None:
+    """The looked-up value is `u + δ·CE` at today's choice."""
+    got = _lookup(keep_intermediates=keep_intermediates)
+    assert_array_almost_equal(
+        got.value, NAIVE_LONG_RUN_VALUES, decimal=DECIMAL_PRECISION
+    )
+
+
+def test_lookup_publishes_the_objective_profile() -> None:
+    """`Q_objective` is today's `u + βδ·CE` per action; `Q` is `u + δ·CE`."""
+    got = _lookup(keep_intermediates=ALL_INTERMEDIATES)
+    assert_array_almost_equal(
+        cast("FloatND", got.Q_objective),
+        cast("FloatND", got.U) + BETA * DELTA * cast("FloatND", got.CE),
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+def test_lookup_keeps_the_objective_profile_only_when_asked() -> None:
+    """`Q_objective` alone keeps no other part; the other parts alone omit it."""
+    alone = _lookup(keep_intermediates=("Q_objective",))
+    without = _lookup(keep_intermediates=("Q", "F", "U", "CE"))
+    assert alone.Q_objective is not None
+    assert alone.Q is None
+    assert without.Q_objective is None
+    assert_array_almost_equal(
+        alone.Q_objective,
+        cast("FloatND", _lookup(keep_intermediates=ALL_INTERMEDIATES).Q_objective),
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+def test_lookup_without_decoupled_publishes_no_objective_profile() -> None:
+    """A plain Koopmans aggregator leaves `Q_objective` empty."""
+    model = _model(koopmans_aggregator=long_run)
+    params: UserParams = {"decide": {"koopmans_aggregator": {"delta": DELTA}}}
+    got = model.lookup_policy(
+        params=params,
+        solution=model.solve(params=params, log_level="off"),
+        period=0,
+        regime_name="decide",
+        states={"wealth": jnp.array([0, 1])},
+        keep_intermediates=ALL_INTERMEDIATES,
+    )
+    assert got.Q_objective is None
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda: lcm.Decoupled(
+            objective=long_run,
+            value=lcm.Phased(solve=long_run, simulate=long_run),  # ty: ignore[invalid-argument-type]
+        ),
+        lambda: lcm.Decoupled(
+            objective=lcm.Decoupled(objective=long_run, value=long_run),  # ty: ignore[invalid-argument-type]
+            value=long_run,
+        ),
+        lambda: lcm.Decoupled(objective=long_run, value=2.0),  # ty: ignore[invalid-argument-type]
+    ],
+    ids=["phased-value", "nested", "not-callable"],
+)
+def test_decoupled_refuses_an_invalid_declaration(build) -> None:
+    """Only `objective` may be `Phased`, and both parts must be aggregators."""
+    with pytest.raises(RegimeInitializationError, match="Decoupled"):
+        build()
+
+
+def test_phased_koopmans_aggregator_refuses_a_decoupled_aggregator() -> None:
+    """`Phased` around a `Decoupled` is refused; put `Phased` on `objective`."""
+    with pytest.raises(ModelInitializationError, match="Decoupled"):
+        _model(
+            koopmans_aggregator=lcm.Phased(solve=PRESENT_BIAS, simulate=PRESENT_BIAS)
+        )
+
+
+def test_other_solvers_refuse_a_decoupled_aggregator() -> None:
+    """Only `GridSearch` chooses with one aggregator and stores another."""
+    from lcm_examples import iskhakov_et_al_2017 as iskhakov  # noqa: PLC0415
+
+    ages = lcm.AgeGrid(start=40, inclusive_stop=60, step="10Y")
+    decoupled = lcm.Decoupled(objective=long_run, value=long_run)
+    with pytest.raises(ModelInitializationError, match="DCEGM solver does not"):
+        lcm.Model(
+            edges=iskhakov.get_edges(ages=ages),
+            regimes={
+                "working_life": iskhakov.dcegm_working_life.replace(
+                    koopmans_aggregator=decoupled
+                ),
+                "retirement": iskhakov.dcegm_retirement.replace(
+                    koopmans_aggregator=decoupled
+                ),
+                "dead": iskhakov.dead,
+            },
+            ages=ages,
+            regime_id_class=iskhakov.RegimeId,
+            initial_nodes={40: "working_life"},
+        )
+
+
+def test_collective_regime_refuses_a_decoupled_aggregator() -> None:
+    """A household chooses with its Pareto-weighted objective."""
+    shared_utility = lcm.CollectiveUtility(utilities={"f": utility, "m": utility})
+    with pytest.raises(ModelInitializationError, match="collective regime cannot"):
+        lcm.Model(
+            n_periods=2,
+            regimes={
+                "decide": lcm.Regime(
+                    actions={"choice": lcm.DiscreteGrid(Choice)},
+                    functions={"utility": shared_utility},
+                    koopmans_aggregator=lcm.Decoupled(
+                        objective=long_run, value=long_run
+                    ),
+                ),
+                "end": lcm.Regime(
+                    actions={"choice": lcm.DiscreteGrid(Choice)},
+                    functions={"utility": shared_utility},
+                ),
+            },
+            regime_id_class=RegimeId,
+            initial_nodes=lcm.InitialNodes(by_period={0: "decide"}),
+            edges={"decide": {"end": lcm.Periods(values=(0,))}},
+        )
+
+
+@lcm.categorical(ordered=False)
+class Mood:
+    patient: ScalarInt
+    impatient: ScalarInt
+
+
+def mood_dependent_choice(
+    *, utility: FloatND, CE: FloatND, mood: DiscreteState, delta: float
+) -> FloatND:
+    return utility + jnp.where(mood == Mood.patient, 1.0, BETA) * delta * CE
+
+
+def _mood_model(
+    *,
+    koopmans_aggregator: UserFunction | lcm.Decoupled = lcm.Decoupled(  # noqa: B008
+        objective=mood_dependent_choice, value=long_run
+    ),
+    execution_config: lcm.ExecutionConfig = lcm.ExecutionConfig(),  # noqa: B008
+) -> lcm.Model:
+    return lcm.Model(
+        n_periods=3,
+        regimes={
+            "decide": lcm.Regime(
+                actions={"choice": lcm.DiscreteGrid(Choice)},
+                states={
+                    "wealth": lcm.DiscreteGrid(Wealth),
+                    "mood": lcm.DiscreteGrid(Mood),
+                },
+                state_transitions={
+                    "wealth": next_wealth,
+                    "mood": lcm.fixed_transition("mood"),
+                },
+                constraints={"can_afford": can_afford},
+                functions={"utility": utility},
+                koopmans_aggregator=koopmans_aggregator,
+            ),
+            "end": lcm.Regime(
+                states={"wealth": lcm.DiscreteGrid(Wealth)},
+                functions={"utility": terminal_utility},
+            ),
+        },
+        regime_id_class=RegimeId,
+        initial_nodes=lcm.InitialNodes(by_period={0: "decide"}),
+        edges={
+            "decide": {
+                "decide": lcm.PeriodRange(exclusive_stop=1),
+                "end": lcm.Periods(values=(1,)),
+            }
+        },
+        execution_config=execution_config,
+    )
+
+
+def test_a_state_read_only_by_the_objective_is_used() -> None:
+    """An impatient mood chooses like the sophisticated agent, a patient one not."""
+    solution = _mood_model().solve(
+        params={"decide": {"koopmans_aggregator": {"delta": DELTA}}}, log_level="off"
+    )
+    assert_array_almost_equal(
+        solution.value(period=1, regime="decide"),
+        np.stack(
+            [
+                _enumerate_values(beta_tilde=1.0)[1],
+                _enumerate_values(beta_tilde=BETA)[1],
+            ],
+            axis=1,
+        ),
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+def test_a_state_read_only_by_the_koopmans_aggregator_is_used() -> None:
+    """A patient mood values and chooses like the time-consistent agent."""
+    solution = _mood_model(koopmans_aggregator=mood_dependent_choice).solve(
+        params={"decide": {"koopmans_aggregator": {"delta": DELTA}}}, log_level="off"
+    )
+    assert_array_almost_equal(
+        solution.value(period=1, regime="decide")[:, Mood.patient],
+        _enumerate_values(beta_tilde=1.0)[1],
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+def test_a_labelled_objective_parameter_is_read_by_label() -> None:
+    """A `pd.Series` indexed by mood binds each row to its label, not its position."""
+    beta_by_mood = pd.Series(
+        [BETA, 1.0],
+        index=pd.Index(["impatient", "patient"], name="mood"),
+    )
+
+    def mood_indexed_choice(
+        *,
+        utility: FloatND,
+        CE: FloatND,
+        mood: DiscreteState,
+        beta: FloatND,
+        delta: float,
+    ) -> FloatND:
+        return utility + beta[mood] * delta * CE
+
+    solution = _mood_model(
+        koopmans_aggregator=lcm.Decoupled(objective=mood_indexed_choice, value=long_run)
+    ).solve(
+        params={
+            "decide": {"koopmans_aggregator": {"delta": DELTA, "beta": beta_by_mood}}
+        },
+        log_level="off",
+    )
+    assert_array_almost_equal(
+        solution.value(period=1, regime="decide")[:, Mood.impatient],
+        _enumerate_values(beta_tilde=BETA)[1],
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+@lcm.categorical(ordered=True)
+class Funds:
+    empty: ScalarInt
+    ready: ScalarInt
+
+
+def first_choice_utility(*, choice: DiscreteAction) -> FloatND:
+    return jnp.where(choice == Choice.spend, 1.0, 0.0)
+
+
+def can_act(*, funds: DiscreteState) -> BoolND:
+    return funds > Funds.empty
+
+
+def perceived_next_funds(*, funds: DiscreteState) -> DiscreteState:
+    return funds
+
+
+def realized_next_funds(*, funds: DiscreteState) -> DiscreteState:
+    return jnp.zeros_like(funds)
+
+
+def additive(*, utility: FloatND, CE: FloatND) -> FloatND:
+    return utility + CE
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_simulation_rejects_an_objective_with_no_feasible_action(
+    *, enable_jit: bool
+) -> None:
+    """A feasible start lands in a state that admits no action in period one."""
+    model = lcm.Model(
+        n_periods=3,
+        regimes={
+            "decide": lcm.Regime(
+                actions={"choice": lcm.DiscreteGrid(Choice)},
+                states={"funds": lcm.DiscreteGrid(Funds)},
+                state_transitions={
+                    "funds": lcm.Phased(
+                        solve=perceived_next_funds, simulate=realized_next_funds
+                    )
+                },
+                constraints={"can_act": can_act},
+                functions={"utility": first_choice_utility},
+                koopmans_aggregator=lcm.Decoupled(objective=additive, value=additive),
+            ),
+            "end": lcm.Regime(functions={"utility": lambda: jnp.asarray(0.0)}),
+        },
+        regime_id_class=RegimeId,
+        initial_nodes=lcm.InitialNodes(by_period={0: "decide"}),
+        edges={
+            "decide": {
+                "decide": lcm.Periods(values=(0,)),
+                "end": lcm.Periods(values=(1,)),
+            }
+        },
+        enable_jit=enable_jit,
+        # Device-memory admission needs compiled peaks, which an eager model lacks.
+        execution_config=lcm.ExecutionConfig(device_memory_bytes=None),
+    )
+    with pytest.raises(NoFeasibleActionError, match=r"period 1.*no feasible action"):
+        model.simulate(
+            params={},
+            initial_conditions={
+                "funds": jnp.array([Funds.ready]),
+                "regime_id": jnp.array([RegimeId.decide]),
+                "period": jnp.zeros(1, dtype=jnp.int32),
+            },
+            log_level="off",
+        )
+
+
+def _readout_oracle(
+    *, selection: np.ndarray, readout: np.ndarray, where: np.ndarray
+) -> tuple[int | None, float]:
+    """Scan the flat elements in order, as the contract states it.
+
+    The index is `None` where the value is NaN: a poisoned cell has no choice.
+    """
+    flat_selection = np.ravel(selection)
+    flat_readout = np.ravel(readout)
+    flat_where = np.ravel(np.broadcast_to(where, np.shape(selection)))
+    feasible = [k for k in range(flat_selection.size) if flat_where[k]]
+    if not feasible:
+        return -1, -np.inf
+    if any(np.isnan(flat_selection[k]) or np.isnan(flat_readout[k]) for k in feasible):
+        return None, np.nan
+    best = feasible[0]
+    for k in feasible[1:]:
+        if flat_selection[k] > flat_selection[best]:
+            best = k
+    return best, float(flat_readout[best])
+
+
+READOUT_CASES = {
+    "scalar feasible": (2.0, 7.0, True),
+    "scalar infeasible": (2.0, 7.0, False),
+    "scalar infeasible NaN objective": (np.nan, 7.0, False),
+    "all infeasible": ([2.0, 1.0], [7.0, 8.0], [False, False]),
+    "first of two": ([2.0, 1.0], [7.0, 8.0], [True, True]),
+    "tie picks first feasible": (
+        [5.0, 5.0, 9.0],
+        [101.0, 7.0, 99.0],
+        [False, True, True],
+    ),
+    "only -inf feasible": ([-np.inf, -np.inf], [7.0, 8.0], [False, True]),
+    "signed-zero tie": ([-0.0, +0.0], [7.0, 8.0], [True, True]),
+    "2x2 grid": ([[3.0, 4.0], [4.0, 2.0]], [[1.0, 7.0], [8.0, 9.0]], [[True] * 2] * 2),
+    "NaN value at a feasible unchosen action": (
+        [2.0, 1.0],
+        [7.0, np.nan],
+        [True, True],
+    ),
+    "NaN value at an infeasible action": ([2.0, 1.0], [7.0, np.nan], [True, False]),
+    "NaN objective at a feasible action": ([2.0, np.nan], [7.0, 8.0], [True, True]),
+}
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+@pytest.mark.parametrize("case", list(READOUT_CASES))
+def test_readout_follows_the_empty_tie_and_nan_contract(
+    *, case: str, enable_jit: bool
+) -> None:
+    """Index `-1` and `-inf` without a feasible action; a feasible NaN poisons."""
+    import jax  # noqa: PLC0415
+
+    from _lcm.regime_building.decoupled import argmax_and_readout  # noqa: PLC0415
+
+    selection, readout, where = (np.asarray(part) for part in READOUT_CASES[case])
+    function = jax.jit(argmax_and_readout) if enable_jit else argmax_and_readout
+    index, value = function(
+        selection=jnp.asarray(selection),
+        readout=jnp.asarray(readout),
+        where=jnp.asarray(where),
+    )
+    expected_index, expected_value = _readout_oracle(
+        selection=selection, readout=readout, where=where
+    )
+    got = (
+        None if np.isnan(value) else int(index),
+        "nan" if np.isnan(value) else float(value),
+    )
+    assert got == (
+        expected_index,
+        "nan" if np.isnan(expected_value) else expected_value,
+    )
+
+
+def shocked_utility(*, choice: DiscreteAction, shock: FloatND) -> FloatND:
+    return utility(choice) + shock
+
+
+SHOCK_POINTS = 3
+
+
+def _shocked_model(*, fold: bool) -> lcm.Model:
+    return lcm.Model(
+        n_periods=3,
+        regimes={
+            "decide": lcm.Regime(
+                actions={"choice": lcm.DiscreteGrid(Choice)},
+                states={
+                    "wealth": lcm.DiscreteGrid(Wealth),
+                    "shock": lcm.NormalIIDProcess(
+                        n_points=SHOCK_POINTS,
+                        gauss_hermite=True,
+                        mu=0.0,
+                        sigma=1.0,
+                        fold=fold,
+                    ),
+                },
+                state_transitions={"wealth": next_wealth},
+                constraints={"can_afford": can_afford},
+                functions={"utility": shocked_utility},
+                koopmans_aggregator=PRESENT_BIAS,
+            ),
+            "end": lcm.Regime(
+                states={"wealth": lcm.DiscreteGrid(Wealth)},
+                functions={"utility": terminal_utility},
+            ),
+        },
+        regime_id_class=RegimeId,
+        initial_nodes=lcm.InitialNodes(by_period={0: "decide"}),
+        edges={
+            "decide": {
+                "decide": lcm.PeriodRange(exclusive_stop=1),
+                "end": lcm.Periods(values=(1,)),
+            }
+        },
+    )
+
+
+@pytest.mark.parametrize("period", [0, 1])
+def test_folded_state_averages_the_stored_value(*, period: int) -> None:
+    """Folding the shock gives the unfolded stored value averaged over its nodes."""
+    params = _params(beta_tilde=BETA)
+    unfolded = _shocked_model(fold=False)
+    folded = _shocked_model(fold=True)
+    weights = np.asarray(
+        cast(
+            "lcm.NormalIIDProcess", unfolded.user_regimes["decide"].states["shock"]
+        ).get_transition_probs()[0]
+    )
+    assert_array_almost_equal(
+        folded.solve(params=params, log_level="off").value(
+            period=period, regime="decide"
+        ),
+        np.asarray(
+            unfolded.solve(params=params, log_level="off").value(
+                period=period, regime="decide"
+            )
+        )
+        @ weights,
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+@pytest.mark.parametrize("period", [0, 1])
+def test_invariant_blocking_solves_like_the_unblocked_model(*, period: int) -> None:
+    """Solving one mood at a time gives the unblocked stored values."""
+    params: UserParams = {"decide": {"koopmans_aggregator": {"delta": DELTA}}}
+    blocked = _mood_model(
+        execution_config=lcm.ExecutionConfig(
+            devices=(0,), device_memory_bytes=None, invariant_block_widths={"mood": 1}
+        )
+    )
+    assert_array_equal(
+        blocked.solve(params=params, log_level="off").value(
+            period=period, regime="decide"
+        ),
+        _mood_model()
+        .solve(params=params, log_level="off")
+        .value(period=period, regime="decide"),
+    )
+
+
+SCALE = 0.3
+
+
+def _enumerate_ev1_values(*, beta_tilde: float) -> dict[int, np.ndarray]:
+    """Solve the EV1 model by enumeration.
+
+    The value is `scale * logsumexp(Q_dec / scale) + sum_k P_k (Q_k - Q_dec_k)`
+    over the feasible choices, with `P = softmax(Q_dec / scale)`.
+    """
+    values = {2: TERMINAL_VALUES}
+    for period in (1, 0):
+        V = np.empty(4)
+        for w in range(4):
+            choices = [(0.0, min(w + 1, 3))]
+            if w >= 1:
+                choices.insert(0, (SPEND_UTILITY, w - 1))
+            u = np.array([c[0] for c in choices])
+            ce = np.array([values[period + 1][c[1]] for c in choices])
+            perceived = u + beta_tilde * DELTA * ce
+            long_run_q = u + DELTA * ce
+            probabilities = np.exp(perceived / SCALE) / np.exp(perceived / SCALE).sum()
+            V[w] = SCALE * np.log(np.exp(perceived / SCALE).sum()) + probabilities @ (
+                long_run_q - perceived
+            )
+        values[period] = V
+    return values
+
+
+@pytest.mark.parametrize(
+    ("beta_tilde", "expected"),
+    [
+        (1.0, [0.9, 1.893979, 3.605445, 3.693979]),
+        (BETA, [0.9, 1.645361, 3.051903, 3.445361]),
+        (0.7, [0.9, 1.778744, 3.498829, 3.578744]),
+    ],
+)
+def test_ev1_enumeration_matches_the_hand_solution(
+    *, beta_tilde: float, expected: list[float]
+) -> None:
+    """The EV1 oracle reproduces the values computed by hand at scale 0.3."""
+    assert_array_almost_equal(
+        _enumerate_ev1_values(beta_tilde=beta_tilde)[1], expected, decimal=6
+    )
+
+
+def _ev1_model(
+    *, koopmans_aggregator: UserFunction | lcm.Decoupled = PRESENT_BIAS
+) -> lcm.Model:
+    model = _model(koopmans_aggregator=koopmans_aggregator)
+    return lcm.Model(
+        n_periods=3,
+        regimes={
+            "decide": model.user_regimes["decide"].replace(
+                taste_shocks=lcm.ExtremeValueTasteShocks()
+            ),
+            "end": lcm.Regime(
+                states={"wealth": lcm.DiscreteGrid(Wealth)},
+                functions={"utility": terminal_utility},
+            ),
+        },
+        regime_id_class=RegimeId,
+        initial_nodes=lcm.InitialNodes(by_period={0: "decide"}),
+        edges={
+            "decide": {
+                "decide": lcm.PeriodRange(exclusive_stop=1),
+                "end": lcm.Periods(values=(1,)),
+            }
+        },
+    )
+
+
+def _ev1_params(*, beta_tilde: float) -> UserParams:
+    return {
+        "decide": {
+            "koopmans_aggregator": {
+                "beta_tilde": beta_tilde,
+                "beta": BETA,
+                "delta": DELTA,
+            },
+            "taste_shocks": {"scale": SCALE},
+        }
+    }
+
+
+@pytest.mark.parametrize("period", [0, 1])
+@pytest.mark.parametrize("agent", list(AGENTS))
+def test_ev1_solve_stores_the_expected_value_at_the_noisy_objective(
+    *, agent: str, period: int
+) -> None:
+    """With taste shocks `V` is the expected `u + delta * CE` plus the chosen shock."""
+    beta_tilde = AGENTS[agent]
+    solution = _ev1_model().solve(
+        params=_ev1_params(beta_tilde=beta_tilde), log_level="off"
+    )
+    assert_array_almost_equal(
+        solution.value(period=period, regime="decide"),
+        _enumerate_ev1_values(beta_tilde=beta_tilde)[period],
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+@pytest.mark.parametrize("period", [0, 1])
+def test_ev1_identical_objective_and_value_solve_like_the_plain_aggregator(
+    *, period: int
+) -> None:
+    """With `objective = value` the EV1 solve equals the plain logsum."""
+    params: UserParams = {
+        "decide": {
+            "koopmans_aggregator": {"delta": DELTA},
+            "taste_shocks": {"scale": SCALE},
+        }
+    }
+    wrapped = _ev1_model(
+        koopmans_aggregator=lcm.Decoupled(objective=long_run, value=long_run)
+    ).solve(params=params, log_level="off")
+    plain = _ev1_model(koopmans_aggregator=long_run).solve(
+        params=params, log_level="off"
+    )
+    assert_array_almost_equal(
+        wrapped.value(period=period, regime="decide"),
+        plain.value(period=period, regime="decide"),
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+def _naive_today_probabilities() -> np.ndarray:
+    """Today's naive self at period 0 and wealth one: spend versus save."""
+    V_1 = _enumerate_ev1_values(beta_tilde=1.0)[1]
+    current = np.array([SPEND_UTILITY + BETA * DELTA * V_1[0], BETA * DELTA * V_1[2]])
+    return np.exp(current / SCALE) / np.exp(current / SCALE).sum()
+
+
+def test_ev1_lookup_publishes_the_acting_selfs_choice_probabilities() -> None:
+    """Probabilities are `softmax(Q_objective / scale)` with today's beta.
+
+    `Qc` is the stored long-run value at each choice and `value` its expectation
+    at the noisy choice plus `scale` times the entropy, which differs from a logsum
+    of `Qc` because the objective and the stored value differ at both choices.
+    """
+    model = _ev1_model()
+    params = _ev1_params(beta_tilde=1.0)
+    got = model.lookup_policy(
+        params=params,
+        solution=model.solve(params=params, log_level="off"),
+        period=0,
+        regime_name="decide",
+        states={"wealth": jnp.array([Wealth.one])},
+    )
+    continuation = _enumerate_ev1_values(beta_tilde=1.0)[1]
+    expected_qc = np.array(
+        [SPEND_UTILITY + DELTA * continuation[0], DELTA * continuation[2]]
+    )
+    probabilities = _naive_today_probabilities()
+    expected_value = probabilities @ expected_qc - SCALE * np.sum(
+        probabilities * np.log(probabilities)
+    )
+    assert_array_almost_equal(
+        cast("FloatND", got.choice_probabilities)[0],
+        probabilities,
+        decimal=DECIMAL_PRECISION,
+    )
+    assert_array_almost_equal(
+        cast("FloatND", got.Qc)[0], expected_qc, decimal=DECIMAL_PRECISION
+    )
+    assert_array_almost_equal(got.value, [expected_value], decimal=DECIMAL_PRECISION)
+
+
+def test_ev1_simulated_choices_follow_the_acting_selfs_probabilities() -> None:
+    """Simulated spend frequency at wealth one is within four standard errors."""
+    n_subjects = 4_000
+    df = (
+        _ev1_model()
+        .simulate(
+            params=_ev1_params(beta_tilde=1.0),
+            initial_conditions={
+                "wealth": jnp.full(n_subjects, Wealth.one),
+                "regime_id": jnp.full(n_subjects, RegimeId.decide),
+                "period": jnp.zeros(n_subjects, dtype=jnp.int32),
+            },
+            log_level="off",
+            seed=11,
+        )
+        .to_dataframe()
+    )
+    spend = _naive_today_probabilities()[0]
+    share = (df.loc[df["period"] == 0, "choice"] == "spend").mean()
+    assert abs(share - spend) < 4 * np.sqrt(spend * (1 - spend) / n_subjects)
+
+
+@lcm.categorical(ordered=False)
+class Gate:
+    blocked: ScalarInt
+    allowed: ScalarInt
+
+
+def gate_utility(choice: DiscreteAction) -> FloatND:
+    return jnp.where(choice == Gate.blocked, 7.0, 1.0)
+
+
+def gate_is_open(choice: DiscreteAction) -> BoolND:
+    return choice == Gate.allowed
+
+
+def translated_objective(*, utility: FloatND, CE: FloatND, offset: float) -> FloatND:
+    """Every action's objective is `offset`: a translation that moves no choice."""
+    return jnp.full_like(utility + CE, offset)
+
+
+def _gate_model(*, objective: UserFunction, enable_jit: bool) -> lcm.Model:
+    """One EV1 decision with one feasible action (`R = 1`), then nothing."""
+    return lcm.Model(
+        n_periods=2,
+        regimes={
+            "decide": lcm.Regime(
+                actions={"choice": lcm.DiscreteGrid(Gate)},
+                functions={"utility": gate_utility},
+                constraints={"gate_is_open": gate_is_open},
+                koopmans_aggregator=lcm.Decoupled(objective=objective, value=additive),
+                taste_shocks=lcm.ExtremeValueTasteShocks(),
+            ),
+            "end": lcm.Regime(functions={"utility": lambda: jnp.asarray(0.0)}),
+        },
+        regime_id_class=RegimeId,
+        initial_nodes=lcm.InitialNodes(by_period={0: "decide"}),
+        edges={"decide": {"end": lcm.Periods(values=(0,))}},
+        enable_jit=enable_jit,
+        execution_config=lcm.ExecutionConfig(device_memory_bytes=None),
+    )
+
+
+def _large_offset() -> float:
+    """An objective level whose unit in the last place exceeds the stored value."""
+    return float(2 ** (26 if jnp.asarray(0.0).dtype == jnp.float32 else 55))
+
+
+@pytest.mark.parametrize("keep_intermediates", [(), ALL_INTERMEDIATES])
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_ev1_infeasible_combination_publishes_minus_infinity(
+    *, enable_jit: bool, keep_intermediates: tuple[Intermediate, ...]
+) -> None:
+    """`Qc` is `-inf` where no action is feasible; raw `Q` stays unmasked."""
+    model = _gate_model(objective=additive, enable_jit=enable_jit)
+    params: UserParams = {"decide": {"taste_shocks": {"scale": 1.0}}}
+    got = model.lookup_policy(
+        params=params,
+        solution=model.solve(params=params, log_level="off"),
+        period=0,
+        regime_name="decide",
+        states={},
+        keep_intermediates=keep_intermediates,
+    )
+    Qc = np.asarray(got.Qc)[0]
+    assert np.isneginf(Qc[Gate.blocked])
+    assert Qc[Gate.allowed] == 1.0
+    assert_array_equal(np.asarray(got.choice_probabilities)[0], [0.0, 1.0])
+    if keep_intermediates:
+        assert np.asarray(got.Q)[0, Gate.blocked] == 7.0
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_ev1_stored_value_survives_a_large_objective_translation(
+    *, enable_jit: bool
+) -> None:
+    """The one feasible action's value `1` survives an objective of `2**26`."""
+    model = _gate_model(objective=translated_objective, enable_jit=enable_jit)
+    params: UserParams = {
+        "decide": {
+            "taste_shocks": {"scale": 1.0},
+            "koopmans_aggregator": {"offset": _large_offset()},
+        }
+    }
+    solution = model.solve(params=params, log_level="off")
+    lookup = model.lookup_policy(
+        params=params,
+        solution=solution,
+        period=0,
+        regime_name="decide",
+        states={},
+    )
+    assert float(np.asarray(solution.value(period=0, regime="decide"))) == 1.0
+    assert_array_equal(np.asarray(lookup.value), [1.0])
+
+
+def _entropy_oracle(
+    *, objective: np.ndarray, value: np.ndarray, feasible: np.ndarray, scale: float
+) -> float:
+    """`sum_k P_k R_k + scale * H(P)` in float64, `P = softmax(objective / scale)`."""
+    best = np.where(feasible, objective, -np.inf)
+    index = np.argmax(best, axis=-1)
+    o = np.take_along_axis(best, index[..., None], axis=-1)[..., 0]
+    r = np.take_along_axis(value, index[..., None], axis=-1)[..., 0]
+    live = np.isfinite(o)
+    z = np.where(live, (o - o[live].max()) / scale, -np.inf)
+    p = np.exp(z) / np.exp(z).sum()
+    log_p = np.where(p > 0, np.log(np.where(p > 0, p, 1.0)), 0.0)
+    return float(np.sum(np.where(p > 0, p * r, 0.0)) - scale * np.sum(p * log_p))
+
+
+@pytest.mark.parametrize("seed", range(8))
+def test_ev1_stored_value_is_invariant_to_objective_translations(*, seed: int) -> None:
+    """Generated menus: translating the objective leaves the stored value unchanged.
+
+    Objectives sit on a quarter grid within `[-4, 4]`, so `objective + 2**20`
+    is exact in float32 and the translated choice problem is the same one.
+    """
+    from _lcm.regime_building.decoupled import (  # noqa: PLC0415
+        decoupled_logsum,
+        get_conditional_profiles,
+    )
+    from _lcm.regime_building.Q_and_F import QAndFParts  # noqa: PLC0415
+
+    rng = np.random.default_rng(seed)
+    shape = (4, 3)
+    objective = rng.integers(-16, 17, size=shape) / 4.0
+    value = rng.normal(size=shape) * 3.0
+    feasible = rng.uniform(size=shape) > 0.3
+    feasible[0, 0] = True
+    scale = float(rng.choice([0.25, 1.0, 3.0]))
+    expected = _entropy_oracle(
+        objective=objective, value=value, feasible=feasible, scale=scale
+    )
+    tolerance = (
+        50
+        * float(jnp.finfo(jnp.asarray(0.0).dtype).eps)
+        * (1.0 + np.abs(value).max() + scale * np.log(value.size))
+    )
+    for offset in (0.0, 2.0**20):
+        parts = QAndFParts(
+            U=jnp.asarray(value),
+            F=jnp.asarray(feasible),
+            CE=jnp.zeros(shape),
+            Q=jnp.asarray(value),
+            Q_objective=jnp.asarray(objective + offset),
+        )
+        got, _ = decoupled_logsum(
+            conditional=get_conditional_profiles(parts=parts, n_discrete_action_axes=1),
+            scale=jnp.asarray(scale),
+            parts=parts,
+        )
+        assert abs(float(got) - expected) <= tolerance, (offset, float(got), expected)
+
+
+def _ev1_cell_value(
+    *, objective: FloatND, value: FloatND, feasible: BoolND, scale: float
+) -> FloatND:
+    """The stored EV1 value of a cell with one continuous candidate per combination."""
+    from _lcm.regime_building.decoupled import (  # noqa: PLC0415
+        decoupled_logsum,
+        get_conditional_profiles,
+    )
+    from _lcm.regime_building.Q_and_F import QAndFParts  # noqa: PLC0415
+
+    parts = QAndFParts(
+        U=value,
+        F=feasible,
+        CE=jnp.zeros_like(value),
+        Q=value,
+        Q_objective=objective,
+    )
+    stored, _ = decoupled_logsum(
+        conditional=get_conditional_profiles(parts=parts, n_discrete_action_axes=1),
+        scale=jnp.asarray(scale),
+        parts=parts,
+    )
+    return stored
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_ev1_objective_gradient_ignores_an_empty_combination(
+    *, enable_jit: bool
+) -> None:
+    """An infeasible combination's `-inf` readout leaves the gradient finite.
+
+    With feasibility `[F, T, T]`, objective `[0, theta, 0]` and value `[7, 1, 3]`,
+    the stored value at `theta = 0` is `2 + log 2` and its derivative is `-1/2`.
+    """
+    import jax  # noqa: PLC0415
+
+    def stored(theta: FloatND) -> FloatND:
+        return _ev1_cell_value(
+            objective=jnp.stack([jnp.zeros_like(theta), theta, jnp.zeros_like(theta)]),
+            value=jnp.asarray([7.0, 1.0, 3.0]),
+            feasible=jnp.asarray([False, True, True]),
+            scale=1.0,
+        )
+
+    gradient = jax.grad(stored)
+    if enable_jit:
+        gradient = jax.jit(gradient)
+    assert_array_almost_equal(stored(jnp.asarray(0.0)), 2.0 + np.log(2.0))
+    assert_array_almost_equal(gradient(jnp.asarray(0.0)), -0.5)
+
+
+@pytest.mark.parametrize("seed", range(6))
+def test_ev1_objective_gradient_matches_finite_differences(*, seed: int) -> None:
+    """Menus with empty combinations: the gradient matches a central difference."""
+    import jax  # noqa: PLC0415
+
+    if jnp.asarray(0.0).dtype != jnp.float64:
+        pytest.skip("central differences need float64")
+    rng = np.random.default_rng(seed)
+    n = 5
+    base = jnp.asarray(rng.normal(size=n))
+    direction = jnp.asarray(rng.normal(size=n))
+    value = jnp.asarray(rng.normal(size=n) * 2.0)
+    mask = rng.uniform(size=n) > 0.4
+    mask[0], mask[1] = True, False
+    feasible = jnp.asarray(mask)
+
+    def along(step: FloatND) -> FloatND:
+        return _ev1_cell_value(
+            objective=base + step * direction,
+            value=value,
+            feasible=feasible,
+            scale=0.7,
+        )
+
+    h = 1e-6
+    central = (along(jnp.asarray(h)) - along(jnp.asarray(-h))) / (2 * h)
+    got = jax.grad(along)(jnp.asarray(0.0))
+    assert np.isfinite(float(got))
+    assert abs(float(got) - float(central)) < 1e-6
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ([2.0, -np.inf], -np.inf),
+        ([2.0, np.inf], np.inf),
+        ([-np.inf, np.inf], np.nan),
+    ],
+    ids=["minus-inf", "plus-inf", "both"],
+)
+def test_ev1_underflowed_feasible_infinite_value_is_kept(
+    *, value: list[float], expected: float
+) -> None:
+    """A feasible action has positive EV1 mass even when its probability underflows."""
+    got = float(
+        _ev1_cell_value(
+            objective=jnp.asarray([0.0, -1000.0]),
+            value=jnp.asarray(value),
+            feasible=jnp.asarray([True, True]),
+            scale=1.0,
+        )
+    )
+    if np.isnan(expected):
+        assert np.isnan(got)
+    else:
+        assert got == expected
+
+
+def _phase_aggregators(
+    declaration: UserFunction | lcm.Phased | lcm.Decoupled | None,
+) -> dict[str, tuple[UserFunction | None, UserFunction | None]]:
+    regime = lcm.Regime(
+        functions={"utility": lambda: jnp.asarray(0.0)},
+        koopmans_aggregator=declaration,
+    )
+    return {
+        phase: (
+            regime.get_koopmans_aggregator(phase=phase),
+            regime.get_objective_aggregator(phase=phase),
+        )
+        for phase in ("solve", "simulate")
+    }
+
+
+def test_aggregator_getters_resolve_every_declaration_form() -> None:
+    """Each phase gets the value aggregator and, for `Decoupled`, its objective."""
+    assert _phase_aggregators(None) == {
+        "solve": (None, None),
+        "simulate": (None, None),
+    }
+    assert _phase_aggregators(long_run) == {
+        "solve": (long_run, None),
+        "simulate": (long_run, None),
+    }
+    assert _phase_aggregators(
+        lcm.Phased(solve=perceived_future_choice, simulate=current_choice)
+    ) == {
+        "solve": (perceived_future_choice, None),
+        "simulate": (current_choice, None),
+    }
+    assert _phase_aggregators(PRESENT_BIAS) == {
+        "solve": (long_run, perceived_future_choice),
+        "simulate": (long_run, current_choice),
+    }
+    assert _phase_aggregators(
+        lcm.Decoupled(objective=current_choice, value=long_run)
+    ) == {
+        "solve": (long_run, current_choice),
+        "simulate": (long_run, current_choice),
+    }
+
+
+def value_with_own(
+    *, utility: FloatND, CE: FloatND, delta: float, value_only: float
+) -> FloatND:
+    return utility + delta * CE + 0.0 * value_only
+
+
+def solve_objective_with_own(
+    *, utility: FloatND, CE: FloatND, delta: float, solve_only: float
+) -> FloatND:
+    return utility + solve_only * delta * CE
+
+
+def simulate_objective_with_own(
+    *, utility: FloatND, CE: FloatND, delta: float, simulate_only: float
+) -> FloatND:
+    return utility + simulate_only * delta * CE
+
+
+def test_params_template_is_one_namespace_over_all_three_aggregators() -> None:
+    """Names of the value and both objectives form one namespace; shared is one."""
+    model = _model(
+        koopmans_aggregator=lcm.Decoupled(
+            objective=lcm.Phased(
+                solve=solve_objective_with_own, simulate=simulate_objective_with_own
+            ),
+            value=value_with_own,
+        )
+    )
+    assert set(model.get_params_template()["decide"]["koopmans_aggregator"]) == {
+        "delta",
+        "value_only",
+        "solve_only",
+        "simulate_only",
+    }
+
+
+@lcm.categorical(ordered=False)
+class GatedRegimeId:
+    alive: ScalarInt
+    couple: ScalarInt
+
+
+def _stay(wealth: ContinuousState) -> ContinuousState:
+    return wealth
+
+
+def _wealth_utility(wealth: ContinuousState) -> FloatND:
+    return wealth
+
+
+def _couple_is_better(*, V_target_f: FloatND, V_target_m: FloatND) -> BoolND:
+    return V_target_f >= V_target_m
+
+
+def test_a_gated_source_refuses_a_decoupled_aggregator() -> None:
+    """Which of the two values a gate would compare is not defined."""
+    wealth = lcm.LinSpacedGrid(start=1, stop=5, n_points=3)
+    with pytest.raises(
+        (ModelInitializationError, NotImplementedError), match="Decoupled"
+    ):
+        lcm.Model(
+            regimes={
+                "alive": lcm.Regime(
+                    states={"wealth": wealth},
+                    state_transitions={"wealth": _stay},
+                    functions={"utility": _wealth_utility},
+                    koopmans_aggregator=lcm.Decoupled(
+                        objective=additive, value=additive
+                    ),
+                ),
+                "couple": lcm.Regime(
+                    states={"wealth": wealth},
+                    functions={
+                        "utility": lcm.CollectiveUtility(
+                            utilities={"f": _wealth_utility, "m": _wealth_utility}
+                        )
+                    },
+                ),
+            },
+            n_periods=2,
+            regime_id_class=GatedRegimeId,
+            initial_nodes=lcm.InitialNodes(by_period={0: "alive"}),
+            edges={
+                "alive": lcm.Transition(
+                    law="couple",
+                    gates={
+                        "couple": lcm.Gate(
+                            predicate=_couple_is_better,
+                            routes={
+                                "her": lcm.StakeholderRoute(
+                                    target_stakeholder="f",
+                                    fallback=lcm.ProjectedRegimeValue(
+                                        regime="alive", projection={"wealth": _stay}
+                                    ),
+                                )
+                            },
+                        )
+                    },
+                )
+            },
+            enable_jit=False,
+        )

@@ -47,6 +47,7 @@ from _lcm.typing import (
 from _lcm.utils.ast_inspection import _get_func_indexing_params, time_index_names
 from _lcm.utils.functools import is_user_function
 from _lcm.utils.namespace import ParamsQnameDepth
+from lcm.decoupled import koopmans_aggregator_variants
 from lcm.exceptions import InvalidParamsError
 from lcm.params import (
     TimeVarying,
@@ -449,17 +450,13 @@ def convert_series_in_params(
                     solve=solve_funcs[name], simulate=simulate_funcs[name]
                 )
         # The Koopmans aggregator is not a regime function; its params live
-        # under a pseudo-function key of the same name. Under `Phased` the two
-        # variants declare different parameters and the template carries their
-        # union, so the variant that declares each parameter is the one whose
-        # source describes how it is indexed.
-        aggregator_variants = tuple(
-            aggregator
-            for aggregator in (
-                user_regime.get_koopmans_aggregator(phase="solve"),
-                user_regime.get_koopmans_aggregator(phase="simulate"),
-            )
-            if aggregator is not None
+        # under a pseudo-function key of the same name. Every aggregator the slot
+        # runs (both `Phased` variants, a `Decoupled`'s decision and value)
+        # declares its own parameters and the template carries their union, so
+        # the variant that declares each parameter is the one whose source
+        # describes how it is indexed.
+        aggregator_variants = koopmans_aggregator_variants(
+            declaration=user_regime.koopmans_aggregator
         )
         if aggregator_variants:
             all_funcs["koopmans_aggregator"] = aggregator_variants[0]
@@ -642,13 +639,14 @@ def _regime_param_periods(
         return periods
     required: set[int] = set()
     for phase, functions in phase_functions.items():
-        aggregator = user_regime.get_koopmans_aggregator(phase=phase)
         consumer, _ = _resolve_param_consumer(
             parts=parts,
             param_name=parts[-1],
             user_regime=user_regime,
             all_funcs=functions,
-            aggregator_variants=() if aggregator is None else (aggregator,),
+            aggregator_variants=koopmans_aggregator_variants(
+                declaration=user_regime.koopmans_aggregator, phase=phase
+            ),
             phase=phase,
         )
         if consumer is None or parts[-1] not in inspect.signature(consumer).parameters:

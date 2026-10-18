@@ -1,6 +1,6 @@
 """Test beta-delta (quasi-hyperbolic) discounting via a custom H function.
 
-Verifies exponential, sophisticated, and naive beta-delta discounting against
+Verifies exponential, compounding and naive beta-delta discounting against
 analytical solutions in a 3-period consumption-savings model with log utility.
 
 Analytical solution
@@ -9,11 +9,16 @@ With log utility u(c) = log(c) and budget w' = w - c, optimal consumption is
 c_t = w_t / D_t where D_t depends on the discounting type:
 
     Exponential (beta=1):   D_1 = 1 + delta,  D_0 = 1 + delta*(1 + delta)
-    Sophisticated (beta<1): D_1 = 1 + bd,     D_0 = 1 + bd*(1 + bd)
+    Compounding (beta<1):   D_1 = 1 + bd,     D_0 = 1 + bd*(1 + bd)
     Naive (beta<1):         D_1 = 1 + bd,     D_0 = 1 + bd*(1 + delta)
 
-where bd = beta * delta. At t=1, naive = sophisticated. They differ at t=0:
-naive uses V^E (exponential continuation) while sophisticated uses V (biased).
+where bd = beta * delta. The compounding agent applies `u + bd * CE` in both
+phases, so it discounts the future at `bd` per period: exponential discounting
+at a lower factor. The naive agent prices its continuation with the exponential
+value `V^E`. The sophisticated and partially naive agents need an objective that
+chooses apart from the value that is stored; `lcm.Decoupled` declares it and
+`test_decoupled.py` covers them, since with log utility and deterministic
+wealth the sophisticated consumption at t=0 equals the naive one.
 
 """
 
@@ -157,18 +162,7 @@ def _denominators_naive(*, beta, delta):
     ("label", "beta", "delta"),
     [
         ("exponential", 1.0, 0.95),
-        pytest.param(
-            "sophisticated",
-            0.7,
-            0.95,
-            marks=pytest.mark.skip(
-                reason=(
-                    "Uses H(u,V')=u+βδV' for both phases, which gives consistent "
-                    "(βδ)^n discounting — not true quasi-hyperbolic βδ^n. "
-                    "Correct sophisticated implementation deferred."
-                )
-            ),
-        ),
+        ("compounding", 0.7, 0.95),
         ("naive", 0.7, 0.95),
     ],
 )
