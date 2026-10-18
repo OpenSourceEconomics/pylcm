@@ -7,6 +7,7 @@ from types import MappingProxyType
 from typing import Literal
 
 import jax.numpy as jnp
+import numpy as np
 import pytest
 from dags import rename_arguments
 from dags.tree import QNAME_DELIMITER
@@ -65,7 +66,7 @@ from lcm.typing import (
     StateName,
     UserFunction,
 )
-from tests.test_models.deterministic import discrete
+from tests.conftest import DECIMAL_PRECISION
 
 
 def utility(consumption):
@@ -835,37 +836,6 @@ def test_regime_with_fixed_states_only():
     )
 
 
-def _value_grid_utility(
-    *, wealth: DiscreteState, consumption: DiscreteAction
-) -> FloatND:
-    return jnp.asarray(wealth + consumption, dtype=float)
-
-
-def _next_value_grid_wealth(*, wealth: DiscreteState) -> DiscreteState:
-    return wealth
-
-
-def test_model_refuses_a_value_grid_until_user_functions_receive_values():
-    """A model cannot be built with a `DiscreteGrid(values=...)` state."""
-    regime = UserRegime(
-        actions={
-            "consumption": DiscreteGrid(category_class=discrete.DiscreteConsumption)
-        },
-        states={"wealth": DiscreteGrid(values=[0, 1, 2])},
-        state_transitions={"wealth": _next_value_grid_wealth},
-        functions={"utility": _value_grid_utility},
-    )
-    ages = AgeGrid(start=50, inclusive_stop=60, step="10Y")
-    with pytest.raises(RegimeInitializationError, match=r"values=\.\.\."):
-        Model(
-            regimes={"working_life": regime, "dead": discrete.dead},
-            ages=ages,
-            regime_id_class=discrete.RegimeId,
-            initial_nodes={50: "working_life"},
-            edges=discrete.working_life_edges(ages),
-        )
-
-
 type _GuardLocation = Literal["state", "action", "derived", "phased", "fixed_component"]
 type _GuardScope = Literal["regime", "model"]
 
@@ -976,23 +946,47 @@ def test_model_refuses_a_value_grid_hidden_by_fixed_component_factoring():
         )
 
 
-@pytest.mark.parametrize(
-    "location", ["state", "action", "derived", "phased", "fixed_component"]
-)
 @pytest.mark.parametrize("scope", ["regime", "model"])
 @pytest.mark.parametrize(
     "values",
     [pytest.param((10, 20), id="integer"), pytest.param((10.0, 20.0), id="float")],
 )
-def test_model_refuses_value_grids_in_every_declaration_slot(
-    *,
-    location: _GuardLocation,
-    scope: _GuardScope,
-    values: tuple[int, ...] | tuple[float, ...],
+def test_model_refuses_value_grids_behind_a_fixed_component_in_every_scope(
+    *, scope: _GuardScope, values: tuple[int, ...] | tuple[float, ...]
 ):
-    """A value grid is refused in a regime or at model level, in every slot."""
+    """A value grid behind a fixed component is refused in a regime and at model level.
+
+    Fixed-component factoring replaces the declared grid with category grids before
+    user functions are handed values, so the values would silently become codes.
+    """
     with pytest.raises(RegimeInitializationError, match=r"values=\.\.\."):
-        _guard_model(grid=DiscreteGrid(values=values), location=location, scope=scope)
+        _guard_model(
+            grid=DiscreteGrid(values=values), location="fixed_component", scope=scope
+        )
+
+
+@pytest.mark.parametrize(
+    "values",
+    [pytest.param((10, 20), id="integer"), pytest.param((10.0, 20.0), id="float")],
+)
+def test_value_grid_state_without_fixed_component_reaches_utility_as_values(
+    *, values: tuple[int, ...] | tuple[float, ...]
+):
+    """`u = wealth` on a value-grid state solves to the values, not the codes `0, 1`.
+
+    The state is fixed, the regime lives two periods with discount factor 0.9, and
+    its successor is a zero-utility terminal regime, so the first-period value is
+    `1.9 * wealth` at each node; codes would give `0` and `1.9`.
+    """
+    model = _guard_model(
+        grid=DiscreteGrid(values=values), location="state", scope="regime"
+    )
+    solution = model.solve(params={"discount_factor": 0.9}, log_level="off")
+    np.testing.assert_array_almost_equal(
+        np.asarray(solution.values[0]["alive"]),
+        1.9 * np.asarray(values, dtype=float),
+        decimal=DECIMAL_PRECISION,
+    )
 
 
 @pytest.mark.parametrize(

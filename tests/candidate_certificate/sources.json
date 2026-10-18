@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "35e774c3e941f17c7a06ea865ad669f957c9b6980ae2a385f61638a883e066d7",
+  "source_inventory_sha256": "3a42f7a01a513feae0f7470db98fbc7adfac883cfea1ba5f063c335845db0e02",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -98,7 +98,7 @@
     },
     {
       "path": "src/_lcm/grids/discrete.py",
-      "sha256": "9bb9f90e79bc66a9be06bfd6facc21db5d95e282a8ae5ed8abd51b680c31821c"
+      "sha256": "ca80856224816b3bf9802b297b1306d04bd580a2c6972c6c5c1ce54c00135c04"
     },
     {
       "path": "src/_lcm/grids/piecewise.py",
@@ -378,7 +378,7 @@
     },
     {
       "path": "src/_lcm/solution/fingerprint.py",
-      "sha256": "29fe68dcc1e60489d3332ba7878bd9a9bfe3271738be4cf07c3942093b29f793"
+      "sha256": "993b8b94849fdd12985db676be35262a178070b608ded76fb327456cdf4dd71d"
     },
     {
       "path": "src/_lcm/solution/grid_search.py",
@@ -482,7 +482,7 @@
     },
     {
       "path": "src/lcm/model.py",
-      "sha256": "98d6b35b9e92bda1895ae349000501866026fdfacf9094a01773da55219cbd6f"
+      "sha256": "0ebbb1ab2f6f5dc0bb4d7e6d4d054cbef813f9170a5c8b22b948a03ddb1dd37e"
     },
     {
       "path": "src/lcm/result.py",

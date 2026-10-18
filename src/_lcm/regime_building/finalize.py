@@ -30,6 +30,13 @@ from _lcm.processes.joint_normal_lowering import (
     coordinate_names,
     joint_normal_declarations,
 )
+from _lcm.regime_building.value_adapter import (
+    AdaptableEntry,
+    AdapterMemo,
+    ValueAdapter,
+    adapt_entry,
+    collect_value_grids,
+)
 from _lcm.regime_law import RegimeLaws
 from _lcm.typing import EconFunctionArg, FunctionName, RegimeName
 from _lcm.user_regime_validation import (
@@ -43,11 +50,13 @@ from lcm.consumption_savings_regime import (
     _composition_rule_message,
     _EGMFamilyRegime,
 )
+from lcm.decoupled import Decoupled
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.phased import Phased
+from lcm.regime import ConstraintEntry, StateTransitionEntry
 from lcm.regime import Regime as UserRegime
 from lcm.transition import _AgeSpecialized
-from lcm.typing import FloatND, ReferenceName, UserFunction, ValueND
+from lcm.typing import FloatND, ReferenceName, StateName, UserFunction, ValueND
 
 # A user `Regime` after model-build finalization. Runtime-equivalent to
 # `lcm.regime.Regime`; internal signatures use this alias to mark values
@@ -109,6 +118,10 @@ def finalize_regimes(
         if regime.stakeholders is not None
         for stakeholder in regime.stakeholders
     )
+    value_grids = collect_value_grids(
+        regimes=user_regimes, laws=laws, derived_categoricals=derived_categoricals
+    )
+    adapters: AdapterMemo = {}
     result: dict[RegimeName, FinalizedUserRegime] = {}
     for regime_name, user_regime in user_regimes.items():
         merged = _merge_derived_categoricals(
@@ -116,7 +129,12 @@ def finalize_regimes(
             user_regime=user_regime,
             derived_categoricals=derived_categoricals,
         )
-        functions = dict(user_regime.decomposed_functions)
+        # A finalized regime reused in another model holds the proxies this
+        # function built; it starts again from the functions the user wrote.
+        functions = {
+            name: _authored(func)
+            for name, func in user_regime.decomposed_functions.items()
+        }
         _compose_case_piece_outputs(functions=functions)
         _compose_margin_resources(
             regime_name=regime_name,
@@ -145,9 +163,43 @@ def finalize_regimes(
         # them straight into `functions` would put the decomposition where the
         # declaration was. The write-back goes by provenance instead.
         finalized = user_regime.with_engine_functions(
-            engine_functions=MappingProxyType(functions),
+            engine_functions=cast(
+                "Mapping[FunctionName, UserFunction | Phased | None]",
+                _adapt_slot(
+                    slot=functions,
+                    value_grids=value_grids,
+                    encoded=frozenset(merged),
+                    adapters=adapters,
+                ),
+            ),
+            state_transitions=cast(
+                "Mapping[StateName, StateTransitionEntry]",
+                _adapt_slot(
+                    slot=user_regime.state_transitions,
+                    value_grids=value_grids,
+                    encoded=frozenset(user_regime.state_transitions),
+                    adapters=adapters,
+                ),
+            ),
+            constraints=cast(
+                "Mapping[FunctionName, ConstraintEntry]",
+                _adapt_slot(
+                    slot=user_regime.constraints,
+                    value_grids=value_grids,
+                    encoded=frozenset(),
+                    adapters=adapters,
+                ),
+            ),
             derived_categoricals=merged,
-            koopmans_aggregator=regime_koopmans_aggregator,
+            koopmans_aggregator=cast(
+                "UserFunction | Phased | Decoupled | None",
+                adapt_entry(
+                    entry=regime_koopmans_aggregator,
+                    value_grids=value_grids,
+                    encode=None,
+                    adapters=adapters,
+                ),
+            ),
             certainty_equivalent=regime_certainty_equivalent,
         )
         error_messages = _validate_completeness(
@@ -162,6 +214,47 @@ def finalize_regimes(
         finalized._validate_finalized_structure(regime_name=regime_name)  # noqa: SLF001
         result[regime_name] = finalized
     return MappingProxyType(result)
+
+
+def _authored(
+    func: UserFunction | Phased | None,
+) -> UserFunction | Phased | None:
+    """Return the function the user wrote beneath this module's own proxies.
+
+    Finalization wraps a value-reading function in a `ValueAdapter` and a case
+    function in an `_AnnotatedCaseFunction`; both are rebuilt from the user's
+    function, so a regime finalized again is not wrapped twice.
+    """
+    if isinstance(func, Phased):
+        solve, simulate = _authored(func.solve), _authored(func.simulate)
+        # Keep the declared object: other checks compare phases by identity.
+        if solve is func.solve and simulate is func.simulate:
+            return func
+        return Phased(solve=solve, simulate=simulate)
+    while isinstance(func, ValueAdapter | _AnnotatedCaseFunction):
+        func = func.func if isinstance(func, ValueAdapter) else func.function
+    return func
+
+
+def _adapt_slot(
+    *,
+    slot: Mapping[str, AdaptableEntry],
+    value_grids: Mapping[str, DiscreteGrid],
+    encoded: frozenset[str],
+    adapters: AdapterMemo,
+) -> MappingProxyType[str, AdaptableEntry]:
+    """Adapt one regime slot; entries named in `encoded` return their grid's code."""
+    return MappingProxyType(
+        {
+            name: adapt_entry(
+                entry=entry,
+                value_grids=value_grids,
+                encode=value_grids.get(name) if name in encoded else None,
+                adapters=adapters,
+            )
+            for name, entry in slot.items()
+        }
+    )
 
 
 def _fail_if_a_joint_coordinate_is_a_discrete_state(
