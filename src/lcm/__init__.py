@@ -142,6 +142,8 @@ from lcm.grids import (  # noqa: E402
     PiecewiseLinSpacedGrid,
     PiecewiseLogSpacedGrid,
     categorical,
+    category_with,
+    characteristics,
 )
 from lcm.initial_nodes import InitialNodes  # noqa: E402
 from lcm.initial_nodes import UserInitialNodes as _UserInitialNodes  # noqa: E402
@@ -299,6 +301,8 @@ __all__ = [
     "case_boundary",
     "cash_on_hand_with_subsidy",
     "categorical",
+    "category_with",
+    "characteristics",
     "deterministic_transition",
     "fixed_transition",
     "implies",

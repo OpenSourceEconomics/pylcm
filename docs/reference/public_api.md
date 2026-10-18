@@ -40,6 +40,8 @@ documentation and tests.
 | --------------------------------------------------------------------------------------- | ------------------------------------ |
 | [`lcm.AgeGrid`](grids_and_processes.md#api-lifecycle-and-categorical-grids)             | Lifecycle grid                       |
 | [`lcm.categorical`](grids_and_processes.md#api-lifecycle-and-categorical-grids)         | Category declaration                 |
+| [`lcm.characteristics`](grids_and_processes.md#api-lifecycle-and-categorical-grids)     | Checked category characteristics     |
+| [`lcm.category_with`](grids_and_processes.md#api-lifecycle-and-categorical-grids)       | Category code from characteristics   |
 | [`lcm.DiscreteGrid`](grids_and_processes.md#api-lifecycle-and-categorical-grids)        | Discrete outcome grid                |
 | [`lcm.LinSpacedGrid`](grids_and_processes.md#api-continuous-grids)                      | Linear grid                          |
 | [`lcm.LogSpacedGrid`](grids_and_processes.md#api-continuous-grids)                      | Log grid                             |
