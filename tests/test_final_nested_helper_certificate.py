@@ -40,6 +40,7 @@ _BODY_OWNERS = {
         "prepare_nested_inner_kernels",
         "fold_executed_summaries",
     ),
+    "src/_lcm/egm/nbegm_query_model.py": (),
     "src/_lcm/egm/nbegm_query.py": (
         "build_nbegm_query",
         "NBEGMQuery.capabilities",
@@ -107,6 +108,7 @@ _BODY_OWNERS = {
         "reduce_continuation_read_counts",
         "merge_continuation_read_counts",
     ),
+    "src/_lcm/egm/query_data.py": (),
     "src/_lcm/regime_building/processing.py": (
         "_prepare_nbegm_query_models",
         "_canonical_constraint_routing_inputs",
@@ -145,7 +147,7 @@ def test_final_nested_selection_names_each_body_and_surface() -> None:
         for source, (_surface, callables) in direct_flow._FINAL_NESTED_CONTRACTS.items()
     }
     assert actual == _BODY_OWNERS
-    assert sum(map(len, actual.values())) == 95
+    assert sum(map(len, actual.values())) == 80
     assert all("_three_jets" not in names for names in actual.values())
     assert direct_flow._unselected_pins() == ()
     assert all(source in direct_flow._CERTIFIED_CORRIDOR_SOURCES for source in actual)

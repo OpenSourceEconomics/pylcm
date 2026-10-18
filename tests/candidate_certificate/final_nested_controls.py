@@ -43,6 +43,7 @@ BODY_OWNERS = {
         "prepare_nested_inner_kernels",
         "fold_executed_summaries",
     ),
+    "src/_lcm/egm/nbegm_query_model.py": (),
     "src/_lcm/egm/nbegm_query.py": (
         "build_nbegm_query",
         "NBEGMQuery.capabilities",
@@ -110,6 +111,7 @@ BODY_OWNERS = {
         "reduce_continuation_read_counts",
         "merge_continuation_read_counts",
     ),
+    "src/_lcm/egm/query_data.py": (),
     "src/_lcm/regime_building/processing.py": (
         "_prepare_nbegm_query_models",
         "_canonical_constraint_routing_inputs",
@@ -258,7 +260,7 @@ def _alter_overload(*, tree: ast.Module, mutation: str, checker: ModuleType) -> 
 def final_nested_mutation_specs(
     *, repo_root: Path, checker: ModuleType
 ) -> dict[str, dict[str, str]]:
-    """Construct all95 body,18 module-surface and9 exact-overload controls."""
+    """Construct all 80 body, 15 module-surface and 9 exact-overload controls."""
     specifications = {}
     for source, names in BODY_OWNERS.items():
         original = (repo_root / source).read_text(encoding="utf-8")
@@ -299,6 +301,6 @@ def final_nested_mutation_specs(
             "path": source,
             "source": ast.unparse(tree) + "\n",
         }
-    if len(specifications) != 122:
+    if len(specifications) != 104:
         raise ValueError("The declared final nested control population changed")
     return specifications

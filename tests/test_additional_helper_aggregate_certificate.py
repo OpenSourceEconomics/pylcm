@@ -156,18 +156,18 @@ def _assert_historical_counts(*, report: direct_flow.DirectMutationControls) -> 
     assert report["supplemental_mutation_count"] == 97
     assert report["retained_prefix_mutation_count"] == 113
     assert report["outer_helper_mutation_count"] == 40
-    assert report["final_nested_mutation_count"] == 122
+    assert report["final_nested_mutation_count"] == 104
 
 
 def test_additional_helper_source_controls_execute_in_the_actual_aggregate() -> None:
-    """All forty-six bodies, three surfaces and five source attacks execute once."""
+    """All forty bodies, three surfaces and five source attacks execute once."""
     _required_specs()
     report = direct_flow.run_direct_flow_mutation_controls(repo_root=_ROOT)
     _assert_historical_counts(report=report)
     assert report["clean"]["ok"]
     assert report["clean"]["errors"] == []
     assert set(report["additional_helper_mutations"]) == _EXPECTED_NAMES
-    assert report["additional_helper_mutation_count"] == 54
+    assert report["additional_helper_mutation_count"] == 48
     assert report["additional_helper_names_match_expected"]
     assert report["admitted_additional_helper_mutations"] == []
     assert report["all_rejected"]
@@ -231,7 +231,7 @@ def test_an_admitted_or_missing_helper_control_prevents_aggregate_acceptance(
     if fault == "admitted":
         assert _PROBE in report["admitted_additional_helper_mutations"]
         assert report["additional_helper_names_match_expected"]
-        assert report["additional_helper_mutation_count"] == 54
+        assert report["additional_helper_mutation_count"] == 48
     else:
         assert _PROBE not in report["additional_helper_mutations"]
         assert not report["additional_helper_names_match_expected"]

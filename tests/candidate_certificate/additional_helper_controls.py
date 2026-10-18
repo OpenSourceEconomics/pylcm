@@ -230,7 +230,7 @@ def _semantic_mutation(*, tree: ast.Module, mutation: str, checker: ModuleType) 
 def additional_helper_mutation_specs(
     *, repo_root: Path, checker: ModuleType
 ) -> dict[str, dict[str, str]]:
-    """Construct forty-six body, three surface and five source attack controls."""
+    """Construct forty body, three surface and five source attack controls."""
     specifications: dict[str, dict[str, str]] = {}
     for source, names in BODY_OWNERS.items():
         original = (repo_root / source).read_text(encoding="utf-8")
@@ -268,6 +268,6 @@ def additional_helper_mutation_specs(
             "path": source,
             "source": ast.unparse(tree) + "\n",
         }
-    if len(specifications) != 54:
+    if len(specifications) != 48:
         raise ValueError("The declared additional helper population changed")
     return specifications

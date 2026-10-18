@@ -3518,6 +3518,7 @@ _FINAL_NESTED_CONTRACTS = _contracts(
             "prepare_nested_inner_kernels",
             "fold_executed_summaries",
         ),
+        "src/_lcm/egm/nbegm_query_model.py": (),
         "src/_lcm/egm/nbegm_query.py": (
             "build_nbegm_query",
             "NBEGMQuery.capabilities",
@@ -3585,6 +3586,7 @@ _FINAL_NESTED_CONTRACTS = _contracts(
             "reduce_continuation_read_counts",
             "merge_continuation_read_counts",
         ),
+        "src/_lcm/egm/query_data.py": (),
         "src/_lcm/regime_building/processing.py": (
             "_prepare_nbegm_query_models",
             "_canonical_constraint_routing_inputs",

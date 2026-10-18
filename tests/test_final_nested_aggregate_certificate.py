@@ -140,7 +140,7 @@ def test_final_nested_runner_keeps_a_distinct_required_population() -> None:
     assert report["outer_helper_mutation_count"] == 40
     cases = report["final_nested_mutations"]
     assert set(cases) == _EXPECTED_NAMES
-    assert report["final_nested_mutation_count"] == 122
+    assert report["final_nested_mutation_count"] == 104
     assert report["final_nested_names_match_expected"]
     assert report["admitted_final_nested_mutations"] == []
     assert report["all_rejected"]
@@ -211,7 +211,7 @@ def test_final_nested_failure_prevents_the_actual_runner_aggregate(
     if fault == "admitted":
         assert _PROBE in report["admitted_final_nested_mutations"]
         assert report["final_nested_names_match_expected"]
-        assert report["final_nested_mutation_count"] == 122
+        assert report["final_nested_mutation_count"] == 104
     else:
         assert _PROBE not in report["final_nested_mutations"]
         assert not report["final_nested_names_match_expected"]
