@@ -40,7 +40,11 @@ def test_outer_helper_family_selects_exactly_the_declared_bodies_and_surfaces() 
         source: tuple(callables) for source, (_surface, callables) in contracts.items()
     } == BODY_OWNERS
     for source, (surface, callables) in contracts.items():
-        assert direct_flow._CORRIDOR_PINS[source] == (surface, callables)
+        # A source can also carry pins that another helper family selects, so
+        # compare only this family's surface and callables against the store.
+        stored_surface, stored_callables = direct_flow._CORRIDOR_PINS[source]
+        assert stored_surface == surface
+        assert {name: stored_callables[name] for name in callables} == callables
         assert source in direct_flow._CERTIFIED_CORRIDOR_SOURCES
     assert direct_flow._unselected_pins() == ()
 
