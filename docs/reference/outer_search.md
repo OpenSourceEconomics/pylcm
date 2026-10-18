@@ -40,7 +40,11 @@ AdaptiveOuterMesh(
 ```
 
 Starts from `initial_grid`, evaluates exact inner solves on a shared mesh, validates
-interpolation at proposed points, and refines bracket-local optima.
+interpolation at proposed points, and refines bracket-local optima. It supports only
+literal borrowing floors; a callable `post_decision_lower_bound` floor raises
+`ModelInitializationError` at model construction, because honouring it at every refined
+node is prohibitively slow (see
+[post-decision lower bounds](consumption_savings.md#api-post-decision-lower-bounds)).
 
 Important fields:
 
