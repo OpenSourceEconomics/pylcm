@@ -1436,7 +1436,6 @@ def test_supplemental_sources_complete_the_pinned_registry_coverage() -> None:
         "s02_query:executable_aux_restored",
         "s02_query:expected_model_descriptor_bypassed",
         "s02_query:intrinsic_budget_owner_changed",
-        "s02_query:shared_mesh_state_sharded",
         "s02_query:typed_adapter_refusal_omitted",
         "s02_status:active_lane_nonfinite_ignored",
         "s02_status:canonical_dag_declarations_omitted",

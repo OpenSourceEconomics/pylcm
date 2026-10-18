@@ -46,11 +46,11 @@ def _required_specs() -> dict[str, dict[str, str]]:
 def _assert_historical_counts(*, report: direct_flow.DirectMutationControls) -> None:
     """Keep every independently declared family population intact."""
     assert report["mutation_count"] == 421
-    assert report["supplemental_mutation_count"] == 97
+    assert report["supplemental_mutation_count"] == 96
     assert report["retained_prefix_mutation_count"] == 113
     assert report["outer_helper_mutation_count"] == 40
-    assert report["final_nested_mutation_count"] == 122
-    assert report["additional_helper_mutation_count"] == 54
+    assert report["final_nested_mutation_count"] == 104
+    assert report["additional_helper_mutation_count"] == 48
 
 
 def test_child_native_source_controls_execute_in_the_actual_aggregate() -> None:

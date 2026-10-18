@@ -753,9 +753,9 @@ EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 421
 EXPECTED_DIRECT_FLOW_MUTATION_NAMES_SHA256 = (
     "f58754206b785f05a7dff36c690946024effc931c888c72383fc0bd98be060cd"
 )
-EXPECTED_SUPPLEMENTAL_MUTATION_COUNT = 97
+EXPECTED_SUPPLEMENTAL_MUTATION_COUNT = 96
 EXPECTED_SUPPLEMENTAL_MUTATION_NAMES_SHA256 = (
-    "d85b3f5dc1422ac4f6aea31711c9cc25fead19439fcb5cc7addf1c89eb3cda11"
+    "bfb20467575ab892db7be74b859bac0288c8840f7a1aeb36eb13dee129ed3490"
 )
 EXPECTED_UNIFORM_PROCESS_MUTATION_COUNT = 37
 EXPECTED_UNIFORM_PROCESS_MUTATION_NAMES_SHA256 = (
@@ -3631,9 +3631,9 @@ def _final_nested_errors(*, tree: ast.Module, source: SourcePath) -> list[str]:
     return errors
 
 
-EXPECTED_FINAL_NESTED_MUTATION_COUNT = 122
+EXPECTED_FINAL_NESTED_MUTATION_COUNT = 104
 EXPECTED_FINAL_NESTED_MUTATION_NAMES_SHA256 = (
-    "d771f1d2d221d5dbc19cbf97d2ba87fb563cf3bad4b60db840f2996c570d3544"
+    "3d3f035499bfb13bcb8dccfc158894f2873ecd486907d9329706d3c1454362b2"
 )
 
 
@@ -11339,14 +11339,6 @@ _S02_HELPER_MUTATIONS = {
         "(tuple(getattr(record, item.name) for item in fields(record)), type(record))",
         1,
     ),
-    "s02_query:shared_mesh_state_sharded": (
-        "src/_lcm/egm/carry.py",
-        "_query_output_role",
-        "keyword",
-        "state_names",
-        "state_names",
-        1,
-    ),
     "s02_query:expected_model_descriptor_bypassed": (
         "src/_lcm/solution/model_authority.py",
         "_validate_model_query_spec",
@@ -13642,9 +13634,9 @@ def reviewed_prefix_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, st
     return specs
 
 
-EXPECTED_S03_SCALAR_MUTATION_COUNT = 57
+EXPECTED_S03_SCALAR_MUTATION_COUNT = 62
 EXPECTED_S03_SCALAR_MUTATION_NAMES_SHA256 = (
-    "070c43d068455d31f3b1c9c54502149253ca9ce3a97bc39a22158283310c7487"
+    "41e1bded6af2f4b3c42c59c487f00c4dbe9c9e9e105ed12260b31a0cb1db30df"
 )
 
 
@@ -17340,7 +17332,7 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> DirectMutationContr
     )
     additional_helper_names_match = (
         set(additional_helper_cases) == _EXPECTED_ADDITIONAL_HELPER_MUTATION_NAMES
-        and len(additional_helper_cases) == 54
+        and len(additional_helper_cases) == 48
     )
     child_native_cases = {name: cases.pop(name) for name in child_native}
     child_native_admitted = sorted(
