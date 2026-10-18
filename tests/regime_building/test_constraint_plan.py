@@ -85,6 +85,11 @@ def works_or_retires(work: DiscreteAction) -> FloatND:
     return work >= 0
 
 
+def works_up_to(*, work: DiscreteAction, max_work: float) -> FloatND:
+    """Reads a discrete action and a parameter, both bound per combination."""
+    return work <= max_work
+
+
 def _model(*, solver: OneMarginSolver | GridSearch, constraint: UserFunction) -> Model:
     """Build a one-period model whose saving regime declares `constraint`."""
     saving_regime = ConsumptionSavingsRegime(
@@ -145,6 +150,13 @@ def test_the_same_constraint_is_accepted_on_a_grid_search_regime() -> None:
 def test_a_constraint_over_combination_inputs_is_accepted_by_dcegm() -> None:
     """A discrete action is bound per combination, so a constraint on it builds."""
     model = _model(solver=_dcegm(), constraint=works_or_retires)
+
+    assert "saving" in model.user_regimes
+
+
+def test_a_constraint_reading_a_parameter_is_accepted_by_dcegm() -> None:
+    """A regime parameter is bound per combination, so a constraint on it builds."""
+    model = _model(solver=_dcegm(), constraint=works_up_to)
 
     assert "saving" in model.user_regimes
 

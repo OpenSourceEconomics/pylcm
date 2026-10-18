@@ -437,22 +437,35 @@ def _observe_installed_consumer(
 def _assert_clean_installed_statuses(
     *, model: Model, output: FeasibilityKernelOutput
 ) -> None:
-    """Accept every declared child and source construction summary."""
+    """Accept every declared child and source construction summary.
+
+    The parent's own source slot and its bound summaries exist exactly when it
+    installs a query authority, which a literal floor without predicates does
+    not.
+    """
     slots = model._regimes["parent"].solution.query_input_authorities
     assert slots is not None
     assert slots[0][0][0:2] == ("child", 1)
-    assert slots[0][-1][0:2] == ("parent", 0)
+    own_slot = ("parent", 0)
+    owns_query = model._regimes["parent"].solution.query_authority is not None
+    if owns_query:
+        assert slots[0][-1][0:2] == own_slot
+    else:
+        assert own_slot not in {slot[0:2] for slot in slots[0]}
     assert output.query_status is not None
     np.testing.assert_array_equal(
         jnp.stack(tuple(jnp.stack(status) for status in output.query_status)),
         np.zeros((len(slots[0]), 3), dtype=bool),
     )
+    validate_query_input_status(statuses=output.query_status, authorities=slots[0])
+    if not owns_query:
+        assert output.bound_status == ()
+        return
     assert output.bound_status
     np.testing.assert_array_equal(
         jnp.stack(tuple(jnp.stack(status) for status in output.bound_status)),
         np.zeros((len(output.bound_status), 2), dtype=bool),
     )
-    validate_query_input_status(statuses=output.query_status, authorities=slots[0])
 
 
 @pytest.mark.parametrize("ev1", [False, True], ids=("hard-max", "ev1"))

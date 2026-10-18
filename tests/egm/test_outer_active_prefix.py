@@ -176,7 +176,9 @@ def _assert_search_matches(
     for field in fields(SafeguardedSearchResult):
         observed = getattr(actual, field.name)
         expected = getattr(reference, field.name)
-        if field.name in ("x", "second_best_x"):
+        if expected is None:
+            assert observed is None, field.name
+        elif field.name in ("x", "second_best_x"):
             np.testing.assert_allclose(
                 observed,
                 expected,

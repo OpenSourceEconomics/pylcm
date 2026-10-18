@@ -16,12 +16,18 @@ from _lcm.execution.core_program import CoreBuildContext, materialize_core_progr
 from _lcm.solution.dcegm import _DCEGMPeriodKernel
 from _lcm.solution.feasibility import BoundedResult, ContinuationReadCounts
 from _lcm.typing import EconFunctionKwargs
-from lcm import AgeGrid, IrregSpacedGrid, Model, Regime
+from lcm import AgeGrid, IrregSpacedGrid, Model, Regime, categorical
 from lcm.solvers import DCEGM
-from lcm.typing import BoolND, ContinuousState, FloatND
+from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
 from tests.egm.test_below_first_live_counts import _model, _params
 from tests.egm.test_dynamic_dcegm_activation import RegimeId
 from tests.solution._nbegm_direct_oracle import ride_along_kernel
+
+
+@categorical(ordered=False)
+class _TerminalRegimeId:
+    parent: ScalarInt
+    child: ScalarInt
 
 
 def _never() -> BoolND:
@@ -47,6 +53,7 @@ def _literal_model(*, terminal_capacity: int | None) -> Model:
         }
         edges = seed.edges
         ages = seed.ages
+        regime_id_class = RegimeId
     else:
         regimes = {
             "parent": parent,
@@ -61,12 +68,13 @@ def _literal_model(*, terminal_capacity: int | None) -> Model:
         }
         edges = {"parent": {"child": 0}}
         ages = AgeGrid(start=0, inclusive_stop=1, step="Y")
+        regime_id_class = _TerminalRegimeId
     return Model(
         regimes=regimes,
         ages=ages,
         edges=edges,
         initial_nodes={0: "parent"},
-        regime_id_class=RegimeId,
+        regime_id_class=regime_id_class,
         enable_jit=False,
     )
 
