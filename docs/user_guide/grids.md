@@ -206,6 +206,39 @@ PiecewiseLogSpacedGrid(
 )
 ```
 
+## Conditional actions
+
+Often a continuous action matters only for some values of a discrete action: hours
+worked only when working, a loan amount only when taking a loan. Declare it with
+`ConditionalAction` instead of pinning it with a constraint:
+
+```python
+from lcm import ConditionalAction, DiscreteGrid, LinSpacedGrid
+
+actions = {
+    "labor": DiscreteGrid(category_class=Labor),
+    "hours": ConditionalAction(
+        grid=LinSpacedGrid(start=0.0, stop=40.0, n_points=5),
+        active_when={"labor": Labor.yes},
+        inactive_value=0.0,
+    ),
+    "consumption": LinSpacedGrid(start=0.5, stop=10.0, n_points=100),
+}
+```
+
+- Where every condition holds, the action ranges over its grid. Elsewhere it takes
+  `inactive_value`, and every user function sees that value.
+- `active_when` maps discrete actions of the same regime to one value or to several in a
+  tuple, such as `{"tenure": (Tenure.purchase, Tenure.refinance)}`. With several
+  discrete actions, all conditions must hold.
+- `inactive_value` must equal exactly one node of the grid.
+- Simulated actions and `lookup_policy` report `inactive_value` where the action is
+  inactive.
+
+The declaration means the same as the constraint
+`(labor == Labor.yes) | (hours == 0.0)`, and pylcm enforces it that way: results are
+identical to that constraint.
+
 ## Grid Hierarchy (advanced)
 
 All grids inherit from the `Grid` base class:
@@ -219,6 +252,7 @@ All grids inherit from the `Grid` base class:
     - `IrregSpacedGrid`
     - `PiecewiseLinSpacedGrid`
     - `PiecewiseLogSpacedGrid`
+    - `ConditionalAction` — wraps one of the above for a conditional action
     - `_ContinuousStochasticProcess` — base for stochastic continuous grids
 
 The `to_jax()` method converts any grid to a JAX array. `ContinuousGrid` subclasses
