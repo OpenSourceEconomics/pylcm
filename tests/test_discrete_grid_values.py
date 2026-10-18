@@ -23,6 +23,7 @@ import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 import pytest
+from beartype.roar import BeartypeCallHintParamViolation
 from numpy.testing import assert_array_almost_equal as aaae
 from pandas.testing import assert_frame_equal
 
@@ -34,6 +35,7 @@ from _lcm.regime_building.value_adapter import (
     adapt_user_function,
     collect_value_grids,
 )
+from _lcm.simulation.transitions import _count_drawn_off_grid_codes
 from lcm import (
     AgeGrid,
     AgeRange,
@@ -67,6 +69,7 @@ from lcm.consumption_savings_regime import (
 from lcm.exceptions import InvalidStateTransitionError, RegimeInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.regime import StochasticTransition
+from lcm.solver_api import SolutionResult
 from lcm.solvers import DCEGM
 from lcm.transition import AgeSpecializedFunction
 from lcm.typing import (
@@ -2243,3 +2246,286 @@ def test_on_grid_phased_law_behind_a_value_gate_simulates_to_the_target(*, enabl
     later = panel.loc[panel["period"] == 1].sort_values("subject_id")
     assert later["regime_name"].tolist() == ["target", "target"]
     np.testing.assert_array_equal(later["kind"].to_numpy(), [0, 1])
+
+
+# A continuous source state between grid nodes can make a simulated law emit a code
+# the preflight never sees. Simulation checks the raw code of every subject drawn
+# to a target before a gate reads it or reroutes the subject.
+
+
+def _flow_with_wealth(
+    *, kind: DiscreteState, wealth: ContinuousState, a: DiscreteAction
+) -> FloatND:
+    return 20.0 * a + 0.0 * kind + 0.0 * wealth
+
+
+def _between_nodes_model(
+    *,
+    enable_jit: bool,
+    gated: bool = True,
+    bad_code: int = 2,
+    lower: float = 0.0,
+    upper: float = 1.0,
+    n_wealth_points: int = 2,
+    forbid_working: bool = False,
+    valid_simulation: bool = False,
+) -> Model:
+    """Working sends `kind` to `bad_code` only strictly inside `(lower, upper)`."""
+
+    def interior_law(
+        *, kind: DiscreteState, wealth: ContinuousState, a: DiscreteAction
+    ) -> DiscreteState:
+        bad = (a == 1) & (wealth > lower) & (wealth < upper)
+        return jnp.where(bad, bad_code, kind).astype(jnp.int32)
+
+    kind = DiscreteGrid(category_class=_TwoCodes)
+    gates = {
+        "target": Gate(
+            predicate=_threshold_gate,
+            routes={
+                "only": StakeholderRoute(
+                    fallback=ProjectedRegimeValue(
+                        regime="fallback", projection={"kind": _project_kind}
+                    )
+                )
+            },
+        )
+    }
+    return Model(
+        regimes={
+            "source": UserRegime(
+                states={
+                    "kind": kind,
+                    "wealth": LinSpacedGrid(
+                        start=0.0, stop=1.0, n_points=n_wealth_points
+                    ),
+                },
+                actions={"a": DiscreteGrid(category_class=_TwoCodes)},
+                functions={"utility": _flow_with_wealth},
+                state_transitions={
+                    "kind": Phased(
+                        solve=_kind_stays,
+                        simulate=_kind_stays if valid_simulation else interior_law,
+                    ),
+                    "wealth": fixed_transition("wealth"),
+                },
+                constraints={"rest_only": _rest_only} if forbid_working else {},
+            ),
+            "target": UserRegime(
+                states={"kind": kind}, functions={"utility": _kind_utility_zero}
+            ),
+            "fallback": UserRegime(
+                states={"kind": kind}, functions={"utility": _kind_utility_low}
+            ),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        edges={
+            "source": Transition(law="target", gates=gates) if gated else {"target": 0}
+        },
+        initial_nodes={0: "source"},
+        regime_id_class=_SourceTargetFallback,
+        enable_jit=enable_jit,
+    )
+
+
+def _simulate_between_nodes(
+    *, model: Model, wealth: tuple[float, float], solution: SolutionResult | None
+) -> pd.DataFrame:
+    return model.simulate(
+        params=_PARAMS_ONE,
+        initial_conditions={
+            "kind": jnp.asarray([0, 1], dtype=jnp.int32),
+            "wealth": jnp.asarray(wealth),
+            "age": jnp.zeros(2),
+            "regime_id": jnp.full(2, _SourceTargetFallback.source, dtype=jnp.int32),
+        },
+        solution=solution,
+        seed=3,
+        log_level="off",
+        runtime_checks=True,
+    ).to_dataframe(use_labels=False)
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+@pytest.mark.parametrize("supply_solution", [False, True])
+@pytest.mark.parametrize("gated", [True, False])
+def test_off_grid_code_from_a_between_node_value_fails_simulation(
+    *, gated, supply_solution, enable_jit
+):
+    """Wealth 0.5 lies between nodes 0 and 1; working there emits code 2."""
+    model = _between_nodes_model(enable_jit=enable_jit, gated=gated)
+    solution = model.solve(params=_PARAMS_ONE, log_level="off", runtime_checks=True)
+    with pytest.raises(InvalidStateTransitionError, match="kind"):
+        _simulate_between_nodes(
+            model=model,
+            wealth=(0.5, 0.5),
+            solution=solution if supply_solution else None,
+        )
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+@pytest.mark.parametrize(("lower", "upper"), [(0.125, 0.875), (0.25, 0.75)])
+@pytest.mark.parametrize("bad_code", [-1, 3, MISSING_CAT_CODE])
+def test_between_node_window_and_code_mutations_fail_simulation(
+    *, bad_code, lower, upper, enable_jit
+):
+    model = _between_nodes_model(
+        enable_jit=enable_jit, bad_code=bad_code, lower=lower, upper=upper
+    )
+    solution = model.solve(params=_PARAMS_ONE, log_level="off", runtime_checks=True)
+    midpoint = (lower + upper) / 2
+    with pytest.raises(InvalidStateTransitionError, match="kind"):
+        _simulate_between_nodes(
+            model=model, wealth=(midpoint, midpoint), solution=solution
+        )
+
+
+def _assert_reaches_target(*, panel: pd.DataFrame, action: int) -> None:
+    first = panel.loc[panel["period"] == 0].sort_values("subject_id")
+    later = panel.loc[panel["period"] == 1].sort_values("subject_id")
+    np.testing.assert_array_equal(first["a"].to_numpy(), [action, action])
+    assert later["regime_name"].tolist() == ["target", "target"]
+    np.testing.assert_array_equal(later["kind"].to_numpy(), [0, 1])
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+@pytest.mark.parametrize("supply_solution", [False, True])
+def test_on_node_values_of_the_same_law_simulate_to_the_target(
+    *, supply_solution, enable_jit
+):
+    model = _between_nodes_model(enable_jit=enable_jit)
+    solution = model.solve(params=_PARAMS_ONE, log_level="off", runtime_checks=True)
+    panel = _simulate_between_nodes(
+        model=model,
+        wealth=(0.0, 1.0),
+        solution=solution if supply_solution else None,
+    )
+    _assert_reaches_target(panel=panel, action=1)
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_valid_simulated_law_between_nodes_simulates_to_the_target(*, enable_jit):
+    model = _between_nodes_model(enable_jit=enable_jit, valid_simulation=True)
+    solution = model.solve(params=_PARAMS_ONE, log_level="off", runtime_checks=True)
+    panel = _simulate_between_nodes(model=model, wealth=(0.5, 0.5), solution=solution)
+    _assert_reaches_target(panel=panel, action=1)
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_ordinarily_excluded_action_between_nodes_simulates_to_the_target(
+    *, enable_jit
+):
+    model = _between_nodes_model(enable_jit=enable_jit, forbid_working=True)
+    solution = model.solve(params=_PARAMS_ONE, log_level="off", runtime_checks=True)
+    panel = _simulate_between_nodes(model=model, wealth=(0.5, 0.5), solution=solution)
+    _assert_reaches_target(panel=panel, action=0)
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_a_grid_node_inside_the_window_is_refused_before_the_solve(*, enable_jit):
+    """With a node at 0.5 the preflight sees the bad code itself."""
+    model = _between_nodes_model(enable_jit=enable_jit, n_wealth_points=3)
+    with pytest.raises(InvalidStateTransitionError, match="ordinary constraint"):
+        model.solve(params=_PARAMS_ONE, log_level="off", runtime_checks=True)
+
+
+def _working_goes_to_fallback(*, a: DiscreteAction) -> ScalarInt:
+    return jnp.where(
+        a == 1, _SourceTargetFallback.fallback, _SourceTargetFallback.target
+    )
+
+
+def _kind_off_grid_between_nodes(
+    *, kind: DiscreteState, wealth: ContinuousState, a: DiscreteAction
+) -> DiscreteState:
+    return jnp.where((a == 1) & (wealth > 0.0) & (wealth < 1.0), 2, kind).astype(
+        jnp.int32
+    )
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_off_grid_code_to_a_target_no_subject_is_drawn_to_passes(*, enable_jit):
+    """Working moves the subject to `fallback`; its code toward `target` is unread."""
+    kind = DiscreteGrid(category_class=_TwoCodes)
+    model = Model(
+        regimes={
+            "source": UserRegime(
+                states={
+                    "kind": kind,
+                    "wealth": LinSpacedGrid(start=0.0, stop=1.0, n_points=2),
+                },
+                actions={"a": DiscreteGrid(category_class=_TwoCodes)},
+                functions={"utility": _flow_with_wealth},
+                state_transitions={
+                    "kind": Phased(
+                        solve={"target": _kind_stays, "fallback": _kind_stays},
+                        simulate={
+                            "target": _kind_off_grid_between_nodes,
+                            "fallback": _kind_stays,
+                        },
+                    ),
+                    "wealth": fixed_transition("wealth"),
+                },
+            ),
+            "target": UserRegime(
+                states={"kind": kind}, functions={"utility": _kind_utility_zero}
+            ),
+            "fallback": UserRegime(
+                states={"kind": kind}, functions={"utility": _kind_utility_zero}
+            ),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        edges={
+            "source": Transition(
+                targets={"target": (0,), "fallback": (0,)},
+                law=_working_goes_to_fallback,
+            )
+        },
+        initial_nodes={0: "source"},
+        regime_id_class=_SourceTargetFallback,
+        enable_jit=enable_jit,
+    )
+    solution = model.solve(params=_PARAMS_ONE, log_level="off", runtime_checks=True)
+    panel = _simulate_between_nodes(model=model, wealth=(0.5, 0.5), solution=solution)
+    later = panel.loc[panel["period"] == 1].sort_values("subject_id")
+    assert later["regime_name"].tolist() == ["fallback", "fallback"]
+
+
+@pytest.mark.parametrize("width", ["int32", "int64"])
+def test_drawn_code_count_is_exact_at_any_signed_width(*, width):
+    """A wide code is compared at its own width and never aliases a valid one."""
+    if width == "int64" and not jax.config.jax_enable_x64:
+        pytest.skip("An int64 code needs x64.")
+    dtype = jnp.int32 if width == "int32" else jnp.int64
+    codes = (
+        jnp.asarray([0, 2, 3, -1, 2**31 - 1], dtype=jnp.int32)
+        if width == "int32"
+        else jnp.asarray([0, 2, 3, -(2**33), 2**31 + 2], dtype=dtype),
+    )
+    counts = _count_drawn_off_grid_codes(
+        codes=codes,
+        n_codes=(jnp.int32(3),),
+        target_ids=(jnp.int32(1),),
+        subjects=jnp.ones(5, dtype=bool),
+        new_regime_ids=jnp.ones(5, dtype=jnp.int32),
+    )
+    assert counts.tolist() == [3]
+
+
+@pytest.mark.parametrize(
+    "codes",
+    [
+        jnp.asarray([0, 2, 3], dtype=jnp.uint32),
+        jnp.asarray([0.0, 0.5, 3.0]),
+    ],
+    ids=["unsigned", "float"],
+)
+def test_drawn_code_count_refuses_codes_that_are_not_signed_integers(*, codes):
+    with pytest.raises(BeartypeCallHintParamViolation):
+        _count_drawn_off_grid_codes(
+            codes=(codes,),
+            n_codes=(jnp.int32(3),),
+            target_ids=(jnp.int32(1),),
+            subjects=jnp.ones(3, dtype=bool),
+            new_regime_ids=jnp.ones(3, dtype=jnp.int32),
+        )

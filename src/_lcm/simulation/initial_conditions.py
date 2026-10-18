@@ -190,7 +190,9 @@ def validate_simulation_inputs(  # noqa: C901
             )
             with contextlib.closing(
                 _ValidationSummary(
-                    memory=memory, process_grid_resolver=process_grid_resolver
+                    memory=memory,
+                    producers=producers,
+                    process_grid_resolver=process_grid_resolver,
                 )
             ) as summary:
                 validate_off_grid_transitions(
@@ -210,7 +212,9 @@ def validate_simulation_inputs(  # noqa: C901
         PreflightActionGrids(memory=memory, build=_build_flat_action_grid)
     ) as action_grid_resolver:
         summary = _ValidationSummary(
-            memory=memory, process_grid_resolver=process_grid_resolver
+            memory=memory,
+            producers=producers,
+            process_grid_resolver=process_grid_resolver,
         )
         try:
             try:
@@ -295,7 +299,9 @@ def validate_simulation_inputs(  # noqa: C901
         )
         with contextlib.closing(
             _ValidationSummary(
-                memory=memory, process_grid_resolver=process_grid_resolver
+                memory=memory,
+                producers=producers,
+                process_grid_resolver=process_grid_resolver,
             )
         ) as summary:
             validate_off_grid_transitions(

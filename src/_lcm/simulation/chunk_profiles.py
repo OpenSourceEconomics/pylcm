@@ -99,9 +99,11 @@ from _lcm.simulation.taste_stream import (
 from _lcm.simulation.transitions import (
     _advance_states_for_subjects,
     _clip_next_states,
+    _count_drawn_off_grid_codes,
     _count_realized_grid_state,
     _draw_random_regime_ids_from_scalars,
     _update_regime_ids,
+    drawn_code_checks,
 )
 from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.solution.backward_induction import (
@@ -689,6 +691,28 @@ def _profile_next_subjects(
             ),
         ),
     )
+    if runtime_checks:
+        checks = drawn_code_checks(
+            next_state_names={
+                target: tuple(states) for target, states in next_states.items()
+            },
+            regimes=regimes,
+            targets=tuple(names),
+        )
+        if checks:
+            inventory.operation(
+                function=_count_drawn_off_grid_codes,
+                arguments={
+                    "codes": tuple(
+                        next_states[target][state] for target, state, _ in checks
+                    ),
+                    "n_codes": tuple(scalar_int for _ in checks),
+                    "target_ids": tuple(scalar_int for _ in checks),
+                    "subjects": mask,
+                    "new_regime_ids": new_ids,
+                },
+                subject_arg_names=("codes", "subjects", "new_regime_ids"),
+            )
     carrier = cast("Mapping[str, Mapping[str, jax.ShapeDtypeStruct]]", advanced)
     if period in regime.simulation.programs.gate_route:
         shared = simulation_value_sharding(

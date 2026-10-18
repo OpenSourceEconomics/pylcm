@@ -54,7 +54,9 @@ class _PiecewiseGrid(ContinuousGrid):
     points_per_segment: tuple[ScalarInt, ...]
     """Output-node count contributed by each nominal segment."""
 
-    off_grid: OffGrid = "extrapolate"
+    off_grid: OffGrid = dataclasses.field(
+        default="extrapolate", metadata={"fingerprint_omit_if_default": True}
+    )
     """Policy at the closed outer endpoints; interior ownership stays unchanged."""
 
     _breakpoint_values: Float1D = dataclasses.field(init=False, repr=False)
