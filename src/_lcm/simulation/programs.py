@@ -8,11 +8,12 @@ serve:
 - `transition`: the laws of motion carrying each subject into the next period.
 - `route`: the regime-transition probabilities the realized draw reads.
 
-A hard-max singleton regime also publishes `action_values`, the dense decision
-that additionally returns, from the one kernel evaluation it maximizes over, the
+A singleton regime also publishes `action_values`, the dense decision that
+additionally returns, from the one kernel evaluation it maximizes over, the
 action values, their feasibility, the flow utility and the certainty-equivalent
-continuation. Only policy lookup dispatches it, so it compiles only when
-requested.
+continuation. With taste shocks it publishes the EV1 decision's conditional
+values and choice probabilities in place of a drawn action. Only policy lookup
+dispatches it, so it compiles only when requested.
 
 Every family tiles the subject axis, so the engine owns the width each body runs
 at. A decision whose solve counterpart streams its action product declares that
@@ -53,13 +54,10 @@ from _lcm.simulation.gated_routing import (
     simulation_gate_route_delta,
 )
 from _lcm.simulation.program_types import (
-    ACTION_FEASIBILITY,
     ACTION_INDEX,
-    ACTION_VALUES,
-    CONTINUATION_CE,
+    ACTION_PARTS_ROLES,
     DECISION_PROGRAM,
     DECISION_VALUE,
-    FLOW_UTILITY,
     GATE_FOLD_PROGRAM,
     GATE_ROUTE_PROGRAM,
     GATED_CONTINUATION,
@@ -75,6 +73,10 @@ from _lcm.simulation.program_types import (
     SimulationPrograms,
     _PerSubjectFunction,
     subject_axis,
+)
+from _lcm.simulation.taste_shock_lookup import (
+    TASTE_SHOCK_LOOKUP_OUTPUT_ROLES,
+    TasteShockLookup,
 )
 from _lcm.solution.action_reduction import HARD_MAX_REDUCTION, HardMaxResult
 from _lcm.solution.action_streaming import build_streaming_max_Q_over_a
@@ -198,32 +200,47 @@ def build_simulation_programs(
     )
 
     # The dense decision with its parts, even where the decision streams: same
-    # reads and subject tiling, no reduced action axis. A taste-shock draw or a
-    # household argmax publishes no such parts.
+    # reads and subject tiling, no reduced action axis. A household argmax
+    # publishes no such parts. A taste-shock regime applies the solve's EV1
+    # reduction to its simulation decision, which draws nothing.
     action_value_bodies: dict[int, Callable[..., PytreeValue]] = {}
     action_values: dict[int, CoreProgram] = {}
-    is_hard_max_singleton = (
-        not context.has_taste_shocks and context.stakeholders is None
-    )
-    for period in decision if is_hard_max_singleton else ():
+    space = context.state_action_space
+    lookup_subject_arg_names = tuple(space.states)
+    for period in decision if context.stakeholders is None else ():
         kernel = Q_and_F_functions[period]
         group = id(kernel)
         if group not in action_value_bodies:
             action_value_bodies[group] = _SubjectTiled(
                 func=_decision_with_action_parts(
                     Q_and_F=kernel,
-                    reducer=per_subject_decisions[period],
-                    action_names=context.state_action_space.action_names,
+                    action_names=space.action_names,
+                    body=(
+                        partial(
+                            TasteShockLookup,
+                            n_discrete_action_axes=len(space.discrete_actions),
+                        )
+                        if context.has_taste_shocks
+                        else _DecisionWithActionParts
+                    ),
                 ),
-                subject_arg_names=_decision_subject_arg_names(context=context),
+                subject_arg_names=lookup_subject_arg_names,
             )
         action_values[period] = dataclasses.replace(
             decision[period],
             function=action_value_bodies[group],
+            argument_builder=_ArgumentsBoundAtDispatch(
+                program_name=DECISION_PROGRAM,
+                subject_arg_names=lookup_subject_arg_names,
+            ),
             requirements=dataclasses.replace(
                 decision[period].requirements, reduced_axes=()
             ),
-            output_roles=ACTION_VALUES_OUTPUT_ROLES,
+            output_roles=(
+                TASTE_SHOCK_LOOKUP_OUTPUT_ROLES
+                if context.has_taste_shocks
+                else ACTION_VALUES_OUTPUT_ROLES
+            ),
         )
 
     transition_bodies: dict[int, Callable[..., PytreeValue]] = {}
@@ -757,13 +774,9 @@ def _decision_body(
     return _SubjectTiled(func=cell, subject_arg_names=subject_arg_names)
 
 
-# The parts the dense decision with its parts publishes after its own pair, in
-# the order its body returns them.
-ACTION_PART_ROLES = (ACTION_VALUES, ACTION_FEASIBILITY, FLOW_UTILITY, CONTINUATION_CE)
-
 # What the dense decision with its parts publishes, in the order its body
 # returns them: the decision's own pair, then each part over the action product.
-ACTION_VALUES_OUTPUT_ROLES = (ACTION_INDEX, DECISION_VALUE, *ACTION_PART_ROLES)
+ACTION_VALUES_OUTPUT_ROLES = (ACTION_INDEX, DECISION_VALUE, *ACTION_PARTS_ROLES)
 
 # Derived programs keyed by the source program's identity and the kept parts. The
 # source is held alongside so its identity cannot be reused while the entry lives.
@@ -775,39 +788,40 @@ type KeptPartsPrograms = dict[
 def with_kept_action_parts(
     *, program: CoreProgram, roles: frozenset[str], cache: KeptPartsPrograms
 ) -> CoreProgram:
-    """Return a dense decision with its parts that publishes only the parts in `roles`.
+    """Return a lookup decision with its parts that publishes only the parts in `roles`.
 
-    The decision's own pair is always published, followed by the kept parts in the
-    order of `ACTION_PART_ROLES`. The selection is made at each state cell, so a
-    dropped part is never stacked over the subjects. Keeping every part returns
+    The decision's own outputs are always published, followed by the kept parts in
+    the order of `ACTION_PARTS_ROLES`. The selection is made at each state cell, so
+    a dropped part is never stacked over the subjects. Keeping every part returns
     `program` unchanged; one object per kept subset keeps the executor's
     compiled-route cache warm. `cache` belongs to the owner of `program`, so the
     derived programs live exactly as long as it does; the owner serializes calls.
     """
-    unknown = roles - set(ACTION_PART_ROLES)
+    unknown = roles - set(ACTION_PARTS_ROLES)
     if unknown:
         msg = (
-            f"Unknown action part roles {sorted(unknown)}; known: {ACTION_PART_ROLES}."
+            f"Unknown action part roles {sorted(unknown)}; known: {ACTION_PARTS_ROLES}."
         )
         raise ValueError(msg)
-    if roles == set(ACTION_PART_ROLES):
+    if roles == set(ACTION_PARTS_ROLES):
         return program
     key = (id(program), roles)
     if key not in cache:
-        kept = tuple(role for role in ACTION_PART_ROLES if role in roles)
+        published = cast("tuple[str, ...]", program.output_roles)
+        kept = tuple(
+            role
+            for role in published
+            if role not in ACTION_PARTS_ROLES or role in roles
+        )
         cache[key] = (
             program,
             dataclasses.replace(
                 program,
                 function=_select_cell_outputs(
                     function=program.function,
-                    positions=(
-                        0,
-                        1,
-                        *(2 + ACTION_PART_ROLES.index(role) for role in kept),
-                    ),
+                    positions=tuple(published.index(role) for role in kept),
                 ),
-                output_roles=(ACTION_INDEX, DECISION_VALUE, *kept),
+                output_roles=kept,
             ),
         )
     return cache[key][1]
@@ -865,15 +879,15 @@ class _SelectedOutputs:
 def _decision_with_action_parts(
     *,
     Q_and_F: QAndFFunction,
-    reducer: Callable[..., PytreeValue],
     action_names: tuple[ActionName, ...],
+    body: Callable[..., Callable[..., PytreeValue]],
 ) -> Callable[..., PytreeValue]:
-    """Return the dense hard-max decision extended by the parts it maximizes over.
+    """Return the dense decision extended by the parts it reduces.
 
-    The result takes the arguments of `reducer`, the dense hard-max decision
-    over `Q_and_F`, and evaluates the parts form of `Q_and_F` once over the
-    action product. Its argmax and max are those `reducer` takes, of the same
-    `Q` over the same `F`.
+    The result takes the arguments of the parts form of `Q_and_F` mapped once
+    over the action product, and calls `body` built from it: the hard max over
+    that `Q` and `F`, or the EV1 reduction the solve applies, both without a
+    taste-shock draw.
     """
     parts = productmap(
         func=get_Q_and_F_parts(Q_and_F=Q_and_F),
@@ -881,9 +895,9 @@ def _decision_with_action_parts(
         batch_sizes=dict.fromkeys(action_names, 0),
     )
     return with_signature(
-        _DecisionWithActionParts(parts=parts),
-        args=list(inspect.signature(reducer).parameters),
-        return_annotation=("tuple[IntND, FloatND, FloatND, BoolND, FloatND, FloatND]"),
+        body(parts=parts),
+        args=list(inspect.signature(parts).parameters),
+        return_annotation="tuple[FloatND | IntND | BoolND, ...]",
         enforce=False,
     )
 

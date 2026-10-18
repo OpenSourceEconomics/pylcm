@@ -5,6 +5,18 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Choice probabilities in policy lookup with taste shocks
+
+- `Model.lookup_policy` accepts GridSearch regimes with `ExtremeValueTasteShocks`. The
+  returned `PolicyLookup` has `actions=None` and adds, per state row and discrete-action
+  combination, the conditional value `Qc`, the `choice_probabilities`
+  `softmax(Qc / scale)` and the `conditional_actions` attaining `Qc`; `value` is their
+  smoothed maximum; `keep_intermediates` adds `Q`, `F`, `U` and `CE` as elsewhere. These
+  describe the discrete choice `simulate` draws: `value` equals
+  the stored solve value at grid rows to numerical precision when both phases share the
+  current utility and Koopmans aggregator and the action grid is the declared one.
+  Regimes solved by an EGM-family solver are refused.
+
 ### Typed simulation random roots
 
 - `Model.simulate(seed=...)` and `taste_shock_seed=...` accept scalar typed

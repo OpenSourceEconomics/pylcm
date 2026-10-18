@@ -249,6 +249,8 @@ def _assert_same_public_result(
             regime_name="alive",
             states=states,
         )
+        assert expected_policy.actions is not None
+        assert actual_policy.actions is not None
         for action_name, expected in expected_policy.actions.items():
             np.testing.assert_array_almost_equal(
                 np.asarray(actual_policy.actions[action_name]),
@@ -830,6 +832,8 @@ def test_raw_domain_invalid_utility_matches_native_fold_and_literal_oracle() -> 
             period=period,
             regime_name="alive",
         )
+        assert expected_policy.actions is not None
+        assert actual_policy.actions is not None
         np.testing.assert_array_equal(
             np.asarray(actual_policy.actions["consumption"]),
             np.asarray(expected_policy.actions["consumption"]),
