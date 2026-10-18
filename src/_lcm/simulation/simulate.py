@@ -142,6 +142,7 @@ from _lcm.simulation.taste_stream import (
 from _lcm.simulation.transitions import (
     calculate_next_regime_membership,
     calculate_next_states,
+    clip_next_states,
     create_regime_state_action_space,
 )
 from _lcm.simulation.unit_executor import SimulationUnitExecutor
@@ -425,6 +426,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
             )
             memory = SimulationMemory(
                 budget_bytes=runtime.execution.device_memory_bytes,
+                budget_note=runtime.execution.device_memory_cap_note(),
                 axis_widths=MappingProxyType({})
                 if prepared_chunks is None
                 else prepared_chunks.plan.profile.axis_widths,
@@ -2060,7 +2062,36 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 delta=route_delta,
                 next_states=next_states,
             )
-        states = next_states
+        states = clip_next_states(
+            states=next_states,
+            regimes=regimes,
+            base_spaces=base_state_action_spaces,
+            targets=tuple(
+                dict.fromkeys(
+                    (
+                        *realization_targets_next_period,
+                        *(
+                            leg.realized_fallback.regime
+                            for edge in regime.gated_edges.values()
+                            for leg in edge.legs
+                        ),
+                    )
+                )
+            ),
+            next_period=period + 1,
+            source=regime_name,
+            new_regime_ids=new_subject_regime_ids,
+            regime_ids=regime_names_to_ids,
+            logger=logger,
+            subjects=subject_ids_in_regime,
+            genuine=_genuine_rows(
+                subject_slice=subject_slice,
+                n_real=n_subjects
+                if original_n_subjects is None
+                else original_n_subjects,
+            ),
+            memory=memory,
+        )
 
     return (
         simulation_result,
@@ -4193,6 +4224,18 @@ def _resources_at_subjects(
         ),
         (n_subjects,),
     )
+
+
+def _genuine_rows(*, subject_slice: slice | SubjectRows, n_real: int) -> np.ndarray:
+    """Mark the chunk rows that stand for a distinct real subject.
+
+    An ungrouped chunk's rows at or past `n_real` are alignment copies of the
+    last subject; a grouped chunk's short tail repeats its last original row.
+    """
+    if isinstance(subject_slice, SubjectRows):
+        rows = subject_slice.rows
+        return np.concatenate(([True], rows[1:] != rows[:-1]))
+    return np.arange(subject_slice.start, subject_slice.stop) < n_real
 
 
 def _first_empty_action_row(*, indices: IntND, in_regime: BoolND) -> IntND:

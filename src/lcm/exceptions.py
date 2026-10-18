@@ -50,6 +50,10 @@ class InvalidStateTransitionProbabilitiesError(PyLCMError):
     """
 
 
+class OffGridStateError(PyLCMError):
+    """Raised when an explicitly guarded continuous state leaves its grid."""
+
+
 class InvalidInitialConditionsError(PyLCMError):
     """Raised when the initial conditions (states or regimes) are invalid."""
 
@@ -123,6 +127,10 @@ class RegimeInitializationError(ModelInitializationError):
     surfaces from either call. Catching `ModelInitializationError` catches
     both.
     """
+
+
+class OffGridPolicyError(ModelInitializationError):
+    """Raised when a solver cannot honour a state grid's declared `off_grid` rule."""
 
 
 class GridInitializationError(PyLCMError):

@@ -201,6 +201,9 @@ def test_candidate_frontier_describes_dynamic_arguments_once(
         _model(execution_config=ExecutionConfig(device_memory_bytes=2**32)).solve(
             params=get_params(n_periods=_N_PERIODS),
             log_level="off",
+            # Runtime checks off: their off-grid count producers are host
+            # operations whose lowering keys would be counted beside the cores.
+            runtime_checks=False,
         )
 
     monkeypatch.setattr(

@@ -20,6 +20,7 @@ from dags import concatenate_functions
 from dags.tree import qname_from_tree_path
 
 from _lcm.grids import ContinuousGrid, DiscreteGrid, IrregSpacedGrid
+from _lcm.grids.continuous import _clip_grid_value
 from _lcm.grids.coordinates import get_irreg_coordinate
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.ndimage import map_coordinates
@@ -27,7 +28,15 @@ from _lcm.typing import ArrayTree, StateName
 from _lcm.utils.functools import all_as_kwargs
 from _lcm.variables import from_regime, get_grids
 from lcm.regime import Regime as UserRegime
-from lcm.typing import BoolND, Float1D, FloatND, IntND, ReferenceName, ScalarFloat
+from lcm.typing import (
+    BoolND,
+    Float1D,
+    FloatND,
+    IntND,
+    OffGrid,
+    ReferenceName,
+    ScalarFloat,
+)
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -558,13 +567,21 @@ def _get_coordinate_finder(
             state_name = in_name.removeprefix("next_")
             points_param = qname_from_tree_path((state_name, "points"))
             return _RuntimePointsIrregCoordinateFinder(
-                in_name=in_name, points_param=points_param
+                in_name=in_name, points_param=points_param, off_grid=grid.off_grid
             )
-        return _FixedPointsIrregCoordinateFinder(in_name=in_name, points=grid.to_jax())
+        return _FixedPointsIrregCoordinateFinder(
+            in_name=in_name, points=grid.to_jax(), off_grid=grid.off_grid
+        )
 
     # All other grid types (LinSpaced, LogSpaced, Piecewise*,
     # _ContinuousStochasticProcess)
-    return _GridCoordinateFinder(in_name=in_name, grid=grid)
+    return _GridCoordinateFinder(
+        in_name=in_name,
+        grid=grid,
+        clip_points=(
+            grid.to_jax() if grid.off_grid in ("clip_lookup", "clip_state") else None
+        ),
+    )
 
 
 def _get_interpolator(
@@ -782,6 +799,10 @@ class _RuntimePointsIrregCoordinateFinder:
     """Name under which the value arrives."""
     points_param: str
     """Qualified name of the runtime parameter carrying the grid points."""
+    off_grid: OffGrid = dataclasses.field(
+        default="extrapolate", metadata={"fingerprint_omit_if_default": True}
+    )
+    """The declared policy for exterior lookup values."""
 
     def __post_init__(self) -> None:
         _publish_signature(
@@ -796,9 +817,11 @@ class _RuntimePointsIrregCoordinateFinder:
         kwargs = all_as_kwargs(
             args=args, kwargs=kwargs, arg_names=[self.in_name, self.points_param]
         )
-        return get_irreg_coordinate(
-            value=kwargs[self.in_name], points=kwargs[self.points_param]
-        )
+        points = kwargs[self.points_param]
+        value = kwargs[self.in_name]
+        if self.off_grid in ("clip_lookup", "clip_state"):
+            value = _clip_grid_value(value=value, points=points)
+        return get_irreg_coordinate(value=value, points=points)
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True, eq=False)
@@ -809,6 +832,10 @@ class _FixedPointsIrregCoordinateFinder:
     """Name under which the value arrives."""
     points: Float1D
     """The grid's points."""
+    off_grid: OffGrid = dataclasses.field(
+        default="extrapolate", metadata={"fingerprint_omit_if_default": True}
+    )
+    """The declared policy for exterior lookup values."""
 
     def __post_init__(self) -> None:
         _publish_signature(
@@ -821,7 +848,10 @@ class _FixedPointsIrregCoordinateFinder:
     @no_type_check
     def __call__(self, *args: FloatND, **kwargs: FloatND) -> FloatND:
         kwargs = all_as_kwargs(args=args, kwargs=kwargs, arg_names=[self.in_name])
-        return get_irreg_coordinate(value=kwargs[self.in_name], points=self.points)
+        value = kwargs[self.in_name]
+        if self.off_grid in ("clip_lookup", "clip_state"):
+            value = _clip_grid_value(value=value, points=self.points)
+        return get_irreg_coordinate(value=value, points=self.points)
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True, eq=False)
@@ -832,6 +862,10 @@ class _GridCoordinateFinder:
     """Name under which the value arrives."""
     grid: ContinuousGrid
     """The grid the value is placed on."""
+    clip_points: Float1D | None = dataclasses.field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Concrete clipping nodes, resolved before tracing coordinate lookup."""
 
     def __post_init__(self) -> None:
         _publish_signature(
@@ -844,7 +878,11 @@ class _GridCoordinateFinder:
     @no_type_check
     def __call__(self, *args: FloatND, **kwargs: FloatND) -> FloatND:
         kwargs = all_as_kwargs(args=args, kwargs=kwargs, arg_names=[self.in_name])
-        return self.grid.get_coordinate(kwargs[self.in_name])
+        value = kwargs[self.in_name]
+        if self.clip_points is not None:
+            # Clip physical values before a logarithmic coordinate can become NaN.
+            value = _clip_grid_value(value=value, points=self.clip_points)
+        return self.grid.get_coordinate(value)
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True, eq=False)

@@ -70,6 +70,7 @@ from _lcm.model_processing import (
     fail_if_nonpositive_taste_shock_scale,
     validate_model_inputs,
 )
+from _lcm.off_grid import fail_if_endogenous_grid_reads_a_clipped_grid
 from _lcm.pandas_utils import (
     convert_series_in_params,
     initial_conditions_from_dataframe,
@@ -149,6 +150,7 @@ from _lcm.simulation.initial_conditions import (
     pad_initial_conditions_to_multiple,
     physical_state_at_row,
     resolve_initial_periods,
+    transition_preflight_memory,
     validate_simulation_inputs,
 )
 from _lcm.simulation.initial_conditions import (
@@ -1160,6 +1162,14 @@ class Model:
             block_widths=self._execution.invariant_block_widths,
             schedule=self._execution.invariant_block_schedule,
         )
+        fail_if_endogenous_grid_reads_a_clipped_grid(
+            solvers={name: regime.solver for name, regime in self.user_regimes.items()},
+            grids={
+                name: (*regime.solution.grids.items(), *regime.simulation.grids.items())
+                for name, regime in self._regimes.items()
+            },
+            targets_by_regime=schedules.targets_by_regime,
+        )
         # The axis names a width may fix are what the core programs declare, so
         # this is the first point at which the declaration can be checked at all.
         # Each phase contributes one collection of programs.
@@ -1599,7 +1609,20 @@ class Model:
                 ages=self._time,
                 logger=get_call_logger(log_level="warning", runtime_checks=True),
                 process_grid_resolver=None,
+                memory=self._transition_memory(flat_params=flat_params),
+                producers=self._simulate_entry_operations,
             )
+
+    def _transition_memory(self, *, flat_params: FlatParams) -> SimulationMemory | None:
+        """Return the budgeted owner admitting this call's transition checks."""
+        return transition_preflight_memory(
+            execution=self._execution,
+            producers=self._simulate_entry_operations,
+            flat_params=flat_params,
+            regimes=self._regimes,
+            regime_names_to_ids=self.regime_names_to_ids,
+            ages=self._time,
+        )
 
     @beartype(conf=PARAMS_CONF)
     def solve(
@@ -1675,6 +1698,8 @@ class Model:
                         ages=self._time,
                         logger=log,
                         process_grid_resolver=None,
+                        memory=self._transition_memory(flat_params=flat_params),
+                        producers=self._simulate_entry_operations,
                     )
             result = self._solve_from_flat_params(
                 flat_params=flat_params,
@@ -1792,6 +1817,8 @@ class Model:
             ages=self._time,
             logger=log,
             process_grid_resolver=None,
+            memory=self._transition_memory(flat_params=flat_params),
+            producers=self._simulate_entry_operations,
         )
         preparation = self._prepare_solution(
             flat_params=flat_params,

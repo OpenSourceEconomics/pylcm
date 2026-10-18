@@ -261,13 +261,18 @@ def test_simulation_reports_an_empty_initial_state(*, enable_jit: bool) -> None:
 
 
 @pytest.mark.parametrize("enable_jit", [False, True])
-def test_a_fully_feasible_solve_has_no_warning(
+def test_a_fully_feasible_solve_has_only_off_grid_warning(
     *, enable_jit: bool, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """A fully feasible finite grid leaves the warning log empty."""
+    """Feasible actions can leave the hull without empty-action/value warnings."""
     model = _model(enable_jit=enable_jit, constrained=False)
     model.solve(params={"discount_factor": 0.5}, log_level="warning")
-    assert [record.getMessage() for record in caplog.records] == []
+    assert [record.getMessage() for record in caplog.records] == [
+        (
+            "Off-grid next states: regime='working', target='working', "
+            "period=0, state='wealth', phase='solve', count=2"
+        )
+    ]
 
 
 @pytest.mark.parametrize("enable_jit", [False, True])
@@ -637,10 +642,10 @@ def test_block_major_simulation_reports_each_count_once(
     assert _period_one_counts(messages=messages, kind="empty") == [5]
 
 
-def test_feasible_component_job_has_no_warning(
+def test_feasible_component_job_has_no_feasibility_warning(
     *, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """A job whose every cell has a finite feasible action logs no warning."""
+    """A fully feasible job logs no feasibility warning."""
     model = _blocked_model(constrained=False)
     directory = tmp_path / "jobs"
     plan_component_jobs(
@@ -655,7 +660,11 @@ def test_feasible_component_job_has_no_warning(
         log_level="warning",
     )
 
-    assert [record.getMessage() for record in caplog.records] == []
+    assert [
+        message
+        for message in (record.getMessage() for record in caplog.records)
+        if "no feasible action" in message or message.startswith("Inf in V_arr")
+    ] == []
 
 
 def _joint_utility(
@@ -872,6 +881,81 @@ def test_reached_joint_empty_state_uses_each_current_runtime_law(*, fold: bool) 
     np.testing.assert_array_almost_equal(
         reached_states[2], reached_states[0], decimal=DECIMAL_PRECISION
     )
+
+
+@pytest.mark.parametrize("runtime", [False, True])
+@pytest.mark.parametrize("fold", [False, True])
+@pytest.mark.parametrize("log_level", ["off", "warning", "progress", "debug"])
+def test_initial_joint_error_preserves_public_physical_states(
+    *,
+    runtime: bool,
+    fold: bool,
+    log_level: Literal["off", "warning", "progress", "debug"],
+) -> None:
+    """An adopted initial error must describe physical inputs, not lowered slots."""
+    params: UserParams = (
+        {
+            "working": {
+                "shocks": {
+                    "mean": jnp.asarray((2.0, -1.0)),
+                    "cov": jnp.asarray(((1.0, 0.4), (0.4, 2.0))),
+                }
+            }
+        }
+        if runtime
+        else {}
+    )
+    initial = {
+        "age": jnp.asarray([0.0]),
+        "wealth": jnp.asarray([0.5]),
+        "x": jnp.asarray([3.1]),
+        "y": jnp.asarray([-1.3]),
+        "regime_id": jnp.asarray([DecisionId.working], dtype=jnp.int32),
+    }
+    control = _joint_empty_model(
+        constrained=False, runtime=runtime, fold=fold, memory_budget=None
+    )
+    positive = control.simulate(
+        params=params,
+        initial_conditions=initial,
+        seed=534,
+        log_level="off",
+        runtime_checks=True,
+    ).to_dataframe()
+    first = positive.loc[positive["period"] == 0].iloc[0]
+    assert np.isfinite(first["value"])
+    assert first["consumption"] == 2.0
+    expected = np.asarray([0.5, 3.1, -1.3])
+    names = ("wealth", "x", "y")
+    np.testing.assert_array_almost_equal(
+        first[list(names)].to_numpy(dtype=float), expected, decimal=DECIMAL_PRECISION
+    )
+    model = _joint_empty_model(
+        constrained=True, runtime=runtime, fold=fold, memory_budget=None
+    )
+    with pytest.raises(
+        exceptions.NoFeasibleActionError, match=r"working.*period 0"
+    ) as caught:
+        model.simulate(
+            params=params,
+            initial_conditions=initial,
+            seed=534,
+            log_level=log_level,
+            # False would reach a different guard and miss initial formatting.
+            runtime_checks=True,
+        )
+    message = str(caught.value)
+    state = ast.literal_eval(
+        message.split("state ", 1)[1].split(" has no feasible action.", 1)[0]
+    )
+    assert set(state) == set(names)
+    np.testing.assert_array_almost_equal(
+        [state[name] for name in names], expected, decimal=DECIMAL_PRECISION
+    )
+    table = message.split("Per-constraint admissibility", 1)[1]
+    header = next(line for line in table.splitlines() if "affordable" in line)
+    assert set(names).issubset(header.split())
+    assert "shocks_normal_" not in message
 
 
 @pytest.mark.parametrize(

@@ -12,10 +12,10 @@ from _lcm.axis_boundaries import BoundaryOwner, effective_segment_bounds
 from _lcm.beartype_conf import GRID_CONF
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.grids import coordinates as grid_coordinates
-from _lcm.grids.continuous import ContinuousGrid
+from _lcm.grids.continuous import ContinuousGrid, _validate_off_grid
 from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import GridInitializationError
-from lcm.typing import Float1D, FloatND, Int1D, ScalarFloat, ScalarInt
+from lcm.typing import Float1D, FloatND, Int1D, OffGrid, ScalarFloat, ScalarInt
 
 if TYPE_CHECKING:
     type PiecewisePointCounts = tuple[int | ScalarInt, ...]
@@ -54,6 +54,11 @@ class _PiecewiseGrid(ContinuousGrid):
     points_per_segment: tuple[ScalarInt, ...]
     """Output-node count contributed by each nominal segment."""
 
+    off_grid: OffGrid = dataclasses.field(
+        default="extrapolate", metadata={"fingerprint_omit_if_default": True}
+    )
+    """Policy at the closed outer endpoints; interior ownership stays unchanged."""
+
     _breakpoint_values: Float1D = dataclasses.field(init=False, repr=False)
     _segment_selection_thresholds: Float1D = dataclasses.field(init=False, repr=False)
     _segment_starts: Float1D = dataclasses.field(init=False, repr=False)
@@ -61,6 +66,7 @@ class _PiecewiseGrid(ContinuousGrid):
     _segment_n_points: Int1D = dataclasses.field(init=False, repr=False)
     _cumulative_offsets: Int1D = dataclasses.field(init=False, repr=False)
 
+    @beartype(conf=GRID_CONF)
     def __init__(
         self,
         *,
@@ -68,6 +74,7 @@ class _PiecewiseGrid(ContinuousGrid):
         stop: float | ScalarFloat,
         breakpoints: tuple[GridBreakpoint, ...],
         points_per_segment: PiecewisePointCounts,
+        off_grid: OffGrid = "extrapolate",
     ) -> None:
         _init_piecewise_grid(
             grid=self,
@@ -77,6 +84,8 @@ class _PiecewiseGrid(ContinuousGrid):
             points_per_segment=points_per_segment,
             requires_positive_bounds=isinstance(self, PiecewiseLogSpacedGrid),
         )
+        _validate_off_grid(off_grid)
+        object.__setattr__(self, "off_grid", off_grid)
 
     @property
     def n_points(self) -> ScalarInt:

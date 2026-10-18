@@ -22,7 +22,7 @@ import inspect
 import logging
 import math
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from types import MappingProxyType
 from typing import cast
@@ -133,6 +133,7 @@ class _ActionStreamingDisposition(StrEnum):
     DENSE_CO_MAP_REFERENCE_CHANNEL = (
         "deliberately_dense:co_map_with_separate_reference_channel"
     )
+    DENSE_OFF_GRID_RAISE_COUNT = "deliberately_dense:off_grid_raise_count"
     UNSUPPORTED_COLLECTIVE_EV1 = "unsupported:collective_ev1"
     UNSUPPORTED_EV1_FOLD = "unsupported:ev1_fold"
     UNSUPPORTED_COLLECTIVE_FOLD = "unsupported:collective_fold"
@@ -263,6 +264,11 @@ class GridSearch(Solver):
         from _lcm.regime_building.processing import (  # noqa: PLC0415
             get_conditioned_fold_weights_by_code,
         )
+        from _lcm.solution.landing_counts import (  # noqa: PLC0415
+            LandingCountedGridSearch,
+            get_landing_counting_max_Q_over_a,
+            landing_checks_of,
+        )
 
         program_functions: dict[int, Callable[..., PytreeValue]] = {}
         broadcast_extents: dict[int, int] = {}
@@ -364,7 +370,11 @@ class GridSearch(Solver):
                     "fold_conditioning": MappingProxyType(fold_conditioning),
                     "return_feasibility": True,
                 }
-                if action_partition_mesh is not None:
+                if landing_checks_of(Q_and_F):
+                    program_functions[q_id] = get_landing_counting_max_Q_over_a(
+                        **common_kwargs
+                    )
+                elif action_partition_mesh is not None:
                     program_functions[q_id] = get_action_partitioned_max_Q_over_a(
                         Q_and_F=Q_and_F,
                         batch_sizes=common_kwargs["batch_sizes"],
@@ -388,11 +398,14 @@ class GridSearch(Solver):
                         else get_max_Q_over_a(**common_kwargs)
                     )
                 reducer = program_functions[q_id]
+                counted = CountedGridSearch(
+                    function=cast("Callable[..., tuple[FloatND, BoolND]]", reducer),
+                    collective=context.stakeholders is not None,
+                )
                 program_functions[q_id] = with_signature(
-                    CountedGridSearch(
-                        function=cast("Callable[..., tuple[FloatND, BoolND]]", reducer),
-                        collective=context.stakeholders is not None,
-                    ),
+                    LandingCountedGridSearch(counted=counted)
+                    if landing_checks_of(Q_and_F)
+                    else counted,
                     args=list(inspect.signature(reducer).parameters),
                     enforce=False,
                 )
@@ -466,18 +479,32 @@ class GridSearch(Solver):
                 argument_builder=argument_builder,
                 requirements=requirements,
                 output_roles=(
-                    (
-                        VALUE,
-                        DISSOLUTION_FLAG,
-                        StateAxesLeading(state_names=(), dtype=jnp.int32, shape=()),
-                        StateAxesLeading(state_names=(), dtype=jnp.int32, shape=()),
-                    )
-                    if context.stakeholders is not None
-                    else (
-                        VALUE,
-                        StateAxesLeading(state_names=(), dtype=jnp.int32, shape=()),
-                        StateAxesLeading(state_names=(), dtype=jnp.int32, shape=()),
-                    )
+                    *(
+                        (
+                            VALUE,
+                            DISSOLUTION_FLAG,
+                            StateAxesLeading(state_names=(), dtype=jnp.int32, shape=()),
+                            StateAxesLeading(state_names=(), dtype=jnp.int32, shape=()),
+                        )
+                        if context.stakeholders is not None
+                        else (
+                            VALUE,
+                            StateAxesLeading(state_names=(), dtype=jnp.int32, shape=()),
+                            StateAxesLeading(state_names=(), dtype=jnp.int32, shape=()),
+                        )
+                    ),
+                    # One raw landing total per raise-rule check the kernel counts.
+                    *(
+                        (
+                            StateAxesLeading(
+                                state_names=(),
+                                dtype=jnp.int32,
+                                shape=(len(landing_checks_of(Q_and_F)),),
+                            ),
+                        )
+                        if landing_checks_of(Q_and_F)
+                        else ()
+                    ),
                 ),
                 disposition=(
                     CoreExecutionDisposition.PLANNED
@@ -490,7 +517,8 @@ class GridSearch(Solver):
             result[period] = _GridSearchPeriodKernel(
                 _core_programs=MappingProxyType({"main": program})
                 if not context.invariant_bindings
-                else _bound_programs(program=program, context=context)
+                else _bound_programs(program=program, context=context),
+                landing_checks=landing_checks_of(Q_and_F),
             )
         return SolutionKernels(period_kernels=MappingProxyType(result))
 
@@ -595,6 +623,8 @@ def _classify_action_streaming(
     *, context: SolverBuildContext
 ) -> _ActionStreamingDisposition:
     """Classify one solve route without conflating dense and unsupported cases."""
+    from _lcm.solution.landing_counts import landing_checks_of  # noqa: PLC0415
+
     action_extents = context.state_action_space.actions_grid_shapes
     if context.has_taste_shocks and context.stakeholders is not None:
         disposition = _ActionStreamingDisposition.UNSUPPORTED_COLLECTIVE_EV1
@@ -616,6 +646,10 @@ def _classify_action_streaming(
         disposition = _ActionStreamingDisposition.DENSE_EV1_NONCANONICAL
     elif context.stakeholders is not None:
         disposition = _ActionStreamingDisposition.DENSE_COLLECTIVE_RESOURCES
+    elif any(map(landing_checks_of, context.Q_and_F_functions.values())):
+        # The dense reduction sums each action's raw raise-rule landings over
+        # the feasible actions in the pass that takes the maximum.
+        disposition = _ActionStreamingDisposition.DENSE_OFF_GRID_RAISE_COUNT
     else:
         disposition = _ActionStreamingDisposition.STREAMED
     return disposition
@@ -863,6 +897,14 @@ class _GridSearchPeriodKernel:
 
     _core_programs: Mapping[str, CoreProgram]
     """The immutable GridSearch program graph: `main`, or one program per code."""
+    landing_checks: tuple[tuple[RegimeName, StateName], ...] = field(
+        default=(), metadata={"fingerprint_omit_if_default": True}
+    )
+    """The `(target, state)` raise-rule landings the program counts, in order.
+
+    A nonzero total is a reached raw landing outside a grid declaring
+    `off_grid="raise"`, and fails the solve.
+    """
 
     def __post_init__(self) -> None:
         """Snapshot and require the one mathematical GridSearch core family."""
@@ -973,6 +1015,18 @@ class _GridSearchPeriodKernel:
             )
         )
         out = compiled_cores[core_key](**arguments)
+        if self.landing_checks:
+            from _lcm.solution.landing_counts import (  # noqa: PLC0415
+                fail_on_reached_landings,
+            )
+
+            *out, landing_totals = cast("tuple[PytreeValue, ...]", out)
+            fail_on_reached_landings(
+                totals=cast("IntND", landing_totals),
+                checks=self.landing_checks,
+                regime_name=argument_builder.regime_name,
+                period=period,
+            )
         # A program declaring the value alone publishes no feasibility counts.
         if program.output_roles is VALUE:
             return KernelOutput(value=cast("FloatND", out))

@@ -241,8 +241,14 @@ def test_budgeted_values_agree_with_the_unbudgeted_solve(
 
 
 def test_budget_below_every_candidate_fails_closed(*, monkeypatch, tmp_path) -> None:
-    """One byte fits no compiled core, so planning refuses before backward induction."""
-    with pytest.raises(ExecutionPlanningError, match="leaving nothing"):
+    """One byte holds not even the model's inputs, so solve refuses before any core.
+
+    The transition preflight admits the parameters and model-owned grids before the
+    solve plan runs, so its resident-transfer check is the first to refuse.
+    """
+    with pytest.raises(
+        ExecutionPlanningError, match=r"requires \d+ bytes on .* against a 1-byte"
+    ):
         _solve_capturing(
             monkeypatch=monkeypatch,
             tmp_path=tmp_path,
