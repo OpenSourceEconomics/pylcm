@@ -740,3 +740,84 @@ def test_lowering_module_imports_without_beartype_warnings() -> None:
         [sys.executable, "-c", code], capture_output=True, text=True, check=False
     )
     assert completed.returncode == 0, completed.stderr
+
+
+@categorical(ordered=False)
+class _VisitRegimeId:
+    origin: ScalarInt
+    working: ScalarInt
+    dead: ScalarInt
+
+
+def _period_utility(period: int) -> Callable[..., FloatND]:
+    def utility(*, labor: IntND, hours: FloatND) -> FloatND:
+        return (100.0 + period) * (1 - labor) + hours
+
+    return utility
+
+
+def _visited_only_utility(period: int) -> Callable[..., FloatND]:
+    """Build the simulated utility, which exists only where subjects are."""
+    if period != 2:
+        msg = f"No simulated utility at period {period}; subjects arrive at 2."
+        raise ValueError(msg)
+    return _period_utility(period)
+
+
+def _visit_model() -> Model:
+    """Subjects start in origin at period 0 and in working at period 2. The solve
+    moves origin to working, the simulation moves it to dead, so working is solved
+    at periods 1 and 2 but visited only at period 2."""
+    working = Regime(
+        actions={
+            "labor": DiscreteGrid(category_class=Labor),
+            "hours": ConditionalAction(
+                grid=IrregSpacedGrid(points=(0.0, 1.0, 2.0)),
+                active_when={"labor": Labor.yes},
+                inactive_value=0.0,
+            ),
+        },
+        functions={
+            "utility": Phased(
+                solve=PeriodSpecializedFunction(build=_period_utility, signature=int),
+                simulate=PeriodSpecializedFunction(
+                    build=_visited_only_utility, signature=int
+                ),
+            )
+        },
+    )
+    return Model(
+        regimes={
+            "origin": Regime(functions={"utility": _zero}),
+            "working": working,
+            "dead": Regime(functions={"utility": _zero}),
+        },
+        regime_id_class=_VisitRegimeId,
+        n_periods=4,
+        initial_nodes=InitialNodes(by_period={0: "origin", 2: "working"}),
+        edges=Phased(
+            solve={
+                "origin": {"working": Periods(values=(0,))},
+                "working": {"dead": Periods(values=(1, 2))},
+            },
+            simulate={
+                "origin": {"dead": Periods(values=(0,))},
+                "working": {"dead": Periods(values=(1, 2))},
+            },
+        ),
+    )
+
+
+@pytest.mark.parametrize(("period", "expected"), [(1, 101.0), (2, 102.0)])
+def test_simulated_reader_is_bound_where_subjects_visit(
+    *, period: int, expected: float
+) -> None:
+    """A simulated utility built only at visited periods does not block the model,
+    and working is worth `100 + period + inactive hours` with labor no."""
+    solution = _visit_model().solve(
+        params={"discount_factor": 0.95, "origin": {}, "working": {}, "dead": {}},
+        log_level="off",
+    )
+    np.testing.assert_allclose(
+        np.asarray(solution.values[period]["working"]), expected, rtol=1e-6
+    )
