@@ -41,7 +41,6 @@ from jax._src.dtypes import ExtendedDType
 from jax._src.lib import xla_client
 from jaxtyping import Float, Int, Scalar
 
-from _lcm.continuation import EGMContinuationSpec
 from _lcm.engine import (
     Regime,
     StateActionSpace,
@@ -181,7 +180,6 @@ from _lcm.solution.continuation_reads import published_continuation_template
 from _lcm.solution.contract import (
     BackwardInductionResult,
     ContinuationPayload,
-    GeneratedContinuationAuthority,
     GeneratedReplayAuthority,
 )
 from _lcm.solution.diagnostics import (
@@ -620,9 +618,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
 
     solution: dict[int, MappingProxyType[RegimeName, FloatND]] = {}
     simulation_policies: dict[int, MappingProxyType[RegimeName, SimulationPolicy]] = {}
-    generated_continuation_authorities: dict[
-        int, MappingProxyType[RegimeName, GeneratedContinuationAuthority]
-    ] = {}
     generated_replay_authorities: dict[
         int, MappingProxyType[RegimeName, GeneratedReplayAuthority]
     ] = {}
@@ -732,9 +727,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 period_solution: dict[RegimeName, FloatND] = {}
                 period_continuations: dict[RegimeName, ContinuationPayload] = {}
                 period_simulation_policies: dict[RegimeName, SimulationPolicy] = {}
-                period_generated_continuation_authorities: dict[
-                    RegimeName, GeneratedContinuationAuthority
-                ] = {}
                 period_generated_replay_authorities: dict[
                     RegimeName, GeneratedReplayAuthority
                 ] = {}
@@ -959,11 +951,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                             ),
                             regime_name=regime_name,
                             period=period,
-                            continuation_query_spec=(
-                                continuation_spec.layout.query_spec
-                                if isinstance(continuation_spec, EGMContinuationSpec)
-                                else None
-                            ),
                             artifact_authorities=regime.solution.artifact_authorities,
                         )
                         V_arr = result.value
@@ -988,10 +975,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                             period=period,
                             continuation_publishers=next_regime_to_continuation,
                         )
-                        if result.generated_continuation_authority is not None:
-                            period_generated_continuation_authorities[regime_name] = (
-                                result.generated_continuation_authority
-                            )
                         if result.continuation is not None:
                             period_continuations[regime_name] = result.continuation
                         if retain_all_artifacts:
@@ -1332,10 +1315,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                             )
                         }
                     )
-                if period_generated_continuation_authorities:
-                    generated_continuation_authorities[period] = MappingProxyType(
-                        period_generated_continuation_authorities
-                    )
                 if period_generated_replay_authorities:
                     generated_replay_authorities[period] = MappingProxyType(
                         period_generated_replay_authorities
@@ -1425,9 +1404,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         value_functions=MappingProxyType(solution),
         simulation_policies=MappingProxyType(simulation_policies),
         generated_replay_authorities=MappingProxyType(generated_replay_authorities),
-        generated_continuation_authorities=MappingProxyType(
-            generated_continuation_authorities
-        ),
         dissolution_flags=MappingProxyType(dissolution_flags),
         diagnostics=MappingProxyType(solver_diagnostics),
         retained_continuations=ArtifactStore(retained_continuations),

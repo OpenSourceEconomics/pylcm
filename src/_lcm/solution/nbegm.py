@@ -10490,7 +10490,7 @@ def _assemble_nbegm_query_carry(
     # The floor is stored once per fixed cell and therefore has no action axis.
     floor = data.floor_used.reshape(ride_shape)
     floor = jnp.transpose(floor, axes=state_permutation)
-    if data.liquid_corner_data is not None or data.adaptive_outer_data is not None:
+    if data.liquid_corner_data is not None:
         raise TypeError("NB publication requires its compact interval representation.")
     data = replace(
         data,

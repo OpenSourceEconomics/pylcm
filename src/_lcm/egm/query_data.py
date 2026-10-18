@@ -12,7 +12,7 @@ import jax.numpy as jnp
 
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.grids.discrete import read_at_codes
-from lcm.typing import BoolND, Float1D, FloatND, IntND, ScalarInt
+from lcm.typing import BoolND, FloatND, IntND, ScalarInt
 
 if TYPE_CHECKING:
     from _lcm.typing import PytreeChild
@@ -52,24 +52,6 @@ class EGMLiquidCornerData:
 
 
 @dataclass(frozen=True, kw_only=True)
-class EGMAdaptiveOuterData:
-    """Bounded mesh transport whose active prefix is bound by model authority."""
-
-    outer_nodes: Float1D
-    """Finite-safe adjuster coordinates with fixed capacity."""
-    outer_count: ScalarInt
-    """Actual adjuster-node count, excluding the separate keeper slot."""
-    outer_node_kind: IntND
-    """Active or padding status of each adjuster coordinate."""
-    outer_link_valid: BoolND
-    """Supported adjacent outer links per fixed cell and discrete action."""
-    outer_owner_id: IntND
-    """Canonical adjuster identities per fixed cell and discrete action."""
-    outer_side_id: IntND
-    """One-sided outer interval association."""
-
-
-@dataclass(frozen=True, kw_only=True)
 class EGMQueryData:
     """Candidate provenance beside the carry's existing conditional numeric rows."""
 
@@ -95,8 +77,6 @@ class EGMQueryData:
     """Canonical compact one-sided interval owners."""
     liquid_corner_data: EGMLiquidCornerData | None = None
     """Liquid-dependent alternative to the complete compact corner group."""
-    adaptive_outer_data: EGMAdaptiveOuterData | None = None
-    """Optional active-prefix outer mesh; its reduction meaning is model-owned."""
 
     def __post_init__(self) -> None:
         compact = (
@@ -118,7 +98,7 @@ class EGMQueryData:
         return MappingProxyType(dict(_query_record_leaves(record=self, prefix=())))
 
 
-type QueryRecord = EGMQueryData | EGMLiquidCornerData | EGMAdaptiveOuterData
+type QueryRecord = EGMQueryData | EGMLiquidCornerData
 
 
 def select_query_data(
@@ -128,8 +108,6 @@ def select_query_data(
     floor_positions: tuple[ScalarInt | int | slice, ...] | None = None,
 ) -> EGMQueryData:
     """Select DC row axes while preserving the floor's independently declared axes."""
-    if data.adaptive_outer_data is not None:
-        raise TypeError("DC row selection cannot reinterpret an adaptive outer bank.")
 
     def select(leaf: NumericQueryLeaf | None) -> NumericQueryLeaf | None:
         return None if leaf is None else read_at_codes(array=leaf, positions=positions)
@@ -155,38 +133,6 @@ def select_query_data(
     )
 
 
-def select_adaptive_query_data(
-    *,
-    data: EGMQueryData,
-    cell_positions: tuple[ScalarInt | int | slice, ...],
-    floor_positions: tuple[ScalarInt | int | slice, ...] | None = None,
-) -> EGMQueryData:
-    """Select declared cell/D axes without indexing the global adaptive mesh."""
-    mesh = data.adaptive_outer_data
-    if mesh is None:
-        raise TypeError("Adaptive row selection requires its declared mesh subtree.")
-    selected = select_query_data(
-        data=replace(data, adaptive_outer_data=None),
-        positions=cell_positions,
-        floor_positions=floor_positions,
-    )
-    return replace(
-        selected,
-        adaptive_outer_data=replace(
-            mesh,
-            outer_link_valid=read_at_codes(
-                array=mesh.outer_link_valid, positions=cell_positions
-            ),
-            outer_owner_id=read_at_codes(
-                array=mesh.outer_owner_id, positions=cell_positions
-            ),
-            outer_side_id=read_at_codes(
-                array=mesh.outer_side_id, positions=cell_positions
-            ),
-        ),
-    )
-
-
 def _query_record_leaves(
     *, record: QueryRecord, prefix: tuple[str, ...]
 ) -> tuple[tuple[tuple[str, ...], NumericQueryLeaf], ...]:
@@ -196,7 +142,7 @@ def _query_record_leaves(
         if value is None:
             continue
         path = (*prefix, attribute.name)
-        if isinstance(value, (EGMQueryData, EGMLiquidCornerData, EGMAdaptiveOuterData)):
+        if isinstance(value, (EGMQueryData, EGMLiquidCornerData)):
             leaves.extend(_query_record_leaves(record=value, prefix=path))
         else:
             leaves.append((path, cast("NumericQueryLeaf", value)))
@@ -237,7 +183,7 @@ def _unflatten_query_record(
     return record
 
 
-for _record_type in (EGMQueryData, EGMLiquidCornerData, EGMAdaptiveOuterData):
+for _record_type in (EGMQueryData, EGMLiquidCornerData):
     jax.tree_util.register_pytree_with_keys(
         _record_type,
         _flatten_query_record_with_keys,
@@ -254,20 +200,12 @@ def build_template_egm_query_data(
     interval_capacity: int,
     outer_capacity: int = 0,
     liquid_corner: bool = False,
-    adaptive_capacity: int | None = None,
 ) -> EGMQueryData:
     """Build finite inert query records with PAD or missing support throughout."""
     if row_capacity < 1 or interval_capacity < 1 or outer_capacity < 0:
         raise ValueError("Query row and interval capacities must be positive.")
     if any(extent < 1 for extent in (*state_shape, *action_shape)):
         raise ValueError("Query state and action extents must be positive.")
-    if adaptive_capacity is not None and (
-        adaptive_capacity < 2  # noqa: PLR2004 - a continuous mesh needs adjacent nodes
-        or outer_capacity != adaptive_capacity + 1
-    ):
-        raise ValueError(
-            "An adaptive bank needs one keeper plus its adjuster capacity."
-        )
     cells = (*state_shape, *action_shape)
     rows = (*cells, *((outer_capacity,) if outer_capacity else ()))
     row_shape = (*rows, row_capacity)
@@ -289,18 +227,6 @@ def build_template_egm_query_data(
         if liquid_corner
         else None
     )
-    adaptive = (
-        EGMAdaptiveOuterData(
-            outer_nodes=jnp.zeros((adaptive_capacity,), dtype),
-            outer_count=jnp.asarray(0, jnp.int32),
-            outer_node_kind=jnp.zeros((adaptive_capacity,), jnp.int32),
-            outer_link_valid=jnp.zeros((*cells, adaptive_capacity - 1), jnp.bool_),
-            outer_owner_id=jnp.zeros((*cells, adaptive_capacity), jnp.int32),
-            outer_side_id=jnp.zeros((*cells, adaptive_capacity), jnp.int32),
-        )
-        if adaptive_capacity is not None
-        else None
-    )
     return EGMQueryData(
         savings=jnp.zeros(row_shape, dtype),
         node_kind=jnp.zeros(row_shape, jnp.int32),
@@ -315,5 +241,4 @@ def build_template_egm_query_data(
         else jnp.zeros(corner_shape, jnp.int32),
         corner_side_id=None if liquid_corner else jnp.zeros(corner_shape, jnp.int32),
         liquid_corner_data=liquid,
-        adaptive_outer_data=adaptive,
     )

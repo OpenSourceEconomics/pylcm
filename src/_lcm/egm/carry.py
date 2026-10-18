@@ -309,8 +309,6 @@ def _stack_carry_leaf(
     names = tuple(key.name for key in path)
     if names in (("taste_shock_scale",), ("query_data", "floor_used")):
         return leaves[0]
-    if "adaptive_outer_data" in names:
-        return leaves[0]
     axis = -3 if "liquid_corner_data" in names else -2
     return jnp.stack(leaves, axis=axis)
 
@@ -730,31 +728,24 @@ def egm_query_role_tree(
     """Declare each numeric query buffer's exact dtype, shape and state axes."""
     return cast(
         "EGMQueryData",
-        jax.tree.map_with_path(
+        jax.tree.map(
             functools.partial(_query_output_role, state_names=state_names),
             query_data,
         ),
     )
 
 
-# keyword-only-exempt: library-callback=jax.tree.map_with_path
+# keyword-only-exempt: library-callback=jax.tree.map
 def _query_output_role(
-    path: tuple[jax.tree_util.GetAttrKey, ...],
     leaf: NumericQueryLeaf,
     *,
     state_names: tuple[StateName, ...],
 ) -> OutputRoleLeaf:
-    """Replicate shared mesh metadata and place conditional banks by fixed states."""
+    """Place conditional query banks by fixed states."""
     from _lcm.execution.output_layout import StateAxesLeading  # noqa: PLC0415
 
-    names = tuple(key.name for key in path)
-    shared_mesh = names[0] == "adaptive_outer_data" and names[-1] in (
-        "outer_nodes",
-        "outer_count",
-        "outer_node_kind",
-    )
     return StateAxesLeading(
-        state_names=() if shared_mesh else state_names,
+        state_names=state_names,
         dtype=leaf.dtype,
         shape=leaf.shape,
     )
@@ -853,7 +844,7 @@ def shard_carry_template(
         ),
     )
     scalar_spec = jax.NamedSharding(plan.mesh, jax.P())
-    return jax.tree.map_with_path(
+    return jax.tree.map(
         functools.partial(
             _place_carry_leaf, scalar_spec=scalar_spec, leading_spec=leading_spec
         ),
@@ -881,21 +872,12 @@ def _place_carry_template_on_one_device(
     return jax.device_put(template, jax.sharding.SingleDeviceSharding(devices[0]))
 
 
-# keyword-only-exempt: library-callback=jax.tree.map_with_path
+# keyword-only-exempt: library-callback=jax.tree.map
 def _place_carry_leaf(
-    path: tuple[jax.tree_util.GetAttrKey, ...],
     leaf: NumericQueryLeaf,
     *,
     scalar_spec: jax.NamedSharding,
     leading_spec: jax.NamedSharding,
 ) -> NumericQueryLeaf:
-    """Replicate scalar/shared mesh data and partition fixed-state banks."""
-    names = tuple(key.name for key in path)
-    shared_mesh = "adaptive_outer_data" in names and names[-1] in (
-        "outer_nodes",
-        "outer_count",
-        "outer_node_kind",
-    )
-    return jax.device_put(
-        leaf, scalar_spec if leaf.ndim == 0 or shared_mesh else leading_spec
-    )
+    """Replicate scalar data and partition fixed-state banks."""
+    return jax.device_put(leaf, scalar_spec if leaf.ndim == 0 else leading_spec)

@@ -1378,10 +1378,9 @@ def _stacked_nested_carry_role(
 ) -> StateAxesLeading:
     """Keep fixed-cell floors shared and stack candidate-dependent leaves."""
     names = tuple(key.name for key in path)
-    if (
-        role.shape is None
-        or names in (("taste_shock_scale",), ("query_data", "floor_used"))
-        or "adaptive_outer_data" in names
+    if role.shape is None or names in (
+        ("taste_shock_scale",),
+        ("query_data", "floor_used"),
     ):
         return role
     axis = len(role.shape) - (2 if "liquid_corner_data" in names else 1)

@@ -66,25 +66,20 @@ def test_feasibility_count_addition_saturates() -> None:
 
 
 @pytest.mark.parametrize("corner", ["compact", "liquid"])
-@pytest.mark.parametrize("adaptive", [False, True])
-def test_query_payload_roundtrip_preserves_named_numeric_leaves(
-    *, corner: str, adaptive: bool
-) -> None:
+def test_query_payload_roundtrip_preserves_named_numeric_leaves(*, corner: str) -> None:
     """Every query leaf retains its original buffer and field path through JAX."""
     builder = getattr(carry_module, "build_template_egm_query_data", None)
     assert builder is not None, "EGM carries need optional typed query transport."
     query = builder(
         state_shape=(2,),
         action_shape=(3,),
-        outer_capacity=4 if adaptive else 0,
         row_capacity=5,
         interval_capacity=1,
         liquid_corner=corner == "liquid",
-        adaptive_capacity=3 if adaptive else None,
     )
     template = carry_module.build_template_egm_carry(
         n_rows=5,
-        leading_shape=(2, 3, 4) if adaptive else (2, 3),
+        leading_shape=(2, 3),
         query_data=query,
     )
     leaves, tree = jax.tree_util.tree_flatten(template)
@@ -228,7 +223,7 @@ def test_outer_stack_rejects_partial_query_transport() -> None:
 
 @pytest.mark.parametrize("liquid_corner", [False, True])
 def test_query_output_roles_follow_each_leafs_own_axes(*, liquid_corner: bool) -> None:
-    """Floors name fixed states while shared mesh nodes and counts replicate."""
+    """Every query leaf names the fixed states and keeps its own shape and dtype."""
     builder = getattr(carry_module, "egm_query_role_tree", None)
     assert builder is not None, "Each query buffer needs an explicit output role."
     query = carry_module.build_template_egm_query_data(
@@ -238,7 +233,6 @@ def test_query_output_roles_follow_each_leafs_own_axes(*, liquid_corner: bool) -
         row_capacity=5,
         interval_capacity=2,
         liquid_corner=liquid_corner,
-        adaptive_capacity=3,
     )
     roles = builder(query_data=query, state_names=("income",))
     role_leaves = {
@@ -247,14 +241,9 @@ def test_query_output_roles_follow_each_leafs_own_axes(*, liquid_corner: bool) -
     }
     for path, leaf in query.leaves().items():
         role = role_leaves[path]
-        shared_mesh = path[0] == "adaptive_outer_data" and path[-1] in (
-            "outer_nodes",
-            "outer_count",
-            "outer_node_kind",
-        )
         assert type(role) is StateAxesLeading
         assert (role.state_names, role.n_free_leading_axes, role.shape, role.dtype) == (
-            () if shared_mesh else ("income",),
+            ("income",),
             0,
             leaf.shape,
             leaf.dtype,

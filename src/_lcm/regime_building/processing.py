@@ -39,7 +39,6 @@ from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from _lcm.coarse_transition import _CoarseTransitionCell
 from _lcm.constraints.dynamic_bound import validate_declared_bounds
 from _lcm.continuation import (
-    AdaptiveOuterQuerySpec,
     ContinuationSpec,
     EGMContinuationSpec,
     FiniteOuterQuerySpec,
@@ -1671,10 +1670,7 @@ def _prepare_nbegm_query_models(
         build_query_model_authority,
     )
     from _lcm.egm.nbegm import collect_nbegm_metadata  # noqa: PLC0415
-    from _lcm.egm.outer_search import (  # noqa: PLC0415
-        AdaptiveOuterMesh,
-        FiniteOuterGrid,
-    )
+    from _lcm.egm.outer_search import FiniteOuterGrid  # noqa: PLC0415
     from _lcm.solution.nbegm import (  # noqa: PLC0415
         _BoundNBEGM,
         build_nbegm_interval_recipe,
@@ -1684,19 +1680,14 @@ def _prepare_nbegm_query_models(
     models = {}
     for name, user_regime in processor.representative_user_regimes.items():
         outer_solver = user_regime.solver
-        adaptive_solver = (
-            outer_solver
-            if isinstance(outer_solver, _BoundNNBEGM)
-            and isinstance(outer_solver.outer_search, AdaptiveOuterMesh)
-            else None
-        )
-        finite_solver = (
+        # An adaptive outer search admits only literal floors, so it never
+        # needs a query model: its regime falls through the NB check below.
+        nested_solver = (
             outer_solver
             if isinstance(outer_solver, _BoundNNBEGM)
             and isinstance(outer_solver.outer_search, FiniteOuterGrid)
             else None
         )
-        nested_solver = adaptive_solver or finite_solver
         solver = nested_solver.inner if nested_solver is not None else outer_solver
         bounds = processor.post_decision_bounds[name]
         if not isinstance(solver, _BoundNBEGM):
@@ -1793,11 +1784,8 @@ def _prepare_nbegm_query_models(
             if target not in bound.declaration_names
             and target not in evaluated_predicates
         )
-        adaptive_spec, finite_spec = _nbegm_nested_query_specs(
-            adaptive_solver=adaptive_solver,
-            finite_solver=finite_solver,
-            name=name,
-            cost_target=solver.budget_target,
+        finite_spec = _nbegm_finite_query_spec(
+            finite_solver=nested_solver, cost_target=solver.budget_target
         )
         authority = build_query_model_authority(
             bound=bound,
@@ -1830,21 +1818,10 @@ def _prepare_nbegm_query_models(
             functions=by_period[periods[0]],
             functions_by_period=by_period,
             target_periods=periods,
-            outer_mode=(
-                "adaptive_continuous"
-                if adaptive_spec is not None
-                else "finite_max"
-                if finite_spec is not None
-                else "none"
-            ),
+            outer_mode="finite_max" if finite_spec is not None else "none",
             outer_capacity=(
-                adaptive_spec.adjuster_capacity + 1
-                if adaptive_spec is not None
-                else len(finite_spec.outer_nodes) + 1
-                if finite_spec is not None
-                else 0
+                len(finite_spec.outer_nodes) + 1 if finite_spec is not None else 0
             ),
-            adaptive_outer=adaptive_spec,
             finite_outer=finite_spec,
             row_topology=EGMRowTopologySpec(
                 kind="nb_budget_interval_run", owner_capacity=len(interval_ids)
@@ -1877,35 +1854,27 @@ def _prepare_nbegm_query_models(
     return MappingProxyType(models) if models else None
 
 
-def _nbegm_nested_query_specs(
+def _nbegm_finite_query_spec(
     *,
-    adaptive_solver: _BoundNNBEGM | None,
     finite_solver: _BoundNNBEGM | None,
-    name: RegimeName,
     cost_target: FunctionName,
-) -> tuple[AdaptiveOuterQuerySpec | None, FiniteOuterQuerySpec | None]:
-    """Bind each declared nested search to its canonical query descriptor."""
+) -> FiniteOuterQuerySpec | None:
+    """Bind a declared finite nested search to its canonical query descriptor."""
     from _lcm.egm.outer_search import FiniteOuterGrid  # noqa: PLC0415
 
-    adaptive_spec = None
-    if adaptive_solver is not None:
-        adaptive_spec = _nbegm_adaptive_query_spec(
-            adaptive_solver=adaptive_solver, name=name, cost_target=cost_target
-        )
-    finite_spec = None
-    if finite_solver is not None:
-        search = finite_solver.outer_search
-        if not isinstance(search, FiniteOuterGrid):
-            raise TypeError("Finite NB authority requires its declared finite grid.")
-        finite_spec = FiniteOuterQuerySpec(
-            outer_state=finite_solver.outer_state,
-            outer_action=finite_solver.outer_action,
-            outer_post_decision=finite_solver.outer_post_decision,
-            keeper_target=finite_solver.outer_no_adjustment_candidate,
-            cost_target=cost_target,
-            outer_nodes=tuple(float(node) for node in search.grid.to_jax()),
-        )
-    return adaptive_spec, finite_spec
+    if finite_solver is None:
+        return None
+    search = finite_solver.outer_search
+    if not isinstance(search, FiniteOuterGrid):
+        raise TypeError("Finite NB authority requires its declared finite grid.")
+    return FiniteOuterQuerySpec(
+        outer_state=finite_solver.outer_state,
+        outer_action=finite_solver.outer_action,
+        outer_post_decision=finite_solver.outer_post_decision,
+        keeper_target=finite_solver.outer_no_adjustment_candidate,
+        cost_target=cost_target,
+        outer_nodes=tuple(float(node) for node in search.grid.to_jax()),
+    )
 
 
 def _with_nbegm_nested_role_models(
@@ -1915,21 +1884,8 @@ def _with_nbegm_nested_role_models(
     declarations_by_period: Mapping[int, Mapping[FunctionName, UserFunction]],
 ) -> NBEGMQueryModel:
     """Attach only the actual nested role models selected by canonical authority."""
-    from _lcm.egm.nbegm_query_model import (  # noqa: PLC0415
-        derive_adaptive_inner_models,
-        derive_finite_inner_models,
-    )
+    from _lcm.egm.nbegm_query_model import derive_finite_inner_models  # noqa: PLC0415
 
-    if model.authority.adaptive_outer is not None:
-        return dataclass_replace(
-            model,
-            adaptive_inner_models=derive_adaptive_inner_models(
-                model=model,
-                functions_by_period=functions_by_period,
-                declarations_by_period=declarations_by_period,
-            ),
-            functions_by_period=functions_by_period,
-        )
     if model.authority.finite_outer is not None:
         return dataclass_replace(
             model,
@@ -2116,47 +2072,6 @@ def _nbegm_evaluated_query_predicates(
             continue
         evaluated_predicates.append(target)
     return evaluated_predicates
-
-
-def _nbegm_adaptive_query_spec(
-    *, adaptive_solver: _BoundNNBEGM, name: RegimeName, cost_target: FunctionName
-) -> AdaptiveOuterQuerySpec:
-    """Bind declared search and branch aggregation into canonical mesh authority."""
-    search = adaptive_solver.outer_search
-    if not isinstance(search, AdaptiveOuterMesh):
-        raise TypeError("Adaptive NB authority requires its declared mesh search.")
-    aggregation = adaptive_solver.branch_aggregator
-    uniform = aggregation if isinstance(aggregation, UniformObservedFixedCost) else None
-    return AdaptiveOuterQuerySpec(
-        outer_state=adaptive_solver.outer_state,
-        outer_action=adaptive_solver.outer_action,
-        outer_post_decision=adaptive_solver.outer_post_decision,
-        keeper_target=adaptive_solver.outer_no_adjustment_candidate,
-        cost_target=cost_target,
-        adjuster_capacity=search.max_nodes,
-        golden_iterations=search.golden_iterations,
-        evaluator_identity=(),
-        evaluator_inputs=(),
-        branch_aggregation="uniform_observed_fixed_cost"
-        if uniform is not None
-        else "deterministic",
-        fixed_cost_target=uniform.scale_function if uniform is not None else None,
-        fixed_cost_support=(uniform.lower, uniform.upper)
-        if uniform is not None
-        else None,
-        mesh_authority_identity=(
-            "adaptive_nbegm",
-            name,
-            search.max_nodes,
-            search.max_refinement_rounds,
-            search.value_atol,
-            search.value_rtol,
-            search.golden_iterations,
-            search.outer_lipschitz_bound,
-            search.fail_closed,
-            tuple(float(point) for point in search.initial_grid.to_jax()),
-        ),
-    )
 
 
 def _with_declared_continuation_reads(
@@ -4262,7 +4177,6 @@ def _solver_with_query_authority(
             inner=dataclass_replace(
                 solver.inner, post_decision_bound=query_model.authority.bound
             ),
-            _adaptive_query=query_model.authority.adaptive_outer is not None,
         )
     elif isinstance(solver, _BoundNBEGM):
         if not isinstance(query_model, NBEGMQueryModel):

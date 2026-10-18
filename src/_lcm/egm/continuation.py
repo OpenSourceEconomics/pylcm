@@ -53,18 +53,13 @@ from _lcm.egm.interp import (
     prepare_padded_grid,
 )
 from _lcm.egm.nbegm_query import (
-    AdaptiveNBEGMQueryResult,
     NBEGMQuery,
     NBEGMQueryResult,
     build_nbegm_query,
 )
 from _lcm.egm.nbegm_query_model import NBEGMQueryModel
 from _lcm.egm.outer_envelope import right_germ_winner
-from _lcm.egm.query_data import (
-    EGMQueryData,
-    select_adaptive_query_data,
-    select_query_data,
-)
+from _lcm.egm.query_data import EGMQueryData, select_query_data
 from _lcm.egm.regime_introspection import (
     _get_child_discrete_actions,
     _get_child_resources,
@@ -2413,21 +2408,13 @@ def _read_feature_child_choices(
     )
     if collect_continuation_read_counts:
         if isinstance(
-            evaluated,
-            DCEGMQueryResult
-            | NBEGMQueryResult
-            | FiniteNEGMQueryResult
-            | AdaptiveNBEGMQueryResult,
+            evaluated, DCEGMQueryResult | NBEGMQueryResult | FiniteNEGMQueryResult
         ):
             raise TypeError("Checked choices require their paired read summary.")
         result, read_counts = evaluated
     else:
         if not isinstance(
-            evaluated,
-            DCEGMQueryResult
-            | NBEGMQueryResult
-            | FiniteNEGMQueryResult
-            | AdaptiveNBEGMQueryResult,
+            evaluated, DCEGMQueryResult | NBEGMQueryResult | FiniteNEGMQueryResult
         ):
             raise TypeError("Ordinary choices require their unchanged query tuple.")
         result, read_counts = evaluated, None
@@ -2459,29 +2446,23 @@ def _select_feature_child_rows(
     n_outer_candidates: int,
 ) -> EGMQueryData:
     """Validate the declared outer axis before selecting its actual child rows."""
-    adaptive = (
-        query.model.authority.adaptive_outer if isinstance(query, NBEGMQuery) else None
-    )
     finite_nb = (
         query.model.authority.finite_outer if isinstance(query, NBEGMQuery) else None
     )
     if n_outer_candidates:
         if isinstance(query, NBEGMQuery):
-            if adaptive is not None:
-                valid_outer = n_outer_candidates == adaptive.adjuster_capacity + 1
-            else:
-                authority = query.model.authority
-                topology = authority.row_topology
-                valid_outer = (
-                    finite_nb is not None
-                    and authority.outer_mode == "finite_max"
-                    and authority.coordinate_kind == "liquid"
-                    and authority.corner_coordinate_kind == "compact_interval"
-                    and topology is not None
-                    and topology.kind == "nb_budget_interval_run"
-                    and query.finite_queries is not None
-                    and n_outer_candidates == authority.outer_capacity
-                )
+            authority = query.model.authority
+            topology = authority.row_topology
+            valid_outer = (
+                finite_nb is not None
+                and authority.outer_mode == "finite_max"
+                and authority.coordinate_kind == "liquid"
+                and authority.corner_coordinate_kind == "compact_interval"
+                and topology is not None
+                and topology.kind == "nb_budget_interval_run"
+                and query.finite_queries is not None
+                and n_outer_candidates == authority.outer_capacity
+            )
             if not valid_outer:
                 raise TypeError(
                     "Nested NB rows require their canonical outer authority."
@@ -2493,15 +2474,9 @@ def _select_feature_child_rows(
             raise TypeError(
                 "Nested DC rows require their canonical finite outer authority."
             )
-    elif adaptive is not None:
-        raise TypeError("Adaptive child query omitted its declared outer capacity.")
     elif finite_nb is not None:
         raise TypeError("Finite NB child query omitted its declared outer capacity.")
-    return (
-        select_adaptive_query_data(data=data, cell_positions=child_index)
-        if adaptive is not None
-        else select_query_data(data=data, positions=child_index)
-    )
+    return select_query_data(data=data, positions=child_index)
 
 
 def _blend_passive_axes(

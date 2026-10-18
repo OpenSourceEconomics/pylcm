@@ -10,7 +10,6 @@ except ModuleNotFoundError:
     from tests.candidate_certificate.generate_sources import SourcePath
 
 BODY_OWNERS: dict[SourcePath, tuple[str, ...]] = {
-    "src/_lcm/egm/adaptive_nbegm_query.py": ("_fold_adaptive_choice",),
     "src/_lcm/egm/continuation.py": (
         "_select_feature_child_rows",
         "_build_feature_child_query",
@@ -39,19 +38,13 @@ BODY_OWNERS: dict[SourcePath, tuple[str, ...]] = {
         "_nbegm_query_function_pools",
         "_nbegm_query_evaluator_targets",
         "_nbegm_evaluated_query_predicates",
-        "_nbegm_adaptive_query_spec",
         "_solver_with_query_authority",
         "_nbegm_query_row_state_names",
     ),
     "src/_lcm/solution/dcegm.py": ("_dcegm_query_slots_and_capabilities",),
     "src/_lcm/solution/egm.py": ("_unpack_scalar_child_read",),
-    "src/_lcm/solution/kernel_output.py": (
-        "_validate_generated_continuation_authority",
-    ),
     "src/_lcm/solution/model_authority.py": (
         "_validate_query_policy_budget_authority",
-        "_bind_generated_continuation_authority",
-        "_bind_declared_continuation_authority",
     ),
     "src/_lcm/solution/nbegm.py": (
         "_NBEGMScalarChildReads.read_rows",
@@ -71,7 +64,6 @@ BODY_OWNERS: dict[SourcePath, tuple[str, ...]] = {
     "src/_lcm/solution/nnbegm.py": (
         "_nnbegm_query_period_groups",
         "_prepare_nnbegm_query_inner_pair",
-        "_publish_adaptive_nnbegm_query",
         "_nnbegm_outer_replay_function",
     ),
 }

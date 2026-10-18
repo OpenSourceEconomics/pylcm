@@ -407,10 +407,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
     "src/_lcm/egm/upper_envelope/segment_envelope.py",
     "src/_lcm/egm/nested_floor.py",
     "src/_lcm/egm/finite_negm_query.py",
-    "src/_lcm/egm/adaptive_mesh_authority.py",
-    "src/_lcm/egm/adaptive_nbegm_carry.py",
     "src/_lcm/egm/adaptive_nbegm_producer.py",
-    "src/_lcm/egm/adaptive_nbegm_query.py",
     "src/_lcm/egm/nbegm_query_model.py",
     "src/_lcm/egm/nbegm_query.py",
     "src/_lcm/solution/negm.py",
@@ -734,10 +731,7 @@ _SOURCE_SEALS = {
     "src/_lcm/egm/upper_envelope/segment_envelope.py": "706b3f3c7c52c5de2b1553e34be7863653aa0cd14d834fd3b68d9533f7c1273c",
     "src/_lcm/egm/nested_floor.py": "8983b037774946af7a90aa106268659a69963e2d8f5dd4b55c6f5532dd2dbb72",
     "src/_lcm/egm/finite_negm_query.py": "d10095ed31e91ddb3620c5a329fe2cd38fb0d46cc891013bd3761fd0ed173677",
-    "src/_lcm/egm/adaptive_mesh_authority.py": "2cbc4e948b81af3db22e06b1e23715f44f7c6d3e7ed1fada19b877aa700942cd",
-    "src/_lcm/egm/adaptive_nbegm_carry.py": "448627fc57aad3d9280a6ac9d154d01b69b522d641ae4e90036f67aa1a49296b",
     "src/_lcm/egm/adaptive_nbegm_producer.py": "171b469d2f439b7d62081096089f87397b3ba505eb6cbc439f5dff6d6664f9d0",
-    "src/_lcm/egm/adaptive_nbegm_query.py": "b8f2828853b0ca60fdfc1fb85d32d9de6656fb1ae66aa131effcc4f7c3bf878c",
     "src/_lcm/egm/nbegm_query_model.py": "63980bda4ee98d990f0fc56a560aac053c5c8e451c8cd15cae73de35a76ba325",
     "src/_lcm/egm/nbegm_query.py": "a714b466b12bebd63778e78114f644a8cf897ec8e62c4f20739e1de7fe944c58",
     "src/_lcm/solution/negm.py": "440dab171d993e2a85d541d9293e30fc8ab41a7c4f67529caaab3c3daf90952c",
@@ -2061,8 +2055,6 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_declared_carry_row_state_names": "835ba452926f8c55464f71282c057c64c690484767f67c9ca009db1e723b7f8e",
             "_declared_carry_trailing_state": "c60309b6bb614ecd89aeedaf6b3051df0d3c665d4a1e0ec4502f72a68079bc31",
             "_model_role_axes": "6e6dd672aa0cff5d3c2ee20541ea8c557362ca5ac2e6b52154222e827b84a01a",
-            "_bind_declared_continuation_authority": "5c77b3c0aacd7637e81e0449c2561f9c0d24e1eb3daa95ac000692e8ac6e4342",
-            "_bind_generated_continuation_authority": "84d4237e02fedf4fffe5ca51a455b9230109736ab641a78b7cd82c2cf8cfd7a8",
             "_validate_query_policy_budget_authority": "2e145016ee3b87e1e75c28b72b63a5bfaef3be8d015df98451ef48e79de85909",
         },
     ),
@@ -2374,7 +2366,6 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_prepare_dcegm_query_models": "9dbd436a6be2af9365412d2c594afbea4335103f3f2a8234c9f521605d5f85fe",
             "_canonical_constraint_routing_inputs": "b014cb91c503eb021cd7aee8b6ead91fa54a86b0ffc1b8fde29e80978b53327e",
             "_prepare_nbegm_query_models": "8426b07f922de19e0fe9a964db097b2f155817773df5b732ffef406437657e1e",
-            "_nbegm_adaptive_query_spec": "89016e541572f19e329d79e53e84bf467c350e18329c0abfed2de825a8bf1623",
             "_nbegm_evaluated_query_predicates": "4a734bc9d0020b846a7ed8e56c318331ec1e414191354ee55194c39d0f5e6b98",
             "_nbegm_query_evaluator_targets": "4eca3820123c39974c20fbb85dffb68fd28286773f67a225af5a1e84aec36c33",
             "_nbegm_query_function_pools": "3d5549c36db6f139068d67a76c0234a3055f84989391576fe5615658ba39ce1b",
@@ -2480,7 +2471,6 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_query_bound_evaluator_targets": "9f82f0ea98ba9b0b214a3e59a651a592b7a9185a549e4012620d89f90c9bdf45",
             "_query_evaluator_contract": "5b842073f2a991ae42b1f81aef724a26b7e60d94c6f9406c3fc04e2e84371e30",
             "validate_query_evaluator_authority": "872b9392f5b474fba7bd37ce680665a75c56ebe7f1f296b215e052a6dd285277",
-            "_adaptive_evaluator_contract": "8d82bb532477223e972a3c02b96b7ad44d6aa6f6923f0dfa116d0976268b0e5f",
             "validate_query_template": "4ffc7186abce559cdb769b04d3498e7a9e72abab66c0426979d0554765c5eaf8",
             "EGMRowTopologySpec.__post_init__": "b8b3d2ec434b2182bd79c420dae4bedd4c144ae3ddaf2941e5e52a73772ba3ec",
             "_validate_row_topology": "002d0b993c0dc92edd86fc40dd102696c80447c9f3235fa9ae1f9f58ff909ca3",
@@ -2498,7 +2488,6 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_unflatten_query_record": "e3892756c7f98ed7fa7ca2ef9ba126727ca4cbd9f8e9a16338bc0d280cfa0907",
             "build_template_egm_query_data": "9399d958c45e4c9031ce049e0d2ab4a2a944d0bf2668efaa5314ffc7d1158007",
             "select_query_data": "3aea669e4e555f68e26f5d25b23b632d16f7ca47becd26618433610ce5624708",
-            "select_adaptive_query_data": "bc1d24d555915e65597825be2147a3c35f5c30d87ee3a085f26e086a9bdf88ed",
         },
     ),
     "src/_lcm/egm/carry.py": (
@@ -2614,7 +2603,6 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         "915d7f4c076a73a642bb8138a893f94379aef55f1e107f438f9811d6124dc8ab",
         {
             "consume_kernel_output": "303e19c473b70e805f204e8d937d1887c991a5378d67a3c6a5bdef1c2dce2cb3",
-            "_validate_generated_continuation_authority": "f1340babcab57f05de8d8b64ddae25d54e0043309934d52950fb26632ec52b0f",
         },
     ),
     "src/_lcm/solution/landing_counts.py": (
@@ -3033,21 +3021,6 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "maximize_golden_section": "70c6581bf1886a7ed0f252fcb61e8c4869251e946e08d276b729d306b0a28d2b",
         },
     ),
-    "src/_lcm/egm/adaptive_mesh_authority.py": (
-        "e3fece1cd0d0a1a66ec64e2c368f7e8ff009e067255be393c1bfb1ac69486854",
-        {
-            "admit_continuation_mesh": "cea4612cf81f8f026c3c1d5039fda48b90b312cbbbf3aebdf8b05ac3f478d895",
-            "validate_bound_continuation_mesh": "9c5a5f2f9740b8fbd417da1f894ab60a69e479af78e263bdcf19ad35c476732d",
-            "validate_continuation_mesh": "687f416f7978e7dc5849f54e28e5f287a20b8b1601fd8c0770c214847aea739d",
-        },
-    ),
-    "src/_lcm/egm/adaptive_nbegm_carry.py": (
-        "37830b5309d944705409e21f3e4f0a23bfc98b6c9ed392152040c6b388794b56",
-        {
-            "adaptive_nbegm_template": "b617607a337623e1a06e59a49ed6869ecd9ce061d240bbcb9a26a72a01ecf47d",
-            "assemble_adaptive_nbegm_carry": "d5f2b7f0aff2fb5203ca23325e13691dee49f2c08fb805dd5caf57a2128946e5",
-        },
-    ),
     "src/_lcm/egm/adaptive_nbegm_producer.py": (
         "d8913492e7076f1ff881475346bf80d045845978e41b53f9f3a05223190dbf3c",
         {
@@ -3057,20 +3030,6 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "fold_executed_summaries": "a237cc4039b9a5b6b9c507920701e74b9341da5d9bedf41a9e9b09d432c58d15",
             "prepare_nested_inner_kernels": "20ef68bbd5378edb778be80796a19c154608a53082f73240ec9ac39fe2329e7d",
             "with_keeper_floor": "9f31fdd02e169d0d33696445e7eaf94ddf511b7b9b641e400eaf446b4927cd09",
-        },
-    ),
-    "src/_lcm/egm/adaptive_nbegm_query.py": (
-        "f1d0a598ee5f30c526961e9c71089dfe100d2e489f00097bdbd0a16eb59d5dd1",
-        {
-            "_Profile.interpolate": "1b5bf5c3a1bdc686b1aed3e8c430af84fdf80ae82f17767de03dc8299649e207",
-            "_Profile.read": "4710f9ef0ab5ed025b45ec5dd8b536daf692fb01d6c4d9e62a649768c8000a2b",
-            "_Profile.status_at": "c149af44cf3eb1c43715cf8543c9754326b3498b8c6b9ee12ece810ab31302ca",
-            "_numeric_operand": "5efd09516283a11681a0c665f1609a64622b362355e13a93440cbf2a463cfde6",
-            "_read_one_choice": "e0ae7786afd4f6a8de4911e648a4f35e5b80cac4cca4e23ca36af9aefbf5e141",
-            "_take": "3e3c18f8b926854bf0288b8a67a4fbe1a5dfaa5308d8e97de30e17585980e758",
-            "_validate_tuple": "fe24aaf2cd866895863dd6729cc694469b2a1be2f1e73099bfb61401df4ce3a4",
-            "read_adaptive_choices": "edc0c6291c7f9925956011d150f40f818acfe3e4b727dbe031be58153bb4074e",
-            "_fold_adaptive_choice": "8e80a139c22b0a516ec83ddfa84f18afe426677d317cb67040e873ec730fb489",
         },
     ),
     "src/_lcm/egm/finite_negm_query.py": (
@@ -3113,9 +3072,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
     ),
     "src/_lcm/egm/nbegm_query_model.py": (
         "b434e36fe11e9300acf9f0a3cdb7e9cb3ca00c07205f20b1bc6ef9188611b841",
-        {
-            "derive_adaptive_inner_models": "c22193ecdd762b7e86295b89051dc7ed24a603cf351f11da0862876cbc81a4cf",
-        },
+        {},
     ),
     "src/_lcm/egm/nested_floor.py": (
         "ac153105f85ba73895865d2f48a7e544202537780a2c598a1cce639e998defa1",
@@ -3174,7 +3131,6 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_nnbegm_outer_replay_function": "2587eccd6afb167826e2810aca1e6636e755ef745b52264a7131dc766787344d",
             "_nnbegm_query_period_groups": "742df35ba9a5f186841cc9a92b9afb2adf640f2f61e4147b1d6bf6dd4c1318a5",
             "_prepare_nnbegm_query_inner_pair": "f7acc5233fd35b58cbea5a35ef3d6e13a43c014c4d734e6f5ce3df34c245ccd4",
-            "_publish_adaptive_nnbegm_query": "7f85223706dbf786f86d882e7ad41dac0f994769aa34fd8cf37252bc6624090f",
         },
     ),
     "src/_lcm/egm/upper_envelope/__init__.py": (
@@ -3359,7 +3315,6 @@ _OUTER_HELPER_CONTRACTS = _contracts(_OUTER_HELPER_OWNER_SELECTION)
 _ADDITIONAL_HELPER_CONTRACTS = _contracts(_ADDITIONAL_HELPER_OWNER_SELECTION)
 _EXPECTED_ADDITIONAL_HELPER_MUTATION_NAMES = frozenset(
     (
-        "additional_helper:body:src/_lcm/egm/adaptive_nbegm_query.py::_fold_adaptive_choice",
         "additional_helper:body:src/_lcm/egm/continuation.py::_build_feature_child_query",
         "additional_helper:body:src/_lcm/egm/continuation.py::_select_feature_child_rows",
         "additional_helper:body:src/_lcm/egm/finite_negm_query.py::_finite_outer_publication_inputs",
@@ -3376,7 +3331,6 @@ _EXPECTED_ADDITIONAL_HELPER_MUTATION_NAMES = frozenset(
         "additional_helper:body:src/_lcm/execution/internal_outputs.py::_tree_signature",
         "additional_helper:body:src/_lcm/execution/internal_outputs.py::assert_internal_inputs",
         "additional_helper:body:src/_lcm/model_processing.py::_validate_callable_borrowing_solver",
-        "additional_helper:body:src/_lcm/regime_building/processing.py::_nbegm_adaptive_query_spec",
         "additional_helper:body:src/_lcm/regime_building/processing.py::_nbegm_evaluated_query_predicates",
         "additional_helper:body:src/_lcm/regime_building/processing.py::_nbegm_query_evaluator_targets",
         "additional_helper:body:src/_lcm/regime_building/processing.py::_nbegm_query_function_pools",
@@ -3384,9 +3338,6 @@ _EXPECTED_ADDITIONAL_HELPER_MUTATION_NAMES = frozenset(
         "additional_helper:body:src/_lcm/regime_building/processing.py::_solver_with_query_authority",
         "additional_helper:body:src/_lcm/solution/dcegm.py::_dcegm_query_slots_and_capabilities",
         "additional_helper:body:src/_lcm/solution/egm.py::_unpack_scalar_child_read",
-        "additional_helper:body:src/_lcm/solution/kernel_output.py::_validate_generated_continuation_authority",
-        "additional_helper:body:src/_lcm/solution/model_authority.py::_bind_declared_continuation_authority",
-        "additional_helper:body:src/_lcm/solution/model_authority.py::_bind_generated_continuation_authority",
         "additional_helper:body:src/_lcm/solution/model_authority.py::_validate_query_policy_budget_authority",
         "additional_helper:body:src/_lcm/solution/nbegm.py::_NBEGMActionEligibility.__call__",
         "additional_helper:body:src/_lcm/solution/nbegm.py::_NBEGMScalarChildReads.__call__",
@@ -3404,7 +3355,6 @@ _EXPECTED_ADDITIONAL_HELPER_MUTATION_NAMES = frozenset(
         "additional_helper:body:src/_lcm/solution/nnbegm.py::_nnbegm_outer_replay_function",
         "additional_helper:body:src/_lcm/solution/nnbegm.py::_nnbegm_query_period_groups",
         "additional_helper:body:src/_lcm/solution/nnbegm.py::_prepare_nnbegm_query_inner_pair",
-        "additional_helper:body:src/_lcm/solution/nnbegm.py::_publish_adaptive_nnbegm_query",
         "additional_helper:semantic:invalid_numeric_laundered",
         "additional_helper:semantic:pad_bridge",
         "additional_helper:semantic:paired_marginal_changed",
@@ -3560,15 +3510,6 @@ _FINAL_NESTED_CONTRACTS = _contracts(
             "_select_finite_outer_profiles",
             "_collapse_finite_selection",
         ),
-        "src/_lcm/egm/adaptive_mesh_authority.py": (
-            "admit_continuation_mesh",
-            "validate_continuation_mesh",
-            "validate_bound_continuation_mesh",
-        ),
-        "src/_lcm/egm/adaptive_nbegm_carry.py": (
-            "adaptive_nbegm_template",
-            "assemble_adaptive_nbegm_carry",
-        ),
         "src/_lcm/egm/adaptive_nbegm_producer.py": (
             "_tuple_roles",
             "_floor_template",
@@ -3577,17 +3518,6 @@ _FINAL_NESTED_CONTRACTS = _contracts(
             "prepare_nested_inner_kernels",
             "fold_executed_summaries",
         ),
-        "src/_lcm/egm/adaptive_nbegm_query.py": (
-            "_numeric_operand",
-            "_Profile.read",
-            "_Profile.interpolate",
-            "_Profile.status_at",
-            "_take",
-            "read_adaptive_choices",
-            "_read_one_choice",
-            "_validate_tuple",
-        ),
-        "src/_lcm/egm/nbegm_query_model.py": ("derive_adaptive_inner_models",),
         "src/_lcm/egm/nbegm_query.py": (
             "build_nbegm_query",
             "NBEGMQuery.capabilities",
@@ -3655,7 +3585,6 @@ _FINAL_NESTED_CONTRACTS = _contracts(
             "reduce_continuation_read_counts",
             "merge_continuation_read_counts",
         ),
-        "src/_lcm/egm/query_data.py": ("select_adaptive_query_data",),
         "src/_lcm/regime_building/processing.py": (
             "_prepare_nbegm_query_models",
             "_canonical_constraint_routing_inputs",
@@ -8554,7 +8483,6 @@ _S02_QUERY_STATUS_CONTRACTS = _contracts(
             "_query_bound_evaluator_targets",
             "_query_evaluator_contract",
             "validate_query_evaluator_authority",
-            "_adaptive_evaluator_contract",
             "validate_query_template",
             "EGMRowTopologySpec.__post_init__",
             "_validate_row_topology",

@@ -86,7 +86,7 @@ def with_keeper_floor(
     """Prepare b(C) before any keeper cost and append the genuine shared bank."""
     target = model.authority.bound.lower_target
     if target is None:
-        raise TypeError("An adaptive callable floor requires its canonical DAG target.")
+        raise TypeError("A nested callable floor requires its canonical DAG target.")
     prepared = prepare_nested_floor(
         lower=concatenate_regime_function(functions=model.functions, target=target),
         offsets=model.offsets,
@@ -124,7 +124,7 @@ def prepare_nested_inner_kernels(
         adjuster, _RideAlongNBEGMPeriodKernel
     ):
         raise TypeError(
-            "Adaptive floor sharing requires the actual native NB ride kernels."
+            "Nested floor sharing requires the actual native NB ride kernels."
         )
     names = model.authority.state_names
     shape = tuple(state_grids[name].size for name in names)
@@ -201,7 +201,7 @@ def fold_executed_summaries(
         not isinstance(keeper, _NBEGMNestedKernelOutput)
         or len(keeper.bound_status) != 1
     ):
-        raise TypeError("An adaptive fold requires its genuine keeper's source owner.")
+        raise TypeError("A nested fold requires its genuine keeper's source owner.")
     bounds, queries, counts = (
         keeper.bound_status,
         keeper.query_status,

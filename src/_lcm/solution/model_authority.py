@@ -30,10 +30,6 @@ from _lcm.continuation import (
     validate_query_template,
 )
 from _lcm.dtypes import canonical_float_dtype
-from _lcm.egm.adaptive_mesh_authority import (
-    ACTIVE_CONTINUATION_MESH_AXIS,
-    admit_continuation_mesh,
-)
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy, OuterPolicyBank
 from _lcm.egm.outer_inversion import DeclaredOuterInverse
@@ -80,7 +76,6 @@ from _lcm.typing import (
 from lcm._solver_api.identity import ArtifactRuntimeType
 from lcm.solver_api import (
     DISSOLUTION_FLAG,
-    EGM_CONTINUATION,
     SIMULATION_POLICY,
     SOLVER_DIAGNOSTICS,
     ArtifactAuthority,
@@ -1580,7 +1575,6 @@ def _validate_finite_nnbegm_policy_query_authority(
     if (
         type(declared) is not EGMQuerySpec
         or finite is None
-        or expected.adaptive_outer is not None
         or expected.coordinate_kind != "liquid"
         or expected.row_topology is None
         or expected.row_topology.kind != "nb_budget_interval_run"
@@ -1622,55 +1616,6 @@ def _validate_finite_nnbegm_policy_query_authority(
         read=read,
         outer_post_decision=finite.outer_post_decision,
         label="Finite",
-    )
-    return True
-
-
-def _validate_adaptive_nnbegm_policy_query_authority(
-    *, regime: Regime, expected: EGMQuerySpec
-) -> bool:
-    """Authenticate retained adaptive replay against its canonical floor DAG.
-
-    Returns `False` when the regime does not retain an applicable adaptive
-    nested replay policy, so the scalar route stays governed by the caller.
-    Otherwise the
-    nested replay roles must match the model's adaptive query authority, and
-    the floor that replay evaluates at each subject's current state must be
-    the installed canonical runtime bound.
-    """
-    read = regime.simulation.egm_policy_read
-    adaptive = expected.adaptive_outer
-    if (
-        adaptive is None
-        or not isinstance(read, NNBEGMPolicyRead)
-        or not read.replay_policy_is_nested
-        or not read.policy_applicable
-        or all(
-            SIMULATION_POLICY not in program.retained_artifact_keys
-            for kernel in regime.solution.period_kernels.values()
-            for program in core_program_graph(kernel=kernel).values()
-        )
-    ):
-        return False
-    bound = expected.bound
-    if (
-        bound.kind != "dag"
-        or bound.lower_target is None
-        or read.consumer_route != "nnbegm_nested"
-        or read.inner_action_name != bound.action
-        or read.liquid_state_name != bound.liquid_state
-        or read.resources_target != bound.resources_target
-        or read.outer_action_name != adaptive.outer_action
-        or read.outer_state_name != adaptive.outer_state
-        or read.outer_post_decision != adaptive.outer_post_decision
-    ):
-        raise TypeError("Adaptive policy query roles differ from model authority.")
-    _validate_nnbegm_policy_floor_authority(
-        regime=regime,
-        expected=expected,
-        read=read,
-        outer_post_decision=adaptive.outer_post_decision,
-        label="Adaptive",
     )
     return True
 
@@ -1772,32 +1717,14 @@ def _validate_query_policy_budget_authority(
     from _lcm.egm.budget import DCEGM_BUDGET_CONSTRAINT_NAME  # noqa: PLC0415
 
     policy_read = regime.simulation.egm_policy_read
-    adaptive_without_replay = (
-        expected.adaptive_outer is not None
-        and isinstance(policy_read, NNBEGMPolicyRead)
-        and (
-            not policy_read.policy_applicable
-            or all(
-                SIMULATION_POLICY not in program.retained_artifact_keys
-                for kernel in regime.solution.period_kernels.values()
-                for program in core_program_graph(kernel=kernel).values()
-            )
-        )
-    )
     with_adapter = _validate_finite_nnbegm_policy_query_authority(
         regime=regime,
         state_action_space=state_action_space,
         expected=expected,
-    ) or _validate_adaptive_nnbegm_policy_query_authority(
-        regime=regime, expected=expected
     )
     if expected.bound.kind == "dag" and (
         isinstance(policy_read, EGMPolicyRead)
-        or (
-            isinstance(policy_read, NNBEGMPolicyRead)
-            and not adaptive_without_replay
-            and not with_adapter
-        )
+        or (isinstance(policy_read, NNBEGMPolicyRead) and not with_adapter)
     ):
         raise TypeError(
             "Query policy/intrinsic budget authority requires a model-bound adapter; "
@@ -1854,16 +1781,6 @@ def _validate_model_query_spec(
         ),
         action_names=tuple(state_action_space.discrete_actions),
     )
-    adaptive = expected.adaptive_outer
-    if adaptive is not None and (
-        adaptive.outer_state not in expected.state_names
-        or adaptive.outer_state == bounds[0].liquid_state
-        or adaptive.outer_action not in state_action_space.continuous_actions
-        or adaptive.outer_action == bounds[0].action
-    ):
-        raise TypeError(
-            "Query outer roles differ from the canonical non-liquid margin."
-        )
     finite = expected.finite_outer
     if finite is not None and (
         finite.outer_state not in expected.state_names
@@ -2023,24 +1940,6 @@ def _egm_carry_artifact_layout(  # noqa: C901, PLR0912, PLR0915
                 ),
             )
         )
-        if query_spec.adaptive_outer is not None:
-            capacity = query_spec.adaptive_outer.adjuster_capacity
-            axes.extend(
-                (
-                    AxisAuthority(
-                        name="pylcm:egm:outer_mesh",
-                        length=capacity,
-                        role=AxisRole.CANDIDATE,
-                        coordinates=tuple(range(capacity)),
-                    ),
-                    AxisAuthority(
-                        name="pylcm:egm:outer_link",
-                        length=capacity - 1,
-                        role=AxisRole.OTHER,
-                        coordinates=tuple(range(capacity - 1)),
-                    ),
-                )
-            )
     leaf_axes: dict[TreePath, tuple[str, ...]] = {}
     for path, leaf in paths_and_leaves:
         shape = tuple(leaf.shape)
@@ -2099,26 +1998,15 @@ def _egm_carry_artifact_layout(  # noqa: C901, PLR0912, PLR0915
     )
 
 
-def _query_leaf_axis_names(  # noqa: PLR0911
+def _query_leaf_axis_names(
     *,
     path: TreePath,
     state_names: tuple[StateName, ...],
     leading_names: tuple[str, ...],
     trailing_name: str,
 ) -> tuple[str, ...]:
-    """Name fixed-cell, row/link, interval and shared-mesh axes independently."""
+    """Name fixed-cell, row/link and interval axes independently."""
     field = path[-1].removeprefix("attribute:")
-    if "attribute:adaptive_outer_data" in path:
-        if field == "outer_count":
-            return ()
-        if field in ("outer_nodes", "outer_node_kind"):
-            return ("pylcm:egm:outer_mesh",)
-        return (
-            *leading_names[:-1],
-            "pylcm:egm:outer_link"
-            if field == "outer_link_valid"
-            else "pylcm:egm:outer_mesh",
-        )
     if field == "floor_used":
         return state_names
     if "attribute:liquid_corner_data" in path:
@@ -2536,53 +2424,6 @@ def _replay_model_context_from_state_action_space(
     )
 
 
-def _bind_generated_continuation_authority(
-    *,
-    bound: _AuthorityBinding,
-    internal_result: BackwardInductionResult,
-    regimes: MappingProxyType[RegimeName, Regime],
-    flat_params: FlatParams,
-) -> None:
-    """Bind exactly the completed meshes emitted for adaptive publications."""
-    expected_continuations = {
-        ArtifactRef(period=period, regime=name, key=EGM_CONTINUATION)
-        for period, values in internal_result.value_functions.items()
-        for name in values
-        if (spec := regimes[name].solution.query_authority) is not None
-        and spec.adaptive_outer is not None
-    }
-    actual_continuations = set()
-    for (
-        period,
-        generated_by_regime,
-    ) in internal_result.generated_continuation_authorities.items():
-        for name, generated in generated_by_regime.items():
-            ref = ArtifactRef(period=period, regime=name, key=EGM_CONTINUATION)
-            spec = regimes[name].solution.query_authority
-            if (
-                spec is None
-                or spec.adaptive_outer is None
-                or generated.model_identity
-                != spec.adaptive_outer.mesh_authority_identity
-            ):
-                raise TypeError(
-                    "Generated continuation mesh has no "
-                    "matching canonical adaptive route."
-                )
-            bound.bind_adaptive_continuation(
-                ref=ref,
-                nodes=generated.adaptive_outer_nodes,
-                regime=regimes[name],
-                flat_params=flat_params,
-            )
-            actual_continuations.add(ref)
-    if actual_continuations != expected_continuations:
-        raise TypeError(
-            "Generated continuation mesh coverage "
-            "differs from actual adaptive publications."
-        )
-
-
 def bind_generated_solution_authority(
     *,
     authority: SolutionAuthority,
@@ -2645,12 +2486,6 @@ def bind_generated_solution_authority(
             f"nested policies: missing={missing}, unexpected={unexpected}."
         )
         raise TypeError(msg)
-    _bind_generated_continuation_authority(
-        bound=bound,
-        internal_result=internal_result,
-        regimes=regimes,
-        flat_params=flat_params,
-    )
     for period, regime_to_diagnostics in internal_result.diagnostics.items():
         for regime_name, diagnostics in regime_to_diagnostics.items():
             bound.bind_diagnostics(
@@ -2702,40 +2537,6 @@ def bind_declared_solution_authority(
             ),
         )
     return bound.authority_with_bindings()
-
-
-def _bind_declared_continuation_authority(
-    *,
-    bound: _AuthorityBinding,
-    authority: SolutionAuthority,
-    artifact_descriptors: Mapping[ArtifactRef, ArtifactDescriptor],
-    regimes: MappingProxyType[RegimeName, Regime],
-    flat_params: FlatParams,
-) -> None:
-    """Admit completed continuation meshes from canonical declared axes."""
-    for ref in authority.artifacts:
-        if ref.key != EGM_CONTINUATION:
-            continue
-        regime = regimes[ref.regime]
-        spec = regime.solution.query_authority
-        if spec is None or spec.adaptive_outer is None:
-            continue
-        descriptor = artifact_descriptors.get(ref)
-        if type(descriptor) is not ArtifactDescriptor:
-            continue
-        axes = tuple(
-            axis
-            for axis in descriptor.named_axes
-            if axis.name == ACTIVE_CONTINUATION_MESH_AXIS
-        )
-        if len(axes) != 1:
-            raise TypeError(
-                "A declared adaptive continuation lacks its completed mesh axis."
-            )
-        nodes = admit_continuation_mesh(nodes=axes[0].coordinates, spec=spec)
-        bound.bind_adaptive_continuation(
-            ref=ref, nodes=nodes, regime=regime, flat_params=flat_params
-        )
 
 
 def bind_declared_adaptive_authority(
@@ -2794,13 +2595,6 @@ def bind_declared_adaptive_authority(
             regime=regime,
             flat_params=flat_params,
         )
-    _bind_declared_continuation_authority(
-        bound=bound,
-        authority=authority,
-        artifact_descriptors=artifact_descriptors,
-        regimes=regimes,
-        flat_params=flat_params,
-    )
     return bound.authority_with_bindings()
 
 
@@ -2927,71 +2721,6 @@ class _AuthorityBinding:
         )
         self.artifacts[ref] = bound_authority
         self.artifact_descriptors[ref] = bound_authority.descriptor
-        self.bound_refs.add(ref)
-
-    def bind_adaptive_continuation(
-        self,
-        *,
-        ref: ArtifactRef,
-        nodes: tuple[float, ...],
-        regime: Regime,
-        flat_params: FlatParams,
-    ) -> None:
-        """Bind only the separately admitted completed mesh; retain fixed leaf
-        schemas.
-        """
-        spec = regime.solution.query_authority
-        if spec is None:
-            raise TypeError(
-                "Generated continuation facts require canonical query authority."
-            )
-        nodes = admit_continuation_mesh(nodes=nodes, spec=spec)
-        old = self.artifacts[ref]
-        template, containers = _snapshot_artifact_template_once(
-            template=old.template,
-            payload_runtime_type=old.payload_runtime_type,
-        )
-        if any(axis.name == ACTIVE_CONTINUATION_MESH_AXIS for axis in old.axes):
-            raise TypeError("A completed continuation mesh cannot be bound twice.")
-        axes = (
-            *old.axes,
-            AxisAuthority(
-                name=ACTIVE_CONTINUATION_MESH_AXIS,
-                length=len(nodes),
-                role=AxisRole.CANDIDATE,
-                coordinates=nodes,
-            ),
-        )
-        generated = _authority_from_observed_template(
-            key=old.descriptor.key,
-            channel=old.descriptor.channel,
-            persistence=old.descriptor.persistence,
-            payload_runtime_type=old.payload_runtime_type,
-            template_snapshot=template,
-            container_runtime_types=containers,
-            leaf_axis_names=MappingProxyType(
-                {path: leaf.axis_names for path, leaf in old.leaves.items()}
-            ),
-            axes=axes,
-            state_roles=old.state_roles,
-            action_roles=old.action_roles,
-            categorical_domains=dict(old.categorical_domains),
-            consumer_route=old.consumer_route,
-            applicable=old.applicable,
-            required=old.required,
-        )
-        state_action_space = _state_action_space_for_period(
-            regime=regime,
-            base=regime.solution.state_action_space(
-                regime_params=regime_kernel_params(flat_params, regime_name=ref.regime),
-            ),
-            period=ref.period,
-        )
-        generated = _bind_model_owned_artifact_facts(
-            authority=generated, regime=regime, state_action_space=state_action_space
-        )
-        self.artifacts[ref] = generated
-        self.artifact_descriptors[ref] = generated.descriptor
         self.bound_refs.add(ref)
 
     def bind_diagnostics(

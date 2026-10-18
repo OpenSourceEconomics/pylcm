@@ -35,15 +35,6 @@ BODY_OWNERS = {
         "_select_finite_outer_profiles",
         "_collapse_finite_selection",
     ),
-    "src/_lcm/egm/adaptive_mesh_authority.py": (
-        "admit_continuation_mesh",
-        "validate_continuation_mesh",
-        "validate_bound_continuation_mesh",
-    ),
-    "src/_lcm/egm/adaptive_nbegm_carry.py": (
-        "adaptive_nbegm_template",
-        "assemble_adaptive_nbegm_carry",
-    ),
     "src/_lcm/egm/adaptive_nbegm_producer.py": (
         "_tuple_roles",
         "_floor_template",
@@ -52,17 +43,6 @@ BODY_OWNERS = {
         "prepare_nested_inner_kernels",
         "fold_executed_summaries",
     ),
-    "src/_lcm/egm/adaptive_nbegm_query.py": (
-        "_numeric_operand",
-        "_Profile.read",
-        "_Profile.interpolate",
-        "_Profile.status_at",
-        "_take",
-        "read_adaptive_choices",
-        "_read_one_choice",
-        "_validate_tuple",
-    ),
-    "src/_lcm/egm/nbegm_query_model.py": ("derive_adaptive_inner_models",),
     "src/_lcm/egm/nbegm_query.py": (
         "build_nbegm_query",
         "NBEGMQuery.capabilities",
@@ -130,7 +110,6 @@ BODY_OWNERS = {
         "reduce_continuation_read_counts",
         "merge_continuation_read_counts",
     ),
-    "src/_lcm/egm/query_data.py": ("select_adaptive_query_data",),
     "src/_lcm/regime_building/processing.py": (
         "_prepare_nbegm_query_models",
         "_canonical_constraint_routing_inputs",

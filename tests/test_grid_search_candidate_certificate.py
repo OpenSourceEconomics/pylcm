@@ -3227,10 +3227,7 @@ def test_final_nested_sources_have_literal_inventory_obligations() -> None:
     """Inventory nested reader, producer and conditional-bank source owners."""
     assert isinstance(_parse("src/_lcm/egm/nested_floor.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/egm/finite_negm_query.py"), ast.Module)
-    assert isinstance(_parse("src/_lcm/egm/adaptive_mesh_authority.py"), ast.Module)
-    assert isinstance(_parse("src/_lcm/egm/adaptive_nbegm_carry.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/egm/adaptive_nbegm_producer.py"), ast.Module)
-    assert isinstance(_parse("src/_lcm/egm/adaptive_nbegm_query.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/egm/nbegm_query_model.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/egm/nbegm_query.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/solution/negm.py"), ast.Module)

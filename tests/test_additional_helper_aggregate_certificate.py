@@ -9,10 +9,6 @@ from tests.candidate_certificate import direct_flow
 _ROOT = Path(__file__).parents[1]
 _EXPECTED_NAMES = frozenset(
     (
-        (
-            "additional_helper:body:src/_lcm/egm/adaptive_nbegm_query.py::"
-            "_fold_adaptive_choice"
-        ),
         "additional_helper:body:src/_lcm/egm/continuation.py::_build_feature_child_query",
         "additional_helper:body:src/_lcm/egm/continuation.py::_select_feature_child_rows",
         (
@@ -49,10 +45,6 @@ _EXPECTED_NAMES = frozenset(
         ),
         (
             "additional_helper:body:src/_lcm/regime_building/processing.py::"
-            "_nbegm_adaptive_query_spec"
-        ),
-        (
-            "additional_helper:body:src/_lcm/regime_building/processing.py::"
             "_nbegm_evaluated_query_predicates"
         ),
         (
@@ -76,18 +68,6 @@ _EXPECTED_NAMES = frozenset(
             "_dcegm_query_slots_and_capabilities"
         ),
         "additional_helper:body:src/_lcm/solution/egm.py::_unpack_scalar_child_read",
-        (
-            "additional_helper:body:src/_lcm/solution/kernel_output.py::"
-            "_validate_generated_continuation_authority"
-        ),
-        (
-            "additional_helper:body:src/_lcm/solution/model_authority.py::"
-            "_bind_declared_continuation_authority"
-        ),
-        (
-            "additional_helper:body:src/_lcm/solution/model_authority.py::"
-            "_bind_generated_continuation_authority"
-        ),
         (
             "additional_helper:body:src/_lcm/solution/model_authority.py::"
             "_validate_query_policy_budget_authority"
@@ -143,10 +123,6 @@ _EXPECTED_NAMES = frozenset(
         (
             "additional_helper:body:src/_lcm/solution/nnbegm.py::"
             "_prepare_nnbegm_query_inner_pair"
-        ),
-        (
-            "additional_helper:body:src/_lcm/solution/nnbegm.py::"
-            "_publish_adaptive_nnbegm_query"
         ),
         "additional_helper:semantic:invalid_numeric_laundered",
         "additional_helper:semantic:pad_bridge",

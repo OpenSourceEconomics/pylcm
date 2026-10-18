@@ -6,7 +6,6 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Literal, cast
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -17,7 +16,6 @@ from _lcm.egm.carry import (
     EGMCarry,
     build_template_egm_carry,
     build_template_egm_query_data,
-    shard_carry_template,
 )
 from _lcm.engine import EGMPolicyRead
 from _lcm.grids import LinSpacedGrid
@@ -70,7 +68,7 @@ _FINITE_OUTER = continuation.FiniteOuterQuerySpec(
 def _feature_model(
     *,
     liquid_corner: bool = False,
-    outer_mode: Literal["none", "finite_max", "adaptive_continuous"] = "none",
+    outer_mode: Literal["none", "finite_max"] = "none",
     multiple_periods: bool = False,
 ) -> Model:
     """Install transport-only query declarations on a canonical ordinary model."""
@@ -98,27 +96,10 @@ def _feature_model(
         )
     regime = model._regimes["done"]
     bound = regime.solution.post_decision_bounds[0]
-    outer_capacity = 4 if outer_mode == "adaptive_continuous" else 3 if has_outer else 0
-    adaptive = (
-        continuation.AdaptiveOuterQuerySpec(
-            outer_state="income",
-            outer_action="adjustment",
-            outer_post_decision="outer_target",
-            keeper_target=None,
-            cost_target="outer_cost",
-            adjuster_capacity=3,
-            golden_iterations=4,
-            evaluator_identity=(),
-            evaluator_inputs=(),
-            branch_aggregation="deterministic",
-        )
-        if outer_mode == "adaptive_continuous"
-        else None
-    )
+    outer_capacity = 3 if has_outer else 0
     finite = _FINITE_OUTER if outer_mode == "finite_max" else None
     query = build_template_egm_query_data(
         outer_capacity=outer_capacity,
-        adaptive_capacity=3 if adaptive is not None else None,
         state_shape=(2,),
         action_shape=(),
         row_capacity=5,
@@ -136,7 +117,6 @@ def _feature_model(
         bound=bound,
         outer_mode=outer_mode,
         outer_capacity=outer_capacity,
-        adaptive_outer=adaptive,
         finite_outer=finite,
         state_names=("income",),
         action_names=(),
@@ -311,42 +291,6 @@ def test_query_container_snapshot_has_inert_static_metadata(
     )
     assert ("attribute:query_data", "attribute:savings") in snapshot.leaf_paths
     assert containers[("attribute:query_data",)] is type(template.query_data)
-
-
-def test_shared_adaptive_mesh_is_replicated_on_state_mesh() -> None:
-    """Shared outer coordinates and active count never acquire a state partition."""
-
-    template = build_template_egm_carry(
-        n_rows=5,
-        leading_shape=(2, 4),
-        query_data=build_template_egm_query_data(
-            state_shape=(2,),
-            action_shape=(),
-            row_capacity=5,
-            interval_capacity=1,
-            outer_capacity=4,
-            adaptive_capacity=3,
-        ),
-    )
-    placed = shard_carry_template(
-        template=template,
-        grids={"income": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        sharded_state_names=frozenset({"income"}),
-        leading_axis_names=("income",),
-        devices=(jax.devices()[0],),
-    )
-    assert placed.query_data is not None
-    mesh = placed.query_data.adaptive_outer_data
-    assert mesh is not None
-    assert cast("jax.NamedSharding", mesh.outer_nodes.sharding).spec == jax.P()
-    assert cast("jax.NamedSharding", mesh.outer_node_kind.sharding).spec == jax.P()
-    assert cast("jax.NamedSharding", mesh.outer_count.sharding).spec == jax.P()
-    assert cast("jax.NamedSharding", mesh.outer_owner_id.sharding).spec == jax.P(
-        "income"
-    )
-    assert cast(
-        "jax.NamedSharding", placed.query_data.floor_used.sharding
-    ).spec == jax.P("income")
 
 
 def _query_solution(model: Model) -> SolutionResult:
@@ -722,14 +666,9 @@ def test_literal_budget_descriptors_keep_feature_free_authority(*, kind: str) ->
     assert cast("EGMCarry", authority.artifacts[ref].template).query_data is None
 
 
-@pytest.mark.parametrize("outer_mode", ["finite_max", "adaptive_continuous"])
-def test_outer_query_artifact_axes_follow_the_declared_operator(
-    *, outer_mode: str
-) -> None:
-    """Finite candidate banks and shared adaptive meshes retain distinct axes."""
-    model = _feature_model(
-        outer_mode=cast('Literal["finite_max", "adaptive_continuous"]', outer_mode)
-    )
+def test_outer_query_artifact_axes_follow_the_declared_operator() -> None:
+    """Finite candidate banks keep fixed-cell floors apart from candidate rows."""
+    model = _feature_model(outer_mode="finite_max")
     authority = _authority(model)
     ref = ArtifactRef(period=0, regime="done", key=EGM_CONTINUATION)
     paths = {
@@ -742,89 +681,6 @@ def test_outer_query_artifact_axes_follow_the_declared_operator(
         "pylcm:egm:candidate",
         "pylcm:egm:node",
     )
-    if outer_mode == "adaptive_continuous":
-        assert paths[
-            (
-                "attribute:query_data",
-                "attribute:adaptive_outer_data",
-                "attribute:outer_nodes",
-            )
-        ] == ("pylcm:egm:outer_mesh",)
-        assert (
-            paths[
-                (
-                    "attribute:query_data",
-                    "attribute:adaptive_outer_data",
-                    "attribute:outer_count",
-                )
-            ]
-            == ()
-        )
-
-
-@pytest.mark.parametrize("change", ["function", "inputs"])
-def test_adaptive_query_authority_recomputes_cost_dependencies(*, change: str) -> None:
-    """Adaptive cost semantics are authenticated from the canonical model pool."""
-    model = _feature_model(outer_mode="adaptive_continuous")
-    regime = model._regimes["done"]
-
-    def foreign_cost(*, adjustment: FloatND, income: FloatND) -> FloatND:
-        return 2.0 * adjustment + income
-
-    def foreign_inputs(*, wealth: FloatND) -> FloatND:
-        return wealth
-
-    phase = replace(
-        regime.solution,
-        _continuation_functions=MappingProxyType(
-            {
-                **regime.solution.continuation_functions,
-                "outer_cost": foreign_cost if change == "function" else foreign_inputs,
-            }
-        ),
-    )
-    object.__setattr__(
-        model, "_regimes", MappingProxyType({"done": replace(regime, solution=phase)})
-    )
-    with pytest.raises(TypeError, match=r"Query|query"):
-        _authority(model)
-
-
-@pytest.mark.parametrize("role", ["state", "action"])
-def test_adaptive_query_roles_bind_distinct_canonical_outer_margin(
-    *, role: str
-) -> None:
-    """Outer roles cannot impersonate the liquid state or its chosen action."""
-    model = _feature_model(outer_mode="adaptive_continuous")
-    regime = model._regimes["done"]
-    spec = regime.solution.query_authority
-    assert spec is not None
-    assert spec.adaptive_outer is not None
-    adaptive = replace(
-        spec.adaptive_outer,
-        **(
-            {"outer_state": "wealth"}
-            if role == "state"
-            else {"outer_action": "consumption"}
-        ),
-    )
-    substitute = replace(spec, adaptive_outer=adaptive)
-    original = cast(
-        "continuation.EGMContinuationSpec", regime.solution.continuation_spec
-    )
-    phase = replace(
-        regime.solution,
-        query_authority=substitute,
-        continuation_spec=replace(
-            original,
-            layout=replace(original.layout, query_spec=substitute),
-        ),
-    )
-    object.__setattr__(
-        model, "_regimes", MappingProxyType({"done": replace(regime, solution=phase)})
-    )
-    with pytest.raises(TypeError, match=r"Query|query"):
-        _authority(model)
 
 
 @pytest.mark.parametrize("change", ["lower", "ancestor"])

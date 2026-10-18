@@ -65,18 +65,7 @@ class NBEGMQueryResult(NamedTuple):
     bound_status: BoundInputStatus
 
 
-class AdaptiveNBEGMQueryResult(NamedTuple):
-    """Conditional adaptive values after nodewise outer folding and passive blending."""
-
-    value: FloatND
-    marginal: FloatND
-    coverage_missing: BoolND
-    bound_status: BoundInputStatus
-
-
-type _NBChoiceResult = (
-    NBEGMQueryResult | AdaptiveNBEGMQueryResult | FiniteNEGMQueryResult
-)
+type _NBChoiceResult = NBEGMQueryResult | FiniteNEGMQueryResult
 
 
 class _NBCornerRead(NamedTuple):
@@ -174,11 +163,7 @@ def build_nbegm_query(
         ),
     )
 
-    models = (
-        model.adaptive_inner_models
-        if model.adaptive_inner_models is not None
-        else model.finite_inner_models
-    )
+    models = model.finite_inner_models
     if models is not None:
         bindings = []
         for role in ("keeper", "adjuster"):
@@ -196,11 +181,7 @@ def build_nbegm_query(
                     target_period=target_period,
                 )
             )
-        query = (
-            replace(query, adaptive_queries=(bindings[0], bindings[1]))
-            if model.adaptive_inner_models is not None
-            else replace(query, finite_queries=(bindings[0], bindings[1]))
-        )
+        query = replace(query, finite_queries=(bindings[0], bindings[1]))
     return query
 
 
@@ -220,12 +201,6 @@ class NBEGMQuery:
     """Bind actual target utility or the existing positive EZ flow."""
     read_discount_factor: Callable[[EconFunctionKwargs], ScalarFloat]
     """Bind actual target discounting."""
-    adaptive_queries: tuple[NBEGMQuery, NBEGMQuery] | None = field(
-        default=None, metadata={"fingerprint_omit_if_default": True}
-    )
-    """Actual target-period keeper and adjuster readers with independent derived
-    authority.
-    """
     finite_queries: tuple[NBEGMQuery, NBEGMQuery] | None = field(
         default=None, metadata={"fingerprint_omit_if_default": True}
     )
@@ -243,27 +218,6 @@ class NBEGMQuery:
         """Include every interval/floor/predicate dependency in branch grouping."""
         bound = self.model.authority.bound
         internal = {bound.action, bound.post_decision, "utility", "CE"}
-        adaptive = self.model.authority.adaptive_outer
-        if adaptive is not None:
-            if self.adaptive_queries is None:
-                raise TypeError(
-                    "Adaptive query inputs require their actual role bindings."
-                )
-            names = (
-                set()
-                if self.lower is None
-                else set(inspect.signature(self.lower).parameters)
-            )
-            for reader in self.adaptive_queries:
-                names.update(reader.input_names)
-            for target in (adaptive.keeper_target, adaptive.fixed_cost_target):
-                if target is not None:
-                    function = concatenate_regime_function(
-                        functions=self.model.functions, target=target
-                    )
-                    names.update(inspect.signature(function).parameters)
-            names.discard(adaptive.outer_post_decision)
-            return frozenset(names - internal)
         finite = self.model.authority.finite_outer
         if finite is not None:
             if self.finite_queries is None:
@@ -404,28 +358,6 @@ class NBEGMQuery:
         collect_continuation_read_counts: bool = False,
     ) -> _NBChoiceResult | tuple[_NBChoiceResult, ContinuationReadCounts]:
         """Read conditional NB rows with one floor and optional original-row counts."""
-        if self.model.authority.adaptive_outer is not None:
-            from _lcm.egm.adaptive_nbegm_query import (  # noqa: PLC0415
-                read_adaptive_choices,
-            )
-
-            return read_adaptive_choices(
-                query=self,
-                grid=grid,
-                value=value,
-                marginal=marginal,
-                data=data,
-                row_queries=row_queries,
-                row_gradients=row_gradients,
-                passive_values=passive_values,
-                passive_grids=passive_grids,
-                action_names=action_names,
-                action_values=action_values,
-                pool=pool,
-                euler_gradient=euler_gradient,
-                paired_marginal_read=paired_marginal_read,
-                collect_continuation_read_counts=collect_continuation_read_counts,
-            )
         if self.model.authority.finite_outer is not None:
             from _lcm.egm.finite_nbegm_query import (  # noqa: PLC0415
                 read_finite_nbegm_choices,

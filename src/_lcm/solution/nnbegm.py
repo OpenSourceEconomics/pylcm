@@ -28,10 +28,6 @@ from dags import concatenate_functions
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.constraints.routes import ConstraintRoute
 from _lcm.continuation import EGMContinuationLayout, EGMContinuationSpec
-from _lcm.egm.adaptive_nbegm_carry import (
-    adaptive_nbegm_template,
-    assemble_adaptive_nbegm_carry,
-)
 from _lcm.egm.adaptive_nbegm_producer import (
     fold_executed_summaries,
     prepare_nested_inner_kernels,
@@ -51,23 +47,17 @@ from _lcm.egm.nested_published_policy import (
 )
 from _lcm.egm.numeric_inverse import numeric_inverse_marginal_utility
 from _lcm.egm.outer_candidates import (
-    OuterCandidateBank,
     OuterCandidateResult,
     build_outer_candidate_bank,
 )
-from _lcm.egm.outer_carry import (
-    ContinuousCollapse,
-    ContinuousValueCollapse,
-    collapse_continuous_candidate_bank,
-    collapse_continuous_values,
-)
+from _lcm.egm.outer_carry import collapse_continuous_candidate_bank
 from _lcm.egm.outer_inversion import (
     DeclaredOuterInverse,
     abstract_like,
     certify_declared_outer_inverse,
     invert_declared_outer_target,
 )
-from _lcm.egm.outer_refinement import AdaptiveMeshResult, refine_outer_mesh
+from _lcm.egm.outer_refinement import refine_outer_mesh
 from _lcm.egm.outer_replay_capability import (
     OuterReplayCapability,
     fail_if_continuous_outer_replay_is_unsupported,
@@ -85,7 +75,6 @@ from _lcm.execution.core_program import (
     CoreArgumentBuilder,
     CoreBuildContext,
     CoreProgram,
-    ProgramScope,
     ValueRead,
     core_program_graph,
 )
@@ -98,11 +87,9 @@ from _lcm.solution.continuation_reads import (
     rekeyed_value_reads,
 )
 from _lcm.solution.contract import (
-    GENERATED_CONTINUATION_AUTHORITY,
     GENERATED_REPLAY_AUTHORITY,
     ConstraintRouteContext,
     ContinuationPayload,
-    GeneratedContinuationAuthority,
     GeneratedReplayAuthority,
     PeriodKernel,
     SolutionKernels,
@@ -143,7 +130,6 @@ from _lcm.typing import (
     EconFunctionsMapping,
     FlatParams,
     FlatRegimeParams,
-    HostArray,
     PytreeValue,
     ReferenceName,
     RegimeName,
@@ -343,16 +329,6 @@ class NNBEGM(TwoMarginSolver):
                 n_stacked_candidates=(
                     int(self.outer_search.grid.to_jax().shape[0]) + 1
                 ),
-            )
-        if isinstance(self, _BoundNNBEGM) and self._adaptive_query:
-            if not isinstance(self.outer_search, AdaptiveOuterMesh):
-                raise TypeError(
-                    "An adaptive query requires its canonical adaptive search."
-                )
-            return replace(
-                self.inner.egm_continuation_layout,
-                n_stacked_candidates=self.outer_search.max_nodes + 1,
-                retains_discrete_action_rows=True,
             )
         return self.inner.egm_continuation_layout
 
@@ -681,11 +657,7 @@ class NNBEGM(TwoMarginSolver):
                 # instead, so the standalone inner policy leaf must not leak into
                 # the cross-period continuation template.
                 template = (
-                    adaptive_nbegm_template(
-                        inner=cast("EGMCarry", inner_template), model=query_model
-                    )
-                    if query_model is not None
-                    else replace(inner_template, policy=None)
+                    replace(inner_template, policy=None)
                     if isinstance(inner_template, EGMCarry)
                     else inner_template
                 )
@@ -848,9 +820,6 @@ class _BoundNNBEGM(NNBEGM):
     """Internal N-NB-EGM config with both regime margins resolved."""
 
     inner: _BoundNBEGM
-    _adaptive_query: bool = field(
-        default=False, metadata={"fingerprint_omit_if_default": True}
-    )
     outer_action: ActionName
     outer_state: StateName
     outer_post_decision: FunctionName
@@ -1147,11 +1116,11 @@ class _NNBEGMPeriodKernel:
 
         The keeper and adjuster are distinct traced programs built from
         different contexts, so each (role, program) pair keeps its own
-        compilation key. A values-only solve dispatches the inner `main`
-        programs and publishes the value and carry alone. Replay retention uses
-        the inner `replay` banks, except that an adaptive query host derives
-        its nested policy from the same raw main rows under a replay-scoped
-        alternative. The inner main output and its decoder stay paired.
+        compilation key. Each inner program keeps its own scope: a values-only
+        solve dispatches the inner `main` programs and the nested collapse
+        publishes the value and the carry alone; a replay-retaining solve
+        dispatches the inner `replay` programs and assembles the nested policy
+        from their banks.
 
         Both roles retain the inner execution contract. The outer search owns
         how many times it dispatches an adjuster; each compiled inner program
@@ -1160,10 +1129,6 @@ class _NNBEGMPeriodKernel:
         separately from compiled axes.
         """
         programs: dict[str, CoreProgram] = {}
-        adaptive_query = (
-            self.query_model is not None
-            and self.query_model.authority.adaptive_outer is not None
-        )
         for role, kernel, outer_node in (
             ("keeper", self.keeper_kernel, None),
             (
@@ -1176,25 +1141,7 @@ class _NNBEGMPeriodKernel:
                 ),
             ),
         ):
-            inner_programs = core_program_graph(kernel=kernel)
-            if adaptive_query:
-                main = inner_programs["main"]
-                inner_programs = MappingProxyType(
-                    {
-                        "main": main,
-                        "query-replay": replace(
-                            main,
-                            name="query-replay",
-                            scope=ProgramScope.REPLAY,
-                            retained_artifact_keys=(SIMULATION_POLICY,),
-                            retained_artifact_payload_types={
-                                SIMULATION_POLICY: self._published_policy_type
-                            },
-                            replaces_program="main",
-                        ),
-                    }
-                )
-            for name, program in inner_programs.items():
+            for name, program in core_program_graph(kernel=kernel).items():
                 retained_artifact_payload_types = dict(
                     program.retained_artifact_payload_types
                 )
@@ -1280,10 +1227,9 @@ class _NNBEGMPeriodKernel:
     ) -> KernelOutput:
         """Solve the keeper, settle the replay capability, run the outer search.
 
-        Replay-scoped alternatives are present exactly when replay is retained,
-        and only then does the outer search assemble a nested policy. Adaptive
-        query alternatives retain the raw main output for host assembly;
-        ordinary inner replay alternatives retain their policy banks. The
+        The retention shows in the compiled programs: the inner `replay`
+        programs are present exactly when the solve retains replay artifacts,
+        and only then does the outer search assemble a nested policy. The
         finite search folds completed chunks immediately. Without replay, it
         releases their per-node value temporaries before the next chunk. Every
         finite solve retains the full continuation-carry bank, and replay also
@@ -1315,10 +1261,7 @@ class _NNBEGMPeriodKernel:
         return self._solve_outer(
             replay_capability=replay_capability,
             keeper_result=keeper_result,
-            retain_replay=(
-                "keeper:replay" in compiled_cores
-                or "keeper:query-replay" in compiled_cores
-            ),
+            retain_replay="keeper:replay" in compiled_cores,
             compiled_cores=compiled_cores,
             state_action_space=state_action_space,
             next_regime_to_V_arr=next_regime_to_V_arr,
@@ -2023,11 +1966,6 @@ class _AdaptiveNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
             kernel=self,
             adjuster_cores=_subcores(compiled_cores=compiled_cores, role="adjuster"),
             cache=cache,
-            prepared_source_floor=(
-                keeper_result.prepared_source_floor
-                if isinstance(keeper_result, _NBEGMNestedKernelOutput)
-                else None
-            ),
             dispatch_width=self.outer_dispatch_width,
             state_action_space=state_action_space,
             next_regime_to_V_arr=next_regime_to_V_arr,
@@ -2065,23 +2003,14 @@ class _AdaptiveNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
                 self.branch_fixed_cost.upper,
             )
         keeper_carry = cast("EGMCarry", keeper_result.continuations[EGM_CONTINUATION])
-        if self.query_model is None:
-            collapse = collapse_continuous_candidate_bank(
-                keeper_v_arr=jnp.asarray(keeper_result.value),
-                keeper_carry=keeper_carry,
-                bank=bank,
-                config=config,
-                fixed_cost_scale=fixed_cost_scale,
-                fixed_cost_support=fixed_cost_support,
-            )
-        else:
-            collapse = collapse_continuous_values(
-                keeper_v_arr=jnp.asarray(keeper_result.value),
-                bank=bank,
-                config=config,
-                fixed_cost_scale=fixed_cost_scale,
-                fixed_cost_support=fixed_cost_support,
-            )
+        collapse = collapse_continuous_candidate_bank(
+            keeper_v_arr=jnp.asarray(keeper_result.value),
+            keeper_carry=keeper_carry,
+            bank=bank,
+            config=config,
+            fixed_cost_scale=fixed_cost_scale,
+            fixed_cost_support=fixed_cost_support,
+        )
         # Derive both branches' inner simulation policies, only when the solve
         # retains replay artifacts. An NB-EGM inner publishes no `EGMSimPolicy`
         # of its own; on the smooth v1 scope its unrefined carry rows determine
@@ -2176,35 +2105,14 @@ class _AdaptiveNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
                 value_atol=config.value_atol,
                 value_rtol=config.value_rtol,
             )
-        auxiliary: dict[
-            ArtifactKey,
-            SolverDiagnostics
-            | GeneratedReplayAuthority
-            | GeneratedContinuationAuthority,
-        ] = {SOLVER_DIAGNOSTICS: diagnostics}
+        auxiliary: dict[ArtifactKey, SolverDiagnostics | GeneratedReplayAuthority] = {
+            SOLVER_DIAGNOSTICS: diagnostics
+        }
         replay: dict[ArtifactKey, NestedEGMSimPolicy] = {}
         if sim_policy is not None:
             replay[SIMULATION_POLICY] = sim_policy
             auxiliary[GENERATED_REPLAY_AUTHORITY] = GeneratedReplayAuthority(
                 adaptive_outer_nodes=tuple(float(node) for node in mesh_nodes_host)
-            )
-        if self.query_model is not None:
-            return _publish_adaptive_nnbegm_query(
-                query_model=self.query_model,
-                keeper_result=keeper_result,
-                keeper_carry=keeper_carry,
-                bank=bank,
-                cache=cache,
-                mesh=mesh,
-                mesh_nodes_host=mesh_nodes_host,
-                collapse=collapse,
-                replay=replay,
-                auxiliary=auxiliary,
-                capacity=config.max_nodes,
-            )
-        if not isinstance(collapse, ContinuousCollapse):
-            raise TypeError(
-                "An ordinary continuous collapse must retain its carried rows."
             )
         return KernelOutput(
             value=collapse.V_arr,
@@ -2243,14 +2151,12 @@ def _nnbegm_query_period_groups(
     """Validate canonical inner authorities and group periods by their real targets."""
     inner_models = None
     if query_model is not None:
-        if isinstance(outer_search, FiniteOuterGrid):
-            if query_model.authority.finite_outer is None:
-                raise TypeError("Finite NB publication requires finite authority.")
-            inner_models = query_model.finite_inner_models
-        else:
-            if query_model.authority.adaptive_outer is None:
-                raise TypeError("Adaptive NB publication requires adaptive authority.")
-            inner_models = query_model.adaptive_inner_models
+        if (
+            not isinstance(outer_search, FiniteOuterGrid)
+            or query_model.authority.finite_outer is None
+        ):
+            raise TypeError("Nested NB publication requires finite authority.")
+        inner_models = query_model.finite_inner_models
         if inner_models is None:
             raise TypeError("Nested NB publication requires canonical role models.")
     # The adjuster's outer post-decision arrives per outer-grid node as a
@@ -2358,71 +2264,6 @@ def _prepare_nnbegm_query_inner_pair(
     )
 
 
-def _publish_adaptive_nnbegm_query(
-    *,
-    query_model: NBEGMQueryModel,
-    keeper_result: KernelOutput,
-    keeper_carry: EGMCarry,
-    bank: OuterCandidateBank,
-    cache: Mapping[float, OuterCandidateResult],
-    mesh: AdaptiveMeshResult,
-    mesh_nodes_host: HostArray,
-    collapse: ContinuousCollapse | ContinuousValueCollapse,
-    replay: dict[ArtifactKey, NestedEGMSimPolicy],
-    auxiliary: dict[
-        ArtifactKey,
-        SolverDiagnostics | GeneratedReplayAuthority | GeneratedContinuationAuthority,
-    ],
-    capacity: int,
-) -> FeasibilityKernelOutput:
-    """Publish the real adaptive bank with executed status and current feasibility."""
-    adaptive = query_model.authority.adaptive_outer
-    if adaptive is None:
-        raise TypeError(
-            "Adaptive publication requires its canonical search declaration."
-        )
-    if not isinstance(keeper_result, _NBEGMNestedKernelOutput):
-        raise TypeError("Adaptive publication requires its real conditional keeper.")
-    carry, mismatch = assemble_adaptive_nbegm_carry(
-        keeper=keeper_carry,
-        adjusters=bank.carry,
-        outer_nodes=mesh.nodes,
-        capacity=capacity,
-    )
-    bounds, queries, counts = fold_executed_summaries(
-        keeper=keeper_result,
-        candidates=tuple(cache.values()),
-        floor_mismatch=mismatch,
-    )
-    masks = [keeper_result.current_feasibility]
-    for node in mesh_nodes_host:
-        current = cache[float(node)].current_feasibility
-        if current is None:
-            raise TypeError("An actual adaptive node lost its pre-D feasibility.")
-        masks.append(current)
-    joint = jnp.any(jnp.stack(masks), axis=0)
-    physical = count_current_feasibility(
-        budget_feasible=joint,
-        predicate_feasible=jnp.empty((*joint.shape, 0), dtype=jnp.bool_),
-        value=collapse.V_arr,
-        active_states=jnp.ones(collapse.V_arr.shape, dtype=jnp.bool_),
-    )
-    auxiliary[GENERATED_CONTINUATION_AUTHORITY] = GeneratedContinuationAuthority(
-        adaptive_outer_nodes=tuple(float(node) for node in mesh_nodes_host),
-        model_identity=adaptive.mesh_authority_identity,
-    )
-    return FeasibilityKernelOutput(
-        value=collapse.V_arr,
-        continuations={EGM_CONTINUATION: carry},
-        replay=replay,
-        auxiliary=auxiliary,
-        feasibility_counts=physical,
-        bound_status=bounds,
-        query_status=queries,
-        continuation_read_counts=counts,
-    )
-
-
 def _dispatch_bounds(*, n_items: int, width: int | None) -> tuple[tuple[int, int], ...]:
     """Return one `(start, stop)` pair per host-loop step of an outer dispatch.
 
@@ -2527,7 +2368,6 @@ class _AdaptiveNodeSolver:
     """Immutable mapping of the adjuster's compiled core programs."""
 
     cache: dict[float, OuterCandidateResult]
-    prepared_source_floor: PreparedNestedFloor | None = None
     """Node value to its solved candidate; the driver's caller reads it back
     to assemble the final bank."""
 
@@ -2578,11 +2418,6 @@ class _AdaptiveNodeSolver:
                     period=self.period,
                     ages=self.ages,
                     logger=self.logger,
-                    **(
-                        {"prepared_source_floor": self.prepared_source_floor}
-                        if self.kernel.query_model is not None
-                        else {}
-                    ),
                 )
                 for node in chunk
             ]
@@ -2728,11 +2563,11 @@ def _fail_if_the_outer_search_leaves_the_outer_state_domain(
 def _subcores(
     *, compiled_cores: Mapping[str, Callable[..., PytreeValue]], role: str
 ) -> Mapping[str, Callable[..., PytreeValue]]:
-    """Select actual inner cores and decode the host-retained raw-main alias."""
+    """Select one role's inner cores, stripping the `role:` prefix."""
     token = f"{role}:"
     return MappingProxyType(
         {
-            ("main" if key == f"{role}:query-replay" else key.removeprefix(token)): core
+            key.removeprefix(token): core
             for key, core in compiled_cores.items()
             if key.startswith(token)
         }

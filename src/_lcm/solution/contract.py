@@ -548,19 +548,6 @@ class SolverBuildContext:
 
 
 @dataclass(frozen=True, kw_only=True)
-class GeneratedContinuationAuthority:
-    """Trusted completed mesh facts emitted independently of any replay payload."""
-
-    adaptive_outer_nodes: tuple[float, ...]
-    model_identity: Hashable
-
-
-GENERATED_CONTINUATION_AUTHORITY = ArtifactKey(
-    type_id="pylcm.engine.generated_continuation_authority", schema_version=1
-)
-
-
-@dataclass(frozen=True, kw_only=True)
 class GeneratedReplayAuthority:
     """Trusted dynamic replay facts emitted beside, never read from, a payload."""
 
@@ -581,7 +568,6 @@ _ENGINE_ARTIFACT_TYPE_IDS = frozenset(
         DISSOLUTION_FLAG.type_id,
         EGM_CONTINUATION.type_id,
         GENERATED_REPLAY_AUTHORITY.type_id,
-        GENERATED_CONTINUATION_AUTHORITY.type_id,
         SIMULATION_POLICY.type_id,
         SOLVER_DIAGNOSTICS.type_id,
     }
@@ -608,11 +594,6 @@ class BackwardInductionResult:
 
     Sparse over regimes: only kernels that publish a policy contribute entries.
     """
-
-    generated_continuation_authorities: MappingProxyType[
-        int, MappingProxyType[RegimeName, GeneratedContinuationAuthority]
-    ] = MappingProxyType({})
-    """Trusted generated mesh data retained even when replay is absent."""
 
     generated_replay_authorities: MappingProxyType[
         int, MappingProxyType[RegimeName, GeneratedReplayAuthority]

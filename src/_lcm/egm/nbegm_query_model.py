@@ -64,10 +64,6 @@ class NBEGMQueryModel:
     """Canonical qualified state-node declarations deferred by the compiler."""
     inverse_eis_name: QualifiedName | None = None
     """Existing EZ elasticity leaf; absent for additive expected utility."""
-    adaptive_inner_models: Mapping[str, NBEGMQueryModel] | None = field(
-        default=None, metadata={"fingerprint_omit_if_default": True}
-    )
-    """Canonical keeper/adjuster authorities with their actual substituted DAGs."""
     finite_inner_models: Mapping[str, NBEGMQueryModel] | None = field(
         default=None, metadata={"fingerprint_omit_if_default": True}
     )
@@ -80,24 +76,6 @@ class NBEGMQueryModel:
         default=None, metadata={"fingerprint_omit_if_default": True}
     )
     """Actual period-resolved derived role pools, absent on ordinary NB models."""
-
-
-def derive_adaptive_inner_models(
-    *,
-    model: NBEGMQueryModel,
-    functions_by_period: Mapping[int, EconFunctionsMapping],
-    declarations_by_period: Mapping[int, Mapping[FunctionName, UserFunction]],
-) -> Mapping[str, NBEGMQueryModel]:
-    """Build genuine keeper and adjuster authority from their substituted DAGs."""
-    if model.authority.adaptive_outer is None:
-        raise TypeError(
-            "Derived adaptive roles require their canonical parent descriptor."
-        )
-    return _derive_inner_models(
-        model=model,
-        functions_by_period=functions_by_period,
-        declarations_by_period=declarations_by_period,
-    )
 
 
 def derive_finite_inner_models(
@@ -133,7 +111,7 @@ def _derive_inner_models(
         _without_outer_post_decision,
     )
 
-    outer = model.authority.adaptive_outer or model.authority.finite_outer
+    outer = model.authority.finite_outer
     if outer is None:
         raise TypeError("Derived nested roles require their canonical descriptor.")
     result = {}
@@ -193,7 +171,6 @@ def _derive_inner_models(
             koopmans_aggregator=first["koopmans_aggregator"],
             intervals=recipes[periods[0]],
             intervals_by_period=recipes,
-            adaptive_inner_models=None,
             finite_inner_models=None,
             functions_by_period=MappingProxyType(pools),
             retain_nested_feasibility=True,

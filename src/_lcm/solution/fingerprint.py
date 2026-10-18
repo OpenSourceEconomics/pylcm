@@ -837,18 +837,10 @@ def fingerprint_model_structure(
 
 def _query_semantic_descriptor(spec: EGMQuerySpec) -> EGMQuerySpec:
     """Seal static query meaning; declaration and parameter walks seal code/data."""
-    adaptive = spec.adaptive_outer
     return dataclasses.replace(
         spec,
         bound=dataclasses.replace(spec.bound, dependency_identity=()),
         evaluator_identity=(),
-        adaptive_outer=None
-        if adaptive is None
-        else dataclasses.replace(
-            adaptive,
-            evaluator_identity=(),
-            mesh_authority_identity=(),
-        ),
     )
 
 

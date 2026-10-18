@@ -144,7 +144,6 @@ def _assert_parent_query_authority(
     assert authority.coordinate_kind == "liquid"
     assert authority.outer_mode == "finite_max"
     assert authority.outer_capacity == 4
-    assert authority.adaptive_outer is None
     assert authority.finite_outer is not None
     assert authority.finite_outer.outer_nodes == (0.0, 1.0, 2.0)
     assert authority.finite_outer.outer_state == "illiquid"
@@ -167,7 +166,6 @@ def _assert_finite_inner_role_authorities(*, kernel: _NNBEGMPeriodKernel) -> Non
     roles = model_authority.finite_inner_models
     assert roles is not None
     assert tuple(roles) == ("keeper", "adjuster")
-    assert model_authority.adaptive_inner_models is None
     for role in ("keeper", "adjuster"):
         derived = roles[role]
         assert derived.authority.outer_mode == "none"
@@ -187,7 +185,6 @@ def _assert_finite_query_publication(
     """Keep all published query leaves, templates and transported identities exact."""
     data = child.query_data_for_transport()
     assert data is not None
-    assert data.adaptive_outer_data is None
     assert data.liquid_corner_data is None
     assert data.corner_continuation is not None
     np.testing.assert_array_equal(data.floor_used, [0.0, 0.25, 0.5])

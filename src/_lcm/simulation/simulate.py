@@ -31,7 +31,6 @@ from _lcm.egm.outer_inversion import (
     outer_candidate_is_admissible,
 )
 from _lcm.egm.outer_refinement import safeguarded_continuous_argmax
-from _lcm.egm.preferences import concatenate_regime_function
 from _lcm.egm.published_policy import (
     EGMSimPolicy,
     NBEGMGridPolicy,
@@ -47,7 +46,6 @@ from _lcm.engine import (
 )
 from _lcm.grids import ContinuousGrid, DiscreteGrid
 from _lcm.params.edges import regime_kernel_params
-from _lcm.post_decision_bound import PostDecisionBoundSpec
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.ndimage import map_coordinates
 from _lcm.regime_building.Q_and_F import (
@@ -2825,15 +2823,6 @@ def _read_nested_policy(
             ),
         ),
     )
-    floor = _nested_current_floor(
-        payload=payload,
-        regime=regime,
-        states=states,
-        flat_params=flat_params,
-        period=period,
-        age=age,
-        n_subjects=n_subjects,
-    )
     accepted = (
         pointwise_replay_ok
         & keeper_support
@@ -2842,7 +2831,7 @@ def _read_nested_policy(
         & jnp.isfinite(outer_action)
         & jnp.isfinite(inner_action)
         & (inner_action > 0.0)
-        & (inner_action <= resources - floor)
+        & (inner_action <= resources - payload.savings_lower_bound)
     )
 
     new_actions = dict(optimal_actions)
@@ -2976,17 +2965,6 @@ def _best_admissible_replay_candidate(
             n_subjects=n_subjects,
         )
     )(outer_action=outer_actions, outer_post_decision=images)
-    # The floor is a fixed current-state quantity: one value per subject,
-    # shared by the keeper and every mesh row rather than derived from a target.
-    floor = _nested_current_floor(
-        payload=payload,
-        regime=regime,
-        states=states,
-        flat_params=flat_params,
-        period=period,
-        age=age,
-        n_subjects=n_subjects,
-    )
     preliminary_admissible = (
         reaches_target
         & support
@@ -2995,7 +2973,7 @@ def _best_admissible_replay_candidate(
         & jnp.isfinite(resources)
         & jnp.isfinite(published_values)
         & (inner_actions > 0.0)
-        & (inner_actions <= resources - floor[None, :])
+        & (inner_actions <= resources - payload.savings_lower_bound)
     )
     return outer_actions, inner_actions, preliminary_admissible
 
@@ -3058,22 +3036,13 @@ def _nested_actions_are_intrinsically_admissible(
         n_subjects=n_subjects,
     )
     inner_action = jnp.asarray(actions[payload.inner_action_name])
-    floor = _nested_current_floor(
-        payload=payload,
-        regime=regime,
-        states=states,
-        flat_params=flat_params,
-        period=period,
-        age=age,
-        n_subjects=n_subjects,
-    )
     return (
         in_outer_domain
         & jnp.isfinite(outer_action)
         & jnp.isfinite(inner_action)
         & jnp.isfinite(resources)
         & (inner_action > 0.0)
-        & (inner_action <= resources - floor)
+        & (inner_action <= resources - payload.savings_lower_bound)
     )
 
 
@@ -3160,7 +3129,7 @@ def _nested_grid_baseline(
         grid_inner[None, ...],
     )
 
-    scored = vmap(
+    replay_values, replay_q_feasible = vmap(
         functools.partial(
             _canonical_Q_at_branch,
             grid_actions=grid_actions,
@@ -3176,24 +3145,6 @@ def _nested_grid_baseline(
             age=age,
         )
     )(outer_action=safe_outer_actions, inner_action=safe_inner_actions)
-    if type(scored) is BoundedResult:
-        # Every evaluated row, including excluded or losing ones, contributes
-        # its integrity record; the folded record is accepted once on the host.
-        validate_runtime_bound_status(
-            statuses=reduce_bound_input_status(
-                statuses=scored.bound_status,
-                active=jnp.ones((safe_outer_actions.shape[0],), dtype=bool),
-            ),
-            bound_specs=tuple(
-                bound
-                for bound in regime.simulation.post_decision_bounds
-                if bound.kind == "dag"
-            ),
-            regime_name=regime.name,
-            period=period,
-        )
-        scored = scored.output
-    replay_values, replay_q_feasible = cast("tuple[FloatND, BoolND]", scored)
     replay_admissible = (
         replay_preliminary & replay_q_feasible & jnp.isfinite(replay_values)
     )
@@ -3270,86 +3221,6 @@ def _nested_resources(
         ),
         (n_subjects,),
     )
-
-
-def _nested_current_floor(
-    *,
-    payload: NestedEGMSimPolicy,
-    regime: Regime,
-    states: Mapping[StateOrActionName, FloatND | IntND],
-    flat_params: FlatRegimeParams,
-    period: int,
-    age: ScalarFloat | ScalarInt,
-    n_subjects: int,
-) -> FloatND:
-    """Return the saving floor nested replay enforces at each current state.
-
-    A regime with a canonical callable floor on the payload's liquid margin
-    evaluates that floor from the period's feasibility pool at the subjects'
-    current states, params, period and age, before any action-dependent
-    resources. Model authority restricts its inputs to those fixed quantities
-    and binds its target to the installed runtime bound. A regime without one
-    keeps the solver's scalar savings floor. Either way the result has one
-    entry per subject.
-    """
-    bounds = tuple(
-        bound
-        for bound in regime.simulation.post_decision_bounds
-        if bound.kind == "dag" and bound.liquid_state == payload.liquid_state_name
-    )
-    if not bounds:
-        return jnp.full(n_subjects, payload.savings_lower_bound)
-    _fail_if_nested_floor_has_no_canonical_evaluator(
-        bounds=bounds, regime=regime, period=period
-    )
-    functions, _constraints = regime.simulation.feasibility_pools_by_period[period]
-    lower = concatenate_regime_function(
-        functions=functions, target=cast("FunctionName", bounds[0].lower_target)
-    )
-    kwargs = _resolve_function_kwargs(
-        func=lower,
-        states=states,
-        bindings={},
-        flat_params=flat_params,
-        period=period,
-        age=age,
-        n_subjects=n_subjects,
-    )
-    if kwargs is None:
-        raise TypeError(
-            f"The borrowing floor of regime '{regime.name}' reads an input outside "
-            "the current states, params, period and age."
-        )
-    # The canonical floor is a scalar function of one state; map it over subjects.
-    subject_axes = {
-        name: 0 if name in states or name in ("period", "age") else None
-        for name in kwargs
-    }
-    if not any(axis == 0 for axis in subject_axes.values()):
-        return jnp.broadcast_to(jnp.asarray(lower(**kwargs)), (n_subjects,))
-    return jnp.reshape(
-        jax.vmap(lambda inputs: lower(**inputs), in_axes=(subject_axes,))(kwargs),
-        (n_subjects,),
-    )
-
-
-def _fail_if_nested_floor_has_no_canonical_evaluator(
-    *,
-    bounds: tuple[PostDecisionBoundSpec, ...],
-    regime: Regime,
-    period: int,
-) -> None:
-    """Refuse a nested replay floor that is ambiguous or has no canonical pool."""
-    if len(bounds) != 1 or bounds[0].lower_target is None:
-        raise TypeError(
-            f"Nested replay in regime '{regime.name}' needs exactly one canonical "
-            f"callable floor on its liquid margin, got {len(bounds)}."
-        )
-    if period not in regime.simulation.feasibility_pools_by_period:
-        raise TypeError(
-            f"Nested replay in regime '{regime.name}' has no canonical floor "
-            f"evaluator for period {period}."
-        )
 
 
 def _resolve_function_kwargs(
@@ -4301,12 +4172,8 @@ def _canonical_Q_at_branch(
     referenced_value_kwargs: QAndFKwargs,
     period: int,
     age: ScalarFloat | ScalarInt,
-) -> tuple[FloatND, BoolND] | BoundedResult[tuple[FloatND, BoolND]]:
-    """Score the grid actions with one replay branch's outer and inner pair.
-
-    The evaluation is pure, so it can be mapped over the branch bank; any
-    integrity record it returns is left to the caller's single host check.
-    """
+) -> tuple[FloatND, BoolND]:
+    """Score the grid actions with one replay branch's outer and inner pair."""
     branch_actions = MappingProxyType(
         {
             **grid_actions,
@@ -4314,7 +4181,7 @@ def _canonical_Q_at_branch(
             inner_action_name: inner_action,
         }
     )
-    return _evaluate_canonical_Q_at_actions(
+    return _canonical_Q_at_actions(
         candidate_actions=branch_actions,
         regime=regime,
         canonical_states=canonical_states,

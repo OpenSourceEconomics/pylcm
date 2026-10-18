@@ -7,7 +7,7 @@ adds every layout property a reading parent needs.
 """
 
 from collections.abc import Hashable, Mapping
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, fields
 from dataclasses import field as dataclass_field
 from typing import Literal, cast
 
@@ -24,42 +24,6 @@ from lcm.typing import ActionName, FunctionName, ReferenceName, StateName, UserF
 type ContinuationPayload = ContinuationArtifact
 
 _EXACT_ENVELOPE_SIDE_IDS = (-1, 0, 1)
-
-
-@dataclass(frozen=True, kw_only=True)
-class AdaptiveOuterQuerySpec:
-    """Model-owned continuous outer-profile and active-mesh interpretation."""
-
-    outer_state: StateName
-    """Fixed current outer-state role."""
-    outer_action: ActionName
-    """Chosen outer-action role, excluded from the source bound."""
-    outer_post_decision: FunctionName
-    """Adjuster target associated with each saved mesh node."""
-    keeper_target: FunctionName | None
-    """Canonical keeper target; absent for the current-state identity."""
-    cost_target: FunctionName
-    """Canonical adjustment-cost evaluator target."""
-    adjuster_capacity: int
-    """Fixed mesh capacity, with one additional keeper slot in the row bank."""
-    golden_iterations: int
-    """Existing continuous search iteration budget."""
-    evaluator_identity: tuple[tuple[FunctionName, Hashable], ...]
-    """Canonical cost/target/keeper/aggregation evaluator dependencies."""
-    evaluator_inputs: tuple[tuple[FunctionName, tuple[ReferenceName, ...]], ...]
-    """Resolved transitive inputs, including canonical time and parameter leaves."""
-    branch_aggregation: Literal["deterministic", "uniform_observed_fixed_cost"]
-    """Keeper/adjuster fold before passive blending for each conditional action."""
-    fixed_cost_target: FunctionName | None = None
-    """Canonical fixed-cost scale target for an expected-cost fold."""
-    fixed_cost_support: tuple[float, float] | None = None
-    """Declared cost support; absent for deterministic folding."""
-    interpolant_identity: str = "LocalCubicOuterInterpolant"
-    """Existing continuous surrogate, never a finite-node maximum."""
-    tie_convention: str = "keeper_first"
-    """Canonical exact branch-tie ownership."""
-    mesh_authority_identity: Hashable = ()
-    """Model-generated binding for active coordinates/count and solution parameters."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -148,12 +112,10 @@ class EGMQuerySpec:
     """Canonical evaluator/dependency/phase identity, excluding numerical floors."""
     target_periods: tuple[int, ...]
     """Canonical target-period bindings represented by this declaration."""
-    outer_mode: Literal["none", "finite_max", "adaptive_continuous"] = "none"
+    outer_mode: Literal["none", "finite_max"] = "none"
     """Outer operator, independent of the incidental row-bank shape."""
     outer_capacity: int = 0
-    """Finite candidate count or adaptive keeper-plus-adjuster capacity."""
-    adaptive_outer: AdaptiveOuterQuerySpec | None = None
-    """Continuous-profile authority, present only for adaptive composition."""
+    """Finite keeper-plus-adjuster candidate count."""
     row_topology: EGMRowTopologySpec | None = dataclass_field(
         default=None, metadata={"fingerprint_omit_if_default": True}
     )
@@ -189,10 +151,6 @@ class EGMQuerySpec:
             )
         if (self.outer_mode == "none") != (self.outer_capacity == 0):
             raise TypeError("Query outer operator and capacity disagree.")
-        if (self.outer_mode == "adaptive_continuous") != (
-            self.adaptive_outer is not None
-        ):
-            raise TypeError("Query adaptive and finite authority must be distinct.")
         if (self.outer_mode == "finite_max") != (self.finite_outer is not None):
             raise TypeError("Finite nested queries require canonical outer identities.")
         if self.finite_outer is not None and (
@@ -212,11 +170,6 @@ class EGMQuerySpec:
             raise TypeError(
                 "Finite nested coordinates and candidate authority disagree."
             )
-        if (
-            self.adaptive_outer is not None
-            and self.outer_capacity != self.adaptive_outer.adjuster_capacity + 1
-        ):
-            raise TypeError("Query adaptive capacity needs a separate keeper slot.")
 
 
 def _validate_row_topology(*, topology: EGMRowTopologySpec | None) -> None:
@@ -323,7 +276,7 @@ def validate_query_model_authority(
             if field.name in ("bound", "row_topology"):
                 continue
             left, right = getattr(spec, field.name), getattr(model_spec, field.name)
-            if field.name in ("adaptive_outer", "finite_outer"):
+            if field.name == "finite_outer":
                 if (left is None) != (right is None) or (
                     left is not None
                     and any(
@@ -335,7 +288,7 @@ def validate_query_model_authority(
                     )
                 ):
                     raise TypeError(
-                        "Query adaptive semantics differ from model authority."
+                        "Query finite outer semantics differ from model authority."
                     )
             elif not _same_bound_identity(left=left, right=right):
                 raise TypeError(f"Query {field.name} differs from model authority.")
@@ -357,9 +310,8 @@ def build_query_model_authority(
     target_periods: tuple[int, ...],
     functions_by_period: Mapping[int, Mapping[FunctionName, UserFunction]]
     | None = None,
-    outer_mode: Literal["none", "finite_max", "adaptive_continuous"] = "none",
+    outer_mode: Literal["none", "finite_max"] = "none",
     outer_capacity: int = 0,
-    adaptive_outer: AdaptiveOuterQuerySpec | None = None,
     row_topology: EGMRowTopologySpec | None = None,
     interval_source_identity: tuple[Hashable, ...] = (),
     finite_outer: FiniteOuterQuerySpec | None = None,
@@ -386,17 +338,6 @@ def build_query_model_authority(
         targets=evaluator_targets,
         functions_by_period=functions_by_period,
     )
-    if adaptive_outer is not None:
-        adaptive_inputs, adaptive_identity = _adaptive_evaluator_contract(
-            spec=adaptive_outer,
-            functions=functions,
-            functions_by_period=functions_by_period,
-        )
-        adaptive_outer = replace(
-            adaptive_outer,
-            evaluator_inputs=adaptive_inputs,
-            evaluator_identity=adaptive_identity,
-        )
     return EGMQuerySpec(
         bound=bound,
         state_names=state_names,
@@ -413,7 +354,6 @@ def build_query_model_authority(
         target_periods=target_periods,
         outer_mode=outer_mode,
         outer_capacity=outer_capacity,
-        adaptive_outer=adaptive_outer,
         row_topology=row_topology,
         interval_source_identity=interval_source_identity,
         finite_outer=finite_outer,
@@ -504,54 +444,6 @@ def validate_query_evaluator_authority(
         )
     if spec.target_periods != target_periods:
         raise TypeError("Query target periods differ from canonical model authority.")
-    if spec.adaptive_outer is not None:
-        adaptive_inputs, adaptive_identity = _adaptive_evaluator_contract(
-            spec=spec.adaptive_outer,
-            functions=functions,
-            functions_by_period=functions_by_period,
-        )
-        if not _same_bound_identity(
-            left=adaptive_inputs, right=spec.adaptive_outer.evaluator_inputs
-        ) or not _same_bound_identity(
-            left=adaptive_identity, right=spec.adaptive_outer.evaluator_identity
-        ):
-            raise TypeError(
-                "Query adaptive dependencies differ from canonical model authority."
-            )
-
-
-def _adaptive_evaluator_contract(
-    *,
-    spec: AdaptiveOuterQuerySpec,
-    functions: Mapping[FunctionName, UserFunction],
-    functions_by_period: Mapping[int, Mapping[FunctionName, UserFunction]] | None,
-) -> tuple[
-    tuple[tuple[FunctionName, tuple[ReferenceName, ...]], ...],
-    tuple[tuple[FunctionName, Hashable], ...],
-]:
-    """Bind required outer targets and declared aggregation nodes to canonical code."""
-    if type(spec) is not AdaptiveOuterQuerySpec:
-        raise TypeError("Query adaptive authority must be an exact canonical record.")
-    targets = tuple(
-        dict.fromkeys(
-            (
-                spec.outer_post_decision,
-                spec.cost_target,
-                *((spec.keeper_target,) if spec.keeper_target is not None else ()),
-                *(
-                    (spec.fixed_cost_target,)
-                    if spec.fixed_cost_target is not None
-                    else ()
-                ),
-                *(name for name, _inputs in spec.evaluator_inputs),
-            )
-        )
-    )
-    return _query_evaluator_contract(
-        functions=functions,
-        functions_by_period=functions_by_period,
-        targets=tuple((name, name) for name in targets),
-    )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -669,10 +561,7 @@ def validate_query_template(  # noqa: C901, PLR0912
         raise TypeError(
             "Query authority and corner coordinate representation disagree."
         )
-    if (query.adaptive_outer_data is not None) != (spec.adaptive_outer is not None):
-        raise TypeError("Query authority and adaptive mesh representation disagree.")
     interval_capacity = len(spec.interval_ids)
-    cells = prefix[: len(spec.state_names) + len(spec.action_names)]
     for path, leaf in query.leaves().items():
         name = path[-1]
         dtype = (
@@ -688,10 +577,6 @@ def validate_query_template(  # noqa: C901, PLR0912
                 "corner_kind",
                 "corner_interval_id",
                 "corner_side_id",
-                "outer_count",
-                "outer_node_kind",
-                "outer_owner_id",
-                "outer_side_id",
             )
             else canonical_float_dtype()
         )
@@ -700,17 +585,6 @@ def validate_query_template(  # noqa: C901, PLR0912
                 *prefix,
                 spec.row_capacity - 1 if name == "link_valid" else spec.row_capacity,
                 interval_capacity,
-            )
-        elif path[0] == "adaptive_outer_data":
-            if spec.adaptive_outer is None:
-                raise TypeError("Query adaptive metadata has no model authority.")
-            capacity = spec.adaptive_outer.adjuster_capacity
-            expected = (
-                ()
-                if name == "outer_count"
-                else (capacity,)
-                if name in ("outer_nodes", "outer_node_kind")
-                else (*cells, capacity - 1 if name == "outer_link_valid" else capacity)
             )
         elif name == "floor_used":
             expected = prefix[: len(spec.state_names)]
