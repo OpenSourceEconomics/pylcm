@@ -41,18 +41,21 @@ from lcm import (
     ref,
 )
 from lcm.collective import CollectiveUtility
+from lcm.consumption_savings_regime import NestedConsumptionSavingsRegime
 from lcm.exceptions import ModelInitializationError
-from lcm.solvers import EGM, GridSearch
+from lcm.solvers import EGM, AdaptiveOuterMesh, GridSearch
 from lcm.transition import AgeSpecializedFunction
 from lcm.typing import (
     ActionName,
     BoolND,
+    ContinuousState,
     FloatND,
     FunctionName,
     ScalarInt,
     UserFunction,
 )
 from tests.solution.test_egm_model_validation import _model as _egm_model
+from tests.test_models import n_nbegm_toy
 
 LIQUID = LiquidMargin(
     state="wealth",
@@ -830,3 +833,47 @@ def test_actual_floor_output_is_real_floating_scalar(
         ModelInitializationError, match=r"borrowing.*real floating scalar"
     ):
         model.solve(params={"theta": 0.5, "floor_scale": 0.5}, log_level="off")
+
+
+def _adaptive_constant_floor() -> FloatND:
+    return jnp.asarray(0.5)
+
+
+def _adaptive_zero_floor() -> FloatND:
+    return jnp.asarray(0.0)
+
+
+def _adaptive_illiquid_floor(illiquid: ContinuousState) -> FloatND:
+    return 0.1 * illiquid
+
+
+@pytest.mark.parametrize(
+    "floor",
+    [_adaptive_constant_floor, _adaptive_zero_floor, _adaptive_illiquid_floor],
+    ids=["constant", "zero", "illiquid"],
+)
+def test_adaptive_outer_mesh_refuses_a_callable_floor(floor: UserFunction) -> None:
+    """Adaptive outer search accepts only literal floors, refused at model build."""
+    seed = n_nbegm_toy.build_model(
+        variant="n_nbegm",
+        n_periods=2,
+        outer_search=AdaptiveOuterMesh(initial_grid=n_nbegm_toy.OUTER_GRID),
+    )
+    alive = cast("NestedConsumptionSavingsRegime", seed.user_regimes["alive"])
+    feature = alive.replace(
+        constraints={
+            "borrowing": post_decision_lower_bound(margin=alive.liquid, lower=floor)
+        }
+    )
+    with pytest.raises(
+        ModelInitializationError,
+        match=r"adaptive outer search supports only literal floors.*slow",
+    ):
+        Model(
+            regimes={**seed.user_regimes, "alive": feature},
+            ages=seed.ages,
+            edges=seed.edges,
+            fixed_params=seed.fixed_params,
+            initial_nodes=seed.initial_nodes,
+            regime_id_class=n_nbegm_toy.RegimeId,
+        )

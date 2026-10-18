@@ -5,25 +5,15 @@ finite action grid, recover consumption from the conditional inner policies,
 and remain deterministic without taste shocks.
 """
 
-from types import MappingProxyType
-
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 import pytest
 from jax import config as jax_config
 
-from _lcm.egm.nbegm_query import NBEGMQuery
-from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
-from _lcm.params.edges import regime_kernel_params
-from _lcm.simulation.simulate import _canonical_Q_at_actions
-from _lcm.solution.nnbegm import _NNBEGMPeriodKernel
-from lcm import ExecutionConfig, LinSpacedGrid, Model, post_decision_lower_bound
-from lcm.consumption_savings_regime import NestedConsumptionSavingsRegime
-from lcm.solver_api import SIMULATION_POLICY
+from lcm import LinSpacedGrid
 from lcm.solvers import AdaptiveOuterMesh
 from lcm.typing import ContinuousState, FloatND
-from tests.conftest import DECIMAL_PRECISION
 from tests.test_models import n_nbegm_toy as toy
 
 # The module-scoped simulation runs up against the per-test timeout on the
@@ -223,107 +213,3 @@ def test_a_legal_narrow_adjuster_mesh_preserves_the_exact_keeper() -> None:
     assert float(row["illiquid"] + row["illiquid_investment"]) == pytest.approx(
         0.0, abs=0.0
     )
-
-
-def _adaptive_zero_floor() -> FloatND:
-    """The callable margin has the toy's unchanged zero saving floor."""
-    return jnp.asarray(0.0)
-
-
-def test_adaptive_callable_floor_preserves_public_replay(
-    simulated: pd.DataFrame,
-) -> None:
-    """A canonical callable floor preserves the adaptive replay's value and budget."""
-    _require_adaptive_budget(frame=simulated)
-    config = ExecutionConfig(device_memory_bytes=None)
-    seed = toy.build_model(
-        variant="n_nbegm", n_periods=3, outer_search=_MESH, execution_config=config
-    )
-    alive = seed.user_regimes["alive"]
-    assert isinstance(alive, NestedConsumptionSavingsRegime)
-    feature = alive.replace(
-        constraints={
-            "borrowing": post_decision_lower_bound(
-                margin=alive.liquid, lower=_adaptive_zero_floor
-            )
-        }
-    )
-    model = Model(
-        regimes={**seed.user_regimes, "alive": feature},
-        ages=seed.ages,
-        edges=seed.edges,
-        fixed_params=seed.fixed_params,
-        initial_nodes=seed.initial_nodes,
-        regime_id_class=toy.RegimeId,
-        execution_config=config,
-    )
-    phase = model._regimes["alive"].solution
-    readers = phase.continuation_reader_capabilities
-    authorities = phase.query_input_authorities
-    assert readers is not None
-    assert authorities is not None
-    kernel = phase.period_kernels[0]
-    assert isinstance(kernel, _NNBEGMPeriodKernel)
-    for inner in (kernel.keeper_kernel, kernel.adjuster_kernel):
-        plan = inner.continuation_plan
-        assert plan.query_targets == ("alive",)
-        query = plan.child_reads["alive"].query
-        assert isinstance(query, NBEGMQuery)
-        assert query.model.authority is phase.query_authority
-        assert readers[0] == {"alive": query.capabilities}
-        assert authorities[0] == (("alive", 1, query.model.authority.bound),)
-    solution = model.solve(params=_PARAMS, log_level="off")
-    policy = solution.replay_artifacts.project(SIMULATION_POLICY)[0]["alive"]
-    assert isinstance(policy, NestedEGMSimPolicy)
-    regime = model._regimes["alive"]
-    assert regime.simulation.replay_route.consumer_route == "nnbegm_nested"
-    result = model.simulate(
-        params=_PARAMS,
-        solution=solution,
-        initial_conditions=dict(_INITIAL),
-        log_level="off",
-        seed=42,
-    ).to_dataframe()
-    _require_adaptive_budget(frame=result)
-    rows = result.query("period == 0 and regime_name == 'alive'")
-    assert len(rows) == len(_INITIAL["wealth"])
-    flat = regime_kernel_params(
-        model._process_params(_PARAMS, runtime_checks=True), regime_name="alive"
-    )
-    assert model.ages is not None
-    values, feasible = _canonical_Q_at_actions(
-        candidate_actions={
-            name: jnp.asarray(rows[name].to_numpy())
-            for name in regime.simulation.action_names
-        },
-        regime=regime,
-        canonical_states={
-            name: jnp.asarray(rows[name].to_numpy())
-            for name in regime.simulation.state_names
-        },
-        action_names=regime.simulation.action_names,
-        next_regime_to_V_arr=MappingProxyType(dict(solution.values[1])),
-        flat_params=flat,
-        period=0,
-        age=model.ages.values[0],
-    )
-    np.testing.assert_array_equal(feasible, [True] * len(rows))
-    np.testing.assert_array_almost_equal(
-        rows["value"].to_numpy(), values, decimal=DECIMAL_PRECISION
-    )
-
-
-def _require_adaptive_budget(*, frame: pd.DataFrame) -> None:
-    """Use the adaptive toy's original intrinsic-budget and outer-domain oracle."""
-    rows = frame[frame["regime_name"] == "alive"]
-    assert len(rows) == 2 * len(_INITIAL["wealth"])
-    wealth = np.asarray(rows["wealth"], dtype=float)
-    illiquid = np.asarray(rows["illiquid"], dtype=float)
-    investment = np.asarray(rows["illiquid_investment"], dtype=float)
-    consumption = np.asarray(rows["consumption"], dtype=float)
-    resources = wealth + toy.LABOUR_INCOME - investment
-    assert np.all(consumption > 0.0)
-    assert np.all(consumption <= resources + 1e-9)
-    next_illiquid = illiquid + investment
-    assert np.all(next_illiquid >= toy.OUTER_GRID.start - 1e-9)
-    assert np.all(next_illiquid <= toy.OUTER_GRID.stop + 1e-9)

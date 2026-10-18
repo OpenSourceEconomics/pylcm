@@ -326,10 +326,16 @@ def _validate_callable_borrowing_solver(
         user_regime.solver, _BoundEGM | _BoundDCEGM | _BoundNBEGM | _BoundNEGM
     ):
         return
-    if isinstance(user_regime.solver, _BoundNNBEGM) and isinstance(
-        user_regime.solver.outer_search, AdaptiveOuterMesh | FiniteOuterGrid
-    ):
-        return
+    if isinstance(user_regime.solver, _BoundNNBEGM):
+        if isinstance(user_regime.solver.outer_search, FiniteOuterGrid):
+            return
+        if isinstance(user_regime.solver.outer_search, AdaptiveOuterMesh):
+            raise ModelInitializationError(
+                f"Regime '{regime_name}' declares a callable borrowing bound, but "
+                "adaptive outer search supports only literal floors: honouring a "
+                "callable floor at every refined outer node is prohibitively slow. "
+                "Use a literal `lower`, or a `FiniteOuterGrid` outer search."
+            )
     raise ModelInitializationError(
         f"Regime '{regime_name}' declares a callable borrowing bound; "
         f"its EGM-family route does not implement dynamic floors."
