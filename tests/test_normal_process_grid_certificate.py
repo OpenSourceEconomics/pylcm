@@ -9,6 +9,64 @@ import pytest
 from tests.candidate_certificate import direct_flow
 from tests.candidate_certificate.generate_sources import sha256_file
 
+# Sources the nested, scalar-query and state-dependent borrowing corridor adds
+# to the original roster, in roster order.
+_NESTED_CORRIDOR_SOURCES = (
+    "src/_lcm/egm/upper_envelope/__init__.py",
+    "src/_lcm/egm/upper_envelope/segment_envelope.py",
+    "src/_lcm/egm/nested_floor.py",
+    "src/_lcm/egm/finite_negm_query.py",
+    "src/_lcm/egm/adaptive_nbegm_producer.py",
+    "src/_lcm/egm/nbegm_query_model.py",
+    "src/_lcm/egm/nbegm_query.py",
+    "src/_lcm/solution/negm.py",
+    "src/_lcm/solution/nnbegm.py",
+    "src/_lcm/egm/outer_candidates.py",
+    "src/_lcm/egm/outer_interpolation.py",
+    "src/_lcm/egm/outer_refinement.py",
+    "src/_lcm/optimization/golden_section.py",
+    "src/_lcm/egm/upper_envelope/query.py",
+    "src/_lcm/egm/asset_row.py",
+    "src/_lcm/egm/continuation.py",
+    "src/_lcm/egm/dcegm_query.py",
+    "src/_lcm/egm/dcegm_query_model.py",
+    "src/_lcm/egm/regime_introspection.py",
+    "src/_lcm/egm/step.py",
+    "src/_lcm/egm/step_core.py",
+    "src/_lcm/solution/dcegm.py",
+    "src/_lcm/regime_building/decoupled.py",
+    "src/_lcm/egm/euler.py",
+    "src/_lcm/egm/declared_law.py",
+    "src/_lcm/egm/interp.py",
+    "src/_lcm/egm/numeric_inverse.py",
+    "src/_lcm/egm/one_asset_egm_step.py",
+    "src/_lcm/egm/preferences.py",
+    "src/_lcm/egm/scalar_query.py",
+    "src/_lcm/egm/outer_envelope.py",
+    "src/_lcm/solution/landing_counts.py",
+    "src/_lcm/continuation.py",
+    "src/_lcm/egm/budget.py",
+    "src/_lcm/egm/carry.py",
+    "src/_lcm/egm/query_data.py",
+    "src/_lcm/regime_building/Q_and_F.py",
+    "src/_lcm/simulation/subject_parallel.py",
+    "src/_lcm/solution/egm.py",
+    "src/_lcm/solution/kernel_output.py",
+    "src/_lcm/constraints/dynamic_bound.py",
+    "src/_lcm/post_decision_bound.py",
+    "src/_lcm/constraints/bounds.py",
+    "src/_lcm/constraints/processed.py",
+    "src/lcm/regime.py",
+    "src/lcm/consumption_savings_regime.py",
+    "src/_lcm/regime_building/age_normalization.py",
+    "src/_lcm/utils/counts.py",
+    "src/_lcm/egm/nbegm_step.py",
+    "src/_lcm/egm/nbegm_segments.py",
+    "src/_lcm/egm/framed_arithmetic.py",
+    "src/_lcm/egm/ez_kernel.py",
+    "src/_lcm/power_mean.py",
+)
+
 
 def test_normal_controls_preserve_all_historical_populations() -> None:
     root = Path(__file__).parents[1]
@@ -53,15 +111,18 @@ def test_normal_controls_preserve_all_historical_populations() -> None:
         "simulation_adapter:initial_physical_transform_changed",
     }
     assert added_initial_controls <= historical
-    assert len(historical) == 571
-    assert len(historical - added_initial_controls) == 559
-    assert len(historical - added_initial_controls - added_feasibility_controls) == 557
+    assert len(historical) == 613
+    assert len(historical - added_initial_controls) == 601
+    assert len(historical - added_initial_controls - added_feasibility_controls) == 599
     assert "src/_lcm/solution/feasibility.py" in direct_flow._CERTIFIED_CORRIDOR_SOURCES
-    assert len(direct_flow._CERTIFIED_CORRIDOR_SOURCES) == 118
+    assert len(direct_flow._CERTIFIED_CORRIDOR_SOURCES) == 171
+    assert len(set(_NESTED_CORRIDOR_SOURCES)) == 53
+    assert set(_NESTED_CORRIDOR_SOURCES) <= set(direct_flow._CERTIFIED_CORRIDOR_SOURCES)
     original_corridor_sources = tuple(
         relative
         for relative in direct_flow._CERTIFIED_CORRIDOR_SOURCES
         if relative != "src/_lcm/solution/feasibility.py"
+        and relative not in _NESTED_CORRIDOR_SOURCES
     )
     assert len(original_corridor_sources) == 117
     # Exact ordered source roster from 0a39539fd628bb60dcae2d3cca601816fe4832f4.
