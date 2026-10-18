@@ -215,11 +215,43 @@ def test_economic_original_gap_survives_duplicate_folding_and_inactive_padding(
     np.testing.assert_array_equal(result.rescore_interior, [False, False, False, True])
 
 
+def _equal_cash_reference() -> tuple[tuple[float, ...], ...]:
+    """Hand-derived log-utility reads where the rightmost equal-cash tuple wins.
+
+    With beta one and log utility, consumption is `1 / M` and endogenous cash is
+    `c + a`. The tuples at savings 0 and 2 both land on cash 4, so the saving-2
+    tuple owns cash 4 and opens the interval to the saving-4 tuple at cash 12.
+    Cash 2 lies below all support and reads the floor corner.
+    """
+    next_value = {0.0: math.log(4.0), 2.0: math.log(6.0), 4.0: math.log(8.0)}
+    consumption = {0.0: 4.0, 2.0: 2.0, 4.0: 8.0}
+    cash = {saving: consumption[saving] + saving for saving in consumption}
+    value = {
+        saving: math.log(consumption[saving]) + next_value[saving]
+        for saving in consumption
+    }
+    corner_consumption = 2.0
+    weight = (5.0 - cash[2.0]) / (cash[4.0] - cash[2.0])
+    interior_consumption = (1.0 - weight) * consumption[2.0] + weight * consumption[4.0]
+    return (
+        (
+            math.log(corner_consumption) + next_value[0.0],
+            value[2.0],
+            (1.0 - weight) * value[2.0] + weight * value[4.0],
+        ),
+        (corner_consumption, consumption[2.0], interior_consumption),
+        (0.0, 2.0, (1.0 - weight) * 2.0 + weight * 4.0),
+        (
+            1.0 / corner_consumption,
+            1.0 / consumption[2.0],
+            1.0 / interior_consumption,
+        ),
+    )
+
+
 @pytest.mark.parametrize("compiled", [False, True])
-def test_distinct_savings_with_equal_cash_do_not_authorize_an_interval(
-    *, compiled: bool
-) -> None:
-    """Distinct tuples sharing endogenous cash retain strict-order refusal."""
+def test_equal_cash_tuples_read_the_rightmost_saving(*, compiled: bool) -> None:
+    """At equal endogenous cash the highest-saving tuple owns the read."""
     savings = (0.0, 2.0, 4.0)
     marginals = (0.25, 0.5, 0.125)
     np.testing.assert_array_equal(
@@ -229,7 +261,7 @@ def test_distinct_savings_with_equal_cash_do_not_authorize_an_interval(
         savings=savings,
         values=(math.log(4.0), math.log(6.0), math.log(8.0)),
         marginals=marginals,
-        cash=(2.0, 5.0),
+        cash=(2.0, 4.0, 5.0),
         support=_EGMSavingsSupport(
             floor=jnp.asarray(0.0),
             active=jnp.asarray([True, True, True]),
@@ -237,12 +269,9 @@ def test_distinct_savings_with_equal_cash_do_not_authorize_an_interval(
         ),
         compiled=compiled,
     )
-    np.testing.assert_array_almost_equal(
-        result.value, [math.log(8.0), -np.inf], decimal=DECIMAL_PRECISION
-    )
-    np.testing.assert_array_equal(result.marginal, [0.5, 0.0])
-    np.testing.assert_array_equal(result.coverage_missing, [False, True])
-    np.testing.assert_array_equal(result.rescore_interior, [False, False])
+    _assert_channels(result=result, expected=_equal_cash_reference())
+    np.testing.assert_array_equal(result.coverage_missing, [False, False, False])
+    np.testing.assert_array_equal(result.rescore_interior, [False, False, True])
 
 
 @pytest.mark.parametrize("compiled", [False, True])
