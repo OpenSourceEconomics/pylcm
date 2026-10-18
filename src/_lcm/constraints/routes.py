@@ -29,6 +29,8 @@ from collections.abc import Hashable, Mapping
 from dataclasses import dataclass
 from typing import Literal, Protocol, runtime_checkable
 
+from dags.tree import QNAME_DELIMITER
+
 from _lcm.constraints.dispositions import (
     CompileBoundary,
     ConstraintContext,
@@ -464,7 +466,19 @@ def _site_can_evaluate(*, bound: BoundConstraint) -> bool:
         return True
     if not available:
         return False
-    return bound.transitive_inputs <= available
+    return not _unbound_inputs(bound=bound)
+
+
+def _unbound_inputs(*, bound: BoundConstraint) -> frozenset[str]:
+    """The constraint's leaves the site does not bind.
+
+    Sites list a param by its qualified name, while a declared function reads it
+    by its unqualified argument name, so a param's last path segment counts as
+    bound wherever its qualified name is.
+    """
+    available = bound.site.available_names or frozenset()
+    unqualified = {name.rsplit(QNAME_DELIMITER, 1)[-1] for name in available}
+    return frozenset(bound.transitive_inputs - available - unqualified)
 
 
 def _shortfall_at(*, bound: BoundConstraint) -> str:
@@ -472,7 +486,7 @@ def _shortfall_at(*, bound: BoundConstraint) -> str:
     site = bound.site
     if site.available_names is not None and not site.available_names:
         return f"at '{site.stage}' nothing is evaluated"
-    missing = sorted(bound.transitive_inputs - (site.available_names or frozenset()))
+    missing = sorted(_unbound_inputs(bound=bound))
     return f"at '{site.stage}' it still needs {missing}"
 
 

@@ -120,6 +120,7 @@ from _lcm.typing import (
     TransitionFunctionName,
     TransitionFunctionsMapping,
 )
+from _lcm.utils.counts import sum_counts
 from _lcm.zero_safe import scaled_joint_weight, zero_safe_weighted_term
 from lcm.exceptions import ExecutionPlanningError, ModelInitializationError
 from lcm.regime import Regime as UserRegime
@@ -357,6 +358,13 @@ class _ChildRead:
     (non-co-mapped) read.
     """
 
+    rows_share_state_grid: bool = False
+    """Whether the producing solver publishes its rows on the child's state grid.
+
+    Such a row supports every carried node, so its `-inf` values are economic.
+    An endogenous-grid producer supports only finite-valued nodes: its dead row
+    is `-inf` on finite placeholder nodes.
+    """
     query: DCEGMQuery | NBEGMQuery | None = None
     """Canonical target-period query adapter, absent on raw child reads."""
     query_target: RegimeName | None = None
@@ -1092,6 +1100,7 @@ class _ChildCarryReader:
                 query_euler_gradient=euler_gradient,
                 query_action_names=read.query_action_names,
                 query_action_values=read.query_action_values,
+                rows_share_state_grid=read.rows_share_state_grid,
                 collect_continuation_read_counts=self.collect_continuation_read_counts,
             )
             value, marginal = (
@@ -1411,13 +1420,12 @@ def _expect_over_stochastic_nodes(
     code into the resources query (when read) and selects the carry's leading
     discrete axis by that code.
 
-    Read counts come only from an installed child query: a plain child's node
-    read returns the bare pair, so its fold carries no count slot, matching the
-    node-free read of the same child.
+    When read counting is on, every node read returns its counts: an installed
+    child query counts against its canonical support, and a literal child row
+    against the support its producer declares (`_literal_read_counts`), so the
+    fold carries a count slot exactly when the node-free read of the same child
+    does.
     """
-    collect_continuation_read_counts = (
-        collect_continuation_read_counts and read.query is not None
-    )
     # The queries depend on the node combo only when the resources function
     # reads a stochastic state; otherwise compute them once and share.
     shared_queries_and_gradients = (
@@ -1674,6 +1682,7 @@ class _ReadAtNodes:
             query_euler_gradient=euler_gradient,
             query_action_names=read.query_action_names,
             query_action_values=read.query_action_values,
+            rows_share_state_grid=read.rows_share_state_grid,
             collect_continuation_read_counts=self.collect_continuation_read_counts,
         )
 
@@ -2124,6 +2133,7 @@ def _aggregate_child_choices(
     query_euler_gradient: ScalarFloat | None = None,
     query_action_names: tuple[ActionName, ...] = (),
     query_action_values: tuple[FloatND | IntND, ...] = (),
+    rows_share_state_grid: bool = False,
     collect_continuation_read_counts: bool = False,
 ) -> tuple[ScalarFloat, ScalarFloat] | BoundedResult[tuple[ScalarFloat, ScalarFloat]]:
     """Read one child's carry with mixed interpolation and aggregate its choices.
@@ -2248,6 +2258,19 @@ def _aggregate_child_choices(
     valid_rows = valid_block.reshape(-1)
     queries_flat = row_queries.reshape(-1)
     gradients_flat = row_gradients.reshape(-1)
+    read_counts = (
+        _literal_read_counts(
+            grid_rows=grid_rows,
+            value_rows=value_rows,
+            queries_flat=queries_flat,
+            block_shape=row_queries.shape,
+            child_passive_values=child_passive_values,
+            child_passive_grids=child_passive_grids,
+            rows_share_state_grid=rows_share_state_grid,
+        )
+        if collect_continuation_read_counts
+        else None
+    )
 
     # The marginal-utility row is the value row's exact slope (envelope
     # theorem), upgrading the value read to cubic Hermite. The marginal read
@@ -2341,9 +2364,63 @@ def _aggregate_child_choices(
     on_grid = _codes_on_their_axes(
         codes=child_index, sizes=leaves[("value",)].shape[: len(child_index)]
     )
-    return (
+    output = (
         jnp.where(on_grid, smoothed_value, jnp.nan),
         jnp.where(on_grid, smoothed_marginal, jnp.nan),
+    )
+    if read_counts is None:
+        return output
+    return BoundedResult(
+        output=output,
+        bound_status=(),
+        query_status=None,
+        continuation_read_counts=read_counts,
+    )
+
+
+def _literal_read_counts(
+    *,
+    grid_rows: FloatND,
+    value_rows: FloatND,
+    queries_flat: FloatND,
+    block_shape: tuple[int, ...],
+    child_passive_values: tuple[ScalarFloat, ...],
+    child_passive_grids: tuple[Float1D, ...],
+    rows_share_state_grid: bool,
+) -> ContinuationReadCounts:
+    """Count one read event per active literal row against its producer's support.
+
+    The producer, not the leaf values, decides which carried nodes are support
+    (`_ChildRead.rows_share_state_grid`): a state-grid row supports every carried
+    node, an endogenous-grid row only its finite-valued nodes, so a dead
+    endogenous row has none. A row is eligible when its passive stencil weight
+    is not an exact zero and it has a first supported node; it counts as below
+    when its query lies strictly below that node's coordinate.
+    """
+    carried = ~jnp.isnan(grid_rows)
+    supported = carried if rows_share_state_grid else carried & jnp.isfinite(value_rows)
+    has_first = jnp.any(supported, axis=-1)
+    first = jnp.take_along_axis(
+        grid_rows, jnp.argmax(supported, axis=-1)[:, None], axis=-1
+    )[:, 0]
+    active = jnp.ones(block_shape, dtype=jnp.bool_)
+    for axis, (passive_value, passive_grid) in enumerate(
+        zip(child_passive_values, child_passive_grids, strict=True)
+    ):
+        lower, upper, weight_upper = locate_on_grid(
+            x_query=passive_value, grid=passive_grid
+        )
+        nodes = jnp.arange(passive_grid.size)
+        axis_weights = (nodes == lower) * (1.0 - weight_upper) + (
+            nodes == upper
+        ) * weight_upper
+        shape = [1] * len(block_shape)
+        shape[axis] = passive_grid.size
+        active = active & ~is_represented_zero(axis_weights).reshape(shape)
+    eligible = active.reshape(-1) & has_first
+    return ContinuationReadCounts(
+        below_first_live=sum_counts(counts=eligible & (queries_flat < first)),
+        eligible=sum_counts(counts=eligible),
     )
 
 
@@ -3101,6 +3178,7 @@ def _build_child_reads(
             row_arg_names=passive_state_names + action_names,
             row_values=row_values,
             row_block_shape=row_block_shape,
+            rows_share_state_grid=layout.rows_share_state_grid,
             query=query,
             query_target=target if query is not None else None,
             query_action_names=action_names,

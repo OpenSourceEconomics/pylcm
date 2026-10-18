@@ -182,8 +182,12 @@ def validate_declared_bounds(
             "Mapping[str, ConstraintLike]", user_regime.decomposed_constraints
         )
     )
+    # A stochastic process has discrete topology but is read at its float node
+    # values, like a continuous state; only genuinely discrete variables are codes.
     known_dtypes: dict[str, DTypeLike] = {
-        name: canonical_float_dtype() if info.topology == "continuous" else jnp.int32
+        name: canonical_float_dtype()
+        if info.topology == "continuous" or info.is_process
+        else jnp.int32
         for name, info in from_regime(user_regime=user_regime).info.items()
     }
     known_dtypes["period"] = jnp.int32

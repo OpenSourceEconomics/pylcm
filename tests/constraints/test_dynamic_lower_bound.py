@@ -8,6 +8,7 @@ from typing import cast
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from beartype import beartype
 from dags import concatenate_functions, with_signature
 
 from _lcm.constraints.bounds import proves_the_savings_grids_lower_bound
@@ -35,6 +36,7 @@ from lcm import (
     PeriodSpecializedFunction,
     Phased,
     Regime,
+    RouwenhorstAR1Process,
     categorical,
     fixed_transition,
     post_decision_lower_bound,
@@ -877,3 +879,59 @@ def test_adaptive_outer_mesh_refuses_a_callable_floor(floor: UserFunction) -> No
             initial_nodes=seed.initial_nodes,
             regime_id_class=n_nbegm_toy.RegimeId,
         )
+
+
+@beartype
+def _shock_income(*, eps: ContinuousState) -> FloatND:
+    return 1.25 + 0.5 * eps
+
+
+def _shock_floor(*, income: FloatND) -> FloatND:
+    return -0.5 * income
+
+
+@pytest.mark.parametrize("process", ["iid", "ar1"])
+def test_floor_reads_a_stochastic_process_at_its_node_values(process: str) -> None:
+    """A floor helper reading a process state receives the float node values."""
+    # Both declarations have the nodes (-2, 0, 2): the IID grid spans two
+    # standard deviations, and Rouwenhorst with rho zero spans sqrt(2) sigma.
+    shock = (
+        NormalIIDProcess(n_points=3, gauss_hermite=False, mu=0.0, sigma=1.0, n_std=2.0)
+        if process == "iid"
+        else RouwenhorstAR1Process(n_points=3, rho=0.0, sigma=2.0**0.5, mu=0.0)
+    )
+    regime = ConsumptionSavingsRegime(
+        liquid=LIQUID,
+        states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=2), "eps": shock},
+        actions={"consumption": LinSpacedGrid(start=0.25, stop=3.0, n_points=12)},
+        functions={
+            "utility": utility,
+            "savings": savings,
+            "resources": resources,
+            "income": _shock_income,
+        },
+        constraints={
+            "borrowing": post_decision_lower_bound(margin=LIQUID, lower=_shock_floor)
+        },
+        solver=GridSearch(),
+    )
+    model = Model(
+        regimes={"done": regime},
+        edges={},
+        ages=AgeGrid(exact_values=(0,)),
+        regime_id_class=RegimeId,
+        initial_nodes={0: "done"},
+    )
+    values = model.solve(params={}, log_level="off").values[0]["done"]
+
+    # Terminal value is the largest grid consumption with savings at or above
+    # the floor: c <= wealth + 0.5 * (1.25 + 0.5 * eps), on the 0.25 grid.
+    consumption = [0.25 * (k + 1) for k in range(12)]
+    expected = [
+        [
+            max(c for c in consumption if c <= wealth + 0.5 * (1.25 + 0.5 * eps))
+            for wealth in (1.0, 2.0)
+        ]
+        for eps in (-2.0, 0.0, 2.0)
+    ]
+    np.testing.assert_allclose(values, expected, atol=1e-6)

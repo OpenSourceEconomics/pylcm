@@ -340,8 +340,9 @@ def _solve_viable_feature_row(
     last = jnp.maximum(count - 1, 0)
     indices = jnp.where(positions < count, original_indices, original_indices[last])
     support = jnp.where(positions < count, liquid_endog[indices], jnp.inf)
-    # Canonical duplicate inputs have already folded. Equal cash from distinct
-    # remaining tuples has no declared winner and cannot authorize an interval.
+    # Canonical duplicate inputs have already folded. Distinct remaining tuples
+    # may share endogenous cash; there the rightmost tuple (the highest saving)
+    # wins, both for an exact read and as the left end of the next interval.
     ordered = jnp.all(
         jnp.where(
             positions[1:] < count, support[1:] >= support[:-1], jnp.asarray(a=True)

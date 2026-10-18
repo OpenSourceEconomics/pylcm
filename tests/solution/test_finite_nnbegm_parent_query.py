@@ -433,8 +433,8 @@ def test_finite_nb_publication_transports_all_query_leaves_and_replay(
     )
 
 
-def test_finite_nb_checked_programs_publish_zero_terminal_read_counts() -> None:
-    """Keep checked reads observable when the child has no eligible query rows."""
+def test_finite_nb_checked_programs_count_terminal_reads_by_producer() -> None:
+    """Checked reads of a literal terminal child count against its state grid."""
     model = _create_child_model()
     kernel, context = ride_along_kernel(
         model=model,
@@ -491,7 +491,13 @@ def test_finite_nb_checked_programs_publish_zero_terminal_read_counts() -> None:
         else None
     )
     assert isinstance(counts, ContinuationReadCounts)
-    np.testing.assert_array_equal(counts, [0, 0])
+    # The terminal publishes its value on its own state grid, so every carried
+    # node is support. Each parent illiquid node (3) reads it once per savings
+    # node (6) for each of the keeper and the three outer adjuster candidates
+    # (4); the landing stock is an illiquid node, so one row is active per read.
+    # No saving lies below the terminal's first liquid node, 0.0.
+    n_illiquid, n_savings, n_candidates = 3, 6, 4
+    np.testing.assert_array_equal(counts, [0, n_illiquid * n_savings * n_candidates])
     for count in counts:
         assert count.shape == ()
         assert count.dtype == jnp.int32
