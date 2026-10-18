@@ -1105,6 +1105,11 @@ class _SemanticHasher:
                 self.visit(value=value.categories)
                 self.visit(value=value.codes)
                 self.visit(value=value.ordered)
+                if value.values is not None:
+                    # Labels alone omit the precision the floats are stored at.
+                    self.frame(label="DiscreteGrid-values")
+                    self.visit(value=value.values_to_jax())
+                    self.visit(value=value.tolerance)
                 self.frame(label="DiscreteGrid-end")
                 return
             if isinstance(value, Phased):

@@ -293,6 +293,7 @@ from _lcm.typing import (
 )
 from _lcm.user_regime_validation import (
     fail_if_a_folded_conditioner_can_move,
+    fail_if_value_grids,
     validate_regimes,
 )
 from _lcm.utils.containers import (
@@ -886,6 +887,19 @@ class Model:
         # The transitions as declared, before any age selects among them: the
         # `edges` parameter template and its Series conversion read these.
         self._declared_transitions = collect_declared_transitions(self._edges)
+        # Fixed-component lowering replaces declared grids with category grids,
+        # so reject unsupported value grids while the raw declarations remain.
+        fail_if_value_grids(
+            states=states,
+            actions=actions,
+            derived_categoricals=derived_categoricals,
+        )
+        for regime in regimes.values():
+            fail_if_value_grids(
+                states=regime.states,
+                actions=regime.actions,
+                derived_categoricals=regime.derived_categoricals,
+            )
         # A Markov state that declares a fixed component is carried as two states
         # (group and position within it) before anything else reads the regimes.
         (

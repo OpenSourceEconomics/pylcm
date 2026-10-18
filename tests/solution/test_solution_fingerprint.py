@@ -914,6 +914,57 @@ def test_discrete_grid_fingerprint_binds_category_order_and_ordered_flag() -> No
     )
 
 
+@pytest.mark.parametrize(
+    ("category_class", "digest"),
+    [
+        (_LowHigh, "30057dfad0a7a3a262dac7558951d80e60b684abce0221b7d94d5833937ad1ec"),
+        (
+            _OrderedLowHigh,
+            "1812ba3f47fda4df33a5fc16af774047af3ea200cbff48b143f6f630480e5465",
+        ),
+    ],
+)
+def test_category_grid_fingerprint_is_unchanged_by_the_value_field(
+    *, category_class, digest
+) -> None:
+    """The digests were computed before value grids existed, at both precisions."""
+    grid = DiscreteGrid(category_class=category_class)
+
+    assert fingerprints._semantic_fingerprint(grid) == digest
+
+
+@pytest.mark.parametrize("stored", ["precision", "one-ulp"])
+def test_value_grid_fingerprint_binds_the_stored_values(
+    *, stored, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only the stored values change; labels, codes and tolerance stay fixed."""
+    grid = DiscreteGrid(values=[0.0, 0.25])
+    baseline = fingerprints._semantic_fingerprint(grid)
+    nodes = grid.values_to_jax()
+    other = (
+        nodes.astype(jnp.float16)
+        if stored == "precision"
+        else nodes.at[1].set(jnp.nextafter(nodes[1], jnp.inf))
+    )
+    monkeypatch.setattr(DiscreteGrid, "values_to_jax", lambda _self: other)
+
+    assert fingerprints._semantic_fingerprint(grid) != baseline
+
+
+def test_value_grid_fingerprint_binds_the_tolerance() -> None:
+    baseline = fingerprints._semantic_fingerprint(DiscreteGrid(values=[0.0, 0.25]))
+
+    assert baseline != fingerprints._semantic_fingerprint(
+        DiscreteGrid(values=[0.0, 0.25], tolerance=1e-6)
+    )
+
+
+def test_value_grid_fingerprint_is_reproducible() -> None:
+    assert fingerprints._semantic_fingerprint(
+        DiscreteGrid(values=[0.0, 0.25])
+    ) == fingerprints._semantic_fingerprint(DiscreteGrid(values=[0.0, 0.25]))
+
+
 def test_discrete_grid_protocol_subclass_fails_closed() -> None:
     with pytest.raises(TypeError, match="DiscreteGrid subclass"):
         fingerprints._semantic_fingerprint(
