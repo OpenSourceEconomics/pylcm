@@ -370,8 +370,10 @@ def validate_transitions(
 ) -> None:
     """Validate regime and state transition probabilities before solve / simulate.
 
-    Runs the regime-transition check then the state-transition check. Both
-    self-gate on the logger's explicit runtime policy, independently of output.
+    Runs the regime-transition check then the state-transition check, both
+    gated on the logger's explicit runtime policy. Off-grid landings on a grid
+    declared `off_grid="raise"` are checked regardless; landings on other grids
+    are counted only when that policy is on and the logger reports warnings.
 
     Args:
         regimes: Immutable mapping of regime names to regimes.
@@ -490,7 +492,13 @@ def validate_off_grid_transitions(
     constraints or gated edges decide which landings are reached only once
     values are known. Its realized landings are counted as simulation advances.
     """
-    checked = validation_enabled(logger) and not mandatory_only
+    # Count-only diagnostics can expand simulation-only axes during solve, so a
+    # logger that would not report the counts skips them.
+    checked = (
+        validation_enabled(logger)
+        and not mandatory_only
+        and logger.isEnabledFor(logging.WARNING)
+    )
     for period in range(ages.n_periods - 1):
         for name, regime in regimes.items():
             if regime.solution.counts_raise_landings:

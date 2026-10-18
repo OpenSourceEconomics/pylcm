@@ -119,7 +119,7 @@ def carried_state_grids(user_regime: UserRegime) -> dict[StateName, Grid]:
     return {
         name: cast("Grid", spec.simulate)
         for name, spec in user_regime.states.items()
-        if isinstance(spec, Phased)
+        if isinstance(spec, Phased) and callable(spec.solve)
     }
 
 
@@ -144,9 +144,13 @@ def _grid_states(user_regime: UserRegime) -> dict[StateName, Grid]:
     omitted from the solve-phase state grids and variable info.
     """
     return {
-        name: spec
+        name: spec.solve if isinstance(spec, Phased) else spec
         for name, spec in user_regime.states.items()
         if isinstance(spec, Grid)
+        or (
+            isinstance(spec, Phased)
+            and isinstance(spec.solve, _ContinuousStochasticProcess)
+        )
     }
 
 

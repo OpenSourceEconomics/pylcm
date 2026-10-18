@@ -1336,7 +1336,23 @@ def _add_runtime_grid_params(
     *, function_params: dict[FunctionName, dict[str, str]], user_regime: UserRegime
 ) -> None:
     """Add runtime-supplied state/action grid params to the template in place."""
-    for state_name, grid in user_regime.states.items():
+    for state_name, declaration in user_regime.states.items():
+        if isinstance(declaration, Phased) and isinstance(
+            declaration.solve, _ContinuousStochasticProcess
+        ):
+            names = sorted(
+                set(declaration.solve.params_to_pass_at_runtime)
+                | set(declaration.simulate.params_to_pass_at_runtime)
+            )
+            if names:
+                _fail_if_runtime_grid_shadows_function(
+                    function_params=function_params,
+                    name=state_name,
+                    kind="process state",
+                )
+                function_params[state_name] = dict.fromkeys(names, "float")
+            continue
+        grid = declaration
         if isinstance(grid, IrregSpacedGrid) and grid.pass_points_at_runtime:
             _fail_if_runtime_grid_shadows_function(
                 function_params=function_params, name=state_name, kind="state"
@@ -1533,7 +1549,7 @@ def _collect_all_functions_for_template(
     # surface in the template. Its law of motion is its regular
     # `state_transitions` entry (keyed `next_<name>`), collected below.
     for name, spec in user_regime.states.items():
-        if isinstance(spec, Phased):
+        if isinstance(spec, Phased) and callable(spec.solve):
             result[name] = cast("UserFunction", spec.solve)
     if not law.terminal:
         joint_output_names = {

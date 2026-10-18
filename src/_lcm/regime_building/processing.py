@@ -570,7 +570,7 @@ def process_regimes(
             for regime_name, user_regime in representative_user_regimes.items()
         }
     )
-    _validate_all_conditioned_processes(all_grids=all_grids)
+    _validate_all_conditioned_processes(all_grids=all_grids, specs=specs)
     # Only a state can be entered: entry places a next-period value on the
     # target's support, and an action is chosen inside the target's own period,
     # so it has no axis in that regime's value function to place anything on.
@@ -1260,7 +1260,23 @@ class _CanonicalRegimeBuilder:
                 solution_reachability=self.reachability.solution,
                 simulation_reachability=self.reachability.simulation,
                 nested_transitions=self.simulate_nested_transitions[regime_name],
-                all_grids=self.all_grids,
+                all_grids=MappingProxyType(
+                    {
+                        name: MappingProxyType(
+                            {
+                                **grids,
+                                **{
+                                    state: grid
+                                    for state, grid in self.phased_specs[
+                                        name
+                                    ].simulation.grid_states.items()
+                                    if isinstance(grid, Grid)
+                                },
+                            }
+                        )
+                        for name, grids in self.all_grids.items()
+                    }
+                ),
                 state_grids=self.state_grids,
                 regime_params_template=regime_params_template,
                 edge_params_template=edge_params_template,
@@ -2970,17 +2986,23 @@ def _state_handoff_errors(
                 target_slice = phase_slices[target]
                 for state_name, target_grid in target_slice.grid_states.items():
                     # A value reaching a process the source does not hold
-                    # identically has to be placed on the target's support from
-                    # inside the source's Bellman equation -- as the process's
-                    # own unconditional weights without an entry law, and as a
+                    # has to be placed on the target's support from inside the
+                    # source's Bellman equation -- as the process's own
+                    # unconditional weights without an entry law, and as a
                     # coordinate on its nodes with one. Either way that support
                     # is built where only the source's parameters are readable,
                     # so a law the target parameterizes at runtime cannot be
                     # entered at all. A source holding the same process places
                     # nothing: the process transitions under its own law.
-                    if (
-                        isinstance(target_grid, _ContinuousStochasticProcess)
-                        and source_slice.grid_states.get(state_name) != target_grid
+                    #
+                    # Holding is decided on the solve laws, in either phase.
+                    # They name the runtime parameters both regimes read, and a
+                    # simulation law or draw mode only changes how the carried
+                    # value is realized, not whether the source carries it.
+                    if isinstance(
+                        target_grid, _ContinuousStochasticProcess
+                    ) and not _solve_laws_agree(
+                        specs=specs, source=source, target=target, state_name=state_name
                     ):
                         entry_error = _runtime_param_entry_error(
                             phase_name=phase_name,
@@ -3082,6 +3104,23 @@ def _fail_if_a_law_reads_a_draw_the_edge_lacks(
         ]
     if errors:
         raise ModelInitializationError(format_messages(errors))
+
+
+def _solve_laws_agree(
+    *,
+    specs: Mapping[RegimeName, PhasedRegimeSpec],
+    source: RegimeName,
+    target: RegimeName,
+    state_name: StateName,
+) -> bool:
+    """Return whether source and target declare one solve law for a process."""
+    target_law = specs[target].solution.grid_states.get(state_name)
+    source_law = specs[source].solution.grid_states.get(state_name)
+    return (
+        isinstance(target_law, _ContinuousStochasticProcess)
+        and isinstance(source_law, _ContinuousStochasticProcess)
+        and target_law.has_same_law_as(source_law)
+    )
 
 
 def _runtime_param_entry_error(
@@ -5712,6 +5751,8 @@ def _process_regime_core(
                 name=process,
                 grid=grid,
                 grids=all_grids[user_regime],
+                clip_coordinate=phase_name == "simulation"
+                and grid.simulate_draws == "nodes",
             )
             for (user_regime, process), grid in carried_process_grids.items()
         }
@@ -5767,8 +5808,10 @@ def _process_regime_core(
     source_draw_grids = _source_draws_read_by_target_laws(
         flat_nested_transitions=flat_nested_transitions,
         reads_by_law=reads_by_law,
+        # `state_grids` only enumerates the source's states; the law comes from
+        # `all_grids`, which carries the active phase's declaration of each one.
         source_random_grids={
-            state: grid
+            state: all_grids[source_regime_name][state]
             for state, grid in state_grids[source_regime_name].items()
             if (
                 state in carried_processes
@@ -7063,7 +7106,9 @@ def _validate_conditioned_grid_is_fixed(
 
 
 def _validate_all_conditioned_processes(
-    *, all_grids: Mapping[RegimeName, Mapping[StateOrActionName, Grid]]
+    *,
+    all_grids: Mapping[RegimeName, Mapping[StateOrActionName, Grid]],
+    specs: Mapping[RegimeName, PhasedRegimeSpec],
 ) -> None:
     """Check every state-conditioned declaration in the model.
 
@@ -7073,7 +7118,8 @@ def _validate_all_conditioned_processes(
     synthesize, wrong as a validation domain: a regime whose only edge the temporal
     activity intersection drops would never be checked, and an invalid declaration
     would then solve silently. Every check is a property of the declaration alone, so
-    reachability cannot turn an invalid one valid.
+    reachability cannot turn an invalid one valid. A simulation law, read from
+    `specs`, is held to the code agreement as well.
     """
     for regime_grids in all_grids.values():
         for process_name, process_grid in regime_grids.items():
@@ -7091,6 +7137,29 @@ def _validate_all_conditioned_processes(
             _validate_conditioning_codes_agree_across_regimes(
                 on=state_conditioned.on, all_grids=all_grids
             )
+    _validate_simulation_conditioning_codes(specs=specs, all_grids=all_grids)
+
+
+def _validate_simulation_conditioning_codes(
+    *,
+    specs: Mapping[RegimeName, PhasedRegimeSpec],
+    all_grids: Mapping[RegimeName, Mapping[StateOrActionName, Grid]],
+) -> None:
+    """Require model-wide conditioning codes for state-conditioned simulation laws.
+
+    A simulation law gathers its per-category sigma by the conditioning state's
+    codes exactly as a solve law does, so the same agreement rule applies to it.
+    """
+    for on in sorted(
+        {
+            grid.state_conditioned.on
+            for spec in specs.values()
+            for grid in spec.simulation.grid_states.values()
+            if isinstance(grid, _ContinuousStochasticProcess)
+            and grid.state_conditioned is not None
+        }
+    ):
+        _validate_conditioning_codes_agree_across_regimes(on=on, all_grids=all_grids)
 
 
 def _validate_conditioned_process(
@@ -7222,6 +7291,7 @@ def _get_weights_func_for_process(
     name: str,
     grid: _ContinuousStochasticProcess,
     grids: Mapping[StateOrActionName, Grid] = MappingProxyType({}),
+    clip_coordinate: bool = False,
 ) -> Callable[..., FloatND]:
     """Get function that uses linear interpolation to calculate the process weights.
 
@@ -7230,6 +7300,10 @@ def _get_weights_func_for_process(
     state-conditioned process the row is instead computed directly at the from-value
     (`_get_conditioned_weights_func`), and `grids` is that regime's grid mapping, from
     which the conditioning state is resolved.
+
+    With `clip_coordinate`, a value beyond the nodes takes its nearest edge node's row.
+    A node draw needs this: rows extrapolated along the edge segment can carry
+    negative weights, which are no probabilities to sample with.
 
     """
     sc = grid.state_conditioned
@@ -7260,6 +7334,8 @@ def _get_weights_func_for_process(
             gridpoints = grid.compute_gridpoints(**process_kw)
             transition_probs = grid.compute_transition_probs(**process_kw)
             coord = get_irreg_coordinate(value=kwargs[name], points=gridpoints)
+            if clip_coordinate:
+                coord = jnp.clip(coord, 0, n_points - 1)
             return map_coordinates(
                 input=transition_probs,
                 coordinates=[
@@ -7280,6 +7356,8 @@ def _get_weights_func_for_process(
     )
     def weights_func(*args: FloatND, **kwargs: FloatND) -> Float1D:  # noqa: ARG001
         coordinate = get_irreg_coordinate(value=kwargs[f"{name}"], points=gridpoints)
+        if clip_coordinate:
+            coordinate = jnp.clip(coordinate, 0, grid.n_points - 1)
         return map_coordinates(
             input=transition_probs,
             coordinates=[
@@ -8848,7 +8926,17 @@ def _build_next_state_vmapped(
             supplied_states=supplied_states,
         )
         sig_args = tuple(inspect.signature(next_state).parameters)
-        non_vmap = {"period", "age"} | flat_param_names
+        non_vmap = (
+            {"period", "age"}
+            | flat_param_names
+            | {
+                f"nodes_{target}__next_{state}"
+                for target, grids in all_grids.items()
+                for state, grid in grids.items()
+                if isinstance(grid, _ContinuousStochasticProcess)
+                and grid.simulate_draws == "nodes"
+            }
+        )
         vmap_variables = tuple(arg for arg in sig_args if arg not in non_vmap)
         next_state_vmapped = vmap_1d(func=next_state, variables=vmap_variables)
         next_state_vmapped = with_signature(

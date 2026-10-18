@@ -6,8 +6,17 @@ from typing import cast
 
 import jax
 
+from _lcm.engine import Regime, StateActionSpace
+from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.typing import PRNGKeyND, PytreeValue, QualifiedName, ShapeDtypePytree
-from lcm.typing import ReferenceName, ScalarFloat, ScalarInt, StateName
+from lcm.typing import (
+    ContinuousState,
+    DiscreteState,
+    ReferenceName,
+    ScalarFloat,
+    ScalarInt,
+    StateName,
+)
 
 
 def decision_arguments(
@@ -36,6 +45,25 @@ def decision_arguments(
     }
 
 
+def process_node_arguments(
+    *,
+    regime: Regime,
+    regimes: Mapping[str, Regime],
+    base_spaces: Mapping[str, StateActionSpace],
+) -> dict[ReferenceName, ContinuousState | DiscreteState]:
+    """Supply resolved solve axes only for this source's node-draw targets."""
+    return {
+        f"nodes_{target}__next_{state}": nodes
+        for target in regime.simulation.transition_plans
+        for state, nodes in base_spaces[target].states.items()
+        if isinstance(
+            process := regimes[target].simulation.grids[state],
+            _ContinuousStochasticProcess,
+        )
+        and process.simulate_draws == "nodes"
+    }
+
+
 def transition_arguments(
     *,
     states: Mapping[StateName, PytreeValue | ShapeDtypePytree],
@@ -45,11 +73,13 @@ def transition_arguments(
     period: PytreeValue | ShapeDtypePytree,
     age: PytreeValue | ShapeDtypePytree,
     params: Mapping[QualifiedName, PytreeValue | ShapeDtypePytree],
+    process_nodes: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree] | None = None,
 ) -> dict[ReferenceName, PytreeValue | ShapeDtypePytree]:
     """Preserve the state/route call's existing last-writer parameter precedence."""
     return {
         **states,
         **carried,
+        **({} if process_nodes is None else process_nodes),
         **actions,
         **keys,
         "period": period,

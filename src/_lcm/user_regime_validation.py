@@ -1422,6 +1422,10 @@ def _state_transition_coverage_errors(
         name
         for name, grid in regime.states.items()
         if isinstance(grid, _ContinuousStochasticProcess)
+        or (
+            isinstance(grid, Phased)
+            and isinstance(grid.solve, _ContinuousStochasticProcess)
+        )
     }
     non_process_names: set[StateName] = set(regime.states) - process_names
 
