@@ -56,7 +56,7 @@ from _lcm.engine import (
     _StochasticStateTransition,
 )
 from _lcm.grids import ContinuousGrid, DiscreteGrid, Grid
-from _lcm.off_grid import count_off_grid, report_off_grid
+from _lcm.off_grid import count_off_grid, off_grid_message, report_off_grid
 from _lcm.params.edges import regime_kernel_params
 from _lcm.params.mapping_leaf import MappingLeaf
 from _lcm.params.sequence_leaf import SequenceLeaf
@@ -74,7 +74,10 @@ from _lcm.regime_building.Q_and_F import (
     _publish_signature,
 )
 from _lcm.regime_building.schedules import Side
-from _lcm.simulation.host_operations import StaticArgument
+from _lcm.simulation.host_operations import (
+    ProfiledSimulationOperations,
+    StaticArgument,
+)
 from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
 from _lcm.simulation.operand_placement import place_simulation_arguments
 from _lcm.simulation.residency import (
@@ -204,6 +207,8 @@ class _ValidationSummary:
     """Call-owned flags and bindings, never validity retained across calls."""
 
     memory: SimulationMemory | None = None
+    producers: ProfiledSimulationOperations | None = None
+    """Model-owned owner of unbudgeted off-grid counts; `None` keeps them per call."""
     process_grid_resolver: ProcessGridResolver | None = None
     flags: list[jax.Array] = field(default_factory=list)
     spaces: dict[tuple[RegimeName, tuple[tuple[str, int], ...]], StateActionSpace] = (
@@ -365,6 +370,7 @@ def validate_transitions(
     summary: _ValidationSummary | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
     memory: SimulationMemory | None = None,
+    producers: ProfiledSimulationOperations | None = None,
 ) -> None:
     """Validate regime and state transition probabilities before solve / simulate.
 
@@ -380,11 +386,14 @@ def validate_transitions(
         logger: Logger carrying the runtime-validation policy.
         memory: Budgeted owner that admits every off-grid count producer before
             dispatch, or `None` for an unbudgeted call.
+        producers: Model-owned owner that keeps an unbudgeted call's off-grid
+            counts compiled across calls, or `None` to keep them for this call.
 
     """
     if not validation_enabled(logger):
         _validate_off_grid_under(
             memory=memory,
+            producers=producers,
             regimes=regimes,
             flat_params=flat_params,
             ages=ages,
@@ -433,6 +442,7 @@ def validate_transitions(
         )
     _validate_off_grid_under(
         memory=memory,
+        producers=producers,
         regimes=regimes,
         flat_params=flat_params,
         ages=ages,
@@ -444,6 +454,7 @@ def validate_transitions(
 def _validate_off_grid_under(
     *,
     memory: SimulationMemory | None,
+    producers: ProfiledSimulationOperations | None,
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
     ages: TimeAxis,
@@ -452,7 +463,9 @@ def _validate_off_grid_under(
 ) -> None:
     """Run every off-grid count through one call-owned summary of `memory`."""
     summary = _ValidationSummary(
-        memory=memory, process_grid_resolver=process_grid_resolver
+        memory=memory,
+        producers=producers,
+        process_grid_resolver=process_grid_resolver,
     )
     try:
         validate_off_grid_transitions(
@@ -551,9 +564,14 @@ def validate_off_grid_transitions(
                     for index, (state, grid) in enumerate(grids.items()):
                         if grid.off_grid == "raise" and int(counts[index, 1]):
                             raise OffGridStateError(
-                                f"Invalid next state: regime={name!r}, "
-                                f"target={target!r}, "
-                                f"period={period}, state={state!r}"
+                                off_grid_message(
+                                    count=int(counts[index, 1]),
+                                    regime=name,
+                                    target=target,
+                                    period=period,
+                                    state=state,
+                                    phase="simulate" if realized else "solve",
+                                )
                             )
                         report_off_grid(
                             count=int(counts[index, 0]),
@@ -604,11 +622,6 @@ def _off_grid_target_counts(
         "law": law,
         "states": tuple(points),
     }
-    point_call = (
-        _build_off_grid_cell(**builder_inputs)
-        if memory is None
-        else memory.producers.built(builder=_build_off_grid_cell, **builder_inputs)
-    )
     available = {**space.states, **space.actions}
     if phase is regime.simulation:
         available |= dict(_phase_extra_grids(regime=regime, phase="simulate"))
@@ -628,13 +641,31 @@ def _off_grid_target_counts(
         }
     )
     if memory is None:
+        owner = None if summary is None else summary.producers
+        n_rows = prod(jnp.shape(axis)[0] for axis in available.values())
+        # A single block runs op by op and compiles nothing; it stays uncompiled
+        # because `is_live`, compiled for the CPU backend, reads a subnormal mass
+        # as dead. A count over several blocks compiles its loop on every eager
+        # call, so with a model-owned owner it is compiled once and kept.
+        if owner is not None and n_rows > _OFF_GRID_BLOCK_ROWS:
+            count = owner.built(
+                builder=_build_unbudgeted_off_grid_count,
+                grid_names=grid_names,
+                **builder_inputs,
+            )
+            return count(grid_args=available, scalar_kwargs=scalar_kwargs)
         return _off_grid_counts_law(
             grid_args=available,
             scalar_kwargs=scalar_kwargs,
             grid_names=grid_names,
-            func=point_call,
+            func=(
+                _build_off_grid_cell(**builder_inputs)
+                if owner is None
+                else owner.built(builder=_build_off_grid_cell, **builder_inputs)
+            ),
             largest_count=1,
         )
+    point_call = memory.producers.built(builder=_build_off_grid_cell, **builder_inputs)
     arguments = {"grid_args": available, "scalar_kwargs": scalar_kwargs}
 
     def admitted_count(block_rows: int) -> IntND:
@@ -675,6 +706,36 @@ def _off_grid_block_candidates(*, n_rows: int) -> tuple[int, ...]:
         candidates.append(rows)
         rows //= 2
     return (*candidates, _OFF_GRID_BLOCK_ROWS)
+
+
+def _build_unbudgeted_off_grid_count(
+    *,
+    grid_names: tuple[StateOrActionName, ...],
+    functions: EconFunctionsMapping,
+    constraints: ConstraintFunctionsMapping,
+    bundle: MappingProxyType[TransitionFunctionName, TransitionFunction],
+    transition_plans: TargetTransitionPlans,
+    target: RegimeName,
+    law: RegimeTransitionFunction,
+    states: tuple[StateName, ...],
+) -> Callable[..., IntND]:
+    """Compile one cell's whole count, reused for as long as its owner keeps it."""
+    return jax.jit(
+        partial(
+            _off_grid_counts_law,
+            grid_names=grid_names,
+            func=_build_off_grid_cell(
+                functions=functions,
+                constraints=constraints,
+                bundle=bundle,
+                transition_plans=transition_plans,
+                target=target,
+                law=law,
+                states=states,
+            ),
+            largest_count=1,
+        )
+    )
 
 
 def _build_off_grid_cell(
