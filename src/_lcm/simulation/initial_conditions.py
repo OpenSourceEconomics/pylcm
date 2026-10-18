@@ -38,6 +38,7 @@ from _lcm.processes.joint_normal_lowering import (
     joint_normal_declarations,
 )
 from _lcm.reachability import PhaseReachability
+from _lcm.regime_building.age_normalization import group_periods_by_key
 from _lcm.regime_building.collective import NO_ROLE
 from _lcm.regime_building.Q_and_F import _BoundFeasibility, _get_feasibility
 from _lcm.simulation import population_operations
@@ -209,7 +210,9 @@ def validate_simulation_inputs(  # noqa: C901
             )
             with contextlib.closing(
                 _ValidationSummary(
-                    memory=memory, process_grid_resolver=process_grid_resolver
+                    memory=memory,
+                    producers=producers,
+                    process_grid_resolver=process_grid_resolver,
                 )
             ) as summary:
                 validate_off_grid_transitions(
@@ -229,7 +232,9 @@ def validate_simulation_inputs(  # noqa: C901
         PreflightActionGrids(memory=memory, build=_build_flat_action_grid)
     ) as action_grid_resolver:
         summary = _ValidationSummary(
-            memory=memory, process_grid_resolver=process_grid_resolver
+            memory=memory,
+            producers=producers,
+            process_grid_resolver=process_grid_resolver,
         )
         try:
             try:
@@ -314,7 +319,9 @@ def validate_simulation_inputs(  # noqa: C901
         )
         with contextlib.closing(
             _ValidationSummary(
-                memory=memory, process_grid_resolver=process_grid_resolver
+                memory=memory,
+                producers=producers,
+                process_grid_resolver=process_grid_resolver,
             )
         ) as summary:
             validate_off_grid_transitions(
@@ -1896,28 +1903,31 @@ def _regime_views_by_start_pool(
             initial_ages=np.asarray(initial_states["age"])[np.asarray(subject_indices)],
         )
     else:
-        subject_periods = np.array(
-            [cohorts.periods[index] for index in subject_indices]
-        )
+        subject_periods = np.asarray(cohorts.periods)[np.asarray(subject_indices)]
     pools = regime.simulation.feasibility_pools_by_period
-    groups: dict[
-        int,
-        tuple[tuple[EconFunctionsMapping, ConstraintFunctionsMapping], list[int]],
-    ] = {}
-    for index, period in zip(subject_indices, subject_periods.tolist(), strict=True):
-        pool = pools[int(period)]
-        groups.setdefault(id(pool), (pool, []))[1].append(index)
+    # Start periods in order of first appearance, so groups follow their first
+    # subject and each mask keeps the subjects' order.
+    start_periods, first_positions = np.unique(subject_periods, return_index=True)
+    groups = group_periods_by_key(
+        active_periods=tuple(
+            int(period) for period in start_periods[np.argsort(first_positions)]
+        ),
+        key=lambda period: id(pools[period]),
+    )
+    indices_array = np.asarray(subject_indices)
     return tuple(
         (
             dataclasses.replace(
                 regime,
                 simulation=dataclasses.replace(
-                    regime.simulation, functions=functions, constraints=constraints
+                    regime.simulation,
+                    functions=pools[periods[0]][0],
+                    constraints=pools[periods[0]][1],
                 ),
             ),
-            indices,
+            indices_array[np.isin(subject_periods, periods)].tolist(),
         )
-        for (functions, constraints), indices in groups.values()
+        for periods in groups.values()
     )
 
 

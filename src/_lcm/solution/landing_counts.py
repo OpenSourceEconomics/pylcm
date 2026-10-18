@@ -26,6 +26,7 @@ import jax
 import jax.numpy as jnp
 from dags import with_signature
 
+from _lcm.off_grid import off_grid_message
 from _lcm.regime_building.collective import ParetoWeights
 from _lcm.regime_building.max_Q_over_a import (
     _fail_if_co_map_states_not_leading,
@@ -251,8 +252,14 @@ def fail_on_reached_landings(
     for (target, state), count in zip(checks, jax.device_get(totals), strict=True):
         if int(count):
             raise OffGridStateError(
-                f"Invalid next state: regime={regime_name!r}, target={target!r}, "
-                f"period={period}, state={state!r}"
+                off_grid_message(
+                    count=int(count),
+                    regime=regime_name,
+                    target=target,
+                    period=period,
+                    state=state,
+                    phase="solve",
+                )
             )
 
 

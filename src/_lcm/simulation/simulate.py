@@ -12,7 +12,7 @@ import inspect
 import itertools
 import logging
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, fields, replace
 from types import MappingProxyType
 from typing import Literal, cast
@@ -147,6 +147,7 @@ from _lcm.simulation.transitions import (
     calculate_next_states,
     clip_next_states,
     create_regime_state_action_space,
+    fail_if_drawn_codes_leave_their_grids,
 )
 from _lcm.simulation.unit_executor import SimulationUnitExecutor
 from _lcm.simulation.value_reads import PeriodSimulationReads
@@ -2032,6 +2033,29 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             memory=memory,
             runtime_checks=validation_enabled(logger),
         )
+        # A subject's raw codes are checked against the regime it was drawn to
+        # before a gate can read a value at them or reroute the subject.
+        if validation_enabled(logger):
+            fail_if_drawn_codes_leave_their_grids(
+                next_states=next_states,
+                regimes=regimes,
+                targets=_drawn_code_targets(
+                    targets=realization_targets_next_period,
+                    regime_names_to_ids=regime_names_to_ids,
+                ),
+                source=regime_name,
+                period=period,
+                new_regime_ids=new_subject_regime_ids,
+                regime_ids=regime_names_to_ids,
+                subjects=subject_ids_in_regime
+                & _genuine_rows(
+                    subject_slice=subject_slice,
+                    n_real=n_subjects
+                    if original_n_subjects is None
+                    else original_n_subjects,
+                ),
+                memory=memory,
+            )
         # The value router's routing half. A gated
         # edge's target is always ALSO an ordinary declared transition
         # target, so `calculate_next_states` already computed candidate
@@ -4477,6 +4501,17 @@ def _resources_at_subjects(
             )[read.resources_target]
         ),
         (n_subjects,),
+    )
+
+
+def _drawn_code_targets(
+    *,
+    targets: Iterable[RegimeName],
+    regime_names_to_ids: RegimeNamesToIds,
+) -> tuple[RegimeName, ...]:
+    """Order the drawn targets by regime id, as the memory profile records them."""
+    return tuple(
+        sorted(dict.fromkeys(targets), key=lambda name: int(regime_names_to_ids[name]))
     )
 
 
