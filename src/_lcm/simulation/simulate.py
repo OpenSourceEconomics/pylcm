@@ -126,6 +126,7 @@ from _lcm.simulation.residency import (
     union_buffer_footprints,
 )
 from _lcm.simulation.runtime import SimulationRuntime, execute_simulation_program
+from _lcm.simulation.shock_paths import shock_path_values, supplied_shock_argument_names
 from _lcm.simulation.subject_groups import (
     ComponentValueSource,
     SubjectGroupPlan,
@@ -231,6 +232,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
     retained_footprint: DeviceBufferFootprint | None = None,
     prepared_chunks: PreparedSimulationChunks | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
+    shock_paths: Mapping[StateName, np.ndarray] = MappingProxyType({}),
     call_id: CallId | None = None,
     component_values: ComponentValueSource | None = None,
 ) -> SimulationResult:
@@ -613,6 +615,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
                         memory=memory,
                         call_inputs=call_inputs,
                         process_grid_resolver=process_grid_resolver,
+                        shock_paths=shock_paths,
                     )
                     if host_device is not None:
                         # `block_until_ready` forces the D2H copy to complete
@@ -814,6 +817,7 @@ def _simulate_subject_chunk(
         tuple[int, RegimeName], tuple[int, ...]
     ] = MappingProxyType({}),
     process_grid_resolver: ProcessGridResolver | None = None,
+    shock_paths: Mapping[StateName, np.ndarray] = MappingProxyType({}),
 ) -> dict[RegimeName, dict[int, PeriodRegimeSimulationData]]:
     """Run the full period loop for one chunk of subjects.
 
@@ -1016,6 +1020,17 @@ def _simulate_subject_chunk(
                     n_subjects=n_subjects,
                     subject_slice=subject_slice,
                     original_n_subjects=original_n_subjects,
+                    supplied_shocks=shock_path_values(
+                        paths=shock_paths,
+                        argument_names=supplied_shock_argument_names(
+                            regime=regime, period=period
+                        ),
+                        period=period + 1,
+                        subject_slice=subject_slice,
+                        n_subjects=len(subject_regime_ids),
+                    )
+                    if shock_paths
+                    else MappingProxyType({}),
                     own_stakeholder=own_stakeholder,
                     new_own_stakeholder=new_own_stakeholder,
                     gated_edge_fold_age=(
@@ -1598,6 +1613,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
     replay_reader: PreparedReplayReader | ReplayReader | None = None,
     taste_key: PRNGKeyND | None = None,
     taste_address: tuple[int, ...] | None = None,
+    supplied_shocks: Mapping[str, np.ndarray] = MappingProxyType({}),
 ) -> tuple[PeriodRegimeSimulationData, StatesPerRegime, Int1D, Int1D]:
     """Simulate one regime for one period.
 
@@ -1941,6 +1957,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             subjects_in_regime=subject_ids_in_regime,
             n_subjects=n_subjects,
             subject_slice=subject_slice,
+            supplied_shocks=supplied_shocks,
             original_n_subjects=original_n_subjects,
             memory=memory,
         )
