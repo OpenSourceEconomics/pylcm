@@ -22,6 +22,7 @@ from dags.tree import qname_from_tree_path
 from _lcm.grids import ContinuousGrid, DiscreteGrid, IrregSpacedGrid
 from _lcm.grids.continuous import _clip_grid_value
 from _lcm.grids.coordinates import get_irreg_coordinate
+from _lcm.grids.discrete import read_at_codes
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.ndimage import map_coordinates
 from _lcm.typing import ArrayTree, StateName
@@ -753,7 +754,7 @@ class _LookupWrapper:
             slice(None) if var in self.retained_axis_names else kwargs[var]
             for var in self.axis_names
         )
-        return kwargs[self.array_name][positions]
+        return read_at_codes(array=kwargs[self.array_name], positions=positions)
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True, eq=False)

@@ -1594,13 +1594,14 @@ class Model:
     def validate_transitions(self, *, params: UserParams) -> None:
         """Run the solve's transition preflight without backward induction.
 
-        Process parameters and check regime probabilities, stochastic state laws
-        and transition-local joint supports and probabilities over their active
-        periods and phase grids. The first failure raises with the same diagnostic
-        as ``solve(runtime_checks=True)``; valid laws return ``None``. Checks are
-        always enabled. A law that cannot be numerically validated is reported as
-        a warning; otherwise nothing is printed. This does not validate
-        utilities, solver outputs or general deterministic next-state finiteness.
+        Process parameters and check regime probabilities, stochastic state laws,
+        transition-local joint supports and probabilities, and that deterministic
+        laws of discrete states stay on their grids at feasible cells, over their
+        active periods and phase grids. The first failure raises with the same
+        diagnostic as ``solve(runtime_checks=True)``; valid laws return ``None``.
+        Checks are always enabled. A law that cannot be numerically validated is
+        reported as a warning; otherwise nothing is printed. This does not
+        validate utilities, solver outputs or continuous next-state finiteness.
 
         Args:
             params: Model parameters compatible with ``get_params_template()``.

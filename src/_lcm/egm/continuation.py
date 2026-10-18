@@ -59,6 +59,7 @@ from _lcm.execution.reductions import (
     WeightedExpectationAccumulator,
 )
 from _lcm.grids import Grid
+from _lcm.grids.discrete import read_at_codes
 from _lcm.logsum import logsum_and_softmax
 from _lcm.probability import probabilities_form_distribution, scaled_by_power_of_two
 from _lcm.processes import _ContinuousStochasticProcess
@@ -1728,9 +1729,11 @@ def _aggregate_child_choices(
     """
     leaves = carry.leaves()
     n_pad = leaves[("value",)].shape[-1]
-    grid_block = leaves[("endog_grid",)][child_index]
-    value_block = leaves[("value",)][child_index]
-    marginal_block = leaves[("marginal_utility",)][child_index]
+    grid_block = read_at_codes(array=leaves[("endog_grid",)], positions=child_index)
+    value_block = read_at_codes(array=leaves[("value",)], positions=child_index)
+    marginal_block = read_at_codes(
+        array=leaves[("marginal_utility",)], positions=child_index
+    )
     # The prepared search key and valid length are indexed by the same
     # `child_index` as the carry rows, so each row reads its own precomputed
     # pair instead of recomputing the NaN mask per query.
@@ -1848,7 +1851,26 @@ def _aggregate_child_choices(
             values=value_at_child, axes=(0,)
         )
     smoothed_marginal = jnp.sum(choice_probs * marginal_at_child)
-    return smoothed_value, smoothed_marginal
+    # The carry pads unused nodes with NaN, so an off-grid code's all-NaN rows
+    # would read as an empty row and fall back to a finite candidate. A code off
+    # its axis reads NaN, as `read_at_codes` promises.
+    on_grid = _codes_on_their_axes(
+        codes=child_index, sizes=leaves[("value",)].shape[: len(child_index)]
+    )
+    return (
+        jnp.where(on_grid, smoothed_value, jnp.nan),
+        jnp.where(on_grid, smoothed_marginal, jnp.nan),
+    )
+
+
+def _codes_on_their_axes(
+    *, codes: tuple[ScalarInt, ...], sizes: tuple[int, ...]
+) -> BoolND:
+    """Return whether every code lies in `0..n-1` of its own axis."""
+    on_grid = jnp.ones((), dtype=bool)
+    for code, size in zip(codes, sizes, strict=True):
+        on_grid = on_grid & (jnp.asarray(code) >= 0) & (jnp.asarray(code) < size)
+    return on_grid
 
 
 def _blend_passive_axes(
