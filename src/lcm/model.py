@@ -138,6 +138,10 @@ from _lcm.regime_building.schedules import (
     lower_demanded_transitions,
     resolve_initial_nodes,
 )
+from _lcm.regime_building.value_adapter import (
+    adapt_regime_laws,
+    collect_value_grids,
+)
 from _lcm.regime_law import RegimeLaws, bind_regime_law
 from _lcm.simulation.chunk_admission import prepare_simulation_chunks
 from _lcm.simulation.compile import bind_simulation_runtime
@@ -1032,6 +1036,14 @@ class Model:
             name for shocks in draw_only_processes.values() for name in shocks
         )
         self._draw_only_processes = draw_only_processes
+        # A regime law reads the values of value grids as every user function
+        # does; it still returns regime codes or probabilities.
+        laws = adapt_regime_laws(
+            laws=laws,
+            value_grids=collect_value_grids(
+                regimes=pruned_regimes, derived_categoricals=derived_categoricals
+            ),
+        )
         finalized_regimes = finalize_regimes(
             user_regimes=pruned_regimes,
             laws=laws,

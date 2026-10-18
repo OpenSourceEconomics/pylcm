@@ -55,12 +55,18 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   law of a value-grid state returns a value, which becomes the code of its node. A
   stochastic law reads values and still returns probabilities in the order of
   `values`. Integer values arrive as int32, as codes do. A variable declared with values
-  must carry the same values and tolerance in every regime. Value grids are not yet
-  supported for joint transitions, condition constraints, collective regimes,
-  carried-state imputations, age-specialized functions, or regime transition laws
-  that read them; the model raises for these. Age-specialized readers are refused
-  in functions, constraints and carried-state imputations; this includes `Phased`
-  function declarations and model-level derived value grids.
+  must carry the same values and tolerance in every regime. Regime transition laws,
+  gates and their projections, collective regimes (stakeholder utilities, Pareto
+  weights, value-dependent constraints and their projections), joint transitions
+  and carried-state imputations read values too; a projection, a joint output and an
+  imputation of a value-grid state return a value. A `functools.partial` reading a
+  value grid asks only for the arguments it leaves free. Condition constraints that
+  read a value grid, and age-specialized functions, constraints and imputations in a
+  regime with value grids, are refused; this includes `Phased` function
+  declarations and model-level derived value grids.
+- A float value grid holds its values at the precision of the model that uses it,
+  so a grid built before x64 is enabled holds float64 values in a float64 model.
+  Values that collide at that precision raise when the model is built.
 
 ### Time-inconsistent agents with `Decoupled`
 

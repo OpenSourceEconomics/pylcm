@@ -34,6 +34,7 @@ from _lcm.regime_building.value_adapter import (
     AdaptableEntry,
     AdapterMemo,
     ValueAdapter,
+    adapt_collective_utility,
     adapt_entry,
     collect_value_grids,
 )
@@ -45,6 +46,7 @@ from _lcm.user_regime_validation import (
 )
 from _lcm.utils.error_messages import format_messages
 from lcm.case_piece import CaseBoundary
+from lcm.collective import CollectiveUtility
 from lcm.consumption_savings_regime import (
     NetOfAdjustmentCost,
     _composition_rule_message,
@@ -53,9 +55,9 @@ from lcm.consumption_savings_regime import (
 from lcm.decoupled import Decoupled
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.phased import Phased
-from lcm.regime import ConstraintEntry, StateTransitionEntry
+from lcm.regime import ConstraintEntry, StateEntry, StateTransitionEntry
 from lcm.regime import Regime as UserRegime
-from lcm.transition import _AgeSpecialized
+from lcm.transition import JointTransition, _AgeSpecialized
 from lcm.typing import FloatND, ReferenceName, StateName, UserFunction, ValueND
 
 # A user `Regime` after model-build finalization. Runtime-equivalent to
@@ -119,7 +121,7 @@ def finalize_regimes(
         for stakeholder in regime.stakeholders
     )
     value_grids = collect_value_grids(
-        regimes=user_regimes, laws=laws, derived_categoricals=derived_categoricals
+        regimes=user_regimes, derived_categoricals=derived_categoricals
     )
     adapters: AdapterMemo = {}
     result: dict[RegimeName, FinalizedUserRegime] = {}
@@ -162,13 +164,30 @@ def finalize_regimes(
         # The engine composed these from `decomposed_functions`, so writing
         # them straight into `functions` would put the decomposition where the
         # declaration was. The write-back goes by provenance instead.
-        finalized = user_regime.with_engine_functions(
-            engine_functions=cast(
-                "Mapping[FunctionName, UserFunction | Phased | None]",
+        engine_functions = cast(
+            "Mapping[FunctionName, UserFunction | Phased | None]",
+            _adapt_slot(
+                slot=functions,
+                value_grids=value_grids,
+                encoded=frozenset(merged),
+                adapters=adapters,
+            ),
+        )
+        declaring = _with_adapted_household(
+            user_regime=user_regime,
+            engine_functions=engine_functions,
+            value_grids=value_grids,
+            adapters=adapters,
+        )
+        finalized = declaring.with_engine_functions(
+            engine_functions=engine_functions,
+            # A carried state's imputation returns the state's value.
+            states=cast(
+                "Mapping[StateName, StateEntry]",
                 _adapt_slot(
-                    slot=functions,
+                    slot=declaring.states,
                     value_grids=value_grids,
-                    encoded=frozenset(merged),
+                    encoded=frozenset(declaring.states),
                     adapters=adapters,
                 ),
             ),
@@ -178,6 +197,15 @@ def finalize_regimes(
                     slot=user_regime.state_transitions,
                     value_grids=value_grids,
                     encoded=frozenset(user_regime.state_transitions),
+                    adapters=adapters,
+                ),
+            ),
+            joint_transitions=cast(
+                "Mapping[RegimeName, Mapping[str, JointTransition | Phased]]",
+                _adapt_slot(
+                    slot=declaring.joint_transitions,
+                    value_grids=value_grids,
+                    encoded=frozenset(),
                     adapters=adapters,
                 ),
             ),
@@ -214,6 +242,32 @@ def finalize_regimes(
         finalized._validate_finalized_structure(regime_name=regime_name)  # noqa: SLF001
         result[regime_name] = finalized
     return MappingProxyType(result)
+
+
+def _with_adapted_household(
+    *,
+    user_regime: UserRegime,
+    engine_functions: Mapping[FunctionName, UserFunction | Phased | None],
+    value_grids: Mapping[str, DiscreteGrid],
+    adapters: AdapterMemo,
+) -> UserRegime:
+    """Return the regime whose household declares the bodies the engine runs.
+
+    A stakeholder's adapted utility is then one object in the declaration and in
+    the engine's functions, and the Pareto weights read values.
+    """
+    declaration = user_regime.functions.get("utility")
+    if not isinstance(declaration, CollectiveUtility):
+        return user_regime
+    adapted = adapt_collective_utility(
+        declaration=declaration,
+        engine_functions=engine_functions,
+        value_grids=value_grids,
+        adapters=adapters,
+    )
+    if adapted is declaration:
+        return user_regime
+    return user_regime.replace(functions={**user_regime.functions, "utility": adapted})
 
 
 def _authored(
