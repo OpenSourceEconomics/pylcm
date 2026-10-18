@@ -895,7 +895,8 @@ class _DecisionWithActionParts:
     Returns the chosen flat index and its value, followed by the action values
     `Q`, their feasibility `F`, the flow utility `U` and the certainty-equivalent
     continuation `CE` over the action product, all from one evaluation of the
-    regime's kernel. `Q`, `U` and `CE` are unmasked: an infeasible entry holds
+    regime's kernel. A cell without a feasible action publishes index -1, as the
+    dense decision does. `Q`, `U` and `CE` are unmasked: an infeasible entry holds
     what the action would have; the decision masks `Q` with `F`.
     """
 
@@ -912,6 +913,7 @@ class _DecisionWithActionParts:
         """Return the chosen flat index, its value, and `Q`, `F`, `U` and `CE`."""
         parts = self.parts(**kwargs)
         index, value = argmax_and_max(a=parts.Q, where=parts.F, initial=-jnp.inf)
+        index = jnp.where(jnp.any(parts.F), index, -1)
         return index, value, parts.Q, parts.F, parts.U, parts.CE
 
 
@@ -922,8 +924,9 @@ class _StreamedArgmaxQOverA:
     Publishes the flat identity of the winning action in the canonical C order
     of the action product, and the value it attains — the same pair the dense
     canonical reducer publishes, obtained by the exact hard-max fold the solve
-    kernel streams with. An all-infeasible cell publishes identity zero, which
-    is what the dense reducer's masked `argmax` publishes there.
+    kernel streams with. An all-infeasible cell publishes identity -1, as the
+    dense reducer does; no action grid decodes it, so a caller refuses the cell
+    before reading its action.
     """
 
     __name__: ClassVar[str] = "streamed_argmax_and_max_Q_over_a"
@@ -963,7 +966,7 @@ class _StreamedArgmaxQOverA:
             next_regime_to_V_arr=next_regime_to_V_arr, **q_and_f_params
         )
         return (
-            jnp.maximum(result.best_global_action_id, 0).astype(jnp.int32),
+            result.best_global_action_id.astype(jnp.int32),
             result.best_value,
         )
 

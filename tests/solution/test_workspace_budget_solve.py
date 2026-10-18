@@ -55,8 +55,12 @@ _BYTES_PER_ACTION = 1000
 
 
 def _fixed_owner_bytes() -> int:
-    """Three wealth/consumption nodes, three params, four V cells, four int32s."""
-    return 13 * jnp.zeros(()).dtype.itemsize + 4 * 4
+    """Three wealth/consumption nodes, three params, four V cells, four int32s.
+
+    Each period also reserves int32 feasibility counters: a pair for its one
+    active regime and a pair that merges invariant blocks.
+    """
+    return 13 * jnp.zeros(()).dtype.itemsize + 4 * 4 + 2 * 4 * (1 + 1)
 
 
 def _model(
