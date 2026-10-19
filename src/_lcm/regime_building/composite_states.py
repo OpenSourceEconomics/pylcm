@@ -57,6 +57,7 @@ from lcm.transition import fixed_transition
 from lcm.typing import (
     BoolND,
     DiscreteState,
+    FloatND,
     IntND,
     ScalarInt,
     UserInitialConditions,
@@ -446,7 +447,11 @@ class _CompositeEncoder:
     """Encode the members' next codes toward one target as a composite code."""
 
     laws: Callable[..., tuple[IntND, ...]]
-    """The member laws, returning next member codes in member order."""
+    """The member laws, returning next member codes in member order.
+
+    They read whatever the member laws read: codes, but also floating or boolean
+    helpers and the age, so the keyword inputs are not restricted to integers.
+    """
 
     law_args: tuple[ReferenceName, ...]
     """Arguments of `laws`."""
@@ -460,7 +465,7 @@ class _CompositeEncoder:
     shape: tuple[int, ...]
     """Number of codes of every member."""
 
-    def __call__(self, **kwargs: IntND) -> IntND:
+    def __call__(self, **kwargs: FloatND | IntND | BoolND) -> IntND:
         values = kwargs | dict(self.bound)
         nexts = self.laws(**{arg: values[arg] for arg in self.law_args})
         return _read_flat(table=self.encoding, shape=self.shape, index=nexts)

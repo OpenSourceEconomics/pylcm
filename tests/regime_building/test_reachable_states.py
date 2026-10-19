@@ -29,7 +29,7 @@ from lcm import (
     fixed_transition,
 )
 from lcm.exceptions import ModelInitializationError
-from lcm.regime import StateTransitionEntry
+from lcm.regime import ConstraintEntry, StateTransitionEntry
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -37,6 +37,7 @@ from lcm.typing import (
     DiscreteAction,
     DiscreteState,
     FloatND,
+    FunctionName,
     ScalarInt,
     StateName,
 )
@@ -127,7 +128,9 @@ def _retired_utility(
 
 
 def _alive_regime(
-    *, state_transitions: Mapping[StateName, StateTransitionEntry] | None = None
+    *,
+    state_transitions: Mapping[StateName, StateTransitionEntry] | None = None,
+    constraints: Mapping[FunctionName, ConstraintEntry] | None = None,
 ) -> Regime:
     states = {name: DiscreteGrid(_Count) for name in _COUNTERS} | {
         "offer": DiscreteGrid(_Offer),
@@ -152,7 +155,8 @@ def _alive_regime(
             "c_needs_a": _c_needs_a,
             "b_needs_offer": _b_needs_offer,
             "budget": _budget,
-        },
+        }
+        | dict(constraints or {}),
     )
 
 
@@ -287,3 +291,25 @@ def test_continuous_member_is_refused() -> None:
     """Only discrete states can be enumerated."""
     with pytest.raises(ModelInitializationError, match=r"wealth.*discrete"):
         _enumerate(model=_model(n_periods=4), state_names=("count_a", "wealth"))
+
+
+def _a_below_limit(
+    *, choice: DiscreteAction, count_a: DiscreteState, limit: ScalarInt
+) -> BoolND:
+    return (choice != _Choice.a) | (count_a < limit)
+
+
+def test_constraint_reading_a_free_parameter_is_skipped_and_reported() -> None:
+    """A constraint on a runtime parameter cannot prune; it is reported by name."""
+    alive = _alive_regime(constraints={"a_below_limit": _a_below_limit})
+    reachable = _enumerate(model=_model(alive=alive, n_periods=6))
+    assert dict(reachable.skipped_constraints)[("alive", "a_below_limit")] == (
+        "a_below_limit__limit",
+    )
+
+
+def test_skipped_free_parameter_constraint_leaves_the_support_unrestricted() -> None:
+    """With the limit constraint skipped, the sets equal those without it."""
+    alive = _alive_regime(constraints={"a_below_limit": _a_below_limit})
+    reachable = _enumerate(model=_model(alive=alive, n_periods=6))
+    assert dict(reachable.by_node) == _oracle(6)
