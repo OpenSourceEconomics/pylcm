@@ -26,6 +26,7 @@ from _lcm.solution.contract import (
 )
 from _lcm.solution.feasibility import (
     BoundInputStatus,
+    ChildStatusKernelOutput,
     ContinuationCountedKernelOutput,
     ContinuationReadCounts,
     FeasibilityCounts,
@@ -276,7 +277,10 @@ def consume_kernel_output(
             output.bound_status if type(output) is FeasibilityKernelOutput else ()
         ),
         query_status=(
-            output.query_status if type(output) is FeasibilityKernelOutput else None
+            output.query_status
+            if type(output) is FeasibilityKernelOutput
+            or type(output) is ChildStatusKernelOutput
+            else None
         ),
         feasibility_counts=(
             output.feasibility_counts
@@ -286,6 +290,7 @@ def consume_kernel_output(
         continuation_read_counts=(
             output.continuation_read_counts
             if type(output) is FeasibilityKernelOutput
+            or type(output) is ChildStatusKernelOutput
             or type(output) is ContinuationCountedKernelOutput
             else None
         ),
