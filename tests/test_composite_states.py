@@ -9,6 +9,7 @@ The model reproduces the dense model's values at every reachable cell and its
 simulated panel exactly.
 """
 
+import itertools
 from collections.abc import Mapping
 
 import cloudpickle
@@ -17,6 +18,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from _lcm.grids.discrete import MISSING_CAT_CODE
 from lcm import (
     AgeGrid,
     CompositeState,
@@ -490,3 +492,90 @@ def test_member_law_reading_a_value_grid_is_refused() -> None:
             choice_grid=DiscreteGrid(values=[10, 20]),
             transitions={"a": _next_a_from_numeric_choice, "b": fixed_transition("b")},
         )
+
+
+def _independent_reachable_sets() -> dict[tuple[int, str], set[tuple[int, ...]]]:
+    """Every counter tuple some admissible choice path reaches, per node.
+
+    `alive` decides at periods `0 .. _N_PERIODS - 3`, `retired` holds the tuples of
+    the period after. Counter `c` may rise only once `a` is positive; the offer is
+    enumerated over both codes, so `b` may always rise.
+    """
+    reached: dict[tuple[int, str], set[tuple[int, ...]]] = {}
+    for period in range(_N_PERIODS - 1):
+        regime = "alive" if period <= _N_PERIODS - 3 else "retired"
+        for path in itertools.product(range(4), repeat=period):
+            counts = [0, 0, 0]
+            for choice in path:
+                if choice == int(_Choice.c) and counts[0] == 0:
+                    break
+                if choice < len(counts):
+                    counts[choice] = min(counts[choice] + 1, _CAP)
+            else:
+                reached.setdefault((period, regime), set()).add(tuple(counts))
+    return reached
+
+
+def test_value_is_finite_exactly_at_codes_reachable_at_each_period() -> None:
+    """At every node the finite cells of V are the independently reachable codes."""
+    composite = _composite()
+    lowering = composite._composite_states["history"]
+    values = composite.solve(params=_PARAMS, log_level="off").values
+    finite: dict[tuple[int, str], set[tuple[int, ...]]] = {}
+    for period, regimes in values.items():
+        for regime in ("alive", "retired"):
+            if regime not in regimes:
+                continue
+            v = _member_first(
+                model=composite,
+                regime=regime,
+                values=np.asarray(regimes[regime]),
+                names=("history",),
+            )
+            codes = np.flatnonzero(np.isfinite(v.reshape(len(v), -1)).any(axis=1))
+            if codes.size:
+                finite[(period, regime)] = {
+                    tuple(int(code) for code in lowering.table[c]) for c in codes
+                }
+    assert finite == _independent_reachable_sets()
+
+
+def test_missing_code_marks_in_grid_and_off_grid_tuples_outside_the_set() -> None:
+    """`(0, 0, 2)` is on the grids but unreachable; `(3, 0, 0)` is off the grid."""
+    lowering = _composite()._composite_states["history"]
+    codes = lowering.encode_rows(np.asarray([[0, 0, 2], [3, 0, 0]]))
+    assert codes.tolist() == [int(MISSING_CAT_CODE)] * 2
+
+
+def _two_start_codes() -> Model:
+    """`count_a` may start at zero or one."""
+    return _model(
+        composite_states={
+            "history": CompositeState(
+                members=_MEMBERS,
+                start_codes={"count_a": (0, 1), "count_b": (0,), "count_c": (0,)},
+            )
+        }
+    )
+
+
+def test_labelled_start_with_nonzero_member_label_decodes_to_its_code() -> None:
+    """A subject starting at `count_a="one"` reads member code 1 in period 0."""
+    frame = pd.DataFrame(
+        {
+            "regime_name": ["alive", "alive"],
+            "age": [0.0, 0.0],
+            "wealth": [2.0, 3.0],
+            "offer": ["no", "yes"],
+            "count_a": ["one", "zero"],
+            "count_b": ["zero", "zero"],
+            "count_c": ["zero", "zero"],
+        }
+    )
+    panel = (
+        _two_start_codes()
+        .simulate(params=_PARAMS, initial_conditions=frame, log_level="off", seed=3)
+        .to_dataframe(use_labels=False, additional_targets=list(_MEMBERS))
+    )
+    first = panel[panel["period"] == 0].sort_values("subject_id")
+    assert first[list(_MEMBERS)].to_numpy().tolist() == [[1, 0, 0], [0, 0, 0]]
