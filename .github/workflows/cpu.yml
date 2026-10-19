@@ -47,17 +47,22 @@ jobs:
             python-version: '3.14'
             leg: fp64-linux
             shard: 1
-            shards: 3
+            shards: 4
           - os: ubuntu-latest
             python-version: '3.14'
             leg: fp64-linux
             shard: 2
-            shards: 3
+            shards: 4
           - os: ubuntu-latest
             python-version: '3.14'
             leg: fp64-linux
             shard: 3
-            shards: 3
+            shards: 4
+          - os: ubuntu-latest
+            python-version: '3.14'
+            leg: fp64-linux
+            shard: 4
+            shards: 4
           - os: macos-latest
             python-version: '3.14'
             leg: fp64-macos
@@ -305,8 +310,10 @@ jobs:
   # Two duration-weighted shards: the fp32 general payload is less than half the
   # fp64 one. Three shards: the leg measured 190 worker-minutes on run
   # 35078533997, which two four-worker jobs cannot carry inside the guardrail.
+  # Four shards: re-measured on run 39196899855 at 287 worker-minutes, three
+  # four-worker jobs sat at the guardrail.
   tests-fp32:
-    name: Run general fp32 tests on ubuntu-latest (shard ${{ matrix.shard }}/3)
+    name: Run general fp32 tests on ubuntu-latest (shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -319,10 +326,11 @@ jobs:
           - 1
           - 2
           - 3
+          - 4
     env:
       PYLCM_CI_RECEIPT: reports/ci-receipts
       PYLCM_CI_GENERAL_LEG: fp32-linux
-      PYLCM_CI_GENERAL_SHARDS: '3'
+      PYLCM_CI_GENERAL_SHARDS: '4'
       PYLCM_CI_GENERAL_SHARD: ${{ matrix.shard }}
       PYLCM_SHARD: ${{ matrix.shard }}
       PYLCM_CACHE_KEY: jax-gen32-s${{ matrix.shard }}
