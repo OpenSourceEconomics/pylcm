@@ -311,8 +311,8 @@ class EdgeVocabulary:
     aggregator inputs."""
 
     states: frozenset[StateName]
-    """Its states, which a gate or projection with this regime as target reads
-    off the target grid."""
+    """Its states and the code `<name>_code` of each discrete one, which a gate or
+    projection with this regime as target reads off the target grid."""
 
     categoricals: MappingProxyType[ReferenceName, DiscreteGrid]
     """Its discrete state and action grids, which label the levels of a Series
@@ -343,7 +343,16 @@ def create_edge_vocabulary(
         {
             name: EdgeVocabulary(
                 variables=frozenset(_wired_names(regime)),
-                states=frozenset(regime.states),
+                states=frozenset(
+                    {
+                        *regime.states,
+                        *(
+                            f"{state}_code"
+                            for state in _declared_categoricals(regime)
+                            if state in regime.states
+                        ),
+                    }
+                ),
                 categoricals=_declared_categoricals(regime),
             )
             for name, regime in user_regimes.items()
@@ -1681,7 +1690,8 @@ def _gated_edge_wired_names(
     A gate and a projection are evaluated on that edge's TARGET regime's grid, so
     the names no user supplies are those of that evaluation, not the source's:
 
-    - the target regime's states, which the fold binds from that regime's grids;
+    - the target regime's states and the code `<name>_code` of each discrete
+      one, which the fold binds from that regime's grids;
     - `D_target`, the target's dissolution flag;
     - each key of THIS edge's gate `references`, bound to that reference's
       interpolated value;
@@ -1700,7 +1710,8 @@ def _gated_edge_wired_names(
 
     Args:
         gate_reference_names: The keys of the edge's gate references.
-        target_state_names: State names declared by that edge's target regime.
+        target_state_names: State names declared by that edge's target regime,
+            with the code `<name>_code` of each discrete one.
 
     Returns:
         Set of the names this edge's callables may read without them being
