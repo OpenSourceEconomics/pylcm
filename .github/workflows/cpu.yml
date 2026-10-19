@@ -47,27 +47,42 @@ jobs:
             python-version: '3.14'
             leg: fp64-linux
             shard: 1
-            shards: 3
+            shards: 4
           - os: ubuntu-latest
             python-version: '3.14'
             leg: fp64-linux
             shard: 2
-            shards: 3
+            shards: 4
           - os: ubuntu-latest
             python-version: '3.14'
             leg: fp64-linux
             shard: 3
-            shards: 3
+            shards: 4
+          - os: ubuntu-latest
+            python-version: '3.14'
+            leg: fp64-linux
+            shard: 4
+            shards: 4
           - os: macos-latest
             python-version: '3.14'
             leg: fp64-macos
             shard: 1
-            shards: 1
+            shards: 2
+          - os: macos-latest
+            python-version: '3.14'
+            leg: fp64-macos
+            shard: 2
+            shards: 2
           - os: windows-latest
             python-version: '3.14'
             leg: fp64-windows
             shard: 1
-            shards: 1
+            shards: 2
+          - os: windows-latest
+            python-version: '3.14'
+            leg: fp64-windows
+            shard: 2
+            shards: 2
     env:
       PYLCM_CI_RECEIPT: reports/ci-receipts
       PYLCM_CI_GENERAL_LEG: ${{ matrix.leg }}
@@ -305,8 +320,10 @@ jobs:
   # Two duration-weighted shards: the fp32 general payload is less than half the
   # fp64 one. Three shards: the leg measured 190 worker-minutes on run
   # 35078533997, which two four-worker jobs cannot carry inside the guardrail.
+  # Four shards: re-measured on run 39196899855 at 287 worker-minutes, three
+  # four-worker jobs sat at the guardrail.
   tests-fp32:
-    name: Run general fp32 tests on ubuntu-latest (shard ${{ matrix.shard }}/3)
+    name: Run general fp32 tests on ubuntu-latest (shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -319,10 +336,11 @@ jobs:
           - 1
           - 2
           - 3
+          - 4
     env:
       PYLCM_CI_RECEIPT: reports/ci-receipts
       PYLCM_CI_GENERAL_LEG: fp32-linux
-      PYLCM_CI_GENERAL_SHARDS: '3'
+      PYLCM_CI_GENERAL_SHARDS: '4'
       PYLCM_CI_GENERAL_SHARD: ${{ matrix.shard }}
       PYLCM_SHARD: ${{ matrix.shard }}
       PYLCM_CACHE_KEY: jax-gen32-s${{ matrix.shard }}
@@ -434,8 +452,9 @@ jobs:
   # and share one set of verifications (`tests/candidate_certificate/runner_replay.py`).
   #
   # The standalone verifier and its `--self-test` run in
-  # `tests-source-certificate-standalone` beside this job: each is one full pass
-  # of the mutation runner, and the two together exceed one job's budget.
+  # `tests-source-certificate-standalone` beside this job: the self-test is one
+  # full pass of the mutation runner, which with this campaign exceeds one job's
+  # budget.
   tests-source-contract:
     name: Run the source-only certificate campaign (Linux, 3.14)
     runs-on: ubuntu-latest
@@ -532,6 +551,11 @@ jobs:
           name: coverage-source-contract
           path: reports/coverage-source-contract.xml
           if-no-files-found: error
+  # The plain verification takes seconds; the self-test is the aggregate
+  # direct-flow mutation runner, which took 52 minutes serially on run
+  # 39213321138. `--workers 4` keeps the serial runner and its verdict
+  # aggregation and spreads only the independent per-tree verifications over
+  # the runner's four cores (`tests/candidate_certificate/runner_replay.py`).
   tests-source-certificate-standalone:
     name: Run the standalone candidate certificate (Linux, 3.14)
     runs-on: ubuntu-latest
@@ -567,7 +591,7 @@ jobs:
           mkdir -p reports/candidate-certificate
           set +e
           pixi run --frozen -e tests-cpu python tests/candidate_certificate/verify.py \
-            --repo-root . --self-test \
+            --repo-root . --self-test --workers 4 \
             > reports/candidate-certificate/self-test.json \
             2> reports/candidate-certificate/self-test.stderr.log
           status=$?
@@ -581,6 +605,124 @@ jobs:
           name: candidate-certificate-standalone
           path: reports/candidate-certificate/
           if-no-files-found: warn
+  # The two source-certificate modules whose single file outweighs a general
+  # shard's budget run here instead, distributed per test rather than per file,
+  # at both precisions the general legs run them at.
+  tests-certificate-heavy:
+    name: Run the heavy certificate modules (Linux, fp${{ matrix.precision }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      actions: write
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        precision:
+          - 64
+          - 32
+    env:
+      PYLCM_CI_RECEIPT: reports/ci-receipts
+      PYLCM_CI_PRECISION: ${{ matrix.precision }}
+      PYLCM_CACHE_KEY: jax-cert-heavy-fp${{ matrix.precision }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: prefix-dev/setup-pixi@v0.11.0
+        with:
+          pixi-version: v0.81.0
+          cache: true
+          cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
+          environments: tests-cpu
+          activate-environment: true
+          frozen: true
+      - name: Probe or reinstall the installed native payload
+        shell: bash
+        run: |
+          mkdir -p reports
+          pylcm_native_report="reports/native.json"
+          set +e
+          pixi run -e tests-cpu python -m tests.ci.probe_native \
+            --report="$pylcm_native_report"
+          status=$?
+          set -e
+          if test "$status" -eq 2; then
+            pixi reinstall -e tests-cpu --locked pylcm
+            pixi run -e tests-cpu python -m tests.ci.probe_native \
+              --report="$pylcm_native_report"
+          elif test "$status" -ne 0; then
+            exit "$status"
+          fi
+      - name: Cache JAX compiled programs
+        # `setup-pixi` caches the environment but not JAX's persistent
+        # compilation cache, so every job recompiles every program from cold.
+        # Safe because JAX keys an entry on the computation, the backend and its
+        # own version, so a stale or torn entry misses rather than misleads.
+        # `github.sha` makes each run write a fresh entry while `restore-keys`
+        # starts it from the nearest earlier one, so the cache follows the
+        # branch instead of freezing at its first write. Each lane keys its own
+        # namespace (`PYLCM_CACHE_KEY`) so lanes never fight over one entry.
+        uses: actions/cache@v6.1.0
+        with:
+          key: ${{env.PYLCM_CACHE_KEY}}-${{hashFiles('pixi.lock')}}-${{github.sha}}
+          path: ~/.cache/jax
+          restore-keys: |
+            ${{env.PYLCM_CACHE_KEY}}-${{hashFiles('pixi.lock')}}-
+            ${{env.PYLCM_CACHE_KEY}}-
+      - name: Run the heavy certificate modules
+        shell: bash {0}
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          coverage_args=()
+          if test "$PYLCM_CI_PRECISION" = "64"; then
+            coverage_args=(--cov=./ \
+              --cov-report="xml:reports/coverage-certificate-heavy.xml")
+          fi
+          pylcm_junit_report="reports/junit-cpu-fp$PYLCM_CI_PRECISION-Linux-certificate-heavy.xml"
+          pixi run -e tests-cpu pytest \
+            tests/test_final_nested_helper_certificate.py \
+            tests/test_grid_search_candidate_certificate.py \
+            --precision="$PYLCM_CI_PRECISION" \
+            -m "not slow and not manual" \
+            --policy-child --ci-policy=full --hardware-profile=cpu \
+            --timeout=600 --timeout-method=thread -v --max-worker-restart=0 \
+            --durations=25 \
+            --junitxml="$pylcm_junit_report" \
+            -n 2 --dist load ${coverage_args[@]+"${coverage_args[@]}"}
+      - name: Upload JUnit reports and receipts
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: junit-cpu-fp${{ matrix.precision }}-certificate-heavy
+          path: |
+            reports/junit-*.xml
+            reports/ci-receipts/*.json
+          if-no-files-found: warn
+      - name: Upload this lane's coverage data
+        if: always() && matrix.precision == 64
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: coverage-certificate-heavy
+          path: reports/coverage-certificate-heavy.xml
+          if-no-files-found: error
+      - name: Prune superseded JAX caches for this lane
+        # `github.sha` in the key means every run writes a fresh entry instead
+        # of replacing one, so an active branch accumulates them until the
+        # repository passes GitHub's 10 GB ceiling. Keep this ref's newest entry
+        # and drop the rest. Never fail the build over cache housekeeping: a
+        # pull request from a fork gets a read-only token and cannot delete.
+        if: always()
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{github.token}}
+        run: |
+          gh cache list --ref "$GITHUB_REF" --key "$PYLCM_CACHE_KEY-" \
+            --sort created_at --order desc --limit 100 --json id \
+            --jq '.[1:][].id' | while read -r cache_id; do
+              [ -n "$cache_id" ] || continue
+              gh cache delete "$cache_id" || true
+            done
   # Slow non-solution tests, Linux only at both precisions (macOS and Windows
   # drop the `slow` set, see the `tests` job). Unchained from the general lanes
   # so a general shard's failure no longer hides this phase's result.
@@ -2503,6 +2645,7 @@ jobs:
     needs:
       - tests
       - tests-source-contract
+      - tests-certificate-heavy
       - tests-rest-slow
       - tests-certified
       - tests-timing
@@ -2636,6 +2779,7 @@ jobs:
       - tests-source-contract
       - tests-source-certificate-standalone
       - tests-os-persistence
+      - tests-certificate-heavy
       - tests-rest-slow
       - tests-certified
       - tests-timing
@@ -2666,6 +2810,7 @@ jobs:
           echo "source-contract: ${{needs.tests-source-contract.result}}"
           echo "source-certificate-standalone: ${{needs.tests-source-certificate-standalone.result}}"
           echo "os-persistence: ${{needs.tests-os-persistence.result}}"
+          echo "certificate-heavy: ${{needs.tests-certificate-heavy.result}}"
           echo "rest-slow: ${{needs.tests-rest-slow.result}}"
           echo "certified: ${{needs.tests-certified.result}}"
           echo "timing: ${{needs.tests-timing.result}}"
@@ -2680,6 +2825,7 @@ jobs:
           test "${{needs.tests-source-contract.result}}" = "success"
           test "${{needs.tests-source-certificate-standalone.result}}" = "success"
           test "${{needs.tests-os-persistence.result}}" = "success"
+          test "${{needs.tests-certificate-heavy.result}}" = "success"
           test "${{needs.tests-rest-slow.result}}" = "success"
           test "${{needs.tests-certified.result}}" = "success"
           test "${{needs.tests-timing.result}}" = "success"

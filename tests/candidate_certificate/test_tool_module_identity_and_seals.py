@@ -8,7 +8,12 @@ from types import ModuleType
 
 import pytest
 
-from tests.candidate_certificate import check_seals, repin_corridors
+from tests.candidate_certificate import (
+    check_seals,
+    repin_corridors,
+    runner_replay,
+    verify,
+)
 
 _ROOT = Path(__file__).parents[2]
 _CHECKER = "tests/candidate_certificate/direct_flow.py"
@@ -24,7 +29,8 @@ def test_loaded_verifier_callbacks_resolve_the_requested_module_identity(
     path = tmp_path / _CHECKER
     path.parent.mkdir(parents=True)
     path.write_text(
-        "import sys\n\ndef current_module():\n    return sys.modules[__name__]\n"
+        "import sys\n\ndef current_module():\n    return sys.modules[__name__]\n",
+        encoding="utf-8",
     )
     loaded = tool._load_direct_flow(root=tmp_path)
     assert Path(loaded.__file__).resolve() == path.resolve()
@@ -47,8 +53,11 @@ def certificate_root(tmp_path: Path) -> Path:
 def test_fix_refreshes_a_literal_path_source_seal(*, certificate_root: Path) -> None:
     """A source whose seal uses a literal path receives its actual current digest."""
     source = certificate_root / _LITERAL_OWNER
-    source.write_text(source.read_text() + "\n# Seal-only source probe.\n")
-    expected = hashlib.sha256(source.read_text().encode()).hexdigest()
+    source.write_text(
+        source.read_text(encoding="utf-8") + "\n# Seal-only source probe.\n",
+        encoding="utf-8",
+    )
+    expected = hashlib.sha256(source.read_text(encoding="utf-8").encode()).hexdigest()
     check_seals.fix(repo_root=certificate_root)
     actual = check_seals._load_direct_flow(root=certificate_root)
     assert actual._SOURCE_SEALS[_LITERAL_OWNER] == expected
@@ -78,7 +87,7 @@ def test_fix_creates_a_missing_seal_for_an_already_certified_owner(
     )
     assert not set(module._SOURCE_SEALS) - set(module._CERTIFIED_CORRIDOR_SOURCES)
     checker = certificate_root / _CHECKER
-    original = checker.read_text()
+    original = checker.read_text(encoding="utf-8")
     tree = ast.parse(original)
     store = next(
         statement.value
@@ -100,9 +109,9 @@ def test_fix_creates_a_missing_seal_for_an_already_certified_owner(
     assert key.lineno == value.end_lineno
     lines = original.splitlines(keepends=True)
     del lines[key.lineno - 1]
-    checker.write_text("".join(lines))
+    checker.write_text("".join(lines), encoding="utf-8")
     expected = hashlib.sha256(
-        (certificate_root / owner).read_text().encode()
+        (certificate_root / owner).read_text(encoding="utf-8").encode()
     ).hexdigest()
     check_seals.fix(repo_root=certificate_root)
     actual = check_seals._load_direct_flow(root=certificate_root)
@@ -112,3 +121,49 @@ def test_fix_creates_a_missing_seal_for_an_already_certified_owner(
     assert set(actual._SOURCE_SEALS) | initially_missing == set(
         actual._CERTIFIED_CORRIDOR_SOURCES
     )
+
+
+def test_certificate_text_io_names_its_encoding() -> None:
+    """Seal digests are over UTF-8 text, so no certificate file decodes by locale.
+
+    A locale-dependent `read_text()` decodes the non-ASCII sources as cp1252 on
+    Windows and hashes different bytes than the UTF-8 seal tools do.
+    """
+    implicit = [
+        f"{path.relative_to(_ROOT)}:{node.lineno}"
+        for path in sorted((_ROOT / "tests/candidate_certificate").rglob("*.py"))
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in _TEXT_IO_ENCODING_POSITION
+        and len(node.args) <= _TEXT_IO_ENCODING_POSITION[node.func.attr]
+        and not any(keyword.arg == "encoding" for keyword in node.keywords)
+    ]
+    assert implicit == []
+
+
+# Position of `encoding` among each `Path` text method's positional parameters.
+_TEXT_IO_ENCODING_POSITION = {"read_text": 0, "write_text": 1}
+
+
+def test_self_test_workers_route_direct_flow_controls_through_the_pool(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--workers N` runs the actual aggregate runner over an N-process pool."""
+    started: list[int] = []
+
+    class _Replay:
+        def __init__(self, *, processes: int) -> None:
+            started.append(processes)
+
+        def run(self, *, repo_root: Path) -> dict[str, bool]:
+            assert repo_root == _ROOT
+            return {"all_rejected": True}
+
+    def _serial(*, repo_root: Path) -> None:
+        raise AssertionError(repo_root)
+
+    monkeypatch.setattr(runner_replay, "DirectFlowControlsReplay", _Replay)
+    monkeypatch.setattr(verify, "run_direct_flow_mutation_controls", _serial)
+    verify._self_tests(repo_root=_ROOT, workers=3)
+    assert started == [3]

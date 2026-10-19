@@ -268,30 +268,29 @@ def test_source_only_modules_run_only_on_the_source_contract_lane() -> None:
 def test_leg_weights_are_recorded_per_leg_not_as_a_cross_leg_sum():
     """A per-job budget must never be computed from the cross-leg CSV totals.
 
-    `file_weights` sums the four general legs; the split-workflow parity module
-    costs 13 minutes of Windows and 9 of Linux fp64, and its cross-leg entry is
-    those and the other two added together. Sharding against that number would
+    `file_weights` sums the four general legs, so a file's cross-leg entry is
+    its per-leg costs added together. Sharding against that number would
     over-provision the cheap platform and under-provision the expensive one, so
     the layout reads `leg_weights` instead. This test pins the distinction.
 
-    The exemplar has to be a file the general legs still run: a module that has
-    moved to a single-leg lane -- as the source-only certificates did -- keeps
-    a cross-leg entry but stops accruing per-leg seconds, so it would report
-    this contract as broken when only its lane changed.
+    The exemplar has to be a file all four general legs still run: a module
+    that has moved to a single-leg lane, or into `linux_only_files`, keeps a
+    cross-leg entry but stops accruing seconds on the legs that no longer run
+    it, so it would report this contract as broken when only its lane changed.
     """
     manifest = ci_workloads.load_manifest()
     legs = set(ci_workloads.leg_names())
     assert {"fp64-linux", "fp64-macos", "fp64-windows", "fp32-linux"} <= legs
-    parity = "tests/simulation/test_nnbegm_split_workflow_parity.py"
-    assert parity in set(ci_workloads.general_shard_universe())
+    exemplar = "tests/test_persistence.py"
+    assert exemplar in set(ci_workloads.general_shard_universe())
     legs_checked = ("fp64-linux", "fp64-macos", "fp64-windows", "fp32-linux")
     per_leg: dict[str, float] = {}
     for leg in legs_checked:
-        seconds = ci_workloads.leg_weights(leg=leg).get(parity)
-        assert seconds is not None, f"{parity} has no recorded weight on {leg}"
+        seconds = ci_workloads.leg_weights(leg=leg).get(exemplar)
+        assert seconds is not None, f"{exemplar} has no recorded weight on {leg}"
         per_leg[leg] = seconds
     assert len(set(per_leg.values())) > 1, "per-leg weights collapsed to one value"
-    cross_leg = float(manifest["file_weights"][parity]["seconds"])
+    cross_leg = float(manifest["file_weights"][exemplar]["seconds"])
     assert cross_leg > max(per_leg.values())
 
 
@@ -435,3 +434,135 @@ def test_conftest_marks_exactly_the_listed_persistence_tests():
         if line.startswith(target + "::")
     }
     assert collected == listed, completed.stdout + completed.stderr
+
+
+def _write_junit(*, path: Path, cases: list[tuple[str, str, float]]) -> Path:
+    body = "".join(
+        f'<testcase classname="{classname}" name="{name}" time="{seconds}"/>'
+        for classname, name, seconds in cases
+    )
+    path.write_text(
+        '<?xml version="1.0"?><testsuites>'
+        f'<testsuite name="pytest" tests="{len(cases)}">{body}</testsuite>'
+        "</testsuites>",
+        encoding="utf-8",
+    )
+    return path
+
+
+@pytest.fixture
+def junit_tree(tmp_path: Path) -> tuple[Path, tuple[Path, ...]]:
+    """A repository with two test files and one JUnit report per shard."""
+    (tmp_path / "tests/sub").mkdir(parents=True)
+    (tmp_path / "tests/test_a.py").write_text("", encoding="utf-8")
+    (tmp_path / "tests/sub/test_b.py").write_text("", encoding="utf-8")
+    first = _write_junit(
+        path=tmp_path / "junit-1.xml",
+        cases=[("tests.test_a", "test_x", 1.5), ("tests.test_a", "test_y[1]", 0.25)],
+    )
+    second = _write_junit(
+        path=tmp_path / "junit-2.xml",
+        cases=[("tests.sub.test_b.TestCase", "test_z", 2.0)],
+    )
+    return tmp_path, (first, second)
+
+
+@pytest.mark.parametrize(
+    ("file_", "seconds", "count"),
+    [("tests/test_a.py", 1.75, 2), ("tests/sub/test_b.py", 2.0, 1)],
+)
+def test_leg_weights_from_junit_sums_testcase_seconds_per_file(
+    *, junit_tree: tuple[Path, tuple[Path, ...]], file_: str, seconds: float, count: int
+):
+    from tests.ci.generate_ci_workloads import leg_weights_from_junit  # noqa: PLC0415
+
+    root, reports = junit_tree
+    measured = leg_weights_from_junit(repo_root=root, junit_paths=reports)
+    assert (measured.seconds[file_], measured.counts[file_]) == (seconds, count)
+
+
+def test_leg_weights_from_junit_refuses_a_testcase_with_no_file(
+    *, junit_tree: tuple[Path, tuple[Path, ...]]
+):
+    from tests.ci.generate_ci_workloads import leg_weights_from_junit  # noqa: PLC0415
+
+    root, reports = junit_tree
+    stray = _write_junit(
+        path=root / "junit-3.xml", cases=[("tests.test_gone", "test_q", 1.0)]
+    )
+    with pytest.raises(ValueError, match=r"tests\.test_gone"):
+        leg_weights_from_junit(repo_root=root, junit_paths=(*reports, stray))
+
+
+def test_refresh_leg_replaces_only_that_legs_weights_and_provenance(
+    *, junit_tree: tuple[Path, tuple[Path, ...]]
+):
+    from tests.ci.generate_ci_workloads import (  # noqa: PLC0415
+        leg_weights_from_junit,
+        refresh_leg,
+    )
+
+    root, reports = junit_tree
+    manifest: ci_workloads.WorkloadManifest = {  # ty: ignore[missing-typed-dict-key]
+        "frozen_head": "abc",
+        "file_weights": {"tests/test_a.py": {"seconds": 9.0, "count": 1}},
+        "leg_weights": {
+            "fp64-linux": {
+                "junit_source": "old",
+                "measurement": "junit testcase seconds",
+                "seconds": {"tests/test_old.py": 5.0},
+                "counts": {"tests/test_old.py": 1},
+            },
+            "fp64-windows": {
+                "junit_source": "win",
+                "measurement": "junit testcase seconds",
+                "seconds": {"tests/test_a.py": 3.0},
+                "counts": {"tests/test_a.py": 2},
+            },
+        },
+    }
+    updated = refresh_leg(
+        manifest=manifest,
+        leg="fp64-linux",
+        measured=leg_weights_from_junit(repo_root=root, junit_paths=reports),
+        junit_source="run 1 attempt 1",
+    )
+    assert (
+        updated["leg_weights"]["fp64-linux"],
+        updated["leg_weights"]["fp64-windows"],
+        updated["file_weights"],
+        updated["frozen_head"],
+    ) == (
+        {
+            "junit_source": "run 1 attempt 1",
+            "measurement": "junit testcase seconds",
+            "seconds": {"tests/sub/test_b.py": 2.0, "tests/test_a.py": 1.75},
+            "counts": {"tests/sub/test_b.py": 1, "tests/test_a.py": 2},
+        },
+        manifest["leg_weights"]["fp64-windows"],
+        manifest["file_weights"],
+        "abc",
+    )
+
+
+@pytest.mark.parametrize("precision", [64, 32])
+def test_heavy_certificate_modules_run_on_linux_at_each_general_precision(
+    *, precision: int
+):
+    """Modules moved out of the general universe keep a Linux lane per precision."""
+    heavy = {
+        file_
+        for inv in ci_workloads.invocations_for_job(job="tests-certificate-heavy")
+        for file_ in inv["files"]
+    }
+    selected = {
+        file_
+        for inv in ci_workloads.invocations()
+        if inv["environment"]["runner_os"] == "Linux"
+        and inv["environment"]["precision"] == precision
+        and inv["job"] == "tests-certificate-heavy"
+        for file_ in inv["files"]
+    }
+    assert heavy
+    assert heavy <= selected
+    assert heavy.isdisjoint(ci_workloads.general_shard_universe())
