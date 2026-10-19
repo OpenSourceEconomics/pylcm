@@ -69,6 +69,12 @@ from _lcm.simulation.diagnostic_operations import (
     period_value_flags,
     profiled_transition_counts,
 )
+from _lcm.simulation.dissolution_route import (
+    DissolutionFallback,
+    log_dissolution_fallbacks,
+    reroute_rows_without_feasible_action,
+    rows_of,
+)
 from _lcm.simulation.gated_routing import (
     GatedRouteDelta,
     commit_gated_route_delta,
@@ -199,6 +205,7 @@ from lcm.exceptions import (
 from lcm.result import SimulationResult
 from lcm.solver_api import SIMULATION_POLICY, ActionOutput, ReplayReader
 from lcm.typing import (
+    Bool1D,
     BoolND,
     Float1D,
     FloatND,
@@ -540,6 +547,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
         chunk_results: list[
             dict[RegimeName, dict[int, PeriodRegimeSimulationData]]
         ] = []
+        dissolution_records: list[DissolutionFallback] = []
         completed_setup = (
             None
             if prepared_chunks is None
@@ -628,6 +636,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
                         call_inputs=call_inputs,
                         process_grid_resolver=process_grid_resolver,
                         shock_paths=shock_paths,
+                        dissolution_records=dissolution_records,
                     )
                     if host_device is not None:
                         # `block_until_ready` forces the D2H copy to complete
@@ -728,6 +737,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
         # `_solution`: never part of the constructor's persisted fields, so it is
         # not written by `SimulationResult.save` and is `None` after `load`.
         result._plan_summary = plan_summary  # noqa: SLF001
+        result._dissolution_fallbacks = tuple(dissolution_records)  # noqa: SLF001
         if subject_codes is not None and group_plan is not None:
             result._subject_rows = group_plan.rows  # noqa: SLF001
     return result
@@ -793,7 +803,7 @@ def _initialize_chunk_state(
     return states, regime_ids, own_stakeholder, key
 
 
-def _simulate_subject_chunk(
+def _simulate_subject_chunk(  # noqa: PLR0915
     *,
     initial_states: dict[StateOrActionName, Float1D | IntND],
     initial_regime_ids: Int1D,
@@ -830,6 +840,7 @@ def _simulate_subject_chunk(
     ] = MappingProxyType({}),
     process_grid_resolver: ProcessGridResolver | None = None,
     shock_paths: Mapping[StateName, np.ndarray] = MappingProxyType({}),
+    dissolution_records: list[DissolutionFallback] | None = None,
 ) -> dict[RegimeName, dict[int, PeriodRegimeSimulationData]]:
     """Run the full period loop for one chunk of subjects.
 
@@ -887,6 +898,10 @@ def _simulate_subject_chunk(
     simulation_results: dict[RegimeName, dict[int, PeriodRegimeSimulationData]] = {
         regime_name: {} for regime_name in regimes
     }
+    # Each row's regime and role in the previous period: a household without a
+    # feasible action takes the dissolution route of the edge it came through.
+    source_regime_ids: Int1D | None = None
+    source_roles: Int1D | None = None
 
     for period, active_regimes in enumerate(
         forward_regimes_by_period(regimes=regimes, n_periods=ages.n_periods)
@@ -981,76 +996,84 @@ def _simulate_subject_chunk(
                     age,
                 ),
             )
-            result, new_states, new_subject_regime_ids, new_own_stakeholder = (
-                _simulate_regime_in_period(
-                    regime_name=regime_name,
-                    regime=dispatched_regime,
-                    regimes=regimes,
-                    value_owner=owner,
-                    subject_devices=devices,
-                    memory=memory,
-                    base_state_action_space=base_state_action_spaces[regime_name],
-                    period=period,
-                    age=age,
-                    states=states,
-                    subject_regime_ids=subject_regime_ids,
-                    new_subject_regime_ids=new_subject_regime_ids,
-                    period_to_regime_to_V_arr=period_to_regime_to_V_arr,
-                    period_to_regime_to_dissolution_flags=period_to_regime_to_dissolution_flags,
-                    base_state_action_spaces=base_state_action_spaces,
-                    sim_policy=(period_to_regime_to_sim_policy or {})
-                    .get(period, {})
-                    .get(regime_name),
-                    replay_reader=period_to_regime_to_replay_reader.get(period, {}).get(
-                        regime_name
-                    ),
-                    flat_params=flat_params,
-                    regime_names_to_ids=regime_names_to_ids,
-                    decision_targets_next_period=(
-                        ()
-                        if period == ages.n_periods - 1
-                        else regime.solution.reachability.targets(
-                            period=period, source=regime_name
-                        )
-                    ),
-                    realization_targets_next_period=(
-                        ()
-                        if period == ages.n_periods - 1
-                        else regime.simulation.reachability.targets(
-                            period=period, source=regime_name
-                        )
-                    ),
-                    key=site_simulation_key(
-                        key=key,
-                        period=period,
-                        regime_id=int(regime_names_to_ids[regime_name]),
-                        memory=memory,
-                    ),
-                    taste_key=taste_key,
-                    taste_address=taste_addresses.get((period, regime_name)),
-                    logger=logger,
-                    n_subjects=n_subjects,
-                    subject_slice=subject_slice,
-                    original_n_subjects=original_n_subjects,
-                    supplied_shocks=shock_path_values(
-                        paths=shock_paths,
-                        argument_names=supplied_shock_argument_names(
-                            regime=regime, period=period
-                        ),
-                        period=period + 1,
-                        subject_slice=subject_slice,
-                        n_subjects=len(subject_regime_ids),
+            (
+                result,
+                new_states,
+                new_subject_regime_ids,
+                new_own_stakeholder,
+                subject_regime_ids,
+                own_stakeholder,
+            ) = _simulate_regime_in_period(
+                regime_name=regime_name,
+                regime=dispatched_regime,
+                regimes=regimes,
+                value_owner=owner,
+                subject_devices=devices,
+                memory=memory,
+                base_state_action_space=base_state_action_spaces[regime_name],
+                period=period,
+                age=age,
+                states=states,
+                subject_regime_ids=subject_regime_ids,
+                new_subject_regime_ids=new_subject_regime_ids,
+                period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+                period_to_regime_to_dissolution_flags=period_to_regime_to_dissolution_flags,
+                base_state_action_spaces=base_state_action_spaces,
+                sim_policy=(period_to_regime_to_sim_policy or {})
+                .get(period, {})
+                .get(regime_name),
+                replay_reader=period_to_regime_to_replay_reader.get(period, {}).get(
+                    regime_name
+                ),
+                flat_params=flat_params,
+                regime_names_to_ids=regime_names_to_ids,
+                decision_targets_next_period=(
+                    ()
+                    if period == ages.n_periods - 1
+                    else regime.solution.reachability.targets(
+                        period=period, source=regime_name
                     )
-                    if shock_paths
-                    else MappingProxyType({}),
-                    own_stakeholder=own_stakeholder,
-                    new_own_stakeholder=new_own_stakeholder,
-                    gated_edge_fold_age=(
-                        coordinate_at(ages=ages, period=period + 1)
-                        if regime.gated_edges and period + 1 < ages.n_periods
-                        else None
+                ),
+                realization_targets_next_period=(
+                    ()
+                    if period == ages.n_periods - 1
+                    else regime.simulation.reachability.targets(
+                        period=period, source=regime_name
+                    )
+                ),
+                key=site_simulation_key(
+                    key=key,
+                    period=period,
+                    regime_id=int(regime_names_to_ids[regime_name]),
+                    memory=memory,
+                ),
+                taste_key=taste_key,
+                taste_address=taste_addresses.get((period, regime_name)),
+                logger=logger,
+                n_subjects=n_subjects,
+                subject_slice=subject_slice,
+                original_n_subjects=original_n_subjects,
+                supplied_shocks=shock_path_values(
+                    paths=shock_paths,
+                    argument_names=supplied_shock_argument_names(
+                        regime=regime, period=period
                     ),
+                    period=period + 1,
+                    subject_slice=subject_slice,
+                    n_subjects=len(subject_regime_ids),
                 )
+                if shock_paths
+                else MappingProxyType({}),
+                own_stakeholder=own_stakeholder,
+                new_own_stakeholder=new_own_stakeholder,
+                gated_edge_fold_age=(
+                    coordinate_at(ages=ages, period=period + 1)
+                    if regime.gated_edges and period + 1 < ages.n_periods
+                    else None
+                ),
+                source_regime_ids=source_regime_ids,
+                source_roles=source_roles,
+                dissolution_records=dissolution_records,
             )
             states = new_states
             simulation_results[regime_name][period] = result
@@ -1102,6 +1125,8 @@ def _simulate_subject_chunk(
             ),
         )
 
+        source_regime_ids = subject_regime_ids
+        source_roles = own_stakeholder
         subject_regime_ids = new_subject_regime_ids
         own_stakeholder = new_own_stakeholder
 
@@ -1626,7 +1651,10 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
     taste_key: PRNGKeyND | None = None,
     taste_address: tuple[int, ...] | None = None,
     supplied_shocks: Mapping[str, np.ndarray] = MappingProxyType({}),
-) -> tuple[PeriodRegimeSimulationData, StatesPerRegime, Int1D, Int1D]:
+    source_regime_ids: Int1D | None = None,
+    source_roles: Int1D | None = None,
+    dissolution_records: list[DissolutionFallback] | None = None,
+) -> tuple[PeriodRegimeSimulationData, StatesPerRegime, Int1D, Int1D, Int1D, Int1D]:
     """Simulate one regime for one period.
 
     This function processes all subjects in a given regime for a single period,
@@ -1683,6 +1711,13 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             result cell, or ``None`` for an engine-owned replay route.
         value_owner: This period's owner of addressed copies.
         subject_devices: Actual ordered devices evaluating the population.
+        source_regime_ids: Each row's regime in the previous period, or `None`
+            in a chunk's first period. A row of this regime with no feasible
+            action that entered through a gated edge takes that edge's
+            dissolution route this period instead of raising.
+        source_roles: Each row's role in the previous period.
+        dissolution_records: Collects one record per rerouted subject when
+            runtime checks are on.
 
     Returns:
         Tuple containing:
@@ -1690,6 +1725,8 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
         - Updated state carrier
         - Updated new_subject_regime_ids array
         - Updated new_own_stakeholder array
+        - Current regime membership, after any dissolution route
+        - Current roles, after any dissolution route
 
     """
     # Select subjects in the current regime
@@ -1909,6 +1946,41 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             },
             subject_arg_names=("indices", "in_regime"),
         ).item()
+        if empty_row >= 0 and sim_policy is None and source_regime_ids is not None:
+            (
+                states,
+                subject_regime_ids,
+                own_stakeholder,
+                new_subject_regime_ids,
+                new_own_stakeholder,
+                subject_ids_in_regime,
+                empty_row,
+            ) = _take_dissolution_routes(
+                regime_name=regime_name,
+                regime=regime,
+                regimes=regimes,
+                indices=indices_optimal_actions,
+                in_regime=subject_ids_in_regime,
+                source_regime_ids=source_regime_ids,
+                source_roles=cast("Int1D", source_roles),
+                states=states,
+                canonical_states=state_action_space.states,
+                subject_regime_ids=subject_regime_ids,
+                own_stakeholder=own_stakeholder,
+                new_subject_regime_ids=new_subject_regime_ids,
+                new_own_stakeholder=new_own_stakeholder,
+                regime_names_to_ids=regime_names_to_ids,
+                flat_params=flat_params,
+                period=period,
+                age=age,
+                subject_slice=subject_slice,
+                n_real=n_subjects
+                if original_n_subjects is None
+                else original_n_subjects,
+                logger=logger,
+                memory=memory,
+                records=dissolution_records,
+            )
         if empty_row >= 0 and sim_policy is None:
             state = physical_state_at_row(
                 regime=regime,
@@ -2139,6 +2211,117 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
         states,
         new_subject_regime_ids,
         new_own_stakeholder,
+        subject_regime_ids,
+        own_stakeholder,
+    )
+
+
+def _take_dissolution_routes(
+    *,
+    regime_name: RegimeName,
+    regime: Regime,
+    regimes: Mapping[RegimeName, Regime],
+    indices: IntND,
+    in_regime: Bool1D,
+    source_regime_ids: Int1D,
+    source_roles: Int1D,
+    states: StatesPerRegime,
+    canonical_states: Mapping[StateName, FloatND | IntND],
+    subject_regime_ids: Int1D,
+    own_stakeholder: Int1D,
+    new_subject_regime_ids: Int1D,
+    new_own_stakeholder: Int1D,
+    regime_names_to_ids: RegimeNamesToIds,
+    flat_params: FlatParams,
+    period: int,
+    age: ScalarInt | ScalarFloat,
+    subject_slice: slice | SubjectRows,
+    n_real: int,
+    logger: logging.Logger,
+    memory: SimulationMemory | None,
+    records: list[DissolutionFallback] | None,
+) -> tuple[StatesPerRegime, Int1D, Int1D, Int1D, Int1D, Bool1D, int]:
+    """Send this regime's rows without a feasible action down their gate's route.
+
+    Returns the updated carriers, this regime's remaining rows, and the first
+    row still without a feasible action (`-1` when none is left), which the
+    caller refuses as before.
+    """
+    empty = in_regime & (indices < 0)
+    outcome = reroute_rows_without_feasible_action(
+        regime_name=regime_name,
+        regimes=regimes,
+        empty=empty,
+        source_regime_ids=source_regime_ids,
+        source_roles=source_roles,
+        states=states,
+        subject_regime_ids=subject_regime_ids,
+        own_stakeholder=own_stakeholder,
+        new_subject_regime_ids=new_subject_regime_ids,
+        new_own_stakeholder=new_own_stakeholder,
+        regime_names_to_ids=regime_names_to_ids,
+        flat_params=flat_params,
+        period=period,
+        age=age,
+    )
+    if memory is not None:
+        memory.hold(tree=outcome)
+    remaining = in_regime & ~outcome.rerouted
+    rerouted_rows = rows_of(
+        outcome.rerouted & _genuine_rows(subject_slice=subject_slice, n_real=n_real)
+    )
+    if rerouted_rows.size:
+        new_records: tuple[DissolutionFallback, ...] = ()
+        if validation_enabled(logger):
+            regime_params = {
+                **regime.resolved_fixed_params,
+                **regime_kernel_params(flat_params, regime_name=regime_name),
+            }
+            ids_to_names = {
+                int(code): name for name, code in regime_names_to_ids.items()
+            }
+            sources = np.asarray(source_regime_ids)
+            fallbacks = np.asarray(outcome.fallback_ids)
+            new_records = tuple(
+                DissolutionFallback(
+                    subject_id=int(
+                        subject_slice.rows[row]
+                        if isinstance(subject_slice, SubjectRows)
+                        else cast("int", subject_slice.start) + row
+                    ),
+                    period=period,
+                    regime=regime_name,
+                    state=MappingProxyType(
+                        physical_state_at_row(
+                            regime=regime,
+                            states=canonical_states,
+                            row=int(row),
+                            regime_params=regime_params,
+                            memory=memory,
+                        )
+                    ),
+                    source=ids_to_names[int(sources[row])],
+                    fallback=ids_to_names[int(fallbacks[row])],
+                )
+                for row in rerouted_rows
+            )
+            if records is not None:
+                records.extend(new_records)
+        log_dissolution_fallbacks(
+            logger=logger,
+            records=new_records,
+            regime_name=regime_name,
+            period=period,
+            n_rows=int(rerouted_rows.size),
+        )
+    return (
+        outcome.states,
+        outcome.subject_regime_ids,
+        outcome.own_stakeholder,
+        outcome.new_subject_regime_ids,
+        outcome.new_own_stakeholder,
+        remaining,
+        int(_first_empty_action_row(indices=indices, in_regime=remaining)),
     )
 
 

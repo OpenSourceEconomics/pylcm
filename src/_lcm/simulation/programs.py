@@ -548,21 +548,68 @@ def forward_regimes_by_period(
     enters) has no decision program and is absent here, while its solved value
     stays available to the decisions that read it. Each period keeps the
     insertion order of `regimes`, so traversal order and random-site identity
-    follow the regime mapping. Chunk profiling (the compilation wave and the
+    follow the regime mapping, except that a gated edge's target runs
+    before the regimes that are not one (`order_targets_before_fallbacks`). Chunk
+    profiling (the compilation wave and the
     sequential carrier walk) and dispatch all read this one inventory.
     """
     return tuple(
-        MappingProxyType(
-            {
+        order_targets_before_fallbacks(
+            active={
                 name: regime
                 for name, regime in regimes.items()
                 if period in regime.active_periods
                 and name
                 in regime.simulation.reachability.active_regimes_by_period[period]
-            }
+            },
+            regimes=regimes,
         )
         for period in range(n_periods)
     )
+
+
+def order_targets_before_fallbacks(
+    *, active: Mapping[RegimeName, Regime], regimes: Mapping[RegimeName, Regime]
+) -> MappingProxyType[RegimeName, Regime]:
+    """Order a period's regimes so each gated target runs before its fallbacks.
+
+    A household rerouted out of a gated target acts in a fallback regime in the
+    same period, so that fallback must not have run yet. Regimes keep their
+    relative order otherwise; rows are disjoint across regimes and random keys
+    are addressed by regime id, so the order does not change any other result.
+
+    Raises:
+        ExecutionPlanningError: A fallback is itself a gated target ordered
+            before a target it serves, which this two-bucket order cannot fix.
+    """
+    targets = {
+        target
+        for regime in regimes.values()
+        for target in regime.gated_edges
+        if target in active
+    }
+    ordered = {
+        **{name: regime for name, regime in active.items() if name in targets},
+        **{name: regime for name, regime in active.items() if name not in targets},
+    }
+    position = {name: index for index, name in enumerate(ordered)}
+    for regime in regimes.values():
+        for target, edge in regime.gated_edges.items():
+            for leg in edge.legs:
+                fallback = leg.realized_fallback.regime
+                if (
+                    target in position
+                    and fallback in position
+                    and position[fallback] < position[target]
+                ):
+                    msg = (
+                        f"The fallback regime '{fallback}' of the gated edge into "
+                        f"'{target}' runs before it in the same period, so a "
+                        "household without a feasible action in "
+                        f"'{target}' could not act there."
+                    )
+                    raise ExecutionPlanningError(msg)
+    return MappingProxyType(ordered)
 
 
 class _GateFoldArguments(TypedDict):
