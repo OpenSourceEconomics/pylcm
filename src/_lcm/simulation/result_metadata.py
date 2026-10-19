@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from _lcm.engine import PeriodRegimeSimulationData, Regime
+from _lcm.grids import DiscreteGrid
 from _lcm.processes.joint_normal import JointNormalIIDProcess
 from _lcm.processes.joint_normal_lowering import (
     coordinate_names,
@@ -17,6 +18,9 @@ from _lcm.regime_building.processing import compute_merged_discrete_categories
 from _lcm.time import TimeAxis
 from _lcm.typing import ActionName, ProcessName, RegimeName, RegimeNamesToIds, StateName
 from lcm.regime import Regime as UserRegime
+
+# A category of a published discrete column: a label, or the number of a value grid.
+type CategoryValue = str | int | float
 
 
 @dataclass(frozen=True)
@@ -53,14 +57,17 @@ class ResultMetadata:
     user's dataframe.
     """
 
-    discrete_categories: MappingProxyType[str, tuple[str, ...]]
-    """Immutable mapping of discrete variable names to their category labels."""
+    discrete_categories: MappingProxyType[str, tuple[CategoryValue, ...]]
+    """Immutable mapping of discrete variable names to their categories.
+
+    A category-class grid's string labels, or a value grid's numbers.
+    """
 
     discrete_ordered: MappingProxyType[str, bool]
     """Immutable mapping of discrete variable names to their ordered flag."""
 
     regime_discrete_categories: MappingProxyType[
-        tuple[RegimeName, str], tuple[str, ...]
+        tuple[RegimeName, str], tuple[CategoryValue, ...]
     ]
     """Immutable mapping of (regime_name, var_name) to per-regime categories."""
 
@@ -110,7 +117,9 @@ def _get_output_dtypes(
     """Compute pandas CategoricalDtype for all discrete output columns.
 
     Merge ordered categories across regimes via topological sort. This must be
-    called after model validation (which guarantees merges succeed).
+    called after model validation (which guarantees merges succeed). A variable
+    declared with `values` has the same values wherever it appears, and they are
+    its categories: integers or floats, in ascending order.
 
     Args:
         user_regimes: Mapping of regime names to user-provided `Regime` instances.
@@ -122,11 +131,17 @@ def _get_output_dtypes(
 
     """
     merged_categories, ordered_flags = compute_merged_discrete_categories(user_regimes)
+    declared_values = {
+        var_name: grid.values  # noqa: PD011
+        for user_regime in user_regimes.values()
+        for var_name, grid in {**user_regime.states, **user_regime.actions}.items()
+        if isinstance(grid, DiscreteGrid) and grid.values is not None  # noqa: PD011
+    }
 
     dtypes: dict[str, pd.CategoricalDtype] = {}
     for var_name, categories in merged_categories.items():
         dtypes[var_name] = pd.CategoricalDtype(
-            categories=list(categories),
+            categories=list(declared_values.get(var_name, categories)),
             ordered=ordered_flags[var_name],
         )
 
@@ -181,7 +196,7 @@ def _compute_metadata(
         )
 
     # Extract categories and ordered flags from simulation_output_dtypes
-    discrete_categories: dict[str, tuple[str, ...]] = {}
+    discrete_categories: dict[str, tuple[CategoryValue, ...]] = {}
     discrete_ordered: dict[str, bool] = {}
     for var_name, dtype in simulation_output_dtypes.items():
         if var_name == "regime_name":
@@ -192,10 +207,15 @@ def _compute_metadata(
     # Per-regime discrete categories for correct code→label mapping. The
     # simulation grids include carried pair states, so a discrete pair's
     # output column gets labels like any other discrete state.
-    regime_discrete_categories: dict[tuple[RegimeName, str], tuple[str, ...]] = {}
+    regime_discrete_categories: dict[
+        tuple[RegimeName, str], tuple[CategoryValue, ...]
+    ] = {}
     for regime_name, regime in regimes.items():
         for var_name, grid in regime.simulation.discrete_grids.items():
-            regime_discrete_categories[(regime_name, var_name)] = grid.categories
+            values = grid.values  # noqa: PD011
+            regime_discrete_categories[(regime_name, var_name)] = (
+                grid.categories if values is None else values
+            )
 
     regime_to_stakeholders: dict[RegimeName, tuple[str, ...] | None] = {
         regime_name: regime.stakeholders for regime_name, regime in regimes.items()

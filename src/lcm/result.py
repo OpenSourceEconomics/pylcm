@@ -287,9 +287,12 @@ class SimulationResult:
                 also bounds the number of subject-period rows evaluated together
                 for these deferred targets.
             use_categorical_codes: If False (default), discrete variables (states,
-                actions, and regime) are returned as pandas Categorical dtype with
-                string labels. If True, discrete variables are returned as integer
-                codes.
+                actions, and regime) are returned as pandas Categorical columns. A
+                category-class grid's categories are its string labels. A grid
+                declared with `values` gives an ordered Categorical whose
+                categories are those numbers, all of them, observed or not; cast
+                with `.astype(float)` before arithmetic. If True, discrete
+                variables are returned as integer codes.
             terminal_rows: Which rows to emit for a subject in a terminal regime.
                 Terminal regimes are absorbing: after entry, the subject is carried
                 with frozen state through every later period the regime is active.

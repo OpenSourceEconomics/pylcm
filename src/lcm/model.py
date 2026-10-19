@@ -308,6 +308,11 @@ from _lcm.utils.logging import (
     get_call_logger,
     get_logger,
 )
+from _lcm.value_grid_inputs import (
+    encode_grid_values,
+    encode_initial_values,
+    value_grids_by_regime,
+)
 from _lcm.variables import carried_state_grids, from_regime, get_grids
 from lcm._solver_api.authority import _ArrayCopier
 from lcm._solver_api.contract import ArtifactContractValue
@@ -387,6 +392,7 @@ from lcm.typing import (
     UserFacingParamsTemplate,
     UserFunction,
     UserInitialConditions,
+    UserInitialConditionsInput,
     UserParams,
     UserSeed,
     ValueND,
@@ -1604,7 +1610,9 @@ class Model:
         )
 
     @beartype(conf=PARAMS_CONF)
-    def validate_transitions(self, *, params: UserParams) -> None:
+    def validate_transitions(
+        self, *, params: UserParams, use_categorical_codes: bool = False
+    ) -> None:
         """Run the solve's transition preflight without backward induction.
 
         Process parameters and check regime probabilities, stochastic state laws,
@@ -1618,9 +1626,15 @@ class Model:
 
         Args:
             params: Model parameters compatible with ``get_params_template()``.
+            use_categorical_codes: Whether a `pd.Series` level named by a discrete
+                variable in `params` holds integer codes. By default it holds the
+                labels of a category class or the numbers of a grid declared with
+                `values`.
         """
         self._check_identity_runtime()
-        flat_params = self._process_params(params)
+        flat_params = self._process_params(
+            params, use_categorical_codes=use_categorical_codes
+        )
         with naming_cells_without_edges(self._cells_without_edges):
             validate_transitions(
                 regimes=self._regimes,
@@ -1655,6 +1669,7 @@ class Model:
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
         period_capture: PeriodCapture | None = None,
+        use_categorical_codes: bool = False,
     ) -> SolutionResult:
         """Solve the model into a labelled, model-authoritative result.
 
@@ -1688,6 +1703,10 @@ class Model:
             period_capture: Optional atomic selected-period inputs and references.
                 Requires actual GPU buffer-assignment metadata before publishing
                 the selected entry; unsupported runtime metadata is refused.
+            use_categorical_codes: Whether a `pd.Series` level named by a discrete
+                variable in `params` holds integer codes. By default it holds the
+                labels of a category class or the numbers of a grid declared with
+                `values`.
 
         Returns:
             An immutable labelled result containing values, metadata, retained replay
@@ -1708,7 +1727,9 @@ class Model:
         with solve_phase(name="public_solve", logger=log, call_id=call_id):
             with solve_phase(name="params_validation", logger=log, call_id=call_id):
                 flat_params = self._process_params(
-                    params, runtime_checks=runtime_checks
+                    params,
+                    runtime_checks=runtime_checks,
+                    use_categorical_codes=use_categorical_codes,
                 )
                 with naming_cells_without_edges(self._cells_without_edges):
                     validate_transitions(
@@ -3434,7 +3455,7 @@ class Model:
         self,
         *,
         params: UserParams,
-        initial_conditions: UserInitialConditions | pd.DataFrame,
+        initial_conditions: UserInitialConditionsInput | pd.DataFrame,
         solution: _SolutionResultBoundary | None = None,
         log_level: LogLevel,
         runtime_checks: bool = True,
@@ -3444,6 +3465,7 @@ class Model:
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
         max_compilation_workers: int | None = None,
+        use_categorical_codes: bool = False,
     ) -> SimulationResult:
         """Simulate the model forward, optionally solving first.
 
@@ -3469,9 +3491,17 @@ class Model:
             initial_conditions: Mapping of state names (plus `"regime_id"`) to arrays.
                 All arrays must have the same length (number of subjects). The
                 `"regime_id"` entry must contain integer regime codes (from
-                `model.regime_names_to_ids`). May also be a `pd.DataFrame`
-                with a `"regime_name"` column carrying regime label strings
-                (auto-converted via `initial_conditions_from_dataframe`).
+                `model.regime_names_to_ids`). A category-class state takes its
+                integer codes. A state declared with `values` takes those
+                numbers: a NumPy, JAX or pandas array, or a pandas Categorical
+                whose categories are exactly the grid's values in order, as
+                `SimulationResult.to_dataframe` publishes it. Integers match
+                exactly, floats within the grid's tolerance, and a value on no
+                node raises. Rows of subjects whose regime lacks the state are
+                not read. May also be a `pd.DataFrame` with a `"regime_name"`
+                column carrying regime label strings, labels for category-class
+                states and values for value-grid states (auto-converted via
+                `initial_conditions_from_dataframe`).
                 A subject starting in a COLLECTIVE regime that can reach a
                 value-dependent transition declaring more than one route --- its
                 own, or one further along --- also needs an `"own_stakeholder"`
@@ -3505,7 +3535,15 @@ class Model:
                 initial-condition row order. Overrides the entry value and later
                 draws, including folded IID and persistent processes. Continuous
                 values must be in the distribution's support; discrete values are
-                exact category codes. A value is checked against every regime the
+                exact category codes. This holds for a state declared with
+                `values` too, whatever `use_categorical_codes` says, while every
+                other boundary (initial conditions, params, `to_dataframe`,
+                `lookup_policy`, `value_array`) takes or gives that state's values
+                by default: a code names its node exactly, so the path is replayed
+                exactly and losslessly, without a tolerance to find a float on its
+                grid. A code maps to its value as `grid.values[code]`, e.g.
+                `DiscreteGrid(values=(0, 4, 10)).values[2]` is `10`, and values map
+                to codes with `grid.encode`. A value is checked against every regime the
                 subject may occupy when it is read; unread cells are ignored.
                 Transition-local draws use the destination's period. Solve
                 expectations and unnamed shocks' seeded streams are unchanged.
@@ -3523,6 +3561,10 @@ class Model:
                 trace settings that differ from worker settings keep chunk
                 planning on the caller's serial path. Defaults to the number
                 of physical CPU cores.
+            use_categorical_codes: Whether every discrete state in
+                `initial_conditions`, and every discrete level of a `pd.Series` in
+                `params`, holds integer codes, value-grid states included.
+                `shock_paths` holds codes either way.
         Returns:
             SimulationResult object. Call .to_dataframe() to get a pandas DataFrame,
             optionally with additional_targets.
@@ -3534,7 +3576,11 @@ class Model:
             seed=taste_shock_seed, name="taste_shock_seed"
         )
         initial_conditions = lower_initial_time(
-            initial_conditions=initial_conditions, ages=self._time
+            initial_conditions=self._encode_initial_values(
+                initial_conditions=initial_conditions,
+                use_categorical_codes=use_categorical_codes,
+            ),
+            ages=self._time,
         )
         log = get_logger(log_level=log_level, runtime_checks=runtime_checks)
         call_id = new_call_id()
@@ -3570,14 +3616,11 @@ class Model:
                 # The canonical parameters bind both the supplied result preflight
                 # and an automatic solve. Process them once and keep one
                 # model-authoritative seam.
-                flat_params = (
-                    self._process_params(params, runtime_checks=runtime_checks)
-                    if entry_allocations is None
-                    else self._process_params(
-                        params,
-                        array_writer=entry_allocations,
-                        runtime_checks=runtime_checks,
-                    )
+                flat_params = self._process_params(
+                    params,
+                    array_writer=entry_allocations,
+                    runtime_checks=runtime_checks,
+                    use_categorical_codes=use_categorical_codes,
                 )
                 process_grid_resolver = (
                     None
@@ -3660,6 +3703,7 @@ class Model:
                         regime_names_to_ids=self.regime_names_to_ids,
                         array_writer=entry_allocations,
                         ages=self._time,
+                        use_categorical_codes=use_categorical_codes,
                     )
                 if entry_allocations is not None:
                     entry_allocations.publish(stage="initial", tree=initial_conditions)
@@ -4085,6 +4129,7 @@ class Model:
         states: Mapping[StateName, jax.Array],
         action_grids: Mapping[ActionName, jax.Array] | None = None,
         keep_intermediates: tuple[Intermediate, ...] = (),
+        use_categorical_codes: bool = False,
     ) -> PolicyLookup:
         """Return the decision at given states of one regime-period.
 
@@ -4103,16 +4148,18 @@ class Model:
             period: Period index of the queried node.
             regime_name: Regime of the queried node; it must be active in `period`.
             states: One 1-D array per state of the regime, all of equal length.
-                Discrete values must be grid codes; continuous values off the grid
-                are extrapolated exactly as in `simulate`. A regime without states
-                takes `{}`, which is one row. A joint normal process is given
-                either by its physical shocks, as `initial_state_names` lists
-                them, or by its complete set of internal coordinates, as
-                `state_names` lists them, whose nodes `state_grid` returns; one
-                process cannot mix the two.
+                A category-class state takes its codes, a state declared with
+                `values` those numbers, matched as in `simulate`; continuous values
+                off the grid are extrapolated exactly as in `simulate`. A regime
+                without states takes `{}`, which is one row. A joint normal
+                process is given either by its physical shocks, as
+                `initial_state_names` lists them, or by its complete set of
+                internal coordinates, as `state_names` lists them, whose nodes
+                `state_grid` returns; one process cannot mix the two.
             action_grids: Optional replacement grids for some actions, e.g. a
                 single code of a discrete action to obtain the conditional argmax
-                and value of that branch. Values must lie on the declared grid.
+                and value of that branch. Values must lie on the declared grid; a
+                discrete action declared with `values` is given by those numbers.
             keep_intermediates: Which intermediates of the decision to keep over
                 the (possibly restricted) action grid, in any order: the action
                 values `"Q"`, their feasibility `"F"`, the flow utility `"U"` and
@@ -4125,6 +4172,10 @@ class Model:
                 choice materializes the whole action product, even where the
                 decision alone streams over it. Not supported for a collective
                 regime.
+            use_categorical_codes: Whether value-grid states, value-grid action
+                grids and the returned discrete actions are codes instead of
+                values, and the discrete levels of a `pd.Series` in `params`
+                codes too.
 
         Returns:
             The argmax action value per action name and the max of Q over the
@@ -4133,7 +4184,8 @@ class Model:
             GridSearch regime with taste shocks returns no actions; it returns the
             smoothed maximum as the value, and per discrete-action combination
             `Qc`, the choice probabilities and the continuous actions attaining
-            `Qc`.
+            `Qc`. A discrete action declared with `values` is returned as a plain
+            array of those numbers; a category-class action as its codes.
 
             With a `Decoupled` Koopmans aggregator the actions maximize the
             objective and the value is the value profile there. With taste shocks,
@@ -4165,6 +4217,18 @@ class Model:
             solver=self.user_regimes[regime_name].solver,
             keep_intermediates=keep_intermediates,
         )
+        value_grids = (
+            MappingProxyType({})
+            if use_categorical_codes
+            else value_grids_by_regime(self.user_regimes)[regime_name]
+        )
+        states = _encode_lookup_values(
+            given=states, value_grids=value_grids, kind="state"
+        )
+        if action_grids is not None:
+            action_grids = _encode_lookup_values(
+                given=action_grids, value_grids=value_grids, kind="action"
+            )
         allocations = self._open_entry_allocations(
             params=params, inputs=(states, action_grids), solution=solution
         )
@@ -4172,7 +4236,11 @@ class Model:
             lookup_inputs: UserInitialConditions = states
             processed_params = None
             if joint_normal_declarations(regime.simulation.grids):
-                flat_params = self._process_params(params, array_writer=allocations)
+                flat_params = self._process_params(
+                    params,
+                    array_writer=allocations,
+                    use_categorical_codes=use_categorical_codes,
+                )
                 processed_params = flat_params
                 first_state = (
                     np.asarray(next(iter(states.values()))) if states else None
@@ -4220,7 +4288,7 @@ class Model:
                         initial_conditions=states, multiple=alignment
                     )
                     allocations.publish(stage="initial", tree=states)
-            return self._lookup_policy(
+            lookup = self._lookup_policy(
                 params=params,
                 solution=solution,
                 period=period,
@@ -4234,6 +4302,20 @@ class Model:
                     n_rows
                     if states and len(next(iter(states.values()))) != n_rows
                     else None
+                ),
+                use_categorical_codes=use_categorical_codes,
+            )
+            if lookup.actions is None:
+                return lookup
+            return dataclasses.replace(
+                lookup,
+                actions=MappingProxyType(
+                    {
+                        name: value_grids[name].decode(codes)
+                        if name in value_grids
+                        else codes
+                        for name, codes in lookup.actions.items()
+                    }
                 ),
             )
         finally:
@@ -4253,6 +4335,7 @@ class Model:
         keep_intermediates: frozenset[Intermediate],
         n_query_rows: int | None,
         processed_params: FlatParams | None = None,
+        use_categorical_codes: bool = False,
     ) -> PolicyLookup:
         """Run a validated lookup under the call's entry owner, if budgeted.
 
@@ -4265,10 +4348,10 @@ class Model:
         flat_params = (
             processed_params
             if processed_params is not None
-            else (
-                self._process_params(params)
-                if allocations is None
-                else self._process_params(params, array_writer=allocations)
+            else self._process_params(
+                params,
+                array_writer=allocations,
+                use_categorical_codes=use_categorical_codes,
             )
         )
         resolver = None if allocations is None else allocations.process_grid_resolver
@@ -4653,8 +4736,9 @@ class Model:
     def validate_initial_conditions(
         self,
         *,
-        initial_conditions: UserInitialConditions | pd.DataFrame,
+        initial_conditions: UserInitialConditionsInput | pd.DataFrame,
         params: UserParams,
+        use_categorical_codes: bool = False,
     ) -> None:
         """Validate initial conditions without solving or simulating.
 
@@ -4671,11 +4755,15 @@ class Model:
             initial_conditions: Starting regime and states, one entry per
                 subject.
             params: User parameters, processed exactly as for `simulate`.
+            use_categorical_codes: Whether discrete states, value-grid states
+                included, and the discrete levels of a `pd.Series` in `params` hold
+                integer codes, as for `simulate`.
 
         Raises:
             InvalidInitialConditionsError: If the structure is malformed
                 (unknown regime, missing or extra state, unequal lengths,
-                off-grid age, inactive regime, invalid categorical code), if
+                off-grid age, inactive regime, invalid categorical code, a
+                value on no node of its value grid), if
                 some subject admits no jointly feasible action combination, or
                 if subjects start in a collective regime without declaring
                 their role where routing needs one.
@@ -4686,7 +4774,9 @@ class Model:
 
         """
         canonical, flat_params = self._canonical_feasibility_inputs(
-            initial_conditions=initial_conditions, params=params
+            initial_conditions=initial_conditions,
+            params=params,
+            use_categorical_codes=use_categorical_codes,
         )
         validate_canonical_initial_conditions(
             initial_conditions=canonical,
@@ -4700,8 +4790,9 @@ class Model:
     def initial_conditions_feasibility(
         self,
         *,
-        initial_conditions: UserInitialConditions | pd.DataFrame,
+        initial_conditions: UserInitialConditionsInput | pd.DataFrame,
         params: UserParams,
+        use_categorical_codes: bool = False,
     ) -> Bool1D:
         """Return the per-subject feasibility mask without solving or simulating.
 
@@ -4719,6 +4810,9 @@ class Model:
             initial_conditions: Starting regime and states, one entry per
                 subject, in the same forms `simulate` accepts.
             params: User parameters, processed exactly as for `simulate`.
+            use_categorical_codes: Whether discrete states, value-grid states
+                included, and the discrete levels of a `pd.Series` in `params` hold
+                integer codes, as for `simulate`.
 
         Returns:
             Boolean array of shape `(n_subjects,)`, `True` exactly for the
@@ -4734,7 +4828,9 @@ class Model:
 
         """
         canonical, flat_params = self._canonical_feasibility_inputs(
-            initial_conditions=initial_conditions, params=params
+            initial_conditions=initial_conditions,
+            params=params,
+            use_categorical_codes=use_categorical_codes,
         )
         return initial_conditions_feasibility_mask(
             initial_conditions=canonical,
@@ -4747,18 +4843,25 @@ class Model:
     def _canonical_feasibility_inputs(
         self,
         *,
-        initial_conditions: UserInitialConditions | pd.DataFrame,
+        initial_conditions: UserInitialConditionsInput | pd.DataFrame,
         params: UserParams,
+        use_categorical_codes: bool = False,
     ) -> tuple[InitialConditions, FlatParams]:
         """Canonicalize public feasibility inputs without allocation accounting."""
         self._check_identity_runtime()
         initial_conditions = lower_initial_time(
-            initial_conditions=initial_conditions, ages=self._time
+            initial_conditions=self._encode_initial_values(
+                initial_conditions=initial_conditions,
+                use_categorical_codes=use_categorical_codes,
+            ),
+            ages=self._time,
         )
         self._fail_if_declared_entry_is_not_permitted(
             initial_conditions=initial_conditions
         )
-        flat_params = self._process_params(params)
+        flat_params = self._process_params(
+            params, use_categorical_codes=use_categorical_codes
+        )
         initial_conditions = split_initial_conditions(
             initial_conditions=initial_conditions,
             splits=self._fixed_component_splits,
@@ -4775,6 +4878,7 @@ class Model:
                 user_regimes=self.user_regimes,
                 regime_names_to_ids=self.regime_names_to_ids,
                 ages=self._time,
+                use_categorical_codes=use_categorical_codes,
             )
         canonical = canonicalize_initial_conditions(
             initial_conditions=initial_conditions,
@@ -4784,6 +4888,26 @@ class Model:
         )
         self._fail_if_entry_is_not_permitted(initial_conditions=canonical)
         return canonical, flat_params
+
+    def _encode_initial_values(
+        self,
+        *,
+        initial_conditions: UserInitialConditionsInput | pd.DataFrame,
+        use_categorical_codes: bool,
+    ) -> UserInitialConditions | pd.DataFrame:
+        """Return a mapping as arrays, the values of value-grid states as codes.
+
+        A frame is read by `initial_conditions_from_dataframe` instead.
+        """
+        if isinstance(initial_conditions, pd.DataFrame):
+            return initial_conditions
+        return encode_initial_values(
+            initial_conditions=initial_conditions,
+            user_regimes=self.user_regimes,
+            regime_names_to_ids=self.regime_names_to_ids,
+            use_categorical_codes=use_categorical_codes,
+            error_type=InvalidInitialConditionsError,
+        )
 
     def _lower_joint_initial_conditions(
         self,
@@ -4958,6 +5082,7 @@ class Model:
         *,
         array_writer: SimulationEntryAllocations | None = None,
         runtime_checks: bool = True,
+        use_categorical_codes: bool = False,
     ) -> FlatParams:
         """Broadcast, convert Series, dtype-cast, and validate user params.
 
@@ -4984,6 +5109,7 @@ class Model:
             phase_transitions=self.declared_transitions,
             declared_vocabulary=self._declared_edge_vocabulary,
             reachability=self.reachability,
+            use_categorical_codes=use_categorical_codes,
             required_periods_by_regime={
                 name: tuple(
                     sorted(
@@ -5161,6 +5287,30 @@ def _fail_if_policy_lookup_unsupported(
             f"{regime_name!r} is a collective regime."
         )
         raise InvalidSimulationInputError(msg)
+
+
+def _encode_lookup_values(
+    *,
+    given: Mapping[str, jax.Array],
+    value_grids: Mapping[str, DiscreteGrid],
+    kind: str,
+) -> MappingProxyType[str, jax.Array]:
+    """Replace the values of value-grid variables in a policy lookup by codes."""
+    return MappingProxyType(
+        {
+            name: jnp.asarray(
+                encode_grid_values(
+                    grid=value_grids[name],
+                    values=values,
+                    name=f"Policy lookup {kind} {name!r}",
+                    error_type=InvalidSimulationInputError,
+                )
+            )
+            if name in value_grids
+            else values
+            for name, values in given.items()
+        }
+    )
 
 
 def _fail_if_off_grid(

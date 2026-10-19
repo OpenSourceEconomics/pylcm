@@ -214,6 +214,7 @@ def _simulated_codes(model: Model) -> pd.DataFrame:
         initial_conditions=_INITIAL_CONDITIONS,
         seed=0,
         log_level="off",
+        use_categorical_codes=True,
     ).to_dataframe(use_categorical_codes=True)
     return frame.sort_values(["subject_id", "period"]).reset_index(drop=True)
 
@@ -2659,6 +2660,7 @@ def _assert_identical_solutions_and_simulations(
             solution=solution,
             seed=3,
             log_level="off",
+            use_categorical_codes=True,
         )
         .to_dataframe(use_categorical_codes=True)
         .sort_values(["subject_id", "period"])

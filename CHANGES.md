@@ -72,6 +72,21 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   `SolutionResult.value_frame`; `SimulationResult.save` takes
   `df_use_categorical_codes`. The default `False` keeps categorical columns and
   coordinates; `True` gives integer codes. There is no alias for the old name.
+- Behavior change: the user-facing boundaries speak a value grid's values instead of its
+  codes. `to_dataframe` gives an ordered numeric Categorical over all of the grid's
+  values (cast with `.astype(float)` for arithmetic). Initial conditions, as a mapping or
+  a frame, take the values, as numbers or as such a Categorical, whose categories must
+  be exactly the grid's values in order; integers match exactly, floats within the
+  grid's tolerance, and anything else raises naming the value. A `pd.Series` level in
+  `params` takes the values as labels and refuses string spellings. `lookup_policy`
+  reads states and `action_grids` in values and returns a value-grid action as an array
+  of its values. `value_array` and `value_frame` use the values as coordinates.
+  `use_categorical_codes=True` on `solve`, `simulate`, `validate_transitions`,
+  `validate_initial_conditions`, `initial_conditions_feasibility` and `lookup_policy`
+  switches these inputs and outputs to integer codes, for category-class grids as well.
+  `shock_paths` keeps category codes for every discrete state, so a path replays exactly.
+  A mapping of initial conditions also accepts pandas Series, and Categoricals for value
+  grids.
 
 ### Time-inconsistent agents with `Decoupled`
 
