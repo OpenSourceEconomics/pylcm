@@ -10,10 +10,12 @@
 
 from collections.abc import Mapping
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 import pytest
+from jaxtyping import Array, Int
 
 from lcm import (
     AgeGrid,
@@ -440,6 +442,29 @@ def test_member_law_reading_a_float_helper_matches_dense() -> None:
     """A member law may read a floating helper of a member through the encoder."""
     models = [
         _quarterly(a_law=_next_a_from_half, functions={"half_a": _half_a}, composite=c)
+        for c in (False, True)
+    ]
+    values = [_start_values(model) for model in models]
+    assert_agrees_to_ulp(got=values[1], expected=values[0], n_ulp=8)
+
+
+type _Int64 = Int[Array, "..."]
+
+
+def _wide_a(*, a: DiscreteState) -> _Int64:
+    return a.astype(jnp.int64)
+
+
+def _next_a_from_wide(*, wide_a: _Int64, choice: DiscreteAction) -> DiscreteState:
+    return jnp.where(choice == 1, jnp.int32(1), wide_a.astype(jnp.int32))
+
+
+def test_member_law_reading_an_int64_helper_matches_dense() -> None:
+    """A member law may read a signed integer helper of any width."""
+    if not jax.config.jax_enable_x64:
+        pytest.skip("An int64 helper needs x64.")
+    models = [
+        _quarterly(a_law=_next_a_from_wide, functions={"wide_a": _wide_a}, composite=c)
         for c in (False, True)
     ]
     values = [_start_values(model) for model in models]

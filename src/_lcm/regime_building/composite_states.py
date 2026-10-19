@@ -26,6 +26,7 @@ import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 from dags import concatenate_functions
+from jaxtyping import Array, Int
 
 from _lcm.dtypes import safe_to_int_dtype
 from _lcm.engine import Regime as EngineRegime
@@ -430,6 +431,10 @@ def _encode_or_fail(*, lowering: CompositeLowering, rows: np.ndarray) -> np.ndar
     return composite
 
 
+# Integer arrays of any width: with x64 enabled, a helper may be int64.
+type _SignedInts = Int[Array, "..."]
+
+
 @dataclass(frozen=True, kw_only=True, eq=False)
 class _MemberDecoder:
     """Read one member's code off a composite code."""
@@ -450,7 +455,8 @@ class _CompositeEncoder:
     """The member laws, returning next member codes in member order.
 
     They read whatever the member laws read: codes, but also floating or boolean
-    helpers and the age, so the keyword inputs are not restricted to integers.
+    helpers, signed integer helpers of any width and the age, so the keyword inputs
+    are not restricted to int32 codes.
     """
 
     law_args: tuple[ReferenceName, ...]
@@ -465,7 +471,7 @@ class _CompositeEncoder:
     shape: tuple[int, ...]
     """Number of codes of every member."""
 
-    def __call__(self, **kwargs: FloatND | IntND | BoolND) -> IntND:
+    def __call__(self, **kwargs: FloatND | _SignedInts | BoolND) -> IntND:
         values = kwargs | dict(self.bound)
         nexts = self.laws(**{arg: values[arg] for arg in self.law_args})
         return _read_flat(table=self.encoding, shape=self.shape, index=nexts)
