@@ -23,9 +23,14 @@ What it changes, and nothing else:
   (`shard_test_files tests/solution --weights-leg fp<p>-solution`): a new
   solution file joins one shard, and the weighted partition may move others.
 
-What it leaves alone: `frozen_head`, the observed weights, the exclusion list,
-`linux_only_files`,
-the guardrail budgets, the shard *counts*, and every other lane.
+With `--refresh-leg <leg> --junit <glob> --junit-source <text>` it first
+replaces that one leg's `leg_weights` with the summed JUnit testcase seconds and
+testcase counts of the given reports -- the shards of that leg on one run -- and
+records `--junit-source` as their provenance.
+
+What it leaves alone: `frozen_head`, the root `file_weights`, every other leg's
+observed weights, the exclusion list, `linux_only_files`, the guardrail budgets,
+the shard *counts*, and every other lane.
 `frozen_head` binds the root cross-leg CSV weights; per-leg `junit_source`
 records each leg's measurement provenance. Registering files or refreshing one
 leg does not advance the root freeze. Re-measuring the root CSV weights does.
@@ -38,9 +43,12 @@ Exit codes:
 """
 
 import argparse
+import glob
 import json
 import sys
+import xml.etree.ElementTree as ET
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from tests.ci import ci_workloads
@@ -75,6 +83,73 @@ def unaccounted_test_files(
     selected = {file_ for inv in manifest["invocations"] for file_ in inv["files"]}
     excluded = set(manifest["excluded_files"])
     return tuple(sorted(present - selected - excluded))
+
+
+@dataclass(frozen=True)
+class MeasuredLeg:
+    """Per-file JUnit testcase seconds and testcase counts for one leg."""
+
+    seconds: Mapping[str, float]
+    """Summed testcase seconds per repository-relative test file."""
+    counts: Mapping[str, int]
+    """Number of testcases per repository-relative test file."""
+
+
+def leg_weights_from_junit(
+    *, repo_root: Path, junit_paths: Sequence[Path]
+) -> MeasuredLeg:
+    """Sum each file's JUnit testcase seconds over the reports of one run.
+
+    The reports are the shards of one leg on one run, so every file appears in
+    exactly one of them. A testcase keeps its recorded seconds whatever its
+    outcome; a file with no testcase gets no entry. A classname that resolves
+    to no file under `repo_root` is refused rather than dropped.
+    """
+    seconds: dict[str, float] = {}
+    counts: dict[str, int] = {}
+    for junit_path in junit_paths:
+        root = ET.parse(junit_path).getroot()  # noqa: S314 - CI-produced JUnit artifacts
+        for case in root.iter("testcase"):
+            file_ = _test_file_of(classname=case.get("classname", ""), root=repo_root)
+            seconds[file_] = seconds.get(file_, 0.0) + float(case.get("time", "0"))
+            counts[file_] = counts.get(file_, 0) + 1
+    return MeasuredLeg(
+        seconds={file_: round(seconds[file_], 3) for file_ in sorted(seconds)},
+        counts={file_: counts[file_] for file_ in sorted(counts)},
+    )
+
+
+def refresh_leg(
+    *,
+    manifest: ci_workloads.WorkloadManifest,
+    leg: str,
+    measured: MeasuredLeg,
+    junit_source: ci_workloads.SourcePath,
+) -> ci_workloads.WorkloadManifest:
+    """Replace one leg's observed weights and their provenance, nothing else.
+
+    `frozen_head`, the root `file_weights` and every other leg stay as they
+    are: re-measuring one leg does not advance the root freeze.
+    """
+    updated: ci_workloads.WorkloadManifest = json.loads(json.dumps(dict(manifest)))
+    if leg not in updated["leg_weights"]:
+        legs = sorted(updated["leg_weights"])
+        raise KeyError(f"{leg!r} is not a recorded leg: {legs}")
+    entry = updated["leg_weights"][leg]
+    entry["junit_source"] = junit_source
+    entry["seconds"] = dict(measured.seconds)
+    entry["counts"] = dict(measured.counts)
+    return updated
+
+
+def _test_file_of(*, classname: str, root: Path) -> str:
+    """Return the test file a JUnit classname names, dropping any class suffix."""
+    parts = classname.split(".")
+    for end in range(len(parts), 0, -1):
+        candidate = "/".join(parts[:end]) + ".py"
+        if (root / candidate).is_file():
+            return candidate
+    raise ValueError(f"JUnit classname {classname!r} names no test file under {root}")
 
 
 def regenerate(
@@ -153,6 +228,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     committed_text = manifest_path.read_text(encoding="utf-8")
     manifest = json.loads(committed_text)
 
+    if args.refresh_leg is not None:
+        reports = tuple(
+            Path(path)
+            for pattern in args.junit
+            for path in sorted(glob.glob(pattern))  # noqa: PTH207 - absolute patterns
+        )
+        if not reports or not args.junit_source:
+            sys.stdout.write(
+                "--refresh-leg needs --junit matching at least one report and "
+                "--junit-source naming the run\n"
+            )
+            return 1
+        manifest = refresh_leg(
+            manifest=manifest,
+            leg=args.refresh_leg,
+            measured=leg_weights_from_junit(repo_root=repo_root, junit_paths=reports),
+            junit_source=args.junit_source,
+        )
     additions = tuple(args.add) or unaccounted_test_files(
         repo_root=repo_root, manifest=manifest
     )
@@ -200,6 +293,27 @@ def _parser() -> argparse.ArgumentParser:
             "repository-relative test file to register; repeat once per file. "
             "Omitted, every unaccounted test file under tests/ is registered."
         ),
+    )
+    parser.add_argument(
+        "--refresh-leg",
+        default=None,
+        metavar="LEG",
+        help=(
+            "re-measure this leg's `leg_weights` from --junit reports of one run, "
+            "recording --junit-source as their provenance"
+        ),
+    )
+    parser.add_argument(
+        "--junit",
+        action="append",
+        default=[],
+        metavar="GLOB",
+        help="JUnit report glob for --refresh-leg; repeat once per pattern",
+    )
+    parser.add_argument(
+        "--junit-source",
+        default=None,
+        help="the run, attempt, head and artifacts the --junit reports come from",
     )
     parser.add_argument(
         "--check",

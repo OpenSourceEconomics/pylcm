@@ -21,8 +21,9 @@ kind of regeneration has its own route:
 - a new or changed `cpu.yml` invocation ⇒ a reviewed hand edit, checked by
   `tests/ci/test_cpu_workflow_contract.py`;
 - re-measured root `file_weights` ⇒ a new per-file CSV and a new `frozen_head`;
-- re-measured `leg_weights` ⇒ a matching per-leg CSV and an updated leg's
-  `junit_source`, with its tested source, selection and input provenance.
+- re-measured `leg_weights` ⇒ `tests/ci/generate_ci_workloads.py --refresh-leg`
+  over that leg's JUnit reports of one run, with a `--junit-source` naming the
+  run, attempt, head and artifacts.
 
 `frozen_head` binds the root cross-leg CSV weights. Each `leg_weights` entry
 records its own measurement provenance in `junit_source`; updating one leg does

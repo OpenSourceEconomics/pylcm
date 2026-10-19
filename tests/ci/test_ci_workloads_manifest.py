@@ -435,3 +435,112 @@ def test_conftest_marks_exactly_the_listed_persistence_tests():
         if line.startswith(target + "::")
     }
     assert collected == listed, completed.stdout + completed.stderr
+
+
+def _write_junit(*, path: Path, cases: list[tuple[str, str, float]]) -> Path:
+    body = "".join(
+        f'<testcase classname="{classname}" name="{name}" time="{seconds}"/>'
+        for classname, name, seconds in cases
+    )
+    path.write_text(
+        '<?xml version="1.0"?><testsuites>'
+        f'<testsuite name="pytest" tests="{len(cases)}">{body}</testsuite>'
+        "</testsuites>",
+        encoding="utf-8",
+    )
+    return path
+
+
+@pytest.fixture
+def junit_tree(tmp_path: Path) -> tuple[Path, tuple[Path, ...]]:
+    """A repository with two test files and one JUnit report per shard."""
+    (tmp_path / "tests/sub").mkdir(parents=True)
+    (tmp_path / "tests/test_a.py").write_text("", encoding="utf-8")
+    (tmp_path / "tests/sub/test_b.py").write_text("", encoding="utf-8")
+    first = _write_junit(
+        path=tmp_path / "junit-1.xml",
+        cases=[("tests.test_a", "test_x", 1.5), ("tests.test_a", "test_y[1]", 0.25)],
+    )
+    second = _write_junit(
+        path=tmp_path / "junit-2.xml",
+        cases=[("tests.sub.test_b.TestCase", "test_z", 2.0)],
+    )
+    return tmp_path, (first, second)
+
+
+@pytest.mark.parametrize(
+    ("file_", "seconds", "count"),
+    [("tests/test_a.py", 1.75, 2), ("tests/sub/test_b.py", 2.0, 1)],
+)
+def test_leg_weights_from_junit_sums_testcase_seconds_per_file(
+    *, junit_tree: tuple[Path, tuple[Path, ...]], file_: str, seconds: float, count: int
+):
+    from tests.ci.generate_ci_workloads import leg_weights_from_junit  # noqa: PLC0415
+
+    root, reports = junit_tree
+    measured = leg_weights_from_junit(repo_root=root, junit_paths=reports)
+    assert (measured.seconds[file_], measured.counts[file_]) == (seconds, count)
+
+
+def test_leg_weights_from_junit_refuses_a_testcase_with_no_file(
+    *, junit_tree: tuple[Path, tuple[Path, ...]]
+):
+    from tests.ci.generate_ci_workloads import leg_weights_from_junit  # noqa: PLC0415
+
+    root, reports = junit_tree
+    stray = _write_junit(
+        path=root / "junit-3.xml", cases=[("tests.test_gone", "test_q", 1.0)]
+    )
+    with pytest.raises(ValueError, match=r"tests\.test_gone"):
+        leg_weights_from_junit(repo_root=root, junit_paths=(*reports, stray))
+
+
+def test_refresh_leg_replaces_only_that_legs_weights_and_provenance(
+    *, junit_tree: tuple[Path, tuple[Path, ...]]
+):
+    from tests.ci.generate_ci_workloads import (  # noqa: PLC0415
+        leg_weights_from_junit,
+        refresh_leg,
+    )
+
+    root, reports = junit_tree
+    manifest: ci_workloads.WorkloadManifest = {  # ty: ignore[missing-typed-dict-key]
+        "frozen_head": "abc",
+        "file_weights": {"tests/test_a.py": {"seconds": 9.0, "count": 1}},
+        "leg_weights": {
+            "fp64-linux": {
+                "junit_source": "old",
+                "measurement": "junit testcase seconds",
+                "seconds": {"tests/test_old.py": 5.0},
+                "counts": {"tests/test_old.py": 1},
+            },
+            "fp64-windows": {
+                "junit_source": "win",
+                "measurement": "junit testcase seconds",
+                "seconds": {"tests/test_a.py": 3.0},
+                "counts": {"tests/test_a.py": 2},
+            },
+        },
+    }
+    updated = refresh_leg(
+        manifest=manifest,
+        leg="fp64-linux",
+        measured=leg_weights_from_junit(repo_root=root, junit_paths=reports),
+        junit_source="run 1 attempt 1",
+    )
+    assert (
+        updated["leg_weights"]["fp64-linux"],
+        updated["leg_weights"]["fp64-windows"],
+        updated["file_weights"],
+        updated["frozen_head"],
+    ) == (
+        {
+            "junit_source": "run 1 attempt 1",
+            "measurement": "junit testcase seconds",
+            "seconds": {"tests/sub/test_b.py": 2.0, "tests/test_a.py": 1.75},
+            "counts": {"tests/sub/test_b.py": 1, "tests/test_a.py": 2},
+        },
+        manifest["leg_weights"]["fp64-windows"],
+        manifest["file_weights"],
+        "abc",
+    )
