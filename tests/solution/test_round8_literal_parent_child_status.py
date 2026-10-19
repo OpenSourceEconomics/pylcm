@@ -51,7 +51,9 @@ from tests.solution._oracle8_child_status import (
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
 
-def make_literal_parent_model(*, resources, outer_search=None) -> Model:
+def make_literal_parent_model(
+    *, resources, outer_search=None, enable_jit: bool = True
+) -> Model:
     """Use the shipped admitted model with a literal parent and DAG child floor."""
     margin = LiquidMargin(
         state="liquid",
@@ -122,6 +124,7 @@ def make_literal_parent_model(*, resources, outer_search=None) -> Model:
         edges={"parent": {"child": (0,)}, "child": {"done": (10,)}},
         initial_nodes={0: "parent"},
         regime_id_class=fixture.RegimeId,
+        enable_jit=enable_jit,
     )
     fixture.fail_if_not_actual_nb_query_path(model=model)
     kernel = model._regimes["parent"].solution.period_kernels[0]
@@ -154,7 +157,13 @@ def _row(*, name, output) -> ExecutedRow:
 def test_public_literal_parent_preserves_executed_child_summaries(
     *, monkeypatch, runtime_checks, disable_jit, retention
 ) -> None:
-    model = make_literal_parent_model(resources=fixture.child_positive_resources)
+    # The eager case also builds an eager model. A jitted model still lowers and
+    # compiles every period program ahead of time, and under `jax.disable_jit`
+    # each `lax.scan`/`lax.map` in that program is unrolled into the lowered
+    # graph, so XLA compiles a vastly larger program instead of running eagerly.
+    model = make_literal_parent_model(
+        resources=fixture.child_positive_resources, enable_jit=not disable_jit
+    )
     authorities = (model._regimes["parent"].solution.query_input_authorities or {})[0]
     native_inner = _RideAlongNBEGMPeriodKernel.__call__
     native_outer = _NNBEGMPeriodKernel.__call__
