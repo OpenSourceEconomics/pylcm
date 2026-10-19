@@ -175,7 +175,7 @@ class SolutionResult:
         `grid.values[code]`, and values map to codes with `grid.encode`:
 
         ```python
-        grid = DiscreteGrid(values=(0, 4, 10))
+        grid = DiscreteGrid(values=jnp.array([0, 4, 10]))
         grid.values[2]  # 10
         ```
 

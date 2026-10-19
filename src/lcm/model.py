@@ -3600,9 +3600,10 @@ class Model:
                 by default: a code names its node exactly, so the path is replayed
                 exactly and losslessly, without a tolerance to find a float on its
                 grid. A code maps to its value as `grid.values[code]`, e.g.
-                `DiscreteGrid(values=(0, 4, 10)).values[2]` is `10`, and values map
-                to codes with `grid.encode`. A value is checked against every regime the
-                subject may occupy when it is read; unread cells are ignored.
+                `DiscreteGrid(values=jnp.array([0, 4, 10])).values[2]` is `10`, and
+                values map to codes with `grid.encode`. A value is checked against
+                every regime the subject may occupy when it is read; unread cells
+                are ignored.
                 Transition-local draws use the destination's period. Solve
                 expectations and unnamed shocks' seeded streams are unchanged.
             log_level: Console verbosity: off, warning, progress or debug.

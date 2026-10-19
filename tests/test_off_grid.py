@@ -317,7 +317,7 @@ def test_grid_policy_preserves_or_clips_the_actual_later_state(
 _GRID_FACTORIES: tuple[Callable[..., ContinuousGrid], ...] = (
     partial(LinSpacedGrid, start=1, stop=3, n_points=3),
     partial(LogSpacedGrid, start=1, stop=3, n_points=3),
-    partial(IrregSpacedGrid, points=[1, 1.5, 3]),
+    partial(IrregSpacedGrid, points=jnp.array([1, 1.5, 3])),
     partial(
         PiecewiseLinSpacedGrid,
         start=1,

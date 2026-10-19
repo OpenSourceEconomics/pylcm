@@ -24,6 +24,7 @@ from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
 from _lcm.regime_building import processing as regime_processing
 from _lcm.simulation import simulate as simulation_module
+from _lcm.simulation.entry_allocations import SimulationEntryAllocations
 from _lcm.solution import artifacts as private_artifacts
 from _lcm.solution import backward_induction
 from _lcm.solution.contract import GENERATED_REPLAY_AUTHORITY
@@ -677,11 +678,20 @@ def test_direct_solution_simulation_processes_params_once(
 
     # keyword-only-exempt: primary-argument=raw_params
     def _counted_process_params(
-        raw_params: UserParams, *, runtime_checks: bool = True
+        raw_params: UserParams,
+        *,
+        array_writer: SimulationEntryAllocations | None = None,
+        runtime_checks: bool = True,
+        use_categorical_codes: bool = False,
     ) -> FlatParams:
         nonlocal call_count
         call_count += 1
-        return original(raw_params, runtime_checks=runtime_checks)
+        return original(
+            raw_params,
+            array_writer=array_writer,
+            runtime_checks=runtime_checks,
+            use_categorical_codes=use_categorical_codes,
+        )
 
     monkeypatch.setattr(model, "_process_params", _counted_process_params)
     model.simulate(
