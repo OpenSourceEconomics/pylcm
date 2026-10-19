@@ -624,7 +624,8 @@ def _wired_names(user_regime: UserRegime) -> frozenset[ReferenceName]:
 
     Returns:
         Set of the regime's states, actions and functions, `period`, `age` and
-        `CE`, plus a collective regime's engine-wired aggregator inputs.
+        `CE`, the code `<name>_code` of each discrete variable, plus a collective
+        regime's engine-wired aggregator inputs.
 
     """
     variables = {
@@ -649,6 +650,14 @@ def _wired_names(user_regime: UserRegime) -> frozenset[ReferenceName]:
         # user-facing params.
         variables.update(f"Q_{s}" for s in user_regime.stakeholders)
         variables.update(user_regime.same_period_refs)
+    # `<name>_code` reads the code of the discrete variable `<name>`.
+    variables.update(
+        f"{name}_code"
+        for name in (
+            *_declared_categoricals(user_regime),
+            *user_regime.derived_categoricals,
+        )
+    )
     return frozenset(variables)
 
 

@@ -103,6 +103,15 @@ back to its code. Integer values arrive as int32, as codes do, so `jnp.log(hours
 integer grid is float32 even when x64 is enabled; write `jnp.log(hours * 1.0)` or
 declare float values if you need the model's float precision.
 
+A function that needs the position of a node, for example to index a parameter array,
+reads `<name>_code` next to or instead of `<name>`: `hours` is the value (in pandas'
+terms the category) and `hours_code` the int32 position (the code). Index arrays with
+the code, `premium[hours_code]`; indexing with the value, `premium[hours]`, is refused
+when the model is built. `<name>_code` exists for every discrete variable, so for a
+category class it equals `<name>`. It can be read wherever `<name>` can: in functions,
+constraints, state transitions and regime-transition laws. No state, action or function
+may be named `<name>_code` for a discrete variable `<name>`.
+
 A value matches a node only if it equals it. Integer grids match integers exactly. A
 float grid matches within its absolute `tolerance` (zero by default), and
 `grid.nearest(x)` snaps a float that arithmetic left between nodes.

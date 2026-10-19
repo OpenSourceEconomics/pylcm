@@ -36,7 +36,8 @@ from _lcm.regime_building.value_adapter import (
     ValueAdapter,
     adapt_collective_utility,
     adapt_entry,
-    collect_value_grids,
+    collect_adapter_grids,
+    encoding_grid,
 )
 from _lcm.regime_law import RegimeLaws
 from _lcm.typing import EconFunctionArg, FunctionName, RegimeName
@@ -120,7 +121,7 @@ def finalize_regimes(
         if regime.stakeholders is not None
         for stakeholder in regime.stakeholders
     )
-    value_grids = collect_value_grids(
+    value_grids = collect_adapter_grids(
         regimes=user_regimes, derived_categoricals=derived_categoricals
     )
     adapters: AdapterMemo = {}
@@ -303,7 +304,9 @@ def _adapt_slot(
             name: adapt_entry(
                 entry=entry,
                 value_grids=value_grids,
-                encode=value_grids.get(name) if name in encoded else None,
+                encode=encoding_grid(value_grids=value_grids, name=name)
+                if name in encoded
+                else None,
                 adapters=adapters,
             )
             for name, entry in slot.items()

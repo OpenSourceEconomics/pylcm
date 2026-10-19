@@ -423,9 +423,9 @@ def test_label_grid_initial_conditions_keep_codes_and_labels() -> None:
 
 
 def _table_utility(
-    *, experience: DiscreteState, level: DiscreteState, table: FloatND
+    *, experience_code: DiscreteState, level_code: DiscreteState, table: FloatND
 ) -> FloatND:
-    return table[experience, level]
+    return table[experience_code, level_code]
 
 
 _TABLE_REGIMES = MappingProxyType(

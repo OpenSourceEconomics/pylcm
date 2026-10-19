@@ -61,6 +61,16 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   strictly ascending and finite, integers are stored as int32 and floats at the
   canonical float dtype. Codes stay `0..n-1`;
   `categories` holds the `repr` of each value.
+- A user function may read `<name>_code` for any discrete variable `<name>`, state or
+  action, in functions, constraints, state transitions and regime-transition laws. For
+  a value grid `<name>` is the value (pandas: the category) and `<name>_code` the int32
+  position (pandas: the code); for a category class both are the code. A parameter
+  array indexed by `<name>_code` takes a `pd.Series` whose level is named `<name>` and
+  labelled by the values or category labels, aligned to grid order in any written
+  order. Indexing an array by the value of a value grid (`table[experience]`) is
+  refused at model build, naming `experience_code` as the fix, and a state, action,
+  function or constraint named `<name>_code` for a discrete `<name>` is refused as a
+  name collision.
 - A float matches a node exactly unless the grid declares an absolute `tolerance`,
   which must lie below half the smallest gap between values; integer grids take
   integers and match them exactly. `grid.encode` maps values to codes (off-grid values

@@ -146,7 +146,7 @@ from _lcm.regime_building.schedules import (
 )
 from _lcm.regime_building.value_adapter import (
     adapt_regime_laws,
-    collect_value_grids,
+    collect_adapter_grids,
 )
 from _lcm.regime_law import RegimeLaws, bind_regime_law
 from _lcm.simulation.chunk_admission import prepare_simulation_chunks
@@ -1092,7 +1092,7 @@ class Model:
         # does; it still returns regime codes or probabilities.
         laws = adapt_regime_laws(
             laws=laws,
-            value_grids=collect_value_grids(
+            value_grids=collect_adapter_grids(
                 regimes=pruned_regimes, derived_categoricals=derived_categoricals
             ),
         )

@@ -6,6 +6,10 @@ values of the value-grid variables it reads, and, for a deterministic law or a
 derived categorical of such a grid, so that the value it returns becomes the
 code of the node it names. A value on no node becomes `MISSING_CAT_CODE`.
 
+An argument `<name>_code` of any discrete variable `<name>`, declared by values
+or by a category class, receives the code itself. For a category class the code
+is what `<name>` holds as well.
+
 The wrapper publishes `DiscreteState` for every decoded argument and encoded
 return, the annotation the engine's own nodes carry for codes, so the DAG sees
 one annotation per node whichever function names it.
@@ -28,6 +32,7 @@ from _lcm.processes.joint_normal import JointNormalIIDProcess
 from _lcm.regime_building.schedules import RegimeTransitionLaw
 from _lcm.regime_law import RegimeLaw, RegimeLaws
 from _lcm.typing import EconFunctionArg, FunctionName, RegimeName
+from _lcm.utils.ast_inspection import value_indexed_arrays
 from lcm.collective import (
     CollectiveUtility,
     ProjectedRegimeValue,
@@ -53,6 +58,9 @@ from lcm.transition import (
 from lcm.typing import StateOrActionName, UserFunction, ValueND
 
 _CODE_ANNOTATION = "DiscreteState"
+
+# The suffix of an argument that reads the code of a discrete variable.
+CODE_SUFFIX = "_code"
 
 # One entry of a regime's `functions`, `states`, `state_transitions`,
 # `constraints` or `joint_transitions`.
@@ -81,6 +89,8 @@ _ADAPTER_OWN_ATTRIBUTES: frozenset[str] = frozenset(
         "__annotations__",
         "__annotate__",
         "__dict__",
+        "__lcm_source__",
+        "_reads",
     }
 )
 
@@ -153,6 +163,82 @@ def collect_value_grids(
     return MappingProxyType(value_grids)
 
 
+def collect_adapter_grids(
+    *,
+    regimes: Mapping[RegimeName, UserRegime],
+    derived_categoricals: Mapping[FunctionName, DiscreteGrid],
+) -> MappingProxyType[StateOrActionName, DiscreteGrid]:
+    """Return the grid of every discrete variable a user function can read.
+
+    A variable declared by its values maps to its value grid, which decodes and
+    encodes it. Every other discrete variable maps to one of its category grids,
+    which only marks that `<name>_code` reads its code.
+
+    Raises:
+        RegimeInitializationError: If a regime declares a variable, function or
+            constraint named `<name>_code` for a discrete variable `<name>`, or
+            as `collect_value_grids` does.
+
+    """
+    value_grids = collect_value_grids(
+        regimes=regimes, derived_categoricals=derived_categoricals
+    )
+    grids = dict(
+        _declared_discrete_grids(
+            regimes=regimes, derived_categoricals=derived_categoricals
+        )
+    )
+    _fail_if_a_name_spells_a_code(regimes=regimes, discrete_names=frozenset(grids))
+    return MappingProxyType({**grids, **value_grids})
+
+
+def _declared_discrete_grids(
+    *,
+    regimes: Mapping[RegimeName, UserRegime],
+    derived_categoricals: Mapping[FunctionName, DiscreteGrid],
+) -> list[tuple[StateOrActionName, DiscreteGrid]]:
+    """Return every declared discrete grid with its name, both sides of `Phased`."""
+    found = list(derived_categoricals.items())
+    for regime in regimes.values():
+        for name, entry in {
+            **dict(regime.states),
+            **dict(regime.actions),
+            **dict(regime.derived_categoricals),
+        }.items():
+            sides = (
+                (entry.solve, entry.simulate) if isinstance(entry, Phased) else (entry,)
+            )
+            found.extend(
+                (name, side) for side in sides if isinstance(side, DiscreteGrid)
+            )
+    return found
+
+
+def _fail_if_a_name_spells_a_code(
+    *, regimes: Mapping[RegimeName, UserRegime], discrete_names: frozenset[str]
+) -> None:
+    """Raise where a declared name is `<name>_code` of a discrete variable."""
+    collisions = sorted(
+        f"'{name}' in regime '{regime_name}'"
+        for regime_name, regime in regimes.items()
+        for name in (
+            *regime.states,
+            *regime.actions,
+            *regime.derived_categoricals,
+            *regime.decomposed_functions,
+            *regime.constraints,
+        )
+        if name.endswith(CODE_SUFFIX)
+        and name.removesuffix(CODE_SUFFIX) in discrete_names
+    )
+    if collisions:
+        raise RegimeInitializationError(
+            f"{', '.join(collisions)} collides with the code of a discrete "
+            f"variable: an argument `<name>{CODE_SUFFIX}` reads the code of the "
+            "discrete variable `<name>`. Rename it."
+        )
+
+
 def _value_grid_key(
     *, grid: DiscreteGrid
 ) -> tuple[tuple[int | float, ...] | None, float, bool | None]:
@@ -191,18 +277,32 @@ def adapt_user_function(
     # user's function, so a regime reused in another model is wrapped once.
     if isinstance(func, ValueAdapter):
         func = func.func
+    reads = _read_names(func)
     decoded = {
         name: value_grids[grid_name]
-        for name in _read_names(func)
+        for name in reads
         if (grid_name := _value_grid_name(name=name, value_grids=value_grids))
         is not None
     }
-    if not decoded and encode is None:
+    codes = {
+        name: name.removesuffix(CODE_SUFFIX)
+        for name in reads
+        if name.endswith(CODE_SUFFIX)
+        and name.removesuffix(CODE_SUFFIX) in value_grids
+        and name not in value_grids
+    }
+    if not decoded and not codes and encode is None:
         return func
+    _fail_if_an_array_is_indexed_by_a_value(func=func, decoded=decoded)
     key = (id(func), id(encode))
     if adapters is not None and key in adapters:
         return adapters[key][1]
-    adapter = ValueAdapter(func=func, decoded=MappingProxyType(decoded), encode=encode)
+    adapter = ValueAdapter(
+        func=func,
+        decoded=MappingProxyType(decoded),
+        codes=MappingProxyType(codes),
+        encode=encode,
+    )
     if adapters is not None:
         # The function is kept with its adapter, so its id cannot be reused.
         adapters[key] = (func, adapter)
@@ -225,30 +325,42 @@ def adapt_regime_laws(
         {
             name: law
             if not value_grids or law.terminal
-            else dataclasses.replace(
-                law,
-                transition=law.transition
-                if isinstance(law.transition, str)
-                else cast(
-                    "RegimeTransitionLaw",
-                    adapt_entry(
-                        entry=cast("AdaptableEntry", law.transition),
-                        value_grids=value_grids,
-                        encode=None,
-                        adapters=adapters,
-                    ),
-                ),
-                gated_edges=MappingProxyType(
-                    {
-                        target: _adapt_gated_edge(
-                            edge=edge, value_grids=value_grids, adapters=adapters
-                        )
-                        for target, edge in law.gated_edges.items()
-                    }
-                ),
-            )
+            else _adapt_regime_law(law=law, value_grids=value_grids, adapters=adapters)
             for name, law in laws.items()
         }
+    )
+
+
+def _adapt_regime_law(
+    *,
+    law: RegimeLaw,
+    value_grids: Mapping[StateOrActionName, DiscreteGrid],
+    adapters: AdapterMemo,
+) -> RegimeLaw:
+    """Adapt one law's transition and gated edges; keep the law if neither changes."""
+    transition = (
+        law.transition
+        if isinstance(law.transition, str)
+        else cast(
+            "RegimeTransitionLaw",
+            adapt_entry(
+                entry=cast("AdaptableEntry", law.transition),
+                value_grids=value_grids,
+                encode=None,
+                adapters=adapters,
+            ),
+        )
+    )
+    gated_edges = {
+        target: _adapt_gated_edge(edge=edge, value_grids=value_grids, adapters=adapters)
+        for target, edge in law.gated_edges.items()
+    }
+    if transition is law.transition and all(
+        gated_edges[target] is edge for target, edge in law.gated_edges.items()
+    ):
+        return law
+    return dataclasses.replace(
+        law, transition=transition, gated_edges=MappingProxyType(gated_edges)
     )
 
 
@@ -299,38 +411,44 @@ def _adapt_gated_edge(
     value_grids: Mapping[StateOrActionName, DiscreteGrid],
     adapters: AdapterMemo,
 ) -> GatedEdge:
-    """Adapt a gated edge's gate, its routes' fallbacks and its references."""
+    """Adapt a gated edge's gate, its routes' fallbacks and its references.
+
+    The edge is kept as declared if none of them changes.
+    """
+    gate = adapt_user_function(
+        func=edge.gate, value_grids=value_grids, encode=None, adapters=adapters
+    )
+    fallbacks = {
+        name: _adapt_reference(
+            reference=route.fallback, value_grids=value_grids, adapters=adapters
+        )
+        for name, route in edge.legs.items()
+    }
+    gate_refs = {
+        name: cast(
+            "ProjectedRegimeValue",
+            _adapt_reference(
+                reference=reference, value_grids=value_grids, adapters=adapters
+            ),
+        )
+        for name, reference in edge.gate_refs.items()
+    }
+    if (
+        gate is edge.gate
+        and all(fallbacks[name] is route.fallback for name, route in edge.legs.items())
+        and all(gate_refs[name] is ref for name, ref in edge.gate_refs.items())
+    ):
+        return edge
     return dataclasses.replace(
         edge,
-        gate=adapt_user_function(
-            func=edge.gate, value_grids=value_grids, encode=None, adapters=adapters
-        ),
+        gate=gate,
         legs=MappingProxyType(
             {
-                name: dataclasses.replace(
-                    route,
-                    fallback=_adapt_reference(
-                        reference=route.fallback,
-                        value_grids=value_grids,
-                        adapters=adapters,
-                    ),
-                )
+                name: dataclasses.replace(route, fallback=fallbacks[name])
                 for name, route in edge.legs.items()
             }
         ),
-        gate_refs=MappingProxyType(
-            {
-                name: cast(
-                    "ProjectedRegimeValue",
-                    _adapt_reference(
-                        reference=reference,
-                        value_grids=value_grids,
-                        adapters=adapters,
-                    ),
-                )
-                for name, reference in edge.gate_refs.items()
-            }
-        ),
+        gate_refs=MappingProxyType(gate_refs),
     )
 
 
@@ -357,7 +475,7 @@ def _adapt_reference(
         name: adapt_user_function(
             func=func,
             value_grids=value_grids,
-            encode=value_grids.get(name),
+            encode=encoding_grid(value_grids=value_grids, name=name),
             adapters=adapters,
         )
         for name, func in reference.projection.items()
@@ -411,35 +529,28 @@ def adapt_entry(  # noqa: PLR0911
             entry=entry, value_grids=value_grids, encode=encode, adapters=adapters
         )
     if isinstance(entry, Mapping):
-        return cast(
-            "AdaptableEntry",
-            MappingProxyType(
-                {
-                    key: adapt_entry(
-                        entry=value,
-                        value_grids=value_grids,
-                        encode=encode,
-                        adapters=adapters,
-                    )
-                    for key, value in entry.items()
-                }
-            ),
-        )
+        adapted = {
+            key: adapt_entry(
+                entry=value, value_grids=value_grids, encode=encode, adapters=adapters
+            )
+            for key, value in entry.items()
+        }
+        if all(adapted[key] is value for key, value in entry.items()):
+            return entry
+        return cast("AdaptableEntry", MappingProxyType(adapted))
     if isinstance(entry, Decoupled):
         return _adapt_decoupled(entry=entry, value_grids=value_grids, adapters=adapters)
     if isinstance(entry, JointTransition):
         return _adapt_joint(entry=entry, value_grids=value_grids, adapters=adapters)
     if isinstance(entry, StochasticTransition | DeterministicTransition):
         # A stochastic law returns probabilities over codes, never a value.
-        return dataclasses.replace(
-            entry,
-            func=adapt_user_function(
-                func=entry.func,
-                value_grids=value_grids,
-                encode=None if isinstance(entry, StochasticTransition) else encode,
-                adapters=adapters,
-            ),
+        func = adapt_user_function(
+            func=entry.func,
+            value_grids=value_grids,
+            encode=None if isinstance(entry, StochasticTransition) else encode,
+            adapters=adapters,
         )
+        return entry if func is entry.func else dataclasses.replace(entry, func=func)
     return adapt_user_function(
         func=cast("UserFunction", entry),
         value_grids=value_grids,
@@ -528,7 +639,7 @@ def _adapt_joint(
         name: adapt_user_function(
             func=func,
             value_grids=value_grids,
-            encode=value_grids.get(name),
+            encode=encoding_grid(value_grids=value_grids, name=name),
             adapters=adapters,
         )
         for name, func in entry.outputs.items()
@@ -578,6 +689,8 @@ class ValueAdapter:
     """The user function, which reads values."""
     decoded: MappingProxyType[str, DiscreteGrid]
     """The grid of each argument the function reads as a value."""
+    codes: MappingProxyType[str, StateOrActionName] = MappingProxyType({})
+    """The variable each `<name>_code` argument reads the code of."""
     encode: DiscreteGrid | None
     """The grid whose code the returned value names, if any."""
 
@@ -591,28 +704,40 @@ class ValueAdapter:
             value = getattr(self.func, name, None)
             if value is not None:
                 object.__setattr__(self, name, value)
+        # Array subscripts are read off the source of the function the user wrote.
+        object.__setattr__(self, "__lcm_source__", self.func)
         # A `partial` keeps the keywords it fixes in its signature; the adapter
-        # publishes only the arguments the engine supplies.
-        free = frozenset(_read_names(self.func))
+        # publishes only the arguments the engine supplies, and a `<name>_code`
+        # argument as the variable `<name>` whose code the engine holds.
+        free = _read_names(self.func)
+        object.__setattr__(self, "_reads", free)
+        code_reads = {*self.decoded, *self.codes.values()}
         annotations = {
-            name: _CODE_ANNOTATION if name in self.decoded else annotation
+            self.codes.get(name, name): _CODE_ANNOTATION
+            if self.codes.get(name, name) in code_reads
+            else annotation
             for name, annotation in get_annotations(self.func).items()
-            if name in free or name == "return"
+            if name in free
         }
+        return_annotation = get_annotations(self.func).get("return")
         if self.encode is not None:
-            annotations["return"] = _CODE_ANNOTATION
+            return_annotation = _CODE_ANNOTATION
+        if return_annotation is not None:
+            annotations["return"] = return_annotation
         signature = inspect.signature(self.func)
+        published: dict[str, inspect.Parameter] = {}
+        for parameter in signature.parameters.values():
+            name = self.codes.get(parameter.name, parameter.name)
+            if parameter.name in free and name not in published:
+                published[name] = parameter.replace(
+                    name=name,
+                    annotation=annotations.get(name, parameter.annotation),
+                )
         object.__setattr__(
             self,
             "__signature__",
             signature.replace(
-                parameters=[
-                    parameter.replace(annotation=annotations[parameter.name])
-                    if parameter.name in annotations
-                    else parameter
-                    for parameter in signature.parameters.values()
-                    if parameter.name in free
-                ],
+                parameters=list(published.values()),
                 return_annotation=annotations.get(
                     "return", signature.return_annotation
                 ),
@@ -625,10 +750,12 @@ class ValueAdapter:
     def __call__(self, **kwargs: EconFunctionArg) -> ValueND:
         result = self.func(
             **{
-                name: self.decoded[name].decode(value)
+                name: kwargs[self.codes[name]]
+                if name in self.codes
+                else self.decoded[name].decode(kwargs[name])
                 if name in self.decoded
-                else value
-                for name, value in kwargs.items()
+                else kwargs[name]
+                for name in self._reads
             }
         )
         return result if self.encode is None else self.encode.encode(result)
@@ -643,11 +770,44 @@ def _value_grid_name(
     *, name: str, value_grids: Mapping[StateOrActionName, DiscreteGrid]
 ) -> StateOrActionName | None:
     """Return the value grid an argument reads: `x` or the next state `next_x`."""
-    if name in value_grids:
-        return name
-    if name.startswith("next_") and name.removeprefix("next_") in value_grids:
-        return name.removeprefix("next_")
+    for grid_name in (name, name.removeprefix("next_")):
+        grid = value_grids.get(grid_name)
+        if grid is not None and grid.values is not None:
+            return grid_name
     return None
+
+
+def encoding_grid(
+    *, value_grids: Mapping[StateOrActionName, DiscreteGrid], name: str
+) -> DiscreteGrid | None:
+    """Return the value grid a returned value of `name` is encoded on, if any."""
+    grid = value_grids.get(name)
+    return grid if grid is not None and grid.values is not None else None
+
+
+def _fail_if_an_array_is_indexed_by_a_value(
+    *, func: UserFunction, decoded: Mapping[str, DiscreteGrid]
+) -> None:
+    """Raise where `func` indexes an array argument by a value-grid variable's value.
+
+    An array is laid out over a variable's codes, so its position is the code;
+    reading `<name>_code` gives it.
+    """
+    found = value_indexed_arrays(
+        func=func,
+        names=frozenset(name for name in decoded if not name.startswith("next_")),
+    )
+    if found:
+        func_name = getattr(func, "__name__", type(func).__name__)
+        reads = ", ".join(
+            f"`{array}[{name}]` (write `{array}[{name}{CODE_SUFFIX}]`)"
+            for array, name in found
+        )
+        raise RegimeInitializationError(
+            f"'{func_name}' indexes an array by the value of a value grid: {reads}. "
+            f"An array's positions are a variable's codes; read the code as the "
+            f"argument `<name>{CODE_SUFFIX}`."
+        )
 
 
 def _fail_if_unsupported_reader(

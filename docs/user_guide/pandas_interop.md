@@ -105,6 +105,34 @@ A discrete state or action labels a level wherever the regime declares it, inclu
 horizon at which no demanded function reads it and the model prunes it: the parameter a
 dormant law reads keeps its slot, and its Series converts by the same categories.
 
+A function indexes an array by the codes of a discrete variable, its positions in
+pandas' terms. For a variable declared with values, the function reads `<name>` as the
+value (pandas: the category) and `<name>_code` as the int32 position (pandas: the code),
+and indexes with the code:
+
+```python
+def wage(*, experience, experience_code, wage_premium, base_wage):
+    return base_wage * (1 + 0.02 * experience + wage_premium[experience_code])
+
+
+params = {
+    "working_life": {
+        "wage": {
+            "wage_premium": pd.Series(
+                [0.25, 0.0, 0.1], index=pd.Index([10, 0, 5], name="experience")
+            ),
+            "base_wage": 2.0,
+        }
+    }
+}
+```
+
+The level is still named `experience` and labelled by the values; pylcm places each
+label at its code, whatever order the Series is written in. Indexing by the value,
+`wage_premium[experience]`, is refused when the model is built, because the value 10 is
+no position of a three-node grid. For a category class `<name>` already holds the code,
+so `<name>_code` equals it and either spelling indexes the same way.
+
 Level order does not matter — levels are reordered to match the function signature
 automatically.
 

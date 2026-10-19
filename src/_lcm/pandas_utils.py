@@ -1133,6 +1133,14 @@ def array_from_series(
         **declared_categoricals,
         **_resolve_categoricals(user_regimes=user_regimes, regime_name=regime_name),
     }
+    # An index `<name>_code` is the position of the discrete variable `<name>`,
+    # whose level the Series names `<name>`.
+    indexing_params = [
+        param.removesuffix("_code")
+        if param not in grids and param.removesuffix("_code") in grids
+        else param
+        for param in indexing_params
+    ]
 
     # Replace internal "period" with user-facing "age"
     display_params = [
