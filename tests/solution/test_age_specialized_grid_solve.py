@@ -29,6 +29,7 @@ import numpy as np
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
+from _lcm.dtypes import canonical_float_dtype
 from _lcm.grids.continuous import ContinuousGrid
 from _lcm.regime_building.age_specialization import _TRAIT_DESCRIPTIONS, _GridTraits
 from lcm import (
@@ -183,7 +184,7 @@ def test_default_signature_reproduces_explicit_signature_solve():
     default = AgeSpecializedGrid(build=explicit.build)
     v_explicit = _model(explicit).solve(params=_PARAMS, log_level="debug").values
     v_default = _model(default).solve(params=_PARAMS, log_level="debug").values
-    assert jnp.asarray(v_default[0]["alive"]).dtype == jnp.float64
+    assert jnp.asarray(v_default[0]["alive"]).dtype == canonical_float_dtype()
     for period in range(_N):
         if "alive" not in v_explicit[period]:
             continue

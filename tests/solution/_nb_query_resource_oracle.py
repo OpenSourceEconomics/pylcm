@@ -18,6 +18,7 @@ class ResourceKind(Enum):
     POSITIVE = "positive"
     ZERO_AT_FLOOR = "zero_at_floor"
     NEGATIVE_FINITE = "negative_finite"
+    NAN_ON_EMPTY = "nan_on_empty"
 
 
 class ResourceClass(Enum):
@@ -30,7 +31,12 @@ class ResourceClass(Enum):
 
 
 NONFINITE_KINDS = frozenset(
-    {ResourceKind.NAN, ResourceKind.POSITIVE_INFINITY, ResourceKind.NEGATIVE_INFINITY}
+    {
+        ResourceKind.NAN,
+        ResourceKind.POSITIVE_INFINITY,
+        ResourceKind.NEGATIVE_INFINITY,
+        ResourceKind.NAN_ON_EMPTY,
+    }
 )
 SOURCE_LIQUID = (0.0, 0.25, 0.5, 0.75, 1.0, 2.0, 4.0, 8.0)
 SOURCE_STOCK = (0.0, 1.0)
@@ -38,22 +44,29 @@ SOURCE_STOCK = (0.0, 1.0)
 
 def resource_value(*, kind: ResourceKind, liquid: float, stock: float) -> float:
     """Evaluate a fixture literally in scalar Python arithmetic."""
+    radicand = (stock - 0.5) ** 2 - 0.01
+    denominator = (stock - 0.5) ** 2
     match kind:
         case ResourceKind.NAN:
-            radicand = (stock - 0.5) ** 2 - 0.01
-            return math.nan if radicand < 0.0 else liquid + 1.25 + math.sqrt(radicand)
+            value = math.nan if radicand < 0.0 else liquid + 1.25 + math.sqrt(radicand)
         case ResourceKind.POSITIVE_INFINITY:
-            denominator = (stock - 0.5) ** 2
-            return math.inf if denominator == 0.0 else liquid + 1.25 + 1.0 / denominator
+            value = (
+                math.inf if denominator == 0.0 else liquid + 1.25 + 1.0 / denominator
+            )
         case ResourceKind.NEGATIVE_INFINITY:
-            denominator = (stock - 0.5) ** 2
-            return -math.inf if denominator == 0.0 else liquid + 8.0 - 1.0 / denominator
+            value = (
+                -math.inf if denominator == 0.0 else liquid + 8.0 - 1.0 / denominator
+            )
         case ResourceKind.POSITIVE:
-            return liquid + 1.25 + 4.0 * stock * (1.0 - stock)
+            value = liquid + 1.25 + 4.0 * stock * (1.0 - stock)
         case ResourceKind.ZERO_AT_FLOOR:
-            return liquid + 1.25 - 5.0 * stock * (1.0 - stock)
+            value = liquid + 1.25 - 5.0 * stock * (1.0 - stock)
         case ResourceKind.NEGATIVE_FINITE:
-            return liquid + 1.25 - 64.0 * stock * (1.0 - stock)
+            value = liquid + 1.25 - 64.0 * stock * (1.0 - stock)
+        case ResourceKind.NAN_ON_EMPTY:
+            empty = liquid + 1.25 - 64.0 * stock * (1.0 - stock)
+            value = math.nan if radicand < 0.0 else empty
+    return value
 
 
 def classify_resource(*, resources: float, floor: float) -> ResourceClass:
