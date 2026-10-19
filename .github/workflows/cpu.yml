@@ -314,11 +314,17 @@ jobs:
   # `tests/test_source_certificate_portability.py`, so Windows and macOS lose no
   # signal. This lane is mandatory on every PR push and gates `cpu`.
   #
-  # `--dist load` rather than `loadfile`: these are source-only cases with no
-  # device or cache coupling, and under `loadfile` the program module alone
-  # would be one indivisible atom that sets the lane's wall time. Per-test
-  # distribution costs one module-scoped clean verification per worker (two),
-  # not per test.
+  # `--dist loadgroup` rather than `loadfile`: these are source-only cases with
+  # no device or cache coupling, and under `loadfile` the program module alone
+  # would be one indivisible atom that sets the lane's wall time. Ungrouped tests
+  # distribute per test, which costs one module-scoped clean verification per
+  # worker (two), not per test. The tests that call the aggregate mutation
+  # runner share `xdist_group("direct_flow_runner")`, so they land on one worker
+  # and share one set of verifications (`tests/candidate_certificate/runner_replay.py`).
+  #
+  # The standalone verifier and its `--self-test` run in
+  # `tests-source-certificate-standalone` beside this job: each is one full pass
+  # of the mutation runner, and the two together exceed one job's budget.
   tests-source-contract:
     name: Run the source-only certificate campaign (Linux, 3.14)
     runs-on: ubuntu-latest
@@ -389,8 +395,47 @@ jobs:
             --durations=25 \
             --junitxml=reports/junit-cpu-fp64-source-contract.xml \
             --cov=./ --cov-report="xml:reports/coverage-source-contract.xml" \
-            -n 2 --dist load \
+            -n 2 --dist loadgroup \
           && check_population reports/junit-cpu-fp64-source-contract.xml
+      - name: Upload JUnit reports and receipts
+        # `always()` so a failing run still publishes its report: the XML is how
+        # a run's counts are read back, and a run that failed is exactly when
+        # that matters.
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: junit-cpu-fp64-source-contract
+          path: |
+            reports/junit-*.xml
+            reports/ci-receipts/*.json
+            reports/certificate-*.json
+          if-no-files-found: warn
+      - name: Upload this lane's coverage data
+        # Not sent to Codecov here. The `coverage` job below is the single
+        # deliberate combine stage: it checks the complete set of contributing
+        # lanes against the manifest before any upload, so an incomplete run
+        # cannot publish a partial coverage picture that looks like a drop.
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: coverage-source-contract
+          path: reports/coverage-source-contract.xml
+          if-no-files-found: error
+  tests-source-certificate-standalone:
+    name: Run the standalone candidate certificate (Linux, 3.14)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: prefix-dev/setup-pixi@v0.11.0
+        with:
+          pixi-version: v0.81.0
+          cache: true
+          environments: tests-cpu
+          activate-environment: true
+          frozen: true
       - name: Verify the standalone candidate certificate
         if: ${{ !cancelled() }}
         shell: bash
@@ -425,30 +470,6 @@ jobs:
           name: candidate-certificate-standalone
           path: reports/candidate-certificate/
           if-no-files-found: warn
-      - name: Upload JUnit reports and receipts
-        # `always()` so a failing run still publishes its report: the XML is how
-        # a run's counts are read back, and a run that failed is exactly when
-        # that matters.
-        if: always()
-        uses: actions/upload-artifact@v7.0.2
-        with:
-          name: junit-cpu-fp64-source-contract
-          path: |
-            reports/junit-*.xml
-            reports/ci-receipts/*.json
-            reports/certificate-*.json
-          if-no-files-found: warn
-      - name: Upload this lane's coverage data
-        # Not sent to Codecov here. The `coverage` job below is the single
-        # deliberate combine stage: it checks the complete set of contributing
-        # lanes against the manifest before any upload, so an incomplete run
-        # cannot publish a partial coverage picture that looks like a drop.
-        if: always()
-        uses: actions/upload-artifact@v7.0.2
-        with:
-          name: coverage-source-contract
-          path: reports/coverage-source-contract.xml
-          if-no-files-found: error
   # Slow non-solution tests, Linux only at both precisions (macOS and Windows
   # drop the `slow` set, see the `tests` job). Unchained from the general lanes
   # so a general shard's failure no longer hides this phase's result.
@@ -2502,6 +2523,7 @@ jobs:
       - tests
       - tests-fp32
       - tests-source-contract
+      - tests-source-certificate-standalone
       - tests-rest-slow
       - tests-certified
       - tests-timing
@@ -2530,6 +2552,7 @@ jobs:
           echo "tests: ${{needs.tests.result}}"
           echo "fp32: ${{needs.tests-fp32.result}}"
           echo "source-contract: ${{needs.tests-source-contract.result}}"
+          echo "source-certificate-standalone: ${{needs.tests-source-certificate-standalone.result}}"
           echo "rest-slow: ${{needs.tests-rest-slow.result}}"
           echo "certified: ${{needs.tests-certified.result}}"
           echo "timing: ${{needs.tests-timing.result}}"
@@ -2542,6 +2565,7 @@ jobs:
           test "${{needs.tests.result}}" = "success"
           test "${{needs.tests-fp32.result}}" = "success"
           test "${{needs.tests-source-contract.result}}" = "success"
+          test "${{needs.tests-source-certificate-standalone.result}}" = "success"
           test "${{needs.tests-rest-slow.result}}" = "success"
           test "${{needs.tests-certified.result}}" = "success"
           test "${{needs.tests-timing.result}}" = "success"

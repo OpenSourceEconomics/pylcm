@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from tests.candidate_certificate import direct_flow
+from tests.candidate_certificate.runner_replay import DirectFlowControlsReplay
 
 _ROOT = Path(__file__).parents[1]
 _EXPECTED_NAMES = frozenset(
@@ -124,14 +125,18 @@ _PROBE_DIAGNOSTIC = (
 )
 
 
-def test_final_nested_runner_keeps_a_distinct_required_population() -> None:
+@pytest.mark.xdist_group("direct_flow_runner")
+@pytest.mark.timeout(3000)
+def test_final_nested_runner_keeps_a_distinct_required_population(
+    *, direct_flow_controls: DirectFlowControlsReplay
+) -> None:
     """Every declared nested control executes without changing historical families."""
     assert callable(getattr(direct_flow, "final_nested_mutation_specs", None)), (
         "The canonical aggregate has no final nested mutation family"
     )
     specifications = direct_flow.final_nested_mutation_specs(repo_root=_ROOT)
     assert set(specifications) == _EXPECTED_NAMES
-    report = direct_flow.run_direct_flow_mutation_controls(repo_root=_ROOT)
+    report = direct_flow_controls.run(repo_root=_ROOT)
     assert report["clean"]["ok"]
     assert report["clean"]["errors"] == []
     assert report["mutation_count"] == 421
@@ -160,9 +165,14 @@ def test_final_nested_runner_keeps_a_distinct_required_population() -> None:
         )
 
 
+@pytest.mark.xdist_group("direct_flow_runner")
+@pytest.mark.timeout(3000)
 @pytest.mark.parametrize("fault", ["admitted", "omitted"])
 def test_final_nested_failure_prevents_the_actual_runner_aggregate(
-    *, fault: str, monkeypatch: pytest.MonkeyPatch
+    *,
+    fault: str,
+    monkeypatch: pytest.MonkeyPatch,
+    direct_flow_controls: DirectFlowControlsReplay,
 ) -> None:
     """An admitted or missing nested case prevents canonical aggregate acceptance."""
     assert callable(getattr(direct_flow, "final_nested_mutation_specs", None)), (
@@ -200,7 +210,7 @@ def test_final_nested_failure_prevents_the_actual_runner_aggregate(
             }
 
         monkeypatch.setattr(direct_flow, "final_nested_mutation_specs", omit_probe)
-    report = direct_flow.run_direct_flow_mutation_controls(repo_root=_ROOT)
+    report = direct_flow_controls.run(repo_root=_ROOT)
     assert report["clean"]["ok"]
     assert report["clean"]["errors"] == []
     assert report["mutation_count"] == 421

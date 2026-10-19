@@ -990,6 +990,7 @@ if TYPE_CHECKING:
         _InputDispatch,
         _ProgramExecutionMetadata,
     )
+    from tests.candidate_certificate.runner_replay import DirectFlowControlsReplay
 
 
 class ResidentInventoryKwargs(TypedDict, closed=True):
@@ -999,3 +1000,18 @@ class ResidentInventoryKwargs(TypedDict, closed=True):
     program_metadata: Mapping[_CoreTriple, _ProgramExecutionMetadata]
     device_ids: tuple[int, ...]
     fixed_bytes: NotRequired[MappingProxyType[int, int]]
+
+
+@pytest.fixture(scope="session")
+def direct_flow_controls() -> DirectFlowControlsReplay:
+    """Share direct-flow verifications across every runner call in this process.
+
+    Tests that use it carry `xdist_group("direct_flow_runner")` and the campaign
+    lane runs under `--dist loadgroup`, so the calls share one worker and only
+    the first pays for the real verifications.
+    """
+    from tests.candidate_certificate.runner_replay import (  # noqa: PLC0415
+        DirectFlowControlsReplay,
+    )
+
+    return DirectFlowControlsReplay()

@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from tests.candidate_certificate import direct_flow
+from tests.candidate_certificate.runner_replay import DirectFlowControlsReplay
 
 _ROOT = Path(__file__).parents[1]
 _EXPECTED_NAMES = frozenset(
@@ -53,10 +54,14 @@ def _assert_historical_counts(*, report: direct_flow.DirectMutationControls) -> 
     assert report["additional_helper_mutation_count"] == 48
 
 
-def test_child_native_source_controls_execute_in_the_actual_aggregate() -> None:
+@pytest.mark.xdist_group("direct_flow_runner")
+@pytest.mark.timeout(3000)
+def test_child_native_source_controls_execute_in_the_actual_aggregate(
+    *, direct_flow_controls: DirectFlowControlsReplay
+) -> None:
     """Both bodies, both surfaces and all nine declarations execute once."""
     _required_specs()
-    report = direct_flow.run_direct_flow_mutation_controls(repo_root=_ROOT)
+    report = direct_flow_controls.run(repo_root=_ROOT)
     _assert_historical_counts(report=report)
     assert report["clean"]["ok"]
     assert report["clean"]["errors"] == []
@@ -79,9 +84,14 @@ def test_child_native_source_controls_execute_in_the_actual_aggregate() -> None:
         )
 
 
+@pytest.mark.xdist_group("direct_flow_runner")
+@pytest.mark.timeout(3000)
 @pytest.mark.parametrize("fault", ["admitted", "omitted"])
 def test_an_admitted_or_missing_helper_control_prevents_aggregate_acceptance(
-    *, fault: str, monkeypatch: pytest.MonkeyPatch
+    *,
+    fault: str,
+    monkeypatch: pytest.MonkeyPatch,
+    direct_flow_controls: DirectFlowControlsReplay,
 ) -> None:
     """The genuine aggregate refuses detector or population omissions."""
     specs = _required_specs()
@@ -113,7 +123,7 @@ def test_an_admitted_or_missing_helper_control_prevents_aggregate_acceptance(
             }
 
         monkeypatch.setattr(direct_flow, "child_native_mutation_specs", omit_probe)
-    report = direct_flow.run_direct_flow_mutation_controls(repo_root=_ROOT)
+    report = direct_flow_controls.run(repo_root=_ROOT)
     _assert_historical_counts(report=report)
     assert report["clean"]["ok"]
     assert report["clean"]["errors"] == []

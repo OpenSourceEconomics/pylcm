@@ -7,7 +7,7 @@ from shutil import copyfile
 
 import pytest
 
-from tests.candidate_certificate import direct_flow
+from tests.candidate_certificate import direct_flow, runner_replay
 from tests.candidate_certificate.outer_helper_controls import (
     BODY_OWNERS,
     CONTROLS,
@@ -15,6 +15,7 @@ from tests.candidate_certificate.outer_helper_controls import (
     mutate_outer_helper,
     outer_helper_mutation_specs,
 )
+from tests.candidate_certificate.runner_replay import DirectFlowControlsReplay
 
 _ROOT = Path(__file__).parents[1]
 
@@ -122,9 +123,13 @@ def test_outer_helper_mutation_requires_its_non_seal_owner_error(
     )
 
 
-def test_outer_helper_runner_keeps_the_new_population_separate_and_required() -> None:
+@pytest.mark.xdist_group("direct_flow_runner")
+@pytest.mark.timeout(3000)
+def test_outer_helper_runner_keeps_the_new_population_separate_and_required(
+    *, direct_flow_controls: DirectFlowControlsReplay
+) -> None:
     """All forty named controls run without changing any original mutation family."""
-    report = direct_flow.run_direct_flow_mutation_controls(repo_root=_ROOT)
+    report = direct_flow_controls.run(repo_root=_ROOT)
     assert "outer_helper_mutations" in report, (
         "The canonical runner omits the outer-helper population"
     )
@@ -227,9 +232,14 @@ def test_outer_helper_rejection_requires_every_scoped_failure_condition(
     ) is (fault == "none")
 
 
+@pytest.mark.xdist_group("direct_flow_runner")
+@pytest.mark.timeout(3000)
 @pytest.mark.parametrize("fault", ["admitted", "omitted"])
 def test_outer_helper_failure_prevents_the_actual_runner_aggregate(
-    *, fault: str, monkeypatch: pytest.MonkeyPatch
+    *,
+    fault: str,
+    monkeypatch: pytest.MonkeyPatch,
+    direct_flow_controls: DirectFlowControlsReplay,
 ) -> None:
     """An admitted or missing helper prevents aggregate all-rejected acceptance."""
     name = "outer_helpers:golden:nan_not_sanitized"
@@ -259,7 +269,7 @@ def test_outer_helper_failure_prevents_the_actual_runner_aggregate(
             }
 
         monkeypatch.setattr(direct_flow, "outer_helper_mutation_specs", omit_probe)
-    report = direct_flow.run_direct_flow_mutation_controls(repo_root=_ROOT)
+    report = direct_flow_controls.run(repo_root=_ROOT)
     assert report["clean"]["ok"]
     assert report["clean"]["errors"] == []
     assert report["mutation_count"] == 421
@@ -271,3 +281,61 @@ def test_outer_helper_failure_prevents_the_actual_runner_aggregate(
     else:
         assert name not in report["outer_helper_mutations"]
         assert not report["outer_helper_names_match_expected"]
+
+
+@pytest.mark.parametrize("change", ["none", "source_byte", "source_seal"])
+def test_direct_flow_replay_key_moves_with_every_verifier_input(
+    *,
+    change: str,
+    direct_flow_controls: DirectFlowControlsReplay,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A replayed verdict is reused only for byte- and seal-identical trees."""
+    for relative in direct_flow._CERTIFIED_CORRIDOR_SOURCES:
+        target = tmp_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        copyfile(_ROOT / relative, target)
+    baseline = direct_flow_controls.key(repo_root=_ROOT)
+    relative = direct_flow._CERTIFIED_CORRIDOR_SOURCES[0]
+    if change == "source_byte":
+        target = tmp_path / relative
+        target.write_bytes(target.read_bytes() + b"\n")
+    elif change == "source_seal":
+        monkeypatch.setitem(direct_flow._SOURCE_SEALS, relative, "0" * 64)
+    assert (direct_flow_controls.key(repo_root=tmp_path) == baseline) is (
+        change == "none"
+    )
+
+
+def test_direct_flow_replay_pool_reproduces_the_serial_verdict(
+    *, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pool process verifying a recorded tree returns the serial verdict."""
+    name = "outer_helpers:golden:nan_not_sanitized"
+    spec = outer_helper_mutation_specs(repo_root=_ROOT)[name]
+    relative = spec["path"]
+    originals = {
+        source: (_ROOT / source).read_bytes()
+        for source in direct_flow._CERTIFIED_CORRIDOR_SOURCES
+    }
+    serial_root = tmp_path / "serial"
+    for source, content in originals.items():
+        target = serial_root / source
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+    mutated = spec["source"].encode("utf-8")
+    (serial_root / relative).write_bytes(mutated)
+    monkeypatch.setitem(
+        direct_flow._SOURCE_SEALS, relative, hashlib.sha256(mutated).hexdigest()
+    )
+    serial = direct_flow.verify_direct_candidate_flow(repo_root=serial_root)
+    assert not serial["ok"], "the specimen must be a rejected mutation"
+    monkeypatch.setattr(runner_replay, "_WORKER_ROOT", None)
+    monkeypatch.setattr(runner_replay, "_WORKER_ORIGINALS", {})
+    (tmp_path / "pool").mkdir()
+    runner_replay._start_worker(originals=originals, base=tmp_path / "pool")
+    pooled = runner_replay._verify_recorded_tree(
+        ({relative: mutated}, tuple(sorted(direct_flow._SOURCE_SEALS.items())))
+    )
+    assert pooled == serial
