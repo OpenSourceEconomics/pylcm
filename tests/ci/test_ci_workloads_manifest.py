@@ -147,7 +147,77 @@ def test_general_shard_files_partition_the_general_universe_exactly():
             assert files, f"empty shard {index} of {leg}"
             assert union.isdisjoint(files), f"file in two shards of {leg}"
             union |= files
-        assert union == universe, f"{leg} shards do not cover the general universe"
+        assert union == set(ci_workloads.general_leg_universe(leg=leg)), (
+            f"{leg} shards do not cover the leg's general universe"
+        )
+
+
+def test_linux_only_files_are_general_universe_files():
+    """A Linux-only entry narrows the general universe; it never adds to it."""
+    linux_only = set(ci_workloads.linux_only_files())
+    assert linux_only <= set(ci_workloads.general_shard_universe())
+
+
+def test_linux_only_files_run_on_every_linux_general_leg():
+    """Restricting a file to Linux keeps it running, on each Linux leg."""
+    linux_only = set(ci_workloads.linux_only_files())
+    for leg, cfg in ci_workloads.shard_layout()["general"].items():
+        if not leg.endswith("-linux"):
+            continue
+        selected = {
+            file_
+            for index in range(1, cfg["shards"] + 1)
+            for file_ in ci_workloads.files_for(
+                invocation_id=f"general-shard-{index}-{leg}"
+            )
+        }
+        assert linux_only <= selected, f"{leg} drops {sorted(linux_only - selected)}"
+
+
+def test_no_macos_or_windows_general_shard_selects_a_linux_only_file():
+    """No macOS or Windows general shard runs a file restricted to Linux.
+
+    Lanes that select explicit node ids -- the per-OS timing witnesses -- choose
+    their tests by hand for what they measure on that OS and are not narrowed.
+    """
+    linux_only = set(ci_workloads.linux_only_files())
+    offenders = {
+        inv["id"]: sorted(linux_only & set(inv["files"]))
+        for inv in ci_workloads.invocations()
+        if inv["id"].startswith("general-shard-")
+        and inv["environment"]["runner_os"] != "Linux"
+        and linux_only & set(inv["files"])
+    }
+    assert not offenders, offenders
+
+
+@pytest.mark.parametrize(
+    ("leg", "expected"),
+    [
+        ("fp64-linux", ("tests/test_a.py", "tests/test_b.py")),
+        ("fp64-windows", ("tests/test_a.py",)),
+        ("fp64-macos", ("tests/test_a.py",)),
+    ],
+)
+def test_general_leg_universe_drops_linux_only_files_off_linux(
+    *, leg: str, expected: tuple[str, ...], tmp_path: Path
+):
+    manifest = tmp_path / "ci-workloads.json"
+    manifest.write_text(
+        '{"general_shard_universe": ["tests/test_a.py", "tests/test_b.py"],'
+        ' "linux_only_files": ["tests/test_b.py"]}',
+        encoding="utf-8",
+    )
+    assert ci_workloads.general_leg_universe(leg=leg, path=manifest) == expected
+
+
+def test_general_leg_universe_refuses_a_leg_without_an_os(*, tmp_path: Path):
+    manifest = tmp_path / "ci-workloads.json"
+    manifest.write_text(
+        '{"general_shard_universe": [], "linux_only_files": []}', encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match="fp64-solaris"):
+        ci_workloads.general_leg_universe(leg="fp64-solaris", path=manifest)
 
 
 def test_the_shard_assignment_is_reproduced_by_the_sharder():

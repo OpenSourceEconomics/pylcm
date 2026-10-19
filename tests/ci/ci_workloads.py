@@ -124,6 +124,7 @@ class WorkloadManifest(TypedDict):
     shard_layout: dict[str, dict[str, _ShardConfig]]
     coverage_contributors: list[str]
     general_shard_universe: list[str]
+    linux_only_files: list[str]
     per_test_ceiling_backlog: list[_CeilingBacklog]
     invocations: list[Invocation]
     file_weights: dict[str, _FileWeight]
@@ -258,6 +259,31 @@ def general_shard_universe(*, path: Path = MANIFEST_PATH) -> tuple[str, ...]:
     return tuple(load_manifest(path=path)["general_shard_universe"])
 
 
+def linux_only_files(*, path: Path = MANIFEST_PATH) -> tuple[str, ...]:
+    """Return general-universe files that only the Linux general legs run.
+
+    A file belongs here when nothing in it is expected to behave differently on
+    macOS or Windows -- numerics, certificates, kernels -- so the platform legs
+    spend their minutes on paths, I/O, processes and platform dependencies.
+    """
+    return tuple(load_manifest(path=path).get("linux_only_files", ()))
+
+
+def general_leg_universe(*, leg: str, path: Path = MANIFEST_PATH) -> tuple[str, ...]:
+    """Return the general files one leg shards over.
+
+    The OS is the leg name's suffix (`fp64-windows`): Linux legs shard the whole
+    general universe, macOS and Windows legs shard it without `linux_only_files`.
+    """
+    universe = general_shard_universe(path=path)
+    if leg.endswith("-linux"):
+        return universe
+    if not leg.endswith(("-macos", "-windows")):
+        raise ValueError(f"general leg {leg!r} names no known OS")
+    linux_only = set(linux_only_files(path=path))
+    return tuple(file_ for file_ in universe if file_ not in linux_only)
+
+
 def coverage_contributors(*, path: Path = MANIFEST_PATH) -> tuple[str, ...]:
     """Return the artifact name of every lane that contributes to coverage."""
     return tuple(load_manifest(path=path)["coverage_contributors"])
@@ -283,6 +309,7 @@ __all__: Sequence[str] = (
     "excluded_files",
     "file_weight_seconds",
     "files_for",
+    "general_leg_universe",
     "general_shard_universe",
     "guardrails",
     "invocation_by_id",
@@ -291,6 +318,7 @@ __all__: Sequence[str] = (
     "lane_summary",
     "leg_names",
     "leg_weights",
+    "linux_only_files",
     "load_manifest",
     "node_ids",
     "shard_layout",

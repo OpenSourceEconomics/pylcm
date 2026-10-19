@@ -24,7 +24,9 @@ jobs:
   # time from `PYLCM_CI_GENERAL_*`. Passing the split through the environment
   # rather than as several hundred paths keeps the Windows command line bounded
   # and leaves `ignore_implicit_eight_device_collection` -- whose exclusion is
-  # keyed on a file NOT being named -- working unchanged.
+  # keyed on a file NOT being named -- working unchanged. The macOS and
+  # Windows legs shard the universe without the manifest's `linux_only_files`:
+  # files with nothing OS-dependent in them run on the Linux legs only.
   tests:
     name: >-
       Run general tests for ${{ matrix.os }} on ${{ matrix.python-version }}
@@ -60,42 +62,12 @@ jobs:
             python-version: '3.14'
             leg: fp64-macos
             shard: 1
-            shards: 4
-          - os: macos-latest
-            python-version: '3.14'
-            leg: fp64-macos
-            shard: 2
-            shards: 4
-          - os: macos-latest
-            python-version: '3.14'
-            leg: fp64-macos
-            shard: 3
-            shards: 4
-          - os: macos-latest
-            python-version: '3.14'
-            leg: fp64-macos
-            shard: 4
-            shards: 4
+            shards: 1
           - os: windows-latest
             python-version: '3.14'
             leg: fp64-windows
             shard: 1
-            shards: 4
-          - os: windows-latest
-            python-version: '3.14'
-            leg: fp64-windows
-            shard: 2
-            shards: 4
-          - os: windows-latest
-            python-version: '3.14'
-            leg: fp64-windows
-            shard: 3
-            shards: 4
-          - os: windows-latest
-            python-version: '3.14'
-            leg: fp64-windows
-            shard: 4
-            shards: 4
+            shards: 1
     env:
       PYLCM_CI_RECEIPT: reports/ci-receipts
       PYLCM_CI_GENERAL_LEG: ${{ matrix.leg }}

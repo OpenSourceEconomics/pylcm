@@ -150,7 +150,7 @@ def general_shard_files(*, leg: str, n_shards: int, shard: int) -> tuple[str, ..
     if not 1 <= shard <= n_shards:
         raise ValueError("shard must be between 1 and n_shards")
     groups = assign_weighted_test_files(
-        files=general_shard_universe(),
+        files=ci_workloads.general_leg_universe(leg=leg),
         n_shards=n_shards,
         weights=leg_weights(leg=leg),
     )

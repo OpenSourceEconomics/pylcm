@@ -14,14 +14,17 @@ What it changes, and nothing else:
 - every file some invocation selects that has neither a weight nor an
   unweighted entry is added to `unweighted_files`;
 - the `files` list of every `general-shard-<n>-<leg>` invocation is recomputed
-  from that universe with the manifest's own weighted partition, so the
-  recorded split is the one CI computes at run time;
+  from that universe -- without `linux_only_files` on the macOS and Windows
+  legs -- with the manifest's own weighted partition, so the recorded split is
+  the one CI computes at run time, and its `predicted_payload_minutes` is
+  recomputed from the same partition;
 - the `files` list of every `solution-shard-<n>-fp<p>-linux` invocation is
   recomputed the way `cpu.yml` selects it at run time
   (`shard_test_files tests/solution --weights-leg fp<p>-solution`): a new
   solution file joins one shard, and the weighted partition may move others.
 
 What it leaves alone: `frozen_head`, the observed weights, the exclusion list,
+`linux_only_files`,
 the guardrail budgets, the shard *counts*, and every other lane.
 `frozen_head` binds the root cross-leg CSV weights; per-leg `junit_source`
 records each leg's measurement provenance. Registering files or refreshing one
@@ -41,7 +44,11 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from tests.ci import ci_workloads
-from tests.ci.shard_test_files import assign_weighted_test_files, general_shard_files
+from tests.ci.shard_test_files import (
+    assign_weighted_test_files,
+    general_shard_files,
+    weighted_shard_report,
+)
 
 MANIFEST_PATH = Path(__file__).with_name("ci-workloads.json")
 _INDENT = 1
@@ -93,14 +100,24 @@ def regenerate(
             file_: float(seconds)
             for file_, seconds in updated["leg_weights"][leg]["seconds"].items()
         }
-        groups = assign_weighted_test_files(
-            files=universe, n_shards=config["shards"], weights=weights
+        linux_only = set(updated.get("linux_only_files", ()))
+        leg_universe = (
+            universe
+            if leg.endswith("-linux")
+            else tuple(file_ for file_ in universe if file_ not in linux_only)
         )
-        for index, group in enumerate(groups, start=1):
+        reports = weighted_shard_report(
+            files=leg_universe, n_shards=config["shards"], weights=weights
+        )
+        for index, report in enumerate(reports, start=1):
+            group = report.files
             invocation_id = f"general-shard-{index}-{leg}"
             if invocation_id not in by_id:
                 raise KeyError(f"{invocation_id} is not a recorded invocation")
             by_id[invocation_id]["files"] = sorted(group)
+            by_id[invocation_id]["predicted_payload_minutes"] = round(
+                report.payload_minutes(workers=config["workers"]), 2
+            )
     solution_files = tuple(
         path.relative_to(repo_root).as_posix()
         for path in (repo_root / "tests/solution").rglob("test_*.py")
