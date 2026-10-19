@@ -104,8 +104,8 @@ def test_parent_values_the_reconstructed_action_through_its_nonlinear_law(
         regimes={
             "saving": ConsumptionSavingsRegime(
                 liquid=margin,
-                states={"wealth": IrregSpacedGrid(points=(2.5, 3.0))},
-                actions={"consumption": IrregSpacedGrid(points=(0.5, 1.0))},
+                states={"wealth": IrregSpacedGrid(points=np.array([2.5, 3.0]))},
+                actions={"consumption": IrregSpacedGrid(points=np.array([0.5, 1.0]))},
                 functions={
                     "utility": utility,
                     "inverse_marginal_utility": inverse_marginal_utility,
@@ -117,10 +117,10 @@ def test_parent_values_the_reconstructed_action_through_its_nonlinear_law(
                         margin=margin, lower=0.0 if literal else lower
                     )
                 },
-                solver=EGM(savings_grid=IrregSpacedGrid(points=(0.0, 2.0))),
+                solver=EGM(savings_grid=IrregSpacedGrid(points=np.array([0.0, 2.0]))),
             ),
             "done": Regime(
-                states={"wealth": IrregSpacedGrid(points=(1.0, 2.0, 7.0))},
+                states={"wealth": IrregSpacedGrid(points=np.array([1.0, 2.0, 7.0]))},
                 functions={"utility": terminal_utility},
             ),
         },

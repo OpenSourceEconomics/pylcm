@@ -88,7 +88,9 @@ AIME_GRID = LinSpacedGrid(start=0.0, stop=AIME_MAX, n_points=6)
 # below the comparison tolerance; unlike the state grids above, this one
 # cannot shrink without reintroducing that oracle-side bias.
 CONSUMPTION_GRID = LinSpacedGrid(start=0.25, stop=120.0, n_points=600)
-SAVINGS_GRID = IrregSpacedGrid(points=tuple(100.0 * (i / 59) ** 3 for i in range(60)))
+SAVINGS_GRID = IrregSpacedGrid(
+    points=np.array(tuple(100.0 * (i / 59) ** 3 for i in range(60)))
+)
 
 N_BRUTE_UNSTABLE_NODES = 8
 

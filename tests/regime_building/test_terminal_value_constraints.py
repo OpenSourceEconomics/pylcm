@@ -38,7 +38,7 @@ from lcm.typing import (
     UserParamsNode,
 )
 
-_WAGE = IrregSpacedGrid(points=(1.0, 2.0, 3.0))
+_WAGE = IrregSpacedGrid(points=np.array([1.0, 2.0, 3.0]))
 
 
 @categorical(ordered=False)

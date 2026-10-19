@@ -692,7 +692,9 @@ def _fold_model() -> Model:
                 n_points=3, mu=0.0, sigma=0.25, gauss_hermite=True, fold=True
             ),
         },
-        actions={"consumption": IrregSpacedGrid(points=(-1.0, 0.0, 1.0, 2.0, 3.0))},
+        actions={
+            "consumption": IrregSpacedGrid(points=np.array([-1.0, 0.0, 1.0, 2.0, 3.0]))
+        },
         state_transitions={
             "wealth": AdditiveShockTransition(
                 base="before_bill", shock="negative_cost"

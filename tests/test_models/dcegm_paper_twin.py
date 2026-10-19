@@ -24,6 +24,7 @@ import functools
 from typing import Literal
 
 import jax.numpy as jnp
+import numpy as np
 
 from _lcm.grids import ContinuousGrid
 from lcm import (
@@ -66,7 +67,7 @@ _FLOOR_WEALTH_POINTS = tuple(0.001 * (0.5 / 0.001) ** (i / 120) for i in range(1
 _MID_WEALTH_POINTS = tuple(0.5 + 0.05 * i for i in range(90))
 _TOP_WEALTH_POINTS = tuple(5.0 + 0.25 * i for i in range(181))
 WEALTH_GRID = IrregSpacedGrid(
-    points=_FLOOR_WEALTH_POINTS + _MID_WEALTH_POINTS + _TOP_WEALTH_POINTS
+    points=np.array(_FLOOR_WEALTH_POINTS + _MID_WEALTH_POINTS + _TOP_WEALTH_POINTS)
 )
 # Log spacing resolves the small optimal consumption of poor retirees; the
 # lower end matches the consumption floor so the lowest wealth node keeps a

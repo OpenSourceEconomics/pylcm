@@ -1119,7 +1119,9 @@ def test_tauchen_on_nodes_matches_integrated_normal(*, rho: float, mu: float) ->
     """Physical node bins integrate the conditional normal, including unit roots."""
     nodes = (-1.4, -0.3, 0.2, 1.1)
     sigma = 0.6
-    process = TauchenAR1Process.on_nodes(nodes=nodes, rho=rho, sigma=sigma, mu=mu)
+    process = TauchenAR1Process.on_nodes(
+        nodes=np.array(nodes), rho=rho, sigma=sigma, mu=mu
+    )
     boundaries = [
         -np.inf,
         *[(a + b) / 2 for a, b in pairwise(nodes)],
@@ -1161,7 +1163,10 @@ def test_tauchen_on_default_nodes_matches_stationary_process(
         mu=0.3,
     )
     process = TauchenAR1Process.on_nodes(
-        nodes=tuple(float(x) for x in ordinary.to_jax()), rho=0.6, sigma=0.4, mu=0.3
+        nodes=np.array(tuple(float(x) for x in ordinary.to_jax())),
+        rho=0.6,
+        sigma=0.4,
+        mu=0.3,
     )
     aaae(
         process.get_transition_probs(),
@@ -1177,21 +1182,46 @@ def test_tauchen_on_default_nodes_matches_stationary_process(
 def test_tauchen_on_nodes_rejects_invalid_grid(nodes: tuple[float, ...]) -> None:
     """Supplied nodes require a finite strictly increasing interpolation axis."""
     with pytest.raises(GridInitializationError, match="nodes"):
+        TauchenAR1Process.on_nodes(nodes=np.array(nodes), rho=1.0, sigma=0.3)
+
+
+@pytest.mark.parametrize(
+    ("nodes", "type_name"),
+    [
+        pytest.param([-1.0, 0.0, 1.0], "list", id="list"),
+        pytest.param((-1.0, 0.0, 1.0), "tuple", id="tuple"),
+    ],
+)
+def test_tauchen_on_nodes_refuses_a_non_array_container(*, nodes, type_name) -> None:
+    """`nodes` is a NumPy or JAX array; the error names the type and the spelling."""
+    with pytest.raises(
+        GridInitializationError,
+        match=rf"got {type_name}.*on_nodes\(nodes=jnp\.array\(",
+    ):
         TauchenAR1Process.on_nodes(nodes=nodes, rho=1.0, sigma=0.3)
 
 
-# The public type check samples one entry per call, so each input is refused
-# many times to catch a call that accepts it or names the private class.
-@pytest.mark.parametrize("nodes", [(-1.0, "0.0", 1.0), (-1.0, None, 1.0)])
-def test_tauchen_on_nodes_refuses_non_numeric_nodes_on_every_call(nodes) -> None:
-    for _ in range(30):
-        with pytest.raises(GridInitializationError, match="on_nodes"):
-            TauchenAR1Process.on_nodes(nodes=nodes, rho=1.0, sigma=0.3)
+@pytest.mark.parametrize(
+    "nodes",
+    [np.array(["-1.0", "0.0", "1.0"]), np.array([-1.0, None, 1.0], dtype=object)],
+)
+def test_tauchen_on_nodes_refuses_a_non_numeric_array(nodes) -> None:
+    """An array of nodes must have an integer or floating dtype."""
+    with pytest.raises(GridInitializationError, match="integer or floating dtype"):
+        TauchenAR1Process.on_nodes(nodes=nodes, rho=1.0, sigma=0.3)
+
+
+def test_tauchen_on_nodes_accepts_a_jax_array() -> None:
+    """A JAX array of nodes gives the same physical axis as a NumPy array."""
+    process = TauchenAR1Process.on_nodes(
+        nodes=jnp.array([-1.0, 0.0, 2.0]), rho=1.0, sigma=0.3
+    )
+    np.testing.assert_array_equal(process.to_jax(), jnp.asarray([-1.0, 0.0, 2.0]))
 
 
 def test_tauchen_on_nodes_runtime_parameters_keep_fixed_coordinates() -> None:
     """Runtime law parameters leave the supplied physical grid observable."""
-    process = TauchenAR1Process.on_nodes(nodes=(-1.0, 0.0, 2.0))
+    process = TauchenAR1Process.on_nodes(nodes=np.array([-1.0, 0.0, 2.0]))
     assert process.params_to_pass_at_runtime == ("rho", "sigma")
     np.testing.assert_array_equal(process.to_jax(), jnp.asarray([-1.0, 0.0, 2.0]))
     aaae(
@@ -1225,7 +1255,9 @@ def test_tauchen_on_nodes_unit_root_native_solve_and_simulate(
 
     nodes = (-2.0, -0.5, 0.0, 0.8, 2.0)
     process = TauchenAR1Process.on_nodes(
-        nodes=nodes, rho=None if runtime else 1.0, sigma=None if runtime else 0.1
+        nodes=np.array(nodes),
+        rho=None if runtime else 1.0,
+        sigma=None if runtime else 0.1,
     )
     model = Model(
         regimes={
@@ -1283,8 +1315,10 @@ def test_tauchen_on_nodes_unit_root_native_solve_and_simulate(
 def test_tauchen_on_nodes_integer_parameters_match_float_parameters(rho: float) -> None:
     """Canonical integer scalars preserve the physical conditional law."""
     nodes = (-1.0, 0.0, 2.0)
-    actual = TauchenAR1Process.on_nodes(nodes=nodes, rho=rho, sigma=1, mu=0)
-    expected = TauchenAR1Process.on_nodes(nodes=nodes, rho=1.0, sigma=1.0, mu=0.0)
+    actual = TauchenAR1Process.on_nodes(nodes=np.array(nodes), rho=rho, sigma=1, mu=0)
+    expected = TauchenAR1Process.on_nodes(
+        nodes=np.array(nodes), rho=1.0, sigma=1.0, mu=0.0
+    )
     aaae(
         actual.get_transition_probs(),
         expected.get_transition_probs(),
@@ -1296,20 +1330,22 @@ def test_tauchen_on_nodes_integer_parameters_match_float_parameters(rho: float) 
 def test_tauchen_on_nodes_rejects_nonfinite_persistence(rho: float) -> None:
     """Given nodes remove the stationary-grid restriction, not a finite-law boundary."""
     with pytest.raises(GridInitializationError, match="rho must be finite"):
-        TauchenAR1Process.on_nodes(nodes=(-1.0, 1.0), rho=rho, sigma=0.1)
+        TauchenAR1Process.on_nodes(nodes=np.array([-1.0, 1.0]), rho=rho, sigma=0.1)
 
 
 def test_tauchen_on_nodes_validates_active_precision() -> None:
     """Nodes that collapse at the working precision cannot be interpolated."""
     epsilon = float(np.finfo(np.float64 if X64_ENABLED else np.float32).eps)
     with pytest.raises(GridInitializationError, match="active precision"):
-        TauchenAR1Process.on_nodes(nodes=(1.0, 1.0 + epsilon / 4), rho=1.0, sigma=0.1)
+        TauchenAR1Process.on_nodes(
+            nodes=np.array([1.0, 1.0 + epsilon / 4]), rho=1.0, sigma=0.1
+        )
 
 
 def test_tauchen_on_nodes_scale_derivative_matches_normal_bins() -> None:
     """Runtime innovation-scale derivatives follow the analytic normal-bin law."""
     nodes = (-1.4, -0.3, 0.2, 1.1)
-    process = TauchenAR1Process.on_nodes(nodes=nodes)
+    process = TauchenAR1Process.on_nodes(nodes=np.array(nodes))
     rho, mu, sigma = 1.0, 0.3, 0.4
 
     def matrix(scale: ScalarFloat) -> FloatND:
@@ -1335,7 +1371,7 @@ def test_tauchen_on_nodes_scale_derivative_matches_normal_bins() -> None:
 def test_tauchen_on_nodes_batched_runtime_scale_matches_normal_bins() -> None:
     """Batched runtime scales preserve independently integrated physical-bin rows."""
     nodes = (-1.4, -0.3, 0.2, 1.1)
-    process = TauchenAR1Process.on_nodes(nodes=nodes)
+    process = TauchenAR1Process.on_nodes(nodes=np.array(nodes))
 
     def matrix(scale: ScalarFloat) -> FloatND:
         return process.compute_transition_probs(
@@ -1433,9 +1469,11 @@ def _on_nodes_matrix(
     """Evaluate the supplied-node matrix with a fixed or fully runtime law."""
     if route == "fixed":
         return TauchenAR1Process.on_nodes(
-            nodes=nodes, rho=rho, mu=mu, sigma=sigma
+            nodes=np.array(nodes), rho=rho, mu=mu, sigma=sigma
         ).get_transition_probs()
-    process = TauchenAR1Process.on_nodes(nodes=nodes, rho=None, mu=None, sigma=None)
+    process = TauchenAR1Process.on_nodes(
+        nodes=np.array(nodes), rho=None, mu=None, sigma=None
+    )
     evaluate = (
         jit(process.compute_transition_probs)
         if route == "runtime_jit"
@@ -1487,7 +1525,7 @@ def test_tauchen_on_nodes_with_overflowing_endpoint_sum_split_at_midpoint(
 def test_tauchen_on_adjacent_nodes_batched_scales_match_exact_bins() -> None:
     """Every vmapped scale integrates over the same exactly centred midpoint."""
     nodes, step = _adjacent_nodes(sign=1.0, offset_exponent=0)
-    process = TauchenAR1Process.on_nodes(nodes=nodes)
+    process = TauchenAR1Process.on_nodes(nodes=np.array(nodes))
     scales = (step / 4, step / 2, step)
 
     def matrix(scale: ScalarFloat) -> FloatND:
@@ -1510,7 +1548,7 @@ def test_tauchen_on_adjacent_nodes_scale_derivative_matches_exact_bins(
 ) -> None:
     """The derivative in the scale in cell widths uses the centred half-cell."""
     nodes, step = _adjacent_nodes(sign=sign, offset_exponent=0)
-    process = TauchenAR1Process.on_nodes(nodes=nodes)
+    process = TauchenAR1Process.on_nodes(nodes=np.array(nodes))
     ratio = 0.25
 
     def matrix(scale_in_steps: ScalarFloat) -> FloatND:
@@ -1538,7 +1576,7 @@ def test_tauchen_on_adjacent_nodes_preserve_a_finite_margin_choice() -> None:
     """A certain payoff of 1/4 beats the lottery paying one at the upper node."""
     nodes, step = _adjacent_nodes(sign=1.0, offset_exponent=0)
     upper_mass = TauchenAR1Process.on_nodes(
-        nodes=nodes, rho=1.0, mu=0.0, sigma=step / 4
+        nodes=np.array(nodes), rho=1.0, mu=0.0, sigma=step / 4
     ).get_transition_probs()[0, 1]
     assert int(np.argmax([0.25, float(upper_mass)])) == 0
 
@@ -1576,7 +1614,9 @@ def test_tauchen_on_adjacent_nodes_two_period_value_uses_exact_bins(
     nodes, step = _adjacent_nodes(sign=1.0, offset_exponent=0)
     sigma = step / 4
     process = TauchenAR1Process.on_nodes(
-        nodes=nodes, rho=None if runtime else 1.0, sigma=None if runtime else sigma
+        nodes=np.array(nodes),
+        rho=None if runtime else 1.0,
+        sigma=None if runtime else sigma,
     )
 
     def no_current_payoff(income: ContinuousState) -> FloatND:

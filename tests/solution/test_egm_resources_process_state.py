@@ -59,7 +59,9 @@ class ProcessResourcesRegimeId:
 
 WEALTH_GRID = LinSpacedGrid(start=1.0, stop=60.0, n_points=120)
 CONSUMPTION_GRID = LinSpacedGrid(start=0.25, stop=60.0, n_points=600)
-SAVINGS_GRID = IrregSpacedGrid(points=tuple(60.0 * (i / 119) ** 3 for i in range(120)))
+SAVINGS_GRID = IrregSpacedGrid(
+    points=np.array(tuple(60.0 * (i / 119) ** 3 for i in range(120)))
+)
 
 # The head-to-head lives on the wealth interior, where both solvers are
 # well-defined. Below `N_BRUTE_LOW_NODES` the coarse consumption grid makes the

@@ -443,24 +443,24 @@ def test_irreg_spaced_grid_rejects_points_that_round_to_one_node() -> None:
     """Distinct integers past the float mantissa round to one stored node."""
     lower = 2 ** (np.finfo(_canonical_float()).nmant + 1)
     with pytest.raises(GridInitializationError, match="strictly ascending"):
-        IrregSpacedGrid(points=(lower, lower + 1))
+        IrregSpacedGrid(points=np.array([lower, lower + 1]))
 
 
 def test_irreg_spaced_grid_keeps_adjacent_representable_points() -> None:
     dtype = _canonical_float()
     upper = np.nextafter(dtype(1.0), dtype(np.inf))
-    grid = IrregSpacedGrid(points=(1.0, float(upper)))
+    grid = IrregSpacedGrid(points=np.array([1.0, float(upper)]))
     np.testing.assert_array_equal(grid.get_coordinate(grid.to_jax()), [0.0, 1.0])
 
 
 def test_irreg_spaced_grid_rejects_nan_points():
     with pytest.raises(GridInitializationError, match="must be finite"):
-        IrregSpacedGrid(points=(1.0, float("nan"), 3.0))
+        IrregSpacedGrid(points=np.array([1.0, float("nan"), 3.0]))
 
 
 def test_irreg_spaced_grid_rejects_inf_points():
     with pytest.raises(GridInitializationError, match="must be finite"):
-        IrregSpacedGrid(points=(1.0, 2.0, float("inf")))
+        IrregSpacedGrid(points=np.array([1.0, 2.0, float("inf")]))
 
 
 def test_replace_mixin():
@@ -472,24 +472,24 @@ def test_replace_mixin():
 
 
 def test_irreg_spaced_grid_creation():
-    grid = IrregSpacedGrid(points=(1.0, 2.0, 5.0, 10.0))
+    grid = IrregSpacedGrid(points=np.array([1.0, 2.0, 5.0, 10.0]))
     assert np.allclose(grid.to_jax(), np.array([1.0, 2.0, 5.0, 10.0]))
     assert grid.n_points == 4
 
 
 def test_irreg_spaced_grid_invalid_too_few_points():
     with pytest.raises(GridInitializationError, match="at least 2 elements"):
-        IrregSpacedGrid(points=(1.0,))
+        IrregSpacedGrid(points=np.array([1.0]))
 
 
 def test_irreg_spaced_grid_invalid_non_numeric():
     with pytest.raises(GridInitializationError, match="points"):
-        IrregSpacedGrid(points=(1.0, "a", 3.0))  # ty: ignore[invalid-argument-type]
+        IrregSpacedGrid(points=np.array([1.0, "a", 3.0]))
 
 
 def test_irreg_spaced_grid_invalid_not_ascending():
     with pytest.raises(GridInitializationError, match="strictly ascending order"):
-        IrregSpacedGrid(points=(1.0, 3.0, 2.0))
+        IrregSpacedGrid(points=np.array([1.0, 3.0, 2.0]))
 
 
 def _create_equivalent_grid(
@@ -497,7 +497,9 @@ def _create_equivalent_grid(
 ) -> IrregSpacedGrid | PiecewiseLinSpacedGrid:
     """Create a grid equivalent to the given LinSpacedGrid."""
     if grid_type == "IrregSpacedGrid":
-        return IrregSpacedGrid(points=tuple(float(x) for x in lin_grid.to_jax()))
+        return IrregSpacedGrid(
+            points=np.array(tuple(float(x) for x in lin_grid.to_jax()))
+        )
     if grid_type == "PiecewiseLinSpacedGrid":
         return PiecewiseLinSpacedGrid(
             start=lin_grid.start,
@@ -573,7 +575,7 @@ def test_log_spaced_grid_get_coordinate_with_array():
 
 
 def test_irreg_spaced_grid_get_coordinate_with_array():
-    grid = IrregSpacedGrid(points=[0.0, 1.0, 3.0, 6.0])
+    grid = IrregSpacedGrid(points=np.array([0.0, 1.0, 3.0, 6.0]))
     values = jnp.array([0.5, 3.0, 4.5])
     coords = grid.get_coordinate(values)
     expected = jnp.array([0.5, 2.0, 2.5])
@@ -637,7 +639,10 @@ def test_discrete_grid_has_no_execution_properties():
             id="LogSpacedGrid",
         ),
         pytest.param(
-            lambda: IrregSpacedGrid(points=[1.0, 2.0, 3.0, 4.0], distributed=True),  # ty: ignore[unknown-argument]
+            lambda: IrregSpacedGrid(
+                points=np.array([1.0, 2.0, 3.0, 4.0]),
+                distributed=True,  # ty: ignore[unknown-argument]
+            ),
             id="IrregSpacedGrid",
         ),
         pytest.param(
@@ -1518,3 +1523,34 @@ def test_integer_differential_detects_each_broken_classifier(*, monkeypatch, mut
         test_integer_value_grid_encodes_every_integer_dtype_like_python_integers(
             grid_name="mixed_boundaries", dtype=np.uint32
         )
+
+
+@pytest.mark.parametrize(
+    ("points", "type_name"),
+    [
+        pytest.param([0.0, 1.0, 3.0], "list", id="list"),
+        pytest.param((0.0, 1.0, 3.0), "tuple", id="tuple"),
+        pytest.param(range(3), "range", id="range"),
+    ],
+)
+def test_irreg_spaced_grid_refuses_a_non_array_container(*, points, type_name):
+    """`points` is a NumPy or JAX array; the error names the type and the spelling."""
+    with pytest.raises(
+        GridInitializationError,
+        match=rf"got {type_name}.*IrregSpacedGrid\(points=jnp\.array\(",
+    ):
+        IrregSpacedGrid(points=points)
+
+
+@pytest.mark.parametrize(
+    "points",
+    [
+        pytest.param(np.array(["a", "b"]), id="string"),
+        pytest.param(np.array([True, False]), id="bool"),
+        pytest.param(np.zeros((2, 2)), id="2d"),
+    ],
+)
+def test_irreg_spaced_grid_refuses_a_non_numeric_or_multidimensional_array(points):
+    """An array must be one-dimensional with an integer or floating dtype."""
+    with pytest.raises(GridInitializationError, match="points"):
+        IrregSpacedGrid(points=points)

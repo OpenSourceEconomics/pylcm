@@ -166,7 +166,7 @@ def _model(
         else _next_wealth
     )
     alive = Regime(
-        actions={"consumption": IrregSpacedGrid(points=CONSUMPTION_NODES)},
+        actions={"consumption": IrregSpacedGrid(points=np.array(CONSUMPTION_NODES))},
         states={
             "wealth": _wealth_grid(off_grid=off_grid),
             "health": DiscreteGrid(_Health),

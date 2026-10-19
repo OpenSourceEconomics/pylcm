@@ -187,7 +187,7 @@ def test_native_iid_node_simulation_and_repeat_seed(*, fold: bool) -> None:
 
 def test_runtime_supplied_node_markov_rows_and_support() -> None:
     nodes = (-1.3, 0.1, 2.4)
-    process = TauchenAR1Process.on_nodes(nodes=nodes, simulate_draws="nodes")
+    process = TauchenAR1Process.on_nodes(nodes=np.array(nodes), simulate_draws="nodes")
     model = _model(process)
     params = {"alive": {"income": {"rho": 0.6, "sigma": 0.4}}}
     initial = {

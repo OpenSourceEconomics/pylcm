@@ -57,9 +57,9 @@ from tests.conftest import DECIMAL_PRECISION
 _X = LinSpacedGrid(start=0.0, stop=2.0, n_points=3)
 
 # 1.5 lands inside the straddled cell; 2.0 lands exactly on a node.
-_SAVING = IrregSpacedGrid(points=(1.5, 2.0))
+_SAVING = IrregSpacedGrid(points=np.array([1.5, 2.0]))
 
-_ON_GRID_SAVING = IrregSpacedGrid(points=(1.0, 2.0))
+_ON_GRID_SAVING = IrregSpacedGrid(points=np.array([1.0, 2.0]))
 
 
 @categorical(ordered=False)
@@ -216,7 +216,7 @@ def _make_categorical_process_fallback_model(
             "source": Regime(
                 states={"category": categories, "x": _X},
                 state_transitions={"category": _project_category, "x": _next_x},
-                actions={"saving": IrregSpacedGrid(points=(1.0, 1.5))},
+                actions={"saving": IrregSpacedGrid(points=np.array([1.0, 1.5]))},
                 functions={"utility": _utility_source},
             ),
             "target": Regime(
@@ -339,7 +339,7 @@ def test_projected_fallback_preserves_or_clips_its_economic_handoff(
 ) -> None:
     """A closed gate writes the fallback projection under the fallback's rule."""
     model = _make_model(
-        saving_grid=IrregSpacedGrid(points=(0.5, 0.6)),
+        saving_grid=IrregSpacedGrid(points=np.array([0.5, 0.6])),
         fallback_off_grid=fallback_off_grid,
         project_outside_hull=True,
     )
@@ -363,7 +363,7 @@ def test_projected_realized_fallback_raise_is_mandatory(
 ) -> None:
     """A reached fallback projection fails the solve even with diagnostics off."""
     model = _make_model(
-        saving_grid=IrregSpacedGrid(points=(0.5, 0.6)),
+        saving_grid=IrregSpacedGrid(points=np.array([0.5, 0.6])),
         fallback_off_grid="raise",
         project_outside_hull=True,
     )

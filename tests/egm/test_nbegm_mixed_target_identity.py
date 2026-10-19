@@ -197,7 +197,7 @@ def _half() -> FloatND:
 
 def _model_and_params() -> tuple[Model, UserParams]:
     """Construct a live zero-flow bridge and a terminal with identical value nodes."""
-    passive = IrregSpacedGrid(points=(0.0, 1.0))
+    passive = IrregSpacedGrid(points=np.array([0.0, 1.0]))
     margin = LiquidMargin(
         state="liquid",
         action="consumption",
@@ -206,8 +206,12 @@ def _model_and_params() -> tuple[Model, UserParams]:
     )
     parent = ConsumptionSavingsRegime(
         liquid=margin,
-        states={"liquid": IrregSpacedGrid(points=(2.0, 3.0)), "z": passive},
-        actions={"consumption": IrregSpacedGrid(points=(0.125, 0.25, 0.5, 1.0, 2.0))},
+        states={"liquid": IrregSpacedGrid(points=np.array([2.0, 3.0])), "z": passive},
+        actions={
+            "consumption": IrregSpacedGrid(
+                points=np.array([0.125, 0.25, 0.5, 1.0, 2.0])
+            )
+        },
         functions={
             "utility": _parent_utility,
             "resources": _resources,
@@ -218,9 +222,12 @@ def _model_and_params() -> tuple[Model, UserParams]:
             "liquid": {"living": _next_liquid, "done": _next_liquid},
             "z": {"living": fixed_transition("z"), "done": fixed_transition("z")},
         },
-        solver=NBEGM(savings_grid=IrregSpacedGrid(points=(1.0, 1.5, 2.0))),
+        solver=NBEGM(savings_grid=IrregSpacedGrid(points=np.array([1.0, 1.5, 2.0]))),
     )
-    child_states = {"liquid": IrregSpacedGrid(points=(1.0, 2.0)), "z": passive}
+    child_states = {
+        "liquid": IrregSpacedGrid(points=np.array([1.0, 2.0])),
+        "z": passive,
+    }
     living = Regime(
         states=child_states,
         functions={"utility": _zero_utility},

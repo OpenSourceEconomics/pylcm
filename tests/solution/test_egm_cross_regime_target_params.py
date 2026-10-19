@@ -74,7 +74,9 @@ ACCRUED_PENSION = 12.0
 
 WEALTH_GRID = LinSpacedGrid(start=1.0, stop=100.0, n_points=160)
 CONSUMPTION_GRID = LinSpacedGrid(start=0.25, stop=120.0, n_points=4000)
-SAVINGS_GRID = IrregSpacedGrid(points=tuple(100.0 * (i / 149) ** 3 for i in range(150)))
+SAVINGS_GRID = IrregSpacedGrid(
+    points=np.array(tuple(100.0 * (i / 149) ** 3 for i in range(150)))
+)
 
 # Lowest wealth nodes excluded from the comparison: the brute solver leans on
 # coarse interpolation and consumption choices near its grid start there.

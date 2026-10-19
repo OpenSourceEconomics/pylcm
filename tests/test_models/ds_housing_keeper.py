@@ -40,6 +40,7 @@ probe, not an accuracy benchmark.
 from typing import Literal
 
 import jax.numpy as jnp
+import numpy as np
 
 from lcm import (
     AgeGrid,
@@ -88,7 +89,7 @@ LIQUID_ASSETS_GRID = LinSpacedGrid(start=BORROWING_LIMIT, stop=20.0, n_points=12
 HOUSING_GRID = LinSpacedGrid(start=0.5, stop=4.0, n_points=4)
 CONSUMPTION_GRID = LinSpacedGrid(start=0.05, stop=25.0, n_points=60)
 SAVINGS_GRID = IrregSpacedGrid(
-    points=tuple(BORROWING_LIMIT + 25.0 * (i / 79) ** 3 for i in range(80))
+    points=np.array(tuple(BORROWING_LIMIT + 25.0 * (i / 79) ** 3 for i in range(80)))
 )
 
 

@@ -71,6 +71,10 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   refused at model build, naming `experience_code` as the fix, and a state, action,
   function or constraint named `<name>_code` for a discrete `<name>` is refused as a
   name collision.
+- `IrregSpacedGrid(points=...)` and `TauchenAR1Process.on_nodes(nodes=...)` take only
+  a one-dimensional NumPy or JAX array of integer or floating dtype, as
+  `DiscreteGrid(values=...)` does; `on_nodes` now accepts arrays, and a list, tuple or
+  range is refused with an error that shows the array spelling.
 - A float matches a node exactly unless the grid declares an absolute `tolerance`,
   which must lie below half the smallest gap between values; integer grids take
   integers and match them exactly. `grid.encode` maps values to codes (off-grid values

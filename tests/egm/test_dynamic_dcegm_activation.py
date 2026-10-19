@@ -124,9 +124,11 @@ def build_activation_model(
     regimes = {
         "child": ConsumptionSavingsRegime(
             liquid=margin,
-            states={"liquid": IrregSpacedGrid(points=child_liquid_nodes)},
+            states={"liquid": IrregSpacedGrid(points=np.array(child_liquid_nodes))},
             actions={
-                "consumption": IrregSpacedGrid(points=(0.025, 0.05, 0.25, 0.5, 1.0))
+                "consumption": IrregSpacedGrid(
+                    points=np.array([0.025, 0.05, 0.25, 0.5, 1.0])
+                )
             },
             functions={
                 "utility": _utility,
@@ -142,13 +144,13 @@ def build_activation_model(
             state_transitions={"liquid": _asset_law if asset else _ordinary_law},
             solver=DCEGM(
                 savings_grid=IrregSpacedGrid(
-                    points=saving_nodes if literal else source_nodes
+                    points=np.array(saving_nodes if literal else source_nodes)
                 ),
                 n_constrained_points=4,
             ),
         ),
         "done": Regime(
-            states={"liquid": IrregSpacedGrid(points=terminal_nodes)},
+            states={"liquid": IrregSpacedGrid(points=np.array(terminal_nodes))},
             functions={"utility": _terminal},
         ),
     }
@@ -156,8 +158,10 @@ def build_activation_model(
         parent_solver = EGM if plain_parent else DCEGM
         regimes["parent"] = ConsumptionSavingsRegime(
             liquid=margin,
-            states={"liquid": IrregSpacedGrid(points=(0.225, 0.25))},
-            actions={"consumption": IrregSpacedGrid(points=(0.025, 0.05, 0.1))},
+            states={"liquid": IrregSpacedGrid(points=np.array([0.225, 0.25]))},
+            actions={
+                "consumption": IrregSpacedGrid(points=np.array([0.025, 0.05, 0.1]))
+            },
             functions={
                 "utility": _utility,
                 "resources": _parent_resources,
@@ -168,7 +172,9 @@ def build_activation_model(
                 "parent_borrowing": post_decision_lower_bound(margin=margin, lower=0.2)
             },
             state_transitions={"liquid": _to_child},
-            solver=parent_solver(savings_grid=IrregSpacedGrid(points=(0.2, 0.3, 0.4))),
+            solver=parent_solver(
+                savings_grid=IrregSpacedGrid(points=np.array([0.2, 0.3, 0.4]))
+            ),
         )
     return Model(
         regimes=regimes,

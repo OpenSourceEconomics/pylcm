@@ -47,24 +47,29 @@ def _model(*, plain_parent: bool, floor: float) -> Model:
         post_decision_state="savings",
     )
     parent_solver = (
-        EGM(savings_grid=IrregSpacedGrid(points=(0.0, 0.5, 1.0)))
+        EGM(savings_grid=IrregSpacedGrid(points=np.array([0.0, 0.5, 1.0])))
         if plain_parent
         else DCEGM(
-            savings_grid=IrregSpacedGrid(points=(0.0, 0.5, 1.0)), n_constrained_points=4
+            savings_grid=IrregSpacedGrid(points=np.array([0.0, 0.5, 1.0])),
+            n_constrained_points=4,
         )
     )
     nodes = tuple(floor + offset for offset in (0.0, 0.5, 1.0, 1.5))
     child_solver = (
-        DCEGM(savings_grid=IrregSpacedGrid(points=nodes), n_constrained_points=4)
+        DCEGM(
+            savings_grid=IrregSpacedGrid(points=np.array(nodes)), n_constrained_points=4
+        )
         if plain_parent
-        else EGM(savings_grid=IrregSpacedGrid(points=nodes))
+        else EGM(savings_grid=IrregSpacedGrid(points=np.array(nodes)))
     )
     return Model(
         regimes={
             "parent": ConsumptionSavingsRegime(
                 liquid=margin,
-                states={"wealth": IrregSpacedGrid(points=(0.125, 0.25))},
-                actions={"consumption": IrregSpacedGrid(points=(0.125, 0.25, 0.5))},
+                states={"wealth": IrregSpacedGrid(points=np.array([0.125, 0.25]))},
+                actions={
+                    "consumption": IrregSpacedGrid(points=np.array([0.125, 0.25, 0.5]))
+                },
                 functions={
                     "utility": utility,
                     "savings": savings,
@@ -78,9 +83,11 @@ def _model(*, plain_parent: bool, floor: float) -> Model:
             ),
             "child": ConsumptionSavingsRegime(
                 liquid=margin,
-                states={"wealth": IrregSpacedGrid(points=(0.75, 1.0))},
+                states={"wealth": IrregSpacedGrid(points=np.array([0.75, 1.0]))},
                 actions={
-                    "consumption": IrregSpacedGrid(points=(0.125, 0.25, 0.5, 1.0))
+                    "consumption": IrregSpacedGrid(
+                        points=np.array([0.125, 0.25, 0.5, 1.0])
+                    )
                 },
                 functions={
                     "utility": utility,
@@ -94,7 +101,11 @@ def _model(*, plain_parent: bool, floor: float) -> Model:
                 solver=child_solver,
             ),
             "done": Regime(
-                states={"wealth": IrregSpacedGrid(points=(4.0, 5.5, 7.0, 8.5, 10.0))},
+                states={
+                    "wealth": IrregSpacedGrid(
+                        points=np.array([4.0, 5.5, 7.0, 8.5, 10.0])
+                    )
+                },
                 functions={"utility": terminal_utility},
             ),
         },

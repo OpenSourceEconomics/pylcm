@@ -22,6 +22,7 @@ the housing-axis carry extension shared with the NEGM column.
 from typing import Literal
 
 import jax.numpy as jnp
+import numpy as np
 
 from _lcm.typing import DataclassInstance
 from lcm import (
@@ -156,10 +157,12 @@ def build_model(  # noqa: C901
         start=0.05, stop=liquid_max, n_points=n_consumption
     )
     savings_grid = IrregSpacedGrid(
-        points=tuple(
-            housing_min
-            + (liquid_max + housing_max - housing_min) * (i / (n_savings - 1)) ** 2
-            for i in range(n_savings)
+        points=np.array(
+            tuple(
+                housing_min
+                + (liquid_max + housing_max - housing_min) * (i / (n_savings - 1)) ** 2
+                for i in range(n_savings)
+            )
         )
     )
 

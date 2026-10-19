@@ -10,6 +10,7 @@ unprojected candidate coordinate instead of the projection it is priced at.
 """
 
 import jax.numpy as jnp
+import numpy as np
 from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm import (
@@ -32,7 +33,7 @@ from tests.conftest import DECIMAL_PRECISION
 _X = LinSpacedGrid(start=0.0, stop=2.0, n_points=3)
 # Utility strictly prefers 1.0, so every solved row lands at the same
 # candidate x=1 before any gate/fallback logic runs; 2.0 is dominated.
-_SAVING = IrregSpacedGrid(points=(1.0, 2.0))
+_SAVING = IrregSpacedGrid(points=np.array([1.0, 2.0]))
 
 
 @categorical(ordered=False)

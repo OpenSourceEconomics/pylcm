@@ -100,7 +100,7 @@ def _probability_dead(age: float) -> FloatND:
 def _model(*, fold: bool, alive_reads_xi: bool = False) -> Model:
     alive = Regime(
         actions={
-            "consumption": IrregSpacedGrid(points=CONSUMPTION_NODES),
+            "consumption": IrregSpacedGrid(points=np.array(CONSUMPTION_NODES)),
         },
         states={"wealth": WEALTH_GRID, "xi": _xi(fold=fold)},
         state_transitions={"wealth": _next_wealth},

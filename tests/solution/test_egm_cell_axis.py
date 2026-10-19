@@ -64,7 +64,9 @@ BAND_WIDTH = 40.0
 # these grids are sized for the cheapest solve that still exercises the
 # flatten-and-transpose path, not for resolution.
 CONSUMPTION_GRID = LinSpacedGrid(start=0.25, stop=100.0, n_points=60)
-SAVINGS_GRID = IrregSpacedGrid(points=tuple(110.0 * (i / 29) ** 3 for i in range(30)))
+SAVINGS_GRID = IrregSpacedGrid(
+    points=np.array(tuple(110.0 * (i / 29) ** 3 for i in range(30)))
+)
 
 
 # Health has three levels and marital status two, so a cell width of 2 leaves a

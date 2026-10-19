@@ -78,7 +78,9 @@ def test_clustered_savings_grid_resolves_excluded_low_wealth_nodes():
     """
     low = np.geomspace(1e-4, 2.0, 220)
     high = np.linspace(2.0, 50.0, 281)[1:]
-    clustered = IrregSpacedGrid(points=(0.0, *map(float, low), *map(float, high)))
+    clustered = IrregSpacedGrid(
+        points=np.array([0.0, *map(float, low), *map(float, high)])
+    )
     params = dcegm_paper_twin.get_params(taste_shock_scale=SCALE)
 
     dcegm_V = (

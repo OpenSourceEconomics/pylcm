@@ -246,7 +246,8 @@ outputs and general deterministic next-state finiteness are outside this preflig
 ### Discrete values and codes
 
 `DiscreteGrid(values=jnp.array([0, 5, 10]))` declares a discrete variable by its numbers;
-`values` is always a one-dimensional NumPy or JAX array, never a list or tuple. A user
+`values` is always a one-dimensional NumPy or JAX array, never a list or tuple; the
+same holds for `IrregSpacedGrid(points=...)` and `TauchenAR1Process.on_nodes(nodes=...)`. A user
 function reading `experience` receives the value (pandas: the category); reading
 `experience_code` receives the int32 position (pandas: the code). `<name>_code` exists
 for every discrete state and action, and for a category class equals `<name>`. Index

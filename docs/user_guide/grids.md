@@ -215,10 +215,10 @@ LogSpacedGrid(start=0.1, stop=100, n_points=50)
 ### IrregSpacedGrid
 
 Explicit point placement. Use when you need specific grid points (e.g., at policy
-kinks):
+kinks). `points` is a one-dimensional NumPy or JAX array; a list or tuple is refused:
 
 ```python
-IrregSpacedGrid(points=(0.0, 0.5, 1.0, 5.0, 10.0, 50.0))
+IrregSpacedGrid(points=jnp.array([0.0, 0.5, 1.0, 5.0, 10.0, 50.0]))
 ```
 
 You can also defer points to runtime by specifying only `n_points`. The actual points

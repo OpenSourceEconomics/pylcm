@@ -113,7 +113,9 @@ def _boundary_grid(*, kind: str, owner: _Owner) -> ContinuousGrid:
         dtype = _working_dtype()
         direction = dtype(np.inf if owner == "left" else -np.inf)
         neighbour = float(np.nextafter(dtype(1.0), direction))
-        return IrregSpacedGrid(points=tuple(sorted((0.0, 1.0, neighbour, 2.0))))
+        return IrregSpacedGrid(
+            points=np.array(tuple(sorted((0.0, 1.0, neighbour, 2.0))))
+        )
     grid_class = {
         "piecewise_lin": PiecewiseLinSpacedGrid,
         "piecewise_log": PiecewiseLogSpacedGrid,
@@ -307,7 +309,7 @@ def test_pin_is_node_identity_on_three_adjacent_nodes(
         float(center),
         float(np.nextafter(center, dtype(np.inf))),
     )
-    grid = IrregSpacedGrid(points=points)
+    grid = IrregSpacedGrid(points=np.array(points))
     nodes = grid.to_jax()
     assert bool(np.all(np.diff(np.asarray(nodes)) > 0))
     for k, inactive_value in enumerate(points):

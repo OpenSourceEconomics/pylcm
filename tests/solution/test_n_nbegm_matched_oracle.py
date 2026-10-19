@@ -249,7 +249,7 @@ def _simulate_replay(
         variant="n_nbegm",
         n_periods=2,
         illiquid_grid=toy.ILLIQUID_GRID,
-        illiquid_investment_grid=IrregSpacedGrid(points=points),
+        illiquid_investment_grid=IrregSpacedGrid(points=np.array(points)),
         consumption_grid=toy.CONSUMPTION_GRID,
         execution_config=ExecutionConfig(
             axis_widths=(

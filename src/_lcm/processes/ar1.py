@@ -9,7 +9,6 @@ from abc import abstractmethod
 from dataclasses import dataclass, fields
 from functools import partial
 from math import comb
-from numbers import Real
 from types import MappingProxyType
 from typing import ClassVar, Literal
 
@@ -22,6 +21,7 @@ from jax.scipy.stats.norm import cdf
 from _lcm.beartype_conf import GRID_CONF
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.grids import coordinates as grid_coordinates
+from _lcm.grids.base import UserVector, fail_if_not_a_numeric_vector
 from _lcm.processes.base import (
     StateConditioned,
     _ContinuousStochasticProcess,
@@ -110,7 +110,7 @@ class TauchenAR1Process(_AR1Process):
     @staticmethod
     def on_nodes(
         *,
-        nodes: tuple[float, ...],
+        nodes: UserVector,
         simulate_draws: Literal["continuous", "nodes"] = "continuous",
         rho: float | None = None,
         sigma: float | StateConditioned | None = None,
@@ -121,10 +121,16 @@ class TauchenAR1Process(_AR1Process):
         Bin edges are adjacent midpoints, with open first and last tails.
         The nodes do not depend on stationarity, so unit roots are supported.
         Unspecified law parameters are supplied at solve or simulation time.
+        `nodes` is a one-dimensional NumPy or JAX array of integer or floating
+        dtype; lists and tuples are refused.
         """
-        _fail_if_non_real_nodes(nodes=nodes)
+        fail_if_not_a_numeric_vector(
+            value=nodes,
+            argument="nodes",
+            example="TauchenAR1Process.on_nodes(nodes=jnp.array([-1.0, 0.0, 1.0]))",
+        )
         return _TauchenOnNodesProcess(
-            nodes=tuple(float(node) for node in nodes),
+            nodes=tuple(float(node) for node in np.asarray(nodes).tolist()),
             simulate_draws=simulate_draws,
             n_points=len(nodes),
             gauss_hermite=False,
@@ -263,25 +269,6 @@ class _TauchenOnNodesProcess(TauchenAR1Process):
             ),
             in_axes=0,
         )(nodes)
-
-
-def _fail_if_non_real_nodes(
-    *,
-    nodes: tuple[object, ...],  # noqa: PAN001 - checked entry by entry
-) -> None:
-    """Raise if a supplied node is not a real number.
-
-    The public type check samples a single entry of the tuple, so every entry is
-    checked here. Entries are typed `object`, so that this check, not the internal
-    type check, reports an entry that is not a number.
-    """
-    invalid = tuple(node for node in nodes if not isinstance(node, Real))
-    if invalid:
-        msg = (
-            f"TauchenAR1Process.on_nodes needs real-number nodes; got {invalid!r} "
-            f"in {nodes!r}."
-        )
-        raise GridInitializationError(msg)
 
 
 # keyword-only-exempt: library-callback=jax.vmap

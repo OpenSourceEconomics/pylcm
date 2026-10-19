@@ -32,7 +32,7 @@ from lcm import (
 from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
 
-_WAGE = IrregSpacedGrid(points=(1.0, 2.0))
+_WAGE = IrregSpacedGrid(points=np.array([1.0, 2.0]))
 
 # The gate opens above this wage, so `wage = 1` closes it and `wage = 2` opens it.
 _STAY_TOGETHER_ABOVE = 1.5

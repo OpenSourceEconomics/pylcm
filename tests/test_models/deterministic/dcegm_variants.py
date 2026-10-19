@@ -16,6 +16,8 @@ import dataclasses
 import functools
 from typing import Literal
 
+import numpy as np
+
 from lcm import AgeGrid, DiscreteGrid, IrregSpacedGrid, Model
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.solvers import DCEGM
@@ -53,7 +55,9 @@ SAVINGS_FLOOR = 0.0
 # curves hardest where the constraint starts to bind, and the published V is
 # interpolated from endogenous points spaced like the savings nodes — a
 # uniform grid under-resolves the lowest wealth nodes by orders of magnitude.
-SAVINGS_GRID = IrregSpacedGrid(points=tuple(400.0 * (i / 199) ** 3 for i in range(200)))
+SAVINGS_GRID = IrregSpacedGrid(
+    points=np.array(tuple(400.0 * (i / 199) ** 3 for i in range(200)))
+)
 
 
 DCEGM_SOLVER = DCEGM(

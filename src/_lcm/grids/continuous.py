@@ -6,17 +6,18 @@ start/stop/n_points forms `LinSpacedGrid` and `LogSpacedGrid` take, while
 """
 
 import dataclasses
+import math
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
 from dataclasses import dataclass
 
 import jax.numpy as jnp
+import numpy as np
 from beartype import beartype
 
 from _lcm.beartype_conf import GRID_CONF
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.grids import coordinates as grid_coordinates
-from _lcm.grids.base import Grid
+from _lcm.grids.base import Grid, UserVector, fail_if_not_a_numeric_vector
 from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import GridInitializationError
 from lcm.typing import (
@@ -228,15 +229,15 @@ class IrregSpacedGrid(ContinuousGrid):
     This grid type is useful for representing non-uniformly spaced points such as
     Gauss-Hermite quadrature nodes.
 
-    `points` is stored as a JAX array at `canonical_float_dtype()`, converted
-    from the Python sequence supplied at construction. When `points` is
-    omitted and only `n_points` is given, the points must be supplied at
-    runtime via the params.
+    `points` is a one-dimensional NumPy or JAX array of integer or floating dtype,
+    stored as a JAX array at `canonical_float_dtype()`; lists and tuples are
+    refused. When `points` is omitted and only `n_points` is given, the points
+    must be supplied at runtime via the params.
 
     Example:
     --------
-    Fixed grid: `IrregSpacedGrid(points=[-1.73, -0.58, 0.58, 1.73])` Grid that is only
-    completed at runtime via params: `IrregSpacedGrid(n_points=4)`
+    Fixed grid: `IrregSpacedGrid(points=jnp.array([-1.73, -0.58, 0.58, 1.73]))`.
+    Grid that is only completed at runtime via params: `IrregSpacedGrid(n_points=4)`.
 
     """
 
@@ -255,13 +256,18 @@ class IrregSpacedGrid(ContinuousGrid):
     def __init__(
         self,
         *,
-        points: Sequence[float] | Float1D | None = None,
+        points: UserVector | None = None,
         n_points: int | None = None,
         off_grid: OffGrid = "extrapolate",
     ) -> None:
         _validate_off_grid(off_grid)
         if points is not None:
-            _validate_irreg_spaced_grid(points)
+            fail_if_not_a_numeric_vector(
+                value=points,
+                argument="points",
+                example="IrregSpacedGrid(points=jnp.array([-1.73, -0.58, 0.58, 1.73]))",
+            )
+            _validate_irreg_spaced_grid(np.asarray(points).tolist())
             derived_n = len(points)
             if n_points is None:
                 n_points = derived_n
@@ -391,15 +397,11 @@ def _validate_continuous_grid(
         raise GridInitializationError(msg)
 
 
-@beartype(conf=GRID_CONF)
-def _validate_irreg_spaced_grid(points: Sequence[float] | Float1D) -> None:
+def _validate_irreg_spaced_grid(points: list[int | float]) -> None:
     """Validate the irregular spaced grid parameters.
 
-    Decorated with the grid conf, so a non-numeric entry that beartype samples
-    raises the same `GridInitializationError` as the manual check below.
-
     Args:
-        points: The grid points.
+        points: The grid points, as Python scalars of one numeric array.
 
     Raises:
         GridInitializationError: If the grid parameters are invalid.
@@ -410,36 +412,24 @@ def _validate_irreg_spaced_grid(points: Sequence[float] | Float1D) -> None:
     if len(points) < 2:  # noqa: PLR2004
         error_messages.append("points must have at least 2 elements")
     else:
-        # Check that all elements are numeric
-        non_numeric = [
-            (i, type(p).__name__)
-            for i, p in enumerate(points)
-            if not isinstance(p, int | float)
-        ]
-        if non_numeric:
+        # Reject NaN/inf — comparisons with NaN are False, so the
+        # ascending-order check below would silently let them through.
+        non_finite = [(i, p) for i, p in enumerate(points) if not math.isfinite(p)]
+        if non_finite:
             error_messages.append(
-                f"All elements of points must be int or float. "
-                f"Non-numeric elements found at indices: {non_numeric}"
+                f"All elements of points must be finite. "
+                f"Non-finite elements found at: {non_finite}"
             )
         else:
-            # Reject NaN/inf — comparisons with NaN are False, so the
-            # ascending-order check below would silently let them through.
-            non_finite = [(i, p) for i, p in enumerate(points) if not jnp.isfinite(p)]
-            if non_finite:
-                error_messages.append(
-                    f"All elements of points must be finite. "
-                    f"Non-finite elements found at: {non_finite}"
-                )
-            else:
-                # Check that points are in strictly ascending order
-                for i in range(len(points) - 1):
-                    if points[i] >= points[i + 1]:
-                        error_messages.append(
-                            "Points must be in strictly ascending order. "
-                            f"Found points[{i}]={points[i]} >= "
-                            f"points[{i + 1}]={points[i + 1]}"
-                        )
-                        break
+            # Check that points are in strictly ascending order
+            for i in range(len(points) - 1):
+                if points[i] >= points[i + 1]:
+                    error_messages.append(
+                        "Points must be in strictly ascending order. "
+                        f"Found points[{i}]={points[i]} >= "
+                        f"points[{i + 1}]={points[i + 1]}"
+                    )
+                    break
 
     if error_messages:
         msg = format_messages(error_messages)

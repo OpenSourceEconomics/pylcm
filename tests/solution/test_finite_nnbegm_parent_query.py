@@ -103,7 +103,7 @@ def _model() -> Model:
         state_transitions={"liquid": _landing_liquid, "illiquid": _landing_stock},
         liquid=margin,
         solver=original.NBEGM(
-            savings_grid=IrregSpacedGrid(points=(0.0, 0.125, 0.25, 8.0))
+            savings_grid=IrregSpacedGrid(points=np.array([0.0, 0.125, 0.25, 8.0]))
         ),
     )
     return Model(

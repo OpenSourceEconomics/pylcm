@@ -735,7 +735,7 @@ def test_state_grid_unset_error_with_different_grid_types(grid_cls):
     if grid_cls is LinSpacedGrid:
         grid = LinSpacedGrid(start=1, stop=10, n_points=5)
     else:
-        grid = IrregSpacedGrid(points=(1.0, 5.0, 10.0))
+        grid = IrregSpacedGrid(points=np.array([1.0, 5.0, 10.0]))
 
     regime = UserRegime(
         functions={"utility": utility},

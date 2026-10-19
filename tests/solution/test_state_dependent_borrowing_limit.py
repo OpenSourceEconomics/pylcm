@@ -278,7 +278,7 @@ def _model(*, solver: str, limit: str, lower: _Lower, taxed: bool) -> Model:
             functions=functions,
             liquid=margin,
             solver=_SOLVERS[solver](
-                IrregSpacedGrid(points=_savings_points(grid_start))
+                IrregSpacedGrid(points=np.array(_savings_points(grid_start)))
             ),
         )
     done = Regime(

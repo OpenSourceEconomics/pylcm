@@ -95,8 +95,12 @@ def _grouping_model(
         )
     child = ConsumptionSavingsRegime(
         liquid=margin,
-        states={"liquid": IrregSpacedGrid(points=(0.0, 0.125, 0.25, 0.5))},
-        actions={"consumption": IrregSpacedGrid(points=(0.025, 0.05, 0.25, 0.5, 1.0))},
+        states={"liquid": IrregSpacedGrid(points=np.array([0.0, 0.125, 0.25, 0.5]))},
+        actions={
+            "consumption": IrregSpacedGrid(
+                points=np.array([0.025, 0.05, 0.25, 0.5, 1.0])
+            )
+        },
         functions=functions,
         constraints={
             "borrowing": post_decision_lower_bound(margin=margin, lower=_lower)
@@ -104,14 +108,14 @@ def _grouping_model(
         state_transitions={"liquid": _ordinary_law},
         koopmans_aggregator=child_aggregator,
         solver=DCEGM(
-            savings_grid=IrregSpacedGrid(points=(0.0, 0.5, 1.0)),
+            savings_grid=IrregSpacedGrid(points=np.array([0.0, 0.5, 1.0])),
             n_constrained_points=4,
         ),
     )
     parent = ConsumptionSavingsRegime(
         liquid=margin,
-        states={"liquid": IrregSpacedGrid(points=(0.225, 0.25))},
-        actions={"consumption": IrregSpacedGrid(points=(0.025, 0.05, 0.1))},
+        states={"liquid": IrregSpacedGrid(points=np.array([0.225, 0.25]))},
+        actions={"consumption": IrregSpacedGrid(points=np.array([0.025, 0.05, 0.1]))},
         functions={
             "utility": _utility,
             "resources": _parent_resources,
@@ -122,7 +126,7 @@ def _grouping_model(
             "parent_borrowing": post_decision_lower_bound(margin=margin, lower=0.2)
         },
         state_transitions={"liquid": _to_child},
-        solver=EGM(savings_grid=IrregSpacedGrid(points=(0.2, 0.3, 0.4))),
+        solver=EGM(savings_grid=IrregSpacedGrid(points=np.array([0.2, 0.3, 0.4]))),
         koopmans_aggregator=LinearAggregator()
         if child_aggregator is not None
         else None,
@@ -132,7 +136,7 @@ def _grouping_model(
             "parent": parent,
             "child": child,
             "done": Regime(
-                states={"liquid": IrregSpacedGrid(points=(5.5, 7.0, 8.5))},
+                states={"liquid": IrregSpacedGrid(points=np.array([5.5, 7.0, 8.5]))},
                 functions={"utility": _terminal},
             ),
         },

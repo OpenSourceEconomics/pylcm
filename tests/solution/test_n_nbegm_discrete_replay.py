@@ -170,7 +170,7 @@ def _simulate(*, points: tuple[float, ...], dtype: DTypeLike):
     model = toy.build_model(
         variant="n_nbegm",
         n_periods=2,
-        illiquid_investment_grid=IrregSpacedGrid(points=points),
+        illiquid_investment_grid=IrregSpacedGrid(points=np.array(points)),
     )
     initial_conditions = {
         "wealth": jnp.asarray([4.0, 15.0, 24.0], dtype=dtype),
@@ -216,7 +216,7 @@ def test_policy_bank_is_the_declared_outer_times_discrete_product() -> None:
 
 def test_separate_solve_and_simulate_replays_the_exact_nnbegm_policy() -> None:
     """A returned NNBEGM policy reproduces automatic solve-and-simulate."""
-    foreign_grid = IrregSpacedGrid(points=(-20.0, 0.01, 20.0))
+    foreign_grid = IrregSpacedGrid(points=np.array([-20.0, 0.01, 20.0]))
     model = toy.build_model(
         variant="n_nbegm",
         n_periods=2,
@@ -255,7 +255,7 @@ def test_separate_nnbegm_simulation_requires_the_returned_policy() -> None:
     model = toy.build_model(
         variant="n_nbegm",
         n_periods=2,
-        illiquid_investment_grid=IrregSpacedGrid(points=(-20.0, 0.01, 20.0)),
+        illiquid_investment_grid=IrregSpacedGrid(points=np.array([-20.0, 0.01, 20.0])),
     )
     initial_conditions = {
         "wealth": jnp.asarray([4.0]),

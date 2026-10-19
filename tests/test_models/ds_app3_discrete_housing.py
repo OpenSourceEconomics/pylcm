@@ -72,6 +72,7 @@ uses the bequest weight `theta = 0.5`.
 from typing import Literal
 
 import jax.numpy as jnp
+import numpy as np
 
 from lcm import (
     AgeGrid,
@@ -528,7 +529,9 @@ def build_model(
     # value function curves hardest; the floor (0) encodes `consumption <=
     # resources`.
     savings_grid = IrregSpacedGrid(
-        points=tuple(asset_max * (i / (n_assets - 1)) ** 3 for i in range(n_assets))
+        points=np.array(
+            tuple(asset_max * (i / (n_assets - 1)) ** 3 for i in range(n_assets))
+        )
     )
     wage_process = RouwenhorstAR1Process(n_points=n_wage_nodes)
 

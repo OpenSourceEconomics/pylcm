@@ -46,7 +46,9 @@ def test_retained_conditional_reads_survive_publication_rejection(
         post_decision_state="savings",
     )
     parent = seed.user_regimes["parent"].replace(
-        solver=DCEGM(savings_grid=IrregSpacedGrid(points=(0.0, 0.625, 1.125))),
+        solver=DCEGM(
+            savings_grid=IrregSpacedGrid(points=np.array([0.0, 0.625, 1.125]))
+        ),
         constraints={
             "borrowing": post_decision_lower_bound(margin=margin, lower=_lower),
             "never": _never,

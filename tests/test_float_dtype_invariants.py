@@ -220,7 +220,7 @@ def test_solve_V_arrays_at_canonical_float_dtype(x64_disabled: None):
     [
         lambda: LinSpacedGrid(start=0, stop=1, n_points=5),
         lambda: LogSpacedGrid(start=1, stop=10, n_points=5),
-        lambda: IrregSpacedGrid(points=(0.0, 0.5, 1.0)),
+        lambda: IrregSpacedGrid(points=np.array([0.0, 0.5, 1.0])),
     ],
     ids=["linspaced", "logspaced", "irregspaced"],
 )
@@ -258,7 +258,7 @@ def test_uniform_grid_stores_endpoints_as_canonical_jax_scalar(
 
 def test_irreg_grid_stores_points_as_canonical_jax_array(x64_disabled: None):
     """`IrregSpacedGrid` stores `points` as a JAX array at canonical dtype."""
-    grid = IrregSpacedGrid(points=(0.0, 0.5, 1.0))
+    grid = IrregSpacedGrid(points=np.array([0.0, 0.5, 1.0]))
     assert isinstance(grid.points, jnp.ndarray)
     assert grid.points.dtype == canonical_float_dtype()
 

@@ -73,8 +73,10 @@ Place process instances in `states` and omit their names from `state_transitions
 `TauchenAR1Process.on_nodes(nodes=..., rho=None, sigma=None, mu=0.0)` uses supplied
 physical nodes with midpoint probability bins and open tails. The axis is fixed;
 unspecified law parameters are runtime operands and unit-root persistence is allowed.
-Nodes must be finite and strictly increasing at the working precision. Ordinary Tauchen
-construction still places its own stationary grid.
+`nodes` is a one-dimensional NumPy or JAX array, as are `IrregSpacedGrid(points=...)`
+and `DiscreteGrid(values=...)`; lists and tuples are refused. Nodes must be finite and
+strictly increasing at the working precision. Ordinary Tauchen construction still places
+its own stationary grid.
 
 A process owns its transition mechanism. Adding a second law under `state_transitions`
 is an ambiguous declaration and is rejected.

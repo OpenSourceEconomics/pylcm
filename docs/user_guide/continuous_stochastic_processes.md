@@ -223,7 +223,7 @@ calibration, or the process has a unit root and cannot place a stationary grid:
 
 ```python
 TauchenAR1Process.on_nodes(
-    nodes=(-1.2, -0.5, 0.0, 0.5, 1.2),
+    nodes=jnp.array([-1.2, -0.5, 0.0, 0.5, 1.2]),
     rho=None,
     sigma=None,
 )

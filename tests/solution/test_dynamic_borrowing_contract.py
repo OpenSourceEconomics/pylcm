@@ -83,13 +83,15 @@ def make_model(*, dynamic: bool) -> Model:
         resources="liquid",
         post_decision_state="savings",
     )
-    source_grid = IrregSpacedGrid(points=(0.5, 1.0, 2.0, 4.0))
-    target_grid = IrregSpacedGrid(points=(0.0, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0))
+    source_grid = IrregSpacedGrid(points=np.array([0.5, 1.0, 2.0, 4.0]))
+    target_grid = IrregSpacedGrid(points=np.array([0.0, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0]))
     income_grid = DiscreteGrid(category_class=Income)
     saving = ConsumptionSavingsRegime(
         states={"income": income_grid, "liquid": source_grid},
         actions={
-            "consumption": IrregSpacedGrid(points=(0.01, 0.25, 0.5, 1.0, 2.0, 4.0))
+            "consumption": IrregSpacedGrid(
+                points=np.array([0.01, 0.25, 0.5, 1.0, 2.0, 4.0])
+            )
         },
         functions={
             "utility": utility,
@@ -108,7 +110,9 @@ def make_model(*, dynamic: bool) -> Model:
         },
         liquid=margin,
         solver=NBEGM(
-            savings_grid=IrregSpacedGrid(points=(0.0, 0.25, 0.5, 1.0, 2.0, 4.0))
+            savings_grid=IrregSpacedGrid(
+                points=np.array([0.0, 0.25, 0.5, 1.0, 2.0, 4.0])
+            )
         ),
     )
     done = Regime(

@@ -8,7 +8,7 @@ movement over the codes is declared with `StochasticTransition`, not here.
 import itertools
 import math
 from fractions import Fraction
-from typing import TYPE_CHECKING, NamedTuple
+from typing import NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -20,7 +20,7 @@ from jaxtyping import Int
 
 from _lcm.beartype_conf import GRID_CONF
 from _lcm.dtypes import canonical_float_dtype
-from _lcm.grids.base import Grid
+from _lcm.grids.base import Grid, UserVector, fail_if_not_a_numeric_vector
 from _lcm.grids.categorical import (
     DataclassInstance,
     _validate_discrete_grid,
@@ -38,13 +38,6 @@ _INT32_MAX = jnp.iinfo(jnp.int32).max
 
 # A code array of any integer width; with x64 enabled, `jnp.array([0])` is int64.
 type _CodeIndex = Int[Array, "..."]
-
-if TYPE_CHECKING:
-    type _ValuesArray = np.ndarray | ValueND
-else:
-    # Wider runtime form: `__init_values` refuses a non-array with a message that
-    # shows the array spelling, which beartype's own violation message cannot.
-    type _ValuesArray = object
 
 
 class DiscreteGrid(Grid):
@@ -86,7 +79,7 @@ class DiscreteGrid(Grid):
         self,
         *legacy_category_class: type[DataclassInstance],
         category_class: type[DataclassInstance] | None = None,
-        values: _ValuesArray | None = None,
+        values: UserVector | None = None,
         tolerance: float = 0.0,
     ) -> None:
         if len(legacy_category_class) > 1:
@@ -130,27 +123,15 @@ class DiscreteGrid(Grid):
     def __init_values(
         self,
         *,
-        values: _ValuesArray,
+        values: UserVector,
         tolerance: float,
     ) -> None:
         """Validate and store a value grid's numbers and tolerance."""
-        if not isinstance(values, np.ndarray | jax.Array):
-            raise GridInitializationError(
-                "`values` must be a one-dimensional NumPy or JAX array, got "
-                f"{type(values).__name__}. Write, for example, "
-                "`DiscreteGrid(values=jnp.array([0, 5, 10]))`."
-            )
-        if values.ndim != 1:
-            raise GridInitializationError(
-                f"`values` must be one-dimensional, got shape {values.shape}."
-            )
-        if not (
-            np.issubdtype(values.dtype, np.integer)
-            or np.issubdtype(values.dtype, np.floating)
-        ):
-            raise GridInitializationError(
-                f"`values` must have an integer or floating dtype, got {values.dtype}."
-            )
+        fail_if_not_a_numeric_vector(
+            value=values,
+            argument="values",
+            example="DiscreteGrid(values=jnp.array([0, 5, 10]))",
+        )
         declared = _validate_values(np.asarray(values).tolist())
         is_integer = isinstance(declared[0], int)
         self.__values = declared

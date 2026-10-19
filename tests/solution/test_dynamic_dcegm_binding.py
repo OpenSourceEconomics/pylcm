@@ -160,13 +160,13 @@ def _make_model(
     saving = ConsumptionSavingsRegime(
         liquid=liquid,
         states={
-            "passive_b": IrregSpacedGrid(points=(0.0, 0.5, 1.0)),
-            "liquid": IrregSpacedGrid(points=(0.5, 1.0, 2.0, 3.0, 4.0)),
+            "passive_b": IrregSpacedGrid(points=np.array([0.0, 0.5, 1.0])),
+            "liquid": IrregSpacedGrid(points=np.array([0.5, 1.0, 2.0, 3.0, 4.0])),
             "income": DiscreteGrid(category_class=Income),
-            "passive_a": IrregSpacedGrid(points=(0.0, 1.0)),
+            "passive_a": IrregSpacedGrid(points=np.array([0.0, 1.0])),
         },
         actions={
-            "consumption": IrregSpacedGrid(points=(0.1, 0.5, 1.0)),
+            "consumption": IrregSpacedGrid(points=np.array([0.1, 0.5, 1.0])),
             "work": DiscreteGrid(category_class=Work),
         },
         functions={
@@ -194,7 +194,7 @@ def _make_model(
             "passive_b": fixed_transition("passive_b"),
         },
         solver=DCEGM(
-            savings_grid=IrregSpacedGrid(points=(0.0, 0.25, 4.0)),
+            savings_grid=IrregSpacedGrid(points=np.array([0.0, 0.25, 4.0])),
             n_constrained_points=4,
             refined_grid_factor=2.0,
             envelope=ExactEnvelope(max_runs=7) if exact else MSSEnvelope(),
@@ -204,7 +204,9 @@ def _make_model(
         regimes={
             "saving": saving,
             "done": Regime(
-                states={"liquid": IrregSpacedGrid(points=(0.5, 1.0, 4.0, 8.0))},
+                states={
+                    "liquid": IrregSpacedGrid(points=np.array([0.5, 1.0, 4.0, 8.0]))
+                },
                 functions={"utility": _terminal},
             ),
         },
@@ -511,7 +513,7 @@ def test_installed_query_status_slot_mapping_is_snapshotted_and_sealed() -> None
     with pytest.raises(RegimeInitializationError, match="query_input_authorities"):
         processing._fail_if_a_declaration_moved_more_than_the_kernels(
             regime_name="saving",
-            solver=DCEGM(savings_grid=IrregSpacedGrid(points=(0.0, 1.0))),
+            solver=DCEGM(savings_grid=IrregSpacedGrid(points=np.array([0.0, 1.0]))),
             handed_over=kernels,
             declared=declared,
         )

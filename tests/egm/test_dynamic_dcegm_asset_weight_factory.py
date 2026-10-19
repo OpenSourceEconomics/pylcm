@@ -95,10 +95,12 @@ def _model() -> tuple[Model, UserParams]:
         post_decision_state="savings",
     )
     passive = {
-        "z": IrregSpacedGrid(points=(0.0, 1.0)),
-        "w": IrregSpacedGrid(points=(0.0, 1.0, 2.0)),
+        "z": IrregSpacedGrid(points=np.array([0.0, 1.0])),
+        "w": IrregSpacedGrid(points=np.array([0.0, 1.0, 2.0])),
     }
-    actions = {"consumption": IrregSpacedGrid(points=(0.025, 0.125, 0.5, 1.0, 4.0))}
+    actions = {
+        "consumption": IrregSpacedGrid(points=np.array([0.025, 0.125, 0.5, 1.0, 4.0]))
+    }
     functions = {
         "utility": _utility,
         "savings": _savings,
@@ -108,7 +110,10 @@ def _model() -> tuple[Model, UserParams]:
         regimes={
             "parent": ConsumptionSavingsRegime(
                 liquid=margin,
-                states={"liquid": IrregSpacedGrid(points=(0.5, 0.75)), **passive},
+                states={
+                    "liquid": IrregSpacedGrid(points=np.array([0.5, 0.75])),
+                    **passive,
+                },
                 actions=actions,
                 functions={**functions, "resources": _parent_resources},
                 constraints={
@@ -120,14 +125,17 @@ def _model() -> tuple[Model, UserParams]:
                     "w": _child_w,
                 },
                 solver=DCEGM(
-                    savings_grid=IrregSpacedGrid(points=(0.25, 0.5, 0.75)),
+                    savings_grid=IrregSpacedGrid(points=np.array([0.25, 0.5, 0.75])),
                     n_constrained_points=4,
                     envelope=MSSEnvelope(),
                 ),
             ),
             "child": ConsumptionSavingsRegime(
                 liquid=margin,
-                states={"liquid": IrregSpacedGrid(points=(0.0, 0.5, 1.5)), **passive},
+                states={
+                    "liquid": IrregSpacedGrid(points=np.array([0.0, 0.5, 1.5])),
+                    **passive,
+                },
                 actions=actions,
                 functions={**functions, "resources": _resources},
                 constraints={
@@ -139,16 +147,16 @@ def _model() -> tuple[Model, UserParams]:
                     "w": fixed_transition("w"),
                 },
                 solver=DCEGM(
-                    savings_grid=IrregSpacedGrid(points=(0.5, 1.0, 1.5)),
+                    savings_grid=IrregSpacedGrid(points=np.array([0.5, 1.0, 1.5])),
                     n_constrained_points=4,
                 ),
             ),
             "low": Regime(
-                states={"liquid": IrregSpacedGrid(points=(0.0, 32.0))},
+                states={"liquid": IrregSpacedGrid(points=np.array([0.0, 32.0]))},
                 functions={"utility": _low_utility},
             ),
             "high": Regime(
-                states={"liquid": IrregSpacedGrid(points=(0.0, 32.0))},
+                states={"liquid": IrregSpacedGrid(points=np.array([0.0, 32.0]))},
                 functions={"utility": _high_utility},
             ),
         },

@@ -113,32 +113,40 @@ def _canonical_query(
         regimes={
             "parent": ConsumptionSavingsRegime(
                 liquid=margin,
-                states={"liquid": IrregSpacedGrid(points=(0.5, 1.0))},
+                states={"liquid": IrregSpacedGrid(points=np.array([0.5, 1.0]))},
                 actions={
-                    "consumption": IrregSpacedGrid(points=(0.025, 0.25, 0.5, 1.0))
+                    "consumption": IrregSpacedGrid(
+                        points=np.array([0.025, 0.25, 0.5, 1.0])
+                    )
                 },
                 functions={**functions, "resources": _resources},
                 constraints={
                     "borrowing": post_decision_lower_bound(margin=margin, lower=0.0)
                 },
                 state_transitions={"liquid": _identity},
-                solver=EGM(savings_grid=IrregSpacedGrid(points=(0.0, 0.5, 2.0))),
+                solver=EGM(
+                    savings_grid=IrregSpacedGrid(points=np.array([0.0, 0.5, 2.0]))
+                ),
             ),
             "child": ConsumptionSavingsRegime(
                 liquid=margin,
-                states={"liquid": IrregSpacedGrid(points=(0.75, 1.5, 3.0))},
+                states={"liquid": IrregSpacedGrid(points=np.array([0.75, 1.5, 3.0]))},
                 actions={
-                    "consumption": IrregSpacedGrid(points=(0.025, 0.05, 0.25, 0.5, 1.0))
+                    "consumption": IrregSpacedGrid(
+                        points=np.array([0.025, 0.05, 0.25, 0.5, 1.0])
+                    )
                 },
                 functions=functions,
                 constraints={
                     "borrowing": post_decision_lower_bound(margin=margin, lower=_floor)
                 },
                 state_transitions={"liquid": _terminal_landing},
-                solver=NBEGM(savings_grid=IrregSpacedGrid(points=(0.5, 1.0, 1.5))),
+                solver=NBEGM(
+                    savings_grid=IrregSpacedGrid(points=np.array([0.5, 1.0, 1.5]))
+                ),
             ),
             "done": Regime(
-                states={"liquid": IrregSpacedGrid(points=(4.0, 5.5, 10.0))},
+                states={"liquid": IrregSpacedGrid(points=np.array([4.0, 5.5, 10.0]))},
                 functions={"utility": _terminal},
             ),
         },
