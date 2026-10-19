@@ -240,10 +240,13 @@ class SimulationResult:
 
         A household that enters a gated target regime and finds no feasible
         action at its realised state takes the dissolution route of the gate it
-        came through in that same period. With runtime checks on, each such use
-        is recorded here with the subject, period, regime, full state, source
-        and fallback regime; with them off this is empty and only a count is
-        logged. Diagnostic only, like `plan_summary`: empty after `save`/`load`.
+        came through in that same period. Under a `~D_target` gate that is how
+        every dissolution the realised state forces is carried out, so these are
+        ordinary events of the model. With runtime checks on, each one is
+        recorded here with the subject, period, regime, full state, source and
+        fallback regime; with them off this is empty and a count per
+        regime-period is logged. Diagnostic only, like `plan_summary`: empty
+        after `save`/`load`.
         """
         return self._dissolution_fallbacks
 

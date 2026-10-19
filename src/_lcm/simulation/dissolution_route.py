@@ -179,33 +179,28 @@ def reroute_rows_without_feasible_action(
 def log_dissolution_fallbacks(
     *,
     logger: logging.Logger,
-    records: tuple[DissolutionFallback, ...],
     regime_name: RegimeName,
     period: int,
     n_rows: int,
+    recorded: bool,
 ) -> None:
-    """Report every use of the route, never silently."""
-    if records:
-        for record in records:
-            logger.warning(
-                "Subject %d in regime '%s', period %d, state %s has no feasible "
-                "action; it takes the dissolution route of the gated edge from "
-                "'%s' into '%s' this period.",
-                record.subject_id,
-                record.regime,
-                record.period,
-                dict(record.state),
-                record.source,
-                record.fallback,
-            )
-        return
-    logger.warning(
-        "%d subject(s) in regime '%s', period %d have no feasible action and take "
-        "their gate's dissolution route this period. Enable runtime checks to "
-        "record each one.",
+    """Report how many households took the route in one regime-period.
+
+    Under a `~D_target` gate this is every dissolution the realised state
+    forces, an ordinary event of the model rather than an anomaly, so it is
+    reported once per regime-period at info level. The per-household record is
+    on `SimulationResult.dissolution_fallbacks` when runtime checks are on;
+    without them the count is raised to a warning, since nothing else records
+    the households.
+    """
+    log = logger.info if recorded else logger.warning
+    log(
+        "%d subject(s) in regime '%s', period %d have no feasible action at their "
+        "realised state and take their gate's dissolution route this period%s.",
         n_rows,
         regime_name,
         period,
+        "" if recorded else " (enable runtime checks to record each one)",
     )
 
 

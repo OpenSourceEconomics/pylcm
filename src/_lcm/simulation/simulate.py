@@ -2309,10 +2309,10 @@ def _take_dissolution_routes(
                 records.extend(new_records)
         log_dissolution_fallbacks(
             logger=logger,
-            records=new_records,
             regime_name=regime_name,
             period=period,
             n_rows=int(rerouted_rows.size),
+            recorded=records is not None and validation_enabled(logger),
         )
     return (
         outcome.states,
