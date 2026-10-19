@@ -9,6 +9,7 @@
 """
 
 from collections.abc import Mapping
+from fractions import Fraction
 
 import jax
 import jax.numpy as jnp
@@ -49,6 +50,7 @@ from lcm.typing import (
     ScalarInt,
     StateName,
     UserFunction,
+    UserInitialConditions,
 )
 from tests.conftest import DECIMAL_PRECISION, assert_agrees_to_ulp
 
@@ -710,3 +712,179 @@ def test_wide_code_outside_the_table_never_wraps_into_it(code: int) -> None:
     table = jnp.arange(4, dtype=jnp.int32)
     got = _read_flat(table=table, shape=(2, 2), index=(jnp.int64(code), jnp.int64(0)))
     assert int(got) == MISSING_CAT_CODE
+
+
+def _python_half(*, a: DiscreteState) -> float:  # noqa: ARG001 - DAG dependency
+    """Return a Python scalar with a declared categorical dependency."""
+    return 0.5
+
+
+def _array_half(*, a: DiscreteState) -> FloatND:
+    """Return the same fractional value as an array in the working precision."""
+    return jnp.zeros_like(a, dtype=float) + 0.5
+
+
+def _next_a_above_quarter(*, half: FloatND) -> DiscreteState:
+    return jnp.asarray(half > 0.25, dtype=jnp.int32)
+
+
+def _next_b_below_zero(*, half: FloatND) -> DiscreteState:
+    return jnp.asarray(half < 0.0, dtype=jnp.int32)
+
+
+def _next_a_above_quarter_py(*, half: float) -> DiscreteState:
+    return jnp.asarray(half > 0.25, dtype=jnp.int32)
+
+
+def _next_b_below_zero_py(*, half: float) -> DiscreteState:
+    return jnp.asarray(half < 0.0, dtype=jnp.int32)
+
+
+def _fractional_helper_model(
+    *, half: UserFunction, composite: bool, enable_jit: bool
+) -> Model:
+    """Build two live periods with both member laws reading the same helper."""
+    return Model(
+        n_periods=3,
+        regimes={
+            "live": Regime(
+                states={"a": DiscreteGrid(_Bit), "b": DiscreteGrid(_Bit)},
+                state_transitions=(
+                    {"a": _next_a_above_quarter_py, "b": _next_b_below_zero_py}
+                    if half is _python_half
+                    else {"a": _next_a_above_quarter, "b": _next_b_below_zero}
+                ),
+                functions={"utility": _identity_utility, "half": half},
+            ),
+            "dead": Regime(functions={"utility": _zero}),
+        },
+        edges={
+            "live": {
+                "live": Periods(values=(0,)),
+                "dead": Periods(values=(1,)),
+            }
+        },
+        regime_id_class=_RegimeId,
+        initial_nodes=InitialNodes(by_period={0: "live"}),
+        execution_config=ExecutionConfig(device_memory_bytes=None),
+        enable_jit=enable_jit,
+        composite_states=(
+            {
+                "history": CompositeState(
+                    members=("a", "b"), start_codes={"a": (0,), "b": (0,)}
+                )
+            }
+            if composite
+            else {}
+        ),
+    )
+
+
+def _assert_fractional_transition(
+    *,
+    model: Model,
+    composite: bool,
+    initial_conditions: UserInitialConditions,
+) -> pd.DataFrame:
+    """Check literal support, value and decoded states for the path 00 to 10."""
+    if composite:
+        by_node = model._composite_states["history"].reachable.by_node
+        assert {node: set(tuples) for node, tuples in by_node.items()} == {
+            (0, "live"): {(0, 0)},
+            (1, "live"): {(1, 0)},
+        }
+    model.validate_transitions(params=_PARAMS)
+    solution = model.solve(params=_PARAMS, log_level="off")
+    values = np.asarray(solution.values[0]["live"])
+    # The initial tuple 00 is first in either representation. Its utilities are
+    # 1 and 2, with discount factor 9/10, so its value is 1 + 9/10 * 2 = 14/5.
+    np.testing.assert_array_almost_equal(
+        values.ravel()[0], 14 / 5, decimal=DECIMAL_PRECISION
+    )
+    panel = model.simulate(
+        params=_PARAMS,
+        solution=solution,
+        initial_conditions=initial_conditions,
+        seed=7,
+        log_level="off",
+    ).to_dataframe(
+        use_labels=False, additional_targets=["a", "b"] if composite else None
+    )
+    live = panel.loc[panel["regime_name"] == "live"].sort_values("period")
+    np.testing.assert_array_equal(live["period"].to_numpy(), [0, 1])
+    np.testing.assert_array_equal(live[["a", "b"]].to_numpy(), [[0, 0], [1, 0]])
+    return live
+
+
+@pytest.mark.parametrize("composite", [False, True], ids=["dense", "composite"])
+@pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
+@pytest.mark.parametrize("half", [_python_half, _array_half], ids=["python", "array"])
+def test_fractional_helper_preserves_value_and_state_path(
+    *, half: UserFunction, composite: bool, enable_jit: bool
+) -> None:
+    """Preserve Python and array helper values through public solve and simulate."""
+    model = _fractional_helper_model(
+        half=half, composite=composite, enable_jit=enable_jit
+    )
+    _assert_fractional_transition(
+        model=model,
+        composite=composite,
+        initial_conditions={
+            "regime_id": jnp.full(1, _RegimeId.live, dtype=jnp.int32),
+            "period": jnp.zeros(1, dtype=jnp.int32),
+            "a": jnp.zeros(1, dtype=jnp.int32),
+            "b": jnp.zeros(1, dtype=jnp.int32),
+        },
+    )
+
+
+def _next_a_from_fractional_age(*, age: FloatND) -> DiscreteState:
+    return jnp.asarray(age > 0.25, dtype=jnp.int32)
+
+
+@pytest.mark.parametrize("composite", [False, True], ids=["dense", "composite"])
+@pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
+def test_nonzero_fractional_age_preserves_value_and_state_path(
+    *, composite: bool, enable_jit: bool
+) -> None:
+    """Use the source age 1/2 at period zero to reach the literal next state 10."""
+    start_age = Fraction(1, 2)
+    model = Model(
+        regimes={
+            "live": Regime(
+                states={"a": DiscreteGrid(_Bit), "b": DiscreteGrid(_Bit)},
+                state_transitions={
+                    "a": _next_a_from_fractional_age,
+                    "b": fixed_transition("b"),
+                },
+                functions={"utility": _identity_utility},
+            ),
+            "dead": Regime(functions={"utility": _zero}),
+        },
+        edges={"live": {"live": start_age, "dead": Fraction(1)}},
+        ages=AgeGrid(start=start_age, inclusive_stop=Fraction(3, 2), step="2Q"),
+        regime_id_class=_RegimeId,
+        initial_nodes=InitialNodes(by_age={start_age: "live"}),
+        execution_config=ExecutionConfig(device_memory_bytes=None),
+        enable_jit=enable_jit,
+        composite_states=(
+            {
+                "history": CompositeState(
+                    members=("a", "b"), start_codes={"a": (0,), "b": (0,)}
+                )
+            }
+            if composite
+            else {}
+        ),
+    )
+    live = _assert_fractional_transition(
+        model=model,
+        composite=composite,
+        initial_conditions={
+            "regime_id": jnp.full(1, _RegimeId.live, dtype=jnp.int32),
+            "age": jnp.asarray([0.5]),
+            "a": jnp.zeros(1, dtype=jnp.int32),
+            "b": jnp.zeros(1, dtype=jnp.int32),
+        },
+    )
+    np.testing.assert_array_equal(live["age"].to_numpy(), [0.5, 1.0])

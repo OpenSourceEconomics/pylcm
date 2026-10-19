@@ -41,6 +41,7 @@ from _lcm.regime_building.reachable_states import (
 )
 from _lcm.typing import (
     DataclassInstance,
+    EconFunctionArg,
     FlatRegimeParams,
     FunctionName,
     ReferenceName,
@@ -58,7 +59,6 @@ from lcm.transition import fixed_transition
 from lcm.typing import (
     BoolND,
     DiscreteState,
-    FloatND,
     IntND,
     ScalarInt,
     UserInitialConditions,
@@ -454,9 +454,10 @@ class _CompositeEncoder:
     laws: Callable[..., tuple[_SignedInts, ...]]
     """The member laws, returning next member codes in member order.
 
-    They read whatever the member laws read: codes, but also floating or boolean
-    helpers, signed integer helpers of any width and the age, so the keyword inputs
-    are not restricted to int32 codes.
+    Inputs follow the argument contract of a user economic function
+    (`EconFunctionArg`). Helper values, including Python scalars, pass through
+    unchanged. The returned member codes keep their signed-integer contract and are
+    checked before indexing.
     """
 
     law_args: tuple[ReferenceName, ...]
@@ -471,7 +472,7 @@ class _CompositeEncoder:
     shape: tuple[int, ...]
     """Number of codes of every member."""
 
-    def __call__(self, **kwargs: FloatND | _SignedInts | BoolND) -> IntND:
+    def __call__(self, **kwargs: EconFunctionArg) -> IntND:
         values = kwargs | dict(self.bound)
         nexts = self.laws(**{arg: values[arg] for arg in self.law_args})
         return _read_flat(table=self.encoding, shape=self.shape, index=nexts)
