@@ -132,6 +132,35 @@ Legacy bare pairs and selector mappings remain accepted in age models. Period mo
 require `InitialNodes(by_period=...)`. `ByAge` and `ByPeriod` select transition laws;
 they do not supply initial-node regime names.
 
+(api-composite-state)=
+
+## `CompositeState`
+
+`Model(composite_states={"history": CompositeState(members=(...), start_codes={...})})`
+replaces the axes of deterministic discrete member states by one generated discrete
+state, `history`, whose codes index the member tuples reachable from the start codes.
+Solve and simulate run on those tuples only, so the value function no longer spans the
+full product of the members.
+
+- Members are discrete states that every carrying regime holds on the same grid. Their
+  laws must be deterministic and read only discrete variables, the period, the age and
+  fixed parameters; a law that reads anything else is refused by name. A constraint that
+  reads a continuous variable or a free parameter is not used to prune tuples.
+- User functions keep reading the member names. Initial conditions name the members, as
+  code arrays or as labels in a DataFrame; a start tuple the declaration never reaches
+  raises `InvalidInitialConditionsError`. Members reach `to_dataframe` through
+  `additional_targets`.
+- The code set holds every tuple reachable at some period. A generated constraint,
+  `<name>_is_reachable`, makes each code infeasible at the periods it cannot be reached
+  in, so its value there is `-inf` and no reachable cell reads it.
+- Member laws and grids are the same in both phases; a `Phased` member is refused.
+- Members are held on category grids. A member declared by its values
+  (`DiscreteGrid(values=...)`) is refused, and so is a member law that reads a variable
+  declared by its values.
+- Initial conditions are encoded only for subjects whose starting regime carries the
+  members; member codes must be whole numbers.
+- A model declares at most one composite state.
+
 (api-period-candidate-lowering)=
 
 ## Lower one production candidate
