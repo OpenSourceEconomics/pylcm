@@ -22,7 +22,7 @@ bounds or node values vary with age instead (e.g., an age-dependent borrowing li
 
 | Grid Type                | Use Case                  | Key Parameters                                       |
 | ------------------------ | ------------------------- | ---------------------------------------------------- |
-| `DiscreteGrid`           | Categorical choices       | `category_class`                                     |
+| `DiscreteGrid`           | Categorical choices       | `category_class` or `values`                         |
 | `LinSpacedGrid`          | Evenly spaced continuous  | `start`, `stop`, `n_points`                          |
 | `LogSpacedGrid`          | Log-spaced continuous     | `start`, `stop`, `n_points`                          |
 | `IrregSpacedGrid`        | Custom point placement    | `points` or `n_points`                               |
@@ -75,6 +75,69 @@ that fixes job holding and benefit duration, see
 When used as an **action**, no further configuration is needed. When used as a
 **state**, the transition is specified via `state_transitions` on the `Regime` — see
 [Transitions](transitions.ipynb).
+
+### Discrete grids with numeric values
+
+When the outcomes of a discrete variable are numbers, such as hours of work or years of
+experience, declare the numbers instead of a category class:
+
+```python
+from lcm import DiscreteGrid
+
+actions = {"hours": DiscreteGrid(values=(0, 20, 40))}
+states = {
+    "experience": DiscreteGrid(values=range(31)),
+    "productivity": DiscreteGrid(values=(0.5, 1.0, 2.0), tolerance=1e-9),
+}
+```
+
+Values are strictly ascending, finite, and all integers or all floats. Inside pylcm the
+variable is indexed by the codes `0..n-1` of its values, but every function you write
+receives the values: `hours` arrives as `0`, `20` or `40`, not as `0`, `1` or `2`, and a
+deterministic law of `experience` returns the next year of experience, which pylcm maps
+back to its code. Integer values arrive as int32, as codes do, so `jnp.log(hours)` on an
+integer grid is float32 even when x64 is enabled; write `jnp.log(hours * 1.0)` or
+declare float values if you need the model's float precision.
+
+A value matches a node only if it equals it. Integer grids match integers exactly. A
+float grid matches within its absolute `tolerance` (zero by default), and
+`grid.nearest(x)` snaps a float that arithmetic left between nodes.
+
+Every place where you hand values to pylcm or read them back uses values by default, and
+integer codes when the call passes `use_categorical_codes=True`:
+
+- `SimulationResult.to_dataframe()` gives an ordered pandas Categorical whose categories
+  are the grid's values, all of them, observed or not. Cast with `.astype(float)` before
+  arithmetic, as in `df["hours"].astype(float).mean()`.
+- Initial conditions take the values, as a NumPy, JAX or pandas array, or as the numeric
+  Categorical `to_dataframe` publishes; its categories must be exactly the grid's values
+  in the same order. A value on no node raises an error naming it.
+- A `pd.Series` in `params` indexed by a value-grid state uses the values as its index
+  labels (for example a level `experience` with labels `0, 1, ..., 30`), matched like
+  initial conditions. String spellings such as `"0.5"` are refused.
+- `Model.lookup_policy` takes states in values, restricts discrete actions through
+  `action_grids` given in values, and returns a value-grid action as a plain array of
+  its values.
+- `SolutionResult.value_array()` and `value_frame()` carry a value-grid state's values
+  as coordinates, so `.sel(experience=4)` selects a node by its value.
+
+The one exception is `Model.simulate(shock_paths=...)`. A shock path holds category
+codes even for a value grid, whatever `use_categorical_codes` says, because a path is
+replayed exactly and losslessly: a code names exactly one node, while a float value
+would need the grid's tolerance to find it. Map codes and values with the grid itself:
+
+```python
+import jax.numpy as jnp
+
+grid = DiscreteGrid(values=(0.5, 1.0, 2.0))
+
+grid.values[2]  # 2.0, the value of code 2
+grid.encode(jnp.array([0.5, 2.0]))  # the codes 0 and 2, as int32
+grid.decode(jnp.array([0, 2]))  # the values 0.5 and 2.0
+```
+
+A value-grid column that `to_dataframe()` published becomes a shock path by its codes,
+`df["productivity"].cat.codes`.
 
 ## Continuous Grids
 

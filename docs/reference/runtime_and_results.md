@@ -407,6 +407,7 @@ codes = solution.value_frame(period=0, regime="working", use_categorical_codes=T
 `metadata.value_schemas[(period, regime)].axis_names` order. Axis names must be unique
 and cannot be `V`, which is reserved for the value. Discrete states carry their labels
 as a categorical coordinate in declaration order, with the ordering matching simulation;
+a state declared with `values` carries those numbers as a plain coordinate.
 `use_categorical_codes=True` keeps integer codes. Collective regimes also have a
 `stakeholder` dimension, and a regime without states yields a zero-dimensional array.
 Coordinates are the resolved grid nodes used by the solve, including parameter-dependent
@@ -741,7 +742,10 @@ candidates, so the lookup refuses such a regime.
 materializes a flat DataFrame. `additional_targets` accepts a sequence of selected DAG
 output names (including the tuple `result.available_targets`), `"all"`, or `None`. Other
 bare strings raise `InvalidAdditionalTargetsError`. `terminal_rows="all"` retains every
-frozen absorbing row; the default keeps only terminal entry.
+frozen absorbing row; the default keeps only terminal entry. Discrete columns are pandas
+Categoricals: a category class's labels, or, for a grid declared with `values`, an
+ordered Categorical over those numbers that `.astype(float)` turns into numbers.
+`use_categorical_codes=True` gives integer codes instead.
 
 Inspection properties include `regime_names`, `state_names`, `action_names`,
 `n_periods`, `n_subjects`, `available_targets`, `raw_results`, `flat_params`, and

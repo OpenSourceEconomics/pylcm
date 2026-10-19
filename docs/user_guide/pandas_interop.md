@@ -34,8 +34,15 @@ result = model.simulate(
 - `"regime_name"` column is required. Use regime names as strings (e.g., `"working"`).
 - Discrete states use string labels from the model's categorical classes (e.g., `"good"`
   instead of `0`). Labels are validated and mapped to integer codes automatically.
+- A discrete state declared with [values](grids.md#discrete-grids-with-numeric-values)
+  takes those numbers, matched exactly for integers and within the grid's tolerance for
+  floats; a value on no node raises.
 - Continuous states pass through as-is.
-- `Categorical` dtype columns are also supported.
+- `Categorical` dtype columns are also supported, including the numeric Categoricals
+  `SimulationResult.to_dataframe()` publishes for value grids, so rows of a simulated
+  panel are valid initial conditions.
+- `simulate(..., use_categorical_codes=True)` reads every discrete column as integer
+  codes instead.
 
 The example above is for an age model. A model declared with `n_periods` requires an
 integer `"period"` column instead of `"age"`. Use exactly the coordinate kind the model
@@ -80,7 +87,11 @@ Each `pd.Series` must have:
 
 - A **named** `MultiIndex` (or named `Index` for 1-D arrays). Level names must match the
   function's indexing parameters.
-- **String labels** for discrete variables, matching the model's categorical classes.
+- **String labels** for discrete variables, matching the model's categorical classes,
+  and the **values** themselves for a variable declared with
+  [values](grids.md#discrete-grids-with-numeric-values) (`0, 4, 10`, not `"4"`). Pass
+  `use_categorical_codes=True` to `solve` or `simulate` to index every discrete level by
+  integer codes instead.
 - **`"age"`** for an age model, with actual values from its `AgeGrid`, or **`"period"`**
   for a period model, with integer computational indices. These names are never
   interchangeable, even when the numerical labels coincide.

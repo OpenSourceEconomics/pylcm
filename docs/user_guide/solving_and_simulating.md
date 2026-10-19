@@ -27,11 +27,12 @@ fields and addressed artifact stores.
 To inspect values with their state coordinates, use
 `solution.value_array(period=0, regime="working")`. It returns an xarray `DataArray`
 with one named dimension per state, so `.sel(education="college")` picks a curve
-regardless of axis order. Discrete states carry categorical labels by default; pass
-`use_categorical_codes=True` for integer codes. Collective values also have a
-`stakeholder` dimension. `solution.value_frame(...)` returns the same values as a long
-DataFrame with state columns and `V`; it explicitly materializes the whole grid. Use
-`model.lookup_policy` for values between grid nodes, with the same interpolation as
+regardless of axis order. Discrete states carry categorical labels by default, and a
+state declared with [values](grids.md#discrete-grids-with-numeric-values) carries those
+numbers; pass `use_categorical_codes=True` for integer codes. Collective values also
+have a `stakeholder` dimension. `solution.value_frame(...)` returns the same values as a
+long DataFrame with state columns and `V`; it explicitly materializes the whole grid.
+Use `model.lookup_policy` for values between grid nodes, with the same interpolation as
 simulation.
 
 ### Retention and replay
@@ -250,6 +251,9 @@ initial_conditions = {
 ```
 
 - Every non-shock state must have an entry.
+- A state declared with [values](grids.md#discrete-grids-with-numeric-values) takes
+  those numbers, not codes; pass `use_categorical_codes=True` to `simulate` to give
+  codes instead.
 - `"regime_id"` must be included, with integer codes from the `regime_id_class`.
 - All arrays must have the same length (= number of agents).
 - Shock states are drawn automatically.
@@ -651,8 +655,11 @@ a subject entering later reads its entry column. The given value overrides that
 subject's initial shock and each subsequent realised draw. Continuous processes accept
 finite values in their distribution's support, including off-node values; lognormal
 levels must be positive and uniform draws must lie inside the declared interval.
-Discrete shocks require exact category codes. Persistent processes consume the supplied
-realised level directly, rather than treating it as an innovation and recursing again.
+Discrete shocks require exact category codes, also for a state declared with
+[values](grids.md#discrete-grids-with-numeric-values), whose other boundaries use the
+values: a code replays the path exactly and losslessly. `grid.values[code]` maps a code
+to its value. Persistent processes consume the supplied realised level directly, rather
+than treating it as an innovation and recursing again.
 
 Each value is checked against the support of every regime that may read it: the
 subject's starting regime in its entry period, and afterwards every regime the
