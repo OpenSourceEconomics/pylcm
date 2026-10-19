@@ -501,8 +501,8 @@ def test_admitted_joint_producers_preserve_seeded_simulation_and_inputs() -> Non
         params=params, initial_conditions=initial, log_level="debug", seed=17
     )
 
-    results_match = budgeted_result.to_dataframe(use_labels=False).equals(
-        baseline_result.to_dataframe(use_labels=False)
+    results_match = budgeted_result.to_dataframe(use_categorical_codes=True).equals(
+        baseline_result.to_dataframe(use_categorical_codes=True)
     )
     inputs_match = all(
         np.array_equal(initial[name], snapshot) for name, snapshot in snapshots.items()

@@ -92,7 +92,7 @@ def test_ephemeral_model_solves_and_simulates_an_opaque_callable_graph(
         log_level="off",
         seed=0,
     )
-    frame = result.to_dataframe(use_labels=False)
+    frame = result.to_dataframe(use_categorical_codes=True)
     assert frame["regime_name"].tolist() == ["working_life", "dead"]
     alive = frame.loc[frame["regime_name"] == "working_life"]
     np.testing.assert_array_equal(alive["wealth"], [2.0])

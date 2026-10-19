@@ -426,8 +426,12 @@ def test_independent_outer_cohorts_preserve_profiled_shapes_and_real_rows(
     assert maps[0] == maps[1]
     _assert_raw_equal(actual=results[1], expected=results[0])
     for targets in (None, ["utility"]):
-        left = results[0].to_dataframe(use_labels=False, additional_targets=targets)
-        right = results[1].to_dataframe(use_labels=False, additional_targets=targets)
+        left = results[0].to_dataframe(
+            use_categorical_codes=True, additional_targets=targets
+        )
+        right = results[1].to_dataframe(
+            use_categorical_codes=True, additional_targets=targets
+        )
         eps = (
             8 * np.finfo(np.asarray(next(iter(solution.values[0].values()))).dtype).eps
         )

@@ -116,7 +116,7 @@ def test_simulated_wealth_follows_the_realized_draw(model: Model) -> None:
         },
         log_level="off",
     )
-    df = result.to_dataframe(use_labels=False).reset_index()
+    df = result.to_dataframe(use_categorical_codes=True).reset_index()
 
     np.testing.assert_allclose(
         df.query("period == 1")["wealth"].to_numpy(),

@@ -162,7 +162,9 @@ def test_simulation_preserves_nested_fixed_parameters(
         seed=17,
         log_level="off",
     )
-    frame = result.to_dataframe(use_labels=False).sort_values(["period", "subject_id"])
+    frame = result.to_dataframe(use_categorical_codes=True).sort_values(
+        ["period", "subject_id"]
+    )
     np.testing.assert_array_equal(
         np.column_stack(
             (
@@ -234,7 +236,7 @@ def test_user_subject_width_name_remains_an_economic_action() -> None:
             "regime_id": jnp.full(2, _WidthCollisionRegimeId.alive, dtype=jnp.int32),
         },
         log_level="off",
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
     np.testing.assert_array_equal(
         frame.query("period == 0")["lcm_subject_width"], np.asarray([2.0, 2.0])
     )

@@ -67,6 +67,11 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - A float value grid holds its values at the precision of the model that uses it,
   so a grid built before x64 is enabled holds float64 values in a float64 model.
   Values that collide at that precision raise when the model is built.
+- Breaking: `use_labels` is renamed `use_categorical_codes`, with the opposite meaning,
+  in `SimulationResult.to_dataframe`, `SolutionResult.value_array` and
+  `SolutionResult.value_frame`; `SimulationResult.save` takes
+  `df_use_categorical_codes`. The default `False` keeps categorical columns and
+  coordinates; `True` gives integer codes. There is no alias for the old name.
 
 ### Time-inconsistent agents with `Decoupled`
 
@@ -164,7 +169,7 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 - `SolutionResult.value_array(period=..., regime=...)` returns an xarray `DataArray`
   named `V` with one dimension per state axis, the resolved grid nodes as coordinates,
-  discrete states labelled as categoricals in declaration order (`use_labels=False` for
+  discrete states labelled as categoricals in declaration order (`use_categorical_codes=True` for
   integer codes), and a `stakeholder` dimension for collective regimes. It wraps the
   stored value without a host copy; `.sel(...)` selects a curve or surface by name before
   any table is built. `SolutionResult.value_frame(...)` returns the same values as a long

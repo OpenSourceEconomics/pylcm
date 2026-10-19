@@ -84,7 +84,7 @@ def test_policy_and_ordinary_seed_changes_preserve_independent_taste_keys(
             log_level="debug",
         )
         choices.append(
-            result.to_dataframe(use_labels=False)
+            result.to_dataframe(use_categorical_codes=True)
             .query("period == 0")["work"]
             .to_numpy()
         )
@@ -133,7 +133,7 @@ def test_explicit_none_preserves_default_seeded_result() -> None:
         solution=solution,
         seed=11,
         log_level="debug",
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
     explicit = model.simulate(
         params=params,
         initial_conditions=initial,
@@ -141,7 +141,7 @@ def test_explicit_none_preserves_default_seeded_result() -> None:
         seed=11,
         log_level="debug",
         taste_shock_seed=None,
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
     pd.testing.assert_frame_equal(ordinary, explicit, check_exact=True)
 
 
@@ -183,7 +183,7 @@ def test_budgeted_padded_chunks_preserve_independent_taste_keys_and_choices(
                 taste_shock_seed=721,
                 log_level="off",
             )
-            frames.append(result.to_dataframe(use_labels=False))
+            frames.append(result.to_dataframe(use_categorical_codes=True))
     assert len(captured) == 2
     np.testing.assert_array_equal(captured[0], np.concatenate(captured[1:])[:7])
     # This control owns exact RNG, state and selected-action semantics. Value
@@ -229,7 +229,7 @@ def test_typed_seed_matches_integer_draws_and_choices(
                 log_level="off",
                 seed=seeds["seed"],
                 taste_shock_seed=seeds["taste_shock_seed"],
-            ).to_dataframe(use_labels=False)
+            ).to_dataframe(use_categorical_codes=True)
         )
     assert len(captured) == 2
     np.testing.assert_array_equal(captured[0], captured[1])
@@ -309,7 +309,7 @@ def test_integer_seed_draws_threefry_under_an_rbg_default(*, budgeted: bool) -> 
             solution=solution,
             seed=11,
             log_level="off",
-        ).to_dataframe(use_labels=False)
+        ).to_dataframe(use_categorical_codes=True)
     with jax.default_prng_impl("rbg"):
         actual = model.simulate(
             params=params,
@@ -317,7 +317,7 @@ def test_integer_seed_draws_threefry_under_an_rbg_default(*, budgeted: bool) -> 
             solution=solution,
             seed=11,
             log_level="off",
-        ).to_dataframe(use_labels=False)
+        ).to_dataframe(use_categorical_codes=True)
     pd.testing.assert_frame_equal(actual, expected, check_exact=True)
 
 
@@ -342,7 +342,7 @@ def test_integer_seed_draws_ignore_subject_width_under_an_rbg_default(
                     initial_conditions=_initial_conditions(count=32),
                     seed=11,
                     log_level="off",
-                ).to_dataframe(use_labels=False)
+                ).to_dataframe(use_categorical_codes=True)
             )
     pd.testing.assert_frame_equal(frames[0], frames[1], check_exact=True)
 

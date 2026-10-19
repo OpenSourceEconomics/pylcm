@@ -381,8 +381,8 @@ def test_admitted_state_transition_preserves_seeded_simulation_and_inputs() -> N
     )
 
     results_match = np.array_equal(
-        budgeted_result.to_dataframe(use_labels=False).to_numpy(),
-        baseline_result.to_dataframe(use_labels=False).to_numpy(),
+        budgeted_result.to_dataframe(use_categorical_codes=True).to_numpy(),
+        baseline_result.to_dataframe(use_categorical_codes=True).to_numpy(),
     )
     inputs_match = all(
         np.array_equal(initial[name], snapshot) for name, snapshot in snapshots.items()

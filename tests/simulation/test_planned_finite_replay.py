@@ -121,9 +121,9 @@ def test_planned_replay_preserves_public_legacy_frames(*, monkeypatch, discrete)
         log_level="off",
         seed=17,
     )
-    planned = simulate().to_dataframe(use_labels=False)
+    planned = simulate().to_dataframe(use_categorical_codes=True)
     monkeypatch.setattr(_replay, "_execute_finite_replay", _legacy_finite_replay)
-    legacy = simulate().to_dataframe(use_labels=False)
+    legacy = simulate().to_dataframe(use_categorical_codes=True)
     dtype = np.float64 if jax.config.x64_enabled else np.float32
     tolerance = float(8 * np.finfo(dtype).eps)
     assert_frame_equal(planned, legacy, rtol=tolerance, atol=tolerance)

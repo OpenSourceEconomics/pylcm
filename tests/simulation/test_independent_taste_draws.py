@@ -181,7 +181,7 @@ def _public_choices(
         seed=11,
         taste_shock_seed=root,
         log_level="off",
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
     period_zero = result.query("period == 0").sort_values("subject_id")
     return period_zero["work"].to_numpy()
 

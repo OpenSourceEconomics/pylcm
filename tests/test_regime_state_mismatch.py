@@ -234,7 +234,7 @@ def test_deterministic_target_only_state() -> None:
         },
         solution=period_to_regime_to_V_arr,
     )
-    df = result.to_dataframe(use_labels=False)
+    df = result.to_dataframe(use_categorical_codes=True)
     dead_rows = df[df["regime_name"] == "dead"]
     valid_codes = {float(HeirPresent.no), float(HeirPresent.yes)}
     assert not dead_rows.empty, "Expected some rows in the dead regime"
@@ -333,7 +333,7 @@ def test_stochastic_target_only_state() -> None:
         },
         solution=period_to_regime_to_V_arr,
     )
-    df = result.to_dataframe(use_labels=False)
+    df = result.to_dataframe(use_categorical_codes=True)
     dead_rows = df[df["regime_name"] == "dead"]
     valid_codes = {float(HeirPresent.no), float(HeirPresent.yes)}
     assert not dead_rows.empty, "Expected some rows in the dead regime"
@@ -419,7 +419,7 @@ def test_per_target_dict_transitions():
         },
         solution=period_to_regime_to_V_arr,
     )
-    df = result.to_dataframe(use_labels=False)
+    df = result.to_dataframe(use_categorical_codes=True)
 
     retired_rows = df[df["regime_name"] == "retirement"]
     valid_retired_codes = {float(HealthRetirement.bad), float(HealthRetirement.good)}

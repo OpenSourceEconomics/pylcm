@@ -1015,7 +1015,7 @@ def test_fixed_component_preserves_a_transition_reading_its_next_code(
         },
         seed=123,
         log_level="off",
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
     if "period" not in panel.columns:
         panel = panel.reset_index()
     first = panel.loc[panel["period"] == 0].sort_values("subject_id")
@@ -1145,7 +1145,7 @@ def test_fixed_component_preserves_next_code_probability_and_joint_consumers(
             },
             seed=123,
             log_level="off",
-        ).to_dataframe(use_labels=False)
+        ).to_dataframe(use_categorical_codes=True)
         if "period" not in panel.columns:
             panel = panel.reset_index()
         first = panel.loc[panel["period"] == 0].sort_values("subject_id")

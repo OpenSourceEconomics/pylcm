@@ -117,7 +117,7 @@ def _simulate_panels(
             log_level="off",
             max_compilation_workers=workers,
             seed=seed,
-        ).to_dataframe(use_labels=False)
+        ).to_dataframe(use_categorical_codes=True)
         for _ in range(repeats)
     ]
 

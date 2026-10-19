@@ -131,7 +131,7 @@ def test_a_dissolved_row_stops_carrying_a_role() -> None:
         own_stakeholder=[roles["f"], roles["m"], roles["f"]]
     )
 
-    published = result.to_dataframe(use_labels=False)
+    published = result.to_dataframe(use_categorical_codes=True)
     dissolved = published.query("period == 1 and regime_name == 'single_m'")
     assert list(dissolved["own_stakeholder"]) == [_NO_ROLE]
 
@@ -145,7 +145,7 @@ def test_a_row_that_stays_married_keeps_its_role() -> None:
         own_stakeholder=[roles["f"], roles["m"], roles["f"]]
     )
 
-    published = result.to_dataframe(use_labels=False)
+    published = result.to_dataframe(use_categorical_codes=True)
     married = published.query("period == 1 and regime_name == 'married_ir'")
     assert list(married.sort_values("subject_id")["own_stakeholder"]) == [
         roles["f"],

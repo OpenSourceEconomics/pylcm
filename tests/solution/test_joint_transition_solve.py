@@ -527,7 +527,7 @@ def test_bdy_simulation_samples_one_shared_match_and_agrees_with_solve() -> None
         solution=solution,
         log_level="debug",
     )
-    frame = result.to_dataframe(use_labels=False, terminal_rows="all")
+    frame = result.to_dataframe(use_categorical_codes=True, terminal_rows="all")
     couple = frame.query('regime_name == "couple"')
 
     realized_pairs = set(zip(couple["ybar_p"], couple["eps_p"], strict=True))

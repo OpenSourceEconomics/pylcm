@@ -104,7 +104,7 @@ def test_common_path_decisions_match_policy_lookup() -> None:
         seed=7,
         log_level="off",
     )
-    df = result.to_dataframe(use_labels=False)
+    df = result.to_dataframe(use_categorical_codes=True)
     for period in range(3):
         rows = df.query("regime_name == 'alive' and period == @period")
         expected = model.lookup_policy(
@@ -137,7 +137,7 @@ def test_individual_paths_keep_original_subject_order_and_late_entry(
         seed=7,
         log_level="off",
     )
-    df = result.to_dataframe(use_labels=False).reset_index()
+    df = result.to_dataframe(use_categorical_codes=True).reset_index()
     for _, row in df.query("regime_name == 'alive'").iterrows():
         np.testing.assert_array_equal(
             row["shock"], paths[int(row["subject_id"]), int(row["period"])]
@@ -181,7 +181,7 @@ def test_given_discrete_draw_feeds_a_dependent_transition(health_model: Model) -
         log_level="off",
         seed=0,
     )
-    rows = result.to_dataframe(use_labels=False).query("period == 1")
+    rows = result.to_dataframe(use_categorical_codes=True).query("period == 1")
     np.testing.assert_array_equal(rows["health"], 0)
     np.testing.assert_array_equal(rows["wealth"], 0.0)
 
@@ -247,7 +247,7 @@ def test_transition_only_fold_uses_given_destination_period_draw() -> None:
         shock_paths={"cost": jnp.array([0.0, 0.5])},
         seed=0,
         log_level="off",
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
     np.testing.assert_array_equal(df.query("period == 1")["wealth"], [1.5, 2.5])
 
 
@@ -350,7 +350,7 @@ def test_given_paths_preserve_dated_transition_bindings(
         shock_paths={"shock": jnp.array([1.0, -1.0, 2.0, 0.5])},
         seed=7,
         log_level="off",
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
     for subject, expected in ((0, [1.0, 0.1, 2.3, 3.1]), (1, [2.0, 4.2, 5.0])):
         np.testing.assert_allclose(
             frame.loc[frame["subject_id"] == subject, "wealth"], expected, rtol=1e-5
@@ -392,7 +392,7 @@ def test_given_paths_survive_budgeted_subject_chunks(
                 seed=3,
                 log_level="off",
             )
-            .to_dataframe(use_labels=False)
+            .to_dataframe(use_categorical_codes=True)
             .reset_index()
         )
         rows = df.query("regime_name == 'alive'")
@@ -410,7 +410,7 @@ def test_omitted_and_empty_paths_preserve_seeded_output() -> None:
         initial_conditions=_initial(),
         seed=19,
         log_level="off",
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
     empty = model.simulate(
         params={"discount_factor": 0.9},
         solution=solution,
@@ -418,7 +418,7 @@ def test_omitted_and_empty_paths_preserve_seeded_output() -> None:
         seed=19,
         log_level="off",
         shock_paths={},
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
     pd.testing.assert_frame_equal(original, empty, check_exact=True)
 
 
@@ -470,7 +470,7 @@ def test_supplied_shock_keeps_unnamed_seeded_draws() -> None:
         initial_conditions=initial,
         seed=17,
         log_level="off",
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
     given = model.simulate(
         params={"discount_factor": 0.9},
         solution=solution,
@@ -478,7 +478,7 @@ def test_supplied_shock_keeps_unnamed_seeded_draws() -> None:
         seed=17,
         log_level="off",
         shock_paths={"shock": np.array([1.0, -1.0, 2.0])},
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
     np.testing.assert_array_equal(given["noise"], original["noise"])
     np.testing.assert_array_equal(given["regime_name"], original["regime_name"])
 
@@ -541,7 +541,7 @@ def test_ar1_accepts_realized_off_node_path_without_recursing_it() -> None:
         shock_paths={"shock": path},
         seed=2,
         log_level="off",
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
     alive = rows.query("regime_name == 'alive'")
     np.testing.assert_array_equal(alive.shock, path[alive["period"].to_numpy()])
 
@@ -569,7 +569,7 @@ def test_inactive_path_columns_are_ignored() -> None:
             seed=1,
             log_level="off",
         )
-        .to_dataframe(use_labels=False)
+        .to_dataframe(use_categorical_codes=True)
     )
     rows = df.query("regime_name == 'alive'")
     np.testing.assert_array_equal(rows.choice, rows.shock)
@@ -672,7 +672,7 @@ def test_fractional_late_entry_starts_from_its_entry_period_column(
         shock_paths={"shock": history},
         seed=7,
         log_level="off",
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
     np.testing.assert_array_equal(
         _alive_records(df),
         _expected_alive_records(starts=starts, history=history, n_periods=3),
@@ -718,7 +718,7 @@ def test_fractional_late_entry_column_holds_across_execution_routes(
         shock_paths={"shock": _ENTRY_HISTORY},
         seed=7,
         log_level="off",
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
     np.testing.assert_array_equal(
         _alive_records(df),
         _expected_alive_records(
@@ -872,7 +872,7 @@ def test_phased_history_skips_regime_valued_only_in_solve(
             seed=7,
             log_level="off",
         )
-        .to_dataframe(use_labels=False)
+        .to_dataframe(use_categorical_codes=True)
     )
     np.testing.assert_array_equal(
         _phased_panel(df), _expected_phased_panel(np.full(5, -1.0))
@@ -890,7 +890,7 @@ def test_phased_individual_history_keeps_subject_rows() -> None:
             seed=7,
             log_level="off",
         )
-        .to_dataframe(use_labels=False)
+        .to_dataframe(use_categorical_codes=True)
     )
     np.testing.assert_array_equal(_phased_panel(df), _expected_phased_panel(levels))
 
@@ -906,7 +906,7 @@ def test_phased_history_skips_periods_valued_only_in_solve() -> None:
             seed=7,
             log_level="off",
         )
-        .to_dataframe(use_labels=False)
+        .to_dataframe(use_categorical_codes=True)
     )
     np.testing.assert_array_equal(
         _phased_panel(df), _expected_phased_panel(np.full(5, -1.0))
@@ -949,7 +949,7 @@ def test_column_used_only_by_a_solve_only_regime_is_not_validated(
         seed=7,
         log_level="off",
         runtime_checks=False,
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
     np.testing.assert_array_equal(_phased_panel(df), _expected_phased_panel(levels))
 
 
@@ -1027,7 +1027,7 @@ def test_phased_local_draw_is_dated_at_the_destination_period(
         shock_paths={"cost": np.array([0.0, 0.5])},
         seed=7,
         log_level="off",
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
     terminal = df.reset_index().query("period == 1").sort_values("subject_id")
     np.testing.assert_array_equal(
         terminal[["regime_name", "wealth"]].to_numpy(),
@@ -1057,7 +1057,7 @@ def test_visited_terminal_regime_accepts_and_seeds_a_history() -> None:
         shock_paths={"shock": np.array([-1.0])},
         seed=7,
         log_level="off",
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
     np.testing.assert_array_equal(df["shock"].to_numpy(dtype=float), np.full(5, -1.0))
 
 
@@ -1131,7 +1131,7 @@ def test_paths_are_checked_against_each_subjects_own_regime_support() -> None:
             seed=3,
             log_level="off",
         )
-        .to_dataframe(use_labels=False)
+        .to_dataframe(use_categorical_codes=True)
     )
     np.testing.assert_array_equal(_pair_panel(df=df, column="shock"), paths[:, :2])
 
@@ -1161,7 +1161,7 @@ def test_unread_cell_of_a_late_entrant_may_be_missing() -> None:
             seed=7,
             log_level="off",
         )
-        .to_dataframe(use_labels=False)
+        .to_dataframe(use_categorical_codes=True)
         .reset_index()
         .query("regime_name == 'alive'")
     )
@@ -1203,7 +1203,7 @@ def test_paths_seed_only_subjects_whose_regime_draws_the_state() -> None:
         },
         seed=3,
         log_level="off",
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
     np.testing.assert_array_equal(
         _pair_panel(df=df, column="health"),
         [[PairHealth.bad, PairHealth.bad], [PairHealth.good, PairHealth.good]],
@@ -1345,7 +1345,7 @@ def _two_entry_observed_rows(
             seed=7,
             log_level="off",
         )
-        .to_dataframe(use_labels=False)
+        .to_dataframe(use_categorical_codes=True)
         .reset_index()
         .sort_values(["subject_id", "period"])
     )

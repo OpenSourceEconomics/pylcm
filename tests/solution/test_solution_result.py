@@ -1717,9 +1717,9 @@ def test_values_and_replay_retains_the_adaptive_nnbegm_policy() -> None:
 
 
 @pytest.mark.parametrize("width", [1, 3])
-@pytest.mark.parametrize("use_labels", [True, False])
+@pytest.mark.parametrize("use_categorical_codes", [True, False])
 def test_value_frame_labels_grid_nodes(
-    *, width: int, use_labels: bool, tmp_path: Path
+    *, width: int, use_categorical_codes: bool, tmp_path: Path
 ) -> None:
     """Each labelled row retains its value through blocking and persistence."""
 
@@ -1752,7 +1752,9 @@ def test_value_frame_labels_grid_nodes(
         regime_id_class=Alive,
     )
     result = model.solve(params={}, log_level="off")
-    frame = result.value_frame(period=0, regime="alive", use_labels=use_labels)
+    frame = result.value_frame(
+        period=0, regime="alive", use_categorical_codes=use_categorical_codes
+    )
     assert tuple(frame.columns) == (
         *result.metadata.value_schemas[0, "alive"].axis_names,
         "V",
@@ -1762,14 +1764,17 @@ def test_value_frame_labels_grid_nodes(
     np.testing.assert_array_equal(
         frame["V"], np.asarray(result.value(period=0, regime="alive")).ravel()
     )
-    if use_labels:
+    if not use_categorical_codes:
         assert frame["kind"].tolist() == ["low"] * 3 + ["high"] * 3
         assert frame["kind"].cat.ordered
     else:
         np.testing.assert_array_equal(frame["kind"], [0, 0, 0, 1, 1, 1])
     restored = load_solution(path=result.save(path=tmp_path / "labelled"))
     assert_frame_equal(
-        frame, restored.value_frame(period=0, regime="alive", use_labels=use_labels)
+        frame,
+        restored.value_frame(
+            period=0, regime="alive", use_categorical_codes=use_categorical_codes
+        ),
     )
     frame["V"] = -99.0
     np.testing.assert_array_equal(
@@ -1907,7 +1912,7 @@ def test_value_frame_preserves_state_named_stakeholder(
         with pytest.raises(ValueError, match="unique"):
             result.value_frame(period=0, regime="alive")
     else:
-        frame = result.value_frame(period=0, regime="alive", use_labels=False)
+        frame = result.value_frame(period=0, regime="alive", use_categorical_codes=True)
         np.testing.assert_array_equal(frame["stakeholder"], coordinates)
         np.testing.assert_array_equal(frame["V"], coordinates)
 
@@ -2038,8 +2043,10 @@ def _assert_collective_frame_matches_reference(
         result.value(period=0, regime="alive"),
         np.asarray([row[2] for row in expected]).reshape(2, 2),
     )
-    for use_labels in (False, True):
-        frame = result.value_frame(period=0, regime="alive", use_labels=use_labels)
+    for use_categorical_codes in (False, True):
+        frame = result.value_frame(
+            period=0, regime="alive", use_categorical_codes=use_categorical_codes
+        )
         assert frame.to_dict("list") == {
             "wealth": [row[0] for row in expected],
             "stakeholder": [row[1] for row in expected],
@@ -2173,12 +2180,18 @@ def test_value_frame_categorical_state_named_stakeholder_keeps_its_domain(
         }
         assert tuple(frame["stakeholder"].cat.categories) == ("low", "high")
         assert frame["stakeholder"].cat.ordered is ordered
-        codes = candidate.value_frame(period=0, regime="alive", use_labels=False)
+        codes = candidate.value_frame(
+            period=0, regime="alive", use_categorical_codes=True
+        )
         assert codes.to_dict("list") == {"stakeholder": [0, 1], "V": [1.0, 3.0]}
 
 
 def _reference_value_frame(
-    *, result: SolutionResult, period: int, regime: RegimeName, use_labels: bool
+    *,
+    result: SolutionResult,
+    period: int,
+    regime: RegimeName,
+    use_categorical_codes: bool,
 ) -> pd.DataFrame:
     """Build the long value frame directly from the stored array and schema."""
     value = np.asarray(result.value(period=period, regime=regime))
@@ -2190,7 +2203,7 @@ def _reference_value_frame(
         coordinates = np.tile(np.repeat(axis.coordinates, repeats), tiles)
         frame[axis.name] = coordinates
         domain = schema.categorical_domains.get(axis.name)
-        if use_labels and domain is not None:
+        if not use_categorical_codes and domain is not None:
             frame[axis.name] = pd.Categorical.from_codes(
                 pd.Index(domain.codes).get_indexer(pd.Index(coordinates)),
                 categories=pd.Index(domain.labels),
@@ -2271,14 +2284,16 @@ def test_value_array_carries_grid_nodes_as_coordinates() -> None:
 
 
 @pytest.mark.parametrize(
-    ("use_labels", "expected"), [(True, ["low", "high"]), (False, [0, 1])]
+    ("use_categorical_codes", "expected"), [(False, ["low", "high"]), (True, [0, 1])]
 )
 def test_value_array_categorical_coordinates(
-    *, use_labels: bool, expected: list[str] | list[int]
+    *, use_categorical_codes: bool, expected: list[str] | list[int]
 ) -> None:
     """Discrete states carry labels in declaration order, or integer codes."""
     result = _solve_labelled_model()
-    array = result.value_array(period=0, regime="alive", use_labels=use_labels)
+    array = result.value_array(
+        period=0, regime="alive", use_categorical_codes=use_categorical_codes
+    )
     assert array["kind"].to_numpy().tolist() == expected
 
 
@@ -2318,16 +2333,20 @@ def test_value_array_collective_regime_labels_stakeholders() -> None:
     assert float(curve) == 5.0
 
 
-@pytest.mark.parametrize("use_labels", [True, False])
+@pytest.mark.parametrize("use_categorical_codes", [True, False])
 def test_value_array_survives_save_and_load(
-    *, use_labels: bool, tmp_path: Path
+    *, use_categorical_codes: bool, tmp_path: Path
 ) -> None:
     """A loaded result yields an identical labelled array."""
     result = _solve_labelled_model()
     restored = load_solution(path=result.save(path=tmp_path / "labelled"))
     xr.testing.assert_identical(
-        result.value_array(period=0, regime="alive", use_labels=use_labels),
-        restored.value_array(period=0, regime="alive", use_labels=use_labels),
+        result.value_array(
+            period=0, regime="alive", use_categorical_codes=use_categorical_codes
+        ),
+        restored.value_array(
+            period=0, regime="alive", use_categorical_codes=use_categorical_codes
+        ),
     )
 
 
@@ -2339,15 +2358,23 @@ def test_value_array_survives_save_and_load(
         (_solve_scalar_and_collective_model, "couple"),
     ],
 )
-@pytest.mark.parametrize("use_labels", [True, False])
+@pytest.mark.parametrize("use_categorical_codes", [True, False])
 def test_value_frame_matches_direct_construction(
-    *, solve: Callable[[], SolutionResult], regime: RegimeName, use_labels: bool
+    *,
+    solve: Callable[[], SolutionResult],
+    regime: RegimeName,
+    use_categorical_codes: bool,
 ) -> None:
     """The long frame equals one built directly from the array and its schema."""
     result = solve()
     assert_frame_equal(
-        result.value_frame(period=0, regime=regime, use_labels=use_labels),
+        result.value_frame(
+            period=0, regime=regime, use_categorical_codes=use_categorical_codes
+        ),
         _reference_value_frame(
-            result=result, period=0, regime=regime, use_labels=use_labels
+            result=result,
+            period=0,
+            regime=regime,
+            use_categorical_codes=use_categorical_codes,
         ),
     )

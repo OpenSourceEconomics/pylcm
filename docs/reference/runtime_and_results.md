@@ -400,19 +400,19 @@ values = solution.value_array(period=0, regime="working")
 curve = values.sel(education="college")
 frame = curve.to_dataframe().reset_index()
 full_frame = solution.value_frame(period=0, regime="working")
-codes = solution.value_frame(period=0, regime="working", use_labels=False)
+codes = solution.value_frame(period=0, regime="working", use_categorical_codes=True)
 ```
 
 `value_array` returns an xarray `DataArray` named `V` with one dimension per axis in
 `metadata.value_schemas[(period, regime)].axis_names` order. Axis names must be unique
 and cannot be `V`, which is reserved for the value. Discrete states carry their labels
 as a categorical coordinate in declaration order, with the ordering matching simulation;
-`use_labels=False` keeps integer codes. Collective regimes also have a `stakeholder`
-dimension, and a regime without states yields a zero-dimensional array. Coordinates are
-the resolved grid nodes used by the solve, including parameter-dependent process grids
-and period-specialized grids, and remain available after saving and loading. The array
-wraps the stored value without copying it to the host, so select the slice you need
-before converting it to a table.
+`use_categorical_codes=True` keeps integer codes. Collective regimes also have a
+`stakeholder` dimension, and a regime without states yields a zero-dimensional array.
+Coordinates are the resolved grid nodes used by the solve, including parameter-dependent
+process grids and period-specialized grids, and remain available after saving and
+loading. The array wraps the stored value without copying it to the host, so select the
+slice you need before converting it to a table.
 
 `value_frame` is the same array in long form: a pandas DataFrame with one column per
 dimension followed by `V`. It materializes every grid point, so the frame can be large.
@@ -737,7 +737,7 @@ candidates, so the lookup refuses such a regime.
 
 ## `SimulationResult`
 
-`to_dataframe(additional_targets=None, use_labels=True, terminal_rows="first")`
+`to_dataframe(additional_targets=None, use_categorical_codes=False, terminal_rows="first")`
 materializes a flat DataFrame. `additional_targets` accepts a sequence of selected DAG
 output names (including the tuple `result.available_targets`), `"all"`, or `None`. Other
 bare strings raise `InvalidAdditionalTargetsError`. `terminal_rows="all"` retains every
@@ -749,7 +749,7 @@ Inspection properties include `regime_names`, `state_names`, `action_names`,
 reported (route, subject devices, resolved widths, chunking, budget mode); it is
 diagnostic only and is `None` for a result read back with `load`.
 
-`SimulationResult.save(directory=..., df_additional_targets=None, df_use_labels=True)`
+`SimulationResult.save(directory=..., df_additional_targets=None, df_use_categorical_codes=False)`
 writes array checkpoints, value functions, metadata, and a Feather table. The two `df_*`
 keywords are passed through to `to_dataframe` when projecting that table and select what
 it holds; they leave the other three artifacts unchanged.

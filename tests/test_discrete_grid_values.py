@@ -214,7 +214,7 @@ def _simulated_codes(model: Model) -> pd.DataFrame:
         initial_conditions=_INITIAL_CONDITIONS,
         seed=0,
         log_level="off",
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
     return frame.sort_values(["subject_id", "period"]).reset_index(drop=True)
 
 
@@ -1743,7 +1743,7 @@ def test_checked_simulation_accepts_a_source_only_markov_draw(
         seed=19,
         log_level="off",
         runtime_checks=True,
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
     source = panel.loc[panel["period"] == 0]
     target = panel.loc[panel["period"] == 1]
     assert len(source) == len(target) == 3
@@ -2213,7 +2213,7 @@ def test_on_grid_phased_law_behind_a_value_gate_simulates_to_the_target(*, enabl
         seed=3,
         log_level="off",
         runtime_checks=True,
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
     later = panel.loc[panel["period"] == 1].sort_values("subject_id")
     assert later["regime_name"].tolist() == ["target", "target"]
     np.testing.assert_array_equal(later["kind"].to_numpy(), [0, 1])
@@ -2314,7 +2314,7 @@ def _simulate_between_nodes(
         seed=3,
         log_level="off",
         runtime_checks=True,
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
 
 
 @pytest.mark.parametrize("enable_jit", [False, True])
@@ -2660,7 +2660,7 @@ def _assert_identical_solutions_and_simulations(
             seed=3,
             log_level="off",
         )
-        .to_dataframe(use_labels=False)
+        .to_dataframe(use_categorical_codes=True)
         .sort_values(["subject_id", "period"])
         .reset_index(drop=True)
         for model, solution in ((got, got_solution), (expected, expected_solution))

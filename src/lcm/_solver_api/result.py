@@ -148,18 +148,22 @@ class SolutionResult:
         return save_solution(solution=self, path=path)
 
     def value_array(
-        self, *, period: int, regime: RegimeName, use_labels: bool = True
+        self,
+        *,
+        period: int,
+        regime: RegimeName,
+        use_categorical_codes: bool = False,
     ) -> xr.DataArray:
         """Return one value-function array with its state coordinates, named `V`.
 
         Dimensions follow the stored value schema's axis order, including a
         trailing `stakeholder` dimension for collective values; a regime without
         states yields a zero-dimensional array. Coordinates are the resolved
-        process and period-specific grid nodes used by this solve. With
-        `use_labels=True`, discrete states carry their labels as an (ordered)
-        categorical index in declaration order, matching simulation labels;
-        otherwise they carry integer codes. Axis names must be unique and must
-        not be `V`.
+        process and period-specific grid nodes used by this solve. By default,
+        discrete states carry their labels as an (ordered) categorical index in
+        declaration order, matching simulation labels; with
+        `use_categorical_codes=True` they carry integer codes. Axis names must be
+        unique and must not be `V`.
 
         The array wraps the stored value as is, so a device-resident value stays
         on its device until it is converted. Select coordinates with `.sel`
@@ -179,7 +183,7 @@ class SolutionResult:
         for axis in schema.named_axes:
             nodes = pd.Index(np.asarray(axis.coordinates))
             domain = schema.categorical_domains.get(axis.name)
-            if use_labels and domain is not None:
+            if not use_categorical_codes and domain is not None:
                 nodes = pd.CategoricalIndex(
                     pd.Categorical.from_codes(
                         pd.Index(domain.codes).get_indexer(nodes),
@@ -191,7 +195,11 @@ class SolutionResult:
         return xr.DataArray(value, dims=schema.axis_names, coords=coordinates, name="V")
 
     def value_frame(
-        self, *, period: int, regime: RegimeName, use_labels: bool = True
+        self,
+        *,
+        period: int,
+        regime: RegimeName,
+        use_categorical_codes: bool = False,
     ) -> pd.DataFrame:
         """Return grid values in long form, with state columns followed by `V`.
 
@@ -204,7 +212,11 @@ class SolutionResult:
         first to convert only part of it. For values between nodes, use
         `Model.lookup_policy`, which uses simulation's interpolation.
         """
-        array = self.value_array(period=period, regime=regime, use_labels=use_labels)
+        array = self.value_array(
+            period=period,
+            regime=regime,
+            use_categorical_codes=use_categorical_codes,
+        )
         if not array.dims:
             return pd.DataFrame({"V": np.asarray(array).reshape(-1)})
         return array.to_dataframe().reset_index()

@@ -376,8 +376,8 @@ def _simulations_agree(
     tolerance = 10.0**-decimal
     try:
         pd.testing.assert_frame_equal(
-            result.to_dataframe(use_labels=False),
-            expected.to_dataframe(use_labels=False),
+            result.to_dataframe(use_categorical_codes=True),
+            expected.to_dataframe(use_categorical_codes=True),
             rtol=tolerance,
             atol=tolerance,
         )
@@ -410,8 +410,8 @@ def report_forward(*, decimal: int) -> PlacementReport:
         result.save(directory=target)
         reloaded = SimulationResult.load(directory=target)
         report["save_load_round_trips"] = reloaded.to_dataframe(
-            use_labels=False
-        ).equals(result.to_dataframe(use_labels=False))
+            use_categorical_codes=True
+        ).equals(result.to_dataframe(use_categorical_codes=True))
     return report
 
 

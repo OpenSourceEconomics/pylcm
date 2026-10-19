@@ -820,7 +820,7 @@ def test_joint_normal_keeps_an_ordinary_state_carried_to_reader(*, fold: bool) -
             runtime_checks=True,
             log_level="off",
         )
-        .to_dataframe(use_labels=False)
+        .to_dataframe(use_categorical_codes=True)
         .sort_values(["subject_id", "period"])
     )
     aaae(frame.loc[frame["period"] == 0, "value"], expected, decimal=DECIMAL_PRECISION)

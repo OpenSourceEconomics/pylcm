@@ -228,7 +228,7 @@ def test_mixed_processes_preserve_saved_support_with_a_uniform_admission_profile
     result = consumer.simulate(
         params=params, initial_conditions=initial, solution=restored, log_level="debug"
     )
-    first = result.to_dataframe(use_labels=False).iloc[0]
+    first = result.to_dataframe(use_categorical_codes=True).iloc[0]
     np.testing.assert_array_equal(
         first[["income", "saving", "value"]].to_numpy(dtype=float), [2.0, 1.0, 3.0]
     )
@@ -348,7 +348,7 @@ def test_process_support_preserves_simulated_value_and_action(
         solution=solution,
         log_level=log_level,
     )
-    rows = result.to_dataframe(use_labels=False)
+    rows = result.to_dataframe(use_categorical_codes=True)
     first = rows.iloc[0]
     np.testing.assert_array_equal(
         first[["income", "saving", "value"]].to_numpy(dtype=float), [2.0, 1.0, 3.0]
@@ -375,7 +375,7 @@ def test_saved_unbudgeted_solution_preserves_support_under_simulation_budget(
     result = consumer.simulate(
         params=params, initial_conditions=initial, solution=restored, log_level="debug"
     )
-    first = result.to_dataframe(use_labels=False).iloc[0]
+    first = result.to_dataframe(use_categorical_codes=True).iloc[0]
     np.testing.assert_array_equal(
         first[["income", "saving", "value"]].to_numpy(dtype=float), [2.0, 1.0, 3.0]
     )
@@ -395,7 +395,7 @@ def test_fixed_uniform_parameters_enter_through_admitted_placement(
         UniformIIDProcess, "params", property(_forbid_fixed_parameter_upload)
     )
     result = model.simulate(params=params, initial_conditions=initial, log_level="off")
-    first = result.to_dataframe(use_labels=False).iloc[0]
+    first = result.to_dataframe(use_categorical_codes=True).iloc[0]
     np.testing.assert_array_equal(
         first[["income", "saving", "value"]].to_numpy(dtype=float), [2.0, 1.0, 3.0]
     )
@@ -535,7 +535,7 @@ def test_uniform_grids_remain_owned_during_later_production_and_automatic_solve(
     np.testing.assert_array_equal(produced[0], [1.0, 1.5, 2.0, 2.5, 3.0])
     np.testing.assert_array_equal(produced[1], [1.0, 2.0, 3.0])
     np.testing.assert_array_equal(
-        result.to_dataframe(use_labels=False)
+        result.to_dataframe(use_categorical_codes=True)
         .iloc[0][["saving", "value"]]
         .to_numpy(dtype=float),
         [1.0, 3.0],
@@ -581,7 +581,7 @@ def test_uniform_binding_reuse_avoids_repeated_host_reads_and_warm_grid_compilat
             params=params, initial_conditions=initial, log_level="off"
         )
         np.testing.assert_array_equal(
-            result.to_dataframe(use_labels=False)
+            result.to_dataframe(use_categorical_codes=True)
             .iloc[0][["saving", "value"]]
             .to_numpy(dtype=float),
             [1.0, 3.0],

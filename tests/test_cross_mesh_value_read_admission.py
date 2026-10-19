@@ -459,8 +459,8 @@ def _simulation_mismatch(
     tolerance = 10.0**-decimal
     try:
         pd.testing.assert_frame_equal(
-            result.to_dataframe(use_labels=False),
-            expected.to_dataframe(use_labels=False),
+            result.to_dataframe(use_categorical_codes=True),
+            expected.to_dataframe(use_categorical_codes=True),
             rtol=tolerance,
             atol=tolerance,
         )

@@ -253,7 +253,7 @@ def test_automatic_simulation_consumes_each_admitted_runtime_process(
         initial_conditions=initial,
         log_level="debug",
     )
-    first = result.to_dataframe(use_labels=False).iloc[0]
+    first = result.to_dataframe(use_categorical_codes=True).iloc[0]
 
     np.testing.assert_array_equal(
         first[["income", "saving", "value"]].to_numpy(dtype=float),
@@ -306,7 +306,7 @@ def test_runtime_process_support_changes_public_value_and_saving() -> None:
             seed=0,
             log_level="debug",
         )
-        frame = result.to_dataframe(use_labels=False)
+        frame = result.to_dataframe(use_categorical_codes=True)
         initial_row = frame.loc[frame["period"] == 0]
         assert len(initial_row) == 1
         np.testing.assert_array_equal(

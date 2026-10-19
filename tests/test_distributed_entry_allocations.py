@@ -616,7 +616,7 @@ def test_preflight_action_products_use_the_selected_entry_device(  # noqa: PLR09
     np.testing.assert_array_equal(products[0]["choice"], [0, 0, 0, 1, 1, 1])
     np.testing.assert_array_equal(products[0]["saving"], [0, 1, 2, 0, 1, 2])
     np.testing.assert_array_equal(
-        result.to_dataframe(use_labels=False)
+        result.to_dataframe(use_categorical_codes=True)
         .iloc[0][["choice", "saving", "value"]]
         .to_numpy(dtype=float),
         [1, 1, 6],

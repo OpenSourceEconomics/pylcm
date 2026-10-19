@@ -448,8 +448,8 @@ def test_effect_of_disutility_of_work():
     ).all()
 
 
-def test_to_dataframe_use_labels_parameter():
-    """Test that use_labels=True/False controls discrete column dtypes."""
+def test_to_dataframe_use_categorical_codes_parameter():
+    """`use_categorical_codes` switches discrete columns between labels and codes."""
 
     model = get_model(n_periods=3)
     params = get_params(n_periods=3)
@@ -463,14 +463,14 @@ def test_to_dataframe_use_labels_parameter():
         },
     )
 
-    # use_labels=True (default): discrete columns are Categorical with string labels
+    # By default, discrete columns are Categorical with string labels.
     df_labels = result.to_dataframe()
     for col in ["regime_name", "labor_supply"]:
         assert df_labels[col].dtype.name == "category", f"{col} should be categorical"
     assert set(df_labels["labor_supply"].cat.categories) == {"work", "retire"}
 
-    # use_labels=False: discrete columns have numeric codes
-    df_codes = result.to_dataframe(use_labels=False)
+    # use_categorical_codes=True: discrete columns have numeric codes
+    df_codes = result.to_dataframe(use_categorical_codes=True)
     assert df_codes["labor_supply"].dtype.kind in "iuf"  # integer/unsigned/float
     assert set(df_codes["labor_supply"].dropna().unique()).issubset({0, 1})
 
@@ -810,7 +810,7 @@ def test_save_writes_simulated_data_arrow_matching_to_dataframe(tmp_path: Path) 
     """`save(directory=...)` writes a `simulated_data.arrow` file at the directory root.
 
     The file's contents read back via `pd.read_feather` must match
-    `result.to_dataframe(use_labels=True)` — i.e. the base columns only.
+    `result.to_dataframe(use_categorical_codes=False)` — i.e. the base columns only.
     `save` defaults to `df_additional_targets=None` to keep the artifact
     small; downstream consumers needing extra targets pass them
     explicitly or work with the full `SimulationResult` after `load`.
@@ -827,7 +827,7 @@ def test_save_writes_simulated_data_arrow_matching_to_dataframe(tmp_path: Path) 
         },
     )
 
-    expected = result.to_dataframe(use_labels=True)
+    expected = result.to_dataframe(use_categorical_codes=False)
 
     save_dir = tmp_path / "result"
     result.save(directory=save_dir)

@@ -28,9 +28,9 @@ To inspect values with their state coordinates, use
 `solution.value_array(period=0, regime="working")`. It returns an xarray `DataArray`
 with one named dimension per state, so `.sel(education="college")` picks a curve
 regardless of axis order. Discrete states carry categorical labels by default; pass
-`use_labels=False` for integer codes. Collective values also have a `stakeholder`
-dimension. `solution.value_frame(...)` returns the same values as a long DataFrame with
-state columns and `V`; it explicitly materializes the whole grid. Use
+`use_categorical_codes=True` for integer codes. Collective values also have a
+`stakeholder` dimension. `solution.value_frame(...)` returns the same values as a long
+DataFrame with state columns and `V`; it explicitly materializes the whole grid. Use
 `model.lookup_policy` for values between grid nodes, with the same interpolation as
 simulation.
 
@@ -497,7 +497,7 @@ Each target is computed for regimes where it exists; rows from other regimes get
 ### Integer codes instead of labels
 
 ```python
-df = result.to_dataframe(use_labels=False)
+df = result.to_dataframe(use_categorical_codes=True)
 ```
 
 Returns discrete variables as raw integer codes instead of categorical labels.
@@ -530,9 +530,9 @@ artifacts. `save(directory=..., df_additional_targets=...)` is passed through to
 `to_dataframe`: `None` (the default) writes only the base columns (states, actions,
 regime, period, `V_arr`, and age for age models), a sequence of target names bakes those
 DAG outputs in, and `"all"` includes every available target --- which can grow the file
-by an order of magnitude on a model with many DAG leaves. `df_use_labels=True` (the
-default) stores discrete variables as pandas `Categorical` labels; `False` stores
-integer codes.
+by an order of magnitude on a model with many DAG leaves.
+`df_use_categorical_codes=False` (the default) stores discrete variables as pandas
+`Categorical` columns; `True` stores integer codes.
 
 `save()` consumes the in-memory result by clearing its value-function arrays and
 compiled regimes. Reload the saved directory before further access that needs either.

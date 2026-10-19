@@ -615,7 +615,7 @@ def _simulated_choices(*, model: Model, solution: SolutionResult):
         solution=solution,
         seed=20260806,
         log_level="debug",
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
     return simulated.set_index(["subject_id", "period"]).sort_index()
 
 

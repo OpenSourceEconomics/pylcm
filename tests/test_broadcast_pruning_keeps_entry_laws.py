@@ -178,10 +178,10 @@ def test_promoting_the_state_leaves_the_simulation_unchanged() -> None:
         seed=7,
     )
 
-    expected = regime_level.to_dataframe(use_labels=False).sort_values(
+    expected = regime_level.to_dataframe(use_categorical_codes=True).sort_values(
         ["subject_id", "period"]
     )
-    got = model_level.to_dataframe(use_labels=False).sort_values(
+    got = model_level.to_dataframe(use_categorical_codes=True).sort_values(
         ["subject_id", "period"]
     )
     assert list(got.columns) == list(expected.columns)

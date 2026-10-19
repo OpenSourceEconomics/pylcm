@@ -208,7 +208,7 @@ def test_clipped_continuation_matches_hand_capped_value_and_choice(
         solution=solution,
         log_level="off",
     )
-    frame = result.to_dataframe(use_labels=False)
+    frame = result.to_dataframe(use_categorical_codes=True)
     np.testing.assert_array_equal(frame.loc[frame["period"] == 0, "consumption"], [1])
 
 
@@ -304,7 +304,7 @@ def test_grid_policy_preserves_or_clips_the_actual_later_state(
         solution=solution,
         log_level="off",
     )
-    frame = result.to_dataframe(use_labels=False).sort_values("period")
+    frame = result.to_dataframe(use_categorical_codes=True).sort_values("period")
     np.testing.assert_array_equal(
         frame["wealth"],
         np.repeat(
@@ -776,7 +776,7 @@ def test_budgeted_mandatory_counts_reuse_the_warm_executable() -> None:
             solution=solution,
             runtime_checks=False,
             log_level="off",
-        ).to_dataframe(use_labels=False)
+        ).to_dataframe(use_categorical_codes=True)
     with count_compile_requests() as warm_requests:
         warm = model.simulate(
             params=params,
@@ -784,7 +784,7 @@ def test_budgeted_mandatory_counts_reuse_the_warm_executable() -> None:
             solution=solution,
             runtime_checks=False,
             log_level="off",
-        ).to_dataframe(use_labels=False)
+        ).to_dataframe(use_categorical_codes=True)
     pd.testing.assert_frame_equal(warm, cold, check_exact=True)
     assert (cold_requests.compile_requests > 0, warm_requests.compile_requests) == (
         True,
@@ -929,7 +929,7 @@ def _simulate_every_subject_off_grid(
             runtime_checks=True,
             log_level="warning",
             seed=0,
-        ).to_dataframe(use_labels=False)
+        ).to_dataframe(use_categorical_codes=True)
     counts = [
         int(message.rsplit("count=", 1)[1])
         for record in caplog.records

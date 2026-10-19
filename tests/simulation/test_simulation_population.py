@@ -80,13 +80,13 @@ def test_one_model_accepts_different_call_time_populations(
             log_level="debug",
             seed=0,
         )
-        frame = result.to_dataframe(use_labels=False)
+        frame = result.to_dataframe(use_categorical_codes=True)
         expected = (
             _model()
             .simulate(
                 params=params, initial_conditions=initial, log_level="debug", seed=0
             )
-            .to_dataframe(use_labels=False)
+            .to_dataframe(use_categorical_codes=True)
         )
         assert result.n_subjects == count
         assert frame.loc[frame["period"] == 0, "wealth"].tolist() == (

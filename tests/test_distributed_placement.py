@@ -1895,7 +1895,7 @@ def test_uniform_entry_grid_uses_selected_device_and_keeps_source_owners(
     assert result.raw_results["alive"][0].V_arr.sharding.device_set == {
         jax.devices()[device] for device in selected
     }
-    rows = result.to_dataframe(use_labels=False)
+    rows = result.to_dataframe(use_categorical_codes=True)
     np.testing.assert_array_equal(
         rows.loc[
             rows["regime_name"] == "alive", ["income", "saving", "value"]
@@ -2071,7 +2071,7 @@ def test_stateless_terminal_decision_preserves_scalar_profile_and_subject_rows(
         solution=solution,
         log_level=log_level,
     )
-    rows = result.to_dataframe(use_labels=False)
+    rows = result.to_dataframe(use_categorical_codes=True)
     np.testing.assert_array_equal(
         rows.loc[rows["regime_name"] == "alive", ["saving", "value"]].to_numpy(),
         [[1.0, 4.0], [1.0, 5.0], [1.0, 6.0]],

@@ -194,8 +194,8 @@ def test_three_device_solve_simulates_on_eight_devices(
         np.testing.assert_array_equal(
             np.asarray(data.in_regime), np.ones(16, dtype=bool)
         )
-    frame = result.to_dataframe(use_labels=False)
-    expected_frame = expected.to_dataframe(use_labels=False)
+    frame = result.to_dataframe(use_categorical_codes=True)
+    expected_frame = expected.to_dataframe(use_categorical_codes=True)
     tolerance = 8 * np.finfo(next(iter(originals.values()))[1].dtype).eps
     pd.testing.assert_frame_equal(frame, expected_frame, rtol=tolerance, atol=tolerance)
     for original, snapshot in (*originals.values(), *engine_originals.values()):
