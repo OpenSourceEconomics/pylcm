@@ -544,3 +544,26 @@ def test_refresh_leg_replaces_only_that_legs_weights_and_provenance(
         manifest["file_weights"],
         "abc",
     )
+
+
+@pytest.mark.parametrize("precision", [64, 32])
+def test_heavy_certificate_modules_run_on_linux_at_each_general_precision(
+    *, precision: int
+):
+    """Modules moved out of the general universe keep a Linux lane per precision."""
+    heavy = {
+        file_
+        for inv in ci_workloads.invocations_for_job(job="tests-certificate-heavy")
+        for file_ in inv["files"]
+    }
+    selected = {
+        file_
+        for inv in ci_workloads.invocations()
+        if inv["environment"]["runner_os"] == "Linux"
+        and inv["environment"]["precision"] == precision
+        and inv["job"] == "tests-certificate-heavy"
+        for file_ in inv["files"]
+    }
+    assert heavy
+    assert heavy <= selected
+    assert heavy.isdisjoint(ci_workloads.general_shard_universe())
