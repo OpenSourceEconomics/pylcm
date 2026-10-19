@@ -10,12 +10,18 @@
 
 from collections.abc import Mapping
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 import pytest
+from jaxtyping import Array, Int
 
+from _lcm.grids.discrete import MISSING_CAT_CODE
+from _lcm.regime_building.composite_states import _read_flat
 from lcm import (
+    AgeGrid,
+    ByPeriod,
     CompositeState,
     DiscreteGrid,
     ExecutionConfig,
@@ -24,7 +30,10 @@ from lcm import (
     Model,
     PeriodRange,
     Periods,
+    Phased,
     Regime,
+    StochasticTransition,
+    Transition,
     categorical,
     fixed_transition,
 )
@@ -241,6 +250,28 @@ def test_unevaluable_constraint_leaves_values_equal_to_the_dense_model() -> None
     )
 
 
+type _Int64 = Int[Array, "..."]
+
+
+def _jump_off_the_grid(*, a: DiscreteState, choice: DiscreteAction) -> _Int64:
+    return jnp.where(choice == 1, jnp.int64(2**32 + 1), a.astype(jnp.int64))
+
+
+def test_wide_off_grid_successor_never_wraps_into_the_code_set() -> None:
+    """`2**32 + 1` is off the grid in int64; narrowed to int32 it would read `1`."""
+    if not jax.config.jax_enable_x64:
+        pytest.skip("An int64 code needs x64.")
+    lowering = _model(
+        states={"a": DiscreteGrid(_Bit), "b": DiscreteGrid(_Bit)},
+        actions={"choice": DiscreteGrid(_Bit)},
+        transitions={"a": _jump_off_the_grid, "b": fixed_transition("b")},
+        utility=_utility,
+        constraints={},
+        composite=True,
+    )._composite_states["history"]
+    assert lowering.reachable.union == ((0, 0),)
+
+
 def test_feasible_off_grid_member_law_still_raises() -> None:
     """Without the cap, `a + choice` leaves the grid at a feasible cell."""
     with pytest.raises(InvalidStateTransitionError):
@@ -359,3 +390,323 @@ def test_optional_member_column_of_the_wrong_length_is_refused() -> None:
         _cohort(composite=True).initial_conditions_feasibility(
             params=_PARAMS, initial_conditions=conditions
         )
+
+
+def _next_a_before_half(
+    *, a: DiscreteState, choice: DiscreteAction, age: FloatND
+) -> DiscreteState:
+    return jnp.where((choice == 1) & (age < 0.5), jnp.int32(1), a)
+
+
+def _half_a(*, a: DiscreteState) -> FloatND:
+    return a + 0.5
+
+
+def _next_a_from_half(*, half_a: FloatND, choice: DiscreteAction) -> DiscreteState:
+    return jnp.where(choice == 1, jnp.int32(1), jnp.floor(half_a).astype(jnp.int32))
+
+
+def _quarterly(
+    *,
+    a_law: StateTransitionEntry,
+    functions: Mapping[FunctionName, UserFunction],
+    composite: bool,
+) -> Model:
+    """Two half-year decisions on a sub-annual clock, then a terminal period."""
+    return Model(
+        regimes={
+            "live": Regime(
+                states={"a": DiscreteGrid(_Bit), "b": DiscreteGrid(_Bit)},
+                actions={"choice": DiscreteGrid(_Bit)},
+                state_transitions={"a": a_law, "b": fixed_transition("b")},
+                functions={"utility": _utility} | dict(functions),
+            ),
+            "dead": Regime(functions={"utility": _zero}),
+        },
+        edges={"live": {"live": 0, "dead": 0.5}},
+        ages=AgeGrid(start=0, inclusive_stop=1, step="2Q"),
+        regime_id_class=_RegimeId,
+        initial_nodes={0: "live"},
+        execution_config=ExecutionConfig(device_memory_bytes=None),
+        composite_states=(
+            {
+                "history": CompositeState(
+                    members=("a", "b"), start_codes={"a": (0,), "b": (0,)}
+                )
+            }
+            if composite
+            else {}
+        ),
+    )
+
+
+def _start_values(model: Model) -> FloatND:
+    """V at the start tuple `(0, 0)` in the first period."""
+    v = np.asarray(model.solve(params=_PARAMS, log_level="off").values[0]["live"])
+    return v.ravel()[0]
+
+
+@pytest.mark.parametrize(
+    ("a_law", "functions"),
+    [(fixed_transition("a"), {}), (_next_a_before_half, {})],
+    ids=["no-law-reads-age", "member-law-reads-age"],
+)
+def test_sub_annual_clock_builds_and_matches_dense(
+    *, a_law: StateTransitionEntry, functions: Mapping[FunctionName, UserFunction]
+) -> None:
+    """A quarterly `AgeGrid` hands numeric ages to the enumeration."""
+    values = [
+        _start_values(_quarterly(a_law=a_law, functions=functions, composite=c))
+        for c in (False, True)
+    ]
+    assert_agrees_to_ulp(got=values[1], expected=values[0], n_ulp=8)
+
+
+def test_member_law_reading_a_float_helper_matches_dense() -> None:
+    """A member law may read a floating helper of a member through the encoder."""
+    models = [
+        _quarterly(a_law=_next_a_from_half, functions={"half_a": _half_a}, composite=c)
+        for c in (False, True)
+    ]
+    values = [_start_values(model) for model in models]
+    assert_agrees_to_ulp(got=values[1], expected=values[0], n_ulp=8)
+
+
+def _wide_a(*, a: DiscreteState) -> _Int64:
+    return a.astype(jnp.int64)
+
+
+def _next_a_from_wide(*, wide_a: _Int64, choice: DiscreteAction) -> DiscreteState:
+    return jnp.where(choice == 1, jnp.int32(1), wide_a.astype(jnp.int32))
+
+
+def _next_a_as_int64(*, a: DiscreteState, choice: DiscreteAction) -> _Int64:
+    return jnp.where(choice == 1, jnp.int64(1), a.astype(jnp.int64))
+
+
+@pytest.mark.parametrize(
+    ("a_law", "functions"),
+    [(_next_a_from_wide, {"wide_a": _wide_a}), (_next_a_as_int64, {})],
+    ids=["reads-int64-helper", "returns-int64-code"],
+)
+def test_member_law_with_int64_codes_matches_dense(
+    *, a_law: StateTransitionEntry, functions: Mapping[FunctionName, UserFunction]
+) -> None:
+    """A member law may read or return signed integer codes of any width."""
+    if not jax.config.jax_enable_x64:
+        pytest.skip("An int64 code needs x64.")
+    models = [
+        _quarterly(a_law=a_law, functions=functions, composite=c) for c in (False, True)
+    ]
+    values = [_start_values(model) for model in models]
+    assert_agrees_to_ulp(got=values[1], expected=values[0], n_ulp=8)
+
+
+def test_member_law_reading_a_float_helper_simulates_like_dense() -> None:
+    """The simulated choices with a floating helper equal those of the dense model."""
+    conditions = {
+        "regime_id": jnp.full(3, _RegimeId.live, dtype=jnp.int32),
+        "age": jnp.zeros(3),
+        "a": jnp.zeros(3, dtype=jnp.int32),
+        "b": jnp.zeros(3, dtype=jnp.int32),
+    }
+    panels = [
+        _quarterly(a_law=_next_a_from_half, functions={"half_a": _half_a}, composite=c)
+        .simulate(
+            params=_PARAMS, initial_conditions=conditions, log_level="off", seed=5
+        )
+        .to_dataframe(use_labels=False)[
+            ["subject_id", "period", "regime_name", "choice"]
+        ]
+        .reset_index(drop=True)
+        for c in (False, True)
+    ]
+    pd.testing.assert_frame_equal(panels[1], panels[0])
+
+
+@categorical(ordered=True)
+class _Trit:
+    zero: ScalarInt
+    one: ScalarInt
+    two: ScalarInt
+
+
+@categorical(ordered=False)
+class _SideRegimeId:
+    live: ScalarInt
+    side: ScalarInt
+    dead: ScalarInt
+
+
+def _step_a(*, a: DiscreteState, choice: DiscreteAction) -> DiscreteState:
+    return jnp.minimum(a + choice, 2)
+
+
+def _jump_a(*, a: DiscreteState, choice: DiscreteAction) -> DiscreteState:
+    return jnp.minimum(a + 2 * choice, 2)
+
+
+def _side_utility(*, a: DiscreteState, b: DiscreteState) -> FloatND:
+    return 1.0 + a + b
+
+
+def _branching(*, side_in: str) -> Model:
+    """`live` steps `a` toward itself and jumps it toward `side`.
+
+    `side_in` names the one phase whose graph reaches `side`; the other phase keeps
+    `live` for a second period instead. Both declare `live`'s edge out of period 1,
+    which the solve phase needs wherever the simulation can stand.
+    """
+    reaches_side = {
+        "live": {"side": Periods(values=(0,)), "dead": Periods(values=(1,))}
+    }
+    stays_live = {"live": {"live": Periods(values=(0,)), "dead": Periods(values=(1,))}}
+    shared = {"side": {"dead": Periods(values=(1,))}}
+    side_phase = reaches_side | shared
+    live_phase = stays_live | shared
+    return Model(
+        n_periods=3,
+        regimes={
+            "live": Regime(
+                states={"a": DiscreteGrid(_Trit), "b": DiscreteGrid(_Bit)},
+                actions={"choice": DiscreteGrid(_Bit)},
+                state_transitions={
+                    "a": {"live": _step_a, "side": _jump_a},
+                    "b": fixed_transition("b"),
+                },
+                functions={"utility": _utility},
+            ),
+            "side": Regime(
+                states={"a": DiscreteGrid(_Trit), "b": DiscreteGrid(_Bit)},
+                state_transitions={
+                    "a": fixed_transition("a"),
+                    "b": fixed_transition("b"),
+                },
+                functions={"utility": _side_utility},
+            ),
+            "dead": Regime(functions={"utility": _zero}),
+        },
+        edges=Phased(
+            solve=side_phase if side_in == "solve" else live_phase,
+            simulate=side_phase if side_in == "simulate" else live_phase,
+        ),
+        regime_id_class=_SideRegimeId,
+        initial_nodes=InitialNodes(by_period={0: "live"}),
+        execution_config=ExecutionConfig(device_memory_bytes=None),
+        composite_states={
+            "history": CompositeState(
+                members=("a", "b"), start_codes={"a": (0,), "b": (0,)}
+            )
+        },
+    )
+
+
+@pytest.mark.parametrize("side_in", ["simulate", "solve"])
+def test_each_phase_and_each_target_law_reaches_its_own_tuples(side_in: str) -> None:
+    """`live` gets `a + choice` and `side` gets `a + 2 * choice`, whichever phase."""
+    by_node = _branching(side_in=side_in)._composite_states["history"].reachable.by_node
+    assert {node: set(tuples) for node, tuples in by_node.items()} == {
+        (0, "live"): {(0, 0)},
+        (1, "live"): {(0, 0), (1, 0)},
+        (1, "side"): {(0, 0), (2, 0)},
+    }
+
+
+def _half() -> FloatND:
+    return jnp.asarray(0.5)
+
+
+def _two_targets(*, composite: bool) -> Model:
+    """`live` moves to `live` or `side` with probability one half each.
+
+    Toward `live` the member law steps `a`; toward `side` it jumps `a` by two.
+    """
+    return Model(
+        n_periods=3,
+        regimes={
+            "live": Regime(
+                states={"a": DiscreteGrid(_Trit), "b": DiscreteGrid(_Bit)},
+                actions={"choice": DiscreteGrid(_Bit)},
+                state_transitions={
+                    "a": {"live": _step_a, "side": _jump_a},
+                    "b": fixed_transition("b"),
+                },
+                functions={"utility": _utility},
+            ),
+            "side": Regime(
+                states={"a": DiscreteGrid(_Trit), "b": DiscreteGrid(_Bit)},
+                state_transitions={
+                    "a": fixed_transition("a"),
+                    "b": fixed_transition("b"),
+                },
+                functions={"utility": _side_utility},
+            ),
+            "dead": Regime(functions={"utility": _zero}),
+        },
+        edges={
+            "live": Transition(
+                targets={
+                    "live": Periods(values=(0,)),
+                    "side": Periods(values=(0,)),
+                    "dead": Periods(values=(1,)),
+                },
+                law=ByPeriod(
+                    cases={
+                        0: {
+                            "live": StochasticTransition(func=_half),
+                            "side": StochasticTransition(func=_half),
+                        },
+                        1: "dead",
+                    }
+                ),
+            ),
+            "side": {"dead": Periods(values=(1,))},
+        },
+        regime_id_class=_SideRegimeId,
+        initial_nodes=InitialNodes(by_period={0: "live"}),
+        execution_config=ExecutionConfig(device_memory_bytes=None),
+        composite_states=(
+            {
+                "history": CompositeState(
+                    members=("a", "b"), start_codes={"a": (0,), "b": (0,)}
+                )
+            }
+            if composite
+            else {}
+        ),
+    )
+
+
+def test_two_targets_of_one_phase_keep_their_own_member_laws() -> None:
+    """From one source and period, each target receives its own law's tuples."""
+    by_node = (
+        _two_targets(composite=True)._composite_states["history"].reachable.by_node
+    )
+    assert {node: set(tuples) for node, tuples in by_node.items()} == {
+        (0, "live"): {(0, 0)},
+        (1, "live"): {(0, 0), (1, 0)},
+        (1, "side"): {(0, 0), (2, 0)},
+    }
+
+
+def test_two_targets_of_one_phase_value_like_dense() -> None:
+    """The start value weighs each target's own successor, as the dense model does."""
+    values = [
+        np.asarray(
+            _two_targets(composite=c)
+            .solve(params=_PARAMS, log_level="off")
+            .values[0]["live"]
+        ).ravel()[0]
+        for c in (False, True)
+    ]
+    assert_agrees_to_ulp(got=values[1], expected=values[0], n_ulp=8)
+
+
+@pytest.mark.parametrize("code", [2**32, 2**32 + 1, -(2**32)])
+def test_wide_code_outside_the_table_never_wraps_into_it(code: int) -> None:
+    """An int64 code is checked against the table before it is narrowed to int32."""
+    if not jax.config.jax_enable_x64:
+        pytest.skip("An int64 code needs x64.")
+    table = jnp.arange(4, dtype=jnp.int32)
+    got = _read_flat(table=table, shape=(2, 2), index=(jnp.int64(code), jnp.int64(0)))
+    assert int(got) == MISSING_CAT_CODE

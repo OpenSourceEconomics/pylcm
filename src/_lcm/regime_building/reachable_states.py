@@ -39,7 +39,7 @@ from _lcm.typing import (
     StateName,
 )
 from lcm.exceptions import ModelInitializationError
-from lcm.typing import UserAge
+from lcm.typing import ScalarFloat, ScalarInt, UserAge
 
 type Phase = SolutionPhase | SimulationPhase
 type Codes = tuple[int, ...]
@@ -276,7 +276,7 @@ class _SuccessorEvaluator:
                 phase=phase,
                 target=target,
                 period=period,
-                age=self._ages.exact_values[period],
+                age=self._ages.values[period],
                 fixed_params=MappingProxyType(
                     {
                         **regime.resolved_fixed_params,
@@ -311,7 +311,8 @@ class _Program:
         } | {name: jnp.asarray(others[:, i]) for i, name in enumerate(self.other_names)}
         nexts, feasible = jax.vmap(self.func)(**kwargs) if kwargs else self.func()
         feasible = np.broadcast_to(np.asarray(feasible), (len(histories),))
-        successors = histories.copy()
+        # Wide enough for any law output, so the domain filter sees the true code.
+        successors = histories.astype(np.int64)
         for member in self.law_members:
             successors[:, self.members.index(member)] = np.broadcast_to(
                 np.asarray(nexts[f"next_{member}"]), (len(histories),)
@@ -325,7 +326,7 @@ def _build_program(
     phase: Phase,
     target: RegimeName,
     period: int,
-    age: UserAge,
+    age: ScalarInt | ScalarFloat,
     fixed_params: FlatRegimeParams,
     members: tuple[StateName, ...],
     skipped: dict[tuple[RegimeName, FunctionName], tuple[ReferenceName, ...]],
@@ -404,10 +405,12 @@ def _build_program(
     )
     leaves = set(law_args) | set(feasibility_args)
     scalars = {
-        name: value for name, value in fixed_params.items() if name in leaves
-    } | {
         name: value
-        for name, value in (("period", jnp.int32(period)), ("age", jnp.asarray(age)))
+        for name, value in (
+            *fixed_params.items(),
+            ("period", jnp.int32(period)),
+            ("age", age),
+        )
         if name in leaves
     }
     member_reads = tuple(m for m in members if m in leaves)
