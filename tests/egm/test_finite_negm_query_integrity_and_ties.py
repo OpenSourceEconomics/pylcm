@@ -439,19 +439,20 @@ def test_pointwise_corner_tie_keeps_signed_passive_marginal_algebra() -> None:
     pool = {**pool, "stock": jnp.asarray(-0.5)}
     grid, value, marginal, data = _bank(query=query, keeper_row=True)
     marginal = marginal.at[1, 0].set(jnp.where(jnp.isfinite(grid[1, 0]), 19.0, jnp.nan))
-    adjusted = {**pool, "new_stock": jnp.asarray(1.0)}
-    resources = _evaluate(function=query.resources, pool=adjusted)
     floor, _, bound_status = query.evaluate_floor(pool=pool)
-    np.testing.assert_array_equal(resources, 0.6875)
     np.testing.assert_array_equal(floor, -0.125)
     assert not bool(bound_status.nonfinite_floor)
-    preferences = query.build_preferences(adjusted)
-    corner = preferences.utility(resources - floor)
-    w = jnp.asarray([-100.0, 0.0, -100.0]).at[1].set(-corner)
-    np.testing.assert_array_equal(corner + w[1], 0.0)
-    data = replace(
-        data, corner_continuation=jnp.broadcast_to(w[None, :, None], (2, 3, 1))
-    )
+    # Each node's O1 corner is valued with that node's own stock, so its tie is
+    # set per node: W_r = -u(resources_r - floor).
+    nodes = []
+    for stock in (0.0, 1.0):
+        adjusted = {**pool, "stock": jnp.asarray(stock), "new_stock": 1.0}
+        resources = _evaluate(function=query.resources, pool=adjusted)
+        nodes.append(query.build_preferences(adjusted).utility(resources - floor))
+    corners = jnp.stack(nodes)
+    w = jnp.stack([jnp.full((2,), -100.0), -corners, jnp.full((2,), -100.0)], axis=-1)
+    np.testing.assert_array_equal(corners + w[:, 1], 0.0)
+    data = replace(data, corner_continuation=w[..., None])
     result = _read(
         query=query,
         pool=pool,

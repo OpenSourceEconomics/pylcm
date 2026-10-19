@@ -28,7 +28,6 @@ from _lcm.egm.interp import (
     prepare_padded_grid,
 )
 from _lcm.egm.outer_envelope import right_germ_winner
-from _lcm.egm.preferences import Preferences
 from _lcm.egm.query_data import EGMQueryData, select_query_data
 from _lcm.grids.discrete import read_at_codes
 from _lcm.solution.feasibility import ContinuationReadCounts
@@ -40,10 +39,12 @@ from lcm.typing import (
     BoolND,
     Float1D,
     FloatND,
+    FunctionName,
     IntND,
     ScalarBool,
     ScalarFloat,
     ScalarInt,
+    StateName,
 )
 
 type _Germ = tuple[BoolND, FloatND, FloatND, FloatND]
@@ -176,6 +177,9 @@ def read_finite_outer_choices(
     action_shape = tuple(values.size for values in action_values)
     passive_shape = tuple(grid.size for grid in passive_grids)
     n_rows = math.prod(passive_shape)
+    row_states = _finite_row_states(
+        state_names=authority.state_names, passive_grids=passive_grids
+    )
 
     def at_action(
         action: ScalarInt,
@@ -195,31 +199,29 @@ def read_finite_outer_choices(
                 )
             },
         }
-        keeper = (
-            actual[outer.outer_state]
-            if query.finite_keeper is None
-            else _evaluate(function=query.finite_keeper, pool=actual)
-        )
         # Every O differs only in its index and identity, so the reads are one
         # program batched over the candidate axis rather than one per candidate.
-        identities = jnp.stack(
-            [
-                jnp.asarray(keeper),
-                *(jnp.asarray(node, dtype=grid.dtype) for node in outer.outer_nodes),
-            ]
+        identities, row_identities = _finite_outer_identities(
+            query=query,
+            actual=actual,
+            row_states=row_states,
+            n_rows=n_rows,
+            dtype=grid.dtype,
         )
+        row_values = tuple(values for _, values in row_states)
 
         def at_outer(
-            *, outer_index: ScalarInt, identity: ScalarFloat
+            *,
+            outer_index: ScalarInt,
+            identity: ScalarFloat,
+            row_identity: FloatND,
         ) -> tuple[_FiniteOuterProfile, ContinuationReadCounts | None, BoolND]:
             chosen = {**actual, outer.outer_post_decision: identity}
-            resources, eligible, domain, resource_gradient = (
-                _finite_outer_publication_inputs(
-                    query=query,
-                    pool=chosen,
-                    floor=floor,
-                    euler_gradient=euler_gradient,
-                )
+            resources, eligible, domain, _ = _finite_outer_publication_inputs(
+                query=query,
+                pool=chosen,
+                floor=floor,
+                euler_gradient=euler_gradient,
             )
             positions = (*action_positions, outer_index)
             native_grid = read_at_codes(array=grid, positions=positions)
@@ -254,24 +256,24 @@ def read_finite_outer_choices(
                     ),
                     eligible=sum_counts(counts=counted),
                 )
-            preferences = query.build_preferences(chosen)
-            beta = query.read_discount_factor(chosen)
-            corners = jax.vmap(
+            corners, row_resources = jax.vmap(
                 functools.partial(
                     _read_finite_corner_row,
                     query=query,
-                    preferences=preferences,
-                    beta=beta,
-                    resources=resources,
+                    actual=actual,
+                    passive_names=tuple(name for name, _ in row_states),
+                    outer_post_decision=outer.outer_post_decision,
                     floor=floor,
                     eligible=eligible & domain,
-                    resource_gradient=resource_gradient,
+                    euler_gradient=euler_gradient,
                     paired_marginal_read=paired_marginal_read,
                 )
             )(
                 coordinate=common_queries.reshape(n_rows),
                 grid=native_grid.reshape(n_rows, authority.row_capacity),
                 data=row_data,
+                passive_row=row_values,
+                identity=row_identity,
             )
             profile = _validate_finite_outer_rows(
                 raw=raw,
@@ -280,7 +282,7 @@ def read_finite_outer_choices(
                 floor=floor,
                 upper_saving=nodes[-1],
                 resources=resources,
-                eligible=eligible & domain,
+                eligible=eligible & domain & (row_resources > floor),
                 corner_value=corners.value,
                 corner_marginal=corners.marginal,
                 supported_corner=corners.supported,
@@ -293,6 +295,7 @@ def read_finite_outer_choices(
         candidates, summaries, eligible_outer = jax.vmap(at_outer, out_axes=(-1, 0, 0))(
             outer_index=jnp.arange(authority.outer_capacity, dtype=jnp.int32),
             identity=identities,
+            row_identity=row_identities,
         )
         any_eligible = jnp.any(eligible_outer)
         selection = _select_finite_outer_profiles(profiles=candidates)
@@ -341,6 +344,66 @@ def read_finite_outer_choices(
             *(sum_counts(counts=count) for count in summaries)
         )
     return result
+
+
+def _finite_outer_identities(
+    *,
+    query: DCEGMQuery,
+    actual: EconFunctionKwargs,
+    row_states: tuple[tuple[StateName, FloatND], ...],
+    n_rows: int,
+    dtype: jnp.dtype,
+) -> tuple[FloatND, FloatND]:
+    """Return each O's outer post-decision at the actual query and at every row.
+
+    The keeper's identity is its no-adjustment level, read at the actual query
+    (for feasibility) and at each passive node (for that row's economics); an
+    adjuster's identity is its outer node everywhere. Shapes `(O,)` and
+    `(O, n_rows)`.
+    """
+    outer = query.model.authority.finite_outer
+    if outer is None:
+        raise TypeError("Finite outer identities need canonical outer authority.")
+
+    def keeper_at(state_pool: EconFunctionKwargs) -> ScalarFloat:
+        return jnp.asarray(
+            state_pool[outer.outer_state]
+            if query.finite_keeper is None
+            else _evaluate(function=query.finite_keeper, pool=state_pool)
+        )
+
+    nodes = tuple(jnp.asarray(node, dtype=dtype) for node in outer.outer_nodes)
+    row_keepers = tuple(
+        keeper_at({**actual, **{name: values[row] for name, values in row_states}})
+        for row in range(n_rows)
+    )
+    return (
+        jnp.stack([keeper_at(actual), *nodes]),
+        jnp.stack(
+            [
+                jnp.stack(row_keepers),
+                *(jnp.broadcast_to(node, (n_rows,)) for node in nodes),
+            ]
+        ),
+    )
+
+
+def _finite_row_states(
+    *, state_names: tuple[StateName, ...], passive_grids: tuple[Float1D, ...]
+) -> tuple[tuple[StateName, FloatND], ...]:
+    """Name each passive state and list its value at every flattened row.
+
+    The authority orders the discrete states before the passive ones, so the
+    passive names are the trailing `len(passive_grids)` state names. Rows run in
+    the row-major order of the passive grids, the order of the row queries.
+    """
+    if not passive_grids:
+        return ()
+    names = state_names[len(state_names) - len(passive_grids) :]
+    mesh = jnp.meshgrid(*passive_grids, indexing="ij")
+    return tuple(
+        (name, axis.reshape(-1)) for name, axis in zip(names, mesh, strict=True)
+    )
 
 
 def _validate_finite_outer_query_rows(
@@ -434,17 +497,39 @@ def _read_finite_corner_row(
     coordinate: ScalarFloat,
     grid: Float1D,
     data: EGMQueryData,
+    passive_row: tuple[ScalarFloat, ...],
+    identity: ScalarFloat,
     query: DCEGMQuery,
-    preferences: Preferences,
-    beta: ScalarFloat,
-    resources: ScalarFloat,
+    actual: EconFunctionKwargs,
+    passive_names: tuple[StateName, ...],
+    outer_post_decision: FunctionName,
     floor: ScalarFloat,
     eligible: BoolND,
-    resource_gradient: ScalarFloat,
+    euler_gradient: ScalarFloat,
     paired_marginal_read: bool,
-) -> _FiniteCornerRead:
-    """Retain W_iO until its nodewise O fold; no passive interpolation occurs."""
+) -> tuple[_FiniteCornerRead, ScalarFloat]:
+    """Retain W_iO until its nodewise O fold; no passive interpolation occurs.
+
+    The corner competes with the row's ordinary read in the nodewise maximum, so
+    its budget, flow utility and resource slope are evaluated at the row's own
+    passive node, as the row's query coordinate is. Only the floor and the
+    eligibility `eligible` describe the actual query. Returns the corner and the
+    row's budget; a candidate whose budget at the node does not clear the floor
+    is unavailable on that row.
+    """
     authority = query.model.authority
+    pool = {
+        **actual,
+        **dict(zip(passive_names, passive_row, strict=True)),
+        outer_post_decision: identity,
+    }
+    resources = _evaluate(function=query.resources, pool=pool)
+    eligible = eligible & (resources > floor)
+    resource_gradient = _read_finite_resource_gradient(
+        query=query, pool=pool, euler_gradient=euler_gradient
+    )
+    preferences = query.build_preferences(pool)
+    beta = query.read_discount_factor(pool)
 
     def continuation_at(point: ScalarFloat) -> _CornerRead:
         if authority.corner_coordinate_kind == "liquid_row":
@@ -489,7 +574,7 @@ def _read_finite_corner_row(
         supported=supported,
         finite=(supported & jnp.isfinite(value) & jnp.isfinite(marginal)),
         invalid=invalid,
-    )
+    ), resources
 
 
 def _read_finite_native_row(
