@@ -611,6 +611,29 @@ class ContinuationCountedKernelOutput(KernelOutput):
 
 
 @dataclass(frozen=True, kw_only=True)
+class ChildStatusKernelOutput(KernelOutput):
+    """A literal-floor result with only the child summaries its solves executed.
+
+    A source without an own query floor still reads callable-floor children
+    through their queries. It publishes those declared slots, and optionally the
+    paired-read counts, without a fabricated feasibility pair.
+    """
+
+    query_status: tuple[QueryInputStatus, ...]
+    """Mandatory child summaries in independently declared target/period slots."""
+    continuation_read_counts: ContinuationReadCounts | None = None
+    """Optional paired-read population, materialized independently of feasibility."""
+
+    def __post_init__(self) -> None:
+        """Require the declared slots as native scalar Boolean records."""
+        super().__post_init__()
+        _fail_if_invalid_child_summaries(
+            query_status=self.query_status,
+            continuation_read_counts=self.continuation_read_counts,
+        )
+
+
+@dataclass(frozen=True, kw_only=True)
 class FeasibilityKernelOutput(KernelOutput):
     """Private scalar summaries beside the unchanged public artifact channels."""
 
@@ -630,14 +653,10 @@ class FeasibilityKernelOutput(KernelOutput):
     def __post_init__(self) -> None:
         """Require native scalar integer counters without a host transfer."""
         super().__post_init__()
-        if self.continuation_read_counts is not None and (
-            type(self.continuation_read_counts) is not ContinuationReadCounts
-            or any(
-                count.shape != () or count.dtype != jnp.int32
-                for count in self.continuation_read_counts
-            )
-        ):
-            raise TypeError("Continuation-read summaries require two int32 scalars.")
+        _fail_if_invalid_child_summaries(
+            query_status=self.query_status,
+            continuation_read_counts=self.continuation_read_counts,
+        )
         if bool(self.landing_checks) != (self.landing_totals is not None) or (
             self.landing_totals is not None
             and (
@@ -656,15 +675,6 @@ class FeasibilityKernelOutput(KernelOutput):
             raise TypeError(
                 "Kernel bound integrity must contain scalar Boolean arrays."
             )
-        if self.query_status is not None and (
-            not self.query_status
-            or any(
-                type(status) is not QueryInputStatus
-                or any(flag.shape != () or flag.dtype != jnp.bool_ for flag in status)
-                for status in self.query_status
-            )
-        ):
-            raise TypeError("Kernel query integrity requires scalar Boolean records.")
         if len(self.feasibility_counts) != 2 or any(  # noqa: PLR2004
             value.ndim != 0 or value.dtype != jnp.int32
             for value in self.feasibility_counts
@@ -672,6 +682,31 @@ class FeasibilityKernelOutput(KernelOutput):
             raise TypeError(
                 "GridSearch feasibility counts must be scalar int32 arrays."
             )
+
+
+def _fail_if_invalid_child_summaries(
+    *,
+    query_status: tuple[QueryInputStatus, ...] | None,
+    continuation_read_counts: ContinuationReadCounts | None,
+) -> None:
+    """Require scalar Boolean query records and int32 read counts when present."""
+    if continuation_read_counts is not None and (
+        type(continuation_read_counts) is not ContinuationReadCounts
+        or any(
+            count.shape != () or count.dtype != jnp.int32
+            for count in continuation_read_counts
+        )
+    ):
+        raise TypeError("Continuation-read summaries require two int32 scalars.")
+    if query_status is not None and (
+        not query_status
+        or any(
+            type(status) is not QueryInputStatus
+            or any(flag.shape != () or flag.dtype != jnp.bool_ for flag in status)
+            for status in query_status
+        )
+    ):
+        raise TypeError("Kernel query integrity requires scalar Boolean records.")
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
