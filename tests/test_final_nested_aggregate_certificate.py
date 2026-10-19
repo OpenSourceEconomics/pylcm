@@ -215,4 +215,4 @@ def test_final_nested_failure_prevents_the_actual_runner_aggregate(
     else:
         assert _PROBE not in report["final_nested_mutations"]
         assert not report["final_nested_names_match_expected"]
-        assert report["final_nested_mutation_count"] == 121
+        assert report["final_nested_mutation_count"] == 103

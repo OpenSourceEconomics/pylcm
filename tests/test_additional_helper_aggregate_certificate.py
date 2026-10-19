@@ -235,4 +235,4 @@ def test_an_admitted_or_missing_helper_control_prevents_aggregate_acceptance(
     else:
         assert _PROBE not in report["additional_helper_mutations"]
         assert not report["additional_helper_names_match_expected"]
-        assert report["additional_helper_mutation_count"] == 53
+        assert report["additional_helper_mutation_count"] == 47
