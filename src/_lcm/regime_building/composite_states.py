@@ -451,7 +451,7 @@ class _MemberDecoder:
 class _CompositeEncoder:
     """Encode the members' next codes toward one target as a composite code."""
 
-    laws: Callable[..., tuple[IntND, ...]]
+    laws: Callable[..., tuple[_SignedInts, ...]]
     """The member laws, returning next member codes in member order.
 
     They read whatever the member laws read: codes, but also floating or boolean
@@ -500,15 +500,19 @@ class _ReachableAtPeriod:
 
 
 def _read_flat(
-    *, table: IntND, shape: tuple[int, ...], index: tuple[IntND, ...]
+    *, table: IntND, shape: tuple[int, ...], index: tuple[_SignedInts, ...]
 ) -> IntND:
-    """Read a C-order flattened table, `MISSING_CAT_CODE` off its bounds."""
+    """Read a C-order flattened table, `MISSING_CAT_CODE` off its bounds.
+
+    The bounds are checked in each index's own width, before it is narrowed to int32,
+    so a wide code outside the table never wraps into it.
+    """
     inside = jnp.ones((), dtype=bool)
     flat = jnp.zeros((), dtype=jnp.int32)
     for raw, size in zip(index, shape, strict=True):
-        position = jnp.asarray(raw, dtype=jnp.int32)
-        inside = inside & (position >= 0) & (position < size)
-        flat = flat * size + jnp.clip(position, 0, size - 1)
+        inside = inside & (raw >= 0) & (raw < size)
+        position = jnp.clip(raw, 0, size - 1).astype(jnp.int32)
+        flat = flat * size + position
     return jnp.where(inside, jnp.take(table, flat), MISSING_CAT_CODE)
 
 

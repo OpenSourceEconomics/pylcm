@@ -17,6 +17,8 @@ import pandas as pd
 import pytest
 from jaxtyping import Array, Int
 
+from _lcm.grids.discrete import MISSING_CAT_CODE
+from _lcm.regime_building.composite_states import _read_flat
 from lcm import (
     AgeGrid,
     ByPeriod,
@@ -459,13 +461,23 @@ def _next_a_from_wide(*, wide_a: _Int64, choice: DiscreteAction) -> DiscreteStat
     return jnp.where(choice == 1, jnp.int32(1), wide_a.astype(jnp.int32))
 
 
-def test_member_law_reading_an_int64_helper_matches_dense() -> None:
-    """A member law may read a signed integer helper of any width."""
+def _next_a_as_int64(*, a: DiscreteState, choice: DiscreteAction) -> _Int64:
+    return jnp.where(choice == 1, jnp.int64(1), a.astype(jnp.int64))
+
+
+@pytest.mark.parametrize(
+    ("a_law", "functions"),
+    [(_next_a_from_wide, {"wide_a": _wide_a}), (_next_a_as_int64, {})],
+    ids=["reads-int64-helper", "returns-int64-code"],
+)
+def test_member_law_with_int64_codes_matches_dense(
+    *, a_law: StateTransitionEntry, functions: Mapping[FunctionName, UserFunction]
+) -> None:
+    """A member law may read or return signed integer codes of any width."""
     if not jax.config.jax_enable_x64:
-        pytest.skip("An int64 helper needs x64.")
+        pytest.skip("An int64 code needs x64.")
     models = [
-        _quarterly(a_law=_next_a_from_wide, functions={"wide_a": _wide_a}, composite=c)
-        for c in (False, True)
+        _quarterly(a_law=a_law, functions=functions, composite=c) for c in (False, True)
     ]
     values = [_start_values(model) for model in models]
     assert_agrees_to_ulp(got=values[1], expected=values[0], n_ulp=8)
@@ -669,3 +681,13 @@ def test_two_targets_of_one_phase_value_like_dense() -> None:
         for c in (False, True)
     ]
     assert_agrees_to_ulp(got=values[1], expected=values[0], n_ulp=8)
+
+
+@pytest.mark.parametrize("code", [2**32, 2**32 + 1, -(2**32)])
+def test_wide_code_outside_the_table_never_wraps_into_it(code: int) -> None:
+    """An int64 code is checked against the table before it is narrowed to int32."""
+    if not jax.config.jax_enable_x64:
+        pytest.skip("An int64 code needs x64.")
+    table = jnp.arange(4, dtype=jnp.int32)
+    got = _read_flat(table=table, shape=(2, 2), index=(jnp.int64(code), jnp.int64(0)))
+    assert int(got) == MISSING_CAT_CODE
