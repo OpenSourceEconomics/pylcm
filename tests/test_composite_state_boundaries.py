@@ -250,6 +250,28 @@ def test_unevaluable_constraint_leaves_values_equal_to_the_dense_model() -> None
     )
 
 
+type _Int64 = Int[Array, "..."]
+
+
+def _jump_off_the_grid(*, a: DiscreteState, choice: DiscreteAction) -> _Int64:
+    return jnp.where(choice == 1, jnp.int64(2**32 + 1), a.astype(jnp.int64))
+
+
+def test_wide_off_grid_successor_never_wraps_into_the_code_set() -> None:
+    """`2**32 + 1` is off the grid in int64; narrowed to int32 it would read `1`."""
+    if not jax.config.jax_enable_x64:
+        pytest.skip("An int64 code needs x64.")
+    lowering = _model(
+        states={"a": DiscreteGrid(_Bit), "b": DiscreteGrid(_Bit)},
+        actions={"choice": DiscreteGrid(_Bit)},
+        transitions={"a": _jump_off_the_grid, "b": fixed_transition("b")},
+        utility=_utility,
+        constraints={},
+        composite=True,
+    )._composite_states["history"]
+    assert lowering.reachable.union == ((0, 0),)
+
+
 def test_feasible_off_grid_member_law_still_raises() -> None:
     """Without the cap, `a + choice` leaves the grid at a feasible cell."""
     with pytest.raises(InvalidStateTransitionError):
@@ -448,9 +470,6 @@ def test_member_law_reading_a_float_helper_matches_dense() -> None:
     ]
     values = [_start_values(model) for model in models]
     assert_agrees_to_ulp(got=values[1], expected=values[0], n_ulp=8)
-
-
-type _Int64 = Int[Array, "..."]
 
 
 def _wide_a(*, a: DiscreteState) -> _Int64:

@@ -311,7 +311,8 @@ class _Program:
         } | {name: jnp.asarray(others[:, i]) for i, name in enumerate(self.other_names)}
         nexts, feasible = jax.vmap(self.func)(**kwargs) if kwargs else self.func()
         feasible = np.broadcast_to(np.asarray(feasible), (len(histories),))
-        successors = histories.copy()
+        # Wide enough for any law output, so the domain filter sees the true code.
+        successors = histories.astype(np.int64)
         for member in self.law_members:
             successors[:, self.members.index(member)] = np.broadcast_to(
                 np.asarray(nexts[f"next_{member}"]), (len(histories),)
