@@ -125,6 +125,7 @@ class WorkloadManifest(TypedDict):
     coverage_contributors: list[str]
     general_shard_universe: list[str]
     linux_only_files: list[str]
+    os_persistence_tests: list[str]
     per_test_ceiling_backlog: list[_CeilingBacklog]
     invocations: list[Invocation]
     file_weights: dict[str, _FileWeight]
@@ -269,6 +270,18 @@ def linux_only_files(*, path: Path = MANIFEST_PATH) -> tuple[str, ...]:
     return tuple(load_manifest(path=path).get("linux_only_files", ()))
 
 
+def os_persistence_tests(*, path: Path = MANIFEST_PATH) -> tuple[str, ...]:
+    """Return the `slow` tests the macOS and Windows persistence lanes run.
+
+    Each entry is `<file>::<test function>`. They write, read, pickle or replay
+    on-disk state, which is expected to behave differently across operating
+    systems, yet they live in the `slow` solution battery that the macOS and
+    Windows general legs deselect. `tests/conftest.py` marks them
+    `os_persistence` so those lanes can select them by marker.
+    """
+    return tuple(load_manifest(path=path).get("os_persistence_tests", ()))
+
+
 def general_leg_universe(*, leg: str, path: Path = MANIFEST_PATH) -> tuple[str, ...]:
     """Return the general files one leg shards over.
 
@@ -321,6 +334,7 @@ __all__: Sequence[str] = (
     "linux_only_files",
     "load_manifest",
     "node_ids",
+    "os_persistence_tests",
     "shard_layout",
     "unweighted_files",
 )

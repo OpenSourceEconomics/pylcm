@@ -365,3 +365,73 @@ def test_every_general_shard_universe_file_exists_and_is_collectable():
     for name in ci_workloads.general_shard_universe():
         assert name.startswith("tests/"), name
         assert (_REPO_ROOT / name).is_file(), name
+
+
+def test_every_os_persistence_test_names_a_test_function_in_its_file():
+    """Each entry is `<file>::<test function>` and that function exists."""
+    import ast  # noqa: PLC0415
+
+    entries = ci_workloads.os_persistence_tests()
+    assert entries
+    missing = []
+    for entry in entries:
+        file_, name = entry.split("::")
+        tree = ast.parse((_REPO_ROOT / file_).read_text(encoding="utf-8"))
+        names = {
+            node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
+        }
+        if name not in names:
+            missing.append(entry)
+    assert not missing, missing
+
+
+@pytest.mark.parametrize("runner_os", ["macOS", "Windows"])
+def test_every_os_persistence_test_runs_on_each_platform_leg(*, runner_os: str):
+    """A persistence test is selected by an `os_persistence` lane on that OS."""
+    files = {
+        file_
+        for inv in ci_workloads.invocations()
+        if inv["environment"]["runner_os"] == runner_os
+        and "os_persistence" in inv["selection"]
+        for file_ in inv["files"]
+    }
+    entries = ci_workloads.os_persistence_tests()
+    assert {entry.split("::")[0] for entry in entries} <= files
+
+
+def test_conftest_marks_exactly_the_listed_persistence_tests():
+    """Collection carries `os_persistence` on the listed tests and on no other."""
+    import subprocess  # noqa: PLC0415
+    import sys  # noqa: PLC0415
+
+    target = "tests/solution/test_ephemeral_identity.py"
+    listed = {
+        entry
+        for entry in ci_workloads.os_persistence_tests()
+        if entry.startswith(target)
+    }
+    assert listed
+    completed = subprocess.run(  # noqa: S603 - fixed pytest argv on a repository file
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            target,
+            "--collect-only",
+            "-q",
+            "-p",
+            "no:cacheprovider",
+            "-m",
+            "os_persistence",
+        ],
+        cwd=_REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    collected = {
+        line.split("[")[0]
+        for line in completed.stdout.splitlines()
+        if line.startswith(target + "::")
+    }
+    assert collected == listed, completed.stdout + completed.stderr

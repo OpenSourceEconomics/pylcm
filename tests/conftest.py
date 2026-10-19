@@ -77,7 +77,7 @@ from lcm.typing import (
     ScalarInt,
     StateOrActionName,
 )
-from tests.ci import pytest_policy
+from tests.ci import ci_workloads, pytest_policy
 from tests.ci.cpu_suite_invocations import ignore_implicit_eight_device_collection
 from tests.ci.receipt_plugin import maybe_register as maybe_register_receipt_plugin
 from tests.ci.shard_test_files import (
@@ -381,13 +381,26 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     exist to cover, so they must not be swept along with their neighbours.
     """
     slow = pytest.mark.slow
+    os_persistence = frozenset(ci_workloads.os_persistence_tests())
     for item in items:
         if "solution" in item.path.parts:
             item.add_marker(slow)
+        if _test_function_key(item=item, root=config.rootpath) in os_persistence:
+            item.add_marker(pytest.mark.os_persistence)
 
     _validate_exact_kernel_markers(items=items)
     _apply_backend_skips(items=items)
     pytest_policy.apply(config=config, items=items)
+
+
+def _test_function_key(*, item: pytest.Item, root: pathlib.Path) -> str:
+    """Return `<repository-relative file>::<test function>` for one collected item."""
+    try:
+        relative = item.path.resolve().relative_to(root.resolve()).as_posix()
+    except ValueError:
+        return ""
+    name = getattr(item, "originalname", None) or item.name
+    return f"{relative}::{name}"
 
 
 def pytest_collection_finish(session: pytest.Session) -> None:
