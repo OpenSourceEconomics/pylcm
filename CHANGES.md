@@ -55,9 +55,11 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   for category grids as well, which used to clamp silently. An integer value grid has
   no NaN, so a user function reading such a state receives `MISSING_CAT_CODE`, the
   int32 minimum, while the value function there is still NaN.
-- `DiscreteGrid(values=[0, 20, 40])` declares a discrete variable by its numbers instead
-  of a category class. Values are strictly ascending, finite, and all integers (stored
-  as int32) or all floats (stored at the canonical float dtype). Codes stay `0..n-1`;
+- `DiscreteGrid(values=jnp.array([0, 20, 40]))` declares a discrete variable by its
+  numbers instead of a category class. `values` is a one-dimensional NumPy or JAX
+  array of integer or floating dtype; lists, tuples and ranges are refused. Values are
+  strictly ascending and finite, integers are stored as int32 and floats at the
+  canonical float dtype. Codes stay `0..n-1`;
   `categories` holds the `repr` of each value.
 - A float matches a node exactly unless the grid declares an absolute `tolerance`,
   which must lie below half the smallest gap between values; integer grids take

@@ -138,7 +138,7 @@ def _model_with_hours(
         "hours": hours,
     }
     if with_shift:
-        actions["shift"] = DiscreteGrid(values=[0, 8, 12])
+        actions["shift"] = DiscreteGrid(values=np.array([0, 8, 12]))
     working = Regime(
         actions=actions,
         state_transitions={"wealth": _next_wealth},

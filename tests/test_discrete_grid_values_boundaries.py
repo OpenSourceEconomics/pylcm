@@ -107,12 +107,12 @@ def _next_regime(*, age: float) -> ScalarInt:
 def _model() -> Model:
     alive = Regime(
         states={
-            "experience": DiscreteGrid(values=_EXPERIENCE),
-            "level": DiscreteGrid(values=_LEVEL, tolerance=1e-6),
-            "rank": DiscreteGrid(values=range(3)),
+            "experience": DiscreteGrid(values=np.array(_EXPERIENCE)),
+            "level": DiscreteGrid(values=np.array(_LEVEL), tolerance=1e-6),
+            "rank": DiscreteGrid(values=np.arange(3)),
             "health": DiscreteGrid(category_class=_Health),
         },
-        actions={"hours": DiscreteGrid(values=_HOURS)},
+        actions={"hours": DiscreteGrid(values=np.array(_HOURS))},
         state_transitions={
             "experience": _stay_experience,
             "level": _stay_level,
@@ -432,8 +432,8 @@ _TABLE_REGIMES = MappingProxyType(
     {
         "alive": Regime(
             states={
-                "experience": DiscreteGrid(values=_EXPERIENCE),
-                "level": DiscreteGrid(values=_LEVEL, tolerance=1e-6),
+                "experience": DiscreteGrid(values=np.array(_EXPERIENCE)),
+                "level": DiscreteGrid(values=np.array(_LEVEL), tolerance=1e-6),
             },
             state_transitions={
                 "experience": _stay_experience,

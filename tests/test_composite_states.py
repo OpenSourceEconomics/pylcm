@@ -479,7 +479,7 @@ def test_member_on_a_value_grid_is_refused() -> None:
     """Members are read as codes, so a member declared by its values is refused."""
     with pytest.raises(ModelInitializationError, match=r"'a'.*values"):
         _two_bit_model(
-            a_grid=DiscreteGrid(values=[10, 20]),
+            a_grid=DiscreteGrid(values=np.array([10, 20])),
             choice_grid=DiscreteGrid(_Bit),
             transitions={"a": fixed_transition("a"), "b": _next_b_from_choice},
         )
@@ -490,7 +490,7 @@ def test_member_law_reading_a_value_grid_is_refused() -> None:
     with pytest.raises(ModelInitializationError, match=r"next_a.*'choice'"):
         _two_bit_model(
             a_grid=DiscreteGrid(_Bit),
-            choice_grid=DiscreteGrid(values=[10, 20]),
+            choice_grid=DiscreteGrid(values=np.array([10, 20])),
             transitions={"a": _next_a_from_numeric_choice, "b": fixed_transition("b")},
         )
 

@@ -319,7 +319,7 @@ def test_lookup_policy_matches_the_pin_constraint(inactive_value: float) -> None
         np.testing.assert_array_equal(looked_up[True][name], expected, err_msg=name)
 
 
-SHIFT_GRID = DiscreteGrid(values=[0, 8, 12])
+SHIFT_GRID = DiscreteGrid(values=np.array([0, 8, 12]))
 
 
 def _utility_with_shift(

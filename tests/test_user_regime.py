@@ -940,7 +940,7 @@ def test_model_refuses_a_value_grid_hidden_by_fixed_component_factoring():
     """Factoring a Markov state into fixed components cannot hide a value grid."""
     with pytest.raises(RegimeInitializationError, match=r"values=\.\.\."):
         _guard_model(
-            grid=DiscreteGrid(values=[10, 20]),
+            grid=DiscreteGrid(values=np.array([10, 20])),
             location="fixed_component",
             scope="regime",
         )
@@ -961,7 +961,9 @@ def test_model_refuses_value_grids_behind_a_fixed_component_in_every_scope(
     """
     with pytest.raises(RegimeInitializationError, match=r"values=\.\.\."):
         _guard_model(
-            grid=DiscreteGrid(values=values), location="fixed_component", scope=scope
+            grid=DiscreteGrid(values=np.array(values)),
+            location="fixed_component",
+            scope=scope,
         )
 
 
@@ -979,7 +981,7 @@ def test_value_grid_state_without_fixed_component_reaches_utility_as_values(
     `1.9 * wealth` at each node; codes would give `0` and `1.9`.
     """
     model = _guard_model(
-        grid=DiscreteGrid(values=values), location="state", scope="regime"
+        grid=DiscreteGrid(values=np.array(values)), location="state", scope="regime"
     )
     solution = model.solve(params={"discount_factor": 0.9}, log_level="off")
     np.testing.assert_array_almost_equal(

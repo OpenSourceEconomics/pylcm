@@ -136,11 +136,13 @@ def _value_grid_model(*, enable_jit: bool) -> Model:
     working_life = UserRegime(
         actions={
             "labor_supply": DiscreteGrid(category_class=LaborSupply),
-            "consumption": DiscreteGrid(values=[1.0, 2.0]),
+            "consumption": DiscreteGrid(values=np.array([1.0, 2.0])),
         },
         states={
             "wealth": DiscreteGrid(
-                values=[_WEALTH_OFFSET, _WEALTH_OFFSET + 1, _WEALTH_OFFSET + 2]
+                values=np.array(
+                    [_WEALTH_OFFSET, _WEALTH_OFFSET + 1, _WEALTH_OFFSET + 2]
+                )
             )
         },
         state_transitions={"wealth": _next_wealth},
@@ -242,7 +244,7 @@ def test_value_grid_tolerance_enters_the_model_fingerprint():
     tolerant = regime.replace(
         actions={
             **dict(regime.actions),
-            "consumption": DiscreteGrid(values=[1.0, 2.0], tolerance=1e-6),
+            "consumption": DiscreteGrid(values=np.array([1.0, 2.0]), tolerance=1e-6),
         }
     )
     ages = AgeGrid(start=50, inclusive_stop=50 + (_N_PERIODS - 1) * 10, step="10Y")
@@ -256,7 +258,7 @@ def test_value_grid_tolerance_enters_the_model_fingerprint():
     assert other._model_structure_fingerprint != model._model_structure_fingerprint
 
 
-_WEALTH = DiscreteGrid(values=[10, 11, 12])
+_WEALTH = DiscreteGrid(values=np.array([10, 11, 12]))
 _VALUE_GRIDS = MappingProxyType({"wealth": _WEALTH})
 
 
@@ -346,7 +348,7 @@ def test_model_refuses_one_name_with_different_values():
                     functions={"utility": lambda: 0.0},
                 ),
                 "b": UserRegime(
-                    states={"wealth": DiscreteGrid(values=[0, 1, 2])},
+                    states={"wealth": DiscreteGrid(values=np.array([0, 1, 2]))},
                     state_transitions={"wealth": _identity_wealth},
                     functions={"utility": lambda: 0.0},
                 ),
@@ -372,7 +374,10 @@ def test_fixed_value_grid_state_repeats_the_reference_per_value(law):
     model = _value_grid_model(enable_jit=True)
     regime = model.user_regimes["working_life"]
     with_bracket = regime.replace(
-        states={**dict(regime.states), "bracket": DiscreteGrid(values=[5, 7])},
+        states={
+            **dict(regime.states),
+            "bracket": DiscreteGrid(values=np.array([5, 7])),
+        },
         state_transitions={**dict(regime.state_transitions), "bracket": law},
         functions={**dict(regime.functions), "utility": _utility_with_bracket},
     )
@@ -599,7 +604,7 @@ def test_law_reading_a_sibling_next_state_is_checked_as_the_solve_composes_it():
     """
     regime = _value_grid_model(enable_jit=True).user_regimes["working_life"]
     with_room = regime.replace(
-        states={**dict(regime.states), "room": DiscreteGrid(values=[0, 1])},
+        states={**dict(regime.states), "room": DiscreteGrid(values=np.array([0, 1]))},
         state_transitions={"wealth": _next_wealth_by_room, "room": _next_room},
         functions={**dict(regime.functions), "utility": _utility_with_room},
     )
@@ -680,7 +685,7 @@ def test_koopmans_aggregator_reads_the_value_of_a_derived_categorical(
     )
     working = UserRegime(
         functions={"utility": _zero_utility, "bonus": bonus},
-        derived_categoricals={"bonus": DiscreteGrid(values=nodes)},
+        derived_categoricals={"bonus": DiscreteGrid(values=np.array(nodes))},
         koopmans_aggregator=None if location == "model" else declaration,
     )
     model = _one_period_model(
@@ -712,7 +717,7 @@ def test_decoupled_objective_selects_by_the_values_of_an_action(
         return jnp.asarray(hours, dtype=float) + 0.0 * utility + 0.0 * CE
 
     working = UserRegime(
-        actions={"hours": DiscreteGrid(values=nodes)},
+        actions={"hours": DiscreteGrid(values=np.array(nodes))},
         functions={"utility": _utility_of_hours},
         koopmans_aggregator=Decoupled(
             objective=Phased(solve=select, simulate=select) if phased else select,
@@ -741,7 +746,7 @@ def test_one_function_in_both_phases_keeps_the_feasible_set(
         return h > 0.0
 
     working = UserRegime(
-        states={"hours": DiscreteGrid(values=nodes)},
+        states={"hours": DiscreteGrid(values=np.array(nodes))},
         state_transitions={"hours": fixed_transition("hours")},
         functions={
             "h": (
@@ -778,7 +783,7 @@ def _case_regime(*, nodes, value_side: str) -> UserRegime:
     return UserRegime(
         states={
             "wealth": LinSpacedGrid(start=1, stop=2, n_points=2),
-            "hours": DiscreteGrid(values=nodes),
+            "hours": DiscreteGrid(values=np.array(nodes)),
         },
         state_transitions={
             "wealth": fixed_transition("wealth"),
@@ -834,7 +839,7 @@ def _bonus_regime(kind: str) -> UserRegime:
         },
         derived_categoricals={
             "bonus": DiscreteGrid(
-                values=[10, 20] if kind == "integer" else [10.0, 20.0]
+                values=np.array([10, 20] if kind == "integer" else [10.0, 20.0])
             )
         },
     )
@@ -915,7 +920,7 @@ def test_an_imputed_value_grid_state_matches_its_twin_on_codes(*, enable_jit):
                     "wealth": LinSpacedGrid(start=0, stop=30, n_points=4),
                     "hours": Phased(
                         solve=_impute_twenty if values else _impute_high_code,
-                        simulate=DiscreteGrid(values=[10, 20])
+                        simulate=DiscreteGrid(values=np.array([10, 20]))
                         if values
                         else DiscreteGrid(category_class=_HoursCodes),
                     ),
@@ -961,7 +966,7 @@ def _imputation_regime(*, nodes, marked, category_control=False) -> UserRegime:
         grid = DiscreteGrid(category_class=_HoursCodes)
     else:
         impute = _hours_as_float
-        grid = DiscreteGrid(values=nodes)
+        grid = DiscreteGrid(values=np.array(nodes))
     return UserRegime(
         states={
             "hours": grid,
@@ -1029,7 +1034,7 @@ def test_a_phased_age_specialized_utility_beside_a_value_grid_is_refused(nodes):
     """An age-specialized utility inside `Phased` is refused beside a value grid."""
     marker = _specialize(_hours_as_float)
     working = UserRegime(
-        states={"hours": DiscreteGrid(values=nodes)},
+        states={"hours": DiscreteGrid(values=np.array(nodes))},
         state_transitions={"hours": fixed_transition("hours")},
         functions={"utility": Phased(solve=marker, simulate=marker)},
     )
@@ -1055,7 +1060,7 @@ def _constraint_regime(*, nodes, category_control=False) -> UserRegime:
         def available(*, hours: DiscreteState, choice: DiscreteAction) -> BoolND:
             return (choice == 0) | (hours >= threshold)
 
-        grid = DiscreteGrid(values=nodes)
+        grid = DiscreteGrid(values=np.array(nodes))
     return UserRegime(
         states={"hours": grid},
         state_transitions={"hours": fixed_transition("hours")},
@@ -1104,7 +1109,7 @@ def test_a_model_level_derived_value_grid_counts_for_the_refusals(phased):
     with pytest.raises(RegimeInitializationError, match=r"age-specialized.*utility"):
         collect_value_grids(
             regimes={"working": working},
-            derived_categoricals={"bonus": DiscreteGrid(values=[10, 20])},
+            derived_categoricals={"bonus": DiscreteGrid(values=np.array([10, 20]))},
         )
 
 
@@ -1550,7 +1555,7 @@ def _u_single_terminal(*, wealth: ContinuousState, kind: DiscreteState) -> Float
 def test_phased_stakeholder_utility_beside_a_value_grid_elsewhere_builds(*, enable_jit):
     """A value grid in another regime leaves the household's `Phased` body alone."""
     wealth = LinSpacedGrid(start=1.0, stop=3.0, n_points=3)
-    kind = DiscreteGrid(values=[10, 20])
+    kind = DiscreteGrid(values=np.array([10, 20]))
     phased = Phased(solve=_u_m, simulate=_u_m_simulate)
     model = Model(
         regimes={
@@ -2531,7 +2536,7 @@ def _as_declared[F: UserFunction](func: F) -> F:
 
 def _income_grid(*, values: bool) -> DiscreteGrid:
     if values:
-        return DiscreteGrid(values=_INCOME_VALUES)
+        return DiscreteGrid(values=np.array(_INCOME_VALUES))
     return DiscreteGrid(category_class=_ThreeCodes)
 
 
@@ -2722,7 +2727,7 @@ def _float_grid_built_without_x64() -> DiscreteGrid:
     previous = jax.config.read("jax_enable_x64")
     jax.config.update("jax_enable_x64", val=False)
     try:
-        return DiscreteGrid(values=(0.1, 0.7))
+        return DiscreteGrid(values=np.array([0.1, 0.7]))
     finally:
         jax.config.update("jax_enable_x64", val=previous)
 

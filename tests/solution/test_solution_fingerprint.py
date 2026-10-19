@@ -938,7 +938,7 @@ def test_value_grid_fingerprint_binds_the_stored_values(
     *, stored, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Only the stored values change; labels, codes and tolerance stay fixed."""
-    grid = DiscreteGrid(values=[0.0, 0.25])
+    grid = DiscreteGrid(values=np.array([0.0, 0.25]))
     baseline = fingerprints._semantic_fingerprint(grid)
     nodes = grid.values_to_jax()
     other = (
@@ -952,17 +952,19 @@ def test_value_grid_fingerprint_binds_the_stored_values(
 
 
 def test_value_grid_fingerprint_binds_the_tolerance() -> None:
-    baseline = fingerprints._semantic_fingerprint(DiscreteGrid(values=[0.0, 0.25]))
+    baseline = fingerprints._semantic_fingerprint(
+        DiscreteGrid(values=np.array([0.0, 0.25]))
+    )
 
     assert baseline != fingerprints._semantic_fingerprint(
-        DiscreteGrid(values=[0.0, 0.25], tolerance=1e-6)
+        DiscreteGrid(values=np.array([0.0, 0.25]), tolerance=1e-6)
     )
 
 
 def test_value_grid_fingerprint_is_reproducible() -> None:
     assert fingerprints._semantic_fingerprint(
-        DiscreteGrid(values=[0.0, 0.25])
-    ) == fingerprints._semantic_fingerprint(DiscreteGrid(values=[0.0, 0.25]))
+        DiscreteGrid(values=np.array([0.0, 0.25]))
+    ) == fingerprints._semantic_fingerprint(DiscreteGrid(values=np.array([0.0, 0.25])))
 
 
 def test_discrete_grid_protocol_subclass_fails_closed() -> None:

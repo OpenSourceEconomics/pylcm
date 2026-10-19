@@ -82,18 +82,22 @@ When the outcomes of a discrete variable are numbers, such as hours of work or y
 experience, declare the numbers instead of a category class:
 
 ```python
+import jax.numpy as jnp
+
 from lcm import DiscreteGrid
 
-actions = {"hours": DiscreteGrid(values=(0, 20, 40))}
+actions = {"hours": DiscreteGrid(values=jnp.array([0, 20, 40]))}
 states = {
-    "experience": DiscreteGrid(values=range(31)),
-    "productivity": DiscreteGrid(values=(0.5, 1.0, 2.0), tolerance=1e-9),
+    "experience": DiscreteGrid(values=jnp.arange(31)),
+    "productivity": DiscreteGrid(values=jnp.array([0.5, 1.0, 2.0]), tolerance=1e-9),
 }
 ```
 
-Values are strictly ascending, finite, and all integers or all floats. Inside pylcm the
-variable is indexed by the codes `0..n-1` of its values, but every function you write
-receives the values: `hours` arrives as `0`, `20` or `40`, not as `0`, `1` or `2`, and a
+`values` is a one-dimensional NumPy or JAX array with an integer or floating dtype, so
+the array's dtype decides whether the grid holds integers or floats; a list, tuple or
+`range` is refused. Values are strictly ascending and finite. Inside pylcm the variable
+is indexed by the codes `0..n-1` of its values, but every function you write receives
+the values: `hours` arrives as `0`, `20` or `40`, not as `0`, `1` or `2`, and a
 deterministic law of `experience` returns the next year of experience, which pylcm maps
 back to its code. Integer values arrive as int32, as codes do, so `jnp.log(hours)` on an
 integer grid is float32 even when x64 is enabled; write `jnp.log(hours * 1.0)` or
@@ -129,7 +133,7 @@ would need the grid's tolerance to find it. Map codes and values with the grid i
 ```python
 import jax.numpy as jnp
 
-grid = DiscreteGrid(values=(0.5, 1.0, 2.0))
+grid = DiscreteGrid(values=jnp.array([0.5, 1.0, 2.0]))
 
 grid.values[2]  # 2.0, the value of code 2
 grid.encode(jnp.array([0.5, 2.0]))  # the codes 0 and 2, as int32
