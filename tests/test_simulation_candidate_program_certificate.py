@@ -1340,11 +1340,33 @@ def test_donation_argument_adapter_is_in_the_reviewed_source_inventory(
     assert source in clean_corridor_sources
 
 
-def test_supplemental_sources_complete_the_pinned_registry_coverage():
+def test_supplemental_sources_complete_the_pinned_registry_coverage() -> None:
     """Every added corridor has its own separate, nonoverlapping control."""
     root = Path(__file__).parents[1]
     registered = direct_flow_mutation_specs(repo_root=root)
     supplemental = direct_flow.supplemental_direct_flow_mutation_specs(repo_root=root)
+    s03_scalar = direct_flow.s03_scalar_mutation_specs(repo_root=root)
+    owned_query = direct_flow.owned_query_helper_mutation_specs(repo_root=root)
+    child_failure = direct_flow.child_failure_mutation_specs(repo_root=root)
+    reviewed_prefix = direct_flow.reviewed_prefix_mutation_specs(repo_root=root)
+    decoupled = direct_flow.decoupled_bound_mutation_specs(repo_root=root)
+    associated_saving = direct_flow.associated_saving_mutation_specs(repo_root=root)
+    retained_prefix = direct_flow.retained_prefix_mutation_specs(repo_root=root)
+    outer_helpers = direct_flow.outer_helper_mutation_specs(repo_root=root)
+    final_nested = direct_flow.final_nested_mutation_specs(repo_root=root)
+    child_native = direct_flow.child_native_mutation_specs(repo_root=root)
+    additional_helpers = direct_flow.additional_helper_mutation_specs(repo_root=root)
+
+    assert set(decoupled) == {
+        "decoupled_bound:action_adapter_bypassed",
+        "decoupled_bound:action_summary_disabled",
+        "decoupled_bound:state_tiled_summary_disabled",
+        "decoupled_bound:state_untiled_summary_disabled",
+        "decoupled_bound:readout_parts_recomputed",
+        "decoupled_bound:hard_return_wrong_status_owner",
+        "decoupled_bound:ev1_solve_return_wrong_status_owner",
+        "decoupled_bound:ev1_simulate_return_wrong_status_owner",
+    }
 
     assert set(supplemental) == {
         "solve_completion:conflict_wait_bypassed",
@@ -1401,13 +1423,76 @@ def test_supplemental_sources_complete_the_pinned_registry_coverage():
         "type_local_decision:reducer_reads_ordinary_q_and_f",
         "structural_blueprint:cache_hit_ignores_key",
         "structural_blueprint:schema_drops_dtype",
+        "borrowing_bound:declared_producer_replaced_by_view",
+        "borrowing_bound:forbidden_dependency_bypassed",
+        "borrowing_bound:grid_origin_shifted",
+        "borrowing_bound:liquid_role_overwritten",
+        "borrowing_bound:literal_proof_value_substituted",
+        "borrowing_bound:normalized_rhs_renamed",
+        "borrowing_bound:parameter_owner_discarded",
+        "borrowing_bound:representative_marker_cache_identity_bypassed",
+        "borrowing_bound:scalar_shape_check_removed",
+        "borrowing_bound:temporal_marker_discarded",
+        "s02_query:active_period_pool_omitted",
+        "s02_query:auto_lower_target_omitted",
+        "s02_query:executable_ancestor_omitted",
+        "s02_query:executable_aux_restored",
+        "s02_query:expected_model_descriptor_bypassed",
+        "s02_query:intrinsic_budget_owner_changed",
+        "s02_query:typed_adapter_refusal_omitted",
+        "s02_status:active_lane_nonfinite_ignored",
+        "s02_status:canonical_dag_declarations_omitted",
+        "s02_status:kernel_status_channel_omitted",
+        "s02_status:mandatory_host_gate_omitted",
+        "s02_status:scan_history_retained",
+        "s02_status:subject_collective_or_omitted",
+        "s02_status:subject_scalar_roles_ignored",
+        "s02_status:bounded_aux_executable",
+        "s02_status:bounded_keyed_leaf_swapped",
+        "s02_status:bounded_reconstruction_status_swapped",
+        "s02_status:fold_weight_call_seam_replaced",
+        "s02_status:fold_weight_helper_changes_row",
+        "s02_status:initial_host_call_seam_replaced",
+        "s02_status:initial_host_helper_omits_status",
+        "s02_status:landing_reducer_status_omitted",
+        "s02_status:landing_total_call_seam_replaced",
+        "s02_status:landing_total_helper_loses_left_bank",
+        "s02_status:off_grid_eager_index_conversion_omitted",
+        "s02_status:off_grid_host_call_seam_replaced",
+        "s02_status:off_grid_host_helper_omits_status",
+        "s02_status:signature_metadata_omitted",
+        "s02_query:builder_query_record_call_seam_replaced",
+        "s02_query:carry_query_record_discarded",
+        "s02_query:outer_candidate_marginal_negated",
+        "s02_query:outer_query_record_call_seam_replaced",
     }
     assert not set(registered) & set(supplemental)
-    assert {spec["path"] for spec in (registered | supplemental).values()} == (
+    families = (
+        registered,
+        supplemental,
+        s03_scalar,
+        owned_query,
+        child_failure,
+        reviewed_prefix,
+        decoupled,
+        associated_saving,
+        retained_prefix,
+        outer_helpers,
+        final_nested,
+        child_native,
+        additional_helpers,
+    )
+    for index, left in enumerate(families):
+        for right in families[index + 1 :]:
+            assert not set(left) & set(right)
+    assert {spec["path"] for family in families for spec in family.values()} == (
         set(direct_flow._CERTIFIED_CORRIDOR_SOURCES)
         - set(direct_flow._UNIFORM_PROCESS_SOURCES)
         - set(direct_flow._ACTION_GRID_SOURCES)
-    )
+    ) | {
+        direct_flow.SUPPORT_AUTHORITY_SOURCE,
+        direct_flow.SUPPORT_TRANSITION_CHECKS_SOURCE,
+    }
 
 
 @pytest.mark.parametrize(

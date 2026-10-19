@@ -23,12 +23,15 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import ast
 import importlib.util
 import json
 import re
 import sys
+import uuid
 from pathlib import Path
 from types import ModuleType
+from typing import cast
 
 try:
     from generate_sources import (
@@ -46,13 +49,6 @@ except ModuleNotFoundError:  # Imported as tests.candidate_certificate.check_sea
     )
 
 DIRECT_FLOW_PATH = "tests/candidate_certificate/direct_flow.py"
-# Seal constants are named after their source file, so some carry a digit
-# (`PROCESS_AR1_SOURCE`). A name class without `0-9` silently skips those: `--fix`
-# reports success, one entry stays stale, and the next check reports it as an error
-# a reseal cannot repair.
-_SEAL_LINE = re.compile(
-    r'^(?P<indent>\s+)(?P<name>[A-Z0-9_]+_SOURCE): "[0-9a-f]{64}",$'
-)
 _SEAL_MISMATCH = re.compile(r"^(?P<path>[^:]+): source seal mismatch: ")
 
 
@@ -62,13 +58,28 @@ def _load_direct_flow(*, root: Path) -> ModuleType:
     The map is read fresh on every call, so a check after `--fix` sees the rewritten
     digests, and a tree other than this checkout is verified against its own map.
     """
-    path = root / DIRECT_FLOW_PATH
-    spec = importlib.util.spec_from_file_location("_certificate_direct_flow", path)
+    path = (root / DIRECT_FLOW_PATH).resolve()
+    name = "_certificate_direct_flow_" + uuid.uuid4().hex
+    spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
         raise ImportError(f"cannot load {path}")
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    missing = object()
+    previous = sys.modules.get(name, missing)
+    sys.modules[name] = module
+    completed = False
+    try:
+        spec.loader.exec_module(module)
+        if Path(cast("str", module.__file__)).resolve() != path:
+            raise ImportError(f"loaded verifier origin differs from {path}")
+        completed = True
+        return module
+    finally:
+        if not completed:
+            if previous is missing:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = cast("ModuleType", previous)
 
 
 def check(*, repo_root: Path) -> tuple[list[str], list[str]]:
@@ -107,6 +118,58 @@ def check(*, repo_root: Path) -> tuple[list[str], list[str]]:
     return seal_errors, other_errors
 
 
+def _source_seal_key(
+    *, key: ast.expr | None, direct_flow: ModuleType
+) -> tuple[str, str]:
+    """Resolve the store's declared source names and literal repository paths."""
+    if isinstance(key, ast.Name):
+        source = getattr(direct_flow, key.id)
+        if not isinstance(source, str):
+            raise ValueError("A source seal name must identify one repository path")
+        return source, key.id
+    if isinstance(key, ast.Constant) and isinstance(key.value, str):
+        return key.value, json.dumps(key.value)
+    raise ValueError("Source seals require declared names or literal paths")
+
+
+def _with_current_source_seals(
+    *, original: str, direct_flow: ModuleType, root: Path
+) -> str:
+    """Refresh every stored byte seal and add each explicitly certified source."""
+    tree = ast.parse(original)
+    stores = [
+        statement.value
+        for statement in tree.body
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "_SOURCE_SEALS"
+    ]
+    store = stores[0] if len(stores) == 1 else None
+    if not isinstance(store, ast.Dict):
+        raise ValueError("The source seal store must be one explicit dictionary")
+    entries = [_source_seal_key(key=key, direct_flow=direct_flow) for key in store.keys]
+    present = {source for source, _key in entries}
+    entries.extend(
+        (source, json.dumps(source))
+        for source in direct_flow._CERTIFIED_CORRIDOR_SOURCES
+        if source not in present
+    )
+    replacement = (
+        "{\n"
+        + "".join(
+            f'    {key}: "{sha256_file(root / source)}",\n' for source, key in entries
+        )
+        + "}"
+    )
+    lines = original.splitlines(keepends=True)
+    start = sum(map(len, lines[: store.lineno - 1])) + store.col_offset
+    if store.end_lineno is None or store.end_col_offset is None:
+        raise ValueError("The source seal store has no complete AST span")
+    end = sum(map(len, lines[: store.end_lineno - 1])) + store.end_col_offset
+    return original[:start] + replacement + original[end:]
+
+
 def fix(*, repo_root: Path) -> list[str]:
     """Regenerate the inventory and rewrite the seal map; return the rewritten files."""
     root = repo_root.resolve()
@@ -121,19 +184,9 @@ def fix(*, repo_root: Path) -> list[str]:
     direct_flow = _load_direct_flow(root=root)
     seal_map_path = root / DIRECT_FLOW_PATH
     original = seal_map_path.read_text(encoding="utf-8")
-    lines = original.split("\n")
-    # Only the seal map holds byte seals; a line of the same shape elsewhere, such
-    # as in the corridor pin store, is an AST pin that `repin_corridors.py` owns.
-    start = lines.index("_SOURCE_SEALS = {")
-    end = lines.index("}", start)
-    for index, line in enumerate(lines[start:end], start=start):
-        match = _SEAL_LINE.match(line)
-        if match is None:
-            continue
-        relative = getattr(direct_flow, match["name"])
-        digest = sha256_file(root / relative)
-        lines[index] = f'{match["indent"]}{match["name"]}: "{digest}",'
-    updated = "\n".join(lines)
+    updated = _with_current_source_seals(
+        original=original, direct_flow=direct_flow, root=root
+    )
     if updated != original:
         seal_map_path.write_text(updated, encoding="utf-8")
         rewritten.append(DIRECT_FLOW_PATH)

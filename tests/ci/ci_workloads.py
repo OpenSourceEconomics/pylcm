@@ -21,8 +21,9 @@ kind of regeneration has its own route:
 - a new or changed `cpu.yml` invocation ⇒ a reviewed hand edit, checked by
   `tests/ci/test_cpu_workflow_contract.py`;
 - re-measured root `file_weights` ⇒ a new per-file CSV and a new `frozen_head`;
-- re-measured `leg_weights` ⇒ a matching per-leg CSV and an updated leg's
-  `junit_source`, with its tested source, selection and input provenance.
+- re-measured `leg_weights` ⇒ `tests/ci/generate_ci_workloads.py --refresh-leg`
+  over that leg's JUnit reports of one run, with a `--junit-source` naming the
+  run, attempt, head and artifacts.
 
 `frozen_head` binds the root cross-leg CSV weights. Each `leg_weights` entry
 records its own measurement provenance in `junit_source`; updating one leg does
@@ -124,6 +125,8 @@ class WorkloadManifest(TypedDict):
     shard_layout: dict[str, dict[str, _ShardConfig]]
     coverage_contributors: list[str]
     general_shard_universe: list[str]
+    linux_only_files: list[str]
+    os_persistence_tests: list[str]
     per_test_ceiling_backlog: list[_CeilingBacklog]
     invocations: list[Invocation]
     file_weights: dict[str, _FileWeight]
@@ -258,6 +261,43 @@ def general_shard_universe(*, path: Path = MANIFEST_PATH) -> tuple[str, ...]:
     return tuple(load_manifest(path=path)["general_shard_universe"])
 
 
+def linux_only_files(*, path: Path = MANIFEST_PATH) -> tuple[str, ...]:
+    """Return general-universe files that only the Linux general legs run.
+
+    A file belongs here when nothing in it is expected to behave differently on
+    macOS or Windows -- numerics, certificates, kernels -- so the platform legs
+    spend their minutes on paths, I/O, processes and platform dependencies.
+    """
+    return tuple(load_manifest(path=path).get("linux_only_files", ()))
+
+
+def os_persistence_tests(*, path: Path = MANIFEST_PATH) -> tuple[str, ...]:
+    """Return the `slow` tests the macOS and Windows persistence lanes run.
+
+    Each entry is `<file>::<test function>`. They write, read, pickle or replay
+    on-disk state, which is expected to behave differently across operating
+    systems, yet they live in the `slow` solution battery that the macOS and
+    Windows general legs deselect. `tests/conftest.py` marks them
+    `os_persistence` so those lanes can select them by marker.
+    """
+    return tuple(load_manifest(path=path).get("os_persistence_tests", ()))
+
+
+def general_leg_universe(*, leg: str, path: Path = MANIFEST_PATH) -> tuple[str, ...]:
+    """Return the general files one leg shards over.
+
+    The OS is the leg name's suffix (`fp64-windows`): Linux legs shard the whole
+    general universe, macOS and Windows legs shard it without `linux_only_files`.
+    """
+    universe = general_shard_universe(path=path)
+    if leg.endswith("-linux"):
+        return universe
+    if not leg.endswith(("-macos", "-windows")):
+        raise ValueError(f"general leg {leg!r} names no known OS")
+    linux_only = set(linux_only_files(path=path))
+    return tuple(file_ for file_ in universe if file_ not in linux_only)
+
+
 def coverage_contributors(*, path: Path = MANIFEST_PATH) -> tuple[str, ...]:
     """Return the artifact name of every lane that contributes to coverage."""
     return tuple(load_manifest(path=path)["coverage_contributors"])
@@ -283,6 +323,7 @@ __all__: Sequence[str] = (
     "excluded_files",
     "file_weight_seconds",
     "files_for",
+    "general_leg_universe",
     "general_shard_universe",
     "guardrails",
     "invocation_by_id",
@@ -291,8 +332,10 @@ __all__: Sequence[str] = (
     "lane_summary",
     "leg_names",
     "leg_weights",
+    "linux_only_files",
     "load_manifest",
     "node_ids",
+    "os_persistence_tests",
     "shard_layout",
     "unweighted_files",
 )

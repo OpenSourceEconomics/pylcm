@@ -129,7 +129,9 @@ Model(
         "working": working_regime,
         "retired": retired_regime,
     },
-    ages=AgeGrid(start=25, inclusive_stop=75, step="Y"),  # Or n_periods=...; exactly one
+    ages=AgeGrid(
+        start=25, inclusive_stop=75, step="Y"
+    ),  # Or n_periods=...; exactly one
     regime_id_class=RegimeId,  # Required: dataclass mapping names to indices
     edges={"working": {"retired": 25}},  # Source → destination → source ages
     initial_nodes=InitialNodes(by_age={25: "working"}),  # Required: admissible starts

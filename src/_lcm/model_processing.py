@@ -11,11 +11,11 @@ from collections.abc import Mapping
 from types import MappingProxyType
 from typing import cast
 
+import jax.numpy as jnp
 from dags import get_ancestors
 from dags.tree import QNAME_DELIMITER, qname_from_tree_path
 from jax import Array
 
-from _lcm.constraints.bounds import lower_bound_declaration
 from _lcm.constraints.processed import ConstraintLike, normalize_constraints
 from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.grids import DiscreteGrid
@@ -254,6 +254,94 @@ def _build_regimes_and_template_with_fixed_params(
     )
 
 
+def _validate_borrowing_bound_routes(
+    *,
+    user_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
+    ages: TimeAxis,
+    active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
+) -> None:
+    """Validate floor identities before admitting a numerical solver route."""
+    from _lcm.constraints.dynamic_bound import validate_declared_bounds  # noqa: PLC0415
+
+    for regime_name, user_regime in user_regimes.items():
+        specs = validate_declared_bounds(
+            user_regime=user_regime,
+            regime_name=regime_name,
+            law=laws[regime_name],
+            ages=ages,
+            periods=active_periods_by_regime.get(regime_name, ()),
+        )
+        post_decision = _post_decision_function_of_solver(user_regime.solver)
+        if post_decision is not None and len(specs) > 1:
+            first = specs[0]
+            for other in specs[1:]:
+                same = (
+                    first.kind == other.kind
+                    and first.dependency_identity == other.dependency_identity
+                )
+                if first.kind == other.kind == "literal":
+                    same = bool(
+                        jnp.array_equal(
+                            jnp.asarray(first.literal_value),
+                            jnp.asarray(other.literal_value),
+                        )
+                    )
+                if not same:
+                    raise ModelInitializationError(
+                        f"Regime '{regime_name}' declares distinct lower "
+                        f"bounds '{first.declaration_names[0]}' "
+                        f"and '{other.declaration_names[0]}'; its solver "
+                        f"cannot jointly construct them."
+                    )
+        if any(spec.kind == "dag" for spec in specs) and post_decision is not None:
+            _validate_callable_borrowing_solver(
+                user_regime=user_regime, regime_name=regime_name
+            )
+
+
+def _validate_callable_borrowing_solver(
+    *, user_regime: UserRegime, regime_name: RegimeName
+) -> None:
+    """Require static saving offsets and a solver route that owns dynamic floors."""
+    solver = user_regime.solver
+    while (inner := getattr(solver, "inner", None)) is not None:
+        solver = inner
+    if getattr(getattr(solver, "savings_grid", None), "pass_points_at_runtime", False):
+        raise ModelInitializationError(
+            f"Regime '{regime_name}' declares a callable borrowing "
+            f"bound but its savings grid supplies points only at runtime."
+        )
+    from _lcm.egm.outer_search import (  # noqa: PLC0415
+        AdaptiveOuterMesh,
+        FiniteOuterGrid,
+    )
+    from _lcm.solution.dcegm import _BoundDCEGM  # noqa: PLC0415
+    from _lcm.solution.egm import _BoundEGM  # noqa: PLC0415
+    from _lcm.solution.nbegm import _BoundNBEGM  # noqa: PLC0415
+    from _lcm.solution.negm import _BoundNEGM  # noqa: PLC0415
+    from _lcm.solution.nnbegm import _BoundNNBEGM  # noqa: PLC0415
+
+    if isinstance(
+        user_regime.solver, _BoundEGM | _BoundDCEGM | _BoundNBEGM | _BoundNEGM
+    ):
+        return
+    if isinstance(user_regime.solver, _BoundNNBEGM):
+        if isinstance(user_regime.solver.outer_search, FiniteOuterGrid):
+            return
+        if isinstance(user_regime.solver.outer_search, AdaptiveOuterMesh):
+            raise ModelInitializationError(
+                f"Regime '{regime_name}' declares a callable borrowing bound, but "
+                "adaptive outer search supports only literal floors: honouring a "
+                "callable floor at every refined outer node is prohibitively slow. "
+                "Use a literal `lower`, or a `FiniteOuterGrid` outer search."
+            )
+    raise ModelInitializationError(
+        f"Regime '{regime_name}' declares a callable borrowing bound; "
+        f"its EGM-family route does not implement dynamic floors."
+    )
+
+
 def validate_model_inputs(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
@@ -300,6 +388,13 @@ def validate_model_inputs(
     # `AgeSpecializedGrid` contract, so the representative grid answers it exactly —
     # whereas the raw marker is not a `Grid` at all and would be dropped from every
     # type-filtered collection of continuous states, rejecting a valid model.
+    _validate_borrowing_bound_routes(
+        user_regimes=user_regimes,
+        laws=laws,
+        ages=ages,
+        active_periods_by_regime=active_periods_by_regime,
+    )
+
     solver_validation_regimes = _representative_for_validation(
         user_regimes=user_regimes,
         laws=laws,
@@ -766,6 +861,10 @@ def _law_phase_varies(*, solve_obj: UserFunction, sim_obj: UserFunction | None) 
     """
     if solve_obj is sim_obj:
         return False
+    from _lcm.constraints.dynamic_bound import get_floor_source  # noqa: PLC0415
+
+    if get_floor_source(function=solve_obj) is get_floor_source(function=sim_obj):
+        return False
     if getattr(solve_obj, "_is_auto_identity", False) and getattr(
         sim_obj, "_is_auto_identity", False
     ):
@@ -805,8 +904,15 @@ def _is_solve_proved_post_decision_lower_bound(
     processed = normalize_constraints(
         constraints={constraint_name: cast("ConstraintLike", declaration)}
     )[constraint_name]
-    bound = lower_bound_declaration(constraint=processed)
-    return bound is not None and bound[0] == post_decision
+    from _lcm.constraints.bounds import matches_installed_literal_bound  # noqa: PLC0415
+
+    solver = user_regime.solver
+    while (inner := getattr(solver, "inner", None)) is not None:
+        solver = inner
+    return matches_installed_literal_bound(
+        constraint=processed,
+        bound_spec=getattr(solver, "post_decision_bound", None),
+    )
 
 
 def _validate_constraint_phase_invariance(

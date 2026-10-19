@@ -494,7 +494,7 @@ def _reducers() -> tuple[ArgmaxQOverAFunction, _StreamedArgmaxQOverA]:
         ),
         action_width_keyword="_lcm_action_block_width",
     )
-    return dense, streamed
+    return cast("ArgmaxQOverAFunction", dense), streamed
 
 
 @pytest.mark.parametrize("width", [1, 2, 3, 5, 14])
@@ -508,11 +508,14 @@ def test_streamed_decision_chooses_the_dense_reducers_action(
     dense_index, _ = dense(
         next_regime_to_V_arr=continuation, wealth=jnp.asarray(wealth), **_TOY_ACTIONS
     )
-    streamed_index, _ = streamed(
-        next_regime_to_V_arr=continuation,
-        wealth=jnp.asarray(wealth),
-        _lcm_action_block_width=width,
-        **_TOY_ACTIONS,
+    streamed_index, _ = cast(
+        "tuple[IntND, FloatND]",
+        streamed(
+            next_regime_to_V_arr=continuation,
+            wealth=jnp.asarray(wealth),
+            _lcm_action_block_width=width,
+            **_TOY_ACTIONS,
+        ),
     )
     assert int(streamed_index) == int(dense_index)
 
@@ -528,11 +531,14 @@ def test_streamed_decision_reports_the_dense_reducers_value(
     _, dense_value = dense(
         next_regime_to_V_arr=continuation, wealth=jnp.asarray(wealth), **_TOY_ACTIONS
     )
-    _, streamed_value = streamed(
-        next_regime_to_V_arr=continuation,
-        wealth=jnp.asarray(wealth),
-        _lcm_action_block_width=width,
-        **_TOY_ACTIONS,
+    _, streamed_value = cast(
+        "tuple[IntND, FloatND]",
+        streamed(
+            next_regime_to_V_arr=continuation,
+            wealth=jnp.asarray(wealth),
+            _lcm_action_block_width=width,
+            **_TOY_ACTIONS,
+        ),
     )
     assert_values_agree(got=streamed_value, expected=dense_value, n_ulp=1)
 
@@ -548,11 +554,14 @@ def test_streamed_decision_publishes_identity_zero_when_nothing_is_feasible(
     dense_index, _ = dense(
         next_regime_to_V_arr=continuation, wealth=infeasible, **_TOY_ACTIONS
     )
-    streamed_index, _ = streamed(
-        next_regime_to_V_arr=continuation,
-        wealth=infeasible,
-        _lcm_action_block_width=width,
-        **_TOY_ACTIONS,
+    streamed_index, _ = cast(
+        "tuple[IntND, FloatND]",
+        streamed(
+            next_regime_to_V_arr=continuation,
+            wealth=infeasible,
+            _lcm_action_block_width=width,
+            **_TOY_ACTIONS,
+        ),
     )
     assert int(streamed_index) == int(dense_index)
 

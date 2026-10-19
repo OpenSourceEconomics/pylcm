@@ -13,7 +13,9 @@ from types import MappingProxyType
 from typing import Protocol, runtime_checkable
 
 import jax
+import jax.numpy as jnp
 
+from _lcm.execution.output_layout import OutputRoleTree, StateAxesLeading
 from _lcm.typing import ArgumentTree, PytreeValue, ShapeDtypePytree
 from lcm.typing import ReferenceName
 
@@ -70,6 +72,7 @@ def shard_subject_function(
     static_kwargs: Mapping[str, int],
     devices: tuple[jax.Device, ...],
     subject_width_keyword: str,
+    output_roles: OutputRoleTree | None = None,
 ) -> Callable[..., PytreeValue]:
     """Wrap the complete tile loop, not each tile, in one manual device map.
 
@@ -100,16 +103,42 @@ def shard_subject_function(
     )
     names = frozenset(subject_arg_names)
     in_specs = {name: jax.P("X") if name in names else jax.P() for name in arguments}
+    scalar_positions = frozenset(
+        index
+        for index, role in enumerate(jax.tree.leaves(output_roles))
+        if isinstance(role, StateAxesLeading)
+        and role.state_names == ()
+        and role.n_free_leading_axes == 0
+        and role.dtype == jnp.bool_
+        and role.shape == ()
+    )
+    out_specs = (
+        jax.tree.map(
+            lambda role: (
+                jax.P()
+                if isinstance(role, StateAxesLeading)
+                and role.state_names == ()
+                and role.n_free_leading_axes == 0
+                and role.dtype == jnp.bool_
+                and role.shape == ()
+                else jax.P("X")
+            ),
+            output_roles,
+        )
+        if scalar_positions
+        else jax.P("X")
+    )
     mapped = jax.shard_map(
         partial(
             _evaluate_local_subjects,
             function=function,
             static_kwargs=MappingProxyType(local_widths),
             local_extent=local_extent,
+            scalar_positions=scalar_positions,
         ),
         mesh=mesh,
         in_specs=(in_specs,),
-        out_specs=jax.P("X"),
+        out_specs=out_specs,
         check_vma=True,
     )
     return _KeywordSubjectMap(mapped=mapped)
@@ -147,14 +176,27 @@ def _evaluate_local_subjects(
     function: Callable[..., PytreeValue],
     static_kwargs: Mapping[str, int],
     local_extent: int,
+    scalar_positions: frozenset[int] = frozenset(),
 ) -> PytreeValue:
     """Run one partition's existing tiling body, retaining its output tree."""
     result = function(**arguments, **static_kwargs)
-    for leaf in jax.tree.leaves(result):
+    leaves = jax.tree.leaves(result)
+    for index, leaf in enumerate(leaves):
         shape = getattr(leaf, "shape", ())
+        if index in scalar_positions:
+            if shape != () or leaf.dtype != jnp.bool_:
+                raise TypeError(
+                    "Subject integrity outputs must be scalar Boolean arrays."
+                )
+            leaves[index] = jax.lax.pmax(leaf.astype(jnp.int32), "X").astype(jnp.bool_)
+            continue
         if not shape or shape[0] != local_extent:
             raise ValueError("A subject-local output must preserve its leading extent.")
-    return result
+    return (
+        jax.tree.unflatten(jax.tree.structure(result), leaves)
+        if scalar_positions
+        else result
+    )
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)

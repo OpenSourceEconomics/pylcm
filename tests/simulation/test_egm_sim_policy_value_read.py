@@ -150,6 +150,11 @@ def test_policy_replacement_reports_the_value_of_the_emitted_action(monkeypatch)
         "_canonical_Q_at_actions",
         lambda **_kwargs: (jnp.array([7.0]), jnp.array([True])),
     )
+    monkeypatch.setattr(
+        simulation_module,
+        "_evaluate_canonical_Q_at_actions",
+        lambda **_kwargs: (jnp.array([7.0]), jnp.array([True])),
+    )
 
     _, reported_value, _ = _replace_continuous_action_with_policy_read(
         optimal_actions=MappingProxyType({"consumption": jnp.array([0.5])}),
@@ -174,7 +179,7 @@ def test_nested_policy_replacement_keeps_only_canonically_better_pairs(
     monkeypatch,
 ) -> None:
     """Nested actions and values move together only for feasible improvements."""
-    regime = _StubRegime(simulation=SimpleNamespace())
+    regime = _StubRegime(simulation=SimpleNamespace(post_decision_bounds=()))
     sim_policy = object.__new__(NestedEGMSimPolicy)
     grid_actions = MappingProxyType(
         {
@@ -307,6 +312,14 @@ def test_nested_policy_replay_scores_the_published_pair_without_reoptimizing(
     )
     monkeypatch.setattr(
         simulation_module,
+        "_evaluate_canonical_Q_at_actions",
+        lambda *, candidate_actions, **_kwargs: (
+            2.0 - (jnp.asarray(candidate_actions["consumption"]) - 0.7) ** 2,
+            jnp.asarray([True]),
+        ),
+    )
+    monkeypatch.setattr(
+        simulation_module,
         "_nested_actions_are_intrinsically_admissible",
         lambda **_kwargs: jnp.asarray([True]),
     )
@@ -399,7 +412,7 @@ def test_nested_policy_rejects_an_inner_action_below_its_surrogate_value(
 
     actions, reported_value, fallback = _replace_continuous_action_with_policy_read(
         optimal_actions=baseline_actions,
-        regime=_StubRegime(simulation=SimpleNamespace()),
+        regime=_StubRegime(simulation=SimpleNamespace(post_decision_bounds=())),
         sim_policy=payload,
         states=MappingProxyType({"wealth": jnp.ones(1)}),
         flat_params=MappingProxyType({}),
@@ -482,7 +495,7 @@ def test_nested_policy_acceptance_truth_table(monkeypatch) -> None:
     common = {
         "logger": _SILENT,
         "optimal_actions": grid_actions,
-        "regime": _StubRegime(simulation=SimpleNamespace()),
+        "regime": _StubRegime(simulation=SimpleNamespace(post_decision_bounds=())),
         "sim_policy": object.__new__(NestedEGMSimPolicy),
         "states": MappingProxyType({"wealth": jnp.ones(1)}),
         "flat_params": MappingProxyType({}),
@@ -657,7 +670,7 @@ def test_nested_policy_replacement_never_emits_a_degraded_interpolated_pair(
 
     actions, reported_value, fallback = _replace_continuous_action_with_policy_read(
         optimal_actions=grid_actions,
-        regime=_StubRegime(simulation=SimpleNamespace()),
+        regime=_StubRegime(simulation=SimpleNamespace(post_decision_bounds=())),
         sim_policy=object.__new__(NestedEGMSimPolicy),
         states=MappingProxyType({"wealth": jnp.ones(len(grid_values))}),
         flat_params=MappingProxyType({}),
@@ -683,7 +696,7 @@ def test_nested_policy_accepts_improvement_over_a_canonically_unsafe_grid_pair(
     monkeypatch,
 ) -> None:
     """A valid nested pair replaces a grid decision canonical Q rejects."""
-    regime = _StubRegime(simulation=SimpleNamespace())
+    regime = _StubRegime(simulation=SimpleNamespace(post_decision_bounds=()))
     sim_policy = object.__new__(NestedEGMSimPolicy)
     grid_actions = MappingProxyType(
         {
@@ -758,7 +771,7 @@ def test_nested_policy_emits_a_safe_baseline_when_the_policy_read_falls_back(
     monkeypatch,
 ) -> None:
     """A rejected nested read emits its projected and canonically scored baseline."""
-    regime = _StubRegime(simulation=SimpleNamespace())
+    regime = _StubRegime(simulation=SimpleNamespace(post_decision_bounds=()))
     sim_policy = object.__new__(NestedEGMSimPolicy)
     grid_actions = MappingProxyType(
         {
@@ -885,6 +898,9 @@ def test_nested_policy_rejection_replaces_a_grid_pair_outside_the_solver_domain(
     )
     monkeypatch.setattr(simulation_module, "_canonical_Q_at_actions", canonical_q)
     monkeypatch.setattr(
+        simulation_module, "_evaluate_canonical_Q_at_actions", canonical_q
+    )
+    monkeypatch.setattr(
         simulation_module,
         "_read_nested_policy",
         lambda **_kwargs: (
@@ -908,7 +924,7 @@ def test_nested_policy_rejection_replaces_a_grid_pair_outside_the_solver_domain(
     assert bool(grid_feasible[0])
     actions, reported_value, fallback = _replace_continuous_action_with_policy_read(
         optimal_actions=grid_actions,
-        regime=_StubRegime(simulation=SimpleNamespace()),
+        regime=_StubRegime(simulation=SimpleNamespace(post_decision_bounds=())),
         sim_policy=payload,
         states=MappingProxyType({"wealth": jnp.ones(1)}),
         flat_params=MappingProxyType({}),
@@ -1003,6 +1019,9 @@ def test_nested_policy_rejection_replaces_a_canonically_infeasible_grid_pair(
     )
     monkeypatch.setattr(simulation_module, "_canonical_Q_at_actions", canonical_q)
     monkeypatch.setattr(
+        simulation_module, "_evaluate_canonical_Q_at_actions", canonical_q
+    )
+    monkeypatch.setattr(
         simulation_module,
         "_read_nested_policy",
         lambda **_kwargs: (
@@ -1030,7 +1049,7 @@ def test_nested_policy_rejection_replaces_a_canonically_infeasible_grid_pair(
     assert not bool(grid_feasible[0])
     actions, reported_value, fallback = _replace_continuous_action_with_policy_read(
         optimal_actions=grid_actions,
-        regime=_StubRegime(simulation=SimpleNamespace()),
+        regime=_StubRegime(simulation=SimpleNamespace(post_decision_bounds=())),
         sim_policy=payload,
         states=MappingProxyType({"wealth": jnp.ones(1)}),
         flat_params=MappingProxyType({}),
@@ -1111,11 +1130,14 @@ def test_nested_grid_baseline_publishes_the_replay_candidate_it_was_given(
         return jnp.where(feasible, resources, -jnp.inf), feasible
 
     monkeypatch.setattr(simulation_module, "_canonical_Q_at_actions", canonical_q)
+    monkeypatch.setattr(
+        simulation_module, "_evaluate_canonical_Q_at_actions", canonical_q
+    )
 
     actions, value, admissible = simulation_module._nested_grid_baseline(
         payload=payload,
         grid_actions=grid_actions,
-        regime=_StubRegime(simulation=SimpleNamespace()),
+        regime=_StubRegime(simulation=SimpleNamespace(post_decision_bounds=())),
         states=MappingProxyType({"wealth": jnp.ones(1)}),
         canonical_states=MappingProxyType({"wealth": jnp.ones(1)}),
         action_names=("consumption", "investment"),
@@ -1182,11 +1204,14 @@ def test_nested_grid_baseline_enforces_the_solver_owned_budget(monkeypatch) -> N
         return investment, jnp.ones_like(investment, dtype=bool)
 
     monkeypatch.setattr(simulation_module, "_canonical_Q_at_actions", canonical_q)
+    monkeypatch.setattr(
+        simulation_module, "_evaluate_canonical_Q_at_actions", canonical_q
+    )
 
     actions, value, admissible = simulation_module._nested_grid_baseline(
         payload=payload,
         grid_actions=grid_actions,
-        regime=_StubRegime(simulation=SimpleNamespace()),
+        regime=_StubRegime(simulation=SimpleNamespace(post_decision_bounds=())),
         states=MappingProxyType({"wealth": jnp.ones(1)}),
         canonical_states=MappingProxyType({"wealth": jnp.ones(1)}),
         action_names=("consumption", "investment"),
@@ -1263,7 +1288,7 @@ def test_nested_policy_rejection_fails_when_no_candidate_is_safe(
     ):
         _replace_continuous_action_with_policy_read(
             optimal_actions=grid_actions,
-            regime=_StubRegime(simulation=SimpleNamespace()),
+            regime=_StubRegime(simulation=SimpleNamespace(post_decision_bounds=())),
             sim_policy=object.__new__(NestedEGMSimPolicy),
             states=MappingProxyType({"wealth": jnp.ones(1)}),
             flat_params=MappingProxyType({}),
@@ -1335,7 +1360,7 @@ def test_nested_policy_failure_ignores_out_of_regime_placeholders(
 
     actions, reported_value, fallback = _replace_continuous_action_with_policy_read(
         optimal_actions=grid_actions,
-        regime=_StubRegime(simulation=SimpleNamespace()),
+        regime=_StubRegime(simulation=SimpleNamespace(post_decision_bounds=())),
         sim_policy=object.__new__(NestedEGMSimPolicy),
         states=MappingProxyType({"wealth": jnp.ones(n_subjects)}),
         flat_params=MappingProxyType({}),
@@ -1366,7 +1391,7 @@ def test_nested_policy_failure_ignores_out_of_regime_placeholders(
 
 def test_nested_action_pair_is_scored_without_changing_actions(monkeypatch) -> None:
     """Canonical scoring leaves the published nested action pair unchanged."""
-    regime = _StubRegime(simulation=SimpleNamespace())
+    regime = _StubRegime(simulation=SimpleNamespace(post_decision_bounds=()))
     targets = jnp.asarray([0.27, 0.73])
     proposed_actions = MappingProxyType(
         {
@@ -1383,6 +1408,7 @@ def test_nested_action_pair_is_scored_without_changing_actions(monkeypatch) -> N
         return values, jnp.ones_like(values, dtype=bool)
 
     monkeypatch.setattr(simulation_module, "_canonical_Q_at_actions", score)
+    monkeypatch.setattr(simulation_module, "_evaluate_canonical_Q_at_actions", score)
 
     actions, values, feasible = simulation_module._score_nested_action_pair(
         proposed_actions=proposed_actions,
@@ -1493,6 +1519,7 @@ def _read_with(*, payload, functions):
                 constraints={},
                 compute_regime_transition_probs=None,
                 age_specialized_function_names=frozenset(),
+                post_decision_bounds=(),
             )
         ),
         states=MappingProxyType(

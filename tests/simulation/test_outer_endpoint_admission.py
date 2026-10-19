@@ -280,6 +280,7 @@ def _falls_back(*, domain, nodes, winner: int, stock: float) -> bool:
                 grids={},
                 functions={"new_illiquid": _new_illiquid, "resources": _resources},
                 constraints={},
+                post_decision_bounds=(),
                 compute_regime_transition_probs=None,
                 age_specialized_function_names=frozenset(),
             )
@@ -533,6 +534,7 @@ def _regime(
             grids={},
             functions={"new_illiquid": _new_illiquid, "resources": _resources},
             constraints={},
+            post_decision_bounds=(),
             compute_regime_transition_probs=None,
             age_specialized_function_names=frozenset(),
             Q_and_F=MappingProxyType(

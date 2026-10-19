@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
+from _lcm.simulation import initial_conditions
 from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
@@ -26,7 +27,10 @@ from lcm import (
     categorical,
     fixed_transition,
 )
-from lcm.exceptions import InvalidAdditionalTargetsError, UnsupportedOperationError
+from lcm.exceptions import (
+    InvalidAdditionalTargetsError,
+    InvalidInitialConditionsError,
+)
 from lcm.regime import Regime as UserRegime
 from lcm.transition import AgeSpecializedFunction
 from lcm.typing import (
@@ -411,32 +415,68 @@ def test_additional_targets_all_rejects_age_specialized_constraint():
         result.to_dataframe(additional_targets="all")
 
 
+def _cap_falling_with_age(age: float) -> Callable[..., bool]:
+    """Return the age's consumption cap, one unit of wealth tighter per year past 25.
+
+    At 25 it coincides with `consumption <= wealth`; at 45 it demands twenty units
+    of wealth beyond the consumption, so a subject's verdict depends on which
+    age's closure judges it.
+    """
+
+    def wealth_cap(*, consumption: float, wealth: float) -> bool:
+        return consumption <= wealth - (age - 25.0)
+
+    return wealth_cap
+
+
+def _simulate_with_falling_cap(
+    *, ages: list[float], wealth: list[float], log_level: LogLevel
+):
+    model = _make_specialized_constraint_model(
+        AgeSpecializedFunction(build=_cap_falling_with_age, signature=lambda age: age)
+    )
+    return model.simulate(
+        params={"discount_factor": 0.95},
+        initial_conditions={
+            "age": jnp.array(ages),
+            "wealth": jnp.array(wealth),
+            "regime_id": jnp.full(len(ages), RegimeId.working_life),
+        },
+        log_level=log_level,
+    )
+
+
 @pytest.mark.parametrize("log_level", ["warning", "debug"])
-def test_initial_conditions_feasibility_check_rejects_age_specialized_constraint(
+def test_initial_feasibility_admits_subjects_under_their_own_start_ages_constraint(
     log_level: LogLevel,
 ):
-    """Feasibility validation cannot answer for a specialized constraint when
-    subjects start away from the regime's representative age, so it raises.
+    """Subjects starting at different ages simulate from their own start ages.
 
-    The published `regime.simulation.constraints` hold an `AgeSpecializedFunction`
-    resolved at the regime's representative (first active) age only. Checking a
-    subject who starts at a later age against that closure would silently apply
-    the wrong age's policy. This is a property of the model, not of the supplied
-    rows, so it is an unsupported operation and is never downgraded to a warning.
+    Wealth 100 leaves every action feasible under each age's cap along the whole
+    working life, so both subjects pass the feasibility check of their start
+    period and are simulated from there.
     """
-    model = _make_specialized_constraint_model(
-        AgeSpecializedFunction(build=_cap_of_age, signature=lambda age: age)
+    result = _simulate_with_falling_cap(
+        ages=[25.0, 45.0], wealth=[100.0, 100.0], log_level=log_level
     )
-    with pytest.raises(UnsupportedOperationError, match="policy-specialized"):
-        model.simulate(
-            params={"discount_factor": 0.95},
-            initial_conditions={
-                "age": jnp.array([25.0, 35.0, 45.0]),
-                "wealth": jnp.array([10.0, 50.0, 100.0]),
-                "regime_id": jnp.full(3, RegimeId.working_life),
-            },
-            log_level=log_level,
-        )
+    first_ages = result.to_dataframe().groupby("subject_id")["age"].min()
+    assert first_ages.tolist() == [25.0, 45.0]
+
+
+@pytest.mark.parametrize("log_level", ["warning", "debug"])
+def test_initial_feasibility_judges_a_late_starter_by_its_start_ages_constraint(
+    log_level: LogLevel,
+):
+    """A subject at 45 with wealth 10 fails the initial feasibility check.
+
+    The age-45 cap demands consumption at most -10, below every action node,
+    while the age-25 cap would admit consumption up to 10. Rejection therefore
+    shows the subject was judged by the constraint of its own start age.
+    """
+    with pytest.raises(
+        InvalidInitialConditionsError, match="satisfies all constraints jointly"
+    ):
+        _simulate_with_falling_cap(ages=[45.0], wealth=[10.0], log_level=log_level)
 
 
 def _cap_binding_at_age(age: float) -> Callable[..., bool]:
@@ -533,3 +573,61 @@ def test_another_ages_constraint_would_have_given_that_period_a_different_value(
     )
 
     assert float(gap) > 0.0
+
+
+def _start_pool_partition(*, cohorts_route: bool) -> list[tuple[int, list[int]]]:
+    """Return each start-pool group as (index of its period's pool, subjects).
+
+    Subjects 7 and 9 start at 45, 2 and 5 at 25, and 4 at 35. Every start age
+    resolves its own cap, so each start period has a pool of its own.
+    """
+    model = _make_specialized_constraint_model(
+        AgeSpecializedFunction(build=_cap_falling_with_age, signature=lambda age: age)
+    )
+    regime = model._regimes["working_life"]
+    ages = np.full(10, 25.0)
+    ages[[7, 9]] = 45.0
+    ages[4] = 35.0
+    subject_indices = [7, 2, 9, 4, 5]
+    cohorts = (
+        initial_conditions._InitialCohorts(
+            indices={"working_life": tuple(subject_indices)},
+            periods=tuple(int((age - 25.0) // 10.0) for age in ages),
+        )
+        if cohorts_route
+        else None
+    )
+    views = initial_conditions._regime_views_by_start_pool(
+        regime=regime,
+        initial_states={"age": jnp.asarray(ages)},
+        subject_indices=subject_indices,
+        ages=model._time,
+        cohorts=cohorts,
+    )
+    pools = regime.simulation.feasibility_pools_by_period
+    return [
+        (
+            next(
+                period
+                for period, (functions, constraints) in pools.items()
+                if view.simulation.functions is functions
+                and view.simulation.constraints is constraints
+            ),
+            list(indices),
+        )
+        for view, indices in views
+    ]
+
+
+@pytest.mark.parametrize("cohorts_route", [False, True])
+def test_regime_views_by_start_pool_groups_in_first_appearance_order(
+    *,
+    cohorts_route: bool,
+):
+    """Groups follow the first appearance of their start period among the subjects,
+    keep the subjects' order within each group, and carry that period's pools."""
+    assert _start_pool_partition(cohorts_route=cohorts_route) == [
+        (2, [7, 9]),
+        (0, [2, 5]),
+        (1, [4]),
+    ]

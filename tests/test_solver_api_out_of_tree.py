@@ -325,23 +325,26 @@ def test_this_module_imports_nothing_from_the_engine_package():
     assert engine_imports == []
 
 
-_VERSION_TWO = dataclasses.replace(EGM_CONTINUATION, schema_version=2)
+_OTHER_VERSION = dataclasses.replace(
+    EGM_CONTINUATION, schema_version=EGM_CONTINUATION.schema_version + 1
+)
 
 
-class _VersionTwoSolver(WealthSolver):
+class _OtherVersionSolver(WealthSolver):
     @property
     def required_continuation_keys(self) -> frozenset[ArtifactKey]:
-        return frozenset({_VERSION_TWO})
+        return frozenset({_OTHER_VERSION})
 
 
 def test_a_parent_requiring_a_version_a_child_does_not_publish_is_refused():
     """A continuation demand is matched against the target's published key at build."""
+    assert _OTHER_VERSION.schema_version != EGM_CONTINUATION.schema_version
     with pytest.raises(RegimeInitializationError) as excinfo:
-        _two_regime_model(solver=_VersionTwoSolver())
+        _two_regime_model(solver=_OtherVersionSolver())
     message = str(excinfo.value)
     assert "'alive'" in message
     assert "'dead'" in message
-    assert "version 2" in message
+    assert f"version {_OTHER_VERSION.schema_version}" in message
 
 
 _COUNTER = ArtifactKey(type_id="tests.counter", schema_version=1)

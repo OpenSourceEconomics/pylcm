@@ -1,7 +1,7 @@
 """Production-path control for ordinary singleton action streaming."""
 
 from collections.abc import Callable, Mapping
-from typing import Never
+from typing import Never, cast
 
 import jax
 import jax.numpy as jnp
@@ -14,7 +14,7 @@ from _lcm.execution.core_program import (
 )
 from _lcm.regime_building import max_Q_over_a
 from _lcm.solution import action_streaming
-from _lcm.typing import MaxQOverAFunction, QAndFArg
+from _lcm.typing import QAndFArg
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -164,16 +164,19 @@ def test_public_singleton_solve_uses_streamed_action_blocks(
         block_width: int,
         block_offsets: jax.Array,
     ) -> tuple[jax.Array, jax.Array, jax.Array]:
-        values, feasible, global_ids = real_evaluate_block(
-            block_index=block_index,
-            Q_and_F=Q_and_F,
-            action_names=action_names,
-            action_grids=action_grids,
-            action_sizes=action_sizes,
-            fixed_kwargs=fixed_kwargs,
-            n_actions=n_actions,
-            block_width=block_width,
-            block_offsets=block_offsets,
+        values, feasible, global_ids = cast(
+            "tuple[jax.Array, jax.Array, jax.Array]",
+            real_evaluate_block(
+                block_index=block_index,
+                Q_and_F=Q_and_F,
+                action_names=action_names,
+                action_grids=action_grids,
+                action_sizes=action_sizes,
+                fixed_kwargs=fixed_kwargs,
+                n_actions=n_actions,
+                block_width=block_width,
+                block_offsets=block_offsets,
+            ),
         )
         return values, feasible & (global_ids != 5), global_ids
 
@@ -197,12 +200,10 @@ def test_eager_singleton_hard_max_never_builds_the_dense_oracle(
     """JIT-disabled production resolves the same streamed native program."""
     real_get_max_Q_over_a = max_Q_over_a.get_max_Q_over_a
 
-    def guard_dense[**P](
-        func: Callable[P, MaxQOverAFunction],
-    ) -> Callable[P, MaxQOverAFunction]:
-        def fail_dense_construction(
-            *args: P.args, **kwargs: P.kwargs
-        ) -> MaxQOverAFunction:
+    def guard_dense[**P, Output](
+        func: Callable[P, Output],
+    ) -> Callable[P, Output]:
+        def fail_dense_construction(*args: P.args, **kwargs: P.kwargs) -> Output:
             if kwargs.get("action_names"):
                 raise AssertionError(
                     "eligible eager GridSearch reached its dense oracle"

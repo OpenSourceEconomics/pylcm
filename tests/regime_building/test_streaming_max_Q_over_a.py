@@ -4,7 +4,7 @@ import functools
 import inspect
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
-from typing import NotRequired, TypedDict
+from typing import NotRequired, TypedDict, cast
 
 import jax
 import jax.numpy as jnp
@@ -28,7 +28,7 @@ from _lcm.solution.grid_search import (
     _classify_action_streaming,
     _supports_action_streaming,
 )
-from _lcm.typing import QAndFFunction, QAndFKwargs
+from _lcm.typing import PytreeValue, QAndFFunction, QAndFKwargs
 from lcm.typing import ActionName, BoolND, FloatND, RegimeName, StateName
 
 
@@ -1033,16 +1033,17 @@ def _fold_Q_and_F(
 
 def _evaluate_kernel(
     *,
-    func: Callable[..., FloatND | tuple[FloatND, BoolND]],
+    func: Callable[..., PytreeValue],
     arguments: QAndFKwargs,
     execution: str,
-):
+) -> FloatND:
+    """Run a value-only fixture with its requested execution mode."""
     if execution == "eager":
-        return func(**arguments)
+        return cast("FloatND", func(**arguments))
     jitted = jax.jit(func)
     if execution == "jit":
-        return jitted(**arguments)
-    return jitted.lower(**arguments).compile()(**arguments)
+        return cast("FloatND", jitted(**arguments))
+    return cast("FloatND", jitted.lower(**arguments).compile()(**arguments))
 
 
 def _multi_fold_Q_and_F(

@@ -9,7 +9,7 @@ import pytest
 
 from _lcm.execution.core_program import CoreExecutionDisposition, core_program_graph
 from _lcm.grids import Grid
-from _lcm.typing import ArrayTree, QAndFArg
+from _lcm.typing import PytreeValue, QAndFArg
 from _lcm.utils import dispatchers
 from lcm import (
     AgeGrid,
@@ -129,7 +129,7 @@ def test_public_solve_dispatches_the_planned_cell_width(
     observed: set[int] = set()
     original = dispatchers._TiledProductMap.__call__
 
-    def observe(self: dispatchers._TiledProductMap, **kwargs: QAndFArg) -> ArrayTree:
+    def observe(self: dispatchers._TiledProductMap, **kwargs: QAndFArg) -> PytreeValue:
         width = kwargs.get(self.width_keyword, 1)
         assert isinstance(width, int)
         observed.add(width)

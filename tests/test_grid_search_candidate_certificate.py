@@ -67,7 +67,7 @@ import json
 import math
 from collections.abc import Callable, Hashable, Mapping
 from pathlib import Path
-from typing import Literal, NotRequired, Protocol, TypeGuard, Unpack
+from typing import Literal, NotRequired, Protocol, TypeGuard, Unpack, cast
 
 import jax
 import jax.numpy as jnp
@@ -122,8 +122,12 @@ from lcm.typing import (
     UserParamsNode,
 )
 from tests.candidate_certificate.direct_flow import (
+    _DECOUPLED_BOUND_MUTATION_NAMES,
+    _decoupled_bound_transport_errors,
     _feasibility_summary_errors,
+    decoupled_bound_mutation_source,
     direct_flow_mutation_specs,
+    s03_scalar_mutation_specs,
     supplemental_direct_flow_mutation_specs,
     verify_direct_candidate_flow,
 )
@@ -418,10 +422,10 @@ def test_feasibility_summary_preserves_the_native_value() -> None:
 
 def test_feasibility_summary_rejects_changed_native_values() -> None:
     """Changing only the wrapper's value readout breaks its transport proof."""
-    source = (_SRC_ROOT / "_lcm/solution/feasibility.py").read_text()
+    source = (_SRC_ROOT / "_lcm/solution/feasibility.py").read_text(encoding="utf-8")
     changed = source.replace(
-        "return value, empty_count, other_inf_count",
-        "return -value, empty_count, other_inf_count",
+        "else (value, empty_count, other_inf_count)",
+        "else (-value, empty_count, other_inf_count)",
     )
     assert changed != source
     assert _feasibility_summary_errors(ast.parse(changed))
@@ -654,6 +658,19 @@ def test_q_and_f_arrays_reach_full_reducers_without_candidate_transformation():
     assert tuple(sorted(result["certified_corridor_sources"])) == CERTIFIED_SOURCES
 
 
+def test_borrowing_floor_sources_have_literal_inventory_obligations() -> None:
+    """Include floor declaration, normalization, scalar validation and proof owners."""
+    assert isinstance(
+        _parse("src/_lcm/regime_building/age_normalization.py"), ast.Module
+    )
+    assert isinstance(_parse("src/_lcm/constraints/dynamic_bound.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/post_decision_bound.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/constraints/bounds.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/constraints/processed.py"), ast.Module)
+    assert isinstance(_parse("src/lcm/regime.py"), ast.Module)
+    assert isinstance(_parse("src/lcm/consumption_savings_regime.py"), ast.Module)
+
+
 def test_uniform_process_sources_have_literal_inventory_obligations() -> None:
     """Include the producer, resolver and every support interpretation consumer."""
     assert isinstance(_parse("src/_lcm/processes/grid_resolution.py"), ast.Module)
@@ -780,8 +797,8 @@ _FOLDED_BODY_MUTATIONS = {
         ),
     ),
     "published_value_changed": (
-        "return V_arr if empty is None else (V_arr, empty)",
-        "return -V_arr if empty is None else (-V_arr, empty)",
+        "output=V_arr if empty is None else (V_arr, empty),",
+        "output=-V_arr if empty is None else (-V_arr, empty),",
     ),
     "empty_support_dropped": (
         "empty = jnp.any(empty & support, axis=axis)",
@@ -824,15 +841,20 @@ def test_folded_kernel_mutation_is_rejected_after_byte_reseal(
 
 
 _BACKWARD_SOURCE = "src/_lcm/solution/backward_induction.py"
-_COUNTER_SIZE = "size = 2 * np.dtype(np.int32).itemsize * (len(active) + 1)"
+# The continuation reservation repeats the size line, so the docstring tail
+# pins the feasibility reservation.
+_COUNTER_SIZE_PREFIX = 'a device no active regime runs on holds none.\n    """\n    '
+_COUNTER_SIZE = (
+    f"{_COUNTER_SIZE_PREFIX}size = 2 * np.dtype(np.int32).itemsize * (len(active) + 1)"
+)
 _COUNTER_DEVICES = (
     "sorted(frozenset().union(*(device_ids_by_regime[name] for name in active)))"
 )
 _COUNTER_RESERVATION_MUTATIONS = {
-    "zero_charge": (_COUNTER_SIZE, "size = 0"),
+    "zero_charge": (_COUNTER_SIZE, f"{_COUNTER_SIZE_PREFIX}size = 0"),
     "half_pair": (
         _COUNTER_SIZE,
-        "size = np.dtype(np.int32).itemsize * (len(active) + 1)",
+        f"{_COUNTER_SIZE_PREFIX}size = np.dtype(np.int32).itemsize * (len(active) + 1)",
     ),
     "omit_peer_devices": (_COUNTER_DEVICES, f"{_COUNTER_DEVICES}[:1]"),
 }
@@ -2692,14 +2714,19 @@ def _simulation_fold_masking_the_last_action_cell(
     The simulation module owns the patched builder binding. The solve module keeps
     its original builder, and terminal folds without actions pass through untouched.
     """
-    return action_streaming_module.build_streaming_max_Q_over_a(
-        Q_and_F=(
-            functools.partial(_q_and_f_masking_the_last_action_cell, Q_and_F=Q_and_F)
-            if action_names
-            else Q_and_F
+    return cast(
+        "Callable[..., HardMaxResult]",
+        action_streaming_module.build_streaming_max_Q_over_a(
+            Q_and_F=(
+                functools.partial(
+                    _q_and_f_masking_the_last_action_cell, Q_and_F=Q_and_F
+                )
+                if action_names
+                else Q_and_F
+            ),
+            action_names=action_names,
+            block_width=block_width,
         ),
-        action_names=action_names,
-        block_width=block_width,
     )
 
 
@@ -2765,7 +2792,9 @@ def _streaming_block_dropping_the_last_action_cell() -> _EvaluateBlock:
     def patched(
         **kwargs: Unpack[_EvaluateBlockArguments],
     ) -> tuple[jax.Array, jax.Array, jax.Array]:
-        values, feasible, global_ids = real(**kwargs)
+        values, feasible, global_ids = cast(
+            "tuple[jax.Array, jax.Array, jax.Array]", real(**kwargs)
+        )
         return values, feasible & (global_ids != 5), global_ids
 
     return patched
@@ -2872,3 +2901,352 @@ def test_backward_copy_mutation_preserves_required_full_replica_branch() -> None
     assert ast.dump(
         ast.parse(mutation["source"]), include_attributes=False
     ) == ast.dump(expected, include_attributes=False)
+
+
+_S02_IMPORTED_HELPERS = (
+    ("src/_lcm/egm/carry.py", "query_data_for_transport"),
+    ("src/_lcm/egm/outer_envelope.py", "stack_candidate_carries"),
+    ("src/_lcm/solution/feasibility.py", "_flatten_bounded_result"),
+    ("src/_lcm/solution/feasibility.py", "_flatten_bounded_result_with_keys"),
+    ("src/_lcm/solution/feasibility.py", "_unflatten_bounded_result"),
+    ("src/_lcm/transition_checks.py", "_validate_off_grid_bound_status"),
+    ("src/_lcm/simulation/initial_conditions.py", "_validate_initial_bound_status"),
+    ("src/_lcm/solution/grid_search.py", "_grid_search_fold_weights"),
+    ("src/_lcm/solution/backward_induction.py", "_accumulate_landing_totals"),
+    ("src/_lcm/utils/functools.py", "publish_signature"),
+    ("src/_lcm/continuation.py", "_query_bound_evaluator_targets"),
+    ("src/_lcm/continuation.py", "_query_evaluator_contract"),
+    ("src/_lcm/egm/query_data.py", "_flatten_query_record"),
+    ("src/_lcm/egm/carry.py", "_query_output_role"),
+    ("src/_lcm/solution/model_authority.py", "_validate_model_query_spec"),
+    ("src/_lcm/solution/continuation_reads.py", "continuation_leaf_reads"),
+    ("src/_lcm/solution/feasibility.py", "reduce_bound_input_status"),
+    ("src/_lcm/utils/dispatchers.py", "_map_with_bound_summary"),
+    ("src/_lcm/simulation/subject_parallel.py", "shard_subject_function"),
+    ("src/_lcm/simulation/subject_parallel.py", "_evaluate_local_subjects"),
+    ("src/_lcm/solution/kernel_output.py", "consume_kernel_output"),
+)
+
+
+@pytest.mark.parametrize(("relative", "helper"), _S02_IMPORTED_HELPERS)
+def test_s02_imported_helper_is_rejected_after_byte_reseal(
+    *, relative: str, helper: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each imported query/status helper retains its own selected AST dependency."""
+    root = _SRC_ROOT.parent
+    sources = verify_direct_candidate_flow(repo_root=root)["certified_corridor_sources"]
+    for path in {*sources, relative}:
+        target = tmp_path / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text((root / path).read_text(encoding="utf-8"), encoding="utf-8")
+    target = tmp_path / relative
+    tree = ast.parse(target.read_text(encoding="utf-8"))
+    if helper == "query_data_for_transport":
+        matches = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef) and node.name == helper
+        ]
+        assert len(matches) == 1
+        function = matches[0]
+        assert function is _definition(
+            tree=tree, qualname="EGMCarry.query_data_for_transport"
+        )
+    else:
+        function = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == helper
+        )
+    function.body = ast.parse("return None").body
+    target.write_text(ast.unparse(tree) + "\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "tests.candidate_certificate.direct_flow._SOURCE_SEALS",
+        {path: sha256_file(tmp_path / path) for path in sources},
+    )
+
+    result = verify_direct_candidate_flow(repo_root=tmp_path)
+
+    assert not any("source seal mismatch" in error for error in result["errors"])
+    assert any(
+        "S02 query/status dependency" in error and helper in error
+        for error in result["errors"]
+    ), result["errors"]
+
+
+def test_s02_query_status_sources_have_literal_inventory_obligations() -> None:
+    """Inventory imported query records, carry, DAG owners and status consumers."""
+    assert isinstance(_parse("src/_lcm/continuation.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/budget.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/carry.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/outer_envelope.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/query_data.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/regime_building/Q_and_F.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/subject_parallel.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/solution/egm.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/solution/kernel_output.py"), ast.Module)
+
+
+def test_counted_landing_source_is_a_literal_inventory_obligation() -> None:
+    """Include mandatory integrity beside qualified saturating landing counts."""
+    assert isinstance(_parse("src/_lcm/solution/landing_counts.py"), ast.Module)
+
+
+_S03_IMPORTED_HELPERS = (
+    ("src/_lcm/constraints/bounds.py", "_SavingsGridLowerBoundProof.__call__"),
+    ("src/_lcm/egm/budget.py", "get_intrinsic_budget_constraint"),
+    ("src/_lcm/egm/budget.py", "_IntrinsicBudgetConstraint.__call__"),
+    ("src/_lcm/egm/declared_law.py", "build_declared_liquid_law"),
+    ("src/_lcm/egm/declared_law.py", "_DeclaredLiquidLaw.__call__"),
+    ("src/_lcm/egm/declared_law.py", "_landing_point"),
+    ("src/_lcm/egm/declared_law.py", "_fail_if_law_reaches_past_the_post_decision"),
+    ("src/_lcm/egm/declared_law.py", "fail_if_declared_law_is_not_increasing"),
+    ("src/_lcm/egm/interp.py", "locate_on_grid"),
+    ("src/_lcm/egm/numeric_inverse.py", "numeric_inverse_marginal_utility"),
+    ("src/_lcm/egm/numeric_inverse.py", "_expand_upper_bracket"),
+    ("src/_lcm/egm/numeric_inverse.py", "_LogMarginalUtility.__call__"),
+    ("src/_lcm/egm/one_asset_egm_step.py", "egm_one_asset_step"),
+    ("src/_lcm/egm/preferences.py", "newton_action_ceiling"),
+    ("src/_lcm/egm/preferences.py", "get_numeric_inverse_marginal_utility"),
+    ("src/_lcm/egm/preferences.py", "preferences_from_utility"),
+    ("src/_lcm/egm/preferences.py", "get_preferences_builder"),
+    ("src/_lcm/egm/preferences.py", "get_discount_factor_reader"),
+    ("src/_lcm/egm/preferences.py", "concatenate_regime_function"),
+    ("src/_lcm/egm/preferences.py", "_elementwise"),
+    ("src/_lcm/egm/preferences.py", "_Elementwise.__call__"),
+    ("src/_lcm/egm/preferences.py", "BoundUtilityOfAction.__call__"),
+    ("src/_lcm/egm/preferences.py", "AnalyticInverseMarginalUtility.__call__"),
+    ("src/_lcm/egm/preferences.py", "_NumericInverseMarginalUtility.__call__"),
+    ("src/_lcm/egm/preferences.py", "_PreferencesBuilder.__call__"),
+    ("src/_lcm/egm/preferences.py", "_DiscountFactorReader.__call__"),
+    ("src/_lcm/egm/scalar_query.py", "build_scalar_egm_query"),
+    ("src/_lcm/egm/scalar_query.py", "ScalarEGMQuery.capabilities"),
+    ("src/_lcm/egm/scalar_query.py", "ScalarEGMQuery.evaluate_floor"),
+    ("src/_lcm/egm/scalar_query.py", "ScalarEGMQuery.__call__"),
+    ("src/_lcm/egm/scalar_query.py", "_weighted_pair"),
+    ("src/_lcm/model_processing.py", "_validate_borrowing_bound_routes"),
+    ("src/_lcm/regime_building/processing.py", "_CanonicalRegimeBuilder.__call__"),
+    ("src/_lcm/regime_building/processing.py", "_prepare_scalar_egm_query_models"),
+    (
+        "src/_lcm/regime_building/processing.py",
+        "_fail_if_a_declaration_moved_more_than_the_kernels",
+    ),
+    (
+        "src/_lcm/regime_building/processing.py",
+        "_fail_if_a_continuation_demand_is_unmet",
+    ),
+    ("src/_lcm/regime_building/processing.py", "_build_solution_phase"),
+    ("src/_lcm/regime_building/processing.py", "_process_regime_core"),
+    ("src/_lcm/solution/backward_induction.py", "solve"),
+    ("src/_lcm/solution/backward_induction.py", "_match_leaf_pair_sharding"),
+    ("src/_lcm/solution/backward_induction.py", "_match_leaf_template_sharding"),
+    ("src/_lcm/solution/backward_induction.py", "_release_closed_period_inputs"),
+    ("src/_lcm/solution/contract.py", "SolutionKernels.__post_init__"),
+    ("src/_lcm/solution/egm.py", "EGM.build_period_kernels"),
+    ("src/_lcm/solution/egm.py", "_build_egm_period_kernel"),
+    ("src/_lcm/solution/egm.py", "_EGMArgumentBuilder.__call__"),
+    ("src/_lcm/solution/egm.py", "_EGMArgumentBuilder._law_readings"),
+    ("src/_lcm/solution/egm.py", "_EGMPeriodKernel.__call__"),
+    ("src/_lcm/solution/egm.py", "_scalar_egm_output_role"),
+    ("src/_lcm/solution/egm.py", "_build_egm_core"),
+    ("src/_lcm/solution/egm.py", "_EGMCore.__call__"),
+    ("src/_lcm/solution/egm.py", "_RegimeMassGuardedCore.__call__"),
+    ("src/_lcm/solution/feasibility.py", "BoundInputStatus.__reduce__"),
+    ("src/_lcm/solution/model_authority.py", "_validate_model_query_spec"),
+    ("src/_lcm/zero_safe.py", "zero_safe_weighted_term"),
+)
+
+
+@pytest.mark.parametrize(("relative", "helper"), _S03_IMPORTED_HELPERS)
+def test_s03_imported_helper_is_rejected_after_byte_reseal(
+    *, relative: str, helper: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Scalar readers and numerical dependencies retain selected callable authority."""
+    root = _SRC_ROOT.parent
+    sources = verify_direct_candidate_flow(repo_root=root)["certified_corridor_sources"]
+    for relative_path in {*sources, relative}:
+        target = tmp_path / relative_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            (root / relative_path).read_text(encoding="utf-8"), encoding="utf-8"
+        )
+    target = tmp_path / relative
+    tree = ast.parse(target.read_text(encoding="utf-8"))
+    function = _definition(tree=tree, qualname=helper)
+    assert isinstance(function, ast.FunctionDef)
+    function.body = ast.parse("return None").body
+    target.write_text(ast.unparse(tree) + "\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "tests.candidate_certificate.direct_flow._SOURCE_SEALS",
+        {
+            relative_path: sha256_file(tmp_path / relative_path)
+            for relative_path in sources
+        },
+    )
+    result = verify_direct_candidate_flow(repo_root=tmp_path)
+    assert not any("source seal mismatch" in error for error in result["errors"])
+    assert any(
+        "S03 scalar dependency" in error and helper in error
+        for error in result["errors"]
+    ), result["errors"]
+
+
+def test_s03_scalar_sources_have_literal_inventory_obligations() -> None:
+    """Inventory scalar query, inversion, law and ordinary interpolation owners."""
+    assert isinstance(_parse("src/_lcm/constraints/bounds.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/budget.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/declared_law.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/euler.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/interp.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/numeric_inverse.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/one_asset_egm_step.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/preferences.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/scalar_query.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/engine.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/model_processing.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/regime_building/processing.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/solution/backward_induction.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/solution/contract.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/solution/egm.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/solution/feasibility.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/solution/model_authority.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/zero_safe.py"), ast.Module)
+
+
+_S03_OWNED_NUMERICAL_HELPERS = (
+    ("src/_lcm/egm/one_asset_egm_step.py", "_solve_viable_feature_row"),
+    ("src/_lcm/egm/euler.py", "invert_euler"),
+)
+
+
+@pytest.mark.parametrize(("relative", "helper"), _S03_OWNED_NUMERICAL_HELPERS)
+def test_s03_owned_numerical_helpers_have_body_mutation_controls(
+    *, relative: str, helper: str
+) -> None:
+    """Require named body mutation controls for owned viability and Euler helpers."""
+    specs = s03_scalar_mutation_specs(repo_root=_SRC_ROOT.parent)
+    key = f"s03_scalar:{relative}:{helper}"
+    assert key in specs, f"Missing owned numerical helper body control: {key}"
+    spec = specs[key]
+    assert spec["path"] == relative
+    assert relative in derive_source_paths(Path(__file__))
+    function = _definition(tree=ast.parse(spec["source"]), qualname=helper)
+    assert isinstance(function, ast.FunctionDef)
+    assert ast.dump(ast.Module(body=function.body, type_ignores=[])) == ast.dump(
+        ast.parse("return None")
+    )
+
+
+@pytest.mark.parametrize(("relative", "helper"), _S03_OWNED_NUMERICAL_HELPERS)
+def test_s03_owned_numerical_helper_body_adds_explicit_detection(
+    *, relative: str, helper: str, tmp_path: Path
+) -> None:
+    """Require helper corruption to add its diagnostic beyond existing pin errors."""
+    root = _SRC_ROOT.parent
+    sources = verify_direct_candidate_flow(repo_root=root)["certified_corridor_sources"]
+    for source in {*sources, relative}:
+        target = tmp_path / source
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text((root / source).read_text(encoding="utf-8"), encoding="utf-8")
+    baseline = verify_direct_candidate_flow(repo_root=tmp_path)
+    diagnostic = f"S03 scalar dependency: exact callable corridor {helper!r} changed"
+    assert diagnostic not in baseline["errors"], (
+        (
+            "Unmodified helper already has a stale callable pin; mutation sensitivity "
+            "cannot be inferred from that baseline error."
+        ),
+        baseline["errors"],
+    )
+    target = tmp_path / relative
+    tree = ast.parse(target.read_text(encoding="utf-8"))
+    function = _definition(tree=tree, qualname=helper)
+    assert isinstance(function, ast.FunctionDef)
+    function.body = ast.parse("return None").body
+    target.write_text(ast.unparse(tree) + "\n", encoding="utf-8")
+    mutated = verify_direct_candidate_flow(repo_root=tmp_path)
+    assert diagnostic in mutated["errors"], {
+        "required_additional_diagnostic": diagnostic,
+        "baseline_errors": baseline["errors"],
+        "mutated_errors": mutated["errors"],
+    }
+
+
+def test_decoupled_bound_metadata_has_an_explicit_source_corridor() -> None:
+    """The dense Decoupled owner authenticates its separate bound metadata."""
+    tree = _parse("src/_lcm/regime_building/decoupled.py")
+    assert _decoupled_bound_transport_errors(tree) == []
+    result = verify_direct_candidate_flow(repo_root=_SRC_ROOT.parent)
+    assert (
+        "src/_lcm/regime_building/decoupled.py" in result["certified_corridor_sources"]
+    )
+
+
+@pytest.mark.parametrize("mutation", _DECOUPLED_BOUND_MUTATION_NAMES)
+def test_decoupled_bound_metadata_mutations_fail_after_byte_reseal(
+    *, mutation: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Byte resealing cannot hide a changed actual bound-metadata connection."""
+    root = _SRC_ROOT.parent
+    relative = "src/_lcm/regime_building/decoupled.py"
+    original = (root / relative).read_text(encoding="utf-8")
+    mutated = decoupled_bound_mutation_source(source=original, mutation=mutation)
+    sources = verify_direct_candidate_flow(repo_root=root)["certified_corridor_sources"]
+    for source_path in sources:
+        target = tmp_path / source_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            mutated
+            if source_path == relative
+            else (root / source_path).read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+    monkeypatch.setattr(
+        "tests.candidate_certificate.direct_flow._SOURCE_SEALS",
+        {source_path: sha256_file(tmp_path / source_path) for source_path in sources},
+    )
+    result = verify_direct_candidate_flow(repo_root=tmp_path)
+    assert result["offending_paths"] == [relative]
+    assert not any("source seal mismatch" in error for error in result["errors"])
+    assert any("Decoupled bound metadata:" in error for error in result["errors"])
+
+
+def test_reviewed_prefix_sources_have_literal_inventory_obligations() -> None:
+    """Inventory numerical-reader and checked-program dependencies."""
+    assert isinstance(_parse("src/_lcm/egm/asset_row.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/continuation.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/dcegm_query.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/dcegm_query_model.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/regime_introspection.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/step.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/step_core.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/solution/dcegm.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/utils/counts.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/nbegm_step.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/nbegm_segments.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/framed_arithmetic.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/ez_kernel.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/power_mean.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/upper_envelope/query.py"), ast.Module)
+
+
+def test_outer_helper_sources_have_literal_inventory_obligations() -> None:
+    """Inventory interpolation and safeguarded-search dependency owners."""
+    assert isinstance(_parse("src/_lcm/egm/outer_interpolation.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/outer_refinement.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/optimization/golden_section.py"), ast.Module)
+
+
+def test_final_nested_sources_have_literal_inventory_obligations() -> None:
+    """Inventory nested reader, producer and conditional-bank source owners."""
+    assert isinstance(_parse("src/_lcm/egm/nested_floor.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/finite_negm_query.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/adaptive_nbegm_producer.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/nbegm_query_model.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/nbegm_query.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/solution/negm.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/solution/nnbegm.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/outer_candidates.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/upper_envelope/__init__.py"), ast.Module)
+    assert isinstance(
+        _parse("src/_lcm/egm/upper_envelope/segment_envelope.py"), ast.Module
+    )

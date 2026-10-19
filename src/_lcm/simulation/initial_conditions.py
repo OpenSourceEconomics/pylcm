@@ -11,7 +11,7 @@ import functools
 import logging
 from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
-from typing import NoReturn, cast
+from typing import NoReturn, NotRequired, TypedDict, cast
 
 import jax
 import numpy as np
@@ -30,6 +30,7 @@ from _lcm.engine import PeriodRegimeSimulationData, Regime, placed_devices_for_i
 from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.grids import DiscreteGrid
 from _lcm.params.edges import regime_kernel_params
+from _lcm.post_decision_bound import PostDecisionBoundSpec
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.processes.joint_normal import JointNormalIIDProcess
 from _lcm.processes.joint_normal_lowering import (
@@ -37,12 +38,13 @@ from _lcm.processes.joint_normal_lowering import (
     joint_normal_declarations,
 )
 from _lcm.reachability import PhaseReachability
+from _lcm.regime_building.age_normalization import group_periods_by_key
 from _lcm.regime_building.collective import NO_ROLE
-from _lcm.regime_building.Q_and_F import _get_feasibility
+from _lcm.regime_building.Q_and_F import _BoundFeasibility, _get_feasibility
 from _lcm.simulation import population_operations
 from _lcm.simulation.action_grids import PreflightActionGrids
 from _lcm.simulation.assembly import slice_array
-from _lcm.simulation.host_operations import ProfiledSimulationOperations
+from _lcm.simulation.host_operations import ProfiledSimulationOperations, _BuilderInput
 from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
 from _lcm.simulation.operand_placement import place_simulation_arguments
 from _lcm.simulation.residency import (
@@ -52,6 +54,11 @@ from _lcm.simulation.residency import (
     union_buffer_footprints,
 )
 from _lcm.simulation.subject_devices import simulation_subject_devices
+from _lcm.solution.feasibility import (
+    BoundedResult,
+    reduce_bound_input_status,
+    validate_runtime_bound_status,
+)
 from _lcm.time import TimeAxis, coordinate_kind
 from _lcm.transition_checks import (
     _evaluate_admitted_transition_producer,
@@ -63,6 +70,9 @@ from _lcm.transition_checks import (
 )
 from _lcm.typing import (
     ActionName,
+    ConstraintFunction,
+    ConstraintFunctionsMapping,
+    EconFunctionsMapping,
     FlatParams,
     HostArray,
     InitialConditions,
@@ -76,6 +86,7 @@ from _lcm.typing import (
     StatesPerRegime,
 )
 from _lcm.utils.containers import invert_regime_ids
+from _lcm.utils.dispatchers import map_over_leading_axis
 from _lcm.utils.error_messages import format_messages
 from _lcm.utils.functools import get_union_of_args
 from _lcm.utils.logging import raise_or_warn, validation_enabled
@@ -116,6 +127,16 @@ _PREFLIGHT_OPERATIONS = ProfiledSimulationOperations()
 # NumPy 2.5 NDArray is a generic alias whose dtype beartype cannot resolve.
 # Keep the host int32 contract in jaxtyping, alongside the JAX array aliases.
 type _HostIntArray = Int32[np.ndarray, "..."]
+
+
+class _FeasibilityInputs(TypedDict):
+    """Named canonical inputs of the combined-feasibility builder."""
+
+    functions: EconFunctionsMapping
+    constraints: ConstraintFunctionsMapping
+    bound_specs: NotRequired[tuple[PostDecisionBoundSpec, ...]]
+    bound_periods: NotRequired[tuple[int, ...]]
+
 
 type _DiscreteInitialSpec = tuple[str, tuple[int, ...], tuple[int, ...]]
 
@@ -982,9 +1003,6 @@ def validate_initial_conditions(
 
     Raises:
         InvalidInitialConditionsError: If any validation check fails.
-        UnsupportedOperationError: If a constraint depends on an age-specialized
-            function while subjects start away from the regime's representative
-            age, so that feasibility cannot be evaluated for them.
 
     """
     initial_states, regime_arr = _admitted_initial_states(
@@ -1051,9 +1069,6 @@ def initial_conditions_feasibility_mask(
     Raises:
         InvalidInitialConditionsError: If the regime IDs, state names, shapes,
             ages or discrete codes are invalid.
-        UnsupportedOperationError: If a constraint depends on an age-specialized
-            function while subjects start away from the regime's representative
-            age, so that feasibility cannot be evaluated for them.
 
     """
     initial_states, regime_arr = _admitted_initial_states(
@@ -1074,20 +1089,27 @@ def initial_conditions_feasibility_mask(
         ).tolist()
         if not subject_indices:
             continue
-        verdict = _regime_feasibility_mask(
+        regime_params = _merged_regime_params(
+            regime=regime, regime_name=regime_name, flat_params=flat_params
+        )
+        for regime_view, view_indices in _regime_views_by_start_pool(
             regime=regime,
-            regime_name=regime_name,
             initial_states=initial_states,
             subject_indices=subject_indices,
-            regime_params=_merged_regime_params(
-                regime=regime, regime_name=regime_name, flat_params=flat_params
-            ),
             ages=ages,
-            process_grid_resolver=process_grid_resolver,
-        )
-        # Without a summary the producer always returns a verdict.
-        assert verdict is not None  # noqa: S101
-        mask[subject_indices] = np.asarray(verdict.feasible)
+        ):
+            verdict = _regime_feasibility_mask(
+                regime=regime_view,
+                regime_name=regime_name,
+                initial_states=initial_states,
+                subject_indices=view_indices,
+                regime_params=regime_params,
+                ages=ages,
+                process_grid_resolver=process_grid_resolver,
+            )
+            # Without a summary the producer always returns a verdict.
+            assert verdict is not None  # noqa: S101
+            mask[view_indices] = np.asarray(verdict.feasible)
     return jnp.asarray(mask)
 
 
@@ -1598,23 +1620,31 @@ def _collect_feasibility_errors(
         if not subject_indices:
             continue
 
-        msg = _check_regime_feasibility(
+        regime_params = _merged_regime_params(
+            regime=regime, regime_name=regime_name, flat_params=flat_params
+        )
+        for regime_view, view_indices in _regime_views_by_start_pool(
             regime=regime,
-            regime_name=regime_name,
             initial_states=initial_states,
             subject_indices=subject_indices,
-            regime_params=_merged_regime_params(
-                regime=regime, regime_name=regime_name, flat_params=flat_params
-            ),
             ages=ages,
             cohorts=cohorts,
-            summary=summary,
-            process_grid_resolver=process_grid_resolver,
-            action_grid_resolver=action_grid_resolver,
-            memory=memory,
-        )
-        if msg is not None:
-            errors.append(msg)
+        ):
+            msg = _check_regime_feasibility(
+                regime=regime_view,
+                regime_name=regime_name,
+                initial_states=initial_states,
+                subject_indices=view_indices,
+                regime_params=regime_params,
+                ages=ages,
+                cohorts=cohorts,
+                summary=summary,
+                process_grid_resolver=process_grid_resolver,
+                action_grid_resolver=action_grid_resolver,
+                memory=memory,
+            )
+            if msg is not None:
+                errors.append(msg)
 
     return errors
 
@@ -1684,13 +1714,13 @@ _BYTES_PER_ACTION_ELEMENT = 4
 
 def _batched_feasibility_check(
     *,
-    feasibility_func: Callable[..., BoolND],
+    feasibility_func: ConstraintFunction | _BoundFeasibility,
     subject_states: Mapping[str, FloatND | IntND],
     action_kwargs: Mapping[str, FloatND | IntND],
     filtered_params: Mapping[ReferenceName, ParamsLeaf],
     flat_actions: Mapping[ActionName, FloatND | IntND],
     memory: SimulationMemory | None = None,
-) -> BoolND:
+) -> BoolND | BoundedResult[BoolND]:
     """Check feasibility for all subjects, batching to avoid OOM.
 
     Vmaps over action combos individually (like solve/simulate do) so each
@@ -1724,23 +1754,20 @@ def _batched_feasibility_check(
             },
         )
     if action_kwargs:
-        vmapped_check = jax.vmap(
-            functools.partial(
-                _is_any_action_feasible,
-                feasibility_func=feasibility_func,
-                action_kwargs=action_kwargs,
-                filtered_params=filtered_params,
-            )
+        pointwise_check = functools.partial(
+            _is_any_action_feasible,
+            feasibility_func=feasibility_func,
+            action_kwargs=action_kwargs,
+            filtered_params=filtered_params,
         )
     else:
-        vmapped_check = jax.vmap(
-            functools.partial(
-                _is_feasible_without_actions,
-                feasibility_func=feasibility_func,
-                filtered_params=filtered_params,
-            )
+        pointwise_check = functools.partial(
+            _is_feasible_without_actions,
+            feasibility_func=feasibility_func,
+            filtered_params=filtered_params,
         )
 
+    vmapped_check = jax.vmap(pointwise_check)
     n_subjects = len(next(iter(subject_states.values())))
     n_action_combos = max((len(v) for v in flat_actions.values()), default=1)
     batch_size = max(
@@ -1748,9 +1775,17 @@ def _batched_feasibility_check(
         _TARGET_BATCH_BYTES // max(n_action_combos * _BYTES_PER_ACTION_ELEMENT, 1),
     )
 
+    if type(feasibility_func) is _BoundFeasibility:
+        return map_over_leading_axis(
+            func=pointwise_check,
+            xs=subject_states,
+            batch_size=min(batch_size, n_subjects),
+            bound_summary=True,
+        )
     if n_subjects <= batch_size:
         return vmapped_check(subject_states)
 
+    vmapped_check = cast("Callable[..., BoolND]", vmapped_check)
     results: list[BoolND] = []
     for start in range(0, n_subjects, batch_size):
         end = min(start + batch_size, n_subjects)
@@ -1759,12 +1794,12 @@ def _batched_feasibility_check(
     return jnp.concatenate(results)
 
 
-def _run_profiled_feasibility(
+def _run_profiled_feasibility[Output: BoolND | bool | BoundedResult[BoolND]](
     *,
     memory: SimulationMemory,
-    function: Callable[..., BoolND | bool],
+    function: Callable[..., Output],
     arguments: Mapping[ReferenceName, PytreeValue],
-) -> BoolND:
+) -> Output:
     """Admit one user DAG with explicit dynamic input owners.
 
     The executable is determined by the DAG (its code and captured values), the
@@ -1808,81 +1843,104 @@ def _run_profiled_feasibility(
     result = executable(**placed)
     jax.block_until_ready(result)
     memory.hold(tree=result)
-    return result
+    return cast("Output", result)
 
 
 def _regime_feasibility_function(
     *, regime: Regime, memory: SimulationMemory | None
-) -> Callable[..., BoolND]:
+) -> ConstraintFunction | _BoundFeasibility:
     """Compose the regime's feasibility, reusing the budgeted owner's composition."""
-    inputs = {
+    inputs: _FeasibilityInputs = {
         "functions": regime.simulation.functions,
         "constraints": regime.simulation.constraints,
     }
+    if any(bound.kind == "dag" for bound in regime.simulation.post_decision_bounds):
+        inputs.update(
+            bound_specs=regime.simulation.post_decision_bounds,
+            bound_periods=regime.active_periods,
+        )
     if memory is None:
         return _get_feasibility(**inputs)
-    return memory.producers.built(builder=_get_feasibility, **inputs)
+    return memory.producers.built(
+        builder=_get_feasibility, **cast("Mapping[str, _BuilderInput]", inputs)
+    )
 
 
-def _age_specialized_feasibility_message(
+def _regime_views_by_start_pool(
     *,
     regime: Regime,
-    regime_name: RegimeName,
     initial_states: Mapping[StateName, FloatND | IntND],
     subject_indices: list[int],
     ages: TimeAxis,
     cohorts: _InitialCohorts | None = None,
-) -> str | None:
-    """Return an error message if a subject's feasibility check would silently
-    read a policy-specialized function resolved at the wrong age, else `None`.
+) -> tuple[tuple[Regime, list[int]], ...]:
+    """Pair each group of a regime's subjects with the regime view that judges them.
 
     The published `regime.simulation.constraints`/`functions` hold each
     `AgeSpecializedFunction` resolved at the regime's representative (first
-    active) period only. A subject starting at any other period would have
-    their feasibility checked against that closure instead of their own.
-    """
-    specialized = regime.simulation.age_specialized_function_names
-    if not specialized:
-        return None
-    pool = {**dict(regime.simulation.functions), **dict(regime.simulation.constraints)}
-    consumed = (
-        set(
-            get_ancestors(
-                pool,
-                targets=list(regime.simulation.constraints),
-                include_targets=True,
-            )
-        )
-        & specialized
-    )
-    if not consumed:
-        return None
+    active) period. When a constraint reads one, every subject is judged by the
+    function and constraint pool of its own start period instead, and subjects
+    whose start periods share a pool share one view. Otherwise all subjects are
+    judged by the published pools.
 
-    representative_period = regime.active_periods[0]
-    idx_arr = np.asarray(subject_indices)
+    Args:
+        regime: The internal regime instance.
+        initial_states: Mapping of state names to arrays (includes "age").
+        subject_indices: Indices of subjects starting in this regime.
+        ages: TimeAxis for the model.
+        cohorts: Host cohort metadata of the summary route.
+
+    Returns:
+        Pairs of a regime view and the subject indices it judges, together
+        covering `subject_indices` exactly once.
+
+    """
+    if not _constraints_read_age_specialized_functions(regime):
+        return ((regime, subject_indices),)
     if cohorts is None:
         subject_periods, _ = resolve_initial_periods(
-            ages=ages, initial_ages=np.asarray(initial_states["age"])[idx_arr]
+            ages=ages,
+            initial_ages=np.asarray(initial_states["age"])[np.asarray(subject_indices)],
         )
     else:
-        subject_periods = np.array(
-            [cohorts.periods[index] for index in subject_indices]
-        )
-    off_representative = subject_periods != representative_period
-    if not np.any(off_representative):
-        return None
-
-    offending_indices = idx_arr[off_representative].tolist()
-    return (
-        f"Regime {regime_name!r}: subjects at indices {offending_indices} start "
-        f"away from the representative period {representative_period} used to "
-        f"resolve the policy-specialized (`AgeSpecializedFunction`) function(s) "
-        f"{sorted(consumed)} for feasibility checking. Published simulation "
-        f"functions hold one representative-age closure, so checking feasibility "
-        f"for these subjects would silently apply the wrong age's policy. Move "
-        f"the age-specialized logic out of the constraint (for example, compute "
-        f"it as a plain state fed by a transition) instead."
+        subject_periods = np.asarray(cohorts.periods)[np.asarray(subject_indices)]
+    pools = regime.simulation.feasibility_pools_by_period
+    # Start periods in order of first appearance, so groups follow their first
+    # subject and each mask keeps the subjects' order.
+    start_periods, first_positions = np.unique(subject_periods, return_index=True)
+    groups = group_periods_by_key(
+        active_periods=tuple(
+            int(period) for period in start_periods[np.argsort(first_positions)]
+        ),
+        key=lambda period: id(pools[period]),
     )
+    indices_array = np.asarray(subject_indices)
+    return tuple(
+        (
+            dataclasses.replace(
+                regime,
+                simulation=dataclasses.replace(
+                    regime.simulation,
+                    functions=pools[periods[0]][0],
+                    constraints=pools[periods[0]][1],
+                ),
+            ),
+            indices_array[np.isin(subject_periods, periods)].tolist(),
+        )
+        for periods in groups.values()
+    )
+
+
+def _constraints_read_age_specialized_functions(regime: Regime) -> bool:
+    """Whether a simulation constraint depends on an `AgeSpecializedFunction`."""
+    specialized = regime.simulation.age_specialized_function_names
+    if not specialized:
+        return False
+    pool = {**dict(regime.simulation.functions), **dict(regime.simulation.constraints)}
+    ancestors = get_ancestors(
+        pool, targets=list(regime.simulation.constraints), include_targets=True
+    )
+    return not specialized.isdisjoint(ancestors)
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -2065,23 +2123,7 @@ def _regime_feasibility_mask(  # noqa: C901, PLR0912
         The per-subject verdict with the operands diagnostics reuse, or `None`
         when the verdict was reduced into `summary`.
 
-    Raises:
-        UnsupportedOperationError: If a constraint depends on an age-specialized
-            function while subjects start away from the regime's representative
-            age.
-
     """
-    age_specialized_message = _age_specialized_feasibility_message(
-        regime=regime,
-        regime_name=regime_name,
-        initial_states=initial_states,
-        subject_indices=subject_indices,
-        ages=ages,
-        cohorts=cohorts,
-    )
-    if age_specialized_message is not None:
-        raise UnsupportedOperationError(age_specialized_message)
-
     feasibility_func = _regime_feasibility_function(regime=regime, memory=memory)
     accepted = get_union_of_args([feasibility_func])
 
@@ -2106,9 +2148,8 @@ def _regime_feasibility_mask(  # noqa: C901, PLR0912
     }
     # An action-free regime has exactly one (empty) action combination, so its
     # constraints are evaluated on states and parameters alone.
-    flat_actions: Mapping[ActionName, FloatND | IntND]
     if not action_names:
-        flat_actions = {}
+        flat_actions: Mapping[ActionName, FloatND | IntND] = {}
     elif action_grid_resolver is None:
         flat_actions = _build_flat_action_grid(
             action_names=action_names, grids=MappingProxyType(action_grids)
@@ -2196,6 +2237,9 @@ def _regime_feasibility_mask(  # noqa: C901, PLR0912
                 regime=regime,
                 subject_states=subject_states,
             )
+        any_feasible = _validate_initial_bound_status(
+            any_feasible=any_feasible, regime=regime, regime_name=regime_name
+        )
         if summary is not None:
             summary.append(
                 function=_subject_feasibility_flag,
@@ -2206,7 +2250,7 @@ def _regime_feasibility_mask(  # noqa: C901, PLR0912
     else:
         # No per-subject varying states: feasibility is identical for all subjects.
         result = _evaluate_constant_feasibility(
-            feasibility_func=feasibility_func,
+            feasibility_func=cast("ConstraintFunction", feasibility_func),
             action_kwargs=action_kwargs,
             params=filtered_params,
             memory=memory,
@@ -2229,6 +2273,37 @@ def _regime_feasibility_mask(  # noqa: C901, PLR0912
         idx_arr=cast("Int1D | _HostIntArray", idx_arr),
         state_names=tuple(state_names),
     )
+
+
+def _validate_initial_bound_status(
+    *,
+    any_feasible: BoolND | BoundedResult[BoolND],
+    regime: Regime,
+    regime_name: RegimeName,
+) -> BoolND:
+    """Validate period-qualified bound integrity before interpreting feasibility."""
+    if type(any_feasible) is BoundedResult:
+        runtime_bounds = tuple(
+            bound
+            for bound in regime.simulation.post_decision_bounds
+            if bound.kind == "dag"
+        )
+        if len(any_feasible.bound_status) != len(runtime_bounds) * len(
+            regime.active_periods
+        ):
+            raise TypeError(
+                "Initial integrity must match canonical period declarations."
+            )
+        for index, bound_period in enumerate(regime.active_periods):
+            start = index * len(runtime_bounds)
+            validate_runtime_bound_status(
+                statuses=any_feasible.bound_status[start : start + len(runtime_bounds)],
+                bound_specs=runtime_bounds,
+                regime_name=regime_name,
+                period=bound_period,
+            )
+        any_feasible = cast("BoolND", any_feasible.output)
+    return cast("BoolND", any_feasible)
 
 
 @functools.partial(jax.jit, static_argnames=("needs_period",))
@@ -2260,7 +2335,7 @@ def _constant_feasibility_flag(*, feasible: BoolND | bool) -> jax.Array:
 
 def _admits_any_action(
     *,
-    feasibility_func: Callable[..., BoolND],
+    feasibility_func: ConstraintFunction,
     action_kwargs: Mapping[str, FloatND | IntND],
     params: Mapping[ReferenceName, ParamsLeaf],
     memory: SimulationMemory | None = None,
@@ -2277,7 +2352,7 @@ def _admits_any_action(
 
 def _evaluate_constant_feasibility(
     *,
-    feasibility_func: Callable[..., BoolND],
+    feasibility_func: ConstraintFunction,
     action_kwargs: Mapping[str, FloatND | IntND],
     params: Mapping[ReferenceName, ParamsLeaf],
     memory: SimulationMemory | None = None,
@@ -2292,13 +2367,16 @@ def _evaluate_constant_feasibility(
             arguments={"action_kwargs": action_kwargs, "params": params},
         )
     if action_kwargs:
-        return jax.vmap(
-            functools.partial(
-                _is_combo_feasible_for_all_subjects,
-                feasibility_func=feasibility_func,
-                params=params,
-            )
-        )(action_kwargs)
+        return cast(
+            "BoolND",
+            jax.vmap(
+                functools.partial(
+                    _is_combo_feasible_for_all_subjects,
+                    feasibility_func=feasibility_func,
+                    params=params,
+                )
+            )(action_kwargs),
+        )
     return feasibility_func(**params)
 
 
@@ -2307,9 +2385,9 @@ def _is_combo_feasible(
     action_kw: Mapping[str, FloatND | IntND],
     subject_kw: Mapping[str, FloatND | IntND],
     *,
-    feasibility_func: Callable[..., BoolND],
+    feasibility_func: ConstraintFunction | _BoundFeasibility,
     filtered_params: Mapping[ReferenceName, ParamsLeaf],
-) -> BoolND:
+) -> BoolND | BoundedResult[BoolND]:
     """Evaluate feasibility of one action combo at one subject's states."""
     return feasibility_func(**action_kw, **subject_kw, **filtered_params)
 
@@ -2318,10 +2396,10 @@ def _is_combo_feasible(
 def _is_any_action_feasible(
     per_subject_kwargs: Mapping[str, FloatND | IntND],
     *,
-    feasibility_func: Callable[..., BoolND],
+    feasibility_func: ConstraintFunction | _BoundFeasibility,
     action_kwargs: Mapping[str, FloatND | IntND],
     filtered_params: Mapping[ReferenceName, ParamsLeaf],
-) -> BoolND:
+) -> BoolND | BoundedResult[BoolND]:
     """Return whether any action combo is feasible at one subject's states."""
     per_combo = jax.vmap(
         functools.partial(
@@ -2331,27 +2409,44 @@ def _is_any_action_feasible(
         ),
         in_axes=(0, None),
     )(action_kwargs, per_subject_kwargs)
-    return jnp.any(per_combo)
+    if type(per_combo) is BoundedResult:
+        per_combo = cast("BoundedResult[BoolND]", per_combo)
+        return BoundedResult(
+            output=jnp.any(per_combo.output),
+            bound_status=reduce_bound_input_status(
+                statuses=per_combo.bound_status,
+                active=jnp.ones_like(per_combo.output, dtype=jnp.bool_),
+            ),
+        )
+    return jnp.any(cast("BoolND", per_combo))
 
 
 # keyword-only-exempt: library-callback=jax.vmap
 def _is_feasible_without_actions(
     per_subject_kwargs: Mapping[str, FloatND | IntND],
     *,
-    feasibility_func: Callable[..., BoolND],
+    feasibility_func: ConstraintFunction | _BoundFeasibility,
     filtered_params: Mapping[ReferenceName, ParamsLeaf],
-) -> BoolND:
+) -> BoolND | BoundedResult[BoolND]:
     """Return whether an action-free regime is feasible at one subject's states."""
-    return jnp.any(feasibility_func(**per_subject_kwargs, **filtered_params))
+    evaluated = feasibility_func(**per_subject_kwargs, **filtered_params)
+    return (
+        BoundedResult(
+            output=jnp.any(cast("BoundedResult[BoolND]", evaluated).output),
+            bound_status=evaluated.bound_status,
+        )
+        if type(evaluated) is BoundedResult
+        else jnp.any(cast("BoolND", evaluated))
+    )
 
 
 # keyword-only-exempt: library-callback=jax.vmap
 def _is_combo_feasible_for_all_subjects(
     action_kw: Mapping[str, FloatND | IntND],
     *,
-    feasibility_func: Callable[..., BoolND],
+    feasibility_func: ConstraintFunction | _BoundFeasibility,
     params: Mapping[ReferenceName, ParamsLeaf],
-) -> BoolND:
+) -> BoolND | BoundedResult[BoolND]:
     """Evaluate feasibility of one action combo when no state varies by subject."""
     return feasibility_func(**action_kw, **params)
 
@@ -2400,9 +2495,12 @@ def _per_constraint_feasibility(
 
     out: dict[str, np.ndarray] = {}
     for name, constraint_func in constraints.items():
-        single_feasibility = _get_feasibility(
-            functions=functions,
-            constraints=MappingProxyType({name: constraint_func}),
+        single_feasibility = cast(
+            "ConstraintFunction",
+            _get_feasibility(
+                functions=functions,
+                constraints=MappingProxyType({name: constraint_func}),
+            ),
         )
         accepted = get_union_of_args([single_feasibility])
         single_states = {k: v for k, v in infeasible_states.items() if k in accepted}

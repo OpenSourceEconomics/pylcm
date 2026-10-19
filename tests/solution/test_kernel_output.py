@@ -308,11 +308,15 @@ def test_the_consumer_normalizes_an_accepted_numpy_value_to_jax() -> None:
                 continuations={
                     ArtifactKey(
                         type_id=EGM_CONTINUATION.type_id,
-                        schema_version=2,
+                        schema_version=EGM_CONTINUATION.schema_version + 1,
                     ): cast("ArtifactPayload", object())
                 },
             ),
-            "Regime 'saving'.*period 2.*version.*2.*expected.*1",
+            (
+                "Regime 'saving'.*period 2.*version.*"
+                f"{EGM_CONTINUATION.schema_version + 1}.*expected.*"
+                f"{EGM_CONTINUATION.schema_version}"
+            ),
         ),
     ],
     ids=["missing", "unknown-key", "other-version"],

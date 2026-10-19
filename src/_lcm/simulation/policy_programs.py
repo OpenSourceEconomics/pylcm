@@ -17,7 +17,7 @@ from _lcm.execution.core_program import (
     CoreProgram,
     ValueRead,
 )
-from _lcm.execution.output_layout import OutputRoleTree
+from _lcm.execution.output_layout import OutputRoleTree, StateAxesLeading
 from _lcm.execution.value_transfer import (
     ValueArtifactAddress,
     ValueArtifactKind,
@@ -27,6 +27,7 @@ from _lcm.execution.value_transfer import (
 from _lcm.simulation.program_types import subject_axis
 from _lcm.simulation.programs import _ArgumentsBoundAtDispatch, _SubjectTiled
 from _lcm.solution.continuation_reads import rekeyed_value_reads
+from _lcm.solution.feasibility import BoundedResult
 from _lcm.typing import (
     FlatRegimeParams,
     PytreeChild,
@@ -35,7 +36,15 @@ from _lcm.typing import (
     RegimeName,
 )
 from lcm.solver_api import SIMULATION_POLICY
-from lcm.typing import FloatND, IntND, ScalarFloat, ScalarInt, StateName
+from lcm.typing import (
+    ActionName,
+    BoolND,
+    FloatND,
+    IntND,
+    ScalarFloat,
+    ScalarInt,
+    StateName,
+)
 
 POLICY_PREPARE = "simulate_policy_prepare"
 POLICY_RANK = "simulate_policy_rank"
@@ -91,6 +100,9 @@ def declare_finite_replay_programs(regime: Regime) -> Regime:
     previous = regime.simulation.programs
     preparation = {}
     ranking = {}
+    n_bound_records = sum(
+        bound.kind == "dag" for bound in regime.simulation.post_decision_bounds
+    )
     for period, decision in previous.decision.items():
         payload_reads = _policy_reads(
             regime=regime.name,
@@ -147,7 +159,12 @@ def declare_finite_replay_programs(regime: Regime) -> Regime:
                 ),
                 "decision_value",
                 "nested_policy_fallback",
+                *(
+                    StateAxesLeading(state_names=(), dtype=jnp.bool_, shape=())
+                    for _ in range(2 * n_bound_records)
+                ),
             ),
+            n_bound_records=n_bound_records,
         )
     programs = dataclasses.replace(
         previous,
@@ -168,10 +185,15 @@ def _program(
     state_names: tuple[StateName, ...],
     reads: tuple[ValueRead, ...],
     roles: OutputRoleTree,
+    n_bound_records: int = 0,
 ) -> CoreProgram:
     return CoreProgram(
         name=name,
-        function=_SubjectTiled(func=body, subject_arg_names=subject_names),
+        function=_SubjectTiled(
+            func=body,
+            subject_arg_names=subject_names,
+            n_bound_records=n_bound_records,
+        ),
         argument_builder=_ArgumentsBoundAtDispatch(
             program_name=name, subject_arg_names=subject_names
         ),
@@ -271,7 +293,7 @@ class _Rank:
         payload = cast("ReplayPayload", arguments.pop("payload"))
         bank = cast("tuple[jax.Array, ...]", arguments.pop("bank"))
         states = arguments.pop("canonical_states")
-        actions, values = _rank_nnbegm_candidate_bank(
+        ranked = _rank_nnbegm_candidate_bank(
             candidate_inner=bank[0][:, None],
             candidate_outer=bank[1][:, None],
             represented=bank[3][:, None],
@@ -289,9 +311,21 @@ class _Rank:
             ),
             # What remains after the pops are the declared reference channels.
             referenced_value_kwargs=cast("QAndFKwargs", arguments),
+            bound_summary=True,
         )
-        return (
+        actions, values = cast(
+            "tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND]",
+            ranked.output if type(ranked) is BoundedResult else ranked,
+        )
+        output = (
             jax.tree.map(lambda value: value[0], actions),
             values[0],
             jnp.zeros((), dtype=bool),
+        )
+        return (
+            BoundedResult[
+                tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND, BoolND]
+            ](output=output, bound_status=ranked.bound_status)
+            if type(ranked) is BoundedResult
+            else output
         )

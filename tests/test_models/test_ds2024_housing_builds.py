@@ -23,7 +23,14 @@ import pytest
 
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.solution._ds2024_housing_vfi_oracle import solve_ds2024_housing_vfi
-from tests.test_models.ds2024_housing import build_model, build_params
+from tests.test_models.ds2024_housing import (
+    _LOG_INCOME_BASE,
+    INCOME_HIGH,
+    INCOME_LOW,
+    INCOME_PI,
+    build_model,
+    build_params,
+)
 
 _NEEDS_KERNEL = pytest.mark.requires_exact_affine_kernel(
     reason=EXACT_KERNEL_SKIP_REASON
@@ -264,3 +271,136 @@ def test_ds2024_housing_negm_improves_on_nested_outer_refinement():
     assert means[0] > means[1] > means[2]
     assert means[2] < means[0] / 2
     assert means[2] < ORACLE_MEAN_TOL
+
+
+def _exact_state_first_period_value(
+    *,
+    n_grid: int,
+    n_outer_grid: int,
+    n_consumption: int,
+    n_fine_liquid: int,
+    delta: float,
+    tau: float = 0.20,
+    beta: float = 0.945,
+    gamma_c: float = 1.458,
+    alpha: float = 0.66,
+    return_liquid: float = 0.024,
+    return_housing: float = 0.10,
+    theta: float = 2.0,
+    bequest_shift: float = 200.0,
+) -> np.ndarray:
+    """First-period alive value of the three-period model with exact next states.
+
+    A literal grid search per state: every next house `H'` (the free keep
+    `h(1 - delta)` and every outer-grid node) is solved at its own level, and the
+    last alive period is tabulated on a dense liquid grid, so the first-period
+    continuation is read at the actual next state rather than blended over the
+    house grid. Only the terminal bequest is read on the declared state grids,
+    clamped, as the NEGM solve reads it. The calibration defaults are
+    `build_params`'s. Returned in the pylcm layout `(income, liquid, house)`.
+    """
+    low, high = 0.01, 50.0
+    liquid = np.linspace(low, high, n_grid)
+    house = np.linspace(low, high, n_grid)
+    outer = np.linspace(low, high, n_outer_grid)
+    fine = np.linspace(low, high, n_fine_liquid)
+    consumption = np.linspace(0.05, 50.0, n_consumption)
+    income = np.exp(_LOG_INCOME_BASE + np.array([INCOME_LOW, INCOME_HIGH])) * 1e-5
+    transition = np.asarray(INCOME_PI)
+    consumption_utility = (consumption ** (1.0 - gamma_c) - 1.0) / (1.0 - gamma_c)
+    estate = bequest_shift + (1.0 + return_liquid) * liquid[None, :] + house[:, None]
+    terminal = theta * (estate ** (1.0 - gamma_c) - 1.0) / (1.0 - gamma_c)
+
+    def read_terminal(*, next_house: float, next_liquid: np.ndarray) -> np.ndarray:
+        step = (high - low) / (n_grid - 1)
+        coordinate = np.clip((next_house - low) / step, 0.0, n_grid - 1)
+        upper = int(np.clip(np.floor(coordinate) + 1, 1, n_grid - 1))
+        weight = coordinate - (upper - 1)
+        row = terminal[upper - 1] * (1.0 - weight) + terminal[upper] * weight
+        return np.interp(np.clip(next_liquid, low, high), liquid, row)
+
+    def best(*, held: float, cash: np.ndarray, continuation) -> np.ndarray:
+        depreciated = held * (1.0 - delta)
+        candidates = np.concatenate([[depreciated], outer])
+        costs = np.concatenate(
+            [
+                [0.0],
+                (1.0 + tau) * outer - (1.0 + return_housing) * depreciated,
+            ]
+        )
+        value = np.full(cash.shape, -np.inf)
+        for next_house, outer_cost in zip(candidates, costs, strict=True):
+            next_liquid = (cash - outer_cost)[:, None] - consumption[None, :]
+            q = (
+                consumption_utility[None, :]
+                + alpha * np.log(next_house)
+                + beta * continuation(next_house=next_house, next_liquid=next_liquid)
+            )
+            q = np.where(next_liquid >= low, q, -np.inf)
+            value = np.maximum(value, q.max(axis=1))
+        return value
+
+    next_houses = np.concatenate([house * (1.0 - delta), outer])
+    last_alive = {
+        (income_index, float(next_house)): best(
+            held=next_house,
+            cash=(1.0 + return_liquid) * fine + income[income_index],
+            continuation=read_terminal,
+        )
+        for income_index in range(2)
+        for next_house in next_houses
+    }
+    value = np.empty((2, n_grid, n_grid))
+    for income_index in range(2):
+
+        def expected(*, next_house: float, next_liquid: np.ndarray) -> np.ndarray:
+            clamped = np.clip(next_liquid, low, high)
+            return sum(
+                transition[income_index, next_income]  # noqa: B023
+                * np.interp(clamped, fine, last_alive[(next_income, next_house)])
+                for next_income in range(2)
+            )
+
+        for house_index, held in enumerate(house):
+            value[income_index, :, house_index] = best(
+                held=held,
+                cash=(1.0 + return_liquid) * liquid + income[income_index],
+                continuation=expected,
+            )
+    return value
+
+
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
+def test_ds2024_housing_negm_does_not_exceed_exact_next_state_optimum():
+    """The NEGM first-period value never exceeds the exact next-state optimum.
+
+    The reference solves the next period at the actual next house of every
+    candidate, so its continuation is at least as good as the NEGM read, which
+    blends the next value over the house grid. Up to the reference's own
+    consumption-grid undershoot, no interior NEGM value may lie above it: a
+    higher value credits a continuation no next state attains.
+    """
+    n_grid, n_outer_grid, delta = 8, 5, 0.10
+    negm = (
+        build_model(
+            variant="negm",
+            n_grid=n_grid,
+            n_periods=3,
+            n_consumption=N_CONSUMPTION,
+            delta=delta,
+            n_outer_grid=n_outer_grid,
+        )
+        .solve(params=build_params(variant="negm", delta=delta), log_level="debug")
+        .values
+    )
+    reference = _exact_state_first_period_value(
+        n_grid=n_grid,
+        n_outer_grid=n_outer_grid,
+        n_consumption=1600,
+        n_fine_liquid=351,
+        delta=delta,
+    )
+    interior = (Ellipsis, slice(2, n_grid - 1), slice(2, n_grid - 1))
+    excess = np.asarray(negm[0]["alive"])[interior] - reference[interior]
+
+    assert float(excess.max()) < 0.01

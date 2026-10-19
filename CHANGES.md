@@ -12,6 +12,19 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   class, node dtype and node bytes. An explicit `signature` still works and may be
   coarser. `AgeSpecializedFunction` still requires `signature`.
 
+### Reachable discrete states
+
+- `Model(composite_states={"history": CompositeState(members=..., start_codes=...)})`
+  replaces the axes of deterministic discrete member states by one generated discrete
+  state over the member tuples reachable from the start codes, so the value function is
+  solved and stored on those tuples only. User functions keep reading the members, and
+  initial conditions name them. A generated constraint, `<name>_is_reachable`, makes each
+  tuple infeasible at the periods it cannot be reached in.
+- Member laws must be deterministic and read only discrete variables, the period, the
+  age and fixed parameters; a stochastic or phase-specific member law, a law reading
+  anything else, a member held on different grids, a member declared by its values,
+  and a member law reading a variable declared by its values are refused by name.
+
 ### Conditional continuous actions
 
 - `ConditionalAction(grid=..., active_when=..., inactive_value=...)` declares a
@@ -447,9 +460,9 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - Subjects of a regime without actions are now checked against that regime's state-only
   constraints, in `simulate` as well. Populations that previously simulated from such
   rows raise `InvalidInitialConditionsError` when a state-only constraint fails.
-- A constraint depending on an age-specialized function while subjects start away from
-  the regime's representative age now raises `UnsupportedOperationError` instead of
-  `InvalidInitialConditionsError`, and `simulate` never downgrades it to a warning.
+- When a constraint depends on an age-specialized function, each subject's initial
+  feasibility is checked against the constraints and functions resolved at its own start
+  period, so subjects may start at any active age of the regime.
 - Coverage now measures the child Python processes the test suite spawns
   (`[tool.coverage.run] patch = ["subprocess"]`), so the execution and sharding code
   those tests exercise is reported as covered instead of missing from every diff.

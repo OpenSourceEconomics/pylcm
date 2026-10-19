@@ -26,7 +26,15 @@ from lcm._solver_api.identity import (
     ReplayRouteIdentity,
     SolverIdentity,
 )
-from lcm.typing import ActionName, FloatND, IntND, RegimeName, StateName, ValueND
+from lcm.typing import (
+    ActionName,
+    BoolND,
+    FloatND,
+    IntND,
+    RegimeName,
+    StateName,
+    ValueND,
+)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -162,7 +170,7 @@ class ReplayReader(Protocol):
 # Built-in identities live on the public transport boundary. The engine imports
 # these same singleton objects rather than defining private lookalikes, so an
 # installed solver and pylcm always address the same schema.
-EGM_CONTINUATION = ArtifactKey(type_id="pylcm.egm.continuation", schema_version=1)
+EGM_CONTINUATION = ArtifactKey(type_id="pylcm.egm.continuation", schema_version=2)
 SIMULATION_POLICY = ArtifactKey(type_id="pylcm.simulation.policy", schema_version=1)
 DISSOLUTION_FLAG = ArtifactKey(
     type_id="pylcm.collective.dissolution_flag", schema_version=1
@@ -339,7 +347,7 @@ class ContinuationReader(Protocol):
         """Return the marginal of the continuation in `state` at `query`."""
         ...
 
-    def leaves(self) -> Mapping[tuple[str, ...], FloatND]:
+    def leaves(self) -> Mapping[tuple[str, ...], FloatND | IntND | BoolND]:
         """Return every published array by its pytree path, by identity.
 
         The engine addresses a payload's buffers through the objects this

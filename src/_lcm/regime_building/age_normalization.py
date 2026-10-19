@@ -36,12 +36,14 @@ from typing import NoReturn, TypeVar, cast, overload
 import numpy as np
 from jax import numpy as jnp
 
+from _lcm.constraints.dynamic_bound import ScalarFloor
 from _lcm.constraints.processed import (
     ConstraintLike,
     ProcessedConstraintsMapping,
     normalize_constraints,
 )
 from _lcm.grids.continuous import ContinuousGrid
+from _lcm.post_decision_bound import _PostDecisionLowerBound
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.age_specialization import (
@@ -851,6 +853,23 @@ def _representative_function(
     return value
 
 
+def _restore_representative_floor_source(*, value: FunctionEntry) -> FunctionEntry:
+    """Keep concrete producer declarations behind scalar-checked marker views."""
+    if isinstance(value, ScalarFloor):
+        return value.function
+    if isinstance(value, Phased):
+        return Phased(
+            solve=cast(
+                "UserFunction", _restore_representative_floor_source(value=value.solve)
+            ),
+            simulate=cast(
+                "UserFunction",
+                _restore_representative_floor_source(value=value.simulate),
+            ),
+        )
+    return value
+
+
 def _representative_regime(
     *,
     user_regime: FinalizedUserRegime,
@@ -870,14 +889,30 @@ def _representative_regime(
     function sets, and age-invariant validation.
     """
     functions = {
-        name: _representative_function(
-            value=value, function_cache=function_cache, period=period
+        name: _restore_representative_floor_source(
+            value=_representative_function(
+                value=user_regime.decomposed_functions.get(name, value),
+                function_cache=function_cache,
+                period=period,
+            )
         )
         for name, value in user_regime.functions.items()
     }
     constraints = {
-        name: _representative_function(
-            value=value, function_cache=function_cache, period=period
+        name: (
+            dataclasses.replace(
+                value,
+                lower_bound=_representative_function(
+                    value=user_regime.decomposed_functions[f"{name}_lower"],
+                    function_cache=function_cache,
+                    period=period,
+                ),
+            )
+            if isinstance(value, _PostDecisionLowerBound)
+            and callable(value.lower_bound)
+            else _representative_function(
+                value=value, function_cache=function_cache, period=period
+            )
         )
         for name, value in user_regime.constraints.items()
     }
@@ -995,7 +1030,7 @@ def _regime_has_markers(user_regime: FinalizedUserRegime) -> bool:
     case.
     """
     for value in (
-        *user_regime.functions.values(),
+        *user_regime.decomposed_functions.values(),
         *user_regime.constraints.values(),
         *user_regime.states.values(),
     ):
@@ -1022,7 +1057,7 @@ def _collect_function_markers(
     """
     markers: dict[int, AgeSpecializedFunction] = {}
     for value in (
-        *user_regime.functions.values(),
+        *user_regime.decomposed_functions.values(),
         *user_regime.constraints.values(),
         *user_regime.states.values(),
     ):

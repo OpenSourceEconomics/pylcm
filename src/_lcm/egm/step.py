@@ -135,7 +135,7 @@ DC-EGM regime.
 import functools
 import math
 from collections.abc import Callable, Hashable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import cast
 
@@ -157,9 +157,13 @@ from _lcm.egm.continuation_grids import (
     continuation_grid_signature,
     continuation_v_interpolation_info,
 )
+from _lcm.egm.dcegm_query_model import DCEGMQueryModel
 from _lcm.egm.kernel_scope import _find_unsupported_feature
+from _lcm.egm.nbegm_query_model import NBEGMQueryModel
+from _lcm.egm.nested_floor import PreparedNestedFloor
 from _lcm.egm.preferences import concatenate_regime_function
 from _lcm.egm.published_policy import EGMSimPolicy
+from _lcm.egm.query_data import EGMQueryData, build_template_egm_query_data
 from _lcm.egm.regime_introspection import (
     _get_discrete_state_names,
     _get_passive_state_names,
@@ -167,6 +171,8 @@ from _lcm.egm.regime_introspection import (
 )
 from _lcm.egm.step_core import (
     CONSTRAINED_OFFSET_FRACTION,
+    _ComboRows,
+    _ConditionalComboRows,
     _EgmKernelPieces,
     _get_solve_one_combo,
     tile_block_size,
@@ -184,7 +190,18 @@ from _lcm.regime_building.max_Q_over_a import TASTE_SHOCK_SCALE_PARAM
 from _lcm.regime_building.V import VInterpolationInfo
 from _lcm.regime_building.w_dag import _get_build_W_kwargs
 from _lcm.regime_law import RegimeLaws
-from _lcm.solution.dcegm import EGMStepBuild, ExactEnvelope, _BoundDCEGM
+from _lcm.solution.dcegm import (
+    EGMStepBuild,
+    ExactEnvelope,
+    _BoundDCEGM,
+    _DCEGMStepOutput,
+    _NestedDCEGMStepChannels,
+)
+from _lcm.solution.feasibility import (
+    BoundedResult,
+    FeasibilityCounts,
+    count_current_feasibility,
+)
 from _lcm.transition_plans import TargetTransitionPlans
 from _lcm.typing import (
     ActionName,
@@ -200,20 +217,30 @@ from _lcm.typing import (
     StateOrActionName,
     TransitionFunctionsMapping,
 )
-from _lcm.utils.dispatchers import productmap
+from _lcm.utils.dispatchers import map_over_leading_axis, productmap
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, MSSEnvelope
 from lcm.typing import (
     BoolND,
     DiscreteAction,
-    Float1D,
     FloatND,
     IntND,
     ScalarBool,
     ScalarFloat,
     ScalarInt,
 )
+
+type _MappedConditionalRows = tuple[
+    FloatND,
+    FloatND,
+    FloatND,
+    FloatND,
+    FloatND,
+    BoolND,
+    EGMQueryData | None,
+    BoolND,
+]
 
 
 def build_egm_step_functions(
@@ -245,6 +272,9 @@ def build_egm_step_functions(
         MappingProxyType[int, Mapping[RegimeName, UserRegime]] | None
     ) = None,
     age_values: FloatND | IntND,
+    query_model: DCEGMQueryModel | None = None,
+    dcegm_query_models: Mapping[RegimeName, DCEGMQueryModel] | None = None,
+    nbegm_query_models: Mapping[RegimeName, NBEGMQueryModel] | None = None,
 ) -> EGMStepBuild:
     """Build per-period DC-EGM kernels and the regime's carry template.
 
@@ -285,6 +315,7 @@ def build_egm_step_functions(
             discrete-action grids and their canonical order).
         has_taste_shocks: Whether the regime declares EV1 taste shocks on its
             discrete actions.
+        query_model: Canonical source evaluator and authority pool, when installed.
         period_to_regime_v_interp: Immutable mapping of period to that period's
             V-interpolation info per regime, or `None` for an age-invariant
             model. A period-`t` kernel reads its targets' entries at `t + 1`.
@@ -368,7 +399,19 @@ def build_egm_step_functions(
     )
     n_cell_axes = len(own_discrete_state_names) + len(own_passive_state_names)
     carry_template = build_template_egm_carry(
-        n_rows=n_carry_rows, leading_shape=leading_shape
+        n_rows=n_carry_rows,
+        leading_shape=leading_shape,
+        query_data=(
+            None
+            if query_model is None
+            else build_template_egm_query_data(
+                state_shape=leading_shape[:n_cell_axes],
+                action_shape=leading_shape[n_cell_axes:],
+                row_capacity=n_carry_rows,
+                interval_capacity=len(query_model.authority.interval_ids),
+                liquid_corner=asset_row_mode,
+            )
+        ),
     )
 
     configs: dict[_EGMGroupKey, list[int]] = {}
@@ -411,12 +454,32 @@ def build_egm_step_functions(
                     # declared signature says the closures agree.
                     periodized_tree_signature(tree=functions, period=period),
                     periodized_tree_signature(tree=constraints, period=period),
+                    tuple(
+                        (
+                            target,
+                            periodized_tree_signature(
+                                tree=model.functions, period=period + 1
+                            ),
+                            periodized_tree_signature(
+                                tree={"koopmans_aggregator": model.koopmans_aggregator},
+                                period=period + 1,
+                            ),
+                        )
+                        for target in carry
+                        if (
+                            model := (
+                                (dcegm_query_models or {}).get(target)
+                                or (nbegm_query_models or {}).get(target)
+                            )
+                        )
+                        is not None
+                    ),
                 ),
             ),
             [],
         ).append(period)
 
-    built: dict[_EGMGroupKey, EGMStepFunction] = {}
+    built: dict[_EGMGroupKey, EGMStepFunction[_DCEGMStepOutput]] = {}
     node_axes_by_group: dict[_EGMGroupKey, tuple[tuple[StateName, int], ...]] = {}
     for group_key, group_periods in configs.items():
         stateful_targets, scalar_targets, _ = group_key
@@ -456,6 +519,20 @@ def build_egm_step_functions(
             own_passive_state_names=own_passive_state_names,
             own_discrete_action_names=tuple(own_discrete_action_values),
             asset_row_mode=asset_row_mode,
+            post_inversion_predicate_names=(
+                frozenset(
+                    target
+                    for purpose, target in query_model.authority.evaluator_targets
+                    if purpose == f"predicate:{target}"
+                    and target in group_constraints
+                    and target in query_model.functions
+                    and solver.continuous_state
+                    in dict(query_model.authority.evaluator_inputs)[purpose]
+                )
+                if isinstance(query_model, DCEGMQueryModel)
+                and isinstance(solver.envelope, ExactEnvelope)
+                else frozenset()
+            ),
         )
         if unsupported is not None:
             raise ModelInitializationError(unsupported)
@@ -490,6 +567,10 @@ def build_egm_step_functions(
             regime_to_v_interpolation_info=group_v_interp,
             asset_row_mode=asset_row_mode,
             age_values=age_values,
+            query_model=query_model,
+            dcegm_query_models=dcegm_query_models,
+            nbegm_query_models=nbegm_query_models,
+            source_period=representative_period,
         )
         built[group_key] = kernel
         # Each group owns a distinct numerical core and its child mesh. A
@@ -499,7 +580,7 @@ def build_egm_step_functions(
             plan=cast("_EGMStep", kernel).pieces.continuation_plan
         )
 
-    result: dict[int, EGMStepFunction] = {}
+    result: dict[int, EGMStepFunction[_DCEGMStepOutput]] = {}
     group_keys: dict[int, _EGMGroupKey] = {}
     for key, periods in configs.items():
         for period in periods:
@@ -574,7 +655,11 @@ def _get_egm_step(
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     asset_row_mode: bool,
     age_values: FloatND | IntND,
-) -> EGMStepFunction:
+    query_model: DCEGMQueryModel | None = None,
+    dcegm_query_models: Mapping[RegimeName, DCEGMQueryModel] | None = None,
+    nbegm_query_models: Mapping[RegimeName, NBEGMQueryModel] | None = None,
+    source_period: int | None = None,
+) -> EGMStepFunction[_DCEGMStepOutput]:
     """Build the EGM kernel for one continuation-target configuration.
 
     `asset_row_mode` selects the per-combo computation at build time: the
@@ -612,6 +697,11 @@ def _get_egm_step(
         euler_axis_in_V=euler_axis_in_V,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         age_values=age_values,
+        query_model=query_model,
+        dcegm_query_models=dcegm_query_models,
+        nbegm_query_models=nbegm_query_models,
+        source_period=source_period,
+        asset_row_mode=asset_row_mode,
     )
 
     return _EGMStep(
@@ -643,7 +733,7 @@ class _EGMStep:
         ...,
         Callable[
             [tuple[ScalarInt | ScalarFloat, ...]],
-            tuple[Float1D, Float1D, Float1D, Float1D, Float1D, ScalarBool],
+            _ComboRows | BoundedResult[_ConditionalComboRows],
         ],
     ]
     """Builder of the per-combo solve (single-post-state or asset-row)."""
@@ -675,8 +765,9 @@ class _EGMStep:
         _lcm_savings_point_width: int | None = None,
         _lcm_euler_point_width: int | None = None,
         _lcm_envelope_cell_width: int = 1,
+        _lcm_prepared_nested_floor: PreparedNestedFloor | None = None,
         **kwargs: EconFunctionArg,
-    ) -> tuple[FloatND, EGMCarry, EGMSimPolicy]:
+    ) -> _DCEGMStepOutput:
         """Run the DC-EGM step and publish V on the exogenous grid.
 
         Args:
@@ -703,6 +794,16 @@ class _EGMStep:
 
         """
         pieces = self.pieces
+        if _lcm_prepared_nested_floor is not None:
+            pieces = replace(
+                pieces,
+                _prepared_nested_floor=_lcm_prepared_nested_floor,
+                _prepared_nested_axes=tuple(
+                    (name, jnp.asarray(kwargs[name]))
+                    for name in self.own_discrete_state_names
+                    + self.own_passive_state_names
+                ),
+            )
         dtype = canonical_float_dtype()
         own_state_names = {
             pieces.euler_state_name,
@@ -763,6 +864,32 @@ class _EGMStep:
                     for name, values in self.own_discrete_action_values.items()
                 },
             }
+            mapped = _map_combo_product(
+                func=solve_one_combo_over_axes,
+                combo_var_names=combo_var_names,
+                combo_axis_values=combo_axis_values,
+                state_names=self.own_discrete_state_names
+                + self.own_passive_state_names,
+                cell_width=_lcm_cell_width,
+                bound_summary=(
+                    pieces.query_spec is not None
+                    or pieces.check_query_construction
+                    or bool(pieces.continuation_plan.query_targets)
+                    or pieces.collect_continuation_read_counts
+                    or pieces._retain_nested_feasibility  # noqa: SLF001
+                ),
+            )
+            if isinstance(mapped, BoundedResult):
+                return _publish_conditional_product(
+                    rows=mapped,
+                    pieces=pieces,
+                    taste_shock_scale=own_taste_shock_scale,
+                    mask_gap_rows=self.mask_gap_rows,
+                    has_taste_shocks=self.has_taste_shocks,
+                    discrete_state_names=self.own_discrete_state_names,
+                    passive_state_names=self.own_passive_state_names,
+                    discrete_action_names=tuple(self.own_discrete_action_values),
+                )
             (
                 V_stack,
                 grid_stack,
@@ -770,14 +897,7 @@ class _EGMStep:
                 value_stack,
                 marginal_stack,
                 read_supported_stack,
-            ) = _map_combo_product(
-                func=solve_one_combo_over_axes,
-                combo_var_names=combo_var_names,
-                combo_axis_values=combo_axis_values,
-                state_names=self.own_discrete_state_names
-                + self.own_passive_state_names,
-                cell_width=_lcm_cell_width,
-            )
+            ) = mapped
             n_state_axes = len(self.own_discrete_state_names) + len(
                 self.own_passive_state_names
             )
@@ -821,9 +941,15 @@ class _EGMStep:
                 row_discrete_action_names=tuple(self.own_discrete_action_values),
             )
         else:
-            V_arr, grid_row, policy_row, value_row, marginal_row, read_supported = (
-                solve_one_combo(())
-            )
+            combo = solve_one_combo(())
+            if isinstance(combo, BoundedResult):
+                return _publish_conditional_combo(
+                    combo=combo,
+                    taste_shock_scale=own_taste_shock_scale,
+                    mask_gap_rows=self.mask_gap_rows,
+                    retain_nested_feasibility=pieces._retain_nested_feasibility,  # noqa: SLF001
+                )
+            V_arr, grid_row, policy_row, value_row, marginal_row, read_supported = combo
             carry = EGMCarry(
                 endog_grid=grid_row,
                 value=value_row,
@@ -844,13 +970,186 @@ class _EGMStep:
         return V_arr, carry, sim_policy
 
 
+def _publish_conditional_product(
+    *,
+    rows: BoundedResult[_MappedConditionalRows],
+    pieces: _EgmKernelPieces,
+    taste_shock_scale: ScalarFloat,
+    mask_gap_rows: bool,
+    has_taste_shocks: bool,
+    discrete_state_names: tuple[StateName, ...],
+    passive_state_names: tuple[StateName, ...],
+    discrete_action_names: tuple[ActionName, ...],
+) -> (
+    BoundedResult[tuple[FloatND, EGMCarry, EGMSimPolicy, FeasibilityCounts | None]]
+    | BoundedResult[_NestedDCEGMStepChannels]
+):
+    """Publish conditional choice rows and reduce feasibility on state nodes."""
+    V, grid, policy, value, marginal, read_supported, data, feasible = rows.output
+    n_state_axes = len(discrete_state_names) + len(passive_state_names)
+    action_axes = tuple(range(n_state_axes, len(pieces.combo_names)))
+    if action_axes and has_taste_shocks:
+        V_state, _ = logsum_and_softmax(
+            values=V, scale=taste_shock_scale, axes=action_axes
+        )
+    elif action_axes:
+        V_state = jnp.max(V, axis=action_axes)
+    else:
+        V_state = V
+    if data is not None and action_axes:
+        # The installed floor excludes actions; retain its one fixed-cell leaf.
+        data = replace(
+            data,
+            floor_used=data.floor_used[
+                (slice(None),) * n_state_axes + (0,) * len(action_axes)
+            ],
+        )
+    carry = EGMCarry(
+        endog_grid=grid,
+        value=value,
+        marginal_utility=marginal,
+        taste_shock_scale=taste_shock_scale,
+        query_data=data,
+    )
+    read_ok = read_supported[..., None] if mask_gap_rows else jnp.asarray(a=True)
+    sim_policy = EGMSimPolicy(
+        endog_grid=jnp.where(read_ok, grid, jnp.nan),
+        policy=jnp.where(read_ok, policy, jnp.nan),
+        value=jnp.where(read_ok, value, jnp.nan),
+        marginal_utility=jnp.where(read_ok, marginal, jnp.nan),
+        row_discrete_state_names=discrete_state_names,
+        row_passive_state_names=passive_state_names,
+        row_discrete_action_names=discrete_action_names,
+    )
+    if pieces._retain_nested_feasibility:  # noqa: SLF001
+        node_feasible = jnp.moveaxis(feasible, -1, n_state_axes).reshape(
+            *V_state.shape, -1
+        )
+        counts = (
+            count_current_feasibility(
+                budget_feasible=node_feasible,
+                predicate_feasible=jnp.ones((*node_feasible.shape, 0), dtype=jnp.bool_),
+                value=V_state,
+                active_states=jnp.ones(V_state.shape, dtype=jnp.bool_),
+            )
+            if rows.bound_status or rows.query_status is not None
+            else None
+        )
+        return BoundedResult(
+            output=(
+                jnp.moveaxis(V_state, -1, pieces.euler_axis_in_V),
+                carry,
+                sim_policy,
+                counts,
+                jnp.moveaxis(node_feasible, -2, pieces.euler_axis_in_V),
+            ),
+            bound_status=rows.bound_status,
+            query_status=rows.query_status,
+            continuation_read_counts=rows.continuation_read_counts,
+        )
+    if not rows.bound_status and rows.query_status is None:
+        return BoundedResult(
+            output=(
+                jnp.moveaxis(V_state, -1, pieces.euler_axis_in_V),
+                carry,
+                sim_policy,
+                None,
+            ),
+            bound_status=(),
+            continuation_read_counts=rows.continuation_read_counts,
+        )
+    node_feasible = jnp.moveaxis(feasible, -1, n_state_axes).reshape(*V_state.shape, -1)
+    counts = count_current_feasibility(
+        budget_feasible=node_feasible,
+        predicate_feasible=jnp.ones((*node_feasible.shape, 0), dtype=jnp.bool_),
+        value=V_state,
+        active_states=jnp.ones(V_state.shape, dtype=jnp.bool_),
+    )
+    return BoundedResult(
+        output=(
+            jnp.moveaxis(V_state, -1, pieces.euler_axis_in_V),
+            carry,
+            sim_policy,
+            counts,
+        ),
+        bound_status=rows.bound_status,
+        query_status=rows.query_status,
+        continuation_read_counts=rows.continuation_read_counts,
+    )
+
+
+def _publish_conditional_combo(
+    *,
+    combo: BoundedResult[_ConditionalComboRows],
+    taste_shock_scale: ScalarFloat,
+    mask_gap_rows: bool,
+    retain_nested_feasibility: bool = False,
+) -> (
+    BoundedResult[tuple[FloatND, EGMCarry, EGMSimPolicy, FeasibilityCounts | None]]
+    | BoundedResult[_NestedDCEGMStepChannels]
+):
+    """Publish one conditional row with independent counts and bounded integrity."""
+    value, grid, policy, row_value, marginal, read_supported, data, feasible = (
+        combo.output
+    )
+    carry = EGMCarry(
+        endog_grid=grid,
+        value=row_value,
+        marginal_utility=marginal,
+        taste_shock_scale=taste_shock_scale,
+        query_data=data,
+    )
+    read_ok = read_supported if mask_gap_rows else jnp.asarray(a=True)
+    sim_policy = EGMSimPolicy(
+        endog_grid=jnp.where(read_ok, grid, jnp.nan),
+        policy=jnp.where(read_ok, policy, jnp.nan),
+        value=jnp.where(read_ok, row_value, jnp.nan),
+        marginal_utility=jnp.where(read_ok, marginal, jnp.nan),
+    )
+    if retain_nested_feasibility:
+        counts = (
+            count_current_feasibility(
+                budget_feasible=feasible[:, None],
+                predicate_feasible=jnp.ones((*feasible.shape, 1, 0), dtype=jnp.bool_),
+                value=value,
+                active_states=jnp.ones(feasible.shape, dtype=jnp.bool_),
+            )
+            if combo.bound_status or combo.query_status is not None
+            else None
+        )
+        return BoundedResult(
+            output=(value, carry, sim_policy, counts, feasible[:, None]),
+            bound_status=combo.bound_status,
+            query_status=combo.query_status,
+            continuation_read_counts=combo.continuation_read_counts,
+        )
+    if not combo.bound_status and combo.query_status is None:
+        return BoundedResult(
+            output=(value, carry, sim_policy, None),
+            bound_status=(),
+            continuation_read_counts=combo.continuation_read_counts,
+        )
+    counts = count_current_feasibility(
+        budget_feasible=feasible[:, None],
+        predicate_feasible=jnp.ones((*feasible.shape, 1, 0), dtype=jnp.bool_),
+        value=value,
+        active_states=jnp.ones(feasible.shape, dtype=jnp.bool_),
+    )
+    return BoundedResult(
+        output=(value, carry, sim_policy, counts),
+        bound_status=combo.bound_status,
+        query_status=combo.query_status,
+        continuation_read_counts=combo.continuation_read_counts,
+    )
+
+
 @dataclass(frozen=True, kw_only=True, eq=False)
 class _SolveOneComboOverAxes:
     """The per-combo solve, keyed by combo variable name for `productmap`."""
 
     solve_one_combo: Callable[
         [tuple[ScalarInt | ScalarFloat, ...]],
-        tuple[Float1D, Float1D, Float1D, Float1D, Float1D, ScalarBool],
+        _ComboRows | BoundedResult[_ConditionalComboRows],
     ]
     """The positional per-combo solve."""
 
@@ -859,7 +1158,7 @@ class _SolveOneComboOverAxes:
 
     def __call__(
         self, **combo_values: ScalarFloat | ScalarInt
-    ) -> tuple[Float1D, Float1D, Float1D, Float1D, Float1D, ScalarBool]:
+    ) -> _ComboRows | BoundedResult[_ConditionalComboRows]:
         return self.solve_one_combo(
             tuple(combo_values[name] for name in self.combo_var_names)
         )
@@ -867,12 +1166,13 @@ class _SolveOneComboOverAxes:
 
 def _map_combo_product(
     *,
-    func: Callable[..., tuple[Float1D | ScalarBool, ...]],
+    func: Callable[..., _ComboRows | BoundedResult[_ConditionalComboRows]],
     combo_var_names: tuple[StateOrActionName, ...],
     combo_axis_values: dict[StateOrActionName, FloatND | IntND],
     state_names: tuple[StateName, ...],
     cell_width: int | None,
-) -> tuple[FloatND | BoolND, ...]:
+    bound_summary: bool = False,
+) -> tuple[FloatND | BoolND, ...] | BoundedResult[_MappedConditionalRows]:
     """Map the per-combo solve over the Cartesian product of the combo axes.
 
     `func` has a `combo_var_names` keyword signature and returns one tuple of
@@ -896,6 +1196,7 @@ def _map_combo_product(
             func=func,
             variables=combo_var_names,
             batch_sizes=dict.fromkeys(combo_var_names, 0),
+            bound_summary=bound_summary,
         )(**combo_axis_values)
 
     splayed = tuple(name for name in combo_var_names if name in state_names)
@@ -904,22 +1205,28 @@ def _map_combo_product(
         func=func,
         variables=vmapped,
         batch_sizes=dict.fromkeys(vmapped, 0),
+        bound_summary=bound_summary,
     )
     vmapped_values = {name: combo_axis_values[name] for name in vmapped}
     splayed_dims = tuple(int(combo_axis_values[name].shape[0]) for name in splayed)
     mesh = jnp.meshgrid(*(combo_axis_values[name] for name in splayed), indexing="ij")
     flat_splayed = tuple(grid.ravel() for grid in mesh)
 
-    stacked = jax.lax.map(
-        functools.partial(
-            _at_one_splayed_combo,
-            inner=inner,
-            splayed=splayed,
-            vmapped_values=vmapped_values,
-        ),
-        flat_splayed,
-        batch_size=block,
+    at_one = functools.partial(
+        _at_one_splayed_combo,
+        inner=inner,
+        splayed=splayed,
+        vmapped_values=vmapped_values,
     )
+    if bound_summary:
+        stacked = map_over_leading_axis(
+            func=at_one,
+            xs=flat_splayed,
+            batch_size=block,
+            bound_summary=True,
+        )
+    else:
+        stacked = jax.lax.map(at_one, flat_splayed, batch_size=block)
 
     # Restore `combo_var_names` order: `stacked` axes are
     # (flattened splayed, *vmapped, *per-element); reshape the flat axis back
@@ -927,6 +1234,21 @@ def _map_combo_product(
     current_order = splayed + vmapped
     perm = tuple(current_order.index(name) for name in combo_var_names)
     n_combo = len(combo_var_names)
+    if isinstance(stacked, BoundedResult):
+        return BoundedResult(
+            output=jax.tree.map(
+                functools.partial(
+                    _reorder_combo_axes,
+                    splayed_dims=splayed_dims,
+                    perm=perm,
+                    n_combo=n_combo,
+                ),
+                stacked.output,
+            ),
+            bound_status=stacked.bound_status,
+            query_status=stacked.query_status,
+            continuation_read_counts=stacked.continuation_read_counts,
+        )
     return tuple(
         _reorder_combo_axes(
             arr=arr, splayed_dims=splayed_dims, perm=perm, n_combo=n_combo
@@ -939,21 +1261,24 @@ def _map_combo_product(
 def _at_one_splayed_combo(
     splayed_values: tuple[ScalarFloat | ScalarInt, ...],
     *,
-    inner: Callable[..., tuple[FloatND | BoolND, ...]],
+    inner: Callable[
+        ..., tuple[FloatND | BoolND, ...] | BoundedResult[_MappedConditionalRows]
+    ],
     splayed: tuple[StateOrActionName, ...],
     vmapped_values: dict[StateOrActionName, FloatND | IntND],
-) -> tuple[FloatND | BoolND, ...]:
+) -> tuple[FloatND | BoolND, ...] | BoundedResult[_MappedConditionalRows]:
     """Run the vmapped inner product at one flattened splayed combo."""
     return inner(**dict(zip(splayed, splayed_values, strict=True)), **vmapped_values)
 
 
+# keyword-only-exempt: library-callback=jax.tree.map
 def _reorder_combo_axes(
+    arr: FloatND | BoolND | IntND,
     *,
-    arr: FloatND | BoolND,
     splayed_dims: tuple[int, ...],
     perm: tuple[int, ...],
     n_combo: int,
-) -> FloatND | BoolND:
+) -> FloatND | BoolND | IntND:
     """Unflatten the splayed axis and transpose the combo axes into canonical order."""
     arr = arr.reshape(*splayed_dims, *arr.shape[1:])
     trailing = tuple(range(n_combo, arr.ndim))
@@ -981,6 +1306,11 @@ def _build_kernel_pieces(
     euler_axis_in_V: int,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     age_values: FloatND | IntND,
+    query_model: DCEGMQueryModel | None = None,
+    dcegm_query_models: Mapping[RegimeName, DCEGMQueryModel] | None = None,
+    nbegm_query_models: Mapping[RegimeName, NBEGMQueryModel] | None = None,
+    source_period: int | None = None,
+    asset_row_mode: bool = False,
 ) -> _EgmKernelPieces:
     """Assemble the build-time statics of the EGM kernel."""
     savings_nodes = jnp.asarray(
@@ -999,6 +1329,9 @@ def _build_kernel_pieces(
         post_decision_name=solver.post_decision_function,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         age_values=age_values,
+        dcegm_query_models=dcegm_query_models,
+        nbegm_query_models=nbegm_query_models,
+        source_period=source_period,
     )
     return _EgmKernelPieces(
         euler_state_name=solver.continuous_state,
@@ -1034,9 +1367,33 @@ def _build_kernel_pieces(
         build_W_kwargs=_get_build_W_kwargs(
             functions=functions, koopmans_aggregator=koopmans_aggregator
         ),
-        refine=get_upper_envelope(solver=solver, n_refined=n_pad),
-        refine_to_bracket=get_bracket_finder(solver=solver, n_refined=n_pad),
+        refine=(
+            get_upper_envelope(solver=solver, n_refined=n_pad, publish_provenance=True)
+            if query_model is not None
+            else get_upper_envelope(solver=solver, n_refined=n_pad)
+        ),
+        refine_to_bracket=(
+            get_bracket_finder(solver=solver, n_refined=n_pad, publish_provenance=True)
+            if query_model is not None
+            else get_bracket_finder(solver=solver, n_refined=n_pad)
+        ),
         continuation_plan=continuation_plan,
+        query_spec=None if query_model is None else query_model.authority,
+        _retain_nested_feasibility=solver._retain_nested_feasibility,  # noqa: SLF001
+        _negm_current_publication=(
+            solver._negm_current_publication  # noqa: SLF001
+            and isinstance(solver.envelope, ExactEnvelope)
+            and not asset_row_mode
+        ),
+        lower_func=(
+            concatenate_regime_function(
+                functions=functions, target=solver.post_decision_bound.lower_target
+            )
+            if solver.post_decision_bound is not None
+            and solver.post_decision_bound.kind == "dag"
+            and solver.post_decision_bound.lower_target is not None
+            else None
+        ),
     )
 
 
@@ -1045,14 +1402,14 @@ def _build_feasibility_function(
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
 ) -> Callable[..., ScalarBool] | None:
-    """Build the discrete-feasibility predicate of a combo, or `None`.
+    """Build current feasibility, or `None` when no predicate remains.
 
-    DC-EGM validation guarantees that no constraint reaches the continuous
-    state or action, so every constraint is evaluable per discrete combo.
+    The route binds either a discrete combo or a published current-state node.
+    Continuous actions are unavailable at both predicate sites.
 
     Returns:
-        Callable mapping a combo's pool (discrete values plus flat params)
-        to a scalar feasibility indicator, or `None` without constraints.
+        Callable mapping the bound current-state pool to a scalar feasibility
+        indicator, or `None` without constraints.
 
     """
     if not constraints:
@@ -1073,7 +1430,7 @@ def _build_feasibility_function(
 
 @dataclass(frozen=True, kw_only=True, eq=False)
 class _ComboFeasibility:
-    """All of a regime's constraints, evaluated and conjoined for one combo."""
+    """Evaluate and conjoin current constraints at the route's bound state."""
 
     constraints_func: Callable[..., Mapping[str, BoolND]]
     """The concatenated constraint DAG, returning every constraint by name."""

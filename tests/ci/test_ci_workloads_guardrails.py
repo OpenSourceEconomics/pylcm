@@ -178,7 +178,7 @@ def test_no_whole_file_atom_exceeds_its_lane_payload_guardrail():
 
     Under `--dist loadfile` a file is indivisible, so a file above the ceiling
     cannot be fixed by adding shards or workers -- LPT cannot split an atom. The
-    source-contract lane is the deliberate exception: it uses `--dist load`, so
+    source-contract lane is the deliberate exception: it uses `--dist loadgroup`, so
     its modules are not atoms there.
     """
     ceiling = ci_workloads.guardrails()["job_payload_ceiling_minutes"]

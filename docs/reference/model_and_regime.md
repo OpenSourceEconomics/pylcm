@@ -99,9 +99,9 @@ state-only constraint holds. Both methods apply every initial-condition check `s
 applies, including the `own_stakeholder` declaration a collective start needs, and take
 no `log_level`: they always raise. The verdict does not depend on how the check is
 executed; at present both run in one eager pass on the default device, without
-device-memory admission or subject padding. A constraint that depends on an
-age-specialized function while subjects start away from the regime's representative age
-raises `UnsupportedOperationError`, from these methods and from `simulate` alike.
+device-memory admission or subject padding. When a constraint depends on an
+age-specialized function, each subject is checked against the constraints and functions
+resolved at its own start period.
 
 `model._regimes` is private canonical engine state.
 
@@ -131,6 +131,35 @@ coordinate–regime pairs, whose meaning is given by `graph.coordinate_kind`.
 Legacy bare pairs and selector mappings remain accepted in age models. Period models
 require `InitialNodes(by_period=...)`. `ByAge` and `ByPeriod` select transition laws;
 they do not supply initial-node regime names.
+
+(api-composite-state)=
+
+## `CompositeState`
+
+`Model(composite_states={"history": CompositeState(members=(...), start_codes={...})})`
+replaces the axes of deterministic discrete member states by one generated discrete
+state, `history`, whose codes index the member tuples reachable from the start codes.
+Solve and simulate run on those tuples only, so the value function no longer spans the
+full product of the members.
+
+- Members are discrete states that every carrying regime holds on the same grid. Their
+  laws must be deterministic and read only discrete variables, the period, the age and
+  fixed parameters; a law that reads anything else is refused by name. A constraint that
+  reads a continuous variable or a free parameter is not used to prune tuples.
+- User functions keep reading the member names. Initial conditions name the members, as
+  code arrays or as labels in a DataFrame; a start tuple the declaration never reaches
+  raises `InvalidInitialConditionsError`. Members reach `to_dataframe` through
+  `additional_targets`.
+- The code set holds every tuple reachable at some period. A generated constraint,
+  `<name>_is_reachable`, makes each code infeasible at the periods it cannot be reached
+  in, so its value there is `-inf` and no reachable cell reads it.
+- Member laws and grids are the same in both phases; a `Phased` member is refused.
+- Members are held on category grids. A member declared by its values
+  (`DiscreteGrid(values=...)`) is refused, and so is a member law that reads a variable
+  declared by its values.
+- Initial conditions are encoded only for subjects whose starting regime carries the
+  members; member codes must be whole numbers.
+- A model declares at most one composite state.
 
 (api-period-candidate-lowering)=
 

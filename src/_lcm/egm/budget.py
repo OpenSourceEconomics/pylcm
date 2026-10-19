@@ -98,7 +98,18 @@ def get_intrinsic_budget_constraint(
         action_name = inner.continuous_action
         resources_name = inner.resources
 
-    return with_signature(  # ty: ignore[invalid-return-type]
+    bound = getattr(
+        (nested_inner if isinstance(solver, NNBEGM) else inner)
+        if isinstance(solver, (EGM, DCEGM, NEGM, NNBEGM))
+        else solver,
+        "post_decision_bound",
+        None,
+    )
+    lower_target = (
+        bound.lower_target if bound is not None and bound.kind == "dag" else None
+    )
+
+    constraint = with_signature(
         args={
             action_name: _find_annotation_of_arg(
                 functions=functions, arg_name=action_name
@@ -106,6 +117,7 @@ def get_intrinsic_budget_constraint(
             resources_name: ensure_annotations_are_strings(
                 get_annotations(_representative(functions[resources_name]))
             )["return"],
+            **({lower_target: "FloatND"} if lower_target is not None else {}),
         },
         return_annotation="BoolND",
         enforce=False,
@@ -114,8 +126,12 @@ def get_intrinsic_budget_constraint(
             action_name=action_name,
             resources_name=resources_name,
             borrowing_limit=borrowing_limit,
+            lower_target=lower_target,
         )
     )
+    if bound is not None and bound.kind == "dag":
+        constraint.__dict__["_lcm_intrinsic_budget_bound"] = bound
+    return cast("ConstraintFunction", constraint)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -135,15 +151,20 @@ class _IntrinsicBudgetConstraint:
 
     borrowing_limit: float
     """Lowest node of the savings grid."""
+    lower_target: FunctionName | None = None
+    """Installed canonical runtime floor target, when the numerical route uses it."""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "__name__", "budget_constraint")
         object.__setattr__(self, "__qualname__", "budget_constraint")
 
     def __call__(self, **action_and_resources: FloatND) -> BoolND:
-        return (
-            action_and_resources[self.action_name]
-            <= action_and_resources[self.resources_name] - self.borrowing_limit
+        return action_and_resources[self.action_name] <= action_and_resources[
+            self.resources_name
+        ] - (
+            self.borrowing_limit
+            if self.lower_target is None
+            else action_and_resources[self.lower_target]
         )
 
 
