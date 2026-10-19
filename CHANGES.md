@@ -427,9 +427,9 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - Subjects of a regime without actions are now checked against that regime's state-only
   constraints, in `simulate` as well. Populations that previously simulated from such
   rows raise `InvalidInitialConditionsError` when a state-only constraint fails.
-- A constraint depending on an age-specialized function while subjects start away from
-  the regime's representative age now raises `UnsupportedOperationError` instead of
-  `InvalidInitialConditionsError`, and `simulate` never downgrades it to a warning.
+- When a constraint depends on an age-specialized function, each subject's initial
+  feasibility is checked against the constraints and functions resolved at its own start
+  period, so subjects may start at any active age of the regime.
 - Coverage now measures the child Python processes the test suite spawns
   (`[tool.coverage.run] patch = ["subprocess"]`), so the execution and sharding code
   those tests exercise is reported as covered instead of missing from every diff.
