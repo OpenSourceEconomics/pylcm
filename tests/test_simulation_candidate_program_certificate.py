@@ -1353,6 +1353,9 @@ def test_supplemental_sources_complete_the_pinned_registry_coverage() -> None:
     associated_saving = direct_flow.associated_saving_mutation_specs(repo_root=root)
     retained_prefix = direct_flow.retained_prefix_mutation_specs(repo_root=root)
     outer_helpers = direct_flow.outer_helper_mutation_specs(repo_root=root)
+    final_nested = direct_flow.final_nested_mutation_specs(repo_root=root)
+    child_native = direct_flow.child_native_mutation_specs(repo_root=root)
+    additional_helpers = direct_flow.additional_helper_mutation_specs(repo_root=root)
 
     assert set(decoupled) == {
         "decoupled_bound:action_adapter_bypassed",
@@ -1475,6 +1478,9 @@ def test_supplemental_sources_complete_the_pinned_registry_coverage() -> None:
         associated_saving,
         retained_prefix,
         outer_helpers,
+        final_nested,
+        child_native,
+        additional_helpers,
     )
     for index, left in enumerate(families):
         for right in families[index + 1 :]:
