@@ -23,7 +23,10 @@ from collections.abc import Callable, Mapping
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
-from tests.candidate_certificate import direct_flow
+try:
+    from tests.candidate_certificate import direct_flow
+except ModuleNotFoundError:  # Imported by `verify.py` run as a script.
+    import direct_flow
 
 type VerdictKey = tuple[tuple[tuple[str, str | None], ...], tuple[tuple[str, str], ...]]
 type Seals = tuple[tuple[str, str], ...]
@@ -35,7 +38,8 @@ _MAX_PROCESSES = 4
 class DirectFlowControlsReplay:
     """Run the actual aggregate runner, verifying each distinct tree once."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, processes: int = _MAX_PROCESSES) -> None:
+        self._processes = processes
         self._verdicts: dict[VerdictKey, direct_flow.DirectFlowReport] = {}
         self.real_verifications = 0
 
@@ -100,7 +104,7 @@ class DirectFlowControlsReplay:
         finally:
             direct_flow.verify_direct_candidate_flow = verify  # ty: ignore[invalid-assignment]
         keys = tuple(recorded)
-        processes = max(1, min(_MAX_PROCESSES, os.cpu_count() or 1))
+        processes = max(1, min(self._processes, os.cpu_count() or 1))
         with (
             tempfile.TemporaryDirectory(prefix="direct-flow-replay-") as base,
             ProcessPoolExecutor(

@@ -8,7 +8,12 @@ from types import ModuleType
 
 import pytest
 
-from tests.candidate_certificate import check_seals, repin_corridors
+from tests.candidate_certificate import (
+    check_seals,
+    repin_corridors,
+    runner_replay,
+    verify,
+)
 
 _ROOT = Path(__file__).parents[2]
 _CHECKER = "tests/candidate_certificate/direct_flow.py"
@@ -139,3 +144,26 @@ def test_certificate_text_io_names_its_encoding() -> None:
 
 # Position of `encoding` among each `Path` text method's positional parameters.
 _TEXT_IO_ENCODING_POSITION = {"read_text": 0, "write_text": 1}
+
+
+def test_self_test_workers_route_direct_flow_controls_through_the_pool(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--workers N` runs the actual aggregate runner over an N-process pool."""
+    started: list[int] = []
+
+    class _Replay:
+        def __init__(self, *, processes: int) -> None:
+            started.append(processes)
+
+        def run(self, *, repo_root: Path) -> dict[str, bool]:
+            assert repo_root == _ROOT
+            return {"all_rejected": True}
+
+    def _serial(*, repo_root: Path) -> None:
+        raise AssertionError(repo_root)
+
+    monkeypatch.setattr(runner_replay, "DirectFlowControlsReplay", _Replay)
+    monkeypatch.setattr(verify, "run_direct_flow_mutation_controls", _serial)
+    verify._self_tests(repo_root=_ROOT, workers=3)
+    assert started == [3]

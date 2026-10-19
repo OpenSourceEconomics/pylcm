@@ -1022,10 +1022,14 @@ def certificate_neighborhood_coverage(*, repo_root: Path) -> _Coverage:
     }
 
 
-def _self_tests(repo_root: Path) -> tuple[_SelfTests, bool]:
+def _self_tests(*, repo_root: Path, workers: int = 1) -> tuple[_SelfTests, bool]:
     source_controls = run_source_set_mutation_controls(repo_root=repo_root)
     mask_controls = run_mask_mutation_controls()
-    direct_flow_controls = run_direct_flow_mutation_controls(repo_root=repo_root)
+    direct_flow_controls = (
+        run_direct_flow_mutation_controls(repo_root=repo_root)
+        if workers == 1
+        else _pooled_direct_flow_controls(repo_root=repo_root, workers=workers)
+    )
     coverage = certificate_neighborhood_coverage(repo_root=repo_root)
     source_green = all(item["rejected"] for item in source_controls.values())
     mask_green = all(item["detected"] for item in mask_controls.values())
@@ -1076,6 +1080,23 @@ def _self_tests(repo_root: Path) -> tuple[_SelfTests, bool]:
     return payload, bool(payload["all_controls_sensitive"])
 
 
+def _pooled_direct_flow_controls(
+    *, repo_root: Path, workers: int
+) -> DirectMutationControls:
+    """Run the aggregate direct-flow runner, verifying its trees over a pool.
+
+    The runner and its verdict aggregation are the serial ones; only the
+    independent per-tree verifications are spread over `workers` processes.
+    """
+    try:
+        from tests.candidate_certificate import runner_replay  # noqa: PLC0415
+    except ModuleNotFoundError:  # Run as a script.
+        import runner_replay  # noqa: PLC0415
+
+    replay = runner_replay.DirectFlowControlsReplay(processes=workers)
+    return replay.run(repo_root=repo_root)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo-root", type=Path, required=True)
@@ -1083,6 +1104,12 @@ def main() -> int:
     parser.add_argument("--contract", type=Path)
     parser.add_argument("--policy", type=Path)
     parser.add_argument("--self-test", action="store_true")
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="processes verifying the self-test's direct-flow mutations",
+    )
     args = parser.parse_args()
 
     root = args.repo_root.resolve()
@@ -1095,7 +1122,7 @@ def main() -> int:
     errors = list(verification["errors"])
     self_tests: _SelfTests | None = None
     if args.self_test:
-        self_tests, controls_green = _self_tests(root)
+        self_tests, controls_green = _self_tests(repo_root=root, workers=args.workers)
         if not controls_green:
             errors.append("self-test: one or more mutation controls did not fire")
 

@@ -67,12 +67,22 @@ jobs:
             python-version: '3.14'
             leg: fp64-macos
             shard: 1
-            shards: 1
+            shards: 2
+          - os: macos-latest
+            python-version: '3.14'
+            leg: fp64-macos
+            shard: 2
+            shards: 2
           - os: windows-latest
             python-version: '3.14'
             leg: fp64-windows
             shard: 1
-            shards: 1
+            shards: 2
+          - os: windows-latest
+            python-version: '3.14'
+            leg: fp64-windows
+            shard: 2
+            shards: 2
     env:
       PYLCM_CI_RECEIPT: reports/ci-receipts
       PYLCM_CI_GENERAL_LEG: ${{ matrix.leg }}
@@ -442,8 +452,9 @@ jobs:
   # and share one set of verifications (`tests/candidate_certificate/runner_replay.py`).
   #
   # The standalone verifier and its `--self-test` run in
-  # `tests-source-certificate-standalone` beside this job: each is one full pass
-  # of the mutation runner, and the two together exceed one job's budget.
+  # `tests-source-certificate-standalone` beside this job: the self-test is one
+  # full pass of the mutation runner, which with this campaign exceeds one job's
+  # budget.
   tests-source-contract:
     name: Run the source-only certificate campaign (Linux, 3.14)
     runs-on: ubuntu-latest
@@ -540,6 +551,11 @@ jobs:
           name: coverage-source-contract
           path: reports/coverage-source-contract.xml
           if-no-files-found: error
+  # The plain verification takes seconds; the self-test is the aggregate
+  # direct-flow mutation runner, which took 52 minutes serially on run
+  # 39213321138. `--workers 4` keeps the serial runner and its verdict
+  # aggregation and spreads only the independent per-tree verifications over
+  # the runner's four cores (`tests/candidate_certificate/runner_replay.py`).
   tests-source-certificate-standalone:
     name: Run the standalone candidate certificate (Linux, 3.14)
     runs-on: ubuntu-latest
@@ -575,7 +591,7 @@ jobs:
           mkdir -p reports/candidate-certificate
           set +e
           pixi run --frozen -e tests-cpu python tests/candidate_certificate/verify.py \
-            --repo-root . --self-test \
+            --repo-root . --self-test --workers 4 \
             > reports/candidate-certificate/self-test.json \
             2> reports/candidate-certificate/self-test.stderr.log
           status=$?
