@@ -9,6 +9,7 @@ diagnostic level. Finite budgets, including empty ones, stay economic.
 """
 
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 from _lcm.egm.nbegm_query import NBEGMQuery
@@ -36,7 +37,7 @@ from lcm.typing import (
     ScalarInt,
     UserFunction,
 )
-from tests.conftest import EXACT_KERNEL_SKIP_REASON
+from tests.conftest import DECIMAL_PRECISION, EXACT_KERNEL_SKIP_REASON
 from tests.solution._nb_query_resource_oracle import (
     NONFINITE_KINDS,
     ResourceKind,
@@ -108,6 +109,14 @@ def child_negative_resources(
     return liquid + 1.25 - 64.0 * stock * (1.0 - stock)
 
 
+def child_nan_on_empty_resources(
+    *, liquid: ContinuousState, stock: ContinuousState
+) -> FloatND:
+    return child_negative_resources(liquid=liquid, stock=stock) + 0.0 * jnp.sqrt(
+        (stock - 0.5) ** 2 - 0.01
+    )
+
+
 _RESOURCES: dict[ResourceKind, UserFunction] = {
     ResourceKind.NAN: child_nan_resources,
     ResourceKind.POSITIVE_INFINITY: child_positive_infinity_resources,
@@ -115,6 +124,7 @@ _RESOURCES: dict[ResourceKind, UserFunction] = {
     ResourceKind.POSITIVE: child_positive_resources,
     ResourceKind.ZERO_AT_FLOOR: child_zero_resources,
     ResourceKind.NEGATIVE_FINITE: child_negative_resources,
+    ResourceKind.NAN_ON_EMPTY: child_nan_on_empty_resources,
 }
 
 
@@ -264,3 +274,31 @@ def test_finite_child_budget_solves(
     """Finite positive, empty and negative budgets keep their economic meaning."""
     model = _qualified_model(kind=kind)
     model.solve(params=PARAMS, log_level="off", runtime_checks=runtime_checks)
+
+
+def test_empty_budget_outer_candidate_loses_at_every_parent_state() -> None:
+    """Dropping the outer node that reaches stock 1/2 leaves every parent value.
+
+    The finite twin of `NAN_ON_EMPTY` has an empty child budget at stock 1/2,
+    so that outer candidate's continuation is economic minus infinity and it
+    never wins.
+    """
+    with_candidate = _qualified_model(kind=ResourceKind.NEGATIVE_FINITE).solve(
+        params=PARAMS, log_level="off"
+    )
+    without_candidate = make_model(
+        resources=_RESOURCES[ResourceKind.NEGATIVE_FINITE], outer_nodes=(0.0, 1.0)
+    ).solve(params=PARAMS, log_level="off")
+    np.testing.assert_array_almost_equal(
+        with_candidate.values[0]["parent"],
+        without_candidate.values[0]["parent"],
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+@pytest.mark.parametrize("runtime_checks", [False, True])
+def test_losing_outer_candidate_with_nan_budget_raises(*, runtime_checks: bool) -> None:
+    """A NaN budget on the always-losing outer candidate still fails at the host."""
+    model = _qualified_model(kind=ResourceKind.NAN_ON_EMPTY)
+    with pytest.raises(InvalidValueFunctionError, match="query_coverage_missing"):
+        model.solve(params=PARAMS, log_level="off", runtime_checks=runtime_checks)
