@@ -147,7 +147,77 @@ def test_general_shard_files_partition_the_general_universe_exactly():
             assert files, f"empty shard {index} of {leg}"
             assert union.isdisjoint(files), f"file in two shards of {leg}"
             union |= files
-        assert union == universe, f"{leg} shards do not cover the general universe"
+        assert union == set(ci_workloads.general_leg_universe(leg=leg)), (
+            f"{leg} shards do not cover the leg's general universe"
+        )
+
+
+def test_linux_only_files_are_general_universe_files():
+    """A Linux-only entry narrows the general universe; it never adds to it."""
+    linux_only = set(ci_workloads.linux_only_files())
+    assert linux_only <= set(ci_workloads.general_shard_universe())
+
+
+def test_linux_only_files_run_on_every_linux_general_leg():
+    """Restricting a file to Linux keeps it running, on each Linux leg."""
+    linux_only = set(ci_workloads.linux_only_files())
+    for leg, cfg in ci_workloads.shard_layout()["general"].items():
+        if not leg.endswith("-linux"):
+            continue
+        selected = {
+            file_
+            for index in range(1, cfg["shards"] + 1)
+            for file_ in ci_workloads.files_for(
+                invocation_id=f"general-shard-{index}-{leg}"
+            )
+        }
+        assert linux_only <= selected, f"{leg} drops {sorted(linux_only - selected)}"
+
+
+def test_no_macos_or_windows_general_shard_selects_a_linux_only_file():
+    """No macOS or Windows general shard runs a file restricted to Linux.
+
+    Lanes that select explicit node ids -- the per-OS timing witnesses -- choose
+    their tests by hand for what they measure on that OS and are not narrowed.
+    """
+    linux_only = set(ci_workloads.linux_only_files())
+    offenders = {
+        inv["id"]: sorted(linux_only & set(inv["files"]))
+        for inv in ci_workloads.invocations()
+        if inv["id"].startswith("general-shard-")
+        and inv["environment"]["runner_os"] != "Linux"
+        and linux_only & set(inv["files"])
+    }
+    assert not offenders, offenders
+
+
+@pytest.mark.parametrize(
+    ("leg", "expected"),
+    [
+        ("fp64-linux", ("tests/test_a.py", "tests/test_b.py")),
+        ("fp64-windows", ("tests/test_a.py",)),
+        ("fp64-macos", ("tests/test_a.py",)),
+    ],
+)
+def test_general_leg_universe_drops_linux_only_files_off_linux(
+    *, leg: str, expected: tuple[str, ...], tmp_path: Path
+):
+    manifest = tmp_path / "ci-workloads.json"
+    manifest.write_text(
+        '{"general_shard_universe": ["tests/test_a.py", "tests/test_b.py"],'
+        ' "linux_only_files": ["tests/test_b.py"]}',
+        encoding="utf-8",
+    )
+    assert ci_workloads.general_leg_universe(leg=leg, path=manifest) == expected
+
+
+def test_general_leg_universe_refuses_a_leg_without_an_os(*, tmp_path: Path):
+    manifest = tmp_path / "ci-workloads.json"
+    manifest.write_text(
+        '{"general_shard_universe": [], "linux_only_files": []}', encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match="fp64-solaris"):
+        ci_workloads.general_leg_universe(leg="fp64-solaris", path=manifest)
 
 
 def test_the_shard_assignment_is_reproduced_by_the_sharder():
@@ -168,19 +238,18 @@ def test_the_shard_assignment_is_reproduced_by_the_sharder():
             )
 
 
-def test_the_two_source_only_modules_run_only_on_the_source_contract_lane():
-    """Batch 4: the consolidated modules leave every numerical lane.
-
-    Their portability control stays behind on every general lane, so removing
-    them costs no platform signal -- that is asserted here rather than left as
-    a claim in a comment.
-    """
+def test_source_only_modules_run_only_on_the_source_contract_lane() -> None:
+    """Source campaigns run once while portability remains on every general lane."""
     source_only = set(
         ci_workloads.files_for(invocation_id="source-contract-fp64-linux")
     )
     assert source_only == {
         "tests/test_simulation_candidate_program_certificate.py",
         "tests/test_uniform_process_grid_certificate.py",
+        "tests/test_outer_helper_certificate.py",
+        "tests/test_final_nested_aggregate_certificate.py",
+        "tests/test_additional_helper_aggregate_certificate.py",
+        "tests/test_child_native_aggregate_certificate.py",
     }
     universe = set(ci_workloads.general_shard_universe())
     assert not (source_only & universe), (
@@ -199,30 +268,29 @@ def test_the_two_source_only_modules_run_only_on_the_source_contract_lane():
 def test_leg_weights_are_recorded_per_leg_not_as_a_cross_leg_sum():
     """A per-job budget must never be computed from the cross-leg CSV totals.
 
-    `file_weights` sums the four general legs; the split-workflow parity module
-    costs 13 minutes of Windows and 9 of Linux fp64, and its cross-leg entry is
-    those and the other two added together. Sharding against that number would
+    `file_weights` sums the four general legs, so a file's cross-leg entry is
+    its per-leg costs added together. Sharding against that number would
     over-provision the cheap platform and under-provision the expensive one, so
     the layout reads `leg_weights` instead. This test pins the distinction.
 
-    The exemplar has to be a file the general legs still run: a module that has
-    moved to a single-leg lane -- as the source-only certificates did -- keeps
-    a cross-leg entry but stops accruing per-leg seconds, so it would report
-    this contract as broken when only its lane changed.
+    The exemplar has to be a file all four general legs still run: a module
+    that has moved to a single-leg lane, or into `linux_only_files`, keeps a
+    cross-leg entry but stops accruing seconds on the legs that no longer run
+    it, so it would report this contract as broken when only its lane changed.
     """
     manifest = ci_workloads.load_manifest()
     legs = set(ci_workloads.leg_names())
     assert {"fp64-linux", "fp64-macos", "fp64-windows", "fp32-linux"} <= legs
-    parity = "tests/simulation/test_nnbegm_split_workflow_parity.py"
-    assert parity in set(ci_workloads.general_shard_universe())
+    exemplar = "tests/test_persistence.py"
+    assert exemplar in set(ci_workloads.general_shard_universe())
     legs_checked = ("fp64-linux", "fp64-macos", "fp64-windows", "fp32-linux")
     per_leg: dict[str, float] = {}
     for leg in legs_checked:
-        seconds = ci_workloads.leg_weights(leg=leg).get(parity)
-        assert seconds is not None, f"{parity} has no recorded weight on {leg}"
+        seconds = ci_workloads.leg_weights(leg=leg).get(exemplar)
+        assert seconds is not None, f"{exemplar} has no recorded weight on {leg}"
         per_leg[leg] = seconds
     assert len(set(per_leg.values())) > 1, "per-leg weights collapsed to one value"
-    cross_leg = float(manifest["file_weights"][parity]["seconds"])
+    cross_leg = float(manifest["file_weights"][exemplar]["seconds"])
     assert cross_leg > max(per_leg.values())
 
 
@@ -296,3 +364,205 @@ def test_every_general_shard_universe_file_exists_and_is_collectable():
     for name in ci_workloads.general_shard_universe():
         assert name.startswith("tests/"), name
         assert (_REPO_ROOT / name).is_file(), name
+
+
+def test_every_os_persistence_test_names_a_test_function_in_its_file():
+    """Each entry is `<file>::<test function>` and that function exists."""
+    import ast  # noqa: PLC0415
+
+    entries = ci_workloads.os_persistence_tests()
+    assert entries
+    missing = []
+    for entry in entries:
+        file_, name = entry.split("::")
+        tree = ast.parse((_REPO_ROOT / file_).read_text(encoding="utf-8"))
+        names = {
+            node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
+        }
+        if name not in names:
+            missing.append(entry)
+    assert not missing, missing
+
+
+@pytest.mark.parametrize("runner_os", ["macOS", "Windows"])
+def test_every_os_persistence_test_runs_on_each_platform_leg(*, runner_os: str):
+    """A persistence test is selected by an `os_persistence` lane on that OS."""
+    files = {
+        file_
+        for inv in ci_workloads.invocations()
+        if inv["environment"]["runner_os"] == runner_os
+        and "os_persistence" in inv["selection"]
+        for file_ in inv["files"]
+    }
+    entries = ci_workloads.os_persistence_tests()
+    assert {entry.split("::")[0] for entry in entries} <= files
+
+
+def test_conftest_marks_exactly_the_listed_persistence_tests():
+    """Collection carries `os_persistence` on the listed tests and on no other."""
+    import subprocess  # noqa: PLC0415
+    import sys  # noqa: PLC0415
+
+    target = "tests/solution/test_ephemeral_identity.py"
+    listed = {
+        entry
+        for entry in ci_workloads.os_persistence_tests()
+        if entry.startswith(target)
+    }
+    assert listed
+    completed = subprocess.run(  # noqa: S603 - fixed pytest argv on a repository file
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            target,
+            "--collect-only",
+            "-q",
+            "-p",
+            "no:cacheprovider",
+            "-m",
+            "os_persistence",
+        ],
+        cwd=_REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    collected = {
+        line.split("[")[0]
+        for line in completed.stdout.splitlines()
+        if line.startswith(target + "::")
+    }
+    assert collected == listed, completed.stdout + completed.stderr
+
+
+def _write_junit(*, path: Path, cases: list[tuple[str, str, float]]) -> Path:
+    body = "".join(
+        f'<testcase classname="{classname}" name="{name}" time="{seconds}"/>'
+        for classname, name, seconds in cases
+    )
+    path.write_text(
+        '<?xml version="1.0"?><testsuites>'
+        f'<testsuite name="pytest" tests="{len(cases)}">{body}</testsuite>'
+        "</testsuites>",
+        encoding="utf-8",
+    )
+    return path
+
+
+@pytest.fixture
+def junit_tree(tmp_path: Path) -> tuple[Path, tuple[Path, ...]]:
+    """A repository with two test files and one JUnit report per shard."""
+    (tmp_path / "tests/sub").mkdir(parents=True)
+    (tmp_path / "tests/test_a.py").write_text("", encoding="utf-8")
+    (tmp_path / "tests/sub/test_b.py").write_text("", encoding="utf-8")
+    first = _write_junit(
+        path=tmp_path / "junit-1.xml",
+        cases=[("tests.test_a", "test_x", 1.5), ("tests.test_a", "test_y[1]", 0.25)],
+    )
+    second = _write_junit(
+        path=tmp_path / "junit-2.xml",
+        cases=[("tests.sub.test_b.TestCase", "test_z", 2.0)],
+    )
+    return tmp_path, (first, second)
+
+
+@pytest.mark.parametrize(
+    ("file_", "seconds", "count"),
+    [("tests/test_a.py", 1.75, 2), ("tests/sub/test_b.py", 2.0, 1)],
+)
+def test_leg_weights_from_junit_sums_testcase_seconds_per_file(
+    *, junit_tree: tuple[Path, tuple[Path, ...]], file_: str, seconds: float, count: int
+):
+    from tests.ci.generate_ci_workloads import leg_weights_from_junit  # noqa: PLC0415
+
+    root, reports = junit_tree
+    measured = leg_weights_from_junit(repo_root=root, junit_paths=reports)
+    assert (measured.seconds[file_], measured.counts[file_]) == (seconds, count)
+
+
+def test_leg_weights_from_junit_refuses_a_testcase_with_no_file(
+    *, junit_tree: tuple[Path, tuple[Path, ...]]
+):
+    from tests.ci.generate_ci_workloads import leg_weights_from_junit  # noqa: PLC0415
+
+    root, reports = junit_tree
+    stray = _write_junit(
+        path=root / "junit-3.xml", cases=[("tests.test_gone", "test_q", 1.0)]
+    )
+    with pytest.raises(ValueError, match=r"tests\.test_gone"):
+        leg_weights_from_junit(repo_root=root, junit_paths=(*reports, stray))
+
+
+def test_refresh_leg_replaces_only_that_legs_weights_and_provenance(
+    *, junit_tree: tuple[Path, tuple[Path, ...]]
+):
+    from tests.ci.generate_ci_workloads import (  # noqa: PLC0415
+        leg_weights_from_junit,
+        refresh_leg,
+    )
+
+    root, reports = junit_tree
+    manifest: ci_workloads.WorkloadManifest = {  # ty: ignore[missing-typed-dict-key]
+        "frozen_head": "abc",
+        "file_weights": {"tests/test_a.py": {"seconds": 9.0, "count": 1}},
+        "leg_weights": {
+            "fp64-linux": {
+                "junit_source": "old",
+                "measurement": "junit testcase seconds",
+                "seconds": {"tests/test_old.py": 5.0},
+                "counts": {"tests/test_old.py": 1},
+            },
+            "fp64-windows": {
+                "junit_source": "win",
+                "measurement": "junit testcase seconds",
+                "seconds": {"tests/test_a.py": 3.0},
+                "counts": {"tests/test_a.py": 2},
+            },
+        },
+    }
+    updated = refresh_leg(
+        manifest=manifest,
+        leg="fp64-linux",
+        measured=leg_weights_from_junit(repo_root=root, junit_paths=reports),
+        junit_source="run 1 attempt 1",
+    )
+    assert (
+        updated["leg_weights"]["fp64-linux"],
+        updated["leg_weights"]["fp64-windows"],
+        updated["file_weights"],
+        updated["frozen_head"],
+    ) == (
+        {
+            "junit_source": "run 1 attempt 1",
+            "measurement": "junit testcase seconds",
+            "seconds": {"tests/sub/test_b.py": 2.0, "tests/test_a.py": 1.75},
+            "counts": {"tests/sub/test_b.py": 1, "tests/test_a.py": 2},
+        },
+        manifest["leg_weights"]["fp64-windows"],
+        manifest["file_weights"],
+        "abc",
+    )
+
+
+@pytest.mark.parametrize("precision", [64, 32])
+def test_heavy_certificate_modules_run_on_linux_at_each_general_precision(
+    *, precision: int
+):
+    """Modules moved out of the general universe keep a Linux lane per precision."""
+    heavy = {
+        file_
+        for inv in ci_workloads.invocations_for_job(job="tests-certificate-heavy")
+        for file_ in inv["files"]
+    }
+    selected = {
+        file_
+        for inv in ci_workloads.invocations()
+        if inv["environment"]["runner_os"] == "Linux"
+        and inv["environment"]["precision"] == precision
+        and inv["job"] == "tests-certificate-heavy"
+        for file_ in inv["files"]
+    }
+    assert heavy
+    assert heavy <= selected
+    assert heavy.isdisjoint(ci_workloads.general_shard_universe())

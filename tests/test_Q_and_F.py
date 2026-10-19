@@ -289,7 +289,7 @@ def test_get_combined_constraint():
         functions=MappingProxyType({"utility": lambda: 0, "h": h}),  # ty: ignore[invalid-argument-type]
         constraints=MappingProxyType({"f": f, "g": g}),  # ty: ignore[invalid-argument-type]
     )
-    feasibility: BoolND = combined_constraint()
+    feasibility: BoolND = cast("BoolND", combined_constraint())
     assert feasibility.item() is False
 
 

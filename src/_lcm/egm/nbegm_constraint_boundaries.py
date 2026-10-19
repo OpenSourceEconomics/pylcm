@@ -1,7 +1,7 @@
 """Compile declarative liquid-state constraints into NBEGM boundary surfaces."""
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from dags.tree import qname_from_tree_path
@@ -19,7 +19,7 @@ from _lcm.constraints.dispositions import (
 from _lcm.constraints.ir import Compare, Const, Ref
 from _lcm.constraints.routes import BoundaryCompiler, BoundConstraint
 from _lcm.typing import FunctionName, QualifiedName
-from lcm.typing import BoolND, FloatND, IntND, StateName
+from lcm.typing import BoolND, FloatND, IntND, ReferenceName, StateName
 
 
 @dataclass(frozen=True)
@@ -51,7 +51,10 @@ class NBEGMFeasibilityBoundaryProgram:
 
 
 def build_nbegm_feasibility_boundary_compiler(
-    *, liquid_state: StateName
+    *,
+    liquid_state: StateName,
+    evaluated_predicate_names: tuple[FunctionName, ...] = (),
+    evaluated_predicate_inputs: frozenset[ReferenceName] = frozenset(),
 ) -> BoundaryCompiler:
     """Build the compiler for constraints on one resolved NBEGM liquid state.
 
@@ -63,7 +66,11 @@ def build_nbegm_feasibility_boundary_compiler(
         unsupported declaration with an attributed diagnostic.
 
     """
-    return _NBEGMFeasibilityBoundaryCompiler(liquid_state=liquid_state)
+    return _NBEGMFeasibilityBoundaryCompiler(
+        liquid_state=liquid_state,
+        evaluated_predicate_names=evaluated_predicate_names,
+        evaluated_predicate_inputs=evaluated_predicate_inputs,
+    )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -73,12 +80,26 @@ class _NBEGMFeasibilityBoundaryCompiler:
     liquid_state: StateName
     """Current liquid state whose axis the solver partitions."""
 
+    evaluated_predicate_names: tuple[FunctionName, ...] = field(
+        default=(), metadata={"fingerprint_omit_if_default": True}
+    )
+    """Only canonical declarations qualified for actual state-node evaluation."""
+    evaluated_predicate_inputs: frozenset[ReferenceName] = field(
+        default=frozenset(), metadata={"fingerprint_omit_if_default": True}
+    )
+    """Actual states, discrete actions, clock and qualified parameter leaves."""
+
     def __call__(
         self,
         *,
         bound: BoundConstraint,
         context: ConstraintContext,
-    ) -> CompileBoundary | Reject:
+    ) -> CompileBoundary | Reject | None:
+        if (
+            bound.constraint.name in self.evaluated_predicate_names
+            and bound.transitive_inputs <= self.evaluated_predicate_inputs
+        ):
+            return None
         surfaces = bound.constraint.boundary_surfaces
         if surfaces is None:
             detail = (

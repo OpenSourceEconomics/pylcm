@@ -46,6 +46,7 @@ from _lcm.execution.execution_plan import (
     visible_device_pool_limits,
 )
 from _lcm.execution.footprint import layout_footprint
+from _lcm.execution.output_layout import OutputRoleLeaf
 from _lcm.grids import (
     DiscreteGrid,
     Grid,
@@ -112,6 +113,11 @@ from _lcm.regime_building.broadcast import (
     prune_broadcast_variables,
     split_transition_only_folds,
     validate_model_slots,
+)
+from _lcm.regime_building.composite_states import (
+    CompositeLowering,
+    lower_composite_initial_conditions,
+    lower_composite_states,
 )
 from _lcm.regime_building.finalize import (
     FinalizedUserRegime,
@@ -218,6 +224,7 @@ from _lcm.solution.block_major import (
     active_component_selection,
 )
 from _lcm.solution.contract import BackwardInductionResult
+from _lcm.solution.feasibility import consume_runtime_bound_outputs
 from _lcm.solution.fingerprint import (
     SolutionParamProjection,
     fingerprint_model,
@@ -309,6 +316,7 @@ from lcm._solver_api.authority import _ArrayCopier
 from lcm._solver_api.contract import ArtifactContractValue
 from lcm.ages import AgeGrid
 from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
+from lcm.composite_state import CompositeState
 from lcm.decoupled import Decoupled
 from lcm.exceptions import (
     ExecutionPlanningError,
@@ -462,6 +470,7 @@ class _PickledModel(TypedDict):
     _declared_transitions: MappingProxyType[RegimeName, tuple[Transition, ...]]
     # An archive may hold the splits as a dict; restoration freezes them.
     _fixed_component_splits: Mapping[StateName, FixedComponentSplit]
+    _composite_states: NotRequired[Mapping[StateName, CompositeLowering]]
     _solution_model_instance_id: NotRequired[str]
     _declared_edge_vocabulary: MappingProxyType[RegimeName, EdgeVocabulary]
     _cells_without_edges: MappingProxyType[tuple[RegimeName, int], DroppedCells]
@@ -797,6 +806,7 @@ class Model:
         execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
         initial_nodes: UserInitialNodes,
         edges: DeclaredModelEdges,
+        composite_states: Mapping[StateName, CompositeState] = MappingProxyType({}),
     ) -> None:
         """Initialize the Model.
 
@@ -862,8 +872,44 @@ class Model:
                 device axis, the per-device workspace budget, and fixed planner
                 axis widths. Resolved once here and read by both `solve()` and
                 `simulate()`; none of it enters the durable fingerprint.
+            composite_states: Mapping of generated state names to
+                `CompositeState` declarations. Each replaces the axes of its member
+                states by one axis over the member tuples reachable from its start
+                codes; user functions keep reading the members, and initial
+                conditions name the members. At most one composite state.
 
         """
+        # A composite state replaces its members by one generated state before
+        # anything reads the regimes; a dense build supplies the member laws.
+        regimes, self._composite_states, composite_consumed_params = (
+            lower_composite_states(
+                composite_states=composite_states,
+                regimes=regimes,
+                fixed_params=fixed_params,
+                derived_categoricals=derived_categoricals,
+                build_dense_model=lambda: Model(
+                    description=description,
+                    ages=ages,
+                    n_periods=n_periods,
+                    regimes=regimes,
+                    regime_id_class=regime_id_class,
+                    enable_jit=False,
+                    durable_identity=False,
+                    fixed_params=fixed_params,
+                    derived_categoricals=derived_categoricals,
+                    functions=functions,
+                    constraints=constraints,
+                    states=states,
+                    state_transitions=state_transitions,
+                    actions=actions,
+                    koopmans_aggregator=koopmans_aggregator,
+                    certainty_equivalent=certainty_equivalent,
+                    execution_config=execution_config,
+                    initial_nodes=initial_nodes,
+                    edges=edges,
+                ),
+            )
+        )
         self.description = description
         self.durable_identity = durable_identity
         self._identity_process_id = os.getpid()
@@ -1151,7 +1197,9 @@ class Model:
             enable_jit=enable_jit,
             fixed_params=residual_fixed_params,
             params_already_consumed=(
-                params_consumed_by_binder | prepared_graph.consumed_param_keys
+                params_consumed_by_binder
+                | prepared_graph.consumed_param_keys
+                | composite_consumed_params
             ),
             prepared_structure=prepared_structure,
             phase_transitions=self.declared_transitions,
@@ -1371,6 +1419,7 @@ class Model:
             _edges=self._edges,
             _declared_transitions=self._declared_transitions,
             _fixed_component_splits=self._fixed_component_splits,
+            _composite_states=self._composite_states,
             _declared_edge_vocabulary=self._declared_edge_vocabulary,
             _cells_without_edges=self._cells_without_edges,
             _transition_only_shock_names=self._transition_only_shock_names,
@@ -1414,6 +1463,9 @@ class Model:
         )
         self._fixed_component_splits = MappingProxyType(
             dict(state["_fixed_component_splits"])
+        )
+        self._composite_states = MappingProxyType(
+            dict(state.get("_composite_states", {}))
         )
         if "durable_identity" not in state:
             self.durable_identity = True
@@ -3288,6 +3340,12 @@ class Model:
                 policy_read = descriptor.route
                 if not isinstance(policy_read, EGMPolicyRead | NNBEGMPolicyRead):
                     continue
+                if (
+                    not descriptor.applicable
+                    and not descriptor.required
+                    and ref not in authority.artifacts
+                ):
+                    continue
                 supplied = policies.get(period, {}).get(regime_name)
                 omission = solution.omissions.get(ref)
                 if supplied is None:
@@ -3635,6 +3693,11 @@ class Model:
                     initial_conditions=initial_conditions,
                     splits=self._fixed_component_splits,
                     user_regimes=self.user_regimes,
+                    regime_names_to_ids=self.regime_names_to_ids,
+                )
+                initial_conditions = lower_composite_initial_conditions(
+                    initial_conditions=initial_conditions,
+                    lowerings=self._composite_states,
                     regime_names_to_ids=self.regime_names_to_ids,
                 )
                 initial_conditions = self._lower_joint_initial_conditions(
@@ -4390,21 +4453,35 @@ class Model:
             )
         outputs = cast(
             "tuple[jax.Array, ...]",
-            executor.dispatch(
-                program=program,
-                period=period,
-                n_subjects=n_rows,
-                arguments=decision_arguments(
-                    states=space.states,
-                    discrete_actions={n: grids[n] for n in space.discrete_actions},
-                    continuous_actions={n: grids[n] for n in space.continuous_actions},
-                    taste_keys={},
-                    next_values=next_V,
-                    references=references,
-                    params=regime_kernel_params(flat_params, regime_name=regime_name),
-                    period=jnp.int32(period),
-                    age=self._time.values[period],  # noqa: PD011
+            consume_runtime_bound_outputs(
+                outputs=cast(
+                    "tuple[jax.Array, ...]",
+                    executor.dispatch(
+                        program=program,
+                        period=period,
+                        n_subjects=n_rows,
+                        arguments=decision_arguments(
+                            states=space.states,
+                            discrete_actions={
+                                n: grids[n] for n in space.discrete_actions
+                            },
+                            continuous_actions={
+                                n: grids[n] for n in space.continuous_actions
+                            },
+                            taste_keys={},
+                            next_values=next_V,
+                            references=references,
+                            params=regime_kernel_params(
+                                flat_params, regime_name=regime_name
+                            ),
+                            period=jnp.int32(period),
+                            age=self._time.values[period],  # noqa: PD011
+                        ),
+                    ),
                 ),
+                bound_specs=regime.simulation.post_decision_bounds,
+                regime_name=regime_name,
+                period=period,
             ),
         )
         if not space.states:
@@ -4412,8 +4489,12 @@ class Model:
             # once, for the one row an empty query stands for; every output gets
             # that row here.
             outputs = tuple(output[None] for output in outputs)
-        # Every lookup program publishes a flat tuple, one role per output.
-        roles = cast("tuple[str, ...]", program.output_roles)
+        # Both lookup programs publish a flat tuple, one role per output.
+        roles = tuple(
+            role
+            for role in cast("tuple[str | OutputRoleLeaf, ...]", program.output_roles)
+            if isinstance(role, str)
+        )
         by_role = dict(zip(roles, outputs, strict=True))
         # A taste-shock regime draws its discrete action, so the lookup decodes
         # the continuous action attaining each combination's `Qc` instead.
@@ -4667,9 +4748,6 @@ class Model:
                 some subject admits no jointly feasible action combination, or
                 if subjects start in a collective regime without declaring
                 their role where routing needs one.
-            UnsupportedOperationError: If a constraint depends on an
-                age-specialized function while subjects start away from the
-                regime's representative age.
             ModelSealError: If a binding captured at `Model(...)` has moved.
 
         """
@@ -4715,9 +4793,6 @@ class Model:
         Raises:
             InvalidInitialConditionsError: If the structure is malformed or a
                 collective start lacks its role declaration.
-            UnsupportedOperationError: If a constraint depends on an
-                age-specialized function while subjects start away from the
-                regime's representative age.
             ModelSealError: If a binding captured at `Model(...)` has moved.
 
         """
@@ -4751,6 +4826,11 @@ class Model:
             initial_conditions=initial_conditions,
             splits=self._fixed_component_splits,
             user_regimes=self.user_regimes,
+            regime_names_to_ids=self.regime_names_to_ids,
+        )
+        initial_conditions = lower_composite_initial_conditions(
+            initial_conditions=initial_conditions,
+            lowerings=self._composite_states,
             regime_names_to_ids=self.regime_names_to_ids,
         )
         initial_conditions = self._lower_joint_initial_conditions(

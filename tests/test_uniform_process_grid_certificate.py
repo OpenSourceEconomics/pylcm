@@ -51,9 +51,9 @@ def test_uniform_controls_preserve_both_historical_mutation_populations() -> Non
     assert _name_digest(registered) == (
         "f58754206b785f05a7dff36c690946024effc931c888c72383fc0bd98be060cd"
     )
-    assert len(supplemental) == 54
+    assert len(supplemental) == 96
     assert _name_digest(supplemental) == (
-        "1d95a163810d9ffecb7bc2f2324065c0a3d6168d9dd01002cd00ff30c5802da5"
+        "bfb20467575ab892db7be74b859bac0288c8840f7a1aeb36eb13dee129ed3490"
     )
     assert len(uniform) == 37
     assert _name_digest(uniform) == (
@@ -63,8 +63,23 @@ def test_uniform_controls_preserve_both_historical_mutation_populations() -> Non
     assert set(direct_flow._UNIFORM_PROCESS_SOURCES) <= {
         spec["path"] for spec in uniform.values()
     }
+    nested = {
+        name: spec
+        for generator in (
+            direct_flow.s03_scalar_mutation_specs,
+            direct_flow.reviewed_prefix_mutation_specs,
+            direct_flow.decoupled_bound_mutation_specs,
+            direct_flow.associated_saving_mutation_specs,
+            direct_flow.retained_prefix_mutation_specs,
+            direct_flow.outer_helper_mutation_specs,
+            direct_flow.final_nested_mutation_specs,
+            direct_flow.child_native_mutation_specs,
+            direct_flow.additional_helper_mutation_specs,
+        )
+        for name, spec in generator(repo_root=root).items()
+    }
     assert {
-        spec["path"] for spec in (registered | supplemental | uniform).values()
+        spec["path"] for spec in (registered | supplemental | uniform | nested).values()
     } == set(direct_flow._CERTIFIED_CORRIDOR_SOURCES) - set(
         direct_flow._ACTION_GRID_SOURCES
     )

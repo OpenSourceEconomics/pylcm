@@ -6,6 +6,7 @@ from types import MappingProxyType
 from typing import cast
 
 from _lcm.egm.carry import EGMCarry
+from _lcm.egm.query_data import EGMQueryData
 from _lcm.execution.core_program import CoreArgumentBuilder, CoreBuildContext, ValueRead
 from _lcm.typing import PytreeValue, RegimeName, ShapeDtypePytree
 from lcm.typing import FloatND, ReferenceName
@@ -61,14 +62,17 @@ class MarginalLeafCore:
                 arguments["next_regime_to_continuation"],
             )
         )
-        residual = cast("Mapping[str, FloatND | None]", carries[self.target])
+        residual = cast(
+            "Mapping[str, FloatND | EGMQueryData | None]", carries[self.target]
+        )
         carries[self.target] = EGMCarry(
             endog_grid=cast("FloatND", residual["endog_grid"]),
             value=cast("FloatND", residual["value"]),
             marginal_utility=marginal,
             taste_shock_scale=cast("FloatND", residual["taste_shock_scale"]),
-            breakpoints=residual["breakpoints"],
-            policy=residual["policy"],
+            breakpoints=cast("FloatND | None", residual["breakpoints"]),
+            policy=cast("FloatND | None", residual["policy"]),
+            query_data=cast("EGMQueryData | None", residual["query_data"]),
         )
         arguments["next_regime_to_continuation"] = MappingProxyType(carries)
         return self.core(**arguments)

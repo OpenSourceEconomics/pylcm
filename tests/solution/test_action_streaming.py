@@ -1,6 +1,6 @@
 import itertools
 from collections.abc import Callable, Mapping, Sequence
-from typing import Protocol, TypeGuard
+from typing import Protocol, TypeGuard, cast
 
 import jax
 import jax.numpy as jnp
@@ -9,6 +9,7 @@ import pytest
 from jax.extend.core import ClosedJaxpr, JaxprEqn
 from numpy.testing import assert_array_equal
 
+from _lcm.solution.action_reduction import HardMaxResult
 from _lcm.solution.action_streaming import (
     build_streaming_collective_max_Q_over_a,
     build_streaming_ev1_max_Q_over_a,
@@ -79,6 +80,7 @@ def test_streaming_one_action_matches_direct_oracle_for_arbitrary_block_widths(
     result = streamed(
         choice=jnp.asarray(choice), state=jnp.float32(3), offset=jnp.float32(0.25)
     )
+    result = cast("HardMaxResult", result)
 
     assert_array_equal(result.best_value, expected[0])
     assert_array_equal(result.best_global_action_id, expected[1])
@@ -111,6 +113,7 @@ def test_streaming_multiple_actions_uses_canonical_row_major_global_ids(
     result = streamed(
         hours=jnp.asarray(hours), saving=jnp.asarray(saving), target=jnp.float32(41)
     )
+    result = cast("HardMaxResult", result)
 
     assert expected[1] == 6
     assert_array_equal(result.best_value, expected[0])
@@ -134,6 +137,7 @@ def test_streaming_ties_use_smallest_global_id_across_blocks_and_partial_final_b
     )
 
     result = streamed(first=jnp.array([0, 1]), second=jnp.array([10, 20, 30]))
+    result = cast("HardMaxResult", result)
 
     # C-order identities: (0, 30) -> 2 and (1, 10) -> 3.
     assert_array_equal(result.best_value, 9.0)
@@ -155,6 +159,7 @@ def test_streaming_distinguishes_feasible_negative_infinity_from_all_infeasible(
     choices = jnp.array([0, 1])
 
     result = jax.vmap(lambda row: streamed(choice=choices, row=row))(jnp.array([0, 1]))
+    result = cast("HardMaxResult", result)
 
     assert_array_equal(result.best_value, jnp.array([-jnp.inf, -jnp.inf]))
     assert_array_equal(result.best_global_action_id, jnp.array([0, -1]))
@@ -468,10 +473,13 @@ def test_streamed_program_takes_no_argument_its_blocks_never_read() -> None:
 
     def reduce_actions(
         *, choice: jax.Array, shift: jax.Array, ignored: jax.Array
-    ) -> tuple[jax.Array, ...]:
-        return build_streaming_max_Q_over_a(
-            Q_and_F=_partly_reading_Q_and_F, action_names=("choice",), block_width=3
-        )(choice=choice, shift=shift, ignored=ignored)
+    ) -> HardMaxResult:
+        return cast(
+            "HardMaxResult",
+            build_streaming_max_Q_over_a(
+                Q_and_F=_partly_reading_Q_and_F, action_names=("choice",), block_width=3
+            )(choice=choice, shift=shift, ignored=ignored),
+        )
 
     compiled = (
         jax.jit(reduce_actions)

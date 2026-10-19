@@ -41,10 +41,12 @@ import argparse
 import ast
 import importlib.util
 import sys
+import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
+from typing import cast
 
 type SourcePath = str
 
@@ -295,13 +297,28 @@ def _parser() -> argparse.ArgumentParser:
 
 def _load_direct_flow(*, root: Path) -> ModuleType:
     """Load the verifier from the tree under repair, not from this script's."""
-    path = root / DIRECT_FLOW_PATH
-    spec = importlib.util.spec_from_file_location("_certificate_repin_flow", path)
+    path = (root / DIRECT_FLOW_PATH).resolve()
+    name = "_certificate_repin_flow_" + uuid.uuid4().hex
+    spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
         raise ImportError(f"cannot load {path}")
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    missing = object()
+    previous = sys.modules.get(name, missing)
+    sys.modules[name] = module
+    completed = False
+    try:
+        spec.loader.exec_module(module)
+        if Path(cast("str", module.__file__)).resolve() != path:
+            raise ImportError(f"loaded verifier origin differs from {path}")
+        completed = True
+        return module
+    finally:
+        if not completed:
+            if previous is missing:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = cast("ModuleType", previous)
 
 
 def _source_tree(
@@ -317,7 +334,34 @@ def _recompute(*, pin: CorridorPin, tree: ast.Module, module: ModuleType) -> str
     """Recompute one pin with the certificate's own hashing helpers."""
     if pin.kind == "module surface":
         return str(module._transport_module_surface(tree))
-    if "." in pin.name:
+    if pin.source == module.DYNAMIC_BOUND_SOURCE and pin.name == "get_floor_source":
+        node = module._floor_source_implementation(tree=tree)
+    elif (
+        pin.source == module.ASSOCIATED_SAVING_SOURCE
+        and pin.name in module._ASSOCIATED_SAVING_OVERLOAD_COUNTS
+    ):
+        node = module._associated_saving_implementation(tree=tree, name=pin.name)
+    elif (
+        pin.source == module._NB_PRODUCER_SOURCE
+        and pin.name in module._NB_PRODUCER_OVERLOAD_COUNTS
+    ):
+        node = module._nb_producer_implementation(tree=tree, name=pin.name)
+    elif (
+        pin.source == module._NB_PRODUCER_SOURCE
+        and pin.name == "_IntervalWinnerStep.__call__"
+    ):
+        node = module._select_interval_winner_call(tree=tree, checker=module)
+    elif (
+        pin.source == "src/_lcm/egm/nbegm_query.py"
+        and pin.name == "NBEGMQuery.read_choices"
+    ):
+        node = module._select_nbegm_query_read_choices(tree=tree, checker=module)
+    elif (
+        pin.source == "src/_lcm/egm/upper_envelope/segment_envelope.py"
+        and pin.name == "refine_envelope_exact"
+    ):
+        node = module._select_refine_envelope_exact(tree=tree, checker=module)
+    elif "." in pin.name:
         class_name, method_name = pin.name.split(".", maxsplit=1)
         _, node = module._method_definition(
             tree=tree, class_name=class_name, method_name=method_name

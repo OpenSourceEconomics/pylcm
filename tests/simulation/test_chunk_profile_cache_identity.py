@@ -17,6 +17,7 @@ from typing import Never, Unpack
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 import _lcm.simulation.chunk_admission as admission
@@ -235,11 +236,21 @@ def test_weak_type_change_misses() -> None:
     model = _budgeted_model()
     base = _initial(n=3)
     strong = jnp.asarray([1.0, 1.0, 1.0], dtype=jnp.float32)
-    weak = jax.device_put(1.0) * jnp.ones(3, dtype=jnp.float32)
+    original_x64 = jax.config.x64_enabled
+    with jax.enable_x64(new_val=False):
+        weak = jax.lax.full(shape=(3,), fill_value=1.0)
+    assert jax.config.x64_enabled == original_x64
+    assert isinstance(strong, jax.Array)
+    assert isinstance(weak, jax.Array)
+    assert type(strong) is type(weak)
+    assert strong.shape == weak.shape == (3,)
+    assert strong.dtype == weak.dtype == jnp.float32
+    np.testing.assert_array_equal(strong, [1.0, 1.0, 1.0])
+    np.testing.assert_array_equal(weak, strong)
+    assert not strong.weak_type
+    assert weak.weak_type
     key_a = _key_for_initial_conditions(model=model, initial=base | {"wealth": strong})
     key_b = _key_for_initial_conditions(model=model, initial=base | {"wealth": weak})
-    if strong.weak_type == weak.weak_type:
-        pytest.skip("this JAX build did not produce a weak-type leaf for the probe")
     assert key_a != key_b, "a weak-type change must produce a different profile key"
 
 

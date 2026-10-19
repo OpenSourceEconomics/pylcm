@@ -29,18 +29,26 @@ from _lcm.regime_building.collective import (
     collective_argmax_and_readout,
     collective_readout,
 )
+from _lcm.regime_building.Q_and_F import (
+    BoundedActionOutput,
+    BoundedQAndF,
+    runtime_bound_specs,
+)
 from _lcm.regime_building.zero_safe import zero_safe_average
+from _lcm.solution.action_reduction import HardMaxResult
 from _lcm.solution.action_streaming import (
     build_partitioned_streaming_max_Q_over_a,
     build_streaming_collective_max_Q_over_a,
     build_streaming_ev1_max_Q_over_a,
     build_streaming_max_Q_over_a,
 )
+from _lcm.solution.feasibility import BoundedResult
 from _lcm.typing import (
     ActionName,
     ArgmaxQOverAFunction,
     MaxQOverAFunction,
     PRNGKeyND,
+    PytreeValue,
     QAndFArg,
     QAndFKwargs,
     QualifiedName,
@@ -53,6 +61,28 @@ from lcm.typing import BoolND, FloatND, IntND, ReferenceName, ScalarFloat
 
 # Flat param name of the EV1 taste-shock scale (template pseudo-function entry).
 TASTE_SHOCK_SCALE_PARAM = "taste_shocks__scale"
+
+type MaxOutput = FloatND | tuple[FloatND, BoolND]
+type BoundedMaxOutput = MaxOutput | BoundedResult[MaxOutput]
+type ArgmaxOutput = tuple[IntND, FloatND]
+type BoundedArgmaxOutput = ArgmaxOutput | BoundedResult[ArgmaxOutput]
+type ActionFunction = Callable[
+    ..., tuple[FloatND, BoolND] | BoundedResult[BoundedActionOutput]
+]
+type RawActionFunction = Callable[..., tuple[FloatND, BoolND]]
+
+
+def _with_bound_summary[Output: PytreeValue](
+    *,
+    evaluated: PytreeValue,
+    output: Output,
+) -> Output | BoundedResult[Output]:
+    """Preserve scalar integrity while the action owner reduces ordinary channels."""
+    return (
+        BoundedResult(output=output, bound_status=evaluated.bound_status)
+        if type(evaluated) is BoundedResult
+        else output
+    )
 
 
 def _evaluate_pareto_weights(
@@ -74,7 +104,7 @@ def _evaluate_pareto_weights(
 
 def get_max_Q_over_a(
     *,
-    Q_and_F: Callable[..., tuple[FloatND, BoolND]],
+    Q_and_F: RawActionFunction,
     batch_sizes: dict[StateName, int],
     action_names: tuple[ActionName, ...],
     state_names: tuple[StateName, ...],
@@ -91,7 +121,7 @@ def get_max_Q_over_a(
     untiled_state_names: tuple[StateName, ...] = (),
     broadcast_state_names: tuple[StateName, ...] = (),
     return_feasibility: bool = False,
-) -> MaxQOverAFunction:
+) -> MaxQOverAFunction[BoundedMaxOutput]:
     r"""Get the function returning the maximum of Q over all actions.
 
     The state-action value function $Q$ is defined as:
@@ -198,19 +228,25 @@ def get_max_Q_over_a(
             dict.fromkeys((*extra_param_names, *pareto_weights.param_names))
         )
 
-    # Actions are the inner optimization axis — batching applies only to the
-    # outer state loop.
-    Q_and_F = productmap(
-        func=Q_and_F,
-        variables=action_names,
-        batch_sizes=dict.fromkeys(action_names, 0),
+    bound_summary = bool(runtime_bound_specs(function=Q_and_F))
+    action_kernel: ActionFunction = (
+        BoundedQAndF(function=Q_and_F) if bound_summary else Q_and_F
     )
 
-    max_Q_over_a: Callable[..., FloatND | tuple[FloatND, BoolND]]
+    # Actions are the inner optimization axis — batching applies only to the
+    # outer state loop.
+    mapped_action_kernel = productmap(
+        func=action_kernel,
+        variables=action_names,
+        batch_sizes=dict.fromkeys(action_names, 0),
+        bound_summary=bound_summary,
+    )
+
+    max_Q_over_a: Callable[..., BoundedMaxOutput]
     if has_taste_shocks:
         max_Q_over_a = with_signature(
             _SmoothedMaxQOverA(
-                Q_and_F=Q_and_F,
+                Q_and_F=mapped_action_kernel,
                 n_discrete_action_axes=n_discrete_action_axes,
                 return_feasibility=return_feasibility,
             ),
@@ -228,7 +264,7 @@ def get_max_Q_over_a(
     else:
         max_Q_over_a = with_signature(
             _HardMaxQOverA(
-                Q_and_F=Q_and_F,
+                Q_and_F=mapped_action_kernel,
                 stakeholders=stakeholders,
                 pareto_weights=pareto_weights,
                 return_feasibility=return_feasibility,
@@ -257,12 +293,14 @@ def get_max_Q_over_a(
             width_keyword=cell_width_keyword,
             untiled_variables=untiled_state_names,
             broadcast_variables=broadcast_state_names,
+            bound_summary=bound_summary,
         )
         if cell_width_keyword is not None
         else productmap(
             func=max_Q_over_a,
             variables=inner_state_names,
             batch_sizes={name: batch_sizes[name] for name in inner_state_names},
+            bound_summary=bound_summary,
         )
     )
 
@@ -271,7 +309,7 @@ def get_max_Q_over_a(
             fold_state_names=fold_state_names, stakeholders=stakeholders
         )
         mapped = _wrap_with_fold_reduction(
-            mapped=cast("Callable[..., FloatND | tuple[FloatND, BoolND]]", mapped),
+            mapped=cast("Callable[..., BoundedMaxOutput]", mapped),
             fold_state_names=fold_state_names,
             fold_weights=fold_weights,
             fold_conditioning=fold_conditioning,
@@ -305,8 +343,12 @@ def get_max_Q_over_a(
             variables=(state_name,),
             co_mapped_in_axes=MappingProxyType({"next_regime_to_V_arr": v_arr_in_axes}),
             callable_with="only_args",
+            bound_summary=bound_summary,
         )
-    return cast("MaxQOverAFunction", allow_only_kwargs(func=mapped, enforce=False))
+    return cast(
+        "MaxQOverAFunction[BoundedMaxOutput]",
+        allow_only_kwargs(func=mapped, enforce=False),
+    )
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -323,7 +365,7 @@ class _SmoothedMaxQOverA:
     __name__: ClassVar[str] = "max_Q_over_a"
     """Name `dags` reads off the callable when it reports an invalid argument."""
 
-    Q_and_F: Callable[..., tuple[FloatND, BoolND]]
+    Q_and_F: ActionFunction
     """The regime's action value and feasibility, mapped over the action product."""
 
     n_discrete_action_axes: int
@@ -336,11 +378,15 @@ class _SmoothedMaxQOverA:
         self,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         **states_actions_params: QAndFArg,
-    ) -> FloatND | tuple[FloatND, BoolND]:
+    ) -> BoundedMaxOutput:
         """Return the expected maximum over the discrete actions at this cell."""
-        Q_arr, F_arr = self.Q_and_F(
+        evaluated = self.Q_and_F(
             next_regime_to_V_arr=next_regime_to_V_arr,
             **states_actions_params,
+        )
+        Q_arr, F_arr = cast(
+            "tuple[FloatND, BoolND]",
+            evaluated.output if type(evaluated) is BoundedResult else evaluated,
         )
         Q_masked = jnp.where(F_arr, Q_arr, -jnp.inf)
         continuous_axes = tuple(range(self.n_discrete_action_axes, Q_arr.ndim))
@@ -350,7 +396,10 @@ class _SmoothedMaxQOverA:
             scale=cast("ScalarFloat", states_actions_params[TASTE_SHOCK_SCALE_PARAM]),
             axes=tuple(range(Qc.ndim)),
         )
-        return (smoothed, ~jnp.any(F_arr)) if self.return_feasibility else smoothed
+        output: MaxOutput = (
+            (smoothed, ~jnp.any(F_arr)) if self.return_feasibility else smoothed
+        )
+        return _with_bound_summary(evaluated=evaluated, output=output)
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -367,7 +416,7 @@ class _HardMaxQOverA:
     __name__: ClassVar[str] = "max_Q_over_a"
     """Name `dags` reads off the callable when it reports an invalid argument."""
 
-    Q_and_F: Callable[..., tuple[FloatND, BoolND]]
+    Q_and_F: ActionFunction
     """The regime's action value and feasibility, mapped over the action product."""
 
     stakeholders: tuple[str, ...] | None
@@ -383,11 +432,15 @@ class _HardMaxQOverA:
         self,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         **states_actions_params: QAndFArg,
-    ) -> FloatND | tuple[FloatND, BoolND]:
+    ) -> BoundedMaxOutput:
         """Return the cell's value, plus the dissolution flag for a household."""
-        Q_arr, F_arr = self.Q_and_F(
+        evaluated = self.Q_and_F(
             next_regime_to_V_arr=next_regime_to_V_arr,
             **states_actions_params,
+        )
+        Q_arr, F_arr = cast(
+            "tuple[FloatND, BoolND]",
+            evaluated.output if type(evaluated) is BoundedResult else evaluated,
         )
         if self.stakeholders is not None:
             # Q_arr carries a trailing
@@ -416,17 +469,21 @@ class _HardMaxQOverA:
                 ),
                 action_axes=action_axes,
             )
-            return (
+            output: MaxOutput = (
                 jnp.stack([values[name] for name in self.stakeholders], axis=-1),
                 dissolution,
             )
+            return _with_bound_summary(
+                evaluated=evaluated, output=cast("MaxOutput", output)
+            )
         value = Q_arr.max(where=F_arr, initial=-jnp.inf)
-        return (value, ~jnp.any(F_arr)) if self.return_feasibility else value
+        output = (value, ~jnp.any(F_arr)) if self.return_feasibility else value
+        return _with_bound_summary(evaluated=evaluated, output=output)
 
 
 def get_streaming_max_Q_over_a(
     *,
-    Q_and_F: Callable[..., tuple[FloatND, BoolND]],
+    Q_and_F: RawActionFunction,
     batch_sizes: dict[StateName, int],
     action_names: tuple[ActionName, ...],
     state_names: tuple[StateName, ...],
@@ -444,7 +501,7 @@ def get_streaming_max_Q_over_a(
     untiled_state_names: tuple[StateName, ...] = (),
     broadcast_state_names: tuple[StateName, ...] = (),
     return_feasibility: bool = False,
-) -> MaxQOverAFunction:
+) -> MaxQOverAFunction[BoundedMaxOutput]:
     """Build a singleton or collective V kernel that streams the action product.
 
     The returned raw callable has the same dynamic argument layout as
@@ -500,6 +557,7 @@ def get_streaming_max_Q_over_a(
         extra_param_names=extra_param_names,
     )
 
+    bound_summary = bool(runtime_bound_specs(function=Q_and_F))
     streamed_max_Q_over_a = with_signature(
         _StreamedMaxQOverA(
             Q_and_F=Q_and_F,
@@ -542,12 +600,14 @@ def get_streaming_max_Q_over_a(
             width_keyword=cell_width_keyword,
             untiled_variables=untiled_state_names,
             broadcast_variables=broadcast_state_names,
+            bound_summary=bound_summary,
         )
         if cell_width_keyword is not None
         else productmap(
             func=streamed_max_Q_over_a,
             variables=inner_state_names,
             batch_sizes={name: batch_sizes[name] for name in inner_state_names},
+            bound_summary=bound_summary,
         )
     )
     if fold_state_names:
@@ -555,7 +615,7 @@ def get_streaming_max_Q_over_a(
             fold_state_names=fold_state_names, stakeholders=stakeholders
         )
         mapped = _wrap_with_fold_reduction(
-            mapped=cast("Callable[..., FloatND | tuple[FloatND, BoolND]]", mapped),
+            mapped=cast("Callable[..., BoundedMaxOutput]", mapped),
             fold_state_names=fold_state_names,
             fold_weights=fold_weights,
             fold_conditioning=fold_conditioning,
@@ -570,7 +630,7 @@ def get_streaming_max_Q_over_a(
             ],
         )
     if not co_map_state_names:
-        return cast("MaxQOverAFunction", mapped)
+        return cast("MaxQOverAFunction[BoundedMaxOutput]", mapped)
 
     # Preserve the dense route's device-local continuation access exactly. Build
     # the maps from the innermost co-map axis outward: at runtime the outer map
@@ -586,8 +646,12 @@ def get_streaming_max_Q_over_a(
             variables=(state_name,),
             co_mapped_in_axes=MappingProxyType({"next_regime_to_V_arr": v_arr_in_axes}),
             callable_with="only_args",
+            bound_summary=bound_summary,
         )
-    return cast("MaxQOverAFunction", allow_only_kwargs(func=mapped, enforce=False))
+    return cast(
+        "MaxQOverAFunction[BoundedMaxOutput]",
+        allow_only_kwargs(func=mapped, enforce=False),
+    )
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -604,7 +668,7 @@ class _StreamedMaxQOverA:
     __name__: ClassVar[str] = "streamed_max_Q_over_a"
     """Name `dags` reads off the callable when it reports an invalid argument."""
 
-    Q_and_F: Callable[..., tuple[FloatND, BoolND]]
+    Q_and_F: RawActionFunction
     """The regime's action value and feasibility, evaluated per action block."""
 
     action_names: tuple[ActionName, ...]
@@ -628,7 +692,7 @@ class _StreamedMaxQOverA:
     action_width_keyword: str
     """Name of the planner-bound static action-block width in the call."""
 
-    whole_product_Q_and_F: Callable[..., tuple[FloatND, BoolND]]
+    whole_product_Q_and_F: RawActionFunction
     """`Q_and_F` mapped over the named action grids, for a block covering them."""
 
     return_feasibility: bool = False
@@ -639,7 +703,7 @@ class _StreamedMaxQOverA:
         *,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         **states_actions_params: QAndFArg,
-    ) -> FloatND | tuple[FloatND, BoolND]:
+    ) -> BoundedMaxOutput:
         """Return the cell's value, plus the dissolution flag for a household."""
         action_block_width = cast(
             "int", states_actions_params[self.action_width_keyword]
@@ -649,6 +713,32 @@ class _StreamedMaxQOverA:
             for name, value in states_actions_params.items()
             if name in self.q_and_f_arg_names
         }
+        if (
+            runtime_bound_specs(function=self.Q_and_F)
+            and not self.has_taste_shocks
+            and self.stakeholders is None
+        ):
+            fixed_cell = build_streaming_max_Q_over_a(
+                Q_and_F=self.Q_and_F,
+                action_names=self.action_names,
+                block_width=action_block_width,
+            )
+            bounded = cast(
+                "BoundedResult[HardMaxResult]",
+                fixed_cell(
+                    next_regime_to_V_arr=next_regime_to_V_arr,
+                    **q_and_f_params,
+                ),
+            )
+            result = bounded.output
+            return BoundedResult(
+                output=(
+                    (result.best_value, ~result.any_feasible)
+                    if self.return_feasibility
+                    else result.best_value
+                ),
+                bound_status=bounded.bound_status,
+            )
         if self.has_taste_shocks:
             ev1_cell = build_streaming_ev1_max_Q_over_a(
                 Q_and_F=self.Q_and_F,
@@ -664,7 +754,14 @@ class _StreamedMaxQOverA:
                 next_regime_to_V_arr=next_regime_to_V_arr,
                 **q_and_f_params,
             )
-            return ev1_result.smoothed_value
+            if isinstance(ev1_result, BoundedResult):
+                ev1_output = BoundedResult(
+                    output=ev1_result.output.smoothed_value,
+                    bound_status=ev1_result.bound_status,
+                )
+            else:
+                ev1_output = ev1_result.smoothed_value
+            return cast("BoundedMaxOutput", ev1_output)
 
         if self.stakeholders is None:
             n_actions = math.prod(
@@ -703,9 +800,12 @@ class _StreamedMaxQOverA:
                 action_names=self.action_names,
                 block_width=action_block_width,
             )
-            result = fixed_cell(
-                next_regime_to_V_arr=next_regime_to_V_arr,
-                **q_and_f_params,
+            result = cast(
+                "HardMaxResult",
+                fixed_cell(
+                    next_regime_to_V_arr=next_regime_to_V_arr,
+                    **q_and_f_params,
+                ),
             )
             return (
                 (result.best_value, ~result.any_feasible)
@@ -727,6 +827,12 @@ class _StreamedMaxQOverA:
             next_regime_to_V_arr=next_regime_to_V_arr,
             **q_and_f_params,
         )
+        if isinstance(collective_result, BoundedResult):
+            result = collective_result.output
+            return BoundedResult(
+                output=(result.best_stakeholder_values, ~result.any_feasible),
+                bound_status=collective_result.bound_status,
+            )
         return (
             collective_result.best_stakeholder_values,
             ~collective_result.any_feasible,
@@ -735,7 +841,7 @@ class _StreamedMaxQOverA:
 
 def get_action_partitioned_max_Q_over_a(
     *,
-    Q_and_F: Callable[..., tuple[FloatND, BoolND]],
+    Q_and_F: RawActionFunction,
     batch_sizes: dict[StateName, int],
     action_names: tuple[ActionName, ...],
     state_names: tuple[StateName, ...],
@@ -746,7 +852,7 @@ def get_action_partitioned_max_Q_over_a(
     untiled_state_names: tuple[StateName, ...] = (),
     broadcast_state_names: tuple[StateName, ...] = (),
     return_feasibility: bool = False,
-) -> MaxQOverAFunction:
+) -> MaxQOverAFunction[BoundedMaxOutput]:
     """Build a singleton hard-max V kernel whose action product devices share.
 
     The returned callable has the argument layout of
@@ -813,12 +919,14 @@ def get_action_partitioned_max_Q_over_a(
             width_keyword=cell_width_keyword,
             untiled_variables=untiled_state_names,
             broadcast_variables=broadcast_state_names,
+            bound_summary=bool(runtime_bound_specs(function=Q_and_F)),
         )
         if cell_width_keyword is not None
         else productmap(
             func=partitioned_max_Q_over_a,
             variables=state_names,
             batch_sizes={name: batch_sizes[name] for name in state_names},
+            bound_summary=bool(runtime_bound_specs(function=Q_and_F)),
         )
     )
     static_names = (
@@ -826,7 +934,7 @@ def get_action_partitioned_max_Q_over_a(
         *((cell_width_keyword,) if cell_width_keyword is not None else ()),
     )
     return cast(
-        "MaxQOverAFunction",
+        "MaxQOverAFunction[BoundedMaxOutput]",
         with_signature(
             _OnActionPartitionAxis(
                 function=mapped, mesh=mesh, static_names=static_names
@@ -851,7 +959,7 @@ class _ActionPartitionedMaxQOverA:
     __name__: ClassVar[str] = "action_partitioned_max_Q_over_a"
     """Name `dags` reads off the callable when it reports an invalid argument."""
 
-    Q_and_F: Callable[..., tuple[FloatND, BoolND]]
+    Q_and_F: RawActionFunction
     """The regime's action value and feasibility, evaluated per action block."""
 
     action_names: tuple[ActionName, ...]
@@ -874,7 +982,7 @@ class _ActionPartitionedMaxQOverA:
         *,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         **states_actions_params: QAndFArg,
-    ) -> FloatND | tuple[FloatND, BoolND]:
+    ) -> BoundedMaxOutput:
         """Return the cell's value after merging every device's accumulator."""
         reduce_cell = build_partitioned_streaming_max_Q_over_a(
             Q_and_F=self.Q_and_F,
@@ -889,6 +997,16 @@ class _ActionPartitionedMaxQOverA:
                 arguments=states_actions_params, names=self.q_and_f_arg_names
             ),
         )
+        if isinstance(result, BoundedResult):
+            reduced = result.output
+            return BoundedResult(
+                output=(
+                    (reduced.best_value, ~reduced.any_feasible)
+                    if self.return_feasibility
+                    else reduced.best_value
+                ),
+                bound_status=result.bound_status,
+            )
         return (
             (result.best_value, ~result.any_feasible)
             if self.return_feasibility
@@ -916,7 +1034,7 @@ class _OnActionPartitionAxis:
     __name__: ClassVar[str] = "on_action_partition_axis"
     """Name `dags` reads off the callable when it reports an invalid argument."""
 
-    function: Callable[..., FloatND | tuple[FloatND, BoolND]]
+    function: Callable[..., BoundedMaxOutput]
     """The state-mapped kernel, reading the action axis inside its reduction."""
 
     mesh: jax.sharding.Mesh
@@ -925,7 +1043,7 @@ class _OnActionPartitionAxis:
     static_names: tuple[str, ...]
     """Planner-bound widths, passed as compile-time constants, not operands."""
 
-    def __call__(self, **kwargs: QAndFArg) -> FloatND | tuple[FloatND, BoolND]:
+    def __call__(self, **kwargs: QAndFArg) -> BoundedMaxOutput:
         """Evaluate the kernel on every device of the action axis."""
         static = {name: kwargs.pop(name) for name in self.static_names}
         mesh = self.mesh
@@ -948,9 +1066,9 @@ class _OnActionPartitionAxis:
 def _call_with_operands(
     operands: QAndFKwargs,
     *,
-    function: Callable[..., FloatND | tuple[FloatND, BoolND]],
+    function: Callable[..., BoundedMaxOutput],
     **static: int,
-) -> FloatND | tuple[FloatND, BoolND]:
+) -> BoundedMaxOutput:
     """Call `function` with its traced operands and its static widths."""
     return function(**operands, **static)
 
@@ -1059,7 +1177,7 @@ def _fail_if_streaming_co_map_layout_is_invalid(
 
 def _wrap_with_fold_reduction(
     *,
-    mapped: Callable[..., FloatND | tuple[FloatND, BoolND]],
+    mapped: Callable[..., BoundedMaxOutput],
     fold_state_names: tuple[StateName, ...],
     fold_weights: Mapping[StateName, FloatND],
     fold_conditioning: Mapping[StateName, StateName],
@@ -1068,7 +1186,7 @@ def _wrap_with_fold_reduction(
     state_names: tuple[StateName, ...],
     extra_param_names: list[QualifiedName],
     return_feasibility: bool = False,
-) -> Callable[..., FloatND | tuple[FloatND, BoolND]]:
+) -> Callable[..., BoundedMaxOutput]:
     """Wrap the (still fold-axis-carrying) inner productmap with the fold average.
 
     `mapped`'s output axes are exactly `inner_state_names`, in order (the
@@ -1130,7 +1248,7 @@ def _wrap_with_fold_reduction(
 class _FoldedMaxQOverA:
     """Fold values and empty-action causes over the same quadrature support."""
 
-    mapped: Callable[..., FloatND | tuple[FloatND, BoolND]]
+    mapped: Callable[..., BoundedMaxOutput]
     fold_steps: tuple[tuple[StateName, int, int | None], ...]
     fold_weights: Mapping[StateName, FloatND]
     fold_reducers: Mapping[StateName, Callable[..., FloatND]]
@@ -1141,15 +1259,16 @@ class _FoldedMaxQOverA:
         *,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         **states_actions_params: QAndFArg,
-    ) -> FloatND | tuple[FloatND, BoolND]:
+    ) -> BoundedMaxOutput:
         """Return the folded value and optionally its supported empty-set cause."""
         out = self.mapped(
             next_regime_to_V_arr=next_regime_to_V_arr, **states_actions_params
         )
+        ordinary = out.output if type(out) is BoundedResult else out
         if self.return_feasibility:
-            V_arr, empty = cast("tuple[FloatND, BoolND]", out)
+            V_arr, empty = cast("tuple[FloatND, BoolND]", ordinary)
         else:
-            V_arr = cast("FloatND", out)
+            V_arr = cast("FloatND", ordinary)
             empty = None
         for name, axis, conditioning_axis in self.fold_steps:
             weights = self.fold_weights[name]
@@ -1169,7 +1288,10 @@ class _FoldedMaxQOverA:
                     support = weights > 0
                 empty = jnp.any(empty & support, axis=axis)
             V_arr = self.fold_reducers[name](a=V_arr, axis=axis, weights=weights)
-        return V_arr if empty is None else (V_arr, empty)
+        return _with_bound_summary(
+            evaluated=out,
+            output=V_arr if empty is None else (V_arr, empty),
+        )
 
 
 def _plan_fold_steps(
@@ -1355,14 +1477,14 @@ def _select_fold_reducer(*, weight: FloatND, name: StateName) -> Callable[..., F
 
 def get_argmax_and_max_Q_over_a(
     *,
-    Q_and_F: Callable[..., tuple[FloatND, BoolND]],
+    Q_and_F: RawActionFunction,
     action_names: tuple[ActionName, ...],
     state_names: tuple[StateName, ...],
     n_discrete_action_axes: int = 0,
     has_taste_shocks: bool = False,
     stakeholders: tuple[str, ...] | None = None,
     pareto_weights: ParetoWeights | None = None,
-) -> ArgmaxQOverAFunction:
+) -> ArgmaxQOverAFunction[BoundedArgmaxOutput]:
     r"""Get the function returning the arguments maximizing Q over all actions.
 
     The state-action value function $Q$ is defined as:
@@ -1429,17 +1551,22 @@ def get_argmax_and_max_Q_over_a(
             dict.fromkeys((*extra_param_names, *pareto_weights.param_names))
         )
 
-    Q_and_F = productmap(
-        func=Q_and_F,
+    bound_summary = bool(runtime_bound_specs(function=Q_and_F))
+    action_kernel: ActionFunction = (
+        BoundedQAndF(function=Q_and_F) if bound_summary else Q_and_F
+    )
+    mapped_action_kernel = productmap(
+        func=action_kernel,
         variables=action_names,
         batch_sizes=dict.fromkeys(action_names, 0),
+        bound_summary=bound_summary,
     )
 
-    argmax_and_max_Q_over_a: ArgmaxQOverAFunction
+    argmax_and_max_Q_over_a: ArgmaxQOverAFunction[BoundedArgmaxOutput]
     if has_taste_shocks:
         argmax_and_max_Q_over_a = with_signature(
             _TasteShockArgmaxQOverA(
-                Q_and_F=Q_and_F,
+                Q_and_F=mapped_action_kernel,
                 n_discrete_action_axes=n_discrete_action_axes,
             ),
             args=[
@@ -1455,7 +1582,7 @@ def get_argmax_and_max_Q_over_a(
     else:
         argmax_and_max_Q_over_a = with_signature(
             _HardMaxArgmaxQOverA(
-                Q_and_F=Q_and_F,
+                Q_and_F=mapped_action_kernel,
                 stakeholders=stakeholders,
                 pareto_weights=pareto_weights,
             ),
@@ -1486,7 +1613,7 @@ class _TasteShockArgmaxQOverA:
     __name__: ClassVar[str] = "argmax_and_max_Q_over_a"
     """Name `dags` reads off the callable when it reports an invalid argument."""
 
-    Q_and_F: Callable[..., tuple[FloatND, BoolND]]
+    Q_and_F: ActionFunction
     """The regime's action value and feasibility, mapped over the action product."""
 
     n_discrete_action_axes: int
@@ -1496,12 +1623,16 @@ class _TasteShockArgmaxQOverA:
         self,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         **states_actions_params: QAndFArg | PRNGKeyND,
-    ) -> tuple[IntND, FloatND]:
+    ) -> BoundedArgmaxOutput:
         """Return the flat index of the drawn action and its noise-free value."""
         taste_shock_key = cast("Array", states_actions_params.pop("taste_shock_key"))
-        Q_arr, F_arr = self.Q_and_F(
+        evaluated = self.Q_and_F(
             next_regime_to_V_arr=next_regime_to_V_arr,
             **states_actions_params,
+        )
+        Q_arr, F_arr = cast(
+            "tuple[FloatND, BoolND]",
+            evaluated.output if type(evaluated) is BoundedResult else evaluated,
         )
         Q_masked = jnp.where(F_arr, Q_arr, -jnp.inf)
         n_discrete_cells = math.prod(Q_arr.shape[: self.n_discrete_action_axes])
@@ -1518,9 +1649,11 @@ class _TasteShockArgmaxQOverA:
         flat_index = (
             discrete_argmax * n_continuous_cells + continuous_argmax[discrete_argmax]
         )
-        return jnp.where(jnp.any(F_arr), flat_index, -1).astype(jnp.int32), Qc[
-            discrete_argmax
-        ]
+        output = (
+            jnp.where(jnp.any(F_arr), flat_index, -1).astype(jnp.int32),
+            Qc[discrete_argmax],
+        )
+        return _with_bound_summary(evaluated=evaluated, output=output)
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -1537,7 +1670,7 @@ class _HardMaxArgmaxQOverA:
     __name__: ClassVar[str] = "argmax_and_max_Q_over_a"
     """Name `dags` reads off the callable when it reports an invalid argument."""
 
-    Q_and_F: Callable[..., tuple[FloatND, BoolND]]
+    Q_and_F: ActionFunction
     """The regime's action value and feasibility, mapped over the action product."""
 
     stakeholders: tuple[str, ...] | None
@@ -1550,11 +1683,15 @@ class _HardMaxArgmaxQOverA:
         self,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         **states_actions_params: QAndFArg,
-    ) -> tuple[IntND, FloatND]:
+    ) -> BoundedArgmaxOutput:
         """Return the flat index of the chosen action and the value it attains."""
-        Q_arr, F_arr = self.Q_and_F(
+        evaluated = self.Q_and_F(
             next_regime_to_V_arr=next_regime_to_V_arr,
             **states_actions_params,
+        )
+        Q_arr, F_arr = cast(
+            "tuple[FloatND, BoolND]",
+            evaluated.output if type(evaluated) is BoundedResult else evaluated,
         )
         if self.stakeholders is not None:
             # Mirrors the solve-side collective
@@ -1580,9 +1717,15 @@ class _HardMaxArgmaxQOverA:
                 action_axes=action_axes,
             )
             V_stacked = jnp.stack([values[name] for name in self.stakeholders], axis=-1)
-            return jnp.where(_dissolution, -1, argmax_flat), V_stacked
+            return _with_bound_summary(
+                evaluated=evaluated,
+                output=(jnp.where(_dissolution, -1, argmax_flat), V_stacked),
+            )
         index, value = argmax_and_max(a=Q_arr, where=F_arr, initial=-jnp.inf)
-        return jnp.where(jnp.any(F_arr), index, -1), value
+        return _with_bound_summary(
+            evaluated=evaluated,
+            output=(jnp.where(jnp.any(F_arr), index, -1), value),
+        )
 
 
 def draw_taste_shock_noise(
@@ -1644,7 +1787,7 @@ def _fail_if_co_map_states_not_leading(
 
 def _get_extra_param_names(
     *,
-    Q_and_F: Callable[..., tuple[FloatND, BoolND]],
+    Q_and_F: ActionFunction,
     action_names: tuple[ActionName, ...],
     state_names: tuple[StateName, ...],
 ) -> list[str]:

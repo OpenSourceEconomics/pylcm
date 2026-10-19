@@ -34,6 +34,7 @@ from _lcm.execution.workspace_planning import (
     compiler_memory_reservation,
     plan_axis_free_workspace,
 )
+from _lcm.post_decision_bound import PostDecisionBoundSpec
 from _lcm.simulation.operand_placement import (
     place_simulation_arguments,
     subject_operand_sharding,
@@ -74,6 +75,8 @@ type _BuilderInput = (
     RegimeName
     | RegimeTransitionFunction
     | tuple[ReferenceName, ...]
+    | tuple[int, ...]
+    | tuple[PostDecisionBoundSpec, ...]
     | Mapping[
         str,
         EconFunction | ConstraintFunction | TransitionFunction | TargetTransitionPlan,

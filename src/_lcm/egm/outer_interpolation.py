@@ -31,7 +31,7 @@ from typing import Protocol, runtime_checkable
 import jax.errors
 import jax.numpy as jnp
 
-from lcm.typing import BoolND, FloatND
+from lcm.typing import BoolND, FloatND, ScalarInt
 
 
 @runtime_checkable
@@ -77,6 +77,7 @@ class LocalCubicOuterInterpolant:
         values: FloatND,
         query: FloatND,
         interval_valid: BoolND | None = None,
+        valid_count: ScalarInt | None = None,
     ) -> FloatND:
         """Interpolated surface at `query`; `-inf` where invalid.
 
@@ -87,13 +88,19 @@ class LocalCubicOuterInterpolant:
             interval_valid: Optional extra per-interval validity, shape
                 broadcastable against `(C - 1, *S)`; `False` marks an
                 interval the interpolant must not bridge.
+            valid_count: Runtime length of the strictly increasing active prefix;
+                `None` uses every node. The prefix contains at least two nodes.
 
         Returns:
             The interpolated read, shape `broadcast(query, S)`.
 
         """
         value, _, valid = self._evaluate(
-            nodes=nodes, values=values, query=query, interval_valid=interval_valid
+            nodes=nodes,
+            values=values,
+            query=query,
+            interval_valid=interval_valid,
+            valid_count=valid_count,
         )
         return jnp.where(valid, value, -jnp.inf)
 
@@ -104,6 +111,7 @@ class LocalCubicOuterInterpolant:
         values: FloatND,
         query: FloatND,
         interval_valid: BoolND | None = None,
+        valid_count: ScalarInt | None = None,
     ) -> tuple[FloatND, FloatND]:
         """Interpolated surface and its outer derivative at `query`.
 
@@ -115,13 +123,19 @@ class LocalCubicOuterInterpolant:
             query: Outer abscissae to read, broadcastable against `S`.
             interval_valid: Optional extra per-interval validity, shape
                 broadcastable against `(C - 1, *S)`.
+            valid_count: Runtime length of the strictly increasing active prefix;
+                `None` uses every node. The prefix contains at least two nodes.
 
         Returns:
             The pair `(value, d value / d outer)`.
 
         """
         value, derivative, valid = self._evaluate(
-            nodes=nodes, values=values, query=query, interval_valid=interval_valid
+            nodes=nodes,
+            values=values,
+            query=query,
+            interval_valid=interval_valid,
+            valid_count=valid_count,
         )
         return (
             jnp.where(valid, value, -jnp.inf),
@@ -135,10 +149,15 @@ class LocalCubicOuterInterpolant:
         values: FloatND,
         query: FloatND,
         interval_valid: BoolND | None = None,
+        valid_count: ScalarInt | None = None,
     ) -> BoolND:
         """Where a read at `query` would be trustworthy (see `evaluate`)."""
         _, _, valid = self._evaluate(
-            nodes=nodes, values=values, query=query, interval_valid=interval_valid
+            nodes=nodes,
+            values=values,
+            query=query,
+            interval_valid=interval_valid,
+            valid_count=valid_count,
         )
         return valid
 
@@ -149,10 +168,11 @@ class LocalCubicOuterInterpolant:
         values: FloatND,
         query: FloatND,
         interval_valid: BoolND | None,
+        valid_count: ScalarInt | None = None,
     ) -> tuple[FloatND, FloatND, BoolND]:
         nodes = jnp.asarray(nodes)
         values = jnp.asarray(values)
-        _validate_nodes(nodes=nodes, values=values)
+        _validate_nodes(nodes=nodes, values=values, valid_count=valid_count)
         n_nodes = nodes.shape[0]
         state_shape = values.shape[1:]
         query = jnp.asarray(query)
@@ -177,12 +197,23 @@ class LocalCubicOuterInterpolant:
 
         # Containing interval per read; reads at the last node land in the
         # final interval (t = 1), out-of-domain reads are flagged below.
-        interval = jnp.clip(
-            jnp.searchsorted(nodes, query_f, side="right") - 1, 0, n_nodes - 2
-        )
-        in_domain = (query_f >= nodes[0]) & (query_f <= nodes[-1])
-
-        slopes = _node_slopes(nodes=nodes, values=values_f)
+        if valid_count is None:
+            interval = jnp.clip(
+                jnp.searchsorted(nodes, query_f, side="right") - 1, 0, n_nodes - 2
+            )
+            in_domain = (query_f >= nodes[0]) & (query_f <= nodes[-1])
+            slopes = _node_slopes(nodes=nodes, values=values_f)
+        else:
+            active_nodes = jnp.where(jnp.arange(n_nodes) < valid_count, nodes, jnp.inf)
+            interval = jnp.clip(
+                jnp.searchsorted(active_nodes, query_f, side="right") - 1,
+                0,
+                valid_count - 2,
+            )
+            in_domain = (query_f >= nodes[0]) & (query_f <= nodes[valid_count - 1])
+            slopes = _prefix_node_slopes(
+                nodes=nodes, values=values_f, valid_count=valid_count
+            )
         y0 = jnp.take_along_axis(values_f, interval[None], axis=0)[0]
         y1 = jnp.take_along_axis(values_f, interval[None] + 1, axis=0)[0]
         m0 = jnp.take_along_axis(slopes, interval[None], axis=0)[0]
@@ -353,7 +384,9 @@ def _one_sided_parabolic_slope(
     )
 
 
-def _validate_nodes(*, nodes: FloatND, values: FloatND) -> None:
+def _validate_nodes(
+    *, nodes: FloatND, values: FloatND, valid_count: ScalarInt | None = None
+) -> None:
     if nodes.ndim != 1:
         msg = f"nodes must be one-dimensional, got shape {nodes.shape}."
         raise ValueError(msg)
@@ -371,9 +404,110 @@ def _validate_nodes(*, nodes: FloatND, values: FloatND) -> None:
     # cannot be checked; the eager top-level calls on the same mesh (mesh
     # driver, bank build, the pre-loop probes) have already validated it.
     try:
-        increasing = bool(jnp.all(nodes[1:] > nodes[:-1]))
+        if valid_count is None:
+            increasing = bool(jnp.all(nodes[1:] > nodes[:-1]))
+        else:
+            intervals = jnp.minimum(jnp.arange(nodes.shape[0] - 1), valid_count - 2)
+            increasing = bool(jnp.all(nodes[intervals + 1] > nodes[intervals]))
     except jax.errors.ConcretizationTypeError:
         return
     if not increasing:
         msg = "nodes must be strictly increasing."
         raise ValueError(msg)
+
+
+_CUBIC_STENCIL_SIZE = 4
+_MIN_PREFIX_SIZE = 2
+
+
+def _prefix_node_slopes(
+    *, nodes: FloatND, values: FloatND, valid_count: ScalarInt
+) -> FloatND:
+    """Differentiate only active stencils, retaining the shorter-mesh formulas."""
+    three_point = _prefix_three_point_slopes(
+        nodes=nodes, values=values, valid_count=valid_count
+    )
+    if nodes.shape[0] < _CUBIC_STENCIL_SIZE:
+        return three_point
+
+    def with_cubic() -> FloatND:
+        four_point = _prefix_four_point_slopes(
+            nodes=nodes, values=values, valid_count=valid_count
+        )
+        return jnp.where(jnp.isfinite(four_point), four_point, three_point)
+
+    def without_cubic() -> FloatND:
+        return three_point
+
+    return jax.lax.cond(valid_count >= _CUBIC_STENCIL_SIZE, with_cubic, without_cubic)
+
+
+def _prefix_three_point_slopes(
+    *, nodes: FloatND, values: FloatND, valid_count: ScalarInt
+) -> FloatND:
+    """Use adjacent active secants and the actual prefix endpoint stencils."""
+    intervals = jnp.minimum(jnp.arange(nodes.shape[0] - 1), valid_count - 2)
+    h = (nodes[intervals + 1] - nodes[intervals]).reshape(
+        (-1,) + (1,) * (values.ndim - 1)
+    )
+    secants = (values[intervals + 1] - values[intervals]) / h
+    if secants.shape[0] == 1:
+        first = jnp.where(jnp.isfinite(secants[:1]), secants[:1], 0.0)
+        return jnp.concatenate([first, first], axis=0)
+    left = secants[:-1]
+    right = secants[1:]
+    h_left = h[:-1]
+    h_right = h[1:]
+    parabolic = (h_right * left + h_left * right) / (h_left + h_right)
+    interior = jnp.where(
+        jnp.isfinite(left) & jnp.isfinite(right),
+        parabolic,
+        jnp.where(jnp.isfinite(left), left, jnp.where(jnp.isfinite(right), right, 0.0)),
+    )
+    first = _one_sided_parabolic_slope(
+        near=secants[:1], far=secants[1:2], h_near=h[:1], h_far=h[1:2]
+    )
+    near_index = valid_count - 2
+    far_index = jnp.maximum(valid_count - 3, 0)
+    last = _one_sided_parabolic_slope(
+        near=secants[near_index],
+        far=secants[far_index],
+        h_near=h[near_index],
+        h_far=h[far_index],
+    )
+    first_secant = jnp.where(jnp.isfinite(secants[:1]), secants[:1], 0.0)
+    first = jnp.where(valid_count == _MIN_PREFIX_SIZE, first_secant, first)
+    last = jnp.where(valid_count == _MIN_PREFIX_SIZE, first_secant[0], last)
+    slopes = jnp.concatenate([first, interior, first], axis=0)
+    endpoint = (jnp.arange(nodes.shape[0]) == valid_count - 1).reshape(
+        (-1,) + (1,) * (values.ndim - 1)
+    )
+    return jnp.where(endpoint, last, slopes)
+
+
+def _prefix_four_point_slopes(
+    *, nodes: FloatND, values: FloatND, valid_count: ScalarInt
+) -> FloatND:
+    """Apply the cubic Lagrange derivative with stencils clamped to the prefix."""
+    indices = jnp.minimum(jnp.arange(nodes.shape[0]), valid_count - 1)
+    base = jnp.clip(indices - 1, 0, valid_count - _CUBIC_STENCIL_SIZE)
+    stencil = base[:, None] + jnp.arange(_CUBIC_STENCIL_SIZE)[None, :]
+    target = indices - base
+    xs = nodes[stencil]
+    xt = nodes[indices, None]
+    is_target = jnp.arange(_CUBIC_STENCIL_SIZE)[None, :] == target[:, None]
+    d = jnp.where(is_target, 1.0, xt - xs)
+    product = jnp.prod(d, axis=1, keepdims=True)
+    numerator = product / d
+    pair_diffs = xs[:, :, None] - xs[:, None, :]
+    pair_diffs = jnp.where(
+        jnp.eye(_CUBIC_STENCIL_SIZE, dtype=bool)[None], 1.0, pair_diffs
+    )
+    denominator = jnp.prod(pair_diffs, axis=2)
+    weights = numerator / denominator
+    target_weight = jnp.sum(jnp.where(is_target, 0.0, 1.0 / d), axis=1)
+    weights = jnp.where(is_target, target_weight[:, None], weights)
+    ys = values[stencil]
+    centered = ys - values[indices, None]
+    weights_b = weights.reshape(*weights.shape, *([1] * (values.ndim - 1)))
+    return jnp.sum(weights_b * centered, axis=1)

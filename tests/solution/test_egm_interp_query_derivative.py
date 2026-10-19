@@ -40,6 +40,7 @@ from _lcm.egm.interp import (
     prepare_padded_grid,
 )
 from _lcm.egm.outer_envelope import outer_envelope_at_query
+from _lcm.solution.feasibility import BoundedResult
 
 
 def test_exact_node_continuation_gradient_matches_carry_marginal():
@@ -62,7 +63,7 @@ def test_exact_node_continuation_gradient_matches_carry_marginal():
     search_grid, valid_length = jax.vmap(prepare_padded_grid)(carry.endog_grid)
 
     def continuation(query):
-        continuation_value, _ = _aggregate_child_choices(
+        result = _aggregate_child_choices(
             carry=carry,
             prepared_search_grid=search_grid,
             prepared_valid_length=valid_length,
@@ -74,6 +75,8 @@ def test_exact_node_continuation_gradient_matches_carry_marginal():
             row_gradients=jnp.asarray([1.0]),
             n_outer_candidates=0,
         )
+        assert not isinstance(result, BoundedResult)
+        continuation_value, _ = result
         return continuation_value
 
     query = jnp.asarray(2.0)

@@ -1,16 +1,276 @@
 """Subject-local loops preserve global order, keys and compiler-visible placement."""
 
 import gc
+import inspect
 import weakref
+from types import MappingProxyType
+from typing import cast
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from typing_extensions import TypedDict
 
+from _lcm.execution.output_layout import StateAxesLeading
+from _lcm.execution.placement import ACTION_PARTITION_AXIS
+from _lcm.regime_building.max_Q_over_a import get_action_partitioned_max_Q_over_a
+from _lcm.regime_building.Q_and_F import get_Q_and_F_terminal
 from _lcm.simulation.program_types import SUBJECT_WIDTH_KEYWORD
 from _lcm.simulation.programs import _SubjectTiled
+from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.subject_parallel import shard_subject_function
+from _lcm.solution.action_reduction import HardMaxAccumulator
+from _lcm.solution.action_streaming import build_partitioned_streaming_max_Q_over_a
+from _lcm.solution.feasibility import BoundedResult, summarize_bound_inputs
+from _lcm.typing import ConstraintFunction, EconFunction
+from lcm import ExecutionConfig
+from lcm.exceptions import InvalidValueFunctionError
+from lcm.typing import BoolND, FloatND, RegimeName, ScalarInt
+from tests.constraints.test_dynamic_lower_bound import TemporalRegimeId, _temporal_model
+from tests.solution.test_dynamic_bound_authority import _bound
+
+
+class _PartitionArguments(TypedDict, closed=True):
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND]
+    period: ScalarInt
+    age: FloatND
+    income: FloatND
+    consumption: FloatND
+
+
+@pytest.mark.parametrize("invalid", [False, True])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_native_action_partition_replicates_active_owner_integrity(
+    *,
+    invalid: bool,
+    reverse: bool,
+) -> None:
+    """Empty devices contribute neutral flags; the active summary is replicated."""
+    devices = _devices(count=2, reverse=reverse)
+    mesh = jax.make_mesh(
+        (2,), (ACTION_PARTITION_AXIS,), (jax.sharding.AxisType.Auto,), devices=devices
+    )
+
+    def floor(*, income: FloatND) -> FloatND:
+        return income
+
+    def utility(*, consumption: FloatND) -> FloatND:
+        return consumption
+
+    def borrowing(*, consumption: FloatND, floor: FloatND) -> BoolND:
+        return -consumption >= floor
+
+    kernel = get_Q_and_F_terminal(
+        flat_param_names=frozenset(),
+        functions=MappingProxyType(
+            {
+                "utility": cast("EconFunction", utility),
+                "floor": cast("EconFunction", floor),
+            }
+        ),
+        constraints=MappingProxyType(
+            {"borrowing": cast("ConstraintFunction", borrowing)}
+        ),
+        bound_specs=(_bound(),),
+    )
+    arguments: _PartitionArguments = {
+        "next_regime_to_V_arr": MappingProxyType({}),
+        "period": jnp.int32(0),
+        "age": jnp.asarray(0.0),
+        "income": jnp.asarray(jnp.nan if invalid else -3.0),
+        "consumption": jnp.asarray([2.0]),
+    }
+    partitioned = build_partitioned_streaming_max_Q_over_a(
+        Q_and_F=kernel,
+        action_names=("consumption",),
+        block_width=1,
+        n_partitions=2,
+        axis_name=ACTION_PARTITION_AXIS,
+    )
+
+    def local_flags():
+        local = partitioned.local(
+            partition=jax.lax.axis_index(ACTION_PARTITION_AXIS).astype(jnp.int32),
+            **arguments,
+        )
+        assert type(local) is BoundedResult
+        return jnp.stack(local.bound_status[0])[None, :], cast(
+            "HardMaxAccumulator", local.output
+        ).any_feasible[None]
+
+    flags, feasible = jax.jit(
+        jax.shard_map(
+            local_flags,
+            mesh=mesh,
+            in_specs=(),
+            out_specs=(jax.P(ACTION_PARTITION_AXIS), jax.P(ACTION_PARTITION_AXIS)),
+            axis_names=frozenset({ACTION_PARTITION_AXIS}),
+            check_vma=False,
+        )
+    )()
+    np.testing.assert_array_equal(flags, [[False, False], [invalid, False]])
+    np.testing.assert_array_equal(feasible, [False, not invalid])
+    mapped = get_action_partitioned_max_Q_over_a(
+        Q_and_F=kernel,
+        batch_sizes={},
+        action_names=("consumption",),
+        state_names=(),
+        mesh=mesh,
+        n_partitions=2,
+        return_feasibility=True,
+    )
+    result = jax.jit(lambda: mapped(**arguments, _lcm_action_block_width=1))()
+    assert type(result) is BoundedResult
+    np.testing.assert_array_equal(result.output[0], -np.inf if invalid else 2.0)
+    np.testing.assert_array_equal(result.output[1], invalid)
+    np.testing.assert_array_equal(jnp.stack(result.bound_status[0]), [invalid, False])
+    assert all(leaf.sharding.spec == jax.P() for leaf in jax.tree.leaves(result))
+
+
+@pytest.mark.parametrize("runtime_checks", [False, True])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_public_subject_sharding_keeps_callable_floor_integrity(
+    *,
+    runtime_checks: bool,
+    reverse: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Padded public cohorts retain global validity at their later decision."""
+    devices = _devices(count=2, reverse=reverse)
+
+    def floor(*, income: FloatND, period: ScalarInt) -> FloatND:
+        return jnp.where((period == 1) & (income == 0.5), jnp.nan, 0.0)
+
+    model = _temporal_model(
+        lower_function=floor,
+        execution_config=ExecutionConfig(
+            devices=tuple(device.id for device in devices),
+            sharded_states=(),
+            simulation_sharding="subjects",
+            device_memory_bytes=1 << 28,
+            axis_widths={"subject": 1},
+        ),
+    )
+    params = {"discount_factor": 1.0}
+    solution = model.solve(params=params, log_level="off")
+    np.testing.assert_allclose(solution.values[1]["saving"], [[1.0, 1.0], [2.0, 2.0]])
+    observed = []
+    dispatch = SimulationRuntime.dispatch
+
+    def observe(self: SimulationRuntime, **kwargs):
+        result = dispatch(self, **kwargs)
+        if self.execution.simulation_sharding == "subjects":
+            scalar_flags = tuple(
+                leaf
+                for leaf in jax.tree.leaves(result)
+                if isinstance(leaf, jax.Array)
+                and leaf.dtype == jnp.bool_
+                and leaf.shape == ()
+            )
+            if scalar_flags:
+                assert len(scalar_flags) == 2
+                assert all(leaf.sharding.spec == jax.P() for leaf in scalar_flags)
+                assert tuple(device.id for device in self.subject_devices) == tuple(
+                    sorted(device.id for device in devices)
+                )
+                observed.append(jnp.stack(scalar_flags))
+        return result
+
+    monkeypatch.setattr(SimulationRuntime, "dispatch", observe)
+    initial = {
+        "wealth": jnp.asarray([2.0, 2.0, 2.0]),
+        "income": jnp.asarray([1.0, 1.0, 1.0]),
+        "age": jnp.asarray([0, 0, 0]),
+        "regime_id": jnp.asarray([TemporalRegimeId.saving] * 3, dtype=jnp.int32),
+    }
+    positive = model.simulate(
+        params=params,
+        solution=solution,
+        initial_conditions=initial,
+        log_level="off",
+        runtime_checks=runtime_checks,
+    )
+    np.testing.assert_array_equal(
+        positive.to_dataframe()["consumption"].dropna(), [0.25, 1.75] * 3
+    )
+    assert observed
+    np.testing.assert_array_equal(
+        jnp.stack(observed), jnp.zeros((len(observed), 2), dtype=bool)
+    )
+    observed.clear()
+    with pytest.raises(InvalidValueFunctionError, match="floor"):
+        model.simulate(
+            params=params,
+            solution=solution,
+            initial_conditions={**initial, "income": jnp.asarray([1.0, 1.0, 0.5])},
+            log_level="off",
+            runtime_checks=runtime_checks,
+        )
+    assert observed
+    np.testing.assert_array_equal(observed[-1], [True, False])
+
+
+def _bounded_cell(
+    *, floor: FloatND, active: BoolND
+) -> BoundedResult[tuple[FloatND, BoolND]]:
+    return BoundedResult(
+        output=(floor * floor, active),
+        bound_status=(summarize_bound_inputs(floor_values=floor, active=active),),
+    )
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("width", [1, 3])
+@pytest.mark.parametrize("active_last", [False, True])
+def test_subject_partitions_or_scalar_integrity_across_devices(
+    *, reverse: bool, width: int, active_last: bool
+) -> None:
+    """Ordinary rows keep their shards; active validity is globally replicated."""
+    code = inspect.unwrap(shard_subject_function).__code__
+    assert (
+        "output_roles" in code.co_varnames[: code.co_argcount + code.co_kwonlyargcount]
+    ), "The subject sharding owner needs explicit mixed scalar output roles."
+    devices = _devices(count=2, reverse=reverse)
+    mesh = _mesh(devices=devices)
+    arguments = {
+        "floor": jax.device_put(
+            jnp.asarray([1.0, jnp.nan, 2.0, jnp.nan]),
+            jax.NamedSharding(mesh, jax.P("X")),
+        ),
+        "active": jax.device_put(
+            jnp.asarray([True, False, True, active_last]),
+            jax.NamedSharding(mesh, jax.P("X")),
+        ),
+    }
+    tiled = _SubjectTiled(
+        func=_bounded_cell,
+        subject_arg_names=("floor", "active"),
+        n_bound_records=1,
+    )
+    adapted = shard_subject_function(
+        function=tiled,
+        subject_arg_names=tiled.subject_shard_arg_names,
+        arguments=arguments,
+        static_kwargs={SUBJECT_WIDTH_KEYWORD: width},
+        devices=devices,
+        subject_width_keyword=SUBJECT_WIDTH_KEYWORD,
+        output_roles=(
+            "value",
+            "active",
+            *(
+                StateAxesLeading(state_names=(), dtype=jnp.bool_, shape=())
+                for _ in range(2)
+            ),
+        ),
+    )
+    result = jax.jit(adapted)(**arguments)
+    np.testing.assert_array_equal(result[0], [1.0, jnp.nan, 4.0, jnp.nan])
+    np.testing.assert_array_equal(result[1], [True, False, True, active_last])
+    assert result[0].sharding.spec == jax.P("X")
+    assert result[2].shape == result[3].shape == ()
+    assert result[2].sharding.spec == result[3].sharding.spec == jax.P()
+    np.testing.assert_array_equal(jnp.stack(result[2:]), [active_last, False])
 
 
 def _devices(*, count: int, reverse: bool = False) -> tuple[jax.Device, ...]:

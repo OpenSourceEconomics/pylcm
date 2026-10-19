@@ -21,7 +21,7 @@ from _lcm.egm.carry import _EGM_CARRY_FIELDS, EGMCarry, build_template_egm_carry
 
 
 def test_egm_carry_fields_include_the_optional_policy_row():
-    """The carry's fields are the Euler-step rows plus the optional policy row.
+    """The carry keeps Euler rows and optional policy and query payloads.
 
     `policy` must appear in `_EGM_CARRY_FIELDS`: that tuple defines the pytree
     flatten/unflatten order, so omitting it would silently drop the row on every
@@ -34,12 +34,14 @@ def test_egm_carry_fields_include_the_optional_policy_row():
         "taste_shock_scale",
         "breakpoints",
         "policy",
+        "query_data",
     }
     field_names = {f.name for f in EGMCarry.__dataclass_fields__.values()}
     assert "policy" in field_names
     # Optional, and absent by default: `None` is a non-leaf empty subtree, so an
     # unpublished policy costs nothing and changes the tree structure when set.
     assert EGMCarry.__dataclass_fields__["policy"].default is None
+    assert EGMCarry.__dataclass_fields__["query_data"].default is None
 
 
 def test_template_carry_has_no_policy_leaf():

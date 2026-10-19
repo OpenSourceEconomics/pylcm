@@ -23,6 +23,7 @@ import subprocess
 import sys
 from pathlib import Path
 from types import MappingProxyType
+from typing import cast
 
 import jax
 import jax.numpy as jnp
@@ -170,10 +171,13 @@ def test_claw_allows_with_signature_wrapper_over_named_param_function() -> None:
         state_names=("state",),
     )
 
-    argmax, maximum = argmax_and_max_Q_over_a(
-        next_regime_to_V_arr=MappingProxyType({"working": jnp.arange(3.0)}),
-        action=jnp.array([0.0, 1.0, 2.0]),
-        state=jnp.array(0.0),
+    argmax, maximum = cast(
+        "tuple[jax.Array, jax.Array]",
+        argmax_and_max_Q_over_a(
+            next_regime_to_V_arr=MappingProxyType({"working": jnp.arange(3.0)}),
+            action=jnp.array([0.0, 1.0, 2.0]),
+            state=jnp.array(0.0),
+        ),
     )
 
     assert int(argmax) == 2

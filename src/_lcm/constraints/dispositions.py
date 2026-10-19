@@ -36,6 +36,7 @@ else:
 # scope, which is what decides whether a constraint can be evaluated at all:
 # - `"state_action"` — over the whole state-action product, as grid search does
 # - `"discrete_combo"` — per discrete combination, before a continuous inner stage
+# - `"state_node"` — at a published current-state node after continuous inversion
 # - `"savings_stage"` — inside an endogenous-grid inversion
 # - `"outer_candidate"` — at one NEGM adjuster outer-grid node
 # - `"keeper_candidate"` — at NEGM's no-adjustment outer candidate
@@ -43,6 +44,7 @@ else:
 type EvaluationStage = Literal[
     "state_action",
     "discrete_combo",
+    "state_node",
     "savings_stage",
     "outer_candidate",
     "keeper_candidate",

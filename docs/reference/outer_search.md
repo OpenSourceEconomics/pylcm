@@ -40,7 +40,11 @@ AdaptiveOuterMesh(
 ```
 
 Starts from `initial_grid`, evaluates exact inner solves on a shared mesh, validates
-interpolation at proposed points, and refines bracket-local optima.
+interpolation at proposed points, and refines bracket-local optima. It supports only
+literal borrowing floors; a callable `post_decision_lower_bound` floor raises
+`ModelInitializationError` at model construction, because honouring it at every refined
+node is prohibitively slow (see
+[post-decision lower bounds](consumption_savings.md#api-post-decision-lower-bounds)).
 
 Important fields:
 
@@ -56,6 +60,12 @@ Important fields:
 
 Without a valid Lipschitz bound, midpoint/mesh validation cannot exclude an arbitrarily
 narrow peak between sampled points.
+
+Golden section assumes that the objective is unimodal inside the bracket. A kink inside
+a retained bracket, for example where a borrowing floor starts to bind, breaks that
+assumption, so the refined point can land away from the optimum of the bracket. Treat
+refined values near a known kink as approximate. When the kink location matters, use a
+`FiniteOuterGrid` that has a node at the kink.
 
 The replay policy published under an adaptive search is read against the exact mesh the
 solve generated, which the solving `Model` instance records privately beside the result.

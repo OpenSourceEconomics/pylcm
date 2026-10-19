@@ -46,6 +46,7 @@ offending cell instead of publishing a guess.
 
 import functools
 from collections.abc import Callable
+from typing import NamedTuple, overload
 
 import jax
 import jax.numpy as jnp
@@ -53,12 +54,120 @@ import jax.numpy as jnp
 from _lcm.egm.upper_envelope._exact_affine import exact_affine_read
 from _lcm.egm.upper_envelope.cell_hull import hull_owners
 from _lcm.egm.upper_envelope.topology import count_linked_runs, monotone_run_ids
-from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, ScalarBool, ScalarInt
+from lcm.typing import (
+    BoolND,
+    Float1D,
+    FloatND,
+    Int1D,
+    IntND,
+    LoopIndex,
+    ScalarBool,
+    ScalarInt,
+)
 
 # Static capacity for the number of x-monotone runs a candidate chain may fold
 # into. One discrete action can fold arbitrarily often, so this is a validated
 # capacity, never an assumed bound: exceeding it poisons the row.
 DEFAULT_MAX_RUNS: int = 24
+
+
+class OwnedEnvelope(NamedTuple):
+    """An envelope associated with its original candidate saving and topology.
+
+    Owners are monotone candidate runs; source indices identify their actual
+    links. Sides are incoming `1`, outgoing `-1`, or unsided `0`. Links have
+    length `n_refined - 1` and never join different owners or coverage gaps.
+    Only emitted nodes are represented; singleton candidate runs spanning no
+    interval do not acquire support.
+    """
+
+    grid: Float1D
+    policy: Float1D
+    value: Float1D
+    n_kept: ScalarInt
+    savings: Float1D
+    owner_id: Int1D
+    side_id: Int1D
+    link_valid: BoolND
+    source_left_index: Int1D
+    source_right_index: Int1D
+
+
+class _NegmBindingEnvelope(NamedTuple):
+    """Associate current publication queries with native floor-source ownership."""
+
+    grid: Float1D
+    policy: Float1D
+    value: Float1D
+    n_kept: ScalarInt
+    binding_query: BoolND
+
+
+class _OwnedNegmBindingEnvelope(NamedTuple):
+    """Keep native publication flags beside the same envelope's original owners."""
+
+    owned: OwnedEnvelope
+    binding_query: BoolND
+
+
+@overload
+def refine_envelope_exact(
+    *,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    n_refined: int,
+    savings: Float1D,
+    _binding_source_count: int,
+    _binding_queries: FloatND,
+    segment_id: Float1D | None = None,
+    max_runs: int = DEFAULT_MAX_RUNS,
+    cell_width: int = 1,
+) -> _OwnedNegmBindingEnvelope: ...
+
+
+@overload
+def refine_envelope_exact(
+    *,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    n_refined: int,
+    _binding_source_count: int,
+    _binding_queries: FloatND,
+    segment_id: Float1D | None = None,
+    max_runs: int = DEFAULT_MAX_RUNS,
+    cell_width: int = 1,
+    savings: None = None,
+) -> _NegmBindingEnvelope: ...
+
+
+@overload
+def refine_envelope_exact(
+    *,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    n_refined: int,
+    segment_id: Float1D | None = None,
+    max_runs: int = DEFAULT_MAX_RUNS,
+    cell_width: int = 1,
+    savings: None = None,
+) -> tuple[Float1D, Float1D, Float1D, ScalarInt]: ...
+
+
+@overload
+def refine_envelope_exact(
+    *,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    n_refined: int,
+    segment_id: Float1D | None = None,
+    max_runs: int = DEFAULT_MAX_RUNS,
+    cell_width: int = 1,
+    savings: Float1D,
+) -> OwnedEnvelope: ...
 
 
 def refine_envelope_exact(
@@ -70,7 +179,15 @@ def refine_envelope_exact(
     segment_id: Float1D | None = None,
     max_runs: int = DEFAULT_MAX_RUNS,
     cell_width: int = 1,
-) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
+    savings: Float1D | None = None,
+    _binding_source_count: int | None = None,
+    _binding_queries: FloatND | None = None,
+) -> (
+    tuple[Float1D, Float1D, Float1D, ScalarInt]
+    | OwnedEnvelope
+    | _NegmBindingEnvelope
+    | _OwnedNegmBindingEnvelope
+):
     """Refine a candidate value correspondence to its exact upper envelope.
 
     Args:
@@ -85,6 +202,8 @@ def refine_envelope_exact(
         cell_width: How many node cells the execution plan resolves together.
             The default visits one cell at a time. Cells are independent, so
             this partitions the work without changing any published value.
+        savings: Original candidate savings. When present, publish their
+            associated ownership and support with an `OwnedEnvelope`.
 
     Returns:
         Tuple of refined endogenous grid, refined policy, refined value (each of
@@ -94,6 +213,8 @@ def refine_envelope_exact(
         then not publishable.
 
     """
+    if (_binding_source_count is None) != (_binding_queries is None):
+        raise ValueError("Binding queries require their source-prefix count.")
     dead = jnp.isnan(endog_grid) | jnp.isnan(value)
     run_id = monotone_run_ids(endog_grid=endog_grid, dead=dead, segment_id=segment_id)
     n_runs = count_linked_runs(endog_grid=endog_grid, dead=dead, segment_id=segment_id)
@@ -115,13 +236,16 @@ def refine_envelope_exact(
         cell_width=cell_width,
     )
 
-    out_grid, out_policy, out_value, n_kept = _emit_envelope(
+    emitted = _emit_envelope(
         sub_cells=sub_cells,
         endog_grid=endog_grid,
         policy=policy,
         value=value,
         n_refined=n_refined,
+        savings=savings,
+        run_id=run_id,
     )
+    out_grid, out_policy, out_value, n_kept = emitted[:4]
 
     uncertain = sub_cells.poisoned | (n_runs > max_runs)
     overflow_marker = jnp.asarray(n_refined + 1, dtype=jnp.int32)
@@ -130,6 +254,39 @@ def refine_envelope_exact(
     out_grid = jnp.where(uncertain, poison, out_grid)
     out_policy = jnp.where(uncertain, poison, out_policy)
     out_value = jnp.where(uncertain, poison, out_value)
+    owned = None
+    if isinstance(emitted, OwnedEnvelope):
+        owned = OwnedEnvelope(
+            grid=out_grid,
+            policy=out_policy,
+            value=out_value,
+            n_kept=n_kept,
+            savings=jnp.where(uncertain, poison, emitted.savings),
+            owner_id=jnp.where(uncertain, -1, emitted.owner_id),
+            side_id=jnp.where(uncertain, 0, emitted.side_id),
+            link_valid=emitted.link_valid & ~uncertain,
+            source_left_index=jnp.where(uncertain, -1, emitted.source_left_index),
+            source_right_index=jnp.where(uncertain, -1, emitted.source_right_index),
+        )
+    if _binding_queries is not None and _binding_source_count is not None:
+        binding_query = _classify_binding_queries(
+            sub_cells=sub_cells,
+            endog_grid=endog_grid,
+            queries=_binding_queries,
+            source_count=_binding_source_count,
+            emitted_grid=out_grid,
+            emitted_policy=out_policy,
+            emitted_value=out_value,
+            n_kept=n_kept,
+            uncertain=uncertain,
+        )
+        if owned is not None:
+            return _OwnedNegmBindingEnvelope(owned, binding_query)
+        return _NegmBindingEnvelope(
+            out_grid, out_policy, out_value, n_kept, binding_query
+        )
+    if owned is not None:
+        return owned
     return out_grid, out_policy, out_value, n_kept
 
 
@@ -185,6 +342,82 @@ class _SubCells:
         """How many sub-cells were owned, counted before any were dropped."""
         self.poisoned = poisoned
         """Whether any ownership decision could not be certified."""
+
+
+def _classify_binding_queries(
+    *,
+    sub_cells: _SubCells,
+    endog_grid: Float1D,
+    queries: FloatND,
+    source_count: int,
+    emitted_grid: Float1D,
+    emitted_policy: Float1D,
+    emitted_value: Float1D,
+    n_kept: ScalarInt,
+    uncertain: ScalarBool,
+) -> BoolND:
+    """Locate each query's native sub-cell without a query-by-cell workspace.
+
+    At a shared boundary the incoming sub-cell owns the query. An exact original
+    endpoint uses that endpoint's source; every other query needs both owning
+    link endpoints in the producer's floor prefix. Unresolved ownership,
+    capacity overflow and refused live emitted channels withhold all flags.
+    """
+    capacity = sub_cells.left.size
+    n_live = jnp.clip(sub_cells.n_live, 0, capacity)
+    lower = jnp.zeros(queries.shape, dtype=jnp.int32)
+    upper = jnp.full(queries.shape, n_live, dtype=jnp.int32)
+    safe_query = jnp.where(jnp.isfinite(queries), queries, 0.0)
+
+    # keyword-only-exempt: library-callback=jax.lax.fori_loop
+    def bisect(_: LoopIndex, bounds: tuple[IntND, IntND]) -> tuple[IntND, IntND]:
+        low, high = bounds
+        middle = low + (high - low) // 2
+        searching = low < high
+        go_right = (
+            searching
+            & (middle < n_live)
+            & (sub_cells.left[jnp.minimum(middle, capacity - 1)] <= safe_query)
+        )
+        return (
+            jnp.where(go_right, middle + 1, low),
+            jnp.where(searching & ~go_right, middle, high),
+        )
+
+    lower, _ = jax.lax.fori_loop(0, capacity.bit_length(), bisect, (lower, upper))
+    selected = jnp.clip(lower - 1, 0, capacity - 1)
+    low = sub_cells.owner_left_index[selected]
+    high = sub_cells.owner_right_index[selected]
+    low_floor = (low >= 0) & (low < source_count)
+    high_floor = (high >= 0) & (high < source_count)
+    source_is_floor = jnp.where(
+        safe_query == endog_grid[low],
+        low_floor,
+        jnp.where(safe_query == endog_grid[high], high_floor, low_floor & high_floor),
+    )
+    covered = (
+        jnp.isfinite(queries)
+        & (lower > 0)
+        & (selected < n_live)
+        & (safe_query >= sub_cells.left[selected])
+        & (safe_query <= sub_cells.right[selected])
+    )
+    live = jnp.arange(emitted_grid.size) < n_kept
+    readable = jnp.all(
+        ~live
+        | (
+            jnp.isfinite(emitted_grid)
+            & jnp.isfinite(emitted_policy)
+            & jnp.isfinite(emitted_value)
+        )
+    )
+    resolved = (
+        ~uncertain
+        & (sub_cells.n_live <= capacity)
+        & (n_kept <= emitted_grid.size)
+        & readable
+    )
+    return covered & source_is_floor & resolved
 
 
 def _node_cells(
@@ -453,14 +686,16 @@ def _place_in_row(
     return row.at[slot].set(jnp.where(keep, source.reshape(-1), empty), mode="drop")
 
 
-def _emit_envelope(
+def _emit_envelope(  # noqa: PLR0915 - channels share one emission and scatter topology
     *,
     sub_cells: _SubCells,
     endog_grid: Float1D,
     policy: Float1D,
     value: Float1D,
     n_refined: int,
-) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
+    savings: Float1D | None = None,
+    run_id: Int1D,
+) -> tuple[Float1D, Float1D, Float1D, ScalarInt] | OwnedEnvelope:
     """Turn owned sub-cells into a weakly ascending, NaN-padded envelope row.
 
     Emission is driven purely by ownership: a boundary whose two sides differ in
@@ -483,33 +718,50 @@ def _emit_envelope(
     high = sub_cells.owner_right_index
     live = jnp.arange(n_slots) < n_live
 
-    own_value, own_policy = _link_channels(
+    own_channels = _link_channels(
         low=low,
         high=high,
         x_query=left,
         endog_grid=endog_grid,
         value=value,
         policy=policy,
+        savings=savings,
     )
+    own_value, own_policy = own_channels[:2]
     previous = jnp.clip(jnp.arange(n_slots) - 1, 0, n_slots - 1)
-    prior_value, prior_policy = _link_channels(
+    is_first = jnp.arange(n_slots) == 0
+    gap = live & ~is_first & (right[previous] < left)
+    prior_grid = jnp.where(gap, right[previous], left) if savings is not None else left
+    prior_channels = _link_channels(
         low=low[previous],
         high=high[previous],
-        x_query=left,
+        x_query=prior_grid,
         endog_grid=endog_grid,
         value=value,
         policy=policy,
+        savings=savings,
     )
+    prior_value, prior_policy = prior_channels[:2]
 
-    is_first = jnp.arange(n_slots) == 0
     kinks = (
         live & ~is_first & ((prior_value != own_value) | (prior_policy != own_policy))
     )
+    if savings is not None:
+        kinks = (
+            live
+            & ~is_first
+            & (
+                gap
+                | kinks
+                | (own_channels[-1] != prior_channels[-1])
+                | (run_id[low] != run_id[low[previous]])
+            )
+        )
 
     # Two rows per sub-cell boundary: the outgoing owner's reading where the
     # envelope kinks, then the incoming owner's reading.
     row_valid = jnp.stack([kinks, live], axis=1).ravel()
-    row_grid = jnp.stack([left, left], axis=1).ravel()
+    row_grid = jnp.stack([prior_grid, left], axis=1).ravel()
     row_policy = jnp.stack([prior_policy, own_policy], axis=1).ravel()
     row_value = jnp.stack([prior_value, own_value], axis=1).ravel()
 
@@ -517,14 +769,16 @@ def _emit_envelope(
     last = jnp.clip(n_live - 1, 0, n_slots - 1)
     closing_valid = (n_live > 0)[None]
     closing_grid = right[last][None]
-    closing_read_value, closing_read_policy = _link_channels(
+    closing_channels = _link_channels(
         low=low[last],
         high=high[last],
         x_query=right[last],
         endog_grid=endog_grid,
         value=value,
         policy=policy,
+        savings=savings,
     )
+    closing_read_value, closing_read_policy = closing_channels[:2]
     closing_policy = closing_read_policy[None]
     closing_value = closing_read_value[None]
 
@@ -546,7 +800,90 @@ def _emit_envelope(
     out_value = out_value.at[slot].set(
         jnp.where(row_valid, row_value, nan), mode="drop"
     )
-    return out_grid, out_policy, out_value, jnp.sum(row_valid, dtype=jnp.int32)
+    n_kept = jnp.sum(row_valid, dtype=jnp.int32)
+    if savings is None:
+        return out_grid, out_policy, out_value, n_kept
+
+    row_savings = jnp.concatenate(
+        [
+            jnp.stack([prior_channels[-1], own_channels[-1]], axis=1).ravel(),
+            closing_channels[-1][None],
+        ]
+    )
+    row_low = jnp.concatenate(
+        [jnp.stack([low[previous], low], axis=1).ravel(), low[last][None]]
+    )
+    row_high = jnp.concatenate(
+        [jnp.stack([high[previous], high], axis=1).ravel(), high[last][None]]
+    )
+    row_side = jnp.concatenate(
+        [
+            jnp.stack(
+                [
+                    -jnp.ones(n_slots, dtype=jnp.int32),
+                    jnp.where(is_first | kinks, 1, 0),
+                ],
+                axis=1,
+            ).ravel(),
+            jnp.array([-1], dtype=jnp.int32),
+        ]
+    )
+    row_end = jnp.concatenate(
+        [jnp.stack([right[previous], right], axis=1).ravel(), right[last][None]]
+    )
+    out_savings = (
+        jnp.full(n_refined, jnp.nan, dtype=savings.dtype)
+        .at[slot]
+        .set(jnp.where(row_valid, row_savings, nan), mode="drop")
+    )
+    out_low = (
+        jnp.full(n_refined, -1, dtype=jnp.int32)
+        .at[slot]
+        .set(jnp.where(row_valid, row_low, -1), mode="drop")
+    )
+    out_high = (
+        jnp.full(n_refined, -1, dtype=jnp.int32)
+        .at[slot]
+        .set(jnp.where(row_valid, row_high, -1), mode="drop")
+    )
+    out_owner = (
+        jnp.full(n_refined, -1, dtype=jnp.int32)
+        .at[slot]
+        .set(jnp.where(row_valid, run_id[row_low], -1), mode="drop")
+    )
+    out_side = (
+        jnp.zeros(n_refined, dtype=jnp.int32)
+        .at[slot]
+        .set(jnp.where(row_valid, row_side, 0), mode="drop")
+    )
+    out_end = (
+        jnp.full(n_refined, jnp.nan, dtype=endog_grid.dtype)
+        .at[slot]
+        .set(jnp.where(row_valid, row_end, nan), mode="drop")
+    )
+    readable = (
+        jnp.isfinite(out_policy) & jnp.isfinite(out_savings) & ~jnp.isnan(out_value)
+    )
+    link_valid = (
+        readable[:-1]
+        & readable[1:]
+        & (out_grid[1:] > out_grid[:-1])
+        & (out_grid[1:] <= out_end[:-1])
+        & (out_owner[:-1] == out_owner[1:])
+        & (out_owner[:-1] >= 0)
+    )
+    return OwnedEnvelope(
+        grid=out_grid,
+        policy=out_policy,
+        value=out_value,
+        n_kept=n_kept,
+        savings=out_savings,
+        owner_id=out_owner,
+        side_id=out_side,
+        link_valid=link_valid,
+        source_left_index=out_low,
+        source_right_index=out_high,
+    )
 
 
 def _line_read(
@@ -595,7 +932,8 @@ def _link_channels(
     endog_grid: Float1D,
     value: Float1D,
     policy: Float1D,
-) -> tuple[FloatND, FloatND]:
+    savings: Float1D | None = None,
+) -> tuple[FloatND, FloatND] | tuple[FloatND, FloatND, FloatND]:
     """Read one link's value and policy, publishing both channels or neither.
 
     A row carrying a finite value beside a NaN policy would be read downstream as
@@ -610,6 +948,16 @@ def _link_channels(
         low=low, high=high, x_query=x_query, endog_grid=endog_grid, ordinate=policy
     )
     readable = (value_status == 0) & (policy_status == 0)
+    if savings is not None:
+        read_savings, savings_status = _line_read(
+            low=low, high=high, x_query=x_query, endog_grid=endog_grid, ordinate=savings
+        )
+        readable = readable & (savings_status == 0)
+        return (
+            jnp.where(readable, read_value, jnp.asarray(jnp.nan, value.dtype)),
+            jnp.where(readable, read_policy, jnp.asarray(jnp.nan, policy.dtype)),
+            jnp.where(readable, read_savings, jnp.asarray(jnp.nan, savings.dtype)),
+        )
     return (
         jnp.where(readable, read_value, jnp.asarray(jnp.nan, value.dtype)),
         jnp.where(readable, read_policy, jnp.asarray(jnp.nan, policy.dtype)),

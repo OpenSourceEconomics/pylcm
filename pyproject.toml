@@ -497,6 +497,10 @@ ini_options.markers = [
   """,
   "manual: gates that solve the real paper-scale model; run on request, never in CI",
   """\
+  os_persistence: slow test of on-disk state that the macOS/Windows persistence lanes \
+  run\
+  """,
+  """\
   requires(device, native, min_devices, min_compute_capability, min_gpu_mem_gb, os, \
   arch): hard execution capabilities\
   """,
