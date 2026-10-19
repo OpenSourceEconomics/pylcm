@@ -192,6 +192,7 @@ from _lcm.solution.diagnostics import (
 from _lcm.solution.feasibility import (
     BoundedResult,
     BoundInputStatus,
+    ChildStatusKernelOutput,
     ContinuationCountedKernelOutput,
     ContinuationReadCounts,
     FeasibilityCounts,
@@ -918,11 +919,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                         query_authorities = (
                             regime.solution.query_input_authorities or {}
                         ).get(period, ())
-                        query_status = (
-                            output.query_status
-                            if type(output) is FeasibilityKernelOutput
-                            else None
-                        )
+                        query_status = _published_query_status(output=output)
                         if query_authorities or query_status is not None:
                             validate_query_input_status(
                                 statuses=query_status, authorities=query_authorities
@@ -1653,11 +1650,23 @@ def _accumulate_landing_totals(
     return landing_totals, landing_checks
 
 
+def _published_query_status(
+    *, output: KernelOutput
+) -> tuple[QueryInputStatus, ...] | None:
+    """Read the declared child slots from either typed status publication."""
+    if (
+        type(output) is FeasibilityKernelOutput
+        or type(output) is ChildStatusKernelOutput
+    ):
+        return output.query_status
+    return None
+
+
 def _query_block_status(
     *, output: KernelOutput, n_query_slots: int
 ) -> tuple[QueryInputStatus, ...] | None:
     """Require every reached block to supply its canonical query slots."""
-    statuses = output.query_status if type(output) is FeasibilityKernelOutput else None
+    statuses = _published_query_status(output=output)
     if len(statuses or ()) != n_query_slots:
         raise TypeError(
             "Every invariant block must supply its model-owned query declaration slots."
@@ -1745,23 +1754,13 @@ def _run_dispatch_unit(
             total=continuation_read_counts,
             output=output,
         )
+        query_status, query_status_initialized = _accumulate_query_status(
+            total=query_status,
+            initialized=query_status_initialized,
+            output=output,
+            block_query=block_query,
+        )
         if type(output) is FeasibilityKernelOutput:
-            if query_status is not None and block_query is not None:
-                block_query = tuple(
-                    QueryInputStatus(
-                        *(
-                            jax.device_put(right, left.sharding)
-                            for left, right in zip(lhs, rhs, strict=True)
-                        )
-                    )
-                    for lhs, rhs in zip(query_status, block_query, strict=True)
-                )
-            query_status = (
-                merge_query_input_status(left=query_status, right=block_query)
-                if query_status_initialized
-                else block_query
-            )
-            query_status_initialized = True
             if output.landing_totals is not None:
                 landing_totals, landing_checks = _accumulate_landing_totals(
                     landing_totals=landing_totals,
@@ -1808,13 +1807,10 @@ def _run_dispatch_unit(
             template=value_template,
         )
     return (
-        (
-            KernelOutput(value=cast("FloatND", value))
-            if continuation_read_counts is None
-            else ContinuationCountedKernelOutput(
-                value=cast("FloatND", value),
-                continuation_read_counts=continuation_read_counts,
-            )
+        _literal_dispatch_unit_output(
+            value=cast("FloatND", value),
+            query_status=query_status,
+            continuation_read_counts=continuation_read_counts,
         )
         if feasibility_counts is None
         else FeasibilityKernelOutput(
@@ -1829,6 +1825,54 @@ def _run_dispatch_unit(
     ), True
 
 
+def _accumulate_query_status(
+    *,
+    total: tuple[QueryInputStatus, ...] | None,
+    initialized: bool,
+    output: KernelOutput,
+    block_query: tuple[QueryInputStatus, ...] | None,
+) -> tuple[tuple[QueryInputStatus, ...] | None, bool]:
+    """Merge one typed block's child slots on the standing summary's placement."""
+    if (
+        type(output) is not FeasibilityKernelOutput
+        and type(output) is not ChildStatusKernelOutput
+    ):
+        return total, initialized
+    if total is not None and block_query is not None:
+        block_query = tuple(
+            QueryInputStatus(
+                *(
+                    jax.device_put(right, left.sharding)
+                    for left, right in zip(lhs, rhs, strict=True)
+                )
+            )
+            for lhs, rhs in zip(total, block_query, strict=True)
+        )
+    if not initialized:
+        return block_query, True
+    return merge_query_input_status(left=total, right=block_query), True
+
+
+def _literal_dispatch_unit_output(
+    *,
+    value: FloatND,
+    query_status: tuple[QueryInputStatus, ...] | None,
+    continuation_read_counts: ContinuationReadCounts | None,
+) -> KernelOutput:
+    """Assemble blocks without feasibility counts under their own typed summaries."""
+    if query_status is not None:
+        return ChildStatusKernelOutput(
+            value=value,
+            query_status=query_status,
+            continuation_read_counts=continuation_read_counts,
+        )
+    if continuation_read_counts is not None:
+        return ContinuationCountedKernelOutput(
+            value=value, continuation_read_counts=continuation_read_counts
+        )
+    return KernelOutput(value=value)
+
+
 def _accumulate_continuation_read_counts(
     *,
     total: ContinuationReadCounts | None,
@@ -1837,6 +1881,7 @@ def _accumulate_continuation_read_counts(
     """Merge a declared block pair on the standing summary's placement."""
     if (
         type(output) is not FeasibilityKernelOutput
+        and type(output) is not ChildStatusKernelOutput
         and type(output) is not ContinuationCountedKernelOutput
     ):
         return total

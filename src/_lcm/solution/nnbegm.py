@@ -100,7 +100,15 @@ from _lcm.solution.contract import (
     _BoundLiquidMargin,
     _BoundOuterContinuousMargin,
 )
-from _lcm.solution.feasibility import FeasibilityKernelOutput, count_current_feasibility
+from _lcm.solution.feasibility import (
+    ChildStatusKernelOutput,
+    ContinuationReadCounts,
+    FeasibilityKernelOutput,
+    QueryInputStatus,
+    count_current_feasibility,
+    merge_continuation_read_counts,
+    merge_query_input_status,
+)
 from _lcm.solution.nbegm import (
     NBEGM,
     _BoundNBEGM,
@@ -1362,8 +1370,12 @@ class _NNBEGMPeriodKernel:
                     "bound_status": result.bound_status,
                     "query_status": result.query_status,
                     "continuation_read_counts": result.continuation_read_counts,
-                    "current_feasibility": result.current_feasibility,
                 }
+                if isinstance(result, FeasibilityKernelOutput)
+                else {}
+            ),
+            **(
+                {"current_feasibility": result.current_feasibility}
                 if isinstance(result, _NBEGMNestedKernelOutput)
                 else {}
             ),
@@ -1694,6 +1706,7 @@ class _FiniteNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
             keeper_result=keeper_result,
             keeper_carry=keeper_carry,
         )
+        inherited = _InheritedChildSummary.of(keeper_result)
         adjuster_cores = _subcores(compiled_cores=compiled_cores, role="adjuster")
         nodes = list(self.outer_grid_values)
         for chunk_start, chunk_stop in _dispatch_bounds(
@@ -1724,6 +1737,7 @@ class _FiniteNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
                 for node in nodes[chunk_start:chunk_stop]
             ]
             for adjuster_result in chunk_results:
+                inherited = inherited.add(adjuster_result)
                 V_arr = jnp.fmax(V_arr, adjuster_result.value)
                 adjuster_carries.append(
                     cast("EGMCarry", adjuster_result.continuations[EGM_CONTINUATION])
@@ -1819,22 +1833,26 @@ class _FiniteNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
                 continuation_read_counts=summary.continuation_read_counts,
             )
         if not retain_replay:
-            return KernelOutput(value=V_arr, continuations={EGM_CONTINUATION: carry})
-        return KernelOutput(
-            value=V_arr,
-            continuations={EGM_CONTINUATION: carry},
-            replay={
-                SIMULATION_POLICY: self._finite_replay_policy(
-                    replay_capability=replay_capability,
-                    keeper_result=keeper_result,
-                    adjuster_results=adjuster_results,
-                    state_action_space=state_action_space,
-                    flat_params=flat_params,
-                    period=period,
-                    ages=ages,
-                    logger=logger,
-                )
-            },
+            return inherited.publish(
+                KernelOutput(value=V_arr, continuations={EGM_CONTINUATION: carry})
+            )
+        return inherited.publish(
+            KernelOutput(
+                value=V_arr,
+                continuations={EGM_CONTINUATION: carry},
+                replay={
+                    SIMULATION_POLICY: self._finite_replay_policy(
+                        replay_capability=replay_capability,
+                        keeper_result=keeper_result,
+                        adjuster_results=adjuster_results,
+                        state_action_space=state_action_space,
+                        flat_params=flat_params,
+                        period=period,
+                        ages=ages,
+                        logger=logger,
+                    )
+                },
+            )
         )
 
     def _finite_replay_policy(
@@ -2114,11 +2132,77 @@ class _AdaptiveNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
             auxiliary[GENERATED_REPLAY_AUTHORITY] = GeneratedReplayAuthority(
                 adaptive_outer_nodes=tuple(float(node) for node in mesh_nodes_host)
             )
-        return KernelOutput(
-            value=collapse.V_arr,
-            continuations={EGM_CONTINUATION: collapse.carry},
-            replay=replay,
-            auxiliary=auxiliary,
+        inherited = _InheritedChildSummary.of(keeper_result)
+        for executed in cache.values():
+            inherited = inherited.add(executed)
+        return inherited.publish(
+            KernelOutput(
+                value=collapse.V_arr,
+                continuations={EGM_CONTINUATION: collapse.carry},
+                replay=replay,
+                auxiliary=auxiliary,
+            )
+        )
+
+
+@dataclass(frozen=True, kw_only=True)
+class _InheritedChildSummary:
+    """The child-query summaries of every executed inner solve of one period.
+
+    A parent without its own query floor still reads callable-floor children
+    through their queries in the keeper and in every evaluated adjuster. Each
+    executed solve contributes once, whether it wins, loses or is economically
+    excluded. Its declared slots are OR-ed in their model-owned order and its
+    requested paired-read counts are added.
+    """
+
+    query_status: tuple[QueryInputStatus, ...] | None
+    """The ordered child slots, or `None` when the inner solves declare none."""
+    continuation_read_counts: ContinuationReadCounts | None
+    """The summed paired-read counts, or `None` when none were requested."""
+
+    @classmethod
+    def of(cls, row: KernelOutput | OuterCandidateResult) -> _InheritedChildSummary:
+        """Read one executed solve's child summaries."""
+        if isinstance(row, FeasibilityKernelOutput | OuterCandidateResult):
+            return cls(
+                query_status=row.query_status,
+                continuation_read_counts=row.continuation_read_counts,
+            )
+        return cls(query_status=None, continuation_read_counts=None)
+
+    def add(self, row: KernelOutput | OuterCandidateResult) -> _InheritedChildSummary:
+        """Fold one further executed solve into the summary."""
+        other = _InheritedChildSummary.of(row)
+        if (self.continuation_read_counts is None) != (
+            other.continuation_read_counts is None
+        ):
+            raise TypeError("Executed inner solves disagree on the read-count schema.")
+        return _InheritedChildSummary(
+            query_status=merge_query_input_status(
+                left=self.query_status, right=other.query_status
+            ),
+            continuation_read_counts=merge_continuation_read_counts(
+                left=self.continuation_read_counts,
+                right=other.continuation_read_counts,
+            ),
+        )
+
+    def publish(self, output: KernelOutput) -> KernelOutput:
+        """Attach the declared slots to a parent result without its own floor."""
+        if self.query_status is None:
+            if self.continuation_read_counts is not None:
+                raise TypeError("Read counts require their declared child slots.")
+            return output
+        if type(output) is not KernelOutput:
+            raise TypeError("Only a plain parent result inherits child slots.")
+        return ChildStatusKernelOutput(
+            **{
+                channel.name: getattr(output, channel.name)
+                for channel in fields(output)
+            },
+            query_status=self.query_status,
+            continuation_read_counts=self.continuation_read_counts,
         )
 
 
