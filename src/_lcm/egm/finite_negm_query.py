@@ -200,15 +200,18 @@ def read_finite_outer_choices(
             if query.finite_keeper is None
             else _evaluate(function=query.finite_keeper, pool=actual)
         )
-        alternatives = []
-        summaries = []
-        any_eligible = jnp.asarray(a=False)
-        for outer_index in range(authority.outer_capacity):
-            identity = (
-                keeper
-                if outer_index == 0
-                else jnp.asarray(outer.outer_nodes[outer_index - 1], dtype=grid.dtype)
-            )
+        # Every O differs only in its index and identity, so the reads are one
+        # program batched over the candidate axis rather than one per candidate.
+        identities = jnp.stack(
+            [
+                jnp.asarray(keeper),
+                *(jnp.asarray(node, dtype=grid.dtype) for node in outer.outer_nodes),
+            ]
+        )
+
+        def at_outer(
+            *, outer_index: ScalarInt, identity: ScalarFloat
+        ) -> tuple[_FiniteOuterProfile, ContinuationReadCounts | None, BoolND]:
             chosen = {**actual, outer.outer_post_decision: identity}
             resources, eligible, domain, resource_gradient = (
                 _finite_outer_publication_inputs(
@@ -218,7 +221,6 @@ def read_finite_outer_choices(
                     euler_gradient=euler_gradient,
                 )
             )
-            any_eligible |= eligible & domain
             positions = (*action_positions, outer_index)
             native_grid = read_at_codes(array=grid, positions=positions)
             native_value = read_at_codes(array=value, positions=positions)
@@ -243,16 +245,14 @@ def read_finite_outer_choices(
                 marginal=native_marginal.reshape(n_rows, authority.row_capacity),
                 data=row_data,
             )
+            summary = None
             if collect_continuation_read_counts:
                 counted = active_flat & raw.has_first
-                summaries.append(
-                    ContinuationReadCounts(
-                        below_first_live=sum_counts(
-                            counts=counted
-                            & (common_queries.reshape(n_rows) < raw.first)
-                        ),
-                        eligible=sum_counts(counts=counted),
-                    )
+                summary = ContinuationReadCounts(
+                    below_first_live=sum_counts(
+                        counts=counted & (common_queries.reshape(n_rows) < raw.first)
+                    ),
+                    eligible=sum_counts(counts=counted),
                 )
             preferences = query.build_preferences(chosen)
             beta = query.read_discount_factor(chosen)
@@ -273,26 +273,28 @@ def read_finite_outer_choices(
                 grid=native_grid.reshape(n_rows, authority.row_capacity),
                 data=row_data,
             )
-            alternatives.append(
-                _validate_finite_outer_rows(
-                    raw=raw,
-                    queries=common_queries.reshape(n_rows),
-                    gradients=common_gradients.reshape(n_rows),
-                    floor=floor,
-                    upper_saving=nodes[-1],
-                    resources=resources,
-                    eligible=eligible & domain,
-                    corner_value=corners.value,
-                    corner_marginal=corners.marginal,
-                    supported_corner=corners.supported,
-                    finite_corner=corners.finite,
-                    invalid_corner=corners.invalid,
-                    paired_marginal_read=paired_marginal_read,
-                )
+            profile = _validate_finite_outer_rows(
+                raw=raw,
+                queries=common_queries.reshape(n_rows),
+                gradients=common_gradients.reshape(n_rows),
+                floor=floor,
+                upper_saving=nodes[-1],
+                resources=resources,
+                eligible=eligible & domain,
+                corner_value=corners.value,
+                corner_marginal=corners.marginal,
+                supported_corner=corners.supported,
+                finite_corner=corners.finite,
+                invalid_corner=corners.invalid,
+                paired_marginal_read=paired_marginal_read,
             )
-        candidates = jax.tree.map(
-            lambda *leaves: jnp.stack(leaves, axis=-1), *alternatives
+            return profile, summary, eligible & domain
+
+        candidates, summaries, eligible_outer = jax.vmap(at_outer, out_axes=(-1, 0, 0))(
+            outer_index=jnp.arange(authority.outer_capacity, dtype=jnp.int32),
+            identity=identities,
         )
+        any_eligible = jnp.any(eligible_outer)
         selection = _select_finite_outer_profiles(profiles=candidates)
         maximum, right, left, right_alive = _collapse_finite_selection(
             selection=selection
@@ -321,14 +323,9 @@ def read_finite_outer_choices(
             coverage_missing=coverage_missing,
             bound_status=bound_status,
         )
-        if collect_continuation_read_counts:
+        if summaries is not None:
             return result, ContinuationReadCounts(
-                *(
-                    sum_counts(
-                        counts=jnp.stack([counts[channel] for counts in summaries])
-                    )
-                    for channel in range(2)
-                )
+                *(sum_counts(counts=summaries[channel]) for channel in range(2))
             )
         return result, None
 
