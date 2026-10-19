@@ -16,7 +16,6 @@ from _lcm.egm.carry import (
 from _lcm.egm.dcegm_query import (
     DCEGMQuery,
     FiniteNEGMQueryResult,
-    _CornerRead,
     _evaluate,
     _passive_weights,
     _read_compact_corner,
@@ -170,9 +169,10 @@ def read_finite_outer_choices(
     )
     # No candidate cost, preference or predicate is evaluated before this floor.
     floor, nodes, bound_status = query.evaluate_floor(pool=pool)
-    _weights, active, negative = _passive_weights(
+    weights, active, negative = _passive_weights(
         values=passive_values, grids=passive_grids
     )
+    flat_weights = tuple(weight.reshape(-1) for weight in weights)
     active_flat = active.reshape(-1)
     action_shape = tuple(values.size for values in action_values)
     passive_shape = tuple(grid.size for grid in passive_grids)
@@ -208,20 +208,26 @@ def read_finite_outer_choices(
             n_rows=n_rows,
             dtype=grid.dtype,
         )
-        row_values = tuple(values for _, values in row_states)
 
         def at_outer(
             *,
             outer_index: ScalarInt,
             identity: ScalarFloat,
             row_identity: FloatND,
-        ) -> tuple[_FiniteOuterProfile, ContinuationReadCounts | None, BoolND]:
+        ) -> tuple[
+            _FiniteOuterProfile,
+            ContinuationReadCounts | None,
+            BoolND,
+            _FiniteCornerRead,
+        ]:
             chosen = {**actual, outer.outer_post_decision: identity}
-            resources, eligible, domain, _ = _finite_outer_publication_inputs(
-                query=query,
-                pool=chosen,
-                floor=floor,
-                euler_gradient=euler_gradient,
+            resources, eligible, domain, resource_gradient = (
+                _finite_outer_publication_inputs(
+                    query=query,
+                    pool=chosen,
+                    floor=floor,
+                    euler_gradient=euler_gradient,
+                )
             )
             positions = (*action_positions, outer_index)
             native_grid = read_at_codes(array=grid, positions=positions)
@@ -256,25 +262,30 @@ def read_finite_outer_choices(
                     ),
                     eligible=sum_counts(counts=counted),
                 )
-            corners, row_resources = jax.vmap(
-                functools.partial(
-                    _read_finite_corner_row,
-                    query=query,
-                    actual=actual,
-                    passive_names=tuple(name for name, _ in row_states),
-                    outer_post_decision=outer.outer_post_decision,
-                    floor=floor,
-                    eligible=eligible & domain,
-                    euler_gradient=euler_gradient,
-                    paired_marginal_read=paired_marginal_read,
-                )
-            )(
-                coordinate=common_queries.reshape(n_rows),
-                grid=native_grid.reshape(n_rows, authority.row_capacity),
-                data=row_data,
-                passive_row=row_values,
-                identity=row_identity,
+            row_resources = _finite_row_resources(
+                query=query,
+                actual=actual,
+                row_states=row_states,
+                outer_post_decision=outer.outer_post_decision,
+                row_identity=row_identity,
             )
+            corner = _read_finite_corner_row(
+                grid=native_grid,
+                data=native_data,
+                row_queries=common_queries,
+                weights=flat_weights,
+                active=active_flat,
+                negative=negative.reshape(-1),
+                query=query,
+                pool=chosen,
+                floor=floor,
+                resources=resources,
+                eligible=eligible & domain,
+                resource_gradient=resource_gradient,
+                paired_marginal_read=paired_marginal_read,
+            )
+            # The corner is an actual-state object and competes with the blended
+            # ordinary channel below, never inside this row's nodewise maximum.
             profile = _validate_finite_outer_rows(
                 raw=raw,
                 queries=common_queries.reshape(n_rows),
@@ -283,16 +294,19 @@ def read_finite_outer_choices(
                 upper_saving=nodes[-1],
                 resources=resources,
                 eligible=eligible & domain & (row_resources > floor),
-                corner_value=corners.value,
-                corner_marginal=corners.marginal,
-                supported_corner=corners.supported,
-                finite_corner=corners.finite,
-                invalid_corner=corners.invalid,
+                corner_value=jnp.full((n_rows,), -jnp.inf, dtype=grid.dtype),
+                corner_marginal=jnp.zeros((n_rows,), dtype=grid.dtype),
+                supported_corner=jnp.zeros((n_rows,), dtype=jnp.bool_),
+                finite_corner=jnp.zeros((n_rows,), dtype=jnp.bool_),
+                invalid_corner=jnp.broadcast_to(corner.invalid, (n_rows,)),
                 paired_marginal_read=paired_marginal_read,
+                corner_in_row_maximum=False,
             )
-            return profile, summary, eligible & domain
+            return profile, summary, eligible & domain, corner
 
-        candidates, summaries, eligible_outer = jax.vmap(at_outer, out_axes=(-1, 0, 0))(
+        candidates, summaries, eligible_outer, corners = jax.vmap(
+            at_outer, out_axes=(-1, 0, 0, 0)
+        )(
             outer_index=jnp.arange(authority.outer_capacity, dtype=jnp.int32),
             identity=identities,
             row_identity=row_identities,
@@ -302,14 +316,14 @@ def read_finite_outer_choices(
         maximum, right, left, right_alive = _collapse_finite_selection(
             selection=selection
         )
-        maximum, marginal_arrays, coverage_missing = _prepare_finite_passive_blend(
-            selection=selection,
-            value=maximum,
-            marginal_arrays=(right, left, right_alive),
-            any_eligible=any_eligible,
-            coverage_missing=jnp.any(candidates.coverage_missing, axis=-1),
-            active=active_flat,
-            negative=negative.reshape(-1),
+        maximum, marginal_arrays, ordinary_supported, dead_ordinary = (
+            _prepare_finite_ordinary_blend(
+                selection=selection,
+                value=maximum,
+                marginal_arrays=(right, left, right_alive),
+                active=active_flat,
+                negative=negative.reshape(-1),
+            )
         )
         blended_value, blended_marginal = _blend_passive_axes(
             value_at_child=maximum.reshape(passive_shape),
@@ -320,9 +334,20 @@ def read_finite_outer_choices(
             child_passive_grids=passive_grids,
             n_outer_candidates=authority.outer_capacity,
         )
+        value_at, marginal_at, represented = _choose_finite_actual_read(
+            corners=corners,
+            ordinary_value=jnp.where(dead_ordinary, -jnp.inf, blended_value),
+            ordinary_marginal=jnp.where(dead_ordinary, 0.0, blended_marginal),
+            ordinary_supported=ordinary_supported,
+        )
+        coverage_missing = (
+            jnp.any(active_flat & jnp.any(candidates.coverage_missing, axis=-1))
+            | jnp.any(corners.invalid)
+            | (any_eligible & ~represented)
+        )
         result = FiniteNEGMQueryResult(
-            value=jnp.where(any_eligible, blended_value, -jnp.inf),
-            marginal=jnp.where(any_eligible, blended_marginal, 0.0),
+            value=jnp.where(any_eligible, value_at, -jnp.inf),
+            marginal=jnp.where(any_eligible, marginal_at, 0.0),
             coverage_missing=coverage_missing,
             bound_status=bound_status,
         )
@@ -344,6 +369,70 @@ def read_finite_outer_choices(
             *(sum_counts(counts=count) for count in summaries)
         )
     return result
+
+
+def _prepare_finite_ordinary_blend(
+    *,
+    selection: _FiniteSelection,
+    value: FloatND,
+    marginal_arrays: tuple[FloatND, ...],
+    active: BoolND,
+    negative: BoolND,
+) -> tuple[FloatND, tuple[FloatND, ...], ScalarBool, ScalarBool]:
+    """Apply the canonical signed-stencil row rules to the ordinary channel.
+
+    Mirrors the plain DC query's `_blend_owned_rows`. Per active row the
+    ordinary channel is its nodewise O maximum over legal ordinary reads;
+    across rows:
+
+    - a row without any legal ordinary read leaves the channel unsupported;
+    - a supported `-inf` row at a positive weight makes the channel `-inf`;
+    - a supported `-inf` row at a negative weight leaves the channel
+      unsupported, since extrapolating an infinity has no sign.
+
+    Returns the finite row values to blend (infinite and unsupported rows
+    replaced by zero), the marginal payloads with unsupported rows zeroed,
+    whether the blended channel is supported, and whether it is `-inf`.
+    """
+    supported = selection.right.ordinary.supported[..., 0]
+    economic = supported & jnp.isneginf(value)
+    negative_economic = jnp.any(active & negative & economic)
+    positive_economic = jnp.any(active & ~negative & economic)
+    channel_supported = ~jnp.any(active & ~supported) & ~negative_economic
+    return (
+        jnp.where(supported & ~economic, value, 0.0),
+        tuple(jnp.where(supported, leaf, 0.0) for leaf in marginal_arrays),
+        channel_supported,
+        channel_supported & positive_economic,
+    )
+
+
+def _choose_finite_actual_read(
+    *,
+    corners: _FiniteCornerRead,
+    ordinary_value: ScalarFloat,
+    ordinary_marginal: ScalarFloat,
+    ordinary_supported: ScalarBool,
+) -> tuple[ScalarFloat, ScalarFloat, ScalarBool]:
+    """Let the best finite actual corner compete with the blended ordinary read.
+
+    As in the plain DC query, a supported ordinary read wins ties; without a
+    supported ordinary read the corner represents the query alone. Value and
+    marginal come from the same winner, and across O the first maximal finite
+    corner owns the marginal. Returns the pair and whether either channel
+    represents the query.
+    """
+    corner_values = jnp.where(corners.finite, corners.value, -jnp.inf)
+    best = jnp.argmax(corner_values)
+    finite_corner = jnp.any(corners.finite)
+    take_ordinary = ordinary_supported & (
+        ~finite_corner | (ordinary_value >= corner_values[best])
+    )
+    return (
+        jnp.where(take_ordinary, ordinary_value, corner_values[best]),
+        jnp.where(take_ordinary, ordinary_marginal, corners.marginal[best]),
+        ordinary_supported | finite_corner,
+    )
 
 
 def _finite_outer_identities(
@@ -385,6 +474,34 @@ def _finite_outer_identities(
                 *(jnp.broadcast_to(node, (n_rows,)) for node in nodes),
             ]
         ),
+    )
+
+
+def _finite_row_resources(
+    *,
+    query: DCEGMQuery,
+    actual: EconFunctionKwargs,
+    row_states: tuple[tuple[StateName, FloatND], ...],
+    outer_post_decision: FunctionName,
+    row_identity: FloatND,
+) -> FloatND:
+    """Evaluate each passive node's own budget for its ordinary row eligibility."""
+    names = tuple(name for name, _ in row_states)
+
+    def at_row(
+        *, passive_row: tuple[ScalarFloat, ...], identity: ScalarFloat
+    ) -> ScalarFloat:
+        return _evaluate(
+            function=query.resources,
+            pool={
+                **actual,
+                **dict(zip(names, passive_row, strict=True)),
+                outer_post_decision: identity,
+            },
+        )
+
+    return jax.vmap(at_row)(
+        passive_row=tuple(values for _, values in row_states), identity=row_identity
     )
 
 
@@ -494,65 +611,51 @@ def _read_finite_resource_gradient(
 
 def _read_finite_corner_row(
     *,
-    coordinate: ScalarFloat,
-    grid: Float1D,
+    grid: FloatND,
     data: EGMQueryData,
-    passive_row: tuple[ScalarFloat, ...],
-    identity: ScalarFloat,
+    row_queries: FloatND,
+    weights: tuple[Float1D, ...],
+    active: BoolND,
+    negative: BoolND,
     query: DCEGMQuery,
-    actual: EconFunctionKwargs,
-    passive_names: tuple[StateName, ...],
-    outer_post_decision: FunctionName,
+    pool: EconFunctionKwargs,
     floor: ScalarFloat,
+    resources: ScalarFloat,
     eligible: BoolND,
-    euler_gradient: ScalarFloat,
+    resource_gradient: ScalarFloat,
     paired_marginal_read: bool,
-) -> tuple[_FiniteCornerRead, ScalarFloat]:
-    """Retain W_iO until its nodewise O fold; no passive interpolation occurs.
+) -> _FiniteCornerRead:
+    """Price one O's floor corner at the actual query on the blended continuation.
 
-    The corner competes with the row's ordinary read in the nodewise maximum, so
-    its budget, flow utility and resource slope are evaluated at the row's own
-    passive node, as the row's query coordinate is. Only the floor and the
-    eligibility `eligible` describe the actual query. Returns the corner and the
-    row's budget; a candidate whose budget at the node does not clear the floor
-    is unavailable on that row.
+    A row corner `u(c) + beta W_i(floor)` is affine in `W_i` at fixed actual
+    economics, so blending row corners over the passive stencil equals one
+    corner at the actual budget, preferences and floor on the passively
+    blended continuation. That corner is an actual-state object: it competes
+    with the blended ordinary maximum, never inside the nodewise one. Its
+    support requires every active row's corner record to be known.
     """
     authority = query.model.authority
-    pool = {
-        **actual,
-        **dict(zip(passive_names, passive_row, strict=True)),
-        outer_post_decision: identity,
-    }
-    resources = _evaluate(function=query.resources, pool=pool)
-    eligible = eligible & (resources > floor)
-    resource_gradient = _read_finite_resource_gradient(
-        query=query, pool=pool, euler_gradient=euler_gradient
-    )
-    preferences = query.build_preferences(pool)
-    beta = query.read_discount_factor(pool)
-
-    def continuation_at(point: ScalarFloat) -> _CornerRead:
-        if authority.corner_coordinate_kind == "liquid_row":
-            # Canonical authority's transport reader preserves liquid-side support.
-            return query._read_liquid_corner(  # noqa: SLF001
-                grid=grid,
-                data=data,
-                row_queries=point,
-                weights=(),
-                active=jnp.asarray(a=True),
-                negative=jnp.asarray(a=False),
-                paired_marginal_read=paired_marginal_read,
-            )
-        return _read_compact_corner(
+    if authority.corner_coordinate_kind == "liquid_row":
+        corner = query._read_liquid_corner(  # noqa: SLF001
+            grid=grid,
             data=data,
-            weights=(),
-            active=jnp.asarray(a=True),
-            negative=jnp.asarray(a=False),
+            row_queries=row_queries,
+            weights=weights,
+            active=active,
+            negative=negative,
+            paired_marginal_read=paired_marginal_read,
+        )
+    else:
+        corner = _read_compact_corner(
+            data=data,
+            weights=weights,
+            active=active,
+            negative=negative,
             interval_id=authority.interval_ids[0],
             side_id=authority.interval_side_ids[0],
         )
-
-    corner = continuation_at(coordinate)
+    preferences = query.build_preferences(pool)
+    beta = query.read_discount_factor(pool)
     consumption = jnp.where(eligible, resources - floor, 1.0)
     value = preferences.utility(consumption) + zero_safe_weighted_term(
         weight=beta, value=corner.value, subnormal_is_accounted_for=True
@@ -560,7 +663,6 @@ def _read_finite_corner_row(
     marginal = (
         preferences.marginal_utility(consumption) + beta * corner.direct_marginal
     ) * resource_gradient
-
     invalid = corner.invalid_numeric | (
         eligible
         & corner.supported
@@ -568,13 +670,13 @@ def _read_finite_corner_row(
     )
     supported = eligible & corner.supported & ~invalid
     return _single_row_finite_corner_read(
-        value=value,
-        marginal=jnp.where(jnp.isneginf(value), 0.0, marginal),
+        value=jnp.where(supported, value, -jnp.inf),
+        marginal=jnp.where(supported & ~jnp.isneginf(value), marginal, 0.0),
         savings=floor,
         supported=supported,
         finite=(supported & jnp.isfinite(value) & jnp.isfinite(marginal)),
         invalid=invalid,
-    ), resources
+    )
 
 
 def _read_finite_native_row(
@@ -729,8 +831,15 @@ def _validate_finite_outer_rows(
     finite_corner: BoolND,
     invalid_corner: BoolND,
     paired_marginal_read: bool,
+    corner_in_row_maximum: bool = True,
 ) -> _FiniteOuterProfile:
-    """Validate each side's own action and retain the separate actual corner."""
+    """Validate each side's own action and retain the separate actual corner.
+
+    With `corner_in_row_maximum` the corner competes in this row's nodewise
+    maximum, so a row that neither channel represents is uncovered here.
+    Without it the corner is an actual-state object read once per O, and
+    representability is decided on the blended channel instead.
+    """
     row = raw.ordinary
     left = raw.left
     right_legal = (
@@ -815,7 +924,7 @@ def _validate_finite_outer_rows(
             | paired_invalid
             | invalid_corner
             | ~jnp.isfinite(resources)
-            | (eligible & ~(right_legal | finite_corner))
+            | (eligible & ~(right_legal | finite_corner) & corner_in_row_maximum)
         ),
     )
 
