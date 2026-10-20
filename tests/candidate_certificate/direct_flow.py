@@ -725,7 +725,7 @@ _SOURCE_SEALS = {
     PARAMS_PROCESSING_SOURCE: "a6640eef75e746b50024d11c51c572d1daa062cf3d5256afe31a97b121a5410d",
     DTYPES_SOURCE: "1d38a54667166599fd692f8c58b37741f355753138d234b650c54384321bcbb2",
     NAMESPACE_SOURCE: "9a33080663f01a6d65501663e8436b132176be51c8223c28b2e749d8dbf8b570",
-    PANDAS_UTILS_SOURCE: "d61b4bdd9e6b76ea5cbb42ce7736003ba35a0e7e6aeac6a4d157c0f4b6201b0d",
+    PANDAS_UTILS_SOURCE: "3afda7ef3d8b4e5802bb8536b194f7fec8f77e84087ddb46449af3aa2e09819d",
     MODEL_PROCESSING_SOURCE: "8281a5df9cbb434c54aaf482571fef76a1e9bdf82821a04fa977fda46fa1d935",
     "src/_lcm/egm/upper_envelope/__init__.py": "79fbbac531b6be0fd6d5b88236f9b56011b8300975bdef9941e24dfd8eea33c3",
     "src/_lcm/egm/upper_envelope/segment_envelope.py": "706b3f3c7c52c5de2b1553e34be7863653aa0cd14d834fd3b68d9533f7c1273c",
@@ -984,7 +984,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "convert_series_in_params": "e12a3cc6f9822c67e47966a19a979f22282ddeb1e2ea80f0d1e089a75ad8c557",
             "_convert_param_value": "78704aa755b151ed88d3c8799d6729a3d538c5acf4fca91c6ee911cc39077403",
             "array_from_series": "ff66ccbcbb61993ba38099f5e1c6fd321f6e2400d6a12029da8e4f60dfa63a34",
-            "_scatter_series": "68981f1c512410fc68eccb42c39ecb3a4b0d4be3a3c4f414329f69b5287f79cf",
+            "_scatter_series": "ccb844566097dc7bb6412b0f81b2e28d60b84b960bb73ee8be3f9acdb6681bcc",
         },
     ),
     DTYPES_SOURCE: (

@@ -1571,6 +1571,15 @@ def _scatter_series(
         for mapping in level_mappings
     ]
 
+    # Distinct float labels can name the same value-grid node within its
+    # tolerance. Detect duplicate encoded keys before scattering: checking raw
+    # labels alone permits an overwrite and may hide a missing required cell.
+    duplicate_codes = pd.MultiIndex.from_arrays(index_arrays).duplicated(keep=False)
+    if duplicate_codes.any():
+        raise InvalidParamsError(
+            f"{name}: multiple selected labels encode to the same grid cell: "
+            f"{series.index[duplicate_codes].tolist()[:8]}."
+        )
     result = np.full(shape, fill_value)
     result[tuple(index_arrays)] = series.to_numpy()
     return _write_pandas_array(
