@@ -190,6 +190,18 @@ def _select_width_keyword(*, context: SolverBuildContext, prefix: str) -> str:
 class GridSearch(Solver):
     """Grid-search solver over the full state-action product (the default)."""
 
+    lottery_contraction: bool = True
+    """Whether to sum eligible draws into the next-period value once per call.
+
+    A draw qualifies when its weights read no state or action of the regime
+    other than the drawn state itself, and no law reads the draw, so it only
+    selects a slice of the target's value function. Its expectation is then the
+    same at every action, and the solve takes it once per kernel call instead of
+    once per state-action candidate. Values agree with the per-candidate
+    expectation to rounding; `False` keeps every draw a node axis of the
+    continuation.
+    """
+
     @property
     def capabilities(self) -> SolverExecutionCapabilities:
         """Describe this configured solver without building numerical kernels."""

@@ -26,6 +26,18 @@ Collective regimes and transition-local `JointTransition` lotteries currently re
 `NBEGM`, and `NNBEGM` reject them. Model construction validates the concrete solver's
 remaining prerequisites.
 
+## Grid-search lottery contraction
+
+`GridSearch(lottery_contraction=True)`, the default, sums a draw into the next-period
+value function once per period when the draw only selects a slice of that value: its
+probabilities read no state or action of the regime other than the drawn state itself,
+and no law of motion reads the drawn value. Spousal income, a Markov health state or an
+income process are typical cases. The solve then reads one pre-averaged value per
+candidate instead of averaging over the draw at every state-action candidate. Values
+agree with the per-candidate expectation to rounding. The contraction applies only under
+the linear expectation; `GridSearch(lottery_contraction=False)` keeps every draw a node
+axis of the continuation.
+
 ## Capability table
 
 <!-- capability tables: rendered, do not edit by hand -->
