@@ -1,14 +1,14 @@
-"""Unexecuted synthetic mutation suite for the independent child-slot law.
+"""Synthetic mutation suite for the independent child-slot law.
 
-Copy beside oracle8_child_status.py in tests/solution/.  These mutations test
-oracle discrimination; the separate public-model witness tests production.
+These mutations test oracle discrimination; the separate public-model witness
+tests production.
 """
 
 from dataclasses import replace
 
 import pytest
 
-from tests.solution._oracle8_child_status import (
+from tests.solution._child_status_witness import (
     ExecutedRow,
     fold_executed,
     require_publication,

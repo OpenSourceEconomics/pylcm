@@ -1,8 +1,4 @@
-"""Unexecuted public NNBEGM literal-parent / callable NB-child witness.
-
-Integration: copy this file and oracle8_child_status.py into tests/solution/.
-Native command after integration (not run by the reviewer):
-  pytest tests/solution/test_round8_literal_parent_child_status.py -q
+"""Public NNBEGM literal-parent / callable NB-child witness.
 
 Only the parent's bound representation changes from the shipped resource
 fixture: callable zero becomes literal zero.  Economics and the actual child
@@ -59,7 +55,7 @@ from lcm.solvers import (
 from lcm.typing import ContinuousState, FloatND
 from tests.conftest import EXACT_KERNEL_SKIP_REASON, assert_agrees_to_ulp
 from tests.solution import test_nbegm_query_actual_resources as fixture
-from tests.solution._oracle8_child_status import (
+from tests.solution._child_status_witness import (
     ExecutedRow,
     fold_executed,
     require_publication,
