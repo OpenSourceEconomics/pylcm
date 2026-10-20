@@ -677,7 +677,7 @@ _SOURCE_SEALS = {
     ARGMAX_SOURCE: "b508d4e10350de8b54707db238d01c7de6c73b4ca6b0176e0c6c12ec762952dc",
     COLLECTIVE_SOURCE: "4cc0683d493f597684f5801909d297145d8bade0aa752c3e35cf8af2cb55edd9",
     MAX_Q_SOURCE: "ef60bcee2800cfda754523241f57d5d6fa3168f1cd16b27cf64b6a639886ced1",
-    PROCESSING_SOURCE: "4d4ccba1d8f41293a9baedf3e3ac2fac55cc507b94475cb53c6659a7770cd928",
+    PROCESSING_SOURCE: "288cd364c8a38e96feaca1176ed668534145b0cc682203e2739f737c923c9c45",
     GRID_SEARCH_SOURCE: "1a359235d613d166d7ed41cbba994f1b550a03f09a5cba3865a843f9fc72b50f",
     CORE_PROGRAM_SOURCE: "8a16d8d2f6e8b8113f6acfc325ab21fe476049a9a5e8e9731fa2e5605ddca679",
     OUTPUT_LAYOUT_SOURCE: "1173fe52bc6c9315b328d5ed5bc752f8012614443bd15756e0bf7245595aafbb",
@@ -2350,7 +2350,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     PROCESSING_SOURCE: (
-        "2f47e6a815612d196a411c1ce91fb4be96ab7813d1a42c8a190c9d4cc504d001",
+        "1ad8281a5aab07ba9bb8ccaab8a55b8385833012a03be9558390f0d1defe736a",
         {
             "_build_per_subject_decisions_per_period": "b9dd72460ebf6d266124f0c4558c5f55d0a73d0995ffe6d48ef0c004b58202f1",
             "process_regimes": "f64a4ea27647c308595c95debe5fa401ae3ae9de8d7fac479c41b0f585a5a6b1",
@@ -2362,7 +2362,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_fail_if_a_declaration_moved_more_than_the_kernels": "77f7d0d6adebd110f143c0156321536d67434715df60d1c7375fbfc3d0ac269e",
             "_fail_if_a_continuation_demand_is_unmet": "549fe3f9640f3cf3f227ec0a2e209a692d02fa7ddba0bb407879aec812741cb9",
             "_build_solution_phase": "ce652a6e6ad65dd6c5fc0192b88622628f91bfc01ff64a84e029f8b93648ef39",
-            "_process_regime_core": "a207c8e280c908df1d5251a941fed5b189ea8faab985dc15e0d752aaa9ae4046",
+            "_process_regime_core": "77f41e5bdc1dc753f60717e47bdbd8a8eec70a66cf33f1aafa7f4b3b7c4aa03d",
             "_prepare_dcegm_query_models": "9dbd436a6be2af9365412d2c594afbea4335103f3f2a8234c9f521605d5f85fe",
             "_canonical_constraint_routing_inputs": "b014cb91c503eb021cd7aee8b6ead91fa54a86b0ffc1b8fde29e80978b53327e",
             "_prepare_nbegm_query_models": "1b73177b06799eed293c42985ef536c39282074a07075aa4dd8508f25c743ac4",
