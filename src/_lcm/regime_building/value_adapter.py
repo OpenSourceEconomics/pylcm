@@ -192,6 +192,20 @@ def collect_adapter_grids(
     return MappingProxyType({**grids, **value_grids})
 
 
+def declared_discrete_names(
+    *,
+    regimes: Mapping[RegimeName, UserRegime],
+    derived_categoricals: Mapping[FunctionName, DiscreteGrid],
+) -> frozenset[StateOrActionName]:
+    """Return the name of every declared discrete variable, whose code is readable."""
+    return frozenset(
+        name
+        for name, _ in _declared_discrete_grids(
+            regimes=regimes, derived_categoricals=derived_categoricals
+        )
+    )
+
+
 def _declared_discrete_grids(
     *,
     regimes: Mapping[RegimeName, UserRegime],

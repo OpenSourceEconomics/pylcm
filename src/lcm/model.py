@@ -147,6 +147,7 @@ from _lcm.regime_building.schedules import (
 from _lcm.regime_building.value_adapter import (
     adapt_regime_laws,
     collect_adapter_grids,
+    declared_discrete_names,
 )
 from _lcm.regime_law import RegimeLaws, bind_regime_law
 from _lcm.simulation.chunk_admission import prepare_simulation_chunks
@@ -1075,6 +1076,9 @@ class Model:
             ages=self._time,
             active_periods_by_regime=schedules.coverage_by_regime,
             visited_periods_by_regime=schedules.visited_periods_by_regime,
+            discrete_names=declared_discrete_names(
+                regimes=merged_regimes, derived_categoricals=derived_categoricals
+            ),
         )
         pruned_regimes, draw_only_processes = split_transition_only_folds(
             user_regimes=pruned_regimes,
