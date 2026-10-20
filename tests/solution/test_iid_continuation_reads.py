@@ -3,7 +3,8 @@
 Every row of an IID transition matrix is the same distribution, so the expected
 continuation `E[V'(x', shock')]` does not depend on the current `shock`. The
 continuation must then not read `shock`, so GridSearch computes it once per remaining
-cell and broadcasts it along `shock` rather than batching it along that axis.
+cell and broadcasts it along `shock` rather than batching it along that axis. A
+collective regime publishes the same reads as the singleton regime it extends.
 
 A process whose rows differ, a Tauchen AR(1), keeps the read: its next-period law
 does depend on the current value.
@@ -231,6 +232,19 @@ def test_grid_search_broadcasts_the_iid_process_past_the_continuation() -> None:
     )[2]
 
     assert selected == ("shock",)
+
+
+def test_collective_continuation_publishes_the_singleton_reads() -> None:
+    """A collective regime states what its continuation reads, and it reads what
+    the singleton regime with the same transitions reads."""
+    singleton = _solve(
+        kind=_SINGLETON, family="iid", n_nodes=2, dispatch=_DENSE, as_markov=False
+    )[1]
+    collective = _solve(
+        kind=_COLLECTIVE, family="iid", n_nodes=2, dispatch=_DENSE, as_markov=False
+    )[1]
+
+    assert collective == singleton
 
 
 def test_ar1_process_is_read_by_the_continuation() -> None:
