@@ -27,7 +27,7 @@ from tests.regime_building.test_collective_regime_simulate import _solve_dissolu
 
 @pytest.fixture(scope="module")
 def dissolution():
-    """A real solved consent gate, with D true only at the middle wage."""
+    """A real solved no-dissolution gate, with D true only at the middle wage."""
     return _solve_dissolution()
 
 
@@ -83,7 +83,7 @@ def test_gate_occurrences_resolve_to_actual_raw_operands(dissolution) -> None:
 
 
 @pytest.mark.parametrize("observe_derived", [False, True])
-def test_raw_boolean_gate_fold_and_route_preserve_the_dissolution_decision(
+def test_raw_boolean_gate_fold_and_route_leave_the_dissolution_to_the_landing(
     *,
     dissolution,
     observe_derived: bool,
@@ -137,7 +137,7 @@ def test_raw_boolean_gate_fold_and_route_preserve_the_dissolution_decision(
         on_derived=callback,
     )
     # A pointwise edge carries target stakeholder operands followed by raw D.
-    # Its decision evaluates the fallback after interpolation, not in this stack.
+    # The fold keeps the solved node flag; the route does not read it.
     np.testing.assert_array_equal(
         folded["married_ir"], [[2, 1, 0], [-np.inf, -np.inf, 1], [6, 3, 0]]
     )
@@ -174,11 +174,13 @@ def test_raw_boolean_gate_fold_and_route_preserve_the_dissolution_decision(
             on_derived=callback,
         )
     )
-    np.testing.assert_array_equal(
-        routed_ids, [ids["married_ir"], ids["single_f"], ids["married_ir"]]
-    )
-    np.testing.assert_array_equal(states["single_f"]["wage"], [-999.0, 2.0, -999.0])
-    np.testing.assert_array_equal(states["single_m"]["wage"], [-999.0, 2.0, -999.0])
+    # The route binds `D_target = False`, so `~D_target` opens for every row,
+    # including wage=2 where the solved node flag is True. That household
+    # leaves `married_ir` at its realised landing, where the target's own
+    # decision finds no feasible action and takes the dissolution route.
+    np.testing.assert_array_equal(routed_ids, [ids["married_ir"]] * 3)
+    np.testing.assert_array_equal(states["single_f"]["wage"], [-999.0] * 3)
+    np.testing.assert_array_equal(states["single_m"]["wage"], [-999.0] * 3)
     assert (
         route_flags["married_ir"] is fold_flags["married_ir"] is flags[1]["married_ir"]
     )

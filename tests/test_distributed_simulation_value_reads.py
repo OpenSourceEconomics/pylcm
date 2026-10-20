@@ -622,10 +622,10 @@ def test_a_real_dissolution_gate_uses_raw_copies_on_an_ordered_submesh() -> None
         subject_devices=subject_devices,
     )[:3]
     states, routed_ids, _ = routed
-    np.testing.assert_array_equal(
-        routed_ids, [ids[target], ids["single_f"], ids[target]] * 2
-    )
-    np.testing.assert_array_equal(states["single_f"]["wage"], [-999.0, 2.0, -999.0] * 2)
+    # The route binds `D_target = False`; the wage=2 rows leave the target at
+    # their realised landing, not here.
+    np.testing.assert_array_equal(routed_ids, [ids[target]] * 6)
+    np.testing.assert_array_equal(states["single_f"]["wage"], [-999.0] * 6)
     owner.commit(unit="married", outputs=(folded, routed))
     owner.finish()
     assert copied_d.is_deleted()
