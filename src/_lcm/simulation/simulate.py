@@ -1933,49 +1933,54 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             )
             taste_shock_kwargs = {"taste_shock_key": gumbel_keys}
 
-        decision_outputs = execute_simulation_program(
-            programs=regime.simulation.programs,
-            family="decision",
-            period=period,
-            n_subjects=n_chunk_subjects,
-            arguments=decision_arguments(
-                states=state_action_space.states,
-                discrete_actions=state_action_space.discrete_actions,
-                continuous_actions=state_action_space.continuous_actions,
-                taste_keys=taste_shock_kwargs,
-                next_values=next_regime_to_V_arr,
-                references=referenced_value_kwargs,
-                params=regime_kernel_params(flat_params, regime_name=regime_name),
-                period=jnp.int32(period) if memory is None else np.int32(period),
-                age=age,
-            ),
-        )
-        indices_optimal_actions, V_arr = consume_runtime_bound_outputs(
-            outputs=cast("tuple[QAndFArg, ...]", decision_outputs),
-            bound_specs=regime.simulation.post_decision_bounds,
-            regime_name=regime_name,
-            period=period,
-        )
-        indices_optimal_actions = cast("IntND", indices_optimal_actions)
-        V_arr = cast("FloatND", V_arr)
-        # A scalar stateless decision lacks the leading subject axis that
-        # every downstream simulation operation expects.
-        if not state_action_space.states and indices_optimal_actions.ndim == 0:
-            indices_optimal_actions, V_arr = chunk_operations.broadcast_collective(
-                indices=indices_optimal_actions,
-                value=V_arr,
+        def decide(
+            *, space: StateActionSpace, in_regime: Bool1D
+        ) -> tuple[IntND, FloatND, int]:
+            decision_outputs = execute_simulation_program(
+                programs=regime.simulation.programs,
+                family="decision",
+                period=period,
                 n_subjects=n_chunk_subjects,
-                memory=memory,
+                arguments=decision_arguments(
+                    states=space.states,
+                    discrete_actions=space.discrete_actions,
+                    continuous_actions=space.continuous_actions,
+                    taste_keys=taste_shock_kwargs,
+                    next_values=next_regime_to_V_arr,
+                    references=referenced_value_kwargs,
+                    params=regime_kernel_params(flat_params, regime_name=regime_name),
+                    period=jnp.int32(period) if memory is None else np.int32(period),
+                    age=age,
+                ),
             )
-        empty_row = run_simulation_operation(
-            memory=memory,
-            function=_first_empty_action_row,
-            arguments={
-                "indices": indices_optimal_actions,
-                "in_regime": subject_ids_in_regime,
-            },
-            subject_arg_names=("indices", "in_regime"),
-        ).item()
+            indices, values = consume_runtime_bound_outputs(
+                outputs=cast("tuple[QAndFArg, ...]", decision_outputs),
+                bound_specs=regime.simulation.post_decision_bounds,
+                regime_name=regime_name,
+                period=period,
+            )
+            indices = cast("IntND", indices)
+            values = cast("FloatND", values)
+            # A scalar stateless decision lacks the leading subject axis that
+            # every downstream simulation operation expects.
+            if not space.states and indices.ndim == 0:
+                indices, values = chunk_operations.broadcast_collective(
+                    indices=indices,
+                    value=values,
+                    n_subjects=n_chunk_subjects,
+                    memory=memory,
+                )
+            first_empty = run_simulation_operation(
+                memory=memory,
+                function=_first_empty_action_row,
+                arguments={"indices": indices, "in_regime": in_regime},
+                subject_arg_names=("indices", "in_regime"),
+            ).item()
+            return indices, values, int(first_empty)
+
+        indices_optimal_actions, V_arr, empty_row = decide(
+            space=state_action_space, in_regime=subject_ids_in_regime
+        )
         if empty_row >= 0 and sim_policy is None and entered_through is not None:
             (
                 states,
@@ -1986,6 +1991,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 entered_through,
                 subject_ids_in_regime,
                 empty_row,
+                redecide,
             ) = _take_dissolution_routes(
                 regime_name=regime_name,
                 regime=regime,
@@ -2012,6 +2018,18 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 memory=memory,
                 records=dissolution_records,
             )
+            # Rows whose route leads back into this regime decide again at
+            # their projected state; their route is used up, so a row still
+            # without a feasible action is refused below.
+            if redecide:
+                state_action_space = create_regime_state_action_space(
+                    regime=regime,
+                    regime_states=states[regime_name],
+                    base=base_state_action_space,
+                )
+                indices_optimal_actions, V_arr, empty_row = decide(
+                    space=state_action_space, in_regime=subject_ids_in_regime
+                )
         if empty_row >= 0 and sim_policy is None:
             state = physical_state_at_row(
                 regime=regime,
@@ -2287,11 +2305,13 @@ def _take_dissolution_routes(
     logger: logging.Logger,
     memory: SimulationMemory | None,
     records: list[DissolutionFallback] | None,
-) -> tuple[StatesPerRegime, Int1D, Int1D, Int1D, Int1D, Int1D, Bool1D, int]:
+) -> tuple[StatesPerRegime, Int1D, Int1D, Int1D, Int1D, Int1D, Bool1D, int, bool]:
     """Send this regime's rows without a feasible action down their gate's route.
 
+    A route back into this regime keeps the row here at its projected state.
     Returns the updated carriers, the open-branch entries with every route taken
-    here used up, this regime's remaining rows, and the first
+    here used up, this regime's remaining rows, whether any of them must decide
+    again at a projected state, and the first
     row still without a feasible action (`-1` when none is left), which the
     caller refuses as before.
     """
@@ -2314,7 +2334,11 @@ def _take_dissolution_routes(
     )
     if memory is not None:
         memory.hold(tree=outcome)
-    remaining = in_regime & ~outcome.rerouted
+    returned = outcome.rerouted & (
+        outcome.fallback_ids == regime_names_to_ids[regime_name]
+    )
+    remaining = in_regime & ~(outcome.rerouted & ~returned)
+    redecide = bool(np.asarray(returned).any())
     rerouted_rows = rows_of(
         outcome.rerouted & _genuine_rows(subject_slice=subject_slice, n_real=n_real)
     )
@@ -2370,7 +2394,12 @@ def _take_dissolution_routes(
         outcome.new_own_stakeholder,
         outcome.entered_through,
         remaining,
-        int(_first_empty_action_row(indices=indices, in_regime=remaining)),
+        int(
+            _first_empty_action_row(
+                indices=indices, in_regime=in_regime & ~outcome.rerouted
+            )
+        ),
+        redecide,
     )
 
 

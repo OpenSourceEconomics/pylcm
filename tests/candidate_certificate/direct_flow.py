@@ -670,7 +670,7 @@ _SOURCE_SEALS = {
     LIVENESS_SOURCE: "056bda4d48f26768ed8615925ce8ff89665bb8eed94b59d69f02701a95943dff",
     CONTINUATION_READS_SOURCE: "144206aa7175163a4dcb365da8765942a9f2c8a530ea41e102d540fa4dfe057d",
     WORKSPACE_PLANNING_SOURCE: "c5cb4ef56e436e5620ef16575fb6f2a92a6c5a5162e3ef005acb855ce259d493",
-    SIMULATION_PROGRAMS_SOURCE: "841dd0ea0fd381b33852062a4c8cb3ddaac97b2174269885f15e76380ffa34aa",
+    SIMULATION_PROGRAMS_SOURCE: "519ed76181ac61a8750fa2ef71be3a492e83bfbdc71dcb6c247838319f293ff9",
     SIMULATION_PROGRAM_TYPES_SOURCE: "d6abdc13894b09b44309fb45c571d233bd20cb330101ff8b0ef7a9e4624fc3a7",
     SIMULATION_RUNTIME_SOURCE: "b2e308916c1ff657ef06cbd9a5805de868fc28f2d474b9e9f172a341f3fa0fd6",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
@@ -695,7 +695,7 @@ _SOURCE_SEALS = {
     PROBABILITY_SOURCE: "60ccd04b143c714360388fcce2730804a4ca729ea4db82e4a0100732e155e53f",
     ENGINE_SOURCE: "9c103e2271e6d5d655be37ce4eda10bf02c811915a5b4b2a3eee25cc02f30c18",
     STATE_ACTION_SPACE_SOURCE: "bc1d4b798ae1beeef6ce6f655ba61cd3bbf064dbd1910b14aa5cf8ce28954e95",
-    SIMULATION_SOURCE: "053e6a6bb3ad339dd97a4de54e06f42caeeb62704ccc4904f0d3b4ae396103a6",
+    SIMULATION_SOURCE: "8718887a818a38ab03b96dc6c1184107644d82d9a1e4645b1e2d6c9cd6a7dbae",
     SIMULATION_TRANSITIONS_SOURCE: "64e3b7283d1dd445edb8a9b27dc691b8dccf6bbd6a4029c1e5e03d87e686067b",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
     MODEL_SOURCE: "f2d9f226ad615de1f0a977e9dbb8f15b8fc65fbaabe09c856f55c29e83b2a13f",
@@ -1471,10 +1471,10 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SIMULATION_SOURCE: (
-        "23a4262c948c7d5db03c1d524abda38f7be42505040b3d6d6e74bb5cf4d9ba08",
+        "0f864b5f100c83527633e548d19c23d168eba8017695690c3f6c491c42058de1",
         {
             "simulate": "927c0ff7eab82772889e60b11baf0fdb1f2c357a293b7e3912be995ed0a77f94",
-            "_simulate_regime_in_period": "df7e51c5d9a7baf3a331569c9529ced5f51c68d95245803b676fbb5397b6beba",
+            "_simulate_regime_in_period": "f9fc8469783922c2e683025f7bc3014be3619874a9695268fd94f5b5587ae3ef",
             "_execute_finite_replay": "dd01d79a502c1027cd08f0656c59c6bbab7080c848a706bcac631e63188edc1f",
             "_announce_dropped_outer_candidates": "977a3fc8627f295ad6837b46fcf94672449b532263c674be2209e509d6c088cd",
             "_report_dropped_outer_candidates": "0825c06c02ecfe2ad8270e6d606c67f3063f945befeccf6debb4880194d54dc1",
@@ -4539,14 +4539,19 @@ def _simulation_state_action_space_errors(tree: ast.Module) -> list[str]:
 
 
 def _simulation_state_action_space_caller_errors(tree: ast.Module) -> list[str]:
-    """Pin the live simulation caller to the params-completed base without wrapping."""
+    """Pin the live simulation caller to the params-completed base without wrapping.
+
+    The first binding is a statement of the function body; a later one rebuilds
+    the space from the same adapter after a dissolution route moved rows to a
+    projected state in the same regime. Every binding is that exact call.
+    """
     try:
         node = _definition(tree=tree, name="_simulate_regime_in_period")
     except ValueError as error:
         return [f"simulation state-action caller: {error}"]
     body = _body_without_docstring(node)
     bindings = _scope_binding_counts(body)
-    matches = [
+    top_level = [
         statement
         for statement in body
         if isinstance(statement, ast.Assign)
@@ -4554,34 +4559,45 @@ def _simulation_state_action_space_caller_errors(tree: ast.Module) -> list[str]:
         and _target_names(statement.targets[0]) == ("state_action_space",)
         and isinstance(statement.value, ast.Call)
     ]
-    if len(matches) != 1 or bindings.get("state_action_space") != 1:
+    matches = [
+        statement
+        for statement in ast.walk(ast.Module(body=body, type_ignores=[]))
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and _target_names(statement.targets[0]) == ("state_action_space",)
+    ]
+    if len(top_level) != 1 or bindings.get("state_action_space") != len(matches):
         return [
             (
                 "simulation state-action caller: expected exactly one live "
                 "state_action_space binding"
             )
         ]
-    call = matches[0].value
-    if not isinstance(call, ast.Call):
-        return ["simulation state-action caller: adapter call changed"]
-    if not (
-        _call_name(call) == "create_regime_state_action_space"
-        and not call.args
-        and {item.arg for item in call.keywords} == {"regime", "regime_states", "base"}
-        and _name(node=_keyword(call=call, name="regime"), expected="regime")
-        and _expression_matches(
-            node=_keyword(call=call, name="regime_states"), source="states[regime_name]"
-        )
-        and _name(
-            node=_keyword(call=call, name="base"), expected="base_state_action_space"
-        )
-    ):
-        return [
-            (
-                "simulation state-action caller: adapter does not receive the "
-                "exact params-completed base"
+    for statement in matches:
+        call = statement.value
+        if not isinstance(call, ast.Call):
+            return ["simulation state-action caller: adapter call changed"]
+        if not (
+            _call_name(call) == "create_regime_state_action_space"
+            and not call.args
+            and {item.arg for item in call.keywords}
+            == {"regime", "regime_states", "base"}
+            and _name(node=_keyword(call=call, name="regime"), expected="regime")
+            and _expression_matches(
+                node=_keyword(call=call, name="regime_states"),
+                source="states[regime_name]",
             )
-        ]
+            and _name(
+                node=_keyword(call=call, name="base"),
+                expected="base_state_action_space",
+            )
+        ):
+            return [
+                (
+                    "simulation state-action caller: adapter does not receive the "
+                    "exact params-completed base"
+                )
+            ]
     return []
 
 
@@ -16177,9 +16193,9 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": SIMULATION_SOURCE,
             "source": replace_once(
                 source=simulation_source,
-                old="        base=base_state_action_space,",
+                old="\n        base=base_state_action_space,",
                 new=(
-                    "        base=base_state_action_space.replace(continuous_actions=MappingProxyType({name: values.at[-1].set(values[0]) for name, values in base_state_action_space.continuous_actions.items()})),"
+                    "\n        base=base_state_action_space.replace(continuous_actions=MappingProxyType({name: values.at[-1].set(values[0]) for name, values in base_state_action_space.continuous_actions.items()})),"
                 ),
                 label="simulation adapter caller base wrapping",
             ),

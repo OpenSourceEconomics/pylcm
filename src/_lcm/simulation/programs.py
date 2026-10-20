@@ -548,8 +548,8 @@ def forward_regimes_by_period(
     enters) has no decision program and is absent here, while its solved value
     stays available to the decisions that read it. Each period keeps the
     insertion order of `regimes`, so traversal order and random-site identity
-    follow the regime mapping, except that a gated edge's target runs
-    before the regimes that are not one (`order_targets_before_fallbacks`). Chunk
+    follow the regime mapping, except that a gated edge's target runs before
+    its fallbacks (`order_targets_before_fallbacks`). Chunk
     profiling (the compilation wave and the
     sequential carrier walk) and dispatch all read this one inventory.
     """
@@ -574,41 +574,43 @@ def order_targets_before_fallbacks(
     """Order a period's regimes so each gated target runs before its fallbacks.
 
     A household rerouted out of a gated target acts in a fallback regime in the
-    same period, so that fallback must not have run yet. Regimes keep their
-    relative order otherwise; rows are disjoint across regimes and random keys
-    are addressed by regime id, so the order does not change any other result.
+    same period, so that fallback must not have run yet. The order is the
+    declaration order wherever that already satisfies this, and otherwise the
+    earliest-declared regime whose targets have all run comes next. Rows are
+    disjoint across regimes and random keys are addressed by regime id, so the
+    order does not change any other result. A gate whose fallback is its own
+    target imposes no order: that regime decides again for its rerouted rows.
 
     Raises:
-        ExecutionPlanningError: A fallback is itself a gated target ordered
-            before a target it serves, which this two-bucket order cannot fix.
+        ExecutionPlanningError: The targets and fallbacks active in the period
+            form a cycle, so no order lets every fallback run after its targets.
     """
-    targets = {
-        target
-        for regime in regimes.values()
-        for target in regime.gated_edges
-        if target in active
-    }
-    ordered = {
-        **{name: regime for name, regime in active.items() if name in targets},
-        **{name: regime for name, regime in active.items() if name not in targets},
-    }
-    position = {name: index for index, name in enumerate(ordered)}
+    must_follow: dict[RegimeName, set[RegimeName]] = {name: set() for name in active}
     for regime in regimes.values():
         for target, edge in regime.gated_edges.items():
             for leg in edge.legs:
                 fallback = leg.realized_fallback.regime
-                if (
-                    target in position
-                    and fallback in position
-                    and position[fallback] < position[target]
-                ):
-                    msg = (
-                        f"The fallback regime '{fallback}' of the gated edge into "
-                        f"'{target}' runs before it in the same period, so a "
-                        "household without a feasible action in "
-                        f"'{target}' could not act there."
-                    )
-                    raise ExecutionPlanningError(msg)
+                if target in active and fallback in active and fallback != target:
+                    must_follow[fallback].add(target)
+    ordered: dict[RegimeName, Regime] = {}
+    while len(ordered) < len(active):
+        ready = next(
+            (
+                name
+                for name in active
+                if name not in ordered and must_follow[name] <= ordered.keys()
+            ),
+            None,
+        )
+        if ready is None:
+            cycle = sorted(name for name in active if name not in ordered)
+            msg = (
+                f"The gated targets and fallbacks {cycle} form a cycle, so no "
+                "regime order lets each fallback run after the targets it "
+                "serves in the same period."
+            )
+            raise ExecutionPlanningError(msg)
+        ordered[ready] = active[ready]
     return MappingProxyType(ordered)
 
 

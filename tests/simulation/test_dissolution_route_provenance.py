@@ -125,6 +125,7 @@ def build_chain_model(
     constrain_b: bool,
     enable_jit: bool = True,
     gate_order: tuple[str, ...] = ("a", "b"),
+    b_fallback: str = "c",
 ) -> Model:
     """`source` gates into `a` (fallback `b`) and into `b` (fallback `c`)."""
     grid = IrregSpacedGrid(points=np.array([1.0, 3.0]))
@@ -136,7 +137,7 @@ def build_chain_model(
     }
     gates = {
         "a": _route(fallback="b", predicate=_gate_closed if close_a else _gate_open),
-        "b": _route(fallback="c"),
+        "b": _route(fallback=b_fallback),
     }
     return Model(
         regimes={name: declarations[name] for name in order},
