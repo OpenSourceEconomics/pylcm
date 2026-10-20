@@ -150,7 +150,7 @@ def test_raw_boolean_gate_fold_and_route_leave_the_dissolution_to_the_landing(
         flags=flags,
     )
     roles = jnp.full(3, married.stakeholder_names_to_ids["f"], dtype=jnp.int32)
-    states, routed_ids, routed_roles, _closed_masks = (
+    states, routed_ids, routed_roles, closed_masks = (
         gated_routing.simulation_gate_route(
             regime=married,
             fold_period=1,
@@ -179,6 +179,7 @@ def test_raw_boolean_gate_fold_and_route_leave_the_dissolution_to_the_landing(
     # leaves `married_ir` at its realised landing, where the target's own
     # decision finds no feasible action and takes the dissolution route.
     np.testing.assert_array_equal(routed_ids, [ids["married_ir"]] * 3)
+    np.testing.assert_array_equal(closed_masks["married_ir"], [False] * 3)
     np.testing.assert_array_equal(states["single_f"]["wage"], [-999.0] * 3)
     np.testing.assert_array_equal(states["single_m"]["wage"], [-999.0] * 3)
     assert (
