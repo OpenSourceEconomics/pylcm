@@ -70,8 +70,10 @@ from _lcm.simulation.diagnostic_operations import (
     profiled_transition_counts,
 )
 from _lcm.simulation.dissolution_route import (
+    NO_GATED_ENTRY,
     DissolutionFallback,
     log_dissolution_fallbacks,
+    record_open_entries,
     reroute_rows_without_feasible_action,
     rows_of,
 )
@@ -898,10 +900,11 @@ def _simulate_subject_chunk(  # noqa: PLR0915
     simulation_results: dict[RegimeName, dict[int, PeriodRegimeSimulationData]] = {
         regime_name: {} for regime_name in regimes
     }
-    # Each row's regime and role in the previous period: a household without a
-    # feasible action takes the dissolution route of the edge it came through.
-    source_regime_ids: Int1D | None = None
+    # Each row's role in the previous period and the source whose gate it
+    # passed open into this period: a household without a feasible action takes
+    # the dissolution route of that gate, once.
     source_roles: Int1D | None = None
+    entered_through: Int1D | None = None
 
     for period, active_regimes in enumerate(
         forward_regimes_by_period(regimes=regimes, n_periods=ages.n_periods)
@@ -943,6 +946,9 @@ def _simulate_subject_chunk(  # noqa: PLR0915
         prev_regime_ids = subject_regime_ids
         new_subject_regime_ids = subject_regime_ids
         new_own_stakeholder = own_stakeholder
+        new_entered_through = jnp.full_like(subject_regime_ids, NO_GATED_ENTRY)
+        if memory is not None:
+            memory.hold(tree=new_entered_through)
 
         log_period_header(
             logger=logger,
@@ -994,6 +1000,9 @@ def _simulate_subject_chunk(  # noqa: PLR0915
                     key,
                     taste_key,
                     age,
+                    source_roles,
+                    entered_through,
+                    new_entered_through,
                 ),
             )
             (
@@ -1003,6 +1012,8 @@ def _simulate_subject_chunk(  # noqa: PLR0915
                 new_own_stakeholder,
                 subject_regime_ids,
                 own_stakeholder,
+                entered_through,
+                new_entered_through,
             ) = _simulate_regime_in_period(
                 regime_name=regime_name,
                 regime=dispatched_regime,
@@ -1071,8 +1082,9 @@ def _simulate_subject_chunk(  # noqa: PLR0915
                     if regime.gated_edges and period + 1 < ages.n_periods
                     else None
                 ),
-                source_regime_ids=source_regime_ids,
                 source_roles=source_roles,
+                entered_through=entered_through,
+                new_entered_through=new_entered_through,
                 dissolution_records=dissolution_records,
             )
             states = new_states
@@ -1125,8 +1137,8 @@ def _simulate_subject_chunk(  # noqa: PLR0915
             ),
         )
 
-        source_regime_ids = subject_regime_ids
         source_roles = own_stakeholder
+        entered_through = new_entered_through
         subject_regime_ids = new_subject_regime_ids
         own_stakeholder = new_own_stakeholder
 
@@ -1651,10 +1663,20 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
     taste_key: PRNGKeyND | None = None,
     taste_address: tuple[int, ...] | None = None,
     supplied_shocks: Mapping[str, np.ndarray] = MappingProxyType({}),
-    source_regime_ids: Int1D | None = None,
     source_roles: Int1D | None = None,
+    entered_through: Int1D | None = None,
+    new_entered_through: Int1D | None = None,
     dissolution_records: list[DissolutionFallback] | None = None,
-) -> tuple[PeriodRegimeSimulationData, StatesPerRegime, Int1D, Int1D, Int1D, Int1D]:
+) -> tuple[
+    PeriodRegimeSimulationData,
+    StatesPerRegime,
+    Int1D,
+    Int1D,
+    Int1D,
+    Int1D,
+    Int1D | None,
+    Int1D | None,
+]:
     """Simulate one regime for one period.
 
     This function processes all subjects in a given regime for a single period,
@@ -1711,11 +1733,17 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             result cell, or ``None`` for an engine-owned replay route.
         value_owner: This period's owner of addressed copies.
         subject_devices: Actual ordered devices evaluating the population.
-        source_regime_ids: Each row's regime in the previous period, or `None`
-            in a chunk's first period. A row of this regime with no feasible
-            action that entered through a gated edge takes that edge's
-            dissolution route this period instead of raising.
-        source_roles: Each row's role in the previous period.
+        source_roles: Each row's role in the previous period, or `None` in a
+            chunk's first period.
+        entered_through: Each row's source regime id when it passed that
+            source's gate into this period through the open branch and has not
+            used the gate's route yet, else `NO_GATED_ENTRY`; `None` in a
+            chunk's first period. A row of this regime with no feasible action
+            and such an entry takes that gate's dissolution route this period
+            instead of raising.
+        new_entered_through: The next period's open-branch entries as
+            accumulated by the regimes already routed this period, written into
+            for this regime's rows.
         dissolution_records: Collects one record per rerouted subject when
             runtime checks are on.
 
@@ -1727,6 +1755,8 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
         - Updated new_own_stakeholder array
         - Current regime membership, after any dissolution route
         - Current roles, after any dissolution route
+        - Current open-branch entries, with every route taken here used up
+        - Updated next-period open-branch entries
 
     """
     # Select subjects in the current regime
@@ -1946,13 +1976,14 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             },
             subject_arg_names=("indices", "in_regime"),
         ).item()
-        if empty_row >= 0 and sim_policy is None and source_regime_ids is not None:
+        if empty_row >= 0 and sim_policy is None and entered_through is not None:
             (
                 states,
                 subject_regime_ids,
                 own_stakeholder,
                 new_subject_regime_ids,
                 new_own_stakeholder,
+                entered_through,
                 subject_ids_in_regime,
                 empty_row,
             ) = _take_dissolution_routes(
@@ -1961,7 +1992,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 regimes=regimes,
                 indices=indices_optimal_actions,
                 in_regime=subject_ids_in_regime,
-                source_regime_ids=source_regime_ids,
+                entered_through=entered_through,
                 source_roles=cast("Int1D", source_roles),
                 states=states,
                 canonical_states=state_action_space.states,
@@ -2175,6 +2206,20 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 delta=route_delta,
                 next_states=next_states,
             )
+            if new_entered_through is not None:
+                new_entered_through = record_open_entries(
+                    source_id=int(regime_names_to_ids[regime_name]),
+                    closed_masks={
+                        target: cast("Bool1D", edge_delta["closed"])
+                        for target, edge_delta in route_delta.items()
+                    },
+                    routed_ids=new_subject_regime_ids,
+                    subjects_in_regime=subject_ids_in_regime,
+                    regime_names_to_ids=regime_names_to_ids,
+                    new_entered_through=new_entered_through,
+                )
+                if memory is not None:
+                    memory.hold(tree=new_entered_through)
         states = clip_next_states(
             states=next_states,
             regimes=regimes,
@@ -2213,6 +2258,8 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
         new_own_stakeholder,
         subject_regime_ids,
         own_stakeholder,
+        entered_through,
+        new_entered_through,
     )
 
 
@@ -2223,7 +2270,7 @@ def _take_dissolution_routes(
     regimes: Mapping[RegimeName, Regime],
     indices: IntND,
     in_regime: Bool1D,
-    source_regime_ids: Int1D,
+    entered_through: Int1D,
     source_roles: Int1D,
     states: StatesPerRegime,
     canonical_states: Mapping[StateName, FloatND | IntND],
@@ -2240,10 +2287,11 @@ def _take_dissolution_routes(
     logger: logging.Logger,
     memory: SimulationMemory | None,
     records: list[DissolutionFallback] | None,
-) -> tuple[StatesPerRegime, Int1D, Int1D, Int1D, Int1D, Bool1D, int]:
+) -> tuple[StatesPerRegime, Int1D, Int1D, Int1D, Int1D, Int1D, Bool1D, int]:
     """Send this regime's rows without a feasible action down their gate's route.
 
-    Returns the updated carriers, this regime's remaining rows, and the first
+    Returns the updated carriers, the open-branch entries with every route taken
+    here used up, this regime's remaining rows, and the first
     row still without a feasible action (`-1` when none is left), which the
     caller refuses as before.
     """
@@ -2252,7 +2300,7 @@ def _take_dissolution_routes(
         regime_name=regime_name,
         regimes=regimes,
         empty=empty,
-        source_regime_ids=source_regime_ids,
+        entered_through=entered_through,
         source_roles=source_roles,
         states=states,
         subject_regime_ids=subject_regime_ids,
@@ -2280,7 +2328,7 @@ def _take_dissolution_routes(
             ids_to_names = {
                 int(code): name for name, code in regime_names_to_ids.items()
             }
-            sources = np.asarray(source_regime_ids)
+            sources = np.asarray(entered_through)
             fallbacks = np.asarray(outcome.fallback_ids)
             new_records = tuple(
                 DissolutionFallback(
@@ -2320,6 +2368,7 @@ def _take_dissolution_routes(
         outcome.own_stakeholder,
         outcome.new_subject_regime_ids,
         outcome.new_own_stakeholder,
+        outcome.entered_through,
         remaining,
         int(_first_empty_action_row(indices=indices, in_regime=remaining)),
     )
