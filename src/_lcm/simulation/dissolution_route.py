@@ -36,6 +36,7 @@ import logging
 from collections.abc import Mapping
 from types import MappingProxyType
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -72,9 +73,13 @@ class DissolutionFallback:
     """The fallback regime of its own leg, where it acts this period instead."""
 
 
+@jax.tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class RerouteOutcome:
-    """The carriers after rerouting, and which rows moved."""
+    """The carriers after rerouting, and which rows moved.
+
+    A pytree of its array fields, so a held outcome is measured buffer by buffer.
+    """
 
     states: StatesPerRegime
     subject_regime_ids: Int1D

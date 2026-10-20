@@ -26,6 +26,7 @@ from lcm import (
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
+    ExecutionConfig,
     Gate,
     IrregSpacedGrid,
     Model,
@@ -123,7 +124,12 @@ def _no_dissolution(D_target: BoolND) -> BoolND:
     return ~D_target
 
 
-def _build_model(*, payoff_name: str, enable_jit: bool = True) -> Model:
+def _build_model(
+    *,
+    payoff_name: str,
+    enable_jit: bool = True,
+    execution_config: ExecutionConfig | None = None,
+) -> Model:
     wage_grid = IrregSpacedGrid(points=np.array([1.0, 3.0]))
     return Model(
         edges={
@@ -181,6 +187,9 @@ def _build_model(*, payoff_name: str, enable_jit: bool = True) -> Model:
         regime_id_class=RegimeId,
         initial_nodes={0: "source"},
         enable_jit=enable_jit,
+        execution_config=ExecutionConfig()
+        if execution_config is None
+        else execution_config,
     )
 
 
