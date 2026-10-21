@@ -1,6 +1,5 @@
-"""Independent ordered-slot fold oracle; stdlib only; reviewer did not execute.
+"""Independent ordered-slot fold oracle for the child-status law; stdlib only.
 
-Copy beside test_round8_literal_parent_child_status.py in tests/solution/.
 This oracle has no model, solver, JAX, or production fold dependency.  A row is
 an actually evaluated keeper or adjuster.  Economic exclusion and losing an
 argmax do not make a row unexecuted; true padding is not an input row here.
