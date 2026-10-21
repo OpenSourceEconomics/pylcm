@@ -203,6 +203,7 @@ jax = "==0.9.0.1"
 [tool.pixi.feature.tests.dependencies]
 pytest = "*"
 pytest-cov = "*"
+psutil = "*"
 pytest-timeout = "*"
 pytest-xdist = "*"
 py-spy = ">=0.4.2,<0.5"
