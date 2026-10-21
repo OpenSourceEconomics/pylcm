@@ -135,6 +135,10 @@ def reroute_rows_without_feasible_action(
     Returns:
         The updated carriers and the rows that moved.
     """
+    # Every leg projects from the same original target state. A self-target
+    # leg may overwrite the carrier below; later legs must not compose their
+    # projections with that write.
+    original_target_states = dict(states[regime_name])
     rerouted = jnp.zeros_like(empty)
     fallback_ids = jnp.full_like(subject_regime_ids, -1)
     for source_name, source in regimes.items():
@@ -152,7 +156,7 @@ def reroute_rows_without_feasible_action(
             projector = leg.fallback_state_projector
             projected = _call_vmapped_with_accepted_kwargs(
                 func=projector,
-                batched_kwargs=dict(states[regime_name]),
+                batched_kwargs=original_target_states,
                 static_kwargs={
                     **bind_provenance_params(
                         provenance=projector.arg_provenance,  # ty: ignore[unresolved-attribute]
