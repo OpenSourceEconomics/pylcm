@@ -15,6 +15,7 @@ counting against the worker.
 """
 
 import gc
+import pathlib
 from types import SimpleNamespace
 
 import pytest
@@ -34,9 +35,25 @@ _BLOCK_BYTES = 2048
 def test_resident_mebibytes_reports_a_plausible_size_for_this_process() -> None:
     """The resident-size probe reports this process's real footprint."""
     resident = resident_mebibytes()
-    if resident is None:
-        pytest.skip("no resident-size probe on this platform")
+    assert resident is not None
     assert 1.0 < resident < 1_000_000.0
+
+
+def test_resident_mebibytes_needs_no_proc_filesystem(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The probe answers on a host without `/proc`, as macOS and Windows are.
+
+    Without a reading the growth trigger never fires, every program a module
+    builds is released in one teardown at the module boundary, and on a slow
+    host that single teardown outlasts the per-test timeout.
+    """
+
+    def _no_proc(_path: pathlib.Path, **_kwargs: str | None) -> str:
+        raise OSError("no /proc on this host")
+
+    monkeypatch.setattr(pathlib.Path, "read_text", _no_proc)
+    assert resident_mebibytes() is not None
 
 
 def test_freed_heap_stops_counting_against_the_worker_once_it_is_returned() -> None:

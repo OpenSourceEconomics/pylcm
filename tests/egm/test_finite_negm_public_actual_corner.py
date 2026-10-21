@@ -1,6 +1,6 @@
-"""RT8: public NEGM source production and an observed reached finite query.
+"""Public NEGM source production and an observed reached finite query.
 
-Copy this and _oracle8_actual_corner.py to tests/egm/ in the target checkout.
+The scalar witness lives in `_finite_negm_actual_corner_witness.py`.
 The fixture uses the shipped public declarations and the installed query method.
 The observer calls that method unchanged and records its actual output; it does
 not replace banks, change arithmetic, suppress status, or provide a fallback.
@@ -29,9 +29,18 @@ from lcm import (
     post_decision_lower_bound,
 )
 from lcm.solvers import DCEGM, NEGM
-from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
+from lcm.typing import (
+    ContinuousAction,
+    ContinuousState,
+    FloatND,
+    ScalarInt,
+    UserFunction,
+)
 from tests.conftest import DECIMAL_PRECISION, EXACT_KERNEL_SKIP_REASON
-from tests.egm._oracle8_actual_corner import actual_corner, source_production_facts
+from tests.egm._finite_negm_actual_corner_witness import (
+    actual_corner,
+    source_production_facts,
+)
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
@@ -93,8 +102,21 @@ def _terminal(*, liquid: ContinuousState, stock: ContinuousState) -> FloatND:
     return liquid / 8.0 + 0.0 * stock
 
 
-def make_model(*, stock: float = 0.5, enable_jit: bool = True) -> Model:
-    """Reach the child's passive interior through a literal finite NEGM parent."""
+def make_model(
+    *,
+    stock: float = 0.5,
+    enable_jit: bool = True,
+    child_utility: UserFunction = _utility,
+    child_inverse_marginal_utility: UserFunction = _inverse_marginal_utility,
+    child_consumption_points: tuple[float, ...] = (0.125, 0.5, 1.0, 2.0, 4.0, 16.0),
+    child_floor: UserFunction = _floor,
+) -> Model:
+    """Reach the child's passive interior through a literal finite NEGM parent.
+
+    The child's utility, inverse marginal utility, consumption grid and
+    callable floor can be replaced so a second public witness reuses the same
+    parent, transitions and terminal law.
+    """
     liquid = IrregSpacedGrid(points=jnp.array((0.0, 1.0, 2.0)))
     child_stock = IrregSpacedGrid(points=jnp.array((0.0, 1.0)))
     parent_stock = IrregSpacedGrid(points=jnp.array((0.0, stock, 1.0)))
@@ -113,7 +135,11 @@ def make_model(*, stock: float = 0.5, enable_jit: bool = True) -> Model:
             states={"liquid": liquid, "stock": child_stock if child else parent_stock},
             actions={
                 "consumption": IrregSpacedGrid(
-                    points=jnp.array((0.125, 0.5, 1.0, 2.0, 4.0, 16.0))
+                    points=jnp.array(
+                        child_consumption_points
+                        if child
+                        else (0.125, 0.5, 1.0, 2.0, 4.0, 16.0)
+                    )
                 ),
                 "investment": IrregSpacedGrid(
                     points=jnp.array((-1.0, -0.5, 0.0, 0.5, 1.0))
@@ -124,12 +150,16 @@ def make_model(*, stock: float = 0.5, enable_jit: bool = True) -> Model:
                 "cost": _cost,
                 "new_stock": _new_stock,
                 "savings": _savings,
-                "utility": _utility,
-                "inverse_marginal_utility": _inverse_marginal_utility,
+                "utility": child_utility if child else _utility,
+                "inverse_marginal_utility": (
+                    child_inverse_marginal_utility
+                    if child
+                    else _inverse_marginal_utility
+                ),
             },
             constraints={
                 "borrowing": post_decision_lower_bound(
-                    margin=margin, lower=_floor if child else 0.0
+                    margin=margin, lower=child_floor if child else 0.0
                 )
             },
             state_transitions={

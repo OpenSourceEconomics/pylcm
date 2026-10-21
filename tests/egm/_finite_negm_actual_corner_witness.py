@@ -1,8 +1,8 @@
-"""OR8: independent scalar oracle for the represented actual-state NEGM corner.
+"""Independent scalar witness for the represented actual-state NEGM corner.
 
 This is a mathematical reference, not a solver or a copied interpolation rule.
 The source-floor continuation is held at W(0)=0 by the adopted representation.
-No project imports are needed.  Authored in the round8 no-execution audit; unrun.
+No project imports are needed.
 """
 
 import math
