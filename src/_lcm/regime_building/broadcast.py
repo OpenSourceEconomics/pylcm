@@ -464,6 +464,7 @@ def _reachable_targets(
 def split_transition_only_folds(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
+    discrete_names: frozenset[str],
     laws: RegimeLaws,
     koopmans_aggregator: UserFunction,
     ages: TimeAxis | None = None,
@@ -491,6 +492,8 @@ def split_transition_only_folds(
 
     Args:
         user_regimes: Mapping of regime names to pruned `Regime` instances.
+        discrete_names: Pre-adaptation discrete names, including model-level
+            derived categoricals. A process can feed a categorical code read.
         laws: Each regime's law, by regime name.
         koopmans_aggregator: The model-level Bellman aggregator.
         ages: The model's time axis, used to resolve age-specialized functions.
@@ -511,6 +514,7 @@ def split_transition_only_folds(
     }
     reads = _NamesRead(
         specs=specs,
+        discrete_names=discrete_names,
         user_regimes=user_regimes,
         laws=laws,
         koopmans_aggregator=koopmans_aggregator,
@@ -599,6 +603,7 @@ class _NamesRead:
     """
 
     specs: Mapping[RegimeName, PhasedRegimeSpec]
+    discrete_names: frozenset[str]
     user_regimes: Mapping[RegimeName, UserRegime]
     laws: RegimeLaws
     koopmans_aggregator: UserFunction
@@ -622,6 +627,7 @@ class _NamesRead:
                 koopmans_aggregator=self.koopmans_aggregator,
                 candidate_targets=candidate_targets,
                 kept=every_state_kept,
+                discrete_names=self.discrete_names,
                 ages=self.ages,
                 active_periods=(
                     None
@@ -1163,7 +1169,7 @@ def _needed_names(
     kept: Mapping[RegimeName, frozenset[StateOrActionName]],
     ages: TimeAxis | None,
     active_periods: tuple[int, ...] | None,
-    discrete_names: frozenset[str] = frozenset(),
+    discrete_names: frozenset[str],
 ) -> frozenset[str]:
     """Collect every name this phase slice's root computations read.
 
