@@ -17,6 +17,7 @@ from _lcm.processes.joint_normal_lowering import (
 from _lcm.regime_building.processing import compute_merged_discrete_categories
 from _lcm.time import TimeAxis
 from _lcm.typing import ActionName, ProcessName, RegimeName, RegimeNamesToIds, StateName
+from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 
 # A category of a published discrete column: a label, or the number of a value grid.
@@ -134,15 +135,16 @@ def _get_output_dtypes(
     declared_values = {
         var_name: grid.values  # noqa: PD011
         for user_regime in user_regimes.values()
-        for var_name, grid in {**user_regime.states, **user_regime.actions}.items()
+        for var_name, entry in {**user_regime.states, **user_regime.actions}.items()
+        for grid in (entry.simulate if isinstance(entry, Phased) else entry,)
         if isinstance(grid, DiscreteGrid) and grid.values is not None  # noqa: PD011
     }
 
     dtypes: dict[str, pd.CategoricalDtype] = {}
-    for var_name, categories in merged_categories.items():
+    for var_name, categories in {**merged_categories, **declared_values}.items():
         dtypes[var_name] = pd.CategoricalDtype(
-            categories=list(declared_values.get(var_name, categories)),
-            ordered=ordered_flags[var_name],
+            categories=list(categories),
+            ordered=ordered_flags.get(var_name, True),
         )
 
     dtypes["regime_name"] = pd.CategoricalDtype(
