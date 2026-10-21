@@ -1,7 +1,7 @@
-"""MT8: independent arithmetic mutation kills and public parameter controls.
+"""Public actual-corner family and scalar wrong-rule controls.
 
-Copy alongside RT8/OR8 in tests/egm/.  These tests are unexecuted reviewer
-artifacts. Scalar rule mutants are not a claim of production patch mutation runs.
+Scalar rule mutants discriminate the witness arithmetic; they are not
+installed production mutants.
 """
 
 import math
@@ -9,8 +9,11 @@ import math
 import pytest
 
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
-from tests.egm._oracle8_actual_corner import actual_corner, node_budget_substitution
-from tests.egm.test_round8_actual_corner import (
+from tests.egm._finite_negm_actual_corner_witness import (
+    actual_corner,
+    node_budget_substitution,
+)
+from tests.egm.test_finite_negm_public_actual_corner import (
     assert_actual_corner,
     observe_public_corner,
 )

@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, NotRequired, cast
 import jax
 import jax.numpy as jnp
 import numpy as np
+import psutil
 import pytest
 from jax import config as jax_config
 from jax.experimental.compilation_cache import compilation_cache
@@ -603,23 +604,21 @@ def _fail_session(*, session: pytest.Session, message: str) -> None:
 # boundaries, keeps releasing exactly where it did before and pays nothing.
 _MIB_BETWEEN_RELEASES = 1024.0
 
-_STATUS_PATH = pathlib.Path("/proc/self/status")
-
 
 def resident_mebibytes() -> float | None:
     """This process's resident set size in MiB, or `None` where it is unavailable.
 
-    Read straight from the kernel rather than from a high-water mark, so a
-    release that returns memory is visible as a fall.
+    The current size rather than a high-water mark, so a release that returns
+    memory is visible as a fall. `psutil` reads it on every platform the suite
+    runs on, including macOS and Windows, which have no `/proc`. Without a
+    reading the growth trigger never fires, and a large module then releases
+    everything it compiled in one teardown at its boundary -- on a slow runner,
+    longer than the per-test timeout.
     """
     try:
-        status = _STATUS_PATH.read_text()
-    except OSError:
+        return psutil.Process().memory_info().rss / 1024.0**2
+    except psutil.Error:
         return None
-    for line in status.splitlines():
-        if line.startswith("VmRSS:"):
-            return int(line.split()[1]) / 1024.0
-    return None
 
 
 @functools.cache
