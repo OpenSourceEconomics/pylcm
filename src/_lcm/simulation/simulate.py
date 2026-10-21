@@ -70,8 +70,8 @@ from _lcm.simulation.diagnostic_operations import (
     profiled_transition_counts,
 )
 from _lcm.simulation.dissolution_route import (
-    NO_GATED_ENTRY,
     DissolutionFallback,
+    empty_gated_entries,
     log_dissolution_fallbacks,
     record_open_entries,
     reroute_rows_without_feasible_action,
@@ -911,12 +911,16 @@ def _simulate_subject_chunk(  # noqa: PLR0915
     ):
         period_start = time.monotonic()
         if memory is not None:
+            # The previous period's roles and open-branch entries are read by
+            # this period's dissolution routes, so they stay roots until then.
             memory.unit_inputs = (
                 states,
                 subject_regime_ids,
                 own_stakeholder,
                 key,
                 taste_key,
+                source_roles,
+                entered_through,
             )
         original_age = chunk_operations.period_age(
             values=ages.values, period=period, memory=memory
@@ -946,9 +950,13 @@ def _simulate_subject_chunk(  # noqa: PLR0915
         prev_regime_ids = subject_regime_ids
         new_subject_regime_ids = subject_regime_ids
         new_own_stakeholder = own_stakeholder
-        new_entered_through = jnp.full_like(subject_regime_ids, NO_GATED_ENTRY)
-        if memory is not None:
-            memory.hold(tree=new_entered_through)
+        new_entered_through = run_simulation_operation(
+            memory=memory,
+            function=empty_gated_entries,
+            arguments={"regime_ids": subject_regime_ids},
+            subject_arg_names=("regime_ids",),
+            subject_outputs=True,
+        )
 
         log_period_header(
             logger=logger,
@@ -1112,7 +1120,8 @@ def _simulate_subject_chunk(  # noqa: PLR0915
         if memory is not None:
             memory.period_owner = None
             # Unit-local owners were released after publication. The period's
-            # current carry and both memberships still live through diagnostics.
+            # current carry, both memberships and both entry carriers still live
+            # through diagnostics.
             memory.unit_inputs = (
                 states,
                 prev_regime_ids,
@@ -1124,6 +1133,9 @@ def _simulate_subject_chunk(  # noqa: PLR0915
                 taste_key,
                 original_age,
                 age,
+                source_roles,
+                entered_through,
+                new_entered_through,
             )
 
         _validate_period_values(
@@ -2225,19 +2237,32 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 next_states=next_states,
             )
             if new_entered_through is not None:
-                new_entered_through = record_open_entries(
-                    source_id=int(regime_names_to_ids[regime_name]),
-                    closed_masks={
-                        target: cast("Bool1D", edge_delta["closed"])
-                        for target, edge_delta in route_delta.items()
+                new_entered_through = run_simulation_operation(
+                    memory=memory,
+                    function=record_open_entries,
+                    arguments={
+                        "closed_masks": tuple(
+                            cast("Bool1D", edge_delta["closed"])
+                            for edge_delta in route_delta.values()
+                        ),
+                        "routed_ids": new_subject_regime_ids,
+                        "subjects_in_regime": subject_ids_in_regime,
+                        "new_entered_through": new_entered_through,
                     },
-                    routed_ids=new_subject_regime_ids,
-                    subjects_in_regime=subject_ids_in_regime,
-                    regime_names_to_ids=regime_names_to_ids,
-                    new_entered_through=new_entered_through,
+                    subject_arg_names=(
+                        "closed_masks",
+                        "routed_ids",
+                        "subjects_in_regime",
+                        "new_entered_through",
+                    ),
+                    static_arguments={
+                        "source_id": int(regime_names_to_ids[regime_name]),
+                        "target_ids": tuple(
+                            int(regime_names_to_ids[target]) for target in route_delta
+                        ),
+                    },
+                    subject_outputs=True,
                 )
-                if memory is not None:
-                    memory.hold(tree=new_entered_through)
         states = clip_next_states(
             states=next_states,
             regimes=regimes,

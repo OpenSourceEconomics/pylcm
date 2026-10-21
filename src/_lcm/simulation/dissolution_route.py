@@ -55,6 +55,11 @@ from lcm.typing import Bool1D, Int1D, ScalarFloat, ScalarInt
 NO_GATED_ENTRY = -1
 
 
+def empty_gated_entries(*, regime_ids: Int1D) -> Int1D:
+    """Build a period's entry carrier, in which no row holds an open-branch entry."""
+    return jnp.full_like(regime_ids, NO_GATED_ENTRY)
+
+
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class DissolutionFallback:
     """One household sent to its dissolution route for want of a feasible action."""
@@ -204,10 +209,10 @@ def reroute_rows_without_feasible_action(
 def record_open_entries(
     *,
     source_id: int,
-    closed_masks: Mapping[RegimeName, Bool1D],
+    target_ids: tuple[int, ...],
+    closed_masks: tuple[Bool1D, ...],
     routed_ids: Int1D,
     subjects_in_regime: Bool1D,
-    regime_names_to_ids: RegimeNamesToIds,
     new_entered_through: Int1D,
 ) -> Int1D:
     """Mark the rows this source's gates let through their open branch.
@@ -217,11 +222,22 @@ def record_open_entries(
     closed for it: a row is eligible only for the gate of its ordinary draw, so
     a closed branch that lands in another gate's target is excluded by its own
     closed mask. Every other row of the source holds no entry next period.
+
+    Args:
+        source_id: The id of the source regime whose gates were evaluated.
+        target_ids: The ids of the gated targets, one per closed mask.
+        closed_masks: Each gated target's closed-branch mask, in `target_ids` order.
+        routed_ids: Next-period regime membership after routing.
+        subjects_in_regime: Rows of the source regime this period.
+        new_entered_through: The next period's entries as accumulated so far.
+
+    Returns:
+        The next period's entries with this source's rows written.
     """
     entered = jnp.zeros_like(subjects_in_regime)
     closed = jnp.zeros_like(subjects_in_regime)
-    for target, mask in closed_masks.items():
-        entered = entered | (routed_ids == regime_names_to_ids[target])
+    for target_id, mask in zip(target_ids, closed_masks, strict=True):
+        entered = entered | (routed_ids == target_id)
         closed = closed | mask
     return jnp.where(
         subjects_in_regime,
