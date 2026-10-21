@@ -311,8 +311,8 @@ class EdgeVocabulary:
     aggregator inputs."""
 
     states: frozenset[StateName]
-    """Its states and the code `<name>_code` of each discrete one, which a gate or
-    projection with this regime as target reads off the target grid."""
+    """Its states and the code `<name>_code` of each discrete or process one, which
+    a gate or projection with this regime as target reads off the target grid."""
 
     categoricals: MappingProxyType[ReferenceName, DiscreteGrid]
     """Its discrete state and action grids, which label the levels of a Series
@@ -348,7 +348,10 @@ def create_edge_vocabulary(
                         *regime.states,
                         *(
                             f"{state}_code"
-                            for state in _declared_categoricals(regime)
+                            for state in (
+                                *_declared_categoricals(regime),
+                                *_process_states(regime),
+                            )
                             if state in regime.states
                         ),
                     }
@@ -374,6 +377,18 @@ def _declared_categoricals(
             for name, grid in {**states, **regime.actions}.items()
             if isinstance(grid, DiscreteGrid)
         }
+    )
+
+
+def _process_states(regime: UserRegime) -> frozenset[StateName]:
+    """Return a regime's stochastic process states, whose node position is a code."""
+    return frozenset(
+        name
+        for name, spec in regime.states.items()
+        if isinstance(
+            spec.simulate if isinstance(spec, Phased) else spec,
+            _ContinuousStochasticProcess,
+        )
     )
 
 
@@ -664,6 +679,7 @@ def _wired_names(user_regime: UserRegime) -> frozenset[ReferenceName]:
         f"{name}_code"
         for name in (
             *_declared_categoricals(user_regime),
+            *_process_states(user_regime),
             *user_regime.derived_categoricals,
         )
     )

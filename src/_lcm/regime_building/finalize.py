@@ -32,6 +32,7 @@ from _lcm.processes.joint_normal_lowering import (
 )
 from _lcm.regime_building.value_adapter import (
     AdaptableEntry,
+    AdapterGrid,
     AdapterMemo,
     ValueAdapter,
     adapt_collective_utility,
@@ -249,7 +250,7 @@ def _with_adapted_household(
     *,
     user_regime: UserRegime,
     engine_functions: Mapping[FunctionName, UserFunction | Phased | None],
-    value_grids: Mapping[str, DiscreteGrid],
+    value_grids: Mapping[str, AdapterGrid],
     adapters: AdapterMemo,
 ) -> UserRegime:
     """Return the regime whose household declares the bodies the engine runs.
@@ -294,7 +295,7 @@ def _authored(
 def _adapt_slot(
     *,
     slot: Mapping[str, AdaptableEntry],
-    value_grids: Mapping[str, DiscreteGrid],
+    value_grids: Mapping[str, AdapterGrid],
     encoded: frozenset[str],
     adapters: AdapterMemo,
 ) -> MappingProxyType[str, AdaptableEntry]:
