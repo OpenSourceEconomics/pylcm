@@ -243,7 +243,7 @@ def test_valid_whole_call_preflight_has_two_host_summaries(
 def test_unstubbed_warm_full_call_progress_meets_existing_time_bar(
     *, witness: str, record_property: Callable[[str, JSONValue], None]
 ) -> None:
-    """Keep the original paired nine-repeat whole-call 1.5x acceptance bar."""
+    """Keep the paired nine-repeat whole-call `HOST_TIME_BAR` acceptance bar."""
     start = time.perf_counter()
     batch = _steady_median_host_times(
         witness=witness,
