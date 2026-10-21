@@ -670,7 +670,7 @@ _SOURCE_SEALS = {
     LIVENESS_SOURCE: "056bda4d48f26768ed8615925ce8ff89665bb8eed94b59d69f02701a95943dff",
     CONTINUATION_READS_SOURCE: "144206aa7175163a4dcb365da8765942a9f2c8a530ea41e102d540fa4dfe057d",
     WORKSPACE_PLANNING_SOURCE: "c5cb4ef56e436e5620ef16575fb6f2a92a6c5a5162e3ef005acb855ce259d493",
-    SIMULATION_PROGRAMS_SOURCE: "841dd0ea0fd381b33852062a4c8cb3ddaac97b2174269885f15e76380ffa34aa",
+    SIMULATION_PROGRAMS_SOURCE: "519ed76181ac61a8750fa2ef71be3a492e83bfbdc71dcb6c247838319f293ff9",
     SIMULATION_PROGRAM_TYPES_SOURCE: "d6abdc13894b09b44309fb45c571d233bd20cb330101ff8b0ef7a9e4624fc3a7",
     SIMULATION_RUNTIME_SOURCE: "b2e308916c1ff657ef06cbd9a5805de868fc28f2d474b9e9f172a341f3fa0fd6",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
@@ -695,17 +695,17 @@ _SOURCE_SEALS = {
     PROBABILITY_SOURCE: "60ccd04b143c714360388fcce2730804a4ca729ea4db82e4a0100732e155e53f",
     ENGINE_SOURCE: "9c103e2271e6d5d655be37ce4eda10bf02c811915a5b4b2a3eee25cc02f30c18",
     STATE_ACTION_SPACE_SOURCE: "bc1d4b798ae1beeef6ce6f655ba61cd3bbf064dbd1910b14aa5cf8ce28954e95",
-    SIMULATION_SOURCE: "30bd29c60a1f7ac44951725e736e05f239cd05ad8a42334ab38dce2b6d46f91b",
+    SIMULATION_SOURCE: "2e95156c10ecfe67c7c0119ec9b47e5745cbdafb87609865bb2f72a895e1a7da",
     SIMULATION_TRANSITIONS_SOURCE: "64e3b7283d1dd445edb8a9b27dc691b8dccf6bbd6a4029c1e5e03d87e686067b",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
-    MODEL_SOURCE: "f2d9f226ad615de1f0a977e9dbb8f15b8fc65fbaabe09c856f55c29e83b2a13f",
+    MODEL_SOURCE: "2b3605cc3a2464c635ed9157ae1c57f0eb52b764be0240d5a635086ec33d4e54",
     SOLVER_API_SOURCE: "bc9e7cd94009998acfc1f11d8da823475030879790a49f8192e1260012496c96",
     BACKWARD_INDUCTION_SOURCE: "2475595305a0dd7cae51d53cf21b39c6cf64582c2ad0fc18adfc5664d5f7f8a0",
     PERIOD_REPLAY_SOURCE: "890aea9983d4d18c16a586e59b375668ed9dce3c4f81879cec733f5bb88f2000",
     INITIAL_CONDITIONS_SOURCE: "7d8181debcef963165e5f50ea9aea9ebc1c2e69ced040cb3486f01fe58181bfc",
     RESULT_SOURCE: "3740c0afb5e3b69137a75eeb0a9d28ad1f356eda12961b53a88da453e3a971cd",
     RESULT_DATAFRAME_SOURCE: "6d735b7cb6bb324ad9e8be16cbcdc47aa2fc2b73657c02c23068072bbc58f095",
-    RESULT_METADATA_SOURCE: "01d1d344b21d9fd8a4a4d32fb1eb76bc18249f0c13abed2f725499ea71422f78",
+    RESULT_METADATA_SOURCE: "220da91adf26fe320713fa969d9155fce01ccd9d84bd60db4c42ab756e28bd09",
     ADDITIONAL_TARGETS_SOURCE: "3a4d95d5c88c801bb8bb0881a52cd8985e1cc17efdbfbf5474332e46b8d46614",
     SIMULATION_RANDOM_SOURCE: "05ea6cd8a4cf1c01c282f6d99c1f7b0f4e5503c9cf42fb0210fe0d28a79ae681",
     FOLD_ZERO_SAFE_SOURCE: "301fcd3bec1211b60872159fe585e55e9742be62a975dd76b33f6f5cb45971e5",
@@ -725,7 +725,7 @@ _SOURCE_SEALS = {
     PARAMS_PROCESSING_SOURCE: "a6640eef75e746b50024d11c51c572d1daa062cf3d5256afe31a97b121a5410d",
     DTYPES_SOURCE: "1d38a54667166599fd692f8c58b37741f355753138d234b650c54384321bcbb2",
     NAMESPACE_SOURCE: "9a33080663f01a6d65501663e8436b132176be51c8223c28b2e749d8dbf8b570",
-    PANDAS_UTILS_SOURCE: "d61b4bdd9e6b76ea5cbb42ce7736003ba35a0e7e6aeac6a4d157c0f4b6201b0d",
+    PANDAS_UTILS_SOURCE: "3afda7ef3d8b4e5802bb8536b194f7fec8f77e84087ddb46449af3aa2e09819d",
     MODEL_PROCESSING_SOURCE: "8281a5df9cbb434c54aaf482571fef76a1e9bdf82821a04fa977fda46fa1d935",
     "src/_lcm/egm/upper_envelope/__init__.py": "79fbbac531b6be0fd6d5b88236f9b56011b8300975bdef9941e24dfd8eea33c3",
     "src/_lcm/egm/upper_envelope/segment_envelope.py": "706b3f3c7c52c5de2b1553e34be7863653aa0cd14d834fd3b68d9533f7c1273c",
@@ -984,7 +984,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "convert_series_in_params": "e12a3cc6f9822c67e47966a19a979f22282ddeb1e2ea80f0d1e089a75ad8c557",
             "_convert_param_value": "78704aa755b151ed88d3c8799d6729a3d538c5acf4fca91c6ee911cc39077403",
             "array_from_series": "ff66ccbcbb61993ba38099f5e1c6fd321f6e2400d6a12029da8e4f60dfa63a34",
-            "_scatter_series": "68981f1c512410fc68eccb42c39ecb3a4b0d4be3a3c4f414329f69b5287f79cf",
+            "_scatter_series": "ccb844566097dc7bb6412b0f81b2e28d60b84b960bb73ee8be3f9acdb6681bcc",
         },
     ),
     DTYPES_SOURCE: (
@@ -1471,10 +1471,10 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SIMULATION_SOURCE: (
-        "8d440c2cca991dbb327d9bb9cc7459bd0e153b6683a47c99149545717ed466b8",
+        "7c748dd5e628db6d89a268a2279273cfe713b9b1d91c69c185ca2d818c603952",
         {
             "simulate": "927c0ff7eab82772889e60b11baf0fdb1f2c357a293b7e3912be995ed0a77f94",
-            "_simulate_regime_in_period": "2bf931c7043780c356ad665089f840da00d8dfc5478c657088041bebdf38ae27",
+            "_simulate_regime_in_period": "2c5fc25ab6dc0b259d7afd2f54eb6d720672344be03dd0bb95d9ffb5c066c4b3",
             "_execute_finite_replay": "dd01d79a502c1027cd08f0656c59c6bbab7080c848a706bcac631e63188edc1f",
             "_announce_dropped_outer_candidates": "977a3fc8627f295ad6837b46fcf94672449b532263c674be2209e509d6c088cd",
             "_report_dropped_outer_candidates": "0825c06c02ecfe2ad8270e6d606c67f3063f945befeccf6debb4880194d54dc1",
@@ -1482,7 +1482,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_concatenate_chunk_results": "e1217d0e707ef6a8b3d00dcef6abce948d065e125fc2886336bf537d276c1a41",
             "_validate_period_values": "30fe242e786e7e38637d380ecad0aa4d1689bc71c1fa9cbf2ae3c781e011a3c3",
             "_validate_simulated_value": "5938880b9d43f485c98f21b559d9b6d9326adc0dfde9dbca9d6a831e128cfd00",
-            "_simulate_subject_chunk": "0a7e24821a79d8b55b066cac8bd193e1126b07423f547c5cf713bc4aed5d9148",
+            "_simulate_subject_chunk": "970b0e91d818e24c7c59dc4ab46829602a911f83ac50e691caa8f2229a9ccf3f",
             "_bind_unit_executor": "a787e30bafb80053703e1f4ce0c1d84feb5ac522cd41349665c600dcf9f1eda5",
             "_lookup_values_from_indices": "ebc4a036a447857f061c117b2eb0c9b9e61d5f17a40e90ea14a6e6205233ea9f",
             "_read_external_replay": "392ae18dc5916b0dd6b9539f395002fb97b1d1d985a8b985dc547785cd98ab53",
@@ -1500,12 +1500,12 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     MODEL_SOURCE: (
-        "3b0091a592273cb3b4c3c049e43aff66791bd361fbe39b2a7dc7fc4ff8130b3c",
+        "54001498602d4374e6755be3e55b59d555ba8782052c0afedcf0699f015fb76c",
         {
             "_validate_sharded_state_capability": "ee8b7e8a97fd413d2376a655558ea7b2a2ab61589a0ddd624ed44b69dfe5fa8d",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "d837bd4f6c97be377ae02dca1f2044e1eb9974c6e7e08bc48866bed0f6886b18",
-            "Model.__init__": "4e2c748866af09a6211c99a5963693e886c18ec40a95f172a499fc3d1138ae7a",
+            "Model.__init__": "b6f7de91a2eb3cafb8891446e0814e2dfe1e899e4dfdbe1edc6a2c53c8731d4b",
             "Model.simulate": "246fd50c3368259c14dfbfa53dd3f309ad29104e0ddce47aada1ea43ba494f6f",
             "Model._open_entry_allocations": "2d3a04ba171e7e79bb145481fb9859294a75004242c981ae32992f6121db017c",
             "Model._check_solution_result_structure": "3e2f19b7fae40cede786a1debce00175907dd9edf1f59c9ff17ebcf834637736",
@@ -4539,14 +4539,19 @@ def _simulation_state_action_space_errors(tree: ast.Module) -> list[str]:
 
 
 def _simulation_state_action_space_caller_errors(tree: ast.Module) -> list[str]:
-    """Pin the live simulation caller to the params-completed base without wrapping."""
+    """Pin the live simulation caller to the params-completed base without wrapping.
+
+    The first binding is a statement of the function body; a later one rebuilds
+    the space from the same adapter after a dissolution route moved rows to a
+    projected state in the same regime. Every binding is that exact call.
+    """
     try:
         node = _definition(tree=tree, name="_simulate_regime_in_period")
     except ValueError as error:
         return [f"simulation state-action caller: {error}"]
     body = _body_without_docstring(node)
     bindings = _scope_binding_counts(body)
-    matches = [
+    top_level = [
         statement
         for statement in body
         if isinstance(statement, ast.Assign)
@@ -4554,34 +4559,45 @@ def _simulation_state_action_space_caller_errors(tree: ast.Module) -> list[str]:
         and _target_names(statement.targets[0]) == ("state_action_space",)
         and isinstance(statement.value, ast.Call)
     ]
-    if len(matches) != 1 or bindings.get("state_action_space") != 1:
+    matches = [
+        statement
+        for statement in ast.walk(ast.Module(body=body, type_ignores=[]))
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and _target_names(statement.targets[0]) == ("state_action_space",)
+    ]
+    if len(top_level) != 1 or bindings.get("state_action_space") != len(matches):
         return [
             (
                 "simulation state-action caller: expected exactly one live "
                 "state_action_space binding"
             )
         ]
-    call = matches[0].value
-    if not isinstance(call, ast.Call):
-        return ["simulation state-action caller: adapter call changed"]
-    if not (
-        _call_name(call) == "create_regime_state_action_space"
-        and not call.args
-        and {item.arg for item in call.keywords} == {"regime", "regime_states", "base"}
-        and _name(node=_keyword(call=call, name="regime"), expected="regime")
-        and _expression_matches(
-            node=_keyword(call=call, name="regime_states"), source="states[regime_name]"
-        )
-        and _name(
-            node=_keyword(call=call, name="base"), expected="base_state_action_space"
-        )
-    ):
-        return [
-            (
-                "simulation state-action caller: adapter does not receive the "
-                "exact params-completed base"
+    for statement in matches:
+        call = statement.value
+        if not isinstance(call, ast.Call):
+            return ["simulation state-action caller: adapter call changed"]
+        if not (
+            _call_name(call) == "create_regime_state_action_space"
+            and not call.args
+            and {item.arg for item in call.keywords}
+            == {"regime", "regime_states", "base"}
+            and _name(node=_keyword(call=call, name="regime"), expected="regime")
+            and _expression_matches(
+                node=_keyword(call=call, name="regime_states"),
+                source="states[regime_name]",
             )
-        ]
+            and _name(
+                node=_keyword(call=call, name="base"),
+                expected="base_state_action_space",
+            )
+        ):
+            return [
+                (
+                    "simulation state-action caller: adapter does not receive the "
+                    "exact params-completed base"
+                )
+            ]
     return []
 
 
@@ -16177,9 +16193,9 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": SIMULATION_SOURCE,
             "source": replace_once(
                 source=simulation_source,
-                old="        base=base_state_action_space,",
+                old="\n        base=base_state_action_space,",
                 new=(
-                    "        base=base_state_action_space.replace(continuous_actions=MappingProxyType({name: values.at[-1].set(values[0]) for name, values in base_state_action_space.continuous_actions.items()})),"
+                    "\n        base=base_state_action_space.replace(continuous_actions=MappingProxyType({name: values.at[-1].set(values[0]) for name, values in base_state_action_space.continuous_actions.items()})),"
                 ),
                 label="simulation adapter caller base wrapping",
             ),

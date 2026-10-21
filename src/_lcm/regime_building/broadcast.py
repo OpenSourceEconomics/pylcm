@@ -51,6 +51,7 @@ from _lcm.regime_building.phases import (
     RegimePhaseSpec,
     normalize_regime_phases,
 )
+from _lcm.regime_building.value_adapter import CODE_SUFFIX
 from _lcm.regime_law import RegimeLaw, RegimeLaws
 from _lcm.time import TimeAxis, specialization_coordinate_at
 from _lcm.typing import (
@@ -239,6 +240,7 @@ def prune_broadcast_variables(
     ages: TimeAxis | None = None,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
     visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
+    discrete_names: frozenset[str] = frozenset(),
 ) -> tuple[
     MappingProxyType[RegimeName, UserRegime],
     MappingProxyType[RegimeName, frozenset[StateOrActionName]],
@@ -274,6 +276,9 @@ def prune_broadcast_variables(
         visited_periods_by_regime: The periods subjects can be in each regime,
             where conditional-action pins build their simulation readers. `None`
             builds them at the first solved period.
+        discrete_names: Every discrete variable of the model, declared in a
+            regime, at model level or as a derived categorical. A read of
+            `<name>_code` is a read of `<name>`.
 
     Returns:
         Tuple of the pruned regimes and, per regime, the pruned names.
@@ -295,6 +300,7 @@ def prune_broadcast_variables(
         koopmans_aggregator=koopmans_aggregator,
         ages=ages,
         active_periods_by_regime=active_periods_by_regime,
+        discrete_names=discrete_names,
     )
     reachable_targets = _reachable_targets(user_regimes=user_regimes, laws=laws)
 
@@ -348,6 +354,7 @@ def compute_kept_variables(
     visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
     targets_by_phase: Mapping[PhaseName, Mapping[RegimeName, frozenset[RegimeName]]]
     | None = None,
+    discrete_names: frozenset[str] = frozenset(),
 ) -> MappingProxyType[RegimeName, frozenset[StateOrActionName]]:
     """Close each regime's kept states and actions under use.
 
@@ -386,6 +393,9 @@ def compute_kept_variables(
             `None` takes every candidate target of the lowered regime transition,
             which for a callable law is every regime, and lets any kept name of
             the target count.
+        discrete_names: The discrete variables whose code `<name>_code` a
+            user function can read; such a read is a read of `<name>`. Empty
+            for regimes whose functions already read the variables themselves.
 
     Returns:
         Per regime, the kept state and action names: every non-candidate
@@ -419,6 +429,7 @@ def compute_kept_variables(
         active_periods_by_regime=active_periods_by_regime,
         visited_periods_by_regime=visited_periods_by_regime,
         targets_by_phase=targets_by_phase,
+        discrete_names=discrete_names,
     )
 
 
@@ -453,6 +464,7 @@ def _reachable_targets(
 def split_transition_only_folds(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
+    discrete_names: frozenset[str],
     laws: RegimeLaws,
     koopmans_aggregator: UserFunction,
     ages: TimeAxis | None = None,
@@ -480,6 +492,8 @@ def split_transition_only_folds(
 
     Args:
         user_regimes: Mapping of regime names to pruned `Regime` instances.
+        discrete_names: Pre-adaptation discrete names, including model-level
+            derived categoricals. A process can feed a categorical code read.
         laws: Each regime's law, by regime name.
         koopmans_aggregator: The model-level Bellman aggregator.
         ages: The model's time axis, used to resolve age-specialized functions.
@@ -500,6 +514,7 @@ def split_transition_only_folds(
     }
     reads = _NamesRead(
         specs=specs,
+        discrete_names=discrete_names,
         user_regimes=user_regimes,
         laws=laws,
         koopmans_aggregator=koopmans_aggregator,
@@ -588,6 +603,7 @@ class _NamesRead:
     """
 
     specs: Mapping[RegimeName, PhasedRegimeSpec]
+    discrete_names: frozenset[str]
     user_regimes: Mapping[RegimeName, UserRegime]
     laws: RegimeLaws
     koopmans_aggregator: UserFunction
@@ -611,6 +627,7 @@ class _NamesRead:
                 koopmans_aggregator=self.koopmans_aggregator,
                 candidate_targets=candidate_targets,
                 kept=every_state_kept,
+                discrete_names=self.discrete_names,
                 ages=self.ages,
                 active_periods=(
                     None
@@ -837,6 +854,7 @@ def _joint_phase_closure(
     targets_by_phase: Mapping[PhaseName, Mapping[RegimeName, frozenset[RegimeName]]]
     | None,
     phase_order: tuple[PhaseName, ...] = ("solution", "simulation"),
+    discrete_names: frozenset[str] = frozenset(),
 ) -> MappingProxyType[RegimeName, frozenset[StateOrActionName]]:
     """Grow the kept-sets to the least fixed point of both phase operators.
 
@@ -868,6 +886,7 @@ def _joint_phase_closure(
                 active_periods_by_regime=active_periods_by_regime,
                 visited_periods_by_regime=visited_periods_by_regime,
                 targets_by_phase=targets_by_phase,
+                discrete_names=discrete_names,
             )
         if grown == before:
             return grown
@@ -888,6 +907,7 @@ def _phase_fixed_point(
     visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None,
     targets_by_phase: Mapping[PhaseName, Mapping[RegimeName, frozenset[RegimeName]]]
     | None,
+    discrete_names: frozenset[str] = frozenset(),
 ) -> MappingProxyType[RegimeName, frozenset[StateOrActionName]]:
     """Grow the kept-sets to this phase slice's least fixed point.
 
@@ -948,6 +968,7 @@ def _phase_fixed_point(
                     active_periods_by_regime=active_periods_by_regime,
                     visited_periods_by_regime=visited_periods_by_regime,
                 ),
+                discrete_names=discrete_names,
             )
             needed |= _state_conditioned_names(
                 user_regime=user_regime,
@@ -1148,6 +1169,7 @@ def _needed_names(
     kept: Mapping[RegimeName, frozenset[StateOrActionName]],
     ages: TimeAxis | None,
     active_periods: tuple[int, ...] | None,
+    discrete_names: frozenset[str],
 ) -> frozenset[str]:
     """Collect every name this phase slice's root computations read.
 
@@ -1162,6 +1184,9 @@ def _needed_names(
     A Markov state whose draw is read roots its law too, since the draw is
     taken from it; the walk repeats until no further draw is read.
 
+    A read of the code `<name>_code` of a discrete variable is a read of
+    `<name>`, and of whatever `<name>` reads when a function computes it.
+
     The whole pool is resolved at a representative active period before the DAG
     walk, so `get_ancestors` sees a marked node's real argument names instead of
     `AgeSpecializedFunction.__call__`'s generic `(*args, **kwargs)`.
@@ -1169,6 +1194,7 @@ def _needed_names(
     pool: dict[str, UserFunction] = dict(phase_slice.functions)
 
     pool |= _composed_resources_edge(user_regime=user_regime, pool=pool)
+    pool |= _code_edges(discrete_names=discrete_names, pool=pool)
 
     roots = dict(
         root_functions(
@@ -1223,6 +1249,27 @@ def _draw_law_roots(
     )
 
 
+def _code_edges(
+    *, discrete_names: frozenset[str], pool: Mapping[str, UserFunction]
+) -> MappingProxyType[str, UserFunction]:
+    """Supply the edge from each discrete variable's code `<name>_code` to `<name>`.
+
+    Model finalization adapts every user function to receive `<name>_code` as
+    the position of `<name>`'s node, read off `<name>` itself. Pruning runs
+    first and would otherwise see `<name>_code` as a leaf: a variable read only
+    through its code would be pruned as unused, and so would whatever computes a
+    derived categorical read only through its code. Like the composed
+    resources, the stub carries the argument name and no body.
+    """
+    return MappingProxyType(
+        {
+            code: cast("UserFunction", _ArgumentEdge(reads=(name,), name="code"))
+            for name in sorted(discrete_names)
+            if (code := f"{name}{CODE_SUFFIX}") not in pool
+        }
+    )
+
+
 def _composed_resources_edge(
     *, user_regime: UserRegime, pool: Mapping[str, UserFunction]
 ) -> MappingProxyType[str, UserFunction]:
@@ -1243,8 +1290,9 @@ def _composed_resources_edge(
         {
             resources.output: cast(
                 "UserFunction",
-                _ComposedResourcesEdge(
-                    before_cost=resources.before_cost, cost=resources.cost
+                _ArgumentEdge(
+                    reads=(resources.before_cost, resources.cost),
+                    name="composed_resources",
                 ),
             )
         }
@@ -1252,24 +1300,24 @@ def _composed_resources_edge(
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
-class _ComposedResourcesEdge:
-    """A bodiless stand-in carrying only the composed resources' argument names."""
+class _ArgumentEdge:
+    """A bodiless stand-in carrying only the argument names of a later node."""
 
-    before_cost: str
-    """Name of the cost-free base."""
-    cost: str
-    """Name of the adjustment cost."""
+    reads: tuple[str, ...]
+    """The names the node reads."""
+    name: str
+    """The stand-in's function name."""
 
     def __post_init__(self) -> None:
         signature = inspect.Signature(
             [
                 inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD)
-                for name in (self.before_cost, self.cost)
+                for name in self.reads
             ]
         )
         object.__setattr__(self, "__signature__", signature)
         object.__setattr__(self, "__annotations__", {})
-        object.__setattr__(self, "__name__", "composed_resources")
+        object.__setattr__(self, "__name__", self.name)
 
     # The kernel is traced with whatever leaves its caller supplies -- tracers,
     # Python scalars, arrays of either integer width -- so its annotations

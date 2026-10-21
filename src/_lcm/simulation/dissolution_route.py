@@ -19,9 +19,16 @@ evaluated at the realised `D` for every predicate. It is also how a household
 that passed a gate not reading `D_target` (a consent gate) leaves a regime that
 has no admissible action for it.
 
-A household that reached the regime through no gated edge (an initial
-condition, or an ungated transition) has no route to take, and the caller
-raises `NoFeasibleActionError` for it as before.
+Only the gate a household actually passed through its open branch hands it a
+route, and only once. A household that landed in the regime through a closed
+branch has already taken its gate's route; one that reached it through no gated
+edge (an initial condition, or an ungated transition) never had one; and one
+that already took a route this period has used it. Regime identity cannot tell
+these apart (a closed branch of one gate can land in the target of another gate
+from the same source), so the router's own closed-branch masks decide, and each
+row carries the id of the source whose gate it passed open in `entered_through`,
+or `NO_GATED_ENTRY`. The caller raises `NoFeasibleActionError` for an empty row
+without one.
 """
 
 import dataclasses
@@ -29,6 +36,7 @@ import logging
 from collections.abc import Mapping
 from types import MappingProxyType
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -42,6 +50,14 @@ from _lcm.simulation.gated_routing import (
 from _lcm.simulation.transitions import _advance_states_for_subjects
 from _lcm.typing import FlatParams, RegimeName, RegimeNamesToIds, StatesPerRegime
 from lcm.typing import Bool1D, Int1D, ScalarFloat, ScalarInt
+
+# The `entered_through` value of a row that holds no unused open-branch entry.
+NO_GATED_ENTRY = -1
+
+
+def empty_gated_entries(*, regime_ids: Int1D) -> Int1D:
+    """Build a period's entry carrier, in which no row holds an open-branch entry."""
+    return jnp.full_like(regime_ids, NO_GATED_ENTRY)
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -57,20 +73,26 @@ class DissolutionFallback:
     state: MappingProxyType[str, float | str]
     """Its full realised state in that regime, in declared coordinates."""
     source: RegimeName
-    """The regime it entered from, whose gated edge supplies the route."""
+    """The regime whose gate the household passed open, which supplies the route."""
     fallback: RegimeName
     """The fallback regime of its own leg, where it acts this period instead."""
 
 
+@jax.tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class RerouteOutcome:
-    """The carriers after rerouting, and which rows moved."""
+    """The carriers after rerouting, and which rows moved.
+
+    A pytree of its array fields, so a held outcome is measured buffer by buffer.
+    """
 
     states: StatesPerRegime
     subject_regime_ids: Int1D
     own_stakeholder: Int1D
     new_subject_regime_ids: Int1D
     new_own_stakeholder: Int1D
+    entered_through: Int1D
+    """Open-branch entries after rerouting: every rerouted row's is used up."""
     rerouted: Bool1D
     """Rows sent to a fallback regime this period."""
     fallback_ids: Int1D
@@ -82,7 +104,7 @@ def reroute_rows_without_feasible_action(
     regime_name: RegimeName,
     regimes: Mapping[RegimeName, Regime],
     empty: Bool1D,
-    source_regime_ids: Int1D,
+    entered_through: Int1D,
     source_roles: Int1D,
     states: StatesPerRegime,
     subject_regime_ids: Int1D,
@@ -94,14 +116,17 @@ def reroute_rows_without_feasible_action(
     period: int,
     age: ScalarInt | ScalarFloat,
 ) -> RerouteOutcome:
-    """Move every empty row that entered through a gated edge to its fallback.
+    """Move every empty row that passed a gate into this regime open to its fallback.
 
     Args:
         regime_name: The regime whose decision found no feasible action.
         regimes: Every regime of the model.
         empty: Rows of this regime with no feasible action this period.
-        source_regime_ids: Each row's regime in the previous period.
-        source_roles: Each row's role in the previous period.
+        entered_through: Each row's source regime id when it entered this period
+            through the open branch of that source's gate and has not used the
+            route yet, else `NO_GATED_ENTRY`.
+        source_roles: Each row's role in the previous period, which selects its
+            leg of the gate.
         states: The current-period state carrier.
         subject_regime_ids: Current-period regime membership.
         own_stakeholder: Current-period roles.
@@ -115,13 +140,17 @@ def reroute_rows_without_feasible_action(
     Returns:
         The updated carriers and the rows that moved.
     """
+    # Every leg projects from the same original target state. A self-target
+    # leg may overwrite the carrier below; later legs must not compose their
+    # projections with that write.
+    original_target_states = dict(states[regime_name])
     rerouted = jnp.zeros_like(empty)
     fallback_ids = jnp.full_like(subject_regime_ids, -1)
     for source_name, source in regimes.items():
         edge = source.gated_edges.get(regime_name)
         if edge is None:
             continue
-        rows = empty & (source_regime_ids == regime_names_to_ids[source_name])
+        rows = empty & (entered_through == regime_names_to_ids[source_name])
         own_fallback_id, _open_role, closed_role = _per_row_leg_outcomes(
             legs=edge.legs,
             own_stakeholder=source_roles,
@@ -132,7 +161,7 @@ def reroute_rows_without_feasible_action(
             projector = leg.fallback_state_projector
             projected = _call_vmapped_with_accepted_kwargs(
                 func=projector,
-                batched_kwargs=dict(states[regime_name]),
+                batched_kwargs=original_target_states,
                 static_kwargs={
                     **bind_provenance_params(
                         provenance=projector.arg_provenance,  # ty: ignore[unresolved-attribute]
@@ -171,8 +200,49 @@ def reroute_rows_without_feasible_action(
         own_stakeholder=own_stakeholder,
         new_subject_regime_ids=new_subject_regime_ids,
         new_own_stakeholder=new_own_stakeholder,
+        entered_through=jnp.where(rerouted, NO_GATED_ENTRY, entered_through),
         rerouted=rerouted,
         fallback_ids=fallback_ids,
+    )
+
+
+def record_open_entries(
+    *,
+    source_id: int,
+    target_ids: tuple[int, ...],
+    closed_masks: tuple[Bool1D, ...],
+    routed_ids: Int1D,
+    subjects_in_regime: Bool1D,
+    new_entered_through: Int1D,
+) -> Int1D:
+    """Mark the rows this source's gates let through their open branch.
+
+    A row entered a gated target through the open branch exactly when it lands
+    in a target whose gate was evaluated this period and no evaluated gate
+    closed for it: a row is eligible only for the gate of its ordinary draw, so
+    a closed branch that lands in another gate's target is excluded by its own
+    closed mask. Every other row of the source holds no entry next period.
+
+    Args:
+        source_id: The id of the source regime whose gates were evaluated.
+        target_ids: The ids of the gated targets, one per closed mask.
+        closed_masks: Each gated target's closed-branch mask, in `target_ids` order.
+        routed_ids: Next-period regime membership after routing.
+        subjects_in_regime: Rows of the source regime this period.
+        new_entered_through: The next period's entries as accumulated so far.
+
+    Returns:
+        The next period's entries with this source's rows written.
+    """
+    entered = jnp.zeros_like(subjects_in_regime)
+    closed = jnp.zeros_like(subjects_in_regime)
+    for target_id, mask in zip(target_ids, closed_masks, strict=True):
+        entered = entered | (routed_ids == target_id)
+        closed = closed | mask
+    return jnp.where(
+        subjects_in_regime,
+        jnp.where(entered & ~closed, source_id, NO_GATED_ENTRY),
+        new_entered_through,
     )
 
 
