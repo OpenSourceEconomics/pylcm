@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "a7ebf192c13d14e46987148b92a98acc54c0093629edd5335d017ca7a2a3e223",
+  "source_inventory_sha256": "4509e906262bda0ff6c23955c2204b5754dab48907253b3840f4a2876ca8affe",
   "sources": [
     {
       "path": "src/_lcm/constraints/bounds.py",
@@ -382,7 +382,7 @@
     },
     {
       "path": "src/_lcm/simulation/chunk_profiles.py",
-      "sha256": "60fdf2a9e2e02885f46baf75f4fc4144807de2597c8d5ed9e113ee7da8d20155"
+      "sha256": "d8d78090ed28a29a89956bee791674c90b1386946031cf67ae61283e046ac4aa"
     },
     {
       "path": "src/_lcm/simulation/compile.py",
