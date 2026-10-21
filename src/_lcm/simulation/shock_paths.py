@@ -30,7 +30,7 @@ from _lcm.typing import (
     RegimeNamesToIds,
 )
 from _lcm.utils.containers import invert_regime_ids
-from lcm.exceptions import InvalidSimulationInputError
+from lcm.exceptions import InvalidInitialConditionsError, InvalidSimulationInputError
 from lcm.typing import StateName, UserInitialConditions
 
 
@@ -43,6 +43,9 @@ def resolve_shock_paths(  # noqa: C901, PLR0912
     params: FlatParams,
     ages: TimeAxis,
     regime_names_to_ids: RegimeNamesToIds,
+    process_code_reads: Mapping[
+        RegimeName, Mapping[StateName, _ContinuousStochasticProcess]
+    ] = MappingProxyType({}),
 ) -> tuple[MappingProxyType[StateName, np.ndarray], UserInitialConditions]:
     """Check given realisations where a subject may read them; seed entry values.
 
@@ -54,7 +57,9 @@ def resolve_shock_paths(  # noqa: C901, PLR0912
     can read, such as one before the subject enters, is not checked.
 
     Continuous processes accept values in their continuous distribution's support,
-    including values outside the solve nodes. Discrete shocks accept exact codes.
+    including values outside the solve nodes, except in a regime that reads the
+    process's node position `<name>_code`: there a value must be one of the
+    regime's nodes. Discrete shocks accept exact codes.
     Transition-local draws are dated at the destination period, like carried draws.
 
     A subject's entry value is replaced by its starting period's column only when
@@ -150,6 +155,15 @@ def resolve_shock_paths(  # noqa: C901, PLR0912
                         f"shock_paths '{name}' is not admissible in the simulation "
                         f"dtype at period {period} in regime '{regime_name}'."
                     )
+                coded = process_code_reads.get(regime_name, {}).get(name)
+                if lag == 0 and coded is not None:
+                    _fail_if_off_node(
+                        values=column,
+                        process=coded,
+                        error=InvalidSimulationInputError,
+                        where=f"shock_paths '{name}' at period {period} in regime "
+                        f"'{regime_name}'",
+                    )
         result[name] = narrowed
         seeded |= _seed_entry_values(
             name=name,
@@ -167,6 +181,60 @@ def resolve_shock_paths(  # noqa: C901, PLR0912
             starts=starts,
         )
     return MappingProxyType(result), seeded
+
+
+def fail_if_an_initial_process_code_is_off_node(
+    *,
+    initial: UserInitialConditions,
+    process_code_reads: Mapping[
+        RegimeName, Mapping[StateName, _ContinuousStochasticProcess]
+    ],
+    regime_names_to_ids: RegimeNamesToIds,
+) -> None:
+    """Refuse an initial process value off the nodes its starting regime reads.
+
+    A regime that reads `<name>_code` reads the position of the node the
+    household holds, which exists only where the value is one of the regime's
+    nodes.
+
+    Raises:
+        InvalidInitialConditionsError: If a subject starts in such a regime with a
+            value on none of its nodes.
+
+    """
+    if "regime_id" not in initial:
+        return
+    regime_ids = np.asarray(initial["regime_id"])
+    for regime_name, processes in process_code_reads.items():
+        starts_here = regime_ids == int(regime_names_to_ids[regime_name])
+        for name, process in processes.items():
+            if name in initial and starts_here.any():
+                _fail_if_off_node(
+                    values=np.asarray(initial[name])[starts_here].astype(
+                        canonical_float_dtype()
+                    ),
+                    process=process,
+                    error=InvalidInitialConditionsError,
+                    where=f"initial condition '{name}' in regime '{regime_name}'",
+                )
+
+
+def _fail_if_off_node(
+    *,
+    values: np.ndarray,
+    process: _ContinuousStochasticProcess,
+    error: type[InvalidSimulationInputError | InvalidInitialConditionsError],
+    where: str,
+) -> None:
+    """Raise `error` where a value is none of the process's nodes, exactly."""
+    nodes = np.asarray(process.to_jax(), dtype=canonical_float_dtype())
+    off = ~np.isin(np.asarray(values, dtype=nodes.dtype), nodes)
+    if off.any():
+        raise error(
+            f"The {where} holds {sorted({float(v) for v in values[off]})}, off the "
+            f"process's nodes {nodes.tolist()}: the regime reads its node position "
+            "`_code`, which exists only at a node. Supply one of its nodes."
+        )
 
 
 def _seed_entry_values(

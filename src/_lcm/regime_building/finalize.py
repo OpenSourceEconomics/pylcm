@@ -37,6 +37,7 @@ from _lcm.regime_building.value_adapter import (
     ValueAdapter,
     adapt_collective_utility,
     adapt_entry,
+    bind_reading_regimes,
     collect_adapter_grids,
     encoding_grid,
 )
@@ -76,6 +77,8 @@ def finalize_regimes(
     derived_categoricals: Mapping[FunctionName, DiscreteGrid],
     koopmans_aggregator: UserFunction,
     certainty_equivalent: CertaintyEquivalent,
+    value_grids_by_regime: Mapping[RegimeName, Mapping[str, AdapterGrid]] | None = None,
+    adapters: AdapterMemo | None = None,
 ) -> MappingProxyType[RegimeName, FinalizedUserRegime]:
     """Finalize every user regime for the model build.
 
@@ -94,6 +97,10 @@ def finalize_regimes(
             non-terminal regime that declares none of its own.
         certainty_equivalent: Model-level continuation aggregation, given to
             every non-terminal regime that declares none of its own.
+        value_grids_by_regime: Per regime, the grid each argument of its
+            functions is read through, with processes bound to that regime.
+            Collected from `user_regimes` when `None`.
+        adapters: The adapters already built for this model.
 
     Returns:
         Immutable mapping of regime names to finalized regimes.
@@ -122,12 +129,18 @@ def finalize_regimes(
         if regime.stakeholders is not None
         for stakeholder in regime.stakeholders
     )
-    value_grids = collect_adapter_grids(
-        regimes=user_regimes, derived_categoricals=derived_categoricals
-    )
-    adapters: AdapterMemo = {}
+    if value_grids_by_regime is None:
+        value_grids_by_regime = bind_reading_regimes(
+            value_grids=collect_adapter_grids(
+                regimes=user_regimes, derived_categoricals=derived_categoricals
+            ),
+            regimes=user_regimes,
+        )
+    adapters = {} if adapters is None else adapters
     result: dict[RegimeName, FinalizedUserRegime] = {}
     for regime_name, user_regime in user_regimes.items():
+        # Every slot of a regime reads that regime's own states.
+        value_grids = value_grids_by_regime[regime_name]
         merged = _merge_derived_categoricals(
             regime_name=regime_name,
             user_regime=user_regime,
