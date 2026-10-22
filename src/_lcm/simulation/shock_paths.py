@@ -30,7 +30,11 @@ from _lcm.typing import (
     RegimeNamesToIds,
 )
 from _lcm.utils.containers import invert_regime_ids
-from lcm.exceptions import InvalidInitialConditionsError, InvalidSimulationInputError
+from lcm.exceptions import (
+    InvalidInitialConditionsError,
+    InvalidSimulationInputError,
+    InvalidStateTransitionError,
+)
 from lcm.typing import StateName, UserInitialConditions
 
 
@@ -219,12 +223,55 @@ def fail_if_an_initial_process_code_is_off_node(
                 )
 
 
+def fail_if_a_held_process_code_is_off_node(
+    *,
+    states: Mapping[StateName, jax.Array | np.ndarray],
+    processes: Mapping[StateName, _ContinuousStochasticProcess],
+    holders: jax.Array | np.ndarray,
+    where: str,
+) -> None:
+    """Refuse a simulated process value off the nodes of the regime reading its code.
+
+    Whatever produced the value (an entry law, a joint transition, a gate's
+    fallback projection or a dissolution route), the regime reading
+    `<name>_code` takes the position of the node the household holds, which
+    exists only at a node.
+
+    Args:
+        states: The receiving regime's state columns.
+        processes: The process states that regime reads the position of.
+        holders: Rows that hold these states in that regime.
+        where: Where the values arise, named in the error.
+
+    Raises:
+        InvalidStateTransitionError: If a holder's value is none of the nodes.
+
+    """
+    rows = np.asarray(holders, dtype=bool)
+    if not rows.any():
+        return
+    for name, process in processes.items():
+        if name in states:
+            _fail_if_off_node(
+                values=np.asarray(states[name])[rows],
+                process=process,
+                error=InvalidStateTransitionError,
+                where=f"process '{name}' {where}",
+                remedy="Keep the law or projection producing it on the nodes.",
+            )
+
+
 def _fail_if_off_node(
     *,
     values: np.ndarray,
     process: _ContinuousStochasticProcess,
-    error: type[InvalidSimulationInputError | InvalidInitialConditionsError],
+    error: type[
+        InvalidSimulationInputError
+        | InvalidInitialConditionsError
+        | InvalidStateTransitionError
+    ],
     where: str,
+    remedy: str = "Supply one of its nodes.",
 ) -> None:
     """Raise `error` where a value is none of the process's nodes, exactly."""
     nodes = np.asarray(process.to_jax(), dtype=canonical_float_dtype())
@@ -233,7 +280,7 @@ def _fail_if_off_node(
         raise error(
             f"The {where} holds {sorted({float(v) for v in values[off]})}, off the "
             f"process's nodes {nodes.tolist()}: the regime reads its node position "
-            "`_code`, which exists only at a node. Supply one of its nodes."
+            f"`_code`, which exists only at a node. {remedy}"
         )
 
 

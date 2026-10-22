@@ -150,6 +150,7 @@ from _lcm.regime_building.value_adapter import (
     bind_reading_regimes,
     collect_adapter_grids,
     declared_discrete_names,
+    fail_if_a_fixed_entry_is_off_a_read_node,
     process_code_reads,
 )
 from _lcm.regime_law import RegimeLaws, bind_regime_law
@@ -1145,6 +1146,9 @@ class Model:
         # so a supplied value off those nodes is refused before it is read.
         self._process_code_reads = process_code_reads(
             value_grids_by_regime=value_grids_by_regime, adapters=adapters
+        )
+        fail_if_a_fixed_entry_is_off_a_read_node(
+            regimes=finalized_regimes, process_code_reads=self._process_code_reads
         )
         # Runs on the finalized regimes, since a conditioner's law may arrive as
         # a model-level broadcast, and against the resolved graph support: the
@@ -4075,6 +4079,7 @@ class Model:
                 seed=seed,
                 taste_shock_seed=taste_shock_seed,
                 shock_paths=resolved_shock_paths,
+                process_code_reads=self._process_code_reads,
                 subject_batch_size=compile_batch_size,
                 original_n_subjects=original_n_subjects,
                 device_ids=self._execution.device_ids,
