@@ -17,7 +17,7 @@ one annotation per node whichever function names it.
 
 import dataclasses
 import inspect
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import cast, no_type_check
@@ -50,10 +50,10 @@ from lcm.regime import (
 from lcm.regime import Regime as UserRegime
 from lcm.transition import (
     AgeSpecializedFunction,
+    AgeSpecializedGrid,
     DeterministicTransition,
     JointTransition,
     StochasticTransition,
-    _AgeSpecialized,
 )
 from lcm.typing import StateOrActionName, UserFunction, ValueND
 
@@ -74,9 +74,13 @@ type AdaptableEntry = (
     | Mapping[str, JointTransition | Phased]
 )
 
-# The adapters built for one model: each authored function and encoding grid
-# (by identity) to the function and its adapter.
-type AdapterMemo = dict[tuple[int, int], tuple[UserFunction, ValueAdapter]]
+# The adapters built for one model: each authored function or age-specialized
+# marker and encoding grid (by identity) to the declaration and its adapter.
+type AdapterMemo = dict[
+    tuple[int, int],
+    tuple[UserFunction, ValueAdapter]
+    | tuple[AgeSpecializedFunction, AgeSpecializedFunction],
+]
 
 # The attributes an adapter publishes itself and never takes from its function.
 _ADAPTER_OWN_ATTRIBUTES: frozenset[str] = frozenset(
@@ -155,11 +159,7 @@ def collect_value_grids(
         # from here on; values that do not survive that precision raise now.
         value_grid.values_to_jax()
     if value_grids:
-        _fail_if_unsupported_reader(
-            regimes=regimes,
-            value_grids=value_grids,
-            model_derived_categoricals=derived_categoricals,
-        )
+        _fail_if_unsupported_reader(regimes=regimes, value_grids=value_grids)
     return MappingProxyType(value_grids)
 
 
@@ -189,6 +189,7 @@ def collect_adapter_grids(
         )
     )
     _fail_if_a_name_spells_a_code(regimes=regimes, discrete_names=frozenset(grids))
+    _fail_if_a_condition_reads_a_code(regimes=regimes, discrete_names=frozenset(grids))
     return MappingProxyType({**grids, **value_grids})
 
 
@@ -253,6 +254,31 @@ def _fail_if_a_name_spells_a_code(
         )
 
 
+def _fail_if_a_condition_reads_a_code(
+    *, regimes: Mapping[RegimeName, UserRegime], discrete_names: frozenset[str]
+) -> None:
+    """Raise where a condition constraint names `<name>_code` of a discrete variable.
+
+    A condition is a tree of names the engine resolves against its own nodes,
+    and no node holds a code under that name.
+    """
+    problems = sorted(
+        f"the condition constraint '{name}' of '{regime_name}' reads `{read}`"
+        for regime_name, regime in regimes.items()
+        for name, entry in regime.constraints.items()
+        if isinstance(entry, Condition)
+        for read in sorted(entry.dependencies)
+        if read.endswith(CODE_SUFFIX)
+        and read.removesuffix(CODE_SUFFIX) in discrete_names
+    )
+    if problems:
+        raise RegimeInitializationError(
+            f"{'; '.join(problems)}. A condition cannot read the code of a "
+            f"discrete variable; write the constraint as a function with the "
+            f"argument `<name>{CODE_SUFFIX}`."
+        )
+
+
 def _value_grid_key(
     *, grid: DiscreteGrid
 ) -> tuple[tuple[int | float, ...] | None, float, bool | None]:
@@ -307,10 +333,10 @@ def adapt_user_function(
     }
     if not decoded and not codes and encode is None:
         return func
-    _fail_if_an_array_is_indexed_by_a_value(func=func, decoded=decoded)
     key = (id(func), id(encode))
     if adapters is not None and key in adapters:
         return adapters[key][1]
+    _fail_if_an_array_is_indexed_by_a_value(func=func, decoded=decoded)
     adapter = ValueAdapter(
         func=func,
         decoded=MappingProxyType(decoded),
@@ -511,15 +537,15 @@ def adapt_entry(  # noqa: PLR0911
     Walks `Phased` sides, per-target mappings, both functions of a `Decoupled`
     Koopmans aggregator, the function of a `DeterministicTransition`, the
     predicate and projections of a `ValueDependentConstraint`, the callables of
-    a `JointTransition`, and the probability function of a
-    `StochasticTransition`, which is decoded only: it returns probabilities over
-    codes. With `adapters`, one authored function gets one adapter wherever it
-    appears, so a function shared by both phases stays one function.
+    a `JointTransition`, the probability function of a `StochasticTransition`,
+    which is decoded only: it returns probabilities over codes, and every
+    function an `AgeSpecializedFunction` builds. With `adapters`, one authored
+    function gets one adapter wherever it appears, so a function shared by both
+    phases stays one function.
     """
     # Without value grids nothing changes. A grid declares no function. A
-    # condition is a tree of names, not a function, and an age-specialized
-    # marker builds its functions per age, so neither can be wrapped here; the
-    # model refuses them beside a value grid. A household's stakeholder bodies
+    # condition is a tree of names, not a function; the model refuses one that
+    # reads a value or a code. A household's stakeholder bodies
     # are adapted as the regime's `utility_<s>` functions. An identity law maps
     # codes to codes exactly as it maps values to values.
     if not value_grids or isinstance(
@@ -527,13 +553,17 @@ def adapt_entry(  # noqa: PLR0911
         Condition
         | CollectiveUtility
         | _IdentityTransition
-        | _AgeSpecialized
+        | AgeSpecializedGrid
         | Grid
         | JointNormalIIDProcess
         | None,
     ):
         return entry
     adapters = {} if adapters is None else adapters
+    if isinstance(entry, AgeSpecializedFunction):
+        return _adapt_age_specialized(
+            entry=entry, value_grids=value_grids, encode=encode, adapters=adapters
+        )
     if isinstance(entry, ValueDependentConstraint):
         return _adapt_value_dependent_constraint(
             entry=entry, value_grids=value_grids, adapters=adapters
@@ -594,6 +624,56 @@ def _adapt_phased(
     if solve is entry.solve and simulate is entry.simulate:
         return entry
     return Phased(solve=solve, simulate=simulate)
+
+
+def _adapt_age_specialized(
+    *,
+    entry: AgeSpecializedFunction,
+    value_grids: Mapping[StateOrActionName, DiscreteGrid],
+    encode: DiscreteGrid | None,
+    adapters: AdapterMemo,
+) -> AgeSpecializedFunction:
+    """Return a marker whose `build(age)` adapts the function the entry builds.
+
+    The marker's contract gives every age's function one call signature, so
+    every age is adapted alike and the signature key carries over unchanged. One
+    marker gets one adapted marker, so a marker shared by both phases stays one.
+    """
+    key = (id(entry), id(encode))
+    if key in adapters:
+        return cast("AgeSpecializedFunction", adapters[key][1])
+    adapted = dataclasses.replace(
+        entry,
+        build=AdaptedBuild(
+            build=entry.build,
+            value_grids=MappingProxyType(dict(value_grids)),
+            encode=encode,
+        ),
+    )
+    # The marker is kept with its adapted twin, so its id cannot be reused.
+    adapters[key] = (entry, adapted)
+    return adapted
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class AdaptedBuild:
+    """The `build` of an age-specialized marker whose functions read codes.
+
+    A frozen callable instance for the reason `ValueAdapter` is one: a function
+    defined per model build would be pinned by the beartype claw's memo.
+    """
+
+    build: Callable[[float], UserFunction]
+    """The marker's own factory, which builds functions that read values."""
+    value_grids: MappingProxyType[StateOrActionName, DiscreteGrid]
+    """The grid of every discrete variable a built function can read."""
+    encode: DiscreteGrid | None
+    """The grid whose code a built function's returned value names, if any."""
+
+    def __call__(self, age: float) -> UserFunction:
+        return adapt_user_function(
+            func=self.build(age), value_grids=self.value_grids, encode=self.encode
+        )
 
 
 def _adapt_value_dependent_constraint(
@@ -828,65 +908,20 @@ def _fail_if_unsupported_reader(
     *,
     regimes: Mapping[RegimeName, UserRegime],
     value_grids: Mapping[StateOrActionName, DiscreteGrid],
-    model_derived_categoricals: Mapping[FunctionName, DiscreteGrid],
 ) -> None:
     """Raise where a value grid meets a declaration that would read its codes."""
-    problems: list[str] = []
-    for regime_name, regime in regimes.items():
-        declared = {
-            name
-            for name in (
-                *regime.states,
-                *regime.actions,
-                *regime.derived_categoricals,
-                *model_derived_categoricals,
-            )
-            if name in value_grids
-        }
-        problems.extend(
-            f"the imputation of the carried state '{name}' of '{regime_name}'"
-            for name, entry in regime.states.items()
-            # A marker's published *args/**kwargs do not describe the
-            # concrete reader, so no adapter can be built for it.
-            if isinstance(entry, Phased)
-            and bool(declared)
-            and _contains_age_specialized(entry)
-        )
-        problems.extend(
-            f"the condition constraint '{name}' of '{regime_name}'"
-            for name, entry in regime.constraints.items()
-            if isinstance(entry, Condition) and entry.dependencies & set(value_grids)
-        )
-        if declared:
-            for slot_name, slot in (
-                ("function", regime.decomposed_functions),
-                ("constraint", regime.constraints),
-                ("state transition", regime.state_transitions),
-            ):
-                problems.extend(
-                    f"the age-specialized {slot_name} '{name}' of '{regime_name}'"
-                    for name, entry in slot.items()
-                    if _contains_age_specialized(entry)
-                )
+    problems = [
+        f"the condition constraint '{name}' of '{regime_name}'"
+        for regime_name, regime in regimes.items()
+        for name, entry in regime.constraints.items()
+        if isinstance(entry, Condition) and entry.dependencies & set(value_grids)
+    ]
     if problems:
         raise RegimeInitializationError(
             "Value grids are not supported where these declarations read them: "
             + "; ".join(problems)
             + ". Declare these variables with a category class."
         )
-
-
-def _contains_age_specialized(entry: AdaptableEntry | StateEntry) -> bool:
-    """Inspect marker leaves, never the generic signature of a build-time marker."""
-    if isinstance(entry, Phased):
-        return _contains_age_specialized(entry.solve) or _contains_age_specialized(
-            entry.simulate
-        )
-    if isinstance(entry, Mapping):
-        return any(_contains_age_specialized(cell) for cell in entry.values())
-    if isinstance(entry, StochasticTransition):
-        return _contains_age_specialized(entry.func)
-    return isinstance(entry, AgeSpecializedFunction)
 
 
 def _value_names(value_grids: Mapping[StateOrActionName, DiscreteGrid]) -> set[str]:

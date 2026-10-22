@@ -18,11 +18,13 @@ from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm import (
     AgeGrid,
+    AgeSpecializedFunction,
     DeterministicTransition,
     DiscreteGrid,
     Model,
     Transition,
     categorical,
+    ref,
 )
 from lcm.exceptions import RegimeInitializationError
 from lcm.regime import Regime
@@ -101,13 +103,16 @@ def _next_regime(*, age: float) -> ScalarInt:
     return jnp.where(age >= _LAST_WORKING_AGE, _RegimeId.dead, _RegimeId.working_life)
 
 
-def _model(*, experience: DiscreteGrid, wage, next_experience) -> Model:
+def _model(
+    *, experience: DiscreteGrid, wage, next_experience, constraints=None
+) -> Model:
     ages = AgeGrid(start=0, inclusive_stop=_LAST_WORKING_AGE + 1, step="Y")
     working_life = Regime(
         actions={"work": DiscreteGrid(category_class=_Work)},
         states={"experience": experience},
         state_transitions={"experience": next_experience},
         functions={"utility": _utility, "wage": wage},
+        constraints={} if constraints is None else constraints,
     )
     return Model(
         regimes={
@@ -139,11 +144,14 @@ def _params(premium: pd.Series) -> UserParams:
     }
 
 
-def _value_case() -> tuple[Model, UserParams, tuple[float, ...]]:
+def _value_case(
+    *, specialize: bool = False, constraints=None
+) -> tuple[Model, UserParams, tuple[float, ...]]:
     model = _model(
         experience=DiscreteGrid(values=jnp.array([0, 5, 10])),
-        wage=_wage,
+        wage=_specialized(_wage) if specialize else _wage,
         next_experience=_next_experience,
+        constraints=constraints,
     )
     premium = pd.Series(
         [_PREMIUM[10], _PREMIUM[0], _PREMIUM[5]],
@@ -155,11 +163,14 @@ def _value_case() -> tuple[Model, UserParams, tuple[float, ...]]:
     return model, _params(premium), wages
 
 
-def _label_case() -> tuple[Model, UserParams, tuple[float, ...]]:
+def _label_case(
+    *, specialize: bool = False, constraints=None
+) -> tuple[Model, UserParams, tuple[float, ...]]:
     model = _model(
         experience=DiscreteGrid(category_class=_Level),
-        wage=_label_wage,
+        wage=_specialized(_label_wage) if specialize else _label_wage,
         next_experience=_next_level,
+        constraints=constraints,
     )
     premium = pd.Series(
         [_LABEL_PREMIUM["high"], _LABEL_PREMIUM["low"], _LABEL_PREMIUM["medium"]],
@@ -169,6 +180,11 @@ def _label_case() -> tuple[Model, UserParams, tuple[float, ...]]:
         _BASE_WAGE * (1 + _LABEL_PREMIUM[label]) for label in ("low", "medium", "high")
     )
     return model, _params(premium), wages
+
+
+def _specialized(function: UserFunction) -> AgeSpecializedFunction:
+    """The same concrete function at every age, behind an age-specialization marker."""
+    return AgeSpecializedFunction(build=lambda _age: function, signature=lambda _age: 0)
 
 
 _CASES = {"value-grid": _value_case, "category-class": _label_case}
@@ -210,6 +226,26 @@ def test_code_indexed_series_solves_to_the_reference_value_function(*, case, per
     model, params, wages = _CASES[case]()
     got = model.solve(params=params, log_level="off").values[period]["working_life"]
     aaae(np.asarray(got), _reference_solution(wages)[0][period], DECIMAL_PRECISION)
+
+
+@pytest.mark.parametrize("case", list(_CASES))
+@pytest.mark.parametrize("period", range(_LAST_WORKING_AGE + 1))
+def test_an_age_specialized_code_reader_solves_to_the_reference_value_function(
+    *, case, period
+):
+    """An age-specialized wage reads `experience_code` as a plain function does."""
+    model, params, wages = _CASES[case](specialize=True)
+    got = model.solve(params=params, log_level="off").values[period]["working_life"]
+    aaae(np.asarray(got), _reference_solution(wages)[0][period], DECIMAL_PRECISION)
+
+
+@pytest.mark.parametrize("case", list(_CASES))
+def test_a_condition_reading_a_code_is_refused(case):
+    """A condition names `experience_code`, which no node of the model provides."""
+    with pytest.raises(
+        RegimeInitializationError, match=r"condition constraint 'cap'.*experience_code"
+    ):
+        _CASES[case](constraints={"cap": ref("experience_code") <= 1})
 
 
 @pytest.mark.parametrize("case", list(_CASES))
