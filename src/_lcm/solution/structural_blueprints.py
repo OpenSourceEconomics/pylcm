@@ -36,6 +36,7 @@ _DEFAULT_MAX_ENTRIES = 4
 type _SchemaTree = (
     PytreeValue
     | ShapeDtypePytree
+    | Mapping[RegimeName, ValueTemplate]
     | Mapping[tuple[RegimeName, RegimeName], ValueTemplate]
 )
 

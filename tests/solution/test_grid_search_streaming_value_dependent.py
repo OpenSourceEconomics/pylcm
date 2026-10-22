@@ -42,7 +42,7 @@ from _lcm.solution.grid_search import (
     _GridSearchPeriodKernel,
     _value_reads,
 )
-from _lcm.typing import ArgumentTree, PytreeValue
+from _lcm.typing import ArgumentTree, PytreeValue, ValueTemplate
 from lcm import Model
 from lcm.typing import BoolND, FloatND, RegimeName, UserParams
 from tests.simulation.test_aot_collective_and_gated import _make_consent_model
@@ -337,7 +337,7 @@ def test_value_dependent_reference_matches_dense_eager_jit_and_aot(width: int) -
         _assert_tree_equal(actual=actual, expected=dense)
 
 
-def _consent_edge_kwargs() -> Mapping[str, Mapping[str, jax.Array]]:
+def _consent_edge_kwargs() -> Mapping[str, Mapping[str, ValueTemplate]]:
     """Build the gated-edge kernel argument of the consent fixture's source regime."""
     model = _make_consent_model()
     flat_params = model._process_params({"discount_factor": 0.95})

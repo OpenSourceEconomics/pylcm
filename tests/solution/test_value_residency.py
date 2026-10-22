@@ -8,19 +8,26 @@ grid-search models of `test_period_target_value_reads`, whose value arrays have
 two axes or more and so cannot be mistaken for a one-dimensional grid.
 """
 
+from collections.abc import Callable
+from typing import Unpack
+
 import jax
 import pytest
 
 from _lcm.solution import backward_induction
-from _lcm.typing import RegimeName
 from lcm import Model
+from tests.solution._callback_types import (
+    EvaluateEdgeFoldKwargs,
+    RunPeriodKernelKwargs,
+    RunPeriodKernelResult,
+)
 from tests.solution.test_period_target_value_reads import (
     _gated_model,
     _three_regime_model,
 )
 
+# Shape, dtype name and buffer address of one live array.
 type _Resident = tuple[tuple[int, ...], str, int]
-"""Shape, dtype name and buffer address of one live array."""
 
 
 def _live_multi_axis_arrays() -> frozenset[_Resident]:
@@ -37,7 +44,7 @@ def _live_multi_axis_arrays() -> frozenset[_Resident]:
     ids=["three-regime", "gated-edge"],
 )
 def test_grid_search_solve_keeps_no_value_placeholder_resident(
-    *, monkeypatch: pytest.MonkeyPatch, build_model: type[Model]
+    *, monkeypatch: pytest.MonkeyPatch, build_model: Callable[[], Model]
 ) -> None:
     """Every value-shaped array live at a period's start was computed by the solve."""
     computed: set[int] = set()
@@ -46,13 +53,14 @@ def test_grid_search_solve_keeps_no_value_placeholder_resident(
     run_period_kernel = backward_induction._run_period_kernel
     evaluate_edge_fold = backward_induction._evaluate_edge_fold
 
-    def _run(*, regime_name: RegimeName, period: int, **kwargs: object) -> object:
+    def _run(**kwargs: Unpack[RunPeriodKernelKwargs]) -> RunPeriodKernelResult:
         samples.append((frozenset(computed), _live_multi_axis_arrays()))
-        output = run_period_kernel(regime_name=regime_name, period=period, **kwargs)
+        output = run_period_kernel(**kwargs)
+        assert isinstance(output.value, jax.Array)
         computed.add(output.value.unsafe_buffer_pointer())
         return output
 
-    def _fold(**kwargs: object) -> jax.Array:
+    def _fold(**kwargs: Unpack[EvaluateEdgeFoldKwargs]) -> jax.Array:
         wbar = evaluate_edge_fold(**kwargs)
         computed.add(wbar.unsafe_buffer_pointer())
         computed_layouts.add((wbar.shape, wbar.dtype.name))

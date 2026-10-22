@@ -98,6 +98,7 @@ from _lcm.typing import (
     QAndFFunction,
     ReferenceName,
     RegimeName,
+    ShapeDtypePytree,
     StateName,
     ValueTemplate,
 )
@@ -866,6 +867,17 @@ def _value_read(
     )
 
 
+def _value_argument(
+    values: Mapping[RegimeName, ValueTemplate],
+) -> PytreeValue | ShapeDtypePytree:
+    """Pass a per-regime value mapping as one program argument.
+
+    The mapping is concrete when the program is called and abstract when it is
+    lowered, never mixed, which its static type cannot express.
+    """
+    return cast("PytreeValue | ShapeDtypePytree", values)
+
+
 @dataclass(frozen=True, kw_only=True)
 class _GridSearchArgumentBuilder:
     """Build the one GridSearch program's arguments for lowering and execution."""
@@ -879,12 +891,10 @@ class _GridSearchArgumentBuilder:
 
     def __call__(
         self, context: CoreBuildContext
-    ) -> Mapping[ReferenceName, QAndFArg | Mapping[RegimeName, ValueTemplate]]:
+    ) -> Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]:
         """Return the exact kwargs shared by lowering and the runtime call."""
         state_action_space = cast("StateActionSpace", context.state_action_space)
-        next_regime_to_V_arr = cast(
-            "Mapping[RegimeName, ValueTemplate]", context.next_regime_to_V_arr
-        )
+        next_regime_to_V_arr = context.next_regime_to_V_arr
         flat_params = cast("FlatParams", context.flat_params)
         ages = cast("TimeAxis", context.ages)
         raw_next_regime_to_V_arr = next_regime_to_V_arr
@@ -892,18 +902,12 @@ class _GridSearchArgumentBuilder:
             next_regime_to_V_arr=MappingProxyType(
                 {name: raw_next_regime_to_V_arr[name] for name in self.target_regimes}
             ),
-            edge_regime_to_V_arr=cast(
-                "Mapping[RegimeName, ValueTemplate] | None",
-                context.edge_regime_to_V_arr,
-            ),
+            edge_regime_to_V_arr=context.edge_regime_to_V_arr,
         )
-        arguments: dict[
-            ReferenceName,
-            QAndFArg | Mapping[RegimeName, ValueTemplate],
-        ] = {
+        arguments: dict[ReferenceName, PytreeValue | ShapeDtypePytree] = {
             **dict(state_action_space.states),
             **dict(state_action_space.actions),
-            "next_regime_to_V_arr": next_regime_to_V_arr,
+            "next_regime_to_V_arr": _value_argument(next_regime_to_V_arr),
             **dict(regime_kernel_params(flat_params, regime_name=self.regime_name)),
             "period": jnp.int32(context.period),
             "age": ages.values[context.period],
@@ -917,12 +921,9 @@ class _GridSearchArgumentBuilder:
                     }
                 )
                 if context.same_period_regime_to_V_arr is None
-                else cast(
-                    "Mapping[RegimeName, ValueTemplate]",
-                    context.same_period_regime_to_V_arr,
-                )
+                else context.same_period_regime_to_V_arr
             )
-            arguments["same_period_regime_to_V_arr"] = reference_values
+            arguments["same_period_regime_to_V_arr"] = _value_argument(reference_values)
             arguments["same_period_regime_to_params"] = self._same_period_params(
                 flat_params=flat_params
             )
@@ -966,20 +967,18 @@ class _GridSearchArgumentBuilder:
         *,
         next_regime_to_V_arr: Mapping[RegimeName, ValueTemplate],
         flat_params: FlatParams,
-    ) -> dict[
-        ReferenceName,
-        MappingProxyType[RegimeName, FloatND]
-        | MappingProxyType[RegimeName, FlatRegimeParams],
-    ]:
+    ) -> dict[ReferenceName, PytreeValue | ShapeDtypePytree]:
         """Build the edge-reference value and parameter channels."""
         if not self.edge_reference_regimes:
             return {}
         return {
-            "edge_reference_regime_to_V_arr": MappingProxyType(
-                {
-                    name: next_regime_to_V_arr[name]
-                    for name in self.edge_reference_regimes
-                }
+            "edge_reference_regime_to_V_arr": _value_argument(
+                MappingProxyType(
+                    {
+                        name: next_regime_to_V_arr[name]
+                        for name in self.edge_reference_regimes
+                    }
+                )
             ),
             "edge_reference_regime_to_params": MappingProxyType(
                 {

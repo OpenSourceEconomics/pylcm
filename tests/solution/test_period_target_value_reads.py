@@ -21,9 +21,8 @@ The gated model's `src` stays in `src` at periods 0 and 1 and at period 2 enters
 terminal at period 3.
 """
 
-import contextlib
-from collections.abc import Iterator
 from types import MappingProxyType
+from typing import Unpack
 
 import jax.numpy as jnp
 import pytest
@@ -58,6 +57,10 @@ from lcm.typing import (
 from lcm_examples import iskhakov_et_al_2017
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.solution import test_nbegm_epstein_zin_multi_regime as nbegm_model
+from tests.solution._callback_types import (
+    RunPeriodKernelKwargs,
+    RunPeriodKernelResult,
+)
 from tests.test_models import n_nbegm_toy
 
 type _Dispatch = tuple[RegimeName, int]
@@ -191,27 +194,27 @@ def _gated_model() -> Model:
     )
 
 
-@contextlib.contextmanager
-def _recorded_value_keys(
+def _record_value_keys(
     monkeypatch: pytest.MonkeyPatch,
-    names: tuple[str, ...] = ("next_regime_to_V_arr", "next_regime_to_continuation"),
-) -> Iterator[dict[_Dispatch, frozenset[RegimeName]]]:
+) -> dict[_Dispatch, frozenset[RegimeName]]:
     """Record the target keys of the values each regime-period's programs get."""
     recorded: dict[_Dispatch, frozenset[RegimeName]] = {}
     current: list[_Dispatch] = []
     run_period_kernel = backward_induction._run_period_kernel
     planned_call = PlannedCore.__call__
 
-    def _run(*, regime_name: RegimeName, period: int, **kwargs: object) -> object:
-        current.append((regime_name, period))
+    def _run(**kwargs: Unpack[RunPeriodKernelKwargs]) -> RunPeriodKernelResult:
+        current.append((kwargs["regime_name"], kwargs["period"]))
         try:
-            return run_period_kernel(regime_name=regime_name, period=period, **kwargs)
+            return run_period_kernel(**kwargs)
         finally:
             current.pop()
 
-    def _call(self: PlannedCore, *args: PytreeValue, **kwargs: PytreeValue) -> object:
+    def _call(
+        self: PlannedCore, *args: PytreeValue, **kwargs: PytreeValue
+    ) -> PytreeValue:
         keys = recorded.get(current[-1], frozenset())
-        for name in names:
+        for name in ("next_regime_to_V_arr", "next_regime_to_continuation"):
             values = kwargs.get(name, MappingProxyType({}))
             assert isinstance(values, MappingProxyType)
             keys |= frozenset(values)
@@ -220,15 +223,15 @@ def _recorded_value_keys(
 
     monkeypatch.setattr(backward_induction, "_run_period_kernel", _run)
     monkeypatch.setattr(PlannedCore, "__call__", _call)
-    yield recorded
+    return recorded
 
 
 def test_grid_search_program_receives_only_its_period_targets_values(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Each grid-search call reads exactly the next-period values of its targets."""
-    with _recorded_value_keys(monkeypatch) as recorded:
-        _three_regime_model().solve(params={"discount_factor": 0.95}, log_level="off")
+    recorded = _record_value_keys(monkeypatch)
+    _three_regime_model().solve(params={"discount_factor": 0.95}, log_level="off")
     assert recorded == {
         ("a", 0): frozenset({"a"}),
         ("a", 1): frozenset({"a"}),
@@ -253,10 +256,10 @@ def test_dcegm_program_receives_only_its_period_targets_carries(
         interest_rate=0.0,
         wage=20.0,
     )
-    with _recorded_value_keys(monkeypatch) as recorded:
-        iskhakov_et_al_2017.get_dcegm_model(n_periods=n_periods).solve(
-            params=params, log_level="off"
-        )
+    recorded = _record_value_keys(monkeypatch)
+    iskhakov_et_al_2017.get_dcegm_model(n_periods=n_periods).solve(
+        params=params, log_level="off"
+    )
     assert recorded == {
         ("working_life", 0): frozenset({"working_life", "retirement", "dead"}),
         ("working_life", 1): frozenset({"working_life", "retirement", "dead"}),
@@ -278,8 +281,8 @@ def test_nbegm_program_receives_only_its_period_targets_carries(
             savings_grid=nbegm_model._SAVINGS_GRID, envelope_arithmetic="ordinary"
         )
     )
-    with _recorded_value_keys(monkeypatch) as recorded:
-        model.solve(params=nbegm_model._PARAMS, log_level="off")
+    recorded = _record_value_keys(monkeypatch)
+    model.solve(params=nbegm_model._PARAMS, log_level="off")
     assert recorded == {
         ("alive", 0): frozenset({"alive", "dead"}),
         ("alive", 1): frozenset({"dead"}),
@@ -301,12 +304,12 @@ def test_nbegm_program_receives_only_its_period_targets_carries(
     ],
 )
 def test_nested_programs_receive_only_their_period_targets_carries(
-    monkeypatch: pytest.MonkeyPatch, variant: str
+    *, monkeypatch: pytest.MonkeyPatch, variant: str
 ) -> None:
     """Every keeper, adjuster and outer-sweep call reads only its targets' carries."""
     model = n_nbegm_toy.build_model(variant=variant, n_periods=4)
-    with _recorded_value_keys(monkeypatch) as recorded:
-        model.solve(params={"discount_factor": 0.95}, log_level="off")
+    recorded = _record_value_keys(monkeypatch)
+    model.solve(params={"discount_factor": 0.95}, log_level="off")
     assert recorded == {
         ("alive", 0): frozenset({"alive", "dead"}),
         ("alive", 1): frozenset({"alive", "dead"}),

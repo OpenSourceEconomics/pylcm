@@ -262,9 +262,32 @@ class RunPeriodKernelKwargs(TypedDict):
     captured_admission: NotRequired[
         backward_induction.Mapping[str, backward_induction.Mapping[str, int | None]]
     ]
+    V_templates: NotRequired[
+        backward_induction.Mapping[
+            backward_induction.RegimeName, backward_induction.ValueTemplate
+        ]
+    ]
 
 
 type RunPeriodKernelResult = backward_induction.KernelOutput
+
+
+class EvaluateEdgeFoldKwargs(TypedDict):
+    fold: backward_induction.CompiledEdgeFold
+    fold_period: int
+    fold_age: backward_induction.FoldAge
+    target_states: Mapping[
+        str, backward_induction.ContinuousState | backward_induction.DiscreteState
+    ]
+    same_period_mapping: Mapping[RegimeName, backward_induction.FloatND]
+    source_flat_params: Mapping[
+        backward_induction.QualifiedName, backward_induction.ParamsLeaf
+    ]
+    reference_flat_params: Mapping[
+        RegimeName,
+        Mapping[backward_induction.QualifiedName, backward_induction.ParamsLeaf],
+    ]
+    shared_sharding: NotRequired[jax.sharding.Sharding | None]
 
 
 class RetireDonatedInputsKwargs(TypedDict):

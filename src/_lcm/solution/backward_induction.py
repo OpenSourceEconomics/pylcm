@@ -526,7 +526,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         )
 
     with solve_phase(name="continuation_templates", logger=logger, call_id=call_id):
-        next_regime_to_V_arr, next_regime_to_continuation, next_edge_to_V_arr = (
+        V_templates, next_regime_to_continuation, edge_templates = (
             _build_continuation_templates(
                 regimes=regimes,
                 flat_params=flat_params,
@@ -542,9 +542,9 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         program_fingerprint=program_fingerprint,
         flat_params=flat_params,
         ages=ages,
-        next_regime_to_V_arr=next_regime_to_V_arr,
+        next_regime_to_V_arr=V_templates,
         next_regime_to_continuation=next_regime_to_continuation,
-        next_edge_to_V_arr=next_edge_to_V_arr,
+        next_edge_to_V_arr=edge_templates,
         enable_jit=enable_jit,
         execution=resolved_execution,
         capture_periods=()
@@ -584,20 +584,20 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     # of a compilation key — so the loop commits to the one they were keyed by
     # rather than building a second.
     input_liveness = compiled_programs.input_liveness
-    input_templates = SolveInputMappings(
-        next_regime_to_V_arr=next_regime_to_V_arr,
+    input_templates: SolveInputMappings[ValueTemplate] = SolveInputMappings(
+        next_regime_to_V_arr=V_templates,
         next_regime_to_continuation=next_regime_to_continuation,
-        next_edge_to_V_arr=next_edge_to_V_arr,
+        next_edge_to_V_arr=edge_templates,
     )
     # The rolling V and gated-edge mappings hold only values the solve has
     # computed; before the last period there are none.
-    next_regime_to_V_arr = MappingProxyType({})
-    next_edge_to_V_arr = MappingProxyType({})
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND] = MappingProxyType({})
+    next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND] = MappingProxyType({})
     buffer_registry = BufferRegistry()
-    # The templates live for the whole solve and stand in the mappings wherever
-    # a key's buffer has gone — a period that rolls one forward unchanged, a
-    # released key, a donated one. Declaring them here makes that a property of
-    # the buffer rather than of each release decision.
+    # The continuation templates live for the whole solve and stand in the carry
+    # mapping wherever a key's buffer has gone — a period that rolls one forward
+    # unchanged, a released key, a donated one. Declaring them here makes that a
+    # property of the buffer rather than of each release decision.
     buffer_registry.declare_not_produced(
         tree=(
             flat_params,
@@ -1610,7 +1610,9 @@ def _run_period_kernel(
         logger=logger,
     )
 
-    same_period_kwargs: dict[ReferenceName, MappingProxyType[RegimeName, FloatND]] = {}
+    same_period_kwargs: dict[
+        ReferenceName, MappingProxyType[RegimeName, ValueTemplate]
+    ] = {}
     if regime.same_period_ref_regimes:
         same_period_kwargs["same_period_regime_to_V_arr"] = MappingProxyType(
             {
@@ -2495,7 +2497,7 @@ def _edge_kwargs(
     regime: Regime,
     regime_name: RegimeName,
     next_edge_to_V_arr: MappingProxyType[_EdgeKey, ValueTemplate],
-) -> MappingProxyType[ReferenceName, MappingProxyType[RegimeName, FloatND]]:
+) -> MappingProxyType[ReferenceName, MappingProxyType[RegimeName, ValueTemplate]]:
     """Build a source kernel's gated-edge `Wbar` argument, keyed by target.
 
     The kernel substitutes each entry for the raw target V in
@@ -2686,8 +2688,8 @@ def _select_runtime_donation_cores(
     *,
     compiled_programs: _CompiledPrograms,
     unit: DispatchUnit,
-    inputs: SolveInputMappings,
-    templates: SolveInputMappings,
+    inputs: SolveInputMappings[FloatND],
+    templates: SolveInputMappings[ValueTemplate],
     registry: BufferRegistry,
     logger: logging.Logger,
 ) -> tuple[
@@ -2727,8 +2729,8 @@ def _select_runtime_donation_cores(
 def _donation_ownership_refusal(
     *,
     artifact: ValueArtifactAddress,
-    inputs: SolveInputMappings,
-    templates: SolveInputMappings,
+    inputs: SolveInputMappings[FloatND],
+    templates: SolveInputMappings[ValueTemplate],
     registry: BufferRegistry,
 ) -> str | None:
     """Explain an actual input's ownership conflict without consuming the input."""
@@ -2809,8 +2811,8 @@ def _release_closed_period_inputs(
     ledger: PlannedInputLiveness[_InputDispatch, ValueArtifactAddress],
     registry: BufferRegistry,
     candidates: dict[ValueArtifactAddress, _InputDispatch],
-    inputs: SolveInputMappings,
-    templates: SolveInputMappings,
+    inputs: SolveInputMappings[FloatND],
+    templates: SolveInputMappings[ValueTemplate],
     pending_outputs: Sequence[ValueND],
     logger: logging.Logger,
     release_enabled: bool,
@@ -2906,8 +2908,8 @@ def _donated_input_arrays(
     *,
     donations: Mapping[_CoreTriple, tuple[ResolvedDonation, ...]],
     unit: DispatchUnit,
-    inputs: SolveInputMappings,
-    templates: SolveInputMappings,
+    inputs: SolveInputMappings[FloatND],
+    templates: SolveInputMappings[ValueTemplate],
     registry: BufferRegistry,
 ) -> tuple[_DonatedInput, ...]:
     """Locate every array this unit's executables donate and check its aliases.
@@ -2951,8 +2953,8 @@ def _locate_donated_input(
     artifact: ValueArtifactAddress,
     argument: str,
     unit: DispatchUnit,
-    inputs: SolveInputMappings,
-    templates: SolveInputMappings,
+    inputs: SolveInputMappings[FloatND],
+    templates: SolveInputMappings[ValueTemplate],
     registry: BufferRegistry,
 ) -> _DonatedInput:
     """Find one donated array and refuse a buffer the solve does not own."""
@@ -2985,8 +2987,8 @@ def _retire_donated_inputs(
     *,
     donated_inputs: tuple[_DonatedInput, ...],
     dispatch: _InputDispatch,
-    inputs: SolveInputMappings,
-    templates: SolveInputMappings,
+    inputs: SolveInputMappings[FloatND],
+    templates: SolveInputMappings[ValueTemplate],
     pending_outputs: tuple[tuple[ValueND, ...], _DispatchOutputs],
     registry: BufferRegistry,
     logger: logging.Logger,
@@ -3343,7 +3345,7 @@ def _resident_bytes_by_triple(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     ledger: PlannedInputLiveness,
-    templates: SolveInputMappings,
+    templates: SolveInputMappings[ValueTemplate],
     program_metadata: Mapping[_CoreTriple, _ProgramExecutionMetadata],
     device_ids: tuple[int, ...],
 ) -> MappingProxyType[_CoreTriple, int]:
@@ -3364,7 +3366,7 @@ def _resident_inventory_by_triple(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     ledger: PlannedInputLiveness,
-    templates: SolveInputMappings,
+    templates: SolveInputMappings[ValueTemplate],
     program_metadata: Mapping[_CoreTriple, _ProgramExecutionMetadata],
     device_ids: tuple[int, ...],
     fixed_bytes: MappingProxyType[int, int] = MappingProxyType({}),
@@ -3656,7 +3658,7 @@ def _fold_output_artifacts(
 
 
 def _artifact_footprints(
-    *, ledger: PlannedInputLiveness, templates: SolveInputMappings
+    *, ledger: PlannedInputLiveness, templates: SolveInputMappings[ValueTemplate]
 ) -> dict[ValueArtifactAddress, ArtifactFootprint]:
     """Size every planned artifact the solve-lifetime templates address."""
     footprints: dict[ValueArtifactAddress, ArtifactFootprint] = {}
