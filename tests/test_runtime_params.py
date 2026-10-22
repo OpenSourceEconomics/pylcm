@@ -190,32 +190,57 @@ def _template_utility(
     return consumption + resources + consumtion + wealt + resourcs + coefficient
 
 
-def test_get_params_template_notes_near_miss_names_without_changing_params() -> None:
-    """Near state, action and function names are noted only in the returned copy."""
+@pytest.fixture
+def near_miss_model() -> Model:
+    """Build a utility whose unresolved arguments resemble model names."""
+    return _make_model(
+        utility=_template_utility,
+        functions={"resources": _template_resources},
+    )
+
+
+def test_near_miss_names_do_not_warn_at_build() -> None:
+    """Unresolved names remain runtime parameters without build warnings."""
     with warnings.catch_warnings(record=True) as recorded:
-        model = _make_model(
+        _make_model(
             utility=_template_utility,
             functions={"resources": _template_resources},
         )
     assert not recorded
-    assert model.get_params_template()["alive"]["utility"] == {
+
+
+def test_get_params_template_notes_near_miss_names(near_miss_model: Model) -> None:
+    """The returned template suggests nearby state, action and function names."""
+    assert near_miss_model.get_params_template()["alive"]["utility"] == {
         "consumtion": "FloatND  [close to action 'consumption'; typo?]",
         "wealt": "FloatND  [close to state 'wealth'; typo?]",
         "resourcs": "FloatND  [close to function 'resources'; typo?]",
         "coefficient": "FloatND",
     }
-    assert model._params_template["alive"]["utility"] == {
+
+
+def test_near_miss_names_leave_the_internal_template_plain(near_miss_model: Model) -> None:
+    """Display suggestions leave the internal runtime parameter template intact."""
+    assert near_miss_model._params_template["alive"]["utility"] == {
         "consumtion": "FloatND",
         "wealt": "FloatND",
         "resourcs": "FloatND",
         "coefficient": "FloatND",
     }
-    model.get_params_template()["alive"]["utility"]["consumtion"] = 0.5
-    assert model.get_params_template()["alive"]["utility"]["consumtion"] == (
+
+
+def test_near_miss_template_is_a_fresh_copy(near_miss_model: Model) -> None:
+    """Filling a displayed suggestion leaves the next template copy intact."""
+    near_miss_model.get_params_template()["alive"]["utility"]["consumtion"] = 0.5
+    assert near_miss_model.get_params_template()["alive"]["utility"]["consumtion"] == (
         "FloatND  [close to action 'consumption'; typo?]"
     )
+
+
+def test_near_miss_parameters_are_still_required_at_solve(near_miss_model: Model) -> None:
+    """Hand-written params must supply unresolved near-miss arguments."""
     with pytest.raises(InvalidParamsError, match="Missing required parameter"):
-        model.solve(
+        near_miss_model.solve(
             params={"discount_factor": 0.95, "interest_rate": 0.05},
             log_level="debug",
         )
@@ -321,11 +346,10 @@ def _template_pruned_utility(consumtion: FloatND) -> FloatND:
     return consumtion
 
 
-@pytest.mark.parametrize("variable_kind", ["state", "action"])
-def test_get_params_template_notes_pruned_broadcast_variables(variable_kind: str) -> None:
-    """A misspelling retains its hint when the unread broadcast variable is pruned."""
+def _make_pruned_template_model(variable_kind: str) -> Model:
+    """Build a model with a misspelled broadcast-variable argument."""
     variables = {"consumption": LinSpacedGrid(start=0, stop=1, n_points=2)}
-    model = Model(
+    return Model(
         regimes={
             "alive": UserRegime(functions={"utility": _template_pruned_utility}),
             "dead": UserRegime(functions={"utility": lambda: 0.0}),
@@ -337,12 +361,49 @@ def test_get_params_template_notes_pruned_broadcast_variables(variable_kind: str
         regime_id_class=RegimeId,
         initial_nodes={0: "alive"},
     )
+
+
+@pytest.mark.parametrize("variable_kind", ["state", "action"])
+def test_near_miss_names_do_not_retain_broadcast_variables(variable_kind: str) -> None:
+    """A misspelled argument does not consume the broadcast variable it resembles."""
+    model = _make_pruned_template_model(variable_kind)
     assert "consumption" in model.pruned_variables["alive"]
+
+
+@pytest.mark.parametrize("variable_kind", ["state", "action"])
+def test_get_params_template_notes_pruned_broadcast_variables(variable_kind: str) -> None:
+    """A misspelling retains its hint when the unread broadcast variable is pruned."""
+    model = _make_pruned_template_model(variable_kind)
     assert model.get_params_template()["alive"]["utility"] == {
         "consumtion": f"FloatND  [close to {variable_kind} 'consumption'; typo?]"
     }
+
+
+@pytest.mark.parametrize("variable_kind", ["state", "action"])
+def test_pruned_broadcast_variable_hints_survive_pickle(variable_kind: str) -> None:
+    """Model persistence preserves suggestions for pruned broadcast variables."""
+    model = _make_pruned_template_model(variable_kind)
     restored = cloudpickle.loads(cloudpickle.dumps(model))
     assert restored.get_params_template() == model.get_params_template()
+
+
+def _template_composed_resources_utility(
+    *, consumption: ContinuousAction, resourcs: FloatND
+) -> FloatND:
+    return -1.0 / consumption + resourcs
+
+
+def test_get_params_template_notes_composed_function_names() -> None:
+    """A composed resource function supplies its declared name to typo notes."""
+    from tests.test_models import n_nbegm_toy  # noqa: PLC0415
+
+    model = n_nbegm_toy.build_model(
+        variant="negm",
+        utility_function=_template_composed_resources_utility,
+    )
+    assert model.get_params_template()["alive"]["utility"] == {
+        "resourcs": "FloatND  [close to function 'resources'; typo?]"
+    }
 
 
 def _template_constraint_reference_utility(

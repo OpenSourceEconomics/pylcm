@@ -537,6 +537,7 @@ def _validate_function_usage(
         direct.update(regime.decomposed_constraints)
         direct.update(regime.value_constraints)
         direct.update(regime.derived_categoricals)
+        direct.add("utility")
         direct.update(
             ("utility",)
             if regime.stakeholders is None

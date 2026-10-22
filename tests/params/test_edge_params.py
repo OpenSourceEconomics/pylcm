@@ -438,11 +438,23 @@ def test_solution_does_not_depend_on_the_level_supplying_a_law_value(params):
     )
 
 
+def _read_edges(edges: FloatND) -> FloatND:
+    return edges
+
+
+def _edges_name_identity(wealth: ContinuousState) -> FloatND:
+    return wealth
+
+
 @pytest.mark.parametrize(
     ("regime_name", "functions"),
     [
         pytest.param("edges", {}, id="regime"),
-        pytest.param("working", {"edges": lambda wealth: wealth}, id="function"),
+        pytest.param(
+            "working",
+            {"utility": _read_edges, "edges": _edges_name_identity},
+            id="function",
+        ),
     ],
 )
 def test_edges_is_reserved_as_a_regime_and_function_name(*, regime_name, functions):
@@ -456,7 +468,7 @@ def test_edges_is_reserved_as_an_argument_name():
     with pytest.raises(InvalidNameError, match="edges"):
         _named_model(
             regime_name="working",
-            functions={"bonus": _bonus_from_edges},
+            functions={"utility": _bonus_from_edges},
         )
 
 

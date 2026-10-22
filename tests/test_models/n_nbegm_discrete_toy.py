@@ -101,7 +101,6 @@ def build_model(
         "new_illiquid": smooth.new_illiquid,
         "resources": resources,
         "liquid_savings": smooth.liquid_savings,
-        "credited": smooth.credited,
     }
     states = {"wealth": smooth.WEALTH_GRID, "illiquid": smooth.ILLIQUID_GRID}
     state_transitions = {

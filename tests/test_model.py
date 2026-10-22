@@ -1,14 +1,17 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Literal
 
 import jax.numpy as jnp
 import pytest
+from numpy.testing import assert_array_almost_equal as aaae
 
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_law import bind_regime_law
 from _lcm.user_regime_validation import validate_regime_law
 from lcm import (
     AgeGrid,
+    CollectiveUtility,
     DeterministicTransition,
     DiscreteGrid,
     LinearAggregator,
@@ -38,7 +41,7 @@ from lcm.typing import (
     ScalarInt,
     UserFunction,
 )
-from tests.conftest import bind_laws
+from tests.conftest import DECIMAL_PRECISION, bind_laws
 
 
 def test_regime_invalid_states():
@@ -718,7 +721,7 @@ def _output_from_helper(helper: FloatND) -> FloatND:
 
 def _output_model(
     *,
-    functions: Mapping[FunctionName, UserFunction | Phased],
+    functions: Mapping[FunctionName, UserFunction | Phased | CollectiveUtility],
     model_output: tuple[FunctionName, ...] = (),
     regime_output: tuple[FunctionName, ...] = (),
 ) -> Model:
@@ -738,9 +741,12 @@ def _output_model(
     )
 
 
-def test_unread_functions_name_regime_and_every_function() -> None:
+@pytest.mark.parametrize(
+    "message", ["alive", "report", "unused", "Remove", "output_only_functions="]
+)
+def test_unread_functions_name_regime_and_every_function(message: str) -> None:
     """Unconsumed functions require an explicit output declaration."""
-    with pytest.raises(RegimeInitializationError) as error:
+    with pytest.raises(RegimeInitializationError, match=message):
         _output_model(
             functions={
                 "utility": _output_utility,
@@ -748,25 +754,51 @@ def test_unread_functions_name_regime_and_every_function() -> None:
                 "unused": lambda: 1.0,
             }
         )
-    message = str(error.value)
-    assert all(name in message for name in ("alive", "report", "unused"))
-    assert "remove" in message.lower()
-    assert "output_only_functions=" in message
 
 
-@pytest.mark.parametrize("level", ["model", "regime"])
-def test_output_only_functions_keep_runtime_params_and_report(level: str) -> None:
-    """Output-only targets accept ordinary runtime params and report their values."""
-    model = _output_model(
+@pytest.fixture(params=["model", "regime"])
+def output_only_model(request: pytest.FixtureRequest) -> Model:
+    """Build an output-only report declared at either supported level."""
+    return _output_model(
         functions={"utility": _output_utility, "report": _output_report},
-        model_output=("report",) if level == "model" else (),
-        regime_output=("report",) if level == "regime" else (),
+        model_output=("report",) if request.param == "model" else (),
+        regime_output=("report",) if request.param == "regime" else (),
     )
-    assert model.user_regimes["alive"].output_only_functions == ("report",)
-    assert "report_scale" in model.get_params_template()["alive"]["report"]
+
+
+def test_output_only_declaration_reaches_finalized_regime(output_only_model: Model) -> None:
+    """An output declaration survives model finalization."""
+    assert output_only_model.user_regimes["alive"].output_only_functions == ("report",)
+
+
+def test_output_only_functions_keep_runtime_params(output_only_model: Model) -> None:
+    """An output-only target lists its unresolved arguments as runtime params."""
+    assert "report_scale" in output_only_model.get_params_template()["alive"]["report"]
+
+
+def test_output_only_functions_require_runtime_params(output_only_model: Model) -> None:
+    """Output-only targets require their ordinary runtime params at solve."""
     with pytest.raises(InvalidParamsError, match=r"Missing required parameter\(s\)"):
-        model.solve(params={}, log_level="off")
-    result = model.simulate(
+        output_only_model.solve(params={}, log_level="off")
+
+
+@pytest.mark.parametrize(
+    ("targets", "column", "expected"),
+    [
+        (["report", "utility"], "report", [4.0, 8.0]),
+        (["report", "utility"], "utility", [1.0, 2.0]),
+        ("all", "report", [4.0, 8.0]),
+    ],
+)
+def test_output_only_functions_report_runtime_values(
+    *,
+    output_only_model: Model,
+    targets: list[FunctionName] | Literal["all"],
+    column: FunctionName,
+    expected: list[float],
+) -> None:
+    """Reporting evaluates output-only and ordinary targets with supplied params."""
+    result = output_only_model.simulate(
         log_level="off",
         params={"alive": {"report": {"report_scale": 4.0}}},
         initial_conditions={
@@ -775,13 +807,11 @@ def test_output_only_functions_keep_runtime_params_and_report(level: str) -> Non
             "regime_id": jnp.array([0, 0]),
         },
     )
-    frame = result.to_dataframe(additional_targets=["report", "utility"])
-    assert frame["report"].tolist() == [4.0, 8.0]
-    assert frame["utility"].tolist() == [1.0, 2.0]
-    assert result.to_dataframe(additional_targets="all")["report"].tolist() == [
-        4.0,
-        8.0,
-    ]
+    aaae(
+        result.to_dataframe(additional_targets=targets)[column],
+        expected,
+        decimal=DECIMAL_PRECISION,
+    )
 
 
 def test_read_helper_is_reportable_without_output_only_declaration() -> None:
@@ -801,9 +831,11 @@ def test_read_helper_is_reportable_without_output_only_declaration() -> None:
             "regime_id": jnp.array([0]),
         },
     )
-    assert result.to_dataframe(additional_targets=["report"])["report"].tolist() == [
-        2.0
-    ]
+    aaae(
+        result.to_dataframe(additional_targets=["report"])["report"],
+        [2.0],
+        decimal=DECIMAL_PRECISION,
+    )
 
 
 @pytest.mark.parametrize(
@@ -830,6 +862,21 @@ def test_output_only_declarations_reject_conflicts_missing_and_read_names(
             functions={"utility": _output_utility, "report": _output_report},
             model_output=model_output,
             regime_output=regime_output,
+        )
+
+
+@pytest.mark.parametrize("level", ["model", "regime"])
+def test_collective_utility_cannot_be_declared_output_only(level: str) -> None:
+    """A collective utility declaration is already consumed by the engine."""
+    with pytest.raises(RegimeInitializationError, match=r"reads.*utility"):
+        _output_model(
+            functions={
+                "utility": CollectiveUtility(
+                    utilities={"first": _output_utility, "second": _output_utility}
+                )
+            },
+            model_output=("utility",) if level == "model" else (),
+            regime_output=("utility",) if level == "regime" else (),
         )
 
 
@@ -870,9 +917,10 @@ def test_simulation_phase_function_consumers_count_as_reads() -> None:
     assert "report" in model.user_regimes["alive"].functions
 
 
-def test_output_only_reporting_retains_broadcast_inputs_by_reachability() -> None:
-    """An explicitly retained reporting target consumes its broadcast inputs."""
-    model = Model(
+@pytest.fixture
+def output_only_broadcast_model() -> Model:
+    """Build a reporting target that reads a model-level state."""
+    return Model(
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_OutputRegimeId,
         regimes={"alive": UserRegime(functions={"utility": lambda: 0.0})},
@@ -882,14 +930,29 @@ def test_output_only_reporting_retains_broadcast_inputs_by_reachability() -> Non
         initial_nodes={0: "alive"},
         edges={},
     )
-    assert "wealth" in model.user_regimes["alive"].states
-    assert "wealth" not in model.get_params_template()["alive"]["report"]
 
 
-@pytest.mark.parametrize("mask", [False, True])
-def test_model_output_only_names_apply_where_defined_and_respect_masks(
-    *, mask: bool
+def test_output_only_reporting_retains_broadcast_inputs_by_reachability(
+    output_only_broadcast_model: Model,
 ) -> None:
+    """An explicitly retained reporting target consumes its broadcast inputs."""
+    assert "wealth" in output_only_broadcast_model.user_regimes["alive"].states
+
+
+def test_output_only_broadcast_inputs_are_not_runtime_params(
+    output_only_broadcast_model: Model,
+) -> None:
+    """A reporting input supplied by a model-level state needs no runtime param."""
+    assert (
+        "wealth"
+        not in output_only_broadcast_model.get_params_template()["alive"]["report"]
+    )
+
+
+@pytest.fixture(params=[False, True])
+def masked_output_only_model(
+    request: pytest.FixtureRequest,
+) -> Model:
     """A shared reporting declaration applies only where the function survives."""
 
     @categorical(ordered=False)
@@ -897,7 +960,8 @@ def test_model_output_only_names_apply_where_defined_and_respect_masks(
         alive: ScalarInt
         dead: ScalarInt
 
-    model = Model(
+    mask = request.param
+    return Model(
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=RegimeId,
         regimes={
@@ -916,9 +980,27 @@ def test_model_output_only_names_apply_where_defined_and_respect_masks(
         initial_nodes={0: "alive"},
         edges={},
     )
-    assert model.user_regimes["alive"].output_only_functions == ("report",)
-    assert model.user_regimes["dead"].output_only_functions == ()
-    assert "report" not in model.user_regimes["dead"].functions
+
+
+def test_model_output_only_names_apply_where_defined(
+    masked_output_only_model: Model,
+) -> None:
+    """A shared reporting declaration reaches a regime that defines the target."""
+    assert masked_output_only_model.user_regimes["alive"].output_only_functions == (
+        "report",
+    )
+
+
+def test_model_output_only_names_respect_masks(masked_output_only_model: Model) -> None:
+    """A shared reporting declaration excludes regimes without the target."""
+    assert masked_output_only_model.user_regimes["dead"].output_only_functions == ()
+
+
+def test_model_output_only_names_keep_functions_masked(
+    masked_output_only_model: Model,
+) -> None:
+    """A model-level reporting declaration does not restore a masked target."""
+    assert "report" not in masked_output_only_model.user_regimes["dead"].functions
 
 
 def _output_positive(report: FloatND) -> BoolND:

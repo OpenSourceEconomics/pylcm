@@ -151,12 +151,16 @@ def _model(
     )
 
 
+def test_egm_keeps_analytic_inverse() -> None:
+    """An analytic Euler inverse survives model finalization."""
+    model = _model(inverse_marginal_utility=_inverse_marginal_utility)
+    assert "inverse_marginal_utility" in model.user_regimes["saving"].functions
+
+
 def test_egm_reads_analytic_inverse_without_an_output_declaration() -> None:
     """An analytic Euler inverse is consumed by the engine directly."""
     model = _model(inverse_marginal_utility=_inverse_marginal_utility)
-    regime = model.user_regimes["saving"]
-    assert "inverse_marginal_utility" in regime.functions
-    assert regime.output_only_functions == ()
+    assert model.user_regimes["saving"].output_only_functions == ()
 
 
 def test_egm_rejects_a_continuous_constraint_during_model_construction() -> None:

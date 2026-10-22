@@ -1648,6 +1648,7 @@ class Model:
             }
             for regime_name, regime_template in self._params_template.items()
         }
+        finalized_candidates = _get_param_name_candidates(self.user_regimes)
         for regime_name, regime in self.user_regimes.items():
             for name, branch in template[regime_name].items():
                 state = regime.states.get(name)
@@ -1659,7 +1660,10 @@ class Model:
                 }:
                     _note_near_miss_params(
                         template=branch,
-                        candidates=self._param_name_candidates[regime_name],
+                        candidates=(
+                            self._param_name_candidates[regime_name]
+                            | finalized_candidates[regime_name]
+                        ),
                     )
         return template
 

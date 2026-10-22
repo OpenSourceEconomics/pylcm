@@ -321,7 +321,6 @@ def build_model(
         ),
         "resources": resources,
         "liquid_savings": liquid_savings,
-        "credited": credited,
     }
     if variant == "negm":
         # With `outer_cost` declared, pylcm composes the resources function
@@ -329,6 +328,7 @@ def build_model(
         # direct `resources` definition would double-declare it.
         del functions["resources"]
         functions["resources_before_outer_cost"] = resources_before_outer_cost
+        functions["credited"] = credited
         functions["inverse_marginal_utility"] = inverse_marginal_utility
     if adjustment_cost is not None:
         functions["adjustment_scale"] = (
