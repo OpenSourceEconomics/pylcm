@@ -1765,17 +1765,17 @@ def _validate_fold_declarations(regime: Regime) -> None:
     """Reject `fold=True` IID-process declarations the fold machinery can't support.
 
     A fold integrates a shock's node axis into the stored value by quadrature
-    immediately after the period's max-over-actions / collective readout, so
-    nothing may condition on which node was realized beyond that point:
+    after the period's max-over-actions / collective readout. Everything the
+    period computes before that average sees one node at a time, so a
+    next-period state law may read the shock: it forms the next state at each
+    node, the continuation is read there, and the maximum is taken before the
+    average. A same-period reference projection may read it too, provided the
+    regime it projects onto carries the shock unfolded
+    (`fail_if_a_collective_fold_is_misread` checks that at model build).
+    Refused here:
 
-    - a same-period gate / value-constraint predicate that reads the
-      shock's realized value — these read live per-node values to decide a
-      within-period household choice or a dissolution/consent gate, which the
-      fold has already averaged away by the time any *other* regime's
-      same-period logic runs;
-    - a next-period transition (state or regime) that reads the shock's
-      realized value — a folded shock is integrated out, so no downstream
-      state may depend on which node was realized;
+    - a value-constraint predicate that reads the shock's realized value
+      directly;
     - EV1 `taste_shocks` on the same regime — the taste-shock reduction is a
       separate closed-form max over discrete actions; the two reductions are
       not composed;
@@ -1804,17 +1804,9 @@ def _validate_fold_declarations(regime: Regime) -> None:
     if not fold_names:
         return
 
-    transition_roots = tuple(
-        func
-        for value in regime.state_transitions.values()
-        for func in _flatten_transition_callables(value)
-    )
     error_messages = [
         *_fold_scope_errors(regime=regime, fold_names=fold_names),
         *_fold_same_period_read_errors(regime=regime, fold_names=fold_names),
-        *_fold_transition_read_errors(
-            regime=regime, transition_roots=transition_roots, fold_names=fold_names
-        ),
     ]
     if error_messages:
         raise RegimeInitializationError(format_messages(error_messages))
@@ -1842,53 +1834,139 @@ def _validate_fold_law_reads(
         raise RegimeInitializationError(format_messages(error_messages))
 
 
-def _fail_if_collective_regime_folds(
-    *, user_regimes: Mapping[RegimeName, Regime]
+def fail_if_a_collective_fold_is_misread(
+    *, user_regimes: Mapping[RegimeName, Regime], laws: RegimeLaws
 ) -> None:
-    """Reject a collective regime that declares a folded state.
+    """Reject the cross-regime reads a folded collective regime cannot serve.
 
-    A collective regime publishes a dissolution flag beside its value: where no
-    action satisfies every stakeholder's participation constraint it flags the
-    cell and writes `-inf`, a sentinel meaning "not sustainable, take the
-    outside option" that a gated edge resolves against the outside option. That
-    sentinel is not a number on the household's own scale, and quadrature over
-    it is not an expectation — `w * -inf` is `-inf` for any positive weight, so
-    one dissolving node sets the whole sum to `-inf`, while the flag is set by
-    any dissolving node at all. A state that dissolves with small probability
-    would be stored as dissolving with certainty.
+    A collective regime that folds a shock keeps the shock's node axis through
+    its participation constraints and through the gates of the edges into it:
+    the dissolution flag `D` is decided node by node, and only after each node
+    is routed is a stakeholder's value averaged with the quadrature weights.
+    Averaging first would price a household that dissolves at one node as
+    dissolving at all of them. Two reads remain refused here, because the
+    declarations alone already say they cannot be answered:
 
-    `Regime.stakeholders` states the same refusal, so an author meets it both
-    where the combination is declared and where it is caught. The regime name
-    lives in the model's `regimes` dict rather than on the regime, so the check
-    runs at model build rather than in the regime-local
-    `_validate_fold_declarations` — which lets the message name the regime the
-    author has to edit.
+    - the folded collective regime named as the `regime` of another regime's
+      same-period reference, gate reference or leg fallback, which would read
+      it node by node at a coordinate the reader projects onto the shock;
+    - a projection, on a regime that folds a shock, that reads the shock while
+      the projection's target does not carry it as an ordinary, unfolded
+      state, so the realised node has no axis to land on.
+
+    Singleton folds meet the first rule, in every role, when the model's regimes
+    are processed. The second rule is the same for both.
 
     Args:
         user_regimes: Mapping of regime names to user-provided `Regime`
             instances.
+        laws: Each regime's law, carrying its gated edges.
 
     Raises:
-        ModelInitializationError: Naming every collective regime that folds,
-            together with the folded state(s) it declares.
+        ModelInitializationError: Naming every offending regime, the folded
+            state(s) and the reading declaration.
 
     """
     error_messages = [
-        f"Regime '{regime_name}' declares stakeholders "
-        f"{list(regime.stakeholders)} and fold=True on "
-        f"state(s) {sorted(fold_names)}. Folding a shock out of a collective "
-        "regime's stored value is not supported: a cell where no action "
-        "satisfies every stakeholder's participation constraint carries -inf "
-        "as a not-sustainable sentinel, which a gated edge resolves to the "
-        "outside option rather than reading as a value. Averaging that "
-        "sentinel over the shock's nodes would price a household that "
-        "dissolves at one node as dissolving at all of them. Drop `fold=True` "
-        "on the shock, or drop `stakeholders` on the regime."
-        for regime_name, regime in user_regimes.items()
-        if regime.stakeholders is not None and (fold_names := _fold_state_names(regime))
+        *_folded_collective_reference_errors(user_regimes=user_regimes, laws=laws),
+        *_fold_projection_target_errors(user_regimes=user_regimes, laws=laws),
     ]
     if error_messages:
         raise ModelInitializationError(format_messages(error_messages))
+
+
+def _folded_collective_reference_errors(
+    *, user_regimes: Mapping[RegimeName, Regime], laws: RegimeLaws
+) -> tuple[str, ...]:
+    """Name every folded collective regime another regime reads by projection."""
+    reference_regimes = {
+        ref.regime
+        for regime in user_regimes.values()
+        for ref in regime.same_period_refs.values()
+    } | {
+        name
+        for law in laws.values()
+        for edge in law.gated_edges.values()
+        for name in edge.reference_regimes(phases=("solve", "simulate"))
+    }
+    return tuple(
+        f"Regime '{regime_name}' declares stakeholders "
+        f"{list(regime.stakeholders)} and fold=True on state(s) "
+        f"{sorted(fold_names)} while being a same-period REFERENCE (named by "
+        "another regime's `same_period_refs`, `gated_edges[...].gate_refs`, or "
+        "`gated_edges[...].legs[...].fallback`). A reader projects onto the "
+        "shock and reads this regime at one node, but the fold averages that "
+        "node away before the value is stored. Drop `fold=True` on this "
+        "regime, or stop referencing it."
+        for regime_name, regime in user_regimes.items()
+        if regime.stakeholders is not None
+        and regime_name in reference_regimes
+        and (fold_names := _fold_state_names(regime))
+    )
+
+
+def _fold_projection_target_errors(
+    *, user_regimes: Mapping[RegimeName, Regime], laws: RegimeLaws
+) -> tuple[str, ...]:
+    """Name every projection reading a folded shock its target does not carry.
+
+    A projection runs on the grid of the regime whose states it reads: a
+    regime's own same-period references on that regime, and the gate
+    references and leg fallbacks of a gated edge on the edge's target. It is
+    evaluated there at every node of a folded shock, before the fold averages
+    the node away, so it may read the node only where the regime it projects
+    onto carries the same shock as an ordinary state axis.
+    """
+    projections = [
+        (regime_name, f"reference {ref_name!r}", ref)
+        for regime_name, regime in user_regimes.items()
+        for ref_name, ref in regime.same_period_refs.items()
+    ]
+    for source_name, law in laws.items():
+        for target_name, edge in law.gated_edges.items():
+            label = f"the gate from {source_name!r}"
+            projections.extend(
+                (target_name, f"{label}, reference {ref_name!r}", ref)
+                for ref_name, ref in edge.gate_refs.items()
+            )
+            projections.extend(
+                (target_name, f"{label}, fallback of route {route_name!r}", ref)
+                for route_name, route in edge.legs.items()
+                for ref in {
+                    id(fallback): fallback
+                    for fallback in (route.solve_fallback, route.simulate_fallback)
+                }.values()
+            )
+    error_messages: list[str] = []
+    for reader_name, label, ref in projections:
+        reader = user_regimes.get(reader_name)
+        target = user_regimes.get(ref.regime)
+        if reader is None or target is None:
+            continue
+        fold_names = _fold_state_names(reader)
+        if not fold_names:
+            continue
+        read_names = _fold_dependency_closure(
+            roots=tuple(ref.projection.values()),
+            resolution_table=_fold_resolution_table(reader),
+        )
+        missing = [
+            name
+            for name in fold_names
+            if (name in read_names or f"{name}_code" in read_names)
+            and (name not in target.states or _is_folded(target.states[name]))
+        ]
+        if missing:
+            error_messages.append(
+                f"Regime {reader_name!r} folds state(s) {missing}, and "
+                f"{label} projects them onto regime {ref.regime!r}, which does "
+                "not carry them as an ordinary, unfolded state. The projection "
+                "reads the shock at each node before the fold averages it "
+                f"away, so the node has to land on an axis of {ref.regime!r}. "
+                f"Declare {missing} unfolded in {ref.regime!r}, or stop "
+                "reading the shock in the projection."
+            )
+    return tuple(error_messages)
 
 
 def fail_if_a_folded_conditioner_can_move(
@@ -2096,27 +2174,17 @@ def _fold_resolution_table(
 
 
 def _fold_same_period_roots(regime: Regime) -> tuple[tuple[str, UserFunction], ...]:
-    """Named same-period gate / value-constraint / reference-projection roots.
+    """Named value-constraint predicates, the same-period reads checked here.
 
-    Deliberately EXCLUDES this regime's own OUTBOUND `gated_edges[...].gate`
-    and `gated_edges[...].gate_refs[...]` projections: a
-    `GatedEdge`'s `gate` and its `gate_refs` projections are compiled and
-    evaluated on the TARGET regime's grid/DAG
-    (`_attach_gated_edge_folds`/`_resolve_gated_edge`), never on this
-    (source) regime's own — so an argument name they declare has no
-    relationship to a state THIS regime folds, even when the names happen to
-    collide (e.g. both regimes declare a `wage_shock`). Walking them here as
-    if they were source-local reads produced false positives: a source
-    folding a state whose name a target-grid gate merely reuses was
-    incorrectly rejected. The genuine cross-regime hazard — this regime
-    itself being read nodewise as a gated-edge target, leg fallback, or
-    same-period reference — is the now-COMPLETE
-    `_fail_if_folded_regime_is_same_period_endpoint` guard in
-    `regime_building/processing.py`, which correctly checks the TARGET side
-    of the very same declarations. `value_constraints` and
-    `same_period_refs` stay as roots here: both are evaluated on THIS
-    (source) regime's own grid/DAG, so a source-local name collision there
-    is a real same-period read of this regime's own fold name.
+    A value constraint runs on this regime's own grid, so a fold name it reads
+    is this regime's own shock. Projections are left out: a same-period
+    reference projection may read the shock at each node provided its target
+    carries the shock unfolded, which needs the target's declaration and is
+    checked at model build (`fail_if_a_collective_fold_is_misread`). The
+    outbound gate and its references run on the TARGET's grid, never on this
+    regime's own, so a name they declare says nothing about this regime's
+    folds. This regime being read node by node by another regime is refused
+    by `_fail_if_folded_regime_is_same_period_endpoint`.
     """
     roots: list[tuple[str, UserFunction]] = []
     for name, predicate in regime.value_constraints.items():
@@ -2124,17 +2192,13 @@ def _fold_same_period_roots(regime: Regime) -> tuple[tuple[str, UserFunction], .
             (f"constraint {name!r}", variant)
             for variant in _function_variants(predicate)
         )
-    for ref_name, ref in regime.same_period_refs.items():
-        roots.extend(
-            (f"reference {ref_name!r}", func) for func in ref.projection.values()
-        )
     return tuple(roots)
 
 
 def _fold_same_period_read_errors(
     *, regime: Regime, fold_names: tuple[StateName, ...]
 ) -> tuple[str, ...]:
-    """Reject a fold name read by a same-period gate / value-constraint."""
+    """Reject a fold name read by a value-constraint predicate."""
     resolution_table = _fold_resolution_table(regime)
     error_messages: list[str] = []
     for label, func in _fold_same_period_roots(regime):
@@ -2147,10 +2211,8 @@ def _fold_same_period_read_errors(
         if hit:
             error_messages.append(
                 f"fold=True on state(s) {hit} conflicts with {label}, which "
-                "reads the shock's realized value: a same-period gate / "
-                "value-constraint / reference projection needs the unfolded "
-                "per-node value, but a folded state's node axis is "
-                "averaged away before the period's value is published. Drop "
+                "reads the shock's realized value: a value constraint that "
+                "decides feasibility on a folded shock is not supported. Drop "
                 "`fold=True` on the shock, or stop reading it there."
             )
     return tuple(error_messages)
@@ -2162,7 +2224,7 @@ def _fold_transition_read_errors(
     transition_roots: tuple[UserFunction, ...],
     fold_names: tuple[StateName, ...],
 ) -> tuple[str, ...]:
-    """Reject a fold name read by a next-period state / regime transition."""
+    """Reject a fold name read by a regime transition's law."""
     resolution_table = _fold_resolution_table(regime)
     transition_hit: set[str] = set()
     for func in transition_roots:
@@ -2175,11 +2237,10 @@ def _fold_transition_read_errors(
     return (
         (
             f"fold=True on state(s) {sorted(transition_hit)} conflicts with a "
-            "next-period transition that reads the shock's realized value: a "
-            "folded shock is integrated out at solve time, so no downstream "
-            "state or regime transition may condition on which node was "
-            "realized. Drop `fold=True`, or stop conditioning the transition "
-            "on it."
+            "regime transition that reads the shock's realized value: the "
+            "probability of reaching a regime may not condition on a folded "
+            "shock. A next-period state law may read it. Drop `fold=True`, or "
+            "stop conditioning the regime transition on it."
         ),
     )
 

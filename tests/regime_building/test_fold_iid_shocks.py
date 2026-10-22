@@ -388,25 +388,23 @@ def test_fold_source_state_name_reused_by_outbound_gate_is_not_rejected():
     )
 
 
-def test_fold_on_transition_conditioning_shock_is_rejected():
-    """A next-period transition that reads the shock's realized value can't
-    compose with folding it: the shock is integrated out, so nothing
-    downstream may depend on which node was realized."""
-    with pytest.raises(RegimeInitializationError, match="next-period transition"):
-        validate_regime_law(
-            Regime(
-                states={
-                    "wage_shock": _shock(fold=True),
-                    "wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
-                },
-                actions={"work": DiscreteGrid(category_class=Work)},
-                state_transitions={
-                    "wealth": lambda wealth, wage_shock: wealth + wage_shock,
-                },
-                functions={"utility": _utility},
-            ),
-            law=bind_regime_law(_next_regime),
-        )
+def test_fold_on_state_law_reading_the_shock_is_accepted():
+    """A law of motion may read the folded shock: it forms the next state at
+    each node, before the fold averages the node away."""
+    validate_regime_law(
+        Regime(
+            states={
+                "wage_shock": _shock(fold=True),
+                "wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
+            },
+            actions={"work": DiscreteGrid(category_class=Work)},
+            state_transitions={
+                "wealth": lambda wealth, wage_shock: wealth + wage_shock,
+            },
+            functions={"utility": _utility},
+        ),
+        law=bind_regime_law(_next_regime),
+    )
 
 
 def _probability_reading_the_shock(wage_shock: FloatND) -> FloatND:
@@ -427,7 +425,7 @@ def test_fold_on_dated_regime_law_conditioning_shock_is_rejected():
     with pytest.raises(
         RegimeInitializationError,
         match=r"fold=True on state\(s\) \['wage_shock'\] conflicts with a "
-        r"next-period transition",
+        r"regime transition",
     ):
         validate_regime_law(
             regime,
