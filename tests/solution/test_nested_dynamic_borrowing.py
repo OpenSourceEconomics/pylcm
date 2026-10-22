@@ -169,7 +169,11 @@ def _model(*, family: Family, lower: float | UserFunction) -> Model:
         "savings": savings,
         "new_illiquid": new_illiquid,
         "inverse_marginal_utility": inverse_marginal_utility,
-        "chosen_floor_helper": chosen_floor_helper,
+        **(
+            {"chosen_floor_helper": chosen_floor_helper}
+            if lower is chosen_floor
+            else {}
+        ),
     }
     solver: NEGM | NNBEGM
     if family == "negm":

@@ -530,7 +530,8 @@ def test_deferred_temporal_target_uses_realized_period(tmp_path: Path) -> None:
                 functions={
                     "utility": _zero,
                     "report": lcm.time_varying_params("bonus")(report),
-                }
+                },
+                output_only_functions=("report",),
             ),
             "done": lcm.Regime(functions={"utility": _terminal}),
         },

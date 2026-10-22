@@ -130,7 +130,7 @@ def utility(*, consumption: FloatND, income: FloatND) -> FloatND:
 def _model(
     *,
     declaration: UserFunction,
-    helper: UserFunction | Phased = floor_helper,
+    helper: UserFunction | Phased | None = floor_helper,
     functions: Mapping[FunctionName, UserFunction | Phased] | None = None,
     margin: LiquidMargin = LIQUID,
     extra_actions: Mapping[ActionName, LinSpacedGrid] | None = None,
@@ -139,7 +139,7 @@ def _model(
         "utility": utility,
         "savings": savings,
         "resources": resources,
-        "floor_helper": helper,
+        **({"floor_helper": helper} if helper is not None else {}),
         **(functions or {}),
     }
     regime = ConsumptionSavingsRegime(
@@ -406,7 +406,9 @@ def test_direct_floor_parameter_has_one_declared_namespace(
         else post_decision_lower_bound(margin=LIQUID, lower=direct)
     )
     model = _model(
-        declaration=declaration, functions={"floor": direct} if handwritten else None
+        declaration=declaration,
+        helper=None,
+        functions={"floor": direct} if handwritten else None,
     )
     locations = [
         name
@@ -560,7 +562,7 @@ def test_direct_post_decision_dependency_reports_its_leaf_path() -> None:
     with pytest.raises(
         ModelInitializationError, match=r"borrowing.*(wealth|consumption).*savings"
     ):
-        _model(declaration=declaration)
+        _model(declaration=declaration, helper=None)
 
 
 @pytest.mark.parametrize("slot", ["state", "action", "constraint"])
@@ -660,7 +662,8 @@ def test_bound_identity_retains_parameter_ownership(
         "constant": zero,
     }[kind]
     baseline = _model(
-        declaration=post_decision_lower_bound(margin=LIQUID, lower=producer)
+        declaration=post_decision_lower_bound(margin=LIQUID, lower=producer),
+        helper=floor_helper if kind == "helper_param" else None,
     )
     regime = baseline.user_regimes["done"].replace(
         constraints={
@@ -749,7 +752,10 @@ def test_generated_floor_cannot_overwrite_actual_process_provider(prefix: str) -
 def test_literal_floor_is_finite_at_model_construction(value: float) -> None:
     """A known nonfinite declaration is invalid model input."""
     with pytest.raises(ModelInitializationError, match=r"borrowing.*finite"):
-        _model(declaration=post_decision_lower_bound(margin=LIQUID, lower=value))
+        _model(
+            declaration=post_decision_lower_bound(margin=LIQUID, lower=value),
+            helper=None,
+        )
 
 
 def test_helper_named_resources_is_legal_when_its_leaves_are_fixed() -> None:
@@ -801,10 +807,11 @@ def test_unknown_parameter_shape_is_checked_with_actual_inputs(kind: str) -> Non
         if kind == "vector_parameter"
         else {"enabled": False}
     )
-    model = _model(declaration=post_decision_lower_bound(margin=LIQUID, lower=producer))
-    values = model.solve(params={**params, "floor_scale": 0.5}, log_level="off").values[
-        0
-    ]["done"]
+    model = _model(
+        declaration=post_decision_lower_bound(margin=LIQUID, lower=producer),
+        helper=None,
+    )
+    values = model.solve(params=params, log_level="off").values[0]["done"]
 
     np.testing.assert_allclose(values, [[0.5, 0.5], [1.5, 1.5]], atol=1e-6)
 
@@ -829,12 +836,14 @@ def test_actual_floor_output_is_real_floating_scalar(
         else post_decision_lower_bound(margin=LIQUID, lower=floor)
     )
     model = _model(
-        declaration=declaration, functions={"floor": floor} if handwritten else None
+        declaration=declaration,
+        helper=None,
+        functions={"floor": floor} if handwritten else None,
     )
     with pytest.raises(
         ModelInitializationError, match=r"borrowing.*real floating scalar"
     ):
-        model.solve(params={"theta": 0.5, "floor_scale": 0.5}, log_level="off")
+        model.solve(params={"theta": 0.5}, log_level="off")
 
 
 def _adaptive_constant_floor() -> FloatND:
