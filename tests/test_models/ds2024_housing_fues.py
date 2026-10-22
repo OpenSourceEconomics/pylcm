@@ -106,7 +106,7 @@ def inverse_marginal_utility(
     return marginal_continuation ** (-1.0 / gamma_c)
 
 
-def build_model(  # noqa: C901
+def build_model(
     *,
     variant: Literal["dcegm", "brute"] = "dcegm",
     n_grid: int,

@@ -50,9 +50,9 @@ entry. Broadcast variables unused by every root computation in both phases are p
 inspect `model.pruned_variables`.
 
 `output_only_functions=(...)` names functions kept solely for simulation reporting.
-Declare a name on the model or on a regime, never both. Model-level names apply to
-each regime defining them. Missing names, declarations of already-read functions,
-and unread functions without a declaration raise at build. See
+Declare a name on the model or on a regime, never both. Model-level names apply to each
+regime defining them. Missing names, declarations of already-read functions, and unread
+functions without a declaration raise at build. See
 [Output-only functions](../user_guide/defining_models.md#output-only-functions).
 
 `koopmans_aggregator` and `certainty_equivalent` are single broadcast values. Declare
@@ -211,20 +211,20 @@ provided.
 
 A general regime declares:
 
-| Field                  | Contract                                                                      |
-| ---------------------- | ----------------------------------------------------------------------------- |
-| `states` / `actions`   | Name-to-grid mappings                                                         |
-| `functions`            | Named DAG functions; a finalized regime needs utility                         |
+| Field                   | Contract                                                                      |
+| ----------------------- | ----------------------------------------------------------------------------- |
+| `states` / `actions`    | Name-to-grid mappings                                                         |
+| `functions`             | Named DAG functions; a finalized regime needs utility                         |
 | `output_only_functions` | Tuple of unread function names retained for simulation reporting              |
-| `constraints`          | Ordinary predicates or structured `Condition` objects                         |
-| `state_transitions`    | Ordinary target-state producers for cells not supplied by `joint_transitions` |
-| `joint_transitions`    | Target-local shared-draw laws that jointly produce one or more next states    |
-| `derived_categoricals` | Discrete grids for categorical DAG outputs                                    |
-| `solver`               | `lcm.solvers.GridSearch()` by default                                         |
-| `taste_shocks`         | Optional EV1 taste-shock configuration                                        |
-| `koopmans_aggregator`  | Optional regime-level continuation aggregator, `Phased` or `Decoupled`        |
-| `certainty_equivalent` | Optional regime-level lottery reduction                                       |
-| `description`          | Human-readable description                                                    |
+| `constraints`           | Ordinary predicates or structured `Condition` objects                         |
+| `state_transitions`     | Ordinary target-state producers for cells not supplied by `joint_transitions` |
+| `joint_transitions`     | Target-local shared-draw laws that jointly produce one or more next states    |
+| `derived_categoricals`  | Discrete grids for categorical DAG outputs                                    |
+| `solver`                | `lcm.solvers.GridSearch()` by default                                         |
+| `taste_shocks`          | Optional EV1 taste-shock configuration                                        |
+| `koopmans_aggregator`   | Optional regime-level continuation aggregator, `Phased` or `Decoupled`        |
+| `certainty_equivalent`  | Optional regime-level lottery reduction                                       |
+| `description`           | Human-readable description                                                    |
 
 Use `Regime.replace(...)` to derive a modified immutable declaration.
 

@@ -766,7 +766,9 @@ def output_only_model(request: pytest.FixtureRequest) -> Model:
     )
 
 
-def test_output_only_declaration_reaches_finalized_regime(output_only_model: Model) -> None:
+def test_output_only_declaration_reaches_finalized_regime(
+    output_only_model: Model,
+) -> None:
     """An output declaration survives model finalization."""
     assert output_only_model.user_regimes["alive"].output_only_functions == ("report",)
 

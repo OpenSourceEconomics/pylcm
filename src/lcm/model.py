@@ -410,6 +410,8 @@ from lcm.typing import (
     _UserFacingTemplateNode,
 )
 
+_PARAM_NAME_SIMILARITY_THRESHOLD = 0.8
+
 if TYPE_CHECKING:
     type _SolutionResultBoundary = SolutionResult
     type _ArtifactStoreBoundary = ArtifactStore
@@ -5514,7 +5516,11 @@ def _note_near_miss_params(
             key=lambda name: SequenceMatcher(None, arg_name, name).ratio(),
             default=None,
         )
-        if closest is not None and SequenceMatcher(None, arg_name, closest).ratio() >= 0.8:
+        if (
+            closest is not None
+            and SequenceMatcher(None, arg_name, closest).ratio()
+            >= _PARAM_NAME_SIMILARITY_THRESHOLD
+        ):
             template[arg_name] = (
                 f"{node}  [close to {candidates[closest]} {closest!r}; typo?]"
             )

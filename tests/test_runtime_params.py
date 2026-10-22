@@ -169,7 +169,7 @@ def test_get_params_template_is_built_from_plain_dicts():
 def test_get_params_template_returns_a_fresh_copy_on_each_call():
     """Filling in one returned template leaves the next call's template as is."""
     model = _make_model()
-    model.get_params_template()["alive"]["next_wealth"]["interest_rate"] = 0.05
+    model.get_params_template()["alive"]["next_wealth"]["interest_rate"] = "filled"
     template = model.get_params_template()
     assert template["alive"]["next_wealth"]["interest_rate"] == "float"
 
@@ -182,12 +182,12 @@ def _template_utility(
     *,
     consumption: ContinuousAction,
     resources: FloatND,
-    consumtion: FloatND,
+    consumptioz: FloatND,
     wealt: FloatND,
-    resourcs: FloatND,
+    resourcz: FloatND,
     coefficient: FloatND,
 ) -> FloatND:
-    return consumption + resources + consumtion + wealt + resourcs + coefficient
+    return consumption + resources + consumptioz + wealt + resourcz + coefficient
 
 
 @pytest.fixture
@@ -212,32 +212,36 @@ def test_near_miss_names_do_not_warn_at_build() -> None:
 def test_get_params_template_notes_near_miss_names(near_miss_model: Model) -> None:
     """The returned template suggests nearby state, action and function names."""
     assert near_miss_model.get_params_template()["alive"]["utility"] == {
-        "consumtion": "FloatND  [close to action 'consumption'; typo?]",
+        "consumptioz": "FloatND  [close to action 'consumption'; typo?]",
         "wealt": "FloatND  [close to state 'wealth'; typo?]",
-        "resourcs": "FloatND  [close to function 'resources'; typo?]",
+        "resourcz": "FloatND  [close to function 'resources'; typo?]",
         "coefficient": "FloatND",
     }
 
 
-def test_near_miss_names_leave_the_internal_template_plain(near_miss_model: Model) -> None:
+def test_near_miss_names_leave_the_internal_template_plain(
+    near_miss_model: Model,
+) -> None:
     """Display suggestions leave the internal runtime parameter template intact."""
     assert near_miss_model._params_template["alive"]["utility"] == {
-        "consumtion": "FloatND",
+        "consumptioz": "FloatND",
         "wealt": "FloatND",
-        "resourcs": "FloatND",
+        "resourcz": "FloatND",
         "coefficient": "FloatND",
     }
 
 
 def test_near_miss_template_is_a_fresh_copy(near_miss_model: Model) -> None:
     """Filling a displayed suggestion leaves the next template copy intact."""
-    near_miss_model.get_params_template()["alive"]["utility"]["consumtion"] = 0.5
-    assert near_miss_model.get_params_template()["alive"]["utility"]["consumtion"] == (
+    near_miss_model.get_params_template()["alive"]["utility"]["consumptioz"] = "filled"
+    assert near_miss_model.get_params_template()["alive"]["utility"]["consumptioz"] == (
         "FloatND  [close to action 'consumption'; typo?]"
     )
 
 
-def test_near_miss_parameters_are_still_required_at_solve(near_miss_model: Model) -> None:
+def test_near_miss_parameters_are_still_required_at_solve(
+    near_miss_model: Model,
+) -> None:
     """Hand-written params must supply unresolved near-miss arguments."""
     with pytest.raises(InvalidParamsError, match="Missing required parameter"):
         near_miss_model.solve(
@@ -246,29 +250,37 @@ def test_near_miss_parameters_are_still_required_at_solve(near_miss_model: Model
         )
 
 
-def _template_constraint(*, consumption: ContinuousAction, consumtion: FloatND) -> FloatND:
-    return consumption <= consumtion
+def _template_constraint(
+    *,
+    consumption: ContinuousAction,
+    consumptioz: FloatND,
+) -> FloatND:
+    return consumption <= consumptioz
 
 
 def test_get_params_template_notes_constraint_arguments() -> None:
     """A constraint's unresolved argument receives the same near-miss note."""
     model = _make_model(constraints={"limit": _template_constraint})
     assert model.get_params_template()["alive"]["limit"] == {
-        "consumtion": "FloatND  [close to action 'consumption'; typo?]"
+        "consumptioz": "FloatND  [close to action 'consumption'; typo?]"
     }
 
 
 def _template_phase_utility(
-    *, consumption: ContinuousAction, consumtion: FloatND
+    *,
+    consumption: ContinuousAction,
+    consumptioz: FloatND,
 ) -> FloatND:
-    return consumption + consumtion
+    return consumption + consumptioz
 
 
 def test_get_params_template_notes_both_phase_variants() -> None:
     """Both phases contribute arguments to the annotated user-facing template."""
-    model = _make_model(utility=Phased(solve=_utility, simulate=_template_phase_utility))
+    model = _make_model(
+        utility=Phased(solve=_utility, simulate=_template_phase_utility)
+    )
     assert model.get_params_template()["alive"]["utility"] == {
-        "consumtion": "FloatND  [close to action 'consumption'; typo?]"
+        "consumptioz": "FloatND  [close to action 'consumption'; typo?]"
     }
 
 
@@ -276,12 +288,14 @@ def test_get_params_template_omits_fixed_near_miss_parameters() -> None:
     """A bound near-miss argument needs no runtime template entry."""
     model = _make_model(
         utility=_template_phase_utility,
-        fixed_params={"consumtion": 0.5},
+        fixed_params={"consumptioz": 0.5},
     )
     assert model.get_params_template()["alive"].get("utility", {}) == {}
 
 
-def _template_threshold_utility(*, abcde: FloatND, abxde: FloatND, abxyf: FloatND) -> FloatND:
+def _template_threshold_utility(
+    *, abcde: FloatND, abxde: FloatND, abxyf: FloatND
+) -> FloatND:
     return abcde + abxde + abxyf
 
 
@@ -306,8 +320,10 @@ def test_get_params_template_uses_the_sequence_matcher_threshold() -> None:
     }
 
 
-def _template_unrelated_utility(resourcs: FloatND) -> FloatND:
-    return resourcs
+def _template_unrelated_utility(
+    resourcz: FloatND,
+) -> FloatND:
+    return resourcz
 
 
 def test_get_params_template_ignores_masked_and_other_regime_names() -> None:
@@ -325,7 +341,7 @@ def test_get_params_template_ignores_masked_and_other_regime_names() -> None:
         regime_id_class=RegimeId,
         initial_nodes={0: "alive"},
     )
-    assert model.get_params_template()["alive"]["utility"] == {"resourcs": "FloatND"}
+    assert model.get_params_template()["alive"]["utility"] == {"resourcz": "FloatND"}
 
 
 def _template_grid_utility(*, consumption: ContinuousAction, point: FloatND) -> FloatND:
@@ -342,8 +358,10 @@ def test_get_params_template_leaves_runtime_grid_entries_plain() -> None:
     assert model.get_params_template()["alive"]["wealth"]["points"] == "Float1D"
 
 
-def _template_pruned_utility(consumtion: FloatND) -> FloatND:
-    return consumtion
+def _template_pruned_utility(
+    consumptioz: FloatND,
+) -> FloatND:
+    return consumptioz
 
 
 def _make_pruned_template_model(variable_kind: str) -> Model:
@@ -371,11 +389,13 @@ def test_near_miss_names_do_not_retain_broadcast_variables(variable_kind: str) -
 
 
 @pytest.mark.parametrize("variable_kind", ["state", "action"])
-def test_get_params_template_notes_pruned_broadcast_variables(variable_kind: str) -> None:
+def test_get_params_template_notes_pruned_broadcast_variables(
+    variable_kind: str,
+) -> None:
     """A misspelling retains its hint when the unread broadcast variable is pruned."""
     model = _make_pruned_template_model(variable_kind)
     assert model.get_params_template()["alive"]["utility"] == {
-        "consumtion": f"FloatND  [close to {variable_kind} 'consumption'; typo?]"
+        "consumptioz": f"FloatND  [close to {variable_kind} 'consumption'; typo?]"
     }
 
 
@@ -388,9 +408,11 @@ def test_pruned_broadcast_variable_hints_survive_pickle(variable_kind: str) -> N
 
 
 def _template_composed_resources_utility(
-    *, consumption: ContinuousAction, resourcs: FloatND
+    *,
+    consumption: ContinuousAction,
+    resourcz: FloatND,
 ) -> FloatND:
-    return -1.0 / consumption + resourcs
+    return -1.0 / consumption + resourcz
 
 
 def test_get_params_template_notes_composed_function_names() -> None:
@@ -402,7 +424,7 @@ def test_get_params_template_notes_composed_function_names() -> None:
         utility_function=_template_composed_resources_utility,
     )
     assert model.get_params_template()["alive"]["utility"] == {
-        "resourcs": "FloatND  [close to function 'resources'; typo?]"
+        "resourcz": "FloatND  [close to function 'resources'; typo?]"
     }
 
 

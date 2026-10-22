@@ -24,11 +24,11 @@ declared in `Model(edges=...)` sit under one more root, `"edges"`; see
 [Edge parameters](#edge-parameters). Use the template as a starting point to see what
 values you need to provide.
 
-Inspect the template, then write each parameter value deliberately. Filling every
-entry with a blanket default can hide a misspelled argument: an unresolved name is
-still a runtime parameter. When a name resembles a state, action or function in its
-regime, the displayed entry includes a hint, for example
-`"consumtion": "FloatND  [close to action 'consumption'; typo?]"`. These hints do not
+Inspect the template, then write each parameter value deliberately. Filling every entry
+with a blanket default can hide a misspelled argument: an unresolved name is still a
+runtime parameter. When a name resembles a state, action or function in its regime, the
+displayed entry includes a hint, for example
+`"consumptioz": "FloatND  [close to action 'consumption'; typo?]"`. These hints do not
 change parameter resolution or emit a warning at model build.
 
 For profiles indexed by age or period, use explicit temporal declarations and labelled
@@ -222,10 +222,10 @@ pylcm inspects function signatures and classifies each argument:
 - **Special names** (`continuation_value`) — not a parameter
 - **Everything else** — a parameter (must appear in the params dict)
 
-Functions retained only for reporting use the same parameter rules. Declare them
-with `output_only_functions=` on the model or regime; their unresolved arguments
-appear in this template and must be supplied even when solving without reporting
-those functions. See [Output-only functions](defining_models.md#output-only-functions).
+Functions retained only for reporting use the same parameter rules. Declare them with
+`output_only_functions=` on the model or regime; their unresolved arguments appear in
+this template and must be supplied even when solving without reporting those functions.
+See [Output-only functions](defining_models.md#output-only-functions).
 
 ## See Also
 
