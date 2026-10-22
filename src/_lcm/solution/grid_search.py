@@ -345,6 +345,14 @@ class GridSearch(Solver):
         flattened_bound_programs: set[int] = set()
         for period, Q_and_F in context.Q_and_F_functions.items():
             q_id = id(Q_and_F)
+            target_regimes = (
+                ()
+                if period == context.solution_reachability.n_periods - 1
+                else context.solution_reachability.targets(
+                    period=period,
+                    source=context.regime_name,
+                )
+            )
             if q_id not in program_functions:
                 broadcast_state_names = (
                     _continuation_unread_state_names(
@@ -371,7 +379,13 @@ class GridSearch(Solver):
                     ),
                     "has_taste_shocks": context.has_taste_shocks,
                     "co_map_state_names": context.co_map_state_names,
-                    "co_map_v_arr_in_axes": context.co_map_v_arr_in_axes,
+                    # Periods sharing one `Q_and_F` share its target tuple.
+                    "co_map_v_arr_in_axes": tuple(
+                        MappingProxyType(
+                            {name: axes[name] for name in target_regimes}
+                        )
+                        for axes in context.co_map_v_arr_in_axes
+                    ),
                     "stakeholders": context.stakeholders,
                     "pareto_weights": context.pareto_weights,
                     "fold_state_names": context.fold_state_names,
@@ -449,20 +463,13 @@ class GridSearch(Solver):
                     enforce=False,
                 )
                 flattened_bound_programs.add(q_id)
-            target_regimes = (
-                ()
-                if period == context.solution_reachability.n_periods - 1
-                else context.solution_reachability.targets(
-                    period=period,
-                    source=context.regime_name,
-                )
-            )
             edge_reference_regimes = _edge_reference_regimes_for_targets(
                 context=context,
                 target_regimes=target_regimes,
             )
             argument_builder = _GridSearchArgumentBuilder(
                 regime_name=context.regime_name,
+                target_regimes=target_regimes,
                 same_period_ref_regimes=context.same_period_ref_regimes,
                 edge_reference_regimes=edge_reference_regimes,
                 edge_target_regimes=context.edge_target_regimes,
@@ -865,27 +872,38 @@ class _GridSearchArgumentBuilder:
     """Build the one GridSearch program's arguments for lowering and execution."""
 
     regime_name: RegimeName
+    target_regimes: tuple[RegimeName, ...]
+    """The period targets whose next-period values the program reads."""
     same_period_ref_regimes: tuple[RegimeName, ...] = ()
     edge_reference_regimes: tuple[RegimeName, ...] = ()
     edge_target_regimes: tuple[RegimeName, ...] = ()
 
-    def __call__(self, context: CoreBuildContext) -> Mapping[ReferenceName, QAndFArg]:
+    def __call__(
+        self, context: CoreBuildContext
+    ) -> Mapping[
+        ReferenceName, QAndFArg | Mapping[RegimeName, FloatND | jax.ShapeDtypeStruct]
+    ]:
         """Return the exact kwargs shared by lowering and the runtime call."""
         state_action_space = cast("StateActionSpace", context.state_action_space)
         next_regime_to_V_arr = cast(
-            "Mapping[RegimeName, FloatND]", context.next_regime_to_V_arr
+            "Mapping[RegimeName, FloatND | jax.ShapeDtypeStruct]", context.next_regime_to_V_arr
         )
         flat_params = cast("FlatParams", context.flat_params)
         ages = cast("TimeAxis", context.ages)
         raw_next_regime_to_V_arr = next_regime_to_V_arr
         next_regime_to_V_arr = self._with_edge_substitution(
-            next_regime_to_V_arr=next_regime_to_V_arr,
+            next_regime_to_V_arr=MappingProxyType(
+                {name: raw_next_regime_to_V_arr[name] for name in self.target_regimes}
+            ),
             edge_regime_to_V_arr=cast(
-                "Mapping[RegimeName, FloatND] | None",
+                "Mapping[RegimeName, FloatND | jax.ShapeDtypeStruct] | None",
                 context.edge_regime_to_V_arr,
             ),
         )
-        arguments: dict[ReferenceName, QAndFArg] = {
+        arguments: dict[
+            ReferenceName,
+            QAndFArg | Mapping[RegimeName, FloatND | jax.ShapeDtypeStruct],
+        ] = {
             **dict(state_action_space.states),
             **dict(state_action_space.actions),
             "next_regime_to_V_arr": next_regime_to_V_arr,
@@ -903,7 +921,7 @@ class _GridSearchArgumentBuilder:
                 )
                 if context.same_period_regime_to_V_arr is None
                 else cast(
-                    "Mapping[RegimeName, FloatND]",
+                    "Mapping[RegimeName, FloatND | jax.ShapeDtypeStruct]",
                     context.same_period_regime_to_V_arr,
                 )
             )
@@ -922,9 +940,9 @@ class _GridSearchArgumentBuilder:
     def _with_edge_substitution(
         self,
         *,
-        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-        edge_regime_to_V_arr: Mapping[RegimeName, FloatND] | None,
-    ) -> Mapping[RegimeName, FloatND]:
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND | jax.ShapeDtypeStruct],
+        edge_regime_to_V_arr: Mapping[RegimeName, FloatND | jax.ShapeDtypeStruct] | None,
+    ) -> Mapping[RegimeName, FloatND | jax.ShapeDtypeStruct]:
         """Replace gated targets' raw values with their continuation objects."""
         if not self.edge_target_regimes:
             return next_regime_to_V_arr
@@ -949,7 +967,7 @@ class _GridSearchArgumentBuilder:
     def _edge_reference_args(
         self,
         *,
-        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND | jax.ShapeDtypeStruct],
         flat_params: FlatParams,
     ) -> dict[
         ReferenceName,

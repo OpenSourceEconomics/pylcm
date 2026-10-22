@@ -136,8 +136,11 @@ def _single_regime_reachability(*, n_periods: int) -> PhaseReachability:
 def _grid_search_period_kernels(
     *, max_Q_over_a: dict[int, MaxQOverAFunction], regime_name: RegimeName
 ) -> dict[int, PeriodKernel]:
-    """Wrap hand-written dense cores in native GridSearch program graphs."""
-    argument_builder = _GridSearchArgumentBuilder(regime_name=regime_name)
+    """Wrap hand-written dense cores in native GridSearch program graphs.
+
+    The regime is its own period target at every period but the last.
+    """
+    last_period = max(max_Q_over_a)
     return {
         period: _GridSearchPeriodKernel(
             _core_programs=MappingProxyType(
@@ -145,7 +148,12 @@ def _grid_search_period_kernels(
                     "main": CoreProgram(
                         name="main",
                         function=core,
-                        argument_builder=argument_builder,
+                        argument_builder=_GridSearchArgumentBuilder(
+                            regime_name=regime_name,
+                            target_regimes=()
+                            if period == last_period
+                            else (regime_name,),
+                        ),
                         requirements=CoreExecutionRequirements(),
                         output_roles=VALUE,
                         disposition=CoreExecutionDisposition.DENSE,
@@ -284,8 +292,7 @@ def test_backward_induction():
     ):
         next_wealth = wealth + labor_supply - consumption
         next_lazy = lazy
-        # next_regime_to_V_arr always contains all regimes with proper shapes.
-        # Interpolate the next-period V array at the next state.
+        # Interpolate the period target's next-period V array at the next state.
         expected_V = map_coordinates(
             input=next_regime_to_V_arr["default"],
             coordinates=jnp.array([next_wealth, next_lazy]),
@@ -298,8 +305,31 @@ def test_backward_induction():
 
         return Q_arr, F_arr
 
+    def _terminal_Q_and_F(
+        *,
+        consumption,
+        lazy,
+        wealth,
+        labor_supply,
+        next_regime_to_V_arr,  # noqa: ARG001
+        period,  # noqa: ARG001
+        age,  # noqa: ARG001
+    ):
+        # The last period has no period target, so nothing is read from the
+        # empty `next_regime_to_V_arr`.
+        return (
+            consumption - 0.2 * lazy * labor_supply,
+            wealth + labor_supply - consumption >= 0,
+        )
+
     max_Q_over_a = get_max_Q_over_a(
         Q_and_F=_Q_and_F,
+        action_names=("consumption", "labor_supply"),
+        state_names=("lazy", "wealth"),
+        batch_sizes={"lazy": 0, "wealth": 0},
+    )
+    terminal_max_Q_over_a = get_max_Q_over_a(
+        Q_and_F=_terminal_Q_and_F,
         action_names=("consumption", "labor_supply"),
         state_names=("lazy", "wealth"),
         batch_sizes={"lazy": 0, "wealth": 0},
@@ -310,7 +340,7 @@ def test_backward_induction():
             period_kernels=_grid_search_period_kernels(
                 max_Q_over_a={
                     0: cast("MaxQOverAFunction", max_Q_over_a),
-                    1: cast("MaxQOverAFunction", max_Q_over_a),
+                    1: cast("MaxQOverAFunction", terminal_max_Q_over_a),
                 },
                 regime_name="default",
             ),
@@ -324,7 +354,7 @@ def test_backward_induction():
     solution = solve(
         program_fingerprint="test_backward_induction",
         flat_params=MappingProxyType({"default": flat_params}),
-        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regimes=MappingProxyType({"default": regime}),
         logger=get_logger(log_level="debug"),
         enable_jit=False,

@@ -1,6 +1,6 @@
 """Streamed GridSearch preserves every value-dependent input channel."""
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Hashable, Mapping
 from types import MappingProxyType
 from typing import cast
 
@@ -61,6 +61,8 @@ def _materialize_program(
         regimes=model._regimes,
         flat_params=flat_params,
     )
+    next_V = _zero_values(templates=next_V)
+    next_edges = _zero_values(templates=next_edges)
     regime = model._regimes[regime_name]
     edge_kwargs = _edge_kwargs(
         regime=regime,
@@ -365,4 +367,16 @@ def test_edge_kwargs_round_trip_through_jax_tree_utilities() -> None:
     assert (type(rebuilt), {name: tuple(value) for name, value in rebuilt.items()}) == (
         MappingProxyType,
         {name: tuple(value) for name, value in edge_kwargs.items()},
+    )
+
+
+def _zero_values[Key: Hashable](
+    *, templates: Mapping[Key, jax.ShapeDtypeStruct]
+) -> MappingProxyType[Key, FloatND]:
+    """Return a zero array laid out like each abstract template, under its key."""
+    return MappingProxyType(
+        {
+            name: jax.device_put(jnp.zeros(t.shape, t.dtype), t.sharding)
+            for name, t in templates.items()
+        }
     )

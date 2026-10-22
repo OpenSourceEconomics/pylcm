@@ -152,15 +152,15 @@ def write_block(
     block: FloatND,
     binding: InvariantBinding,
     axis: int,
-    template: FloatND,
+    template: FloatND | jax.ShapeDtypeStruct,
 ) -> FloatND:
     """Place one block's output into the regime's complete value.
 
-    The first block written goes into a device copy of `template`, the regime's
-    value template, which `device_put` makes without compiling a program; every
+    The first block written goes into a fresh buffer of `template`'s shape, dtype
+    and placement, which `device_put` makes without compiling a program; every
     later block overwrites its own position in that buffer, which is donated, so
     the complete value is never held twice. Every position is written, so
-    nothing of the template survives.
+    nothing of the fresh buffer's contents survives.
     """
     actual = block.sharding
     expected = template.sharding
@@ -182,7 +182,9 @@ def write_block(
         )
     return _write_block(
         value=(
-            jax.device_put(template, template.sharding, may_alias=False)
+            jax.device_put(
+                np.zeros(template.shape, dtype=template.dtype), template.sharding
+            )
             if value is None
             else value
         ),

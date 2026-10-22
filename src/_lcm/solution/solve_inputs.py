@@ -4,7 +4,8 @@ The loop threads three mappings through every period: next-period values by
 regime, next-period continuation payloads by regime, and gated-edge
 continuations by `(source, target)`. A release or a donation acts on one array
 inside them; this module finds that array by its artifact key and rebuilds the
-mapping with the solve-lifetime template leaf in its place.
+mapping without it: a released value or gated continuation drops its key, and
+every continuation leaf is replaced by its solve-lifetime template leaf.
 """
 
 import dataclasses
@@ -32,19 +33,28 @@ class SolveInputMappings:
     one.
     """
 
-    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND]
-    """Next-period value per regime; the template for regimes not yet solved."""
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND | jax.ShapeDtypeStruct]
+    """Next-period value per regime.
+
+    The rolling mapping holds only computed values, keyed by the regimes solved
+    in the period just completed; the template mapping holds an abstract array
+    for every regime.
+    """
 
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload]
     """Next-period continuation payload per publishing regime."""
 
-    next_edge_to_V_arr: MappingProxyType[EdgeKey, FloatND]
-    """Next-period gated continuation per `(source, target)` edge."""
+    next_edge_to_V_arr: MappingProxyType[EdgeKey, FloatND | jax.ShapeDtypeStruct]
+    """Next-period gated continuation per `(source, target)` edge.
+
+    The rolling mapping holds only the edges folded in the period just
+    completed; the template mapping holds an abstract `Wbar` for every edge.
+    """
 
 
 def locate_artifact(
     *, inputs: SolveInputMappings, artifact: ValueArtifactAddress
-) -> jax.Array | None:
+) -> jax.Array | jax.ShapeDtypeStruct | None:
     """Return the array an artifact key names in the mappings, or `None`.
 
     The rolling mappings answer with whatever the current period holds. The
@@ -70,10 +80,12 @@ def substitute_artifact(
     templates: SolveInputMappings,
     artifact: ValueArtifactAddress,
 ) -> SolveInputMappings:
-    """Return the mappings with the artifact's array replaced by its template leaf.
+    """Return the mappings without the artifact's array.
 
-    The template mappings live for the whole solve, so the substitution
-    allocates nothing and every mapping keeps its pytree structure.
+    A regime value or a gated continuation drops its key: no later program reads
+    it, so the mapping holds no placeholder for it. A continuation leaf is
+    replaced by its template leaf, which lives for the whole solve, so that
+    substitution allocates nothing and the mapping keeps its pytree structure.
     """
     old = locate_artifact(inputs=inputs, artifact=artifact)
     new = locate_artifact(inputs=templates, artifact=artifact)
@@ -83,15 +95,23 @@ def substitute_artifact(
     if artifact.kind is ValueArtifactKind.REGIME_VALUE:
         return dataclasses.replace(
             inputs,
-            next_regime_to_V_arr=replace_leaf_by_identity(
-                tree=inputs.next_regime_to_V_arr, old=old, new=new
+            next_regime_to_V_arr=MappingProxyType(
+                {
+                    name: value
+                    for name, value in inputs.next_regime_to_V_arr.items()
+                    if name != artifact.regime
+                }
             ),
         )
     if artifact.kind is ValueArtifactKind.GATED_CONTINUATION:
         return dataclasses.replace(
             inputs,
-            next_edge_to_V_arr=replace_leaf_by_identity(
-                tree=inputs.next_edge_to_V_arr, old=old, new=new
+            next_edge_to_V_arr=MappingProxyType(
+                {
+                    edge: value
+                    for edge, value in inputs.next_edge_to_V_arr.items()
+                    if edge != (artifact.regime, artifact.target_regime)
+                }
             ),
         )
     return dataclasses.replace(

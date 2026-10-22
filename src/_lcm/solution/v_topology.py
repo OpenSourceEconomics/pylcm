@@ -184,6 +184,15 @@ def _get_regime_V_shapes_and_shardings(
     return topology
 
 
+def _build_V_arr_template(*, topology: _RegimeVTopology) -> jax.ShapeDtypeStruct:
+    """Describe a regime's V array, on the devices it is placed on, without data."""
+    return jax.ShapeDtypeStruct(
+        topology.shape,
+        jax.dtypes.canonicalize_dtype(jnp.float64),
+        sharding=topology.sharding,
+    )
+
+
 def _build_zero_V_arr(*, topology: _RegimeVTopology) -> FloatND:
     """Build the zero V-array template for a regime, on the devices it is placed on."""
     return jax.device_put(jnp.zeros(topology.shape), topology.sharding)

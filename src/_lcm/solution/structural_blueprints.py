@@ -34,7 +34,9 @@ _DEFAULT_MAX_ENTRIES = 4
 # A tree `abstract_schema` describes: a value tree, its abstract counterpart, or
 # continuation values keyed by their `(source, target)` edge.
 type _SchemaTree = (
-    PytreeValue | ShapeDtypePytree | Mapping[tuple[RegimeName, RegimeName], FloatND]
+    PytreeValue
+    | ShapeDtypePytree
+    | Mapping[tuple[RegimeName, RegimeName], FloatND | jax.ShapeDtypeStruct]
 )
 
 # An execution-policy value `frozen_policy` renders: a number, string, Boolean,

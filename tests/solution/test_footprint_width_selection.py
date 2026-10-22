@@ -153,13 +153,13 @@ def _counter_bytes() -> int:
 
 
 def _fixed_fixture_bytes() -> int:
-    """Two state grids, two V placeholders, consumption, beta, work, ages, counters.
+    """Two state grids, consumption, beta, work, ages, counters.
 
     The completed state spaces reuse the base arrays in this fixed-grid witness.
     The two integer work codes and four integer ages each occupy four bytes.
     """
     return (
-        4 * _value_bytes() + 4 * jnp.zeros(()).dtype.itemsize + 6 * 4 + _counter_bytes()
+        2 * _value_bytes() + 4 * jnp.zeros(()).dtype.itemsize + 6 * 4 + _counter_bytes()
     )
 
 

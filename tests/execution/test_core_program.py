@@ -532,6 +532,7 @@ def test_ordinary_singleton_grid_search_declares_action_core_program() -> None:
         regimes=model._regimes,
         flat_params=flat_params,
     )
+    next_V = _zero_values(templates=next_V)
     regime = model._regimes["alive"]
     kernel = regime.solution.period_kernels[0]
     context = CoreBuildContext(
@@ -601,6 +602,7 @@ def test_collective_grid_search_plans_cells_with_canonical_action_reduction() ->
         regimes=model._regimes,
         flat_params=flat_params,
     )
+    next_V = _zero_values(templates=next_V)
     regime = model._regimes["couple"]
     kernel = regime.solution.period_kernels[0]
     context = CoreBuildContext(
@@ -657,6 +659,7 @@ def test_ev1_grid_search_plans_cells_with_canonical_action_reduction() -> None:
         regimes=model._regimes,
         flat_params=flat_params,
     )
+    next_V = _zero_values(templates=next_V)
     regime = model._regimes["alive"]
     kernel = regime.solution.period_kernels[0]
     context = CoreBuildContext(
@@ -1098,3 +1101,15 @@ def test_resolved_program_refuses_plain_dict_fields(*, field: str) -> None:
     )
     with pytest.raises(BeartypeCallHintParamViolation, match=field):
         replace(resolved, **{field: {}})
+
+
+def _zero_values(
+    *, templates: Mapping[RegimeName, jax.ShapeDtypeStruct]
+) -> MappingProxyType[RegimeName, FloatND]:
+    """Return a zero array, laid out like each abstract V template, per regime."""
+    return MappingProxyType(
+        {
+            name: jax.device_put(jnp.zeros(t.shape, t.dtype), t.sharding)
+            for name, t in templates.items()
+        }
+    )

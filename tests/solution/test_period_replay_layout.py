@@ -415,8 +415,9 @@ def test_a_mismatched_recorded_variant_is_refused_naming_both_values(tmp_path):
 def test_a_recorded_donation_reaches_the_compiled_executable(tmp_path):
     """The reinstated donation reaches the executable as donated buffers.
 
-    `next_regime_to_V_arr` carries one value array per next regime, so donating
-    that one argument donates both of its leaves.
+    `next_regime_to_V_arr` carries the value array of each period target. At the
+    captured period `alive`'s only target is itself, so donating that argument
+    donates its one leaf.
     """
     body = """
     real = period_replay._compile_cores_for_one_period
@@ -451,7 +452,7 @@ def test_a_recorded_donation_reaches_the_compiled_executable(tmp_path):
     )
     print("DONATED", len(seen[0]))
     """
-    assert _stdout(body=body, tmp_path=tmp_path).split()[-1] == "2"
+    assert _stdout(body=body, tmp_path=tmp_path).split()[-1] == "1"
 
 
 @pytest.mark.parametrize(
