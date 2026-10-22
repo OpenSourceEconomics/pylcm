@@ -27,7 +27,7 @@ def _live_multi_axis_arrays() -> frozenset[_Resident]:
     return frozenset(
         (array.shape, array.dtype.name, array.unsafe_buffer_pointer())
         for array in jax.live_arrays()
-        if array.ndim >= 2  # noqa: PLR2004
+        if array.ndim >= 2
     )
 
 

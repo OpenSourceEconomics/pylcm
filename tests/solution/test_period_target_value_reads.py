@@ -274,7 +274,9 @@ def test_nbegm_program_receives_only_its_period_targets_carries(
 ) -> None:
     """Each NB-EGM call reads exactly the next-period carries of its targets."""
     model = nbegm_model._build_model(
-        solver=NBEGM(savings_grid=nbegm_model._SAVINGS_GRID, envelope_arithmetic="ordinary")
+        solver=NBEGM(
+            savings_grid=nbegm_model._SAVINGS_GRID, envelope_arithmetic="ordinary"
+        )
     )
     with _recorded_value_keys(monkeypatch) as recorded:
         model.solve(params=nbegm_model._PARAMS, log_level="off")
@@ -314,4 +316,3 @@ def test_nested_programs_receive_only_their_period_targets_carries(
         ("dead", 2): frozenset(),
         ("dead", 3): frozenset(),
     }
-
