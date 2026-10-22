@@ -49,7 +49,7 @@ from _lcm.grids import DiscreteGrid, Grid
 from _lcm.optimization.golden_section import GoldenSectionResult
 from _lcm.params.edges import EDGES, flat_namespaces, regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
-from _lcm.regime_building.value_adapter import ValueAdapter
+from _lcm.regime_building.value_adapter import AdaptedBuild, ValueAdapter
 from _lcm.regime_law import RegimeLaw
 from _lcm.time import TimeAxis, coordinate_kind
 from _lcm.typing import (
@@ -197,8 +197,9 @@ _TRUSTED_TERMINAL_OBJECT_TYPES = (
     | _TRUSTED_CONSTRAINT_TYPE_OBJECTS
     | _TRUSTED_CERTAINTY_EQUIVALENT_TYPE_OBJECTS
     | _TRUSTED_CASE_DECLARATION_TYPES
-    # A value-grid adapter means its user function and its grids, its fields.
-    | frozenset({ValueAdapter})
+    # A value-grid adapter, and the build of an age-specialized marker whose
+    # functions it adapts, mean their user function and grids, their fields.
+    | frozenset({ValueAdapter, AdaptedBuild})
 )
 
 

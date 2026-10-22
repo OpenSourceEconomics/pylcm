@@ -409,8 +409,8 @@ def _utility_with_bracket(
     )
 
 
-def test_model_refuses_an_age_specialized_function_beside_a_value_grid():
-    """An age-specialized function in a regime with value grids is refused."""
+def test_an_age_specialized_function_beside_a_value_grid_solves_as_unmarked():
+    """An age-specialized function reads the values of a value grid."""
     model = _value_grid_model(enable_jit=True)
     regime = model.user_regimes["working_life"]
     specialized = regime.replace(
@@ -421,8 +421,18 @@ def test_model_refuses_an_age_specialized_function_beside_a_value_grid():
             ),
         }
     )
-    with pytest.raises(RegimeInitializationError, match="age-specialized"):
-        _model_with(working_life=specialized)
+    got, expected = (
+        candidate.solve(params=_PARAMS, log_level="off").values
+        for candidate in (_model_with(working_life=specialized), model)
+    )
+    pairs = [
+        (np.asarray(got[period][regime]), np.asarray(expected[period][regime]))
+        for period in expected
+        for regime in expected[period]
+    ]
+    assert len(pairs) == sum(len(regimes) for regimes in got.values())
+    for got_values, expected_values in pairs:
+        np.testing.assert_array_equal(got_values, expected_values)
 
 
 def _model_with(*, working_life: UserRegime) -> Model:
@@ -983,26 +993,18 @@ def _imputation_regime(*, nodes, marked, category_control=False) -> UserRegime:
     )
 
 
-@pytest.mark.parametrize("nodes", _NODE_PAIRS)
-def test_an_age_specialized_imputation_reading_a_value_grid_is_refused(nodes):
-    """An age-specialized imputation beside a value grid is refused."""
-    with pytest.raises(RegimeInitializationError, match=r"imputation.*earnings"):
-        _one_period_model(
-            working=_imputation_regime(nodes=nodes, marked=True), enable_jit=False
-        )
-
-
+@pytest.mark.parametrize("marked", [False, True])
 @pytest.mark.parametrize("nodes", _NODE_PAIRS)
 @pytest.mark.parametrize("enable_jit", [False, True])
 def test_an_imputation_reading_a_value_grid_matches_its_twin_on_codes(
-    *, nodes, enable_jit
+    *, nodes, enable_jit, marked
 ):
     """A carried state's imputation reads the values of a value grid."""
     got, expected = (
         _first_values(
             model=_one_period_model(
                 working=_imputation_regime(
-                    nodes=nodes, marked=False, category_control=category_control
+                    nodes=nodes, marked=marked, category_control=category_control
                 ),
                 enable_jit=enable_jit,
             ),
@@ -1030,16 +1032,21 @@ def test_an_age_specialized_imputation_of_category_codes_still_solves(
 
 
 @pytest.mark.parametrize("nodes", _NODE_PAIRS)
-def test_a_phased_age_specialized_utility_beside_a_value_grid_is_refused(nodes):
-    """An age-specialized utility inside `Phased` is refused beside a value grid."""
+def test_a_phased_age_specialized_utility_beside_a_value_grid_reads_values(nodes):
+    """An age-specialized utility inside `Phased` receives each node's value."""
     marker = _specialize(_hours_as_float)
     working = UserRegime(
         states={"hours": DiscreteGrid(values=np.array(nodes))},
         state_transitions={"hours": fixed_transition("hours")},
         functions={"utility": Phased(solve=marker, simulate=marker)},
     )
-    with pytest.raises(RegimeInitializationError, match=r"age-specialized.*utility"):
-        _one_period_model(working=working, enable_jit=False)
+    np.testing.assert_array_equal(
+        _first_values(
+            model=_one_period_model(working=working, enable_jit=False),
+            params={"discount_factor": 1.0},
+        ),
+        np.asarray(nodes, dtype=float),
+    )
 
 
 def _choice_utility(*, choice: DiscreteAction) -> FloatND:
@@ -1071,10 +1078,12 @@ def _constraint_regime(*, nodes, category_control=False) -> UserRegime:
 
 
 @pytest.mark.parametrize("nodes", _NODE_PAIRS)
-def test_an_age_specialized_constraint_beside_a_value_grid_is_refused(nodes):
-    """An age-specialized constraint is refused in a regime with value grids."""
-    with pytest.raises(RegimeInitializationError, match=r"age-specialized.*available"):
-        _one_period_model(working=_constraint_regime(nodes=nodes), enable_jit=False)
+def test_an_age_specialized_constraint_beside_a_value_grid_reads_values(nodes):
+    """An age-specialized constraint compares each node's value to the threshold."""
+    model = _one_period_model(working=_constraint_regime(nodes=nodes), enable_jit=False)
+    np.testing.assert_array_equal(
+        _first_values(model=model, params={"discount_factor": 1.0}), [0.0, 1.0]
+    )
 
 
 @pytest.mark.parametrize("enable_jit", [False, True])
@@ -1089,9 +1098,8 @@ def test_an_age_specialized_constraint_on_category_codes_still_solves(enable_jit
     )
 
 
-@pytest.mark.parametrize("phased", [False, True])
-def test_a_model_level_derived_value_grid_counts_for_the_refusals(phased):
-    """A derived value grid declared on the model makes its regimes refuse markers."""
+def test_a_model_level_derived_value_grid_counts_for_the_refusals():
+    """A model-level derived value grid makes its regimes refuse conditions."""
 
     def bonus() -> DiscreteState:
         return jnp.int32(20)
@@ -1099,14 +1107,11 @@ def test_a_model_level_derived_value_grid_counts_for_the_refusals(phased):
     def utility(*, bonus: DiscreteState) -> FloatND:
         return jnp.asarray(bonus, dtype=float)
 
-    marker = _specialize(utility)
     working = UserRegime(
-        functions={
-            "bonus": bonus,
-            "utility": Phased(solve=marker, simulate=marker) if phased else marker,
-        }
+        functions={"bonus": bonus, "utility": utility},
+        constraints={"enough": ref("bonus") >= 15},
     )
-    with pytest.raises(RegimeInitializationError, match=r"age-specialized.*utility"):
+    with pytest.raises(RegimeInitializationError, match=r"condition.*enough"):
         collect_value_grids(
             regimes={"working": working},
             derived_categoricals={"bonus": DiscreteGrid(values=np.array([10, 20]))},
