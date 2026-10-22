@@ -317,7 +317,12 @@ def test_resolver_rejects_misclassified_or_incompatible_layouts() -> None:
     [
         (jnp.zeros((5,), dtype=jnp.float32), ValueError, "shape"),
         (jnp.zeros((4,), dtype=jnp.int32), TypeError, "dtype"),
-        (jax.ShapeDtypeStruct((4,), jnp.float32), TypeError, "concrete JAX array"),
+        (np.zeros((4,), dtype=np.float32), TypeError, "concrete JAX array"),
+        (
+            jax.ShapeDtypeStruct((5,), jnp.float32, sharding=_named_sharding()),
+            ValueError,
+            "shape",
+        ),
     ],
 )
 def test_apply_rejects_wrong_stored_metadata(*, value, error, message) -> None:
@@ -325,6 +330,16 @@ def test_apply_rejects_wrong_stored_metadata(*, value, error, message) -> None:
 
     with pytest.raises(error, match=message):
         apply_value_transfer(value=value, transfer=transfer)
+
+
+def test_apply_reads_a_template_struct_as_zeros_on_its_layout() -> None:
+    """A template struct on the stored layout transfers as the zeros it stands for."""
+    transfer = _resolve_aligned()
+    template = jax.ShapeDtypeStruct((4,), jnp.float32, sharding=_named_sharding())
+
+    result = apply_value_transfer(value=template, transfer=transfer)
+
+    np.testing.assert_array_equal(np.asarray(result), np.zeros(4, dtype=np.float32))
 
 
 def test_apply_rejects_wrong_stored_sharding() -> None:

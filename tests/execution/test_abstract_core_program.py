@@ -7,6 +7,7 @@ from typing import Never, cast
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 from _lcm.execution.core_program import (
@@ -196,8 +197,14 @@ def test_abstract_read_requires_exact_destination_metadata(mismatch: str) -> Non
         )
 
 
-def test_concrete_resolution_still_requires_concrete_transfer_inputs() -> None:
-    """The default dispatch path never accepts a shape descriptor as an array."""
+def test_concrete_resolution_reads_a_template_struct_as_zeros() -> None:
+    """The default dispatch path reads a value template struct as its zeros."""
     program, transfer = _inputs()
-    with pytest.raises(TypeError, match="concrete JAX array"):
-        resolve_core_program(program=program, input_transfer_plan=(transfer,))
+
+    resolved = resolve_core_program(program=program, input_transfer_plan=(transfer,))
+
+    values = cast("Mapping[str, jax.Array]", resolved.arguments["next_regime_to_V_arr"])
+
+    np.testing.assert_array_equal(
+        np.asarray(values["future"]), np.zeros(3, dtype=np.float32)
+    )

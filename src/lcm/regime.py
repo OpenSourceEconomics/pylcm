@@ -162,7 +162,10 @@ class Regime:
     entry here or an output of `joint_transitions`. `fixed_transition(state_name)`
     marks a fixed state (identity law). Wrap in
     `StochasticTransition` for stochastic transitions. Per-target dicts map target
-    regime names to transition functions — every reachable target must be listed.
+    regime names to transition functions. Every reachable target that carries the
+    state must be listed, unless a joint transition produces its cell; a target
+    that does not carry the state may be left out, and a law listed for one is
+    unused.
     `Phased` gives each phase its own law of motion; it wraps the whole entry
     (outermost only, never inside a per-target dict).
     """

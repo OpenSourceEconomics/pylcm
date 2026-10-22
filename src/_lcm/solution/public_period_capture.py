@@ -25,7 +25,11 @@ from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.execution.output_layout import PlannedCore
 from _lcm.execution.workspace_planning import compiler_memory_reservation
 from _lcm.persistence.period import read_period_archive, write_period_archive
-from _lcm.solution.period_capture import PeriodKernelKwargs, _period_layouts
+from _lcm.solution.period_capture import (
+    PeriodKernelKwargs,
+    _period_layouts,
+    materialize_value_templates,
+)
 from _lcm.time import age_at
 from _lcm.typing import DataclassInstance, JSONValue
 from _lcm.utils.logging import get_run_policy
@@ -208,7 +212,9 @@ def capture_public_entry(
         regime.gated_edges and kernel_kwargs["next_edge_to_V_arr"]
     ):
         raise ValueError("Unsupported continuation or edge inputs in period capture.")
-    kernel_kwargs = {**kernel_kwargs, "next_edge_to_V_arr": MappingProxyType({})}
+    kernel_kwargs = materialize_value_templates(
+        kernel_kwargs={**kernel_kwargs, "next_edge_to_V_arr": MappingProxyType({})}
+    )
     if kernel_kwargs["selected_artifact_keys"] or any(
         core.donated_arguments for core in compiled_cores.values()
     ):

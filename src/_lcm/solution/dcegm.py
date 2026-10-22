@@ -86,6 +86,7 @@ from _lcm.transition_plans import SupportOrigin
 from _lcm.typing import (
     EGMStepFunction,
     FlatParams,
+    NextValue,
     PytreeValue,
     RegimeName,
     ShapeDtypePytree,
@@ -1388,7 +1389,7 @@ class _DCEGMPeriodKernel:
         *,
         compiled_cores: Mapping[str, Callable[..., PytreeValue]],
         state_action_space: StateActionSpace,
-        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        next_regime_to_V_arr: Mapping[RegimeName, NextValue],
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
         flat_params: FlatParams,
         period: int,

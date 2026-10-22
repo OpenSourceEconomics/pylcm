@@ -42,7 +42,7 @@ from _lcm.solution.grid_search import (
     _GridSearchPeriodKernel,
     _value_reads,
 )
-from _lcm.typing import ArgumentTree, PytreeValue
+from _lcm.typing import ArgumentTree, NextValue, PytreeValue
 from lcm import Model
 from lcm.typing import BoolND, FloatND, RegimeName, UserParams
 from tests.simulation.test_aot_collective_and_gated import _make_consent_model
@@ -57,10 +57,14 @@ def _materialize_program(
 ) -> tuple[_GridSearchArgumentBuilder, MaterializedCoreProgram, FloatND]:
     """Build exactly the program arguments used by backward induction."""
     flat_params = model._process_params(params)
-    next_V, next_continuation, next_edges = _build_continuation_templates(
+    abstract_V, next_continuation, abstract_edges = _build_continuation_templates(
         regimes=model._regimes,
         flat_params=flat_params,
     )
+    # The program runs here outside a compiled core, so it receives the zeros a
+    # core would build for each template it reads.
+    next_V = _zeros_like_templates(templates=abstract_V)
+    next_edges = _zeros_like_templates(templates=abstract_edges)
     regime = model._regimes[regime_name]
     edge_kwargs = _edge_kwargs(
         regime=regime,
@@ -86,6 +90,18 @@ def _materialize_program(
         builder,
         materialize_core_program(program=program, context=context),
         next_V[regime_name],
+    )
+
+
+def _zeros_like_templates[Key](
+    *, templates: Mapping[Key, NextValue]
+) -> MappingProxyType[Key, FloatND]:
+    """Build the zero array each abstract value template stands for."""
+    return MappingProxyType(
+        {
+            key: jnp.zeros(leaf.shape, dtype=leaf.dtype, device=leaf.sharding)
+            for key, leaf in templates.items()
+        }
     )
 
 

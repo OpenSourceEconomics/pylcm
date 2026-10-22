@@ -790,10 +790,15 @@ def apply_value_transfer(
     Every other operator is one recorded `jax.device_put` onto the required
     layout, so the collective XLA emits is the one the plan already names, and
     it moves only the block.
+
+    A solve-lifetime template (`jax.ShapeDtypeStruct`) stands for zeros, which
+    are built on its stored layout for this transfer.
     """
     if not isinstance(transfer, ResolvedValueTransfer):
         msg = "transfer must be a ResolvedValueTransfer."
         raise TypeError(msg)
+    if isinstance(value, jax.ShapeDtypeStruct):
+        value = jnp.zeros(value.shape, dtype=value.dtype, device=value.sharding)
     stored = _assert_value_metadata(
         value=value,
         expected_shape=transfer.expected_shape,

@@ -22,19 +22,22 @@ import jax
 
 from _lcm.typing import (
     DataclassInstance,
+    NextValue,
     PytreeChild,
     PytreeValue,
     RegimeName,
     ShapeDtypePytree,
 )
-from lcm.typing import FloatND
 
 _DEFAULT_MAX_ENTRIES = 4
 
 # A tree `abstract_schema` describes: a value tree, its abstract counterpart, or
 # continuation values keyed by their `(source, target)` edge.
 type _SchemaTree = (
-    PytreeValue | ShapeDtypePytree | Mapping[tuple[RegimeName, RegimeName], FloatND]
+    PytreeValue
+    | ShapeDtypePytree
+    | Mapping[RegimeName, NextValue]
+    | Mapping[tuple[RegimeName, RegimeName], NextValue]
 )
 
 # An execution-policy value `frozen_policy` renders: a number, string, Boolean,

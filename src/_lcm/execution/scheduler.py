@@ -510,7 +510,10 @@ def plan_period_waves(
 
 
 def replace_leaf_by_identity[Tree](
-    *, tree: Tree, old: jax.Array, new: jax.Array
+    *,
+    tree: Tree,
+    old: jax.Array | jax.ShapeDtypeStruct,
+    new: jax.Array | jax.ShapeDtypeStruct,
 ) -> Tree:
     """Return `tree` with the leaf that is `old` replaced by `new`.
 

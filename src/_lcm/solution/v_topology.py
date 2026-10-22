@@ -11,7 +11,7 @@ only their shapes and destination layouts; it never relocates a stored solution.
 
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Literal
+from typing import Literal, cast
 
 import jax
 import jax.numpy as jnp
@@ -25,7 +25,7 @@ from _lcm.engine import (
 from _lcm.params.edges import regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.simulation.value_placement import simulation_value_sharding
-from _lcm.typing import FlatParams, RegimeName, StateName
+from _lcm.typing import FlatParams, NextValue, RegimeName, StateName
 from lcm.typing import FloatND
 
 
@@ -187,3 +187,19 @@ def _get_regime_V_shapes_and_shardings(
 def _build_zero_V_arr(*, topology: _RegimeVTopology) -> FloatND:
     """Build the zero V-array template for a regime, on the devices it is placed on."""
     return jax.device_put(jnp.zeros(topology.shape), topology.sharding)
+
+
+def _build_abstract_V_arr(*, topology: _RegimeVTopology) -> NextValue:
+    """Describe a regime's zero V-array template without allocating it.
+
+    Carries the shape, the float dtype `jnp.zeros` would produce, and the
+    placement, so the template sizes and lowers like the array it stands for.
+    """
+    return cast(
+        "NextValue",
+        jax.ShapeDtypeStruct(
+            topology.shape,
+            jax.dtypes.canonicalize_dtype(float),
+            sharding=topology.sharding,
+        ),
+    )
