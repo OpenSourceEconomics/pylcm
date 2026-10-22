@@ -16,6 +16,7 @@ Two oracles validate it on the liquid-housing interior:
   NEGM keeper's depreciated hold reproduces it up to grid resolution.
 """
 
+from collections.abc import Callable
 from typing import Literal
 
 import numpy as np
@@ -219,9 +220,9 @@ def test_ds2024_housing_negm_keeper_depreciation_matches_vfi_oracle():
     assert float((difference <= ORACLE_CELL_TOL).mean()) >= MIN_FRACTION_WITHIN
 
 
-@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
-def test_ds2024_housing_negm_improves_on_nested_outer_refinement():
-    """Refining the outer house grid moves the NEGM solve toward the dense truth.
+@pytest.fixture(scope="module")
+def outer_refinement_mean() -> Callable[[int], float]:
+    """Pooled interior NEGM-vs-oracle difference at one nested outer grid.
 
     Exactness is to the *declared outer grid*: enlarging the candidate set on
     nested grids (5 ⊂ 9 ⊂ 17 linspace points) can only add outer options, so
@@ -229,48 +230,87 @@ def test_ds2024_housing_negm_improves_on_nested_outer_refinement():
     the VFI oracle with a dense outer search (129 points plus the free-keep
     candidate) and its continuation reads clamp-matched to the NEGM carry
     read; the state and liquid grids are fixed throughout, so the comparison
-    isolates the outer-grid refinement. The pooled interior difference must
-    fall strictly at each refinement and at least halve from coarsest to
-    finest.
+    isolates the outer-grid refinement.
 
     Beyond this range the difference sits at the fixed state-grid floor
     (roughly half the finest value here), where further outer refinement no
     longer moves it monotonically — an unresolved interaction of the remaining
     approximations shared by both sides. Candidate count alone cannot grow a
     uniform value-error bound (the max is 1-Lipschitz in the sup norm), so the
-    floor is diagnosed, not explained, by this test.
+    floor is diagnosed, not explained, by these tests.
+
+    The oracle and each solve are computed once per module and shared by the
+    refinement tests. In file order each test adds at most one new solve, so
+    no single test carries the oracle and all three solves.
     """
-    oracle = solve_ds2024_housing_vfi(
-        n_grid=N_GRID,
-        n_periods=N_PERIODS,
-        n_consumption=400,
-        delta=0.10,
-        n_outer_grid=129,
-        read="clamp",
-    )
-    means = []
-    for n_outer_grid in (5, 9, 17):
-        negm = (
-            build_model(
-                variant="negm",
-                n_grid=N_GRID,
-                n_periods=N_PERIODS,
-                n_consumption=N_CONSUMPTION,
-                delta=0.10,
-                n_outer_grid=n_outer_grid,
+    oracle: dict[int, np.ndarray] = {}
+    means: dict[int, float] = {}
+
+    def mean_at(n_outer_grid: int) -> float:
+        if not oracle:
+            oracle.update(
+                solve_ds2024_housing_vfi(
+                    n_grid=N_GRID,
+                    n_periods=N_PERIODS,
+                    n_consumption=400,
+                    delta=0.10,
+                    n_outer_grid=129,
+                    read="clamp",
+                )
             )
-            .solve(params=build_params(variant="negm", delta=0.10), log_level="debug")
-            .values
-        )
-        means.append(
-            float(
+        if n_outer_grid not in means:
+            negm = (
+                build_model(
+                    variant="negm",
+                    n_grid=N_GRID,
+                    n_periods=N_PERIODS,
+                    n_consumption=N_CONSUMPTION,
+                    delta=0.10,
+                    n_outer_grid=n_outer_grid,
+                )
+                .solve(
+                    params=build_params(variant="negm", delta=0.10), log_level="debug"
+                )
+                .values
+            )
+            means[n_outer_grid] = float(
                 _pooled_interior_difference(pylcm_solution=negm, oracle=oracle).mean()
             )
-        )
+        return means[n_outer_grid]
 
-    assert means[0] > means[1] > means[2]
-    assert means[2] < means[0] / 2
-    assert means[2] < ORACLE_MEAN_TOL
+    return mean_at
+
+
+@_NEEDS_KERNEL
+def test_ds2024_housing_negm_finest_outer_grid_is_within_the_oracle_tolerance(
+    outer_refinement_mean: Callable[[int], float],
+):
+    """At 17 outer nodes the pooled interior difference is within tolerance."""
+    assert outer_refinement_mean(17) < ORACLE_MEAN_TOL
+
+
+@_NEEDS_KERNEL
+def test_ds2024_housing_negm_improves_from_middle_to_finest_outer_grid(
+    outer_refinement_mean: Callable[[int], float],
+):
+    """Refining the outer house grid from 9 to 17 nodes moves NEGM toward the truth."""
+    assert outer_refinement_mean(9) > outer_refinement_mean(17)
+
+
+@_NEEDS_KERNEL
+def test_ds2024_housing_negm_improves_from_coarsest_to_middle_outer_grid(
+    outer_refinement_mean: Callable[[int], float],
+):
+    """Refining the outer house grid from 5 to 9 nodes moves NEGM toward the truth."""
+    assert outer_refinement_mean(5) > outer_refinement_mean(9)
+
+
+@_NEEDS_KERNEL
+def test_ds2024_housing_negm_finest_outer_grid_halves_the_coarsest_difference(
+    outer_refinement_mean: Callable[[int], float],
+):
+    """The 17-node outer grid at least halves the 5-node difference to the truth."""
+    assert outer_refinement_mean(17) < outer_refinement_mean(5) / 2
 
 
 def _exact_state_first_period_value(
