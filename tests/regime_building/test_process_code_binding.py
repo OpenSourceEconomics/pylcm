@@ -18,8 +18,10 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    AgeSpecializedFunction,
     ByAge,
     CollectiveUtility,
+    DeterministicTransition,
     DiscreteGrid,
     Gate,
     Model,
@@ -285,6 +287,46 @@ def test_one_callable_in_two_regimes_reads_each_regimes_positions(
         np.stack([materialized["a"], materialized["b"]]),
         np.stack([np.arange(count, dtype=float)] * 2),
     )
+
+
+def _payoff_utility(payoff: FloatND) -> FloatND:
+    return payoff
+
+
+def _to_b() -> ScalarInt:
+    return TwoRegimes.b
+
+
+def _zero_utility() -> FloatND:
+    return jnp.asarray(0.0)
+
+
+def test_an_age_specialized_reader_of_a_process_code_is_refused():
+    """An age-specialized function cannot read a process state's node position."""
+    with pytest.raises(RegimeInitializationError, match=r"age-specialized.*z_code"):
+        Model(
+            regimes={
+                "a": Regime(
+                    states={"z": _process(mu=0.0)},
+                    functions={
+                        "utility": _payoff_utility,
+                        "payoff": AgeSpecializedFunction(
+                            build=lambda _age: _position_payoff,
+                            signature=lambda _age: 0,
+                        ),
+                    },
+                ),
+                "b": Regime(functions={"utility": _zero_utility}),
+            },
+            edges={
+                "a": Transition(
+                    targets={"b": (0,)}, law=DeterministicTransition(func=_to_b)
+                )
+            },
+            ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+            initial_nodes={0: "a"},
+            regime_id_class=TwoRegimes,
+        )
 
 
 def test_a_foreign_continuous_process_does_not_refuse_a_local_code_read():
