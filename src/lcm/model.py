@@ -1214,6 +1214,7 @@ class Model:
             declared_transitions=self._declared_transitions,
             declared_edge_vocabulary=declared_edge_vocabulary,
             draw_only_processes=draw_only_processes,
+            broadcast_variables=broadcast_variables,
         )
         self.reachability = dataclasses.replace(
             prepared_structure.reachability,
