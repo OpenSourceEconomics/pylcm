@@ -725,7 +725,7 @@ _SOURCE_SEALS = {
     PARAMS_PROCESSING_SOURCE: "a6640eef75e746b50024d11c51c572d1daa062cf3d5256afe31a97b121a5410d",
     DTYPES_SOURCE: "1d38a54667166599fd692f8c58b37741f355753138d234b650c54384321bcbb2",
     NAMESPACE_SOURCE: "9a33080663f01a6d65501663e8436b132176be51c8223c28b2e749d8dbf8b570",
-    PANDAS_UTILS_SOURCE: "50f356f81507f165d33acba617f6235ea93cc432961937944d943f9ad90b7606",
+    PANDAS_UTILS_SOURCE: "c49e3df2c076ad1c74e3c13f881bae3fcdce513777e260d6e57e545f98334769",
     MODEL_PROCESSING_SOURCE: "8281a5df9cbb434c54aaf482571fef76a1e9bdf82821a04fa977fda46fa1d935",
     "src/_lcm/egm/upper_envelope/__init__.py": "79fbbac531b6be0fd6d5b88236f9b56011b8300975bdef9941e24dfd8eea33c3",
     "src/_lcm/egm/upper_envelope/segment_envelope.py": "706b3f3c7c52c5de2b1553e34be7863653aa0cd14d834fd3b68d9533f7c1273c",
@@ -976,12 +976,12 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     PANDAS_UTILS_SOURCE: (
-        "b218f71c8f1ed45bdd5f5a784cfee773e70bcb213fbb0bb5d427fc62a7c56dd0",
+        "b640bb53e4399189aba139ed978866fd6ce2ae9058292eeef6b26bbc6c19b8c5",
         {
             "initial_conditions_from_dataframe": "d40f121eb30a57420a0e8b9cde4830871d5745e2832a1378a1245ead322787e5",
             "_role_codes_from_labels": "7427bf2fa16abc7494e981ec61e9b4c5fdd71328cd880f707736cb7c443ea3bd",
             "_write_pandas_array": "fc6fdb8c0b16669a7672c6eac52c951bb92f6180ebf607af7bd15907260c0a4d",
-            "convert_series_in_params": "cce78d7630d93578cbff113f622c4e136138be93b1aaaf6bd44e17ae18c97cbc",
+            "convert_series_in_params": "54d78c03da3d1576c807d4fcadc2119ab40d98c1b42fbbf6f0fc33b82b86e574",
             "_convert_param_value": "78704aa755b151ed88d3c8799d6729a3d538c5acf4fca91c6ee911cc39077403",
             "array_from_series": "ff66ccbcbb61993ba38099f5e1c6fd321f6e2400d6a12029da8e4f60dfa63a34",
             "_scatter_series": "ccb844566097dc7bb6412b0f81b2e28d60b84b960bb73ee8be3f9acdb6681bcc",
