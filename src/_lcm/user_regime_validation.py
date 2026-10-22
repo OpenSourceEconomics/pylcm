@@ -1953,7 +1953,7 @@ def _fold_projection_target_errors(
         missing = [
             name
             for name in fold_names
-            if (name in read_names or f"{name}_code" in read_names)
+            if name in read_names
             and (name not in target.states or _is_folded(target.states[name]))
         ]
         if missing:
