@@ -469,29 +469,29 @@ def convert_series_in_params(
             )
             continue
         user_regime = user_regimes[regime_name]
-        periods = (
+        regime_periods = (
             tuple(range(ages.n_periods))
             if required_periods_by_regime is None
             else required_periods_by_regime.get(regime_name, ())
         )
-        solve_funcs, simulate_funcs = _resolve_age_specialized(
-            phase_functions=tuple(
-                user_regime.get_all_functions(phase=phase, law=laws[regime_name])
-                for phase in ("solve", "simulate")
-            ),
-            ages=ages,
-            periods_by_phase=tuple(
-                tuple(
+        solve_funcs, simulate_funcs = (
+            _resolve_age_specialized(
+                functions=user_regime.get_all_functions(
+                    phase=phase, law=laws[regime_name]
+                ),
+                ages=ages,
+                periods=regime_periods
+                if reachability is None
+                else tuple(
                     period
-                    for period, active in enumerate(
-                        reachability.for_phase(phase).active_regimes_by_period
-                    )
-                    if regime_name in active
-                )
-                if reachability is not None
-                else periods
-                for phase in ("solution", "simulation")
-            ),
+                    for period in regime_periods
+                    if regime_name
+                    in reachability.for_phase(
+                        "solution" if phase == "solve" else "simulation"
+                    ).active_regimes_by_period[period]
+                ),
+            )
+            for phase in ("solve", "simulate")
         )
         all_funcs: dict[str, _ParamConsumer] = {**solve_funcs, **simulate_funcs}
         for name in solve_funcs.keys() & simulate_funcs.keys():
@@ -924,38 +924,29 @@ def _resolve_param_consumer(
 
 def _resolve_age_specialized(
     *,
-    phase_functions: tuple[Mapping[str, UserFunction], ...],
+    functions: Mapping[str, UserFunction],
     ages: TimeAxis,
-    periods_by_phase: tuple[tuple[int, ...], ...],
-) -> tuple[Mapping[str, UserFunction], ...]:
-    """Resolve each phase's specialization where that phase reads the regime.
+    periods: tuple[int, ...],
+) -> Mapping[str, UserFunction]:
+    """Replace each `AgeSpecializedFunction` by its function at the first period.
 
     A marker publishes a generic signature and no source, so its parameters'
     indexing and use are read off a function it builds. Every age's function has
-    one call signature and one body, so any period that phase reads it serves.
-    A marker shared at the same period is built once for both phases.
+    one call signature and one body, so any period the phase reads the regime at
+    serves; a marker is built nowhere else, since its factory may hold only those
+    periods. Without such a period the marker is never read and stays as it is.
     """
-    built: dict[tuple[int, int], UserFunction] = {}
-    resolved: list[Mapping[str, UserFunction]] = []
-    for functions, periods in zip(phase_functions, periods_by_phase, strict=True):
-        if not periods:
-            resolved.append(functions)
-            continue
-        period = periods[0]
-        coordinate = specialization_coordinate_at(ages=ages, period=period)
-        for func in functions.values():
-            key = (id(func), period)
-            if isinstance(func, AgeSpecializedFunction) and key not in built:
-                built[key] = func.build(coordinate)
-        resolved.append(
-            MappingProxyType(
-                {
-                    name: built.get((id(func), period), func)
-                    for name, func in functions.items()
-                }
-            )
-        )
-    return tuple(resolved)
+    if not periods:
+        return functions
+    coordinate = specialization_coordinate_at(ages=ages, period=periods[0])
+    return MappingProxyType(
+        {
+            name: func.build(coordinate)
+            if isinstance(func, AgeSpecializedFunction)
+            else func
+            for name, func in functions.items()
+        }
+    )
 
 
 def _convert_param_value(
