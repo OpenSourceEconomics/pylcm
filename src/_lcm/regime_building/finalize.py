@@ -284,10 +284,21 @@ def _unfold_collective_states(
 def _unfolded(entry: StateEntry) -> StateEntry:
     """Return the entry with `fold=False` on every folded IID process in it."""
     if isinstance(entry, Phased):
-        return Phased(solve=_unfolded(entry.solve), simulate=_unfolded(entry.simulate))
-    if isinstance(entry, _IIDProcess) and entry.fold:
-        return dataclasses.replace(entry, fold=False)
-    return entry
+        return Phased(
+            solve=_unfolded_leg(entry.solve), simulate=_unfolded_leg(entry.simulate)
+        )
+    return _unfolded_leg(entry)
+
+
+def _unfolded_leg[T](leg: T) -> T:
+    """Return a folded IID process with `fold=False`, and any other leg unchanged.
+
+    A `Phased` leg may be a function, the solve-phase imputation of a state
+    carried only in simulation; it passes through unchanged.
+    """
+    if isinstance(leg, _IIDProcess) and leg.fold:
+        return dataclasses.replace(leg, fold=False)
+    return leg
 
 
 def _with_adapted_household(
