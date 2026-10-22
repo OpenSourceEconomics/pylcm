@@ -48,6 +48,7 @@ from _lcm.typing import (
     DataclassInstance,
     FlatParams,
     FloatND,
+    NextValue,
     RegimeName,
     ShardingTree,
 )
@@ -87,7 +88,7 @@ class PeriodKernelContext(TypedDict):
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload]
     """Next period's continuation payload per publishing regime."""
 
-    next_edge_to_V_arr: MappingProxyType[tuple[RegimeName, RegimeName], FloatND]
+    next_edge_to_V_arr: MappingProxyType[tuple[RegimeName, RegimeName], NextValue]
     """Next period's gated-edge value per `(source, target)` edge."""
 
     retain_replay: bool
@@ -100,7 +101,7 @@ class PeriodKernelContext(TypedDict):
 class PeriodCompileInputs(PeriodKernelContext):
     """The inputs one regime-period's cores are lowered against."""
 
-    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND]
+    next_regime_to_V_arr: MappingProxyType[RegimeName, NextValue]
     """Next period's value array per regime."""
 
 

@@ -14,12 +14,13 @@ from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from types import MappingProxyType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import jax
 import jax.numpy as jnp
 from jax.typing import DTypeLike
 
+from _lcm.execution.compiler_inputs import materialize_kept_abstract_inputs
 from _lcm.execution.internal_outputs import assert_internal_inputs
 from _lcm.execution.pending_work import PendingSolveWork, execute_with_pending_work
 from _lcm.execution.runtime_sharding import runtime_shardings_match
@@ -29,6 +30,7 @@ from _lcm.execution.value_transfer import (
     apply_value_transfer_plan,
 )
 from _lcm.typing import (
+    ArgumentTree,
     DataclassInstance,
     PytreeValue,
     ShapeDtypePytree,
@@ -519,11 +521,12 @@ class PlannedCore:
             msg = "PlannedCore transfer_cache must be a TransferCache or None."
             raise TypeError(msg)
 
-    def __call__(self, *args: PytreeValue, **kwargs: PytreeValue) -> PytreeValue:
+    def __call__(self, *args: PytreeValue, **kwargs: ArgumentTree) -> PytreeValue:
         """Execute and enforce the layout contract at the compiled-core seam."""
         if self.internal_input_templates:
             assert_internal_inputs(
-                arguments=kwargs,
+                # An internal input is a producer's output, never a template.
+                arguments=cast("Mapping[ReferenceName, PytreeValue]", kwargs),
                 templates=self.internal_input_templates,
                 label=self.name,
             )
@@ -559,6 +562,10 @@ class PlannedCore:
             if self.input_transfer_plan
             else kwargs
         )
+        if isinstance(self.compiled, jax.stages.Compiled):
+            planned_kwargs = materialize_kept_abstract_inputs(
+                compiled=self.compiled, arguments=planned_kwargs
+            )
         output = self.compiled(*args, **planned_kwargs)
         assert_output_layout(output=output, layout=self.layout)
         return output

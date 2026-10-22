@@ -16,9 +16,8 @@ from _lcm.execution.liveness import PlannedInputLiveness
 from _lcm.execution.scheduler import BufferRegistry, replace_leaf_by_identity
 from _lcm.execution.value_transfer import ValueArtifactAddress, ValueArtifactKind
 from _lcm.solution.contract import ContinuationPayload
-from _lcm.typing import RegimeName
+from _lcm.typing import NextValue, RegimeName
 from lcm.solver_api import ArtifactKey, ContinuationReader
-from lcm.typing import FloatND
 
 type EdgeKey = tuple[RegimeName, RegimeName]
 
@@ -32,19 +31,19 @@ class SolveInputMappings:
     one.
     """
 
-    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND]
+    next_regime_to_V_arr: MappingProxyType[RegimeName, NextValue]
     """Next-period value per regime; the template for regimes not yet solved."""
 
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload]
     """Next-period continuation payload per publishing regime."""
 
-    next_edge_to_V_arr: MappingProxyType[EdgeKey, FloatND]
+    next_edge_to_V_arr: MappingProxyType[EdgeKey, NextValue]
     """Next-period gated continuation per `(source, target)` edge."""
 
 
 def locate_artifact(
     *, inputs: SolveInputMappings, artifact: ValueArtifactAddress
-) -> jax.Array | None:
+) -> jax.Array | jax.ShapeDtypeStruct | None:
     """Return the array an artifact key names in the mappings, or `None`.
 
     The rolling mappings answer with whatever the current period holds. The
@@ -163,9 +162,13 @@ def _register_known(
     *,
     registry: BufferRegistry,
     ledger: PlannedInputLiveness,
-    array: jax.Array,
+    array: NextValue,
     artifact: ValueArtifactAddress,
 ) -> None:
     """Register one array under one key when the ledger plans that key."""
-    if ledger.is_known(artifact=artifact) and not array.is_deleted():
+    if (
+        isinstance(array, jax.Array)
+        and ledger.is_known(artifact=artifact)
+        and not array.is_deleted()
+    ):
         registry.register(array=array, artifact=artifact)
