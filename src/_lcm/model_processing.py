@@ -90,7 +90,7 @@ from lcm.exceptions import (
 from lcm.params import MappingLeaf
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
-from lcm.transition import JointTransition, Transition
+from lcm.transition import AgeSpecializedFunction, JointTransition, Transition
 from lcm.typing import Phase, UserFunction, UserParams
 
 
@@ -527,9 +527,13 @@ def _validate_function_usage(
     errors: list[str] = []
     for name, regime in user_regimes.items():
         declared = declared_regimes[name]
-        # Declarations retain phase variants that a value-only regime does not run;
+        # Retain declared phase variants without restoring pruned broadcast states;
         # finalization contributes generated case and resource producers.
         complete = declared.replace(
+            states={
+                state_name: declared.states.get(state_name, state)
+                for state_name, state in regime.states.items()
+            },
             functions={**regime.functions, **declared.functions},
         )
         direct = reads[name]
@@ -564,11 +568,13 @@ def _validate_function_usage(
             }
             periods = active_periods_by_regime.get(name, ())
             if phase == "simulate" and visited_periods_by_regime is not None:
-                periods = visited_periods_by_regime.get(name, ()) or periods
+                periods = visited_periods_by_regime.get(name, ())
             coordinate = specialization_coordinate_at(
                 ages=ages, period=(periods or (0,))[0]
             )
             for func in functions.values():
+                if not periods and isinstance(func, AgeSpecializedFunction):
+                    continue
                 if callable(func):
                     direct.update(
                         inspect.signature(

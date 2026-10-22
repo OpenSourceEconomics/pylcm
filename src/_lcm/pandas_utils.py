@@ -469,15 +469,29 @@ def convert_series_in_params(
             )
             continue
         user_regime = user_regimes[regime_name]
+        periods = (
+            tuple(range(ages.n_periods))
+            if required_periods_by_regime is None
+            else required_periods_by_regime.get(regime_name, ())
+        )
         solve_funcs, simulate_funcs = _resolve_age_specialized(
             phase_functions=tuple(
                 user_regime.get_all_functions(phase=phase, law=laws[regime_name])
                 for phase in ("solve", "simulate")
             ),
             ages=ages,
-            periods=tuple(range(ages.n_periods))
-            if required_periods_by_regime is None
-            else required_periods_by_regime.get(regime_name, ()),
+            periods_by_phase=tuple(
+                tuple(
+                    period
+                    for period, active in enumerate(
+                        reachability.for_phase(phase).active_regimes_by_period
+                    )
+                    if regime_name in active
+                )
+                if reachability is not None
+                else periods
+                for phase in ("solution", "simulation")
+            ),
         )
         all_funcs: dict[str, _ParamConsumer] = {**solve_funcs, **simulate_funcs}
         for name in solve_funcs.keys() & simulate_funcs.keys():
@@ -912,30 +926,36 @@ def _resolve_age_specialized(
     *,
     phase_functions: tuple[Mapping[str, UserFunction], ...],
     ages: TimeAxis,
-    periods: tuple[int, ...],
+    periods_by_phase: tuple[tuple[int, ...], ...],
 ) -> tuple[Mapping[str, UserFunction], ...]:
-    """Replace each `AgeSpecializedFunction` by its function at the first period.
+    """Resolve each phase's specialization where that phase reads the regime.
 
     A marker publishes a generic signature and no source, so its parameters'
     indexing and use are read off a function it builds. Every age's function has
-    one call signature and one body, so any period the regime is read at serves.
-    Each marker is built once, so a marker both phases share stays one function.
+    one call signature and one body, so any period that phase reads it serves.
+    A marker shared at the same period is built once for both phases.
     """
-    if not periods:
-        return phase_functions
-    coordinate = specialization_coordinate_at(ages=ages, period=periods[0])
-    built = {
-        id(func): func.build(coordinate)
-        for functions in phase_functions
-        for func in functions.values()
-        if isinstance(func, AgeSpecializedFunction)
-    }
-    return tuple(
-        MappingProxyType(
-            {name: built.get(id(func), func) for name, func in functions.items()}
+    built: dict[tuple[int, int], UserFunction] = {}
+    resolved: list[Mapping[str, UserFunction]] = []
+    for functions, periods in zip(phase_functions, periods_by_phase, strict=True):
+        if not periods:
+            resolved.append(functions)
+            continue
+        period = periods[0]
+        coordinate = specialization_coordinate_at(ages=ages, period=period)
+        for func in functions.values():
+            key = (id(func), period)
+            if isinstance(func, AgeSpecializedFunction) and key not in built:
+                built[key] = func.build(coordinate)
+        resolved.append(
+            MappingProxyType(
+                {
+                    name: built.get((id(func), period), func)
+                    for name, func in functions.items()
+                }
+            )
         )
-        for functions in phase_functions
-    )
+    return tuple(resolved)
 
 
 def _convert_param_value(
