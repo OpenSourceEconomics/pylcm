@@ -34,6 +34,7 @@ from types import MappingProxyType, TracebackType
 from typing import Self, cast
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 from jax._src import config as jax_config
 from jax._src import core as jax_core
@@ -267,6 +268,7 @@ from _lcm.typing import (
     SimulationPolicy,
     StateName,
     ValueND,
+    ValueTemplate,
 )
 from _lcm.utils.counts import add_counts
 from _lcm.utils.logging import (
@@ -1231,9 +1233,10 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                     edge_templates=input_templates.next_edge_to_V_arr,
                 )
                 # The fold is a dispatch unit in its own right, and it passes a great
-                # deal through: the sharding match a folded one ends in returns its argument whenever
-                # the shardings already agree. Its grids and params need no mention —
-                # those are declared for the whole solve before the first dispatch.
+                # deal through: the sharding match a folded edge ends in returns its
+                # argument whenever the shardings already agree. Its grids and params
+                # need no mention — those are declared for the whole solve before the
+                # first dispatch.
                 buffer_registry.declare_passed_through(
                     inputs=(
                         next_edge_to_V_arr,
@@ -1490,9 +1493,7 @@ def _run_period_kernel(
     selected_artifact_keys: frozenset[ArtifactKey],
     period_capture: CaptureContext | None = None,
     captured_admission: Mapping[str, Mapping[str, int | None]] = MappingProxyType({}),
-    V_templates: Mapping[RegimeName, FloatND | jax.ShapeDtypeStruct] = (
-        MappingProxyType({})
-    ),
+    V_templates: Mapping[RegimeName, ValueTemplate] = (MappingProxyType({})),
 ) -> KernelOutput:
     """Invoke one regime's period adapter for one period.
 
@@ -1646,7 +1647,7 @@ def _run_period_kernel(
 def _captured_next_values(
     *,
     next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-    V_templates: Mapping[RegimeName, FloatND | jax.ShapeDtypeStruct],
+    V_templates: Mapping[RegimeName, ValueTemplate],
 ) -> MappingProxyType[RegimeName, FloatND]:
     """Return every template regime's next-period value, zeros where none is held."""
     if not V_templates:
@@ -1655,8 +1656,8 @@ def _captured_next_values(
         {
             name: next_regime_to_V_arr[name]
             if name in next_regime_to_V_arr
-            else jax.device_put(
-                np.zeros(template.shape, dtype=template.dtype), template.sharding
+            else jnp.zeros(
+                template.shape, dtype=template.dtype, device=template.sharding
             )
             for name, template in V_templates.items()
         }
@@ -1713,7 +1714,7 @@ def _query_block_status(
 
 def _run_dispatch_unit(
     *,
-    value_template: FloatND | jax.ShapeDtypeStruct,
+    value_template: ValueTemplate,
     regime: Regime,
     regime_name: RegimeName,
     period: int,
@@ -2029,7 +2030,7 @@ def _roll_continuation_inputs(
     regimes: MappingProxyType[RegimeName, Regime],
     period_solution: dict[RegimeName, FloatND],
     period_continuations: dict[RegimeName, ContinuationPayload],
-    V_templates: MappingProxyType[RegimeName, FloatND | jax.ShapeDtypeStruct],
+    V_templates: MappingProxyType[RegimeName, ValueTemplate],
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
 ) -> tuple[
     MappingProxyType[RegimeName, FloatND],
@@ -2093,7 +2094,7 @@ def _roll_gated_edges(
     period_dissolution_flags: dict[RegimeName, BoolND],
     base_state_action_spaces: dict[RegimeName, StateActionSpace],
     flat_params: FlatParams,
-    edge_templates: MappingProxyType[_EdgeKey, FloatND | jax.ShapeDtypeStruct],
+    edge_templates: MappingProxyType[_EdgeKey, ValueTemplate],
 ) -> MappingProxyType[_EdgeKey, FloatND]:
     """Fold every gated edge whose target was solved this period.
 
@@ -2330,7 +2331,7 @@ def _publish_kernel_value(
     *,
     value: FloatND,
     compiled_cores: Mapping[str, PlannedCore],
-    assembled_template: FloatND | jax.ShapeDtypeStruct | None = None,
+    assembled_template: ValueTemplate | None = None,
 ) -> FloatND:
     """Publish a period value after asserting its planned placement.
 
@@ -2372,9 +2373,7 @@ def _publish_kernel_value(
     return value
 
 
-def _assert_assembled_value_layout(
-    *, value: FloatND, template: FloatND | jax.ShapeDtypeStruct
-) -> None:
+def _assert_assembled_value_layout(*, value: FloatND, template: ValueTemplate) -> None:
     """Assert that a value assembled from blocks has its template's layout."""
     if (value.shape, value.dtype) != (
         template.shape,
@@ -2495,7 +2494,7 @@ def _edge_kwargs(
     *,
     regime: Regime,
     regime_name: RegimeName,
-    next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND | jax.ShapeDtypeStruct],
+    next_edge_to_V_arr: MappingProxyType[_EdgeKey, ValueTemplate],
 ) -> MappingProxyType[ReferenceName, MappingProxyType[RegimeName, FloatND]]:
     """Build a source kernel's gated-edge `Wbar` argument, keyed by target.
 
@@ -3961,9 +3960,9 @@ def _prepare_solve_programs(
     program_fingerprint: str,
     flat_params: FlatParams,
     ages: TimeAxis,
-    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND | jax.ShapeDtypeStruct],
+    next_regime_to_V_arr: MappingProxyType[RegimeName, ValueTemplate],
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
-    next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND | jax.ShapeDtypeStruct],
+    next_edge_to_V_arr: MappingProxyType[_EdgeKey, ValueTemplate],
     enable_jit: bool,
     execution: ResolvedExecution,
     retain_replay: bool,
@@ -4090,9 +4089,9 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     program_fingerprint: str,
     flat_params: FlatParams,
     ages: TimeAxis,
-    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND | jax.ShapeDtypeStruct],
+    next_regime_to_V_arr: MappingProxyType[RegimeName, ValueTemplate],
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
-    next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND | jax.ShapeDtypeStruct],
+    next_edge_to_V_arr: MappingProxyType[_EdgeKey, ValueTemplate],
     enable_jit: bool,
     execution: ResolvedExecution,
     retain_replay: bool,
@@ -6194,9 +6193,9 @@ def _resolve_output_layouts_and_lowering_keys(
     program_fingerprint: str,
     flat_params: FlatParams,
     ages: TimeAxis,
-    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND | jax.ShapeDtypeStruct],
+    next_regime_to_V_arr: MappingProxyType[RegimeName, ValueTemplate],
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
-    next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND | jax.ShapeDtypeStruct],
+    next_edge_to_V_arr: MappingProxyType[_EdgeKey, ValueTemplate],
     budget_bytes: int | None,
     execution_widths: ResolvedExecution,
     enable_jit: bool,
@@ -6365,9 +6364,9 @@ def _build_structural_blueprint(
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
     ages: TimeAxis,
-    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND | jax.ShapeDtypeStruct],
+    next_regime_to_V_arr: MappingProxyType[RegimeName, ValueTemplate],
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
-    next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND | jax.ShapeDtypeStruct],
+    next_edge_to_V_arr: MappingProxyType[_EdgeKey, ValueTemplate],
     budget_bytes: int | None,
     execution_widths: ResolvedExecution,
     continuous_sharded_state: StateName | None,
@@ -6666,9 +6665,9 @@ def _structural_key(
     program_fingerprint: str,
     flat_params: FlatParams,
     ages: TimeAxis,
-    next_regime_to_V_arr: Mapping[RegimeName, FloatND | jax.ShapeDtypeStruct],
+    next_regime_to_V_arr: Mapping[RegimeName, ValueTemplate],
     next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
-    next_edge_to_V_arr: Mapping[_EdgeKey, FloatND | jax.ShapeDtypeStruct],
+    next_edge_to_V_arr: Mapping[_EdgeKey, ValueTemplate],
     base_state_action_spaces: Mapping[RegimeName, StateActionSpace],
     execution: ResolvedExecution,
     budgeted: bool,
@@ -6987,7 +6986,7 @@ def _resolve_program_for_execution(
     *,
     program: MaterializedCoreProgram,
     tile_widths: Mapping[str, int],
-    source_value_template: FloatND | jax.ShapeDtypeStruct,
+    source_value_template: ValueTemplate,
     source: _CoreTriple,
     require_full_next_value: bool = False,
     input_transfer_plan: tuple[ResolvedValueTransfer, ...] | None = None,
@@ -7016,7 +7015,7 @@ def _resolve_program_for_execution(
 def _prepare_abstract_program(
     *,
     program: MaterializedCoreProgram,
-    source_value_template: FloatND | jax.ShapeDtypeStruct,
+    source_value_template: ValueTemplate,
     source: _CoreTriple,
     require_full_next_value: bool = False,
     value_axis_names: Mapping[RegimeName, tuple[StateName, ...]] = MappingProxyType({}),
@@ -7063,7 +7062,7 @@ def _prepare_abstract_program(
 def _resolve_value_input_transfer_plan(
     *,
     program: MaterializedCoreProgram,
-    source_value_template: FloatND | jax.ShapeDtypeStruct,
+    source_value_template: ValueTemplate,
     source: _CoreTriple,
     require_full_next_value: bool = False,
     value_axis_names: Mapping[RegimeName, tuple[StateName, ...]] = MappingProxyType({}),

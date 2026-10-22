@@ -26,8 +26,8 @@ from _lcm.typing import (
     PytreeValue,
     RegimeName,
     ShapeDtypePytree,
+    ValueTemplate,
 )
-from lcm.typing import FloatND
 
 _DEFAULT_MAX_ENTRIES = 4
 
@@ -36,7 +36,7 @@ _DEFAULT_MAX_ENTRIES = 4
 type _SchemaTree = (
     PytreeValue
     | ShapeDtypePytree
-    | Mapping[tuple[RegimeName, RegimeName], FloatND | jax.ShapeDtypeStruct]
+    | Mapping[tuple[RegimeName, RegimeName], ValueTemplate]
 )
 
 # An execution-policy value `frozen_policy` renders: a number, string, Boolean,

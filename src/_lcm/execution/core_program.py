@@ -41,10 +41,11 @@ from _lcm.typing import (
     QualifiedName,
     ShapeDtypePytree,
     StateName,
+    ValueTemplate,
 )
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import ArtifactKey
-from lcm.typing import FloatND, ReferenceName, RegimeName
+from lcm.typing import ReferenceName, RegimeName
 
 _CORE_PROGRAM_VERSION = 7
 _INT32_MAX = 2_147_483_647
@@ -416,17 +417,13 @@ class CoreBuildContext:
     """Immutable inputs from which a core builds its dynamic argument mapping."""
 
     state_action_space: StateActionSpace | None
-    next_regime_to_V_arr: Mapping[RegimeName, FloatND | jax.ShapeDtypeStruct]
+    next_regime_to_V_arr: Mapping[RegimeName, ValueTemplate]
     next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload]
     flat_params: Mapping[RegimeName, FlatRegimeParams | FlatEdgeParams]
     period: int
     ages: TimeAxis | None
-    edge_regime_to_V_arr: Mapping[RegimeName, FloatND | jax.ShapeDtypeStruct] | None = (
-        None
-    )
-    same_period_regime_to_V_arr: (
-        Mapping[RegimeName, FloatND | jax.ShapeDtypeStruct] | None
-    ) = None
+    edge_regime_to_V_arr: Mapping[RegimeName, ValueTemplate] | None = None
+    same_period_regime_to_V_arr: Mapping[RegimeName, ValueTemplate] | None = None
 
     def __post_init__(self) -> None:
         """Snapshot caller-owned mappings and reject ambiguous period values."""

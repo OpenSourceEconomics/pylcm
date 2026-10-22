@@ -99,6 +99,7 @@ from _lcm.typing import (
     ReferenceName,
     RegimeName,
     StateName,
+    ValueTemplate,
 )
 from lcm._solver_api.capabilities import SolverExecutionCapabilities
 from lcm.exceptions import ExecutionPlanningError
@@ -381,9 +382,7 @@ class GridSearch(Solver):
                     "co_map_state_names": context.co_map_state_names,
                     # Periods sharing one `Q_and_F` share its target tuple.
                     "co_map_v_arr_in_axes": tuple(
-                        MappingProxyType(
-                            {name: axes[name] for name in target_regimes}
-                        )
+                        MappingProxyType({name: axes[name] for name in target_regimes})
                         for axes in context.co_map_v_arr_in_axes
                     ),
                     "stakeholders": context.stakeholders,
@@ -880,13 +879,11 @@ class _GridSearchArgumentBuilder:
 
     def __call__(
         self, context: CoreBuildContext
-    ) -> Mapping[
-        ReferenceName, QAndFArg | Mapping[RegimeName, FloatND | jax.ShapeDtypeStruct]
-    ]:
+    ) -> Mapping[ReferenceName, QAndFArg | Mapping[RegimeName, ValueTemplate]]:
         """Return the exact kwargs shared by lowering and the runtime call."""
         state_action_space = cast("StateActionSpace", context.state_action_space)
         next_regime_to_V_arr = cast(
-            "Mapping[RegimeName, FloatND | jax.ShapeDtypeStruct]", context.next_regime_to_V_arr
+            "Mapping[RegimeName, ValueTemplate]", context.next_regime_to_V_arr
         )
         flat_params = cast("FlatParams", context.flat_params)
         ages = cast("TimeAxis", context.ages)
@@ -896,13 +893,13 @@ class _GridSearchArgumentBuilder:
                 {name: raw_next_regime_to_V_arr[name] for name in self.target_regimes}
             ),
             edge_regime_to_V_arr=cast(
-                "Mapping[RegimeName, FloatND | jax.ShapeDtypeStruct] | None",
+                "Mapping[RegimeName, ValueTemplate] | None",
                 context.edge_regime_to_V_arr,
             ),
         )
         arguments: dict[
             ReferenceName,
-            QAndFArg | Mapping[RegimeName, FloatND | jax.ShapeDtypeStruct],
+            QAndFArg | Mapping[RegimeName, ValueTemplate],
         ] = {
             **dict(state_action_space.states),
             **dict(state_action_space.actions),
@@ -921,7 +918,7 @@ class _GridSearchArgumentBuilder:
                 )
                 if context.same_period_regime_to_V_arr is None
                 else cast(
-                    "Mapping[RegimeName, FloatND | jax.ShapeDtypeStruct]",
+                    "Mapping[RegimeName, ValueTemplate]",
                     context.same_period_regime_to_V_arr,
                 )
             )
@@ -940,9 +937,9 @@ class _GridSearchArgumentBuilder:
     def _with_edge_substitution(
         self,
         *,
-        next_regime_to_V_arr: Mapping[RegimeName, FloatND | jax.ShapeDtypeStruct],
-        edge_regime_to_V_arr: Mapping[RegimeName, FloatND | jax.ShapeDtypeStruct] | None,
-    ) -> Mapping[RegimeName, FloatND | jax.ShapeDtypeStruct]:
+        next_regime_to_V_arr: Mapping[RegimeName, ValueTemplate],
+        edge_regime_to_V_arr: Mapping[RegimeName, ValueTemplate] | None,
+    ) -> Mapping[RegimeName, ValueTemplate]:
         """Replace gated targets' raw values with their continuation objects."""
         if not self.edge_target_regimes:
             return next_regime_to_V_arr
@@ -967,7 +964,7 @@ class _GridSearchArgumentBuilder:
     def _edge_reference_args(
         self,
         *,
-        next_regime_to_V_arr: Mapping[RegimeName, FloatND | jax.ShapeDtypeStruct],
+        next_regime_to_V_arr: Mapping[RegimeName, ValueTemplate],
         flat_params: FlatParams,
     ) -> dict[
         ReferenceName,

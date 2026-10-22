@@ -25,6 +25,7 @@ from typing import Literal, NotRequired, TypedDict, TypeGuard, cast
 
 import cloudpickle
 import jax
+import jax.numpy as jnp
 import numpy as np
 
 from _lcm.engine import Regime, StateActionSpace, _RegimeSharding
@@ -89,7 +90,7 @@ from _lcm.time import TimeAxis, age_at
 from _lcm.typing import FlatParams, RegimeName, ValueND
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import ArtifactKey, KernelOutput
-from lcm.typing import ContinuousState, DiscreteState
+from lcm.typing import ContinuousState, DiscreteState, FloatND
 
 # How faithfully a replay reproduced the captured run:
 # - `logical` — leaves agree in tree, shape and dtype; placement is the
@@ -1214,7 +1215,7 @@ def compile_declared_period_cores(
         flat_params=flat_params,
         process_grid_resolver=process_grid_resolver,
     )
-    next_regime_to_V_arr, next_regime_to_continuation, next_edge_to_V_arr = (
+    V_templates, next_regime_to_continuation, edge_templates = (
         _build_continuation_templates(
             regimes=regimes,
             flat_params=flat_params,
@@ -1222,6 +1223,10 @@ def compile_declared_period_cores(
             process_grid_resolver=process_grid_resolver,
         )
     )
+    # The cores are compiled against concrete inputs, which no solve has produced
+    # here; zeros laid out like the templates stand in for them while compiling.
+    next_regime_to_V_arr = _zeros_like_templates(templates=V_templates)
+    next_edge_to_V_arr = _zeros_like_templates(templates=edge_templates)
     kernel_kwargs: PeriodCompileInputs = {
         "regime_name": regime_name,
         "period": period,
@@ -1361,4 +1366,18 @@ def _declared_compilation(
         peak_bytes=peak_bytes,
         memory=compiler_memory_bytes(compiled=core.compiled),
         compiled=compiled,
+    )
+
+
+def _zeros_like_templates[Key: Hashable](
+    *, templates: Mapping[Key, jax.ShapeDtypeStruct]
+) -> MappingProxyType[Key, FloatND]:
+    """Return a zero array laid out like each abstract template, under its key."""
+    return MappingProxyType(
+        {
+            key: jnp.zeros(
+                template.shape, dtype=template.dtype, device=template.sharding
+            )
+            for key, template in templates.items()
+        }
     )

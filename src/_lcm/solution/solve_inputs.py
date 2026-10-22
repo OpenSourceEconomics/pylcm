@@ -17,9 +17,8 @@ from _lcm.execution.liveness import PlannedInputLiveness
 from _lcm.execution.scheduler import BufferRegistry, replace_leaf_by_identity
 from _lcm.execution.value_transfer import ValueArtifactAddress, ValueArtifactKind
 from _lcm.solution.contract import ContinuationPayload
-from _lcm.typing import RegimeName
+from _lcm.typing import RegimeName, ValueTemplate
 from lcm.solver_api import ArtifactKey, ContinuationReader
-from lcm.typing import FloatND
 
 type EdgeKey = tuple[RegimeName, RegimeName]
 
@@ -33,7 +32,7 @@ class SolveInputMappings:
     one.
     """
 
-    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND | jax.ShapeDtypeStruct]
+    next_regime_to_V_arr: MappingProxyType[RegimeName, ValueTemplate]
     """Next-period value per regime.
 
     The rolling mapping holds only computed values, keyed by the regimes solved
@@ -44,7 +43,7 @@ class SolveInputMappings:
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload]
     """Next-period continuation payload per publishing regime."""
 
-    next_edge_to_V_arr: MappingProxyType[EdgeKey, FloatND | jax.ShapeDtypeStruct]
+    next_edge_to_V_arr: MappingProxyType[EdgeKey, ValueTemplate]
     """Next-period gated continuation per `(source, target)` edge.
 
     The rolling mapping holds only the edges folded in the period just
