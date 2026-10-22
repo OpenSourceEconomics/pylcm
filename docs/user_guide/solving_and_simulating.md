@@ -480,6 +480,11 @@ collective.
 
 ### Additional targets
 
+Functions used solely for reporting must be registered with
+`output_only_functions=` when building the model or regime. Functions already read
+by the model are available without that declaration. See
+[Output-only functions](defining_models.md#output-only-functions).
+
 Compute functions and constraints alongside the standard output:
 
 ```python
