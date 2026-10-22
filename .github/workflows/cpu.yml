@@ -67,12 +67,22 @@ jobs:
             python-version: '3.14'
             leg: fp64-macos
             shard: 1
-            shards: 2
+            shards: 4
           - os: macos-latest
             python-version: '3.14'
             leg: fp64-macos
             shard: 2
-            shards: 2
+            shards: 4
+          - os: macos-latest
+            python-version: '3.14'
+            leg: fp64-macos
+            shard: 3
+            shards: 4
+          - os: macos-latest
+            python-version: '3.14'
+            leg: fp64-macos
+            shard: 4
+            shards: 4
           - os: windows-latest
             python-version: '3.14'
             leg: fp64-windows

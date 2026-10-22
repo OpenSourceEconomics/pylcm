@@ -35,7 +35,7 @@ from _lcm.reachability import ModelReachability
 from _lcm.regime_building.collective import NO_ROLE, build_role_vocabulary
 from _lcm.regime_law import RegimeLaws
 from _lcm.simulation.initial_conditions import MISSING_CAT_CODE, PSEUDO_STATE_NAMES
-from _lcm.time import TimeAxis, coordinate_kind
+from _lcm.time import TimeAxis, coordinate_kind, specialization_coordinate_at
 from _lcm.typing import (
     FlatParams,
     FunctionName,
@@ -60,6 +60,7 @@ from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.transition import (
     AgeCaseLaw,
+    AgeSpecializedFunction,
     AgeSpecializedGrid,
     ByAge,
     JointTransition,
@@ -468,11 +469,29 @@ def convert_series_in_params(
             )
             continue
         user_regime = user_regimes[regime_name]
-        solve_funcs = user_regime.get_all_functions(
-            phase="solve", law=laws[regime_name]
+        regime_periods = (
+            tuple(range(ages.n_periods))
+            if required_periods_by_regime is None
+            else required_periods_by_regime.get(regime_name, ())
         )
-        simulate_funcs = user_regime.get_all_functions(
-            phase="simulate", law=laws[regime_name]
+        solve_funcs, simulate_funcs = (
+            _resolve_age_specialized(
+                functions=user_regime.get_all_functions(
+                    phase=phase, law=laws[regime_name]
+                ),
+                ages=ages,
+                periods=regime_periods
+                if reachability is None
+                else tuple(
+                    period
+                    for period in regime_periods
+                    if regime_name
+                    in reachability.for_phase(
+                        "solution" if phase == "solve" else "simulation"
+                    ).active_regimes_by_period[period]
+                ),
+            )
+            for phase in ("solve", "simulate")
         )
         all_funcs: dict[str, _ParamConsumer] = {**solve_funcs, **simulate_funcs}
         for name in solve_funcs.keys() & simulate_funcs.keys():
@@ -900,6 +919,33 @@ def _resolve_param_consumer(
             func=all_funcs.get(resolved), param_name=param_name, phase=phase
         ),
         cast("FunctionName", resolved),
+    )
+
+
+def _resolve_age_specialized(
+    *,
+    functions: Mapping[str, UserFunction],
+    ages: TimeAxis,
+    periods: tuple[int, ...],
+) -> Mapping[str, UserFunction]:
+    """Replace each `AgeSpecializedFunction` by its function at the first period.
+
+    A marker publishes a generic signature and no source, so its parameters'
+    indexing and use are read off a function it builds. Every age's function has
+    one call signature and one body, so any period the phase reads the regime at
+    serves; a marker is built nowhere else, since its factory may hold only those
+    periods. Without such a period the marker is never read and stays as it is.
+    """
+    if not periods:
+        return functions
+    coordinate = specialization_coordinate_at(ages=ages, period=periods[0])
+    return MappingProxyType(
+        {
+            name: func.build(coordinate)
+            if isinstance(func, AgeSpecializedFunction)
+            else func
+            for name, func in functions.items()
+        }
     )
 
 
