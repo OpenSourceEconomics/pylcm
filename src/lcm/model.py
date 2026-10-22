@@ -9,6 +9,7 @@ import threading
 import uuid
 from collections import OrderedDict
 from collections.abc import Callable, Iterator, Mapping
+from difflib import SequenceMatcher
 from pathlib import Path
 from types import MappingProxyType
 from typing import (
@@ -398,6 +399,7 @@ from lcm.typing import (
     IntND,
     Phase,
     PRNGKey,
+    ReferenceName,
     UserFacingParamsTemplate,
     UserFunction,
     UserInitialConditions,
@@ -496,6 +498,9 @@ class _PickledModel(TypedDict):
     reachability: ModelReachability
     _graph: ModelGraph
     _params_template: ParamsTemplate
+    _param_name_candidates: NotRequired[
+        MappingProxyType[RegimeName, MappingProxyType[ReferenceName, str]]
+    ]
     _regimes: MappingProxyType[RegimeName, Regime]
     stakeholder_names_to_ids: MappingProxyType[str, int]
     enable_jit: bool
@@ -743,6 +748,11 @@ class Model:
 
     _params_template: ParamsTemplate
     """Template for the model parameters."""
+
+    _param_name_candidates: MappingProxyType[
+        RegimeName, MappingProxyType[ReferenceName, str]
+    ]
+    """Declared names and their categories, retained before variable pruning."""
 
     _transition_only_shock_names: frozenset[str]
     """Folded IID shocks no regime reads within its period.
@@ -1030,6 +1040,7 @@ class Model:
             output_only_functions=output_only_functions,
         )
         declared_function_regimes = merged_regimes
+        self._param_name_candidates = _get_param_name_candidates(merged_regimes)
         validate_time_declarations(regimes=merged_regimes, laws=laws, ages=self._time)
         validate_regimes(regimes=merged_regimes, laws=laws)
         # What each regime declares before demand prunes any: a declared law
@@ -1464,6 +1475,7 @@ class Model:
             reachability=self.reachability,
             _graph=self._graph,
             _params_template=self._params_template,
+            _param_name_candidates=self._param_name_candidates,
             _regimes=self._regimes,
             stakeholder_names_to_ids=self.stakeholder_names_to_ids,
             enable_jit=self.enable_jit,
@@ -1488,6 +1500,9 @@ class Model:
         Resealing records the bindings read by this process's copies of the callables.
         """
         self.__dict__.update(state)
+        self._param_name_candidates = state.get(
+            "_param_name_candidates", _get_param_name_candidates(self.user_regimes)
+        )
         self._transition_only_shock_names = state.get(
             "_transition_only_shock_names", frozenset()
         )
@@ -1626,13 +1641,27 @@ class Model:
         caller may fill in.
 
         """
-        return {
+        template = {
             regime_name: {
                 name: {arg: _readable_template(node) for arg, node in branch.items()}
                 for name, branch in regime_template.items()
             }
             for regime_name, regime_template in self._params_template.items()
         }
+        for regime_name, regime in self.user_regimes.items():
+            for name, branch in template[regime_name].items():
+                state = regime.states.get(name)
+                is_imputation = isinstance(state, Phased) and callable(state.solve)
+                if is_imputation or name not in {
+                    *regime.states,
+                    *regime.actions,
+                    "taste_shocks",
+                }:
+                    _note_near_miss_params(
+                        template=branch,
+                        candidates=self._param_name_candidates[regime_name],
+                    )
+        return template
 
     @beartype(conf=PARAMS_CONF)
     def _compile_period_cores(
@@ -5464,6 +5493,60 @@ def _readable_template(node: RegimeParamsTemplateNode) -> _UserFacingTemplateNod
     if isinstance(node, str):
         return node
     return {key: _readable_template(inner) for key, inner in node.items()}
+
+
+def _note_near_miss_params(
+    *,
+    template: dict[str, _UserFacingTemplateNode],
+    candidates: Mapping[ReferenceName, str],
+) -> None:
+    """Note arguments close to a regime's vocabulary in the display template."""
+    for arg_name, node in template.items():
+        if isinstance(node, dict):
+            _note_near_miss_params(template=node, candidates=candidates)
+            continue
+        closest = max(
+            candidates,
+            key=lambda name: SequenceMatcher(None, arg_name, name).ratio(),
+            default=None,
+        )
+        if closest is not None and SequenceMatcher(None, arg_name, closest).ratio() >= 0.8:
+            template[arg_name] = (
+                f"{node}  [close to {candidates[closest]} {closest!r}; typo?]"
+            )
+
+
+def _get_param_name_candidates(
+    regimes: Mapping[RegimeName, UserRegime],
+) -> MappingProxyType[RegimeName, MappingProxyType[ReferenceName, str]]:
+    """Keep each regime's declared state, action and callable names for typo notes."""
+    return MappingProxyType(
+        {
+            regime_name: MappingProxyType(
+                {
+                    **{
+                        name: "state"
+                        for name, state in regime.states.items()
+                        if state is not None
+                    },
+                    **{
+                        name: "action"
+                        for name, action in regime.actions.items()
+                        if action is not None
+                    },
+                    **{
+                        name: "function"
+                        for name, func in {
+                            **regime.decomposed_functions,
+                            **regime.decomposed_constraints,
+                        }.items()
+                        if func is not None
+                    },
+                }
+            )
+            for regime_name, regime in regimes.items()
+        }
+    )
 
 
 def _validate_sharded_state_capability(

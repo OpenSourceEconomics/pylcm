@@ -1,21 +1,35 @@
 """Tests for runtime-supplied grid points (IrregSpacedGrid)."""
 
+import warnings
+from collections.abc import Mapping
+
+import cloudpickle
 import jax.numpy as jnp
 import numpy as np
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
-from _lcm.grids import IrregSpacedGrid
+from _lcm.grids import Grid, IrregSpacedGrid
 from lcm import (
     AgeGrid,
     DeterministicTransition,
     LinSpacedGrid,
     Model,
+    Phased,
     Transition,
     categorical,
 )
+from lcm.exceptions import InvalidParamsError
 from lcm.regime import Regime as UserRegime
-from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
+from lcm.typing import (
+    ContinuousAction,
+    ContinuousState,
+    FloatND,
+    FunctionName,
+    ScalarInt,
+    UserFunction,
+    UserParams,
+)
 
 
 @categorical(ordered=False)
@@ -55,17 +69,28 @@ _EDGES = {
 }
 
 
-def _make_model(*, wealth_grid=None):
+def _make_model(
+    *,
+    wealth_grid: Grid | Phased | None = None,
+    utility: UserFunction | Phased = _utility,
+    functions: Mapping[FunctionName, UserFunction] | None = None,
+    constraints: Mapping[FunctionName, UserFunction] | None = None,
+    fixed_params: UserParams | None = None,
+) -> Model:
     """Create a simple 2-regime model for testing."""
     if wealth_grid is None:
         wealth_grid = LinSpacedGrid(start=1, stop=10, n_points=5)
 
     alive = UserRegime(
-        functions={"utility": _utility},
+        functions={"utility": utility, **(functions or {})},
         states={"wealth": wealth_grid},
         state_transitions={"wealth": _next_wealth},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5, n_points=5)},
-        constraints={"borrowing_constraint": _borrowing_constraint},
+        constraints=(
+            constraints
+            if constraints is not None
+            else {"borrowing_constraint": _borrowing_constraint}
+        ),
     )
     dead = UserRegime(
         functions={"utility": lambda: 0.0},
@@ -77,6 +102,7 @@ def _make_model(*, wealth_grid=None):
         edges=_EDGES,
         regime_id_class=RegimeId,
         initial_nodes={0: "alive"},
+        fixed_params=fixed_params or {},
     )
 
 
@@ -146,6 +172,210 @@ def test_get_params_template_returns_a_fresh_copy_on_each_call():
     model.get_params_template()["alive"]["next_wealth"]["interest_rate"] = 0.05
     template = model.get_params_template()
     assert template["alive"]["next_wealth"]["interest_rate"] == "float"
+
+
+def _template_resources(wealth: ContinuousState) -> FloatND:
+    return wealth
+
+
+def _template_utility(
+    *,
+    consumption: ContinuousAction,
+    resources: FloatND,
+    consumtion: FloatND,
+    wealt: FloatND,
+    resourcs: FloatND,
+    coefficient: FloatND,
+) -> FloatND:
+    return consumption + resources + consumtion + wealt + resourcs + coefficient
+
+
+def test_get_params_template_notes_near_miss_names_without_changing_params() -> None:
+    """Near state, action and function names are noted only in the returned copy."""
+    with warnings.catch_warnings(record=True) as recorded:
+        model = _make_model(
+            utility=_template_utility,
+            functions={"resources": _template_resources},
+        )
+    assert not recorded
+    assert model.get_params_template()["alive"]["utility"] == {
+        "consumtion": "FloatND  [close to action 'consumption'; typo?]",
+        "wealt": "FloatND  [close to state 'wealth'; typo?]",
+        "resourcs": "FloatND  [close to function 'resources'; typo?]",
+        "coefficient": "FloatND",
+    }
+    assert model._params_template["alive"]["utility"] == {
+        "consumtion": "FloatND",
+        "wealt": "FloatND",
+        "resourcs": "FloatND",
+        "coefficient": "FloatND",
+    }
+    model.get_params_template()["alive"]["utility"]["consumtion"] = 0.5
+    assert model.get_params_template()["alive"]["utility"]["consumtion"] == (
+        "FloatND  [close to action 'consumption'; typo?]"
+    )
+    with pytest.raises(InvalidParamsError, match="Missing required parameter"):
+        model.solve(
+            params={"discount_factor": 0.95, "interest_rate": 0.05},
+            log_level="debug",
+        )
+
+
+def _template_constraint(*, consumption: ContinuousAction, consumtion: FloatND) -> FloatND:
+    return consumption <= consumtion
+
+
+def test_get_params_template_notes_constraint_arguments() -> None:
+    """A constraint's unresolved argument receives the same near-miss note."""
+    model = _make_model(constraints={"limit": _template_constraint})
+    assert model.get_params_template()["alive"]["limit"] == {
+        "consumtion": "FloatND  [close to action 'consumption'; typo?]"
+    }
+
+
+def _template_phase_utility(
+    *, consumption: ContinuousAction, consumtion: FloatND
+) -> FloatND:
+    return consumption + consumtion
+
+
+def test_get_params_template_notes_both_phase_variants() -> None:
+    """Both phases contribute arguments to the annotated user-facing template."""
+    model = _make_model(utility=Phased(solve=_utility, simulate=_template_phase_utility))
+    assert model.get_params_template()["alive"]["utility"] == {
+        "consumtion": "FloatND  [close to action 'consumption'; typo?]"
+    }
+
+
+def test_get_params_template_omits_fixed_near_miss_parameters() -> None:
+    """A bound near-miss argument needs no runtime template entry."""
+    model = _make_model(
+        utility=_template_phase_utility,
+        fixed_params={"consumtion": 0.5},
+    )
+    assert model.get_params_template()["alive"].get("utility", {}) == {}
+
+
+def _template_threshold_utility(*, abcde: FloatND, abxde: FloatND, abxyf: FloatND) -> FloatND:
+    return abcde + abxde + abxyf
+
+
+def test_get_params_template_uses_the_sequence_matcher_threshold() -> None:
+    """A match at the similarity threshold is noted; a weaker match stays plain."""
+    model = Model(
+        regimes={
+            "alive": UserRegime(
+                functions={"utility": _template_threshold_utility},
+                states={"abcde": LinSpacedGrid(start=0, stop=1, n_points=2)},
+            ),
+            "dead": UserRegime(functions={"utility": lambda: 0.0}),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        edges={},
+        regime_id_class=RegimeId,
+        initial_nodes={0: "alive"},
+    )
+    assert model.get_params_template()["alive"]["utility"] == {
+        "abxde": "FloatND  [close to state 'abcde'; typo?]",
+        "abxyf": "FloatND",
+    }
+
+
+def _template_unrelated_utility(resourcs: FloatND) -> FloatND:
+    return resourcs
+
+
+def test_get_params_template_ignores_masked_and_other_regime_names() -> None:
+    """A masked model helper available in another regime supplies no suggestion."""
+    model = Model(
+        regimes={
+            "alive": UserRegime(
+                functions={"utility": _template_unrelated_utility, "resources": None}
+            ),
+            "dead": UserRegime(functions={"utility": lambda resources: resources}),
+        },
+        functions={"resources": lambda: 1.0},
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        edges={},
+        regime_id_class=RegimeId,
+        initial_nodes={0: "alive"},
+    )
+    assert model.get_params_template()["alive"]["utility"] == {"resourcs": "FloatND"}
+
+
+def _template_grid_utility(*, consumption: ContinuousAction, point: FloatND) -> FloatND:
+    return consumption + point
+
+
+def test_get_params_template_leaves_runtime_grid_entries_plain() -> None:
+    """Runtime-grid metadata is not an unresolved function argument."""
+    model = _make_model(
+        wealth_grid=IrregSpacedGrid(n_points=5),
+        utility=_template_grid_utility,
+        functions={"point": _template_resources},
+    )
+    assert model.get_params_template()["alive"]["wealth"]["points"] == "Float1D"
+
+
+def _template_pruned_utility(consumtion: FloatND) -> FloatND:
+    return consumtion
+
+
+@pytest.mark.parametrize("variable_kind", ["state", "action"])
+def test_get_params_template_notes_pruned_broadcast_variables(variable_kind: str) -> None:
+    """A misspelling retains its hint when the unread broadcast variable is pruned."""
+    variables = {"consumption": LinSpacedGrid(start=0, stop=1, n_points=2)}
+    model = Model(
+        regimes={
+            "alive": UserRegime(functions={"utility": _template_pruned_utility}),
+            "dead": UserRegime(functions={"utility": lambda: 0.0}),
+        },
+        states=variables if variable_kind == "state" else {},
+        actions=variables if variable_kind == "action" else {},
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        edges={},
+        regime_id_class=RegimeId,
+        initial_nodes={0: "alive"},
+    )
+    assert "consumption" in model.pruned_variables["alive"]
+    assert model.get_params_template()["alive"]["utility"] == {
+        "consumtion": f"FloatND  [close to {variable_kind} 'consumption'; typo?]"
+    }
+    restored = cloudpickle.loads(cloudpickle.dumps(model))
+    assert restored.get_params_template() == model.get_params_template()
+
+
+def _template_constraint_reference_utility(
+    *, consumption: ContinuousAction, borrowing_contraint: FloatND
+) -> FloatND:
+    return consumption + borrowing_contraint
+
+
+def test_get_params_template_notes_near_constraint_names() -> None:
+    """An unresolved argument can suggest a nearby constraint function's name."""
+    model = _make_model(utility=_template_constraint_reference_utility)
+    assert model.get_params_template()["alive"]["utility"] == {
+        "borrowing_contraint": (
+            "FloatND  [close to function 'borrowing_constraint'; typo?]"
+        )
+    }
+
+
+def _template_impute_wealth(wealt: FloatND) -> ContinuousState:
+    return wealt
+
+
+def test_get_params_template_notes_carried_state_function_arguments() -> None:
+    """A carried state's solve function receives notes for its unresolved inputs."""
+    model = _make_model(
+        wealth_grid=Phased(
+            solve=_template_impute_wealth,
+            simulate=LinSpacedGrid(start=1, stop=10, n_points=5),
+        )
+    )
+    assert model.get_params_template()["alive"]["wealth"] == {
+        "wealt": "FloatND  [close to state 'wealth'; typo?]"
+    }
 
 
 def test_runtime_grid_in_params_template():
