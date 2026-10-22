@@ -43,7 +43,7 @@ from lcm.collective import (
     ValueDependentConstraint,
 )
 from lcm.decoupled import Decoupled
-from lcm.exceptions import RegimeInitializationError
+from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.phased import Phased
 from lcm.regime import (
     ConstraintEntry,
@@ -231,19 +231,22 @@ def bind_reading_regimes(
 
     Each regime binds its own copy of a process, so an adapter's process says
     which regime reads it, even where regimes share one declaration.
+
+    A name that is a process in one regime and a discrete variable elsewhere is
+    bound by the reading regime's own declaration: where the regime holds the
+    process, its value is a node and `<name>_code` its position; elsewhere the
+    name keeps its discrete grid, whose `<name>_code` is the category code.
     """
-    process_names = tuple(
-        name
-        for name, grid in value_grids.items()
-        if isinstance(grid, _ContinuousStochasticProcess | UnreadableProcessCode)
-    )
+    process_names = tuple(_declared_process_grids(regimes=regimes))
     return MappingProxyType(
         {
             regime_name: MappingProxyType(
                 {
                     **value_grids,
                     **{
-                        name: _local_process(regime=regime, name=name)
+                        name: _local_binding(
+                            regime=regime, name=name, global_grid=value_grids[name]
+                        )
                         for name in process_names
                     },
                 }
@@ -283,6 +286,62 @@ def process_code_reads(
             for regime_name, grids in value_grids_by_regime.items()
         }
     )
+
+
+def fail_if_a_fixed_entry_is_off_a_read_node(
+    *,
+    regimes: Mapping[RegimeName, UserRegime],
+    process_code_reads: Mapping[
+        RegimeName, Mapping[StateOrActionName, _ContinuousStochasticProcess]
+    ],
+) -> None:
+    """Refuse an entry law that names one value off the nodes its target reads.
+
+    A law that reads nothing has one value, known while the model builds. A
+    target reading `<name>_code` takes the position of a node, so that value
+    must be one of the target's nodes. A law that reads states is checked where
+    the simulation draws it.
+
+    Raises:
+        ModelInitializationError: If such a law names a value on none of the
+            target's nodes.
+
+    """
+    for source, regime in regimes.items():
+        for name, entry in regime.state_transitions.items():
+            if not isinstance(entry, Mapping):
+                continue
+            for target, law in entry.items():
+                process = process_code_reads.get(target, {}).get(name)
+                if (
+                    process is None
+                    or not callable(law)
+                    or isinstance(law, StochasticTransition | Phased)
+                    or [arg for arg in get_annotations(law) if arg != "return"]
+                ):
+                    continue
+                nodes = jnp.asarray(process.to_jax())
+                value = jnp.asarray(law(), dtype=nodes.dtype)
+                if not bool(jnp.any(value == nodes)):
+                    raise ModelInitializationError(
+                        f"The entry law of '{name}' from regime '{source}' into "
+                        f"regime '{target}' names {float(value)}, off the process's "
+                        f"nodes {nodes.tolist()}: '{target}' reads its node "
+                        f"position `{name}{CODE_SUFFIX}`, which exists only at a "
+                        "node. Enter at one of its nodes."
+                    )
+
+
+def _local_binding(
+    *, regime: UserRegime, name: StateOrActionName, global_grid: AdapterGrid
+) -> AdapterGrid:
+    """Return the grid `name` is read through in `regime`, by its own declaration."""
+    local = _local_process(regime=regime, name=name)
+    if isinstance(local, UnreadableProcessCode) and isinstance(
+        global_grid, DiscreteGrid
+    ):
+        return global_grid
+    return local
 
 
 def _local_process(
