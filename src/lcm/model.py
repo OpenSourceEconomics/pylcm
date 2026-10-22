@@ -807,6 +807,7 @@ class Model:
         ),
         functions: Mapping[FunctionName, FunctionEntry] = MappingProxyType({}),
         constraints: Mapping[FunctionName, ConstraintEntry] = MappingProxyType({}),
+        output_only_functions: tuple[FunctionName, ...] = (),
         states: Mapping[StateName, StateEntry] = MappingProxyType({}),
         state_transitions: Mapping[StateName, StateTransitionEntry] = MappingProxyType(
             {}
@@ -862,6 +863,9 @@ class Model:
                 or regime level, never both; a regime-level `None` masks the
                 model entry).
             constraints: Model-level constraints; same merge rule.
+            output_only_functions: Functions retained solely for simulation
+                reporting, in every regime that defines the name. Declare a
+                name on the model or on its regime, never both.
             states: Model-level states; same merge rule. Broadcast states are
                 pruned per regime by DAG reachability (see
                 `pruned_variables`). Only states declared here may be named in
@@ -910,6 +914,7 @@ class Model:
                     derived_categoricals=derived_categoricals,
                     functions=functions,
                     constraints=constraints,
+                    output_only_functions=output_only_functions,
                     states=states,
                     state_transitions=state_transitions,
                     actions=actions,
@@ -1022,7 +1027,9 @@ class Model:
             user_regimes=regimes,
             laws=laws,
             model_slots=model_slots,
+            output_only_functions=output_only_functions,
         )
+        declared_function_regimes = merged_regimes
         validate_time_declarations(regimes=merged_regimes, laws=laws, ages=self._time)
         validate_regimes(regimes=merged_regimes, laws=laws)
         # What each regime declares before demand prunes any: a declared law
@@ -1142,6 +1149,8 @@ class Model:
             targets_by_phase=schedules.targets_by_phase,
             visited_periods_by_regime=schedules.visited_periods_by_regime,
             removed_edge_reads=prepared_graph.removed_edge_reads,
+            declared_function_regimes=declared_function_regimes,
+            declared_transitions=self._declared_transitions,
         )
         # A validated category class lists its codes 0, 1, ... in field order.
         self.regime_names_to_ids = get_category_codes(regime_id_class)
