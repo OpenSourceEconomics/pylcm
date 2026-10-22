@@ -33,6 +33,7 @@ from _lcm.params.processing import (
     create_params_template,
     materialize_granular_transition_params,
 )
+from _lcm.params.regime_template import iter_transition_callables
 from _lcm.params.sequence_leaf import SequenceLeaf
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.reachability import PhaseName
@@ -43,6 +44,7 @@ from _lcm.regime_building.age_normalization import (
 from _lcm.regime_building.age_specialization import resolve_node
 from _lcm.regime_building.broadcast import (
     compute_kept_variables,
+    engine_function_names,
     root_functions,
     states_read_through_their_draw,
 )
@@ -80,7 +82,11 @@ from _lcm.typing import (
 )
 from _lcm.utils.error_messages import format_messages, path_segment_name_errors
 from _lcm.utils.functools import is_user_function
-from lcm.exceptions import InvalidParamsError, ModelInitializationError
+from lcm.exceptions import (
+    InvalidParamsError,
+    ModelInitializationError,
+    RegimeInitializationError,
+)
 from lcm.params import MappingLeaf
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
@@ -355,6 +361,10 @@ def validate_model_inputs(
     removed_edge_reads: Mapping[
         RegimeName, Mapping[str, tuple[RegimeName, ...]]
     ] = MappingProxyType({}),
+    declared_function_regimes: Mapping[RegimeName, UserRegime] | None = None,
+    declared_transitions: Mapping[
+        RegimeName, tuple[Transition, ...]
+    ] = MappingProxyType({}),
 ) -> None:
     """Validate model constructor inputs.
 
@@ -423,6 +433,16 @@ def validate_model_inputs(
             )
         )
 
+    _validate_function_usage(
+        user_regimes=solver_validation_regimes,
+        declared_regimes=declared_function_regimes or solver_validation_regimes,
+        laws=laws,
+        declared_transitions=declared_transitions,
+        ages=ages,
+        active_periods_by_regime=active_periods_by_regime,
+        visited_periods_by_regime=visited_periods_by_regime,
+    )
+
     error_messages = list(
         _reserved_age_errors(
             user_regimes=solver_validation_regimes, laws=laws, ages=ages
@@ -483,6 +503,108 @@ def validate_model_inputs(
     if error_messages:
         msg = format_messages(error_messages)
         raise ModelInitializationError(msg)
+
+
+def _validate_function_usage(
+    *,
+    user_regimes: Mapping[RegimeName, UserRegime],
+    declared_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
+    declared_transitions: Mapping[RegimeName, tuple[Transition, ...]],
+    ages: TimeAxis,
+    active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
+    visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None,
+) -> None:
+    """Require every declared function to be read or retained for reporting.
+
+    Reads include other functions, even reporting functions, and every declared
+    edge law before horizon-dependent lowering removes dormant cases.
+    """
+    reads = _declared_edge_function_reads(
+        regime_names=tuple(user_regimes), declared_transitions=declared_transitions
+    )
+
+    errors: list[str] = []
+    for name, regime in user_regimes.items():
+        declared = declared_regimes[name]
+        # Declarations retain phase variants that a value-only regime does not run;
+        # finalization contributes generated case and resource producers.
+        complete = declared.replace(
+            functions={**regime.functions, **declared.functions},
+        )
+        direct = reads[name]
+        direct.update(engine_function_names(regime))
+        direct.update(regime.decomposed_constraints)
+        direct.update(regime.value_constraints)
+        direct.update(regime.derived_categoricals)
+        direct.update(
+            ("utility",)
+            if regime.stakeholders is None
+            else tuple(f"utility_{stakeholder}" for stakeholder in regime.stakeholders)
+        )
+        for phase in ("solve", "simulate"):
+            functions = dict(complete.get_all_functions(phase=phase, law=laws[name]))
+            functions |= {
+                key: constraint.as_function(pool=functions)
+                for key, constraint in normalize_constraints(
+                    constraints=cast(
+                        "Mapping[FunctionName, ConstraintLike]",
+                        complete.decomposed_constraints,
+                    )
+                ).items()
+            }
+            roots = root_functions(
+                regime_name=name, regime=regime, laws=laws, phase=phase
+            )
+            functions |= {
+                key: func
+                for key, func in roots.items()
+                if not key.startswith("__output_only__")
+            }
+            periods = active_periods_by_regime.get(name, ())
+            if phase == "simulate" and visited_periods_by_regime is not None:
+                periods = visited_periods_by_regime.get(name, ()) or periods
+            coordinate = specialization_coordinate_at(
+                ages=ages, period=(periods or (0,))[0]
+            )
+            for func in functions.values():
+                if callable(func):
+                    direct.update(
+                        inspect.signature(
+                            resolve_node(node=func, age=coordinate)
+                        ).parameters
+                    )
+
+        outputs = set(regime.output_only_functions)
+        read_outputs = sorted(outputs & direct)
+        if read_outputs:
+            errors.append(
+                f"Regime '{name}' reads {read_outputs}; remove those names from "
+                "output_only_functions=."
+            )
+        unread = sorted(set(regime.decomposed_functions) - direct - outputs)
+        if unread:
+            errors.append(
+                f"Regime '{name}' has unread functions {unread}. Remove them, or "
+                "declare them in output_only_functions=."
+            )
+    if errors:
+        raise RegimeInitializationError(format_messages(errors))
+
+
+def _declared_edge_function_reads(
+    *,
+    regime_names: tuple[RegimeName, ...],
+    declared_transitions: Mapping[RegimeName, tuple[Transition, ...]],
+) -> dict[RegimeName, set[FunctionName]]:
+    """Collect reads where each declared edge callable is evaluated."""
+    reads: dict[RegimeName, set[FunctionName]] = {name: set() for name in regime_names}
+    for source, declarations in declared_transitions.items():
+        for declaration in declarations:
+            for path, func, gate in iter_transition_callables(declaration):
+                owner = source if gate is None else path[0]
+                reads[owner].update(inspect.signature(func).parameters)
+    return reads
 
 
 def _reserved_age_errors(

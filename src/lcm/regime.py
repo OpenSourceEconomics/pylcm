@@ -88,6 +88,7 @@ class _SlotsBesideFunctions(TypedDict, total=False):
     joint_transitions: Mapping[RegimeName, Mapping[str, JointTransition | Phased]]
     actions: Mapping[ActionName, ActionEntry]
     constraints: Mapping[FunctionName, ConstraintEntry]
+    output_only_functions: tuple[FunctionName, ...]
     derived_categoricals: Mapping[FunctionName, DiscreteGrid]
     solver: _solvers.Solver
     taste_shocks: ExtremeValueTasteShocks | None
@@ -217,6 +218,13 @@ class Regime:
     Constraints are phase-invariant: a phase-specific feasible set would let
     the simulated argmax range over actions the value function was never
     computed for, so `Phased` is rejected here.
+    """
+
+    output_only_functions: tuple[FunctionName, ...] = ()
+    """Functions retained solely for reporting after simulation.
+
+    Declare each name on the model or on this regime. A function read by the
+    model needs no declaration and cannot be named here.
     """
 
     derived_categoricals: Mapping[FunctionName, DiscreteGrid] = field(
