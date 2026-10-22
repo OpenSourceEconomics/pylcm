@@ -92,10 +92,19 @@ type AdaptableEntry = (
     | Mapping[str, JointTransition | Phased]
 )
 
-# The adapters built for one model: each authored function and encoding grid
-# (by identity) to the function and its adapter.
+# The adapters built for one model, keyed by every input of the adapter's
+# constructor: the authored function, the encoding grid, and each argument's
+# decoding grid, code variable and process grid (grids by identity). An equal key
+# means equal constructor inputs, so a shared adapter binds exactly as a fresh one.
 type AdapterMemo = dict[
-    tuple[int, int, tuple[tuple[str, int], ...]], tuple[UserFunction, ValueAdapter]
+    tuple[
+        int,
+        int,
+        tuple[tuple[str, int], ...],
+        tuple[tuple[str, str], ...],
+        tuple[tuple[str, int], ...],
+    ],
+    tuple[UserFunction, ValueAdapter],
 ]
 
 # The attributes an adapter publishes itself and never takes from its function.
@@ -486,7 +495,8 @@ def adapt_user_function(
         encode: The grid whose code the function's returned value names, for a
             deterministic law or a derived categorical of a value grid.
         adapters: The adapters already built for this model, so one authored
-            function with one encoding gets one adapter wherever it appears.
+            function gets one adapter wherever it reads the same grids with the
+            same encoding.
 
     Returns:
         The function the engine calls with codes.
@@ -522,10 +532,14 @@ def adapt_user_function(
         return func
     _fail_if_an_array_is_indexed_by_a_value(func=func, decoded=decoded)
     _fail_if_a_position_has_no_node(func=func, positions=positions, codes=codes)
-    # One callable read in two regimes binds each regime's own nodes.
+    # The key covers every constructor input, so an equal key means equal
+    # constructor inputs: one callable read in two regimes binds each regime's own
+    # grids unless both regimes bind the same ones.
     key = (
         id(func),
         id(encode),
+        tuple(sorted((name, id(grid)) for name, grid in decoded.items())),
+        tuple(sorted(codes.items())),
         tuple(sorted((name, id(grid)) for name, grid in positions.items())),
     )
     if adapters is not None and key in adapters:
@@ -540,7 +554,8 @@ def adapt_user_function(
         encode=encode,
     )
     if adapters is not None:
-        # The function is kept with its adapter, so its id cannot be reused.
+        # The adapter holds the function and every keyed grid, so no keyed id
+        # can be reused while the memo lives.
         adapters[key] = (func, adapter)
     return adapter
 
