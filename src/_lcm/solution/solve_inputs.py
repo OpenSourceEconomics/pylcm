@@ -162,7 +162,7 @@ def _register_known(
     *,
     registry: BufferRegistry,
     ledger: PlannedInputLiveness,
-    array: NextValue,
+    array: jax.Array | jax.ShapeDtypeStruct,
     artifact: ValueArtifactAddress,
 ) -> None:
     """Register one array under one key when the ledger plans that key."""

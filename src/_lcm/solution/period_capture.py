@@ -36,6 +36,7 @@ from types import MappingProxyType
 from typing import TypedDict
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 
 from _lcm.continuation import ContinuationPayload
@@ -386,6 +387,7 @@ def capture_kernel_inputs(
     """
     if capture_target != (regime_name, period):
         return
+    kernel_kwargs = materialize_value_templates(kernel_kwargs=kernel_kwargs)
 
     directory = Path(os.environ.get(_DIR_ENV, ".")) / f"{regime_name}@{period}"
     directory.mkdir(parents=True, exist_ok=True)
@@ -407,6 +409,38 @@ def capture_kernel_inputs(
             ),
         },
     )
+
+
+def materialize_value_templates(
+    *, kernel_kwargs: PeriodKernelKwargs
+) -> PeriodKernelKwargs:
+    """Replace each value template struct with the zeros it stands for.
+
+    A capture records concrete inputs: a `jax.ShapeDtypeStruct` carries a live
+    device sharding, which neither pickles nor converts to an archive array, and
+    its layout would go undescribed. The zeros are placed on the struct's
+    sharding, as the solve's own materialization places them.
+    """
+
+    def _materialize[Key](
+        values: Mapping[Key, NextValue],
+    ) -> MappingProxyType[Key, NextValue]:
+        return MappingProxyType(
+            {
+                key: jax.device_put(
+                    jnp.zeros(value.shape, dtype=value.dtype), value.sharding
+                )
+                if isinstance(value, jax.ShapeDtypeStruct)
+                else value
+                for key, value in values.items()
+            }
+        )
+
+    return {
+        **kernel_kwargs,
+        "next_regime_to_V_arr": _materialize(kernel_kwargs["next_regime_to_V_arr"]),
+        "next_edge_to_V_arr": _materialize(kernel_kwargs["next_edge_to_V_arr"]),
+    }
 
 
 def _period_layouts(
