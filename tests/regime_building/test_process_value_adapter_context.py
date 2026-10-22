@@ -1,8 +1,6 @@
-"""RT8: sharing a callable must preserve the reader's complete local binding.
+"""Sharing a callable must preserve the reader's complete local binding.
 
-This native-ready public-API regression is delivered after static review only.
-No project execution is claimed. Run the unchanged file under the project's
-native supported interpreter and conftest in both --precision=32 and =64.
+Public-API regression, run at both --precision=32 and --precision=64.
 
 Two terminal regimes use the same name z. Regime a holds the physical nodes
 (8, 9, 10, 11, 12) of a Normal process; regime b chooses values (10, 20) from a
