@@ -74,13 +74,16 @@ def clip_next_states(
     subjects: Bool1D,
     genuine: np.ndarray,
     memory: SimulationMemory | None,
+    reported_period: int | None = None,
 ) -> StatesPerRegime:
     """Check raw realized states before applying explicit economic state clipping.
 
     `subjects` selects the rows this source advances; `genuine` additionally marks
     the rows that stand for a distinct real subject, so alignment and grouping
-    duplicates are advanced and clipped but never counted.
+    duplicates are advanced and clipped but never counted. Off-grid reports name
+    `reported_period`, by default the transition's period `next_period - 1`.
     """
+    period = next_period - 1 if reported_period is None else reported_period
     points: dict[RegimeName, dict[StateName, Float1D]] = {}
     for target in targets:
         regime = regimes[target]
@@ -121,7 +124,7 @@ def clip_next_states(
                                 count=int(counts[1]),
                                 regime=source,
                                 target=target,
-                                period=next_period - 1,
+                                period=period,
                                 state=name,
                                 phase="realized",
                             )
@@ -131,7 +134,7 @@ def clip_next_states(
                         rule=grid.off_grid,
                         regime=source,
                         target=target,
-                        period=next_period - 1,
+                        period=period,
                         state=name,
                         phase="realized",
                         logger=logger,

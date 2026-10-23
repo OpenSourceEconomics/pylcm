@@ -31,7 +31,7 @@ from lcm import (
     Transition,
     categorical,
 )
-from lcm.exceptions import ExecutionPlanningError, NoFeasibleActionError
+from lcm.exceptions import NoFeasibleActionError
 from lcm.solver_api import DISSOLUTION_FLAG
 from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
@@ -87,16 +87,37 @@ def test_a_fallback_declared_first_still_receives_its_rerouted_rows(
     ]
 
 
-def test_targets_and_fallbacks_in_a_cycle_are_refused():
-    """`a` falls back to `b` and `b` to `a`: neither can run after the other."""
+def test_targets_and_fallbacks_in_a_cycle_simulate_when_no_household_is_rerouted():
+    """`a` falls back to `b` and `b` to `a`; every landing is feasible."""
     model = build_chain_model(
         order=("source", "a", "b", "c"),
         close_a=False,
         constrain_b=False,
         b_fallback="a",
     )
-    with pytest.raises(ExecutionPlanningError, match=r"\['a', 'b'\] form a cycle"):
-        simulate_chain(model=model, wages=np.array([1.0, 3.0]), runtime_checks=False)
+    result = simulate_chain(
+        model=model, wages=np.array([1.0, 3.0]), runtime_checks=False
+    )
+    panel = result.to_dataframe(use_categorical_codes=True)
+    rows = panel.loc[panel["period"] == 1].sort_values("subject_id")
+    assert list(zip(rows["regime_name"], rows["wage"], strict=True)) == [
+        ("a", 1.0),
+        ("b", 3.0),
+    ]
+
+
+def test_a_reroute_into_a_regime_that_already_ran_this_period_raises():
+    """`a` runs before `b` in the cycle; an empty landing in `b` cannot act in `a`."""
+    model = build_chain_model(
+        order=("source", "a", "b", "c"),
+        close_a=False,
+        constrain_b=True,
+        b_fallback="a",
+    )
+    with pytest.raises(
+        NoFeasibleActionError, match=r"'b', period 1.*'a', which already ran"
+    ):
+        simulate_chain(model=model, wages=np.array([2.25]), runtime_checks=False)
 
 
 @categorical(ordered=False)
