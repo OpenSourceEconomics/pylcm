@@ -2781,6 +2781,27 @@ jobs:
   # drop out of the required set until someone remembered to add it there too.
   # Fail-closed: every lane must have succeeded, and a skipped or cancelled lane
   # is not a success.
+  # Shards place a test file with no measured weight at its leg's median
+  # weight and still run it, so this run measures it. This gate stays red until
+  # the next commit's `ci-workload-weights` pre-commit hook records that
+  # measurement in `tests/ci/ci-workloads.json` (`tests/ci/workload_weights.py`).
+  workload-weights:
+    name: Check every shard file has a measured weight
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: prefix-dev/setup-pixi@v0.11.0
+        with:
+          pixi-version: v0.81.0
+          cache: true
+          environments: tests-cpu
+          activate-environment: true
+          frozen: true
+      - name: Check every shard file has a measured weight
+        run: pixi run --frozen -e tests-cpu python -m tests.ci.workload_weights check
   cpu:
     name: cpu
     needs:
@@ -2799,6 +2820,7 @@ jobs:
       - tests-slow-solution
       - tests-benchmarks
       - coverage
+      - workload-weights
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -2830,6 +2852,7 @@ jobs:
           echo "slow-solution: ${{needs.tests-slow-solution.result}}"
           echo "benchmarks: ${{needs.tests-benchmarks.result}}"
           echo "coverage: ${{needs.coverage.result}}"
+          echo "workload-weights: ${{needs.workload-weights.result}}"
           test "${{needs.tests.result}}" = "success"
           test "${{needs.tests-fp32.result}}" = "success"
           test "${{needs.tests-source-contract.result}}" = "success"
@@ -2845,3 +2868,4 @@ jobs:
           test "${{needs.tests-slow-solution.result}}" = "success"
           test "${{needs.tests-benchmarks.result}}" = "success"
           test "${{needs.coverage.result}}" = "success"
+          test "${{needs.workload-weights.result}}" = "success"

@@ -165,21 +165,20 @@ repos:
         files: ^(pyproject\.toml|pixi\.toml|pixi\.lock)$
         stages:
           - pre-push
-      # The sharder places a test file with no measured weight at the leg's
-      # median weight, which is right only until CI has measured the file.
-      # This refuses a push while a file the branch's last completed CPU run
-      # executed still has no weight, and prints the refresh commands. No pull
-      # request, no completed run, or no network passes with a line saying
-      # why; `LCM_CI_WEIGHTS_OVERRIDE="<reason>" git push` passes and prints
-      # the reason.
-      - id: ci-workloads-measured-weights
-        name: every test file the last CI run measured has a weight
-        entry: pixi run -e tests-cpu python -m tests.ci.check_measured_weights
+      # Shard weights come only from CI. On every commit this replaces each
+      # leg's weights in tests/ci/ci-workloads.json with the JUnit seconds of
+      # the latest completed CPU run of the branch's open pull request and
+      # stages the file, so a test file the `workload-weights` CI gate named as
+      # unmeasured gets its weight from that run. No pull request, no completed
+      # run, or no network leaves the file unchanged and prints why; it never
+      # blocks a commit. Reports are cached per run under `.cache/ci-junit/`.
+      - id: ci-workload-weights
+        name: shard weights are refreshed from the last CI run
+        entry: pixi run -e tests-cpu python -m tests.ci.workload_weights refresh
         language: system
         pass_filenames: false
         always_run: true
-        stages:
-          - pre-push
+        verbose: true
       - id: notebook-cell-source-format
         name: notebook cell source is a JSON array of lines
         entry: .ai-instructions/hooks/fix_notebook_cell_source.py
@@ -281,6 +280,6 @@ ci:
     - precise-annotations
     - ty
     - pixi-lock-check
-    - ci-workloads-measured-weights
+    - ci-workload-weights
     - pre-push-hooks-installed
     - notebook-cell-source-format

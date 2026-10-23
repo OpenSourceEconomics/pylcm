@@ -244,8 +244,8 @@ Facts worth knowing before you touch it:
   `unweighted_files`, which is a visible gap rather than a free pass. For placement
   only, the sharder treats it as costing the leg's median measured weight, so files
   added since the last measurement spread over the shards instead of all landing in the
-  lightest one. That stand-in holds only until CI has measured the file; see
-  [Refreshing the weights](#refreshing-the-weights).
+  lightest one. That stand-in lasts one CI run; see
+  [Shard weights come from CI](#shard-weights-come-from-ci).
 - **Shards are derived, not hand-assigned.** `tests/ci/shard_test_files.py` partitions
   the recorded `general_shard_universe` by decreasing per-leg weight into the currently
   lightest bin — a longest-processing-time partition whose result depends only on its
@@ -276,26 +276,26 @@ weights, the exclusion list, the shard counts and every non-general lane untouch
 A new `cpu.yml` invocation is a different change and stays a reviewed hand edit, checked
 by `tests/ci/test_cpu_workflow_contract.py`.
 
-### Refreshing the weights
+### Shard weights come from CI
 
-Once a branch's open pull request has a completed CPU run, that run has measured every
-test file it executed. The `ci-workloads-measured-weights` pre-push hook
-(`tests/ci/check_measured_weights.py`) refuses a push while any of those files still has
-no weight on its leg, names the files, and prints the commands that refresh each leg
-from the run's JUnit artifacts:
+Per-leg weights are measured by CI and by nothing else. Two pieces of
+`tests/ci/workload_weights.py` keep them current:
 
-```console
-JUNIT_DIR=$(mktemp -d)
-gh run download <run> -p 'junit-cpu-fp64-solution-*' -D "$JUNIT_DIR"
-pixi run -e tests-cpu python -m tests.ci.generate_ci_workloads \
-  --refresh-leg fp64-solution --junit "$JUNIT_DIR/junit-cpu-fp64-solution-*/*.xml" \
-  --junit-source 'run <run> attempt <n> (head <sha>); artifacts ...'
-```
+- **The `workload-weights` CI job** fails while any file a general or solution leg
+  shards over has no measured weight on that leg, and names the files. The shards still
+  run, at median placement, so the same run measures them.
+- **The `ci-workload-weights` pre-commit hook** replaces every leg's weights with the
+  JUnit testcase seconds of the latest completed CPU run of the branch's open pull
+  request, re-derives the shards, and stages `tests/ci/ci-workloads.json`. A file the
+  run's leg selected that recorded no testcase is measured at 0 seconds; a leg missing
+  any shard's report keeps its weights. The reports are cached per run under
+  `.cache/ci-junit/`, so the same run always gives the same file.
 
-A file added after that run is not refused: it has no measurement yet and keeps its
-median placement. With no open pull request, no completed run, or no network the hook
-passes and prints why. `LCM_CI_WEIGHTS_OVERRIDE="<reason>" git push` passes too, and
-prints the reason. The hook only fires in a clone that ran `prek install -t pre-push`.
+A new test file therefore fails the gate once, on its first CI run, and the next commit
+picks up its weight. That is intended. With no open pull request, no completed run, or
+`gh` unavailable or offline, the hook leaves the file unchanged, prints why, and never
+blocks the commit. To refresh by hand, run
+`pixi run -e tests-cpu python -m tests.ci.workload_weights refresh`.
 
 ## Pinned test files, and how to move one
 
