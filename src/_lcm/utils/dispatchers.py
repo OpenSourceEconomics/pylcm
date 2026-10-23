@@ -147,14 +147,29 @@ def _map_with_bound_summary[InputTree, Output: PytreeValue](
     # Every window, the first included, runs inside the scan, so the row body is
     # lowered once. Its abstract result sizes the buffers, and folding a window
     # with no active lane gives the all-false, zero-count identity of every merge.
-    template, _ = jax.eval_shape(evaluate_window, jnp.asarray(0, dtype=jnp.int32))
-    empty = jax.tree.map(lambda leaf: jnp.zeros(leaf.shape, leaf.dtype), template)
+    # Only leaves leave the abstract evaluation, since an output container may
+    # refuse abstract leaves; the zero leaves are then put back into its structure.
+    structures = []
+
+    def window_leaves(start: jax.Array) -> list[jax.Array]:
+        leaves, structure = jax.tree.flatten(evaluate_window(start)[0])
+        structures.append(structure)
+        return leaves
+
+    abstract = jax.eval_shape(window_leaves, jnp.asarray(0, dtype=jnp.int32))
+    empty = cast(
+        "BoundedResult[Output]",
+        jax.tree.unflatten(
+            structures[0],
+            [jnp.zeros(leaf.shape, leaf.dtype) for leaf in abstract],
+        ),
+    )
     no_lanes = jnp.zeros((width,), dtype=jnp.bool_)
     buffers = cast(
         "Output",
         jax.tree.map(
             lambda leaf: jnp.zeros((n_windows * width, *leaf.shape[1:]), leaf.dtype),
-            template.output,
+            empty.output,
         ),
     )
 
