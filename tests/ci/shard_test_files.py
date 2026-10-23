@@ -26,8 +26,9 @@ see the gap. The median is a stand-in for one CI run only:
   while any shard file has no measured weight on its leg; the shards still run
   at median placement, so that run produces the missing measurements;
 - the `ci-workload-weights` pre-commit hook (`workload_weights.py refresh`)
-  refreshes every leg from the latest completed CPU run of the branch's open
-  pull request and stages the manifest, so the next commit fills them in.
+  fills in only those missing weights, from the latest completed CPU run of
+  the branch's open pull request that measured each file, and stages the
+  manifest, so the next commit fills them in.
 """
 
 from __future__ import annotations

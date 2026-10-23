@@ -165,13 +165,13 @@ repos:
         files: ^(pyproject\.toml|pixi\.toml|pixi\.lock)$
         stages:
           - pre-push
-      # Shard weights come only from CI. On every commit this replaces each
-      # leg's weights in tests/ci/ci-workloads.json with the JUnit seconds of
-      # the latest completed CPU run of the branch's open pull request and
-      # stages the file, so a test file the `workload-weights` CI gate named as
-      # unmeasured gets its weight from that run. No pull request, no completed
-      # run, or no network leaves the file unchanged and prints why; it never
-      # blocks a commit. Reports are cached per run under `.cache/ci-junit/`.
+      # Shard weights come only from CI. On every commit this fills in the
+      # weights the `workload-weights` CI gate names as missing in
+      # tests/ci/ci-workloads.json, from the latest completed CPU run of the
+      # branch's open pull request that measured each file, and stages the
+      # file. Existing weights are never rewritten, and with nothing missing it
+      # looks nothing up. No pull request, no completed run, or no network
+      # leaves the file unchanged and prints why; it never fails a commit.
       - id: ci-workload-weights
         name: shard weights are refreshed from the last CI run
         entry: pixi run -e tests-cpu python -m tests.ci.workload_weights refresh
