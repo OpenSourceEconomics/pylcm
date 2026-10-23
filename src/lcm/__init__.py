@@ -231,6 +231,8 @@ jax.tree_util.register_pytree_node(
     lambda keys, values: MappingProxyType(dict(zip(keys, values, strict=True))),
 )
 
+from lcm import shocks  # noqa: E402
+
 __all__ = [
     "EULER_GAMMA",
     "AdditiveShockTransition",
@@ -321,6 +323,7 @@ __all__ = [
     "post_decision_lower_bound",
     "ref",
     "save_solution",
+    "shocks",
     "smooth_helper",
     "stochastic_transition",
     "time_varying_params",
