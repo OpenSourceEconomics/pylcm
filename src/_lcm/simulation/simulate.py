@@ -71,6 +71,7 @@ from _lcm.simulation.diagnostic_operations import (
 )
 from _lcm.simulation.dissolution_route import (
     DissolutionFallback,
+    RerouteOutcome,
     empty_gated_entries,
     log_dissolution_fallbacks,
     record_open_entries,
@@ -947,7 +948,6 @@ def _simulate_subject_chunk(  # noqa: PLR0915
             memory=memory,
         )
 
-        prev_regime_ids = subject_regime_ids
         new_subject_regime_ids = subject_regime_ids
         new_own_stakeholder = own_stakeholder
         new_entered_through = run_simulation_operation(
@@ -995,6 +995,7 @@ def _simulate_subject_chunk(  # noqa: PLR0915
         if memory is not None:
             memory.period_owner = owner
 
+        ran_this_period: list[RegimeName] = []
         for regime_name, regime in active_regimes.items():
             dispatched_regime = _bind_unit_executor(
                 regime=regime,
@@ -1094,7 +1095,9 @@ def _simulate_subject_chunk(  # noqa: PLR0915
                 entered_through=entered_through,
                 new_entered_through=new_entered_through,
                 dissolution_records=dissolution_records,
+                ran_this_period=tuple(ran_this_period),
             )
+            ran_this_period.append(regime_name)
             states = new_states
             simulation_results[regime_name][period] = result
             if memory is not None:
@@ -1124,7 +1127,6 @@ def _simulate_subject_chunk(  # noqa: PLR0915
             # through diagnostics.
             memory.unit_inputs = (
                 states,
-                prev_regime_ids,
                 subject_regime_ids,
                 new_subject_regime_ids,
                 own_stakeholder,
@@ -1149,6 +1151,9 @@ def _simulate_subject_chunk(  # noqa: PLR0915
             ),
         )
 
+        # The period's final membership, after dissolution routes moved rows
+        # into the regime they acted in, is where each transition starts.
+        prev_regime_ids = subject_regime_ids
         source_roles = own_stakeholder
         entered_through = new_entered_through
         subject_regime_ids = new_subject_regime_ids
@@ -1679,6 +1684,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
     entered_through: Int1D | None = None,
     new_entered_through: Int1D | None = None,
     dissolution_records: list[DissolutionFallback] | None = None,
+    ran_this_period: tuple[RegimeName, ...] = (),
 ) -> tuple[
     PeriodRegimeSimulationData,
     StatesPerRegime,
@@ -1758,6 +1764,8 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             for this regime's rows.
         dissolution_records: Collects one record per rerouted subject when
             runtime checks are on.
+        ran_this_period: The regimes that already ran this period. A row whose
+            dissolution route leads into one of them cannot act this period.
 
     Returns:
         Tuple containing:
@@ -2008,6 +2016,8 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 regime_name=regime_name,
                 regime=regime,
                 regimes=regimes,
+                base_spaces=base_state_action_spaces,
+                ran_this_period=ran_this_period,
                 indices=indices_optimal_actions,
                 in_regime=subject_ids_in_regime,
                 entered_through=entered_through,
@@ -2311,6 +2321,8 @@ def _take_dissolution_routes(
     regime_name: RegimeName,
     regime: Regime,
     regimes: Mapping[RegimeName, Regime],
+    base_spaces: Mapping[RegimeName, StateActionSpace],
+    ran_this_period: tuple[RegimeName, ...],
     indices: IntND,
     in_regime: Bool1D,
     entered_through: Int1D,
@@ -2334,6 +2346,9 @@ def _take_dissolution_routes(
     """Send this regime's rows without a feasible action down their gate's route.
 
     A route back into this regime keeps the row here at its projected state.
+    A projected state follows its fallback grid's `off_grid` rule, as a closed
+    branch taken at the gate does. A route into a regime that already ran this
+    period raises `NoFeasibleActionError`, since the row could not act there.
     Returns the updated carriers, the open-branch entries with every route taken
     here used up, this regime's remaining rows, whether any of them must decide
     again at a projected state, and the first
@@ -2359,14 +2374,46 @@ def _take_dissolution_routes(
     )
     if memory is not None:
         memory.hold(tree=outcome)
+    genuine = _genuine_rows(subject_slice=subject_slice, n_real=n_real)
+    _fail_if_rerouted_into_a_regime_that_ran(
+        outcome=outcome,
+        genuine=genuine,
+        ran_this_period=ran_this_period,
+        regime_name=regime_name,
+        regime=regime,
+        canonical_states=canonical_states,
+        flat_params=flat_params,
+        regime_names_to_ids=regime_names_to_ids,
+        period=period,
+        memory=memory,
+    )
+    states = clip_next_states(
+        states=outcome.states,
+        regimes=regimes,
+        base_spaces=base_spaces,
+        targets=tuple(
+            dict.fromkeys(
+                leg.realized_fallback.regime
+                for source in regimes.values()
+                if (edge := source.gated_edges.get(regime_name)) is not None
+                for leg in edge.legs
+            )
+        ),
+        next_period=period,
+        source=regime_name,
+        new_regime_ids=outcome.subject_regime_ids,
+        regime_ids=regime_names_to_ids,
+        logger=logger,
+        subjects=outcome.rerouted,
+        genuine=genuine,
+        memory=memory,
+    )
     returned = outcome.rerouted & (
         outcome.fallback_ids == regime_names_to_ids[regime_name]
     )
     remaining = in_regime & ~(outcome.rerouted & ~returned)
     redecide = bool(np.asarray(returned).any())
-    rerouted_rows = rows_of(
-        outcome.rerouted & _genuine_rows(subject_slice=subject_slice, n_real=n_real)
-    )
+    rerouted_rows = rows_of(outcome.rerouted & genuine)
     if rerouted_rows.size:
         new_records: tuple[DissolutionFallback, ...] = ()
         if validation_enabled(logger):
@@ -2412,7 +2459,7 @@ def _take_dissolution_routes(
             recorded=records is not None and validation_enabled(logger),
         )
     return (
-        outcome.states,
+        states,
         outcome.subject_regime_ids,
         outcome.own_stakeholder,
         outcome.new_subject_regime_ids,
@@ -2425,6 +2472,55 @@ def _take_dissolution_routes(
             )
         ),
         redecide,
+    )
+
+
+def _fail_if_rerouted_into_a_regime_that_ran(
+    *,
+    outcome: RerouteOutcome,
+    genuine: np.ndarray,
+    ran_this_period: tuple[RegimeName, ...],
+    regime_name: RegimeName,
+    regime: Regime,
+    canonical_states: Mapping[StateName, FloatND | IntND],
+    flat_params: FlatParams,
+    regime_names_to_ids: RegimeNamesToIds,
+    period: int,
+    memory: SimulationMemory | None,
+) -> None:
+    """Raise if a rerouted row's fallback already ran this period.
+
+    Gated targets and fallbacks that form a cycle run in declaration order, so a
+    fallback can precede a target it serves. A row routed into it would not act
+    this period.
+    """
+    if not ran_this_period:
+        return
+    ran_ids = np.asarray([regime_names_to_ids[name] for name in ran_this_period])
+    late = np.asarray(outcome.rerouted) & genuine
+    late &= np.isin(np.asarray(outcome.fallback_ids), ran_ids)
+    if not late.any():
+        return
+    row = int(np.flatnonzero(late)[0])
+    fallback = next(
+        name
+        for name, code in regime_names_to_ids.items()
+        if int(code) == int(np.asarray(outcome.fallback_ids)[row])
+    )
+    state = physical_state_at_row(
+        regime=regime,
+        states=canonical_states,
+        row=row,
+        regime_params={
+            **regime.resolved_fixed_params,
+            **regime_kernel_params(flat_params, regime_name=regime_name),
+        },
+        memory=memory,
+    )
+    raise NoFeasibleActionError(
+        f"Regime '{regime_name}', period {period}, state {state} has no feasible "
+        f"action, and its dissolution route leads to regime '{fallback}', which "
+        "already ran this period: the gated targets and fallbacks form a cycle."
     )
 
 
