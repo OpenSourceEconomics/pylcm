@@ -57,10 +57,11 @@ from lcm.execution import ExecutionConfig
 from tests.simulation._callback_types import HostDispatch, WorkspacePlanning
 
 # The checked dissolution witness includes numerical preflight and outcome flags.
-# Its four realized off-grid counts and its per-period gated-entry carriers are
-# helpers too. User-law producers also enter
+# Its six realized off-grid counts (four where the gate routes, two where a
+# household without a feasible action takes its dissolution route) and its
+# per-period gated-entry carriers are helpers too. User-law producers also enter
 # the axis-free plan outside helper dispatch.
-_WITNESS_HELPER_OPERATIONS = 71
+_WITNESS_HELPER_OPERATIONS = 73
 _WITNESS_PRODUCER_ADMISSIONS = 5
 # Every owned decision checks its selected action before downstream indexing.
 _WITNESS_EMPTY_ACTION_CHECKS = 5
