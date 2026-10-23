@@ -241,7 +241,11 @@ Facts worth knowing before you touch it:
   dividing them by the leg count would over-provision the cheap platform and
   under-provision the expensive one.
 - **A file with no measurement is never weighted zero.** It is listed in
-  `unweighted_files`, which is a visible gap rather than a free pass.
+  `unweighted_files`, which is a visible gap rather than a free pass. For placement
+  only, the sharder treats it as costing the leg's median measured weight, so files
+  added since the last measurement spread over the shards instead of all landing in the
+  lightest one. That stand-in holds only until CI has measured the file; see
+  [Refreshing the weights](#refreshing-the-weights).
 - **Shards are derived, not hand-assigned.** `tests/ci/shard_test_files.py` partitions
   the recorded `general_shard_universe` by decreasing per-leg weight into the currently
   lightest bin — a longest-processing-time partition whose result depends only on its
@@ -271,6 +275,27 @@ weights, the exclusion list, the shard counts and every non-general lane untouch
 
 A new `cpu.yml` invocation is a different change and stays a reviewed hand edit, checked
 by `tests/ci/test_cpu_workflow_contract.py`.
+
+### Refreshing the weights
+
+Once a branch's open pull request has a completed CPU run, that run has measured every
+test file it executed. The `ci-workloads-measured-weights` pre-push hook
+(`tests/ci/check_measured_weights.py`) refuses a push while any of those files still has
+no weight on its leg, names the files, and prints the commands that refresh each leg
+from the run's JUnit artifacts:
+
+```console
+JUNIT_DIR=$(mktemp -d)
+gh run download <run> -p 'junit-cpu-fp64-solution-*' -D "$JUNIT_DIR"
+pixi run -e tests-cpu python -m tests.ci.generate_ci_workloads \
+  --refresh-leg fp64-solution --junit "$JUNIT_DIR/junit-cpu-fp64-solution-*/*.xml" \
+  --junit-source 'run <run> attempt <n> (head <sha>); artifacts ...'
+```
+
+A file added after that run is not refused: it has no measurement yet and keeps its
+median placement. With no open pull request, no completed run, or no network the hook
+passes and prints why. `LCM_CI_WEIGHTS_OVERRIDE="<reason>" git push` passes too, and
+prints the reason. The hook only fires in a clone that ran `prek install -t pre-push`.
 
 ## Pinned test files, and how to move one
 
