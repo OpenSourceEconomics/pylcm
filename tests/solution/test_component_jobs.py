@@ -169,6 +169,8 @@ def test_collected_jobs_equal_complete_single_process_result_bitwise(
     assert _complete_result_bytes(
         solution=collected.solution, simulation=collected.simulation
     ) == _complete_result_bytes(solution=reference.solution, simulation=reference)
+    assert collected.simulation is not None
+    assert collected.simulation.randomness == reference.randomness
 
 
 def test_simulating_job_copies_its_raw_results_to_the_host_in_one_transfer(

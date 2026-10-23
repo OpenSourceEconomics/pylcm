@@ -33,6 +33,7 @@ from tests.data.regression_tests.generate_representative_model_values import (
 from tests.test_models.deterministic.regression import RegimeId, get_model, get_params
 
 _PRECISION_DIR = TEST_DATA / "regression_tests" / ("f64" if X64_ENABLED else "f32")
+_RNG_PRECISION_DIR = _PRECISION_DIR / "random-v1"
 
 
 def test_regression_test():
@@ -84,7 +85,9 @@ def test_regression_test():
 
 def test_regression_precautionary_savings():
     """Test that precautionary savings benchmark model output does not change."""
-    expected = pd.read_pickle(_PRECISION_DIR / "precautionary_savings_simulation.pkl")
+    expected = pd.read_pickle(
+        _RNG_PRECISION_DIR / "precautionary_savings_simulation.pkl"
+    )
 
     model = ps_example.get_model(
         n_periods=5,
@@ -119,7 +122,7 @@ def test_regression_precautionary_savings():
 
 def test_regression_mortality():
     """Test that mortality benchmark model output does not change."""
-    expected = pd.read_pickle(_PRECISION_DIR / "mortality_simulation.pkl")
+    expected = pd.read_pickle(_RNG_PRECISION_DIR / "mortality_simulation.pkl")
 
     n_periods = 4
     model = mortality_example.get_model(n_periods=n_periods)
@@ -244,7 +247,7 @@ def test_model_with_different_grid_types(grid_type: str):
 # simulated column, with their dtypes and shapes. The archive records the commit
 # and precision it was produced at under `__provenance__/`; its module docstring
 # is the command that regenerates it.
-_STORED_MODEL_VALUES = _PRECISION_DIR / "representative_model_values.npz"
+_STORED_MODEL_VALUES = _RNG_PRECISION_DIR / "representative_model_values.npz"
 _TOLERANCE = 1e-10 if X64_ENABLED else 1e-5
 _ON_ARCHIVE_HOST = (
     jax.default_backend() == "cpu"

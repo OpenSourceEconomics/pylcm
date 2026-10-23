@@ -11,14 +11,64 @@ import pandas as pd
 import pytest
 
 from _lcm.simulation.program_types import SimulationPrograms
-from _lcm.simulation.taste_stream import _taste_address_words
+from _lcm.simulation.random_address import RandomAddress
 from _lcm.typing import PytreeValue, ShapeDtypePytree
-from lcm import ExecutionConfig
+from lcm import (
+    DiscreteGrid,
+    ExecutionConfig,
+    InitialNodes,
+    Model,
+    NormalIIDProcess,
+    Periods,
+    Regime,
+)
 from lcm.exceptions import InvalidSimulationInputError
+from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.typing import ReferenceName, UserSeed
 from tests.test_models import taste_shocks_toy
 
 simulation = importlib.import_module("_lcm.simulation.simulate")
+
+
+def test_taste_toggle_keeps_scheduled_named_shock_draws() -> None:
+    """Enabling decision noise cannot advance the scheduled innovation's root."""
+    process = NormalIIDProcess(n_points=3, gauss_hermite=True, mu=0.0, sigma=1.0)
+    panels = []
+    for enabled in (False, True):
+        model = Model(
+            regimes={
+                "alive": Regime(
+                    states={"shock": process},
+                    actions={"work": DiscreteGrid(taste_shocks_toy.WorkChoice)},
+                    functions={"utility": lambda shock, work: shock + work},
+                    taste_shocks=ExtremeValueTasteShocks() if enabled else None,
+                ),
+                "done": Regime(
+                    states={"shock": process},
+                    functions={"utility": lambda shock: shock},
+                ),
+            },
+            n_periods=2,
+            regime_id_class=taste_shocks_toy.ToyRegimeId,
+            initial_nodes=InitialNodes(by_period={0: "alive"}),
+            edges={"alive": {"done": Periods(values=(0,))}},
+            fixed_params={"alive": {"koopmans_aggregator": {"discount_factor": 0.0}}},
+        )
+        panels.append(
+            model.simulate(
+                params={"alive": {"taste_shocks": {"scale": 1.0}}} if enabled else {},
+                initial_conditions={
+                    "shock": jnp.zeros(7),
+                    "period": jnp.zeros(7, dtype=jnp.int32),
+                    "regime_id": jnp.zeros(7, dtype=jnp.int32),
+                },
+                seed=31,
+                log_level="off",
+            ).to_dataframe()
+        )
+    pd.testing.assert_frame_equal(
+        panels[0][["period", "shock"]], panels[1][["period", "shock"]], check_exact=True
+    )
 
 
 def _initial_conditions(*, count: int = 24) -> dict[str, jax.Array]:
@@ -364,7 +414,7 @@ def test_independent_taste_key_keeps_its_implementation(
     params = taste_shocks_toy.get_params(scale=0.2)
     solution = model.solve(params=params, log_level="off")
     root = jax.random.key(17, impl=impl)
-    words = _taste_address_words(age=40, domain=(("work", (("off", 0), ("on", 1))),))
+    words = RandomAddress(kind="taste", name="alive").words()
     addressed = root
     for word in words:
         addressed = jax.random.fold_in(addressed, np.uint32(word))
@@ -373,7 +423,10 @@ def test_independent_taste_key_keeps_its_implementation(
             np.asarray(
                 jax.random.key_data(
                     jax.random.fold_in(
-                        jax.random.fold_in(addressed, np.uint32(0)), np.uint32(row)
+                        jax.random.fold_in(
+                            jax.random.fold_in(addressed, np.uint32(0)), np.uint32(row)
+                        ),
+                        np.uint32(0),
                     )
                 )
             )

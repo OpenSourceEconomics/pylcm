@@ -2,8 +2,8 @@
 
 A simulated subject may start only at a pair in `model.initial_nodes`; every other
 known pair is refused by name, whether or not the engine solves it. A subject's
-draws at a given age and regime depend on the seed, the age, the regime and the
-subject alone, not on which other pairs the declared starts make visitable.
+named innovations depend on the seed, computational period and original subject
+row, independently of which other pairs the declared starts make visitable.
 """
 
 from collections.abc import Callable

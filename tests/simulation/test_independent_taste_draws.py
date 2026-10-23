@@ -16,7 +16,6 @@ import functools
 import hashlib
 import json
 import struct
-from fractions import Fraction
 
 import jax
 import jax.numpy as jnp
@@ -38,7 +37,6 @@ from lcm.typing import ContinuousState, DiscreteAction, FloatND, ScalarInt, User
 _N_SUBJECTS = 7
 _FOLD_CHILD = 5
 _SOURCE_SEEDS = (17, 0, 1, 721)
-_WORK_DOMAIN = (("work", (("off", 0), ("on", 1))),)
 
 
 @categorical(ordered=False)
@@ -66,9 +64,8 @@ def _next_wealth(*, wealth: ContinuousState) -> ContinuousState:
 
 
 def _scalar_address_keys(*, root: jax.Array) -> list[jax.Array]:
-    """Return each original row's addressed key at age 0, one scalar fold at a time."""
-    age = Fraction(0)
-    payload = ("pylcm.taste-stream.v1", (age.numerator, age.denominator), _WORK_DOMAIN)
+    """Return each original row's period-0 key, one scalar fold at a time."""
+    payload = ("pylcm.random.v1", "taste", "alive", 0)
     encoded = json.dumps(
         payload, ensure_ascii=False, allow_nan=False, separators=(",", ":")
     ).encode("utf-8")
@@ -77,8 +74,11 @@ def _scalar_address_keys(*, root: jax.Array) -> list[jax.Array]:
         addressed = jax.random.fold_in(addressed, np.uint32(word))
     return [
         jax.random.fold_in(
-            jax.random.fold_in(addressed, np.uint32(row // 2**32)),
-            np.uint32(row % 2**32),
+            jax.random.fold_in(
+                jax.random.fold_in(addressed, np.uint32(row // 2**32)),
+                np.uint32(row % 2**32),
+            ),
+            np.uint32(0),
         )
         for row in range(_N_SUBJECTS)
     ]

@@ -87,14 +87,12 @@ from _lcm.simulation.random import (
     _create_simulation_key,
     _generate_rowed_simulation_keys,
     _generate_windowed_simulation_keys,
-    _site_simulation_key,
-    _split_simulation_key,
 )
+from _lcm.simulation.random_address import RandomAddress
 from _lcm.simulation.replay_inputs import replay_payload_reads
 from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.subject_groups import grouped_rows, type_local_transfer
 from _lcm.simulation.taste_stream import (
-    _advance_simulation_taste_key,
     draw_taste_shock_keys,
 )
 from _lcm.simulation.transitions import (
@@ -105,6 +103,7 @@ from _lcm.simulation.transitions import (
     _draw_random_regime_ids_from_scalars,
     _update_regime_ids,
     drawn_code_checks,
+    transition_random_addresses,
 )
 from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.solution.backward_induction import (
@@ -371,8 +370,6 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                     inventory=inventory,
                     key=key,
                     taste_key=taste_key,
-                    population=padded,
-                    original_population=original_population,
                     width=n_subjects,
                     scalar_int=scalar_int,
                 )
@@ -589,34 +586,22 @@ def _profile_next_subjects(
     jax.ShapeDtypeStruct,
 ]:
     """Advance state, membership and ordinary-key metadata in actual dispatch order."""
-    site_scalar = jax.ShapeDtypeStruct((), np.uint32)
-    site_key = cast(
-        "jax.ShapeDtypeStruct",
-        inventory.operation(
-            function=_site_simulation_key,
-            arguments={"key": key, "period": site_scalar, "regime_id": site_scalar},
-        ),
-    )
-    split = cast(
-        "tuple[jax.ShapeDtypeStruct, ...]",
-        inventory.operation(
-            function=_split_simulation_key,
-            arguments={"key": site_key},
-            static_arguments={"partitionable": jax.config.jax_threefry_partitionable},
-        ),
+    stochastic_names = tuple(
+        binding.removeprefix("key_")
+        for binding in _stochastic_keys(regime=regime, key=key)
     )
     _profile_keys(
         inventory=inventory,
-        key=split[0],
-        names=tuple(
-            name.removeprefix("key_")
-            for name in _stochastic_keys(regime=regime, key=key)
-        ),
+        key=key,
+        names=stochastic_names,
         population=population,
         original_population=original_population,
         width=width,
         scalar_int=scalar_int,
         rows=subject_rows,
+        addresses=transition_random_addresses(
+            regime=regime, regimes=regimes, names=stochastic_names
+        ),
     )
     raw = (
         _record_core(
@@ -671,13 +656,14 @@ def _profile_next_subjects(
         )
     _, draw_keys = _profile_keys(
         inventory=inventory,
-        key=split[1],
+        key=key,
         names=("regime_transition",),
         population=population,
         original_population=original_population,
         width=width,
         scalar_int=scalar_int,
         rows=subject_rows,
+        addresses={"regime_transition": RandomAddress(kind="regime", name="regime")},
     )
     rows = tuple(route[target] for target in names)
     drawn = inventory.operation(
@@ -828,7 +814,6 @@ def _profile_next_subjects(
         next_period=period + 1,
         runtime_checks=runtime_checks,
     )
-    key = split[2]
     return carrier, key, new_ids, own_roles
 
 
@@ -1177,27 +1162,47 @@ def _profile_keys(
     width: int,
     scalar_int: jax.ShapeDtypeStruct,
     rows: jax.ShapeDtypeStruct | None = None,
+    addresses: Mapping[str, RandomAddress] = MappingProxyType({}),
 ) -> tuple[jax.ShapeDtypeStruct, Mapping[str, jax.ShapeDtypeStruct]]:
-    """Profile the original full split, windowed or gathered at a chunk's rows."""
+    """Profile the addressed innovations at a contiguous or grouped row window."""
     static_arguments: dict[str, StaticArgument] = {
         "names": names,
         "n_initial_states": population,
         "original_n_subjects": original_population,
         "partitionable": jax.config.jax_threefry_partitionable,
+        "addresses": tuple(
+            addresses.get(name, RandomAddress(kind="state", name=name)).words()
+            for name in names
+        ),
     }
+    period = jax.ShapeDtypeStruct((), np.uint32, sharding=scalar_int.sharding)
     if rows is None:
         function = _generate_windowed_simulation_keys
-        arguments = {"key": key, "start": scalar_int}
+        arguments = {
+            "key": key,
+            "start": jax.ShapeDtypeStruct(
+                (2,), np.uint32, sharding=scalar_int.sharding
+            ),
+            "period": period,
+        }
         static_arguments["width"] = width
     else:
         function = _generate_rowed_simulation_keys
-        arguments = {"key": key, "rows": rows}
-    return cast(
-        "tuple[jax.ShapeDtypeStruct, Mapping[str, jax.ShapeDtypeStruct]]",
+        static_arguments.pop("n_initial_states")
+        static_arguments.pop("original_n_subjects")
+        arguments = {
+            "key": key,
+            "rows": jax.ShapeDtypeStruct((width, 2), np.uint32, sharding=rows.sharding),
+            "period": period,
+        }
+    return key, cast(
+        "Mapping[str, jax.ShapeDtypeStruct]",
         inventory.operation(
             function=function,
             arguments=arguments,
             static_arguments=static_arguments,
+            subject_arg_names=() if rows is None else ("rows",),
+            subject_outputs=True,
         ),
     )
 
@@ -1207,36 +1212,15 @@ def _profile_taste(
     inventory: ChunkProfileInventory,
     key: jax.ShapeDtypeStruct,
     taste_key: jax.ShapeDtypeStruct | None,
-    population: int,
-    original_population: int,
     width: int,
     scalar_int: jax.ShapeDtypeStruct,
 ) -> None:
     """Include the exact ordinary or independent taste-key body and carry."""
-    if taste_key is None:
-        _profile_keys(
-            inventory=inventory,
-            key=key,
-            names=("taste_shock",),
-            population=population,
-            original_population=original_population,
-            width=width,
-            scalar_int=scalar_int,
-        )
-        return
-    inventory.operation(
-        function=_advance_simulation_taste_key,
-        arguments={"key": key},
-        static_arguments={
-            "original_n_subjects": original_population,
-            "partitionable": jax.config.jax_threefry_partitionable,
-        },
-    )
     shared = scalar_int.sharding
     inventory.operation(
         function=draw_taste_shock_keys,
         arguments={
-            "key": taste_key,
+            "key": key if taste_key is None else taste_key,
             "address_words": jax.ShapeDtypeStruct(
                 (8,), np.dtype(np.uint32), sharding=shared
             ),
@@ -1246,6 +1230,7 @@ def _profile_taste(
             "last_real_subject": jax.ShapeDtypeStruct(
                 (2,), np.dtype(np.uint32), sharding=shared
             ),
+            "period": jax.ShapeDtypeStruct((), np.uint32, sharding=shared),
         },
         static_arguments={"subject_count": width},
         subject_outputs=True,

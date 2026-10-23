@@ -159,6 +159,7 @@ class SimulationResult:
         simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
         subject_batch_size: int | None = None,
         nested_policy_regimes: frozenset[RegimeName] = frozenset(),
+        randomness: Mapping[str, str] = MappingProxyType({}),
     ) -> None:
         self._raw_results = raw_results
         self._regimes = regimes
@@ -182,8 +183,14 @@ class SimulationResult:
             simulation_output_dtypes=simulation_output_dtypes,
             ages=ages,
             nested_policy_regimes=nested_policy_regimes,
+            randomness=randomness,
         )
         self._available_targets = tuple(sorted(_collect_all_available_targets(regimes)))
+
+    @property
+    def randomness(self) -> MappingProxyType[str, str]:
+        """Random-address version, PRNG implementations and precision of the run."""
+        return self._metadata.randomness
 
     @property
     def raw_results(

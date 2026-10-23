@@ -34,10 +34,10 @@ from _lcm.simulation.program_arguments import (
     process_node_arguments,
     transition_arguments,
 )
+from _lcm.simulation.random_address import scalar_draw_axis
 from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.shock_paths import supplied_shock_argument_names
 from _lcm.simulation.subject_groups import type_local_template
-from _lcm.simulation.taste_stream import scalar_draw_axis
 from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.solution.backward_induction import CompilationWave, _states_for_period
 from _lcm.time import TimeAxis
