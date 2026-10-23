@@ -8,6 +8,7 @@ import numpy as np
 
 from _lcm.execution import core_program, internal_outputs, workspace_planning
 from _lcm.solution import backward_induction
+from _lcm.solution import validate_V as value_validation
 from lcm.solver_api import ArtifactAuthority, ArtifactKey, KernelOutput
 from lcm.typing import RegimeName, UserParams
 
@@ -327,3 +328,25 @@ class CandidateResidentKwargs(TypedDict):
 
 
 type CandidateResidentResult = int
+
+
+class ValidateVKwargs(TypedDict):
+    V_arr: value_validation.FloatND
+    age: float | value_validation.ScalarInt | value_validation.ScalarFloat
+    regime_name: NotRequired[value_validation.RegimeName | None]
+    partial_solution: NotRequired[value_validation.PeriodToRegimeToVArr | None]
+    compute_intermediates: NotRequired[
+        value_validation.Callable[..., value_validation._Reductions] | None
+    ]
+    state_action_space: NotRequired[value_validation.StateActionSpace | None]
+    next_regime_to_V_arr: NotRequired[
+        value_validation.MappingProxyType[
+            value_validation.RegimeName, value_validation.FloatND
+        ]
+        | None
+    ]
+    flat_params: NotRequired[value_validation.FlatRegimeParams | None]
+    period: NotRequired[int | None]
+    entered_process_names: NotRequired[tuple[str, ...]]
+    time_kind: NotRequired[value_validation.Literal[age, period]]
+    logger: NotRequired[value_validation.logging.Logger | None]

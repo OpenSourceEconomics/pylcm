@@ -2501,9 +2501,12 @@ def _edge_kwargs(
     """Build a source kernel's gated-edge `Wbar` argument, keyed by target.
 
     The kernel substitutes each entry for the raw target V in
-    `next_regime_to_V_arr`. Lowering and execution both go through this one
-    function, so the pytree the kernel is compiled against is the pytree it is
-    called with. Empty for a regime declaring no gated edge.
+    `next_regime_to_V_arr`. Lowering passes the solve-lifetime templates, so
+    every declared edge is present there; execution passes the rolling mapping,
+    which holds only the edges folded in the period just completed. A program
+    reads the entries of its period targets alone, and each of those is folded,
+    so both see the same entries for those targets. Empty for a regime
+    declaring no gated edge.
     """
     if not regime.gated_edges:
         return MappingProxyType({})
