@@ -150,13 +150,14 @@ _PENSION_GROUP = DiscreteGrid(PensionGroup)
 
 
 @pytest.mark.parametrize(
-    ("retired_states", "model_states", "phrase"),
+    ("retired_states", "model_states", "phrase", "first_fix"),
     [
         pytest.param(
             {"pension_group": _PENSION_GROUP},
             {},
             r"'retired' carries state 'pension_group' from its own "
             r"`Regime\(states=\.\.\.\)` declaration",
+            r"Declare 'pension_group' on 'unemployed', ",
             id="regime_level",
         ),
         pytest.param(
@@ -164,6 +165,8 @@ _PENSION_GROUP = DiscreteGrid(PensionGroup)
             {"pension_group": _PENSION_GROUP},
             r"'retired' carries state 'pension_group' from the model-level "
             r"`Model\(states=\.\.\.\)` declaration",
+            r"Define a target-specific entry law for 'pension_group' on "
+            r"'unemployed', ",
             id="model_level",
         ),
     ],
@@ -173,13 +176,29 @@ def test_handoff_error_names_the_declaration_the_target_carries_the_state_from(
     retired_states: Mapping[str, StateEntry],
     model_states: Mapping[str, StateEntry],
     phrase: str,
+    first_fix: str,
 ) -> None:
-    """The refusal of 'unemployed' -> 'retired' names the declaring slot."""
+    """The refusal of 'unemployed' -> 'retired' names the declaring slot.
+
+    The first suggested fix is one the build accepts: declaring the state on the
+    source for a regime-level state, an entry law on the source for a model-level
+    one, which a regime-level redeclaration would make ambiguous.
+    """
     with pytest.raises(
         ModelInitializationError,
-        match=rf"source 'unemployed' -> .*target 'retired'.*{phrase}",
+        match=(
+            rf"source 'unemployed' -> .*target 'retired'.*{phrase}.*"
+            rf"no next-period value exists\. {first_fix}"
+        ),
     ):
         _build_model(retired_states=retired_states, model_states=model_states)
+
+
+def test_handoff_error_for_a_model_level_state_never_suggests_declaring_it() -> None:
+    """Declaring a model-level state on the source is refused as ambiguous."""
+    with pytest.raises(ModelInitializationError) as captured:
+        _build_model(retired_states={}, model_states={"pension_group": _PENSION_GROUP})
+    assert "Declare 'pension_group'" not in str(captured.value)
 
 
 @categorical(ordered=False)
