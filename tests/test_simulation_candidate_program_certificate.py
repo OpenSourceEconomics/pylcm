@@ -773,11 +773,15 @@ _COMBINED_INPUT_MUTATIONS = {
     "chunk_diagnostics:live_carry_dropped": (
         "src/_lcm/simulation/simulate.py",
         (
-            "                prev_regime_ids,\n"
+            "                states,\n"
             "                subject_regime_ids,\n"
-            "                new_subject_regime_ids,"
+            "                new_subject_regime_ids,\n"
+            "                own_stakeholder,"
         ),
-        "                (),\n                (),\n                (),",
+        (
+            "                states,\n                (),\n                (),\n"
+            "                own_stakeholder,"
+        ),
     ),
     "chunk_diagnostics:profiled_nonfinite_bypassed": (
         "src/_lcm/simulation/simulate.py",
