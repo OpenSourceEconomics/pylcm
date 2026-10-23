@@ -144,6 +144,76 @@ Signed quadrature is linear-only. Propagate its provenance into stored channels 
 reject every nonlinear downstream reader, including CE, Euler inversion, constraints,
 availability, exit rules and simulation sampling.
 
+## Conditional query representation
+
+The conditional operator is versioned as `pylcm.conditional.v1`. It conditions under the
+declared scientific law and preserves the joint rows of the hidden numerical rule. A
+finite node table is an integration rule; its accidental empirical dependence does not
+define a copula. Conditional refactorization has its own quadrature error. There is no
+general finite tower identity: a rule on the diagonal points `(-1, -1), (1, 1)` can
+integrate `x * y` differently from nested conditioning under independent normal laws.
+Retained and recomputed execution must still agree for the same declared conditional
+operator.
+
+A generated mathematical physical signal has an explicit internal representation: its
+rounded physical value, the current source-law binding and, for an informative
+normal-base marginal, its authorized correlated Gaussian coordinate. That coordinate
+represents the invertible mathematical observation before rounding. It is a dynamic
+operand of the query, and its representation and source binding enter query identity.
+This is an augmented signal representation, not conditioning on the physical scalar's
+bits alone: distinct signals can round to the same scalar and give different conditional
+prices. Certification names this represented object. It does not claim a scalar inverse
+can recover information lost to rounding.
+
+Informative eligibility uses exact represented law-domain tests. Normal and lognormal
+zero scales and uniform equal endpoints reveal no innovation. A categorical outcome
+reveals its common-uniform interval. Neither permits a generated latent witness to
+disclose additional information. An informative generated witness requires valid
+source-law provenance and a finite, resolved physical transform. A physical override has
+no generated witness; its inverse and support consistency need separate admission.
+Hidden simulation draws remain in the revelation record until the destination acts.
+
+For Gaussian conditioning, order informative observed coordinates first, followed by
+hidden coordinates in original declared order. Exact host admission supplies the pivot
+support of that permutation. Traced factor and triangular-solve arithmetic use safe
+operands and mandatory unresolved status. Redundant observed pivots contribute no
+independent innovation; engine-generated supported observations do not require an exact
+rounded residual-equality test. Project the declared base rows onto the named hidden
+innovation columns, retaining weights, order and duplicates, and apply the joint
+conditional factor. Do not construct independent marginal rules. Correlation,
+informative subset, factor convention, source/target bindings, clock, dtype and rule
+bytes belong to the derived identity.
+
+Without informative observations, retain the original forward operator exactly. An
+informative view with a wholly deterministic conditional state evaluates that state
+directly with unit mass. Residual uncertainty uses the projected rule's unchanged
+weights. Record rule-mass discrepancy separately; these branches do not claim identical
+finite rounding across different information views. Exact categorical event conditioning
+uses common-CDF interval intersections and event-mass division where needed, subject to
+the shared-discrete projection contract.
+
+Actual zero-probability observations require an integrity refusal. Null solve nodes are
+different: they retain safe finite conditional payloads where a zero mass has a nonzero
+derivative. With unchanged shared categorical partitions the target category is the same
+category, including a null solve category, without division by its mass.
+Changed-partition zero-width limits require a qualified extension; unresolved consumed
+derivatives fail separately from primal declaration validity. Never turn an unreachable
+solve node into a global invalid-law failure or drop a finite `dmass * value` term.
+
+State-dependent informative subsets are prepared within the admitted query chunk by
+canonical programs. Host support classification and its transfers, metadata, numeric
+variants and failed-reader owners share the query budget and lifetime contract. Avoid
+population-sized preparation and a global subset bank. Keep target prescribed-policy
+information separate from caller pricing information: additional caller knowledge does
+not change the target's participation policy.
+
+Acceptance separates observation representation/inversion, factor arithmetic,
+conditional quadrature, nested-rule discrepancy, mapped-state representation and
+execution equality. Qualify each with its own independent witnesses and scales;
+arbitrary user rules and payoffs have no universal error bound. Structural comparisons
+remain exact on the declared represented prices. These are implementation contracts;
+native public solve/simulation and override qualification remain required gates.
+
 ## Runtime correlation admission
 
 Each concrete solve, simulation and period replay validates the supplied correlation
