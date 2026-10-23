@@ -13,10 +13,12 @@ OWN value at that shared argmax, so the two stakeholder slices genuinely
 differ and neither equals $O$.
 
 A collective regime's stored value function carries one axis per solve state
-plus one trailing stakeholder axis. A singleton regime's folded state is
-integrated out by quadrature when the value is stored and contributes no axis
-at all; a collective regime's folded state keeps its node axis, so each node is
-routed before it is averaged.
+plus one trailing stakeholder axis. A folded state is integrated out by
+quadrature when the value is stored and contributes no axis at all. The two
+never co-occur here: a collective regime may not declare a folded state, so
+`make_folding_singleton_model` is a singleton and
+`make_folding_collective_regime_kwargs` returns keyword arguments rather than a
+built model.
 """
 
 import jax.numpy as jnp
@@ -237,9 +239,11 @@ def make_folding_singleton_model() -> tuple[Model, ParamsDict]:
 def make_folding_collective_regime_kwargs() -> RegimeReplacement:
     """Return the keyword arguments of a collective regime declaring a fold.
 
-    Two stakeholders, a binary action, and `wage_shock` as a
-    `NormalIIDProcess(fold=True)` entering both partners' utilities. The
-    collective regime keeps the shock's node axis in its stored value.
+    A collective regime may not integrate a shock out of its stored value, so
+    this combination is rejected when the model is built and no model can be
+    handed out. The regime itself is well formed: two stakeholders, a binary
+    action, and `wage_shock` as a `NormalIIDProcess(fold=True)` entering both
+    partners' utilities.
 
     `make_folding_collective_regimes` pairs the regime these arguments describe
     with the terminal regime it transitions into, which is what `Model` needs.
@@ -263,7 +267,8 @@ def make_folding_collective_regimes() -> dict[str, Regime]:
     """Return the regimes of a model whose collective source declares a fold.
 
     Pass straight to `Model(regimes=..., ages=AGES,
-    regime_id_class=CoupleRegimeId, edges={"couple": {"couple_terminal": 0}})`.
+    regime_id_class=CoupleRegimeId, edges={"couple": {"couple_terminal": 0}})`,
+    which is where the combination is rejected.
 
     Returns:
         Dict of regime names to regimes: the collective source `couple` built

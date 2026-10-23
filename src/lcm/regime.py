@@ -326,16 +326,13 @@ class Regime:
     shocks, nonlinear certainty equivalents, and non-GridSearch solvers on a
     collective regime raise `NotImplementedError`.
 
-    A shock declared `fold=True` keeps its node axis in a collective regime's
-    stored value and dissolution flag. A collective regime writes `-inf` where
-    no action satisfies every stakeholder's participation constraint — a
-    sentinel a gated edge resolves to the outside option, not a value on the
-    household's own scale — so each node is routed through the gate first, and
-    the quadrature average is the reader's expectation over the routed nodes.
-    Averaging first would store a household dissolving at one node as
-    dissolving at all of them. Another regime may not read a folding
-    collective regime through a projection. The same shock folds out of the
-    stored value in a singleton regime.
+    A shock declared `fold=True` is refused when the model is built, naming the
+    regime and the state. A collective regime writes `-inf` where no action
+    satisfies every stakeholder's participation constraint — a sentinel a gated
+    edge resolves to the outside option, not a value on the household's own
+    scale — and quadrature over that sentinel is not an expectation: a
+    household dissolving at one node would be stored as dissolving at all of
+    them. The same shock folds normally in a singleton regime.
 
     Three things to know before simulating one:
 

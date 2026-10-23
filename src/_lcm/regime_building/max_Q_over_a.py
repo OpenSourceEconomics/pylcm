@@ -192,9 +192,9 @@ def get_max_Q_over_a(
             axis THROUGH the max-over-actions — every node is evaluated — but its
             axis is then weighted-averaged away (with `fold_weights[name]`)
             before the result is returned, so the caller never sees it. Only a
-            singleton regime folds here: a collective regime keeps its folded
-            shocks as node axes, because its `-inf` dissolution sentinel must
-            be routed at each node before anything is averaged.
+            singleton regime may fold: a collective regime's `-inf` dissolution
+            sentinel is not a value quadrature can average, so the combination
+            is rejected at model build.
         fold_weights: Quadrature weights per name in `fold_state_names`. A name
             absent from `fold_conditioning` carries a 1-D array matching that
             state's node count and summing to 1; a name present there carries a
@@ -1205,9 +1205,9 @@ def _wrap_with_fold_reduction(
     one fold axis shifts the position of every later axis, so each axis pair is
     resolved against the axis order as it stands at that step, not the original.
 
-    `mapped` is a singleton regime's value kernel: a collective regime's folds
-    stay node axes of its stored value, so there is no stakeholder axis here and
-    no dissolution flag to reduce (`_fail_if_collective`).
+    `mapped` is a singleton regime's value kernel: a collective regime may not
+    declare a folded state at all, so there is no stakeholder axis here and no
+    dissolution flag to reduce (`_fail_if_collective`).
 
     The per-axis reducer is bound HERE, at kernel-build time, from the axis's
     own quadrature weights — see `_select_fold_reducer`.
@@ -1383,18 +1383,19 @@ def _fail_if_collective(
     A collective regime's value carries a dissolution flag beside it: where no
     action satisfies every stakeholder's participation constraint the cell is
     flagged and written `-inf`, a not-sustainable sentinel a gated edge
-    resolves to the outside option. Quadrature cannot average a sentinel
-    before it is routed, so `finalize_regimes` keeps a collective regime's
-    folded shocks as node axes and the reader averages after routing. Reaching
-    here means that guarantee was bypassed.
+    resolves to the outside option. Quadrature cannot average a sentinel, so
+    the combination is refused at model build by
+    `_fail_if_collective_regime_folds`. Reaching here means that guarantee was
+    bypassed.
     """
     if stakeholders is not None:
         msg = (
             f"fold=True on state(s) {sorted(fold_state_names)} reached the "
             f"value kernel of a collective regime (stakeholders "
             f"{list(stakeholders)}). Folding a shock out of a collective "
-            "regime's stored value is not supported — model build keeps the "
-            "node axis, so reaching here means that was bypassed."
+            "regime's stored value is not supported — the combination is "
+            "rejected at model build, so reaching here means that rejection "
+            "was bypassed."
         )
         raise ValueError(msg)
 
