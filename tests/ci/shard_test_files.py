@@ -18,8 +18,16 @@ assignment rather than leaving the caller to recompute them.
 Weights are per *leg* (one OS/precision combination), never a cross-leg sum: the
 same file costs 37 minutes on the Windows general leg and 27 on the Linux fp64
 one. `tests/ci/ci-workloads.json` records them under `leg_weights`, keyed by the
-leg name. A file with no observed weight is never treated as free; it is
-reported in `unweighted` so the caller can see the gap.
+leg name. A file with no observed weight is never treated as free: it is
+placed at the leg's median weight and reported in `unweighted` so the caller can
+see the gap. The median is a stand-in for one CI run only:
+
+- the `workload-weights` CI job (`tests/ci/workload_weights.py check`) fails
+  while any shard file has no measured weight on its leg; the shards still run
+  at median placement, so that run produces the missing measurements;
+- the `ci-workload-weights` pre-commit hook (`workload_weights.py refresh`)
+  refreshes every leg from the latest completed CPU run of the branch's open
+  pull request and stages the manifest, so the next commit fills them in.
 """
 
 from __future__ import annotations
@@ -30,6 +38,7 @@ import sys
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from statistics import median
 
 from tests.ci import ci_workloads
 
@@ -59,20 +68,27 @@ def assign_weighted_test_files(
     the lowest-indexed one among those with the smallest current load, so the
     result depends only on the inputs -- two machines computing it agree.
 
-    A file absent from `weights` sorts as weight 0.0 *for ordering only*; it is
-    still assigned, and `weighted_shard_report` names it as unweighted rather
-    than claiming its bin cost nothing.
+    A file absent from `weights` is placed as if it cost the median measured
+    weight (1.0 when nothing is measured), so files added since the last
+    measurement spread over the bins instead of all landing in the lightest
+    one. That weight is used *for placement only*: `weighted_shard_report`
+    still names the file as unweighted and leaves it out of the bin's seconds.
     """
     if n_shards <= 0:
         raise ValueError("n_shards must be positive")
 
+    placement_default = median(map(float, weights.values())) if weights else 1.0
+
+    def placement_weight(path: str) -> float:
+        return float(weights.get(path, placement_default))
+
     groups: list[list[str]] = [[] for _ in range(n_shards)]
     loads = [0.0] * n_shards
-    ordered = sorted(files, key=lambda path: (-float(weights.get(path, 0.0)), path))
+    ordered = sorted(files, key=lambda path: (-placement_weight(path), path))
     for path in ordered:
         lightest = min(range(n_shards), key=lambda index: (loads[index], index))
         groups[lightest].append(path)
-        loads[lightest] += float(weights.get(path, 0.0))
+        loads[lightest] += placement_weight(path)
 
     return tuple(tuple(sorted(group)) for group in groups)
 
