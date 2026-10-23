@@ -70,6 +70,7 @@ from lcm.case_piece import (
 )
 from lcm.decoupled import Decoupled
 from lcm.phased import Phased
+from lcm.shocks import ShockGroup, ShockGroupName, _correlation_record
 from lcm.solver_api import (
     ArtifactChannel,
     AxisRole,
@@ -747,6 +748,7 @@ def fingerprint_model_structure(
     laws: _FingerprintLaws,
     regime_names_to_ids: RegimeNamesToIds,
     binding_recorder: BindingRecorder | None = None,
+    shock_groups: Mapping[ShockGroupName, ShockGroup] = MappingProxyType({}),
 ) -> str:
     """Hash the mathematical facts a model fixes at build.
 
@@ -833,6 +835,22 @@ def fingerprint_model_structure(
     )
     hasher = _SemanticHasher(binding_recorder=binding_recorder)
     hasher.visit(value=record)
+    if shock_groups:
+        hasher.visit(
+            value=(
+                "current-iid-registry",
+                1,
+                {
+                    name: (
+                        tuple(group.shocks.items()),
+                        group.nodes,
+                        _correlation_record(group.correlation),
+                        group._correlation_support,  # noqa: SLF001 - identity retains the prepared rank support
+                    )
+                    for name, group in shock_groups.items()
+                },
+            )
+        )
     return hasher.hexdigest()
 
 
@@ -925,7 +943,9 @@ def _project_user_regime_declaration(
                     if name != "description"
                     # An empty reporting declaration adds no semantic facts to
                     # the pre-existing feature-free model identity.
-                    and not (name == "output_only_functions" and value == ())
+                    and not (
+                        name in {"output_only_functions", "shocks"} and value == ()
+                    )
                 }
             ),
         }
