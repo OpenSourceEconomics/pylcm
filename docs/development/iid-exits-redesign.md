@@ -144,6 +144,54 @@ Signed quadrature is linear-only. Propagate its provenance into stored channels 
 reject every nonlinear downstream reader, including CE, Euler inversion, constraints,
 availability, exit rules and simulation sampling.
 
+## Runtime correlation admission
+
+Each concrete solve, simulation and period replay validates the supplied correlation
+matrix and its active-dtype representation on the host. The engine owns the exact
+zero-pivot support mask and passes it beside dynamic correlation values to the native
+program. The mask is not a user-supplied validation bypass. A later invocation validates
+again; correlation values are not frozen by the first call.
+
+An admitted zero pivot contributes an exact zero factor column. Select safe operands
+before square root and division, rather than hiding an invalid inactive expression
+afterward. An active pivot must be finite and strictly positive, and its factor entries
+must remain finite. Unresolved active arithmetic returns a dedicated invalid-law status;
+clipping an active pivot is not proof of factorization. Rounded residual equality is not
+required at host-admitted zero pivots.
+
+Derivatives hold admitted support fixed. Interior positive-definite derivatives use the
+dynamic factor arithmetic. At singular support, derivatives have the interpretation of
+tangents within the declared PSD stratum; crossing rank has no derivative guarantee.
+Primal validity and finiteness of consumed derivatives are separate obligations.
+
+## Legacy constructor rules
+
+Retained IID constructor spellings return named shock groups at retirement. Their
+compatibility rule preserves the finite operator of formerly admitted fixed folded
+declarations. Standard new declarations retain their explicitly selected base rules.
+Continuous law identity and finite quadrature identity remain separate facts.
+
+Fixed normal-mixture physical-bin rules use frozen pullbacks under their bound law.
+Fixed conditioned-normal rules use the union of category-specific pullbacks with the
+original category weights. Preserve original physical-node bytes, category identity,
+active support order and normalization semantics. A finite base-array round trip cannot
+represent every such pullback exactly. Constructor-generated compatibility rules may
+therefore retain typed frozen pullback anchors, authenticated against their bound law;
+arbitrary user nodes cannot forge a physical-value override. Anchors are fixed numerical
+coordinates, never persistent states or an alternative simulation law.
+
+Simulation always applies the true continuous law to addressed base draws. Compatibility
+anchors only preserve fixed-law solve operators. Unsupported cross-state anchor
+evaluation and unrestricted runtime mixture-shape compatibility require a named refusal
+or an explicit numerical migration; they cannot silently regenerate parameter-dependent
+base nodes. Uniform singleton compatibility retains its declared left endpoint.
+
+Preserving an atomic operator does not establish bitwise equality across changed
+compiler topologies. Compare levels using a declared summand scale and compare
+structural action ownership separately. A value tolerance cannot excuse a changed
+structural decision; an unresolved parity decision fails acceptance. Keep legacy
+consumers until their replacement's public-API parity and independent-oracle gates pass.
+
 ## EKL migration and resources
 
 The exact reference household comes from lcm-zoo
