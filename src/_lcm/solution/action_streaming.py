@@ -44,6 +44,7 @@ from _lcm.solution.logsumexp_action_reduction import (
     BoundLogSumExpReduction,
 )
 from _lcm.typing import PytreeValue, QAndFArg
+from _lcm.utils.dispatchers import vary_carry_like_body
 from lcm.typing import ActionName, BoolND, FloatND, ReferenceName
 
 _INT32_MAX = 2_147_483_647
@@ -540,7 +541,9 @@ def _bounded_hard_max(
 
     carry, _history = jax.lax.scan(
         add_window,
-        carry,
+        vary_carry_like_body(
+            body=lambda state: add_window(state, jnp.int32(0))[0], carry=carry
+        ),
         jnp.arange((n_actions + width - 1) // width, dtype=jnp.int32),
     )
     return BoundedResult(
@@ -649,7 +652,10 @@ class _PartitionedStreamingHardMax:
 
             result, _history = jax.lax.scan(
                 add_window,
-                initial,
+                vary_carry_like_body(
+                    body=lambda state: add_window(state, jnp.int32(0))[0],
+                    carry=initial,
+                ),
                 jnp.arange(layout.blocks_per_partition, dtype=jnp.int32),
             )
             return result
@@ -1387,7 +1393,12 @@ def _scan_ev1_blocks(
             ), None
 
         result, _history = jax.lax.scan(
-            add_window, initial, jnp.arange(n_blocks, dtype=jnp.int32)
+            add_window,
+            vary_carry_like_body(
+                body=lambda state: add_window(state, jnp.int32(0))[0],
+                carry=initial,
+            ),
+            jnp.arange(n_blocks, dtype=jnp.int32),
         )
         return result
     (accumulator, _), _history = jax.lax.scan(

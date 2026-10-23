@@ -16,7 +16,12 @@ from beartype.roar import (
 
 from _lcm.execution.output_layout import StateAxesLeading
 from _lcm.solution import feasibility
-from _lcm.utils.dispatchers import map_over_leading_axis, productmap, tiled_productmap
+from _lcm.utils.dispatchers import (
+    map_over_leading_axis,
+    productmap,
+    tiled_productmap,
+    vary_carry_like_body,
+)
 from lcm.typing import BoolND, FloatND
 
 
@@ -415,3 +420,14 @@ def _direct_summaries(
             np.int32(np.sum(active & (values < 1.0)) * 2),
             np.int32(np.sum(active) * 3),
         ]
+
+
+def test_vary_carry_like_body_returns_a_carry_outside_shard_map_unchanged() -> None:
+    """Without a manual mesh axis there is nothing to vary over."""
+    carry = (jnp.zeros(2), jnp.asarray(a=False))
+    assert (
+        vary_carry_like_body(
+            body=lambda state: (state[0] + 1.0, state[1] | True), carry=carry
+        )
+        is carry
+    )

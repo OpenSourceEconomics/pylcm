@@ -18,6 +18,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import vmap
+from jax.core import ShapedArray
 
 from _lcm.solution.feasibility import (
     BoundedResult,
@@ -104,6 +105,51 @@ def map_over_leading_axis[InputTree, OutputTree](
     return jax.tree.map(lambda leaf: leaf[:n_rows], mapped)
 
 
+def vary_carry_like_body[Carry](
+    *, body: Callable[[Carry], Carry], carry: Carry
+) -> Carry:
+    """Give each carry leaf the manual axes its scan-body output varies over.
+
+    An initial carry built from constants is invariant over every `shard_map`
+    axis, while a body that reads sharded data returns a varying carry, and
+    `lax.scan` requires both to have one type. Each leaf is cast to varying over
+    the axes its abstract body output varies over and it does not, until the
+    two agree. Outside `shard_map` no axis is manual and `carry` is returned
+    unchanged.
+
+    Args:
+        body: The scan body with its per-step input bound, from carry to carry.
+        carry: The initial carry.
+
+    Returns:
+        `carry`, varying over the same manual axes as the body's output.
+
+    """
+    while True:
+        # Only leaves leave the abstract evaluation: a carry container may refuse
+        # abstract leaves.
+        target = jax.eval_shape(lambda state: jax.tree.leaves(body(state)), carry)
+        missing = [
+            tuple(sorted(_varying_axes(out) - _varying_axes(jax.typeof(leaf))))
+            for leaf, out in zip(jax.tree.leaves(carry), target, strict=True)
+        ]
+        if not any(missing):
+            return carry
+        leaves = [
+            jax.lax.pcast(leaf, axes, to="varying") if axes else leaf
+            for leaf, axes in zip(jax.tree.leaves(carry), missing, strict=True)
+        ]
+        carry = jax.tree.unflatten(jax.tree.structure(carry), leaves)
+
+
+def _varying_axes(
+    value: jax.ShapeDtypeStruct | ShapedArray,
+) -> frozenset[str]:
+    """Return the manual mesh axes an abstract value varies over."""
+    manual = getattr(value, "manual_axis_type", None)
+    return frozenset() if manual is None else frozenset(manual.varying)
+
+
 def _map_with_bound_summary[InputTree, Output: PytreeValue](
     *,
     func: Callable[[InputTree], BoundedResult[Output]],
@@ -113,9 +159,11 @@ def _map_with_bound_summary[InputTree, Output: PytreeValue](
 ) -> BoundedResult[Output]:
     """Store ordinary rows while OR-folding active flags in a fixed scan carry.
 
-    Every window runs inside one scan and returns no scan history. Only ordinary
-    output buffers have population extent; integrity lives in the current window
-    and scalar carry.
+    A single window is evaluated directly; several windows all run inside one
+    scan that returns no scan history. Either way the row body is fenced off
+    from the surrounding program, so each row's bits do not depend on the
+    window count or on what consumes the map. Only ordinary output buffers have
+    population extent; integrity lives in the current window and scalar carry.
     """
     n_rows = jax.tree.leaves(xs)[0].shape[0]
     if n_rows < 1:
@@ -129,7 +177,13 @@ def _map_with_bound_summary[InputTree, Output: PytreeValue](
     def evaluate_window(start: jax.Array) -> tuple[BoundedResult[Output], jax.Array]:
         indices = start + offsets
         selected = jnp.minimum(indices, n_rows - 1)
-        inputs = jax.tree.map(lambda leaf: leaf[selected], xs)
+        # The barriers keep XLA from fusing the row body with the ops around it:
+        # a fusion can contract a multiply and an add into one rounding, so a
+        # row's bits would otherwise depend on whether its window sits inside the
+        # scan loop or is inlined beside the map's consumers.
+        inputs = jax.lax.optimization_barrier(
+            jax.tree.map(lambda leaf: leaf[selected], xs)
+        )
         result = jax.vmap(func)(inputs)
         if type(result) is not BoundedResult or not (
             result.bound_status
@@ -139,14 +193,32 @@ def _map_with_bound_summary[InputTree, Output: PytreeValue](
             raise TypeError(
                 "Bound-summary maps require declared BoundedResult records."
             )
+        result = jax.lax.optimization_barrier(result)
         valid = indices < n_rows
         if active is not None:
             valid = valid & active[selected]
         return result, valid
 
-    # Every window, the first included, runs inside the scan, so the row body is
-    # lowered once. Its abstract result sizes the buffers, and folding a window
-    # with no active lane gives the all-false, zero-count identity of every merge.
+    if n_windows == 1:
+        # One window is evaluated directly; the row body still appears once.
+        result, valid = evaluate_window(jnp.asarray(0, dtype=jnp.int32))
+        return BoundedResult(
+            output=result.output,
+            bound_status=reduce_bound_input_status(
+                statuses=result.bound_status, active=valid
+            ),
+            query_status=reduce_query_input_status(
+                statuses=result.query_status, active=valid
+            ),
+            continuation_read_counts=reduce_continuation_read_counts(
+                counts=result.continuation_read_counts, active=valid
+            ),
+        )
+
+    # Across several windows every window, the first included, runs inside the
+    # scan, so the row body is lowered once. Its abstract result sizes the
+    # buffers, and folding a window with no active lane gives the all-false,
+    # zero-count identity of every merge.
     # Only leaves leave the abstract evaluation, since an output container may
     # refuse abstract leaves; the zero leaves are then put back into its structure.
     structures = []
@@ -213,19 +285,23 @@ def _map_with_bound_summary[InputTree, Output: PytreeValue](
             ),
         ), None
 
+    initial = BoundedResult(
+        output=buffers,
+        bound_status=reduce_bound_input_status(
+            statuses=empty.bound_status, active=no_lanes
+        ),
+        query_status=reduce_query_input_status(
+            statuses=empty.query_status, active=no_lanes
+        ),
+        continuation_read_counts=reduce_continuation_read_counts(
+            counts=empty.continuation_read_counts, active=no_lanes
+        ),
+    )
     final, _ = jax.lax.scan(
         one_window,
-        BoundedResult(
-            output=buffers,
-            bound_status=reduce_bound_input_status(
-                statuses=empty.bound_status, active=no_lanes
-            ),
-            query_status=reduce_query_input_status(
-                statuses=empty.query_status, active=no_lanes
-            ),
-            continuation_read_counts=reduce_continuation_read_counts(
-                counts=empty.continuation_read_counts, active=no_lanes
-            ),
+        vary_carry_like_body(
+            body=lambda carry: one_window(carry, jnp.asarray(0, dtype=jnp.int32))[0],
+            carry=initial,
         ),
         jnp.arange(n_windows, dtype=jnp.int32),
     )
