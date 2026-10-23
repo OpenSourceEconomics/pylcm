@@ -17,10 +17,14 @@ whether `pair` has a feasible action at a wage is a scalar inequality that the
 reference below evaluates by enumerating both actions directly.
 """
 
+import logging
+from collections.abc import Callable
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
     ByAge,
@@ -124,11 +128,17 @@ def _no_dissolution(D_target: BoolND) -> BoolND:
     return ~D_target
 
 
+def _double(wage: ContinuousState) -> ContinuousState:
+    return 2.0 * wage
+
+
 def _build_model(
     *,
     payoff_name: str,
     enable_jit: bool = True,
     execution_config: ExecutionConfig | None = None,
+    fallback_grid: IrregSpacedGrid | None = None,
+    fallback_projection: Callable[[ContinuousState], ContinuousState] = _identity,
 ) -> Model:
     wage_grid = IrregSpacedGrid(points=np.array([1.0, 3.0]))
     return Model(
@@ -143,7 +153,8 @@ def _build_model(
                             "only": StakeholderRoute(
                                 target_stakeholder="f",
                                 fallback=ProjectedRegimeValue(
-                                    regime="alone_m", projection={"wage": _identity}
+                                    regime="alone_m",
+                                    projection={"wage": fallback_projection},
                                 ),
                             )
                         },
@@ -180,7 +191,8 @@ def _build_model(
                 states={"wage": wage_grid}, functions={"utility": _outside_f}
             ),
             "alone_m": Regime(
-                states={"wage": wage_grid}, functions={"utility": _outside_m}
+                states={"wage": wage_grid if fallback_grid is None else fallback_grid},
+                functions={"utility": _outside_m},
             ),
         },
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
@@ -341,3 +353,57 @@ def test_every_dissolution_route_is_recorded_with_its_state_and_route():
         (r.subject_id, r.period, r.regime, dict(r.state), r.source, r.fallback)
         for r in result.dissolution_fallbacks
     ] == [(1, 1, "pair", {"wage": 2.0}, "source", "alone_m")]
+
+
+def _clip_state_fallback_model() -> Model:
+    """`alone_m` clips its wage to `[1, 3]`; the route doubles the realised wage."""
+    return _build_model(
+        payoff_name="bowl",
+        fallback_grid=IrregSpacedGrid(
+            points=np.array([1.0, 2.0, 3.0]), off_grid="clip_state"
+        ),
+        fallback_projection=_double,
+    )
+
+
+def _simulate_at_wage_two(*, model: Model, log_level: LogLevel = "off"):
+    solution = model.solve(params=_PARAMS, log_level="off")
+    return model.simulate(
+        params=_PARAMS,
+        initial_conditions={
+            "wage": jnp.array([2.0]),
+            "age": jnp.zeros(1),
+            "regime_id": jnp.full(1, model.regime_names_to_ids["source"], jnp.int32),
+        },
+        solution=solution,
+        log_level=log_level,
+        seed=0,
+    )
+
+
+def test_a_rerouted_state_follows_the_fallback_grid_clip_rule():
+    """Wage 2 is empty in `pair`; doubled to 4, `alone_m` clips it to its top node."""
+    result = _simulate_at_wage_two(model=_clip_state_fallback_model())
+    panel = result.to_dataframe().query("period == 1")
+    assert list(zip(panel["regime_name"], panel["wage"], strict=True)) == [
+        ("alone_m", 3.0)
+    ]
+
+
+def test_debug_transition_counts_name_the_regime_a_rerouted_household_acted_in(
+    caplog: pytest.LogCaptureFixture,
+):
+    """The household rerouted at period 1 acted in `alone_m`, then stays there."""
+    with caplog.at_level(logging.DEBUG, logger="lcm"):
+        _simulate_at_wage_two(model=_clip_state_fallback_model(), log_level="debug")
+    transition_lines = [
+        line.strip()
+        for record in caplog.records
+        if record.getMessage().startswith("  transitions:")
+        for line in record.getMessage().splitlines()[1:]
+    ]
+    assert transition_lines == [
+        "- source → pair = 1",
+        "- alone_m → alone_m = 1",
+        "- alone_m → alone_m = 1",
+    ]
