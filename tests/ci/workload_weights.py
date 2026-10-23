@@ -7,18 +7,26 @@ placement is a stand-in for one CI run only, and two commands keep it so:
 - `check` is the `workload-weights` CI gate. It fails while any file a leg
   shards over has no measured weight on that leg, naming the files. The shards
   themselves still run at median placement, so the same run measures them.
-- `refresh` is the `ci-workload-weights` pre-commit hook. It replaces every
-  leg's weights with the JUnit testcase seconds of the latest completed CPU run
-  of the branch's open pull request, re-derives the shards, and stages
-  `tests/ci/ci-workloads.json`. A file that run selected but that recorded no
-  testcase on a leg is measured at 0 seconds there. A leg whose shard reports
-  are incomplete keeps its weights.
+- `refresh` is the `ci-workload-weights` pre-commit hook. It fills in only
+  the weights `check` names as missing and leaves every existing weight as it
+  is. Each missing file takes its testcase seconds from the latest completed
+  CPU run of the branch's open pull request that measured it; the run's leg
+  counts when it has a report for every shard of the run's own layout, since
+  per-file weights do not depend on the shard count. A file the run's manifest
+  gave to the leg that recorded no testcase there is measured at 0 seconds; a
+  file the run did not contain stays missing. Each filled weight names its run
+  under the leg's `filled_from`. The hook then re-derives the shards and stages
+  `tests/ci/ci-workloads.json`. With nothing missing it looks nothing up.
+
+Re-measuring a whole leg is the manual
+`generate_ci_workloads --refresh-leg` step, which replaces the leg's weights
+and clears its `filled_from`.
 
 Weights come only from CI, never from local timing. A new test file therefore
 fails the gate once, on its first CI run, and the next commit fills its weight
 in from that run. With no open pull request, no completed run, or `gh`
 unavailable or offline, `refresh` leaves the file unchanged and prints why; it
-never blocks a commit. Downloaded reports are cached per run under
+never fails a commit. Downloaded reports are cached per run under
 `.cache/ci-junit/`, so the same run always gives the same file.
 """
 
@@ -33,9 +41,7 @@ from pathlib import Path
 
 from tests.ci import ci_workloads
 from tests.ci.generate_ci_workloads import (
-    MeasuredLeg,
     leg_weights_from_junit,
-    refresh_leg,
     regenerate,
     render,
     unaccounted_test_files,
@@ -55,7 +61,8 @@ LEG_ARTIFACTS: Mapping[str, str] = {
 }
 
 _GH_TIMEOUT_SECONDS = 60
-_DOWNLOAD_TIMEOUT_SECONDS = 600
+_DOWNLOAD_TIMEOUT_SECONDS = 300
+_RUNS_CONSIDERED = 5
 
 
 @dataclass(frozen=True)
@@ -126,77 +133,140 @@ def refresh_manifest(
     *,
     manifest_text: str,
     repo_root: Path,
-    find_run: Callable[[], CompletedRun | Skip],
+    find_runs: Callable[[], Sequence[CompletedRun] | Skip],
     read_reports: Callable[[CompletedRun], Mapping[str, Sequence[Path]] | Skip],
-    selected_at_run: Callable[[CompletedRun], Mapping[str, frozenset[str]] | Skip],
+    run_manifest: Callable[[CompletedRun], ci_workloads.WorkloadManifest | Skip],
 ) -> Refresh:
-    """Replace every complete leg's weights with one CI run's measurements.
+    """Fill in the weights `check` names as missing, from the latest run measuring each.
 
-    `read_reports` maps a leg to the JUnit reports of its shards on the run;
-    `selected_at_run` maps it to the files the run's own manifest had it shard
-    over. A leg is refreshed only when it has one report per shard.
+    Every weight the manifest already has is left exactly as it is; re-measuring
+    a whole leg is the manual `generate_ci_workloads --refresh-leg` step. With
+    nothing missing, no run is looked up.
+
+    `find_runs` returns completed runs newest first. For each, `read_reports`
+    maps a leg to the JUnit reports of its shards and `run_manifest` returns the
+    workload manifest the run ran under. A leg of a run is used only when it has
+    one report per shard of *that run's* layout: per-file weights do not depend
+    on the shard count. A missing file is then filled with its summed testcase
+    seconds, or with 0 when the run's manifest gave it to the leg and it
+    recorded no testcase there. A file the run did not contain stays missing.
     """
-    run = find_run()
-    if isinstance(run, Skip):
-        return Refresh(text=manifest_text, message=_unchanged(run.reason))
-    reports = read_reports(run)
-    if isinstance(reports, Skip):
-        return Refresh(text=manifest_text, message=_unchanged(reports.reason))
-    selected = selected_at_run(run)
-    if isinstance(selected, Skip):
-        return Refresh(text=manifest_text, message=_unchanged(selected.reason))
-
     manifest: ci_workloads.WorkloadManifest = json.loads(manifest_text)
-    shards = {
-        leg: config["shards"]
-        for family in manifest["shard_layout"].values()
-        for leg, config in family.items()
-    }
-    refreshed: list[str] = []
-    kept: list[str] = []
-    for leg in sorted(manifest["leg_weights"]):
-        leg_reports = sorted(reports.get(leg, ()))
-        if len(leg_reports) != shards[leg]:
-            kept.append(
-                f"  {leg}: {len(leg_reports)} of {shards[leg]} shard reports, "
-                "weights kept"
-            )
-            continue
-        manifest = refresh_leg(
-            manifest=manifest,
-            leg=leg,
-            measured=_measure_leg(
-                repo_root=repo_root,
-                reports=leg_reports,
-                selected=selected.get(leg, frozenset()),
-            ),
-            junit_source=(
-                f"run {run.run_id} attempt {run.attempt} (head {run.head_sha}); "
-                f"artifacts {LEG_ARTIFACTS[leg]}, one per shard; per file the "
-                "summed JUnit testcase seconds of that run, 0 for a file the leg "
-                "selected that recorded no testcase"
-            ),
-        )
-        refreshed.append(leg)
-    if not refreshed:
+    missing = unmeasured_files(
+        leg_universes=_shard_universes(manifest=manifest),
+        leg_weights={
+            leg: entry["seconds"] for leg, entry in manifest["leg_weights"].items()
+        },
+    )
+    if not missing:
+        return Refresh(text=manifest_text, message="no shard file lacks a weight")
+    runs = find_runs()
+    if isinstance(runs, Skip):
         return Refresh(
             text=manifest_text,
-            message=_unchanged(f"run {run.run_id} has no complete leg", *kept),
+            message=_unchanged(reason=runs.reason, missing=missing),
+        )
+
+    filled: list[str] = []
+    notes: list[str] = []
+    for run in runs:
+        if not missing:
+            break
+        found = _fill_from_run(
+            manifest=manifest,
+            missing=missing,
+            run=run,
+            repo_root=repo_root,
+            read_reports=read_reports,
+            run_manifest=run_manifest,
+        )
+        if isinstance(found, Skip):
+            notes.append(f"  run {run.run_id}: {found.reason}")
+            continue
+        filled += found
+        missing = unmeasured_files(
+            leg_universes=missing,
+            leg_weights={
+                leg: entry["seconds"] for leg, entry in manifest["leg_weights"].items()
+            },
+        )
+    if not filled:
+        return Refresh(
+            text=manifest_text,
+            message=_unchanged(
+                reason="no completed run measured them",
+                missing=missing,
+                details=notes,
+            ),
         )
     manifest = regenerate(
         repo_root=repo_root,
         manifest=manifest,
         additions=unaccounted_test_files(repo_root=repo_root, manifest=manifest),
     )
+    still = [f"  still missing, {leg}: {f}" for leg, fs in missing.items() for f in fs]
     return Refresh(
         text=render(manifest),
-        message="\n".join(
-            (
-                f"workload weights from run {run.run_id}: {', '.join(refreshed)}",
-                *kept,
-            )
-        ),
+        message="\n".join(("filled workload weights:", *filled, *still, *notes)),
     )
+
+
+def _fill_from_run(
+    *,
+    manifest: ci_workloads.WorkloadManifest,
+    missing: Mapping[str, Sequence[str]],
+    run: CompletedRun,
+    repo_root: Path,
+    read_reports: Callable[[CompletedRun], Mapping[str, Sequence[Path]] | Skip],
+    run_manifest: Callable[[CompletedRun], ci_workloads.WorkloadManifest | Skip],
+) -> list[str] | Skip:
+    """Write into `manifest` the missing weights one run measured; name them."""
+    ran_under = run_manifest(run)
+    if isinstance(ran_under, Skip):
+        return ran_under
+    reports = read_reports(run)
+    if isinstance(reports, Skip):
+        return reports
+    selected = _shard_universes(manifest=ran_under)
+    shards = {
+        leg: config["shards"]
+        for family in ran_under["shard_layout"].values()
+        for leg, config in family.items()
+    }
+    source = f"run {run.run_id} attempt {run.attempt} (head {run.head_sha})"
+    filled: list[str] = []
+    for leg, files in missing.items():
+        leg_reports = sorted(reports.get(leg, ()))
+        if len(leg_reports) != shards.get(leg):
+            continue
+        measured = leg_weights_from_junit(
+            repo_root=repo_root, junit_paths=leg_reports, drop_deleted_files=True
+        )
+        entry = manifest["leg_weights"][leg]
+        for file_ in files:
+            if file_ in measured.seconds:
+                seconds, count = measured.seconds[file_], measured.counts[file_]
+            elif file_ in selected.get(leg, ()):
+                seconds, count = 0.0, 0
+            else:
+                continue
+            entry["seconds"] = _with(
+                mapping=entry["seconds"], file_=file_, value=seconds
+            )
+            entry["counts"] = _with(mapping=entry["counts"], file_=file_, value=count)
+            entry["filled_from"] = _with(
+                mapping=entry.get("filled_from", {}), file_=file_, value=source
+            )
+            filled.append(f"  {leg}: {file_} = {seconds} s from {source}")
+    return filled
+
+
+def _with[Value](
+    *, mapping: Mapping[str, Value], file_: str, value: Value
+) -> dict[str, Value]:
+    """Return `mapping` with `file_` set to `value`, keys in sorted order."""
+    updated = {**mapping, file_: value}
+    return {key: updated[key] for key in sorted(updated)}
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -212,9 +282,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 def _check() -> int:
     manifest = ci_workloads.load_manifest()
-    universes = _general_universes(manifest=manifest) | _solution_universes(
-        manifest=manifest
-    )
+    universes = _shard_universes(manifest=manifest)
     missing = unmeasured_files(
         leg_universes=universes,
         leg_weights={leg: ci_workloads.leg_weights(leg=leg) for leg in universes},
@@ -232,9 +300,9 @@ def _refresh(*, repo_root: Path) -> int:
     refreshed = refresh_manifest(
         manifest_text=text,
         repo_root=repo_root,
-        find_run=_find_run,
+        find_runs=_find_runs,
         read_reports=lambda run: _read_reports(run=run, repo_root=repo_root),
-        selected_at_run=_selected_at_run,
+        run_manifest=_run_manifest,
     )
     if refreshed.text != text:
         path.write_text(refreshed.text, encoding="utf-8")
@@ -243,22 +311,12 @@ def _refresh(*, repo_root: Path) -> int:
     return 0
 
 
-def _measure_leg(
-    *, repo_root: Path, reports: Sequence[Path], selected: frozenset[str]
-) -> MeasuredLeg:
-    measured = leg_weights_from_junit(
-        repo_root=repo_root, junit_paths=reports, drop_deleted_files=True
-    )
-    ran_nothing = {
-        file_
-        for file_ in selected - set(measured.seconds)
-        if (repo_root / file_).is_file()
-    }
-    seconds = {**dict.fromkeys(ran_nothing, 0.0), **measured.seconds}
-    counts = {**dict.fromkeys(ran_nothing, 0), **measured.counts}
-    return MeasuredLeg(
-        seconds={file_: seconds[file_] for file_ in sorted(seconds)},
-        counts={file_: counts[file_] for file_ in sorted(counts)},
+def _shard_universes(
+    *, manifest: ci_workloads.WorkloadManifest
+) -> dict[str, frozenset[str]]:
+    """Return, per leg, the files that leg shards over under `manifest`."""
+    return _general_universes(manifest=manifest) | _solution_universes(
+        manifest=manifest
     )
 
 
@@ -288,17 +346,15 @@ def _solution_universes(
     }
 
 
-def _selected_at_run(run: CompletedRun) -> Mapping[str, frozenset[str]] | Skip:
+def _run_manifest(run: CompletedRun) -> ci_workloads.WorkloadManifest | Skip:
     text = _run_text("git", "show", f"{run.head_sha}:{MANIFEST.as_posix()}")
     if isinstance(text, Skip):
         return Skip(reason=f"head {run.head_sha} of run {run.run_id} is not local")
-    manifest: ci_workloads.WorkloadManifest = json.loads(text)
-    return _general_universes(manifest=manifest) | _solution_universes(
-        manifest=manifest
-    )
+    return json.loads(text)
 
 
-def _find_run() -> CompletedRun | Skip:
+def _find_runs() -> Sequence[CompletedRun] | Skip:
+    """Return the open pull request's latest completed CPU runs, newest first."""
     branch = _run_text("git", "rev-parse", "--abbrev-ref", "HEAD")
     if isinstance(branch, Skip) or branch == "HEAD":
         return Skip(reason="detached HEAD has no pull request")
@@ -310,18 +366,20 @@ def _find_run() -> CompletedRun | Skip:
         return pr
     if not pr:
         return Skip(reason=f"no open pull request for branch {branch}")
-    run = _run_text(
+    listed = _run_text(
         "gh", "run", "list", "--workflow", WORKFLOW, "--branch", branch,
-        "--status", "completed", "--limit", "1", "--json",
+        "--status", "completed", "--limit", str(_RUNS_CONSIDERED), "--json",
         "databaseId,attempt,headSha",
-        "--jq", '.[0] // empty | "\\(.databaseId) \\(.attempt) \\(.headSha)"',
+        "--jq", '.[] | "\\(.databaseId) \\(.attempt) \\(.headSha)"',
     )  # fmt: skip
-    if isinstance(run, Skip):
-        return run
-    if not run:
+    if isinstance(listed, Skip):
+        return listed
+    if not listed:
         return Skip(reason=f"pull request {pr} has no completed {WORKFLOW} run")
-    run_id, attempt, head_sha = run.split()
-    return CompletedRun(run_id=int(run_id), attempt=int(attempt), head_sha=head_sha)
+    return tuple(
+        CompletedRun(run_id=int(run_id), attempt=int(attempt), head_sha=head_sha)
+        for run_id, attempt, head_sha in (line.split() for line in listed.splitlines())
+    )
 
 
 def _read_reports(
@@ -346,8 +404,23 @@ def _read_reports(
     }
 
 
-def _unchanged(reason: str, *details: str) -> str:
-    return "\n".join((f"workload weights unchanged: {reason}", *details))
+def _unchanged(
+    *,
+    reason: str,
+    missing: Mapping[str, Sequence[str]],
+    details: Sequence[str] = (),
+) -> str:
+    return "\n".join(
+        (
+            f"workload weights unchanged: {reason}",
+            *(
+                f"  missing, {leg}: {file_}"
+                for leg, files in missing.items()
+                for file_ in files
+            ),
+            *details,
+        )
+    )
 
 
 def _run_text(*args: str, timeout: int = _GH_TIMEOUT_SECONDS) -> str | Skip:
