@@ -8379,11 +8379,12 @@ def _get_next_for_process(*, grid: Float1D) -> Callable[..., IntND]:
 def _get_entry_weights_for_process(
     *, name: str, grid: _IIDProcess
 ) -> Callable[..., FloatND]:
-    """Get the entry weights of an IID process the source does not carry.
+    """Get the weights of an unconditioned IID process.
 
     Every row of an IID transition matrix is the same unconditional
-    distribution, so the entry weights are row zero and no current value is
-    needed to choose the row.
+    distribution, so the weights are row zero and no current value is needed to
+    choose the row. This serves a source that carries the process as much as
+    one that enters it.
     """
     if grid.params_to_pass_at_runtime:
         fixed_params = dict(grid.params)
