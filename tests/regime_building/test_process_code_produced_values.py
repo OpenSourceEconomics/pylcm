@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from _lcm.simulation.shock_paths import fail_if_a_held_process_code_is_off_node
 from lcm import (
     AgeGrid,
     ByAge,
@@ -531,3 +532,49 @@ def test_foreign_discrete_declaration_leaves_process_reads_local(
     )
     values = model.solve(params={"a": {}, "b": {}}, log_level="off").values[0]
     np.testing.assert_array_equal(np.asarray(values["a"]), np.asarray(expected))
+
+
+def _refuse_off_node_producer(*, producer: str) -> None:
+    """Simulate a jitted model whose `producer` puts 'z' at `1/4` where read by code."""
+    if producer == "entry":
+        _simulate_from_source(
+            model=_entry_model(on_node=False, code=True, enable_jit=True)
+        )
+    elif producer == "gate":
+        _simulate_from_source(model=_gate_model(on_node=False, enable_jit=True))
+    else:
+        _simulate_from_source(
+            model=_dissolution_model(on_node=False, enable_jit=True), roles=("f",)
+        )
+
+
+@pytest.mark.parametrize("producer", ["entry", "gate", "dissolution"])
+def test_off_node_refusal_names_the_code_argument_the_regime_reads(*, producer: str):
+    with pytest.raises(InvalidStateTransitionError, match=r"position `z_code`"):
+        _refuse_off_node_producer(producer=producer)
+
+
+@pytest.mark.parametrize(
+    ("held", "refused"),
+    [((-1.0, 2.0, _OFF_NODE), True), ((-1.0, 2.0, 0.0), False)],
+    ids=["off_node_holder", "every_holder_on_a_node"],
+)
+def test_held_process_code_check_refuses_only_an_off_node_holder(
+    *, held: tuple[float, ...], refused: bool
+):
+    """Only holders count: the non-holder's `1/4` never trips the check."""
+    states = {"z": jnp.asarray((*held, _OFF_NODE))}
+    holders = jnp.asarray((True, True, True, False))
+    try:
+        fail_if_a_held_process_code_is_off_node(
+            states=states,
+            processes={"z": _process()},
+            holders=holders,
+            where="in regime 'target' at period 0",
+            memory=None,
+        )
+    except InvalidStateTransitionError:
+        raised = True
+    else:
+        raised = False
+    assert raised is refused

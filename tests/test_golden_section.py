@@ -214,3 +214,110 @@ def test_negative_iterations_raise() -> None:
         maximize_golden_section(
             objective=lambda x: x, lower=jnp.zeros(1), upper=jnp.ones(1), iterations=-1
         )
+
+
+def _search(
+    *, path: str, objective, lower: FloatND, upper: FloatND, iterations: int
+) -> GoldenSectionResult:
+    """Run the plain search, or the status search with the abscissa as companion."""
+    if path == "plain":
+        return maximize_golden_section(
+            objective=objective, lower=lower, upper=upper, iterations=iterations
+        )
+    return maximize_golden_section(
+        objective=objective,
+        lower=lower,
+        upper=upper,
+        iterations=iterations,
+        objective_with_status=lambda x: (
+            objective(x),
+            (x,),
+            jnp.zeros_like(x, dtype=bool),
+        ),
+    )
+
+
+def _interior_plateau(x: FloatND) -> FloatND:
+    """One on the open bracket (2, 5), zero at both endpoints."""
+    return jnp.where((x > 2.0) & (x < 5.0), 1.0, 0.0)
+
+
+def _equal_endpoints(x: FloatND) -> FloatND:
+    """A parabola with exactly equal values at the endpoints -1 and 1."""
+    return x * x
+
+
+def _upper_shelf(x: FloatND) -> FloatND:
+    """Zero below 0.5 and one from 0.5 up to and including the upper endpoint."""
+    return jnp.where(x >= 0.5, 1.0, 0.0)
+
+
+_TIE_CASES = {
+    "interior": (_interior_plateau, 2.0, 5.0),
+    "endpoints": (_equal_endpoints, -1.0, 1.0),
+    "interior-and-upper": (_upper_shelf, 0.0, 1.0),
+}
+
+
+@pytest.mark.parametrize("path", ["plain", "status"])
+def test_exact_interior_ties_keep_the_left_sub_bracket(*, path: str) -> None:
+    """With `fa == fb` at every step the lower edge never moves."""
+    result = _search(
+        path=path,
+        objective=_interior_plateau,
+        lower=jnp.array([2.0]),
+        upper=jnp.array([5.0]),
+        iterations=17,
+    )
+    assert float(result.lower[0]) == 2.0
+    assert float(result.upper[0]) < 2.01
+    assert 2.0 < float(result.x[0]) <= float(result.upper[0])
+    assert float(result.value[0]) == 1.0
+
+
+@pytest.mark.parametrize("path", ["plain", "status"])
+def test_exactly_equal_endpoints_select_the_lower_endpoint(*, path: str) -> None:
+    """The strict `>` in the final selection keeps the lower of two equal ends."""
+    result = _search(
+        path=path,
+        objective=_equal_endpoints,
+        lower=jnp.array([-1.0]),
+        upper=jnp.array([1.0]),
+        iterations=12,
+    )
+    assert (float(result.x[0]), float(result.value[0])) == (-1.0, 1.0)
+
+
+@pytest.mark.parametrize("path", ["plain", "status"])
+def test_an_upper_endpoint_tied_with_an_interior_point_loses(*, path: str) -> None:
+    """An interior probe equal to the upper endpoint's value is the smaller abscissa."""
+    result = _search(
+        path=path,
+        objective=_upper_shelf,
+        lower=jnp.array([0.0]),
+        upper=jnp.array([1.0]),
+        iterations=12,
+    )
+    assert 0.5 <= float(result.x[0]) < 1.0
+    assert float(result.value[0]) == 1.0
+
+
+@pytest.mark.parametrize("case", tuple(_TIE_CASES))
+def test_plain_and_status_searches_agree_bitwise_on_ties(*, case: str) -> None:
+    """Both entry points select, bracket and report the same bits on exact ties."""
+    objective, lower, upper = _TIE_CASES[case]
+    plain, status = (
+        _search(
+            path=path,
+            objective=objective,
+            lower=jnp.array([lower]),
+            upper=jnp.array([upper]),
+            iterations=12,
+        )
+        for path in ("plain", "status")
+    )
+    assert status.companions is not None
+    actual = [status.x, status.value, status.lower, status.upper, status.companions[0]]
+    expected = [plain.x, plain.value, plain.lower, plain.upper, plain.x]
+    for got, want in zip(actual, expected, strict=True):
+        np.testing.assert_array_equal(np.asarray(got), np.asarray(want))
