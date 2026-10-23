@@ -165,6 +165,20 @@ repos:
         files: ^(pyproject\.toml|pixi\.toml|pixi\.lock)$
         stages:
           - pre-push
+      # Shard weights come only from CI. On every commit this replaces each
+      # leg's weights in tests/ci/ci-workloads.json with the JUnit seconds of
+      # the latest completed CPU run of the branch's open pull request and
+      # stages the file, so a test file the `workload-weights` CI gate named as
+      # unmeasured gets its weight from that run. No pull request, no completed
+      # run, or no network leaves the file unchanged and prints why; it never
+      # blocks a commit. Reports are cached per run under `.cache/ci-junit/`.
+      - id: ci-workload-weights
+        name: shard weights are refreshed from the last CI run
+        entry: pixi run -e tests-cpu python -m tests.ci.workload_weights refresh
+        language: system
+        pass_filenames: false
+        always_run: true
+        verbose: true
       - id: notebook-cell-source-format
         name: notebook cell source is a JSON array of lines
         entry: .ai-instructions/hooks/fix_notebook_cell_source.py
@@ -266,5 +280,6 @@ ci:
     - precise-annotations
     - ty
     - pixi-lock-check
+    - ci-workload-weights
     - pre-push-hooks-installed
     - notebook-cell-source-format

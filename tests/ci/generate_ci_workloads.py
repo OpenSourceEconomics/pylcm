@@ -22,6 +22,7 @@ What it changes, and nothing else:
   recomputed the way `cpu.yml` selects it at run time
   (`shard_test_files tests/solution --weights-leg fp<p>-solution`): a new
   solution file joins one shard, and the weighted partition may move others.
+  Its `predicted_payload_minutes` is recomputed from the same partition.
 
 With `--refresh-leg <leg> --junit <glob> --junit-source <text>` it first
 replaces that one leg's `leg_weights` with the summed JUnit testcase seconds and
@@ -53,7 +54,6 @@ from pathlib import Path
 
 from tests.ci import ci_workloads
 from tests.ci.shard_test_files import (
-    assign_weighted_test_files,
     general_shard_files,
     weighted_shard_report,
 )
@@ -96,21 +96,29 @@ class MeasuredLeg:
 
 
 def leg_weights_from_junit(
-    *, repo_root: Path, junit_paths: Sequence[Path]
+    *, repo_root: Path, junit_paths: Sequence[Path], drop_deleted_files: bool = False
 ) -> MeasuredLeg:
     """Sum each file's JUnit testcase seconds over the reports of one run.
 
     The reports are the shards of one leg on one run, so every file appears in
     exactly one of them. A testcase keeps its recorded seconds whatever its
     outcome; a file with no testcase gets no entry. A classname that resolves
-    to no file under `repo_root` is refused rather than dropped.
+    to no file under `repo_root` is refused rather than dropped, unless
+    `drop_deleted_files` says the reports may predate a file's deletion.
     """
     seconds: dict[str, float] = {}
     counts: dict[str, int] = {}
     for junit_path in junit_paths:
         root = ET.parse(junit_path).getroot()  # noqa: S314 - CI-produced JUnit artifacts
         for case in root.iter("testcase"):
-            file_ = _test_file_of(classname=case.get("classname", ""), root=repo_root)
+            try:
+                file_ = _test_file_of(
+                    classname=case.get("classname", ""), root=repo_root
+                )
+            except ValueError:
+                if drop_deleted_files:
+                    continue
+                raise
             seconds[file_] = seconds.get(file_, 0.0) + float(case.get("time", "0"))
             counts[file_] = counts.get(file_, 0) + 1
     return MeasuredLeg(
@@ -202,15 +210,18 @@ def regenerate(
             file_: float(seconds)
             for file_, seconds in updated["leg_weights"][leg]["seconds"].items()
         }
-        groups = assign_weighted_test_files(
+        reports = weighted_shard_report(
             files=solution_files, n_shards=config["shards"], weights=weights
         )
         precision = leg.removesuffix("-solution")
-        for index, group in enumerate(groups, start=1):
+        for index, report in enumerate(reports, start=1):
             invocation_id = f"solution-shard-{index}-{precision}-linux"
             if invocation_id not in by_id:
                 raise KeyError(f"{invocation_id} is not a recorded invocation")
-            by_id[invocation_id]["files"] = sorted(group)
+            by_id[invocation_id]["files"] = sorted(report.files)
+            by_id[invocation_id]["predicted_payload_minutes"] = round(
+                report.payload_minutes(workers=config["workers"]), 2
+            )
     # A file a lane selects by hand still needs a weight or an unweighted entry.
     selected = {file_ for inv in updated["invocations"] for file_ in inv["files"]}
     updated["unweighted_files"] = sorted(
