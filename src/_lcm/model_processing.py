@@ -362,6 +362,9 @@ def validate_model_inputs(
         RegimeName, Mapping[str, tuple[RegimeName, ...]]
     ] = MappingProxyType({}),
     declared_function_regimes: Mapping[RegimeName, UserRegime] | None = None,
+    generated_function_names: Mapping[
+        RegimeName, frozenset[FunctionName]
+    ] = MappingProxyType({}),
     declared_transitions: Mapping[
         RegimeName, tuple[Transition, ...]
     ] = MappingProxyType({}),
@@ -436,6 +439,7 @@ def validate_model_inputs(
     _validate_function_usage(
         user_regimes=solver_validation_regimes,
         declared_regimes=declared_function_regimes or solver_validation_regimes,
+        generated_function_names=generated_function_names,
         laws=laws,
         declared_transitions=declared_transitions,
         ages=ages,
@@ -509,6 +513,7 @@ def _validate_function_usage(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
     declared_regimes: Mapping[RegimeName, UserRegime],
+    generated_function_names: Mapping[RegimeName, frozenset[FunctionName]],
     laws: RegimeLaws,
     declared_transitions: Mapping[RegimeName, tuple[Transition, ...]],
     ages: TimeAxis,
@@ -589,7 +594,14 @@ def _validate_function_usage(
                 f"Regime '{name}' reads {read_outputs}; remove those names from "
                 "output_only_functions=."
             )
-        unread = sorted(set(regime.decomposed_functions) - direct - outputs)
+        # Fixed-component reconstruction nodes are lowerer-owned, rather than
+        # declared helpers. A pruned broadcast state can leave one without reads.
+        unread = sorted(
+            set(regime.decomposed_functions)
+            - direct
+            - outputs
+            - generated_function_names.get(name, frozenset())
+        )
         if unread:
             errors.append(
                 f"Regime '{name}' has unread functions {unread}. Remove them, or "

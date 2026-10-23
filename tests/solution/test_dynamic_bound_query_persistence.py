@@ -45,8 +45,14 @@ def _outer_target(*, adjustment: FloatND) -> FloatND:
     return adjustment
 
 
-def _outer_utility(*, consumption: FloatND, adjustment: FloatND) -> FloatND:
-    return consumption - adjustment
+def _outer_utility(
+    *,
+    consumption: FloatND,
+    adjustment: FloatND,
+    outer_target: FloatND,
+    outer_cost: FloatND,
+) -> FloatND:
+    return consumption - adjustment + 0.0 * (outer_target + outer_cost)
 
 
 def _outer_cost(*, adjustment: FloatND, income: FloatND) -> FloatND:
@@ -612,7 +618,9 @@ def test_query_authority_refuses_scalar_only_budget_descriptors(*, kind: str) ->
 @pytest.mark.parametrize("kind", ["policy", "intrinsic"])
 def test_literal_budget_descriptors_keep_feature_free_authority(*, kind: str) -> None:
     """Literal budget descriptors preserve ordinary continuation authority."""
-    model = _model(declaration=post_decision_lower_bound(margin=LIQUID, lower=0.0))
+    model = _model(
+        declaration=post_decision_lower_bound(margin=LIQUID, lower=0.0), helper=None
+    )
     regime = model._regimes["done"]
     phase = replace(
         regime.solution,
@@ -659,7 +667,7 @@ def test_literal_budget_descriptors_keep_feature_free_authority(*, kind: str) ->
     assert model.ages is not None
     authority = build_solution_authority(
         regimes=model._regimes,
-        flat_params=model._process_params({"floor_scale": 0.0}),
+        flat_params=model._process_params({}),
         ages=model.ages,
     )
     ref = ArtifactRef(period=0, regime="done", key=EGM_CONTINUATION)

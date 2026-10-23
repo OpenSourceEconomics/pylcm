@@ -1191,6 +1191,14 @@ class Model:
             visited_periods_by_regime=schedules.visited_periods_by_regime,
             removed_edge_reads=prepared_graph.removed_edge_reads,
             declared_function_regimes=declared_function_regimes,
+            generated_function_names={
+                regime_name: frozenset(
+                    name
+                    for name, split in self._fixed_component_splits.items()
+                    if regime_name in split.grids
+                )
+                for regime_name in self.user_regimes
+            },
             declared_transitions=self._declared_transitions,
         )
         # A validated category class lists its codes 0, 1, ... in field order.

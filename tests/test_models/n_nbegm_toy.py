@@ -52,6 +52,7 @@ from lcm.solvers import (
     OuterBranchAggregator,
     OuterSearch,
     TwoMarginSolver,
+    UniformObservedFixedCost,
 )
 from lcm.transition import AgeSpecializedFunction, AgeSpecializedGrid
 from lcm.typing import (
@@ -330,7 +331,10 @@ def build_model(
         functions["resources_before_outer_cost"] = resources_before_outer_cost
         functions["credited"] = credited
         functions["inverse_marginal_utility"] = inverse_marginal_utility
-    if adjustment_cost is not None:
+    if (
+        isinstance(adjustment_cost, UniformObservedFixedCost)
+        and adjustment_cost.scale_function == "adjustment_scale"
+    ):
         functions["adjustment_scale"] = (
             adjustment_scale if scale_function is None else scale_function
         )

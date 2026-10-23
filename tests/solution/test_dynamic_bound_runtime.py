@@ -84,6 +84,7 @@ from tests.constraints.test_dynamic_lower_bound import (
     TemporalRegimeId,
     _model,
     _temporal_model,
+    floor_helper,
     lower,
 )
 from tests.solution.test_dynamic_bound_authority import _bound
@@ -812,6 +813,7 @@ def test_supplied_actual_actions_cannot_drop_invalid_subject_floor(
         declaration=ref("savings") >= ref("floor")
         if handwritten
         else post_decision_lower_bound(margin=LIQUID, lower=floor),
+        helper=None,
         functions={"floor": floor} if handwritten else None,
     )
     with pytest.raises(InvalidValueFunctionError, match="floor"):
@@ -825,7 +827,7 @@ def test_supplied_actual_actions_cannot_drop_invalid_subject_floor(
             action_names=("consumption",),
             next_regime_to_V_arr=MappingProxyType({}),
             flat_params=regime_kernel_params(
-                model._process_params({"floor_scale": 0.5}, runtime_checks=False),
+                model._process_params({}, runtime_checks=False),
                 regime_name="done",
             ),
             period=0,
@@ -847,13 +849,14 @@ def test_simulation_rejects_invalid_floor_only_at_actual_subject(
         declaration=ref("savings") >= ref("floor")
         if handwritten
         else post_decision_lower_bound(margin=LIQUID, lower=floor),
+        helper=None,
         functions={"floor": floor} if handwritten else None,
     )
-    solution = model.solve(params={"floor_scale": 0.5}, log_level="off")
+    solution = model.solve(params={}, log_level="off")
     np.testing.assert_allclose(solution.values[0]["done"], [[1.0, 1.0], [2.0, 2.0]])
     with pytest.raises(InvalidValueFunctionError, match="floor"):
         model.simulate(
-            params={"floor_scale": 0.5},
+            params={},
             solution=solution,
             initial_conditions={
                 "wealth": jnp.asarray([2.0, 2.0, 2.0]),
@@ -1164,6 +1167,7 @@ def test_canonical_action_builders_receive_only_runtime_bound_authority(
     )
     model = _model(
         declaration=declaration,
+        helper=None if spelling == "literal" else floor_helper,
         functions={"floor": lower} if spelling == "handwritten" else None,
     )
     canonical = model._regimes["done"].solution.post_decision_bounds
