@@ -581,9 +581,10 @@ def order_targets_before_fallbacks(
     order does not change any other result. A gate whose fallback is its own
     target imposes no order: that regime decides again for its rerouted rows.
 
-    Raises:
-        ExecutionPlanningError: The targets and fallbacks active in the period
-            form a cycle, so no order lets every fallback run after its targets.
+    Where the targets and fallbacks active in the period form a cycle, no order
+    lets every fallback run after its targets, and the earliest-declared regime
+    still waiting comes next. Simulation then refuses only a household actually
+    rerouted into a regime that already ran (`NoFeasibleActionError`).
     """
     must_follow: dict[RegimeName, set[RegimeName]] = {name: set() for name in active}
     for regime in regimes.values():
@@ -594,22 +595,11 @@ def order_targets_before_fallbacks(
                     must_follow[fallback].add(target)
     ordered: dict[RegimeName, Regime] = {}
     while len(ordered) < len(active):
+        waiting = [name for name in active if name not in ordered]
         ready = next(
-            (
-                name
-                for name in active
-                if name not in ordered and must_follow[name] <= ordered.keys()
-            ),
-            None,
+            (name for name in waiting if must_follow[name] <= ordered.keys()),
+            waiting[0],
         )
-        if ready is None:
-            cycle = sorted(name for name in active if name not in ordered)
-            msg = (
-                f"The gated targets and fallbacks {cycle} form a cycle, so no "
-                "regime order lets each fallback run after the targets it "
-                "serves in the same period."
-            )
-            raise ExecutionPlanningError(msg)
         ordered[ready] = active[ready]
     return MappingProxyType(ordered)
 
