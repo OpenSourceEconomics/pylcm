@@ -1892,9 +1892,10 @@ def build_fallback_state_projector(
     does not need the fallback's VALUE (Wbar already folds that in) but does
     need the fallback's own STATE coordinates, to write the dissolved/rejected
     stakeholder's next-period row into `states[fallback.regime]`. Reuses the
-    identical projection-function construction (same `dag_pool`, same
-    `concatenate_functions` targets) so the coordinates are guaranteed
-    consistent with whatever the fold read.
+    identical projection-function construction (the same `dag_pool` minus the
+    target's carried-state imputations, the same `concatenate_functions`
+    targets) so the coordinates are guaranteed consistent with whatever the
+    fold read.
 
     **Which states it projects.** A written row is a SIMULATE-phase object, so
     the projector covers the fallback regime's simulate states — its solve
