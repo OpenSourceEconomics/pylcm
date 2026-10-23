@@ -141,6 +141,20 @@ current IID law callables. For every adopted shared discrete IID law, prove proj
 invariance of its inputs or implement the common-uniform joint CDF refinement required
 by the issue. Toy-law invariance alone is insufficient.
 
+The initial source review uses lcm-zoo `ad2658dae4df00aaf53934f9011adc4c60dcc959`,
+`src/lcm_zoo/ecksteinCareerFamilyDecisions2019/model.py`:
+
+| Declaration                    | Actual source inputs and date                                                                                                           | Migration decision                                                                                                                                                                                                |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `_job_offer_probs`             | Current hours action, current education/health and experience advanced by hours; next-period offer set (`:451`).                        | Retain a persistent offer-set state with its edge law. Do not admit this callable as current IID.                                                                                                                 |
+| `marriage_offer_young_f/m`     | Current school action and an arrival-age logit (`:2120`, `:2168`).                                                                      | Preserve existing transition-local timing. A new current-IID declaration needs a genuine period-current state law; it cannot relabel the school action as a parameter.                                            |
+| `_spouse_offer_probs_from_f/m` | Own education and fixed parameters (`:1389`); one partner education draw also determines partner experience (`:2717`).                  | Retain one shared innovation for counterparty and couple reads. Same-period own education is preserved by the inspected single projections (`:2234`, `:2238`); changed-law cases require the joint CDF partition. |
+| `_single_projection`           | Own economic states project identically; young projections also set `married_last_period` and phase-specific schooling years (`:2323`). | Check each adopted law against changed fields. Preserving education does not establish invariance for a callable reading marital history.                                                                         |
+
+These are source-based migration constraints, not a revalidation of the full paper
+model. S5 must connect adopted declarations and projection-invariance checks through the
+public API before acceptance.
+
 For S6, use symbolic full-model dimensions, dtype bytes, query channels and all consumer
 counts with the resolved per-device chunk budget. Account for source, target and
 transient workspace simultaneously. Never allocate full household arrays merely to size
@@ -153,6 +167,36 @@ through the perf-loop workflow. Preserve existing production owners and paper-le
 holds; a correctness fixture is not that performance receipt.
 
 ## Ordered delivery
+
+### Gate migration map
+
+The legacy gate date is the arrival period, after the scheduled transition has produced
+the landing state and before the destination action. An arrival adapter retains
+`(incoming source, proposed target, source role, arrival period)` provenance; a
+destination-global exit cannot stand in for an edge-specific fallback. An adapter
+retains its declared Boolean comparison, rather than substituting a utility maximum.
+
+| Legacy behavior                                           | Replacement and preserved contract                                                                                                                         | Baseline witness                                                                             |
+| --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Strict unanimous formation                                | Consent at the existing arrival date; native current-period Consent for the new household. Both values belong to the target's common participating policy. | `tests/regime_building/test_gated_edges_collective_solve.py`                                 |
+| Collective participation and empty support                | Dissolution exit at arrival; realized participating-query support replaces interpolated dissolution flags. Keep zero-weight vetoes and one final action.   | `tests/simulation/test_realised_dissolution_route.py`                                        |
+| Incoming-edge-specific fallback                           | Arrival adapter with incoming-leg provenance; initial and ungated occupants cannot borrow another leg's fallback.                                          | `tests/simulation/test_dissolution_route_provenance.py`                                      |
+| Moving or retirement comparison                           | Arrival adapter retains the strict comparator, mapped landing and source-period utility/discounting.                                                       | `tests/solution/test_terminal_carry_kernel_edge_kwargs.py`                                   |
+| Target value floor, window or mixed state/value predicate | Arrival adapter retains the entire threshold/window predicate, arrival-age grids and temporal parameter namespace.                                         | `tests/test_discrete_grid_values.py`, `tests/params/test_gate_reads_on_the_target_domain.py` |
+| Reference-only or self-reference hurdle                   | Explicit typed projected reader at arrival; a value dependency is not another move.                                                                        | `tests/solution/test_gated_edge_self_referencing_ref_age_specialized_axes.py`                |
+| Collective component comparison                           | Adapter over one selected joint-policy tuple; do not infer unanimous consent from a one-sided comparator.                                                  | `tests/solution/test_decoupled.py`                                                           |
+| Value threshold on a self-loop                            | Adapter scoped to the edge and arrival date, carrying states once and preventing another same-period move.                                                 | `tests/regime_building/test_carried_state_through_gated_self_loop.py`                        |
+| State-only or layout-only crossing                        | State-only Gate or predicate-free layout route, keeping role mapping, phase settlement and off-grid behavior.                                              | `tests/simulation/test_phased_edge_fallback.py`                                              |
+
+Each migrated behavior retains an explicit replacement public-API test before
+retirement. Apply projections to the realized landing before reading a value; apply a
+predicate after reading its operands at the query point. Neither operation commutes with
+interpolation. Preserve source, target, reference and edge parameter namespaces,
+phase-specific settlements and exact arrival-period demand. The new realized policy
+query intentionally replaces the interpolation-of-maxima residual; changed off-grid
+outcomes need oracle evidence, not a claim of legacy bitwise parity.
+
+### Stage gates
 
 The child issues of 607 carry the native dependency graph. The implementation PR closes
 the parent and children together. A child is accepted only with its own tests and all
