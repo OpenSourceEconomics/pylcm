@@ -45,13 +45,10 @@ class _IIDProcess(_ContinuousStochasticProcess):
     weights *before* the result is written into the stored value, so the
     published `V` has one fewer axis. Only an IID process may set this (a
     persistent process has no `fold` field at all — the type system rejects
-    it). A collective regime keeps a folded shock as a node axis of its stored
-    value and flag, since each node must be routed before it is averaged.
-    Further restrictions (no value constraint or regime transition reads the
-    realized node, a same-period projection reads it only onto a regime that
-    carries it unfolded, `GridSearch` only, not combined with `taste_shocks`,
-    not combined with a nonlinear `certainty_equivalent` — the fold average is
-    exact only
+    it). Further restrictions (no same-period gate / value-constraint reads
+    the realized node, no next-period transition or continuation depends on
+    it, `GridSearch` only, not combined with `taste_shocks`, not combined
+    with a nonlinear `certainty_equivalent` — the fold average is exact only
     for the linear expectation, and only a fully-specified process — no
     runtime-supplied distribution params) are enforced by
     `Regime.__post_init__` / model processing; see

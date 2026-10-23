@@ -395,10 +395,12 @@ class PreparedModelStructure:
     broadcast_variables: MappingProxyType[RegimeName, frozenset[StateOrActionName]] = (
         MappingProxyType({})
     )
-    """Per regime, the states and actions it holds from a model-level declaration.
+    """Per regime, state names merged from the model-level state slot.
 
-    Error messages read it to say whether a regime carries a state from its own
-    `Regime(states=...)` or from `Model(states=...)`.
+    Action names are excluded: a masked model action can share its name with a
+    regime-local state. Error messages read this state provenance to say whether
+    a regime carries a state from its own `Regime(states=...)` or from
+    `Model(states=...)`.
     """
 
 
@@ -431,7 +433,7 @@ def prepare_model_structure(
     simulate graph is active. `declared_transitions` are the `Transition`s as
     `Model(edges=...)` declares them and `declared_edge_vocabulary` the names
     each regime declares before demand prunes any. `broadcast_variables` are,
-    per regime, the names merged in from a model-level declaration.
+    per regime, the state names merged in from `Model(states=...)`.
     """
     raw_phase_specs = normalize_all_regime_phases(user_regimes=user_regimes, laws=laws)
     age_normalization = normalize_age_specialization(
@@ -3517,23 +3519,22 @@ def _fail_if_folded_regime_is_same_period_endpoint(
 ) -> None:
     """Reject `fold=True` on a regime read nodewise by another gate/reference.
 
-    `fold=True` integrates a shock's node axis out of a singleton regime's
-    stored V immediately after that regime's OWN period solve
-    (`_wrap_with_fold_reduction` in `regime_building/max_Q_over_a.py`). A
-    collective regime's folds arrive here unfolded: `finalize_regimes` keeps
-    their node axes, so the gates into it route each node before the reader
-    averages, and `fail_if_a_collective_fold_is_misread` refuses the
-    reference role for it. Gated-edge routing and same-period
+    `fold=True` integrates a shock's node axis out of a regime's
+    stored V — and, for a COLLECTIVE regime, additionally collapses its
+    dissolution flag `D` by `jnp.any` — immediately after that regime's OWN
+    period solve (`_wrap_with_fold_reduction` in
+    `regime_building/max_Q_over_a.py`). Gated-edge routing and same-period
     value reads both require gate-THEN-integrate: each realized shock
     node must be routed through its own gate / consent decision before any
     node is averaged away (`jnp.where(gate, V_target, V_fallback)` per node,
     then integrate — never integrate first and gate the average). If the
     folding regime is itself read nodewise by another regime's gate or
     same-period reference, the two orderings conflict: the reader only ever
-    sees the already-averaged V, not the per-node values gate-then-integrate
-    needs. Counterexample: target node values `[-inf, 1]`, nodewise
-    dissolution `[True, False]`, fallback `0`, equal weights — the correct
-    route-then-average is `0.5`, but averaging first (`D_any=True`) routes the
+    sees the already-averaged V (and, if collective, the already-`jnp.any`-
+    reduced D), not the per-node values gate-then-integrate needs.
+    Counterexample: target node values `[-inf, 1]`, nodewise dissolution
+    `[True, False]`, fallback `0`, equal weights — the correct
+    route-then-average is `0.5`, but fold-first (`D_any=True`) routes the
     whole cell to the fallback, `0.0`.
 
     A regime is unsafe to fold when it is any of:
@@ -3550,8 +3551,10 @@ def _fail_if_folded_regime_is_same_period_endpoint(
       `same_period_refs` entry, or of a `gated_edges[...].gate_refs` entry —
       so its per-node V would be read through a projection.
 
-    A singleton has a node-valued V (just no D) that a gate/reference reads
-    exactly the way it reads a collective one.
+    This applies regardless of stakeholder cardinality: gate-then-integrate
+    is violated whether the folding regime is collective or a SINGLETON — a
+    singleton has a node-valued V (just no D) that a gate/reference reads
+    exactly the same way.
 
     The combination is rejected at construction rather than executed: no
     transient per-node `V_node` / `D_node` survives the fold reduction, so a
@@ -3615,11 +3618,21 @@ def _fail_if_folded_regime_is_same_period_endpoint(
         if not roles:
             continue
 
+        d_clause = (
+            " (and collapses its dissolution flag D by `jnp.any`)"
+            if regime.stakeholders is not None
+            else ""
+        )
+        cardinality = (
+            f"a collective (stakeholders={regime.stakeholders}) regime"
+            if regime.stakeholders is not None
+            else "a singleton regime"
+        )
         error_messages.append(
             f"Regime '{regime_name}' declares fold=True on state(s) "
-            f"{fold_names} while being a singleton regime that is "
+            f"{fold_names} while being {cardinality} that is "
             f"{' and '.join(roles)}. Folding integrates the shock's node "
-            "axis out of this regime's stored V before that gate "
+            f"axis out of this regime's stored V{d_clause} before that gate "
             "/ reference can route or read per node: value constraints and "
             "gated edges require gate-then-integrate, not "
             "integrate-then-gate. Drop "

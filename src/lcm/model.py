@@ -1248,7 +1248,12 @@ class Model:
             declared_transitions=self._declared_transitions,
             declared_edge_vocabulary=declared_edge_vocabulary,
             draw_only_processes=draw_only_processes,
-            broadcast_variables=broadcast_variables,
+            # The pruning candidates combine state and action names. Only the
+            # model state slot establishes a state's diagnostic provenance.
+            broadcast_variables={
+                regime_name: names.intersection(factored_states)
+                for regime_name, names in broadcast_variables.items()
+            },
         )
         self.reachability = dataclasses.replace(
             prepared_structure.reachability,
