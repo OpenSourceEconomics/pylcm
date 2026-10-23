@@ -2491,46 +2491,58 @@ jobs:
         include:
           - precision: 64
             shard: 1
-            shards: 7
+            shards: 9
           - precision: 64
             shard: 2
-            shards: 7
+            shards: 9
           - precision: 64
             shard: 3
-            shards: 7
+            shards: 9
           - precision: 64
             shard: 4
-            shards: 7
+            shards: 9
           - precision: 64
             shard: 5
-            shards: 7
+            shards: 9
           - precision: 64
             shard: 6
-            shards: 7
+            shards: 9
           - precision: 64
             shard: 7
-            shards: 7
+            shards: 9
+          - precision: 64
+            shard: 8
+            shards: 9
+          - precision: 64
+            shard: 9
+            shards: 9
           - precision: 32
             shard: 1
-            shards: 7
+            shards: 9
           - precision: 32
             shard: 2
-            shards: 7
+            shards: 9
           - precision: 32
             shard: 3
-            shards: 7
+            shards: 9
           - precision: 32
             shard: 4
-            shards: 7
+            shards: 9
           - precision: 32
             shard: 5
-            shards: 7
+            shards: 9
           - precision: 32
             shard: 6
-            shards: 7
+            shards: 9
           - precision: 32
             shard: 7
-            shards: 7
+            shards: 9
+          - precision: 32
+            shard: 8
+            shards: 9
+          - precision: 32
+            shard: 9
+            shards: 9
     env:
       PYLCM_CI_PRECISION: ${{ matrix.precision }}
       PYLCM_CI_SHARD: ${{ matrix.shard }}
