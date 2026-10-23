@@ -249,6 +249,7 @@ RESULT_DATAFRAME_SOURCE = "src/_lcm/simulation/result_dataframe.py"
 RESULT_METADATA_SOURCE = "src/_lcm/simulation/result_metadata.py"
 ADDITIONAL_TARGETS_SOURCE = "src/_lcm/simulation/additional_targets.py"
 SIMULATION_RANDOM_SOURCE = "src/_lcm/simulation/random.py"
+SIMULATION_RANDOM_ADDRESS_SOURCE = "src/_lcm/simulation/random_address.py"
 FOLD_ZERO_SAFE_SOURCE = "src/_lcm/regime_building/zero_safe.py"
 SOLUTION_CONTRACT_SOURCE = "src/_lcm/solution/contract.py"
 GRIDS_INIT_SOURCE = "src/_lcm/grids/__init__.py"
@@ -536,6 +537,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
     RESULT_METADATA_SOURCE,
     ADDITIONAL_TARGETS_SOURCE,
     SIMULATION_RANDOM_SOURCE,
+    SIMULATION_RANDOM_ADDRESS_SOURCE,
     FOLD_ZERO_SAFE_SOURCE,
     SOLUTION_CONTRACT_SOURCE,
     GRIDS_INIT_SOURCE,
@@ -632,9 +634,9 @@ _SOURCE_SEALS = {
     COMBINED_CHUNK_OPERATIONS_SOURCE: "481b768fc97b134c671c386336a25e9e3e78b631a0a3bc4643d9e74d0ba47e54",
     COMBINED_CHUNK_PLANNING_SOURCE: "807378c7ac745eb7fc3d42c27020f6b40d10d40da3041dcdb647e7e2d3e0d90a",
     COMBINED_CHUNK_PROFILE_INVENTORY_SOURCE: "85070e5f57210e201be248c1f2deae8068dce674112f13efdb0eb94c1dd7f7b4",
-    COMBINED_CHUNK_PROFILES_SOURCE: "d8d78090ed28a29a89956bee791674c90b1386946031cf67ae61283e046ac4aa",
+    COMBINED_CHUNK_PROFILES_SOURCE: "88ce35370ccb53d115d33733c625d5300d1f2b518a939181cb51fc8981e3615a",
     COMBINED_DIAGNOSTIC_OPERATIONS_SOURCE: "477f39609fff5371d88d941cc5c4a0c9ab9fe3692ad2845a3fc3a6befb633f42",
-    COMBINED_FORWARD_PROGRAM_PROFILES_SOURCE: "ae09cf640b7a745598337506312700ebbd26b82cee75d90ac77a88e97f12ee3a",
+    COMBINED_FORWARD_PROGRAM_PROFILES_SOURCE: "a5321421f904540ec5fdcadb96f8f6273bd19d3becdefbfcb423cbcc5da4e93d",
     COMBINED_POPULATION_OPERATIONS_SOURCE: "a9fdd59887462abc4e2f4321730bcfb397f69ba5f44f3db08001288773082ab8",
     COMBINED_PROGRAM_ARGUMENTS_SOURCE: "c04b3fc05dd31f728a629ff17b9774a97313b65f145216c8eb1dd741e68c5208",
     COMBINED_SOLUTION_COPIES_SOURCE: "fbe188d3954a523522624823c769fda4c5831e138d2cb8421fc0f1453946886d",
@@ -649,7 +651,7 @@ _SOURCE_SEALS = {
     SIMULATION_ENTRY_ALLOCATIONS_SOURCE: "4e50d79fe971c9d5f0e59fc7b6942868cb09a1223bcde15754019d72efa2d979",
     NBEGM_SOURCE: "fec7a5fbb235f536098b182de5afff4d4ed7a6edd0a36b65fa9a054e9e32cdd6",
     CONTINUATION_ARGUMENTS_SOURCE: "2bfffbd49e5a2e267fcfdefadd21cf4249dcc6979a6ff4889098c37a06dcc0e1",
-    SIMULATION_TASTE_STREAM_SOURCE: "a8a90200f06aec77d02d21780286e32a3620a1687ee76c23af301687a46ae5b9",
+    SIMULATION_TASTE_STREAM_SOURCE: "5b875618ea92b0470d0b7cd160349450e6df124ffec390bc7c6b133e7d484da3",
     SIMULATION_MEMBERSHIP_SOURCE: "c0c92de4e55be3e7b814a67761caa75e8affe835e1887359d432341f1d85a18d",
     COMPILER_INPUTS_SOURCE: "c2df405f63a61f7d5201d754c95bcca9fdc213c97c1533025080da80814cda70",
     SIMULATION_OPERANDS_SOURCE: "7645b400641b5d995e1a2f651dc5d6ccb54df3e16732db64a75765c5a5f31645",
@@ -695,19 +697,19 @@ _SOURCE_SEALS = {
     PROBABILITY_SOURCE: "60ccd04b143c714360388fcce2730804a4ca729ea4db82e4a0100732e155e53f",
     ENGINE_SOURCE: "9c103e2271e6d5d655be37ce4eda10bf02c811915a5b4b2a3eee25cc02f30c18",
     STATE_ACTION_SPACE_SOURCE: "bc1d4b798ae1beeef6ce6f655ba61cd3bbf064dbd1910b14aa5cf8ce28954e95",
-    SIMULATION_SOURCE: "e3444e4a1a39c2471946e2f569ddbcb2b1939cbd2f597be0016760076cab5a5d",
-    SIMULATION_TRANSITIONS_SOURCE: "64e3b7283d1dd445edb8a9b27dc691b8dccf6bbd6a4029c1e5e03d87e686067b",
+    SIMULATION_SOURCE: "73b80fd36b130fa4e39b4dbd95c7f1d4e844a3313f037fc75823b5b0676799ee",
+    SIMULATION_TRANSITIONS_SOURCE: "3e2c80c07154dbe5f92b7444e1b3e10b5a1b3bcaf1a9ec25397f1e1c1d53b0ed",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
     MODEL_SOURCE: "9b5381fbbe567b1414676b5941bae93cab8617d83b101f53689f4b04697be549",
     SOLVER_API_SOURCE: "bc9e7cd94009998acfc1f11d8da823475030879790a49f8192e1260012496c96",
     BACKWARD_INDUCTION_SOURCE: "5229b0e46cd9d21b5039a630afe37f9eb2bf68f302b3baa5e556d246e9640efb",
     PERIOD_REPLAY_SOURCE: "2f0253693e474c70760a80ab6c07b5bdeb25ffa4aa77224e27ea5d15af5b1a55",
     INITIAL_CONDITIONS_SOURCE: "7d8181debcef963165e5f50ea9aea9ebc1c2e69ced040cb3486f01fe58181bfc",
-    RESULT_SOURCE: "3740c0afb5e3b69137a75eeb0a9d28ad1f356eda12961b53a88da453e3a971cd",
+    RESULT_SOURCE: "ab78a05bb03216b5d7df3d089aeaa43c1377374984c761815a7c0728c8981d52",
     RESULT_DATAFRAME_SOURCE: "6d735b7cb6bb324ad9e8be16cbcdc47aa2fc2b73657c02c23068072bbc58f095",
-    RESULT_METADATA_SOURCE: "220da91adf26fe320713fa969d9155fce01ccd9d84bd60db4c42ab756e28bd09",
+    RESULT_METADATA_SOURCE: "73e7a346ad752c0addac2455d1255980aef9a57aee0cfd7f223cecb77d07b212",
     ADDITIONAL_TARGETS_SOURCE: "3a4d95d5c88c801bb8bb0881a52cd8985e1cc17efdbfbf5474332e46b8d46614",
-    SIMULATION_RANDOM_SOURCE: "05ea6cd8a4cf1c01c282f6d99c1f7b0f4e5503c9cf42fb0210fe0d28a79ae681",
+    SIMULATION_RANDOM_SOURCE: "54092637d7965da26670b1f1dca8b04cf780815a349a8a71dbb243d81f5a7c25",
     FOLD_ZERO_SAFE_SOURCE: "301fcd3bec1211b60872159fe585e55e9742be62a975dd76b33f6f5cb45971e5",
     SOLUTION_CONTRACT_SOURCE: "e2caab2e0c4f3aacf5ea833875ff9b68aef2e0ec999b43a5894a4bd131233928",
     GRIDS_INIT_SOURCE: "3c720bc2240dd1cfd45855ce501f03f8a05abda5de1142b9d00208e517b9ddce",
@@ -747,15 +749,16 @@ _SOURCE_SEALS = {
     "src/_lcm/egm/framed_arithmetic.py": "f4b1fa68cc765fc1450222f7370256306d22b92a6488b40c3575e98f44e43877",
     "src/_lcm/egm/ez_kernel.py": "568caa5183613de012ae4c7b433b5bf058d5594ef3d5263963c25f2b7302c269",
     "src/_lcm/power_mean.py": "1580447a1ca5f6385556438105069bfb15d211bd6da40819b096ad84b2e77cb5",
+    "src/_lcm/simulation/random_address.py": "17f60140770dbd144c57cfd3daccb76a88196acd9e681f2abff8c2eefb37a913",
 }
 
 EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 421
 EXPECTED_DIRECT_FLOW_MUTATION_NAMES_SHA256 = (
     "f58754206b785f05a7dff36c690946024effc931c888c72383fc0bd98be060cd"
 )
-EXPECTED_SUPPLEMENTAL_MUTATION_COUNT = 96
+EXPECTED_SUPPLEMENTAL_MUTATION_COUNT = 97
 EXPECTED_SUPPLEMENTAL_MUTATION_NAMES_SHA256 = (
-    "bfb20467575ab892db7be74b859bac0288c8840f7a1aeb36eb13dee129ed3490"
+    "3feb53024d4903cc245632895f4237a694517ed9f38f48d0e5b5feb7f5611204"
 )
 EXPECTED_UNIFORM_PROCESS_MUTATION_COUNT = 37
 EXPECTED_UNIFORM_PROCESS_MUTATION_NAMES_SHA256 = (
@@ -1062,19 +1065,16 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SIMULATION_TASTE_STREAM_SOURCE: (
-        "62e32d23dc56cad5e11aa254963de93c803964b5a42539679b63054ad14a9491",
+        "81ee7ba23f63b0e6ef6454e93a13a6c402cc541b75bf618b9f6c5b55d55593bd",
         {
             "create_taste_shock_key": "76cdca8e4c1fec745ba4041395bb23454129fc5a751b89d0b5dfddeccc689fa0",
-            "prepare_decision_taste_keys": "ef085a5cfac60dce08367fc50b280500313659e270771b1e94367b73e3ddf717",
-            "generate_taste_shock_keys": "66f0dddec645c123e66957e33ea5da7f932c83c23822dd9a49c308034339a038",
+            "prepare_decision_taste_keys": "c7cb5f5016fcfa051c34fe1341f88fe6fc92d04e134501387ab1bd03133277ba",
+            "generate_taste_shock_keys": "a728f3d9793b2994e7de7ffd46216ac1f082b1e4ea60511c954961adefabd2fe",
             "advance_simulation_taste_key": "49eecd1a5724049acc7108921c86640236140477924fbf3b561156c7a449381b",
-            "build_taste_stream_addresses": "ded7f3a707af20d492dcf9c396d52c9a8f2c9e9341814145b00b7bb829eeb249",
+            "build_taste_stream_addresses": "97cde050565e0adf61ac0246010ed764501437aa65e0761a91319d98ef578a7a",
             "_encode_subject_row": "9206dbef80b1bf9607d6cfc42db24af9d7a01ee34ee04079d13c61582eeba82a",
-            "_advance_simulation_taste_key": "d8854c351a6aac51cc858691332541a21413b90baccf6dd2a52fd2ae601a3752",
-            "_taste_address_words": "4490c80c002e777c58e57d242f5a722e17f31d10e7d8120e32b31123ea284478",
-            "draw_taste_shock_keys": "cab000b3c2a725b99602e5162bc83076db4a2dfd2b466c5a660bc597c2034758",
-            "_row_offset_words": "5b7e8a0ca6032c00fd2db2d24513c6642a270e20d98facc362b45bc784d80778",
-            "_fold_subject_key": "6c3faf14f43234d25195bd3525659c095512857f4b9d4422e05e43e33d936493",
+            "_advance_simulation_taste_key": "acb5787c60e5ed254b21ec0d7bd6ca0da50c19b8b4107af884676689c940c3a4",
+            "draw_taste_shock_keys": "792bd7c17be4be6f2590b11aefc9d6d7a41545852cd787d3438f4d5bd991f7ba",
         },
     ),
     COMPILER_INPUTS_SOURCE: (
@@ -1426,24 +1426,24 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     COMBINED_CHUNK_PROFILES_SOURCE: (
-        "1050e2133a0d5cda00de40ae276ffc12bab270d7d0bcdf873febdcd3feb68a7b",
+        "78057226aafe963ff135c9c0e97e137297843f5c9a1ae53a65138ebf804a7609",
         {
-            "profile_simulation_chunk": "96adcf71245904610cd4af0e808a5f8f0f63a04bb8a3db511705044d19f40177",
+            "profile_simulation_chunk": "1563a5175ff8132ffbdf3bea94cff004b8245d7ed03a2862cc23ee61473060e0",
             "_period_copy_reservation": "bf995f9f6b2ee949a83d862cac85fb1e0148fd80ac225c0e0c469f6f758b05f2",
             "_policy_read_sources": "a83d15eb8de8a505e80cdce7a9448b11d7a9ab3001e92beb7676b491fb63245e",
             "_retained_read_source": "e0233031b8fb4dcb494575a397f5c2e9ccbfd45a69d0e6f951bb3612323cf82f",
-            "_profile_next_subjects": "40e5f933789c51080edfde29d386c6b9ed40d6945489bab06547b4c744da2b42",
+            "_profile_next_subjects": "dfa231ef20cb523118a7a4b4572c3fe73694dc514f16a97822c6f6f41f2cb864",
             "_profile_population_roles": "99510aeb32383e09d2b2972ef0ac6354dd0259aa494d77cefd9aa43d9fecad8e",
             "_profile_outer_storage": "f140b97925fd77d4b73acef4d6cea9c9cbc2db8cf67fb70d692be6130eed11c3",
             "_record_core": "1ca4c13d2facd739b83c8ee4c9cf265ddefcf982b4d937a6daedf39e2393684f",
             "_profile_initial_carrier": "1ef1aa933990fbe5e52659aed6d1f949d76b44ae0d840c0307c2d8764efce7cb",
-            "_profile_keys": "5d56469de097f6ec27b7ac72ebf82561cff40c280c6f6737ea2148d440e4b5ab",
-            "_profile_taste": "ce976aa42f4ef30bed63fc9fedcf72652b611f2c1a5262b8085a29da83b7e622",
+            "_profile_keys": "21f1136c5ae608fb1cefee9b6299348722e95c9a67467f7a76779a002ebc62c6",
+            "_profile_taste": "b095824f8ad7289d68073bebcf3e115d2b1cad84e7a329f127f339f360449f34",
             "_profile_entry_key": "306ad82a059557d575d50c24ed8c51a0d172ed97b6de476a99945bc8ca10599a",
         },
     ),
     COMBINED_FORWARD_PROGRAM_PROFILES_SOURCE: (
-        "776092c8593104d4b41ad20adb4ca356f1c5ec73b0c178aff133929ba5dbc127",
+        "224b437693a3bdb2f77327a922b2695018b413f574b56a1e7c2a559b31af0f6f",
         {
             "profile_forward_programs": "effdfca96bc6322a037b7f0b4b9d93f97a776a55db9d0de0fcf60d32dddf7a3d",
             "profile_forward_unit": "c32b237cf1f70af69221d59d75c3e730880d0ba20dacbb6e7792f06f104fae7d",
@@ -1471,10 +1471,10 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SIMULATION_SOURCE: (
-        "bc525e6ffa3c43832d7d62459559bd86f12b7b8562bd261809465b8c5a4b2244",
+        "87f80bf3f898f915d061a8295bc3653493cde6d0332893274e8bcf6a80653294",
         {
-            "simulate": "77133539270e44847396c40aaf39f5875787fad03196c122e3e294b997cbd2aa",
-            "_simulate_regime_in_period": "39c881e0f513a503b53238934532ef74aa48b9fe6c3a1a8d7d1c910ad9edf901",
+            "simulate": "593879871c079ab0b4d68db1d53c49ef5a995e891d24357a0c4ecd331c7c3204",
+            "_simulate_regime_in_period": "37e0f69e2053ad31a89b080a606697ed04861886589cdf59b65367fdccd899d6",
             "_execute_finite_replay": "dd01d79a502c1027cd08f0656c59c6bbab7080c848a706bcac631e63188edc1f",
             "_announce_dropped_outer_candidates": "977a3fc8627f295ad6837b46fcf94672449b532263c674be2209e509d6c088cd",
             "_report_dropped_outer_candidates": "0825c06c02ecfe2ad8270e6d606c67f3063f945befeccf6debb4880194d54dc1",
@@ -1482,7 +1482,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_concatenate_chunk_results": "e1217d0e707ef6a8b3d00dcef6abce948d065e125fc2886336bf537d276c1a41",
             "_validate_period_values": "30fe242e786e7e38637d380ecad0aa4d1689bc71c1fa9cbf2ae3c781e011a3c3",
             "_validate_simulated_value": "5938880b9d43f485c98f21b559d9b6d9326adc0dfde9dbca9d6a831e128cfd00",
-            "_simulate_subject_chunk": "a6e93e2862e10ab99a479dc1c7a755d425fd2ab65cb7eaf46f6e1b81f903153e",
+            "_simulate_subject_chunk": "f71959fd98884ea1697c1615790b794e033a7c8f2d49a9d57d2a8d538751460b",
             "_bind_unit_executor": "a787e30bafb80053703e1f4ce0c1d84feb5ac522cd41349665c600dcf9f1eda5",
             "_lookup_values_from_indices": "ebc4a036a447857f061c117b2eb0c9b9e61d5f17a40e90ea14a6e6205233ea9f",
             "_read_external_replay": "392ae18dc5916b0dd6b9539f395002fb97b1d1d985a8b985dc547785cd98ab53",
@@ -1900,30 +1900,47 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SIMULATION_TRANSITIONS_SOURCE: (
-        "cb44ad0a166b55a65879e02f89be0ba57773b69ea3602bca47ca211c29cbc8e9",
+        "e7e09bb4d6b002ae98f9589f3ae73d7943ea4bd9ed1d495866cbd31afd0d6909",
         {
             "_draw_random_regime_ids_from_scalars": "548fcaf12654d05a584fabee3fbd81fe42ad256307d5ea4df826cb3ae3355a5a",
             "draw_key_from_dict": "9dfed8dafa357fa87cde342dc7f174028e4adf8454b5906a4e0d24bee164cdae",
-            "calculate_next_states": "723ce9b99f9225da0d117e382ff61f7659dfabcf751be7f112e381b849153005",
-            "calculate_next_regime_membership": "0b6b07b2c499e50144feedefce8e33e74a77ce1a7113a8c87da2e6a55ffe32a5",
+            "calculate_next_states": "04b014b71a2d21dbfb833ad36140a76c47d4049b81b8ef961e2cbbf4740ae90f",
+            "transition_random_addresses": "9ba656ccb054b6d9e49c66dd85e4b02e6935f02ea02f45f0030728abe13662d1",
+            "calculate_next_regime_membership": "d6a351d57600ae2f18043554dc54375169e8da5adc860a09af657ae999272416",
             "_update_regime_ids": "93e8f8c1aba6e42f14269aac5d911c722e5e132c207cae6fa3e07bf138a58163",
             "_draw_random_regime_ids": "87fa7035d1095f0dc1a17e51e517ef559808039ac8a107864995ce94f2bf7430",
             "_advance_states_for_subjects": "a7ea5a0c113ec1aca76552c7d54502133076bee2ebe96052299ef46bf9518547",
         },
     ),
     SIMULATION_RANDOM_SOURCE: (
-        "611eb6e41f547e0bdc51a030efcf23e2a5557d4916312e61d63f12976bb62553",
+        "63f8001bb36219b6768b93f6ea09eaf8500e79b10212545698daf9963dbe0ba8",
         {
             "canonicalize_simulation_seed": "fe5056a999fa8e071b29dbba6833b7aeef20cce18f38379b313720c6955342f4",
-            "_generate_windowed_simulation_keys": "7f78949425a2334609fdcafc40af7004735f24079634d434a8ce4a0610092dd6",
-            "_validated_chunk_window": "b3ea4d659dd8c777e88a08d8c3e3524236d5cecff309bc5cfdf3217e5766876c",
+            "_generate_windowed_simulation_keys": "dad6a1e750b25555822110f10680b25b84ddd37b4a133aeef10cce02ebb0d43a",
+            "_validated_chunk_window": "aa32a232c1fcdb895b2da64e612b73992db690a406150a244216559e3d96f3b3",
             "create_simulation_key": "0fcbb9bb357166e3812b53292c1490fdde56c237f15a502009d4f85d44e4ff47",
             "_create_simulation_key": "1ab7921d3e42ea7255fb8bbc60d1ed58e408e8818d0bac91ec132c276c62a05d",
             "split_simulation_key": "9968b4530b74638b082b63c0160391573b8ae4c20a9dc3b733a9b424de259921",
             "_split_simulation_key": "666d1e23f386815a8fd331cd543813fa2fcdb501f7672a82be9f48fe31c293b2",
-            "generate_simulation_keys": "d56b65542b750105b09b3e7e08975cb0cf70bc24e95006e502c7fce88855c194",
-            "_generate_simulation_keys": "87d86ba01310209a8ac5b222c2ea6aebc8ff4488b2ba373b1b28d5b682c737b8",
+            "generate_simulation_keys": "56bfd46c5aea8ca4cb6ceebdf478580667e3065823f3f4949cd9c2c0f0173cc8",
+            "_generate_rowed_simulation_keys": "8a3f72dac10c12885e880b51cffed268f9d60341529b3bb2cff80948e23652a5",
             "draw_random_seed": "42fb402a3282c789664d45fb988b3ed07b8cec706924d3e6e11e26b44c393502",
+        },
+    ),
+    SIMULATION_RANDOM_ADDRESS_SOURCE: (
+        "7708edf35a968842011117681ce03123419eb56def125b1880bb485339334506",
+        {
+            "RandomAddress.__post_init__": "492900c559c9021831e4fb34df52dc8a3b913771efc601a9699de2cff8eb42c0",
+            "RandomAddress.words": "14d65e58045eff086d86843f04fbcc95d5864bd9acd6b8bfb04579878ffc1467",
+            "encode_subject_row": "446201dfa9a26b336900410b452a5124d7b35e462f13a683a910906ed8c961fd",
+            "draw_window_keys": "1f141d2939a22547cd1c9bd4a0958e419436507664dc6178f582a0d1988a8d52",
+            "draw_row_keys": "ee8f51828ebab5f2c057f324b6f0d0a550f68c4d9e6a610fecbb1b44f89b318a",
+            "scalar_draw_axis": "19ad514b2eb20eb3b3062428e2fd9e0d274e9fdf757b69222efd3a756256c736",
+            "inverse_cdf_index": "6455e3025a3b58dc54c8eee7c3f01640a40dfaf574f078e4bf16c021551b33bc",
+            "draw_categorical_index": "c937f4cc9e2b81874a6d5b9b517d0d5f8019612c32a7a129e4f21846feed080e",
+            "_threefry_key_dtype": "a7c1169554bf9ae2fcda9539e3943002ecf25a94c13e92ebfd880736d5a73bbe",
+            "_row_offset_words": "c6169dce1a0bd8e4fee1de76cafd2c7ee4939b7b7f0648fd589000628690e0a3",
+            "_fold_subject_key": "ec2de14aee66046985b59e498d6a3f8a58b02558ec395c8edb69df1822ee1bca",
         },
     ),
     SIMULATION_RUNTIME_SOURCE: (
@@ -6992,6 +7009,7 @@ _SIMULATION_DISPATCH_CORRIDOR_CONTRACTS = _contracts(
         ),
         SIMULATION_TRANSITIONS_SOURCE: (
             "calculate_next_states",
+            "transition_random_addresses",
             "calculate_next_regime_membership",
             "_update_regime_ids",
             "_draw_random_regime_ids",
@@ -7020,8 +7038,23 @@ _SIMULATION_DISPATCH_CORRIDOR_CONTRACTS = _contracts(
             "split_simulation_key",
             "_split_simulation_key",
             "generate_simulation_keys",
-            "_generate_simulation_keys",
+            "_generate_rowed_simulation_keys",
             "draw_random_seed",
+        ),
+        # The same typed domain/name/coordinate, uint64 original row and period
+        # encoder feeds contiguous, grouped and destination-taste allocations.
+        SIMULATION_RANDOM_ADDRESS_SOURCE: (
+            "RandomAddress.__post_init__",
+            "RandomAddress.words",
+            "encode_subject_row",
+            "draw_window_keys",
+            "draw_row_keys",
+            "scalar_draw_axis",
+            "inverse_cdf_index",
+            "draw_categorical_index",
+            "_threefry_key_dtype",
+            "_row_offset_words",
+            "_fold_subject_key",
         ),
         ENGINE_SOURCE: (),
     }
@@ -7120,10 +7153,7 @@ _SIMULATION_ADAPTER_CONTRACTS = _contracts(
             "build_taste_stream_addresses",
             "_encode_subject_row",
             "_advance_simulation_taste_key",
-            "_taste_address_words",
             "draw_taste_shock_keys",
-            "_row_offset_words",
-            "_fold_subject_key",
         ),
         COMPILER_INPUTS_SOURCE: ("compiler_input_paths", "_is_none"),
         SIMULATION_MEMBERSHIP_SOURCE: (
@@ -10331,6 +10361,7 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> DirectFlowReport:
         MODEL_SOURCE,
         ENGINE_SOURCE,
         SIMULATION_RANDOM_SOURCE,
+        SIMULATION_RANDOM_ADDRESS_SOURCE,
     ):
         tree = parsed.get(relative)
         if tree is not None:
@@ -10935,6 +10966,11 @@ def direct_flow_mutations(source: SourceText) -> dict[str, str]:
 
 
 _SUPPLEMENTAL_SOURCE_MUTATIONS = {
+    "simulation_taste_stream:destination_name_ignored": (
+        SIMULATION_TASTE_STREAM_SOURCE,
+        'RandomAddress(kind="taste", name=regime).words()',
+        'RandomAddress(kind="taste", name="ignored").words()',
+    ),
     "s02_query:intrinsic_budget_owner_changed": (
         "src/_lcm/egm/budget.py",
         'DCEGM_BUDGET_CONSTRAINT_NAME: FunctionName = "dcegm_budget_constraint"',
@@ -11177,9 +11213,9 @@ _SUPPLEMENTAL_SOURCE_MUTATIONS = {
         "memory_by_lowering_key[key].reservation_bytes",
     ),
     "simulation_taste_stream:global_row_high_word_ignored": (
-        SIMULATION_TASTE_STREAM_SOURCE,
-        "return jax.random.fold_in(jax.random.fold_in(key, high), low)",
-        "return jax.random.fold_in(jax.random.fold_in(key, 0), low)",
+        SIMULATION_RANDOM_ADDRESS_SOURCE,
+        "jax.random.fold_in(jax.random.fold_in(key, high), low), period",
+        "jax.random.fold_in(jax.random.fold_in(key, 0), low), period",
     ),
     "compiler_inputs:eliminated_input_counted_by_compiler": (
         COMPILER_INPUTS_SOURCE,
@@ -16587,11 +16623,9 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": SIMULATION_RANDOM_SOURCE,
             "source": replace_once(
                 source=simulation_random_source,
-                old='        simulation_keys[f"key_{name}"] = per_subject_keys',
-                new=(
-                    '        simulation_keys[f"key_{name}"] = jnp.roll(per_subject_keys, 1, axis=0)'
-                ),
-                label="subject taste-key reassignment",
+                old="row_low=rows[:, 1],",
+                new=("row_low=jnp.roll(rows[:, 1], 1, axis=0),"),
+                label="grouped subject innovation reassignment",
             ),
         },
         "shared_fold_average:negated_value": {

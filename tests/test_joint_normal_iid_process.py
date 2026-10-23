@@ -32,6 +32,15 @@ def _utility(
     return x * y + x * x
 
 
+def _utility_with_unrelated(
+    *,
+    x: lcm.typing.ContinuousState,
+    y: lcm.typing.ContinuousState,
+    unrelated: lcm.typing.ContinuousState,
+) -> lcm.typing.FloatND:
+    return _utility(x=x, y=y) + unrelated
+
+
 def _manual_utility(
     *, z_1: lcm.typing.ContinuousState, z_2: lcm.typing.ContinuousState
 ) -> lcm.typing.FloatND:
@@ -60,6 +69,44 @@ _FULL_RANK_COV = ((1.0, -0.4), (-0.4, 2.0))
 def test_joint_normal_process_is_public() -> None:
     """A regime can declare a named joint normal IID process."""
     assert hasattr(lcm, "JointNormalIIDProcess")
+
+
+def test_named_joint_draws_survive_group_rename_and_unrelated_shock_insertion() -> None:
+    """Public draws keep each declared scalar name across lowering edits."""
+    panels = []
+    for group_name, extra_shock in (("wages", False), ("renamed", True)):
+        states = {}
+        if extra_shock:
+            states["unrelated"] = lcm.NormalIIDProcess(
+                n_points=2, gauss_hermite=True, mu=0.0, sigma=1.0
+            )
+        states[group_name] = JointNormalIIDProcess(
+            states=("x", "y"),
+            n_points=2,
+            gauss_hermite=True,
+            mean=(0.0, 0.0),
+            cov=((1.0, 0.4), (0.4, 2.0)),
+        )
+        utility = _utility_with_unrelated if extra_shock else _utility
+        model = _model(lcm.Regime(states=states, functions={"utility": utility}))
+        initial = {
+            "regime_id": jnp.zeros(4, dtype=jnp.int32),
+            "period": jnp.zeros(4, dtype=jnp.int32),
+            "x": jnp.zeros(4),
+            "y": jnp.zeros(4),
+        }
+        if extra_shock:
+            initial["unrelated"] = jnp.zeros(4)
+        panels.append(
+            model.simulate(
+                params={}, initial_conditions=initial, seed=521, log_level="off"
+            ).to_dataframe()
+        )
+    pd.testing.assert_frame_equal(
+        panels[0][["period", "x", "y"]],
+        panels[1][["period", "x", "y"]],
+        check_exact=True,
+    )
 
 
 @pytest.mark.parametrize("runtime", [False, True])

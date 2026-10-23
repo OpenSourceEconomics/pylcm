@@ -81,7 +81,6 @@ from _lcm.simulation import programs as simulation_programs_module
 from _lcm.simulation import runtime as simulation_runtime_module
 from _lcm.simulation import taste_stream as taste_stream_module
 from _lcm.simulation.memory import SimulationMemory
-from _lcm.simulation.subject_groups import SubjectRows
 from _lcm.solution import action_streaming as action_streaming_module
 from _lcm.solution import grid_search as grid_search_module
 from _lcm.solution.action_reduction import HardMaxResult
@@ -166,13 +165,13 @@ class _KernelOutputArguments(TypedDict, closed=True):
     feasibility_counts: tuple[IntND, IntND]
 
 
-class _SimulationKeyArguments(TypedDict, closed=True):
+class _TasteKeyArguments(TypedDict, closed=True):
     key: PRNGKeyND
-    names: list[str]
-    n_initial_states: int
-    subject_slice: NotRequired[slice | SubjectRows | None]
-    original_n_subjects: NotRequired[int | None]
-    memory: NotRequired[SimulationMemory | None]
+    address_words: tuple[int, ...]
+    subject_slice: slice
+    original_n_subjects: int
+    memory: SimulationMemory | None
+    period: NotRequired[int]
 
 
 class _EvaluateBlockArguments(TypedDict, closed=True):
@@ -631,6 +630,7 @@ def test_q_and_f_arrays_reach_full_reducers_without_candidate_transformation():
     assert isinstance(_parse("src/_lcm/simulation/result_metadata.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/simulation/additional_targets.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/simulation/random.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/random_address.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/regime_building/zero_safe.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/solution/contract.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/grids/__init__.py"), ast.Module)
@@ -2541,18 +2541,15 @@ def test_reassigning_taste_keys_changes_the_public_candidate(
         subject_width=_RNG_SUBJECT_BATCH_SIZE,
     )
     baseline = _simulate_seeded_taste_routing(model=model)
-    original = taste_stream_module.generate_simulation_keys
+    original = taste_stream_module.generate_taste_shock_keys
 
     def reassigned_keys(
-        **kwargs: Unpack[_SimulationKeyArguments],
-    ) -> tuple[PRNGKeyND, dict[str, PRNGKeyND]]:
-        next_key, keys = original(**kwargs)
-        return next_key, {
-            name: jnp.roll(values, 1, axis=0) for name, values in keys.items()
-        }
+        **kwargs: Unpack[_TasteKeyArguments],
+    ) -> PRNGKeyND:
+        return jnp.roll(original(**kwargs), 1, axis=0)
 
     monkeypatch.setattr(
-        taste_stream_module, "generate_simulation_keys", reassigned_keys
+        taste_stream_module, "generate_taste_shock_keys", reassigned_keys
     )
     shifted = _simulate_seeded_taste_routing(model=model)
 

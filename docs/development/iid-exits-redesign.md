@@ -38,6 +38,25 @@ period permits one same-period move, one final-regime action and one scheduled
 transition, with no transition after the terminal period. Moves retain the row's shock
 overrides. Regime order, chunking and group edits cannot move an address.
 
+The RNG address version is `pylcm.random.v1`. Its domain, immutable scalar name and
+nonnegative component number form compact UTF-8 JSON with the version string. SHA-256 of
+those bytes is decoded into big-endian uint32 words and folded into the typed root,
+followed by the original row's high and low uint32 words and the computational period.
+Domains `shock`, `state`, `regime` and `taste` remain disjoint. Scalar shock identities
+survive changes to their containing group; lowered joint-normal coordinates retain the
+declared scalar shock names. The regime lottery uses the reserved name `regime`, and a
+destination's taste stream uses its regime name. Consumer DAG bindings do not identify
+the innovation.
+
+A transition executed from period `t` uses address period `t + 1`, while its law still
+receives period-`t` states and actions. Current-period draws and entry draws use their
+current computational period. Original rows span uint64 independently of enabled
+floating precision; computational periods fit uint32. Padded rows repeat the final real
+row. Roots are immutable, and panels record their address version, PRNG implementations
+and floating precision. Categorical draws use half-open inverse-CDF cells, preserve
+literal zero masses, and close the CDF plateau from its final positive category without
+renormalizing the supplied probabilities.
+
 ## EGM publication and refinement
 
 The projection grid is the declared exogenous pre-shock liquid-state grid, resolved at

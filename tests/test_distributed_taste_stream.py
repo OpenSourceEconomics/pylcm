@@ -40,6 +40,7 @@ def _oracle(*, start: int, count: int, population: int) -> np.ndarray:
         bounded = min(row, population - 1)
         addressed = jax.random.fold_in(key, np.uint32(bounded >> 32))
         addressed = jax.random.fold_in(addressed, np.uint32(bounded & (2**32 - 1)))
+        addressed = jax.random.fold_in(addressed, np.uint32(0))
         rows.append(np.asarray(jax.random.key_data(addressed)))
     return np.stack(rows)
 

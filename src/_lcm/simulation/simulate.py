@@ -126,9 +126,8 @@ from _lcm.simulation.programs import (
 from _lcm.simulation.random import (
     create_simulation_key,
     draw_random_seed,
-    site_simulation_key,
-    split_simulation_key,
 )
+from _lcm.simulation.random_address import RANDOM_ADDRESS_VERSION
 from _lcm.simulation.replay_inputs import PreparedReplayReader, place_replay_payload
 from _lcm.simulation.residency import (
     DeviceBufferFootprint,
@@ -346,23 +345,17 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
         if seed is None:
             seed = draw_random_seed()
 
-        taste_addresses = (
-            MappingProxyType({})
-            if taste_shock_seed is None
-            else build_taste_stream_addresses(
-                ages=ages,
-                discrete_actions_by_regime={
-                    name: {
-                        action: grid
-                        for action in regime.solution.action_names
-                        if isinstance(
-                            grid := regime.solution.grids[action], DiscreteGrid
-                        )
-                    }
-                    for name, regime in regimes.items()
-                    if regime.has_taste_shocks
-                },
-            )
+        taste_addresses = build_taste_stream_addresses(
+            ages=ages,
+            discrete_actions_by_regime={
+                name: {
+                    action: grid
+                    for action in regime.solution.action_names
+                    if isinstance(grid := regime.solution.grids[action], DiscreteGrid)
+                }
+                for name, regime in regimes.items()
+                if regime.has_taste_shocks
+            },
         )
 
         logger.info("Starting simulation")
@@ -746,6 +739,16 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
             simulation_output_dtypes=simulation_output_dtypes,
             subject_batch_size=subject_batch_size,
             nested_policy_regimes=nested_policy_regimes,
+            randomness={
+                "address_version": RANDOM_ADDRESS_VERSION,
+                "prng_impl": str(jax.random.key_impl(seed))
+                if isinstance(seed, jax.Array)
+                else "threefry2x32",
+                "taste_prng_impl": str(jax.random.key_impl(taste_shock_seed))
+                if isinstance(taste_shock_seed, jax.Array)
+                else "threefry2x32",
+                "precision": "float64" if jax.config.jax_enable_x64 else "float32",
+            },
         )
         # Diagnostic-only attribute, mirroring how `Model.simulate` attaches
         # `_solution`: never part of the constructor's persisted fields, so it is
@@ -1075,12 +1078,7 @@ def _simulate_subject_chunk(  # noqa: PLR0915
                         period=period, source=regime_name
                     )
                 ),
-                key=site_simulation_key(
-                    key=key,
-                    period=period,
-                    regime_id=int(regime_names_to_ids[regime_name]),
-                    memory=memory,
-                ),
+                key=key,
                 taste_key=taste_key,
                 taste_address=taste_addresses.get((period, regime_name)),
                 logger=logger,
@@ -1977,6 +1975,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 subject_slice=subject_slice,
                 original_n_subjects=original_n_subjects,
                 memory=memory,
+                period=period,
             )
             taste_shock_kwargs = {"taste_shock_key": gumbel_keys}
 
@@ -2156,14 +2155,13 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
 
     # Update states and regime membership for next period
     if not regime.terminal:
-        next_states_key, next_regime_key, key = split_simulation_key(
-            key=key, memory=memory
-        )
+        next_states_key = next_regime_key = key
         if memory is not None:
             memory.hold(tree=(simulation_result, next_states_key, next_regime_key, key))
 
         next_states = calculate_next_states(
             regime=regime,
+            regimes=regimes,
             process_nodes=process_node_arguments(
                 regime=regime,
                 regimes=regimes,

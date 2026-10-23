@@ -72,13 +72,19 @@ _RANDOM_HELPER_MUTATIONS = {
     "simulation_random:population_split_context_ignored": (
         (
             '"partitionable": jax.config.jax_threefry_partitionable,\n'
-            '            "subject_window":'
+            '        "addresses":'
         ),
-        '"partitionable": False,\n            "subject_window":',
+        '"partitionable": False,\n        "addresses":',
     ),
     "simulation_random:declared_population_mode_ignored": (
-        "with jax.threefry_partitionable(partitionable):\n        for name in names:",
-        "with jax.threefry_partitionable(False):\n        for name in names:",
+        (
+            "with jax.threefry_partitionable(partitionable):\n        return {\n"
+            '            f"key_{name}": draw_window_keys('
+        ),
+        (
+            "with jax.threefry_partitionable(False):\n        return {\n"
+            '            f"key_{name}": draw_window_keys('
+        ),
     ),
 }
 
@@ -353,19 +359,14 @@ _PROFILED_HELPER_MUTATIONS = {
         "or False",
     ),
     "simulation_taste_stream:namespace_changed": (
-        "src/_lcm/simulation/taste_stream.py",
-        '"pylcm.taste-stream.v1",',
-        '"pylcm.taste-stream.v2",',
+        "src/_lcm/simulation/random_address.py",
+        'RANDOM_ADDRESS_VERSION = "pylcm.random.v1"',
+        'RANDOM_ADDRESS_VERSION = "pylcm.random.v2"',
     ),
-    "simulation_taste_stream:action_domain_ignored": (
+    "simulation_taste_stream:ordinary_root_advanced": (
         "src/_lcm/simulation/taste_stream.py",
-        "        domain,\n    )",
-        "        (),\n    )",
-    ),
-    "simulation_taste_stream:ordinary_carry_not_advanced": (
-        "src/_lcm/simulation/taste_stream.py",
-        "return next_key, taste_keys",
         "return key, taste_keys",
+        "return jax.random.fold_in(key, 1), taste_keys",
     ),
     "simulation_taste_stream:ambient_implementation_used": (
         "src/_lcm/simulation/taste_stream.py",

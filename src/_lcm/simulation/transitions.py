@@ -24,9 +24,12 @@ from _lcm.grids import ContinuousGrid, DiscreteGrid
 from _lcm.grids.continuous import _clip_grid_value
 from _lcm.off_grid import count_off_grid, off_grid_message, report_off_grid
 from _lcm.processes import _ContinuousStochasticProcess
+from _lcm.processes.iid import _IIDProcess
+from _lcm.processes.joint_normal_lowering import _JointNormalCoordinate
 from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
 from _lcm.simulation.program_arguments import transition_arguments
 from _lcm.simulation.random import generate_simulation_keys
+from _lcm.simulation.random_address import RandomAddress, draw_categorical_index
 from _lcm.simulation.runtime import execute_simulation_program
 from _lcm.simulation.subject_groups import SubjectRows
 from _lcm.state_action_space import _validate_all_states_present
@@ -335,6 +338,7 @@ def create_regime_state_action_space(
 def calculate_next_states(
     *,
     regime: Regime,
+    regimes: Mapping[RegimeName, Regime],
     optimal_actions: MappingProxyType[ActionName, FloatND | IntND],
     period: int,
     age: ScalarInt | ScalarFloat,
@@ -351,6 +355,10 @@ def calculate_next_states(
     supplied_shocks: Mapping[str, np.ndarray] = MappingProxyType({}),
 ) -> StatesPerRegime:
     """Calculate next period states for subjects in a regime.
+
+    Draw addresses use destination period `period + 1`, matching current-period
+    IID and entry innovations at that date. The law still reads source-period
+    states and actions for persistent and transition-local processes.
 
     Args:
         regime: The internal regime instance.
@@ -394,6 +402,10 @@ def calculate_next_states(
         subject_slice=subject_slice,
         original_n_subjects=original_n_subjects,
         memory=memory,
+        period=period + 1,
+        addresses=transition_random_addresses(
+            regime=regime, regimes=regimes, names=tuple(stochastic_next_function_names)
+        ),
     )
 
     # Carried states are true values that the decision's state-action space
@@ -595,6 +607,8 @@ def calculate_next_regime_membership(
         subject_slice=subject_slice,
         original_n_subjects=original_n_subjects,
         memory=memory,
+        period=period + 1,
+        addresses={"regime_transition": RandomAddress(kind="regime", name="regime")},
     )
 
     next_regime_ids = draw_key_from_dict(
@@ -720,7 +734,28 @@ def _draw_random_regime_id(
     key: PRNGKeyND, p: Float1D, *, regime_ids: Int1D
 ) -> ScalarInt:
     """Draw one regime id from `regime_ids` with probabilities `p`."""
-    return jax.random.choice(key, regime_ids, p=p)
+    return regime_ids[draw_categorical_index(key=key, probabilities=p)]
+
+
+def transition_random_addresses(
+    *, regime: Regime, regimes: Mapping[RegimeName, Regime], names: tuple[str, ...]
+) -> Mapping[str, RandomAddress]:
+    """Resolve DAG key bindings to path-independent named innovations."""
+    addresses = {}
+    for name in names:
+        target, _, transition = name.partition("__")
+        state = transition.removeprefix("next_")
+        grid = regimes.get(target, regime).simulation.grids.get(state)
+        if isinstance(grid, _JointNormalCoordinate):
+            coordinate = int(state.removeprefix(f"{grid.group}_normal_"))
+            identity = grid.joint.states[coordinate]
+        else:
+            identity = state if transition.startswith("next_") else f"lottery:{state}"
+        addresses[name] = RandomAddress(
+            kind="shock" if isinstance(grid, _IIDProcess) else "state",
+            name=identity,
+        )
+    return addresses
 
 
 def _advance_states_for_subjects(

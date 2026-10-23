@@ -109,6 +109,12 @@ class ResultMetadata:
     read from the result's flat parameters. Empty for artifacts predating joint laws.
     """
 
+    randomness: MappingProxyType[str, str] = MappingProxyType({})
+    """Address version, PRNG implementations and floating precision of this run.
+
+    Empty for an archive that did not record its random experiment.
+    """
+
 
 def _get_output_dtypes(
     *,
@@ -164,6 +170,7 @@ def _compute_metadata(
     simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
     ages: TimeAxis,
     nested_policy_regimes: frozenset[RegimeName] = frozenset(),
+    randomness: Mapping[str, str] = MappingProxyType({}),
 ) -> ResultMetadata:
     """Compute metadata from canonical regimes, raw results, and output dtypes.
 
@@ -249,6 +256,7 @@ def _compute_metadata(
         regime_to_joint_normals=MappingProxyType(
             {name: _output_joint_laws(regime) for name, regime in regimes.items()}
         ),
+        randomness=MappingProxyType(dict(randomness)),
     )
 
 

@@ -21,6 +21,7 @@ from _lcm.processes.state_conditioned import (
     gather_sigma,
     sigma_array_by_code,
 )
+from _lcm.simulation.random_address import draw_categorical_index
 from _lcm.transition_plans import (
     LotteryLifetime,
     TargetTransitionPlans,
@@ -452,10 +453,9 @@ class _RealizedJointNode:
     # document the contract and are not enforced at call time.
     @no_type_check
     def __call__(self, **kwargs: PytreeValue) -> ArrayTree:
-        index = jax.random.choice(
+        index = draw_categorical_index(
             key=kwargs[f"key_{self.qname}"],
-            a=self.support_size,
-            p=kwargs[f"weight_{self.qname}"],
+            probabilities=kwargs[f"weight_{self.qname}"],
         )
         return jax.tree_util.tree_map(
             operator.itemgetter(index), kwargs[self.support_provider_name]
@@ -512,11 +512,12 @@ class _DiscreteStochasticNextState:
 
     @no_type_check
     def __call__(self, **kwargs: FloatND) -> DiscreteState:
-        return jax.random.choice(
-            key=kwargs[f"key_{self.qname}"],
-            a=self.labels,
-            p=kwargs[f"weight_{self.qname}"],
-        )
+        return self.labels[
+            draw_categorical_index(
+                key=kwargs[f"key_{self.qname}"],
+                probabilities=kwargs[f"weight_{self.qname}"],
+            )
+        ]
 
 
 def _create_continuous_stochastic_next_func(
