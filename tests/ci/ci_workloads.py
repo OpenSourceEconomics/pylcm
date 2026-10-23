@@ -93,6 +93,7 @@ class _LegWeight(TypedDict):
     measurement: str
     imputed_note: NotRequired[str]
     imputed_files: NotRequired[list[SourcePath]]
+    filled_from: NotRequired[dict[SourcePath, str]]
     seconds: dict[str, float]
     counts: dict[str, int]
 

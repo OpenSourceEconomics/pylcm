@@ -16,7 +16,12 @@ from beartype.roar import (
 
 from _lcm.execution.output_layout import StateAxesLeading
 from _lcm.solution import feasibility
-from _lcm.utils.dispatchers import map_over_leading_axis, productmap, tiled_productmap
+from _lcm.utils.dispatchers import (
+    map_over_leading_axis,
+    productmap,
+    tiled_productmap,
+    vary_carry_like_body,
+)
 from lcm.typing import BoolND, FloatND
 
 
@@ -256,4 +261,173 @@ def _assert_conditional_cells(
     np.testing.assert_array_equal(
         jnp.stack((record.nonfinite_floor, record.invalid_shifted_grid)),
         [True, False],
+    )
+
+
+@pytest.mark.parametrize(("n_rows", "batch_size"), [(8, 0), (8, 1)])
+def test_bounded_map_lowers_its_row_body_once(*, n_rows: int, batch_size: int) -> None:
+    """One window and eight windows each place one copy of the row body."""
+    values = jnp.linspace(0.5, 2.0, n_rows)
+    lowered = (
+        jax.jit(
+            lambda xs: map_over_leading_axis(
+                func=_marked_row, xs=xs, batch_size=batch_size, bound_summary=True
+            )
+        )
+        .lower(values)
+        .as_text()
+    )
+    assert lowered.count("stablehlo.round_nearest_even") == 1
+
+
+@pytest.mark.parametrize(
+    ("n_rows", "batch_size"),
+    [(7, 0), (7, 7), (8, 2), (8, 4), (7, 3), (7, 1)],
+    ids=["whole", "covering", "four-windows", "two-windows", "ragged", "unit"],
+)
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+def test_bounded_map_matches_the_plain_map_and_direct_reductions(
+    *, n_rows: int, batch_size: int, compiled: bool
+) -> None:
+    """Windowed outputs equal the vectorized row body; summaries equal direct folds."""
+    values = jnp.asarray([0.5, -1.0, jnp.nan, 2.0, -3.0, jnp.inf, 4.0, 1.5])[:n_rows]
+    active = jnp.asarray([True, True, False, True, True, True, False, True])[:n_rows]
+
+    def evaluate(
+        *, xs: FloatND, mask: BoolND
+    ) -> feasibility.BoundedResult[tuple[FloatND, BoolND]]:
+        return map_over_leading_axis(
+            func=_marked_row,
+            xs=xs,
+            batch_size=batch_size,
+            bound_summary=True,
+            active=mask,
+        )
+
+    result = (jax.jit(evaluate) if compiled else evaluate)(xs=values, mask=active)
+    plain = jax.vmap(_marked_row)(values)
+    assert result.query_status is not None
+    assert result.continuation_read_counts is not None
+    actual = [
+        *result.output,
+        *result.bound_status[0],
+        *result.query_status[0],
+        *result.continuation_read_counts,
+    ]
+    expected = [
+        *plain.output,
+        *_direct_summaries(values=np.asarray(values), active=np.asarray(active)),
+    ]
+    assert len(jax.tree.leaves(result)) == len(actual) == len(expected)
+    for got, want in zip(actual, expected, strict=True):
+        assert got.dtype == np.asarray(want).dtype
+        np.testing.assert_array_equal(got, want)
+
+
+def test_bounded_map_empty_prefix_is_the_merge_identity() -> None:
+    """Reducing no active lane gives all-false and zero, which every merge keeps."""
+    lanes = jax.vmap(_marked_row)(jnp.asarray([jnp.nan, -1.0, jnp.inf, 2.0]))
+    nobody = jnp.zeros(4, dtype=bool)
+    empty = (
+        feasibility.reduce_bound_input_status(
+            statuses=lanes.bound_status, active=nobody
+        ),
+        feasibility.reduce_query_input_status(
+            statuses=lanes.query_status, active=nobody
+        ),
+        feasibility.reduce_continuation_read_counts(
+            counts=lanes.continuation_read_counts, active=nobody
+        ),
+    )
+    everyone = jnp.ones(4, dtype=bool)
+    full = (
+        feasibility.reduce_bound_input_status(
+            statuses=lanes.bound_status, active=everyone
+        ),
+        feasibility.reduce_query_input_status(
+            statuses=lanes.query_status, active=everyone
+        ),
+        feasibility.reduce_continuation_read_counts(
+            counts=lanes.continuation_read_counts, active=everyone
+        ),
+    )
+    merged = (
+        tuple(
+            feasibility.merge_bound_input_status(left=left, right=right)
+            for left, right in zip(empty[0], full[0], strict=True)
+        ),
+        feasibility.merge_query_input_status(left=empty[1], right=full[1]),
+        feasibility.merge_continuation_read_counts(left=empty[2], right=full[2]),
+    )
+    assert [leaf.tolist() for leaf in jax.tree.leaves(empty)] == [
+        False,
+        False,
+        False,
+        False,
+        False,
+        0,
+        0,
+    ]
+    assert [leaf.tolist() for leaf in jax.tree.leaves(merged)] == [
+        leaf.tolist() for leaf in jax.tree.leaves(full)
+    ]
+
+
+def _marked_row(
+    value: FloatND,
+) -> feasibility.BoundedResult[tuple[FloatND, BoolND]]:
+    """Return one rounding, an exact marker op, and every bounded record for one row."""
+    return feasibility.BoundedResult(
+        output=(
+            jax.lax.round(4.0 * value, jax.lax.RoundingMethod.TO_NEAREST_EVEN),
+            value >= 0.0,
+        ),
+        bound_status=(
+            feasibility.summarize_bound_inputs(
+                floor_values=value,
+                active=jnp.asarray(a=True),
+                invalid_shifted_grid=value < -2.0,
+            ),
+        ),
+        query_status=(
+            feasibility.QueryInputStatus(
+                nonfinite_floor=jnp.isinf(value),
+                invalid_shifted_grid=value < 0.0,
+                coverage_missing=value > 3.0,
+            ),
+        ),
+        continuation_read_counts=feasibility.ContinuationReadCounts(
+            below_first_live=jnp.where(value < 1.0, 2, 0).astype(jnp.int32),
+            eligible=jnp.asarray(3, dtype=jnp.int32),
+        ),
+    )
+
+
+def _direct_summaries(
+    *, values: np.ndarray, active: np.ndarray
+) -> list[np.ndarray | np.generic]:
+    """Fold the row records of `_marked_row` over active rows with plain NumPy.
+
+    The order is bound status, query status, then continuation read counts.
+    """
+    with np.errstate(invalid="ignore"):
+        return [
+            np.any(active & ~np.isfinite(values)),
+            np.any(active & (values < -2.0)),
+            np.any(active & np.isinf(values)),
+            np.any(active & (values < 0.0)),
+            np.any(active & (values > 3.0)),
+            np.int32(np.sum(active & (values < 1.0)) * 2),
+            np.int32(np.sum(active) * 3),
+        ]
+
+
+def test_vary_carry_like_body_returns_a_carry_outside_shard_map_unchanged() -> None:
+    """Without a manual mesh axis there is nothing to vary over."""
+    carry = (jnp.zeros(2), jnp.asarray(a=False))
+    assert (
+        vary_carry_like_body(
+            body=lambda state: (state[0] + 1.0, state[1] | True), carry=carry
+        )
+        is carry
     )

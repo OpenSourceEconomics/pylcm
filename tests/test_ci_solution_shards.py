@@ -5,7 +5,11 @@ from pathlib import Path
 import pytest
 import yaml
 
-from tests.ci.shard_test_files import assign_test_files
+from tests.ci.shard_test_files import (
+    assign_test_files,
+    assign_weighted_test_files,
+    weighted_shard_report,
+)
 
 
 def test_solution_shards_cover_each_test_file_once() -> None:
@@ -65,3 +69,45 @@ def test_every_cpu_coverage_upload_uses_the_cpu_python_flag() -> None:
 
     assert len(uploads) == 1
     assert all(step["with"]["flags"] == "cpu-python" for step in uploads)
+
+
+_MEASURED = {f"tests/solution/test_measured_{i}.py": 10.0 for i in range(3)}
+_UNMEASURED = tuple(f"tests/solution/test_new_{i}.py" for i in range(6))
+
+
+def test_weighted_shards_spread_files_with_no_measured_weight() -> None:
+    """Files with no measured weight are spread over the shards, not stacked in one."""
+    groups = assign_weighted_test_files(
+        files=(*_MEASURED, *_UNMEASURED), n_shards=3, weights=_MEASURED
+    )
+
+    unmeasured_per_shard = [len(set(group) & set(_UNMEASURED)) for group in groups]
+
+    assert unmeasured_per_shard == [2, 2, 2]
+
+
+def test_weighted_shards_spread_files_when_no_weight_is_measured() -> None:
+    """A leg with no measured weights still spreads its files evenly."""
+    groups = assign_weighted_test_files(files=_UNMEASURED, n_shards=3, weights={})
+
+    assert [len(group) for group in groups] == [2, 2, 2]
+
+
+def test_weighted_shard_report_names_every_file_with_no_measured_weight() -> None:
+    """The report lists unmeasured files as unweighted wherever they are placed."""
+    reports = weighted_shard_report(
+        files=(*_MEASURED, *_UNMEASURED), n_shards=3, weights=_MEASURED
+    )
+
+    named = sorted(file_ for report in reports for file_ in report.unweighted)
+
+    assert named == sorted(_UNMEASURED)
+
+
+def test_weighted_shard_report_counts_only_measured_seconds() -> None:
+    """A placement weight is never reported as measured shard seconds."""
+    reports = weighted_shard_report(
+        files=(*_MEASURED, *_UNMEASURED), n_shards=3, weights=_MEASURED
+    )
+
+    assert [report.weighted_seconds for report in reports] == [10.0, 10.0, 10.0]

@@ -210,20 +210,23 @@ CONTROLS.update(
             "_shrink_bracket",
             "expression",
             "jnp.where(take_left, fa, fb)",
-            "_probe(objective=objective, x=x_kept)",
+            "_probe(objective=objective, x=x_kept)[0]",
         ),
         "outer_helpers:golden:upper_endpoint_omitted": OuterHelperControl(
             GOLDEN,
             "maximize_golden_section",
             "expression",
-            ("((xa, fa), (xb, fb), (safe_upper, upper_f))"),
-            "((xa, fa), (xb, fb))",
+            (
+                "((xa, fa, companions_a), (xb, fb, companions_b), "
+                "(safe_upper, upper_f, upper_companions))"
+            ),
+            "((xa, fa, companions_a), (xb, fb, companions_b))",
         ),
         "outer_helpers:golden:loop_callback_replaced": OuterHelperControl(
             GOLDEN,
             "maximize_golden_section",
             "expression",
-            "functools.partial(_shrink_bracket, objective=objective)",
+            "functools.partial(_shrink_bracket, objective=search_objective)",
             "lambda _index, carry: carry",
         ),
         "outer_helpers:surface:golden_import_redirected": OuterHelperControl(
