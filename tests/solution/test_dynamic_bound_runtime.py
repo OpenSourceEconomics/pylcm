@@ -27,7 +27,9 @@ from _lcm.simulation.programs import _SubjectTiled
 from _lcm.simulation.simulate import _canonical_Q_at_actions
 from _lcm.solution.action_streaming import (
     build_partitioned_streaming_max_Q_over_a,
+    build_streaming_collective_max_Q_over_a,
     build_streaming_ev1_max_Q_over_a,
+    build_streaming_max_Q_over_a,
 )
 from _lcm.solution.feasibility import (
     BoundedResult,
@@ -1170,3 +1172,153 @@ def test_canonical_action_builders_receive_only_runtime_bound_authority(
     expected = tuple(bound for bound in canonical if bound.kind == "dag")
     assert len(requests) == 2
     assert tuple(requests) == (expected, expected)
+
+
+_MARKER = "stablehlo.round_nearest_even"
+_MARKED_CONSUMPTION = (0.3, 0.9, 1.4, 2.2, 2.6, 3.1, 3.7)
+_STREAM_ROUTES = ("hard_max", "collective", "partitioned", "ev1")
+
+
+@pytest.mark.parametrize("route", _STREAM_ROUTES)
+@pytest.mark.parametrize("block_width", [1, 3])
+def test_bounded_action_streams_lower_q_and_f_once(
+    *, route: str, block_width: int
+) -> None:
+    """A bounded stream over several blocks places one copy of `Q_and_F`."""
+    run = _marked_stream(route=route, bounded=True, block_width=block_width)
+    lowered = jax.jit(run).lower(jnp.asarray(-3.0)).as_text()
+    assert lowered.count(_MARKER) == 1
+
+
+@pytest.mark.parametrize("route", _STREAM_ROUTES)
+@pytest.mark.parametrize("block_width", [7, 14, 3, 2, 1])
+@pytest.mark.parametrize("income", [-3.0, np.nan], ids=["valid", "invalid"])
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+def test_bounded_action_streams_match_the_unbounded_stream(
+    *, route: str, block_width: int, income: float, compiled: bool
+) -> None:
+    """Bounded streams publish the unbounded stream's bits and the floor's validity."""
+    bounded, plain = (
+        _marked_stream(route=route, bounded=flag, block_width=block_width)
+        for flag in (True, False)
+    )
+    if compiled:
+        bounded, plain = jax.jit(bounded), jax.jit(plain)
+    result = bounded(jnp.asarray(income))
+    expected = plain(jnp.asarray(income))
+    assert type(result) is BoundedResult
+    actual = [*jax.tree.leaves(result.output), *result.bound_status[0]]
+    wanted = [*jax.tree.leaves(expected), np.isnan(income), False]
+    assert len(actual) == len(wanted)
+    for got, want in zip(actual, wanted, strict=True):
+        np.testing.assert_array_equal(np.asarray(got), np.asarray(want))
+
+
+def _marked_stream(*, route: str, bounded: bool, block_width: int):
+    """Build one action stream whose utility carries a single rounding marker."""
+    kernel = _marked_kernel(route=route, bounded=bounded)
+    work = jnp.asarray([0.0, 1.0])
+    consumption = jnp.asarray(_MARKED_CONSUMPTION)
+    action_names = ("work", "consumption")
+    if route == "hard_max":
+        stream = build_streaming_max_Q_over_a(
+            Q_and_F=kernel, action_names=action_names, block_width=block_width
+        )
+    elif route == "collective":
+        stream = build_streaming_collective_max_Q_over_a(
+            Q_and_F=kernel,
+            action_names=action_names,
+            block_width=block_width,
+            stakeholders=("a", "b"),
+            weights={"a": 1.0, "b": 0.5},
+        )
+    elif route == "ev1":
+        stream = build_streaming_ev1_max_Q_over_a(
+            Q_and_F=kernel,
+            action_names=action_names,
+            n_discrete_action_axes=1,
+            block_width=block_width,
+            scale=0.5,
+        )
+    else:
+        partitioned = build_partitioned_streaming_max_Q_over_a(
+            Q_and_F=kernel,
+            action_names=action_names,
+            block_width=block_width,
+            n_partitions=2,
+            axis_name="owners",
+        )
+
+        def run_partitioned(income: FloatND):
+            return jax.vmap(
+                lambda _: partitioned(
+                    next_regime_to_V_arr=MappingProxyType({}),
+                    period=jnp.int32(0),
+                    age=jnp.asarray(0.0),
+                    income=income,
+                    work=work,
+                    consumption=consumption,
+                ),
+                axis_name="owners",
+            )(jnp.arange(2, dtype=jnp.int32))
+
+        return run_partitioned
+
+    def run(income: FloatND):
+        return stream(
+            next_regime_to_V_arr=MappingProxyType({}),
+            period=jnp.int32(0),
+            age=jnp.asarray(0.0),
+            income=income,
+            work=work,
+            consumption=consumption,
+        )
+
+    return run
+
+
+def _marked_kernel(*, route: str, bounded: bool) -> QAndFFunction:
+    """Build a terminal kernel whose utility carries a single rounding marker."""
+
+    def floor(*, income: FloatND) -> FloatND:
+        return income
+
+    def utility(*, work: FloatND, consumption: FloatND) -> FloatND:
+        rounded = jax.lax.round(
+            4.0 * consumption, jax.lax.RoundingMethod.TO_NEAREST_EVEN
+        )
+        return rounded - 0.1 * consumption * consumption + 0.5 * work
+
+    def utility_b(*, consumption: FloatND) -> FloatND:
+        return 2.0 - consumption
+
+    def borrowing(*, consumption: FloatND, floor: FloatND) -> BoolND:
+        return -consumption >= floor
+
+    constraints = MappingProxyType({"borrowing": cast("ConstraintFunction", borrowing)})
+    bound_specs = (_bound(),) if bounded else ()
+    if route == "collective":
+        return get_Q_and_F_terminal_collective(
+            flat_param_names=frozenset(),
+            functions=MappingProxyType(
+                {
+                    "utility_a": cast("EconFunction", utility),
+                    "utility_b": cast("EconFunction", utility_b),
+                    "floor": cast("EconFunction", floor),
+                }
+            ),
+            constraints=constraints,
+            stakeholders=("a", "b"),
+            bound_specs=bound_specs,
+        )
+    return get_Q_and_F_terminal(
+        flat_param_names=frozenset(),
+        functions=MappingProxyType(
+            {
+                "utility": cast("EconFunction", utility),
+                "floor": cast("EconFunction", floor),
+            }
+        ),
+        constraints=constraints,
+        bound_specs=bound_specs,
+    )
