@@ -24,10 +24,6 @@ from _lcm.engine import Regime, StateActionSpace
 from _lcm.params.edges import regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.solution.feasibility import ContinuationReadCounts, FeasibilityCounts
-from _lcm.solution.v_topology import (
-    _build_zero_V_arr,
-    _get_regime_V_shapes_and_shardings,
-)
 from _lcm.solution.validate_V import validate_V
 from _lcm.time import TimeAxis, coordinate_kind
 from _lcm.transition_plans import InterpolationBasisInfo
@@ -363,11 +359,7 @@ def _raise_at(
         ),
     )
     next_regime_to_V_arr = _reconstruct_next_regime_to_V_arr(
-        period=row.period,
-        regimes=regimes,
-        flat_params=flat_params,
-        solution=solution,
-        process_grid_resolver=process_grid_resolver,
+        period=row.period, solution=solution
     )
     # The intermediates closure mirrors the brute-force Q evaluation; for a
     # regime solved from interpolated continuations it cannot reproduce the
@@ -421,40 +413,15 @@ def _states_for_period(
 def _reconstruct_next_regime_to_V_arr(
     *,
     period: int,
-    regimes: MappingProxyType[RegimeName, Regime],
-    flat_params: FlatParams,
     solution: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
-    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> MappingProxyType[RegimeName, FloatND]:
     """Recreate the rolling `next_regime_to_V_arr` that was used at `period`.
 
-    The hot loop rolls the per-regime V forward via `period_solution.get(name,
-    next_regime_to_V_arr[name])`, so at iteration `period` each regime's slot
-    holds its V from the smallest later period where it was active, falling
-    back to a zeros template otherwise.
-
-    Rebuild the same mapping post-hoc from `solution`. Shape and device
-    sharding both come from `_get_regime_V_shapes_and_shardings` so the
-    reconstructed templates have the same pytree structure and placement as
-    the live ones in `solve()`.
+    The solve hands a period's programs the values of the regimes solved at
+    `period + 1`, which are the only ones those programs read; the last period
+    reads none.
     """
-    regime_V_topology = _get_regime_V_shapes_and_shardings(
-        regimes=regimes,
-        flat_params=flat_params,
-        process_grid_resolver=process_grid_resolver,
-    )
-    later_periods = sorted(p for p in solution if p > period)
-    result: dict[RegimeName, FloatND] = {}
-    for regime_name, topology in regime_V_topology.items():
-        rolled: FloatND | None = None
-        for q in later_periods:
-            if regime_name in solution[q]:
-                rolled = solution[q][regime_name]
-                break
-        result[regime_name] = (
-            rolled if rolled is not None else _build_zero_V_arr(topology=topology)
-        )
-    return MappingProxyType(result)
+    return MappingProxyType(dict(solution.get(period + 1, {})))
 
 
 def _warn_inf_rows(

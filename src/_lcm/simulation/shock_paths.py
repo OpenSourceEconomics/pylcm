@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from types import MappingProxyType
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 
 from _lcm.dtypes import canonical_float_dtype
@@ -17,6 +18,7 @@ from _lcm.processes.iid import LogNormalIIDProcess, UniformIIDProcess, _IIDProce
 from _lcm.regime_building.age_normalization import group_periods_by_key
 from _lcm.regime_building.processing import _build_next_state_vmapped
 from _lcm.simulation.initial_conditions import resolve_initial_periods
+from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
 from _lcm.simulation.operand_placement import SubjectArgumentNames
 from _lcm.simulation.program_types import _PerSubjectFunction
 from _lcm.simulation.programs import _ArgumentsBoundAtDispatch, _SubjectTiled
@@ -30,12 +32,13 @@ from _lcm.typing import (
     RegimeNamesToIds,
 )
 from _lcm.utils.containers import invert_regime_ids
+from _lcm.utils.counts import sum_counts
 from lcm.exceptions import (
     InvalidInitialConditionsError,
     InvalidSimulationInputError,
     InvalidStateTransitionError,
 )
-from lcm.typing import StateName, UserInitialConditions
+from lcm.typing import Bool1D, Float1D, FloatND, Int1D, StateName, UserInitialConditions
 
 
 def resolve_shock_paths(  # noqa: C901, PLR0912
@@ -163,6 +166,7 @@ def resolve_shock_paths(  # noqa: C901, PLR0912
                 if lag == 0 and coded is not None:
                     _fail_if_off_node(
                         values=column,
+                        name=name,
                         process=coded,
                         error=InvalidSimulationInputError,
                         where=f"shock_paths '{name}' at period {period} in regime "
@@ -217,6 +221,7 @@ def fail_if_an_initial_process_code_is_off_node(
                     values=np.asarray(initial[name])[starts_here].astype(
                         canonical_float_dtype()
                     ),
+                    name=name,
                     process=process,
                     error=InvalidInitialConditionsError,
                     where=f"initial condition '{name}' in regime '{regime_name}'",
@@ -225,45 +230,83 @@ def fail_if_an_initial_process_code_is_off_node(
 
 def fail_if_a_held_process_code_is_off_node(
     *,
-    states: Mapping[StateName, jax.Array | np.ndarray],
+    states: Mapping[StateName, FloatND],
     processes: Mapping[StateName, _ContinuousStochasticProcess],
-    holders: jax.Array | np.ndarray,
+    holders: Bool1D,
     where: str,
+    memory: SimulationMemory | None,
 ) -> None:
     """Refuse a simulated process value off the nodes of the regime reading its code.
 
     Whatever produced the value (an entry law, a joint transition, a gate's
     fallback projection or a dissolution route), the regime reading
     `<name>_code` takes the position of the node the household holds, which
-    exists only at a node.
+    exists only at a node. The off-node holders are counted on the device, so
+    only one count per process reaches the host; the columns are copied only to
+    name the offending values.
 
     Args:
         states: The receiving regime's state columns.
         processes: The process states that regime reads the position of.
         holders: Rows that hold these states in that regime.
         where: Where the values arise, named in the error.
+        memory: The simulation's workspace budget, if any.
 
     Raises:
         InvalidStateTransitionError: If a holder's value is none of the nodes.
 
     """
-    rows = np.asarray(holders, dtype=bool)
-    if not rows.any():
+    read = tuple(name for name in processes if name in states)
+    if not read:
         return
-    for name, process in processes.items():
-        if name in states:
+    counts = jax.device_get(
+        run_simulation_operation(
+            memory=memory,
+            function=_count_off_node_holders,
+            arguments={
+                "values": tuple(states[name] for name in read),
+                "nodes": tuple(_process_nodes(processes[name]) for name in read),
+                "holders": holders,
+            },
+            subject_arg_names=("values", "holders"),
+        )
+    )
+    for name, count in zip(read, counts, strict=True):
+        if int(count):
             _fail_if_off_node(
-                values=np.asarray(states[name])[rows],
-                process=process,
+                values=np.asarray(states[name])[np.asarray(holders, dtype=bool)],
+                name=name,
+                process=processes[name],
                 error=InvalidStateTransitionError,
                 where=f"process '{name}' {where}",
                 remedy="Keep the law or projection producing it on the nodes.",
             )
 
 
+def _count_off_node_holders(
+    *,
+    values: tuple[FloatND, ...],
+    nodes: tuple[Float1D, ...],
+    holders: Bool1D,
+) -> Int1D:
+    """Count, per process, the holders whose value is none of its nodes, exactly."""
+    return jnp.stack(
+        [
+            sum_counts(counts=holders & ~jnp.isin(column.astype(points.dtype), points))
+            for column, points in zip(values, nodes, strict=True)
+        ]
+    )
+
+
+def _process_nodes(process: _ContinuousStochasticProcess) -> Float1D:
+    """Return the process's nodes in the simulation's float dtype."""
+    return jnp.asarray(process.to_jax(), dtype=canonical_float_dtype())
+
+
 def _fail_if_off_node(
     *,
     values: np.ndarray,
+    name: StateName,
     process: _ContinuousStochasticProcess,
     error: type[
         InvalidSimulationInputError
@@ -274,13 +317,13 @@ def _fail_if_off_node(
     remedy: str = "Supply one of its nodes.",
 ) -> None:
     """Raise `error` where a value is none of the process's nodes, exactly."""
-    nodes = np.asarray(process.to_jax(), dtype=canonical_float_dtype())
+    nodes = np.asarray(_process_nodes(process))
     off = ~np.isin(np.asarray(values, dtype=nodes.dtype), nodes)
     if off.any():
         raise error(
             f"The {where} holds {sorted({float(v) for v in values[off]})}, off the "
             f"process's nodes {nodes.tolist()}: the regime reads its node position "
-            f"`_code`, which exists only at a node. {remedy}"
+            f"`{name}_code`, which exists only at a node. {remedy}"
         )
 
 

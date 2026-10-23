@@ -8,18 +8,20 @@ grid-search models of `test_period_target_value_reads`, whose value arrays have
 two axes or more and so cannot be mistaken for a one-dimensional grid.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Unpack
 
 import jax
 import pytest
 
-from _lcm.solution import backward_induction
+from _lcm.solution import backward_induction, diagnostics
 from lcm import Model
+from lcm.exceptions import InvalidValueFunctionError
 from tests.solution._callback_types import (
     EvaluateEdgeFoldKwargs,
     RunPeriodKernelKwargs,
     RunPeriodKernelResult,
+    ValidateVKwargs,
 )
 from tests.solution.test_period_target_value_reads import (
     _gated_model,
@@ -82,3 +84,33 @@ def test_grid_search_solve_keeps_no_value_placeholder_resident(
         for resident in residents
         if resident[:2] in value_layouts and resident[2] not in computed_so_far
     ] == []
+
+
+def test_nan_diagnostic_reads_only_the_values_solved_at_the_next_period(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The NaN breakdown at a period reads the next period's solved values alone.
+
+    With a NaN discount factor the first NaN row is at period 3, whose programs
+    read regime `c`, the only regime solved at period 4. The breakdown receives
+    that computed array and no stand-in for `a` or `b`.
+    """
+    received: list[Mapping[str, jax.Array] | None] = []
+    validate_V = diagnostics.validate_V
+
+    def _validate(**kwargs: Unpack[ValidateVKwargs]) -> None:
+        received.append(kwargs.get("next_regime_to_V_arr"))
+        validate_V(**kwargs)
+
+    monkeypatch.setattr(diagnostics, "validate_V", _validate)
+    with pytest.raises(InvalidValueFunctionError, match=r"age 3") as raised:
+        _three_regime_model().solve(
+            params={"discount_factor": float("nan")}, log_level="off"
+        )
+
+    partial_solution = raised.value.partial_solution
+    assert partial_solution is not None
+    assert len(received) == 1
+    assert received[0] is not None
+    assert set(received[0]) == {"c"}
+    assert received[0]["c"] is partial_solution[4]["c"]

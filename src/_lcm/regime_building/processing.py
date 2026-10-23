@@ -3835,12 +3835,25 @@ def _state_handoff_errors(
                         if isinstance(target_grid, _ContinuousStochasticProcess)
                         else "state"
                     )
-                    declaration = (
-                        "the model-level `Model(states=...)` declaration, kept "
-                        f"on '{target}' because '{target}' uses it"
-                        if state_name in broadcast_variables.get(target, ())
-                        else "its own `Regime(states=...)` declaration"
-                    )
+                    # A model-level state redeclared on the source is refused as
+                    # ambiguous, so only the entry law fixes that case.
+                    if state_name in broadcast_variables.get(target, ()):
+                        declaration = (
+                            "the model-level `Model(states=...)` declaration, "
+                            f"kept on '{target}' because '{target}' uses it"
+                        )
+                        fixes = (
+                            "Define a target-specific entry law for "
+                            f"'{state_name}' on '{source}', or narrow the "
+                            "transition's static target support."
+                        )
+                    else:
+                        declaration = "its own `Regime(states=...)` declaration"
+                        fixes = (
+                            f"Declare '{state_name}' on '{source}', define a "
+                            "target-specific entry law, or narrow the "
+                            "transition's static target support."
+                        )
                     error_messages.append(
                         f"{phase_name} phase, period {period} "
                         f"(age {_display_age(ages=ages, period=period)}), "
@@ -3851,10 +3864,7 @@ def _state_handoff_errors(
                         f"'{target}' carries {state_kind} '{state_name}' from "
                         f"{declaration}, but the "
                         f"source does not carry '{state_name}' and defines no "
-                        f"entry law, so no next-period value exists. Declare "
-                        f"'{state_name}' on '{source}', define a target-specific "
-                        f"entry law, or narrow the transition's static target "
-                        f"support."
+                        f"entry law, so no next-period value exists. {fixes}"
                     )
     return tuple(error_messages)
 
@@ -8409,11 +8419,12 @@ def _get_next_for_process(*, grid: Float1D) -> Callable[..., IntND]:
 def _get_entry_weights_for_process(
     *, name: str, grid: _IIDProcess
 ) -> Callable[..., FloatND]:
-    """Get the entry weights of an IID process the source does not carry.
+    """Get the weights of an unconditioned IID process.
 
     Every row of an IID transition matrix is the same unconditional
-    distribution, so the entry weights are row zero and no current value is
-    needed to choose the row.
+    distribution, so the weights are row zero and no current value is needed to
+    choose the row. This serves a source that carries the process as much as
+    one that enters it.
     """
     if grid.params_to_pass_at_runtime:
         fixed_params = dict(grid.params)
