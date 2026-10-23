@@ -1,15 +1,16 @@
-"""MT3: bounded declaration/binding population for R1's cache invariant.
+"""A shared callable keeps every reader's local binding across a declaration matrix.
 
-Native-ready, not executed by the reviewer. Three translated node tables,
-foreign value-grid states/actions, shared/distinct equivalent callables,
-both declaration orders, and eager/JIT give 48 cases. The exact physical
-payoffs are literal terminal answers; no production adapter is an oracle.
+Three translated node tables, foreign value-grid states/actions,
+shared/distinct equivalent callables, both declaration orders, and eager/JIT
+give 48 cases. The exact physical payoffs are literal terminal answers; no
+production adapter is an oracle.
 
-The categorical k_code argument intentionally requires adaptation even when
-the process-valued z argument needs no conversion. State variants test every
-represented z; action variants test the finite maximizing decision. RT8
-separately retains plain-reader and local-int32-code controls. Neither suite
-claims a global omitted-candidate bound or an observed native mutant kill.
+The categorical k_code argument requires adaptation even when the
+process-valued z argument needs no conversion. State variants test every
+represented z; action variants test the finite maximizing decision. The
+plain-reader and local-int32-code controls live in
+`test_process_value_adapter_context.py`. Neither suite claims a global
+omitted-candidate bound.
 """
 
 import jax.numpy as jnp
