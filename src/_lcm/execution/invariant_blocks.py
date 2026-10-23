@@ -21,7 +21,6 @@ import functools
 from types import MappingProxyType
 
 import jax
-import jax.numpy as jnp
 import numpy as np
 
 from _lcm.execution.core_program import InvariantBinding
@@ -153,13 +152,12 @@ def write_block(
     block: FloatND,
     binding: InvariantBinding,
     axis: int,
-    template: FloatND | jax.ShapeDtypeStruct,
+    template: FloatND,
 ) -> FloatND:
     """Place one block's output into the regime's complete value.
 
     The first block written goes into a device copy of `template`, the regime's
-    value template (zeros of its shape when the template is abstract), which
-    `device_put` makes without compiling a program; every
+    value template, which `device_put` makes without compiling a program; every
     later block overwrites its own position in that buffer, which is donated, so
     the complete value is never held twice. Every position is written, so
     nothing of the template survives.
@@ -182,14 +180,12 @@ def write_block(
                 expected.mesh, actual.spec, memory_kind=actual.memory_kind
             ),
         )
-    if value is None:
-        value = (
-            jnp.zeros(template.shape, dtype=template.dtype, device=template.sharding)
-            if isinstance(template, jax.ShapeDtypeStruct)
-            else jax.device_put(template, template.sharding, may_alias=False)
-        )
     return _write_block(
-        value=value,
+        value=(
+            jax.device_put(template, template.sharding, may_alias=False)
+            if value is None
+            else value
+        ),
         block=block,
         start=np.int32(binding.start),
         axis=axis,

@@ -3,7 +3,6 @@
 from collections.abc import Mapping
 
 import jax
-import jax.numpy as jnp
 
 from _lcm.params.mapping_leaf import MappingLeaf
 from _lcm.params.sequence_leaf import SequenceLeaf
@@ -60,30 +59,6 @@ def compiler_input_paths(
             "Compiler input shardings contain unsupported residency metadata."
         )
     return frozenset(path for path, sharding in with_paths if sharding is not None)
-
-
-def materialize_kept_abstract_inputs(
-    *, compiled: jax.stages.Compiled, arguments: Mapping[str, ArgumentTree]
-) -> Mapping[str, ArgumentTree]:
-    """Replace each abstract input the executable keeps with zeros on its sharding.
-
-    A solve-lifetime template is a `jax.ShapeDtypeStruct` standing for a zero
-    array. An executable that eliminated the input accepts the struct as it is,
-    so only the kept ones are allocated, and only for the call.
-    """
-    with_paths, treedef = jax.tree_util.tree_flatten_with_path(dict(arguments))
-    if not any(isinstance(leaf, jax.ShapeDtypeStruct) for _, leaf in with_paths):
-        return arguments
-    kept = compiler_input_paths(compiled=compiled, arguments=arguments)
-    return jax.tree.unflatten(
-        treedef,
-        [
-            jnp.zeros(leaf.shape, dtype=leaf.dtype, device=leaf.sharding)
-            if isinstance(leaf, jax.ShapeDtypeStruct) and path in kept
-            else leaf
-            for path, leaf in with_paths
-        ],
-    )
 
 
 def _is_none(value: ArgumentTree | _InputShardingTree) -> bool:

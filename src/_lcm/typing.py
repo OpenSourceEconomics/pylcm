@@ -109,22 +109,11 @@ type EconFunctionArg = (
 # The arguments of a user economic function, keyed by the names they reference.
 type EconFunctionKwargs = Mapping[ReferenceName, EconFunctionArg]
 
-# A next-period value as the solve loop threads it: a solved array, or the
-# solve-lifetime `jax.ShapeDtypeStruct` template that stands for zeros where no
-# solved array is held. A compiled core receives zeros for a template it reads,
-# and nothing outside a compiled core reads a value's contents, so the static
-# checker sees the array every consumer is written against while the beartype
-# claw admits the template as well.
-if TYPE_CHECKING:
-    type NextValue = FloatND
-else:
-    type NextValue = FloatND | jax.ShapeDtypeStruct
-
 # One argument of a generated `QAndFFunction` or `MaxQOverAFunction`: an argument
 # of a user function, or a per-regime mapping of value arrays or of flat params.
 type QAndFArg = (
     EconFunctionArg
-    | Mapping[RegimeName, NextValue]
+    | Mapping[RegimeName, FloatND]
     | Mapping[RegimeName, Mapping[QualifiedName, ParamsLeaf]]
 )
 type QAndFKwargs = Mapping[ReferenceName, QAndFArg]

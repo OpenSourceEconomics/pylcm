@@ -77,7 +77,7 @@ def test_census_of_the_donor_pair_fixture_is_nonempty(
     with `ResultRetention.VALUES`. One wave measures four triples: `alive` at
     periods 0, 1 and 2 and `dead` at period 3, each at `cell=2`. The `alive`
     triples of periods 0 and 1 name a fallback and share one fallback key; their
-    primary reservation is 62212 bytes against residencies of 1704 and 1576
+    primary reservation is 62212 bytes against residencies of 1896 and 1768
     bytes, and their fallback reservation is 62340 bytes against the same
     residencies. The recorded census is what the scheduling tests set their
     budgets from.

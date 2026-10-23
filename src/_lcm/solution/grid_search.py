@@ -93,7 +93,6 @@ from _lcm.transition_plans import SupportOrigin
 from _lcm.typing import (
     FlatParams,
     FlatRegimeParams,
-    NextValue,
     PytreeValue,
     QAndFArg,
     QAndFFunction,
@@ -923,9 +922,9 @@ class _GridSearchArgumentBuilder:
     def _with_edge_substitution(
         self,
         *,
-        next_regime_to_V_arr: Mapping[RegimeName, NextValue],
-        edge_regime_to_V_arr: Mapping[RegimeName, NextValue] | None,
-    ) -> Mapping[RegimeName, NextValue]:
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        edge_regime_to_V_arr: Mapping[RegimeName, FloatND] | None,
+    ) -> Mapping[RegimeName, FloatND]:
         """Replace gated targets' raw values with their continuation objects."""
         if not self.edge_target_regimes:
             return next_regime_to_V_arr
@@ -950,11 +949,11 @@ class _GridSearchArgumentBuilder:
     def _edge_reference_args(
         self,
         *,
-        next_regime_to_V_arr: Mapping[RegimeName, NextValue],
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         flat_params: FlatParams,
     ) -> dict[
         ReferenceName,
-        MappingProxyType[RegimeName, NextValue]
+        MappingProxyType[RegimeName, FloatND]
         | MappingProxyType[RegimeName, FlatRegimeParams],
     ]:
         """Build the edge-reference value and parameter channels."""
@@ -1084,14 +1083,14 @@ class _GridSearchPeriodKernel:
         *,
         compiled_cores: Mapping[str, Callable[..., PytreeValue]],
         state_action_space: StateActionSpace,
-        next_regime_to_V_arr: Mapping[RegimeName, NextValue],
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
         flat_params: FlatParams,
         period: int,
         ages: TimeAxis,
         logger: logging.Logger,  # noqa: ARG002
         same_period_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,
-        edge_regime_to_V_arr: Mapping[RegimeName, NextValue] | None = None,
+        edge_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,
     ) -> KernelOutput:
         """Evaluate the grid search and assemble the `KernelOutput`.
 

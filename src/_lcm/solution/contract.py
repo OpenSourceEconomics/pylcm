@@ -74,7 +74,6 @@ from _lcm.typing import (
     EconFunctionsMapping,
     FlatParams,
     FunctionName,
-    NextValue,
     PeriodToRegimeToDissolutionFlags,
     PeriodToRegimeToSimulationPolicy,
     PeriodToRegimeToVArr,
@@ -104,7 +103,7 @@ from lcm.solver_api import (
     KernelOutput,
     SolverIdentity,
 )
-from lcm.typing import Float1D, UserFunction
+from lcm.typing import Float1D, FloatND, UserFunction
 
 # The continuation channel is defined once in `_lcm.continuation`. Backward
 # induction treats `ContinuationPayload` opaquely; EGM solvers additionally
@@ -663,7 +662,7 @@ class PeriodKernel(Protocol):
         *,
         compiled_cores: Mapping[str, Callable[..., PytreeValue]],
         state_action_space: StateActionSpace,
-        next_regime_to_V_arr: Mapping[RegimeName, NextValue],
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
         flat_params: FlatParams,
         period: int,

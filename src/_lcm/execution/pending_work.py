@@ -8,16 +8,13 @@ from typing import Protocol, runtime_checkable
 
 import jax
 
-from _lcm.execution.compiler_inputs import (
-    compiler_input_paths,
-    materialize_kept_abstract_inputs,
-)
+from _lcm.execution.compiler_inputs import compiler_input_paths
 from _lcm.execution.value_transfer import (
     ResolvedValueTransfer,
     TransferCache,
     apply_value_transfer_plan,
 )
-from _lcm.typing import ArgumentTree, PytreeValue
+from _lcm.typing import PytreeValue
 from lcm.typing import ReferenceName, ValueND
 
 
@@ -136,7 +133,7 @@ def execute_with_pending_work(
     *,
     owner: PendingSolveWork,
     compiled: jax.stages.Compiled,
-    arguments: Mapping[ReferenceName, ArgumentTree],
+    arguments: Mapping[ReferenceName, PytreeValue],
     transfers: tuple[ResolvedValueTransfer, ...],
     cache: TransferCache | None,
     donates: bool,
@@ -205,11 +202,7 @@ def execute_with_pending_work(
             copies.arrays[:] = [
                 array for array in copies.arrays if id(array) not in waited
             ]
-        output = compiled(
-            **materialize_kept_abstract_inputs(
-                compiled=compiled, arguments=planned_arguments
-            )
-        )
+        output = compiled(**planned_arguments)
         # Include auxiliary and pass-through outputs before any layout check can
         # fail. Kept copy witnesses travel with the complete output tree.
         owner.record(outputs=(output, tuple(copies.arrays)), devices=devices)

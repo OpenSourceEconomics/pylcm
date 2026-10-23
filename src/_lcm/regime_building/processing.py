@@ -272,7 +272,6 @@ from _lcm.typing import (
     FlatParams,
     FunctionName,
     NextStateSimulationFunction,
-    NextValue,
     ProcessName,
     PytreeValue,
     QAndFFunction,
@@ -5049,14 +5048,14 @@ class _TerminalCarryPeriodKernel:
         *,
         compiled_cores: Mapping[str, Callable[..., PytreeValue]],
         state_action_space: StateActionSpace,
-        next_regime_to_V_arr: Mapping[RegimeName, NextValue],
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
         flat_params: FlatParams,
         period: int,
         ages: TimeAxis,
         logger: logging.Logger,
         same_period_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,
-        edge_regime_to_V_arr: Mapping[RegimeName, NextValue] | None = None,
+        edge_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,
     ) -> KernelOutput:
         """Run the base kernel, then add the regime's carry to its continuations.
 
@@ -5107,7 +5106,7 @@ class _TerminalCarryPeriodKernel:
 
 def _edge_and_same_period_kwargs(
     *,
-    edge_regime_to_V_arr: Mapping[RegimeName, NextValue] | None,
+    edge_regime_to_V_arr: Mapping[RegimeName, FloatND] | None,
     same_period_regime_to_V_arr: Mapping[RegimeName, FloatND] | None,
 ) -> MappingProxyType[ReferenceName, Mapping[RegimeName, FloatND]]:
     """Relay only the optional kernel arguments the caller actually supplied.

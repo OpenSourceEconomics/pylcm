@@ -46,7 +46,6 @@ from _lcm.typing import (
     ActionName,
     ArrayTree,
     MaxQOverAFunction,
-    NextValue,
     QAndFArg,
     QAndFFunction,
     RegimeName,
@@ -296,7 +295,7 @@ class _LandingCountingReduction:
 
     def __call__(
         self,
-        next_regime_to_V_arr: Mapping[RegimeName, NextValue],
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         **states_actions_params: QAndFArg,
     ) -> tuple[FloatND, BoolND, IntND] | BoundedResult[ArrayTree]:
         """Return the reduction's value and feasibility, then the landing counts."""
@@ -339,7 +338,7 @@ class _LandingCountingFold:
     def __call__(
         self,
         *,
-        next_regime_to_V_arr: Mapping[RegimeName, NextValue],
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         **states_actions_params: QAndFArg,
     ) -> tuple[FloatND, BoolND, IntND] | BoundedResult[ArrayTree]:
         """Return the folded value and empty-set cause, then the landing counts."""

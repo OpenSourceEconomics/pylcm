@@ -283,13 +283,13 @@ class RetireDonatedInputsKwargs(TypedDict):
 
 type RetireDonatedInputsResult = tuple[
     backward_induction.MappingProxyType[
-        backward_induction.RegimeName, backward_induction.NextValue
+        backward_induction.RegimeName, backward_induction.FloatND
     ],
     backward_induction.MappingProxyType[
         backward_induction.RegimeName, backward_induction.ContinuationPayload
     ],
     backward_induction.MappingProxyType[
-        backward_induction._EdgeKey, backward_induction.NextValue
+        backward_induction._EdgeKey, backward_induction.FloatND
     ],
 ]
 

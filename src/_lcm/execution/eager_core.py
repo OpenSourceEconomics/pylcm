@@ -11,7 +11,7 @@ import jax.numpy as jnp
 
 from _lcm.execution.core_program import ResolvedCoreProgram
 from _lcm.execution.runtime_sharding import runtime_shardings_match
-from _lcm.typing import ArgumentTree, PytreeValue, ShapeDtypePytree
+from _lcm.typing import PytreeValue, ShapeDtypePytree
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import ReferenceName
 
@@ -92,7 +92,7 @@ class _EagerCore:
     mesh: jax.sharding.Mesh | None
     """Equivalent Explicit mesh for mapped-axis propagation, when sharded."""
 
-    def __call__(self, **arguments: ArgumentTree) -> PytreeValue:
+    def __call__(self, **arguments: PytreeValue) -> PytreeValue:
         """Place operands first and return the numerical function's exact tree."""
         placement = _EagerPlacement(core=self)
         try:
@@ -121,7 +121,7 @@ class _EagerCore:
             placement.results.clear()
 
     def place_operand(
-        self, *, value: ArgumentTree, template: jax.ShapeDtypeStruct
+        self, *, value: PytreeValue, template: jax.ShapeDtypeStruct
     ) -> jax.Array:
         """Preserve committed placement and give ordinary operands their layout."""
         expected = template.sharding
@@ -136,9 +136,6 @@ class _EagerCore:
                 )
             expected = value.sharding
         sharding = self._typed_sharding(sharding=expected)
-        if isinstance(value, jax.ShapeDtypeStruct):
-            # A solve-lifetime template stands for zeros of its own shape.
-            return jnp.zeros(value.shape, dtype=value.dtype, device=sharding)
         placed = (
             value
             if isinstance(value, jax.Array)
@@ -216,9 +213,7 @@ class _EagerPlacement:
         return self(value, template)
 
     # keyword-only-exempt: library-callback=jax.tree.map
-    def __call__(
-        self, value: ArgumentTree, template: jax.ShapeDtypeStruct
-    ) -> jax.Array:
+    def __call__(self, value: PytreeValue, template: jax.ShapeDtypeStruct) -> jax.Array:
         """Share placements while validating each occurrence's numerical metadata."""
         key = (id(value), template)
         if key not in self.results:

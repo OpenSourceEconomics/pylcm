@@ -55,13 +55,12 @@ _BYTES_PER_ACTION = 1000
 
 
 def _fixed_owner_bytes() -> int:
-    """Three wealth and three consumption nodes, three params, four int32s.
+    """Three wealth/consumption nodes, three params, four V cells, four int32s.
 
     Each period also reserves int32 feasibility counters: a pair for its one
-    active regime and a pair that merges invariant blocks. The next-period V
-    templates occupy no device memory, so they add nothing.
+    active regime and a pair that merges invariant blocks.
     """
-    return 9 * jnp.zeros(()).dtype.itemsize + 4 * 4 + 2 * 4 * (1 + 1)
+    return 13 * jnp.zeros(()).dtype.itemsize + 4 * 4 + 2 * 4 * (1 + 1)
 
 
 def _model(

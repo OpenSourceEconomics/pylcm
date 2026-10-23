@@ -326,8 +326,8 @@ def plan_resident_inventory(
     return MappingProxyType(resident)
 
 
-def per_device_footprint(*, array: ValueND | jax.ShapeDtypeStruct) -> ArtifactFootprint:
-    """Read one array's (or template's) footprint off its own sharding."""
+def per_device_footprint(*, array: ValueND) -> ArtifactFootprint:
+    """Read one array's footprint off its own sharding."""
     return layout_footprint(
         sharding=array.sharding,
         shape=tuple(int(size) for size in array.shape),

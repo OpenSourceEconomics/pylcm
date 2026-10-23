@@ -53,7 +53,6 @@ from _lcm.solution.feasibility import BoundedResult
 from _lcm.typing import (
     ActionName,
     MaxQOverAFunction,
-    NextValue,
     PRNGKeyND,
     QAndFArg,
     RegimeName,
@@ -241,7 +240,7 @@ class _DecoupledQOverA:
 
     def __call__(
         self,
-        next_regime_to_V_arr: Mapping[RegimeName, NextValue],
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         **states_actions_params: QAndFArg | PRNGKeyND,
     ) -> BoundedArgmaxOutput | BoundedMaxOutput:
         """Return `(index, value)` or `(value, empty)` at this cell."""

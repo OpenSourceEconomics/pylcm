@@ -138,7 +138,6 @@ from _lcm.typing import (
     EconFunctionsMapping,
     FlatParams,
     FlatRegimeParams,
-    NextValue,
     PytreeValue,
     ReferenceName,
     RegimeName,
@@ -1227,7 +1226,7 @@ class _NNBEGMPeriodKernel:
         *,
         compiled_cores: Mapping[str, Callable[..., PytreeValue]],
         state_action_space: StateActionSpace,
-        next_regime_to_V_arr: Mapping[RegimeName, NextValue],
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
         flat_params: FlatParams,
         period: int,
@@ -1289,7 +1288,7 @@ class _NNBEGMPeriodKernel:
         retain_replay: bool,
         compiled_cores: Mapping[str, Callable[..., PytreeValue]],
         state_action_space: StateActionSpace,
-        next_regime_to_V_arr: Mapping[RegimeName, NextValue],
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
         flat_params: FlatParams,
         period: int,
@@ -1304,7 +1303,7 @@ class _NNBEGMPeriodKernel:
         *,
         compiled_cores: Mapping[str, Callable[..., PytreeValue]],
         state_action_space: StateActionSpace,
-        next_regime_to_V_arr: Mapping[RegimeName, NextValue],
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
         flat_params: FlatParams,
         period: int,
@@ -1329,7 +1328,7 @@ class _NNBEGMPeriodKernel:
         node: FloatND,
         adjuster_cores: Mapping[str, Callable[..., PytreeValue]],
         state_action_space: StateActionSpace,
-        next_regime_to_V_arr: Mapping[RegimeName, NextValue],
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
         flat_params: FlatParams,
         period: int,
@@ -1690,7 +1689,7 @@ class _FiniteNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
         retain_replay: bool,
         compiled_cores: Mapping[str, Callable[..., PytreeValue]],
         state_action_space: StateActionSpace,
-        next_regime_to_V_arr: Mapping[RegimeName, NextValue],
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
         flat_params: FlatParams,
         period: int,
@@ -1959,7 +1958,7 @@ class _AdaptiveNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
         retain_replay: bool,
         compiled_cores: Mapping[str, Callable[..., PytreeValue]],
         state_action_space: StateActionSpace,
-        next_regime_to_V_arr: Mapping[RegimeName, NextValue],
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
         flat_params: FlatParams,
         period: int,
@@ -2462,7 +2461,7 @@ class _AdaptiveNodeSolver:
     state_action_space: StateActionSpace
     """The period's state-action space."""
 
-    next_regime_to_V_arr: Mapping[RegimeName, NextValue]
+    next_regime_to_V_arr: Mapping[RegimeName, FloatND]
     """Immutable mapping of next-period regime name to its value array."""
 
     next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload]
