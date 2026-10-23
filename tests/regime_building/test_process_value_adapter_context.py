@@ -16,15 +16,32 @@ codes (0, 1) are passed as values, it instead chooses code 1 and has value -81.
 These numbers are exactly representable in both supported precisions. The
 test does not catch arbitrary exceptions or reproduce coordinate inversion.
 
-There are 16 cases: shared/distinct/plain readers x two regime orders x
+There are 16 model cases: shared/distinct/plain readers x two regime orders x
 eager/JIT (12), plus local process/discrete-code controls x order x eager/JIT (4).
+
+Three adapter-level cases follow. Each adapts one callable twice into one adapter
+memo, in two binding contexts that differ in a single input: whether `k` is
+discrete (so `k_code` reads its code), the grid a law's value is encoded on, or
+the value grid an age-specialized marker decodes through. Each asserts the
+second binding's literal result.
 """
+
+from typing import cast
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from lcm import AgeGrid, DiscreteGrid, Model, NormalIIDProcess, Regime, categorical
+from _lcm.regime_building.value_adapter import adapt_entry, adapt_user_function
+from lcm import (
+    AgeGrid,
+    AgeSpecializedFunction,
+    DiscreteGrid,
+    Model,
+    NormalIIDProcess,
+    Regime,
+    categorical,
+)
 from lcm.typing import DiscreteState, FloatND, ScalarInt, ValueND
 
 
@@ -137,3 +154,66 @@ def test_local_process_positions_and_discrete_codes_remain_distinct(
         np.asarray(values["a"]), np.asarray((0.0, 1.0, 2.0, 3.0, 4.0))
     )
     np.testing.assert_array_equal(np.asarray(values["b"]), np.asarray(1.0))
+
+
+_LEVEL = DiscreteGrid(values=np.array([1, 2]))
+_LOW_TARGET = DiscreteGrid(values=np.array([1, 2]))
+_HIGH_TARGET = DiscreteGrid(values=np.array([2, 5]))
+
+
+def _level_plus_ten_codes(*, x: DiscreteState, k_code: DiscreteState) -> DiscreteState:
+    return x + 10 * k_code
+
+
+def _level(*, x: DiscreteState) -> DiscreteState:
+    return x
+
+
+def test_one_callable_reads_a_code_only_where_its_variable_is_discrete():
+    """`k_code` is the code of `k` where `k` is discrete, else an argument as named.
+
+    Both readings decode `x` through one grid and share one adapter memo.
+    """
+    adapters = {}
+    adapt_user_function(
+        func=_level_plus_ten_codes,
+        value_grids={"x": _LEVEL, "k": DiscreteGrid(category_class=BinaryChoice)},
+        encode=None,
+        adapters=adapters,
+    )
+    plain = adapt_user_function(
+        func=_level_plus_ten_codes,
+        value_grids={"x": _LEVEL},
+        encode=None,
+        adapters=adapters,
+    )
+    result = plain(x=jnp.int32(1), k_code=jnp.int32(1))
+    assert jnp.asarray(result).tolist() == 12
+
+
+def test_one_law_returns_the_code_on_each_encoding_grid():
+    """Value 2 is code 1 on (1, 2) and code 0 on (2, 5) for one law and input."""
+    adapters = {}
+    value_grids = {"x": _LEVEL, "low": _LOW_TARGET, "high": _HIGH_TARGET}
+    adapt_user_function(
+        func=_level, value_grids=value_grids, encode=_LOW_TARGET, adapters=adapters
+    )
+    high = adapt_user_function(
+        func=_level, value_grids=value_grids, encode=_HIGH_TARGET, adapters=adapters
+    )
+    assert jnp.asarray(high(x=jnp.int32(1))).tolist() == 0
+
+
+def test_one_age_specialized_marker_reads_each_binding_s_value_grid():
+    """A marker read through values (1, 2) and then (10, 20) decodes code 1 as 20."""
+    marker = AgeSpecializedFunction(build=lambda _age: _level, signature=lambda _age: 0)
+    adapters = {}
+    adapt_entry(entry=marker, value_grids={"x": _LEVEL}, encode=None, adapters=adapters)
+    tens = adapt_entry(
+        entry=marker,
+        value_grids={"x": DiscreteGrid(values=np.array([10, 20]))},
+        encode=None,
+        adapters=adapters,
+    )
+    built = cast("AgeSpecializedFunction", tens).build(0)
+    assert jnp.asarray(built(x=jnp.int32(1))).tolist() == 20
