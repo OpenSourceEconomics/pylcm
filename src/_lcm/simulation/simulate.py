@@ -2400,6 +2400,7 @@ def _take_dissolution_routes(
             )
         ),
         next_period=period,
+        reported_period=period,
         source=regime_name,
         new_regime_ids=outcome.subject_regime_ids,
         regime_ids=regime_names_to_ids,
