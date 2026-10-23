@@ -145,9 +145,13 @@ from _lcm.regime_building.schedules import (
     resolve_initial_nodes,
 )
 from _lcm.regime_building.value_adapter import (
+    AdapterMemo,
     adapt_regime_laws,
+    bind_reading_regimes,
     collect_adapter_grids,
     declared_discrete_names,
+    fail_if_a_fixed_entry_is_off_a_read_node,
+    process_code_reads,
 )
 from _lcm.regime_law import RegimeLaws, bind_regime_law
 from _lcm.simulation.chunk_admission import prepare_simulation_chunks
@@ -196,6 +200,7 @@ from _lcm.simulation.result_metadata import _get_output_dtypes
 from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.shock_paths import (
     bind_shock_path_programs,
+    fail_if_an_initial_process_code_is_off_node,
     kernel_param_names,
     resolve_shock_paths,
 )
@@ -489,6 +494,9 @@ class _PickledModel(TypedDict):
     _draw_only_processes: NotRequired[
         Mapping[RegimeName, Mapping[StateName, _IIDProcess]]
     ]
+    _process_code_reads: NotRequired[
+        Mapping[RegimeName, Mapping[StateName, _ContinuousStochasticProcess]]
+    ]
     pruned_variables: MappingProxyType[RegimeName, frozenset[str]]
     user_regimes: MappingProxyType[RegimeName, FinalizedUserRegime]
     regime_names_to_ids: RegimeNamesToIds
@@ -751,6 +759,10 @@ class Model:
     """
     _draw_only_processes: Mapping[RegimeName, Mapping[StateName, _IIDProcess]]
     """Declarations of transition-local folded shocks, retained for path validation."""
+    _process_code_reads: Mapping[
+        RegimeName, Mapping[StateName, _ContinuousStochasticProcess]
+    ]
+    """Per regime, the processes whose node position `<name>_code` its readers take."""
 
     _execution: ResolvedExecution
     """Hardware-local facts both phases run under, resolved once at model build.
@@ -1096,11 +1108,30 @@ class Model:
         self._draw_only_processes = draw_only_processes
         # A regime law reads the values of value grids as every user function
         # does; it still returns regime codes or probabilities.
-        laws = adapt_regime_laws(
-            laws=laws,
+        # A process law named in `fixed_params` means exactly what the same
+        # value passed to the process constructor means, so it is bound into
+        # the grid here — before any function is adapted to read a process's
+        # node position, and before validation, structure preparation, and
+        # entry-law synthesis, all of which ask whether a process's law is
+        # known. What no process could take stays a runtime parameter and
+        # reaches `build_regimes_and_template` unchanged.
+        (
+            pruned_regimes,
+            residual_fixed_params,
+            params_consumed_by_binder,
+        ) = bind_fixed_process_laws(
+            user_regimes=pruned_regimes,
+            fixed_params=self.fixed_params,
+        )
+        value_grids_by_regime = bind_reading_regimes(
             value_grids=collect_adapter_grids(
                 regimes=pruned_regimes, derived_categoricals=derived_categoricals
             ),
+            regimes=pruned_regimes,
+        )
+        adapters: AdapterMemo = {}
+        laws = adapt_regime_laws(
+            laws=laws, value_grids_by_regime=value_grids_by_regime, adapters=adapters
         )
         finalized_regimes = finalize_regimes(
             user_regimes=pruned_regimes,
@@ -1108,6 +1139,16 @@ class Model:
             derived_categoricals=derived_categoricals,
             koopmans_aggregator=koopmans_aggregator,
             certainty_equivalent=certainty_equivalent,
+            value_grids_by_regime=value_grids_by_regime,
+            adapters=adapters,
+        )
+        # The process states whose node position each regime's readers take,
+        # so a supplied value off those nodes is refused before it is read.
+        self._process_code_reads = process_code_reads(
+            value_grids_by_regime=value_grids_by_regime, adapters=adapters
+        )
+        fail_if_a_fixed_entry_is_off_a_read_node(
+            regimes=finalized_regimes, process_code_reads=self._process_code_reads
         )
         # Runs on the finalized regimes, since a conditioner's law may arrive as
         # a model-level broadcast, and against the resolved graph support: the
@@ -1117,20 +1158,7 @@ class Model:
             user_regimes=finalized_regimes,
             targets_by_regime=schedules.targets_by_regime,
         )
-        # A process law named in `fixed_params` means exactly what the same
-        # value passed to the process constructor means, so it is bound into
-        # the grid here — before validation, structure preparation, and
-        # entry-law synthesis, all of which ask whether a process's law is
-        # known. What no process could take stays a runtime parameter and
-        # reaches `build_regimes_and_template` unchanged.
-        (
-            self.user_regimes,
-            residual_fixed_params,
-            params_consumed_by_binder,
-        ) = bind_fixed_process_laws(
-            user_regimes=finalized_regimes,
-            fixed_params=self.fixed_params,
-        )
+        self.user_regimes = finalized_regimes
         validate_regimes(regimes=self.user_regimes, laws=laws)
         validate_model_inputs(
             user_regimes=self.user_regimes,
@@ -1190,6 +1218,7 @@ class Model:
             declared_transitions=self._declared_transitions,
             declared_edge_vocabulary=declared_edge_vocabulary,
             draw_only_processes=draw_only_processes,
+            broadcast_variables=broadcast_variables,
         )
         self.reachability = dataclasses.replace(
             prepared_structure.reachability,
@@ -1448,6 +1477,7 @@ class Model:
             _cells_without_edges=self._cells_without_edges,
             _transition_only_shock_names=self._transition_only_shock_names,
             _draw_only_processes=self._draw_only_processes,
+            _process_code_reads=self._process_code_reads,
             pruned_variables=self.pruned_variables,
             user_regimes=self.user_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
@@ -1484,6 +1514,9 @@ class Model:
         )
         self._draw_only_processes = state.get(
             "_draw_only_processes", MappingProxyType({})
+        )
+        self._process_code_reads = state.get(
+            "_process_code_reads", MappingProxyType({})
         )
         self._fixed_component_splits = MappingProxyType(
             dict(state["_fixed_component_splits"])
@@ -3785,6 +3818,12 @@ class Model:
                     params=flat_params,
                     ages=self._time,
                     regime_names_to_ids=self.regime_names_to_ids,
+                    process_code_reads=self._process_code_reads,
+                )
+                fail_if_an_initial_process_code_is_off_node(
+                    initial=initial_conditions,
+                    process_code_reads=self._process_code_reads,
+                    regime_names_to_ids=self.regime_names_to_ids,
                 )
                 initial_conditions = canonicalize_initial_conditions(
                     initial_conditions=initial_conditions,
@@ -4041,6 +4080,7 @@ class Model:
                 seed=seed,
                 taste_shock_seed=taste_shock_seed,
                 shock_paths=resolved_shock_paths,
+                process_code_reads=self._process_code_reads,
                 subject_batch_size=compile_batch_size,
                 original_n_subjects=original_n_subjects,
                 device_ids=self._execution.device_ids,

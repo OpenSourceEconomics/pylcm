@@ -26,10 +26,11 @@ Three properties are tested:
   1 ULP in float32. Simulating from either solve with the same initial conditions
   and seed yields the same discrete choices, states and regimes.
 - **Width settings.** The broadcast is used only at cell widths that are whole
-  multiples of `habit`'s extent. A pinned width or a ceiling that is not such a
-  multiple is honoured unchanged and solved in the plain layout, as is a budget
-  under which no window of such a multiple fits; every other solve keeps the
-  broadcast. Values agree with the solve that never broadcasts.
+  multiples of `habit`'s extent and narrower than the whole state product. A
+  pinned width or a ceiling that is not such a multiple is honoured unchanged and
+  solved in the plain layout, as is a budget under which no window of such a
+  multiple fits, and a window covering the whole product; every other solve keeps
+  the broadcast. Values agree with the solve that never broadcasts.
 """
 
 import dataclasses
@@ -474,6 +475,7 @@ def test_broadcast_keeps_simulated_discrete_choices_identical(
 # The three-habit model broadcasts `habit`, so a window holds whole multiples of
 # its three points.
 _BROADCAST_EXTENT = 3
+_WHOLE_EXTENT = _N_HEALTH * _BROADCAST_EXTENT * _N_WEALTH
 _BUDGET = 10**9
 _REFUSED = 2**62
 # Width settings, each named for its test id. A pin or ceiling that is not a
@@ -486,7 +488,9 @@ _INCOMPATIBLE = (
     "budget-refuses-broadcast-windows-exhaustive",
     "budget-refuses-broadcast-windows-bounded",
 )
-_COMPATIBLE = ("pin-6", "unbudgeted", "budget-exhaustive", "budget-bounded")
+_COMPATIBLE = ("pin-6", "unbudgeted", "budget-bounded")
+# Widths covering the whole state product, which the plain layout serves.
+_WHOLE_WINDOW = ("pin-whole", "budget-exhaustive")
 _REFUSING_BUDGETS = (
     "budget-refuses-broadcast-windows-exhaustive",
     "budget-refuses-broadcast-windows-bounded",
@@ -501,6 +505,7 @@ def _execution_config(*, setting: str) -> ExecutionConfig:
         "pin-1": ExecutionConfig(axis_widths={CELL_AXIS: {"alive": 1}}),
         "pin-5": ExecutionConfig(axis_widths={CELL_AXIS: {"alive": 5}}),
         "pin-6": ExecutionConfig(axis_widths={CELL_AXIS: {"alive": 6}}),
+        "pin-whole": ExecutionConfig(axis_widths={CELL_AXIS: {"alive": _WHOLE_EXTENT}}),
         "unbudgeted": ExecutionConfig(),
         "budget-exhaustive": ExecutionConfig(device_memory_bytes=_BUDGET),
         "budget-bounded": ExecutionConfig(
@@ -617,14 +622,28 @@ def test_incompatible_width_setting_maps_every_cell_state_in_the_window(
 
 @pytest.mark.parametrize("setting", _COMPATIBLE)
 def test_compatible_width_setting_broadcasts_habit(*, setting: str) -> None:
-    """A width of whole broadcast-extent multiples keeps `habit` outside the cell
-    window: the window maps the dispatched width's share of the other states."""
+    """A width of whole broadcast-extent multiples narrower than the state product
+    keeps `habit` outside the cell window: the window maps the dispatched width's
+    share of the other states."""
     _, width, cells = _solve_under(setting=setting, broadcast=True)
 
     assert (("health", "wealth"), width // _BROADCAST_EXTENT) in cells
 
 
-@pytest.mark.parametrize("setting", [*_INCOMPATIBLE, *_COMPATIBLE])
+@pytest.mark.parametrize("setting", _WHOLE_WINDOW)
+def test_whole_product_width_maps_every_cell_state_in_the_window(
+    *, setting: str
+) -> None:
+    """A window covering the whole state product runs the plain layout, whose
+    per-state vmaps already leave the continuation unbatched along `habit`: no
+    window maps the whole product's share of the other states alone."""
+    _, width, cells = _solve_under(setting=setting, broadcast=True)
+    broadcast_window = (("health", "wealth"), _WHOLE_EXTENT // _BROADCAST_EXTENT)
+
+    assert (width, broadcast_window in cells) == (_WHOLE_EXTENT, False)
+
+
+@pytest.mark.parametrize("setting", [*_INCOMPATIBLE, *_COMPATIBLE, *_WHOLE_WINDOW])
 def test_width_setting_solves_to_the_values_of_the_plain_layout(
     *, setting: str
 ) -> None:

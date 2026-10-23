@@ -118,7 +118,6 @@ _D_THRESHOLD = 0.0
 # bound inside `get_edge_simulate_gate_evaluator`'s two interpolators. Never
 # real regime or gate-ref names.
 _SIMULATE_TARGET_V_ARR_NAME = "__simulate_target_component_v_arr__"
-_SIMULATE_D_ARR_NAME = "__simulate_target_D_arr__"
 
 # The two parameter namespaces a
 # simulate-side edge callable resolves its arguments against. A REGIME, not a
@@ -1644,19 +1643,18 @@ def get_edge_simulate_gate_evaluator(
       target's recomputed `max_a Q` reads `interp(V_{t+2})`). That is not what
       this evaluator does: the value gate is approximate by construction, and
       the two failure modes above are what a caller has to plan around.
-    - The BOOLEAN `D_target` operand (a no-dissolution gate) is a DOCUMENTED
-      RESIDUAL: the float-cast flag is linearly interpolated and then marked
-      dissolved on ANY positive mass — `d_value > _D_THRESHOLD` with
-      `_D_THRESHOLD = 0.0` (`_assemble_gate_kwargs`'s `D_target` branch) —
-      rather than recomputed from `D`'s own underlying per-action value
-      comparison at the realized point. The strict zero threshold is what keeps
-      a `~D_target` gate closed in every cell carrying any weight on a dissolved
-      node: an open branch would read that node's `-inf` value. A midpoint
-      threshold would instead open the gate across half of every straddling
-      cell. Recomputing `D` would mean re-deriving it from internals the fold
-      never exposes here, so a gate reading ONLY `D_target` (a pure dissolution
-      gate) remains approximate off-grid — it is exact about which cells are
-      untouched by dissolution, not about the realized `D` itself.
+    - The BOOLEAN `D_target` operand is decided at the REALIZED landing, not
+      read off the solved node flags. `D` is boolean, and an off-grid landing
+      can have no feasible target action between two feasible nodes, or one
+      next to an empty node, so no interpolation of the node flags is right in
+      general. The evaluator therefore binds `D_target = False` (the target
+      has a feasible action), and the target's own decision next period, which
+      evaluates every action at the realized state, sends a household that
+      finds none to its leg's fallback in that same period
+      (`_lcm.simulation.dissolution_route`). Routing on `D_target = False`
+      followed by that step equals evaluating the predicate at the realized
+      `D` and then taking the dissolution route from any branch that still
+      lands on an empty feasible set — for every predicate, not only `~D`.
 
     **Numerics.** Unlike `get_edge_fold`'s target-V read (exact grid-point
     indexing, to dodge `0 * -inf = nan` poisoning a dissolution cell's
@@ -1726,18 +1724,6 @@ def get_edge_simulate_gate_evaluator(
         arg
         for arg in get_union_of_args([target_component_interpolator])
         if arg != _SIMULATE_TARGET_V_ARR_NAME
-    )
-
-    d_interpolator = get_V_interpolator(
-        v_interpolation_info=target_v_info,
-        state_prefix="",
-        V_arr_name=_SIMULATE_D_ARR_NAME,
-        interpolate_process_axes=target_has_process_axis,
-    )
-    d_interpolator_args = tuple(
-        arg
-        for arg in get_union_of_args([d_interpolator])
-        if arg != _SIMULATE_D_ARR_NAME
     )
 
     # The SAME gate predicate `get_edge_fold` builds, from the same builder, so
@@ -1840,10 +1826,6 @@ def get_edge_simulate_gate_evaluator(
         arg: exposure.expose(arg=arg, namespace=TARGET_PARAMS)
         for arg in target_component_args
     }
-    d_interpolator_exposed = {
-        arg: exposure.expose(arg=arg, namespace=TARGET_PARAMS)
-        for arg in d_interpolator_args
-    }
     gate_ref_exposed = {
         name: MappingProxyType(
             {arg: exposure.expose(arg=arg, namespace=SOURCE_PARAMS) for arg in args}
@@ -1860,7 +1842,6 @@ def get_edge_simulate_gate_evaluator(
             engine_args
             | set(state_names)
             | set(target_component_exposed.values())
-            | set(d_interpolator_exposed.values())
             | {arg for exposed in gate_ref_exposed.values() for arg in exposed.values()}
             | set(gate_extra_exposed.values())
         )
@@ -1876,8 +1857,6 @@ def get_edge_simulate_gate_evaluator(
         target_component_interpolator=target_component_interpolator,
         target_component_exposed=MappingProxyType(target_component_exposed),
         reads_d_target=reads_d_target,
-        d_interpolator=d_interpolator,
-        d_interpolator_exposed=MappingProxyType(d_interpolator_exposed),
         gate_ref_readers=MappingProxyType(gate_ref_readers),
         gate_ref_exposed=MappingProxyType(gate_ref_exposed),
         gate_evaluator=gate_evaluator,
@@ -1969,9 +1948,11 @@ def build_fallback_state_projector(
             i.e. exactly the slots a routed row occupies there.
         target_regime_name: The regime the gated edge lands on, which qualifies
             the projections' parameter names and names the fenced target.
-        target_state_names: The TARGET regime's own state names, i.e. exactly
-            those arguments the router binds from the realized candidate target
-            states rather than from a params namespace.
+        target_state_names: The TARGET regime's simulate-phase state names, i.e.
+            exactly those arguments the router binds from the realized candidate
+            target states rather than from a params namespace. A carried state is
+            among them, so a projection reads its realized value, never its
+            solve-phase imputation.
         target_functions: The target regime's processed functions (projections
             are expressed in terms of the target's own states/helpers).
         target_deterministic_transitions: The target regime's merged
@@ -1987,11 +1968,17 @@ def build_fallback_state_projector(
         regime's own state-coordinate arrays. It carries an `arg_provenance`
         attribute (`EdgeArgProvenance`) saying which namespace resolves each.
     """
-    dag_pool = _build_target_dag_pool(
-        target_functions=target_functions,
-        target_deterministic_transitions=target_deterministic_transitions,
-        edge_target=target_regime_name,
-    )
+    # A state the target carries only in simulation is a solve-phase imputation
+    # among its functions; the projector reads the realized state instead.
+    dag_pool = {
+        name: func
+        for name, func in _build_target_dag_pool(
+            target_functions=target_functions,
+            target_deterministic_transitions=target_deterministic_transitions,
+            edge_target=target_regime_name,
+        ).items()
+        if name not in target_state_names
+    }
     # The same fences the solve-side fold runs over this very leg's fallback
     # projections, from the same helper. `dag_pool` is the GATED TARGET's nodes, so
     # the fence's `edge_target` names the gated target whose node would capture a
@@ -2264,10 +2251,6 @@ class _SimulateGateEvaluator:
     """The interpolator's arguments and the names they are exposed under."""
     reads_d_target: bool
     """Whether the gate reads the target's dissolution flag."""
-    d_interpolator: Callable[..., FloatND]
-    """Interpolates the target's dissolution flag at the point."""
-    d_interpolator_exposed: MappingProxyType[str, str]
-    """The flag interpolator's arguments and the names they are exposed under."""
     gate_ref_readers: MappingProxyType[str, Callable[..., FloatND]]
     """Per gate reference, its same-period reader."""
     gate_ref_exposed: MappingProxyType[str, MappingProxyType[str, str]]
@@ -2321,24 +2304,18 @@ class _SimulateGateEvaluator:
                 **{_SIMULATE_TARGET_V_ARR_NAME: component_arr},
             )
 
-        # DOCUMENTED RESIDUAL: `D_target` is linearly interpolated and
-        # thresholded (same recipe as every other simulate-side value read),
-        # never recomputed from its own per-action IR comparison — see
-        # `get_edge_simulate_gate_evaluator`. Only built/interpolated when the
-        # gate actually reads it (`reads_d_target`, a Python-level bool at trace
-        # time), so a pure value-operand gate (consent) pays no cost for a
-        # `D` array it never uses.
+        # `D_target` is decided at the realised landing, not read off the
+        # solved node flags: the gate is evaluated as if the target had a
+        # feasible action there, and the target's own decision next period
+        # sends a household whose landing has none to its dissolution route
+        # (`_lcm.simulation.dissolution_route`). The flag is still required
+        # to be present, so a mapping assembled without it fails clearly.
         d_value: FloatND | None = None
-        if self.reads_d_target:
-            d_flag = same_period_V.get(f"{self.edge_target}{D_KEY_SUFFIX}")
-            if d_flag is not None:
-                d_value = self.d_interpolator(
-                    **{
-                        arg: kwargs[exposed]
-                        for arg, exposed in self.d_interpolator_exposed.items()
-                    },
-                    **{_SIMULATE_D_ARR_NAME: d_flag},
-                )
+        if (
+            self.reads_d_target
+            and same_period_V.get(f"{self.edge_target}{D_KEY_SUFFIX}") is not None
+        ):
+            d_value = jnp.zeros(())
 
         gate_ref_values = {
             name: reader(
