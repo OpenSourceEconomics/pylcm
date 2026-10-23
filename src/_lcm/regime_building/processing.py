@@ -395,10 +395,12 @@ class PreparedModelStructure:
     broadcast_variables: MappingProxyType[RegimeName, frozenset[StateOrActionName]] = (
         MappingProxyType({})
     )
-    """Per regime, the states and actions it holds from a model-level declaration.
+    """Per regime, state names merged from the model-level state slot.
 
-    Error messages read it to say whether a regime carries a state from its own
-    `Regime(states=...)` or from `Model(states=...)`.
+    Action names are excluded: a masked model action can share its name with a
+    regime-local state. Error messages read this state provenance to say whether
+    a regime carries a state from its own `Regime(states=...)` or from
+    `Model(states=...)`.
     """
 
 
@@ -431,7 +433,7 @@ def prepare_model_structure(
     simulate graph is active. `declared_transitions` are the `Transition`s as
     `Model(edges=...)` declares them and `declared_edge_vocabulary` the names
     each regime declares before demand prunes any. `broadcast_variables` are,
-    per regime, the names merged in from a model-level declaration.
+    per regime, the state names merged in from `Model(states=...)`.
     """
     raw_phase_specs = normalize_all_regime_phases(user_regimes=user_regimes, laws=laws)
     age_normalization = normalize_age_specialization(
