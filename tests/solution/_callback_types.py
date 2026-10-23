@@ -1,7 +1,7 @@
 """Keyword arguments received by solution publication observers."""
 
 from collections.abc import Mapping
-from typing import NotRequired, TypedDict, TypeGuard
+from typing import Literal, NotRequired, TypedDict, TypeGuard
 
 import jax
 import numpy as np
@@ -348,5 +348,5 @@ class ValidateVKwargs(TypedDict):
     flat_params: NotRequired[value_validation.FlatRegimeParams | None]
     period: NotRequired[int | None]
     entered_process_names: NotRequired[tuple[str, ...]]
-    time_kind: NotRequired[value_validation.Literal[age, period]]
+    time_kind: NotRequired[Literal["age", "period"]]
     logger: NotRequired[value_validation.logging.Logger | None]
