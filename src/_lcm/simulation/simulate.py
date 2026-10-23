@@ -1809,8 +1809,9 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
         fail_if_a_held_process_code_is_off_node(
             states=states[regime_name],
             processes=coded,
-            holders=np.asarray(subject_ids_in_regime) & genuine,
+            holders=subject_ids_in_regime & genuine,
             where=f"in regime '{regime_name}' at period {period}",
+            memory=memory,
         )
 
     state_action_space = create_regime_state_action_space(
@@ -2072,9 +2073,10 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 fail_if_a_held_process_code_is_off_node(
                     states=states[regime_name],
                     processes=coded,
-                    holders=np.asarray(subject_ids_in_regime) & genuine,
+                    holders=subject_ids_in_regime & genuine,
                     where=f"projected by a dissolution route back into regime "
                     f"'{regime_name}' at period {period}",
+                    memory=memory,
                 )
             if redecide:
                 state_action_space = create_regime_state_action_space(
@@ -2236,14 +2238,12 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 fail_if_a_held_process_code_is_off_node(
                     states=next_states.get(target, {}),
                     processes=process_code_reads[target],
-                    holders=np.asarray(subject_ids_in_regime)
+                    holders=subject_ids_in_regime
                     & genuine
-                    & (
-                        np.asarray(new_subject_regime_ids)
-                        == int(regime_names_to_ids[target])
-                    ),
+                    & (new_subject_regime_ids == regime_names_to_ids[target]),
                     where=f"drawn from regime '{regime_name}' into regime "
                     f"'{target}' at period {period}",
+                    memory=memory,
                 )
         # The value router's routing half. A gated
         # edge's target is always ALSO an ordinary declared transition
