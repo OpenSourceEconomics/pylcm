@@ -459,8 +459,8 @@ def _bounded_hard_max(
     width = min(block_width, n_actions)
     offsets = jnp.arange(width, dtype=jnp.int32)
 
-    def window(*, index: jax.Array) -> _BoundedBlock:
-        identities = index * width + offsets
+    def window(*, block_index: jax.Array) -> _BoundedBlock:
+        identities = block_index * width + offsets
         active = identities < n_actions
         selected = jnp.minimum(identities, n_actions - 1)
         evaluate_one = partial(
@@ -488,8 +488,6 @@ def _bounded_hard_max(
             ),
         )
 
-    first = window(index=jnp.asarray(0, dtype=jnp.int32))
-
     def add_block(*, accumulator: _HardMaxState, block: _Block) -> _HardMaxState:
         values, feasible, identities = block
         if stakeholders is None:
@@ -514,24 +512,25 @@ def _bounded_hard_max(
             action_ids=identities,
         )
 
-    first_values = first.output[0]
+    # Every window runs in the scan body, so `Q_and_F` is staged once; the carry
+    # starts from the empty accumulator and all-false bound records.
+    trace = _trace_block(evaluate_block=window)
+    template = jnp.zeros(trace.shapes[0].shape[1:], dtype=trace.shapes[0].dtype)
     initial = (
-        HARD_MAX_REDUCTION.initialize(value_template=jnp.zeros_like(first_values[0]))
+        HARD_MAX_REDUCTION.initialize(value_template=template)
         if stakeholders is None
-        else COLLECTIVE_HARD_MAX_REDUCTION.initialize(
-            stakeholder_template=jnp.zeros_like(first_values[0])
-        )
+        else COLLECTIVE_HARD_MAX_REDUCTION.initialize(stakeholder_template=template)
     )
     carry = BoundedResult(
-        output=add_block(accumulator=initial, block=first.output),
-        bound_status=first.bound_status,
+        output=_typed_like(accumulator=initial, arrays=trace.read_arrays),
+        bound_status=_empty_bound_status(evaluate_block=window),
     )
 
     # keyword-only-exempt: library-callback=jax.lax.scan
     def add_window(
         carry: BoundedResult[_HardMaxState], index: jax.Array
     ) -> tuple[BoundedResult[_HardMaxState], None]:
-        block = window(index=index)
+        block = window(block_index=index)
         ordinary = add_block(accumulator=carry.output, block=block.output)
         statuses = tuple(
             merge_bound_input_status(left=left, right=right)
@@ -542,7 +541,7 @@ def _bounded_hard_max(
     carry, _history = jax.lax.scan(
         add_window,
         carry,
-        jnp.arange(1, (n_actions + width - 1) // width, dtype=jnp.int32),
+        jnp.arange((n_actions + width - 1) // width, dtype=jnp.int32),
     )
     return BoundedResult(
         output=(
@@ -628,10 +627,9 @@ class _PartitionedStreamingHardMax:
                     evaluate_block=evaluate_block,
                 ),
             )
-            first = owned_block(block_index=first_block_index)
             initial = BoundedResult(
-                output=_start_reduction(block=first.output),
-                bound_status=first.bound_status,
+                output=_empty_reduction(evaluate_block=owned_block),
+                bound_status=_empty_bound_status(evaluate_block=owned_block),
             )
 
             # keyword-only-exempt: library-callback=jax.lax.scan
@@ -652,7 +650,7 @@ class _PartitionedStreamingHardMax:
             result, _history = jax.lax.scan(
                 add_window,
                 initial,
-                jnp.arange(1, layout.blocks_per_partition, dtype=jnp.int32),
+                jnp.arange(layout.blocks_per_partition, dtype=jnp.int32),
             )
             return result
         # Every participant evaluates each block inside the scan body, exactly
@@ -1141,6 +1139,28 @@ def _empty_reduction(
     )
 
 
+def _empty_bound_status(
+    *, evaluate_block: Callable[..., _BoundedBlock]
+) -> tuple[BoundInputStatus, ...]:
+    """Create all-false bound records for the blocks `evaluate_block` makes.
+
+    All false is a reduction over no active lane and the identity of
+    `merge_bound_input_status`, so a scan seeded with it evaluates every block
+    in its body and stages none outside it.
+    """
+    # Only the records leave the abstract evaluation: an output container may
+    # refuse abstract leaves.
+    template = jax.eval_shape(
+        lambda: evaluate_block(block_index=jnp.int32(0)).bound_status
+    )
+    return _typed_like(
+        accumulator=jax.tree.map(
+            lambda leaf: jnp.zeros(leaf.shape, dtype=leaf.dtype), template
+        ),
+        arrays=_trace_block(evaluate_block=evaluate_block).read_arrays,
+    )
+
+
 def _typed_like[Accumulator](
     *, accumulator: Accumulator, arrays: list[jax.Array]
 ) -> Accumulator:
@@ -1340,16 +1360,9 @@ def _scan_ev1_blocks(
     """Scan every vector block in order while keeping one branch group open."""
     if bound_summary:
         bounded_evaluate_block = cast("Callable[..., _BoundedBlock]", evaluate_block)
-        first = bounded_evaluate_block(block_index=jnp.int32(0))
         initial = BoundedResult(
-            output=_add_ev1_block(
-                accumulator=accumulator,
-                block=first.output,
-                block_index=jnp.int32(0),
-                blocks_per_branch_group=blocks_per_branch_group,
-                reduction=reduction,
-            ),
-            bound_status=first.bound_status,
+            output=accumulator,
+            bound_status=_empty_bound_status(evaluate_block=bounded_evaluate_block),
         )
 
         # keyword-only-exempt: library-callback=jax.lax.scan
@@ -1374,7 +1387,7 @@ def _scan_ev1_blocks(
             ), None
 
         result, _history = jax.lax.scan(
-            add_window, initial, jnp.arange(1, n_blocks, dtype=jnp.int32)
+            add_window, initial, jnp.arange(n_blocks, dtype=jnp.int32)
         )
         return result
     (accumulator, _), _history = jax.lax.scan(
