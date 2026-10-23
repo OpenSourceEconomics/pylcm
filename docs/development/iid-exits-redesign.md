@@ -157,13 +157,14 @@ operator.
 
 A generated mathematical physical signal has an explicit internal representation: its
 rounded physical value, the current source-law binding and, for an informative
-normal-base marginal, its authorized correlated Gaussian coordinate. That coordinate
-represents the invertible mathematical observation before rounding. It is a dynamic
-operand of the query, and its representation and source binding enter query identity.
-This is an augmented signal representation, not conditioning on the physical scalar's
-bits alone: distinct signals can round to the same scalar and give different conditional
-prices. Certification names this represented object. It does not claim a scalar inverse
-can recover information lost to rounding.
+continuous marginal, its authorized marginal base coordinate: the correlated Gaussian
+coordinate for a normal-base law or the independent uniform for a uniform law. That
+coordinate represents the invertible mathematical observation before rounding. It is a
+dynamic operand of the query, and its representation and source binding enter query
+identity. This is an augmented signal representation, not conditioning on the physical
+scalar's bits alone: distinct signals can round to the same scalar and give different
+conditional prices. Certification names this represented object. It does not claim a
+scalar inverse can recover information lost to rounding.
 
 Informative eligibility uses exact represented law-domain tests. Normal and lognormal
 zero scales and uniform equal endpoints reveal no innovation. A categorical outcome
