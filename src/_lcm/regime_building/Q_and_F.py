@@ -2005,6 +2005,9 @@ def get_Q_and_F_collective(
         build_W_kwargs=_build_W_kwargs,
         value_constraint_machinery=value_constraint_machinery,
         arg_names=tuple(arg_names_of_Q_and_F),
+        continuation_reads=_continuation_reads(
+            deps=continuation_deps, arg_names=continuation_arg_names
+        ),
         landing_checks=cast("_ComputeCE", compute_CE).landing_checks,
     )
 
@@ -2025,6 +2028,12 @@ class _CollectiveQAndF:
     """The value-constraint readers and evaluators."""
     arg_names: tuple[ReferenceName, ...]
     """The published argument names, in order."""
+    continuation_reads: frozenset[str] | None
+    """Every argument the continuation reads from the cell, or `None` if unknown.
+
+    A state outside it enters every stakeholder's `Q` only through utility,
+    feasibility and `W`, so the continuation is constant along that state's axis.
+    """
     landing_checks: tuple[LandingCheck, ...] = field(
         default=(), metadata={"fingerprint_omit_if_default": True}
     )
@@ -2435,6 +2444,7 @@ def _get_pointwise_gated_interpolator(
     draw_resolution: _NodeDrawResolution | None = None,
     landing_counter: Callable[..., IntND] | None = None,
     fallback_checks: tuple[tuple[str, tuple[tuple[StateName, Float1D], ...]], ...] = (),
+    process_nodes: Mapping[TransitionFunctionName, Float1D] = MappingProxyType({}),
 ) -> Callable[..., FloatND | tuple[FloatND, IntND]]:
     """Read a gated edge's operand surfaces at the landing point, then gate.
 
@@ -2476,6 +2486,10 @@ def _get_pointwise_gated_interpolator(
         fallback_checks: Per leg fallback reader name, the raise-rule grids of
             the regime it projects onto, as `(state, points)` pairs. Counted
             only where the gate closes and the leg reads its fallback.
+        process_nodes: Per enumerated process landing the gate or a projection
+            reads, keyed `next_<state>`, the process's nodes. The landing
+            arrives as a node position, which indexes the channels; the gate and
+            the projections receive the node's value instead.
 
     Returns:
         A callable returning the gated continuation, one trailing axis per leg
@@ -2578,6 +2592,7 @@ def _get_pointwise_gated_interpolator(
         landing_counter=landing_counter,
         landing_counter_args=tuple(sorted(landing_counter_args)),
         fallback_checks=fallback_checks,
+        process_nodes=MappingProxyType(dict(process_nodes)),
         arg_names=tuple(outer_arg_names),
     )
 
@@ -2630,6 +2645,10 @@ class _PointwiseGatedInterpolator:
         field(default=(), metadata={"fingerprint_omit_if_default": True})
     )
     """Per fallback reader name, the raise-rule grids it projects onto."""
+    process_nodes: MappingProxyType[TransitionFunctionName, Float1D] = field(
+        default=MappingProxyType({}), metadata={"fingerprint_omit_if_default": True}
+    )
+    """Per enumerated process landing, keyed `next_<state>`, its nodes."""
 
     def __post_init__(self) -> None:
         _publish_signature(
@@ -2638,6 +2657,26 @@ class _PointwiseGatedInterpolator:
             return_annotation="FloatND",
             name="next_V_gated",
         )
+
+    @no_type_check
+    def _read_landing(
+        self,
+        *,
+        name: str,
+        landing: Mapping[str, FloatND],
+        kwargs: Mapping[str, ParamsLeaf],
+    ) -> ParamsLeaf | None:
+        """Return what a gate or projection reads under one argument name.
+
+        An enumerated process landing arrives as its node position and is read
+        as that node's value; every other argument is read as it arrives.
+        """
+        if name in landing:
+            return landing[name]
+        if name in self.process_nodes:
+            position = jnp.asarray(kwargs[name]).astype(jnp.int32)
+            return self.process_nodes[name][position]
+        return kwargs.get(name)
 
     @no_type_check
     def __call__(self, **kwargs: ParamsLeaf) -> FloatND | tuple[FloatND, IntND]:
@@ -2736,9 +2775,9 @@ class _PointwiseGatedInterpolator:
         landing_states = {
             arg: cast(
                 "ContinuousState | DiscreteState",
-                landing[self.landing_names[arg]]
-                if self.landing_names[arg] in landing
-                else kwargs[self.landing_names[arg]],
+                self._read_landing(
+                    name=self.landing_names[arg], landing=landing, kwargs=kwargs
+                ),
             )
             for reader in self.projected_readers
             for arg in reader.state_args
@@ -2759,9 +2798,10 @@ class _PointwiseGatedInterpolator:
             **{
                 name: context[name]
                 if name in self.context_args
-                else landing.get(
-                    self.landing_names.get(name, name),
-                    kwargs.get(self.landing_names.get(name, name)),
+                else self._read_landing(
+                    name=self.landing_names.get(name, name),
+                    landing=landing,
+                    kwargs=kwargs,
                 )
                 for name in self.combine_args
                 if name != EDGE_CHANNELS_ARG and name not in self.reader_names
@@ -4159,6 +4199,19 @@ def _build_target_continuation(
             draw_resolution=draw_resolution,
             landing_counter=landing_counting.counter,
             fallback_checks=landing_counting.fallback_checks,
+            process_nodes=_get_landing_process_nodes(
+                target_regime_name=target_regime_name,
+                v_interpolation_info=v_interpolation_info,
+                node_variables=node_variables,
+                read_state_names=(
+                    *gated_continuation.gate_state_names,
+                    *(
+                        arg
+                        for reader in gated_continuation.projected_readers
+                        for arg in reader.state_args
+                    ),
+                ),
+            ),
         )
     elif n_stakeholders is None:
         mapped_interpolator = landing_counting.paired_with(next_V_interpolator)
@@ -4224,6 +4277,46 @@ def _build_target_continuation(
         landing_checks=landing_counting.checks,
         node_weight_names=landing_counting.node_weight_names,
     )
+
+
+def _get_landing_process_nodes(
+    *,
+    target_regime_name: RegimeName,
+    v_interpolation_info: VInterpolationInfo,
+    node_variables: tuple[TransitionFunctionName, ...],
+    read_state_names: tuple[StateName, ...],
+) -> MappingProxyType[TransitionFunctionName, Float1D]:
+    """Return the nodes of each enumerated process landing a gated edge reads.
+
+    The continuation enumerates a process draw by its node position, which is
+    what indexes the target's value function. A gate and a projection read the
+    process as a value, so each enumerated process landing they read is
+    translated through these nodes.
+
+    Raises:
+        ModelInitializationError: If such a process is parameterized at runtime,
+            so its nodes are not known while the model builds.
+
+    """
+    nodes: dict[TransitionFunctionName, Float1D] = {}
+    for state_name in sorted(set(read_state_names)):
+        next_name = f"next_{state_name}"
+        grid = v_interpolation_info.discrete_states.get(state_name)
+        if next_name not in node_variables or not isinstance(
+            grid, _ContinuousStochasticProcess
+        ):
+            continue
+        if not grid.is_fully_specified:
+            msg = (
+                f"A gated edge into regime '{target_regime_name}' reads the "
+                f"process '{state_name}' at its landing, but that process is "
+                "parameterized at runtime, so its nodes are not known while the "
+                "model builds. Fix its parameters through the process constructor "
+                "or `fixed_params`."
+            )
+            raise ModelInitializationError(msg)
+        nodes[next_name] = grid.to_jax()
+    return MappingProxyType(nodes)
 
 
 @dataclass(frozen=True, kw_only=True)

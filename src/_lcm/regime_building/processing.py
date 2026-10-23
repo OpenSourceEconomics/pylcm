@@ -392,6 +392,15 @@ class PreparedModelStructure:
     draw takes it from these processes as a transition-local lottery.
     """
 
+    broadcast_variables: MappingProxyType[RegimeName, frozenset[StateOrActionName]] = (
+        MappingProxyType({})
+    )
+    """Per regime, the states and actions it holds from a model-level declaration.
+
+    Error messages read it to say whether a regime carries a state from its own
+    `Regime(states=...)` or from `Model(states=...)`.
+    """
+
 
 def prepare_model_structure(
     *,
@@ -410,6 +419,8 @@ def prepare_model_structure(
     visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
     draw_only_processes: Mapping[RegimeName, Mapping[StateName, _IIDProcess]]
     | None = None,
+    broadcast_variables: Mapping[RegimeName, frozenset[StateOrActionName]]
+    | None = None,
 ) -> PreparedModelStructure:
     """Prepare normalized declarations and static phase graphs once.
 
@@ -419,7 +430,8 @@ def prepare_model_structure(
     `visited_periods_by_regime` are the periods a subject can occupy, where the
     simulate graph is active. `declared_transitions` are the `Transition`s as
     `Model(edges=...)` declares them and `declared_edge_vocabulary` the names
-    each regime declares before demand prunes any.
+    each regime declares before demand prunes any. `broadcast_variables` are,
+    per regime, the names merged in from a model-level declaration.
     """
     raw_phase_specs = normalize_all_regime_phases(user_regimes=user_regimes, laws=laws)
     age_normalization = normalize_age_specialization(
@@ -457,6 +469,7 @@ def prepare_model_structure(
                 for name, processes in (draw_only_processes or {}).items()
             }
         ),
+        broadcast_variables=MappingProxyType(dict(broadcast_variables or {})),
     )
 
 
@@ -509,12 +522,14 @@ def process_regimes(
         phase_reachability=reachability.solution,
         specs=phased_specs,
         ages=ages,
+        broadcast_variables=prepared_structure.broadcast_variables,
     )
     state_handoff_errors += _state_handoff_errors(
         phase_name="simulation",
         phase_reachability=reachability.simulation,
         specs=phased_specs,
         ages=ages,
+        broadcast_variables=prepared_structure.broadcast_variables,
     )
     if state_handoff_errors:
         raise ModelInitializationError(format_messages(state_handoff_errors))
@@ -2529,9 +2544,9 @@ def _attach_gated_edge_folds(
                             leg.realized_fallback.regime
                         ].simulation.state_names,
                         target_regime_name=target_name,
-                        target_state_names=regime_to_v_interpolation_info[
-                            target_name
-                        ].state_names,
+                        # The router binds the realized candidate landing, so a
+                        # state the target carries only in simulation is a state.
+                        target_state_names=regimes[target_name].simulation.state_names,
                         target_functions=target_solution.functions,
                         target_deterministic_transitions=(
                             target_deterministic_transitions
@@ -3502,22 +3517,23 @@ def _fail_if_folded_regime_is_same_period_endpoint(
 ) -> None:
     """Reject `fold=True` on a regime read nodewise by another gate/reference.
 
-    `fold=True` integrates a shock's node axis out of a regime's
-    stored V — and, for a COLLECTIVE regime, additionally collapses its
-    dissolution flag `D` by `jnp.any` — immediately after that regime's OWN
-    period solve (`_wrap_with_fold_reduction` in
-    `regime_building/max_Q_over_a.py`). Gated-edge routing and same-period
+    `fold=True` integrates a shock's node axis out of a singleton regime's
+    stored V immediately after that regime's OWN period solve
+    (`_wrap_with_fold_reduction` in `regime_building/max_Q_over_a.py`). A
+    collective regime's folds arrive here unfolded: `finalize_regimes` keeps
+    their node axes, so the gates into it route each node before the reader
+    averages, and `fail_if_a_collective_fold_is_misread` refuses the
+    reference role for it. Gated-edge routing and same-period
     value reads both require gate-THEN-integrate: each realized shock
     node must be routed through its own gate / consent decision before any
     node is averaged away (`jnp.where(gate, V_target, V_fallback)` per node,
     then integrate — never integrate first and gate the average). If the
     folding regime is itself read nodewise by another regime's gate or
     same-period reference, the two orderings conflict: the reader only ever
-    sees the already-averaged V (and, if collective, the already-`jnp.any`-
-    reduced D), not the per-node values gate-then-integrate needs.
-    Counterexample: target node values `[-inf, 1]`, nodewise dissolution
-    `[True, False]`, fallback `0`, equal weights — the correct
-    route-then-average is `0.5`, but fold-first (`D_any=True`) routes the
+    sees the already-averaged V, not the per-node values gate-then-integrate
+    needs. Counterexample: target node values `[-inf, 1]`, nodewise
+    dissolution `[True, False]`, fallback `0`, equal weights — the correct
+    route-then-average is `0.5`, but averaging first (`D_any=True`) routes the
     whole cell to the fallback, `0.0`.
 
     A regime is unsafe to fold when it is any of:
@@ -3534,10 +3550,8 @@ def _fail_if_folded_regime_is_same_period_endpoint(
       `same_period_refs` entry, or of a `gated_edges[...].gate_refs` entry —
       so its per-node V would be read through a projection.
 
-    This applies regardless of stakeholder cardinality: gate-then-integrate
-    is violated whether the folding regime is collective or a SINGLETON — a
-    singleton has a node-valued V (just no D) that a gate/reference reads
-    exactly the same way.
+    A singleton has a node-valued V (just no D) that a gate/reference reads
+    exactly the way it reads a collective one.
 
     The combination is rejected at construction rather than executed: no
     transient per-node `V_node` / `D_node` survives the fold reduction, so a
@@ -3601,21 +3615,11 @@ def _fail_if_folded_regime_is_same_period_endpoint(
         if not roles:
             continue
 
-        d_clause = (
-            " (and collapses its dissolution flag D by `jnp.any`)"
-            if regime.stakeholders is not None
-            else ""
-        )
-        cardinality = (
-            f"a collective (stakeholders={regime.stakeholders}) regime"
-            if regime.stakeholders is not None
-            else "a singleton regime"
-        )
         error_messages.append(
             f"Regime '{regime_name}' declares fold=True on state(s) "
-            f"{fold_names} while being {cardinality} that is "
+            f"{fold_names} while being a singleton regime that is "
             f"{' and '.join(roles)}. Folding integrates the shock's node "
-            f"axis out of this regime's stored V{d_clause} before that gate "
+            "axis out of this regime's stored V before that gate "
             "/ reference can route or read per node: value constraints and "
             "gated edges require gate-then-integrate, not "
             "integrate-then-gate. Drop "
@@ -3733,8 +3737,14 @@ def _state_handoff_errors(
     phase_reachability: PhaseReachability,
     specs: Mapping[RegimeName, PhasedRegimeSpec],
     ages: TimeAxis,
+    broadcast_variables: Mapping[RegimeName, frozenset[StateOrActionName]],
 ) -> tuple[str, ...]:
-    """Return errors for target states without a valid retained-edge handoff."""
+    """Return errors for target states without a valid retained-edge handoff.
+
+    Each error names the declaration the target carries the state from: its own
+    `Regime(states=...)`, or `Model(states=...)` when `broadcast_variables`
+    lists the state for the target.
+    """
     phase_slices: dict[RegimeName, RegimePhaseSpec] = {
         regime_name: getattr(spec, phase_name) for regime_name, spec in specs.items()
     }
@@ -3812,14 +3822,21 @@ def _state_handoff_errors(
                         if isinstance(target_grid, _ContinuousStochasticProcess)
                         else "state"
                     )
+                    declaration = (
+                        "the model-level `Model(states=...)` declaration, kept "
+                        f"on '{target}' because '{target}' uses it"
+                        if state_name in broadcast_variables.get(target, ())
+                        else "its own `Regime(states=...)` declaration"
+                    )
                     error_messages.append(
                         f"{phase_name} phase, period {period} "
                         f"(age {_display_age(ages=ages, period=period)}), "
                         f"source '{source}' -> "
                         f"period {period + 1} "
                         f"(age {_display_age(ages=ages, period=period + 1)}), "
-                        f"target '{target}' retains a {status.name} edge. The "
-                        f"target declares {state_kind} '{state_name}', but the "
+                        f"target '{target}' retains a {status.name} edge. "
+                        f"'{target}' carries {state_kind} '{state_name}' from "
+                        f"{declaration}, but the "
                         f"source does not carry '{state_name}' and defines no "
                         f"entry law, so no next-period value exists. Declare "
                         f"'{state_name}' on '{source}', define a target-specific "
@@ -6742,20 +6759,14 @@ def _process_regime_core(
             for (user_regime, process), grid in carried_process_grids.items()
         }
         | {
-            f"{user_regime}__next_{process}": _get_stochastic_next_function_for_process(
-                name=process, grid=grid.to_jax()
-            )
-            for (user_regime, process), grid in carried_process_grids.items()
+            f"{user_regime}__next_{process}": _get_next_for_process(grid=grid.to_jax())
+            for (user_regime, process), grid in (
+                carried_process_grids | entered_process_grids
+            ).items()
         }
         | {
             f"weight_{user_regime}__next_{process}": _get_entry_weights_for_process(
                 name=process, grid=grid
-            )
-            for (user_regime, process), grid in entered_process_grids.items()
-        }
-        | {
-            f"{user_regime}__next_{process}": _get_entry_next_for_process(
-                grid=grid.to_jax()
             )
             for (user_regime, process), grid in entered_process_grids.items()
         }
@@ -7984,18 +7995,6 @@ def _get_discrete_markov_next_function(
     return next_func
 
 
-def _get_stochastic_next_function_for_process(
-    *, name: str, grid: Float1D
-) -> Callable[..., IntND]:
-    """Get function returning the indices in the vf arr of the next process states."""
-
-    @with_signature(args={f"{name}": "ContinuousState"}, return_annotation="Int1D")
-    def next_func(**kwargs: EconFunctionArg) -> Int1D:  # noqa: ARG001
-        return jnp.arange(grid.shape[0], dtype=jnp.int32)
-
-    return next_func
-
-
 def _process_family(grid: _ContinuousStochasticProcess) -> Family:
     """Map a supported process to its state-conditioned family.
 
@@ -8310,12 +8309,18 @@ def _get_weights_func_for_process(
     A node draw needs this: rows extrapolated along the edge segment can carry
     negative weights, which are no probabilities to sample with.
 
+    An unconditioned IID process has one row repeated, so its weights are that row
+    and read no current value: the continuation is then constant along the process's
+    axis rather than recomputed at each of its nodes.
+
     """
     sc = grid.state_conditioned
     if sc is not None:
         # `sc.on` may be absent from `grids`; the callee raises a clear message naming
         # the offending state.
         return _get_conditioned_weights_func(name=name, grid=grid, sc=sc, grids=grids)
+    if isinstance(grid, _IIDProcess):
+        return _get_entry_weights_for_process(name=name, grid=grid)
 
     if grid.params_to_pass_at_runtime:
         n_points = grid.n_points
@@ -8374,11 +8379,11 @@ def _get_weights_func_for_process(
     return weights_func
 
 
-def _get_entry_next_for_process(*, grid: Float1D) -> Callable[..., IntND]:
-    """Get the next-index function for a process the source does not carry.
+def _get_next_for_process(*, grid: Float1D) -> Callable[..., IntND]:
+    """Get the next-index function of a process: every node of the target's axis.
 
-    The target's nodes are the process's own, and no current value selects
-    among them, so the signature is empty.
+    The next-period value of a process lands on the process's own nodes whatever
+    its current value, which only selects the weights, so the signature is empty.
     """
 
     @with_signature(args={}, return_annotation="Int1D")

@@ -12,6 +12,7 @@ containers, and per-target dicts survive untouched, so the params template
 reads the user's coarseness off it.
 """
 
+import dataclasses
 import inspect
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -26,24 +27,27 @@ from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.constraints.ir import Condition
 from _lcm.egm.nbegm import PieceSet
 from _lcm.grids import DiscreteGrid, Grid
+from _lcm.processes.iid import _IIDProcess
 from _lcm.processes.joint_normal_lowering import (
     coordinate_names,
     joint_normal_declarations,
 )
 from _lcm.regime_building.value_adapter import (
     AdaptableEntry,
+    AdapterGrid,
     AdapterMemo,
     ValueAdapter,
     adapt_collective_utility,
     adapt_entry,
+    bind_reading_regimes,
     collect_adapter_grids,
     encoding_grid,
 )
 from _lcm.regime_law import RegimeLaws
 from _lcm.typing import EconFunctionArg, FunctionName, RegimeName
 from _lcm.user_regime_validation import (
-    _fail_if_collective_regime_folds,
     _validate_completeness,
+    fail_if_a_collective_fold_is_misread,
 )
 from _lcm.utils.error_messages import format_messages
 from lcm.case_piece import CaseBoundary
@@ -75,6 +79,8 @@ def finalize_regimes(
     derived_categoricals: Mapping[FunctionName, DiscreteGrid],
     koopmans_aggregator: UserFunction,
     certainty_equivalent: CertaintyEquivalent,
+    value_grids_by_regime: Mapping[RegimeName, Mapping[str, AdapterGrid]] | None = None,
+    adapters: AdapterMemo | None = None,
 ) -> MappingProxyType[RegimeName, FinalizedUserRegime]:
     """Finalize every user regime for the model build.
 
@@ -93,6 +99,10 @@ def finalize_regimes(
             non-terminal regime that declares none of its own.
         certainty_equivalent: Model-level continuation aggregation, given to
             every non-terminal regime that declares none of its own.
+        value_grids_by_regime: Per regime, the grid each argument of its
+            functions is read through, with processes bound to that regime.
+            Collected from `user_regimes` when `None`.
+        adapters: The adapters already built for this model.
 
     Returns:
         Immutable mapping of regime names to finalized regimes.
@@ -105,7 +115,7 @@ def finalize_regimes(
             prefixed.
 
     """
-    _fail_if_collective_regime_folds(user_regimes=user_regimes)
+    fail_if_a_collective_fold_is_misread(user_regimes=user_regimes, laws=laws)
     _fail_if_a_joint_coordinate_is_a_discrete_state(user_regimes=user_regimes)
     _fail_if_continuation_slot_is_mixed(
         user_regimes=user_regimes, laws=laws, slot="koopmans_aggregator"
@@ -121,12 +131,18 @@ def finalize_regimes(
         if regime.stakeholders is not None
         for stakeholder in regime.stakeholders
     )
-    value_grids = collect_adapter_grids(
-        regimes=user_regimes, derived_categoricals=derived_categoricals
-    )
-    adapters: AdapterMemo = {}
+    if value_grids_by_regime is None:
+        value_grids_by_regime = bind_reading_regimes(
+            value_grids=collect_adapter_grids(
+                regimes=user_regimes, derived_categoricals=derived_categoricals
+            ),
+            regimes=user_regimes,
+        )
+    adapters = {} if adapters is None else adapters
     result: dict[RegimeName, FinalizedUserRegime] = {}
     for regime_name, user_regime in user_regimes.items():
+        # Every slot of a regime reads that regime's own states.
+        value_grids = value_grids_by_regime[regime_name]
         merged = _merge_derived_categoricals(
             regime_name=regime_name,
             user_regime=user_regime,
@@ -183,14 +199,17 @@ def finalize_regimes(
         finalized = declaring.with_engine_functions(
             engine_functions=engine_functions,
             # A carried state's imputation returns the state's value.
-            states=cast(
-                "Mapping[StateName, StateEntry]",
-                _adapt_slot(
-                    slot=declaring.states,
-                    value_grids=value_grids,
-                    encoded=frozenset(declaring.states),
-                    adapters=adapters,
+            states=_unfold_collective_states(
+                states=cast(
+                    "Mapping[StateName, StateEntry]",
+                    _adapt_slot(
+                        slot=declaring.states,
+                        value_grids=value_grids,
+                        encoded=frozenset(declaring.states),
+                        adapters=adapters,
+                    ),
                 ),
+                collective=user_regime.stakeholders is not None,
             ),
             state_transitions=cast(
                 "Mapping[StateName, StateTransitionEntry]",
@@ -245,11 +264,48 @@ def finalize_regimes(
     return MappingProxyType(result)
 
 
+def _unfold_collective_states(
+    *, states: Mapping[StateName, StateEntry], collective: bool
+) -> Mapping[StateName, StateEntry]:
+    """Keep a collective regime's folded shocks as stored node axes.
+
+    A collective regime's dissolution flag and every stakeholder's value are
+    decided node by node, and the gates of the edges into it read them at the
+    node a subject lands on, before anything is averaged. The quadrature over
+    the shock is therefore the reader's expectation over the realised node,
+    taken after routing, exactly as for a shock the regime does not fold. A
+    singleton regime's folds pass through unchanged.
+    """
+    if not collective:
+        return states
+    return {name: _unfolded(entry) for name, entry in states.items()}
+
+
+def _unfolded(entry: StateEntry) -> StateEntry:
+    """Return the entry with `fold=False` on every folded IID process in it."""
+    if isinstance(entry, Phased):
+        return Phased(
+            solve=_unfolded_leg(entry.solve), simulate=_unfolded_leg(entry.simulate)
+        )
+    return _unfolded_leg(entry)
+
+
+def _unfolded_leg[T](leg: T) -> T:
+    """Return a folded IID process with `fold=False`, and any other leg unchanged.
+
+    A `Phased` leg may be a function, the solve-phase imputation of a state
+    carried only in simulation; it passes through unchanged.
+    """
+    if isinstance(leg, _IIDProcess) and leg.fold:
+        return dataclasses.replace(leg, fold=False)
+    return leg
+
+
 def _with_adapted_household(
     *,
     user_regime: UserRegime,
     engine_functions: Mapping[FunctionName, UserFunction | Phased | None],
-    value_grids: Mapping[str, DiscreteGrid],
+    value_grids: Mapping[str, AdapterGrid],
     adapters: AdapterMemo,
 ) -> UserRegime:
     """Return the regime whose household declares the bodies the engine runs.
@@ -294,7 +350,7 @@ def _authored(
 def _adapt_slot(
     *,
     slot: Mapping[str, AdaptableEntry],
-    value_grids: Mapping[str, DiscreteGrid],
+    value_grids: Mapping[str, AdapterGrid],
     encoded: frozenset[str],
     adapters: AdapterMemo,
 ) -> MappingProxyType[str, AdaptableEntry]:

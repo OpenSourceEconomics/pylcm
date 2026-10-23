@@ -515,6 +515,7 @@ def test_nonterminal_action_evaluation_shares_flow_before_continuation(
             koopmans_aggregator=cast("EconFunction", W),
             build_W_kwargs=build_W_kwargs,
             arg_names=("income", "consumption"),
+            continuation_reads=frozenset(),
         )
     else:
         kernel = q_and_f_module._QAndF(

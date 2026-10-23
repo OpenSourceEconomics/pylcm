@@ -22,6 +22,7 @@ from _lcm.simulation.additional_targets import (
     _collect_all_available_targets,
     _resolve_targets,
 )
+from _lcm.simulation.dissolution_route import DissolutionFallback
 from _lcm.simulation.plan_summary import SimulationPlanSummary
 from _lcm.simulation.result_dataframe import (
     _convert_to_categorical,
@@ -171,6 +172,7 @@ class SimulationResult:
         self._solution: _SolutionResultBoundary | None = None
         self._durable_identity = True
         self._plan_summary: SimulationPlanSummary | None = None
+        self._dissolution_fallbacks: tuple[DissolutionFallback, ...] = ()
         # The original rows of a simulation of selected codes, which holds
         # those rows alone; `None` for a simulation of the whole population.
         self._subject_rows: np.ndarray | None = None
@@ -231,6 +233,22 @@ class SimulationResult:
         constructor's persisted fields, so it is `None` after `save`/`load`.
         """
         return self._plan_summary
+
+    @property
+    def dissolution_fallbacks(self) -> tuple[DissolutionFallback, ...]:
+        """Every household sent down its gate's dissolution route.
+
+        A household that enters a gated target regime and finds no feasible
+        action at its realised state takes the dissolution route of the gate it
+        came through in that same period. Under a `~D_target` gate that is how
+        every dissolution the realised state forces is carried out, so these are
+        ordinary events of the model. With runtime checks on, each one is
+        recorded here with the subject, period, regime, full state, source and
+        fallback regime; with them off this is empty and a count per
+        regime-period is logged. Diagnostic only, like `plan_summary`: empty
+        after `save`/`load`.
+        """
+        return self._dissolution_fallbacks
 
     @property
     def regime_names(self) -> tuple[RegimeName, ...]:
@@ -544,6 +562,7 @@ class SimulationResult:
         instance._solution = None  # noqa: SLF001
         instance._durable_identity = True  # noqa: SLF001
         instance._plan_summary = None  # noqa: SLF001
+        instance._dissolution_fallbacks = ()  # noqa: SLF001
         return instance
 
     def __repr__(self) -> str:

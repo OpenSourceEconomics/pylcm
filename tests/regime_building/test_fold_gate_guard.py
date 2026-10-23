@@ -17,10 +17,10 @@ folded TARGET or REFERENCE — which
 `_fail_if_folded_regime_is_same_period_endpoint` in
 `regime_building/processing.py` catches.
 
-Only a singleton regime folds at all: a collective regime declaring a folded
-state is refused when the model is built, because its `-inf` dissolution
-sentinel is not a value quadrature can average. So every folding endpoint
-here is a singleton, and the collective fixtures serve as the unfolded pins.
+A collective regime's folded state keeps its node axis, so it may be a
+gated-edge target; it is still refused as a reference, by
+`fail_if_a_collective_fold_is_misread` at model build. The collective fixtures
+serve as the unfolded pins here.
 `test_fold_guard_complete.py` covers the guard's remaining roles.
 """
 

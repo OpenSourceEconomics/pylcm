@@ -373,6 +373,10 @@ def test_budgeted_forward_units_are_exactly_the_visited_pairs(
         simulate.StatesPerRegime,
         simulate.Int1D,
         simulate.Int1D,
+        simulate.Int1D,
+        simulate.Int1D,
+        simulate.Int1D | None,
+        simulate.Int1D | None,
     ]:
         dispatched.append((kwargs["period"], kwargs["regime_name"]))
         return simulate_unit(**kwargs)
