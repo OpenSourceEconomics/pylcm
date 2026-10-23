@@ -284,12 +284,39 @@ Per-leg weights are measured by CI and by nothing else. Two pieces of
 - **The `workload-weights` CI job** fails while any file a general or solution leg
   shards over has no measured weight on that leg, and names the files. The shards still
   run, at median placement, so the same run measures them.
-- **The `ci-workload-weights` pre-commit hook** replaces every leg's weights with the
-  JUnit testcase seconds of the latest completed CPU run of the branch's open pull
-  request, re-derives the shards, and stages `tests/ci/ci-workloads.json`. A file the
-  run's leg selected that recorded no testcase is measured at 0 seconds; a leg missing
-  any shard's report keeps its weights. The reports are cached per run under
-  `.cache/ci-junit/`, so the same run always gives the same file.
+- **The `ci-workload-weights` pre-commit hook** fills in only the weights the gate names
+  as missing, and leaves every existing weight as it is. Each missing file takes its
+  JUnit testcase seconds from the latest completed CPU run of the branch's open pull
+  request that measured it. A run's leg counts when it has a report for every shard of
+  the layout that run ran under, whatever the current shard count. A file the run's
+  manifest gave to the leg that recorded no testcase there is measured at 0 seconds; a
+  file the run did not contain stays missing. Each filled weight names its run under the
+  leg's `filled_from`, and the hook re-derives the shards and stages
+  `tests/ci/ci-workloads.json`. With nothing missing it calls neither `gh` nor the
+  network. Reports it does download are cached per run under `.cache/ci-junit/`.
+- **Re-measuring a whole leg** is a deliberate manual step, below.
+
+Measured weights are kept as they are, so they do not follow changes in a file's cost on
+their own. Whenever the worst CPU job gets close to the 2400-second job budget,
+re-measure every leg by hand from one completed CPU run that has all of its shard
+reports. The source-only certificate campaign is exempt from that budget. For run
+39943209105 and the `fp64-solution` leg:
+
+```console
+JUNIT_DIR=$(mktemp -d)
+gh run download 39943209105 -p 'junit-cpu-fp64-solution-*' -D "$JUNIT_DIR"
+pixi run -e tests-cpu python -m tests.ci.generate_ci_workloads \
+  --refresh-leg fp64-solution \
+  --junit "$JUNIT_DIR/junit-cpu-fp64-solution-*/*.xml" \
+  --junit-source "run 39943209105 attempt 1 (head e497b0f9c); artifacts junit-cpu-fp64-solution-*, one per shard; per file the summed JUnit testcase seconds of that run"
+```
+
+Repeat it for each leg with that leg's artifacts (`junit-cpu-fp64-Linux-general-*`,
+`junit-cpu-fp64-macOS-general-*`, `junit-cpu-fp64-Windows-general-*`,
+`junit-cpu-fp32-general-*`, `junit-cpu-fp32-solution-*`). The re-measurement drops a
+file that recorded no testcase on the leg; the hook on the commit that stages it puts
+that file back at 0 seconds, provided the run is among the pull request's latest
+completed runs.
 
 A new test file therefore fails the gate once, on its first CI run, and the next commit
 picks up its weight. That is intended. With no open pull request, no completed run, or
