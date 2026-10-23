@@ -155,6 +155,7 @@ from _lcm.regime_building.value_adapter import (
     process_code_reads,
 )
 from _lcm.regime_law import RegimeLaws, bind_regime_law
+from _lcm.shock_registry import ShockRegistry, create_shock_registry
 from _lcm.simulation.chunk_admission import prepare_simulation_chunks
 from _lcm.simulation.compile import bind_simulation_runtime
 from _lcm.simulation.entry_allocations import SimulationEntryAllocations
@@ -358,6 +359,7 @@ from lcm.regime import (
 )
 from lcm.regime import Regime as UserRegime
 from lcm.result import PolicyLookup, SimulationResult
+from lcm.shocks import ShockGroup, ShockGroupName
 from lcm.solver_api import (
     DISSOLUTION_FLAG,
     EGM_CONTINUATION,
@@ -507,6 +509,7 @@ class _PickledModel(TypedDict):
     _execution: ResolvedExecution
     reachability: ModelReachability
     _graph: ModelGraph
+    _shock_registry: NotRequired[ShockRegistry]
     _params_template: ParamsTemplate
     _param_name_candidates: NotRequired[
         MappingProxyType[RegimeName, MappingProxyType[ReferenceName, str]]
@@ -739,6 +742,14 @@ class Model:
     """Immutable admissible starts, keyed by the model's exact time coordinate."""
 
     @property
+    def shocks(self) -> Mapping[ShockGroupName, ShockGroup]:
+        """Return immutable model-level current-IID declarations."""
+        return self._shock_registry.groups
+
+    _shock_registry: ShockRegistry
+    """Named innovation identities and unpruned consumer/legacy declarations."""
+
+    @property
     def graph(self) -> ModelGraph:
         """Return the immutable declared and effective model graph."""
         return self._graph
@@ -823,6 +834,7 @@ class Model:
         n_periods: int | None = None,
         regimes: Mapping[RegimeName, UserRegime],
         regime_id_class: type[DataclassInstance],
+        shocks: Mapping[ShockGroupName, ShockGroup] = MappingProxyType({}),
         enable_jit: bool = True,
         durable_identity: bool = True,
         fixed_params: UserParams = MappingProxyType({}),
@@ -857,6 +869,10 @@ class Model:
                 zero. This mode has no age grid.
             description: Description of the model.
             regime_id_class: Dataclass mapping regime names to integer indices.
+            shocks: Named current-IID declarations, referenced by Regime.shocks.
+                Registry-local runtime templates are available on consumer bindings;
+                they are not ordinary regime parameter slots. Execution requires
+                integrated current-IID kernels.
             enable_jit: Whether to JIT-compile the functions of the internal
                 regimes.
             durable_identity: Whether to require a persistable semantic identity.
@@ -932,6 +948,7 @@ class Model:
                     n_periods=n_periods,
                     regimes=regimes,
                     regime_id_class=regime_id_class,
+                    shocks=shocks,
                     enable_jit=False,
                     durable_identity=False,
                     fixed_params=fixed_params,
@@ -962,6 +979,7 @@ class Model:
         self._edges = cast("ModelEdges", snapshot_transition_containers(edges))
         # The engine reads each joint normal declaration in its lowered form;
         # the caller's regimes keep the declarations as written.
+        declared_shock_regimes = regimes
         regimes = {
             name: regime.lower_joint_normal_processes()
             for name, regime in regimes.items()
@@ -1052,6 +1070,13 @@ class Model:
             laws=laws,
             model_slots=model_slots,
             output_only_functions=output_only_functions,
+        )
+        self._shock_registry = create_shock_registry(
+            shocks=shocks,
+            regimes=merged_regimes,
+            legacy_regimes=declared_shock_regimes,
+            model_states=states,
+            laws=laws,
         )
         declared_function_regimes = merged_regimes
         self._param_name_candidates = _get_param_name_candidates(merged_regimes)
@@ -1448,6 +1473,7 @@ class Model:
                 laws=self._graph.laws,
                 regime_names_to_ids=self.regime_names_to_ids,
                 binding_recorder=recorder,
+                shock_groups=self.shocks,
             )
         except (TypeError, ValueError) as error:
             msg = (
@@ -1460,6 +1486,7 @@ class Model:
 
     def _check_identity_runtime(self) -> None:
         """Check the binding seal or the ephemeral model's originating process."""
+        self._shock_registry.fail_if_execution_is_unsupported()
         if not self.durable_identity and self._identity_process_id != os.getpid():
             raise UnsupportedOperationError(
                 "An ephemeral model cannot be used in another process. "
@@ -1519,6 +1546,7 @@ class Model:
             _execution=self._execution,
             reachability=self.reachability,
             _graph=self._graph,
+            _shock_registry=self._shock_registry,
             _params_template=self._params_template,
             _param_name_candidates=self._param_name_candidates,
             _regimes=self._regimes,
@@ -1545,6 +1573,12 @@ class Model:
         Resealing records the bindings read by this process's copies of the callables.
         """
         self.__dict__.update(state)
+        self._shock_registry = state.get("_shock_registry") or create_shock_registry(
+            shocks={},
+            regimes=self.user_regimes,
+            legacy_regimes=self.user_regimes,
+            model_states={},
+        )
         self._param_name_candidates = state.get(
             "_param_name_candidates", _get_param_name_candidates(self.user_regimes)
         )

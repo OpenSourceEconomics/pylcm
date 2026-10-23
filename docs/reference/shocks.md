@@ -136,3 +136,33 @@ this provenance, so an indirect nonlinear reader is subject to the same refusal.
 
 A signed linear integral may lie outside the range of its node values. That is a
 property of the numerical operator. Its weights are not a probability law.
+
+## Model registry and compatibility
+
+`Model(shocks={"wage": wage})` snapshots named groups as the immutable `model.shocks`
+mapping. `Regime(shocks=("wage",))` references that shared declaration. Group namespaces
+cannot alias regime or edge parameter roots. State, action and function names live in
+separate namespaces and can also name a group. Physical shock names cannot collide with
+model inputs or be redeclared by competing groups. Base address identity is the
+immutable physical shock name and component, independent of group membership and node
+rules. Physical values, category codes and local quadrature indices do not identify it.
+
+The registry records each consumer phase's current-state law dependencies and domains
+before broadcast pruning. Runtime slots such as `eps__sigma`, callable parameters and
+`corr` remain group-local metadata; they are not added to `Model.get_params_template()`
+as ordinary regime parameters. Integrated execution must explicitly project those slots
+from `params[group]`, bind correlation support and enforce per-invocation exact host
+correlation admission, numerical validity and signed ancestry.
+
+Registry declarations can be inspected and persisted. Execution of a regime referencing
+a group, or construction of an ordinary function reading an unlowered physical shock, is
+explicitly refused until integrated current-IID kernels are available. This boundary
+prevents a physical draw from silently becoming a free parameter.
+
+Legacy IID state processes retain their public classes, state layouts, phase-specific
+laws, transition timing, fold flags and simulation draw modes. Compatibility records
+retain the original joint declaration and physical-grid rule. In particular, legacy
+normal-mixture CDF bins on a physical equally spaced grid are not a standard-normal base
+rule transformed through mixture quantiles. Persistent processes and transition-local
+state laws keep their existing consumers. An empty registry and empty regime references
+leave feature-free durable fingerprints unchanged.

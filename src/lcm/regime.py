@@ -29,6 +29,7 @@ from _lcm.regime_law import RegimeLaw
 from _lcm.typing import ActionName, FunctionName, RegimeName, StateName
 from _lcm.user_regime_validation import validate_regime
 from _lcm.utils.containers import ensure_containers_are_immutable
+from _lcm.utils.error_messages import path_segment_name_errors
 from lcm.certainty_equivalent import CertaintyEquivalent
 from lcm.collective import (
     CollectiveUtility,
@@ -42,6 +43,7 @@ from lcm.decoupled import (
 )
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
+from lcm.shocks import ShockGroupName
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.transition import (
     AgeSpecializedGrid,
@@ -92,6 +94,7 @@ class _SlotsBesideFunctions(TypedDict, total=False):
     derived_categoricals: Mapping[FunctionName, DiscreteGrid]
     solver: _solvers.Solver
     taste_shocks: ExtremeValueTasteShocks | None
+    shocks: tuple[ShockGroupName, ...]
     koopmans_aggregator: UserFunction | Phased | Decoupled | None
     certainty_equivalent: CertaintyEquivalent | None
     description: str
@@ -305,6 +308,9 @@ class Regime:
     equivalent. Terminal regimes have no continuation and cannot declare one.
     """
 
+    shocks: tuple[ShockGroupName, ...] = ()
+    """Model-level current-IID group references, separate from state processes."""
+
     description: str = ""
     """Description of the regime."""
 
@@ -440,6 +446,14 @@ class Regime:
         object.__setattr__(self, name, value)
 
     def __post_init__(self) -> None:
+        if len(set(self.shocks)) != len(self.shocks) or any(
+            not name.isidentifier()
+            or path_segment_name_errors(kind="Shock group", names=(name,))
+            for name in self.shocks
+        ):
+            raise RegimeInitializationError(
+                "shocks must contain unique ordinary group names."
+            )
         self._lower_value_dependent_declarations()
         self._fail_if_egm_solver_has_no_margin_declaration()
         # What depends on the law is validated once the model binds it from
