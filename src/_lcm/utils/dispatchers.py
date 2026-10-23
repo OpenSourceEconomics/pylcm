@@ -113,9 +113,9 @@ def _map_with_bound_summary[InputTree, Output: PytreeValue](
 ) -> BoundedResult[Output]:
     """Store ordinary rows while OR-folding active flags in a fixed scan carry.
 
-    The first actual window supplies the ordinary output shapes and is stored
-    once. Later windows return no scan history. Only ordinary output buffers
-    have population extent; integrity lives in the current window and scalar carry.
+    Every window runs inside one scan and returns no scan history. Only ordinary
+    output buffers have population extent; integrity lives in the current window
+    and scalar carry.
     """
     n_rows = jax.tree.leaves(xs)[0].shape[0]
     if n_rows < 1:
@@ -144,38 +144,17 @@ def _map_with_bound_summary[InputTree, Output: PytreeValue](
             valid = valid & active[selected]
         return result, valid
 
-    first, first_active = evaluate_window(jnp.asarray(0, dtype=jnp.int32))
-    summary = reduce_bound_input_status(
-        statuses=first.bound_status, active=first_active
-    )
-    query_summary = reduce_query_input_status(
-        statuses=first.query_status, active=first_active
-    )
-    read_summary = reduce_continuation_read_counts(
-        counts=first.continuation_read_counts, active=first_active
-    )
-    if n_windows == 1:
-        return BoundedResult(
-            output=first.output,
-            bound_status=summary,
-            query_status=query_summary,
-            continuation_read_counts=read_summary,
-        )
+    # Every window, the first included, runs inside the scan, so the row body is
+    # lowered once. Its abstract result sizes the buffers, and folding a window
+    # with no active lane gives the all-false, zero-count identity of every merge.
+    template, _ = jax.eval_shape(evaluate_window, jnp.asarray(0, dtype=jnp.int32))
+    empty = jax.tree.map(lambda leaf: jnp.zeros(leaf.shape, leaf.dtype), template)
+    no_lanes = jnp.zeros((width,), dtype=jnp.bool_)
     buffers = cast(
         "Output",
         jax.tree.map(
             lambda leaf: jnp.zeros((n_windows * width, *leaf.shape[1:]), leaf.dtype),
-            first.output,
-        ),
-    )
-    buffers = cast(
-        "Output",
-        jax.tree.map(
-            lambda buffer, leaf: jax.lax.dynamic_update_slice(
-                buffer, leaf, (0, *(0 for _ in leaf.shape[1:]))
-            ),
-            buffers,
-            first.output,
+            template.output,
         ),
     )
 
@@ -223,11 +202,17 @@ def _map_with_bound_summary[InputTree, Output: PytreeValue](
         one_window,
         BoundedResult(
             output=buffers,
-            bound_status=summary,
-            query_status=query_summary,
-            continuation_read_counts=read_summary,
+            bound_status=reduce_bound_input_status(
+                statuses=empty.bound_status, active=no_lanes
+            ),
+            query_status=reduce_query_input_status(
+                statuses=empty.query_status, active=no_lanes
+            ),
+            continuation_read_counts=reduce_continuation_read_counts(
+                counts=empty.continuation_read_counts, active=no_lanes
+            ),
         ),
-        jnp.arange(1, n_windows, dtype=jnp.int32),
+        jnp.arange(n_windows, dtype=jnp.int32),
     )
     return BoundedResult(
         output=cast("Output", jax.tree.map(lambda leaf: leaf[:n_rows], final.output)),

@@ -147,6 +147,8 @@ def refresh_leg(
     entry["junit_source"] = junit_source
     entry["seconds"] = dict(measured.seconds)
     entry["counts"] = dict(measured.counts)
+    # A full re-measurement supersedes every weight filled in one file at a time.
+    entry.pop("filled_from", None)
     return updated
 
 

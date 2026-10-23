@@ -41,6 +41,7 @@ from lcm import (
     ValueDependentConstraint,
     categorical,
 )
+from lcm.exceptions import OffGridStateError
 from lcm.solver_api import DISSOLUTION_FLAG
 from lcm.transition import StochasticTransition
 from lcm.typing import (
@@ -407,3 +408,21 @@ def test_debug_transition_counts_name_the_regime_a_rerouted_household_acted_in(
         "- alone_m → alone_m = 1",
         "- alone_m → alone_m = 1",
     ]
+
+
+def _bend_middle_up(wage: ContinuousState) -> ContinuousState:
+    """Keep wages 1 and 3, and send wage 2 to 4."""
+    return wage + 2.0 * (wage - 1.0) * (3.0 - wage)
+
+
+def test_an_off_grid_rerouted_state_is_refused_at_the_period_it_acts_in():
+    """Wage 2 is empty in `pair` at period 1; its route lands off `alone_m`'s grid."""
+    model = _build_model(
+        payoff_name="bowl",
+        fallback_grid=IrregSpacedGrid(
+            points=np.array([1.0, 2.0, 3.0]), off_grid="raise"
+        ),
+        fallback_projection=_bend_middle_up,
+    )
+    with pytest.raises(OffGridStateError, match=r"target='alone_m', period=1,"):
+        _simulate_at_wage_two(model=model)
