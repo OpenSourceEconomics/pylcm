@@ -49,6 +49,7 @@ from lcm import (
 )
 from lcm.exceptions import (
     ExecutionPlanningError,
+    InvalidNameError,
     InvalidParamsError,
     InvalidSimulationInputError,
     ShockDeclarationError,
@@ -373,6 +374,95 @@ def test_current_state_used_only_by_law_is_retained(*, broadcast: bool) -> None:
 
 def _report_only(scale: float) -> FloatND:  # noqa: ARG001 - intentionally unread helper
     raise AssertionError("An unrelated report must not run while evaluating a law.")
+
+
+def _fixed_offer_probabilities(*, base_share: FloatND, law_shift: FloatND) -> FloatND:
+    high = base_share + law_shift
+    return jnp.stack((1 - high, high))
+
+
+def _offer_share(*, base_share: FloatND, law_shift: FloatND) -> FloatND:
+    return base_share / 2 + law_shift
+
+
+def _helper_offer_probabilities(offer_share: FloatND) -> FloatND:
+    return jnp.stack((1 - offer_share, offer_share))
+
+
+def _offer_utility(*, eps: ScalarInt, base_share: FloatND) -> FloatND:
+    return 4 * eps + base_share
+
+
+def _fixed_offer_model(*, helper: bool, fixed_params: UserParams) -> Model:
+    return Model(
+        regimes={
+            "alive": Regime(
+                functions={"utility": _offer_utility}
+                | ({"offer_share": _offer_share} if helper else {}),
+                shocks=("innovation",),
+            )
+        },
+        n_periods=1,
+        regime_id_class=_TerminalId,
+        initial_nodes=InitialNodes(by_period={0: "alive"}),
+        edges={},
+        fixed_params=fixed_params,
+        shocks={
+            "innovation": ShockGroup(
+                shocks={
+                    "eps": Discrete(
+                        categories=_Action,
+                        probs=_helper_offer_probabilities
+                        if helper
+                        else _fixed_offer_probabilities,
+                    )
+                }
+            )
+        },
+    )
+
+
+@pytest.mark.parametrize("helper", [False, True])
+def test_fixed_callable_law_dependencies_share_ordinary_broadcasts(
+    *, helper: bool
+) -> None:
+    """A fixed leaf serves both the current law DAG and ordinary utility."""
+    model = _fixed_offer_model(
+        helper=helper, fixed_params={"base_share": 0.25, "law_shift": 0.125}
+    )
+    assert model.get_params_template()["innovation"] == {}
+    result = model.solve(params={}, log_level="off", runtime_checks=False)
+    assert_array_almost_equal(
+        np.asarray(result.values[0]["alive"]),
+        1.25 if helper else 1.75,
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+def test_fixed_callable_law_does_not_consume_unused_parameters() -> None:
+    """A current-law dependency does not license unrelated fixed leaves."""
+    with pytest.raises(InvalidParamsError, match="unused_probability"):
+        _fixed_offer_model(
+            helper=True,
+            fixed_params={
+                "base_share": 0.25,
+                "law_shift": 0.125,
+                "unused_probability": 0.5,
+            },
+        )
+
+
+def test_fixed_callable_law_rejects_ambiguous_binding() -> None:
+    """Model and group fixed values cannot both specify a callable leaf."""
+    with pytest.raises(InvalidNameError, match=r"Ambiguous.*law_shift"):
+        _fixed_offer_model(
+            helper=True,
+            fixed_params={
+                "base_share": 0.25,
+                "law_shift": 0.125,
+                "innovation": {"law_shift": 0.5},
+            },
+        )
 
 
 def _adjusted_scale(*, wealth: ContinuousState, scale: float) -> FloatND:

@@ -41,6 +41,7 @@ def _plan(*, group: sh.ShockGroup) -> CurrentIIDDrawPlan:
                 categorical_domains={},
                 functions={},
                 params_template={},
+                callable_parameters=frozenset(),
             )
         }
     )

@@ -156,7 +156,11 @@ from _lcm.regime_building.value_adapter import (
     process_code_reads,
 )
 from _lcm.regime_law import RegimeLaws, bind_regime_law
-from _lcm.shock_registry import ShockRegistry, create_shock_registry
+from _lcm.shock_registry import (
+    ShockRegistry,
+    bind_fixed_shock_params,
+    create_shock_registry,
+)
 from _lcm.simulation.chunk_admission import prepare_simulation_chunks
 from _lcm.simulation.compile import bind_simulation_runtime
 from _lcm.simulation.current_iid_overrides import (
@@ -1103,6 +1107,10 @@ class Model:
             model_states=states,
             laws=laws,
         )
+        fixed_params, shock_consumed_params = bind_fixed_shock_params(
+            registry=self._shock_registry, fixed_params=self.fixed_params
+        )
+        self.fixed_params = ensure_containers_are_immutable(fixed_params)
         declared_function_regimes = merged_regimes
         self._param_name_candidates = _get_param_name_candidates(merged_regimes)
         validate_time_declarations(regimes=merged_regimes, laws=laws, ages=self._time)
@@ -1366,6 +1374,7 @@ class Model:
                 params_consumed_by_binder
                 | prepared_graph.consumed_param_keys
                 | composite_consumed_params
+                | shock_consumed_params
             ),
             prepared_structure=prepared_structure,
             phase_transitions=self.declared_transitions,

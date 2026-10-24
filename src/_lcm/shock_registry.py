@@ -20,7 +20,12 @@ from _lcm.processes.joint_normal import JointNormalIIDProcess
 from _lcm.regime_building.value_adapter import adapt_user_function, encoding_grid
 from _lcm.regime_law import RegimeLaw, RegimeLaws
 from _lcm.utils.error_messages import path_segment_name_errors
-from lcm.exceptions import ShockDeclarationError, UnsupportedOperationError
+from lcm.exceptions import (
+    InvalidNameError,
+    InvalidParamsError,
+    ShockDeclarationError,
+    UnsupportedOperationError,
+)
 from lcm.phased import Phased
 from lcm.regime import Regime, StateEntry
 from lcm.shocks import (
@@ -44,6 +49,7 @@ from lcm.typing import (
     ScalarBool,
     StateName,
     UserFunction,
+    UserParams,
 )
 
 
@@ -80,6 +86,8 @@ class ShockBinding:
     """Current-state DAG available to the law in this phase."""
     params_template: Mapping[ParameterName, str]
     """Group-local runtime slots; these are not ordinary regime parameters."""
+    callable_parameters: frozenset[ParameterName]
+    """Parameter leaves read by the law's transitive callable closure."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -171,6 +179,39 @@ def law_input_validity(
             return jnp.asarray(a=False)
         valid &= (code >= 0) & (code < len(grid.codes))
     return valid
+
+
+def bind_fixed_shock_params(
+    *, registry: ShockRegistry, fixed_params: UserParams
+) -> tuple[UserParams, frozenset[ParameterName]]:
+    """Bind model-level fixed callable leaves without discarding shared broadcasts."""
+    dependencies: dict[ShockGroupName, frozenset[ParameterName]] = {}
+    for (_, _, name), binding in registry.bindings.items():
+        dependencies[name] = dependencies.get(name, frozenset()) | (
+            binding.callable_parameters
+        )
+    bound = dict(fixed_params)
+    consumed: set[ParameterName] = set()
+    for name, leaves in dependencies.items():
+        selected = (leaves & fixed_params.keys()) - registry.groups.keys()
+        if not selected:
+            continue
+        group_fixed = fixed_params.get(name, {})
+        if not isinstance(group_fixed, Mapping):
+            raise InvalidParamsError(
+                f"Shock group {name!r} parameters must be a mapping."
+            )
+        if duplicate := selected & group_fixed.keys():
+            raise InvalidNameError(
+                f"Ambiguous fixed shock parameters for {name!r}: "
+                f"{sorted(duplicate)!r} supplied at model and group levels."
+            )
+        bound[name] = {
+            **group_fixed,
+            **{parameter: fixed_params[parameter] for parameter in selected},
+        }
+        consumed.update(selected)
+    return bound, frozenset(consumed)
 
 
 def create_shock_registry(  # noqa: C901 - bind declarations and phase-specific law domains
@@ -276,6 +317,11 @@ def create_shock_registry(  # noqa: C901 - bind declarations and phase-specific 
                 helpers = _law_helpers(
                     group=group, functions=functions, states=frozenset(regime.states)
                 )
+                params_template, callable_parameters = _create_group_template(
+                    group=group,
+                    states=frozenset(regime.states),
+                    functions=functions,
+                )
                 bindings[regime_name, phase, group_name] = ShockBinding(
                     group=_adapt_law_values(
                         group=group.bind_conditioning(state_grids=state_grids),
@@ -309,11 +355,8 @@ def create_shock_registry(  # noqa: C901 - bind declarations and phase-specific 
                             for name, function in helpers.items()
                         }
                     ),
-                    params_template=_create_group_template(
-                        group=group,
-                        states=frozenset(regime.states),
-                        functions=functions,
-                    ),
+                    params_template=params_template,
+                    callable_parameters=callable_parameters,
                 )
             _fail_if_shock_reads_are_unlowered(
                 declaration=(regime, laws.get(regime_name)),
@@ -388,8 +431,9 @@ def _create_group_template(  # noqa: C901 - enumerate law slots and callable lea
     group: ShockGroup,
     states: frozenset[StateName],
     functions: Mapping[FunctionName, LawCallable],
-) -> Mapping[ParameterName, str]:
+) -> tuple[Mapping[ParameterName, str], frozenset[ParameterName]]:
     template: dict[ParameterName, str] = {}
+    callable_parameters: set[ParameterName] = set()
 
     def visit(name: ReferenceName) -> None:
         if name in functions:
@@ -403,6 +447,7 @@ def _create_group_template(  # noqa: C901 - enumerate law slots and callable lea
             and not (name.endswith("_code") and name[:-5] in states)
         ):
             template[name] = "float"
+            callable_parameters.add(name)
 
     for shock_name, law in group.shocks.items():
         for item in fields(law):
@@ -418,7 +463,7 @@ def _create_group_template(  # noqa: C901 - enumerate law slots and callable lea
                     visit(argument)
     if group.correlation is None:
         template["corr"] = "array"
-    return MappingProxyType(template)
+    return MappingProxyType(template), frozenset(callable_parameters)
 
 
 def _phase_functions(
