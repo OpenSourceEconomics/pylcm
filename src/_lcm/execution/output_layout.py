@@ -33,6 +33,7 @@ from _lcm.typing import (
     PytreeValue,
     ShapeDtypePytree,
     StateName,
+    ValueTemplate,
 )
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import FloatND, ReferenceName, ValueND
@@ -169,7 +170,7 @@ class ResolvedOutputLayout:
 def resolve_output_layout(
     *,
     core_key: str,
-    value_template: FloatND | jax.ShapeDtypeStruct,
+    value_template: ValueTemplate,
     state_order: tuple[StateName, ...],
     output_roles: OutputRoleTree,
 ) -> ResolvedOutputLayout:
@@ -228,9 +229,7 @@ def resolve_output_layout(
     )
 
 
-def _require_value_sharding(
-    *, value_template: FloatND | jax.ShapeDtypeStruct
-) -> jax.sharding.Sharding:
+def _require_value_sharding(*, value_template: ValueTemplate) -> jax.sharding.Sharding:
     """Return the concrete sharding required by a program-owned output contract."""
     value_sharding = getattr(value_template, "sharding", None)
     if not isinstance(value_sharding, jax.sharding.Sharding):
@@ -340,7 +339,7 @@ def _validate_output_roles(
     *,
     roles: OutputRoleTree,
     core_key: str,
-    value_template: FloatND | jax.ShapeDtypeStruct,
+    value_template: ValueTemplate,
     state_order: tuple[StateName, ...],
 ) -> None:
     """Fail closed outside the supported logical output trees."""

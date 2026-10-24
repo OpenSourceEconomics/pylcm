@@ -1,6 +1,6 @@
 """Streamed GridSearch preserves every value-dependent input channel."""
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Hashable, Mapping
 from types import MappingProxyType
 from typing import cast
 
@@ -42,7 +42,7 @@ from _lcm.solution.grid_search import (
     _GridSearchPeriodKernel,
     _value_reads,
 )
-from _lcm.typing import ArgumentTree, PytreeValue
+from _lcm.typing import ArgumentTree, PytreeValue, ValueTemplate
 from lcm import Model
 from lcm.typing import BoolND, FloatND, RegimeName, UserParams
 from tests.simulation.test_aot_collective_and_gated import _make_consent_model
@@ -61,6 +61,8 @@ def _materialize_program(
         regimes=model._regimes,
         flat_params=flat_params,
     )
+    next_V = _zero_values(templates=next_V)
+    next_edges = _zero_values(templates=next_edges)
     regime = model._regimes[regime_name]
     edge_kwargs = _edge_kwargs(
         regime=regime,
@@ -335,7 +337,7 @@ def test_value_dependent_reference_matches_dense_eager_jit_and_aot(width: int) -
         _assert_tree_equal(actual=actual, expected=dense)
 
 
-def _consent_edge_kwargs() -> Mapping[str, Mapping[str, jax.Array]]:
+def _consent_edge_kwargs() -> Mapping[str, Mapping[str, ValueTemplate]]:
     """Build the gated-edge kernel argument of the consent fixture's source regime."""
     model = _make_consent_model()
     flat_params = model._process_params({"discount_factor": 0.95})
@@ -365,4 +367,16 @@ def test_edge_kwargs_round_trip_through_jax_tree_utilities() -> None:
     assert (type(rebuilt), {name: tuple(value) for name, value in rebuilt.items()}) == (
         MappingProxyType,
         {name: tuple(value) for name, value in edge_kwargs.items()},
+    )
+
+
+def _zero_values[Key: Hashable](
+    *, templates: Mapping[Key, jax.ShapeDtypeStruct]
+) -> MappingProxyType[Key, FloatND]:
+    """Return a zero array laid out like each abstract template, under its key."""
+    return MappingProxyType(
+        {
+            name: jax.device_put(jnp.zeros(t.shape, t.dtype), t.sharding)
+            for name, t in templates.items()
+        }
     )

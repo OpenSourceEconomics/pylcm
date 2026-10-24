@@ -583,17 +583,21 @@ def test_a_blocked_cold_solve_compiles_exactly_the_unblocked_programs(
 def test_a_blocked_cold_solve_adds_only_view_selection_and_block_writes(
     workload: str,
 ) -> None:
-    """Binding a code, typing a start and allocating the full value compile nothing.
+    """Binding a code and typing a start compile nothing.
 
     The only programs a blocked solve asks for beyond the unblocked ones are
-    the selection of a stored value's block, the write of a block into the
-    complete value, and the sum of the blocks' feasibility counts.
+    the selection of a stored value's block, the device fill that allocates the
+    complete value (`jnp.zeros`: a broadcast of the converted fill value), the
+    write of a block into that value, and the sum of the blocks' feasibility
+    counts.
     """
     blocked, unblocked = _blocked_and_unblocked_compile_requests(workload=workload)
 
     assert unblocked - blocked == collections.Counter()
     assert set(blocked - unblocked) <= {
         "jit(_select_view_blocks)",
+        "jit(broadcast_in_dim)",
+        "jit(convert_element_type)",
         "jit(_write_block)",
         "jit(add_feasibility_counts)",
     }

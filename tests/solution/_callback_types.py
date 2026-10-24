@@ -1,13 +1,14 @@
 """Keyword arguments received by solution publication observers."""
 
 from collections.abc import Mapping
-from typing import NotRequired, TypedDict, TypeGuard
+from typing import Literal, NotRequired, TypedDict, TypeGuard
 
 import jax
 import numpy as np
 
 from _lcm.execution import core_program, internal_outputs, workspace_planning
 from _lcm.solution import backward_induction
+from _lcm.solution import validate_V as value_validation
 from lcm.solver_api import ArtifactAuthority, ArtifactKey, KernelOutput
 from lcm.typing import RegimeName, UserParams
 
@@ -262,9 +263,32 @@ class RunPeriodKernelKwargs(TypedDict):
     captured_admission: NotRequired[
         backward_induction.Mapping[str, backward_induction.Mapping[str, int | None]]
     ]
+    V_templates: NotRequired[
+        backward_induction.Mapping[
+            backward_induction.RegimeName, backward_induction.ValueTemplate
+        ]
+    ]
 
 
 type RunPeriodKernelResult = backward_induction.KernelOutput
+
+
+class EvaluateEdgeFoldKwargs(TypedDict):
+    fold: backward_induction.CompiledEdgeFold
+    fold_period: int
+    fold_age: backward_induction.FoldAge
+    target_states: Mapping[
+        str, backward_induction.ContinuousState | backward_induction.DiscreteState
+    ]
+    same_period_mapping: Mapping[RegimeName, backward_induction.FloatND]
+    source_flat_params: Mapping[
+        backward_induction.QualifiedName, backward_induction.ParamsLeaf
+    ]
+    reference_flat_params: Mapping[
+        RegimeName,
+        Mapping[backward_induction.QualifiedName, backward_induction.ParamsLeaf],
+    ]
+    shared_sharding: NotRequired[jax.sharding.Sharding | None]
 
 
 class RetireDonatedInputsKwargs(TypedDict):
@@ -304,3 +328,25 @@ class CandidateResidentKwargs(TypedDict):
 
 
 type CandidateResidentResult = int
+
+
+class ValidateVKwargs(TypedDict):
+    V_arr: value_validation.FloatND
+    age: float | value_validation.ScalarInt | value_validation.ScalarFloat
+    regime_name: NotRequired[value_validation.RegimeName | None]
+    partial_solution: NotRequired[value_validation.PeriodToRegimeToVArr | None]
+    compute_intermediates: NotRequired[
+        value_validation.Callable[..., value_validation._Reductions] | None
+    ]
+    state_action_space: NotRequired[value_validation.StateActionSpace | None]
+    next_regime_to_V_arr: NotRequired[
+        value_validation.MappingProxyType[
+            value_validation.RegimeName, value_validation.FloatND
+        ]
+        | None
+    ]
+    flat_params: NotRequired[value_validation.FlatRegimeParams | None]
+    period: NotRequired[int | None]
+    entered_process_names: NotRequired[tuple[str, ...]]
+    time_kind: NotRequired[Literal["age", "period"]]
+    logger: NotRequired[value_validation.logging.Logger | None]
