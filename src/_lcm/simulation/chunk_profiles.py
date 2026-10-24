@@ -57,6 +57,7 @@ from _lcm.simulation.chunk_profile_inventory import (
     payload_bytes,
 )
 from _lcm.simulation.diagnostic_operations import diagnostic_bindings
+from _lcm.simulation.dissolution_route import empty_gated_entries, record_open_entries
 from _lcm.simulation.entry_allocations import _pad_initial_leaf
 from _lcm.simulation.forward_program_profiles import (
     ForwardProgramProfile,
@@ -328,7 +329,15 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                 subject_outputs=True,
             ),
         )
-        pending = payload_bytes(tree=(carrier, regime_ids, own_roles, key, taste_key))
+        entries = inventory.operation(
+            function=empty_gated_entries,
+            arguments={"regime_ids": regime_ids},
+            subject_arg_names=("regime_ids",),
+            subject_outputs=True,
+        )
+        pending = payload_bytes(
+            tree=(carrier, regime_ids, own_roles, entries, key, taste_key)
+        )
         inventory.close_unit()
         new_ids = regime_ids
         for name, regime in forward_regimes[period].items():
@@ -779,6 +788,31 @@ def _profile_next_subjects(
                 subject_arg_names=("delta", "next_states"),
                 subject_outputs=True,
             ),
+        )
+        inventory.operation(
+            function=record_open_entries,
+            arguments={
+                "closed_masks": tuple(
+                    cast("Mapping[str, jax.ShapeDtypeStruct]", edge_delta)["closed"]
+                    for edge_delta in route_delta.values()
+                ),
+                "routed_ids": new_ids,
+                "subjects_in_regime": mask,
+                "new_entered_through": new_ids,
+            },
+            subject_arg_names=(
+                "closed_masks",
+                "routed_ids",
+                "subjects_in_regime",
+                "new_entered_through",
+            ),
+            static_arguments={
+                "source_id": int(regime_names_to_ids[name]),
+                "target_ids": tuple(
+                    int(regime_names_to_ids[target]) for target in route_delta
+                ),
+            },
+            subject_outputs=True,
         )
     carrier = _profile_clip_next_states(
         inventory=inventory,

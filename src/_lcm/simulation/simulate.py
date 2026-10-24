@@ -69,6 +69,15 @@ from _lcm.simulation.diagnostic_operations import (
     period_value_flags,
     profiled_transition_counts,
 )
+from _lcm.simulation.dissolution_route import (
+    DissolutionFallback,
+    RerouteOutcome,
+    empty_gated_entries,
+    log_dissolution_fallbacks,
+    record_open_entries,
+    reroute_rows_without_feasible_action,
+    rows_of,
+)
 from _lcm.simulation.gated_routing import (
     GatedRouteDelta,
     commit_gated_route_delta,
@@ -199,6 +208,7 @@ from lcm.exceptions import (
 from lcm.result import SimulationResult
 from lcm.solver_api import SIMULATION_POLICY, ActionOutput, ReplayReader
 from lcm.typing import (
+    Bool1D,
     BoolND,
     Float1D,
     FloatND,
@@ -540,6 +550,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
         chunk_results: list[
             dict[RegimeName, dict[int, PeriodRegimeSimulationData]]
         ] = []
+        dissolution_records: list[DissolutionFallback] = []
         completed_setup = (
             None
             if prepared_chunks is None
@@ -628,6 +639,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
                         call_inputs=call_inputs,
                         process_grid_resolver=process_grid_resolver,
                         shock_paths=shock_paths,
+                        dissolution_records=dissolution_records,
                     )
                     if host_device is not None:
                         # `block_until_ready` forces the D2H copy to complete
@@ -728,6 +740,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
         # `_solution`: never part of the constructor's persisted fields, so it is
         # not written by `SimulationResult.save` and is `None` after `load`.
         result._plan_summary = plan_summary  # noqa: SLF001
+        result._dissolution_fallbacks = tuple(dissolution_records)  # noqa: SLF001
         if subject_codes is not None and group_plan is not None:
             result._subject_rows = group_plan.rows  # noqa: SLF001
     return result
@@ -793,7 +806,7 @@ def _initialize_chunk_state(
     return states, regime_ids, own_stakeholder, key
 
 
-def _simulate_subject_chunk(
+def _simulate_subject_chunk(  # noqa: PLR0915
     *,
     initial_states: dict[StateOrActionName, Float1D | IntND],
     initial_regime_ids: Int1D,
@@ -830,6 +843,7 @@ def _simulate_subject_chunk(
     ] = MappingProxyType({}),
     process_grid_resolver: ProcessGridResolver | None = None,
     shock_paths: Mapping[StateName, np.ndarray] = MappingProxyType({}),
+    dissolution_records: list[DissolutionFallback] | None = None,
 ) -> dict[RegimeName, dict[int, PeriodRegimeSimulationData]]:
     """Run the full period loop for one chunk of subjects.
 
@@ -887,18 +901,27 @@ def _simulate_subject_chunk(
     simulation_results: dict[RegimeName, dict[int, PeriodRegimeSimulationData]] = {
         regime_name: {} for regime_name in regimes
     }
+    # Each row's role in the previous period and the source whose gate it
+    # passed open into this period: a household without a feasible action takes
+    # the dissolution route of that gate, once.
+    source_roles: Int1D | None = None
+    entered_through: Int1D | None = None
 
     for period, active_regimes in enumerate(
         forward_regimes_by_period(regimes=regimes, n_periods=ages.n_periods)
     ):
         period_start = time.monotonic()
         if memory is not None:
+            # The previous period's roles and open-branch entries are read by
+            # this period's dissolution routes, so they stay roots until then.
             memory.unit_inputs = (
                 states,
                 subject_regime_ids,
                 own_stakeholder,
                 key,
                 taste_key,
+                source_roles,
+                entered_through,
             )
         original_age = chunk_operations.period_age(
             values=ages.values, period=period, memory=memory
@@ -925,9 +948,15 @@ def _simulate_subject_chunk(
             memory=memory,
         )
 
-        prev_regime_ids = subject_regime_ids
         new_subject_regime_ids = subject_regime_ids
         new_own_stakeholder = own_stakeholder
+        new_entered_through = run_simulation_operation(
+            memory=memory,
+            function=empty_gated_entries,
+            arguments={"regime_ids": subject_regime_ids},
+            subject_arg_names=("regime_ids",),
+            subject_outputs=True,
+        )
 
         log_period_header(
             logger=logger,
@@ -966,6 +995,7 @@ def _simulate_subject_chunk(
         if memory is not None:
             memory.period_owner = owner
 
+        ran_this_period: list[RegimeName] = []
         for regime_name, regime in active_regimes.items():
             dispatched_regime = _bind_unit_executor(
                 regime=regime,
@@ -979,79 +1009,95 @@ def _simulate_subject_chunk(
                     key,
                     taste_key,
                     age,
+                    source_roles,
+                    entered_through,
+                    new_entered_through,
                 ),
             )
-            result, new_states, new_subject_regime_ids, new_own_stakeholder = (
-                _simulate_regime_in_period(
-                    regime_name=regime_name,
-                    regime=dispatched_regime,
-                    regimes=regimes,
-                    value_owner=owner,
-                    subject_devices=devices,
-                    memory=memory,
-                    base_state_action_space=base_state_action_spaces[regime_name],
-                    period=period,
-                    age=age,
-                    states=states,
-                    subject_regime_ids=subject_regime_ids,
-                    new_subject_regime_ids=new_subject_regime_ids,
-                    period_to_regime_to_V_arr=period_to_regime_to_V_arr,
-                    period_to_regime_to_dissolution_flags=period_to_regime_to_dissolution_flags,
-                    base_state_action_spaces=base_state_action_spaces,
-                    sim_policy=(period_to_regime_to_sim_policy or {})
-                    .get(period, {})
-                    .get(regime_name),
-                    replay_reader=period_to_regime_to_replay_reader.get(period, {}).get(
-                        regime_name
-                    ),
-                    flat_params=flat_params,
-                    regime_names_to_ids=regime_names_to_ids,
-                    decision_targets_next_period=(
-                        ()
-                        if period == ages.n_periods - 1
-                        else regime.solution.reachability.targets(
-                            period=period, source=regime_name
-                        )
-                    ),
-                    realization_targets_next_period=(
-                        ()
-                        if period == ages.n_periods - 1
-                        else regime.simulation.reachability.targets(
-                            period=period, source=regime_name
-                        )
-                    ),
-                    key=site_simulation_key(
-                        key=key,
-                        period=period,
-                        regime_id=int(regime_names_to_ids[regime_name]),
-                        memory=memory,
-                    ),
-                    taste_key=taste_key,
-                    taste_address=taste_addresses.get((period, regime_name)),
-                    logger=logger,
-                    n_subjects=n_subjects,
-                    subject_slice=subject_slice,
-                    original_n_subjects=original_n_subjects,
-                    supplied_shocks=shock_path_values(
-                        paths=shock_paths,
-                        argument_names=supplied_shock_argument_names(
-                            regime=regime, period=period
-                        ),
-                        period=period + 1,
-                        subject_slice=subject_slice,
-                        n_subjects=len(subject_regime_ids),
+            (
+                result,
+                new_states,
+                new_subject_regime_ids,
+                new_own_stakeholder,
+                subject_regime_ids,
+                own_stakeholder,
+                entered_through,
+                new_entered_through,
+            ) = _simulate_regime_in_period(
+                regime_name=regime_name,
+                regime=dispatched_regime,
+                regimes=regimes,
+                value_owner=owner,
+                subject_devices=devices,
+                memory=memory,
+                base_state_action_space=base_state_action_spaces[regime_name],
+                period=period,
+                age=age,
+                states=states,
+                subject_regime_ids=subject_regime_ids,
+                new_subject_regime_ids=new_subject_regime_ids,
+                period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+                period_to_regime_to_dissolution_flags=period_to_regime_to_dissolution_flags,
+                base_state_action_spaces=base_state_action_spaces,
+                sim_policy=(period_to_regime_to_sim_policy or {})
+                .get(period, {})
+                .get(regime_name),
+                replay_reader=period_to_regime_to_replay_reader.get(period, {}).get(
+                    regime_name
+                ),
+                flat_params=flat_params,
+                regime_names_to_ids=regime_names_to_ids,
+                decision_targets_next_period=(
+                    ()
+                    if period == ages.n_periods - 1
+                    else regime.solution.reachability.targets(
+                        period=period, source=regime_name
                     )
-                    if shock_paths
-                    else MappingProxyType({}),
-                    own_stakeholder=own_stakeholder,
-                    new_own_stakeholder=new_own_stakeholder,
-                    gated_edge_fold_age=(
-                        coordinate_at(ages=ages, period=period + 1)
-                        if regime.gated_edges and period + 1 < ages.n_periods
-                        else None
+                ),
+                realization_targets_next_period=(
+                    ()
+                    if period == ages.n_periods - 1
+                    else regime.simulation.reachability.targets(
+                        period=period, source=regime_name
+                    )
+                ),
+                key=site_simulation_key(
+                    key=key,
+                    period=period,
+                    regime_id=int(regime_names_to_ids[regime_name]),
+                    memory=memory,
+                ),
+                taste_key=taste_key,
+                taste_address=taste_addresses.get((period, regime_name)),
+                logger=logger,
+                n_subjects=n_subjects,
+                subject_slice=subject_slice,
+                original_n_subjects=original_n_subjects,
+                supplied_shocks=shock_path_values(
+                    paths=shock_paths,
+                    argument_names=supplied_shock_argument_names(
+                        regime=regime, period=period
                     ),
+                    period=period + 1,
+                    subject_slice=subject_slice,
+                    n_subjects=len(subject_regime_ids),
                 )
+                if shock_paths
+                else MappingProxyType({}),
+                own_stakeholder=own_stakeholder,
+                new_own_stakeholder=new_own_stakeholder,
+                gated_edge_fold_age=(
+                    coordinate_at(ages=ages, period=period + 1)
+                    if regime.gated_edges and period + 1 < ages.n_periods
+                    else None
+                ),
+                source_roles=source_roles,
+                entered_through=entered_through,
+                new_entered_through=new_entered_through,
+                dissolution_records=dissolution_records,
+                ran_this_period=tuple(ran_this_period),
             )
+            ran_this_period.append(regime_name)
             states = new_states
             simulation_results[regime_name][period] = result
             if memory is not None:
@@ -1077,10 +1123,10 @@ def _simulate_subject_chunk(
         if memory is not None:
             memory.period_owner = None
             # Unit-local owners were released after publication. The period's
-            # current carry and both memberships still live through diagnostics.
+            # current carry, both memberships and both entry carriers still live
+            # through diagnostics.
             memory.unit_inputs = (
                 states,
-                prev_regime_ids,
                 subject_regime_ids,
                 new_subject_regime_ids,
                 own_stakeholder,
@@ -1089,6 +1135,9 @@ def _simulate_subject_chunk(
                 taste_key,
                 original_age,
                 age,
+                source_roles,
+                entered_through,
+                new_entered_through,
             )
 
         _validate_period_values(
@@ -1102,6 +1151,11 @@ def _simulate_subject_chunk(
             ),
         )
 
+        # The period's final membership, after dissolution routes moved rows
+        # into the regime they acted in, is where each transition starts.
+        prev_regime_ids = subject_regime_ids
+        source_roles = own_stakeholder
+        entered_through = new_entered_through
         subject_regime_ids = new_subject_regime_ids
         own_stakeholder = new_own_stakeholder
 
@@ -1626,7 +1680,21 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
     taste_key: PRNGKeyND | None = None,
     taste_address: tuple[int, ...] | None = None,
     supplied_shocks: Mapping[str, np.ndarray] = MappingProxyType({}),
-) -> tuple[PeriodRegimeSimulationData, StatesPerRegime, Int1D, Int1D]:
+    source_roles: Int1D | None = None,
+    entered_through: Int1D | None = None,
+    new_entered_through: Int1D | None = None,
+    dissolution_records: list[DissolutionFallback] | None = None,
+    ran_this_period: tuple[RegimeName, ...] = (),
+) -> tuple[
+    PeriodRegimeSimulationData,
+    StatesPerRegime,
+    Int1D,
+    Int1D,
+    Int1D,
+    Int1D,
+    Int1D | None,
+    Int1D | None,
+]:
     """Simulate one regime for one period.
 
     This function processes all subjects in a given regime for a single period,
@@ -1683,6 +1751,21 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             result cell, or ``None`` for an engine-owned replay route.
         value_owner: This period's owner of addressed copies.
         subject_devices: Actual ordered devices evaluating the population.
+        source_roles: Each row's role in the previous period, or `None` in a
+            chunk's first period.
+        entered_through: Each row's source regime id when it passed that
+            source's gate into this period through the open branch and has not
+            used the gate's route yet, else `NO_GATED_ENTRY`; `None` in a
+            chunk's first period. A row of this regime with no feasible action
+            and such an entry takes that gate's dissolution route this period
+            instead of raising.
+        new_entered_through: The next period's open-branch entries as
+            accumulated by the regimes already routed this period, written into
+            for this regime's rows.
+        dissolution_records: Collects one record per rerouted subject when
+            runtime checks are on.
+        ran_this_period: The regimes that already ran this period. A row whose
+            dissolution route leads into one of them cannot act this period.
 
     Returns:
         Tuple containing:
@@ -1690,6 +1773,10 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
         - Updated state carrier
         - Updated new_subject_regime_ids array
         - Updated new_own_stakeholder array
+        - Current regime membership, after any dissolution route
+        - Current roles, after any dissolution route
+        - Current open-branch entries, with every route taken here used up
+        - Updated next-period open-branch entries
 
     """
     # Select subjects in the current regime
@@ -1866,49 +1953,105 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             )
             taste_shock_kwargs = {"taste_shock_key": gumbel_keys}
 
-        decision_outputs = execute_simulation_program(
-            programs=regime.simulation.programs,
-            family="decision",
-            period=period,
-            n_subjects=n_chunk_subjects,
-            arguments=decision_arguments(
-                states=state_action_space.states,
-                discrete_actions=state_action_space.discrete_actions,
-                continuous_actions=state_action_space.continuous_actions,
-                taste_keys=taste_shock_kwargs,
-                next_values=next_regime_to_V_arr,
-                references=referenced_value_kwargs,
-                params=regime_kernel_params(flat_params, regime_name=regime_name),
-                period=jnp.int32(period) if memory is None else np.int32(period),
-                age=age,
-            ),
-        )
-        indices_optimal_actions, V_arr = consume_runtime_bound_outputs(
-            outputs=cast("tuple[QAndFArg, ...]", decision_outputs),
-            bound_specs=regime.simulation.post_decision_bounds,
-            regime_name=regime_name,
-            period=period,
-        )
-        indices_optimal_actions = cast("IntND", indices_optimal_actions)
-        V_arr = cast("FloatND", V_arr)
-        # A scalar stateless decision lacks the leading subject axis that
-        # every downstream simulation operation expects.
-        if not state_action_space.states and indices_optimal_actions.ndim == 0:
-            indices_optimal_actions, V_arr = chunk_operations.broadcast_collective(
-                indices=indices_optimal_actions,
-                value=V_arr,
+        def decide(
+            *, space: StateActionSpace, in_regime: Bool1D
+        ) -> tuple[IntND, FloatND, int]:
+            decision_outputs = execute_simulation_program(
+                programs=regime.simulation.programs,
+                family="decision",
+                period=period,
                 n_subjects=n_chunk_subjects,
-                memory=memory,
+                arguments=decision_arguments(
+                    states=space.states,
+                    discrete_actions=space.discrete_actions,
+                    continuous_actions=space.continuous_actions,
+                    taste_keys=taste_shock_kwargs,
+                    next_values=next_regime_to_V_arr,
+                    references=referenced_value_kwargs,
+                    params=regime_kernel_params(flat_params, regime_name=regime_name),
+                    period=jnp.int32(period) if memory is None else np.int32(period),
+                    age=age,
+                ),
             )
-        empty_row = run_simulation_operation(
-            memory=memory,
-            function=_first_empty_action_row,
-            arguments={
-                "indices": indices_optimal_actions,
-                "in_regime": subject_ids_in_regime,
-            },
-            subject_arg_names=("indices", "in_regime"),
-        ).item()
+            indices, values = consume_runtime_bound_outputs(
+                outputs=cast("tuple[QAndFArg, ...]", decision_outputs),
+                bound_specs=regime.simulation.post_decision_bounds,
+                regime_name=regime_name,
+                period=period,
+            )
+            indices = cast("IntND", indices)
+            values = cast("FloatND", values)
+            # A scalar stateless decision lacks the leading subject axis that
+            # every downstream simulation operation expects.
+            if not space.states and indices.ndim == 0:
+                indices, values = chunk_operations.broadcast_collective(
+                    indices=indices,
+                    value=values,
+                    n_subjects=n_chunk_subjects,
+                    memory=memory,
+                )
+            first_empty = run_simulation_operation(
+                memory=memory,
+                function=_first_empty_action_row,
+                arguments={"indices": indices, "in_regime": in_regime},
+                subject_arg_names=("indices", "in_regime"),
+            ).item()
+            return indices, values, int(first_empty)
+
+        indices_optimal_actions, V_arr, empty_row = decide(
+            space=state_action_space, in_regime=subject_ids_in_regime
+        )
+        if empty_row >= 0 and sim_policy is None and entered_through is not None:
+            (
+                states,
+                subject_regime_ids,
+                own_stakeholder,
+                new_subject_regime_ids,
+                new_own_stakeholder,
+                entered_through,
+                subject_ids_in_regime,
+                empty_row,
+                redecide,
+            ) = _take_dissolution_routes(
+                regime_name=regime_name,
+                regime=regime,
+                regimes=regimes,
+                base_spaces=base_state_action_spaces,
+                ran_this_period=ran_this_period,
+                indices=indices_optimal_actions,
+                in_regime=subject_ids_in_regime,
+                entered_through=entered_through,
+                source_roles=cast("Int1D", source_roles),
+                states=states,
+                canonical_states=state_action_space.states,
+                subject_regime_ids=subject_regime_ids,
+                own_stakeholder=own_stakeholder,
+                new_subject_regime_ids=new_subject_regime_ids,
+                new_own_stakeholder=new_own_stakeholder,
+                regime_names_to_ids=regime_names_to_ids,
+                flat_params=flat_params,
+                period=period,
+                age=age,
+                subject_slice=subject_slice,
+                n_real=n_subjects
+                if original_n_subjects is None
+                else original_n_subjects,
+                logger=logger,
+                memory=memory,
+                records=dissolution_records,
+            )
+            # Rows whose route leads back into this regime decide again at
+            # their projected state; their route is used up, so a row still
+            # without a feasible action is refused below.
+            if redecide:
+                state_action_space = create_regime_state_action_space(
+                    regime=regime,
+                    regime_states=states[regime_name],
+                    base=base_state_action_space,
+                )
+                indices_optimal_actions, V_arr, empty_row = decide(
+                    space=state_action_space, in_regime=subject_ids_in_regime
+                )
         if empty_row >= 0 and sim_policy is None:
             state = physical_state_at_row(
                 regime=regime,
@@ -2103,6 +2246,33 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 delta=route_delta,
                 next_states=next_states,
             )
+            if new_entered_through is not None:
+                new_entered_through = run_simulation_operation(
+                    memory=memory,
+                    function=record_open_entries,
+                    arguments={
+                        "closed_masks": tuple(
+                            cast("Bool1D", edge_delta["closed"])
+                            for edge_delta in route_delta.values()
+                        ),
+                        "routed_ids": new_subject_regime_ids,
+                        "subjects_in_regime": subject_ids_in_regime,
+                        "new_entered_through": new_entered_through,
+                    },
+                    subject_arg_names=(
+                        "closed_masks",
+                        "routed_ids",
+                        "subjects_in_regime",
+                        "new_entered_through",
+                    ),
+                    static_arguments={
+                        "source_id": int(regime_names_to_ids[regime_name]),
+                        "target_ids": tuple(
+                            int(regime_names_to_ids[target]) for target in route_delta
+                        ),
+                    },
+                    subject_outputs=True,
+                )
         states = clip_next_states(
             states=next_states,
             regimes=regimes,
@@ -2139,6 +2309,221 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
         states,
         new_subject_regime_ids,
         new_own_stakeholder,
+        subject_regime_ids,
+        own_stakeholder,
+        entered_through,
+        new_entered_through,
+    )
+
+
+def _take_dissolution_routes(
+    *,
+    regime_name: RegimeName,
+    regime: Regime,
+    regimes: Mapping[RegimeName, Regime],
+    base_spaces: Mapping[RegimeName, StateActionSpace],
+    ran_this_period: tuple[RegimeName, ...],
+    indices: IntND,
+    in_regime: Bool1D,
+    entered_through: Int1D,
+    source_roles: Int1D,
+    states: StatesPerRegime,
+    canonical_states: Mapping[StateName, FloatND | IntND],
+    subject_regime_ids: Int1D,
+    own_stakeholder: Int1D,
+    new_subject_regime_ids: Int1D,
+    new_own_stakeholder: Int1D,
+    regime_names_to_ids: RegimeNamesToIds,
+    flat_params: FlatParams,
+    period: int,
+    age: ScalarInt | ScalarFloat,
+    subject_slice: slice | SubjectRows,
+    n_real: int,
+    logger: logging.Logger,
+    memory: SimulationMemory | None,
+    records: list[DissolutionFallback] | None,
+) -> tuple[StatesPerRegime, Int1D, Int1D, Int1D, Int1D, Int1D, Bool1D, int, bool]:
+    """Send this regime's rows without a feasible action down their gate's route.
+
+    A route back into this regime keeps the row here at its projected state.
+    A projected state follows its fallback grid's `off_grid` rule, as a closed
+    branch taken at the gate does. A route into a regime that already ran this
+    period raises `NoFeasibleActionError`, since the row could not act there.
+    Returns the updated carriers, the open-branch entries with every route taken
+    here used up, this regime's remaining rows, whether any of them must decide
+    again at a projected state, and the first
+    row still without a feasible action (`-1` when none is left), which the
+    caller refuses as before.
+    """
+    empty = in_regime & (indices < 0)
+    outcome = reroute_rows_without_feasible_action(
+        regime_name=regime_name,
+        regimes=regimes,
+        empty=empty,
+        entered_through=entered_through,
+        source_roles=source_roles,
+        states=states,
+        subject_regime_ids=subject_regime_ids,
+        own_stakeholder=own_stakeholder,
+        new_subject_regime_ids=new_subject_regime_ids,
+        new_own_stakeholder=new_own_stakeholder,
+        regime_names_to_ids=regime_names_to_ids,
+        flat_params=flat_params,
+        period=period,
+        age=age,
+    )
+    if memory is not None:
+        memory.hold(tree=outcome)
+    genuine = _genuine_rows(subject_slice=subject_slice, n_real=n_real)
+    _fail_if_rerouted_into_a_regime_that_ran(
+        outcome=outcome,
+        genuine=genuine,
+        ran_this_period=ran_this_period,
+        regime_name=regime_name,
+        regime=regime,
+        canonical_states=canonical_states,
+        flat_params=flat_params,
+        regime_names_to_ids=regime_names_to_ids,
+        period=period,
+        memory=memory,
+    )
+    states = clip_next_states(
+        states=outcome.states,
+        regimes=regimes,
+        base_spaces=base_spaces,
+        targets=tuple(
+            dict.fromkeys(
+                leg.realized_fallback.regime
+                for source in regimes.values()
+                if (edge := source.gated_edges.get(regime_name)) is not None
+                for leg in edge.legs
+            )
+        ),
+        next_period=period,
+        reported_period=period,
+        source=regime_name,
+        new_regime_ids=outcome.subject_regime_ids,
+        regime_ids=regime_names_to_ids,
+        logger=logger,
+        subjects=outcome.rerouted,
+        genuine=genuine,
+        memory=memory,
+    )
+    returned = outcome.rerouted & (
+        outcome.fallback_ids == regime_names_to_ids[regime_name]
+    )
+    remaining = in_regime & ~(outcome.rerouted & ~returned)
+    redecide = bool(np.asarray(returned).any())
+    rerouted_rows = rows_of(outcome.rerouted & genuine)
+    if rerouted_rows.size:
+        new_records: tuple[DissolutionFallback, ...] = ()
+        if validation_enabled(logger):
+            regime_params = {
+                **regime.resolved_fixed_params,
+                **regime_kernel_params(flat_params, regime_name=regime_name),
+            }
+            ids_to_names = {
+                int(code): name for name, code in regime_names_to_ids.items()
+            }
+            sources = np.asarray(entered_through)
+            fallbacks = np.asarray(outcome.fallback_ids)
+            new_records = tuple(
+                DissolutionFallback(
+                    subject_id=int(
+                        subject_slice.rows[row]
+                        if isinstance(subject_slice, SubjectRows)
+                        else cast("int", subject_slice.start) + row
+                    ),
+                    period=period,
+                    regime=regime_name,
+                    state=MappingProxyType(
+                        physical_state_at_row(
+                            regime=regime,
+                            states=canonical_states,
+                            row=int(row),
+                            regime_params=regime_params,
+                            memory=memory,
+                        )
+                    ),
+                    source=ids_to_names[int(sources[row])],
+                    fallback=ids_to_names[int(fallbacks[row])],
+                )
+                for row in rerouted_rows
+            )
+            if records is not None:
+                records.extend(new_records)
+        log_dissolution_fallbacks(
+            logger=logger,
+            regime_name=regime_name,
+            period=period,
+            n_rows=int(rerouted_rows.size),
+            recorded=records is not None and validation_enabled(logger),
+        )
+    return (
+        states,
+        outcome.subject_regime_ids,
+        outcome.own_stakeholder,
+        outcome.new_subject_regime_ids,
+        outcome.new_own_stakeholder,
+        outcome.entered_through,
+        remaining,
+        int(
+            _first_empty_action_row(
+                indices=indices, in_regime=in_regime & ~outcome.rerouted
+            )
+        ),
+        redecide,
+    )
+
+
+def _fail_if_rerouted_into_a_regime_that_ran(
+    *,
+    outcome: RerouteOutcome,
+    genuine: np.ndarray,
+    ran_this_period: tuple[RegimeName, ...],
+    regime_name: RegimeName,
+    regime: Regime,
+    canonical_states: Mapping[StateName, FloatND | IntND],
+    flat_params: FlatParams,
+    regime_names_to_ids: RegimeNamesToIds,
+    period: int,
+    memory: SimulationMemory | None,
+) -> None:
+    """Raise if a rerouted row's fallback already ran this period.
+
+    Regimes run in dependency order, each gated target before its fallbacks.
+    When gated targets and fallbacks form a cycle, no regime may be ready; the
+    earliest-declared regime still waiting then runs next, so a fallback can
+    precede a target it serves. A row routed into such a fallback would not act
+    this period.
+    """
+    if not ran_this_period:
+        return
+    ran_ids = np.asarray([regime_names_to_ids[name] for name in ran_this_period])
+    late = np.asarray(outcome.rerouted) & genuine
+    late &= np.isin(np.asarray(outcome.fallback_ids), ran_ids)
+    if not late.any():
+        return
+    row = int(np.flatnonzero(late)[0])
+    fallback = next(
+        name
+        for name, code in regime_names_to_ids.items()
+        if int(code) == int(np.asarray(outcome.fallback_ids)[row])
+    )
+    state = physical_state_at_row(
+        regime=regime,
+        states=canonical_states,
+        row=row,
+        regime_params={
+            **regime.resolved_fixed_params,
+            **regime_kernel_params(flat_params, regime_name=regime_name),
+        },
+        memory=memory,
+    )
+    raise NoFeasibleActionError(
+        f"Regime '{regime_name}', period {period}, state {state} has no feasible "
+        f"action, and its dissolution route leads to regime '{fallback}', which "
+        "already ran this period: the gated targets and fallbacks form a cycle."
     )
 
 
