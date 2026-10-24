@@ -380,7 +380,8 @@ def test_native_source_budget_includes_retained_bank_and_future_copy_scratch(
         _small_grid_search_inputs,
     )
 
-    budget = 4096
+    # Leave room for addressed keys; the excluded-source bank still fills the cap.
+    budget = 8192
     source_device = jax.devices()[3]
     selected = (jax.devices()[1], jax.devices()[2])
     model, params, initial = _small_grid_search_inputs(
