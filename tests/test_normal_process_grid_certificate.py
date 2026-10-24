@@ -77,6 +77,7 @@ _CURRENT_IID_CORRIDOR_SOURCES = (
 _OVERRIDE_CORRIDOR_SOURCES = (
     "src/lcm/shocks.py",
     "src/_lcm/shock_overrides.py",
+    "src/_lcm/simulation/current_iid_overrides.py",
 )
 
 
@@ -135,13 +136,13 @@ def test_normal_controls_preserve_all_historical_populations() -> None:
         == 599
     )
     assert "src/_lcm/solution/feasibility.py" in direct_flow._CERTIFIED_CORRIDOR_SOURCES
-    assert len(direct_flow._CERTIFIED_CORRIDOR_SOURCES) == 176
+    assert len(direct_flow._CERTIFIED_CORRIDOR_SOURCES) == 177
     added_corridor_sources = (
         set(_S1_CORRIDOR_SOURCES)
         | set(_CURRENT_IID_CORRIDOR_SOURCES)
         | set(_OVERRIDE_CORRIDOR_SOURCES)
     )
-    assert len(added_corridor_sources) == 5
+    assert len(added_corridor_sources) == 6
     assert added_corridor_sources <= set(direct_flow._CERTIFIED_CORRIDOR_SOURCES)
     assert added_corridor_sources.isdisjoint(_NESTED_CORRIDOR_SOURCES)
     assert len(set(_NESTED_CORRIDOR_SOURCES)) == 53

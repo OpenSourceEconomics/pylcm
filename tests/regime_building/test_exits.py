@@ -10,7 +10,7 @@ import pytest
 import lcm
 from _lcm.grids import Grid
 from lcm import Consent, Counterparty, Exit, ExitTarget, Model, RuleResult
-from lcm.exceptions import RegimeInitializationError
+from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.exits import ExitRule
 from lcm.typing import BoolND, FloatND, IntND, UserParams
 
@@ -456,7 +456,16 @@ def test_consent_counterparty_is_a_coherent_declared_policy_context(kind: str) -
         else "m",
         projection={} if kind == "projection" else {"wealth": _half},
     )
-    with pytest.raises(RegimeInitializationError, match=r"[Cc]ounterparty"):
+    error = (
+        ModelInitializationError if kind == "inactive" else RegimeInitializationError
+    )
+    message = (
+        r"a Raw simulation policy query requires 'other' at age 0, .*"
+        r"no simulationedge out of 'other' at that age"
+        if kind == "inactive"
+        else r"[Cc]ounterparty"
+    )
+    with pytest.raises(error, match=message):
         Model(
             regimes={
                 "source": lcm.Regime(
