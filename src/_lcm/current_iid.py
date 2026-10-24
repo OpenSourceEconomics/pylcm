@@ -11,7 +11,7 @@ from fractions import Fraction
 from functools import partial
 from itertools import product
 from types import MappingProxyType
-from typing import Literal, Self, cast
+from typing import Literal, NamedTuple, Self, cast
 
 import jax
 import jax.numpy as jnp
@@ -20,16 +20,18 @@ from dags import with_signature
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.probability import is_represented_zero
 from _lcm.processes.base import standard_normal
+from _lcm.shock_overrides import apply_overrides
 from _lcm.shock_registry import ShockBinding, ShockRegistry, law_input_validity
 from _lcm.typing import ArgmaxQOverAFunction, PRNGKeyND, PytreeValue, QAndFArg
 from _lcm.zero_safe import factored_weighted_term
-from lcm.exceptions import InvalidParamsError
+from lcm.exceptions import InvalidParamsError, ShockDeclarationError
 from lcm.shocks import (
     Discrete,
     LawValue,
     NodeSet,
     ShockGroupName,
     ShockName,
+    ShockOverride,
     ShockReader,
     Uniform,
 )
@@ -57,6 +59,23 @@ type CurrentIIDDrawOutput = tuple[
 type NodeOperands = Mapping[
     ShockGroupName, Mapping[str, FloatND | Mapping[ShockName, IntND]]
 ]
+
+
+class CurrentIIDDrawFrame(NamedTuple):
+    """One produced realization and its explicit independent-base custody.
+
+    The plan owns the producing bindings. Source parameters and resolved source
+    inputs remain dynamic fields beside the physical values and both base maps.
+    Supplied values carry no policy-observedness claim.
+    """
+
+    physical: Mapping[ShockName, FloatND | IntND]
+    addressed_bases: Mapping[ShockName, FloatND]
+    held_bases: Mapping[ShockName, FloatND]
+    source_params: Mapping[ShockGroupName, Mapping[ReferenceName, LawValue | BoolND]]
+    source_inputs: Mapping[ShockGroupName, Mapping[ReferenceName, LawValue]]
+    recovery_error: Mapping[ShockName, FloatND]
+    valid: BoolND
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -88,6 +107,120 @@ class CurrentIIDDrawPlan:
         """Return actual current-state operands, including carried-only states."""
         return frozenset(
             name for binding in self.bindings.values() for name in binding.state_inputs
+        )
+
+    def realise(
+        self,
+        *,
+        keys: Mapping[ShockName, PRNGKeyND],
+        group_params: Mapping[
+            ShockGroupName, Mapping[ReferenceName, LawValue | BoolND]
+        ],
+        arguments: Mapping[ReferenceName, PytreeValue],
+        overrides: Mapping[ShockName, ShockOverride] = MappingProxyType({}),
+    ) -> CurrentIIDDrawFrame:
+        """Produce one scalar cell, retaining its producing context and named bases.
+
+        Caller routing selects original-row keys and override cells before this
+        producer. Invalid law/support status must be checked before any decision.
+        """
+        unknown = overrides.keys() - set(self.physical_names)
+        if unknown:
+            raise ShockDeclarationError(f"Unknown shock overrides {sorted(unknown)}.")
+        physical: dict[ShockName, FloatND | IntND] = {}
+        addressed_bases: dict[ShockName, FloatND] = {}
+        held_bases: dict[ShockName, FloatND] = {}
+        source_params = {}
+        source_inputs = {}
+        recovery_error = {}
+        valid = jnp.asarray(a=True, dtype=jnp.bool_)
+        for name, binding in self.bindings.items():
+            supplied = group_params.get(name, {})
+            params = cast(
+                "Mapping[ReferenceName, LawValue]",
+                {
+                    key: value
+                    for key, value in supplied.items()
+                    if key != CORRELATION_SUPPORT_ARGUMENT
+                },
+            )
+            addressed = {
+                shock: _draw_base_value(
+                    key=keys[shock], uniform=isinstance(law, Uniform | Discrete)
+                )
+                for shock, law in binding.group.shocks.items()
+            }
+            inputs = _law_inputs(
+                binding=binding,
+                arguments={
+                    name: cast("QAndFArg", arguments[name])
+                    for name in (*binding.state_inputs, "period", "age")
+                },
+                params=params,
+            )
+            support = cast("BoolND | None", supplied.get(CORRELATION_SUPPORT_ARGUMENT))
+            override = apply_overrides(
+                group=binding.group,
+                addressed=addressed,
+                overrides={
+                    key: value
+                    for key, value in overrides.items()
+                    if key in binding.group.shocks
+                },
+                params=params,
+                inputs=inputs,
+                admitted_correlation_support=support,
+            )
+            addressed_bases.update(addressed)
+            held_bases.update(override.bases)
+            source_params[name] = MappingProxyType(dict(supplied))
+            source_inputs[name] = MappingProxyType(dict(inputs))
+            base = jnp.stack(tuple(override.bases.values()))[None]
+            realised, _ = binding.group._realise(  # noqa: SLF001 - shared internal law kernel
+                base_nodes=base,
+                nodes=None,
+                params=params,
+                scalar_cell_group=name,
+                inputs=inputs,
+                admitted_correlation_support=cast(
+                    "BoolND | None", supplied.get(CORRELATION_SUPPORT_ARGUMENT)
+                ),
+            )
+            physical.update({key: value[0] for key, value in realised.values.items()})
+            for shock, supplied_physical in override.physical.items():
+                produced = physical[shock]
+                if produced.dtype != supplied_physical.dtype:
+                    raise ShockDeclarationError(
+                        "Physical values must use their producing law's dtype."
+                    )
+                if produced.dtype.kind == "f":
+                    bits = jnp.uint64 if produced.dtype.itemsize == 8 else jnp.uint32  # noqa: PLR2004 - active IEEE float word width
+                    witnessed = jax.lax.bitcast_convert_type(
+                        produced, bits
+                    ) == jax.lax.bitcast_convert_type(supplied_physical, bits)
+                else:
+                    witnessed = produced == supplied_physical
+                # Singular joint support imposes cross-coordinate restrictions;
+                # independent/full-rank support is not an exact-native-image test.
+                valid &= ~override.requires_witness | witnessed
+                recovery_error[shock] = produced.astype(
+                    canonical_float_dtype()
+                ) - supplied_physical.astype(canonical_float_dtype())
+                valid &= jnp.isfinite(recovery_error[shock])
+                physical[shock] = supplied_physical
+            valid &= (
+                override.valid
+                & realised.valid
+                & law_input_validity(binding=binding, inputs=inputs)
+            )
+        return CurrentIIDDrawFrame(
+            physical=MappingProxyType(physical),
+            addressed_bases=MappingProxyType(addressed_bases),
+            held_bases=MappingProxyType(held_bases),
+            source_params=MappingProxyType(source_params),
+            source_inputs=MappingProxyType(source_inputs),
+            recovery_error=MappingProxyType(recovery_error),
+            valid=valid,
         )
 
     def wrap(
@@ -140,46 +273,10 @@ class _CurrentIIDDraw:
             for name, value in kwargs.items()
             if name not in {CURRENT_IID_ARGUMENT, CURRENT_IID_KEYS_ARGUMENT}
         }
-        physical: dict[ShockName, FloatND | IntND] = {}
-        valid = jnp.asarray(a=True, dtype=jnp.bool_)
-        for name, binding in self.plan.bindings.items():
-            supplied = group_params.get(name, {})
-            params = cast(
-                "Mapping[ReferenceName, LawValue]",
-                {
-                    key: value
-                    for key, value in supplied.items()
-                    if key != CORRELATION_SUPPORT_ARGUMENT
-                },
-            )
-            base = jnp.stack(
-                tuple(
-                    _draw_base_value(
-                        key=keys[shock], uniform=isinstance(law, Uniform | Discrete)
-                    )
-                    for shock, law in binding.group.shocks.items()
-                )
-            )[None]
-            inputs = _law_inputs(
-                binding=binding,
-                arguments={
-                    name: cast("QAndFArg", arguments[name])
-                    for name in (*binding.state_inputs, "period", "age")
-                },
-                params=params,
-            )
-            realised, _ = binding.group._realise(  # noqa: SLF001 - shared internal law kernel
-                base_nodes=base,
-                nodes=None,
-                params=params,
-                scalar_cell_group=name,
-                inputs=inputs,
-                admitted_correlation_support=cast(
-                    "BoolND | None", supplied.get(CORRELATION_SUPPORT_ARGUMENT)
-                ),
-            )
-            physical.update({key: value[0] for key, value in realised.values.items()})
-            valid &= realised.valid & law_input_validity(binding=binding, inputs=inputs)
+        frame = self.plan.realise(
+            keys=keys, group_params=group_params, arguments=arguments
+        )
+        physical, valid = frame.physical, frame.valid
         available = {**arguments, **physical}
         index, value = cast(
             "tuple[IntND, FloatND]",
@@ -190,7 +287,7 @@ class _CurrentIIDDraw:
                 }
             ),
         )
-        return index, value, physical, ~valid
+        return index, value, dict(physical), ~valid
 
 
 def _draw_base_value(*, key: PRNGKeyND, uniform: bool) -> FloatND:

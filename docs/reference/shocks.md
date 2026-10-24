@@ -113,6 +113,53 @@ is separate from node-rule identity: `has_same_laws_as` ignores the node declara
 Joint-law comparison conservatively retains named column order and fingerprints callable
 captured semantics; a reorder cannot reinterpret correlation rows silently.
 
+## Typed draw inputs
+
+`BaseInnovations(values=array)` identifies independent named coordinates before
+correlation and the physical law. Normal-base coordinates must be finite; Uniform's
+forward support is `[0, 1]`, and categorical bases use `[0, 1)`.
+`PhysicalValues(values=array)` identifies values to invert under the producing law and
+its current context. The tags retain their arrays as dynamic JAX pytree leaves; they do
+not copy them into declaration metadata. Base coordinates require floating-point arrays.
+Physical values use the producing law's active float dtype or int32 categorical codes.
+The constructors reject integer or floating-point narrowing before JAX tracing can erase
+the input dtype.
+
+Independent physical inputs support normal, lognormal, uniform, normal-mixture and
+categorical laws. Categorical physical inputs are integer category codes with positive
+source probability. Their latent uniform uses the addressed residual within the source
+CDF interval; it is neither a midpoint nor the category code. An interval or continuous
+inverse that cannot be resolved at the active precision is invalid. Compatible
+deterministic independent inputs retain the original addressed base. Independent and
+full-rank continuous observations retain their supplied physical bits. The draw frame
+records signed `recovery_error` in physical units: the producing forward value at the
+recovered base minus the supplied observation. This describes inverse precision, not
+mathematical support. Finite/support/resolution checks remain mandatory; ordinary
+external values need not be exact images of a native quantile evaluation.
+
+Correlated physical inputs require the complete physical frame alone. Partial frames and
+mixed physical/base forms are refused. Complete informative frames use the same admitted
+factor as the forward law, retaining addressed null coordinates. Singular joint-frame
+consistency requires an exact represented forward witness for the complete supplied
+frame; a rounded inverse without that witness remains unresolved. An EPS proximity check
+does not establish external support. Wholly deterministic compatible frames retain all
+addressed coordinates. A frame mixing informative and noninformative correlated
+coordinates requires deferred latent completion and is invalid. Named base overrides can
+instead use the forward transform. Supplying a value never makes it observed by a
+policy.
+
+An explicit fixed or admitted runtime correlation matrix that is exactly identity uses
+the independent rules. The proof uses the current represented matrix, without an
+epsilon, and is checked again when runtime correlation changes. A genuinely nonidentity
+group, including a block-diagonal group, retains the complete-group physical-input
+restriction; this interface does not perform component completion.
+
+The current scalar draw producer returns exact supplied physical bits, addressed and
+held independent bases, producing parameters/inputs, recovery errors, and mandatory
+validity. Public entry/path routing and cross-regime custody must bind those records
+before accepting them as model inputs; the tags alone do not authorize a new simulation
+input route.
+
 ## Validity and signed provenance
 
 `Realisation` is a JAX-compatible tuple of physical values, joint weights and a scalar

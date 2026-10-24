@@ -3258,6 +3258,8 @@ def test_current_iid_adapter_contract_preserves_canonical_decision_transport() -
 
     trees = {
         "src/_lcm/current_iid.py": _parse("src/_lcm/current_iid.py"),
+        "src/lcm/shocks.py": _parse("src/lcm/shocks.py"),
+        "src/_lcm/shock_overrides.py": _parse("src/_lcm/shock_overrides.py"),
         "src/_lcm/simulation/current_iid.py": _parse(
             "src/_lcm/simulation/current_iid.py"
         ),
@@ -3280,6 +3282,18 @@ def test_current_iid_adapter_contract_preserves_canonical_decision_transport() -
 
 
 _CURRENT_IID_ADAPTER_MUTATIONS = (
+    (
+        "missing_override_callable_proof",
+        "src/_lcm/shock_overrides.py",
+        "def apply_overrides(",
+        "def unavailable_override_proof(",
+    ),
+    (
+        "missing_factor_callable_proof",
+        "src/lcm/shocks.py",
+        "def _correlation_factor(",
+        "def _unavailable_factor_proof(",
+    ),
     (
         "omit_dense_wrap",
         "src/_lcm/regime_building/max_Q_over_a.py",
@@ -3322,8 +3336,8 @@ _CURRENT_IID_ADAPTER_MUTATIONS = (
     (
         "omit_replay_status",
         "src/_lcm/current_iid.py",
-        "return index, value, physical, ~valid",
-        "return index, value, physical, False",
+        "return index, value, dict(physical), ~valid",
+        "return index, value, dict(physical), False",
     ),
     (
         "omit_publication_status",
@@ -3352,6 +3366,8 @@ def test_current_iid_adapter_rejects_rewiring(
         path: _parse(path)
         for path in (
             "src/_lcm/current_iid.py",
+            "src/lcm/shocks.py",
+            "src/_lcm/shock_overrides.py",
             "src/_lcm/simulation/current_iid.py",
             "src/_lcm/regime_building/max_Q_over_a.py",
             "src/_lcm/regime_building/processing.py",
@@ -3369,19 +3385,23 @@ def test_current_iid_adapter_rejects_rewiring(
     assert direct_flow.current_iid_adapter_errors(trees=trees), name
 
 
-def test_current_iid_adapter_requires_implementation_proof() -> None:
-
+@pytest.mark.parametrize(
+    "source",
+    ["src/_lcm/current_iid.py", "src/lcm/shocks.py", "src/_lcm/shock_overrides.py"],
+)
+def test_current_iid_adapter_requires_implementation_proof(
+    *, source: direct_flow.SourcePath
+) -> None:
     trees = {path: _parse(path) for path in direct_flow._CERTIFIED_CORRIDOR_SOURCES}
     assert direct_flow.current_iid_adapter_errors(trees=trees) == []
-    del trees["src/_lcm/current_iid.py"]
+    del trees[source]
     assert (
-        "current IID adapter: missing source src/_lcm/current_iid.py"
+        f"current IID adapter: missing source {source}"
         in direct_flow.current_iid_adapter_errors(trees=trees)
     )
 
 
 def test_current_iid_projection_does_not_change_unrelated_ast() -> None:
-
     tree = ast.parse("def unrelated(x):\n    return x + 1")
     projected = direct_flow._candidate_value_projection(tree)
     assert ast.dump(projected, include_attributes=False) == ast.dump(
