@@ -346,6 +346,53 @@ class CurrentIIDPlan:
             enforce=False,
         )
 
+    def realise_nodes(
+        self,
+        *,
+        arguments: Mapping[ReferenceName, QAndFArg],
+        group_params: Mapping[ShockGroupName, Mapping[ReferenceName, LawValue]],
+        node_operands: NodeOperands,
+        indices: IntND,
+    ) -> tuple[Mapping[ShockName, FloatND | IntND], FloatND, ScalarBool]:
+        """Expose the same physical joint rows, factors and mandatory law status.
+
+        Query consumers retain node-level action identities. Ordinary integration
+        consumes this same realization before reducing its selected values.
+        """
+        physical: dict[ShockName, FloatND | IntND] = {}
+        factors = []
+        valid = jnp.asarray(a=True, dtype=jnp.bool_)
+        for column, (name, binding, fixed_nodes) in enumerate(self.bindings):
+            operands = node_operands[name]
+            nodes = replace(
+                fixed_nodes,
+                base_nodes=cast("FloatND", operands["base"]),
+                weights=cast("FloatND", operands["weights"]),
+                discrete_codes=cast("Mapping[ShockName, IntND]", operands["codes"]),
+            )
+            supplied = group_params[name]
+            params = {
+                key: value
+                for key, value in supplied.items()
+                if key != CORRELATION_SUPPORT_ARGUMENT
+            }
+            inputs = _law_inputs(binding=binding, arguments=arguments, params=params)
+            realised, group_factors = binding.group._realise(  # noqa: SLF001 - shared internal law kernel
+                base_nodes=nodes.base_nodes,
+                nodes=nodes,
+                params=params,
+                inputs=inputs,
+                scalar_cell_group=name,
+                admitted_correlation_support=cast(
+                    "BoolND | None", supplied.get(CORRELATION_SUPPORT_ARGUMENT)
+                ),
+            )
+            row = indices[:, column]
+            physical.update({key: value[row] for key, value in realised.values.items()})
+            factors.extend(factor[row] for factor in group_factors)
+            valid &= realised.valid & law_input_validity(binding=binding, inputs=inputs)
+        return MappingProxyType(physical), jnp.stack(factors), valid
+
 
 @dataclass(frozen=True, kw_only=True)
 class _CurrentIIDExpectation:
@@ -376,42 +423,15 @@ class _CurrentIIDExpectation:
             }
         }
         indices = cast("IntND", kwargs[CURRENT_IID_ROWS_ARGUMENT])
-        physical: dict[ShockName, FloatND | IntND] = {}
-        factors = []
-        valid = jnp.asarray(a=True, dtype=jnp.bool_)
-        for column, (name, binding, fixed_nodes) in enumerate(self.plan.bindings):
-            operands = node_operands[name]
-            nodes = replace(
-                fixed_nodes,
-                base_nodes=cast("FloatND", operands["base"]),
-                weights=cast("FloatND", operands["weights"]),
-                discrete_codes=cast("Mapping[ShockName, IntND]", operands["codes"]),
-            )
-            supplied = group_params[name]
-            params = {
-                key: value
-                for key, value in supplied.items()
-                if key != CORRELATION_SUPPORT_ARGUMENT
-            }
-            inputs = _law_inputs(binding=binding, arguments=arguments, params=params)
-            realised, group_factors = binding.group._realise(  # noqa: SLF001 - shared internal law kernel
-                base_nodes=nodes.base_nodes,
-                nodes=nodes,
-                params=params,
-                inputs=inputs,
-                scalar_cell_group=name,
-                admitted_correlation_support=cast(
-                    "BoolND | None", supplied.get(CORRELATION_SUPPORT_ARGUMENT)
-                ),
-            )
-            row = indices[:, column]
-            physical.update({key: value[row] for key, value in realised.values.items()})
-            factors.extend(factor[row] for factor in group_factors)
-            valid &= realised.valid & law_input_validity(binding=binding, inputs=inputs)
+        physical, factor_array, valid = self.plan.realise_nodes(
+            arguments=arguments,
+            group_params=group_params,
+            node_operands=node_operands,
+            indices=indices,
+        )
         values, empty = jax.vmap(
             partial(_evaluate_node, function=self.function, arguments=arguments)
         )(physical)
-        factor_array = jnp.stack(factors)
         support = jnp.all(~is_represented_zero(factor_array), axis=0)
         terms = factored_weighted_term(factors=factor_array, values=values)
         return jnp.sum(terms), jnp.any(support & empty), ~valid
