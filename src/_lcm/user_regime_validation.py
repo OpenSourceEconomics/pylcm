@@ -473,6 +473,7 @@ def _reference_projection_free_param_errors(regime: Regime) -> tuple[str, ...]:
         | set(regime.decomposed_constraints)
         | set(regime.derived_categoricals)
         | {"period", "age"}
+        | {f"{name}_code" for name in _coded_variable_names(regime)}
     )
     return tuple(
         f"The projection of reference {ref_name!r} for state "
@@ -487,6 +488,23 @@ def _reference_projection_free_param_errors(regime: Regime) -> tuple[str, ...]:
         for arg in inspect.signature(func).parameters
         if arg not in supplied
     )
+
+
+def _coded_variable_names(regime: Regime) -> set[str]:
+    """Return the regime's variables whose code an argument `<name>_code` reads.
+
+    Those are its discrete states, actions and derived categoricals, and its
+    stochastic process states, on either side of `Phased`.
+    """
+    names: set[str] = set(regime.derived_categoricals)
+    for name, entry in {**dict(regime.states), **dict(regime.actions)}.items():
+        sides = (entry.solve, entry.simulate) if isinstance(entry, Phased) else (entry,)
+        if any(
+            isinstance(side, DiscreteGrid | _ContinuousStochasticProcess)
+            for side in sides
+        ):
+            names.add(name)
+    return names
 
 
 def _validate_gated_edges(*, regime: Regime, law: RegimeLaw) -> None:

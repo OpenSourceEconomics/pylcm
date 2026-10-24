@@ -8,13 +8,15 @@ code of the node it names. A value on no node becomes `MISSING_CAT_CODE`.
 
 An argument `<name>_code` of any discrete variable `<name>`, declared by values
 or by a category class, receives the code itself. For a category class the code
-is what `<name>` holds as well.
+is what `<name>` holds as well. A stochastic process state `<name>` holds the
+value of its node, and `<name>_code` receives that node's int32 position.
 
 The wrapper publishes `DiscreteState` for every decoded argument and encoded
 return, the annotation the engine's own nodes carry for codes, so the DAG sees
 one annotation per node whichever function names it.
 """
 
+import copy
 import dataclasses
 import inspect
 from collections.abc import Callable, Mapping
@@ -22,12 +24,14 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import cast, no_type_check
 
+import jax.numpy as jnp
 from dags import get_annotations, get_free_arguments
 
 from _lcm.constraints.ir import Condition
 from _lcm.gated_edge import GatedEdge
 from _lcm.grids import DiscreteGrid, Grid
 from _lcm.identity_transition import _IdentityTransition
+from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.processes.joint_normal import JointNormalIIDProcess
 from _lcm.regime_building.schedules import RegimeTransitionLaw
 from _lcm.regime_law import RegimeLaw, RegimeLaws
@@ -39,7 +43,7 @@ from lcm.collective import (
     ValueDependentConstraint,
 )
 from lcm.decoupled import Decoupled
-from lcm.exceptions import RegimeInitializationError
+from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.phased import Phased
 from lcm.regime import (
     ConstraintEntry,
@@ -59,6 +63,20 @@ from lcm.typing import StateOrActionName, UserFunction, ValueND
 
 _CODE_ANNOTATION = "DiscreteState"
 
+
+@dataclass(frozen=True)
+class UnreadableProcessCode:
+    """A process state whose node position a reading regime cannot supply."""
+
+    reason: str
+    """Why the reading regime has no node position to give."""
+
+
+# The grid a user function's argument is read through: a discrete grid, whose
+# code the engine holds, or the reading regime's process, whose node value the
+# engine holds.
+type AdapterGrid = DiscreteGrid | _ContinuousStochasticProcess | UnreadableProcessCode
+
 # The suffix of an argument that reads the code of a discrete variable.
 CODE_SUFFIX = "_code"
 
@@ -74,10 +92,20 @@ type AdaptableEntry = (
     | Mapping[str, JointTransition | Phased]
 )
 
-# The adapters built for one model: each authored function or age-specialized
-# marker and encoding grid (by identity) to the declaration and its adapter.
+# The adapters built for one model, keyed by every input of the adapter's
+# constructor: the authored function, the encoding grid, and each argument's
+# decoding grid, code variable and process grid (grids by identity). An equal key
+# means equal constructor inputs, so a shared adapter binds exactly as a fresh one.
+# An age-specialized marker is keyed by itself, its encoding grid and every grid
+# it binds; its adapted twin adapts each built function afresh.
 type AdapterMemo = dict[
-    tuple[int, int],
+    tuple[
+        int,
+        int,
+        tuple[tuple[str, int], ...],
+        tuple[tuple[str, str], ...],
+        tuple[tuple[str, int], ...],
+    ],
     tuple[UserFunction, ValueAdapter]
     | tuple[AgeSpecializedFunction, AgeSpecializedFunction],
 ]
@@ -167,12 +195,14 @@ def collect_adapter_grids(
     *,
     regimes: Mapping[RegimeName, UserRegime],
     derived_categoricals: Mapping[FunctionName, DiscreteGrid],
-) -> MappingProxyType[StateOrActionName, DiscreteGrid]:
+) -> MappingProxyType[StateOrActionName, AdapterGrid]:
     """Return the grid of every discrete variable a user function can read.
 
     A variable declared by its values maps to its value grid, which decodes and
     encodes it. Every other discrete variable maps to one of its category grids,
-    which only marks that `<name>_code` reads its code.
+    which only marks that `<name>_code` reads its code. A stochastic process
+    state maps to a declaration of its process, on whose nodes `<name>_code`
+    reads the position.
 
     Raises:
         RegimeInitializationError: If a regime declares a variable, function or
@@ -183,14 +213,163 @@ def collect_adapter_grids(
     value_grids = collect_value_grids(
         regimes=regimes, derived_categoricals=derived_categoricals
     )
-    grids = dict(
-        _declared_discrete_grids(
-            regimes=regimes, derived_categoricals=derived_categoricals
-        )
-    )
+    grids: dict[StateOrActionName, AdapterGrid] = {
+        **_declared_process_grids(regimes=regimes),
+        **dict(
+            _declared_discrete_grids(
+                regimes=regimes, derived_categoricals=derived_categoricals
+            )
+        ),
+    }
     _fail_if_a_name_spells_a_code(regimes=regimes, discrete_names=frozenset(grids))
     _fail_if_a_condition_reads_a_code(regimes=regimes, discrete_names=frozenset(grids))
     return MappingProxyType({**grids, **value_grids})
+
+
+def bind_reading_regimes(
+    *,
+    value_grids: Mapping[StateOrActionName, AdapterGrid],
+    regimes: Mapping[RegimeName, UserRegime],
+) -> MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, AdapterGrid]]:
+    """Return, per reading regime, `value_grids` with each process bound to its own.
+
+    A `<name>_code` argument reads the position of the value the reading regime
+    holds, so its nodes are that regime's. Where the regime holds no process of
+    that name, the name maps to an `UnreadableProcessCode`, which refuses a code
+    read.
+
+    Each regime binds its own copy of a process, so an adapter's process says
+    which regime reads it, even where regimes share one declaration.
+
+    A name that is a process in one regime and a discrete variable elsewhere is
+    bound by the reading regime's own declaration: where the regime holds the
+    process, its value is a node and `<name>_code` its position; elsewhere the
+    name keeps its discrete grid, whose `<name>_code` is the category code.
+    """
+    process_names = tuple(_declared_process_grids(regimes=regimes))
+    return MappingProxyType(
+        {
+            regime_name: MappingProxyType(
+                {
+                    **value_grids,
+                    **{
+                        name: _local_binding(
+                            regime=regime, name=name, global_grid=value_grids[name]
+                        )
+                        for name in process_names
+                    },
+                }
+            )
+            for regime_name, regime in regimes.items()
+        }
+    )
+
+
+def process_code_reads(
+    *,
+    value_grids_by_regime: Mapping[RegimeName, Mapping[StateOrActionName, AdapterGrid]],
+    adapters: AdapterMemo,
+) -> MappingProxyType[
+    RegimeName, MappingProxyType[StateOrActionName, _ContinuousStochasticProcess]
+]:
+    """Return, per regime, the process states some adapter reads the position of.
+
+    A regime's code readers are its own functions and the gates, fallbacks and
+    references of the gated edges landing in it; each binds that regime's copy.
+    """
+    # An age-specialized marker's built functions read no position.
+    read = {
+        id(process)
+        for _, adapter in adapters.values()
+        if isinstance(adapter, ValueAdapter)
+        for process in adapter.positions.values()
+    }
+    return MappingProxyType(
+        {
+            regime_name: MappingProxyType(
+                {
+                    name: grid
+                    for name, grid in grids.items()
+                    if isinstance(grid, _ContinuousStochasticProcess)
+                    and id(grid) in read
+                }
+            )
+            for regime_name, grids in value_grids_by_regime.items()
+        }
+    )
+
+
+def fail_if_a_fixed_entry_is_off_a_read_node(
+    *,
+    regimes: Mapping[RegimeName, UserRegime],
+    process_code_reads: Mapping[
+        RegimeName, Mapping[StateOrActionName, _ContinuousStochasticProcess]
+    ],
+) -> None:
+    """Refuse an entry law that names one value off the nodes its target reads.
+
+    A law that reads nothing has one value, known while the model builds. A
+    target reading `<name>_code` takes the position of a node, so that value
+    must be one of the target's nodes. A law that reads states is checked where
+    the simulation draws it.
+
+    Raises:
+        ModelInitializationError: If such a law names a value on none of the
+            target's nodes.
+
+    """
+    for source, regime in regimes.items():
+        for name, entry in regime.state_transitions.items():
+            if not isinstance(entry, Mapping):
+                continue
+            for target, law in entry.items():
+                process = process_code_reads.get(target, {}).get(name)
+                if (
+                    process is None
+                    or not callable(law)
+                    or isinstance(law, StochasticTransition | Phased)
+                    or [arg for arg in get_annotations(law) if arg != "return"]
+                ):
+                    continue
+                nodes = jnp.asarray(process.to_jax())
+                value = jnp.asarray(law(), dtype=nodes.dtype)
+                if not bool(jnp.any(value == nodes)):
+                    raise ModelInitializationError(
+                        f"The entry law of '{name}' from regime '{source}' into "
+                        f"regime '{target}' names {float(value)}, off the process's "
+                        f"nodes {nodes.tolist()}: '{target}' reads its node "
+                        f"position `{name}{CODE_SUFFIX}`, which exists only at a "
+                        "node. Enter at one of its nodes."
+                    )
+
+
+def _local_binding(
+    *, regime: UserRegime, name: StateOrActionName, global_grid: AdapterGrid
+) -> AdapterGrid:
+    """Return the grid `name` is read through in `regime`, by its own declaration."""
+    local = _local_process(regime=regime, name=name)
+    if isinstance(local, UnreadableProcessCode) and isinstance(
+        global_grid, DiscreteGrid
+    ):
+        return global_grid
+    return local
+
+
+def _local_process(
+    *, regime: UserRegime, name: StateOrActionName
+) -> _ContinuousStochasticProcess | UnreadableProcessCode:
+    """Return a copy of the process `regime` holds under `name`, or why it has none."""
+    entry = regime.states.get(name)
+    sides = (entry.solve, entry.simulate) if isinstance(entry, Phased) else (entry,)
+    processes = [
+        side for side in sides if isinstance(side, _ContinuousStochasticProcess)
+    ]
+    if not processes or len(processes) != len(sides):
+        return UnreadableProcessCode(reason=f"the regime holds no process `{name}`")
+    # Validation refuses two node-drawing phases with different laws, so the
+    # phases of a process that stands on nodes share its nodes.
+    unsafe = [process for process in processes if not _stands_on_nodes(process)]
+    return copy.copy(unsafe[0] if unsafe else processes[0])
 
 
 def declared_discrete_names(
@@ -198,13 +377,49 @@ def declared_discrete_names(
     regimes: Mapping[RegimeName, UserRegime],
     derived_categoricals: Mapping[FunctionName, DiscreteGrid],
 ) -> frozenset[StateOrActionName]:
-    """Return the name of every declared discrete variable, whose code is readable."""
+    """Return the name of every variable whose code `<name>_code` is readable.
+
+    Those are the declared discrete variables and the stochastic process states.
+    """
     return frozenset(
-        name
-        for name, _ in _declared_discrete_grids(
-            regimes=regimes, derived_categoricals=derived_categoricals
-        )
+        {
+            *(
+                name
+                for name, _ in _declared_discrete_grids(
+                    regimes=regimes, derived_categoricals=derived_categoricals
+                )
+            ),
+            *_declared_process_grids(regimes=regimes),
+        }
     )
+
+
+def _declared_process_grids(
+    *, regimes: Mapping[RegimeName, UserRegime]
+) -> dict[StateOrActionName, _ContinuousStochasticProcess]:
+    """Return one declaration per process state name, both sides of `Phased`.
+
+    A `<name>_code` read takes the node position from the value the process
+    holds, which is exact only where that value is a node, so a declaration
+    that simulates off its nodes or lacks fixed nodes is the one returned.
+    """
+    found: dict[StateOrActionName, _ContinuousStochasticProcess] = {}
+    for regime in regimes.values():
+        for name, entry in regime.states.items():
+            sides = (
+                (entry.solve, entry.simulate) if isinstance(entry, Phased) else (entry,)
+            )
+            for side in sides:
+                if not isinstance(side, _ContinuousStochasticProcess):
+                    continue
+                if name not in found or not _stands_on_nodes(side):
+                    found[name] = side
+    return found
+
+
+def _stands_on_nodes(process: _ContinuousStochasticProcess) -> bool:
+    """Whether every value the process holds is one of its fixed nodes."""
+    return process.is_fully_specified and process.simulate_draws == "nodes"
 
 
 def _declared_discrete_grids(
@@ -292,7 +507,7 @@ def _value_grid_key(
 def adapt_user_function(
     *,
     func: UserFunction,
-    value_grids: Mapping[StateOrActionName, DiscreteGrid],
+    value_grids: Mapping[StateOrActionName, AdapterGrid],
     encode: DiscreteGrid | None,
     adapters: AdapterMemo | None = None,
 ) -> UserFunction:
@@ -307,7 +522,8 @@ def adapt_user_function(
         encode: The grid whose code the function's returned value names, for a
             deterministic law or a derived categorical of a value grid.
         adapters: The adapters already built for this model, so one authored
-            function with one encoding gets one adapter wherever it appears.
+            function gets one adapter wherever it reads the same grids with the
+            same encoding.
 
     Returns:
         The function the engine calls with codes.
@@ -319,7 +535,7 @@ def adapt_user_function(
         func = func.func
     reads = _read_names(func)
     decoded = {
-        name: value_grids[grid_name]
+        name: cast("DiscreteGrid", value_grids[grid_name])
         for name in reads
         if (grid_name := _value_grid_name(name=name, value_grids=value_grids))
         is not None
@@ -331,9 +547,27 @@ def adapt_user_function(
         and name.removesuffix(CODE_SUFFIX) in value_grids
         and name not in value_grids
     }
+    positions = {
+        name: grid
+        for name, variable in codes.items()
+        if isinstance(
+            grid := value_grids[variable],
+            _ContinuousStochasticProcess | UnreadableProcessCode,
+        )
+    }
     if not decoded and not codes and encode is None:
         return func
-    key = (id(func), id(encode))
+    _fail_if_a_position_has_no_node(func=func, positions=positions, codes=codes)
+    # The key covers every constructor input, so an equal key means equal
+    # constructor inputs: one callable read in two regimes binds each regime's own
+    # grids unless both regimes bind the same ones.
+    key = (
+        id(func),
+        id(encode),
+        tuple(sorted((name, id(grid)) for name, grid in decoded.items())),
+        tuple(sorted(codes.items())),
+        tuple(sorted((name, id(grid)) for name, grid in positions.items())),
+    )
     if adapters is not None and key in adapters:
         return adapters[key][1]
     _fail_if_an_array_is_indexed_by_a_value(func=func, decoded=decoded)
@@ -341,10 +575,14 @@ def adapt_user_function(
         func=func,
         decoded=MappingProxyType(decoded),
         codes=MappingProxyType(codes),
+        positions=MappingProxyType(
+            cast("dict[str, _ContinuousStochasticProcess]", positions)
+        ),
         encode=encode,
     )
     if adapters is not None:
-        # The function is kept with its adapter, so its id cannot be reused.
+        # The adapter holds the function and every keyed grid, so no keyed id
+        # can be reused while the memo lives.
         adapters[key] = (func, adapter)
     return adapter
 
@@ -352,20 +590,27 @@ def adapt_user_function(
 def adapt_regime_laws(
     *,
     laws: RegimeLaws,
-    value_grids: Mapping[StateOrActionName, DiscreteGrid],
+    value_grids_by_regime: Mapping[RegimeName, Mapping[StateOrActionName, AdapterGrid]],
     adapters: AdapterMemo | None = None,
 ) -> MappingProxyType[RegimeName, RegimeLaw]:
     """Adapt every regime transition law to read the values of value grids.
 
     A law still returns a regime code or probabilities over regimes, so nothing
-    it returns is encoded. A regime name and a terminal law read nothing.
+    it returns is encoded. A regime name and a terminal law read nothing. The
+    transition reads the source regime's states; a gated edge's gate, fallbacks
+    and references read the states of the target it lands in.
     """
     adapters = {} if adapters is None else adapters
     return MappingProxyType(
         {
             name: law
-            if not value_grids or law.terminal
-            else _adapt_regime_law(law=law, value_grids=value_grids, adapters=adapters)
+            if not value_grids_by_regime[name] or law.terminal
+            else _adapt_regime_law(
+                law=law,
+                source=name,
+                value_grids_by_regime=value_grids_by_regime,
+                adapters=adapters,
+            )
             for name, law in laws.items()
         }
     )
@@ -374,7 +619,8 @@ def adapt_regime_laws(
 def _adapt_regime_law(
     *,
     law: RegimeLaw,
-    value_grids: Mapping[StateOrActionName, DiscreteGrid],
+    source: RegimeName,
+    value_grids_by_regime: Mapping[RegimeName, Mapping[StateOrActionName, AdapterGrid]],
     adapters: AdapterMemo,
 ) -> RegimeLaw:
     """Adapt one law's transition and gated edges; keep the law if neither changes."""
@@ -385,14 +631,18 @@ def _adapt_regime_law(
             "RegimeTransitionLaw",
             adapt_entry(
                 entry=cast("AdaptableEntry", law.transition),
-                value_grids=value_grids,
+                value_grids=value_grids_by_regime[source],
                 encode=None,
                 adapters=adapters,
             ),
         )
     )
     gated_edges = {
-        target: _adapt_gated_edge(edge=edge, value_grids=value_grids, adapters=adapters)
+        target: _adapt_gated_edge(
+            edge=edge,
+            value_grids=value_grids_by_regime[target],
+            adapters=adapters,
+        )
         for target, edge in law.gated_edges.items()
     }
     if transition is law.transition and all(
@@ -408,7 +658,7 @@ def adapt_collective_utility(
     *,
     declaration: CollectiveUtility,
     engine_functions: Mapping[FunctionName, UserFunction | Phased | None],
-    value_grids: Mapping[StateOrActionName, DiscreteGrid],
+    value_grids: Mapping[StateOrActionName, AdapterGrid],
     adapters: AdapterMemo,
 ) -> CollectiveUtility:
     """Return the household declaration with the bodies the engine runs.
@@ -448,7 +698,7 @@ def adapt_collective_utility(
 def _adapt_gated_edge(
     *,
     edge: GatedEdge,
-    value_grids: Mapping[StateOrActionName, DiscreteGrid],
+    value_grids: Mapping[StateOrActionName, AdapterGrid],
     adapters: AdapterMemo,
 ) -> GatedEdge:
     """Adapt a gated edge's gate, its routes' fallbacks and its references.
@@ -495,7 +745,7 @@ def _adapt_gated_edge(
 def _adapt_reference(
     *,
     reference: ProjectedRegimeValue | Phased,
-    value_grids: Mapping[StateOrActionName, DiscreteGrid],
+    value_grids: Mapping[StateOrActionName, AdapterGrid],
     adapters: AdapterMemo,
 ) -> ProjectedRegimeValue | Phased:
     """Adapt a projection: it reads values and returns each value-grid state's code.
@@ -528,7 +778,7 @@ def _adapt_reference(
 def adapt_entry(  # noqa: PLR0911
     *,
     entry: AdaptableEntry,
-    value_grids: Mapping[StateOrActionName, DiscreteGrid],
+    value_grids: Mapping[StateOrActionName, AdapterGrid],
     encode: DiscreteGrid | None,
     adapters: AdapterMemo | None = None,
 ) -> AdaptableEntry:
@@ -610,7 +860,7 @@ def adapt_entry(  # noqa: PLR0911
 def _adapt_phased(
     *,
     entry: Phased,
-    value_grids: Mapping[StateOrActionName, DiscreteGrid],
+    value_grids: Mapping[StateOrActionName, AdapterGrid],
     encode: DiscreteGrid | None,
     adapters: AdapterMemo,
 ) -> Phased:
@@ -629,7 +879,7 @@ def _adapt_phased(
 def _adapt_age_specialized(
     *,
     entry: AgeSpecializedFunction,
-    value_grids: Mapping[StateOrActionName, DiscreteGrid],
+    value_grids: Mapping[StateOrActionName, AdapterGrid],
     encode: DiscreteGrid | None,
     adapters: AdapterMemo,
 ) -> AgeSpecializedFunction:
@@ -637,9 +887,17 @@ def _adapt_age_specialized(
 
     The marker's contract gives every age's function one call signature, so
     every age is adapted alike and the signature key carries over unchanged. One
-    marker gets one adapted marker, so a marker shared by both phases stays one.
+    marker gets one adapted marker per encoding and set of grids, so a marker
+    shared by both phases stays one and a marker read in two regimes binds each
+    regime's own grids.
     """
-    key = (id(entry), id(encode))
+    key = (
+        id(entry),
+        id(encode),
+        tuple(sorted((name, id(grid)) for name, grid in value_grids.items())),
+        (),
+        (),
+    )
     if key in adapters:
         return cast("AgeSpecializedFunction", adapters[key][1])
     adapted = dataclasses.replace(
@@ -650,7 +908,8 @@ def _adapt_age_specialized(
             encode=encode,
         ),
     )
-    # The marker is kept with its adapted twin, so its id cannot be reused.
+    # The marker is kept with its adapted twin, which holds every keyed grid, so
+    # no keyed id can be reused while the memo lives.
     adapters[key] = (entry, adapted)
     return adapted
 
@@ -665,21 +924,32 @@ class AdaptedBuild:
 
     build: Callable[[float], UserFunction]
     """The marker's own factory, which builds functions that read values."""
-    value_grids: MappingProxyType[StateOrActionName, DiscreteGrid]
-    """The grid of every discrete variable a built function can read."""
+    value_grids: MappingProxyType[StateOrActionName, AdapterGrid]
+    """The grid of every variable a built function can read the value or code of."""
     encode: DiscreteGrid | None
     """The grid whose code a built function's returned value names, if any."""
 
     def __call__(self, age: float) -> UserFunction:
-        return adapt_user_function(
+        func = adapt_user_function(
             func=self.build(age), value_grids=self.value_grids, encode=self.encode
         )
+        # The process states whose positions simulation tracks are collected
+        # from the adapters built with the model, before any marker is built.
+        if isinstance(func, ValueAdapter) and func.positions:
+            reads = ", ".join(f"`{name}`" for name in sorted(func.positions))
+            name = getattr(func.func, "__name__", type(func.func).__name__)
+            raise RegimeInitializationError(
+                f"The age-specialized function '{name}' reads {reads}, "
+                "the node position of a process state, which an age-specialized "
+                "function cannot read. Read it in a plain function."
+            )
+        return func
 
 
 def _adapt_value_dependent_constraint(
     *,
     entry: ValueDependentConstraint,
-    value_grids: Mapping[StateOrActionName, DiscreteGrid],
+    value_grids: Mapping[StateOrActionName, AdapterGrid],
     adapters: AdapterMemo,
 ) -> ValueDependentConstraint:
     """Adapt the predicate and the projections, keeping the entry if neither changes."""
@@ -705,7 +975,7 @@ def _adapt_value_dependent_constraint(
 def _adapt_joint(
     *,
     entry: JointTransition,
-    value_grids: Mapping[StateOrActionName, DiscreteGrid],
+    value_grids: Mapping[StateOrActionName, AdapterGrid],
     adapters: AdapterMemo,
 ) -> JointTransition:
     """Adapt a joint lottery: each output returns its state's code.
@@ -752,7 +1022,7 @@ def _adapt_joint(
 def _adapt_decoupled(
     *,
     entry: Decoupled,
-    value_grids: Mapping[StateOrActionName, DiscreteGrid],
+    value_grids: Mapping[StateOrActionName, AdapterGrid],
     adapters: AdapterMemo,
 ) -> Decoupled:
     """Adapt the objective and the value, keeping the entry if neither changes."""
@@ -785,6 +1055,10 @@ class ValueAdapter:
     """The grid of each argument the function reads as a value."""
     codes: MappingProxyType[str, StateOrActionName] = MappingProxyType({})
     """The variable each `<name>_code` argument reads the code of."""
+    positions: MappingProxyType[str, _ContinuousStochasticProcess] = MappingProxyType(
+        {}
+    )
+    """The process of each `<name>_code` argument whose variable holds a node value."""
     encode: DiscreteGrid | None
     """The grid whose code the returned value names, if any."""
 
@@ -805,7 +1079,14 @@ class ValueAdapter:
         # argument as the variable `<name>` whose code the engine holds.
         free = _read_names(self.func)
         object.__setattr__(self, "_reads", free)
-        code_reads = {*self.decoded, *self.codes.values()}
+        code_reads = {
+            *self.decoded,
+            *(
+                variable
+                for name, variable in self.codes.items()
+                if name not in self.positions
+            ),
+        }
         annotations = {
             self.codes.get(name, name): _CODE_ANNOTATION
             if self.codes.get(name, name) in code_reads
@@ -844,7 +1125,11 @@ class ValueAdapter:
     def __call__(self, **kwargs: EconFunctionArg) -> ValueND:
         result = self.func(
             **{
-                name: kwargs[self.codes[name]]
+                name: _node_position(
+                    process=self.positions[name], value=kwargs[self.codes[name]]
+                )
+                if name in self.positions
+                else kwargs[self.codes[name]]
                 if name in self.codes
                 else self.decoded[name].decode(kwargs[name])
                 if name in self.decoded
@@ -855,28 +1140,63 @@ class ValueAdapter:
         return result if self.encode is None else self.encode.encode(result)
 
 
+def _node_position(*, process: _ContinuousStochasticProcess, value: ValueND) -> ValueND:
+    """Return the int32 position of the node a process value stands on."""
+    coordinate = jnp.clip(process.get_coordinate(value), 0, process.n_points - 1)
+    return jnp.rint(coordinate).astype(jnp.int32)
+
+
+def _fail_if_a_position_has_no_node(
+    *,
+    func: UserFunction,
+    positions: Mapping[str, _ContinuousStochasticProcess | UnreadableProcessCode],
+    codes: Mapping[str, StateOrActionName],
+) -> None:
+    """Raise where `func` reads the node position of a process that may hold none.
+
+    A process holds a node value while the model solves. A simulation drawing
+    from the continuous law realises values between the nodes, and a process
+    parameterized at runtime has no nodes while the model builds.
+    """
+    problems = [
+        f"`{name}` ({process.reason})"
+        if isinstance(process, UnreadableProcessCode)
+        else f"`{name}` (fix the parameters of `{codes[name]}` at construction)"
+        if not process.is_fully_specified
+        else f"`{name}` (declare `{codes[name]}` with `simulate_draws='nodes'`)"
+        for name, process in positions.items()
+        if isinstance(process, UnreadableProcessCode) or not _stands_on_nodes(process)
+    ]
+    if problems:
+        func_name = getattr(func, "__name__", type(func).__name__)
+        raise RegimeInitializationError(
+            f"'{func_name}' reads the node position of a process that does not "
+            f"always stand on a node: {', '.join(problems)}."
+        )
+
+
 def _read_names(func: UserFunction) -> tuple[str, ...]:
     """Return the names a user function reads, without a `partial`'s fixed ones."""
     return tuple(get_free_arguments(func))
 
 
 def _value_grid_name(
-    *, name: str, value_grids: Mapping[StateOrActionName, DiscreteGrid]
+    *, name: str, value_grids: Mapping[StateOrActionName, AdapterGrid]
 ) -> StateOrActionName | None:
     """Return the value grid an argument reads: `x` or the next state `next_x`."""
     for grid_name in (name, name.removeprefix("next_")):
         grid = value_grids.get(grid_name)
-        if grid is not None and grid.values is not None:
+        if isinstance(grid, DiscreteGrid) and grid.values is not None:
             return grid_name
     return None
 
 
 def encoding_grid(
-    *, value_grids: Mapping[StateOrActionName, DiscreteGrid], name: str
+    *, value_grids: Mapping[StateOrActionName, AdapterGrid], name: str
 ) -> DiscreteGrid | None:
     """Return the value grid a returned value of `name` is encoded on, if any."""
     grid = value_grids.get(name)
-    return grid if grid is not None and grid.values is not None else None
+    return grid if isinstance(grid, DiscreteGrid) and grid.values is not None else None
 
 
 def _fail_if_an_array_is_indexed_by_a_value(

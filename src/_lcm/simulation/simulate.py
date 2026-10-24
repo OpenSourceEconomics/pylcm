@@ -46,6 +46,7 @@ from _lcm.engine import (
 )
 from _lcm.grids import ContinuousGrid, DiscreteGrid
 from _lcm.params.edges import regime_kernel_params
+from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.ndimage import map_coordinates
 from _lcm.regime_building.Q_and_F import (
@@ -137,7 +138,11 @@ from _lcm.simulation.residency import (
     union_buffer_footprints,
 )
 from _lcm.simulation.runtime import SimulationRuntime, execute_simulation_program
-from _lcm.simulation.shock_paths import shock_path_values, supplied_shock_argument_names
+from _lcm.simulation.shock_paths import (
+    fail_if_a_held_process_code_is_off_node,
+    shock_path_values,
+    supplied_shock_argument_names,
+)
 from _lcm.simulation.subject_groups import (
     ComponentValueSource,
     SubjectGroupPlan,
@@ -254,6 +259,9 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
     prepared_chunks: PreparedSimulationChunks | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
     shock_paths: Mapping[StateName, np.ndarray] = MappingProxyType({}),
+    process_code_reads: Mapping[
+        RegimeName, Mapping[StateName, _ContinuousStochasticProcess]
+    ] = MappingProxyType({}),
     call_id: CallId | None = None,
     component_values: ComponentValueSource | None = None,
 ) -> SimulationResult:
@@ -310,6 +318,9 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
             and its automatic-solve path threads them through directly.
         device_ids: The model's device ids, ascending. Empty names every
             device JAX reports.
+        process_code_reads: Per regime, the process states whose node position
+            its readers take. A household holding one off the regime's nodes is
+            refused before the regime decides or a gate reads it.
         call_id: Identifier of the public call whose phase records the setup,
             each chunk, the completion wait and the result assembly are
             written under, or `None` to write none.
@@ -639,6 +650,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
                         call_inputs=call_inputs,
                         process_grid_resolver=process_grid_resolver,
                         shock_paths=shock_paths,
+                        process_code_reads=process_code_reads,
                         dissolution_records=dissolution_records,
                     )
                     if host_device is not None:
@@ -843,6 +855,9 @@ def _simulate_subject_chunk(  # noqa: PLR0915
     ] = MappingProxyType({}),
     process_grid_resolver: ProcessGridResolver | None = None,
     shock_paths: Mapping[StateName, np.ndarray] = MappingProxyType({}),
+    process_code_reads: Mapping[
+        RegimeName, Mapping[StateName, _ContinuousStochasticProcess]
+    ] = MappingProxyType({}),
     dissolution_records: list[DissolutionFallback] | None = None,
 ) -> dict[RegimeName, dict[int, PeriodRegimeSimulationData]]:
     """Run the full period loop for one chunk of subjects.
@@ -1094,6 +1109,7 @@ def _simulate_subject_chunk(  # noqa: PLR0915
                 source_roles=source_roles,
                 entered_through=entered_through,
                 new_entered_through=new_entered_through,
+                process_code_reads=process_code_reads,
                 dissolution_records=dissolution_records,
                 ran_this_period=tuple(ran_this_period),
             )
@@ -1683,6 +1699,9 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
     source_roles: Int1D | None = None,
     entered_through: Int1D | None = None,
     new_entered_through: Int1D | None = None,
+    process_code_reads: Mapping[
+        RegimeName, Mapping[StateName, _ContinuousStochasticProcess]
+    ] = MappingProxyType({}),
     dissolution_records: list[DissolutionFallback] | None = None,
     ran_this_period: tuple[RegimeName, ...] = (),
 ) -> tuple[
@@ -1762,6 +1781,8 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
         new_entered_through: The next period's open-branch entries as
             accumulated by the regimes already routed this period, written into
             for this regime's rows.
+        process_code_reads: Per regime, the process states whose node position
+            its readers take.
         dissolution_records: Collects one record per rerouted subject when
             runtime checks are on.
         ran_this_period: The regimes that already ran this period. A row whose
@@ -1785,6 +1806,21 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
         regime_id=regime_names_to_ids[regime_name],
         memory=memory,
     )
+    genuine = _genuine_rows(
+        subject_slice=subject_slice,
+        n_real=n_subjects if original_n_subjects is None else original_n_subjects,
+    )
+    # Whatever route brought a household here, the position it is read at must
+    # be a node of this regime. A regime reading no position transfers nothing.
+    coded = process_code_reads.get(regime_name, {})
+    if coded:
+        fail_if_a_held_process_code_is_off_node(
+            states=states[regime_name],
+            processes=coded,
+            holders=subject_ids_in_regime & genuine,
+            where=f"in regime '{regime_name}' at period {period}",
+            memory=memory,
+        )
 
     state_action_space = create_regime_state_action_space(
         regime=regime,
@@ -2043,6 +2079,15 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             # Rows whose route leads back into this regime decide again at
             # their projected state; their route is used up, so a row still
             # without a feasible action is refused below.
+            if redecide and coded:
+                fail_if_a_held_process_code_is_off_node(
+                    states=states[regime_name],
+                    processes=coded,
+                    holders=subject_ids_in_regime & genuine,
+                    where=f"projected by a dissolution route back into regime "
+                    f"'{regime_name}' at period {period}",
+                    memory=memory,
+                )
             if redecide:
                 state_action_space = create_regime_state_action_space(
                     regime=regime,
@@ -2197,6 +2242,19 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 ),
                 memory=memory,
             )
+        # A gate reads a target's node positions at the drawn states.
+        for target in realization_targets_next_period:
+            if process_code_reads.get(target):
+                fail_if_a_held_process_code_is_off_node(
+                    states=next_states.get(target, {}),
+                    processes=process_code_reads[target],
+                    holders=subject_ids_in_regime
+                    & genuine
+                    & (new_subject_regime_ids == regime_names_to_ids[target]),
+                    where=f"drawn from regime '{regime_name}' into regime "
+                    f"'{target}' at period {period}",
+                    memory=memory,
+                )
         # The value router's routing half. A gated
         # edge's target is always ALSO an ordinary declared transition
         # target, so `calculate_next_states` already computed candidate
