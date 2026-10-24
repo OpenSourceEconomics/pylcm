@@ -22,8 +22,6 @@ from lcm.exceptions import ShockDeclarationError
 from lcm.typing import FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
 
-pytestmark = pytest.mark.coverage(backends=("cpu",), precisions="both")
-
 
 @categorical(ordered=False)
 class Offer:
@@ -51,6 +49,7 @@ def _keys(*, group: sh.ShockGroup) -> Mapping[sh.ShockName, jax.Array]:
     return {name: jax.random.key(index + 31) for index, name in enumerate(group.shocks)}
 
 
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
 def test_typed_payloads_are_dynamic_leaves() -> None:
     """Base and physical inputs remain distinguishable without hiding their arrays."""
     assert (
@@ -69,6 +68,7 @@ def test_typed_payloads_are_dynamic_leaves() -> None:
         assert restored.values is payload
 
 
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
 @pytest.mark.parametrize("compiled", [False, True])
 def test_draw_frame_retains_named_bases_and_existing_action(*, compiled: bool) -> None:
     """An overridden base passes through the current law and preserves other draws."""
@@ -107,6 +107,7 @@ def test_draw_frame_retains_named_bases_and_existing_action(*, compiled: bool) -
     assert isinstance(frame.physical, MappingProxyType)
 
 
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
 @pytest.mark.parametrize(
     ("law", "physical", "base"),
     [
@@ -138,6 +139,7 @@ def test_independent_physical_inverse(
     np.testing.assert_array_equal(frame.recovery_error["eps"], reconstructed - supplied)
 
 
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
 @pytest.mark.parametrize(
     ("law", "physical"),
     [(sh.Normal(mu=2, sigma=0), 2.0), (sh.Uniform(start=2, stop=2), 2.0)],
@@ -157,6 +159,7 @@ def test_deterministic_physical_preserves_unresolved_base(
     np.testing.assert_array_equal(frame.held_bases["eps"], frame.addressed_bases["eps"])
 
 
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
 def test_complete_correlated_physical_frame_and_singular_support() -> None:
     """Complete physical frames recover joint bases and reject contradictory support."""
     for rho, physical, expected in (
@@ -206,6 +209,7 @@ def test_complete_correlated_physical_frame_and_singular_support() -> None:
             assert not bool(bad.valid)
 
 
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
 def test_partial_and_mixed_correlated_physical_refuse() -> None:
     """Correlated physical overrides require the complete frame alone."""
     group = sh.ShockGroup(
@@ -232,6 +236,7 @@ def test_partial_and_mixed_correlated_physical_refuse() -> None:
             )
 
 
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
 @pytest.mark.parametrize("value", [-0.1, 1.1, float("nan")])
 def test_uniform_base_rejects_outside_support(*, value: float) -> None:
     """Unit-uniform base overrides reject values outside the forward-law support."""
@@ -247,6 +252,7 @@ def test_uniform_base_rejects_outside_support(*, value: float) -> None:
     assert not bool(frame.valid)
 
 
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
 def test_discrete_physical_uses_addressed_interval_residual() -> None:
     """A category constrains its uniform base to its positive source interval."""
     group = sh.ShockGroup(
@@ -278,6 +284,7 @@ def test_discrete_physical_uses_addressed_interval_residual() -> None:
     assert not bool(rejected.valid)
 
 
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
 def test_correlated_noninformative_frame_preserves_or_refuses_latent_custody() -> None:
     """Wholly constant frames reveal nothing; mixed frames need deferred completion."""
     for second_scale, valid in ((0.0, True), (1.0, False)):
@@ -309,6 +316,7 @@ def test_correlated_noninformative_frame_preserves_or_refuses_latent_custody() -
                 )
 
 
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
 def test_original_wrapper_keeps_decision_physical_status_contract() -> None:
     """The ordinary wrapper consumes the shared frame with the same output layout."""
     group = sh.ShockGroup(
@@ -334,6 +342,7 @@ def test_original_wrapper_keeps_decision_physical_status_contract() -> None:
     assert not bool(result[3])
 
 
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
 def test_uniform_upper_endpoint_retains_forward_support() -> None:
     """Uniform's endpoint remains valid although categorical bases exclude it."""
     group = sh.ShockGroup(
@@ -367,6 +376,7 @@ def test_uniform_upper_endpoint_retains_forward_support() -> None:
     assert not bool(categorical_frame.valid)
 
 
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
 @pytest.mark.parametrize("base", [0.25, -0.4])
 def test_shifted_singular_physical_frame_requires_exact_recovered_witness(
     *, base: float
@@ -408,6 +418,7 @@ def test_shifted_singular_physical_frame_requires_exact_recovered_witness(
     np.testing.assert_allclose(frame.held_bases["x"], base, atol=10**-DECIMAL_PRECISION)
 
 
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
 def test_physical_frame_replays_under_target_law() -> None:
     """A mapped target law transforms the recovered base rather than reclamping x."""
     source = sh.ShockGroup(
@@ -429,6 +440,7 @@ def test_physical_frame_replays_under_target_law() -> None:
     np.testing.assert_array_equal(replay.values["eps"], [16.0])
 
 
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
 def test_tiny_positive_categorical_inverse_cannot_invent_interval() -> None:
     """Positive mathematical mass with an unrepresented CDF interval is unresolved."""
     tiny = float(np.finfo(np.float32).tiny)
@@ -444,6 +456,7 @@ def test_tiny_positive_categorical_inverse_cannot_invent_interval() -> None:
     assert not bool(frame.valid)
 
 
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
 def test_rounded_large_location_singular_inverse_is_unresolved() -> None:
     """Lost affine information cannot be certified by a location-sized tolerance."""
     large = float(2 ** (np.finfo(np.dtype(jnp.result_type(0.0))).nmant + 3))
@@ -491,6 +504,7 @@ def test_batched_native_draw_frame_keeps_payload_and_status_leaves() -> None:
     np.testing.assert_array_equal(frame.valid, [True, True, True])
 
 
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
 def test_categorical_physical_rejects_integer_narrowing() -> None:
     """An out-of-range host category cannot wrap into a valid int32 outcome."""
     group = sh.ShockGroup(
@@ -510,6 +524,7 @@ def test_categorical_physical_rejects_integer_narrowing() -> None:
         )
 
 
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
 def test_singular_physical_frame_rejects_adjacent_float_contradiction() -> None:
     """Identical producing coordinates cannot emit different represented values."""
     group = sh.ShockGroup(
@@ -531,6 +546,7 @@ def test_singular_physical_frame_rejects_adjacent_float_contradiction() -> None:
     assert not bool(frame.valid), "singular frame lacks an exact producing witness"
 
 
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
 def test_draw_frame_retains_runtime_correlation_admission_context() -> None:
     """A retained producer context includes the actual admitted correlation support."""
     group = sh.ShockGroup(
@@ -552,6 +568,7 @@ def test_draw_frame_retains_runtime_correlation_admission_context() -> None:
     )
 
 
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
 @pytest.mark.parametrize("runtime", [False, True])
 def test_exact_identity_allows_partial_physical_and_runtime_change_refuses(
     *, runtime: bool
