@@ -225,6 +225,7 @@ def _build_regimes_and_template_with_fixed_params(
         phase_transitions=phase_transitions,
         declared_vocabulary=prepared_structure.declared_edge_vocabulary,
         reachability=prepared_structure.reachability,
+        query_periods_by_phase=prepared_structure.query_periods_by_phase,
         required_periods_by_regime={
             name: tuple(
                 sorted(

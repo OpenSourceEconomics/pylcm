@@ -9,6 +9,7 @@ from typing import ClassVar, cast
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import pytest
 from beartype.roar import BeartypeCallHintParamViolation
 
@@ -34,6 +35,7 @@ from lcm import (
 )
 from lcm.exceptions import (
     ExecutionPlanningError,
+    InvalidParamsError,
     RegimeInitializationError,
     ShockDeclarationError,
     UnsupportedOperationError,
@@ -41,7 +43,7 @@ from lcm.exceptions import (
 from lcm.exits import ExitRule
 from lcm.shocks import Discrete, Normal, PhysicalValues, ShockGroup, UserNodes
 from lcm.taste_shocks import ExtremeValueTasteShocks
-from lcm.typing import BoolND, FloatND, IntND, ScalarInt, UserFunction
+from lcm.typing import BoolND, FloatND, IntND, Period, ScalarInt, UserFunction
 
 
 @categorical(ordered=False)
@@ -235,6 +237,190 @@ def test_public_query_only_targets_need_contexts_without_full_banks() -> None:
     assert model._regimes["couple"].active_periods == ()
     assert model._regimes["single_m"].active_periods == ()
     assert model.graph.visited_nodes == frozenset({(0, "single_f")})
+
+
+def _dated_female(
+    *,
+    action: IntND,
+    wealth: FloatND,
+    married_last_period: IntND,
+    period: Period,
+    solve_bonus: FloatND,
+) -> FloatND:
+    return (
+        _female(action=action, wealth=wealth, married_last_period=married_last_period)
+        + solve_bonus[period]
+    )
+
+
+@lcm.time_varying_params("replay_bonus")
+def _dated_replay_female(
+    *,
+    action: IntND,
+    wealth: FloatND,
+    married_last_period: IntND,
+    replay_bonus: FloatND,
+) -> FloatND:
+    return (
+        _female(action=action, wealth=wealth, married_last_period=married_last_period)
+        + replay_bonus
+    )
+
+
+@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.parametrize("fixed", [False, True])
+@pytest.mark.parametrize("missing", [None, "solve_bonus", "replay_bonus"])
+def test_query_only_temporal_params_cover_the_consuming_phase_date(
+    *, fixed: bool, missing: str | None
+) -> None:
+    """A mapped household reads dated payoffs without requiring unread dates."""
+    base = _household(newlywed=True, enable_jit=True, source_only=True)
+    params = {
+        "solve_bonus": pd.Series(
+            [100.0] if missing == "solve_bonus" else [10.0],
+            index=pd.Index([0] if missing == "solve_bonus" else [1], name="period"),
+        ),
+        "replay_bonus": lcm.TimeVarying(
+            values=jnp.asarray([100.0] if missing == "replay_bonus" else [20.0]),
+            periods=(0,) if missing == "replay_bonus" else (1,),
+        ),
+    }
+
+    def evaluate() -> tuple[FloatND, pd.DataFrame]:
+        model = Model(
+            regimes={
+                **base.user_regimes,
+                "couple": replace(
+                    base.user_regimes["couple"],
+                    functions={
+                        "utility": CollectiveUtility(
+                            utilities={
+                                "f": lcm.Phased(
+                                    solve=_dated_female, simulate=_dated_replay_female
+                                ),
+                                "m": _male,
+                            }
+                        )
+                    },
+                ),
+            },
+            regime_id_class=_Household,
+            n_periods=2,
+            initial_nodes=InitialNodes(by_period={1: "single_f"}),
+            edges={},
+            fixed_params={**base.fixed_params, **(params if fixed else {})},
+            execution_config=ExecutionConfig(device_memory_bytes=None),
+        )
+        runtime = {} if fixed else params
+        solution = model.solve(params=runtime, log_level="off", runtime_checks=False)
+        assert set(solution.values[1]) == {"single_f"}
+        replay = model.simulate(
+            params=runtime,
+            solution=solution,
+            initial_conditions={
+                "period": jnp.asarray([1], dtype=jnp.int32),
+                "regime_id": jnp.asarray([_Household.single_f], dtype=jnp.int32),
+                "wealth": jnp.asarray([0.0]),
+            },
+            seed=3,
+            log_level="off",
+            runtime_checks=False,
+        ).to_dataframe(use_categorical_codes=True)
+        return solution.values[1]["single_f"], replay
+
+    if missing is None:
+        value, replay = evaluate()
+        # Male6 beats Raw5, hence common action1 yields female6 plus her bonus.
+        np.testing.assert_allclose(value, 16.0)
+        np.testing.assert_array_equal(replay["regime_name"], "couple")
+        np.testing.assert_allclose(replay["value_f"], 26.0)
+        np.testing.assert_allclose(replay["value_m"], 6.0)
+    else:
+        with pytest.raises(InvalidParamsError, match=r"missing required period.*1"):
+            evaluate()
+
+
+def _dated_raw_spouse(
+    *, wealth: FloatND, period: Period, solve_outside: FloatND
+) -> FloatND:
+    return solve_outside[period] + 0 * wealth
+
+
+@lcm.time_varying_params("replay_outside")
+def _dated_replay_raw_spouse(*, wealth: FloatND, replay_outside: FloatND) -> FloatND:
+    return replay_outside + 0 * wealth
+
+
+@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.parametrize("fixed", [False, True])
+@pytest.mark.parametrize("missing", [None, "solve_outside", "replay_outside"])
+def test_raw_counterparty_temporal_params_require_the_queried_date(
+    *, fixed: bool, missing: str | None
+) -> None:
+    """An unoccupied spouse's dated outside option governs current consent."""
+    base = _household(newlywed=True, enable_jit=True, source_only=True)
+    params = {
+        "solve_outside": pd.Series(
+            [100.0] if missing == "solve_outside" else [6.5],
+            index=pd.Index([0] if missing == "solve_outside" else [1], name="period"),
+        ),
+        "replay_outside": lcm.TimeVarying(
+            values=jnp.asarray([100.0] if missing == "replay_outside" else [5.0]),
+            periods=(0,) if missing == "replay_outside" else (1,),
+        ),
+    }
+
+    def evaluate() -> tuple[FloatND, pd.DataFrame]:
+        model = Model(
+            regimes={
+                **base.user_regimes,
+                "single_m": replace(
+                    base.user_regimes["single_m"],
+                    functions={
+                        "utility": lcm.Phased(
+                            solve=_dated_raw_spouse,
+                            simulate=_dated_replay_raw_spouse,
+                        )
+                    },
+                ),
+            },
+            regime_id_class=_Household,
+            n_periods=2,
+            initial_nodes=InitialNodes(by_period={1: "single_f"}),
+            edges={},
+            fixed_params={**base.fixed_params, **(params if fixed else {})},
+            execution_config=ExecutionConfig(device_memory_bytes=None),
+        )
+        assert (1, "single_m") not in model.graph.nodes
+        assert (
+            "single_m" not in model.reachability.simulation.active_regimes_by_period[1]
+        )
+        runtime = {} if fixed else params
+        solution = model.solve(params=runtime, log_level="off", runtime_checks=False)
+        assert set(solution.values[1]) == {"single_f"}
+        replay = model.simulate(
+            params=runtime,
+            solution=solution,
+            initial_conditions={
+                "period": jnp.asarray([1], dtype=jnp.int32),
+                "regime_id": jnp.asarray([_Household.single_f], dtype=jnp.int32),
+                "wealth": jnp.asarray([0.0]),
+            },
+            seed=3,
+            log_level="off",
+            runtime_checks=False,
+        ).to_dataframe(use_categorical_codes=True)
+        return solution.values[1]["single_f"], replay
+
+    if missing is None:
+        value, replay = evaluate()
+        # Male6 cannot beat6.5 in solve; in replay male6 beats his dated Raw5.
+        np.testing.assert_allclose(value, 5.0)
+        np.testing.assert_array_equal(replay["regime_name"], "couple")
+        np.testing.assert_allclose(replay[["value_f", "value_m"]], 6.0)
+    else:
+        with pytest.raises(InvalidParamsError, match=r"missing required period.*1"):
+            evaluate()
 
 
 def _hidden_offer(*, offer_code: IntND, action: IntND, wealth: FloatND) -> FloatND:

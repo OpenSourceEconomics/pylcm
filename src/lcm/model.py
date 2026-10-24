@@ -523,6 +523,9 @@ class _PickledModel(TypedDict):
     _execution: ResolvedExecution
     reachability: ModelReachability
     _graph: ModelGraph
+    _query_periods_by_phase: MappingProxyType[
+        str, MappingProxyType[RegimeName, tuple[int, ...]]
+    ]
     _shock_registry: NotRequired[ShockRegistry]
     _params_template: ParamsTemplate
     _param_name_candidates: NotRequired[
@@ -785,6 +788,11 @@ class Model:
 
     _params_template: ParamsTemplate
     """Template for the model parameters."""
+
+    _query_periods_by_phase: MappingProxyType[
+        str, MappingProxyType[RegimeName, tuple[int, ...]]
+    ]
+    """Exact phase query dates retained independently of stored Full and actors."""
 
     _param_name_candidates: MappingProxyType[
         RegimeName, MappingProxyType[ReferenceName, str]
@@ -1334,6 +1342,7 @@ class Model:
                 for regime_name, names in broadcast_variables.items()
             },
         )
+        self._query_periods_by_phase = prepared_structure.query_periods_by_phase
         self.reachability = dataclasses.replace(
             prepared_structure.reachability,
             nodes=frozenset(
@@ -1611,6 +1620,7 @@ class Model:
             regime_names_to_ids=self.regime_names_to_ids,
             _execution=self._execution,
             reachability=self.reachability,
+            _query_periods_by_phase=self._query_periods_by_phase,
             _graph=self._graph,
             _shock_registry=self._shock_registry,
             _params_template=self._params_template,
@@ -5454,6 +5464,7 @@ class Model:
             declared_vocabulary=self._declared_edge_vocabulary,
             reachability=self.reachability,
             use_categorical_codes=use_categorical_codes,
+            query_periods_by_phase=self._query_periods_by_phase,
             required_periods_by_regime={
                 name: tuple(
                     sorted(
