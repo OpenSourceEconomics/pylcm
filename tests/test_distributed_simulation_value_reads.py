@@ -10,8 +10,10 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.arrival_queries import ArrivalQueryArguments
 from _lcm.egm.published_policy import NNBEGMSimPolicy
 from _lcm.execution.core_program import ValueRead
+from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.execution.scheduler import shares_a_buffer
 from _lcm.execution.value_transfer import (
     ResolvedValueTransfer,
@@ -20,23 +22,17 @@ from _lcm.execution.value_transfer import (
     ValueConsumerAddress,
     ValueInputChannel,
 )
-from _lcm.params.edges import regime_kernel_params
-from _lcm.simulation.gated_routing import simulation_gate_fold, simulation_gate_route
-from _lcm.simulation.operand_placement import place_simulation_arguments
-from _lcm.simulation.period_inputs import (
-    GATE_FOLD,
-    GATE_ROUTE,
-    acquire_gate_inputs,
-    gate_reads,
-)
+from _lcm.simulation.exit_replay import _query_arguments
+from _lcm.simulation.exits import OriginalExitOutput, ParticipatingExitOutput
 from _lcm.simulation.replay_inputs import place_replay_payload, replay_payload_reads
+from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.value_reads import PeriodSimulationReads
 from _lcm.solution.artifacts import OwnedSolutionView
-from _lcm.typing import StatesPerRegime
-from lcm import ExecutionConfig
-from lcm.solver_api import SIMULATION_POLICY
-from lcm.typing import Bool1D, Int1D
-from tests.conftest import ApplyValueTransferKwargs
+from _lcm.typing import PytreeValue
+from lcm import AgeGrid, CollectiveUtility, ExecutionConfig, Model
+from lcm.solver_api import SIMULATION_POLICY, ResultRetention
+from lcm.typing import DiscreteAction, FloatND
+from tests.conftest import DECIMAL_PRECISION, ApplyValueTransferKwargs
 
 try:
     jax.config.update("jax_num_cpu_devices", 4)
@@ -53,9 +49,14 @@ from _lcm.simulation.residency import (
     require_transfer_headroom,
     union_buffer_footprints,
 )
-from benchmarks.asv._simulation_witnesses import dissolution
 from lcm.exceptions import ExecutionPlanningError
 from tests.conformance_solver import ReferenceReplayRoute, ReferenceSolver
+from tests.regime_building.test_collective_regime_simulate import (
+    _DISSOLUTION_PARAMS,
+    DissolutionRegimeId,
+    _make_dissolution_regimes,
+    _married_dissolution_transition,
+)
 from tests.simulation.test_finite_policy_budget import _inputs as _finite_inputs
 from tests.test_external_solver_conformance import _PARAMS, _model, _solve
 
@@ -500,138 +501,210 @@ def test_a_copy_that_reuses_an_original_shard_is_never_explicitly_deleted() -> N
     np.testing.assert_array_equal(stored, np.arange(8))
 
 
-def test_a_real_dissolution_gate_uses_raw_copies_on_an_ordered_submesh() -> None:
-    """The raw Boolean artifact reaches both numerical adapters before casting."""
-    model, user_params, _ = dissolution(execution_config=ExecutionConfig(devices=(0,)))
-    solution = model.solve(params=user_params, log_level="off")
+def _query_copy_terminal_wage(*, wage: FloatND) -> FloatND:
+    return wage
+
+
+def _query_copy_collective_terminal_wage(
+    *, wage: FloatND, work: DiscreteAction
+) -> FloatND:
+    return wage + 0.0 * work
+
+
+def _query_copy_leaf(
+    *, arguments: Mapping[str, PytreeValue], path: tuple[str | int, ...]
+) -> FloatND:
+    node: PytreeValue = arguments
+    for step in path:
+        if isinstance(node, ArrivalQueryArguments):
+            assert step == "by_target"
+            node = node.by_target
+        else:
+            assert isinstance(node, Mapping)
+            assert isinstance(step, str)
+            node = node[step]
+    assert isinstance(node, jax.Array)
+    return node
+
+
+def test_collective_queries_share_original_value_copies_on_an_ordered_submesh(  # noqa: PLR0915 - keep the actual owner lifecycle in one witness
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Current and arrival queries share live future-value copies until completion."""
+    declarations = _make_dissolution_regimes()
+    declarations["married_terminal"] = declarations["married_terminal"].replace(
+        functions={
+            "utility": CollectiveUtility(
+                utilities={
+                    "f": _query_copy_collective_terminal_wage,
+                    "m": _query_copy_collective_terminal_wage,
+                }
+            )
+        }
+    )
+    for target in ("single_f_terminal", "single_m_terminal"):
+        declarations[target] = declarations[target].replace(
+            functions={"utility": _query_copy_terminal_wage}
+        )
+    model = Model(
+        regimes=declarations,
+        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
+        regime_id_class=DissolutionRegimeId,
+        initial_nodes={0: "married"},
+        edges={
+            "married": _married_dissolution_transition(),
+            "married_ir": {"married_terminal": 1},
+            "single_f": {"single_f_terminal": 1},
+            "single_m": {"single_m_terminal": (0, 1)},
+        },
+        execution_config=ExecutionConfig(devices=(0,)),
+    )
+    solution = model.solve(
+        params=_DISSOLUTION_PARAMS, retention=ResultRetention.VALUES, log_level="off"
+    )
     owned = solution._engine_view
     assert isinstance(owned, OwnedSolutionView)
-    regimes = model._regimes
-    ids = model.regime_names_to_ids
-    params = model._process_params(user_params)
-    solved_values, solved_flags = owned.values, owned.dissolution_flags
-    target = "married_with_participation"
     devices = jax.devices()
-    stored_sharding = jax.sharding.SingleDeviceSharding(devices[2])
     subject_devices = (devices[3], devices[1])
-    values = {
-        1: {
-            name: jax.device_put(array, stored_sharding)
-            for name, array in solved_values[1].items()
+    originals = {
+        period: {
+            target: jax.device_put(value, devices[2])
+            for target, value in values.items()
         }
+        for period, values in owned.values.items()
     }
-    flags = {
-        1: {
-            name: jax.device_put(array, stored_sharding)
-            for name, array in solved_flags[1].items()
-        }
-    }
-    married = regimes["married"]
-    reads = gate_reads(
-        regime=married, name="married", period=0, values=values, flags=flags
+    before = jax.tree.map(np.asarray, originals)
+    regime = model._regimes["married_ir"]
+    plan = regime.simulation.exit_queries[1]
+    assert plan.full is not None
+    families = (
+        ("exit_full", plan.full, regime.simulation.programs.exit_full[1]),
+        (
+            "exit_participating",
+            plan.participating["married_ir"],
+            regime.simulation.programs.exit_participating[1],
+        ),
+        (
+            "arrival_entry:married",
+            plan.arrivals["married"].queries,
+            regime.simulation.programs.arrival_program(
+                family="arrival_entry:married", period=1
+            ),
+        ),
     )
+    addresses = [
+        {read.target for read in program.requirements.value_reads}
+        for _, _, program in families
+    ]
+    assert set.intersection(*addresses)
+    reads = tuple(
+        read for _, _, program in families for read in program.requirements.value_reads
+    )
+    assert reads
+    assert all(read.target.kind is ValueArtifactKind.REGIME_VALUE for read in reads)
+    assert all(read.target.period == 2 for read in reads)
     owner = PeriodSimulationReads(
-        period=0,
+        period=1,
         devices=subject_devices,
-        reads_by_unit={"married": reads},
+        reads_by_unit={"married_ir": reads},
         release_enabled=True,
     )
-    fold_values, fold_flags = acquire_gate_inputs(
-        reads=tuple(read for read in reads if read.source.core_key == GATE_FOLD),
-        owner=owner,
-        name="married",
-        values=values,
-        flags=flags,
+    native_transfer = value_reads.apply_value_transfer
+    transferred = []
+
+    def observe(**call: Unpack[ApplyValueTransferKwargs]) -> FloatND:
+        transferred.append(call["transfer"].target)
+        return native_transfer(**call)
+
+    monkeypatch.setattr(value_reads, "apply_value_transfer", observe)
+    runtime = SimulationRuntime(
+        execution=ResolvedExecution(
+            device_ids=(3, 1),
+            sharded_states=frozenset(),
+            axis_widths=MappingProxyType({}),
+            device_memory_bytes=None,
+        ),
+        enable_jit=True,
+        subject_devices=subject_devices,
     )
-    copied_d = fold_flags[target]
-    assert copied_d.dtype == jnp.dtype(bool)
-    assert isinstance(copied_d.sharding, jax.NamedSharding)
-    assert tuple(copied_d.sharding.mesh.devices.flat) == subject_devices
-    assert not shares_a_buffer(first=copied_d, second=flags[1][target])
-    copied_values = tuple(fold_values[target].values())
-    for reference, array in fold_values[target].items():
-        assert isinstance(array.sharding, jax.NamedSharding)
-        assert tuple(array.sharding.mesh.devices.flat) == subject_devices
-        assert not shares_a_buffer(first=array, second=values[1][reference])
-    folded = simulation_gate_fold(
-        regime=married,
-        regime_name="married",
-        regimes=regimes,
-        period=0,
-        next_regime_to_V_arr=values[1],
-        base_state_action_spaces={
-            name: regime.solution.state_action_space(
-                regime_params=regime_kernel_params(params, regime_name=name)
+    states = {"wage": jnp.asarray([1.0, 2.0, 3.0, 1.0])}
+    params = model._process_params(_DISSOLUTION_PARAMS)
+    copies = {}
+    outputs = []
+    for family, queries, program in families:
+        query_arguments = _query_arguments(
+            plan=plan,
+            queries=queries,
+            states=states,
+            flat_params=params,
+            period=1,
+            ages=model._time,
+            values=originals,
+            owner=owner,
+            unit="married_ir",
+            family=family,
+            regime=regime,
+        )
+        for read in program.requirements.value_reads:
+            copied = _query_copy_leaf(arguments=query_arguments, path=read.source.path)
+            original = originals[read.target.period][read.target.regime]
+            assert copied.dtype == original.dtype
+            assert isinstance(copied.sharding, jax.NamedSharding)
+            assert tuple(copied.sharding.mesh.devices.flat) == subject_devices
+            assert not shares_a_buffer(first=copied, second=original)
+            np.testing.assert_array_equal(copied, original)
+            assert np.any(np.asarray(original) != 0)
+            if read.target in copies:
+                assert copies[read.target] is copied
+            copies[read.target] = copied
+        arguments = {
+            "states": states,
+            "keys": {},
+            "group_params": {},
+            "query_arguments": query_arguments,
+            "_holders": jnp.ones(4, dtype=bool),
+            "taste_keys": {},
+            "overrides": {},
+        }
+        if family == "exit_participating":
+            arguments.update(held_bases={}, produced={})
+        output = runtime.dispatch(
+            program=program, arguments=arguments, period=1, n_subjects=4
+        )
+        jax.block_until_ready(output)
+        answer = cast("OriginalExitOutput | ParticipatingExitOutput", output)[0]
+        np.testing.assert_array_equal(answer[3], np.ones(4, dtype=bool))
+        if family == "exit_participating":
+            np.testing.assert_array_equal(answer[2], [True, False, True, True])
+            np.testing.assert_allclose(
+                answer[0][jnp.asarray([0, 2, 3])],
+                [[2.95, 1.95], [8.85, 5.85], [2.95, 1.95]],
+                rtol=10.0**-DECIMAL_PRECISION,
             )
-            for name, regime in regimes.items()
-        },
-        edge_values=fold_values,
-        edge_flags=fold_flags,
-        flat_params=params,
-        subject_devices=subject_devices,
-    )
-    np.testing.assert_array_equal(
-        folded[target], [[2, 1, 0], [-np.inf, -np.inf, 1], [6, 3, 0]]
-    )
-    folded_sharding = folded[target].sharding
-    assert isinstance(folded_sharding, jax.NamedSharding)
-    assert tuple(folded_sharding.mesh.devices.flat) == subject_devices
-    route_values, route_flags = acquire_gate_inputs(
-        reads=tuple(read for read in reads if read.source.core_key == GATE_ROUTE),
-        owner=owner,
-        name="married",
-        values=values,
-        flags=flags,
-    )
-    assert route_flags[target] is copied_d
-    for reference, array in fold_values[target].items():
-        assert route_values[target][reference] is array
-    arguments = place_simulation_arguments(
-        arguments={
-            "next_states": MappingProxyType(
-                {
-                    target: MappingProxyType(
-                        {"wage": jnp.array([1.0, 2.0, 3.0, 1.0, 2.0, 3.0])}
-                    ),
-                    "single_f": MappingProxyType({"wage": jnp.full(6, -999.0)}),
-                    "single_m": MappingProxyType({"wage": jnp.full(6, -999.0)}),
-                }
-            ),
-            "ids": jnp.full(6, ids[target], dtype=jnp.int32),
-            "membership": jnp.ones(6, dtype=bool),
-            "roles": jnp.full(
-                6, married.stakeholder_names_to_ids["f"], dtype=jnp.int32
-            ),
-        },
-        subject_arg_names=("next_states", "ids", "membership", "roles"),
-        value_reads=(),
-        devices=subject_devices,
-    )
-    routed = simulation_gate_route(
-        regime=married,
-        fold_period=1,
-        edge_values=route_values,
-        edge_flags=route_flags,
-        next_states=cast("StatesPerRegime", arguments["next_states"]),
-        regime_names_to_ids=ids,
-        new_subject_regime_ids=cast("Int1D", arguments["ids"]),
-        subjects_in_regime=cast("Bool1D", arguments["membership"]),
-        flat_params=params,
-        own_stakeholder=cast("Int1D", arguments["roles"]),
-        new_own_stakeholder=cast("Int1D", arguments["roles"]),
-        subject_devices=subject_devices,
-    )[:3]
-    states, routed_ids, _ = routed
-    # The route binds `D_target = False`; the wage=2 rows leave the target at
-    # their realised landing, not here.
-    np.testing.assert_array_equal(routed_ids, [ids[target]] * 6)
-    np.testing.assert_array_equal(states["single_f"]["wage"], [-999.0] * 6)
-    np.testing.assert_array_equal(states["single_m"]["wage"], [-999.0] * 6)
-    owner.commit(unit="married", outputs=(folded, routed))
+        else:
+            np.testing.assert_array_equal(answer[2], np.ones(4, dtype=bool))
+            np.testing.assert_allclose(
+                answer[0],
+                [[2.95, 1.95], [7.4, 2.9], [8.85, 5.85], [2.95, 1.95]],
+                rtol=10.0**-DECIMAL_PRECISION,
+            )
+            exits = tuple(queries.definitions[queries.root].exit_targets)
+            assert exits
+            rejected = (
+                np.asarray(answer[1]) == 1
+                if family == "arrival_entry:married"
+                else np.isin(np.asarray(answer[1]), exits)
+            )
+            np.testing.assert_array_equal(rejected, [False, True, False, False])
+        outputs.append(output)
+        assert all(not copied.is_deleted() for copied in copies.values())
+    assert len(transferred) == len(copies)
+    assert set(transferred) == set(copies)
+    owner.commit(unit="married_ir", outputs=tuple(outputs))
     owner.finish()
-    assert copied_d.is_deleted()
-    assert all(array.is_deleted() for array in copied_values)
-    np.testing.assert_array_equal(flags[1][target], [False, True, False])
-    for reference, array in values[1].items():
-        assert not array.is_deleted()
-        np.testing.assert_array_equal(array, solved_values[1][reference])
+    assert all(copied.is_deleted() for copied in copies.values())
+    for period, values in originals.items():
+        for target, original in values.items():
+            assert not original.is_deleted()
+            assert original.devices() == {devices[2]}
+            np.testing.assert_array_equal(original, before[period][target])

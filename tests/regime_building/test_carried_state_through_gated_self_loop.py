@@ -13,11 +13,14 @@ assumption the mechanism composes, pin the interaction here in isolation.
 Topology (the singleton half of EKL's `single_f`): `src` is covered over ages
 0-1 with a repeating self-loop `GatedEdge` back to itself, fallback into a
 terminal `src_fallback`; at its last covered age the ordinary transition
-routes it to `src_exit`. This mirrors
-`test_repeating_self_loop_gated_edge_simulates_past_the_sources_last_covered_age`
-exactly, plus a carried `career` state that accumulates `+1` each period and is read by
-utility with a ZERO coefficient — so the value function (and hence the gate
-routing) is byte-identical to that test, isolating the carried-state machinery.
+routes it to `src_exit`. The public occupied-boundary counterpart is
+`test_repeating_arrival_boundary.py`,
+`test_public_repeating_arrival_stops_at_the_sources_last_supported_date`.
+Here a carried `career` state accumulates `+1` each period and is read by utility
+with a ZERO coefficient, isolating the carried-state effect on the occupied
+value and routing oracle. The public witness explicitly limits source support
+to ages 0-1; this kernel harness retains its own dense fixture. This is not a
+bitwise-parity claim against the public native solve.
 
 The gate is OPEN at wage=2 (stays in `src` for the genuine self-loop repeat)
 and CLOSED at wage=1 (routed to `src_fallback`, which does not carry `career`).

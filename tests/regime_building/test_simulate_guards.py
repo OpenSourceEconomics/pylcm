@@ -138,9 +138,11 @@ def test_target_absent_at_next_period_is_still_a_legitimate_no_op():
     """Negative control: the TARGET (not a reference) missing at period+1 stays
     a silent no-op -- the legitimate repeating/one-shot boundary case, which
     the missing-reference guard must leave alone. Mirrors
-    `test_repeating_self_loop_gated_edge_simulates_past_the_sources_last_covered_age`'s
-    scenario at the kernel level: an empty `period_to_regime_to_V_arr` for
-    period+1 (no target, hence no references either) must not raise.
+    the occupied boundary in the public counterpart
+    `test_repeating_arrival_boundary.py`,
+    `test_public_repeating_arrival_stops_at_the_sources_last_supported_date`.
+    This kernel control supplies an empty `period_to_regime_to_V_arr` for
+    period+1 (no target, hence no references either), which must not raise.
     """
     _ages, regimes, _ids, flat_params, solution, _dissolution_flags = (
         _solve_dissolution()

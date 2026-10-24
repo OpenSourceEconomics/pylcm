@@ -1116,9 +1116,11 @@ def test_gated_edge_reference_uncovered_at_unconsumed_boundary_passes():
     target-covered period whose ``Wbar`` is NEVER consumed — the target's earliest
     covered period, where no source exists one period earlier. Requiring
     joint coverage across ALL target-covered periods would wrongly reject the
-    legitimate repeating self-loop model (regression: see
-    ``test_collective_regime_simulate.py::
-    test_repeating_self_loop_gated_edge_simulates_past_the_sources_last_covered_age``).
+    legitimate repeating self-loop boundary. The public occupied-boundary
+    counterpart is
+    `test_repeating_arrival_boundary.py`,
+    `test_public_repeating_arrival_stops_at_the_sources_last_supported_date`;
+    this kernel control separately checks reference coverage.
     """
     # Self-loop: source == target == "src", solved in periods {0, 1}; the
     # fallback is solved in {1, 2}, i.e. not in target-solved period 0 — but

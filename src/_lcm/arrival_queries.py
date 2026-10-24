@@ -551,7 +551,7 @@ class _ArrivalReducer:
         )
         if accepted.shape != () or accepted.dtype != jnp.bool_:
             raise ValueError("An arrival predicate must return a scalar Boolean.")
-        target = cast("PolicyAnswer", operands["acting_target"])
+        target = cast("PolicyAnswer", operands["_lcm_arrival_acting_target"])
         accepted &= target[2]
         valid &= target[3]
         routed = []
@@ -862,7 +862,7 @@ def _bind_arrival(
     physical_names = frozenset() if target_plan is None else target_plan.physical_names
     information = frozenset(declaration.observes)
     inputs = {
-        "acting_target": builder.make(
+        "_lcm_arrival_acting_target": builder.make(
             kind=QueryKind.PARTICIPATING,
             owner=target,
             projection=projection,
@@ -913,7 +913,7 @@ def _bind_arrival(
             )
             for state, function in mapped.items()
         }
-        operand = f"comparison_{len(reads)}"
+        operand = f"_lcm_arrival_comparison_{len(reads)}"
         inputs[operand] = (
             _make_integrated_read(
                 builder=builder, read=read, projection=projected, root=root
@@ -975,7 +975,7 @@ def _bind_arrival(
             )
             for state, function in mapped.items()
         }
-        operand = f"fallback_{len(fallbacks)}"
+        operand = f"_lcm_arrival_fallback_{len(fallbacks)}"
         inputs[operand] = builder.make(
             kind=QueryKind.PARTICIPATING,
             owner=fallback.regime,
@@ -1052,7 +1052,7 @@ def _bind_arrival(
         ),
         inputs=inputs,
         exit_targets={
-            0: dict.fromkeys(members, inputs["acting_target"]),
+            0: dict.fromkeys(members, inputs["_lcm_arrival_acting_target"]),
             1: {
                 member: inputs[fallbacks[index][0]]
                 for index, member in enumerate(members)

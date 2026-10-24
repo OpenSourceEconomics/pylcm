@@ -25,6 +25,7 @@ from lcm import (
     DiscreteGrid,
     LinSpacedGrid,
     Model,
+    Phased,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -47,6 +48,7 @@ from tests.regime_building.test_collective_regime_simulate import (
     _BETA,
     _consent_laws,
     _make_consent_regimes,
+    _prob_one,
 )
 
 _SEED = 41
@@ -334,3 +336,88 @@ def test_multiple_arrivals_preserve_the_original_draw_under_reversed_order() -> 
             decimal=DECIMAL_PRECISION,
         )
     pd.testing.assert_frame_equal(forward, reverse)
+
+
+def test_phased_law_prices_perceived_arrivals_and_settles_realized_draws() -> None:
+    """Perceived marriage prices coexist with a realized normalized meeting lottery."""
+    original = _consent_laws()["single_f"]
+    assert isinstance(original, Transition)
+    declaration = replace(
+        original,
+        law=ByAge(
+            cases={
+                AgeRange(exclusive_stop=1): Phased(
+                    solve={"married_terminal": StochasticTransition(func=_prob_one)},
+                    simulate={
+                        "married_terminal": StochasticTransition(func=_prob_half),
+                        "single_m_terminal": StochasticTransition(func=_prob_half),
+                    },
+                )
+            }
+        ),
+    )
+    model = Model(
+        regimes=_make_consent_regimes(),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        regime_id_class=_ConsentRegimeId,
+        initial_nodes={0: "single_f"},
+        edges={"single_f": declaration},
+    )
+    params = {"discount_factor": _BETA}
+    solution = model.solve(
+        params=params, retention=ResultRetention.VALUES, log_level="off"
+    )
+    aaae(solution.values[0]["single_f"], [2.9, 4.85], decimal=DECIMAL_PRECISION)
+    wages = jnp.tile(jnp.asarray([1.0, 2.0]), _N_SUBJECTS // 2)
+    result = model.simulate(
+        params=params,
+        initial_conditions={
+            "wage": wages,
+            "age": jnp.zeros(_N_SUBJECTS),
+            "regime_id": jnp.full(
+                _N_SUBJECTS, model.regime_names_to_ids["single_f"], dtype=jnp.int32
+            ),
+        },
+        solution=solution,
+        seed=_SEED,
+        log_level="off",
+    )
+    assert result.randomness["address_version"] == "pylcm.random.v1"
+    assert result.randomness["prng_impl"] == "threefry2x32"
+    assert result.randomness["precision"] == str(wages.dtype)
+    frame = result.to_dataframe()
+    landed = frame.loc[frame["period"] == 1].sort_values("subject_id")
+    np.testing.assert_array_equal(landed["subject_id"], np.arange(_N_SUBJECTS))
+    offered = np.asarray(_ordinary_uniforms(n_subjects=_N_SUBJECTS)) >= 0.5
+    consent = np.asarray(wages) == 1.0
+    for selected in (
+        offered & consent,
+        offered & ~consent,
+        ~offered & consent,
+        ~offered & ~consent,
+    ):
+        assert selected.any()
+    expected = np.where(
+        offered,
+        np.where(consent, "married_terminal", "single_f_terminal"),
+        "single_m_terminal",
+    )
+    np.testing.assert_array_equal(landed["regime_name"].to_numpy(), expected)
+    aaae(landed["wage"], np.asarray(wages), decimal=DECIMAL_PRECISION)
+    np.testing.assert_array_equal(
+        landed["own_stakeholder"].astype("string").fillna("none").to_numpy(),
+        np.where(offered & consent, "f", "none"),
+    )
+    for regime, expected_value in (
+        ("single_f_terminal", 1.5 * np.asarray(wages)),
+        ("single_m_terminal", np.where(consent, 0.5, 3.0)),
+    ):
+        selected = expected == regime
+        aaae(
+            landed.loc[selected, "value"],
+            expected_value[selected],
+            decimal=DECIMAL_PRECISION,
+        )
+    kept = offered & consent
+    aaae(landed.loc[kept, "value_f"], 2.0, decimal=DECIMAL_PRECISION)
+    aaae(landed.loc[kept, "value_m"], 1.0, decimal=DECIMAL_PRECISION)

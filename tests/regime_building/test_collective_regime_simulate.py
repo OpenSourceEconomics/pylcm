@@ -17,7 +17,6 @@ import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 
-import lcm.model as model_module
 from _lcm.certainty_equivalent import LinearExpectation
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
@@ -910,26 +909,6 @@ def test_dissolution_edge_routes_the_row_to_its_own_roles_single_regime():
     np.testing.assert_allclose(np.asarray(married_ir.V_arr)[2], [6.0, 3.0], rtol=1e-6)
 
 
-def test_dissolution_edge_leg_projector_computes_the_non_primary_states_too():
-    """Unit-level: the SECOND leg's ("m") own fallback projector is correct.
-
-    Not exercised by the end-to-end assertion above (that cohort declares the
-    wife's role, so `single_m` never becomes the row's own continuing
-    membership there) — this directly calls the resolved
-    projector the value router builds and consumes, confirming it maps the
-    target-grid wage coordinate onto `single_m`'s own state coordinate
-    exactly like the fallback the solve-side fold reads for the SAME leg.
-    """
-    _ages, regimes, _ids, _params, _solution, _dissolution = _solve_dissolution()
-    married = regimes["married"]
-    edge = married.gated_edges["married_ir"]
-    leg_names = [leg.source_stakeholder for leg in edge.legs]
-    assert leg_names == ["f", "m"]
-    m_projector = married.gated_edges["married_ir"].legs[1].fallback_state_projector
-    projected = m_projector(wage=jnp.array([1.0, 2.0, 3.0]))
-    np.testing.assert_array_equal(np.asarray(projected["wage"]), [1.0, 2.0, 3.0])
-
-
 # Test 4: value-masked simulate — the simulated argmax never selects an action
 # excluded by a value constraint (reuses the dissolution miniature's IR
 # mask: married_ir's mask is empty at wage=2).
@@ -1370,59 +1349,6 @@ def test_public_model_simulate_routes_dissolution_edge_when_flags_supplied():
     assert np.all(np.isfinite(np.asarray(married_ir.V_arr)[[0, 2]]))
 
 
-def test_public_model_simulate_runs_edge_fold_collision_guard_on_supplied_result(
-    monkeypatch,
-):
-    """The edge-fold state/source-param collision guard runs on the SIMULATE
-    entry, not only in `solve()`.
-
-    The public `Model.simulate` accepts a previously computed `SolutionResult` and
-    skips `solve()` entirely, so a guard installed only in `solve()` would let the
-    simulate gate and fallback-state projector read a colliding leaf unchecked. This
-    asserts the guard is invoked on exactly that supplied-result path — for a gated
-    model, even though `solve()` never runs. Correctness of the guard itself (that it
-    rejects a genuine collision)
-    is pinned in `test_gated_edge_arg_provenance.py`; this pins its PLACEMENT.
-    """
-    model = _make_dissolution_model()
-    solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="debug")
-    calls: list[frozenset[str]] = []
-    real = model_module._reject_edge_fold_state_param_collisions
-
-    def _spy(**kwargs):
-        calls.append(frozenset(kwargs))
-        return real(**kwargs)
-
-    monkeypatch.setattr(model_module, "_reject_edge_fold_state_param_collisions", _spy)
-
-    initial_conditions = MappingProxyType(
-        {
-            "wage": jnp.array([1.0, 2.0, 3.0]),
-            "age": jnp.array([0.0, 0.0, 0.0]),
-            "regime_id": jnp.array(
-                [model.regime_names_to_ids["married"]] * 3, dtype=jnp.int32
-            ),
-            # The guard runs before any row is routed and reads no leg, so
-            # which role the cohort carries cannot change whether it fires;
-            # the rows start collective and so must carry one.
-            "own_stakeholder": jnp.full(
-                3, model.stakeholder_names_to_ids["f"], dtype=jnp.int32
-            ),
-        }
-    )
-    model.simulate(
-        params=_DISSOLUTION_PARAMS,
-        initial_conditions=initial_conditions,
-        solution=solution,  # precomputed -> solve() is skipped
-        log_level="debug",
-        seed=0,
-    )
-    assert calls, (
-        "the edge-fold collision guard was not invoked on the supplied-result "
-        "simulate path (it would run only inside the skipped solve())"
-    )
-
-
 def test_public_model_replays_participation_from_values_only() -> None:
     """Current participation replay needs values, without a dissolution artifact."""
     model = _make_dissolution_model()
@@ -1751,99 +1677,3 @@ def _make_repeating_self_loop_regimes() -> dict[str, Regime]:
         functions={"utility": _u_src_fallback},
     )
     return {"src": src, "src_exit": src_exit, "src_fallback": src_fallback}
-
-
-def test_repeating_self_loop_gated_edge_simulates_past_the_sources_last_covered_age():
-    """A REPEATING self-loop edge simulates past the source's last covered age.
-
-    Hand computation. Period 1's `src` Bellman weights only the `src_exit`
-    continuation (`_prob_stay(age=1)=0`, `_prob_exit_boundary(age=1)=1`):
-    `V_1(wage) = wage + beta * 0.5 * wage = 1.475 * wage` (`beta=0.95`). The
-    self-loop's gate (`V_target > 2.0`) reads exactly this `V_1`: OPEN at
-    wage=2 (`V_1(2)=2.95`), CLOSED at wage=1 (`V_1(1)=1.475`).
-
-    - wage=1: period-0 gate CLOSED -> routed to `src_fallback` for period 1
-      (period-1 value `0.1 * 1 = 0.1`); period-0 own value
-      `V_0(1) = 1 + beta * 0.1 = 1.095`.
-    - wage=2: period-0 gate OPEN -> STAYS in `src` for period 1 — the
-      genuine repeat, and the household that exercises the boundary (period 1
-      is `src`'s own last covered age, and period 2's solution has no `src`
-      entry). The edge is a no-op at period 1, its target being absent; the
-      ordinary transition (100% `src_exit` at
-      age=1) routes it to `src_exit` for period 2, with period-1 own value
-      `V_1(2) = 2.95` and period-2 terminal value `0.5 * 2 = 1.0`. Period-0
-      own value `V_0(2) = 2 + beta * 2.95 = 4.8025`.
-    """
-    ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
-    regimes_dict = _make_repeating_self_loop_regimes()
-    regimes, regime_names_to_ids = _solve_and_process(
-        regimes_dict=regimes_dict,
-        laws=_repeating_self_loop_laws(),
-        ages=ages,
-        regime_names=list(regimes_dict),
-    )
-    flat_params = MappingProxyType(
-        {
-            "src": MappingProxyType(
-                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
-            ),
-            "src_exit": MappingProxyType({}),
-            "src_fallback": MappingProxyType({}),
-        }
-    )
-    # Solve already tolerates a per-period-absent target (the SOLVE-side
-    # `_roll_gated_edges` guard predates this fix); this is the control that
-    # isolates the bug to the SIMULATE path below.
-    _bi_result = solve(
-        program_fingerprint="test_collective_regime_simulate",
-        flat_params=flat_params,
-        ages=ages,
-        regimes=regimes,
-        logger=get_logger(log_level="debug"),
-        enable_jit=False,
-    )
-    solution = _bi_result.value_functions
-    _sim_policies = _bi_result.simulation_policies
-    dissolution_flags = _bi_result.dissolution_flags
-
-    initial_conditions = MappingProxyType(
-        {
-            "wage": jnp.array([1.0, 2.0]),
-            "age": jnp.array([0.0, 0.0]),
-            "regime_id": jnp.array([regime_names_to_ids["src"]] * 2, dtype=jnp.int32),
-        }
-    )
-    # An unconditional target lookup in `build_same_period_mapping_for_fold`,
-    # called from `substitute_gated_edge_continuations`, raises
-    # `KeyError: 'src'` on the wage=2 household's period-1 (boundary) step.
-    result = simulate(
-        flat_params=flat_params,
-        initial_conditions=initial_conditions,
-        regimes=bind_eager_simulation(regimes=regimes),
-        regime_names_to_ids=regime_names_to_ids,
-        logger=get_logger(log_level="debug"),
-        period_to_regime_to_V_arr=solution,
-        period_to_regime_to_dissolution_flags=dissolution_flags,
-        ages=ages,
-        simulation_output_dtypes={},
-        seed=0,
-    )
-
-    period_0 = result.raw_results["src"][0]
-    np.testing.assert_allclose(np.asarray(period_0.V_arr), [1.095, 4.8025], rtol=1e-6)
-
-    # wage=1 -> gate closed at period 0 -> `src_fallback`; wage=2 -> gate
-    # open -> stays in `src` for the genuine repeat.
-    fallback_1 = result.raw_results["src_fallback"][1]
-    src_1 = result.raw_results["src"][1]
-    np.testing.assert_array_equal(np.asarray(fallback_1.in_regime), [True, False])
-    np.testing.assert_array_equal(np.asarray(src_1.in_regime), [False, True])
-    np.testing.assert_allclose(np.asarray(fallback_1.V_arr)[0], 0.1, rtol=1e-6)
-    np.testing.assert_allclose(np.asarray(src_1.V_arr)[1], 2.95, rtol=1e-6)
-
-    # Past the boundary: the wage=2 household's repeat ends at `src`'s own
-    # activity boundary; the ordinary (not gated-edge) transition routes it
-    # to `src_exit`, exactly as the ordinary per-target probabilities say.
-    exit_2 = result.raw_results["src_exit"][2]
-    np.testing.assert_array_equal(np.asarray(exit_2.in_regime), [False, True])
-    np.testing.assert_allclose(np.asarray(exit_2.V_arr)[1], 1.0, rtol=1e-6)

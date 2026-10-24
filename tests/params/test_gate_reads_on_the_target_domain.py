@@ -44,6 +44,7 @@ from lcm.typing import (
     FloatND,
     ReferenceName,
     ScalarInt,
+    StateName,
     UserFunction,
     UserParams,
 )
@@ -846,3 +847,120 @@ def test_arrival_v_target_read_names_the_declared_reference_object() -> None:
     )
     np.testing.assert_array_equal(landed["x"], [0.0, 1.0])
     np.testing.assert_array_equal(landed["value"], [110.0, 111.0])
+
+
+def _collision_identity_x(*, x: FloatND) -> FloatND:
+    return x
+
+
+def _collision_identity_acting_target(*, acting_target: FloatND) -> FloatND:
+    return acting_target
+
+
+def _collision_source_x(*, x: FloatND) -> FloatND:
+    return 0.0 * x
+
+
+def _collision_source_acting_target(*, acting_target: FloatND) -> FloatND:
+    return 0.0 * acting_target
+
+
+def _collision_target_x(*, x: FloatND) -> FloatND:
+    return 10.0 + x
+
+
+def _collision_target_acting_target(*, acting_target: FloatND) -> FloatND:
+    return 10.0 + acting_target
+
+
+def _collision_fallback_x(*, x: FloatND) -> FloatND:
+    return 1.0 + x
+
+
+def _collision_fallback_acting_target(*, acting_target: FloatND) -> FloatND:
+    return 1.0 + acting_target
+
+
+def _collision_keep_x(*, x: FloatND) -> BoolND:
+    return x > 1.5
+
+
+def _collision_keep_acting_target(*, acting_target: FloatND) -> BoolND:
+    return acting_target > 1.5
+
+
+@pytest.mark.parametrize("state_name", ["x", "acting_target"])
+def test_arrival_internal_dependency_preserves_the_declared_physical_state(
+    *, state_name: StateName
+) -> None:
+    """Renaming a physical state preserves arrival pricing and actual row routes."""
+    if state_name == "x":
+        source_flow = _collision_source_x
+        target_flow = _collision_target_x
+        fallback_flow = _collision_fallback_x
+        predicate = _collision_keep_x
+        projection = _collision_identity_x
+    else:
+        source_flow = _collision_source_acting_target
+        target_flow = _collision_target_acting_target
+        fallback_flow = _collision_fallback_acting_target
+        predicate = _collision_keep_acting_target
+        projection = _collision_identity_acting_target
+    grid = LinSpacedGrid(start=1.0, stop=2.0, n_points=2)
+    model = Model(
+        regimes={
+            "src": Regime(
+                states={state_name: grid},
+                state_transitions={state_name: fixed_transition(state_name)},
+                functions={"utility": source_flow},
+            ),
+            "target": Regime(
+                states={state_name: grid}, functions={"utility": target_flow}
+            ),
+            "fallback": Regime(
+                states={state_name: grid}, functions={"utility": fallback_flow}
+            ),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        initial_nodes={0: "src"},
+        regime_id_class=RegimeId,
+        edges={
+            "src": Transition(
+                law={"target": StochasticTransition(func=always)},
+                arrivals={
+                    "target": ArrivalDecision(
+                        predicate=predicate,
+                        routes={
+                            "self": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="fallback",
+                                    projection={state_name: projection},
+                                )
+                            )
+                        },
+                    )
+                },
+            )
+        },
+    )
+    params = {"discount_factor": 0.5}
+    solution = model.solve(
+        params=params, retention=ResultRetention.VALUES, log_level="off"
+    )
+    np.testing.assert_allclose(solution.values[0]["src"], [1.0, 6.0], rtol=1e-6)
+    result = model.simulate(
+        params=params,
+        initial_conditions={
+            state_name: jnp.asarray([1.0, 2.0]),
+            "age": jnp.zeros(2),
+            "regime_id": jnp.full(2, model.regime_names_to_ids["src"], dtype=jnp.int32),
+        },
+        solution=solution,
+        seed=0,
+        log_level="off",
+    ).to_dataframe()
+    landed = result.loc[result["period"] == 1].sort_values("subject_id")
+    np.testing.assert_array_equal(landed["subject_id"], [0, 1])
+    np.testing.assert_array_equal(landed["regime_name"], ["fallback", "target"])
+    np.testing.assert_array_equal(landed[state_name], [1.0, 2.0])
+    np.testing.assert_allclose(landed["value"], [2.0, 12.0], rtol=1e-6)
