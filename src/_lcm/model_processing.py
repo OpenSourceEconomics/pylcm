@@ -138,7 +138,10 @@ def build_regimes_and_template(
             prepared_structure=prepared_structure,
             execution=execution,
         )
-        params_template = create_params_template(regimes)
+        params_template = create_params_template(
+            regimes=regimes,
+            query_periods_by_phase=prepared_structure.query_periods_by_phase,
+        )
     else:
         regimes, params_template = _build_regimes_and_template_with_fixed_params(
             ages=ages,
@@ -202,7 +205,10 @@ def _build_regimes_and_template_with_fixed_params(
         prepared_structure=prepared_structure,
         execution=execution,
     )
-    raw_params_template = create_params_template(raw_regimes)
+    raw_params_template = create_params_template(
+        regimes=raw_regimes,
+        query_periods_by_phase=prepared_structure.query_periods_by_phase,
+    )
 
     fixed_flat_params = _resolve_fixed_params(
         fixed_params=dict(fixed_params),

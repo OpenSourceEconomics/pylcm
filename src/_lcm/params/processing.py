@@ -565,7 +565,11 @@ def find_param_candidates(
 
 
 def create_params_template(  # noqa: C901, PLR0912 - validate ordinary and exit namespaces
+    *,
     regimes: MappingProxyType[RegimeName, Regime],
+    query_periods_by_phase: Mapping[
+        str, Mapping[RegimeName, tuple[int, ...]]
+    ] = MappingProxyType({}),
 ) -> ParamsTemplate:
     """Create params_template from internal regimes and validate name uniqueness.
 
@@ -578,6 +582,8 @@ def create_params_template(  # noqa: C901, PLR0912 - validate ordinary and exit 
     Args:
         regimes: Immutable mapping of regime names to Regime
             instances.
+        query_periods_by_phase: Actual solve and simulation query demand, distinct
+            from stored Full value periods and unused canonical kernels.
 
     Returns:
         The parameter template.
@@ -601,7 +607,8 @@ def create_params_template(  # noqa: C901, PLR0912 - validate ordinary and exit 
         # Query-only canonical contexts read parameters without publishing Full.
         regime_template = (
             dict(regime.regime_params_template)
-            if regime.solution.period_kernels
+            if regime.active_periods
+            or any(periods.get(name) for periods in query_periods_by_phase.values())
             else {}
         )
         template[name] = regime_template
