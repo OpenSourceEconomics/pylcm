@@ -70,7 +70,6 @@ from lcm.shocks import (
 )
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.typing import ContinuousState, DiscreteAction, FloatND, ScalarInt, UserParams
-from tests import collective_fixtures
 from tests.conftest import DECIMAL_PRECISION
 from tests.constraints import test_dynamic_lower_bound as bound
 from tests.simulation import test_aot_same_period_refs as reference
@@ -1155,16 +1154,13 @@ def test_saved_replay_retains_its_physical_innovations(tmp_path) -> None:
     )
 
 
-@pytest.mark.parametrize("family", ["dcegm", "collective", "decoupled"])
+@pytest.mark.parametrize("family", ["dcegm", "decoupled"])
 def test_new_iid_refuses_uncomposed_native_families(family: str) -> None:
     """Legacy admitted families retain their routes; new IID requires composition."""
 
     if family == "dcegm":
         base = dcegm_paper_twin.get_model(solver="dcegm")
         regime_id_class = dcegm_paper_twin.TwinRegimeId
-    elif family == "collective":
-        base, _ = collective_fixtures.make_two_stakeholder_model()
-        regime_id_class = collective_fixtures.CoupleRegimeId
     else:
         base = test_decoupled._model()
         regime_id_class = test_decoupled.RegimeId

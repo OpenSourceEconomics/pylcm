@@ -1632,8 +1632,12 @@ class _CanonicalRegimeBuilder:
             canonical_regimes=canonical_regimes, solution_builds=solution_builds
         )
         if not any(
-            getattr(regime, "exits", {})
-            for regime in self.representative_user_regimes.values()
+            regime.exits
+            or (
+                regime.stakeholders is not None
+                and any(solution_builds[name].context.current_iid_plans.values())
+            )
+            for name, regime in self.representative_user_regimes.items()
         ):
             return declared
         from _lcm.exit_queries import install_exit_policy_queries  # noqa: PLC0415
@@ -4610,7 +4614,6 @@ def _build_solution_phase(  # noqa: C901, PLR0912, PLR0915 - native route admiss
             label
             for active, label in (
                 (not isinstance(solver, GridSearch), "non-GridSearch solver"),
-                (stakeholders is not None, "collective decision"),
                 (bool(fold_state_names), "legacy folded IID axes"),
                 (action_partitions > 1, "action partitions"),
                 (

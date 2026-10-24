@@ -800,49 +800,50 @@ class _RouteOnce:
         )
 
 
-def _opposing_model(*, rule: ExitRule) -> Model:
+def _opposing_model(*, rule: ExitRule, reverse: bool = False) -> Model:
     grid = LinSpacedGrid(start=0, stop=100, n_points=3)
+    regimes = {
+        "source": Regime(
+            functions={"utility": _x_flow},
+            states={"x": grid},
+            state_transitions={"x": _next_x},
+            exits={
+                "outward": Exit(
+                    targets={
+                        "self": ExitTarget(
+                            regime="target",
+                            projection={"y": _into_target},
+                            utility_adjustment=_adjustment,
+                        )
+                    },
+                    rule=rule,
+                    available=_first_period,
+                )
+            },
+        ),
+        "target": Regime(
+            functions={"utility": _y_flow},
+            states={"y": grid},
+            state_transitions={"y": _next_y},
+            exits={
+                "inward": Exit(
+                    targets={
+                        "self": ExitTarget(
+                            regime="source",
+                            projection={"x": _into_source},
+                            utility_adjustment=_return_fee,
+                        )
+                    },
+                    rule=rule,
+                    available=_first_period,
+                )
+            },
+        ),
+        "source_done": Regime(functions={"utility": _x_flow}, states={"x": grid}),
+        "target_done": Regime(functions={"utility": _y_flow}, states={"y": grid}),
+    }
     return Model(
-        regimes={
-            "source": Regime(
-                functions={"utility": _x_flow},
-                states={"x": grid},
-                state_transitions={"x": _next_x},
-                exits={
-                    "outward": Exit(
-                        targets={
-                            "self": ExitTarget(
-                                regime="target",
-                                projection={"y": _into_target},
-                                utility_adjustment=_adjustment,
-                            )
-                        },
-                        rule=rule,
-                        available=_first_period,
-                    )
-                },
-            ),
-            "target": Regime(
-                functions={"utility": _y_flow},
-                states={"y": grid},
-                state_transitions={"y": _next_y},
-                exits={
-                    "inward": Exit(
-                        targets={
-                            "self": ExitTarget(
-                                regime="source",
-                                projection={"x": _into_source},
-                                utility_adjustment=_return_fee,
-                            )
-                        },
-                        rule=rule,
-                        available=_first_period,
-                    )
-                },
-            ),
-            "source_done": Regime(functions={"utility": _x_flow}, states={"x": grid}),
-            "target_done": Regime(functions={"utility": _y_flow}, states={"y": grid}),
-        },
+        regimes=dict(reversed(tuple(regimes.items()))) if reverse else regimes,
         n_periods=2,
         regime_id_class=_OpposingRegimes,
         initial_nodes=InitialNodes(by_period={0: ("source", "target")}),
@@ -860,9 +861,10 @@ def test_reciprocal_unilateral_exits_refuse_the_public_participating_cycle() -> 
 
 
 @pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
-def test_opposing_public_exits_advance_only_the_final_actor() -> None:
+@pytest.mark.parametrize("reverse", [False, True])
+def test_opposing_public_exits_advance_only_the_final_actor(*, reverse: bool) -> None:
     """Original occupants move once, pay once, then use final scheduled laws."""
-    model = _opposing_model(rule=_RouteOnce())
+    model = _opposing_model(rule=_RouteOnce(), reverse=reverse)
     params = {"discount_factor": 0.0}
     solution = model.solve(params=params, log_level="off", runtime_checks=False)
     frame = model.simulate(

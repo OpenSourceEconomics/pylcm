@@ -278,10 +278,12 @@ Endogenous-grid query reconstruction is not implemented. Query admission also re
 folded, invariant or co-mapped state layouts, action partitioning, stored Full-value
 references and runtime-bound query status adapters.
 
-Collective decisions with current-IID shocks remain explicitly refused. Collective EV1
-tastes and custom source selectors combined with source EV1 tastes are explicitly
-refused. Simulation also refuses tagged current-IID overrides when a model declares
-exits.
+Collective current-IID decisions select one common action and route exits at each node,
+then integrate each member's selected value. Stored values retain the stakeholder axis
+and carry no current-shock axis. This also applies to collective regimes without exits.
+Collective EV1 tastes and custom source selectors combined with source EV1 tastes are
+explicitly refused. Simulation also refuses tagged current-IID overrides when a model
+declares exits.
 
 (api-extreme-value-taste-shocks)=
 
