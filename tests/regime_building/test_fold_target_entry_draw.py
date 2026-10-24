@@ -28,6 +28,7 @@ N_POINTS = 5
 OUTSIDE_OPTION = 0.2
 DISCOUNT_FACTOR = 0.9
 SEED = 7
+N_SUBJECTS = 16
 WEALTH = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
 AGES = AgeGrid(start=0, inclusive_stop=3, step="Y")
 
@@ -98,9 +99,9 @@ def _params() -> dict[str, dict[str, dict[str, float]]]:
 
 def _initial_conditions() -> dict[str, jnp.ndarray]:
     return {
-        "age": jnp.array([0.0, 0.0, 0.0, 0.0]),
-        "wealth": jnp.array([0.0, 1.0, 0.0, 1.0]),
-        "regime_id": jnp.array([RegimeId.start] * 4),
+        "age": jnp.zeros(N_SUBJECTS),
+        "wealth": jnp.tile(jnp.array([0.0, 1.0]), N_SUBJECTS // 2),
+        "regime_id": jnp.full(N_SUBJECTS, RegimeId.start),
     }
 
 

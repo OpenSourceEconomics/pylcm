@@ -39,6 +39,7 @@ documentation and tests.
 
 | Public name                                                                             | Canonical documentation              |
 | --------------------------------------------------------------------------------------- | ------------------------------------ |
+| [`lcm.shocks`](shocks.md)                                                               | Named IID laws and integration rules |
 | [`lcm.AgeGrid`](grids_and_processes.md#api-lifecycle-and-categorical-grids)             | Lifecycle grid                       |
 | [`lcm.categorical`](grids_and_processes.md#api-lifecycle-and-categorical-grids)         | Category declaration                 |
 | [`lcm.characteristics`](grids_and_processes.md#api-lifecycle-and-categorical-grids)     | Checked category characteristics     |

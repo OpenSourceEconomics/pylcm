@@ -801,8 +801,8 @@ _FOLDED_BODY_MUTATIONS = {
         ),
     ),
     "published_value_changed": (
-        "output=V_arr if empty is None else (V_arr, empty),",
-        "output=-V_arr if empty is None else (-V_arr, empty),",
+        'output=cast("MaxOutput", V_arr if empty is None else (V_arr, empty)),',
+        'output=cast("MaxOutput", -V_arr if empty is None else (-V_arr, empty)),',
     ),
     "empty_support_dropped": (
         "empty = jnp.any(empty & support, axis=axis)",

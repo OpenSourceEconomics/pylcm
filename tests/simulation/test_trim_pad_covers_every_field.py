@@ -16,7 +16,7 @@ from _lcm.engine import PeriodRegimeSimulationData
 from _lcm.simulation.initial_conditions import trim_pad_from_raw_results
 
 #: Fields holding `name -> per-subject array` mappings rather than a bare array.
-_MAPPING_FIELDS = frozenset({"actions", "states"})
+_MAPPING_FIELDS = frozenset({"actions", "states", "shocks"})
 
 _N_REAL = 7
 _N_PADDED = 8
