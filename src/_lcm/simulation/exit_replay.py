@@ -16,6 +16,10 @@ from _lcm.regime_building.collective import NO_ROLE
 from _lcm.shock_registry import ShockBinding
 from _lcm.simulation.chunk_operations import regime_mask
 from _lcm.simulation.current_iid import prepare_current_iid_keys
+from _lcm.simulation.current_iid_overrides import (
+    CurrentIIDOverrides,
+    gather_current_iid_overrides,
+)
 from _lcm.simulation.exits import (
     ExitRoute,
     ExitSimulationPlan,
@@ -44,6 +48,7 @@ from lcm.exceptions import (
     NoFeasibleActionError,
     ShockDeclarationError,
 )
+from lcm.shocks import ShockName
 from lcm.typing import BoolND, FloatND, IntND, RegimeName
 
 if TYPE_CHECKING:
@@ -74,6 +79,7 @@ def prepare_exit_period(
     subject_slice: slice | SubjectRows,
     original_n_subjects: int,
     memory: SimulationMemory | None,
+    current_iid_overrides: CurrentIIDOverrides | None = None,
     taste_key: PRNGKeyND | None = None,
     taste_addresses: Mapping[
         tuple[int, RegimeName], tuple[int, ...]
@@ -109,6 +115,14 @@ def prepare_exit_period(
         else MappingProxyType({})
     )
     taste_banks = {}
+    overrides = gather_current_iid_overrides(
+        bank=current_iid_overrides,
+        names=tuple(
+            shock for binding in bindings.values() for shock in binding.group.shocks
+        ),
+        period=period,
+        subject_slice=subject_slice,
+    )
     for name, regime in actors.items():
         if regime.has_taste_shocks and isinstance(subject_slice, slice):
             _, taste_banks[name] = prepare_decision_taste_keys(
@@ -152,6 +166,7 @@ def prepare_exit_period(
             arguments={
                 "states": states[name],
                 "keys": keys,
+                "overrides": overrides,
                 "query_arguments": arguments,
                 "_holders": holders,
                 "taste_keys": {plan.full.root: taste_banks[name]}
@@ -172,6 +187,7 @@ def prepare_exit_period(
                 taste_banks,
                 projected,
                 adjustments,
+                overrides,
             ),
         )
         answer, frame_payload, source_projections, source_adjustments = cast(
@@ -248,6 +264,25 @@ def prepare_exit_period(
         regime_names_to_ids=regime_names_to_ids,
         memory=memory,
     )
+    produced = run_simulation_operation(
+        memory=memory,
+        function=_original_produced,
+        arguments={
+            "regime_ids": regime_ids,
+            "availability": {
+                name: frame.information_available
+                for name, (_, frame) in originals.items()
+            },
+            "regime_names_to_ids": regime_names_to_ids,
+        },
+        static_arguments={
+            "physical_names": tuple(
+                (name, tuple(frame.physical)) for name, (_, frame) in originals.items()
+            ),
+        },
+        subject_arg_names=("regime_ids", "availability"),
+        subject_outputs=True,
+    )
     prepared = {}
     for name, regime in actors.items():
         plan = regime.simulation.exit_queries[period]
@@ -289,6 +324,8 @@ def prepare_exit_period(
                 "states": final_states[name],
                 "keys": keys,
                 "held_bases": bases,
+                "produced": produced,
+                "overrides": overrides,
                 "_holders": holders,
                 "taste_keys": query_taste_keys,
                 "query_arguments": arguments,
@@ -314,6 +351,8 @@ def prepare_exit_period(
                 paid,
                 projected,
                 adjustments,
+                overrides,
+                produced,
             ),
         )
         answer, frame_payload = cast("ParticipatingExitOutput", output)
@@ -580,6 +619,27 @@ def _original_bases(
                 regime_ids == regime_names_to_ids[name], value, combined[shock]
             )
     return combined
+
+
+def _original_produced(
+    *,
+    regime_ids: IntND,
+    availability: Mapping[RegimeName, Mapping[ShockName, BoolND]],
+    regime_names_to_ids: RegimeNamesToIds,
+    physical_names: tuple[tuple[RegimeName, tuple[ShockName, ...]], ...],
+) -> dict[ShockName, BoolND]:
+    """Retain actual producing contexts in immutable original subject order."""
+    produced = {
+        shock: jnp.zeros_like(regime_ids, dtype=jnp.bool_)
+        for _, names in physical_names
+        for shock in names
+    }
+    for owner, names in physical_names:
+        for shock in names:
+            produced[shock] |= (
+                regime_ids == regime_names_to_ids[owner]
+            ) & availability[owner].get(shock, True)
+    return produced
 
 
 def _final_decision(

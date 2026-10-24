@@ -12,6 +12,7 @@ from jaxtyping import Int
 
 from _lcm.engine import Regime
 from _lcm.shock_overrides import CurrentIIDOverride
+from _lcm.simulation.exits import query_producing_bindings
 from _lcm.simulation.initial_conditions import resolve_initial_periods
 from _lcm.simulation.shock_paths import _subject_occupancy
 from _lcm.simulation.subject_groups import SubjectRows
@@ -131,11 +132,42 @@ def resolve_current_iid_overrides(  # noqa: C901, PLR0912 - shapes and demanded 
     """Validate dated shapes and demanded coverage without uploading full banks."""
     if not entries and not paths:
         return None
+    readers = {}
+    for regime_name, regime in regimes.items():
+        periods = {}
+        for period in (
+            regime.simulation.programs.decision.keys()
+            | regime.simulation.exit_queries.keys()
+        ):
+            exit_plan = regime.simulation.exit_queries.get(period)
+            if exit_plan is not None:
+                queries = (
+                    ()
+                    if exit_plan.full is None
+                    else (
+                        exit_plan.full,
+                        *(
+                            exit_plan.participating[name]
+                            for name in exit_plan.final_actors
+                        ),
+                    )
+                )
+                names = frozenset(
+                    shock
+                    for query in queries
+                    for binding in query_producing_bindings(queries=query).values()
+                    for shock in binding.group.shocks
+                )
+            else:
+                draw = regime.simulation.current_iid_draw_plan
+                names = frozenset() if draw is None else frozenset(draw.physical_names)
+            periods[period] = names
+        readers[regime_name] = periods
     consumed = {
         name
-        for regime in regimes.values()
-        if (plan := regime.simulation.current_iid_draw_plan) is not None
-        for name in plan.physical_names
+        for periods in readers.values()
+        for names in periods.values()
+        for name in names
     }
     if unused := (entries.keys() | paths.keys()) - consumed:
         raise InvalidSimulationInputError(
@@ -182,13 +214,11 @@ def resolve_current_iid_overrides(  # noqa: C901, PLR0912 - shapes and demanded 
     )
     for name, item in normalized_paths.items():
         values = item.values  # noqa: PD011 - tagged numeric record
-        for regime_name, regime in regimes.items():
-            plan = regime.simulation.current_iid_draw_plan
-            if plan is None or name not in plan.physical_names:
-                continue
-            for period in regime.simulation.programs.decision:
+        for regime_name, periods in readers.items():
+            for period, names in periods.items():
                 if (
-                    occupancy[regime_name][:, period].any()
+                    name in names
+                    and occupancy[regime_name][:, period].any()
                     and period >= values.shape[-1]
                 ):
                     raise InvalidSimulationInputError(

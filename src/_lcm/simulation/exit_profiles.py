@@ -10,11 +10,16 @@ from _lcm.engine import Regime
 from _lcm.execution.core_program import CoreBuildContext
 from _lcm.simulation.chunk_operations import _regime_mask
 from _lcm.simulation.chunk_profile_inventory import ChunkProfileInventory, abstract_tree
+from _lcm.simulation.current_iid_overrides import (
+    CurrentIIDOverrideSchema,
+    current_iid_override_prototype,
+)
 from _lcm.simulation.exit_replay import (
     _answer_status,
     _final_decision,
     _moving_actor_rows,
     _original_bases,
+    _original_produced,
     exit_bindings,
 )
 from _lcm.simulation.exits import route_original_subjects
@@ -59,6 +64,7 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
     taste_key: jax.ShapeDtypeStruct | None,
     n_subjects: int,
     widths: Mapping[str, int],
+    current_iid_override_schema: CurrentIIDOverrideSchema = (),
 ) -> tuple[
     _Carrier,
     jax.ShapeDtypeStruct,
@@ -125,6 +131,14 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
         if regime.has_taste_shocks
     }
     params = {name: dict(flat_params.get(name, {})) for name in bindings}
+    overrides = current_iid_override_prototype(
+        schema=current_iid_override_schema,
+        names=tuple(
+            shock for binding in bindings.values() for shock in binding.group.shocks
+        ),
+        n_subjects=n_subjects,
+        sharding=subject,
+    )
 
     def native(
         *,
@@ -133,6 +147,7 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
         columns: _Carrier,
         holders: jax.ShapeDtypeStruct,
         bases: ShapeDtypePytree = None,
+        produced: ShapeDtypePytree = None,
     ) -> tuple[ShapeDtypePytree, ...]:
         regime = actors[name]
         plan = regime.simulation.exit_queries[period]
@@ -156,6 +171,7 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
         inputs = {
             "states": columns[name],
             "keys": keys,
+            "overrides": overrides,
             "_holders": holders,
             "taste_keys": {queries.root: tastes[name]} if name in tastes else {},
             "query_arguments": {
@@ -167,6 +183,7 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
             },
             "group_params": abstract_tree(tree=params, sharding=shared),
             **({"held_bases": bases} if bases is not None else {}),
+            **({"produced": produced} if produced is not None else {}),
         }
         profile = _profile_program(
             runtime=inventory.runtime,
@@ -282,6 +299,22 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
         subject_arg_names=("regime_ids", "bases"),
         subject_outputs=True,
     )
+    produced = inventory.operation(
+        function=_original_produced,
+        arguments={
+            "regime_ids": regime_ids,
+            "availability": {name: frame[7] for name, (_, frame) in originals.items()},
+            "regime_names_to_ids": codes,
+        },
+        static_arguments={
+            "physical_names": tuple(
+                (name, tuple(cast("Mapping[str, jax.ShapeDtypeStruct]", frame[0])))
+                for name, (_, frame) in originals.items()
+            ),
+        },
+        subject_arg_names=("regime_ids", "availability"),
+        subject_outputs=True,
+    )
     prepared = {}
     for name, regime in actors.items():
         holders = cast(
@@ -303,6 +336,7 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
             columns=final_states,
             holders=holders,
             bases=bases,
+            produced=produced,
         )
         answer, frame = cast("_Answer", output[0]), cast("_Frame", output[1])
         check(answer=answer, frame=frame, holders=holders)

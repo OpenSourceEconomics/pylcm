@@ -358,6 +358,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
             taste_key=taste_key,
             n_subjects=n_subjects,
             widths=widths,
+            current_iid_override_schema=current_iid_override_schema,
         )
         pending = payload_bytes(
             tree=(

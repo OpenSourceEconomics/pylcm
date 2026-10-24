@@ -147,6 +147,7 @@ class CurrentIIDDrawPlan:
         arguments: Mapping[ReferenceName, PytreeValue],
         overrides: Mapping[ShockName, ShockOverride] = MappingProxyType({}),
         override_active: Mapping[ShockName, BoolND] = MappingProxyType({}),
+        held_bases: Mapping[ShockName, FloatND] = MappingProxyType({}),
     ) -> CurrentIIDDrawFrame:
         """Produce one scalar cell, retaining its producing context and named bases.
 
@@ -158,7 +159,7 @@ class CurrentIIDDrawPlan:
             raise ShockDeclarationError(f"Unknown shock overrides {sorted(unknown)}.")
         physical: dict[ShockName, FloatND | IntND] = {}
         addressed_bases: dict[ShockName, FloatND] = {}
-        held_bases: dict[ShockName, FloatND] = {}
+        resolved_bases: dict[ShockName, FloatND] = {}
         source_params = {}
         source_inputs = {}
         recovery_error = {}
@@ -179,6 +180,10 @@ class CurrentIIDDrawPlan:
                 )
                 for shock, law in binding.group.shocks.items()
             }
+            baseline = {
+                shock: held_bases.get(shock, value)
+                for shock, value in addressed.items()
+            }
             inputs = _law_inputs(
                 binding=binding,
                 arguments={
@@ -196,7 +201,7 @@ class CurrentIIDDrawPlan:
             fallback_physical = {}
             if active:
                 ordinary, _ = binding.group._realise(  # noqa: SLF001
-                    base_nodes=jnp.stack(tuple(addressed.values()))[None],
+                    base_nodes=jnp.stack(tuple(baseline.values()))[None],
                     nodes=None,
                     params=params,
                     inputs=inputs,
@@ -208,7 +213,7 @@ class CurrentIIDDrawPlan:
                 }
             override = apply_overrides(
                 group=binding.group,
-                addressed=addressed,
+                addressed=baseline,
                 overrides={
                     key: value
                     for key, value in overrides.items()
@@ -221,7 +226,7 @@ class CurrentIIDDrawPlan:
                 fallback_physical=fallback_physical,
             )
             addressed_bases.update(addressed)
-            held_bases.update(override.bases)
+            resolved_bases.update(override.bases)
             source_params[name] = MappingProxyType(dict(supplied))
             source_inputs[name] = MappingProxyType(dict(inputs))
             base = jnp.stack(tuple(override.bases.values()))[None]
@@ -267,7 +272,7 @@ class CurrentIIDDrawPlan:
         return CurrentIIDDrawFrame(
             physical=MappingProxyType(physical),
             addressed_bases=MappingProxyType(addressed_bases),
-            held_bases=MappingProxyType(held_bases),
+            held_bases=MappingProxyType(resolved_bases),
             source_params=MappingProxyType(source_params),
             source_inputs=MappingProxyType(source_inputs),
             recovery_error=MappingProxyType(recovery_error),

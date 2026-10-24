@@ -43,9 +43,20 @@ from lcm import (
     RuleResult,
     categorical,
 )
-from lcm.exceptions import UnsupportedOperationError
+from lcm.exceptions import (
+    InvalidSimulationInputError,
+    ShockDeclarationError,
+)
 from lcm.exits import ExitRule
-from lcm.shocks import BaseInnovations, Discrete, Product, ShockGroup
+from lcm.shocks import (
+    BaseInnovations,
+    Discrete,
+    GaussHermite,
+    Normal,
+    PhysicalValues,
+    Product,
+    ShockGroup,
+)
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.typing import BoolND, FloatND, IntND, RegimeName, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
@@ -295,24 +306,323 @@ def test_original_exit_frame_evaluates_only_demanded_permitted_groups() -> None:
     np.testing.assert_array_equal(frame["regime_name"], "target")
 
 
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
 @pytest.mark.parametrize("entry", [False, True])
-def test_tagged_exit_innovations_require_mapped_query_custody(*, entry: bool) -> None:
-    """Ordinary occupancy-only history validation cannot admit an exit target."""
+def test_tagged_exit_innovations_preserve_hidden_pricing(*, entry: bool) -> None:
+    """A supplied low target draw changes the final action, not hidden pricing."""
     model = _hidden_offer_model(observed=False, enable_jit=True)
     initial = {
         "period": jnp.zeros(1, dtype=jnp.int32),
         "regime_id": jnp.zeros(1, dtype=jnp.int32),
     }
     tagged = BaseInnovations(values=jnp.asarray([0.25]))
-    with pytest.raises(UnsupportedOperationError, match=r"mapped-query.*custody"):
+    frame = model.simulate(
+        params={},
+        initial_conditions={**initial, **({"offer": tagged} if entry else {})},
+        shock_paths=None if entry else {"offer": tagged},
+        seed=17,
+        log_level="off",
+        runtime_checks=False,
+    ).to_dataframe(use_categorical_codes=True)
+    np.testing.assert_array_equal(frame["regime_name"], "target")
+    np.testing.assert_array_equal(frame["offer"], 0)
+    np.testing.assert_array_equal(frame["choice"], 0)
+    assert_array_almost_equal(frame["value"], -0.25, decimal=DECIMAL_PRECISION)
+
+
+@categorical(ordered=False)
+class _DatedOverrideRegimes:
+    start: ScalarInt
+    source: ScalarInt
+    target: ScalarInt
+    source_done: ScalarInt
+    target_done: ScalarInt
+
+
+def _start_flow(source_signal: FloatND) -> FloatND:
+    return 0.0 * source_signal
+
+
+def _dated_override_model() -> Model:
+    return Model(
+        regimes={
+            "start": Regime(
+                functions={"utility": _start_flow}, shocks=("source_innovation",)
+            ),
+            "source": Regime(
+                functions={"utility": _stay},
+                exits={
+                    "leave": Exit(
+                        targets={
+                            "self": ExitTarget(
+                                regime="target",
+                                projection={},
+                                utility_adjustment=_adjustment,
+                            )
+                        },
+                        rule="unilateral",
+                    )
+                },
+            ),
+            "target": Regime(
+                functions={"utility": _target},
+                actions={"choice": DiscreteGrid(category_class=_Binary)},
+                shocks=("innovation",),
+            ),
+            "source_done": Regime(functions={"utility": _zero}),
+            "target_done": Regime(functions={"utility": _zero}),
+        },
+        shocks={
+            "source_innovation": ShockGroup(
+                shocks={"source_signal": Normal(mu=0, sigma=1)},
+                nodes=Product(source_signal=GaussHermite(3)),
+            ),
+            "innovation": ShockGroup(
+                shocks={"offer": Discrete(categories=_Binary, probs=(0.5, 0.5))}
+            ),
+        },
+        n_periods=3,
+        regime_id_class=_DatedOverrideRegimes,
+        initial_nodes=InitialNodes(by_period={0: "start", 1: "source"}),
+        edges={
+            "start": {"source": Periods(values=(0,))},
+            "source": {"source_done": Periods(values=(1,))},
+            "target": {"target_done": Periods(values=(1,))},
+        },
+    )
+
+
+def _dated_override_initial() -> dict[str, jax.Array]:
+    return {
+        "period": jnp.asarray([1, 0, 1], dtype=jnp.int32),
+        "regime_id": jnp.asarray([1, 0, 1], dtype=jnp.int32),
+    }
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_target_only_history_covers_incoming_participating_period() -> None:
+    """An incoming-only final actor at period one needs that dated input cell."""
+    model = _dated_override_model()
+    with pytest.raises(InvalidSimulationInputError, match=r"offer.*cover period 1"):
         model.simulate(
-            params={},
-            initial_conditions={**initial, **({"offer": tagged} if entry else {})},
-            shock_paths=None if entry else {"offer": tagged},
+            params={"discount_factor": 0.5},
+            initial_conditions=_dated_override_initial(),
+            shock_paths={"offer": BaseInnovations(values=jnp.asarray([0.25]))},
             seed=17,
             log_level="off",
             runtime_checks=False,
         )
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+@pytest.mark.parametrize("physical", [False, True])
+def test_target_only_complete_history_keeps_original_rows(*, physical: bool) -> None:
+    """Staggered original rows reach the incoming Part actor and its own edge."""
+    model = _dated_override_model()
+    values = (
+        PhysicalValues(values=jnp.asarray([[0, 0], [0, 1], [1, 0]], dtype=jnp.int32))
+        if physical
+        else BaseInnovations(values=jnp.asarray([[0.1, 0.1], [0.1, 0.9], [0.9, 0.1]]))
+    )
+    frame = model.simulate(
+        params={"discount_factor": 0.5},
+        initial_conditions=_dated_override_initial(),
+        shock_paths={"offer": values},
+        seed=17,
+        log_level="off",
+        runtime_checks=False,
+    ).to_dataframe(use_categorical_codes=True)
+    acting = frame.loc[frame["period"] == 1].sort_values("subject_id")
+    np.testing.assert_array_equal(acting["regime_name"], "target")
+    np.testing.assert_array_equal(acting["offer"], [0, 1, 0])
+    np.testing.assert_array_equal(acting["choice"], [0, 1, 0])
+    assert_array_almost_equal(
+        acting["value"], [-0.25, 1.75, -0.25], decimal=DECIMAL_PRECISION
+    )
+    np.testing.assert_array_equal(
+        frame.loc[frame["period"] == 2, "regime_name"], "target_done"
+    )
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_unread_target_history_does_not_replace_fresh_target_draws() -> None:
+    """A source-only prefix leaves the later target's named random address intact."""
+    model = _dated_override_model()
+    frames = [
+        model.simulate(
+            params={"discount_factor": 0.5},
+            initial_conditions=_dated_override_initial(),
+            shock_paths=paths,
+            seed=17,
+            log_level="off",
+            runtime_checks=False,
+        ).to_dataframe(use_categorical_codes=True)
+        for paths in (
+            None,
+            {"source_signal": BaseInnovations(values=jnp.asarray([123.0]))},
+        )
+    ]
+    assert_frame_equal(
+        frames[0].loc[frames[0]["period"] == 1],
+        frames[1].loc[frames[1]["period"] == 1],
+    )
+
+
+def _correlated_override_utility(
+    *, first_signal: FloatND, second_signal: FloatND, choice: ScalarInt
+) -> FloatND:
+    return first_signal + second_signal + choice * (first_signal - 3)
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+@pytest.mark.parametrize("complete", [False, True])
+def test_target_only_correlated_physical_frame_uses_mapped_producer(
+    *, complete: bool
+) -> None:
+    """A complete low physical frame reveals after exit; partial frames refuse."""
+    model = Model(
+        regimes={
+            "source": Regime(
+                functions={"utility": _stay},
+                exits={
+                    "leave": Exit(
+                        targets={"self": ExitTarget(regime="target", projection={})},
+                        rule="unilateral",
+                    )
+                },
+            ),
+            "target": Regime(
+                functions={"utility": _correlated_override_utility},
+                actions={"choice": DiscreteGrid(category_class=_Binary)},
+                shocks=("signals",),
+            ),
+        },
+        shocks={
+            "signals": ShockGroup(
+                shocks={
+                    "first_signal": Normal(mu=2, sigma=2),
+                    "second_signal": Normal(mu=4, sigma=2),
+                },
+                correlation=((1.0, 0.5), (0.5, 1.0)),
+                nodes=Product(
+                    first_signal=GaussHermite(3), second_signal=GaussHermite(3)
+                ),
+            )
+        },
+        n_periods=1,
+        regime_id_class=_RegimeId,
+        initial_nodes=InitialNodes(by_period={0: "source"}),
+        edges={},
+    )
+    paths = {
+        "first_signal": PhysicalValues(values=jnp.asarray([-4.0])),
+        **(
+            {"second_signal": PhysicalValues(values=jnp.asarray([-4.0]))}
+            if complete
+            else {}
+        ),
+    }
+    if not complete:
+        with pytest.raises(
+            ShockDeclarationError, match=r"complete physical|invalid or unresolved"
+        ):
+            model.simulate(
+                params={},
+                initial_conditions={
+                    "period": jnp.asarray([0]),
+                    "regime_id": jnp.asarray([0]),
+                },
+                shock_paths=paths,
+                seed=17,
+                log_level="off",
+                runtime_checks=False,
+            )
+        return
+    frame = model.simulate(
+        params={},
+        initial_conditions={"period": jnp.asarray([0]), "regime_id": jnp.asarray([0])},
+        shock_paths=paths,
+        seed=17,
+        log_level="off",
+        runtime_checks=False,
+    ).to_dataframe(use_categorical_codes=True)
+    np.testing.assert_array_equal(frame["regime_name"], "target")
+    np.testing.assert_array_equal(frame["first_signal"], -4.0)
+    np.testing.assert_array_equal(frame["second_signal"], -4.0)
+    np.testing.assert_array_equal(frame["choice"], 0)
+    assert_array_almost_equal(frame["value"], -8.0, decimal=DECIMAL_PRECISION)
+
+
+def _shared_source_flow(shared_signal: FloatND) -> FloatND:
+    return 0.5 + 0.0 * shared_signal
+
+
+def _shared_target_flow(shared_signal: FloatND) -> FloatND:
+    return shared_signal
+
+
+def _mapped_location(location: FloatND) -> FloatND:
+    return location + 10
+
+
+def _location_mean(location: FloatND) -> FloatND:
+    return location
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_shared_physical_override_transports_recovered_base_to_changed_law() -> None:
+    """Source physical two at mean one becomes target physical twelve at mean eleven."""
+    model = Model(
+        regimes={
+            "source": Regime(
+                states={"location": LinSpacedGrid(start=0, stop=1, n_points=2)},
+                functions={"utility": _shared_source_flow},
+                shocks=("shared",),
+                exits={
+                    "leave": Exit(
+                        targets={
+                            "self": ExitTarget(
+                                regime="target",
+                                projection={"location": _mapped_location},
+                            )
+                        },
+                        rule="unilateral",
+                    )
+                },
+            ),
+            "target": Regime(
+                states={"location": LinSpacedGrid(start=10, stop=11, n_points=2)},
+                functions={"utility": _shared_target_flow},
+                shocks=("shared",),
+            ),
+        },
+        shocks={
+            "shared": ShockGroup(
+                shocks={"shared_signal": Normal(mu=_location_mean, sigma=1)},
+                nodes=Product(shared_signal=GaussHermite(3)),
+            )
+        },
+        n_periods=1,
+        regime_id_class=_RegimeId,
+        initial_nodes=InitialNodes(by_period={0: "source"}),
+        edges={},
+    )
+    frame = model.simulate(
+        params={},
+        initial_conditions={
+            "period": jnp.asarray([0]),
+            "regime_id": jnp.asarray([0]),
+            "location": jnp.asarray([1.0]),
+            "shared_signal": PhysicalValues(values=jnp.asarray([2.0])),
+        },
+        seed=17,
+        log_level="off",
+        runtime_checks=False,
+    ).to_dataframe(use_categorical_codes=True)
+    np.testing.assert_array_equal(frame["regime_name"], "target")
+    np.testing.assert_array_equal(frame["location"], 11.0)
+    assert_array_almost_equal(frame["shared_signal"], 12.0, decimal=DECIMAL_PRECISION)
+    assert_array_almost_equal(frame["value"], 12.0, decimal=DECIMAL_PRECISION)
 
 
 @pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")

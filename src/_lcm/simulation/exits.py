@@ -17,10 +17,20 @@ from _lcm.execution.core_program import (
     CoreExecutionRequirements,
     CoreProgram,
 )
+from _lcm.shock_overrides import CurrentIIDOverride
+from _lcm.shock_registry import ShockBinding
 from _lcm.simulation.program_types import subject_axis
 from _lcm.typing import FlatParams, PytreeValue
-from lcm.shocks import BaseInnovations, Discrete, LawValue, Uniform
-from lcm.typing import BoolND, FloatND, IntND, RegimeName
+from lcm.shocks import (
+    BaseInnovations,
+    Discrete,
+    LawValue,
+    PhysicalValues,
+    ShockGroupName,
+    ShockName,
+    Uniform,
+)
+from lcm.typing import BoolND, FloatND, IntND, ReferenceName, RegimeName
 
 if TYPE_CHECKING:
     from _lcm.engine import Regime
@@ -65,6 +75,20 @@ class ExitSimulationPlan:
     """Own physical columns consumed by this actor's Participating policy."""
     fixed_flat_params: FlatParams = MappingProxyType({})
     """All bound query-context operands, retaining their canonical namespace."""
+
+    @property
+    def final_actors(self) -> tuple[RegimeName, ...]:
+        """Direct move destinations; incoming Part actors create no Full occupants."""
+        if self.full is None:
+            return ()
+        root = self.full.definitions[self.full.root]
+        return tuple(
+            dict.fromkeys(
+                self.full.definitions[query].read.target
+                for targets in root.exit_targets.values()
+                for query in targets.values()
+            )
+        )
 
     def __post_init__(self) -> None:
         """Retain a stable destination roster independent of caller mutation."""
@@ -257,6 +281,53 @@ def _query_draw(
     )
 
 
+def query_producing_bindings(
+    *, queries: ScalarPolicyQueries
+) -> Mapping[ShockGroupName, ShockBinding]:
+    """Name actual frame producers, excluding hidden pricing quadrature."""
+    root = queries.definitions[queries.root]
+    draw = root.context.current_iid_draw_plan or CurrentIIDDrawPlan(bindings={})
+    producing = dict(_query_draw(queries=queries, draw=draw).bindings)
+    for group, producer in root.observation_sources.items():
+        producing_draw = queries.definitions[producer].context.current_iid_draw_plan
+        if producing_draw is None:
+            raise ValueError("An observation producer must own its declared shock law.")
+        producing[group] = producing_draw.bindings[group]
+    return producing
+
+
+def _realise_frame(
+    *,
+    draw: CurrentIIDDrawPlan,
+    keys: Mapping[ShockName, jax.Array],
+    group_params: Mapping[ShockGroupName, Mapping[ReferenceName, LawValue | BoolND]],
+    arguments: Mapping[ReferenceName, PytreeValue],
+    overrides: Mapping[ShockName, CurrentIIDOverride],
+    held_bases: Mapping[ShockName, FloatND] = MappingProxyType({}),
+    produced: Mapping[ShockName, BoolND] = MappingProxyType({}),
+) -> CurrentIIDDrawFrame:
+    """Apply gathered tags only until an original producing context owns the base."""
+    selected = {
+        name: item for name, item in overrides.items() if name in draw.physical_names
+    }
+    return draw.realise(
+        keys=keys,
+        group_params=group_params,
+        arguments=arguments,
+        held_bases=held_bases,
+        overrides={
+            name: BaseInnovations(values=cast("FloatND", item.values))
+            if item.kind == "base"
+            else PhysicalValues(values=cast("FloatND | IntND", item.values))
+            for name, item in selected.items()
+        },
+        override_active={
+            name: cast("BoolND", item.active) & ~jnp.asarray(produced.get(name, False))
+            for name, item in selected.items()
+        },
+    )
+
+
 class PreparedExitDecision(NamedTuple):
     """The final actor's decision, already selected before any transition."""
 
@@ -286,7 +357,7 @@ class OriginalExitDecision:
         query_arguments: Mapping[str, Mapping[str, PytreeValue]],
         _holders: BoolND,
         taste_keys: Mapping[str, jax.Array],
-        overrides: Mapping[str, BaseInnovations] = MappingProxyType({}),
+        overrides: Mapping[ShockName, CurrentIIDOverride] = MappingProxyType({}),
     ) -> OriginalExitOutput:
         """Publish source price/frame and selected destination coordinates."""
         query_arguments = {
@@ -298,7 +369,8 @@ class OriginalExitDecision:
         }
         fixed = query_arguments[self.queries.root]
         source = {**states, "period": fixed["period"], "age": fixed["age"]}
-        frame = self.draw.realise(
+        frame = _realise_frame(
+            draw=self.draw,
             keys=keys,
             group_params=group_params,
             arguments=source,
@@ -323,6 +395,7 @@ class OriginalExitDecision:
             frame=frame,
             keys=keys,
             group_params=group_params,
+            overrides=overrides,
         )
         answer = self.queries(states=states, arguments=query_arguments, frame=frame)
         projections = {}
@@ -392,6 +465,8 @@ class RevealedExitDecision:
         query_arguments: Mapping[str, Mapping[str, PytreeValue]],
         _holders: BoolND,
         taste_keys: Mapping[str, jax.Array],
+        overrides: Mapping[ShockName, CurrentIIDOverride],
+        produced: Mapping[ShockName, BoolND],
     ) -> ParticipatingExitOutput:
         """Reveal target physical values, then run Participating exactly once."""
         query_arguments = {
@@ -402,21 +477,21 @@ class RevealedExitDecision:
             for name, row in query_arguments.items()
         }
         fixed = query_arguments[self.queries.root]
-        frame = self.draw.realise(
+        frame = _realise_frame(
+            draw=self.draw,
             keys=keys,
             group_params=group_params,
             arguments={**states, "period": fixed["period"], "age": fixed["age"]},
-            overrides={
-                name: BaseInnovations(values=held_bases[name])
-                for name in self.draw.physical_names
-            },
+            overrides=overrides,
+            held_bases=held_bases,
+            produced=produced,
         )
         frame = frame._replace(
             addressed_bases={
                 name: _draw_base_value(key=keys[name], uniform=uniform)
                 for name, uniform in self.uniform_bases.items()
             },
-            held_bases={name: held_bases[name] for name in self.uniform_bases},
+            held_bases={**held_bases, **frame.held_bases},
         )
         frame = _observe_query_frame(
             queries=self.queries,
@@ -425,6 +500,8 @@ class RevealedExitDecision:
             frame=frame,
             keys=keys,
             group_params=group_params,
+            overrides=overrides,
+            produced=produced,
         )
         return (
             self.queries(states=states, arguments=query_arguments, frame=frame),
@@ -440,6 +517,8 @@ def _observe_query_frame(
     frame: CurrentIIDDrawFrame,
     keys: Mapping[str, jax.Array],
     group_params: Mapping[str, Mapping[str, LawValue | BoolND]],
+    overrides: Mapping[ShockName, CurrentIIDOverride],
+    produced: Mapping[ShockName, BoolND] = MappingProxyType({}),
 ) -> CurrentIIDDrawFrame:
     """Transform only explicit observations in their exact producing context."""
     root = queries.definitions[queries.root]
@@ -463,6 +542,8 @@ def _observe_query_frame(
             group_params=group_params,
             group=group,
             producer=producer,
+            overrides=overrides,
+            produced=produced,
         )
         # Abstract tracing fixes the exact output tree without executing an
         # inactive projection or physical law. The false payload is never an
@@ -472,23 +553,30 @@ def _observe_query_frame(
             *jax.tree.map(lambda leaf: jnp.zeros(leaf.shape, leaf.dtype), prototype)
         )._replace(valid=jnp.asarray(a=True))
         neutral_payload = _frame_output(frame=neutral)
-        produced = CurrentIIDDrawFrame(
+        observed_frame = CurrentIIDDrawFrame(
             *jax.lax.cond(active, produce, lambda neutral=neutral_payload: neutral)
         )
         observed = {
             name: value
-            for name, value in produced.physical.items()
+            for name, value in observed_frame.physical.items()
             if name in root.read.policy_information
         }
         frame = frame._replace(
             physical={**frame.physical, **observed},
-            source_params={**frame.source_params, **produced.source_params},
-            source_inputs={**frame.source_inputs, **produced.source_inputs},
+            source_params={**frame.source_params, **observed_frame.source_params},
+            source_inputs={**frame.source_inputs, **observed_frame.source_inputs},
             information_available={
                 **frame.information_available,
                 **dict.fromkeys(observed, active),
             },
-            valid=frame.valid & produced.valid,
+            valid=frame.valid & observed_frame.valid,
+            held_bases={
+                **frame.held_bases,
+                **{
+                    name: jnp.where(active, base, frame.held_bases[name])
+                    for name, base in observed_frame.held_bases.items()
+                },
+            },
         )
     return frame
 
@@ -503,6 +591,8 @@ def _produce_observed_group(
     group_params: Mapping[str, Mapping[str, LawValue | BoolND]],
     group: str,
     producer: str,
+    overrides: Mapping[ShockName, CurrentIIDOverride],
+    produced: Mapping[ShockName, BoolND],
 ) -> ExitFramePayload:
     """Return the producer's numerical leaves across JAX's metadata boundary."""
     node = queries.definitions[producer]
@@ -519,7 +609,8 @@ def _produce_observed_group(
         raise ValueError("An observation producer must own its declared shock law.")
     binding = draw.bindings[group]
     return _frame_output(
-        frame=CurrentIIDDrawPlan(bindings={group: binding}).realise(
+        frame=_realise_frame(
+            draw=CurrentIIDDrawPlan(bindings={group: binding}),
             keys=keys,
             group_params=group_params,
             arguments={
@@ -527,8 +618,15 @@ def _produce_observed_group(
                 "period": fixed["period"],
                 "age": fixed["age"],
             },
-            overrides={
-                name: BaseInnovations(values=frame.held_bases[name])
+            overrides=overrides,
+            held_bases=frame.held_bases,
+            produced={
+                name: jnp.asarray(produced.get(name, False))
+                | (
+                    frame.information_available.get(name, jnp.asarray(a=True))
+                    if name in frame.physical
+                    else jnp.asarray(a=False)
+                )
                 for name in binding.group.shocks
             },
         )
@@ -602,16 +700,11 @@ def exit_policy_program(
             queries=queries, draw=draw, uniform_bases=uniform_bases
         )
     )
-    subject_inputs = ("states", "keys", "_holders", "taste_keys") + (
-        () if original else ("held_bases",)
+    subject_inputs = ("states", "keys", "_holders", "taste_keys", "overrides") + (
+        () if original else ("held_bases", "produced")
     )
     root = queries.definitions[queries.root]
-    producing_bindings = dict(draw.bindings)
-    for group, producer in root.observation_sources.items():
-        producing_draw = queries.definitions[producer].context.current_iid_draw_plan
-        if producing_draw is None:
-            raise ValueError("An observation producer must own its declared shock law.")
-        producing_bindings[group] = producing_draw.bindings[group]
+    producing_bindings = query_producing_bindings(queries=queries)
     physical_names = tuple(
         dict.fromkeys(
             (

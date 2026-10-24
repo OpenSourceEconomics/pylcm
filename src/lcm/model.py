@@ -3887,13 +3887,6 @@ class Model:
                 names=frozenset(self._shock_registry.innovations),
             )
         )
-        if (current_entries or current_paths) and any(
-            declaration.exits for declaration in self.user_regimes.values()
-        ):
-            raise UnsupportedOperationError(
-                "Tagged current-IID overrides with exits require mapped-query "
-                "history coverage and original-row custody during routing."
-            )
         initial_conditions = lower_initial_time(
             initial_conditions=self._encode_initial_values(
                 initial_conditions=initial_conditions,
