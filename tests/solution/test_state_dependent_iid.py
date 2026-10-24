@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 from numpy.testing import assert_array_almost_equal
 
-from lcm import InitialNodes, Model, Regime, categorical
+from lcm import ExecutionConfig, InitialNodes, Model, Regime, categorical
 from lcm.shocks import Discrete, Product, ShockGroup
 from lcm.typing import BoolND, DiscreteAction, DiscreteState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
@@ -50,6 +50,10 @@ def test_discrete_shock_code_is_the_physical_category(*, enable_jit: bool) -> No
             )
         },
         enable_jit=enable_jit,
+        # Eager execution cannot report compiler-derived peak workspace.
+        execution_config=ExecutionConfig()
+        if enable_jit
+        else ExecutionConfig(device_memory_bytes=None),
     )
     solution = model.solve(params={}, log_level="off", runtime_checks=False)
     assert_array_almost_equal(
