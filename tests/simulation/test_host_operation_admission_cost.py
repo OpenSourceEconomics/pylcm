@@ -61,7 +61,7 @@ from tests.simulation._callback_types import HostDispatch, WorkspacePlanning
 # household without a feasible action takes its dissolution route) and its
 # per-period gated-entry carriers are helpers too. User-law producers also enter
 # the axis-free plan outside helper dispatch.
-_WITNESS_HELPER_OPERATIONS = 73
+_WITNESS_HELPER_OPERATIONS = 66
 _WITNESS_PRODUCER_ADMISSIONS = 5
 # Every owned decision checks its selected action before downstream indexing.
 _WITNESS_EMPTY_ACTION_CHECKS = 5
@@ -130,7 +130,7 @@ class _CountingCompiler[Compiled]:
 
 @pytest.mark.parametrize(
     ("runtime_checks", "helper_operations", "producer_admissions"),
-    [(False, 59, 0), (True, _WITNESS_HELPER_OPERATIONS, _WITNESS_PRODUCER_ADMISSIONS)],
+    [(False, 52, 0), (True, _WITNESS_HELPER_OPERATIONS, _WITNESS_PRODUCER_ADMISSIONS)],
 )
 def test_every_budgeted_helper_admits_through_the_axis_free_plan(
     *,
