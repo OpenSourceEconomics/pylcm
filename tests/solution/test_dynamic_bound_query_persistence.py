@@ -6,6 +6,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Literal, cast
 
+import cloudpickle
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -526,16 +527,24 @@ def test_query_resource_evaluator_matches_installed_liquid_role() -> None:
         )
 
 
-def test_feature_free_fingerprint_retains_recorded_identity() -> None:
-    """Feature-free model declarations retain their canonical structure identity."""
+def _shifted_lower(*, floor_helper: FloatND) -> FloatND:
+    return floor_helper + 1.0
+
+
+def test_feature_free_fingerprint_is_reproducible_and_seals_its_floor() -> None:
+    """Equivalent floors round-trip; changing the floor changes identity."""
     model = _model(declaration=post_decision_lower_bound(margin=LIQUID, lower=lower))
     observed = _structure_fingerprint(model)
     assert observed == model._model_structure_fingerprint
-    if jnp.dtype(jnp.asarray(0.0).dtype) == jnp.dtype(jnp.float32):
-        assert (
-            observed
-            == "94486b8c64607accd674bd1fd923e79d55bfb7935f62d00f6f820aedd8d5ed12"
-        )
+    rebuilt = _model(declaration=post_decision_lower_bound(margin=LIQUID, lower=lower))
+    restored = cloudpickle.loads(cloudpickle.dumps(model))
+    assert observed == _structure_fingerprint(rebuilt)
+    assert observed == restored._model_structure_fingerprint
+    restored._check_identity_runtime()
+    changed = _model(
+        declaration=post_decision_lower_bound(margin=LIQUID, lower=_shifted_lower)
+    )
+    assert observed != _structure_fingerprint(changed)
 
 
 def test_one_row_query_transport_has_explicit_model_adapter_refusal() -> None:

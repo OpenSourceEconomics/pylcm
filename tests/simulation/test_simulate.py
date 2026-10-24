@@ -92,6 +92,7 @@ def simulate_inputs():
         "regime_names_to_ids": regime_names_to_ids,
         "ages": ages,
         "simulation_output_dtypes": _get_output_dtypes(
+            shocks={},
             user_regimes=finalize_regimes(
                 user_regimes=user_regimes,
                 laws=laws,

@@ -1447,6 +1447,7 @@ class Model:
         self.enable_jit = enable_jit
         self.simulation_output_dtypes = _get_output_dtypes(
             user_regimes=self.user_regimes,
+            shocks=self.shocks,
             regime_names_to_ids=self.regime_names_to_ids,
         )
         self._solution_param_projection: SolutionParamProjection = (

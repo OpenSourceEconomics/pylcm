@@ -1,11 +1,14 @@
 """Public tagged current innovations preserve original rows and producing laws."""
 
 from dataclasses import replace
+from pathlib import Path
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import pytest
+from pandas.testing import assert_frame_equal
 
 from _lcm.simulation.entry_inputs import capture_simulation_entry_inputs
 from lcm import (
@@ -15,6 +18,7 @@ from lcm import (
     Model,
     Periods,
     Regime,
+    SimulationResult,
     categorical,
 )
 from lcm.exceptions import (
@@ -24,6 +28,7 @@ from lcm.exceptions import (
 )
 from lcm.shocks import (
     BaseInnovations,
+    Discrete,
     MonteCarlo,
     Normal,
     PhysicalValues,
@@ -447,3 +452,127 @@ def test_unread_path_prefix_does_not_consume_invalid_values() -> None:
             frame["subject_id"].to_numpy(dtype=int), frame["period"].to_numpy(dtype=int)
         ],
     )
+
+
+@categorical(ordered=True)
+class _OrderedOffer:
+    unavailable: ScalarInt
+    offered: ScalarInt
+
+
+@categorical(ordered=False)
+class _UnorderedOffer:
+    unavailable: ScalarInt
+    offered: ScalarInt
+
+
+@categorical(ordered=False)
+class _OfferRegime:
+    alive: ScalarInt
+    done: ScalarInt
+
+
+def _offer_utility(*, eps: IntND, action: IntND) -> FloatND:
+    return jnp.where(action == eps, 2.0, -1.0)
+
+
+def _recorded_offer(*, eps: IntND) -> IntND:
+    return eps
+
+
+@pytest.mark.parametrize("physical", [False, True])
+@pytest.mark.parametrize("ordered", [False, True])
+@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+def test_discrete_override_labels_codes_and_saved_raw_values(
+    *, tmp_path: Path, physical: bool, ordered: bool
+) -> None:
+    """Tagged categorical draws retain labels, order and raw codes after loading."""
+    model = Model(
+        regimes={
+            name: Regime(
+                functions={
+                    "utility": _offer_utility,
+                    "recorded_offer": _recorded_offer,
+                },
+                output_only_functions=("recorded_offer",),
+                actions={"action": DiscreteGrid(category_class=_Actions)},
+                shocks=("offer",),
+            )
+            for name in ("alive", "done")
+        },
+        shocks={
+            "offer": ShockGroup(
+                shocks={
+                    "eps": Discrete(
+                        categories=_OrderedOffer if ordered else _UnorderedOffer,
+                        probs=(0.5, 0.5),
+                    )
+                }
+            )
+        },
+        n_periods=2,
+        initial_nodes=InitialNodes(by_period={0: "alive", 1: "done"}),
+        edges={"alive": {"done": Periods(values=(0,))}},
+        regime_id_class=_OfferRegime,
+        execution_config=ExecutionConfig(
+            axis_widths={"subject": 2}, device_memory_bytes=2**27
+        ),
+    )
+    assert model.reachability.visited_nodes == frozenset({(0, "alive"), (1, "done")})
+    starts = np.asarray([0, 1, 0], dtype=np.int32)
+    expected = np.asarray([[0, 1], [1, 0], [1, 1]], dtype=np.int32)
+    payload = (
+        PhysicalValues(values=expected)
+        if physical
+        else BaseInnovations(
+            values=np.where(expected == 0, 0.25, 0.75).astype(jnp.asarray(0.0).dtype)
+        )
+    )
+    result = model.simulate(
+        params={"discount_factor": 0.5},
+        initial_conditions={
+            "period": starts,
+            "regime_id": starts,
+        },
+        shock_paths={"eps": payload},
+        seed=91,
+        log_level="off",
+        runtime_checks=False,
+    )
+    labels = result.to_dataframe(additional_targets=["recorded_offer"])
+    codes = result.to_dataframe(
+        additional_targets=["recorded_offer"], use_categorical_codes=True
+    )
+    assert isinstance(labels["eps"].dtype, pd.CategoricalDtype)
+    assert tuple(labels["eps"].cat.categories) == ("unavailable", "offered")
+    assert labels["eps"].cat.ordered is ordered
+    rows = codes["subject_id"].to_numpy()
+    periods = codes["period"].to_numpy()
+    np.testing.assert_array_equal(codes["eps"], expected[rows, periods])
+    np.testing.assert_array_equal(codes["action"], codes["eps"])
+    np.testing.assert_array_equal(codes["recorded_offer"], codes["eps"])
+    np.testing.assert_array_equal(labels["eps"].cat.codes, codes["eps"])
+    raw = {
+        (regime_name, period): np.array(data.shocks["eps"], copy=True)
+        for regime_name, periods in result.raw_results.items()
+        for period, data in periods.items()
+    }
+    randomness = result.randomness
+    directory = result.save(
+        directory=tmp_path / "result", df_additional_targets=["recorded_offer"]
+    )
+    loaded = SimulationResult.load(directory=directory)
+    assert_frame_equal(
+        loaded.to_dataframe(additional_targets=["recorded_offer"]), labels
+    )
+    assert_frame_equal(
+        loaded.to_dataframe(
+            additional_targets=["recorded_offer"], use_categorical_codes=True
+        ),
+        codes,
+    )
+    assert loaded.randomness == randomness
+    for (regime_name, period), values in raw.items():
+        np.testing.assert_array_equal(
+            loaded.raw_results[regime_name][period].shocks["eps"], values
+        )

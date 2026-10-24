@@ -394,7 +394,11 @@ def _decision_programs(
                             )
                             for shock, law in binding.group.shocks.items()
                         },
-                        StateAxesLeading(state_names=(), dtype=jnp.bool_, shape=()),
+                        StateAxesLeading(
+                            state_names=(),
+                            n_free_leading_axes=1,
+                            dtype=jnp.bool_,
+                        ),
                     )
                     if context.current_iid_draw_plan is not None
                     else ()

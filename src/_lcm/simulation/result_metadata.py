@@ -19,6 +19,7 @@ from _lcm.time import TimeAxis
 from _lcm.typing import ActionName, ProcessName, RegimeName, RegimeNamesToIds, StateName
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
+from lcm.shocks import Discrete, ShockGroup, ShockGroupName
 
 # A category of a published discrete column: a label, or the number of a value grid.
 type CategoryValue = str | int | float
@@ -120,6 +121,7 @@ def _get_output_dtypes(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
     regime_names_to_ids: RegimeNamesToIds,
+    shocks: Mapping[ShockGroupName, ShockGroup],
 ) -> MappingProxyType[str, pd.CategoricalDtype]:
     """Compute pandas CategoricalDtype for all discrete output columns.
 
@@ -131,10 +133,11 @@ def _get_output_dtypes(
     Args:
         user_regimes: Mapping of regime names to user-provided `Regime` instances.
         regime_names_to_ids: Mapping of regime names to integer IDs.
+        shocks: Model-level current-IID laws supplying physical-output codecs.
 
     Returns:
         Immutable mapping of variable name to `pd.CategoricalDtype`. Includes
-        all discrete state/action variables plus the `"regime_name"` column.
+        all discrete state/action/current-shock variables and `"regime_name"`.
 
     """
     merged_categories, ordered_flags = compute_merged_discrete_categories(user_regimes)
@@ -152,6 +155,14 @@ def _get_output_dtypes(
             categories=list(categories),
             ordered=ordered_flags.get(var_name, True),
         )
+
+    for group in shocks.values():
+        for var_name, law in group.shocks.items():
+            if isinstance(law, Discrete):
+                grid = DiscreteGrid(category_class=law.categories)
+                dtypes[var_name] = pd.CategoricalDtype(
+                    categories=list(grid.categories), ordered=grid.ordered
+                )
 
     dtypes["regime_name"] = pd.CategoricalDtype(
         categories=list(regime_names_to_ids.keys()),
