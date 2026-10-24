@@ -713,7 +713,7 @@ _SOURCE_SEALS = {
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
     MODEL_SOURCE: "97fefee6b6c8065c50af9dcac2d92659c22e47256f8c2d67669dcdc5071d03f8",
     SOLVER_API_SOURCE: "bc9e7cd94009998acfc1f11d8da823475030879790a49f8192e1260012496c96",
-    BACKWARD_INDUCTION_SOURCE: "68a2f17d3d9abf1ddbbfb96f1af003de3fa5504ddc48ad67f958baccc6efcab4",
+    BACKWARD_INDUCTION_SOURCE: "66fdbcd57277c5534416a86dbc65ea8c173a9a850612deb068f88fab65910945",
     PERIOD_REPLAY_SOURCE: "2f0253693e474c70760a80ab6c07b5bdeb25ffa4aa77224e27ea5d15af5b1a55",
     INITIAL_CONDITIONS_SOURCE: "7d8181debcef963165e5f50ea9aea9ebc1c2e69ced040cb3486f01fe58181bfc",
     RESULT_SOURCE: "a84d216d5063b60fb5cd14548266986da36d2f32caee7a4f806a2b5261872814",
@@ -1674,7 +1674,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_continuous_value_replica_required": "4f22692255b3746899ee7b2849776ea8967090af80d68d46272cd0b9a5bc771b",
             "_compile_all_functions": "f8848af3da69f75671044fc7c75fa1e2871b4a98e554c527e37b3794e4169f8b",
             "_prepare_solve_programs": "ee0cf431eff1dbd14a0d3f75c17850907f54363c523715958a366ba2979956d0",
-            "solve": "992ec873a09b93c00dddcbb54dc0ae30a83d094a82be48cc52892f5e87c684fc",
+            "solve": "b5dc8357930ebc4d8c6c6ffba73219e2f0b3c562f4c142d8166deb7de77f03ba",
             "_cores_with_transfer_cache": "fba35f0f74a7a496f2302ea160d4ce6b832d56abc6d0fee14bc07843b47a0fd0",
             "_release_closed_period_inputs": "f717742187b1e03c7da4f4599a76261a522b9f79785501cbdabaa02319e23e1f",
             "_retire_donated_inputs": "c760bf519c3eab446a2cf7164c4158e5f318de35d9787a62ba24ee8ce5c90a12",
@@ -9424,7 +9424,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             ]
             if len(starts) == len(ends) == 1 and starts[0] <= ends[0]:
                 corridors.append(loop.body[starts[0] : ends[0] + 1])
-        expected = "3e174e5fbd0b819f39010538f04493d265798162c9c0ad83e782528839354b5f"
+        expected = "84981eb38da4c58bd16b67c1a61a0967669123ac8daff82982aef4136812dd68"
         if len(corridors) != 1 or _statements_ast_sha256(corridors[0]) != expected:
             errors.append(
                 "backward output-layout transport: solve publication corridor changed"

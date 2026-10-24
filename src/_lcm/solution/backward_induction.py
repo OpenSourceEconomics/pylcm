@@ -977,6 +977,11 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                             continuation_key=(
                                 None
                                 if continuation_spec is None
+                                or (
+                                    continuation_spec.templates_by_period
+                                    and period
+                                    not in continuation_spec.templates_by_period
+                                )
                                 else continuation_spec.artifact_key
                             ),
                             regime_name=regime_name,
