@@ -22,10 +22,11 @@ from _lcm.simulation import diagnostic_operations as diagnostics
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.residency import measure_buffer_footprint, resident_bytes_by_device
 from _lcm.solution.validate_V import validate_V, value_function_nan_error
+from _lcm.typing import RegimeIdsToNames
 from _lcm.utils.logging import LogLevel, get_logger, log_regime_transition_counts
 from lcm.exceptions import ExecutionPlanningError, InvalidValueFunctionError
 from lcm.result import SimulationResult
-from lcm.typing import BoolND, FloatND
+from lcm.typing import BoolND, FloatND, Int1D
 from tests.simulation._callback_types import (
     DiagnosticEnrichment,
     DiagnosticInputs,
@@ -165,10 +166,17 @@ def test_period_diagnostics_charge_new_carry_after_last_unit_closes(
     monkeypatch: pytest.MonkeyPatch,
     public_simulation: Callable[..., SimulationResult],
 ) -> None:
-    """Current state, membership, role and RNG arrays survive the unit handoff."""
+    """Current state, membership, role and RNG arrays survive the unit handoff.
+
+    The transition counts start from the period's final current membership, so
+    the array they read is the `subject_regime_ids` resident at validation.
+    """
     memories = _capture_memory(monkeypatch)
     original = simulation._validate_period_values
+    original_counts = simulation.log_regime_transition_counts
     inspected: list[bool] = []
+    validated_memberships: list[Int1D] = []
+    counted_memberships: list[Int1D] = []
 
     def observe(**arguments: Unpack[PeriodValidation]) -> None:
         frame = inspect.currentframe()
@@ -179,7 +187,6 @@ def test_period_diagnostics_charge_new_carry_after_last_unit_closes(
             caller[name]
             for name in (
                 "states",
-                "prev_regime_ids",
                 "subject_regime_ids",
                 "new_subject_regime_ids",
                 "own_stakeholder",
@@ -196,11 +203,37 @@ def test_period_diagnostics_charge_new_carry_after_last_unit_closes(
         )
         assert not any(missing.values()), missing
         inspected.append(True)
+        validated_memberships.append(caller["subject_regime_ids"])
         original(**arguments)
 
+    def count(
+        *,
+        logger: logging.Logger,
+        prev_regime_ids: Int1D,
+        new_regime_ids: Int1D,
+        regime_ids_to_names: RegimeIdsToNames,
+        counts_factory: Callable[[], list[list[int]]] | None = None,
+    ) -> None:
+        counted_memberships.append(prev_regime_ids)
+        original_counts(
+            logger=logger,
+            prev_regime_ids=prev_regime_ids,
+            new_regime_ids=new_regime_ids,
+            regime_ids_to_names=regime_ids_to_names,
+            counts_factory=counts_factory,
+        )
+
     monkeypatch.setattr(simulation, "_validate_period_values", observe)
+    monkeypatch.setattr(simulation, "log_regime_transition_counts", count)
     public_simulation()
     assert inspected
+    assert len(counted_memberships) == len(validated_memberships)
+    assert all(
+        counted is validated
+        for counted, validated in zip(
+            counted_memberships, validated_memberships, strict=True
+        )
+    )
 
 
 @pytest.mark.parametrize("collective", [False, True])
