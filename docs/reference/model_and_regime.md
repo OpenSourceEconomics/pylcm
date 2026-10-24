@@ -282,8 +282,65 @@ Collective current-IID decisions select one common action and route exits at eac
 then integrate each member's selected value. Stored values retain the stakeholder axis
 and carry no current-shock axis. This also applies to collective regimes without exits.
 Collective EV1 tastes and custom source selectors combined with source EV1 tastes are
-explicitly refused. Simulation also refuses tagged current-IID overrides when a model
-declares exits.
+explicitly refused.
+
+(api-arrival-decisions)=
+
+## Scheduled arrival decisions
+
+Attach `ArrivalDecision(predicate=..., routes=..., reads=..., observes=())` to an
+incoming `Transition(arrivals={target_name: ...})` in `Model(edges=...)`. It belongs to
+that incoming source, scheduled target, original source role and actual arrival period.
+The scheduled transition produces the landing state before the comparison, and the final
+regime acts after it. Initial occupants and subjects arriving through another edge
+cannot borrow this decision or its fallback. A scheduled target cannot declare both a
+`Gate` and an `ArrivalDecision`.
+
+`predicate` returns a scalar Boolean from the landed target's states and helpers,
+parameters, and the explicitly named `reads`. Declare every value operand, including
+`V_target`, with an `ArrivalRead`. `D_target` is refused; request typed policy support
+instead. The predicate's threshold, window or other comparison determines acceptance; it
+is not replaced by a maximization over the compared values. Acceptance also requires the
+target's Participating policy to have support. `observes` names the target physical
+shocks visible at this comparison.
+
+`routes` maps every original source stakeholder to a
+[`StakeholderRoute`](collective_regimes.md#api-stakeholder-route); a singleton has its
+single route. On acceptance, `target_stakeholder` selects the role in the scheduled
+target. On rejection, `fallback` names the destination, role and complete state
+projection from the landed target state. A collective destination requires its exact
+stakeholder name; a singleton has no stakeholder role. A
+`Phased(solve=..., simulate=...)` fallback prices the source decision using the solve
+settlement and routes simulation using the simulate settlement. The incoming source and
+role remain attached to this settlement, so another edge's fallback cannot replace it.
+
+Arrival callbacks use the target's actual arrival `period` and `age`. Their runtime
+parameters belong under `params["edges"][source][target]`: the predicate uses
+`["predicate"]`, read projections use `["references"][read_name][state]`, and fallback
+projections use `["routes"][source_role]["fallback"]`, with a phase key for a phased
+fallback. Use `model.get_params_template()` for the complete paths. Queried regime
+functions and target helpers retain their own regime parameter namespaces; temporal
+values are selected for the arrival date, rather than the incoming source's decision
+date.
+
+(api-arrival-reads)=
+
+### `ArrivalRead`
+
+`ArrivalRead(regime=..., projection=..., kind=..., stakeholder=None, field="value", observes=())`
+names the represented object supplied to the predicate. `projection` provides every
+state of the referenced regime from the landed target state, and `stakeholder` selects a
+collective reference's exact role. The `reads` mapping key is the argument name the
+predicate receives.
+
+- `kind="Raw"` and `kind="Participating"` reconstruct their canonical `GridSearch`
+  action problems at the projected state, including the common action for a collective
+  regime. `field="value"` reads the selected value; `field="support"` reads Boolean
+  policy support. A read's `observes` adds the referenced physical shocks visible for
+  this comparison to the decision's declared information.
+- `kind="IntegratedFull"` reads the stored, shock-integrated Full value representation
+  at the projected state. It exposes only `field="value"`, with empty `observes`; policy
+  reconstruction, realized information and support are unavailable from this read.
 
 (api-extreme-value-taste-shocks)=
 
