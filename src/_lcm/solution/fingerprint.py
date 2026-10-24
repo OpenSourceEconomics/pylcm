@@ -43,7 +43,8 @@ import _lcm.zero_safe as zero_safe_declarations
 import lcm.exceptions as lcm_exceptions
 import lcm.koopmans_aggregation as koopmans_declarations
 from _lcm.certainty_equivalent import CertaintyEquivalent
-from _lcm.engine import Regime
+from _lcm.continuation import EGMQuerySpec
+from _lcm.engine import NNBEGMPolicyRead, Regime
 from _lcm.grids import DiscreteGrid, Grid
 from _lcm.optimization.golden_section import GoldenSectionResult
 from _lcm.params.edges import EDGES, flat_namespaces, regime_kernel_params
@@ -796,7 +797,27 @@ def fingerprint_model_structure(
                     key: authority.descriptor
                     for key, authority in regime.solution.artifact_authorities.items()
                 },
+                **(
+                    {
+                        "query_authority": _query_semantic_descriptor(
+                            regime.solution.query_authority
+                        ),
+                    }
+                    if regime.solution.query_authority is not None
+                    else {}
+                ),
                 "period_state_axes": regime.solution.period_state_axes,
+                **(
+                    {
+                        "finite_policy_query_authority": _query_semantic_descriptor(
+                            regime.simulation.egm_policy_read.finite_query_authority
+                        )
+                    }
+                    if isinstance(regime.simulation.egm_policy_read, NNBEGMPolicyRead)
+                    and regime.simulation.egm_policy_read.finite_query_authority
+                    is not None
+                    else {}
+                ),
                 # ``Phased`` is projected to its solve member by the semantic
                 # hasher. The declaration retains user-level function bodies,
                 # defaults, closures and globals instead of relying on compiled
@@ -812,6 +833,15 @@ def fingerprint_model_structure(
     hasher = _SemanticHasher(binding_recorder=binding_recorder)
     hasher.visit(value=record)
     return hasher.hexdigest()
+
+
+def _query_semantic_descriptor(spec: EGMQuerySpec) -> EGMQuerySpec:
+    """Seal static query meaning; declaration and parameter walks seal code/data."""
+    return dataclasses.replace(
+        spec,
+        bound=dataclasses.replace(spec.bound, dependency_identity=()),
+        evaluator_identity=(),
+    )
 
 
 def _grid_support(
@@ -1984,6 +2014,10 @@ class _SemanticHasher:
         self.visit(value=identity)
         if dataclasses.is_dataclass(value) and not isinstance(value, type):
             for declaration in dataclasses.fields(cast("DataclassInstance", value)):
+                if declaration.metadata.get("fingerprint_omit_if_default") and (
+                    getattr(value, declaration.name) is declaration.default
+                ):
+                    continue
                 self.frame(label="solver-field", payload=declaration.name.encode())
                 self.visit(value=getattr(value, declaration.name))
         else:

@@ -260,6 +260,14 @@ size of the candidate bank retained for later envelope or ordered-fold operation
 memory can therefore continue to grow with the full candidate set. Measure both
 temporary and retained arrays for the exact model and solver profile.
 
+In the finite nested conditional-query path, an exact maximum-value tie involving a
+legal borrowing corner uses canonical outer order: keeper first, then the declared
+outer nodes. Within the same outer choice, an ordinary row precedes its corner. The
+selected value retains its associated marginal. This is a pointwise tie convention;
+that marginal need not differentiate the approximate value interpolant or identify
+a winner throughout a neighboring interval. Ties involving only ordinary rows retain
+the existing one-sided germ ordering. Equality uses the represented values directly.
+
 `NEGM` rejects EV1 taste shocks. Its outer durable-margin maximum currently wraps the
 inner DCEGM solve, but a taste-shocked discrete choice must be the outermost aggregation:
 `max_outer logsumexp_discrete` is not `logsumexp_discrete max_outer`. Use `GridSearch`,

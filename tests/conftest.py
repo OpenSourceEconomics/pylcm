@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, NotRequired, cast
 import jax
 import jax.numpy as jnp
 import numpy as np
+import psutil
 import pytest
 from jax import config as jax_config
 from jax.experimental.compilation_cache import compilation_cache
@@ -77,7 +78,7 @@ from lcm.typing import (
     ScalarInt,
     StateOrActionName,
 )
-from tests.ci import pytest_policy
+from tests.ci import ci_workloads, pytest_policy
 from tests.ci.cpu_suite_invocations import ignore_implicit_eight_device_collection
 from tests.ci.receipt_plugin import maybe_register as maybe_register_receipt_plugin
 from tests.ci.shard_test_files import (
@@ -381,13 +382,26 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     exist to cover, so they must not be swept along with their neighbours.
     """
     slow = pytest.mark.slow
+    os_persistence = frozenset(ci_workloads.os_persistence_tests())
     for item in items:
         if "solution" in item.path.parts:
             item.add_marker(slow)
+        if _test_function_key(item=item, root=config.rootpath) in os_persistence:
+            item.add_marker(pytest.mark.os_persistence)
 
     _validate_exact_kernel_markers(items=items)
     _apply_backend_skips(items=items)
     pytest_policy.apply(config=config, items=items)
+
+
+def _test_function_key(*, item: pytest.Item, root: pathlib.Path) -> str:
+    """Return `<repository-relative file>::<test function>` for one collected item."""
+    try:
+        relative = item.path.resolve().relative_to(root.resolve()).as_posix()
+    except ValueError:
+        return ""
+    name = getattr(item, "originalname", None) or item.name
+    return f"{relative}::{name}"
 
 
 def pytest_collection_finish(session: pytest.Session) -> None:
@@ -590,23 +604,21 @@ def _fail_session(*, session: pytest.Session, message: str) -> None:
 # boundaries, keeps releasing exactly where it did before and pays nothing.
 _MIB_BETWEEN_RELEASES = 1024.0
 
-_STATUS_PATH = pathlib.Path("/proc/self/status")
-
 
 def resident_mebibytes() -> float | None:
     """This process's resident set size in MiB, or `None` where it is unavailable.
 
-    Read straight from the kernel rather than from a high-water mark, so a
-    release that returns memory is visible as a fall.
+    The current size rather than a high-water mark, so a release that returns
+    memory is visible as a fall. `psutil` reads it on every platform the suite
+    runs on, including macOS and Windows, which have no `/proc`. Without a
+    reading the growth trigger never fires, and a large module then releases
+    everything it compiled in one teardown at its boundary -- on a slow runner,
+    longer than the per-test timeout.
     """
     try:
-        status = _STATUS_PATH.read_text()
-    except OSError:
+        return psutil.Process().memory_info().rss / 1024.0**2
+    except psutil.Error:
         return None
-    for line in status.splitlines():
-        if line.startswith("VmRSS:"):
-            return int(line.split()[1]) / 1024.0
-    return None
 
 
 @functools.cache
@@ -990,6 +1002,7 @@ if TYPE_CHECKING:
         _InputDispatch,
         _ProgramExecutionMetadata,
     )
+    from tests.candidate_certificate.runner_replay import DirectFlowControlsReplay
 
 
 class ResidentInventoryKwargs(TypedDict, closed=True):
@@ -999,3 +1012,18 @@ class ResidentInventoryKwargs(TypedDict, closed=True):
     program_metadata: Mapping[_CoreTriple, _ProgramExecutionMetadata]
     device_ids: tuple[int, ...]
     fixed_bytes: NotRequired[MappingProxyType[int, int]]
+
+
+@pytest.fixture(scope="session")
+def direct_flow_controls() -> DirectFlowControlsReplay:
+    """Share direct-flow verifications across every runner call in this process.
+
+    Tests that use it carry `xdist_group("direct_flow_runner")` and the campaign
+    lane runs under `--dist loadgroup`, so the calls share one worker and only
+    the first pays for the real verifications.
+    """
+    from tests.candidate_certificate.runner_replay import (  # noqa: PLC0415
+        DirectFlowControlsReplay,
+    )
+
+    return DirectFlowControlsReplay()

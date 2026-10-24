@@ -29,12 +29,15 @@ from numpy.testing import assert_array_almost_equal, assert_array_equal
 
 import lcm
 from lcm.exceptions import (
+    InvalidValueFunctionError,
     ModelInitializationError,
     NoFeasibleActionError,
     RegimeInitializationError,
 )
+from lcm.solvers import GridSearch
 from lcm.typing import (
     BoolND,
+    ContinuousAction,
     ContinuousState,
     DiscreteAction,
     DiscreteState,
@@ -1449,3 +1452,153 @@ def test_a_gated_source_refuses_a_decoupled_aggregator() -> None:
             },
             enable_jit=False,
         )
+
+
+def _bounded_decoupled_model(*, taste_shocks: bool, invalid_income: float) -> lcm.Model:
+    """Build a two-period liquid problem with a state-specific borrowing floor."""
+
+    def flow(*, consumption: ContinuousAction, choice: DiscreteAction) -> FloatND:
+        return consumption + choice
+
+    def resources(*, wealth: ContinuousState) -> FloatND:
+        return wealth
+
+    def savings(*, resources: FloatND, consumption: ContinuousAction) -> FloatND:
+        return resources - consumption
+
+    def next_wealth(*, savings: FloatND) -> ContinuousState:
+        return savings
+
+    def terminal(*, wealth: ContinuousState, income: ContinuousState) -> FloatND:
+        return 0.0 * (wealth + income)
+
+    def floor(*, income: ContinuousState) -> FloatND:
+        return jnp.where(income == invalid_income, jnp.nan, 0.25 + 0.25 * income)
+
+    def objective(*, utility: FloatND, CE: FloatND) -> FloatND:
+        return -utility + CE
+
+    def value(*, utility: FloatND, CE: FloatND) -> FloatND:
+        return utility + CE
+
+    margin = lcm.LiquidMargin(
+        state="wealth",
+        action="consumption",
+        resources="resources",
+        post_decision_state="savings",
+    )
+    # The temporal callable-floor fixture's state and liquid-action grids.
+    states = {
+        "wealth": lcm.LinSpacedGrid(start=1.0, stop=2.0, n_points=2),
+        "income": lcm.LinSpacedGrid(start=0.0, stop=1.0, n_points=2),
+    }
+    decide = lcm.ConsumptionSavingsRegime(
+        liquid=margin,
+        states=states,
+        actions={
+            "choice": lcm.DiscreteGrid(Choice),
+            "consumption": lcm.LinSpacedGrid(start=0.25, stop=2.0, n_points=8),
+        },
+        state_transitions={
+            "wealth": next_wealth,
+            "income": lcm.fixed_transition("income"),
+        },
+        functions={"utility": flow, "resources": resources, "savings": savings},
+        constraints={
+            "borrowing": lcm.post_decision_lower_bound(margin=margin, lower=floor)
+        },
+        koopmans_aggregator=lcm.Decoupled(objective=objective, value=value),
+        taste_shocks=lcm.ExtremeValueTasteShocks() if taste_shocks else None,
+        solver=GridSearch(),
+    )
+    return lcm.Model(
+        n_periods=2,
+        regimes={
+            "decide": decide,
+            "end": lcm.Regime(states=states, functions={"utility": terminal}),
+        },
+        regime_id_class=RegimeId,
+        initial_nodes=lcm.InitialNodes(by_period={0: "decide"}),
+        edges={"decide": {"end": lcm.Periods(values=(0,))}},
+    )
+
+
+@pytest.mark.parametrize("taste_shocks", [False, True], ids=["hard", "ev1"])
+def test_callable_floor_decoupled_keeps_objective_choice_and_stored_value(
+    *, taste_shocks: bool
+) -> None:
+    """A callable floor constrains the objective's choice and stored readout."""
+    model = _bounded_decoupled_model(taste_shocks=taste_shocks, invalid_income=0.5)
+    params: UserParams = (
+        {"decide": {"taste_shocks": {"scale": SCALE}}} if taste_shocks else {}
+    )
+    solution = model.solve(params=params, log_level="off", runtime_checks=False)
+    probabilities = np.array([1.0, np.exp(-1.0 / SCALE)])
+    probabilities /= probabilities.sum()
+    expected_value = (
+        probabilities @ np.array([0.25, 1.25])
+        - SCALE * np.sum(probabilities * np.log(probabilities))
+        if taste_shocks
+        else 0.25
+    )
+    assert_array_almost_equal(
+        solution.value(period=0, regime="decide"),
+        np.full((2, 2), expected_value),
+        decimal=DECIMAL_PRECISION,
+    )
+    got = model.lookup_policy(
+        params=params,
+        solution=solution,
+        period=0,
+        regime_name="decide",
+        states={"wealth": jnp.array([1.0]), "income": jnp.array([1.0])},
+        keep_intermediates=("Q", "F", "U", "CE", "Q_objective"),
+    )
+    consumption = np.arange(0.25, 2.25, 0.25)
+    Q = np.stack((consumption, consumption + 1.0))[None, ...]
+    F = np.broadcast_to(consumption <= 0.5, Q.shape)
+    assert_array_almost_equal(got.value, [expected_value], decimal=DECIMAL_PRECISION)
+    assert_array_equal(got.Q, Q)
+    assert_array_equal(got.U, Q)
+    assert_array_equal(got.CE, np.zeros_like(Q))
+    assert_array_equal(got.F, F)
+    assert_array_equal(got.Q_objective, -Q)
+    if taste_shocks:
+        assert_array_almost_equal(
+            cast("FloatND", got.choice_probabilities)[0],
+            probabilities,
+            decimal=DECIMAL_PRECISION,
+        )
+        assert_array_equal(cast("FloatND", got.Qc)[0], [0.25, 1.25])
+    else:
+        assert got.actions is not None
+        assert_array_equal(got.actions["choice"], [Choice.spend])
+        assert_array_equal(got.actions["consumption"], [0.25])
+
+
+@pytest.mark.parametrize("taste_shocks", [False, True], ids=["hard", "ev1"])
+@pytest.mark.parametrize("entry", ["solve", "lookup"])
+def test_callable_floor_decoupled_rejects_invalid_floor_with_no_feasible_action(
+    *, taste_shocks: bool, entry: str
+) -> None:
+    """A nonfinite actual floor is mandatory even when every action is infeasible."""
+    model = _bounded_decoupled_model(
+        taste_shocks=taste_shocks, invalid_income=0.0 if entry == "solve" else 0.5
+    )
+    params: UserParams = (
+        {"decide": {"taste_shocks": {"scale": SCALE}}} if taste_shocks else {}
+    )
+    if entry == "solve":
+        with pytest.raises(InvalidValueFunctionError, match="floor"):
+            model.solve(params=params, log_level="off", runtime_checks=False)
+    else:
+        solution = model.solve(params=params, log_level="off", runtime_checks=False)
+        with pytest.raises(InvalidValueFunctionError, match="floor"):
+            model.lookup_policy(
+                params=params,
+                solution=solution,
+                period=0,
+                regime_name="decide",
+                states={"wealth": jnp.array([1.0]), "income": jnp.array([0.5])},
+                keep_intermediates=("Q", "F", "U", "CE", "Q_objective"),
+            )

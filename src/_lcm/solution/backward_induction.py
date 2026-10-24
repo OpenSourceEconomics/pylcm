@@ -190,9 +190,20 @@ from _lcm.solution.diagnostics import (
     _states_for_period,
 )
 from _lcm.solution.feasibility import (
+    BoundedResult,
+    BoundInputStatus,
+    ChildStatusKernelOutput,
+    ContinuationCountedKernelOutput,
+    ContinuationReadCounts,
     FeasibilityCounts,
     FeasibilityKernelOutput,
+    QueryInputStatus,
     add_feasibility_counts,
+    merge_bound_input_status,
+    merge_continuation_read_counts,
+    merge_query_input_status,
+    validate_query_input_status,
+    validate_runtime_bound_status,
 )
 from _lcm.solution.grid_search import _GridSearchArgumentBuilder
 from _lcm.solution.kernel_attribution import (
@@ -257,6 +268,7 @@ from _lcm.typing import (
     StateName,
     ValueND,
 )
+from _lcm.utils.counts import add_counts
 from _lcm.utils.logging import (
     format_duration,
     log_period_header,
@@ -522,6 +534,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         )
 
     # Resolve every solve program, then compile unique lowerings when enabled.
+    diagnostics_enabled = validation_enabled(logger)
     compiled_programs = _compile_all_functions(
         regimes=regimes,
         program_fingerprint=program_fingerprint,
@@ -555,6 +568,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         else executable_cache,
         structural_blueprints=structural_blueprints,
         base_state_action_spaces=base_state_action_spaces,
+        collect_continuation_read_counts=diagnostics_enabled,
     )
     compiled_functions = compiled_programs.executables
     replay_dispatches = {
@@ -653,7 +667,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     # happens.
     #
     # Runtime checks gate NaN/Inf tracking; debug output independently gates stats.
-    diagnostics_enabled = validation_enabled(logger)
     stats_enabled = logger.isEnabledFor(logging.DEBUG)
     (
         diagnostic_rows,
@@ -741,7 +754,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                     ledger=input_liveness,
                     registry=buffer_registry,
                 )
-                period_pending_outputs: list[FloatND] = []
+                period_pending_outputs: list[ValueND] = []
                 period_release_candidates: dict[
                     ValueArtifactAddress, _InputDispatch
                 ] = {}
@@ -886,6 +899,45 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                                 selected_artifact_keys=selected_artifact_keys,
                             ),
                         )
+                        runtime_bounds = tuple(
+                            bound
+                            for bound in regime.solution.post_decision_bounds
+                            if bound.kind == "dag"
+                        )
+                        if runtime_bounds:
+                            statuses = (
+                                output.bound_status
+                                if type(output) is FeasibilityKernelOutput
+                                else ()
+                            )
+                            validate_runtime_bound_status(
+                                statuses=statuses,
+                                bound_specs=runtime_bounds,
+                                regime_name=regime_name,
+                                period=period,
+                            )
+                        query_authorities = (
+                            regime.solution.query_input_authorities or {}
+                        ).get(period, ())
+                        query_status = _published_query_status(output=output)
+                        if query_authorities or query_status is not None:
+                            validate_query_input_status(
+                                statuses=query_status, authorities=query_authorities
+                            )
+                        if (
+                            type(output) is FeasibilityKernelOutput
+                            and output.landing_totals is not None
+                        ):
+                            from _lcm.solution.landing_counts import (  # noqa: PLC0415
+                                fail_on_reached_landings,
+                            )
+
+                            fail_on_reached_landings(
+                                totals=output.landing_totals,
+                                checks=output.landing_checks,
+                                regime_name=regime_name,
+                                period=period,
+                            )
                         continuation_spec = regime.solution.continuation_spec
                         result = consume_kernel_output(
                             output=output,
@@ -1007,6 +1059,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                             running_any_nan=running_any_nan,
                             running_any_inf=running_any_inf,
                             feasibility_counts=result.feasibility_counts,
+                            continuation_read_counts=result.continuation_read_counts,
                         )
 
                         period_solution[regime_name] = V_arr
@@ -1067,6 +1120,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                                 period_simulation_policies,
                                 period_dissolution_flags,
                                 result.feasibility_counts,
+                                result.continuation_read_counts,
                                 _diagnostic_arrays(
                                     diagnostics=tuple(
                                         period_solver_diagnostics.values()
@@ -1097,6 +1151,10 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                             if pending_work is None
                             else pending_work.before_delete,
                         )
+                        if result.continuation_read_counts is not None:
+                            result = dataclasses.replace(
+                                result, continuation_read_counts=None
+                            )
                     for unit in wave:
                         for key in regime_shared_transfer_keys.get(
                             unit.regime, frozenset()
@@ -1568,6 +1626,54 @@ def _run_period_kernel(
     return output
 
 
+def _accumulate_landing_totals(
+    *,
+    landing_totals: IntND | None,
+    landing_checks: tuple[tuple[str, str], ...],
+    output: FeasibilityKernelOutput,
+) -> tuple[IntND, tuple[tuple[str, str], ...]]:
+    """Retain the first landing bank, then add identically qualified blocks."""
+    if landing_totals is None:
+        landing_totals = cast("IntND", output.landing_totals)
+        landing_checks = output.landing_checks
+    else:
+        if landing_checks != output.landing_checks:
+            raise TypeError(
+                "Invariant blocks must retain the same qualified landing checks."
+            )
+        landing_totals = add_counts(
+            left=landing_totals,
+            right=jax.device_put(
+                cast("IntND", output.landing_totals), landing_totals.sharding
+            ),
+        )
+    return landing_totals, landing_checks
+
+
+def _published_query_status(
+    *, output: KernelOutput
+) -> tuple[QueryInputStatus, ...] | None:
+    """Read the declared child slots from either typed status publication."""
+    if (
+        type(output) is FeasibilityKernelOutput
+        or type(output) is ChildStatusKernelOutput
+    ):
+        return output.query_status
+    return None
+
+
+def _query_block_status(
+    *, output: KernelOutput, n_query_slots: int
+) -> tuple[QueryInputStatus, ...] | None:
+    """Require every reached block to supply its canonical query slots."""
+    statuses = _published_query_status(output=output)
+    if len(statuses or ()) != n_query_slots:
+        raise TypeError(
+            "Every invariant block must supply its model-owned query declaration slots."
+        )
+    return statuses
+
+
 def _run_dispatch_unit(
     *,
     value_template: FloatND,
@@ -1630,13 +1736,57 @@ def _run_dispatch_unit(
         )
     value: FloatND | None = None
     feasibility_counts: FeasibilityCounts | None = None
+    continuation_read_counts: ContinuationReadCounts | None = None
+    bound_status: tuple[BoundInputStatus, ...] | None = None
+    query_status: tuple[QueryInputStatus, ...] | None = None
+    query_status_initialized = False
+    n_query_slots = len((regime.solution.query_input_authorities or {}).get(period, ()))
+    landing_totals: IntND | None = None
+    landing_checks: tuple[tuple[str, str], ...] = ()
     for name in bound:
         binding = cast("InvariantBinding", graph[name].invariant_binding)
         output = run_kernel(
             compiled_cores=MappingProxyType({name: compiled_cores[name]}),
             capture_target=None,
         )
+        block_query = _query_block_status(output=output, n_query_slots=n_query_slots)
+        continuation_read_counts = _accumulate_continuation_read_counts(
+            total=continuation_read_counts,
+            output=output,
+        )
+        query_status, query_status_initialized = _accumulate_query_status(
+            total=query_status,
+            initialized=query_status_initialized,
+            output=output,
+            block_query=block_query,
+        )
         if type(output) is FeasibilityKernelOutput:
+            if output.landing_totals is not None:
+                landing_totals, landing_checks = _accumulate_landing_totals(
+                    landing_totals=landing_totals,
+                    landing_checks=landing_checks,
+                    output=output,
+                )
+            if bound_status is None:
+                bound_status = output.bound_status
+            else:
+                bound_status = tuple(
+                    merge_bound_input_status(
+                        left=left,
+                        right=BoundInputStatus(
+                            nonfinite_floor=jax.device_put(
+                                right.nonfinite_floor, left.nonfinite_floor.sharding
+                            ),
+                            invalid_shifted_grid=jax.device_put(
+                                right.invalid_shifted_grid,
+                                left.invalid_shifted_grid.sharding,
+                            ),
+                        ),
+                    )
+                    for left, right in zip(
+                        bound_status, output.bound_status, strict=True
+                    )
+                )
             counts = output.feasibility_counts
             feasibility_counts = (
                 counts
@@ -1657,12 +1807,93 @@ def _run_dispatch_unit(
             template=value_template,
         )
     return (
-        KernelOutput(value=cast("FloatND", value))
+        _literal_dispatch_unit_output(
+            value=cast("FloatND", value),
+            query_status=query_status,
+            continuation_read_counts=continuation_read_counts,
+        )
         if feasibility_counts is None
         else FeasibilityKernelOutput(
-            value=cast("FloatND", value), feasibility_counts=feasibility_counts
+            value=cast("FloatND", value),
+            feasibility_counts=feasibility_counts,
+            bound_status=bound_status or (),
+            query_status=query_status,
+            landing_totals=landing_totals,
+            landing_checks=landing_checks,
+            continuation_read_counts=continuation_read_counts,
         )
     ), True
+
+
+def _accumulate_query_status(
+    *,
+    total: tuple[QueryInputStatus, ...] | None,
+    initialized: bool,
+    output: KernelOutput,
+    block_query: tuple[QueryInputStatus, ...] | None,
+) -> tuple[tuple[QueryInputStatus, ...] | None, bool]:
+    """Merge one typed block's child slots on the standing summary's placement."""
+    if (
+        type(output) is not FeasibilityKernelOutput
+        and type(output) is not ChildStatusKernelOutput
+    ):
+        return total, initialized
+    if total is not None and block_query is not None:
+        block_query = tuple(
+            QueryInputStatus(
+                *(
+                    jax.device_put(right, left.sharding)
+                    for left, right in zip(lhs, rhs, strict=True)
+                )
+            )
+            for lhs, rhs in zip(total, block_query, strict=True)
+        )
+    if not initialized:
+        return block_query, True
+    return merge_query_input_status(left=total, right=block_query), True
+
+
+def _literal_dispatch_unit_output(
+    *,
+    value: FloatND,
+    query_status: tuple[QueryInputStatus, ...] | None,
+    continuation_read_counts: ContinuationReadCounts | None,
+) -> KernelOutput:
+    """Assemble blocks without feasibility counts under their own typed summaries."""
+    if query_status is not None:
+        return ChildStatusKernelOutput(
+            value=value,
+            query_status=query_status,
+            continuation_read_counts=continuation_read_counts,
+        )
+    if continuation_read_counts is not None:
+        return ContinuationCountedKernelOutput(
+            value=value, continuation_read_counts=continuation_read_counts
+        )
+    return KernelOutput(value=value)
+
+
+def _accumulate_continuation_read_counts(
+    *,
+    total: ContinuationReadCounts | None,
+    output: KernelOutput,
+) -> ContinuationReadCounts | None:
+    """Merge a declared block pair on the standing summary's placement."""
+    if (
+        type(output) is not FeasibilityKernelOutput
+        and type(output) is not ChildStatusKernelOutput
+        and type(output) is not ContinuationCountedKernelOutput
+    ):
+        return total
+    read_counts = output.continuation_read_counts
+    if read_counts is not None and total is not None:
+        read_counts = ContinuationReadCounts(
+            *(
+                jax.device_put(right, left.sharding)
+                for left, right in zip(total, read_counts, strict=True)
+            )
+        )
+    return merge_continuation_read_counts(left=total, right=read_counts)
 
 
 def _cores_with_transfer_cache(
@@ -2054,7 +2285,7 @@ def _match_continuation_template_sharding(
 
 
 # keyword-only-exempt: library-callback=jax.tree.map
-def _match_leaf_pair_sharding(leaf: FloatND, template_leaf: FloatND) -> FloatND:
+def _match_leaf_pair_sharding(leaf: ValueND, template_leaf: ValueND) -> ValueND:
     """Place one continuation leaf on its template leaf's sharding."""
     return _match_leaf_template_sharding(leaf=leaf, template_leaf=template_leaf)
 
@@ -2121,7 +2352,7 @@ def _assert_assembled_value_layout(*, value: FloatND, template: FloatND) -> None
         raise AssertionError(msg)
 
 
-def _match_leaf_template_sharding(*, leaf: FloatND, template_leaf: FloatND) -> FloatND:
+def _match_leaf_template_sharding(*, leaf: ValueND, template_leaf: ValueND) -> ValueND:
     """Place one solved array on its template's device sharding (no-op on match).
 
     Applied where a solved value array is published and where the continuation
@@ -2379,6 +2610,8 @@ class _ProgramExecutionMetadata:
     disposition: CoreExecutionDisposition
     scope: ProgramScope
     input_transfer_plan: tuple[ResolvedValueTransfer, ...]
+    collects_continuation_read_counts: bool = False
+    """Presence derived from the selected numerical output declaration."""
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -2536,7 +2769,7 @@ def _release_closed_period_inputs(
     candidates: dict[ValueArtifactAddress, _InputDispatch],
     inputs: SolveInputMappings,
     templates: SolveInputMappings,
-    pending_outputs: Sequence[FloatND],
+    pending_outputs: Sequence[ValueND],
     logger: logging.Logger,
     release_enabled: bool,
     before_delete: BeforeArrayDelete | None = None,
@@ -3163,6 +3396,17 @@ def _resident_inventory_by_triple(
         )
         for period in range(_model_n_periods(regimes=regimes))
     }
+    read_counters_by_period = {
+        period: _period_continuation_counter_reservations(
+            active=frozenset(
+                name
+                for (name, entry_period, _), metadata in program_metadata.items()
+                if entry_period == period and metadata.collects_continuation_read_counts
+            ),
+            device_ids_by_regime=device_ids_by_regime,
+        )
+        for period in range(_model_n_periods(regimes=regimes))
+    }
     return MappingProxyType(
         {
             (regime_name, period, core_key): dataclasses.replace(
@@ -3171,8 +3415,11 @@ def _resident_inventory_by_triple(
                     {
                         **fixed_bytes,
                         **{
-                            device: fixed_bytes.get(device, 0) + size
-                            for device, size in counters_by_period[period].items()
+                            device: fixed_bytes.get(device, 0)
+                            + counters_by_period[period].get(device, 0)
+                            + read_counters_by_period[period].get(device, 0)
+                            for device in counters_by_period[period].keys()
+                            | read_counters_by_period[period].keys()
                         },
                     }
                 ),
@@ -3183,6 +3430,19 @@ def _resident_inventory_by_triple(
             for core_key in core_keys
         }
     )
+
+
+def _period_continuation_counter_reservations(
+    *,
+    active: frozenset[RegimeName],
+    device_ids_by_regime: Mapping[RegimeName, frozenset[int]],
+) -> MappingProxyType[int, int]:
+    """Reserve one pair per enabled period cell and one invariant merge pair."""
+    if not active:
+        return MappingProxyType({})
+    size = 2 * np.dtype(np.int32).itemsize * (len(active) + 1)
+    devices = frozenset().union(*(device_ids_by_regime[name] for name in active))
+    return MappingProxyType(dict.fromkeys(sorted(devices), size))
 
 
 def _period_feasibility_counter_reservations(
@@ -3611,6 +3871,7 @@ def _select_period_programs(
     period: int,
     retain_replay: bool,
     persistable_artifact_refs: frozenset[ArtifactRef],
+    collect_continuation_read_counts: bool = False,
 ) -> MappingProxyType[str, CoreProgram]:
     """Select one cell's programs from exact model-authoritative artifact keys."""
     selected_artifact_keys = _selected_artifact_keys_for_cell(
@@ -3625,6 +3886,7 @@ def _select_period_programs(
             regime=regime, retain_replay=retain_replay
         ),
         selected_artifact_keys=selected_artifact_keys,
+        collect_continuation_read_counts=collect_continuation_read_counts,
     )
 
 
@@ -3669,6 +3931,7 @@ def _prepare_solve_programs(
     call_id: CallId | None = None,
     structural_blueprints: StructuralBlueprintCache | None = None,
     base_state_action_spaces: Mapping[RegimeName, StateActionSpace] | None = None,
+    collect_continuation_read_counts: bool = False,
 ) -> tuple[
     dict[_CoreTriple, ResolvedOutputLayout],
     dict[_CoreCandidate, Hashable],
@@ -3697,6 +3960,7 @@ def _prepare_solve_programs(
                     period=period,
                     retain_replay=retain_replay,
                     persistable_artifact_refs=persistable_artifact_refs,
+                    collect_continuation_read_counts=collect_continuation_read_counts,
                 )
                 for core_name, program in graph.items():
                     all_programs[(regime_name, period, core_name)] = program
@@ -3801,6 +4065,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     capture_periods: tuple[tuple[str, int], ...] = (),
     structural_blueprints: StructuralBlueprintCache | None = None,
     base_state_action_spaces: Mapping[RegimeName, StateActionSpace] | None = None,
+    collect_continuation_read_counts: bool = False,
 ) -> _CompiledPrograms:
     """Resolve every solve program and optionally compile unique lowerings.
 
@@ -3892,6 +4157,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         call_id=call_id,
         structural_blueprints=structural_blueprints,
         base_state_action_spaces=base_state_action_spaces,
+        collect_continuation_read_counts=collect_continuation_read_counts,
     )
     fallback_keys = frontier.fallback_keys
     fallback_donations = frontier.fallback_donations
@@ -5476,6 +5742,13 @@ def _execution_metadata(
                 disposition=program.disposition,
                 scope=program.scope,
                 input_transfer_plan=program.input_transfer_plan,
+                collects_continuation_read_counts=isinstance(
+                    program.output_roles, BoundedResult
+                )
+                and isinstance(
+                    program.output_roles.continuation_read_counts,
+                    ContinuationReadCounts,
+                ),
             )
             for triple, program in programs.items()
         }

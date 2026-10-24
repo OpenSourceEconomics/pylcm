@@ -28,12 +28,18 @@ from dags import concatenate_functions
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.constraints.routes import ConstraintRoute
 from _lcm.continuation import EGMContinuationLayout, EGMContinuationSpec
+from _lcm.egm.adaptive_nbegm_producer import (
+    fold_executed_summaries,
+    prepare_nested_inner_kernels,
+)
 from _lcm.egm.branch_aggregation import (
     DeterministicOuterMaximum,
     OuterBranchAggregator,
     UniformObservedFixedCost,
 )
 from _lcm.egm.carry import EGMCarry
+from _lcm.egm.nbegm_query_model import NBEGMQueryModel
+from _lcm.egm.nested_floor import PreparedNestedFloor
 from _lcm.egm.nested_published_policy import (
     NestedEGMSimPolicy,
     OuterPolicyBank,
@@ -63,6 +69,7 @@ from _lcm.egm.published_policy import (
     NBEGMGridPolicy,
     NNBEGMSimPolicy,
 )
+from _lcm.egm.query_data import EGMQueryData
 from _lcm.engine import ParamCheck, StateActionSpace
 from _lcm.execution.core_program import (
     CoreArgumentBuilder,
@@ -73,6 +80,7 @@ from _lcm.execution.core_program import (
 )
 from _lcm.grids import ContinuousGrid, DiscreteGrid, Grid
 from _lcm.params.edges import regime_kernel_params
+from _lcm.post_decision_bound import PostDecisionBoundSpec
 from _lcm.solution.continuation_reads import (
     continuation_leaf_reads,
     published_continuation_templates,
@@ -92,9 +100,19 @@ from _lcm.solution.contract import (
     _BoundLiquidMargin,
     _BoundOuterContinuousMargin,
 )
+from _lcm.solution.feasibility import (
+    ChildStatusKernelOutput,
+    ContinuationReadCounts,
+    FeasibilityKernelOutput,
+    QueryInputStatus,
+    count_current_feasibility,
+    merge_continuation_read_counts,
+    merge_query_input_status,
+)
 from _lcm.solution.nbegm import (
     NBEGM,
     _BoundNBEGM,
+    _NBEGMNestedKernelOutput,
     _RideAlongNBEGMPeriodKernel,
     _validate_nbegm_case_piece_declarations,
     proved_post_decision_of,
@@ -359,6 +377,7 @@ class NNBEGM(TwoMarginSolver):
             return case_piece_routes(
                 context=context,
                 post_decision_function=proved_post_decision_of(solver=self.inner),
+                bound_spec=getattr(self.inner, "post_decision_bound", None),
                 solver_path=("nnbegm",),
             )
         bound = cast("_BoundNNBEGM", self)
@@ -394,6 +413,7 @@ class NNBEGM(TwoMarginSolver):
             for route in case_piece_routes(
                 context=context,
                 post_decision_function=proved_post_decision_of(solver=bound.inner),
+                bound_spec=bound.inner.post_decision_bound,
                 solver_path=("nnbegm", branch),
                 function_pool=pool,
                 boundary_compilers=boundary_compilers,
@@ -483,34 +503,10 @@ class NNBEGM(TwoMarginSolver):
           ride-along state.
         """
         bound = cast("_BoundNNBEGM", self)
-        # The adjuster's outer post-decision arrives per outer-grid node as a
-        # bound param, so the function declaring the chosen stock leaves the
-        # inner DAG — leaving it in would let the inner scope check walk through
-        # it to the outer action, which is exactly what binding the node
-        # removes.
-        #
-        # The durable's own law of motion stays exactly as the regime declares
-        # it. It reads the post-decision, which is that bound leaf here, so it
-        # is decision-independent without being replaced — and a declared
-        # `next_<durable>` $= (1 - \delta)\, s_t^\textit{post-dec}$ is therefore
-        # the stock the continuation is read at, not the raw node the outer
-        # search picked.
-        grouped_periods: dict[Hashable, list[int]] = {}
-        for period in context.regimes_to_active_periods[context.regime_name]:
-            targets = (
-                ()
-                if period == context.solution_reachability.n_periods - 1
-                else context.solution_reachability.targets(
-                    period=period, source=context.regime_name
-                )
-            )
-            key = solver_period_group_key(
-                context=context,
-                period=period,
-                continuation_targets=targets,
-                solver_path=("nnbegm",),
-            )
-            grouped_periods.setdefault(key, []).append(period)
+        query_model = (context.nbegm_query_models or {}).get(context.regime_name)
+        inner_models, grouped_periods = _nnbegm_query_period_groups(
+            context=context, query_model=query_model, outer_search=bound.outer_search
+        )
 
         adjuster_by_period: dict[int, _RideAlongNBEGMPeriodKernel] = {}
         keeper_by_period: dict[int, _RideAlongNBEGMPeriodKernel] = {}
@@ -520,6 +516,13 @@ class NNBEGM(TwoMarginSolver):
             int, Callable[..., Mapping[str, FloatND]]
         ] = {}
         grouped_param_checks = []
+        reader_capabilities: dict[
+            int, Mapping[RegimeName, ContinuationCapabilities]
+        ] = {}
+        query_input_authorities: dict[
+            int, tuple[tuple[RegimeName, int, PostDecisionBoundSpec], ...]
+        ] = {}
+        reader_periods: set[int] = set()
         keeper_continuation_spec = None
         for group_key, periods in grouped_periods.items():
             # The complete key above has already established that every period in
@@ -530,6 +533,9 @@ class NNBEGM(TwoMarginSolver):
             # evaluates. The target regimes' lifecycle metadata remains intact.
             group_periods = tuple(periods)
             representative_period = group_periods[0]
+            keeper_role_model = _bind_nnbegm_keeper_query_model(
+                inner_models=inner_models, representative_period=representative_period
+            )
             resolved = resolve_solver_build_context(
                 context=context, period=representative_period
             )
@@ -552,6 +558,11 @@ class NNBEGM(TwoMarginSolver):
                     )
                 ),
             )
+            if inner_models is not None:
+                adjuster_context = replace(
+                    adjuster_context,
+                    nbegm_source_query_model=inner_models["adjuster"],
+                )
             adjuster_group = bound.inner.build_period_kernels(context=adjuster_context)
             no_adjustment_func = (
                 group_context.functions[bound.outer_no_adjustment_candidate]
@@ -576,15 +587,24 @@ class NNBEGM(TwoMarginSolver):
                     )
                 ),
             )
+            if inner_models is not None:
+                keeper_context = replace(
+                    keeper_context,
+                    nbegm_source_query_model=inner_models["keeper"],
+                )
             keeper_group = bound.inner.build_period_kernels(context=keeper_context)
-            replay_targets = [bound.outer_post_decision]
-            if bound.outer_no_adjustment_candidate is not None:
-                replay_targets.append(bound.outer_no_adjustment_candidate)
-            outer_target_function = concatenate_functions(
+            _merge_nnbegm_reader_contracts(
+                keeper=keeper_group,
+                adjuster=adjuster_group,
+                periods=group_periods,
+                seen_periods=reader_periods,
+                capabilities=reader_capabilities,
+                authorities=query_input_authorities,
+            )
+            outer_target_function = _nnbegm_outer_replay_function(
                 functions=group_context.functions,
-                targets=replay_targets,
-                return_type="dict",
-                set_annotations=True,
+                outer_post_decision=bound.outer_post_decision,
+                outer_no_adjustment_candidate=bound.outer_no_adjustment_candidate,
             )
             for period in group_periods:
                 resolved_by_period[period] = group_context
@@ -594,6 +614,15 @@ class NNBEGM(TwoMarginSolver):
                 keeper_by_period[period] = _ride_along_inner_kernel(
                     kernel=keeper_group.period_kernels[period], role="keeper"
                 )
+                if keeper_role_model is not None:
+                    keeper_by_period[period], adjuster_by_period[period] = (
+                        _prepare_nnbegm_query_inner_pair(
+                            keeper=keeper_by_period[period],
+                            adjuster=adjuster_by_period[period],
+                            role_model=keeper_role_model,
+                            group_context=group_context,
+                        )
+                    )
                 # The outer key selected this build; the two inner builds may
                 # split it further, so both of their keys ride along.
                 period_group_keys[period] = (
@@ -727,6 +756,7 @@ class NNBEGM(TwoMarginSolver):
                     ),
                     branch_fixed_cost=branch_aggregation_by_period[period][0],
                     branch_scale_function=branch_aggregation_by_period[period][1],
+                    query_model=query_model,
                 )
                 for period, adjuster_kernel in adjuster_by_period.items()
             }
@@ -745,6 +775,8 @@ class NNBEGM(TwoMarginSolver):
         return SolutionKernels(
             period_kernels=period_kernels,
             period_group_keys=MappingProxyType(period_group_keys),
+            continuation_reader_capabilities=reader_capabilities or None,
+            query_input_authorities=query_input_authorities or None,
             continuation_spec=(
                 None
                 if keeper_egm_spec is None
@@ -756,6 +788,10 @@ class NNBEGM(TwoMarginSolver):
                         n_stacked_candidates=(
                             self.egm_continuation_layout.n_stacked_candidates
                         ),
+                        query_spec=None
+                        if query_model is None
+                        else query_model.authority,
+                        retains_discrete_action_rows=query_model is not None,
                     ),
                 )
             ),
@@ -767,6 +803,24 @@ class NNBEGM(TwoMarginSolver):
                 else (*grouped_param_checks, scale_check)
             ),
         )
+
+
+def _nnbegm_outer_replay_function(
+    *,
+    functions: EconFunctionsMapping,
+    outer_post_decision: FunctionName,
+    outer_no_adjustment_candidate: FunctionName | None,
+) -> Callable[..., Mapping[str, FloatND]]:
+    """Compile the declared outer transition and optional keeper replay targets."""
+    replay_targets = [outer_post_decision]
+    if outer_no_adjustment_candidate is not None:
+        replay_targets.append(outer_no_adjustment_candidate)
+    return concatenate_functions(
+        functions=functions,
+        targets=replay_targets,
+        return_type="dict",
+        set_annotations=True,
+    )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -1039,6 +1093,10 @@ class _NNBEGMPeriodKernel:
     """The fixed cost's scale function, arguments restricted to
     `period`/`age`/flat params (resolved per period at call time)."""
 
+    query_model: NBEGMQueryModel | None = field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+
     keeper_value_reads: tuple[ValueRead, ...] = ()
     """Stored leaves every republished keeper program reads, or empty.
 
@@ -1126,6 +1184,7 @@ class _NNBEGMPeriodKernel:
                 programs[graph_key] = replace(
                     program,
                     name=graph_key,
+                    checked_variant=program.checked_variant,
                     requirements=requirements,
                     replaces_program=(
                         None
@@ -1275,6 +1334,7 @@ class _NNBEGMPeriodKernel:
         period: int,
         ages: TimeAxis,
         logger: logging.Logger,
+        prepared_source_floor: PreparedNestedFloor | None = None,
     ) -> OuterCandidateResult:
         """Run one adjuster node's exact conditional inner solve."""
         result = self.adjuster_kernel(
@@ -1291,6 +1351,11 @@ class _NNBEGMPeriodKernel:
             period=period,
             ages=ages,
             logger=logger,
+            **(
+                {"prepared_source_floor": prepared_source_floor}
+                if self.query_model is not None
+                else {}
+            ),
         )
         policy = result.replay.get(SIMULATION_POLICY)
         return OuterCandidateResult(
@@ -1300,6 +1365,20 @@ class _NNBEGMPeriodKernel:
             # An inner 1-D kernel publishes a flat policy or nothing; the
             # isinstance narrows the widened payload union for the bank.
             sim_policy=policy if isinstance(policy, EGMSimPolicy) else None,
+            **(
+                {
+                    "bound_status": result.bound_status,
+                    "query_status": result.query_status,
+                    "continuation_read_counts": result.continuation_read_counts,
+                }
+                if isinstance(result, FeasibilityKernelOutput)
+                else {}
+            ),
+            **(
+                {"current_feasibility": result.current_feasibility}
+                if isinstance(result, _NBEGMNestedKernelOutput)
+                else {}
+            ),
         )
 
     def _certify_outer_inverse(
@@ -1622,6 +1701,12 @@ class _FiniteNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
         keeper_carry = cast("EGMCarry", keeper_result.continuations[EGM_CONTINUATION])
         adjuster_results: list[KernelOutput] = []
         adjuster_carries: list[EGMCarry] = []
+        summary, keeper_data = _finite_nnbegm_keeper_summary(
+            query_model=self.query_model,
+            keeper_result=keeper_result,
+            keeper_carry=keeper_carry,
+        )
+        inherited = _InheritedChildSummary.of(keeper_result)
         adjuster_cores = _subcores(compiled_cores=compiled_cores, role="adjuster")
         nodes = list(self.outer_grid_values)
         for chunk_start, chunk_stop in _dispatch_bounds(
@@ -1642,17 +1727,67 @@ class _FiniteNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
                     period=period,
                     ages=ages,
                     logger=logger,
+                    **(
+                        {"prepared_source_floor": keeper_result.prepared_source_floor}
+                        if self.query_model is not None
+                        and isinstance(keeper_result, _NBEGMNestedKernelOutput)
+                        else {}
+                    ),
                 )
                 for node in nodes[chunk_start:chunk_stop]
             ]
             for adjuster_result in chunk_results:
+                inherited = inherited.add(adjuster_result)
                 V_arr = jnp.fmax(V_arr, adjuster_result.value)
                 adjuster_carries.append(
                     cast("EGMCarry", adjuster_result.continuations[EGM_CONTINUATION])
                 )
+                if summary is not None:
+                    if not isinstance(adjuster_result, _NBEGMNestedKernelOutput):
+                        raise TypeError(
+                            "A finite NB candidate lost its integrity rows."
+                        )
+                    candidate_data = adjuster_carries[-1].query_data_for_transport()
+                    if candidate_data is None or keeper_data is None:
+                        raise TypeError(
+                            "A finite NB candidate lost its source query data."
+                        )
+                    bounds, queries, counts = fold_executed_summaries(
+                        keeper=summary,
+                        candidates=(
+                            OuterCandidateResult(
+                                outer_node=nodes[len(adjuster_carries) - 1],
+                                V_arr=jnp.asarray(adjuster_result.value),
+                                carry=adjuster_carries[-1],
+                                sim_policy=None,
+                                bound_status=adjuster_result.bound_status,
+                                query_status=adjuster_result.query_status,
+                                continuation_read_counts=(
+                                    adjuster_result.continuation_read_counts
+                                ),
+                                current_feasibility=adjuster_result.current_feasibility,
+                            ),
+                        ),
+                        floor_mismatch=jnp.any(
+                            candidate_data.floor_used != keeper_data.floor_used
+                        ),
+                    )
+                    summary = replace(
+                        summary,
+                        bound_status=bounds,
+                        query_status=queries,
+                        continuation_read_counts=counts,
+                        current_feasibility=(
+                            summary.current_feasibility
+                            | adjuster_result.current_feasibility
+                        ),
+                    )
                 if retain_replay:
                     adjuster_results.append(adjuster_result)
-            V_arr, _ = jax.block_until_ready((V_arr, adjuster_carries[chunk_start:]))
+            ready_value, _ = jax.block_until_ready(
+                (V_arr, adjuster_carries[chunk_start:])
+            )
+            V_arr = jnp.asarray(ready_value)
             del chunk_results, adjuster_result
 
         from _lcm.egm.outer_envelope import stack_candidate_carries  # noqa: PLC0415
@@ -1661,23 +1796,63 @@ class _FiniteNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
             candidates=(keeper_carry, *adjuster_carries),
             nan_is_infeasible=True,
         )
-        if not retain_replay:
-            return KernelOutput(value=V_arr, continuations={EGM_CONTINUATION: carry})
-        return KernelOutput(
-            value=V_arr,
-            continuations={EGM_CONTINUATION: carry},
-            replay={
-                SIMULATION_POLICY: self._finite_replay_policy(
-                    replay_capability=replay_capability,
-                    keeper_result=keeper_result,
-                    adjuster_results=adjuster_results,
-                    state_action_space=state_action_space,
-                    flat_params=flat_params,
-                    period=period,
-                    ages=ages,
-                    logger=logger,
+        if self.query_model is not None:
+            if summary is None:
+                raise TypeError(
+                    "Finite NB publication requires its shared floor owner."
                 )
-            },
+            joint = summary.current_feasibility
+            physical = count_current_feasibility(
+                budget_feasible=joint,
+                predicate_feasible=jnp.empty((*joint.shape, 0), dtype=jnp.bool_),
+                value=jnp.asarray(V_arr),
+                active_states=jnp.ones(V_arr.shape, dtype=jnp.bool_),
+            )
+            return FeasibilityKernelOutput(
+                value=V_arr,
+                continuations={EGM_CONTINUATION: carry},
+                replay=(
+                    {
+                        SIMULATION_POLICY: self._finite_replay_policy(
+                            replay_capability=replay_capability,
+                            keeper_result=keeper_result,
+                            adjuster_results=adjuster_results,
+                            state_action_space=state_action_space,
+                            flat_params=flat_params,
+                            period=period,
+                            ages=ages,
+                            logger=logger,
+                        )
+                    }
+                    if retain_replay
+                    else {}
+                ),
+                feasibility_counts=physical,
+                bound_status=summary.bound_status,
+                query_status=summary.query_status,
+                continuation_read_counts=summary.continuation_read_counts,
+            )
+        if not retain_replay:
+            return inherited.publish(
+                KernelOutput(value=V_arr, continuations={EGM_CONTINUATION: carry})
+            )
+        return inherited.publish(
+            KernelOutput(
+                value=V_arr,
+                continuations={EGM_CONTINUATION: carry},
+                replay={
+                    SIMULATION_POLICY: self._finite_replay_policy(
+                        replay_capability=replay_capability,
+                        keeper_result=keeper_result,
+                        adjuster_results=adjuster_results,
+                        state_action_space=state_action_space,
+                        flat_params=flat_params,
+                        period=period,
+                        ages=ages,
+                        logger=logger,
+                    )
+                },
+            )
         )
 
     def _finite_replay_policy(
@@ -1957,12 +2132,220 @@ class _AdaptiveNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
             auxiliary[GENERATED_REPLAY_AUTHORITY] = GeneratedReplayAuthority(
                 adaptive_outer_nodes=tuple(float(node) for node in mesh_nodes_host)
             )
-        return KernelOutput(
-            value=collapse.V_arr,
-            continuations={EGM_CONTINUATION: collapse.carry},
-            replay=replay,
-            auxiliary=auxiliary,
+        inherited = _InheritedChildSummary.of(keeper_result)
+        for executed in cache.values():
+            inherited = inherited.add(executed)
+        return inherited.publish(
+            KernelOutput(
+                value=collapse.V_arr,
+                continuations={EGM_CONTINUATION: collapse.carry},
+                replay=replay,
+                auxiliary=auxiliary,
+            )
         )
+
+
+@dataclass(frozen=True, kw_only=True)
+class _InheritedChildSummary:
+    """The child-query summaries of every executed inner solve of one period.
+
+    A parent without its own query floor still reads callable-floor children
+    through their queries in the keeper and in every evaluated adjuster. Each
+    executed solve contributes once, whether it wins, loses or is economically
+    excluded. Its declared slots are OR-ed in their model-owned order and its
+    requested paired-read counts are added.
+    """
+
+    query_status: tuple[QueryInputStatus, ...] | None
+    """The ordered child slots, or `None` when the inner solves declare none."""
+    continuation_read_counts: ContinuationReadCounts | None
+    """The summed paired-read counts, or `None` when none were requested."""
+
+    @classmethod
+    def of(cls, row: KernelOutput | OuterCandidateResult) -> _InheritedChildSummary:
+        """Read one executed solve's child summaries."""
+        if isinstance(row, FeasibilityKernelOutput | OuterCandidateResult):
+            return cls(
+                query_status=row.query_status,
+                continuation_read_counts=row.continuation_read_counts,
+            )
+        return cls(query_status=None, continuation_read_counts=None)
+
+    def add(self, row: KernelOutput | OuterCandidateResult) -> _InheritedChildSummary:
+        """Fold one further executed solve into the summary."""
+        other = _InheritedChildSummary.of(row)
+        if (self.continuation_read_counts is None) != (
+            other.continuation_read_counts is None
+        ):
+            raise TypeError("Executed inner solves disagree on the read-count schema.")
+        return _InheritedChildSummary(
+            query_status=merge_query_input_status(
+                left=self.query_status, right=other.query_status
+            ),
+            continuation_read_counts=merge_continuation_read_counts(
+                left=self.continuation_read_counts,
+                right=other.continuation_read_counts,
+            ),
+        )
+
+    def publish(self, output: KernelOutput) -> KernelOutput:
+        """Attach the declared slots to a parent result without its own floor."""
+        if self.query_status is None:
+            if self.continuation_read_counts is not None:
+                raise TypeError("Read counts require their declared child slots.")
+            return output
+        if type(output) is not KernelOutput:
+            raise TypeError("Only a plain parent result inherits child slots.")
+        return ChildStatusKernelOutput(
+            **{
+                channel.name: getattr(output, channel.name)
+                for channel in fields(output)
+            },
+            query_status=self.query_status,
+            continuation_read_counts=self.continuation_read_counts,
+        )
+
+
+def _finite_nnbegm_keeper_summary(
+    *,
+    query_model: NBEGMQueryModel | None,
+    keeper_result: KernelOutput,
+    keeper_carry: EGMCarry,
+) -> tuple[_NBEGMNestedKernelOutput | None, EGMQueryData | None]:
+    """Validate the executed finite keeper and its single prepared floor owner."""
+    if query_model is None:
+        return None, None
+    if (
+        not isinstance(keeper_result, _NBEGMNestedKernelOutput)
+        or keeper_result.prepared_source_floor is None
+    ):
+        raise TypeError("A finite NB keeper must prepare its shared floor.")
+    keeper_data = keeper_carry.query_data_for_transport()
+    if keeper_data is None:
+        raise TypeError("A finite NB keeper must retain its source query data.")
+    return keeper_result, keeper_data
+
+
+def _nnbegm_query_period_groups(
+    *,
+    context: SolverBuildContext,
+    query_model: NBEGMQueryModel | None,
+    outer_search: OuterSearch,
+) -> tuple[Mapping[str, NBEGMQueryModel] | None, dict[Hashable, list[int]]]:
+    """Validate canonical inner authorities and group periods by their real targets."""
+    inner_models = None
+    if query_model is not None:
+        if (
+            not isinstance(outer_search, FiniteOuterGrid)
+            or query_model.authority.finite_outer is None
+        ):
+            raise TypeError("Nested NB publication requires finite authority.")
+        inner_models = query_model.finite_inner_models
+        if inner_models is None:
+            raise TypeError("Nested NB publication requires canonical role models.")
+    # The adjuster's outer post-decision arrives per outer-grid node as a
+    # bound param, so the function declaring the chosen stock leaves the
+    # inner DAG — leaving it in would let the inner scope check walk through
+    # it to the outer action, which is exactly what binding the node
+    # removes.
+    #
+    # The durable's own law of motion stays exactly as the regime declares
+    # it. It reads the post-decision, which is that bound leaf here, so it
+    # is decision-independent without being replaced — and a declared
+    # `next_<durable>` $= (1 - \delta)\, s_t^\textit{post-dec}$ is therefore
+    # the stock the continuation is read at, not the raw node the outer
+    # search picked.
+    grouped_periods: dict[Hashable, list[int]] = {}
+    for period in context.regimes_to_active_periods[context.regime_name]:
+        targets = (
+            ()
+            if period == context.solution_reachability.n_periods - 1
+            else context.solution_reachability.targets(
+                period=period, source=context.regime_name
+            )
+        )
+        key = solver_period_group_key(
+            context=context,
+            period=period,
+            continuation_targets=targets,
+            solver_path=("nnbegm",),
+        )
+        if query_model is not None:
+            key = (key, query_model.authority)
+        grouped_periods.setdefault(key, []).append(period)
+
+    return inner_models, grouped_periods
+
+
+def _merge_nnbegm_reader_contracts(
+    *,
+    keeper: SolutionKernels,
+    adjuster: SolutionKernels,
+    periods: tuple[int, ...],
+    seen_periods: set[int],
+    capabilities: dict[int, Mapping[RegimeName, ContinuationCapabilities]],
+    authorities: dict[int, tuple[tuple[RegimeName, int, PostDecisionBoundSpec], ...]],
+) -> None:
+    """Forward matching actual inner readers across disjoint source-period groups."""
+    if (
+        keeper.continuation_reader_capabilities
+        != adjuster.continuation_reader_capabilities
+    ):
+        raise TypeError("Nested roles disagree on installed child reader capabilities.")
+    if keeper.query_input_authorities != adjuster.query_input_authorities:
+        raise TypeError(
+            "Nested roles disagree on ordered child diagnostic authorities."
+        )
+    group_periods = set(periods)
+    if group_periods & seen_periods:
+        raise TypeError("Nested child reader source-period groups overlap.")
+    group_capabilities = adjuster.continuation_reader_capabilities or {}
+    group_authorities = adjuster.query_input_authorities or {}
+    if (
+        set(group_capabilities) - group_periods
+        or set(group_authorities) - group_periods
+    ):
+        raise TypeError("Nested child readers exceed their source-period group.")
+    seen_periods.update(group_periods)
+    capabilities.update(group_capabilities)
+    authorities.update(group_authorities)
+
+
+def _bind_nnbegm_keeper_query_model(
+    *,
+    inner_models: Mapping[str, NBEGMQueryModel] | None,
+    representative_period: int,
+) -> NBEGMQueryModel | None:
+    """Bind the canonical keeper once to its proved group's period pool."""
+    if inner_models is None:
+        return None
+    keeper_role_model = inner_models["keeper"]
+    keeper_pools = keeper_role_model.functions_by_period
+    if keeper_pools is None:
+        raise TypeError("A nested keeper lacks its resolved period pool.")
+    return replace(
+        keeper_role_model,
+        functions=keeper_pools[representative_period],
+    )
+
+
+def _prepare_nnbegm_query_inner_pair(
+    *,
+    keeper: _RideAlongNBEGMPeriodKernel,
+    adjuster: _RideAlongNBEGMPeriodKernel,
+    role_model: NBEGMQueryModel,
+    group_context: SolverBuildContext,
+) -> tuple[_RideAlongNBEGMPeriodKernel, _RideAlongNBEGMPeriodKernel]:
+    """Bind actual inner kernels to one canonical keeper group model."""
+    return prepare_nested_inner_kernels(
+        keeper=keeper,
+        adjuster=adjuster,
+        model=role_model,
+        state_grids={
+            name: group_context.grids[name].to_jax()
+            for name in role_model.authority.state_names
+        },
+    )
 
 
 def _dispatch_bounds(*, n_items: int, width: int | None) -> tuple[tuple[int, int], ...]:

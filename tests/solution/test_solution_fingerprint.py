@@ -1856,6 +1856,7 @@ def _fingerprint_regime(
         compute_regime_transition_probs=None,
         pareto_weights=None,
         artifact_authorities=artifact_authorities or {},
+        query_authority=None,
         state_action_space=_fingerprint_space,
         period_state_axes={
             0: {"wealth": np.asarray([1.0, 2.0])},
@@ -1870,6 +1871,7 @@ def _fingerprint_regime(
             transitions={},
             compute_regime_transition_probs=None,
             external_replay_route=None,
+            egm_policy_read=None,
             reachability=SimpleNamespace(
                 active_regimes_by_period=(frozenset({"alive"}),) * 2
             ),

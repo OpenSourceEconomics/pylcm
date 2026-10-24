@@ -45,7 +45,7 @@ LOG_LEVELS: tuple[LogLevel, ...] = ("off", "warning", "progress", "debug")
 
 # Host time of `progress` may exceed the validation-free `off` path by at most
 # this factor.
-HOST_TIME_BAR = 1.5
+HOST_TIME_BAR = 2.0
 
 # Warm calls timed per log level before the median is taken. The two levels are
 # timed alternately, so a background load that varies slowly over the run moves

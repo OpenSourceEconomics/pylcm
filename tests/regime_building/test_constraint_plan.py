@@ -27,7 +27,7 @@ from lcm.consumption_savings_regime import (
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime
-from lcm.solvers import DCEGM, GridSearch, OneMarginSolver
+from lcm.solvers import DCEGM, FUESEnvelope, GridSearch, OneMarginSolver
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -83,6 +83,11 @@ def spends_within_reason(consumption: ContinuousAction) -> FloatND:
 def works_or_retires(work: DiscreteAction) -> FloatND:
     """Reads a discrete action, which is bound per combination."""
     return work >= 0
+
+
+def works_up_to(*, work: DiscreteAction, max_work: float) -> FloatND:
+    """Reads a discrete action and a parameter, both bound per combination."""
+    return work <= max_work
 
 
 def _model(*, solver: OneMarginSolver | GridSearch, constraint: UserFunction) -> Model:
@@ -149,6 +154,13 @@ def test_a_constraint_over_combination_inputs_is_accepted_by_dcegm() -> None:
     assert "saving" in model.user_regimes
 
 
+def test_a_constraint_reading_a_parameter_is_accepted_by_dcegm() -> None:
+    """A regime parameter is bound per combination, so a constraint on it builds."""
+    model = _model(solver=_dcegm(), constraint=works_up_to)
+
+    assert "saving" in model.user_regimes
+
+
 def test_a_bound_on_the_post_decision_state_builds_under_dcegm() -> None:
     """The savings grid's lowest node is the limit, so the solve need not call it."""
     model = _model(
@@ -175,11 +187,17 @@ def test_a_proved_bound_is_still_checked_against_the_grid() -> None:
 
 
 def test_a_bound_on_the_euler_state_is_refused_by_dcegm() -> None:
-    """A bound elsewhere says nothing about the savings grid, so nothing proved it."""
+    """A per-combination envelope cannot read the Euler state its inversion makes."""
     with pytest.raises(
         ModelInitializationError, match=r"dcegm solve.*still needs \['wealth'\]"
     ):
-        _model(solver=_dcegm(), constraint=ref("wealth") >= 0.0)
+        _model(
+            solver=DCEGM(
+                savings_grid=LinSpacedGrid(start=-2.0, stop=4.0, n_points=12),
+                envelope=FUESEnvelope(),
+            ),
+            constraint=ref("wealth") >= 0.0,
+        )
 
 
 def test_a_bound_on_the_post_decision_state_is_evaluated_by_grid_search() -> None:

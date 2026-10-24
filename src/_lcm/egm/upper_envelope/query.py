@@ -73,6 +73,9 @@ _PROMOTION_ROUNDS = 2
 # The owner published at a query that carries no finite envelope level.
 NO_OWNER = -1
 
+# Eight geometry/payload endpoint columns plus two associated-saving endpoints.
+_LINK_COLUMNS_WITH_SAVINGS = 10
+
 
 def _along_link(
     *,
@@ -703,6 +706,7 @@ def envelope_at_query(
     feasibility_partition: ResolvedAxisPartition | None = ...,
     feasible_interval_mask: BoolND | None = ...,
     return_owner: Literal[False] = ...,
+    candidate_savings: None = ...,
 ) -> tuple[FloatND, FloatND, FloatND]: ...
 
 
@@ -721,6 +725,7 @@ def envelope_at_query(
     feasibility_partition: ResolvedAxisPartition | None = ...,
     feasible_interval_mask: BoolND | None = ...,
     return_owner: Literal[True],
+    candidate_savings: None = ...,
 ) -> tuple[FloatND, FloatND, FloatND, IntND]: ...
 
 
@@ -739,7 +744,68 @@ def envelope_at_query(
     feasibility_partition: ResolvedAxisPartition | None = ...,
     feasible_interval_mask: BoolND | None = ...,
     return_owner: bool,
+    candidate_savings: None = ...,
 ) -> tuple[FloatND, FloatND, FloatND] | tuple[FloatND, FloatND, FloatND, IntND]: ...
+
+
+@overload
+def envelope_at_query(
+    *,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    marginal: Float1D,
+    segment_id: Float1D,
+    stable_index: IntND | None = ...,
+    x_query: FloatND,
+    segment_block_size: int = ...,
+    arithmetic: ComparisonArithmetic = ...,
+    feasibility_partition: ResolvedAxisPartition | None = ...,
+    feasible_interval_mask: BoolND | None = ...,
+    return_owner: Literal[False] = ...,
+    candidate_savings: Float1D,
+) -> tuple[FloatND, FloatND, FloatND, FloatND]: ...
+
+
+@overload
+def envelope_at_query(
+    *,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    marginal: Float1D,
+    segment_id: Float1D,
+    stable_index: IntND | None = ...,
+    x_query: FloatND,
+    segment_block_size: int = ...,
+    arithmetic: ComparisonArithmetic = ...,
+    feasibility_partition: ResolvedAxisPartition | None = ...,
+    feasible_interval_mask: BoolND | None = ...,
+    return_owner: Literal[True],
+    candidate_savings: Float1D,
+) -> tuple[FloatND, FloatND, FloatND, FloatND, IntND]: ...
+
+
+@overload
+def envelope_at_query(
+    *,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    marginal: Float1D,
+    segment_id: Float1D,
+    stable_index: IntND | None = ...,
+    x_query: FloatND,
+    segment_block_size: int = ...,
+    arithmetic: ComparisonArithmetic = ...,
+    feasibility_partition: ResolvedAxisPartition | None = ...,
+    feasible_interval_mask: BoolND | None = ...,
+    return_owner: bool = ...,
+    candidate_savings: Float1D,
+) -> (
+    tuple[FloatND, FloatND, FloatND, FloatND]
+    | tuple[FloatND, FloatND, FloatND, FloatND, IntND]
+): ...
 
 
 def envelope_at_query(
@@ -756,7 +822,13 @@ def envelope_at_query(
     feasibility_partition: ResolvedAxisPartition | None = None,
     feasible_interval_mask: BoolND | None = None,
     return_owner: bool = False,
-) -> tuple[FloatND, FloatND, FloatND] | tuple[FloatND, FloatND, FloatND, IntND]:
+    candidate_savings: Float1D | None = None,
+) -> (
+    tuple[FloatND, FloatND, FloatND]
+    | tuple[FloatND, FloatND, FloatND, IntND]
+    | tuple[FloatND, FloatND, FloatND, FloatND]
+    | tuple[FloatND, FloatND, FloatND, FloatND, IntND]
+):
     """Evaluate the branch-aware upper envelope at each query abscissa.
 
     Args:
@@ -805,11 +877,15 @@ def envelope_at_query(
             the value is not finite. Ownership is a structural decision, so a
             caller comparing two layouts of the same candidates asserts it
             exactly and reserves a tolerance for the levels.
+        candidate_savings: Optional original saving ordinate at every candidate.
+            Its selected affine read follows the same winner and is published
+            before the optional owner. All retained channels share read status.
 
     Returns:
         Tuple of the envelope value, the winning segment's policy, and the
         winning segment's marginal at each query, each shaped like `x_query`,
-        followed by the owner when `return_owner` is set. A query no live
+        followed by original savings when supplied and then the owner when
+        `return_owner` is set. A query no live
         segment brackets yields NaN in all three channels.
 
     Note:
@@ -822,6 +898,9 @@ def envelope_at_query(
         registered. Reverse mode over a scalar objective therefore needs
         `arithmetic="ordinary"`, or `jax.jacfwd` in place of `jax.grad`.
     """
+    savings_endpoints = _savings_link_endpoints(
+        candidate_savings=candidate_savings, endog_grid=endog_grid
+    )
     links, candidate_row = _segment_links_from_candidates(
         endog_grid=endog_grid,
         policy=policy,
@@ -841,7 +920,9 @@ def envelope_at_query(
         # a partition request with no numerical effect: the native operation
         # streams the same stored segments and returns one winner/status per
         # query, so dense and blocked calls are identical by construction.
-        reduction = _envelope_exact(links=links, query=query)
+        reduction = _envelope_exact(
+            links=links, query=query, savings_endpoints=savings_endpoints
+        )
         published = _mask_infeasible_queries(
             published=reduction.published,
             query=query,
@@ -855,10 +936,25 @@ def envelope_at_query(
             block_size=_ordinary_block_size(
                 requested=segment_block_size, n_segment=n_segment
             ),
+            savings_endpoints=savings_endpoints,
         )
+        row: tuple[Float1D, ...] = (endog_grid, value, policy, marginal)
+        if candidate_savings is not None:
+            row = (
+                *row,
+                jnp.where(jnp.isfinite(endog_grid), candidate_savings, jnp.nan),
+            )
         unreadable = _subnormal_operand_present(
-            row=(endog_grid, value, policy, marginal), query=query
-        ) | _derived_subnormal_possible(links=links, query=query)
+            row=row, query=query
+        ) | _derived_subnormal_possible(
+            links=links,
+            query=query,
+            associated_channels=()
+            if savings_endpoints is None
+            else (savings_endpoints,),
+        )
+        if isinstance(reduction, _SavingsEnvelopeReduction):
+            unreadable = unreadable | ~jnp.isfinite(reduction.savings)
         readable_value, readable_policy, readable_marginal = (
             jnp.where(unreadable, jnp.nan, channel) for channel in reduction.published
         )
@@ -867,6 +963,17 @@ def envelope_at_query(
             query=query,
             partition=feasibility_partition,
             feasible_interval_mask=feasible_interval_mask,
+        )
+    if isinstance(reduction, _SavingsEnvelopeReduction):
+        savings = jnp.where(jnp.isfinite(published[0]), reduction.savings, jnp.nan)
+        if arithmetic == "ordinary":
+            savings = jnp.where(unreadable, jnp.nan, savings)
+        if not return_owner:
+            return (*published, savings)
+        return (
+            *published,
+            savings,
+            published_owner(value=published[0], stable_index=reduction.owner),
         )
     if not return_owner:
         return published
@@ -940,7 +1047,12 @@ def _subnormal_operand_present(*, row: tuple[Float1D, ...], query: FloatND) -> B
     return in_row | is_subnormal(query)
 
 
-def _derived_subnormal_possible(*, links: _SegmentLinks, query: FloatND) -> BoolND:
+def _derived_subnormal_possible(
+    *,
+    links: _SegmentLinks,
+    query: FloatND,
+    associated_channels: tuple[tuple[Float1D, Float1D], ...] = (),
+) -> BoolND:
     """Report, per query, where the read's own result lands below the range.
 
     Every stored operand can be normal and the exact result still be a positive
@@ -1010,6 +1122,7 @@ def _derived_subnormal_possible(*, links: _SegmentLinks, query: FloatND) -> Bool
         (links.left_value, links.right_value),
         (links.left_policy, links.right_policy),
         (links.left_marginal, links.right_marginal),
+        *associated_channels,
     )
     refused = jnp.zeros_like(brackets)
     for left_channel, right_channel in channels:
@@ -1092,11 +1205,49 @@ class EnvelopeWinner(NamedTuple):
     unreadable: BoolND
 
 
-def empty_envelope_winner(*, query: FloatND) -> EnvelopeWinner:
+def _savings_link_endpoints(
+    *, candidate_savings: Float1D | None, endog_grid: Float1D
+) -> tuple[Float1D, Float1D] | None:
+    """Associate original savings with the unchanged consecutive/self link order."""
+    if candidate_savings is None:
+        return None
+    if candidate_savings.shape != endog_grid.shape:
+        raise ValueError("Candidate savings must have the candidate grid shape")
+    if candidate_savings.dtype != endog_grid.dtype:
+        raise ValueError("Candidate savings must have the candidate grid dtype")
+    return (
+        jnp.concatenate((candidate_savings[:-1], candidate_savings)),
+        jnp.concatenate((candidate_savings[1:], candidate_savings)),
+    )
+
+
+class _SavingsEnvelopeWinner(NamedTuple):
+    """A standing link with its original associated savings endpoints."""
+
+    winner: EnvelopeWinner
+    left_savings: FloatND
+    right_savings: FloatND
+
+
+@overload
+def empty_envelope_winner(
+    *, query: FloatND, retain_savings: Literal[False] = ...
+) -> EnvelopeWinner: ...
+
+
+@overload
+def empty_envelope_winner(
+    *, query: FloatND, retain_savings: Literal[True]
+) -> _SavingsEnvelopeWinner: ...
+
+
+def empty_envelope_winner(
+    *, query: FloatND, retain_savings: bool = False
+) -> EnvelopeWinner | _SavingsEnvelopeWinner:
     """Return the neutral standing winner for a streamed candidate reduction."""
     query = jnp.asarray(query)
     zeros = jnp.zeros_like(query)
-    return EnvelopeWinner(
+    winner = EnvelopeWinner(
         left_grid=zeros,
         right_grid=zeros,
         left_value=zeros,
@@ -1110,6 +1261,9 @@ def empty_envelope_winner(*, query: FloatND) -> EnvelopeWinner:
         settled=jnp.ones_like(query, dtype=bool),
         unreadable=jnp.zeros_like(query, dtype=bool),
     )
+    if retain_savings:
+        return _SavingsEnvelopeWinner(winner, zeros, zeros)
+    return winner
 
 
 def _batched_link_terms(
@@ -1175,6 +1329,7 @@ def _ordinary_rank_argmax(*, rank: _OrdinaryRank) -> IntND:
     return jnp.argmax(tied, axis=1)[:, None].astype(jnp.int32)
 
 
+@overload
 def merge_envelope_winner(
     *,
     held: EnvelopeWinner,
@@ -1186,15 +1341,66 @@ def merge_envelope_winner(
     stable_index: IntND,
     query: FloatND,
     arithmetic: ComparisonArithmetic,
+    feasibility_partition: ResolvedAxisPartition | None = ...,
+    feasible_interval_mask: BoolND | None = ...,
+    candidate_savings: None = ...,
+) -> EnvelopeWinner: ...
+
+
+@overload
+def merge_envelope_winner(
+    *,
+    held: _SavingsEnvelopeWinner,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    marginal: Float1D,
+    segment_id: Float1D,
+    stable_index: IntND,
+    query: FloatND,
+    arithmetic: ComparisonArithmetic,
+    feasibility_partition: ResolvedAxisPartition | None = ...,
+    feasible_interval_mask: BoolND | None = ...,
+    candidate_savings: Float1D,
+) -> _SavingsEnvelopeWinner: ...
+
+
+def merge_envelope_winner(
+    *,
+    held: EnvelopeWinner | _SavingsEnvelopeWinner,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    marginal: Float1D,
+    segment_id: Float1D,
+    stable_index: IntND,
+    query: FloatND,
+    arithmetic: ComparisonArithmetic,
     feasibility_partition: ResolvedAxisPartition | None = None,
     feasible_interval_mask: BoolND | None = None,
-) -> EnvelopeWinner:
+    candidate_savings: Float1D | None = None,
+) -> EnvelopeWinner | _SavingsEnvelopeWinner:
     """Fold one candidate block into a standing, globally identified winner.
 
     The held link occupies a temporary column only.  Its explicit identity and
     every challenger's one-shot identity are passed as data, so neither ordinary
     nor certified ownership can depend on where a block happens to be stored.
     """
+    savings_held = held if isinstance(held, _SavingsEnvelopeWinner) else None
+    if (savings_held is None) != (candidate_savings is None):
+        raise ValueError(
+            "Standing savings and candidate savings must be supplied together"
+        )
+    savings_links = _savings_link_endpoints(
+        candidate_savings=candidate_savings, endog_grid=endog_grid
+    )
+    if savings_held is not None:
+        if any(endpoint.shape != query.shape for endpoint in savings_held[1:]):
+            raise ValueError("Standing savings must have the query shape")
+        if any(endpoint.dtype != endog_grid.dtype for endpoint in savings_held[1:]):
+            raise ValueError("Standing savings must have the candidate grid dtype")
+        held = savings_held.winner
+    held = cast("EnvelopeWinner", held)
     links, candidate_row = _segment_links_from_candidates(
         endog_grid=endog_grid,
         policy=policy,
@@ -1262,17 +1468,23 @@ def merge_envelope_winner(
     picked_identity = _pick_column(column=identities, index=index)
     unreadable = held.unreadable.reshape(-1)
     if arithmetic == "ordinary":
+        row: tuple[Float1D, ...] = candidate_row
+        if candidate_savings is not None:
+            row = (
+                *row,
+                jnp.where(jnp.isfinite(candidate_row[0]), candidate_savings, jnp.nan),
+            )
         unreadable = (
             unreadable
-            | _subnormal_operand_present(
-                row=candidate_row, query=jnp.asarray(query)
-            ).reshape(-1)
+            | _subnormal_operand_present(row=row, query=jnp.asarray(query)).reshape(-1)
             | _derived_subnormal_possible(
-                links=links, query=jnp.asarray(query)
+                links=links,
+                query=jnp.asarray(query),
+                associated_channels=() if savings_links is None else (savings_links,),
             ).reshape(-1)
         )
     shape = jnp.asarray(query).shape
-    return EnvelopeWinner(
+    winner = EnvelopeWinner(
         *(jnp.where(resolved, field, 0).reshape(shape) for field in picked),
         live=resolved.reshape(shape),
         stable_index=jnp.where(
@@ -1281,17 +1493,60 @@ def merge_envelope_winner(
         settled=settled.reshape(shape),
         unreadable=unreadable.reshape(shape),
     )
+    if savings_held is None:
+        return winner
+    if savings_links is None:
+        raise ValueError("Standing savings require candidate savings endpoints")
+    endpoints = tuple(
+        _pick_column(
+            column=jnp.concatenate(
+                [old.reshape(-1, 1), _spread_over_queries(column=new, n_query=n_query)],
+                axis=1,
+            ),
+            index=index,
+        ).reshape(shape)
+        for old, new in zip(savings_held[1:], savings_links, strict=True)
+    )
+    return _SavingsEnvelopeWinner(winner, endpoints[0], endpoints[1])
 
 
+@overload
 def finish_envelope_winner(
     *,
     winner: EnvelopeWinner,
     query: FloatND,
     arithmetic: ComparisonArithmetic,
+    feasibility_partition: ResolvedAxisPartition | None = ...,
+    feasible_interval_mask: BoolND | None = ...,
+) -> tuple[FloatND, FloatND, FloatND]: ...
+
+
+@overload
+def finish_envelope_winner(
+    *,
+    winner: _SavingsEnvelopeWinner,
+    query: FloatND,
+    arithmetic: ComparisonArithmetic,
+    feasibility_partition: ResolvedAxisPartition | None = ...,
+    feasible_interval_mask: BoolND | None = ...,
+) -> tuple[FloatND, FloatND, FloatND, FloatND, IntND]: ...
+
+
+def finish_envelope_winner(
+    *,
+    winner: EnvelopeWinner | _SavingsEnvelopeWinner,
+    query: FloatND,
+    arithmetic: ComparisonArithmetic,
     feasibility_partition: ResolvedAxisPartition | None = None,
     feasible_interval_mask: BoolND | None = None,
-) -> tuple[FloatND, FloatND, FloatND]:
-    """Read the three coupled channels of a completed interval-block fold."""
+) -> (
+    tuple[FloatND, FloatND, FloatND] | tuple[FloatND, FloatND, FloatND, FloatND, IntND]
+):
+    """Read a completed fold's coupled channels and optional original savings."""
+    savings_winner = winner if isinstance(winner, _SavingsEnvelopeWinner) else None
+    if savings_winner is not None:
+        winner = savings_winner.winner
+    winner = cast("EnvelopeWinner", winner)
     query = jnp.asarray(query)
     flat_query = query.reshape(-1)
     left_grid = winner.left_grid.reshape(-1)
@@ -1320,6 +1575,11 @@ def finish_envelope_winner(
             left=winner.left_marginal, right=winner.right_marginal
         )
         readable = (value_status | policy_status | marginal_status) == 0
+        if savings_winner is not None:
+            savings, savings_status = read_exact(
+                left=savings_winner.left_savings, right=savings_winner.right_savings
+            )
+            readable = readable & (savings_status == 0)
     else:
         read_ordinary = functools.partial(
             _read_ordinary_channel,
@@ -1333,9 +1593,14 @@ def finish_envelope_winner(
         policy = read_ordinary(left=winner.left_policy, right=winner.right_policy)
         marginal = read_ordinary(left=winner.left_marginal, right=winner.right_marginal)
         readable = ~winner.unreadable.reshape(-1)
+        if savings_winner is not None:
+            savings = read_ordinary(
+                left=savings_winner.left_savings, right=savings_winner.right_savings
+            )
+            readable = readable & jnp.isfinite(savings)
 
     decided = winner.live.reshape(-1) & winner.settled.reshape(-1) & readable
-    return _mask_infeasible_queries(
+    published = _mask_infeasible_queries(
         published=(
             _publish_decided(channel=value, decided=decided, shape=query.shape),
             _publish_decided(channel=policy, decided=decided, shape=query.shape),
@@ -1344,6 +1609,14 @@ def finish_envelope_winner(
         query=query,
         partition=feasibility_partition,
         feasible_interval_mask=feasible_interval_mask,
+    )
+    if savings_winner is None:
+        return published
+    associated = _publish_decided(channel=savings, decided=decided, shape=query.shape)
+    return (
+        *published,
+        jnp.where(jnp.isfinite(published[0]), associated, jnp.nan),
+        published_owner(value=published[0], stable_index=winner.stable_index),
     )
 
 
@@ -1452,16 +1725,35 @@ class _EnvelopeReduction(NamedTuple):
     """
 
 
-def _envelope_exact(*, links: _SegmentLinks, query: FloatND) -> _EnvelopeReduction:
-    """Resolve one exact winner and read only its three published channels.
+class _SavingsEnvelopeReduction(NamedTuple):
+    """Coupled envelope channels and the original associated saving."""
+
+    published: tuple[FloatND, FloatND, FloatND]
+    owner: IntND
+    savings: FloatND
+
+
+def _envelope_exact(
+    *,
+    links: _SegmentLinks,
+    query: FloatND,
+    savings_endpoints: tuple[Float1D, Float1D] | None = None,
+) -> _EnvelopeReduction | _SavingsEnvelopeReduction:
+    """Resolve one exact winner and read only its coupled published channels.
 
     The native winner operation compares exact stored affine values under the
     documented total order: value, right extension, exact slope, then stable
-    segment index. Its status is coupled to the three exact affine reads below;
-    a query either publishes all channels from one winner or NaN in all three.
+    segment index. Its status is coupled to each selected affine read;
+    a query either publishes all channels from one winner or NaN in all of them.
     """
     if links.left_grid.shape[0] == 0:
         empty = jnp.full_like(query, jnp.nan)
+        if savings_endpoints is not None:
+            return _SavingsEnvelopeReduction(
+                published=(empty, empty, empty),
+                owner=jnp.full(query.shape, NO_OWNER, dtype=jnp.int32),
+                savings=empty,
+            )
         return _EnvelopeReduction(
             published=(empty, empty, empty),
             owner=jnp.full(query.shape, NO_OWNER, dtype=jnp.int32),
@@ -1511,8 +1803,14 @@ def _envelope_exact(*, links: _SegmentLinks, query: FloatND) -> _EnvelopeReducti
     coupled_status = (
         winner_status.reshape(-1) | value_status | policy_status | marginal_status
     )
+    if savings_endpoints is not None:
+        savings, savings_status = read(
+            left=take(column=savings_endpoints[0]),
+            right=take(column=savings_endpoints[1]),
+        )
+        coupled_status = coupled_status | savings_status
     decided = coupled_status == 0
-    return _EnvelopeReduction(
+    reduction = _EnvelopeReduction(
         published=(
             _publish_decided(channel=value, decided=decided, shape=query.shape),
             _publish_decided(channel=policy, decided=decided, shape=query.shape),
@@ -1521,6 +1819,13 @@ def _envelope_exact(*, links: _SegmentLinks, query: FloatND) -> _EnvelopeReducti
         owner=jnp.where(
             decided, jnp.take(links.stable_index, flat_winner, axis=0), NO_OWNER
         ).reshape(query.shape),
+    )
+    if savings_endpoints is None:
+        return reduction
+    return _SavingsEnvelopeReduction(
+        published=reduction.published,
+        owner=cast("IntND", reduction.owner),
+        savings=_publish_decided(channel=savings, decided=decided, shape=query.shape),
     )
 
 
@@ -1962,7 +2267,10 @@ def _ordinary_block_size(*, requested: int, n_segment: int) -> int:
 
 
 def _link_blocks(
-    *, links: _SegmentLinks, block_size: int
+    *,
+    links: _SegmentLinks,
+    block_size: int,
+    savings_endpoints: tuple[Float1D, Float1D] | None = None,
 ) -> tuple[FloatND, BoolND, IntND]:
     """Pad the links to a whole number of blocks and stack them for a scan.
 
@@ -1975,7 +2283,8 @@ def _link_blocks(
         block_size: Candidates per block.
 
     Returns:
-        Tuple of the `(n_block, block_size, 8)` endpoint columns, their
+        Tuple of endpoint columns shaped `(n_block, block_size, 8)` without
+        savings or `(n_block, block_size, 10)` with savings, their
         `(n_block, block_size)` live flags, and their equally shaped stable
         global link identities.
 
@@ -1992,6 +2301,14 @@ def _link_blocks(
             _pad_column(column=links.right_policy, fill=0.0, n_padding=pad),
             _pad_column(column=links.left_marginal, fill=0.0, n_padding=pad),
             _pad_column(column=links.right_marginal, fill=0.0, n_padding=pad),
+            *(
+                []
+                if savings_endpoints is None
+                else [
+                    _pad_column(column=endpoint, fill=0.0, n_padding=pad)
+                    for endpoint in savings_endpoints
+                ]
+            ),
         ],
         axis=1,
     )
@@ -2051,8 +2368,12 @@ class _OrdinaryRank(NamedTuple):
 
 
 def _envelope_blocked_ordinary(
-    *, links: _SegmentLinks, query: FloatND, block_size: int
-) -> _EnvelopeReduction:
+    *,
+    links: _SegmentLinks,
+    query: FloatND,
+    block_size: int,
+    savings_endpoints: tuple[Float1D, Float1D] | None = None,
+) -> _EnvelopeReduction | _SavingsEnvelopeReduction:
     """Evaluate the ordinary envelope by streaming the candidates in blocks.
 
     Taking a maximum does not require the candidates to be present at once, so
@@ -2077,7 +2398,7 @@ def _envelope_blocked_ordinary(
     n_query = flat.shape[0]
     dtype = links.left_grid.dtype
     blocks, live_blocks, stable_blocks = _link_blocks(
-        links=links, block_size=block_size
+        links=links, block_size=block_size, savings_endpoints=savings_endpoints
     )
     step = functools.partial(_ordinary_block_step, flat=flat, dtype=dtype)
 
@@ -2090,17 +2411,28 @@ def _envelope_blocked_ordinary(
     empty_channel = jnp.full((n_query,), jnp.nan, dtype=dtype)
     carry, _ = jax.lax.scan(
         step,
-        (*(empty_rank,) * 4, empty_stable_index, *(empty_channel,) * 3),
+        (
+            *(empty_rank,) * 4,
+            empty_stable_index,
+            *(empty_channel,) * (3 if savings_endpoints is None else 4),
+        ),
         (blocks, live_blocks, stable_blocks),
     )
     decided = jnp.isfinite(carry[0])
     value, policy, marginal = (
         jnp.where(decided, channel, jnp.nan).reshape(query.shape)
-        for channel in carry[5:]
+        for channel in carry[5:8]
     )
-    return _EnvelopeReduction(
+    reduction = _EnvelopeReduction(
         published=(value, policy, marginal),
         owner=jnp.where(decided, carry[4], NO_OWNER).reshape(query.shape),
+    )
+    if savings_endpoints is None:
+        return reduction
+    return _SavingsEnvelopeReduction(
+        published=reduction.published,
+        owner=cast("IntND", reduction.owner),
+        savings=jnp.where(decided, carry[8], jnp.nan).reshape(query.shape),
     )
 
 
@@ -2284,12 +2616,37 @@ def _ordinary_block_best(
     )
     still_tied = still_tied & (offered.stable_index == earliest)
     index = jnp.argmax(still_tied, axis=1)[:, None].astype(jnp.int32)
+    associated = ()
+    if block.shape[-1] == _LINK_COLUMNS_WITH_SAVINGS:
+        associated = (
+            _along_link(
+                left=_pick_column(
+                    column=jnp.broadcast_to(block[:, 8][None, :], terms.value.shape),
+                    index=index,
+                ),
+                right=_pick_column(
+                    column=jnp.broadcast_to(block[:, 9][None, :], terms.value.shape),
+                    index=index,
+                ),
+                left_grid=_pick_column(
+                    column=jnp.broadcast_to(block[:, 0][None, :], terms.value.shape),
+                    index=index,
+                ),
+                right_grid=_pick_column(
+                    column=jnp.broadcast_to(block[:, 1][None, :], terms.value.shape),
+                    index=index,
+                ),
+                query=flat,
+                arithmetic="ordinary",
+            ),
+        )
     return (
         _OrdinaryRank(*(_pick_column(column=field, index=index) for field in offered)),
         (
             _pick_column(column=terms.value, index=index),
             _pick_column(column=terms.policy, index=index),
             _pick_column(column=terms.marginal, index=index),
+            *associated,
         ),
     )
 

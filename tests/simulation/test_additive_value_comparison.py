@@ -12,7 +12,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import replace
 from functools import partial
 from types import MappingProxyType
-from typing import TypeGuard
+from typing import TypeGuard, cast
 
 import jax
 import jax.numpy as jnp
@@ -152,7 +152,10 @@ def _evaluate_operands(
         name, discount = next(iter(aggregation.items()))
         assert name.split("__")[-1] == "discount_factor"
         assert isinstance(discount, jax.Array)
-        return utility, continuation, discount, feasible
+        return cast(
+            "tuple[jax.Array | bool, jax.Array, jax.Array, jax.Array | bool]",
+            (utility, continuation, discount, feasible),
+        )
 
     return evaluate
 

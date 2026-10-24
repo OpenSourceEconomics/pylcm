@@ -11,16 +11,27 @@ What it changes, and nothing else:
   list does not name is added to `general_shard_universe` and to
   `unweighted_files` — never to `file_weights`, because a file with no observed
   weight is not a file that costs nothing;
+- every file some invocation selects that has neither a weight nor an
+  unweighted entry is added to `unweighted_files`;
 - the `files` list of every `general-shard-<n>-<leg>` invocation is recomputed
-  from that universe with the manifest's own weighted partition, so the
-  recorded split is the one CI computes at run time;
+  from that universe -- without `linux_only_files` on the macOS and Windows
+  legs -- with the manifest's own weighted partition, so the recorded split is
+  the one CI computes at run time, and its `predicted_payload_minutes` is
+  recomputed from the same partition;
 - the `files` list of every `solution-shard-<n>-fp<p>-linux` invocation is
   recomputed the way `cpu.yml` selects it at run time
   (`shard_test_files tests/solution --weights-leg fp<p>-solution`): a new
   solution file joins one shard, and the weighted partition may move others.
+  Its `predicted_payload_minutes` is recomputed from the same partition.
 
-What it leaves alone: `frozen_head`, the observed weights, the exclusion list,
-the guardrail budgets, the shard *counts*, and every other lane.
+With `--refresh-leg <leg> --junit <glob> --junit-source <text>` it first
+replaces that one leg's `leg_weights` with the summed JUnit testcase seconds and
+testcase counts of the given reports -- the shards of that leg on one run -- and
+records `--junit-source` as their provenance.
+
+What it leaves alone: `frozen_head`, the root `file_weights`, every other leg's
+observed weights, the exclusion list, `linux_only_files`, the guardrail budgets,
+the shard *counts*, and every other lane.
 `frozen_head` binds the root cross-leg CSV weights; per-leg `junit_source`
 records each leg's measurement provenance. Registering files or refreshing one
 leg does not advance the root freeze. Re-measuring the root CSV weights does.
@@ -33,13 +44,19 @@ Exit codes:
 """
 
 import argparse
+import glob
 import json
 import sys
+import xml.etree.ElementTree as ET
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from tests.ci import ci_workloads
-from tests.ci.shard_test_files import assign_weighted_test_files, general_shard_files
+from tests.ci.shard_test_files import (
+    general_shard_files,
+    weighted_shard_report,
+)
 
 MANIFEST_PATH = Path(__file__).with_name("ci-workloads.json")
 _INDENT = 1
@@ -68,6 +85,83 @@ def unaccounted_test_files(
     return tuple(sorted(present - selected - excluded))
 
 
+@dataclass(frozen=True)
+class MeasuredLeg:
+    """Per-file JUnit testcase seconds and testcase counts for one leg."""
+
+    seconds: Mapping[str, float]
+    """Summed testcase seconds per repository-relative test file."""
+    counts: Mapping[str, int]
+    """Number of testcases per repository-relative test file."""
+
+
+def leg_weights_from_junit(
+    *, repo_root: Path, junit_paths: Sequence[Path], drop_deleted_files: bool = False
+) -> MeasuredLeg:
+    """Sum each file's JUnit testcase seconds over the reports of one run.
+
+    The reports are the shards of one leg on one run, so every file appears in
+    exactly one of them. A testcase keeps its recorded seconds whatever its
+    outcome; a file with no testcase gets no entry. A classname that resolves
+    to no file under `repo_root` is refused rather than dropped, unless
+    `drop_deleted_files` says the reports may predate a file's deletion.
+    """
+    seconds: dict[str, float] = {}
+    counts: dict[str, int] = {}
+    for junit_path in junit_paths:
+        root = ET.parse(junit_path).getroot()  # noqa: S314 - CI-produced JUnit artifacts
+        for case in root.iter("testcase"):
+            try:
+                file_ = _test_file_of(
+                    classname=case.get("classname", ""), root=repo_root
+                )
+            except ValueError:
+                if drop_deleted_files:
+                    continue
+                raise
+            seconds[file_] = seconds.get(file_, 0.0) + float(case.get("time", "0"))
+            counts[file_] = counts.get(file_, 0) + 1
+    return MeasuredLeg(
+        seconds={file_: round(seconds[file_], 3) for file_ in sorted(seconds)},
+        counts={file_: counts[file_] for file_ in sorted(counts)},
+    )
+
+
+def refresh_leg(
+    *,
+    manifest: ci_workloads.WorkloadManifest,
+    leg: str,
+    measured: MeasuredLeg,
+    junit_source: ci_workloads.SourcePath,
+) -> ci_workloads.WorkloadManifest:
+    """Replace one leg's observed weights and their provenance, nothing else.
+
+    `frozen_head`, the root `file_weights` and every other leg stay as they
+    are: re-measuring one leg does not advance the root freeze.
+    """
+    updated: ci_workloads.WorkloadManifest = json.loads(json.dumps(dict(manifest)))
+    if leg not in updated["leg_weights"]:
+        legs = sorted(updated["leg_weights"])
+        raise KeyError(f"{leg!r} is not a recorded leg: {legs}")
+    entry = updated["leg_weights"][leg]
+    entry["junit_source"] = junit_source
+    entry["seconds"] = dict(measured.seconds)
+    entry["counts"] = dict(measured.counts)
+    # A full re-measurement supersedes every weight filled in one file at a time.
+    entry.pop("filled_from", None)
+    return updated
+
+
+def _test_file_of(*, classname: str, root: Path) -> str:
+    """Return the test file a JUnit classname names, dropping any class suffix."""
+    parts = classname.split(".")
+    for end in range(len(parts), 0, -1):
+        candidate = "/".join(parts[:end]) + ".py"
+        if (root / candidate).is_file():
+            return candidate
+    raise ValueError(f"JUnit classname {classname!r} names no test file under {root}")
+
+
 def regenerate(
     *,
     repo_root: Path,
@@ -91,14 +185,24 @@ def regenerate(
             file_: float(seconds)
             for file_, seconds in updated["leg_weights"][leg]["seconds"].items()
         }
-        groups = assign_weighted_test_files(
-            files=universe, n_shards=config["shards"], weights=weights
+        linux_only = set(updated.get("linux_only_files", ()))
+        leg_universe = (
+            universe
+            if leg.endswith("-linux")
+            else tuple(file_ for file_ in universe if file_ not in linux_only)
         )
-        for index, group in enumerate(groups, start=1):
+        reports = weighted_shard_report(
+            files=leg_universe, n_shards=config["shards"], weights=weights
+        )
+        for index, report in enumerate(reports, start=1):
+            group = report.files
             invocation_id = f"general-shard-{index}-{leg}"
             if invocation_id not in by_id:
                 raise KeyError(f"{invocation_id} is not a recorded invocation")
             by_id[invocation_id]["files"] = sorted(group)
+            by_id[invocation_id]["predicted_payload_minutes"] = round(
+                report.payload_minutes(workers=config["workers"]), 2
+            )
     solution_files = tuple(
         path.relative_to(repo_root).as_posix()
         for path in (repo_root / "tests/solution").rglob("test_*.py")
@@ -108,15 +212,23 @@ def regenerate(
             file_: float(seconds)
             for file_, seconds in updated["leg_weights"][leg]["seconds"].items()
         }
-        groups = assign_weighted_test_files(
+        reports = weighted_shard_report(
             files=solution_files, n_shards=config["shards"], weights=weights
         )
         precision = leg.removesuffix("-solution")
-        for index, group in enumerate(groups, start=1):
+        for index, report in enumerate(reports, start=1):
             invocation_id = f"solution-shard-{index}-{precision}-linux"
             if invocation_id not in by_id:
                 raise KeyError(f"{invocation_id} is not a recorded invocation")
-            by_id[invocation_id]["files"] = sorted(group)
+            by_id[invocation_id]["files"] = sorted(report.files)
+            by_id[invocation_id]["predicted_payload_minutes"] = round(
+                report.payload_minutes(workers=config["workers"]), 2
+            )
+    # A file a lane selects by hand still needs a weight or an unweighted entry.
+    selected = {file_ for inv in updated["invocations"] for file_ in inv["files"]}
+    updated["unweighted_files"] = sorted(
+        {*updated["unweighted_files"], *(selected - weighted)}
+    )
     _fail_if_missing_paths(repo_root=repo_root, universe=universe)
     return updated
 
@@ -129,6 +241,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     committed_text = manifest_path.read_text(encoding="utf-8")
     manifest = json.loads(committed_text)
 
+    if args.refresh_leg is not None:
+        reports = tuple(
+            Path(path)
+            for pattern in args.junit
+            for path in sorted(glob.glob(pattern))  # noqa: PTH207 - absolute patterns
+        )
+        if not reports or not args.junit_source:
+            sys.stdout.write(
+                "--refresh-leg needs --junit matching at least one report and "
+                "--junit-source naming the run\n"
+            )
+            return 1
+        manifest = refresh_leg(
+            manifest=manifest,
+            leg=args.refresh_leg,
+            measured=leg_weights_from_junit(repo_root=repo_root, junit_paths=reports),
+            junit_source=args.junit_source,
+        )
     additions = tuple(args.add) or unaccounted_test_files(
         repo_root=repo_root, manifest=manifest
     )
@@ -176,6 +306,27 @@ def _parser() -> argparse.ArgumentParser:
             "repository-relative test file to register; repeat once per file. "
             "Omitted, every unaccounted test file under tests/ is registered."
         ),
+    )
+    parser.add_argument(
+        "--refresh-leg",
+        default=None,
+        metavar="LEG",
+        help=(
+            "re-measure this leg's `leg_weights` from --junit reports of one run, "
+            "recording --junit-source as their provenance"
+        ),
+    )
+    parser.add_argument(
+        "--junit",
+        action="append",
+        default=[],
+        metavar="GLOB",
+        help="JUnit report glob for --refresh-leg; repeat once per pattern",
+    )
+    parser.add_argument(
+        "--junit-source",
+        default=None,
+        help="the run, attempt, head and artifacts the --junit reports come from",
     )
     parser.add_argument(
         "--check",

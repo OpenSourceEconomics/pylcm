@@ -15,13 +15,14 @@ import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from functools import partial
-from typing import Literal, NamedTuple
+from typing import Literal, NamedTuple, cast
 
 import jax
 import jax.numpy as jnp
 from jax._src.interpreters import partial_eval
 
 from _lcm.regime_building.collective import _weighted_sum
+from _lcm.regime_building.Q_and_F import BoundedQAndF, runtime_bound_specs
 from _lcm.solution.action_reduction import (
     COLLECTIVE_HARD_MAX_REDUCTION,
     HARD_MAX_REDUCTION,
@@ -33,15 +34,26 @@ from _lcm.solution.action_reduction import (
     LogSumExpAccumulator,
     LogSumExpResult,
 )
+from _lcm.solution.feasibility import (
+    BoundedResult,
+    BoundInputStatus,
+    merge_bound_input_status,
+    reduce_bound_input_status,
+)
 from _lcm.solution.logsumexp_action_reduction import (
     BoundLogSumExpReduction,
 )
-from _lcm.typing import QAndFArg
+from _lcm.typing import PytreeValue, QAndFArg
+from _lcm.utils.dispatchers import vary_carry_like_body
 from lcm.typing import ActionName, BoolND, FloatND, ReferenceName
 
 _INT32_MAX = 2_147_483_647
 _COLLECTIVE_BLOCK_NDIM = 2
 type _Block = tuple[jax.Array, jax.Array, jax.Array]
+type _BoundedBlock = BoundedResult[_Block]
+type _ActionOutput = tuple[FloatND, BoolND]
+type _BoundedActionEvaluator = Callable[..., BoundedResult[_ActionOutput]]
+type _HardMaxState = HardMaxAccumulator | CollectiveHardMaxAccumulator
 type _ScanCarry = tuple[HardMaxAccumulator, jax.Array]
 type _CollectiveBlock = tuple[jax.Array, jax.Array, jax.Array, jax.Array]
 type _CollectiveScanCarry = tuple[CollectiveHardMaxAccumulator, jax.Array]
@@ -86,7 +98,7 @@ def build_streaming_max_Q_over_a(
     Q_and_F: Callable[..., tuple[FloatND, BoolND]],
     action_names: tuple[ActionName, ...],
     block_width: int,
-) -> Callable[..., HardMaxResult]:
+) -> Callable[..., HardMaxResult | BoundedResult[HardMaxResult]]:
     """Build the fixed-state blockwise hard-max callable.
 
     ``action_names`` defines the canonical product order: the final action is the
@@ -263,7 +275,7 @@ def build_streaming_ev1_max_Q_over_a(
     n_discrete_action_axes: int,
     block_width: int,
     scale: FloatND | float,
-) -> Callable[..., LogSumExpResult]:
+) -> Callable[..., LogSumExpResult | BoundedResult[LogSumExpResult]]:
     """Build the fixed-state EV1 expected-maximum callable.
 
     The leading discrete coordinates define contiguous branches in the canonical
@@ -300,7 +312,7 @@ def build_streaming_collective_max_Q_over_a(
     block_width: int,
     stakeholders: tuple[str, ...],
     weights: Mapping[str, FloatND | float],
-) -> Callable[..., CollectiveHardMaxResult]:
+) -> Callable[..., CollectiveHardMaxResult | BoundedResult[CollectiveHardMaxResult]]:
     """Build the fixed-state collective hard-max callable.
 
     Each action cell is evaluated once through Q_and_F. Its trailing stakeholder
@@ -350,7 +362,19 @@ class _StreamingHardMax:
     action_names: tuple[ActionName, ...]
     block_width: int
 
-    def __call__(self, **kwargs: QAndFArg) -> HardMaxResult:
+    def __call__(
+        self, **kwargs: QAndFArg
+    ) -> HardMaxResult | BoundedResult[HardMaxResult]:
+        if runtime_bound_specs(function=self.Q_and_F):
+            return cast(
+                "BoundedResult[HardMaxResult]",
+                _bounded_hard_max(
+                    Q_and_F=self.Q_and_F,
+                    action_names=self.action_names,
+                    block_width=self.block_width,
+                    kwargs=kwargs,
+                ),
+            )
         if not self.action_names:
             return _reduce_no_action(Q_and_F=self.Q_and_F, kwargs=kwargs)
 
@@ -372,10 +396,168 @@ class _StreamingHardMax:
         )
         accumulator = _scan_blocks(
             accumulator=_empty_reduction(evaluate_block=evaluate_block),
-            evaluate_block=evaluate_block,
+            evaluate_block=cast("Callable[..., _Block]", evaluate_block),
             n_blocks=n_blocks,
         )
         return HARD_MAX_REDUCTION.finalize(accumulator=accumulator)
+
+
+def _bounded_hard_max(
+    *,
+    Q_and_F: Callable[..., tuple[FloatND, BoolND]],
+    action_names: tuple[ActionName, ...],
+    block_width: int,
+    kwargs: dict[ReferenceName, QAndFArg],
+    stakeholders: tuple[str, ...] | None = None,
+    weights: Mapping[str, FloatND | float] | None = None,
+) -> BoundedResult[HardMaxResult | CollectiveHardMaxResult]:
+    """OR actual action-window validity beside the existing hard-max accumulator."""
+    evaluator = cast("_BoundedActionEvaluator", BoundedQAndF(function=Q_and_F))
+    if not action_names:
+        result = evaluator(**kwargs)
+        values, feasible = result.output
+        if stakeholders is not None:
+            if weights is None:
+                raise TypeError("Collective bound reduction requires Pareto weights")
+            block_values = values[None, ...]
+            collective_reduced = COLLECTIVE_HARD_MAX_REDUCTION.add(
+                accumulator=COLLECTIVE_HARD_MAX_REDUCTION.initialize(
+                    stakeholder_template=jnp.zeros_like(values)
+                ),
+                objectives=_weighted_sum(
+                    stakeholder_Q={
+                        name: block_values[..., i]
+                        for i, name in enumerate(stakeholders)
+                    },
+                    weights=weights,
+                ),
+                stakeholder_values=block_values,
+                feasible=feasible[None],
+                action_ids=jnp.asarray([0], dtype=jnp.int32),
+            )
+            return BoundedResult(
+                output=COLLECTIVE_HARD_MAX_REDUCTION.finalize(
+                    accumulator=collective_reduced
+                ),
+                bound_status=result.bound_status,
+            )
+        reduced = HARD_MAX_REDUCTION.add(
+            accumulator=HARD_MAX_REDUCTION.initialize(
+                value_template=jnp.zeros_like(values)
+            ),
+            values=values[..., None],
+            feasible=feasible[..., None],
+            action_ids=jnp.asarray([0], dtype=jnp.int32),
+        )
+        return BoundedResult(
+            output=HARD_MAX_REDUCTION.finalize(accumulator=reduced),
+            bound_status=result.bound_status,
+        )
+    grids, fixed, sizes, n_actions = _prepare_action_call(
+        action_names=action_names,
+        kwargs=kwargs,
+    )
+    width = min(block_width, n_actions)
+    offsets = jnp.arange(width, dtype=jnp.int32)
+
+    def window(*, block_index: jax.Array) -> _BoundedBlock:
+        identities = block_index * width + offsets
+        active = identities < n_actions
+        selected = jnp.minimum(identities, n_actions - 1)
+        evaluate_one = partial(
+            _evaluate_one_action,
+            Q_and_F=evaluator,
+            action_names=action_names,
+            action_grids=grids,
+            action_sizes=sizes,
+            fixed_kwargs=fixed,
+        )
+        result = jax.vmap(evaluate_one)(selected)
+        values, feasible = result.output
+        if stakeholders is None:
+            _validate_block_Q_and_F(values=values, feasible=feasible)
+        else:
+            _validate_collective_block_Q_and_F(
+                stakeholder_values=values,
+                feasible=feasible,
+                n_stakeholders=len(stakeholders),
+            )
+        return BoundedResult(
+            output=(values, feasible & active, identities),
+            bound_status=reduce_bound_input_status(
+                statuses=result.bound_status, active=active
+            ),
+        )
+
+    def add_block(*, accumulator: _HardMaxState, block: _Block) -> _HardMaxState:
+        values, feasible, identities = block
+        if stakeholders is None:
+            return HARD_MAX_REDUCTION.add(
+                accumulator=cast("HardMaxAccumulator", accumulator),
+                values=values,
+                feasible=feasible,
+                action_ids=identities,
+            )
+        if weights is None:
+            raise TypeError("Collective bound reduction requires Pareto weights")
+        return COLLECTIVE_HARD_MAX_REDUCTION.add(
+            accumulator=cast("CollectiveHardMaxAccumulator", accumulator),
+            objectives=_weighted_sum(
+                stakeholder_Q={
+                    name: values[..., i] for i, name in enumerate(stakeholders)
+                },
+                weights=weights,
+            ),
+            stakeholder_values=values,
+            feasible=feasible,
+            action_ids=identities,
+        )
+
+    # Every window runs in the scan body, so `Q_and_F` is staged once; the carry
+    # starts from the empty accumulator and all-false bound records.
+    trace = _trace_block(evaluate_block=window)
+    template = jnp.zeros(trace.shapes[0].shape[1:], dtype=trace.shapes[0].dtype)
+    initial = (
+        HARD_MAX_REDUCTION.initialize(value_template=template)
+        if stakeholders is None
+        else COLLECTIVE_HARD_MAX_REDUCTION.initialize(stakeholder_template=template)
+    )
+    carry = BoundedResult(
+        output=_typed_like(accumulator=initial, arrays=trace.read_arrays),
+        bound_status=_empty_bound_status(evaluate_block=window),
+    )
+
+    # keyword-only-exempt: library-callback=jax.lax.scan
+    def add_window(
+        carry: BoundedResult[_HardMaxState], index: jax.Array
+    ) -> tuple[BoundedResult[_HardMaxState], None]:
+        block = window(block_index=index)
+        ordinary = add_block(accumulator=carry.output, block=block.output)
+        statuses = tuple(
+            merge_bound_input_status(left=left, right=right)
+            for left, right in zip(carry.bound_status, block.bound_status, strict=True)
+        )
+        return BoundedResult(output=ordinary, bound_status=statuses), None
+
+    carry, _history = jax.lax.scan(
+        add_window,
+        vary_carry_like_body(
+            body=lambda state: add_window(state, jnp.int32(0))[0], carry=carry
+        ),
+        jnp.arange((n_actions + width - 1) // width, dtype=jnp.int32),
+    )
+    return BoundedResult(
+        output=(
+            HARD_MAX_REDUCTION.finalize(
+                accumulator=cast("HardMaxAccumulator", carry.output)
+            )
+            if stakeholders is None
+            else COLLECTIVE_HARD_MAX_REDUCTION.finalize(
+                accumulator=cast("CollectiveHardMaxAccumulator", carry.output)
+            )
+        ),
+        bound_status=carry.bound_status,
+    )
 
 
 @dataclass(frozen=True)
@@ -388,16 +570,31 @@ class _PartitionedStreamingHardMax:
     n_partitions: int
     axis_name: str
 
-    def __call__(self, **kwargs: QAndFArg) -> HardMaxResult:
+    def __call__(
+        self, **kwargs: QAndFArg
+    ) -> HardMaxResult | BoundedResult[HardMaxResult]:
         """Reduce this member's partition, exchange accumulators and merge them."""
         partition = jax.lax.axis_index(self.axis_name).astype(jnp.int32)
         local = self.local(partition=partition, **kwargs)
         gathered = jax.lax.all_gather(local, self.axis_name)
+        if isinstance(gathered, BoundedResult):
+            return BoundedResult(
+                output=merge_partition_accumulators(
+                    accumulators=gathered.output,
+                    order=tuple(range(self.n_partitions)),
+                ),
+                bound_status=reduce_bound_input_status(
+                    statuses=gathered.bound_status,
+                    active=jnp.ones((self.n_partitions,), dtype=bool),
+                ),
+            )
         return merge_partition_accumulators(
             accumulators=gathered, order=tuple(range(self.n_partitions))
         )
 
-    def local(self, *, partition: jax.Array, **kwargs: QAndFArg) -> HardMaxAccumulator:
+    def local(
+        self, *, partition: jax.Array, **kwargs: QAndFArg
+    ) -> HardMaxAccumulator | BoundedResult[HardMaxAccumulator]:
         """Reduce the blocks one partition owns into an unfinalized accumulator."""
         action_grids, fixed_kwargs, action_sizes, n_actions = _prepare_action_call(
             action_names=self.action_names,
@@ -423,6 +620,45 @@ class _PartitionedStreamingHardMax:
             block_width=self.block_width,
             block_offsets=jnp.arange(self.block_width, dtype=jnp.int32),
         )
+        if runtime_bound_specs(function=self.Q_and_F):
+            owned_block = cast(
+                "Callable[..., _BoundedBlock]",
+                partial(
+                    _evaluate_owned_block,
+                    first_block_index=first_block_index,
+                    stop_block_index=stop_block_index,
+                    evaluate_block=evaluate_block,
+                ),
+            )
+            initial = BoundedResult(
+                output=_empty_reduction(evaluate_block=owned_block),
+                bound_status=_empty_bound_status(evaluate_block=owned_block),
+            )
+
+            # keyword-only-exempt: library-callback=jax.lax.scan
+            def add_window(
+                carry: BoundedResult[HardMaxAccumulator], offset: jax.Array
+            ) -> tuple[BoundedResult[HardMaxAccumulator], None]:
+                block = owned_block(block_index=first_block_index + offset)
+                return BoundedResult(
+                    output=_add_block(accumulator=carry.output, block=block.output),
+                    bound_status=tuple(
+                        merge_bound_input_status(left=left, right=right)
+                        for left, right in zip(
+                            carry.bound_status, block.bound_status, strict=True
+                        )
+                    ),
+                ), None
+
+            result, _history = jax.lax.scan(
+                add_window,
+                vary_carry_like_body(
+                    body=lambda state: add_window(state, jnp.int32(0))[0],
+                    carry=initial,
+                ),
+                jnp.arange(layout.blocks_per_partition, dtype=jnp.int32),
+            )
+            return result
         # Every participant evaluates each block inside the scan body, exactly
         # as the unpartitioned stream does, so each action's value comes from
         # the same traced expression on either route. The scan starts at the
@@ -432,11 +668,14 @@ class _PartitionedStreamingHardMax:
         (accumulator, _), _history = jax.lax.scan(
             partial(
                 _scan_one_block,
-                evaluate_block=partial(
-                    _evaluate_owned_block,
-                    first_block_index=first_block_index,
-                    stop_block_index=stop_block_index,
-                    evaluate_block=evaluate_block,
+                evaluate_block=cast(
+                    "Callable[..., _Block]",
+                    partial(
+                        _evaluate_owned_block,
+                        first_block_index=first_block_index,
+                        stop_block_index=stop_block_index,
+                        evaluate_block=evaluate_block,
+                    ),
                 ),
             ),
             (_empty_reduction(evaluate_block=evaluate_block), first_block_index),
@@ -456,7 +695,9 @@ class _StreamingEV1ExpectedMax:
     block_width: int
     scale: FloatND | float
 
-    def __call__(self, **kwargs: QAndFArg) -> LogSumExpResult:
+    def __call__(
+        self, **kwargs: QAndFArg
+    ) -> LogSumExpResult | BoundedResult[LogSumExpResult]:
         action_grids, fixed_kwargs, action_sizes, n_actions = _prepare_action_call(
             action_names=self.action_names,
             kwargs=kwargs,
@@ -496,7 +737,7 @@ class _StreamingEV1ExpectedMax:
         )
         block = _trace_block(evaluate_block=evaluate_block)
         values = block.shapes[0]
-        accumulator = _typed_ev1_reductions(
+        initial_accumulator = _typed_ev1_reductions(
             accumulator=_initialize_ev1_reduction(
                 branch_value_template=jnp.zeros(values.shape[:-1], dtype=values.dtype),
                 completed_value_template=jnp.zeros(
@@ -507,17 +748,25 @@ class _StreamingEV1ExpectedMax:
             arrays=block.read_arrays,
         )
         accumulator = _scan_ev1_blocks(
-            accumulator=accumulator,
+            accumulator=initial_accumulator,
             evaluate_block=evaluate_block,
             n_blocks=n_blocks,
             blocks_per_branch_group=blocks_per_branch_group,
             reduction=reduction,
+            bound_summary=bool(runtime_bound_specs(function=self.Q_and_F)),
         )
+        statuses = ()
+        if isinstance(accumulator, BoundedResult):
+            statuses = accumulator.bound_status
+            accumulator = accumulator.output
         accumulator = _flush_ev1_branch_group(
             accumulator=accumulator,
             reduction=reduction,
         )
-        return reduction.finalize(accumulator=accumulator.completed_branch_groups)
+        result = reduction.finalize(accumulator=accumulator.completed_branch_groups)
+        return (
+            BoundedResult(output=result, bound_status=statuses) if statuses else result
+        )
 
 
 @dataclass(frozen=True)
@@ -530,7 +779,21 @@ class _StreamingCollectiveHardMax:
     stakeholders: tuple[str, ...]
     weights: Mapping[str, FloatND | float]
 
-    def __call__(self, **kwargs: QAndFArg) -> CollectiveHardMaxResult:
+    def __call__(
+        self, **kwargs: QAndFArg
+    ) -> CollectiveHardMaxResult | BoundedResult[CollectiveHardMaxResult]:
+        if runtime_bound_specs(function=self.Q_and_F):
+            return cast(
+                "BoundedResult[CollectiveHardMaxResult]",
+                _bounded_hard_max(
+                    Q_and_F=self.Q_and_F,
+                    action_names=self.action_names,
+                    block_width=self.block_width,
+                    kwargs=kwargs,
+                    stakeholders=self.stakeholders,
+                    weights=self.weights,
+                ),
+            )
         if not self.action_names:
             return _reduce_collective_no_action(
                 Q_and_F=self.Q_and_F,
@@ -614,7 +877,7 @@ def _evaluate_block(
     n_actions: int,
     block_width: int,
     block_offsets: jax.Array,
-) -> _Block:
+) -> _Block | _BoundedBlock:
     """Evaluate one padded block, never the complete action product."""
     block_start = block_index * block_width
     remaining = n_actions - block_start
@@ -622,19 +885,40 @@ def _evaluate_block(
     safe_offsets = jnp.minimum(block_offsets, remaining - 1)
     global_ids = block_start + safe_offsets
 
+    bounded = bool(runtime_bound_specs(function=Q_and_F))
     evaluate_one = partial(
         _evaluate_one_action,
-        Q_and_F=Q_and_F,
+        Q_and_F=cast("_BoundedActionEvaluator", BoundedQAndF(function=Q_and_F))
+        if bounded
+        else Q_and_F,
         action_names=action_names,
         action_grids=action_grids,
         action_sizes=action_sizes,
         fixed_kwargs=fixed_kwargs,
     )
-    values, feasible = jax.vmap(evaluate_one)(global_ids)
+    evaluated = jax.vmap(evaluate_one)(global_ids)
+    if bounded:
+        bounded_result = cast("BoundedResult[_ActionOutput]", evaluated)
+        values, feasible = bounded_result.output
+        statuses = bounded_result.bound_status
+    else:
+        values, feasible = cast("_ActionOutput", evaluated)
+        statuses = ()
     values = jnp.asarray(values)
     feasible = jnp.asarray(feasible)
     _validate_block_Q_and_F(values=values, feasible=feasible)
-    return values, feasible & valid, global_ids
+    output = (values, feasible & valid, global_ids)
+    return (
+        BoundedResult(
+            output=output,
+            bound_status=reduce_bound_input_status(
+                statuses=statuses,
+                active=valid,
+            ),
+        )
+        if bounded
+        else output
+    )
 
 
 def _evaluate_owned_block(
@@ -642,12 +926,29 @@ def _evaluate_owned_block(
     block_index: jax.Array,
     first_block_index: jax.Array,
     stop_block_index: jax.Array,
-    evaluate_block: Callable[..., _Block],
-) -> _Block:
+    evaluate_block: Callable[..., _Block | _BoundedBlock],
+) -> _Block | _BoundedBlock:
     """Evaluate one block, marking it infeasible outside the partition's run."""
-    values, feasible, global_ids = evaluate_block(block_index=block_index)
+    evaluated = evaluate_block(block_index=block_index)
+    values, feasible, global_ids = (
+        evaluated.output if isinstance(evaluated, BoundedResult) else evaluated
+    )
     owned = (first_block_index <= block_index) & (block_index < stop_block_index)
-    return values, feasible & owned, global_ids
+    output = (values, feasible & owned, global_ids)
+    return (
+        BoundedResult(
+            output=output,
+            bound_status=tuple(
+                BoundInputStatus(
+                    nonfinite_floor=owned & status.nonfinite_floor,
+                    invalid_shifted_grid=owned & status.invalid_shifted_grid,
+                )
+                for status in evaluated.bound_status
+            ),
+        )
+        if isinstance(evaluated, BoundedResult)
+        else output
+    )
 
 
 def _evaluate_ev1_branch_block(
@@ -665,7 +966,7 @@ def _evaluate_ev1_branch_block(
     continuous_block_width: int,
     branch_offsets: jax.Array,
     continuous_offsets: jax.Array,
-) -> _Block:
+) -> _Block | _BoundedBlock:
     """Evaluate one bounded block over complete or chunked EV1 branches."""
     branch_group_id = block_index // blocks_per_branch_group
     block_within_branch_group = block_index % blocks_per_branch_group
@@ -688,22 +989,43 @@ def _evaluate_ev1_branch_block(
     )
     valid = valid_branches[:, jnp.newaxis] & valid_continuous[jnp.newaxis, :]
 
+    bounded = bool(runtime_bound_specs(function=Q_and_F))
     evaluate_one = partial(
         _evaluate_one_action,
-        Q_and_F=Q_and_F,
+        Q_and_F=cast("_BoundedActionEvaluator", BoundedQAndF(function=Q_and_F))
+        if bounded
+        else Q_and_F,
         action_names=action_names,
         action_grids=action_grids,
         action_sizes=action_sizes,
         fixed_kwargs=fixed_kwargs,
     )
-    values, feasible = jax.vmap(jax.vmap(evaluate_one))(global_ids)
+    evaluated = jax.vmap(jax.vmap(evaluate_one))(global_ids)
+    if bounded:
+        bounded_result = cast("BoundedResult[_ActionOutput]", evaluated)
+        values, feasible = bounded_result.output
+        statuses = bounded_result.bound_status
+    else:
+        values, feasible = cast("_ActionOutput", evaluated)
+        statuses = ()
     values = jnp.asarray(values)
     feasible = jnp.asarray(feasible)
     _validate_block_Q_and_F(
         values=values[0],
         feasible=feasible[0],
     )
-    return values, feasible & valid, global_ids
+    output = (values, feasible & valid, global_ids)
+    return (
+        BoundedResult(
+            output=output,
+            bound_status=reduce_bound_input_status(
+                statuses=statuses,
+                active=valid,
+            ),
+        )
+        if bounded
+        else output
+    )
 
 
 def _evaluate_collective_block(
@@ -754,15 +1076,15 @@ def _evaluate_collective_block(
 
 
 # keyword-only-exempt: library-callback=jax.vmap
-def _evaluate_one_action(
+def _evaluate_one_action[Output: PytreeValue](
     global_id: jax.Array,
     *,
-    Q_and_F: Callable[..., tuple[FloatND, BoolND]],
+    Q_and_F: Callable[..., Output],
     action_names: tuple[ActionName, ...],
     action_grids: tuple[jax.Array, ...],
     action_sizes: tuple[int, ...],
     fixed_kwargs: dict[ReferenceName, QAndFArg],
-) -> tuple[FloatND, BoolND]:
+) -> Output:
     """Evaluate ``Q_and_F`` at one global C-order action identity."""
     action_kwargs = _decode_action(
         global_id=global_id,
@@ -781,7 +1103,7 @@ class _BlockTrace(NamedTuple):
 
 
 def _trace_block(
-    *, evaluate_block: Callable[..., tuple[jax.Array, ...]]
+    *, evaluate_block: Callable[..., _Block | _CollectiveBlock | _BoundedBlock]
 ) -> _BlockTrace:
     """Trace one block without staging it into the surrounding program.
 
@@ -809,7 +1131,9 @@ def _trace_block(
     )
 
 
-def _empty_reduction(*, evaluate_block: Callable[..., _Block]) -> HardMaxAccumulator:
+def _empty_reduction(
+    *, evaluate_block: Callable[..., _Block | _BoundedBlock]
+) -> HardMaxAccumulator:
     """Create the empty hard-max accumulator for the blocks `evaluate_block` makes."""
     block = _trace_block(evaluate_block=evaluate_block)
     values = block.shapes[0]
@@ -818,6 +1142,28 @@ def _empty_reduction(*, evaluate_block: Callable[..., _Block]) -> HardMaxAccumul
             value_template=jnp.zeros(values.shape[1:], dtype=values.dtype)
         ),
         arrays=block.read_arrays,
+    )
+
+
+def _empty_bound_status(
+    *, evaluate_block: Callable[..., _BoundedBlock]
+) -> tuple[BoundInputStatus, ...]:
+    """Create all-false bound records for the blocks `evaluate_block` makes.
+
+    All false is a reduction over no active lane and the identity of
+    `merge_bound_input_status`, so a scan seeded with it evaluates every block
+    in its body and stages none outside it.
+    """
+    # Only the records leave the abstract evaluation: an output container may
+    # refuse abstract leaves.
+    template = jax.eval_shape(
+        lambda: evaluate_block(block_index=jnp.int32(0)).bound_status
+    )
+    return _typed_like(
+        accumulator=jax.tree.map(
+            lambda leaf: jnp.zeros(leaf.shape, dtype=leaf.dtype), template
+        ),
+        arrays=_trace_block(evaluate_block=evaluate_block).read_arrays,
     )
 
 
@@ -1011,16 +1357,54 @@ def _keep_ev1_accumulator(
 def _scan_ev1_blocks(
     *,
     accumulator: _EV1ActionAccumulator,
-    evaluate_block: Callable[..., _Block],
+    evaluate_block: Callable[..., _Block | _BoundedBlock],
     n_blocks: int,
     blocks_per_branch_group: int,
     reduction: BoundLogSumExpReduction,
-) -> _EV1ActionAccumulator:
+    bound_summary: bool = False,
+) -> _EV1ActionAccumulator | BoundedResult[_EV1ActionAccumulator]:
     """Scan every vector block in order while keeping one branch group open."""
+    if bound_summary:
+        bounded_evaluate_block = cast("Callable[..., _BoundedBlock]", evaluate_block)
+        initial = BoundedResult(
+            output=accumulator,
+            bound_status=_empty_bound_status(evaluate_block=bounded_evaluate_block),
+        )
+
+        # keyword-only-exempt: library-callback=jax.lax.scan
+        def add_window(
+            carry: BoundedResult[_EV1ActionAccumulator], index: jax.Array
+        ) -> tuple[BoundedResult[_EV1ActionAccumulator], None]:
+            block = bounded_evaluate_block(block_index=index)
+            return BoundedResult(
+                output=_add_ev1_block(
+                    accumulator=carry.output,
+                    block=block.output,
+                    block_index=index,
+                    blocks_per_branch_group=blocks_per_branch_group,
+                    reduction=reduction,
+                ),
+                bound_status=tuple(
+                    merge_bound_input_status(left=left, right=right)
+                    for left, right in zip(
+                        carry.bound_status, block.bound_status, strict=True
+                    )
+                ),
+            ), None
+
+        result, _history = jax.lax.scan(
+            add_window,
+            vary_carry_like_body(
+                body=lambda state: add_window(state, jnp.int32(0))[0],
+                carry=initial,
+            ),
+            jnp.arange(n_blocks, dtype=jnp.int32),
+        )
+        return result
     (accumulator, _), _history = jax.lax.scan(
         partial(
             _scan_one_ev1_block,
-            evaluate_block=evaluate_block,
+            evaluate_block=cast("Callable[..., _Block]", evaluate_block),
             blocks_per_branch_group=blocks_per_branch_group,
             reduction=reduction,
         ),

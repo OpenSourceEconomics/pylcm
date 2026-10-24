@@ -9,7 +9,7 @@ applicability.
 
 import itertools
 import math
-from collections.abc import Mapping
+from collections.abc import Hashable, Mapping
 from dataclasses import dataclass, replace
 from fractions import Fraction
 from types import MappingProxyType
@@ -20,7 +20,15 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
-from _lcm.continuation import ContinuationSpec, EGMContinuationSpec
+from _lcm.continuation import (
+    ContinuationSpec,
+    EGMContinuationSpec,
+    EGMQuerySpec,
+    validate_query_bound_authority,
+    validate_query_evaluator_authority,
+    validate_query_model_authority,
+    validate_query_template,
+)
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy, OuterPolicyBank
@@ -37,6 +45,7 @@ from _lcm.execution.output_layout import StateAxesLeading
 from _lcm.grids.discrete import DiscreteGrid
 from _lcm.params.edges import regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
+from _lcm.regime_building.age_normalization import resolve_periodized_nodes
 from _lcm.regime_building.gated_edges import (
     edge_may_fold_at_period,
     gate_reads_dissolution_flag,
@@ -58,7 +67,9 @@ from _lcm.solution.v_topology import _get_regime_V_shapes_and_shardings
 from _lcm.time import TimeAxis
 from _lcm.typing import (
     ArtifactPayload,
+    EconFunctionsMapping,
     FlatParams,
+    FunctionName,
     RegimeName,
     StateName,
 )
@@ -383,6 +394,11 @@ def _snapshot_nnbegm_policy_read(route: NNBEGMPolicyRead) -> NNBEGMPolicyRead:
     _validate_nnbegm_policy_read(route)
     return replace(
         route,
+        finite_query_authority=(
+            None
+            if route.finite_query_authority is None
+            else replace(route.finite_query_authority)
+        ),
         outer_target_function_by_period=MappingProxyType(
             dict(route.outer_target_function_by_period)
         ),
@@ -429,6 +445,10 @@ def _validate_nnbegm_policy_read(  # noqa: C901, PLR0912
     """Validate NNBEGM route structure before copying mappings or tuples."""
     if type(route) is not NNBEGMPolicyRead:
         raise TypeError("NNBEGM replay route must be exact.")
+    if route.finite_query_authority is not None:
+        if type(route.finite_query_authority) is not EGMQuerySpec:
+            raise TypeError("Finite NNBEGM policy query authority must be exact.")
+        EGMQuerySpec.__post_init__(route.finite_query_authority)
     _require_exact_mapping(
         value=route.outer_target_function_by_period,
         label="NNBEGM outer_target_function_by_period",
@@ -681,7 +701,7 @@ class _ArtifactLayout:
     action_roles: tuple[str, ...] = ()
 
 
-def build_solution_authority(  # noqa: PLR0915
+def build_solution_authority(  # noqa: C901, PLR0915
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
@@ -970,6 +990,12 @@ def build_solution_authority(  # noqa: PLR0915
                     key=continuation_spec.artifact_key,
                 )
                 continuation_template = continuation_spec.template
+                if isinstance(continuation_spec, EGMContinuationSpec):
+                    _validate_model_query_spec(
+                        regime=regime,
+                        state_action_space=state_action_space,
+                        spec=continuation_spec,
+                    )
                 continuation_persistence = (
                     PersistencePolicy.MODEL_VERIFIABLE
                     if isinstance(continuation_template, EGMCarry)
@@ -1533,6 +1559,292 @@ def _nested_policy_artifact_layout(
     )
 
 
+def _validate_finite_nnbegm_policy_query_authority(
+    *,
+    regime: Regime,
+    state_action_space: StateActionSpace,
+    expected: EGMQuerySpec,
+) -> bool:
+    """Authenticate finite actual-action scoring against its canonical floor DAG."""
+    read = regime.simulation.egm_policy_read
+    if not isinstance(read, NNBEGMPolicyRead) or read.finite_query_authority is None:
+        return False
+    declared = read.finite_query_authority
+    finite = expected.finite_outer
+    bound = expected.bound
+    if (
+        type(declared) is not EGMQuerySpec
+        or finite is None
+        or expected.coordinate_kind != "liquid"
+        or expected.row_topology is None
+        or expected.row_topology.kind != "nb_budget_interval_run"
+        or bound.kind != "dag"
+        or bound.lower_target is None
+        or read.replay_policy_is_nested
+        or not read.policy_applicable
+        or not read.policy_required
+        or read.consumer_route != "nnbegm_finite"
+        or read.inner_action_name != bound.action
+        or read.liquid_state_name != bound.liquid_state
+        or read.resources_target != bound.resources_target
+        or read.outer_action_name != finite.outer_action
+        or read.outer_state_name != finite.outer_state
+        or read.outer_post_decision != finite.outer_post_decision
+        or read.outer_no_adjustment_target != finite.keeper_target
+        or read.outer_grid_values != finite.outer_nodes
+    ):
+        raise TypeError("Finite policy query roles differ from model authority.")
+    installed = tuple(
+        item
+        for item in regime.solution.post_decision_bounds
+        if item.post_decision == bound.post_decision
+    )
+    if len(installed) != 1:
+        raise TypeError("Finite policy query requires a unique installed model bound.")
+    validate_query_model_authority(
+        spec=declared,
+        model_spec=expected,
+        model_bound=installed[0],
+        state_names=_declared_carry_row_state_names(
+            regime=regime, state_action_space=state_action_space
+        ),
+        action_names=tuple(state_action_space.discrete_actions),
+    )
+    _validate_nnbegm_policy_floor_authority(
+        regime=regime,
+        expected=expected,
+        read=read,
+        outer_post_decision=finite.outer_post_decision,
+        label="Finite",
+    )
+    return True
+
+
+def _validate_nnbegm_policy_floor_authority(
+    *,
+    regime: Regime,
+    expected: EGMQuerySpec,
+    read: NNBEGMPolicyRead,
+    outer_post_decision: FunctionName,
+    label: str,
+) -> None:
+    """Bind replay's current-state floor to the canonical runtime bound.
+
+    The simulation phase's runtime bound and every period's intrinsic budget
+    must carry the model bound, and the floor may read only fixed current
+    states, parameters, period and age: never the liquid state, an action or
+    the outer post-decision. Its dependency identity must match the canonical
+    evaluator in every simulated period.
+    """
+    from _lcm.egm.budget import DCEGM_BUDGET_CONSTRAINT_NAME  # noqa: PLC0415
+    from _lcm.params.processing import get_flat_param_names  # noqa: PLC0415
+    from _lcm.post_decision_bound import PostDecisionBoundSpec  # noqa: PLC0415
+
+    bound = expected.bound
+    simulation_bounds = tuple(
+        item
+        for item in regime.simulation.post_decision_bounds
+        if item.post_decision == bound.post_decision
+    )
+    if len(simulation_bounds) != 1:
+        raise TypeError(f"{label} policy scoring omits its canonical runtime bound.")
+    validate_query_bound_authority(declared=simulation_bounds[0], model_bound=bound)
+    pools = regime.simulation.feasibility_pools_by_period
+    periods = tuple(pools)
+    if (
+        not periods
+        or set(periods) != read.outer_target_function_by_period.keys()
+        or not set(periods) <= set(expected.target_periods)
+        or not set(periods) <= regime.simulation.Q_and_F.keys()
+    ):
+        raise TypeError(f"{label} policy scoring has incompatible canonical periods.")
+    for _functions, constraints in pools.values():
+        intrinsic = constraints.get(DCEGM_BUDGET_CONSTRAINT_NAME)
+        installed_budget = getattr(intrinsic, "_lcm_intrinsic_budget_bound", None)
+        if type(installed_budget) is not PostDecisionBoundSpec:
+            raise TypeError(f"{label} policy intrinsic budget omits its model bound.")
+        validate_query_bound_authority(declared=installed_budget, model_bound=bound)
+    lower_inputs = dict(expected.evaluator_inputs).get("lower_bound")
+    allowed = (
+        set(regime.simulation.state_names)
+        | get_flat_param_names(regime.regime_params_template)
+        | {"period", "age"}
+    )
+    forbidden = {
+        bound.liquid_state,
+        *regime.simulation.action_names,
+        outer_post_decision,
+    }
+    if lower_inputs is None or not set(lower_inputs) <= allowed - forbidden:
+        raise TypeError(
+            f"{label} policy floor inputs differ from fixed-state authority."
+        )
+    lower_identity = dict(expected.evaluator_identity).get("lower_bound")
+    if type(lower_identity) is not tuple:
+        raise TypeError(f"{label} policy floor lacks canonical dependency identity.")
+    lower_contexts = cast("tuple[tuple[int | None, Hashable], ...]", lower_identity)
+    canonical_contexts = dict(lower_contexts)
+    lower_spec = replace(
+        expected,
+        evaluator_targets=(("lower_bound", bound.lower_target),),
+        evaluator_inputs=(("lower_bound", lower_inputs),),
+        evaluator_identity=(
+            (
+                "lower_bound",
+                (
+                    (None, canonical_contexts[periods[0]]),
+                    *((period, canonical_contexts[period]) for period in periods),
+                ),
+            ),
+        ),
+        target_periods=periods,
+    )
+    validate_query_evaluator_authority(
+        spec=lower_spec,
+        functions=pools[periods[0]][0],
+        functions_by_period=MappingProxyType(
+            {period: functions for period, (functions, _constraints) in pools.items()}
+        ),
+        target_periods=periods,
+    )
+
+
+def _validate_query_policy_budget_authority(
+    *, regime: Regime, state_action_space: StateActionSpace, expected: EGMQuerySpec
+) -> None:
+    """Authenticate a query against its canonical policy and intrinsic budget."""
+    # Budget construction imports solver modules that also import authority helpers.
+    from _lcm.egm.budget import DCEGM_BUDGET_CONSTRAINT_NAME  # noqa: PLC0415
+
+    policy_read = regime.simulation.egm_policy_read
+    with_adapter = _validate_finite_nnbegm_policy_query_authority(
+        regime=regime,
+        state_action_space=state_action_space,
+        expected=expected,
+    )
+    if expected.bound.kind == "dag" and (
+        isinstance(policy_read, EGMPolicyRead)
+        or (isinstance(policy_read, NNBEGMPolicyRead) and not with_adapter)
+    ):
+        raise TypeError(
+            "Query policy/intrinsic budget authority requires a model-bound adapter; "
+            "scalar budget descriptors are refused."
+        )
+    if (
+        expected.bound.kind == "dag"
+        and DCEGM_BUDGET_CONSTRAINT_NAME in regime.simulation.constraints
+    ):
+        from _lcm.post_decision_bound import PostDecisionBoundSpec  # noqa: PLC0415
+
+        intrinsic = regime.simulation.constraints[DCEGM_BUDGET_CONSTRAINT_NAME]
+        installed = getattr(intrinsic, "_lcm_intrinsic_budget_bound", None)
+        if type(installed) is not PostDecisionBoundSpec:
+            raise TypeError(
+                "Query scalar intrinsic budget lacks its model-bound adapter."
+            )
+        validate_query_bound_authority(declared=installed, model_bound=expected.bound)
+
+
+def _validate_model_query_spec(
+    *,
+    regime: Regime,
+    state_action_space: StateActionSpace,
+    spec: EGMContinuationSpec,
+) -> None:
+    """Authenticate a feature descriptor before observing its numeric template."""
+    declared = spec.layout.query_spec
+    expected = regime.solution.query_authority
+    if declared is None:
+        if expected is not None or spec.template.query_data is not None:
+            raise TypeError("Query continuation omits model-owned authority.")
+        return
+    if expected is None:
+        raise TypeError(
+            "Query continuation lacks independently constructed model authority."
+        )
+    _validate_query_policy_budget_authority(
+        regime=regime, state_action_space=state_action_space, expected=expected
+    )
+    bounds = tuple(
+        bound
+        for bound in regime.solution.post_decision_bounds
+        if bound.post_decision == expected.bound.post_decision
+    )
+    if len(bounds) != 1:
+        raise TypeError("Query continuation has no unique installed model bound.")
+    validate_query_model_authority(
+        spec=declared,
+        model_spec=expected,
+        model_bound=bounds[0],
+        state_names=_declared_carry_row_state_names(
+            regime=regime, state_action_space=state_action_space
+        ),
+        action_names=tuple(state_action_space.discrete_actions),
+    )
+    finite = expected.finite_outer
+    if finite is not None and (
+        finite.outer_state not in expected.state_names
+        or finite.outer_state == bounds[0].liquid_state
+        or finite.outer_action not in state_action_space.continuous_actions
+        or finite.outer_action == bounds[0].action
+        or expected.outer_capacity != spec.layout.n_stacked_candidates
+    ):
+        raise TypeError("Finite query roles differ from the canonical outer margin.")
+    query_constraints = regime.solution.query_constraint_functions
+    predicate_targets = frozenset(
+        target
+        for purpose, target in expected.evaluator_targets
+        if purpose.startswith("predicate:")
+    )
+    query_constraints = (
+        MappingProxyType(
+            {
+                target: function
+                for target, function in query_constraints.items()
+                if target in predicate_targets
+            }
+        )
+        if query_constraints is not None
+        else None
+    )
+    functions = regime.solution.continuation_functions
+    if query_constraints is not None:
+        functions = cast(
+            "EconFunctionsMapping",
+            resolve_periodized_nodes(
+                mapping=MappingProxyType({**query_constraints, **functions}),
+                period=regime.active_periods[0],
+            ),
+        )
+    validate_query_evaluator_authority(
+        spec=expected,
+        functions=functions,
+        target_periods=regime.active_periods,
+        functions_by_period=MappingProxyType(
+            {
+                period: MappingProxyType(
+                    {
+                        **cast(
+                            "EconFunctionsMapping",
+                            resolve_periodized_nodes(
+                                mapping=query_constraints or MappingProxyType({}),
+                                period=period,
+                            ),
+                        ),
+                        **period_functions,
+                        **constraints,
+                    }
+                )
+                for period, (
+                    period_functions,
+                    constraints,
+                ) in regime.solution.feasibility_pools_by_period.items()
+            }
+        ),
+    )
+    validate_query_template(template=spec.template, spec=expected)
+
+
 def _egm_carry_artifact_layout(  # noqa: C901, PLR0912, PLR0915
     *,
     regime: Regime,
@@ -1610,11 +1922,36 @@ def _egm_carry_artifact_layout(  # noqa: C901, PLR0912, PLR0915
         )
     )
     common_axis_names = (*leading_names, trailing_name)
+    query_spec = spec.layout.query_spec
+    if query_spec is not None:
+        axes.extend(
+            (
+                AxisAuthority(
+                    name="pylcm:egm:link",
+                    length=max(row_shape[-1] - 1, 0),
+                    role=AxisRole.OTHER,
+                    coordinates=tuple(range(max(row_shape[-1] - 1, 0))),
+                ),
+                AxisAuthority(
+                    name="pylcm:egm:interval",
+                    length=len(query_spec.interval_ids),
+                    role=AxisRole.OTHER,
+                    coordinates=query_spec.interval_ids,
+                ),
+            )
+        )
     leaf_axes: dict[TreePath, tuple[str, ...]] = {}
     for path, leaf in paths_and_leaves:
         shape = tuple(leaf.shape)
         field = path[-1]
-        if field == "attribute:taste_shock_scale":
+        if path[0] == "attribute:query_data":
+            names = _query_leaf_axis_names(
+                path=path,
+                state_names=row_state_names,
+                leading_names=tuple(leading_names),
+                trailing_name=trailing_name,
+            )
+        elif field == "attribute:taste_shock_scale":
             names: tuple[str, ...] = ()
         elif field == "attribute:breakpoints":
             breakpoint_name = "pylcm:egm:breakpoint"
@@ -1658,6 +1995,31 @@ def _egm_carry_artifact_layout(  # noqa: C901, PLR0912, PLR0915
         axes=tuple(axes),
         state_roles=state_roles,
         action_roles=action_roles,
+    )
+
+
+def _query_leaf_axis_names(
+    *,
+    path: TreePath,
+    state_names: tuple[StateName, ...],
+    leading_names: tuple[str, ...],
+    trailing_name: str,
+) -> tuple[str, ...]:
+    """Name fixed-cell, row/link and interval axes independently."""
+    field = path[-1].removeprefix("attribute:")
+    if field == "floor_used":
+        return state_names
+    if "attribute:liquid_corner_data" in path:
+        return (
+            *leading_names,
+            "pylcm:egm:link" if field == "link_valid" else trailing_name,
+            "pylcm:egm:interval",
+        )
+    if field.startswith("corner_"):
+        return (*leading_names, "pylcm:egm:interval")
+    return (
+        *leading_names,
+        "pylcm:egm:link" if field == "link_valid" else trailing_name,
     )
 
 

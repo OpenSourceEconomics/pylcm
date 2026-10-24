@@ -1150,6 +1150,7 @@ class _SimulationCandidateCompiler:
                     static_kwargs=static_kwargs,
                     devices=self.subject_devices,
                     subject_width_keyword=SUBJECT_WIDTH_KEYWORD,
+                    output_roles=self.program.output_roles,
                 )
                 # The wrapper binds only widths and immutable layout metadata;
                 # caller arrays remain dynamic inputs of the existing executable.

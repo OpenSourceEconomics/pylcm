@@ -36,9 +36,15 @@ from _lcm.regime_building.max_Q_over_a import (
     _SmoothedMaxQOverA,
     _wrap_with_fold_reduction,
 )
-from _lcm.solution.feasibility import CountedGridSearch
+from _lcm.regime_building.Q_and_F import BoundedQAndF, runtime_bound_specs
+from _lcm.solution.feasibility import (
+    BoundedResult,
+    CountedGridSearch,
+    CountedGridSearchOutput,
+)
 from _lcm.typing import (
     ActionName,
+    ArrayTree,
     MaxQOverAFunction,
     QAndFArg,
     QAndFFunction,
@@ -104,10 +110,12 @@ def get_landing_counting_max_Q_over_a(
         extra_param_names = list(
             dict.fromkeys((*extra_param_names, *pareto_weights.param_names))
         )
+    bounded = bool(runtime_bound_specs(function=Q_and_F))
     action_mapped = productmap(
-        func=Q_and_F,
+        func=BoundedQAndF(function=Q_and_F, landings=True) if bounded else Q_and_F,
         variables=action_names,
         batch_sizes=dict.fromkeys(action_names, 0),
+        bound_summary=bounded,
     )
     reducer = (
         _SmoothedMaxQOverA(
@@ -139,12 +147,14 @@ def get_landing_counting_max_Q_over_a(
             width_keyword=cell_width_keyword,
             untiled_variables=untiled_state_names,
             broadcast_variables=broadcast_state_names,
+            bound_summary=bounded,
         )
         if cell_width_keyword is not None
         else productmap(
             func=max_Q_over_a,
             variables=inner_state_names,
             batch_sizes={name: batch_sizes[name] for name in inner_state_names},
+            bound_summary=bounded,
         )
     )
     if fold_state_names:
@@ -188,6 +198,7 @@ def get_landing_counting_max_Q_over_a(
             variables=(state_name,),
             co_mapped_in_axes=MappingProxyType({"next_regime_to_V_arr": v_arr_in_axes}),
             callable_with="only_args",
+            bound_summary=bounded,
         )
     return cast("MaxQOverAFunction", allow_only_kwargs(func=mapped, enforce=False))
 
@@ -199,19 +210,28 @@ class LandingCountedGridSearch:
     counted: CountedGridSearch
     """The feasibility summary, whose reduction also returns landing counts."""
 
-    def __call__(self, **kwargs: QAndFArg) -> tuple[FloatND | BoolND | IntND, ...]:
+    def __call__(
+        self, **kwargs: QAndFArg
+    ) -> tuple[FloatND | BoolND | IntND, ...] | BoundedResult[ArrayTree]:
         """Return the feasibility summary's outputs, then the landing totals."""
+        evaluated = self.counted.function(**kwargs)
         value, empty, landing_counts = cast(
-            "tuple[FloatND, BoolND, IntND]", self.counted.function(**kwargs)
+            "tuple[FloatND, BoolND, IntND]",
+            evaluated.output if isinstance(evaluated, BoundedResult) else evaluated,
         )
         summary = dataclasses.replace(
             self.counted, function=_Evaluated(outputs=(value, empty))
         )(**kwargs)
-        return (
-            *summary,
+        output = (
+            *cast("CountedGridSearchOutput", summary),
             sum_counts(
                 counts=landing_counts, axis=tuple(range(landing_counts.ndim - 1))
             ),
+        )
+        return (
+            BoundedResult(output=output, bound_status=evaluated.bound_status)
+            if isinstance(evaluated, BoundedResult)
+            else output
         )
 
 
@@ -277,21 +297,30 @@ class _LandingCountingReduction:
         self,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         **states_actions_params: QAndFArg,
-    ) -> tuple[FloatND, BoolND, IntND]:
+    ) -> tuple[FloatND, BoolND, IntND] | BoundedResult[ArrayTree]:
         """Return the reduction's value and feasibility, then the landing counts."""
+        evaluated = self.reducer.Q_and_F(
+            next_regime_to_V_arr=next_regime_to_V_arr, **states_actions_params
+        )
         Q_arr, F_arr, landing_counts = cast(
             "tuple[FloatND, BoolND, IntND]",
-            self.reducer.Q_and_F(
-                next_regime_to_V_arr=next_regime_to_V_arr, **states_actions_params
-            ),
+            evaluated.output if isinstance(evaluated, BoundedResult) else evaluated,
         )
-        value, feasibility = dataclasses.replace(
-            self.reducer, Q_and_F=_Evaluated(outputs=(Q_arr, F_arr))
-        )(next_regime_to_V_arr=next_regime_to_V_arr, **states_actions_params)
-        return (
+        value, feasibility = cast(
+            "tuple[FloatND, BoolND]",
+            dataclasses.replace(
+                self.reducer, Q_and_F=_Evaluated(outputs=(Q_arr, F_arr))
+            )(next_regime_to_V_arr=next_regime_to_V_arr, **states_actions_params),
+        )
+        output = (
             value,
             feasibility,
             _feasible_landing_counts(F_arr=F_arr, landing_counts=landing_counts),
+        )
+        return (
+            BoundedResult(output=output, bound_status=evaluated.bound_status)
+            if isinstance(evaluated, BoundedResult)
+            else output
         )
 
 
@@ -311,15 +340,23 @@ class _LandingCountingFold:
         *,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         **states_actions_params: QAndFArg,
-    ) -> tuple[FloatND, BoolND, IntND]:
+    ) -> tuple[FloatND, BoolND, IntND] | BoundedResult[ArrayTree]:
         """Return the folded value and empty-set cause, then the landing counts."""
         mapped = self.fold.mapped  # ty: ignore[unresolved-attribute]
+        evaluated = mapped(
+            next_regime_to_V_arr=next_regime_to_V_arr, **states_actions_params
+        )
         value, empty, landing_counts = cast(
             "tuple[FloatND, BoolND, IntND]",
-            mapped(next_regime_to_V_arr=next_regime_to_V_arr, **states_actions_params),
+            evaluated.output if isinstance(evaluated, BoundedResult) else evaluated,
         )
         folded_value, folded_empty = dataclasses.replace(
             self.fold,  # ty: ignore[invalid-argument-type]
             mapped=_Evaluated(outputs=(value, empty)),
         )(next_regime_to_V_arr=next_regime_to_V_arr, **states_actions_params)
-        return folded_value, folded_empty, landing_counts
+        output = (folded_value, folded_empty, landing_counts)
+        return (
+            BoundedResult(output=output, bound_status=evaluated.bound_status)
+            if isinstance(evaluated, BoundedResult)
+            else output
+        )

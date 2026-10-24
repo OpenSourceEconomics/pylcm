@@ -129,7 +129,9 @@ class LiquidMargin:
 
 
 @beartype(conf=REGIME_CONF)
-def post_decision_lower_bound(*, margin: LiquidMargin, lower: float) -> UserFunction:
+def post_decision_lower_bound(
+    *, margin: LiquidMargin, lower: float | UserFunction
+) -> UserFunction:
     """Declare a lower bound on a margin's post-decision state, checkably.
 
     An endogenous-grid solver enforces its solve-time borrowing limit through the
@@ -158,15 +160,21 @@ def post_decision_lower_bound(*, margin: LiquidMargin, lower: float) -> UserFunc
 
     Args:
         margin: The Euler margin whose post-decision state is bounded below.
-        lower: The bound itself. Must equal the savings grid's lowest node
-            exactly, where the solver has one.
+        lower: A literal floor or a callable DAG producer. Callable floors must
+            return a real floating scalar and may read only information fixed
+            before actions are chosen. A literal must equal the savings grid's
+            lowest node exactly, where the solver has one.
 
     Returns:
         A constraint callable carrying the declared bound.
 
     """
     return _PostDecisionLowerBound(
-        post_decision=margin.post_decision_state, lower_bound=lower
+        post_decision=margin.post_decision_state,
+        lower_bound=lower,
+        liquid_state=margin.state,
+        action=margin.action,
+        resources_target=margin.resources_name,
     )
 
 

@@ -69,3 +69,36 @@ def test_binding_a_plain_solver_is_unaffected() -> None:
     bound = _bound_solver(DCEGM(savings_grid=_SAVINGS_GRID))
 
     assert type(bound).__name__ == "_BoundDCEGM"
+
+
+def test_child_transport_keeps_the_public_subclass_build_signature() -> None:
+    """An ordinary subclass override accepts every public DC builder keyword."""
+    from inspect import signature  # noqa: PLC0415
+
+    assert signature(DCEGM.build_period_kernels) == signature(
+        _AnnotatedDCEGM.build_period_kernels
+    )
+
+
+def test_private_child_transport_request_preserves_a_bound_subclass() -> None:
+    """A nested transport request retains the custom solver's fields and override."""
+    from dataclasses import replace  # noqa: PLC0415
+
+    original = _bound_solver(
+        _AnnotatedDCEGM(savings_grid=_SAVINGS_GRID, annotation="kept")
+    )
+    requested = replace(original, _retain_child_feasibility=True)
+
+    assert (
+        type(requested),
+        cast("_AnnotatedDCEGM", requested).annotation,
+        type(requested).build_period_kernels,
+        requested._retain_child_feasibility,
+        original._retain_child_feasibility,
+    ) == (
+        type(original),
+        "kept",
+        _AnnotatedDCEGM.build_period_kernels,
+        True,
+        False,
+    )

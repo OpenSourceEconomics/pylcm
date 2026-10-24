@@ -27,11 +27,19 @@ from _lcm.logsum import logsum_and_softmax
 from _lcm.regime_building.argmax import argmax_and_max
 from _lcm.regime_building.max_Q_over_a import (
     TASTE_SHOCK_SCALE_PARAM,
+    BoundedArgmaxOutput,
+    BoundedMaxOutput,
     _get_extra_param_names,
+    _with_bound_summary,
     _wrap_with_fold_reduction,
     draw_taste_shock_noise,
 )
-from _lcm.regime_building.Q_and_F import QAndFParts, get_Q_and_F_parts
+from _lcm.regime_building.Q_and_F import (
+    BoundedQAndF,
+    QAndFParts,
+    get_Q_and_F_parts,
+    runtime_bound_specs,
+)
 from _lcm.simulation.program_types import (
     ACTION_INDEX,
     ACTION_PARTS_ROLES,
@@ -41,6 +49,7 @@ from _lcm.simulation.program_types import (
     DECISION_VALUE,
     OBJECTIVE_PROFILE,
 )
+from _lcm.solution.feasibility import BoundedResult
 from _lcm.typing import (
     ActionName,
     MaxQOverAFunction,
@@ -92,7 +101,7 @@ def get_decoupled_Q_over_a(
     publishes_index: bool,
     n_discrete_action_axes: int = 0,
     has_taste_shocks: bool = False,
-) -> Callable[..., tuple[IntND, FloatND] | tuple[FloatND, BoolND]]:
+) -> Callable[..., BoundedArgmaxOutput | BoundedMaxOutput]:
     """Get the reduction over actions of a `Decoupled` regime, at one cell.
 
     Args:
@@ -113,14 +122,18 @@ def get_decoupled_Q_over_a(
     extra_param_names = _get_extra_param_names(
         Q_and_F=Q_and_F, action_names=action_names, state_names=state_names
     )
+    bounded = bool(runtime_bound_specs(function=Q_and_F))
     parts = productmap(
-        func=get_Q_and_F_parts(Q_and_F=Q_and_F),
+        func=BoundedQAndF(function=Q_and_F, parts=True)
+        if bounded
+        else get_Q_and_F_parts(Q_and_F=Q_and_F),
         variables=action_names,
         batch_sizes=dict.fromkeys(action_names, 0),
+        bound_summary=bounded,
     )
     return with_signature(
         _DecoupledQOverA(
-            parts=parts,
+            parts=cast("Callable[..., QAndFParts | BoundedResult[QAndFParts]]", parts),
             publishes_index=publishes_index,
             n_discrete_action_axes=n_discrete_action_axes if has_taste_shocks else None,
         ),
@@ -152,7 +165,7 @@ def get_decoupled_max_Q_over_a(
     fold_state_names: tuple[StateName, ...] = (),
     fold_weights: Mapping[StateName, FloatND] = MappingProxyType({}),
     fold_conditioning: Mapping[StateName, StateName] = MappingProxyType({}),
-) -> MaxQOverAFunction:
+) -> MaxQOverAFunction[BoundedMaxOutput]:
     """Get the solve's value function of a `Decoupled` regime.
 
     Maps `get_decoupled_Q_over_a` over the state product, then folds
@@ -174,17 +187,19 @@ def get_decoupled_max_Q_over_a(
             width_keyword=cell_width_keyword,
             untiled_variables=untiled_state_names,
             broadcast_variables=broadcast_state_names,
+            bound_summary=bool(runtime_bound_specs(function=Q_and_F)),
         )
         if cell_width_keyword is not None
         else productmap(
             func=cell,
             variables=state_names,
             batch_sizes={name: batch_sizes[name] for name in state_names},
+            bound_summary=bool(runtime_bound_specs(function=Q_and_F)),
         )
     )
     if fold_state_names:
         mapped = _wrap_with_fold_reduction(
-            mapped=cast("Callable[..., FloatND | tuple[FloatND, BoolND]]", mapped),
+            mapped=cast("Callable[..., BoundedMaxOutput]", mapped),
             fold_state_names=fold_state_names,
             fold_weights=fold_weights,
             fold_conditioning=fold_conditioning,
@@ -199,7 +214,7 @@ def get_decoupled_max_Q_over_a(
                 *((cell_width_keyword,) if cell_width_keyword is not None else ()),
             ],
         )
-    return cast("MaxQOverAFunction", mapped)
+    return cast("MaxQOverAFunction[BoundedMaxOutput]", mapped)
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -213,7 +228,7 @@ class _DecoupledQOverA:
     __name__: ClassVar[str] = "decoupled_Q_over_a"
     """Name `dags` reads off the callable when it reports an invalid argument."""
 
-    parts: Callable[..., QAndFParts]
+    parts: Callable[..., QAndFParts | BoundedResult[QAndFParts]]
     """The regime's kernel parts, mapped over the action product."""
 
     publishes_index: bool
@@ -227,12 +242,16 @@ class _DecoupledQOverA:
         self,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         **states_actions_params: QAndFArg | PRNGKeyND,
-    ) -> tuple[IntND, FloatND] | tuple[FloatND, BoolND]:
+    ) -> BoundedArgmaxOutput | BoundedMaxOutput:
         """Return `(index, value)` or `(value, empty)` at this cell."""
         taste_shock_key = states_actions_params.pop("taste_shock_key", None)
-        parts = self.parts(
+        evaluated = self.parts(
             next_regime_to_V_arr=next_regime_to_V_arr,
             **states_actions_params,
+        )
+        parts = cast(
+            "QAndFParts",
+            evaluated.output if type(evaluated) is BoundedResult else evaluated,
         )
         empty = ~jnp.any(parts.F)
         if self.n_discrete_action_axes is None:
@@ -241,7 +260,10 @@ class _DecoupledQOverA:
                 readout=parts.Q,
                 where=parts.F,
             )
-            return (index, value) if self.publishes_index else (value, empty)
+            return _with_bound_summary(
+                evaluated=evaluated,
+                output=(index, value) if self.publishes_index else (value, empty),
+            )
         conditional = get_conditional_profiles(
             parts=parts, n_discrete_action_axes=self.n_discrete_action_axes
         )
@@ -250,7 +272,7 @@ class _DecoupledQOverA:
             value, _ = decoupled_logsum(
                 conditional=conditional, scale=scale, parts=parts
             )
-            return value, empty
+            return _with_bound_summary(evaluated=evaluated, output=(value, empty))
         # One draw per flat discrete combination, as the one-profile route
         # draws, so the same key gives the same shocks.
         noise = draw_taste_shock_noise(
@@ -263,9 +285,12 @@ class _DecoupledQOverA:
         flat_index = (
             discrete * n_continuous + jnp.ravel(conditional.continuous_index)[discrete]
         )
-        return (
-            jnp.where(empty, -1, flat_index).astype(jnp.int32),
-            jnp.where(empty, -jnp.inf, jnp.ravel(conditional.value)[discrete]),
+        return _with_bound_summary(
+            evaluated=evaluated,
+            output=(
+                jnp.where(empty, -1, flat_index).astype(jnp.int32),
+                jnp.where(empty, -jnp.inf, jnp.ravel(conditional.value)[discrete]),
+            ),
         )
 
 

@@ -316,6 +316,7 @@ else:
     type _PluginPytree = DataclassInstance
 
 if TYPE_CHECKING:
+    from _lcm.execution.output_layout import StateAxesLeading
     from lcm._solver_api.authority import _ArtifactLeafToken
 
     # A child handed to a registered pytree's `unflatten`:
@@ -332,6 +333,7 @@ if TYPE_CHECKING:
         | jax.stages.ArgInfo
         | jax.sharding.Sharding
         | _ArtifactLeafToken
+        | StateAxesLeading
         | bool
         | int
         | float
@@ -341,6 +343,13 @@ else:
     # JAX also unflattens with placeholder leaves of its own (`PytreeLeaf` proxies,
     # `object()` sentinels), so the claw accepts any child.
     type PytreeChild = object
+
+if TYPE_CHECKING:
+    from _lcm.egm.nested_floor import PreparedNestedFloor
+else:
+    # The floor module imports these aliases; its accessor checks the exact record.
+    # A prepared bank is a dataclass; its numeric/status schema stays with that owner.
+    type PreparedNestedFloor = DataclassInstance
 
 # A runtime annotation object. Python admits any value as an annotation, including
 # `Annotated` and `Literal` forms, so each consumer classifies the forms it reads.
@@ -550,7 +559,7 @@ class VmappedRegimeTransitionFunction(Protocol):
 
 
 @runtime_checkable
-class QAndFFunction(Protocol):
+class QAndFFunction[Output: PytreeValue = tuple[FloatND, BoolND]](Protocol):
     """The function that computes Q and F.
 
     Q is the state-action value function. F is a boolean array that indicates whether
@@ -564,11 +573,13 @@ class QAndFFunction(Protocol):
         self,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
         **kwargs: QAndFArg,
-    ) -> tuple[FloatND, BoolND]: ...
+    ) -> Output: ...
 
 
 @runtime_checkable
-class MaxQOverAFunction(Protocol):
+class MaxQOverAFunction[
+    Output: PytreeValue = FloatND | tuple[FloatND, BoolND],
+](Protocol):
     """The function that maximizes Q over all actions.
 
     Q is the state-action value function. The MaxQOverCFunction returns the maximum of Q
@@ -584,11 +595,13 @@ class MaxQOverAFunction(Protocol):
         self,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
         **kwargs: QAndFArg,
-    ) -> FloatND | tuple[FloatND, BoolND]: ...
+    ) -> Output: ...
 
 
 @runtime_checkable
-class EGMStepFunction(Protocol):
+class EGMStepFunction[Output: PytreeValue = tuple[FloatND, EGMCarry, EGMSimPolicy]](
+    Protocol
+):
     """The per-period DC-EGM kernel for one regime.
 
     Consumes the regime's exogenous state grids, the rolling EGM-carry
@@ -611,8 +624,9 @@ class EGMStepFunction(Protocol):
         _lcm_savings_point_width: int | None = None,
         _lcm_euler_point_width: int | None = None,
         _lcm_envelope_cell_width: int = 1,
+        _lcm_prepared_nested_floor: PreparedNestedFloor | None = None,
         **kwargs: EconFunctionArg,
-    ) -> tuple[FloatND, EGMCarry, EGMSimPolicy]: ...
+    ) -> Output: ...
 
 
 @runtime_checkable
@@ -635,7 +649,7 @@ class EGMCarryProducer(Protocol):
 
 
 @runtime_checkable
-class ArgmaxQOverAFunction(Protocol):
+class ArgmaxQOverAFunction[Output: PytreeValue = tuple[IntND, FloatND]](Protocol):
     """The function that finds the argmax of Q over all actions.
 
     Q is the state-action value function. The ArgmaxQOverCFunction returns the argmax
@@ -649,7 +663,7 @@ class ArgmaxQOverAFunction(Protocol):
         self,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
         **kwargs: QAndFArg,
-    ) -> tuple[IntND, FloatND]: ...
+    ) -> Output: ...
 
 
 @runtime_checkable

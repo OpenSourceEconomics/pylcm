@@ -63,8 +63,10 @@ def _numerically_inverted_crra() -> Preferences:
     [crra_preferences(crra=_CRRA), _numerically_inverted_crra()],
     ids=["analytic_inverse", "numeric_inverse"],
 )
+@pytest.mark.parametrize("feature_floor", [False, True])
+@pytest.mark.parametrize("discount_factor", [0.0, _DISCOUNT_FACTOR])
 def test_a_zero_marginal_continuation_publishes_the_consume_everything_corner(
-    preferences: Preferences,
+    *, preferences: Preferences, feature_floor: bool, discount_factor: float
 ) -> None:
     """With no marginal value of saving the agent consumes all liquid.
 
@@ -78,17 +80,43 @@ def test_a_zero_marginal_continuation_publishes_the_consume_everything_corner(
         liquid_grid=_LIQUID_GRID,
         next_liquid_grid=_NEXT_LIQUID_GRID,
         savings_grid=_SAVINGS_GRID,
-        discount_factor=_DISCOUNT_FACTOR,
+        discount_factor=discount_factor,
+        feature_floor=feature_floor,
         preferences=preferences,
         next_liquid=(1.0 + _RETURN_LIQUID) * _SAVINGS_GRID + _INCOME,
         marginal_return=jnp.full_like(_SAVINGS_GRID, 1.0 + _RETURN_LIQUID),
     )
     expected_value = (
-        preferences.utility(_LIQUID_GRID) + _DISCOUNT_FACTOR * _NEXT_VALUE_LEVEL
+        preferences.utility(_LIQUID_GRID) + discount_factor * _NEXT_VALUE_LEVEL
     )
     np.testing.assert_array_almost_equal(
         result.consumption, _LIQUID_GRID, decimal=DECIMAL_PRECISION
     )
     np.testing.assert_array_almost_equal(
         result.value, expected_value, decimal=DECIMAL_PRECISION
+    )
+
+
+@pytest.mark.parametrize("feature_floor", [False, True])
+def test_zero_discount_with_finite_continuation_consumes_all_cash(
+    *, feature_floor: bool
+) -> None:
+    """Finite continuation levels and positive marginals vanish under zero discount."""
+    preferences = crra_preferences(crra=_CRRA)
+    result = egm_one_asset_step(
+        next_value=jnp.full_like(_NEXT_LIQUID_GRID, _NEXT_VALUE_LEVEL),
+        next_marginal=jnp.ones_like(_NEXT_LIQUID_GRID),
+        liquid_grid=_LIQUID_GRID,
+        next_liquid_grid=_NEXT_LIQUID_GRID,
+        savings_grid=_SAVINGS_GRID,
+        discount_factor=0.0,
+        feature_floor=feature_floor,
+        preferences=preferences,
+        next_liquid=(1.0 + _RETURN_LIQUID) * _SAVINGS_GRID + _INCOME,
+        marginal_return=jnp.full_like(_SAVINGS_GRID, 1.0 + _RETURN_LIQUID),
+    )
+    np.testing.assert_array_almost_equal(
+        jnp.stack((result.value, result.consumption)),
+        jnp.stack((preferences.utility(_LIQUID_GRID), _LIQUID_GRID)),
+        decimal=DECIMAL_PRECISION,
     )

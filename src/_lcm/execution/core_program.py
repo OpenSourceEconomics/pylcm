@@ -6,11 +6,12 @@ before lowering. Every kernel publishes its own graph: the engine plans a progra
 or runs it deliberately dense, and refuses a kernel that publishes no graph.
 """
 
+import functools
 import inspect
 import math
 import weakref
 from collections.abc import Callable, Hashable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal, Protocol, cast, runtime_checkable
@@ -35,7 +36,9 @@ from _lcm.typing import (
     ArtifactPayload,
     FlatEdgeParams,
     FlatRegimeParams,
+    ParamsLeaf,
     PytreeValue,
+    QualifiedName,
     ShapeDtypePytree,
     StateName,
 )
@@ -484,6 +487,36 @@ def _validate_compiler_options(options: tuple[tuple[str, int], ...]) -> None:
 
 
 @dataclass(frozen=True, kw_only=True)
+class _CheckedCoreVariant:
+    """One checked function and its output declaration under the same program key."""
+
+    function: Callable[..., PytreeValue]
+    output_roles: OutputRoleTree
+    internal_outputs: tuple[InternalOutputSpec, ...] = ()
+
+    def __post_init__(self) -> None:
+        """Require a callable, a role tree and typed internal-output locators."""
+        from _lcm.execution.output_layout import (  # noqa: PLC0415
+            OutputRole,
+            StateAxesLeading,
+        )
+
+        if not callable(self.function):
+            raise TypeError("A checked core variant function must be callable.")
+        roles = jax.tree.leaves(self.output_roles)
+        if not roles:
+            raise ValueError("A checked core variant must declare output roles.")
+        if any(not isinstance(role, OutputRole | StateAxesLeading) for role in roles):
+            raise TypeError("A checked core variant output tree must contain roles.")
+        outputs = tuple(self.internal_outputs)
+        if any(not isinstance(spec, InternalOutputSpec) for spec in outputs):
+            raise TypeError(
+                "Checked internal outputs must be InternalOutputSpec records."
+            )
+        object.__setattr__(self, "internal_outputs", outputs)
+
+
+@dataclass(frozen=True, kw_only=True)
 class CoreProgram:
     """One authoritative, unmaterialized program in a period kernel's graph."""
 
@@ -508,6 +541,9 @@ class CoreProgram:
     invariant_binding: InvariantBinding | None = None
     """The invariant code this program evaluates, or `None` for a whole-grid program."""
 
+    checked_variant: _CheckedCoreVariant | None = None
+    """Optional checked function/roles/locators sharing all other declarations."""
+
     def __post_init__(self) -> None:
         """Snapshot caller-owned sequences."""
         _validate_compiler_options(self.compiler_options)
@@ -524,6 +560,42 @@ class CoreProgram:
             "retained_artifact_payload_types",
             MappingProxyType(dict(self.retained_artifact_payload_types)),
         )
+        _validate_checked_variant(program=self)
+
+
+def _validate_checked_variant(*, program: CoreProgram) -> None:
+    """Keep unique producer labels while allowing the checked container to differ."""
+    variant = program.checked_variant
+    if variant is None:
+        return
+    if not isinstance(variant, _CheckedCoreVariant):
+        raise TypeError("checked_variant must be a _CheckedCoreVariant or None.")
+    if any(
+        not isinstance(spec, InternalOutputSpec) for spec in program.internal_outputs
+    ):
+        raise TypeError("Internal outputs must be InternalOutputSpec records.")
+    ordinary = tuple(spec.label for spec in program.internal_outputs)
+    checked = tuple(spec.label for spec in variant.internal_outputs)
+    if len(set(checked)) != len(checked) or len(set(ordinary)) != len(ordinary):
+        raise ValueError("Checked and ordinary internal output labels must be unique.")
+    if set(checked) != set(ordinary):
+        raise ValueError("Checked internal output labels must match their producer.")
+
+
+def bind_core_program_fixed_params(
+    *, program: CoreProgram, params: Mapping[QualifiedName, ParamsLeaf]
+) -> CoreProgram:
+    """Bind the same fixed parameter pool into both stored numerical functions."""
+    if not params:
+        return program
+    variant = program.checked_variant
+    return replace(
+        program,
+        function=functools.partial(program.function, **params),
+        checked_variant=None
+        if variant is None
+        else replace(variant, function=functools.partial(variant.function, **params)),
+    )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -643,6 +715,7 @@ def select_programs(
     graph: Mapping[str, CoreProgram],
     retain_replay: bool,
     selected_artifact_keys: frozenset[ArtifactKey] = frozenset(),
+    collect_continuation_read_counts: bool = False,
 ) -> MappingProxyType[str, CoreProgram]:
     """Keep the programs one solve dispatches under its result retention.
 
@@ -657,6 +730,8 @@ def select_programs(
     """
     if type(retain_replay) is not bool:
         raise TypeError("retain_replay must be an exact bool.")
+    if type(collect_continuation_read_counts) is not bool:
+        raise TypeError("collect_continuation_read_counts must be an exact bool.")
     if type(selected_artifact_keys) is not frozenset:
         raise TypeError("selected_artifact_keys must be an exact frozenset.")
     selected_replay_names = {
@@ -694,6 +769,19 @@ def select_programs(
         )
         raise ValueError(msg)
     _validate_selected_internal_edges(selected=selected, graph=graph)
+    if collect_continuation_read_counts:
+        selected = {
+            name: program
+            if program.checked_variant is None
+            else replace(
+                program,
+                function=program.checked_variant.function,
+                output_roles=program.checked_variant.output_roles,
+                internal_outputs=program.checked_variant.internal_outputs,
+                checked_variant=None,
+            )
+            for name, program in selected.items()
+        }
     return MappingProxyType(selected)
 
 

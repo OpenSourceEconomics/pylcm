@@ -28,8 +28,10 @@ from dags import (
 from dags.tree import qname_from_tree_path
 
 from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
+from _lcm.dtypes import canonical_float_dtype
 from _lcm.grids import ContinuousGrid, IrregSpacedGrid
 from _lcm.grids.discrete import read_at_codes
+from _lcm.post_decision_bound import PostDecisionBoundSpec
 from _lcm.probability import (
     is_live,
     is_negative,
@@ -56,6 +58,7 @@ from _lcm.regime_building.w_dag import _get_build_W_kwargs
 # one inside `zero_safe_average` itself -- so one implementation carries the
 # scale and subnormal rules for the whole engine.
 from _lcm.regime_building.zero_safe import zero_safe_average
+from _lcm.solution.feasibility import BoundedResult, BoundInputStatus
 from _lcm.transition_plans import (
     LotteryLifetime,
     TargetTransitionPlans,
@@ -69,6 +72,7 @@ from _lcm.typing import (
     EconFunctionsMapping,
     NextStateSolutionFunction,
     ParamsLeaf,
+    PytreeValue,
     QAndFArg,
     QAndFFunction,
     QAndFKwargs,
@@ -95,6 +99,7 @@ from lcm.typing import (
     DiscreteState,
     Float1D,
     FloatND,
+    FunctionName,
     Int1D,
     IntND,
     ReferenceName,
@@ -110,7 +115,72 @@ type Intermediates = tuple[
 
 # What the utilities-and-feasibility DAG returns at a cell: each felicity, then
 # the feasibility mask (a Python `bool` for a regime without constraints).
-type UtilitiesAndF = tuple[FloatND | IntND | BoolND | bool, ...]
+type UtilitiesAndF = tuple[FloatND | IntND | BoolND | int | float | bool, ...]
+
+
+class EvaluatedUtilitiesAndF(NamedTuple):
+    """Actual utility/feasibility values with separate declaration-integrity flags."""
+
+    utilities_and_F: UtilitiesAndF
+    """Ordinary felicities followed by the economic predicate."""
+    bound_status: tuple[BoundInputStatus, ...]
+    """One scalar record per model-owned declaration, independently of F."""
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _BoundUtilitiesAndF:
+    """Compose felicity, constraint and canonical RHS targets in one DAG pass."""
+
+    function: Callable[..., UtilitiesAndF]
+    target_names: tuple[FunctionName, ...]
+    utility_names: tuple[str, ...]
+    constraint_names: tuple[str, ...]
+    bound_specs: tuple[PostDecisionBoundSpec, ...]
+
+    def __post_init__(self) -> None:
+        if any(
+            bound.kind != "dag" or bound.lower_target is None
+            for bound in self.bound_specs
+        ):
+            raise TypeError("Runtime bound evaluation requires named DAG floors.")
+        _publish_signature(
+            target=self,
+            arg_names=tuple(inspect.signature(self.function).parameters),
+            return_annotation="UtilitiesAndF",
+            name="U_and_F",
+        )
+
+    def __call__(self, **kwargs: QAndFArg) -> UtilitiesAndF:
+        """Keep the ordinary reader's felicity/feasibility output contract."""
+        return self.evaluated(**kwargs).utilities_and_F
+
+    def evaluated(self, **kwargs: QAndFArg) -> EvaluatedUtilitiesAndF:
+        """Share RHS evaluation while preserving invalid-input flags through F=false."""
+        values = dict(zip(self.target_names, self.function(**kwargs), strict=True))
+        F = (
+            jnp.all(jnp.stack(tuple(values[name] for name in self.constraint_names)))
+            if self.constraint_names
+            else jnp.asarray(a=True)
+        )
+        statuses = []
+        for bound in self.bound_specs:
+            floor = jnp.asarray(values[cast("str", bound.lower_target)])
+            if floor.ndim != 0 or not jnp.issubdtype(floor.dtype, jnp.floating):
+                raise ModelInitializationError(
+                    "Canonical borrowing floor must be a real floating scalar."
+                )
+            nonfinite = ~jnp.isfinite(floor.astype(canonical_float_dtype()))
+            statuses.append(
+                BoundInputStatus(
+                    nonfinite_floor=nonfinite,
+                    invalid_shifted_grid=jnp.asarray(a=False),
+                )
+            )
+        return EvaluatedUtilitiesAndF(
+            utilities_and_F=(*tuple(values[name] for name in self.utility_names), F),
+            bound_status=tuple(statuses),
+        )
+
 
 # One raw landing a solve kernel counts: the regime whose grid is read, and the
 # state whose `off_grid="raise"` grid the landing is checked against.
@@ -147,6 +217,113 @@ class QAndFParts(NamedTuple):
     Q_objective: FloatND | None = None
     """`W_objective(utility=U, CE=CE, ...)`, the value the action is chosen on,
     or `None` when the Koopmans aggregator also chooses."""
+
+
+class EvaluatedQAndF(NamedTuple):
+    """One actual action evaluation, including separate bounded integrity records."""
+
+    parts: QAndFParts
+    """Ordinary utility, economic predicate, continuation and action value."""
+    landing_counts: tuple[IntND, ...]
+    """Reached landing counts, independently of bound validity."""
+    bound_status: tuple[BoundInputStatus, ...]
+    """One scalar integrity record per canonical bounded declaration."""
+
+
+type BoundedActionOutput = QAndFParts | tuple[FloatND, BoolND, *tuple[IntND, ...]]
+type CanonicalActionKernel = (
+    _QAndF | _TerminalQAndF | _CollectiveQAndF | _TerminalCollectiveQAndF
+)
+
+
+def runtime_bound_specs(
+    *, function: Callable[..., PytreeValue]
+) -> tuple[PostDecisionBoundSpec, ...]:
+    """Read canonical runtime declarations from the action kernel's owned flow."""
+    if type(function) not in (
+        _QAndF,
+        _TerminalQAndF,
+        _CollectiveQAndF,
+        _TerminalCollectiveQAndF,
+    ):
+        return ()
+    kernel = cast("CanonicalActionKernel", function)
+    flow = (
+        kernel.U_and_F
+        if isinstance(kernel, (_QAndF, _TerminalQAndF))
+        else kernel.utilities_and_F
+    )
+    return flow.bound_specs if type(flow) is _BoundUtilitiesAndF else ()
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class BoundedQAndF:
+    """Transport an actual canonical action evaluation without a second DAG walk."""
+
+    function: Callable[..., tuple[FloatND, BoolND]]
+    parts: bool = field(default=False, metadata={"fingerprint_omit_if_default": True})
+    """Transport the complete parts where the actual consumer requests them."""
+    landings: bool = field(
+        default=False, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Keep the declared landing channel beside ordinary action values."""
+
+    def __post_init__(self) -> None:
+        if not runtime_bound_specs(function=self.function):
+            raise TypeError(
+                "Bounded action transport requires canonical runtime bounds."
+            )
+        if self.parts and self.landings:
+            raise TypeError("An action consumer must choose parts or landing channels.")
+        kernel = cast("CanonicalActionKernel", self.function)
+        if self.landings and (
+            not isinstance(kernel, (_QAndF, _CollectiveQAndF))
+            or not kernel.landing_checks
+        ):
+            raise TypeError("Landing transport requires declared canonical checks.")
+        _publish_signature(
+            target=self,
+            arg_names=tuple(inspect.signature(self.function).parameters),
+            return_annotation="BoundedResult",
+            name="bounded_Q_and_F",
+        )
+
+    def __call__(self, **kwargs: QAndFArg) -> BoundedResult[BoundedActionOutput]:
+        kernel = cast("CanonicalActionKernel", self.function)
+        evaluate = cast("Callable[..., EvaluatedQAndF]", kernel.evaluated)
+        evaluated = evaluate(**kwargs)
+        return BoundedResult(
+            output=(
+                evaluated.parts
+                if self.parts
+                else (evaluated.parts.Q, evaluated.parts.F, *evaluated.landing_counts)
+                if self.landings
+                else (evaluated.parts.Q, evaluated.parts.F)
+            ),
+            bound_status=evaluated.bound_status,
+        )
+
+
+def _evaluated_utilities_and_F(
+    *,
+    function: Callable[..., UtilitiesAndF],
+    states_actions_params: QAndFKwargs,
+) -> EvaluatedUtilitiesAndF:
+    """Require the model-bound single-evaluation DAG at a feature-aware consumer."""
+    if type(function) is not _BoundUtilitiesAndF:
+        raise TypeError("Bound-aware action evaluation requires canonical bound specs.")
+    return cast("_BoundUtilitiesAndF", function).evaluated(**states_actions_params)
+
+
+def _terminal_parts(*, utilities_and_F: UtilitiesAndF, collective: bool) -> QAndFParts:
+    """Derive terminal parts from the already evaluated flow and predicates."""
+    *utilities, F = utilities_and_F
+    U = (
+        jnp.stack(tuple(jnp.asarray(value) for value in utilities), axis=-1)
+        if collective
+        else jnp.asarray(utilities[0])
+    )
+    return QAndFParts(U=U, F=jnp.asarray(F), CE=jnp.zeros_like(U), Q=U)
 
 
 def _compare_swap_values(
@@ -348,6 +525,7 @@ def get_Q_and_F(
         {}
     ),
     count_raise_landings: bool = False,
+    bound_specs: tuple[PostDecisionBoundSpec, ...] = (),
 ) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for a non-terminal period.
 
@@ -430,7 +608,9 @@ def get_Q_and_F(
     # a transition produces, never something this period's utility or a constraint may
     # read. So only the continuation needs a pool of its own, and the phase split
     # reduces to that one sub-DAG.
-    U_and_F = _get_U_and_F(functions=functions, constraints=constraints)
+    U_and_F = _get_U_and_F(
+        functions=functions, constraints=constraints, bound_specs=bound_specs
+    )
     compute_CE, continuation_deps, continuation_arg_names = _get_compute_CE(
         flat_param_names=flat_param_names,
         # `continuation_pool`, NOT `functions`: the continuation is priced under
@@ -641,34 +821,54 @@ class _QAndF:
         **states_actions_params: QAndFArg,
     ) -> tuple[QAndFParts, tuple[IntND, ...]]:
         """Evaluate the cell's parts and the raw landing counts it carries."""
+        return self._parts_from_utilities(
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            utilities_and_F=self.U_and_F(**states_actions_params),
+            states_actions_params=states_actions_params,
+        )
+
+    def _parts_from_utilities(
+        self,
+        *,
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+        utilities_and_F: UtilitiesAndF,
+        states_actions_params: QAndFKwargs,
+    ) -> tuple[QAndFParts, tuple[IntND, ...]]:
+        """Aggregate continuation from flow passed separately from the user inputs."""
         # F_arr is built here, before and independently of Q (it never reads
         # E_next_V). A value-aware mask cannot be built at this point: it needs
         # the per-stakeholder Q^s, which is why `get_Q_and_F_collective` keeps
         # the state-independent F here and ANDs its value constraints in only
         # after computing Q^s.
-        U_arr, F_arr = self.U_and_F(**states_actions_params)
+        U_arr, F_arr = cast("tuple[FloatND, BoolND]", utilities_and_F)
         CE, _, *landing_counts = self.compute_CE(
             next_regime_to_V_arr=next_regime_to_V_arr,
             zero=jnp.zeros_like(U_arr),
             states_actions_params=states_actions_params,
         )
+        CE = cast("FloatND", CE)
 
         Q_arr = self.koopmans_aggregator(
             utility=U_arr,
             CE=CE,
-            **self.build_W_kwargs(states_actions_params),
+            **cast(
+                "Mapping[QualifiedName, EconFunctionArg]",
+                self.build_W_kwargs(states_actions_params),
+            ),
         )
-        Q_objective = (
-            None
-            if self.objective_aggregator is None
-            else jnp.asarray(
+        Q_objective = None
+        if self.objective_aggregator is not None:
+            if self.build_objective_kwargs is None:
+                raise TypeError(
+                    "An objective aggregator requires its parameter builder."
+                )
+            Q_objective = jnp.asarray(
                 self.objective_aggregator(
                     utility=U_arr,
                     CE=CE,
                     **self.build_objective_kwargs(states_actions_params),
                 )
             )
-        )
 
         # Handle cases when there is only one state.
         # In that case, the parts are scalars, but we require arrays as output.
@@ -678,7 +878,25 @@ class _QAndF:
             CE=jnp.asarray(CE),
             Q=jnp.asarray(Q_arr),
             Q_objective=Q_objective,
-        ), tuple(landing_counts)
+        ), cast("tuple[IntND, ...]", tuple(landing_counts))
+
+    def evaluated(
+        self,
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+        **states_actions_params: QAndFArg,
+    ) -> EvaluatedQAndF:
+        """Evaluate canonical flow once and keep its integrity through continuation."""
+        flow = _evaluated_utilities_and_F(
+            function=self.U_and_F, states_actions_params=states_actions_params
+        )
+        parts, landings = self._parts_from_utilities(
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            utilities_and_F=flow.utilities_and_F,
+            states_actions_params=states_actions_params,
+        )
+        return EvaluatedQAndF(
+            parts=parts, landing_counts=landings, bound_status=flow.bound_status
+        )
 
 
 def get_compute_intermediates(
@@ -833,6 +1051,7 @@ def get_Q_and_F_terminal(
     flat_param_names: frozenset[QualifiedName],
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
+    bound_specs: tuple[PostDecisionBoundSpec, ...] = (),
 ) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for a terminal period.
 
@@ -848,7 +1067,9 @@ def get_Q_and_F_terminal(
         for a terminal period.
 
     """
-    U_and_F = _get_U_and_F(functions=functions, constraints=constraints)
+    U_and_F = _get_U_and_F(
+        functions=functions, constraints=constraints, bound_specs=bound_specs
+    )
 
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
         deps=[U_and_F],
@@ -923,10 +1144,25 @@ class _TerminalQAndF:
             value.
 
         """
-        U_arr, F_arr = self.U_and_F(**states_actions_params)
-        U_arr = jnp.asarray(U_arr)
-        return QAndFParts(
-            U=U_arr, F=jnp.asarray(F_arr), CE=jnp.zeros_like(U_arr), Q=U_arr
+        return _terminal_parts(
+            utilities_and_F=self.U_and_F(**states_actions_params), collective=False
+        )
+
+    def evaluated(
+        self,
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],  # noqa: ARG002
+        **states_actions_params: QAndFArg,
+    ) -> EvaluatedQAndF:
+        """Return terminal parts and mandatory flags from the same actual flow pass."""
+        flow = _evaluated_utilities_and_F(
+            function=self.U_and_F, states_actions_params=states_actions_params
+        )
+        return EvaluatedQAndF(
+            parts=_terminal_parts(
+                utilities_and_F=flow.utilities_and_F, collective=False
+            ),
+            landing_counts=(),
+            bound_status=flow.bound_status,
         )
 
 
@@ -943,6 +1179,7 @@ def get_Q_and_F_terminal_collective(
     same_period_v_interpolation_info: MappingProxyType[
         RegimeName, VInterpolationInfo
     ] = MappingProxyType({}),
+    bound_specs: tuple[PostDecisionBoundSpec, ...] = (),
 ) -> QAndFFunction:
     """Terminal (Q, F) for a collective regime — stacked per-stakeholder U + shared F.
 
@@ -991,6 +1228,7 @@ def get_Q_and_F_terminal_collective(
         functions=functions,
         constraints=constraints,
         utility_names=tuple(f"utility_{stakeholder}" for stakeholder in stakeholders),
+        bound_specs=bound_specs,
     )
 
     value_constraint_machinery = _build_value_constraint_machinery(
@@ -1056,26 +1294,48 @@ class _TerminalCollectiveQAndF:
             stakeholder axis) and the shared feasibility mask.
 
         """
-        *stakeholder_utilities, feasibility = self.utilities_and_F(
-            **states_actions_params
+        parts = self._parts_from_utilities(
+            utilities_and_F=self.utilities_and_F(**states_actions_params),
+            states_actions_params=states_actions_params,
         )
-        U_stack = jnp.stack(
-            [jnp.asarray(U_s) for U_s in stakeholder_utilities], axis=-1
+        return parts.Q, parts.F
+
+    def evaluated(
+        self,
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],  # noqa: ARG002
+        **states_actions_params: QAndFArg,
+    ) -> EvaluatedQAndF:
+        """Keep shared bound integrity independently of household value predicates."""
+        flow = _evaluated_utilities_and_F(
+            function=self.utilities_and_F, states_actions_params=states_actions_params
         )
-        F_arr: BoolND = jnp.asarray(feasibility)
+        return EvaluatedQAndF(
+            parts=self._parts_from_utilities(
+                utilities_and_F=flow.utilities_and_F,
+                states_actions_params=states_actions_params,
+            ),
+            landing_counts=(),
+            bound_status=flow.bound_status,
+        )
+
+    def _parts_from_utilities(
+        self, *, utilities_and_F: UtilitiesAndF, states_actions_params: QAndFKwargs
+    ) -> QAndFParts:
+        """Apply household value predicates to its already evaluated terminal flow."""
+        parts = _terminal_parts(utilities_and_F=utilities_and_F, collective=True)
 
         # Value-aware feasibility on the terminal payoff. `Q^s` here IS `U^s`:
         # a terminal cell has no continuation, so the value each stakeholder
         # weighs against the reference is the payoff the cell itself delivers.
         if self.value_constraint_machinery.evaluators:
-            F_arr = _apply_value_constraints(
+            F = _apply_value_constraints(
                 machinery=self.value_constraint_machinery,
-                Q_arr=U_stack,
-                F_arr=F_arr,
+                Q_arr=parts.Q,
+                F_arr=parts.F,
                 states_actions_params=states_actions_params,
             )
-
-        return U_stack, F_arr
+            return parts._replace(F=F)
+        return parts
 
 
 # The name under which the mapping of same-period
@@ -1558,6 +1818,7 @@ def get_Q_and_F_collective(
         {}
     ),
     count_raise_landings: bool = False,
+    bound_specs: tuple[PostDecisionBoundSpec, ...] = (),
 ) -> QAndFFunction:
     """Non-terminal (Q, F) for a collective regime — per-stakeholder continuation.
 
@@ -1677,6 +1938,7 @@ def get_Q_and_F_collective(
         functions=functions,
         constraints=constraints,
         utility_names=tuple(f"utility_{stakeholder}" for stakeholder in stakeholders),
+        bound_specs=bound_specs,
     )
     n_stakeholders = len(stakeholders)
 
@@ -1802,9 +2064,40 @@ class _CollectiveQAndF:
             constraints included.
 
         """
-        *stakeholder_utilities, feasibility = self.utilities_and_F(
-            **states_actions_params
+        parts, landings = self._parts_from_utilities(
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            utilities_and_F=self.utilities_and_F(**states_actions_params),
+            states_actions_params=states_actions_params,
         )
+        return (parts.Q, parts.F, *landings)
+
+    def evaluated(
+        self,
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+        **states_actions_params: QAndFArg,
+    ) -> EvaluatedQAndF:
+        """Preserve actual floor integrity through household continuation and F."""
+        flow = _evaluated_utilities_and_F(
+            function=self.utilities_and_F, states_actions_params=states_actions_params
+        )
+        parts, landings = self._parts_from_utilities(
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            utilities_and_F=flow.utilities_and_F,
+            states_actions_params=states_actions_params,
+        )
+        return EvaluatedQAndF(
+            parts=parts, landing_counts=landings, bound_status=flow.bound_status
+        )
+
+    def _parts_from_utilities(
+        self,
+        *,
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+        utilities_and_F: UtilitiesAndF,
+        states_actions_params: QAndFKwargs,
+    ) -> tuple[QAndFParts, tuple[IntND, ...]]:
+        """Aggregate continuation and value predicates from the evaluated flow."""
+        *stakeholder_utilities, feasibility = utilities_and_F
         U_stack = jnp.stack(
             [jnp.asarray(U_s) for U_s in stakeholder_utilities], axis=-1
         )
@@ -1818,6 +2111,7 @@ class _CollectiveQAndF:
             zero=jnp.zeros_like(U_stack[..., 0]),
             states_actions_params=states_actions_params,
         )
+        CE = cast("FloatND", CE)
 
         # W applied on the stacked arrays is W per stakeholder: `utility` and
         # `CE` share the trailing stakeholder axis and the aggregator's
@@ -1827,7 +2121,10 @@ class _CollectiveQAndF:
         Q_arr = self.koopmans_aggregator(
             utility=U_stack,
             CE=CE,
-            **self.build_W_kwargs(states_actions_params),
+            **cast(
+                "Mapping[QualifiedName, EconFunctionArg]",
+                self.build_W_kwargs(states_actions_params),
+            ),
         )
 
         # Value-aware feasibility. Evaluated AFTER Q^s, unlike the singleton
@@ -1846,7 +2143,12 @@ class _CollectiveQAndF:
                 states_actions_params=states_actions_params,
             )
 
-        return (jnp.asarray(Q_arr), jnp.asarray(F_arr), *landing_counts)
+        return QAndFParts(
+            U=U_stack,
+            F=jnp.asarray(F_arr),
+            CE=CE,
+            Q=jnp.asarray(Q_arr),
+        ), cast("tuple[IntND, ...]", tuple(landing_counts))
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -4572,6 +4874,7 @@ def _get_U_and_F(
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
     utility_names: tuple[str, ...] = ("utility",),
+    bound_specs: tuple[PostDecisionBoundSpec, ...] = (),
 ) -> Callable[..., UtilitiesAndF]:
     """Get the instantaneous utilities and the one feasibility function.
 
@@ -4601,6 +4904,29 @@ def _get_U_and_F(
         order, followed by the feasibility mask.
 
     """
+    runtime_bounds = tuple(bound for bound in bound_specs if bound.kind == "dag")
+    if runtime_bounds:
+        target_names = tuple(
+            dict.fromkeys(
+                (
+                    *utility_names,
+                    *constraints,
+                    *(cast("str", bound.lower_target) for bound in runtime_bounds),
+                )
+            )
+        )
+        return _BoundUtilitiesAndF(
+            function=concatenate_functions(
+                functions=dict(functions) | dict(constraints),
+                targets=list(target_names),
+                enforce_signature=False,
+                set_annotations=True,
+            ),
+            target_names=target_names,
+            utility_names=utility_names,
+            constraint_names=tuple(constraints),
+            bound_specs=runtime_bounds,
+        )
     return concatenate_functions(
         functions={
             "feasibility": _get_feasibility(
@@ -4614,11 +4940,51 @@ def _get_U_and_F(
     )
 
 
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _BoundFeasibility:
+    """One constraint DAG walk with canonical bound flags qualified by model periods."""
+
+    flow: Callable[..., UtilitiesAndF]
+    periods: tuple[int, ...]
+
+    def __post_init__(self) -> None:
+        if type(self.flow) is not _BoundUtilitiesAndF or not self.periods:
+            raise TypeError(
+                "Bounded initial feasibility requires canonical period authority."
+            )
+        _publish_signature(
+            target=self,
+            arg_names=tuple(
+                dict.fromkeys((*inspect.signature(self.flow).parameters, "period"))
+            ),
+            return_annotation="BoundedResult",
+            name="bound_feasibility",
+        )
+
+    def __call__(self, **kwargs: QAndFArg) -> BoundedResult[BoolND]:
+        evaluated = cast("_BoundUtilitiesAndF", self.flow).evaluated(**kwargs)
+        return BoundedResult(
+            output=cast("BoolND", evaluated.utilities_and_F[-1]),
+            bound_status=tuple(
+                BoundInputStatus(
+                    nonfinite_floor=status.nonfinite_floor
+                    & (kwargs["period"] == period),
+                    invalid_shifted_grid=status.invalid_shifted_grid
+                    & (kwargs["period"] == period),
+                )
+                for period in self.periods
+                for status in evaluated.bound_status
+            ),
+        )
+
+
 def _get_feasibility(
     *,
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
-) -> ConstraintFunction:
+    bound_specs: tuple[PostDecisionBoundSpec, ...] = (),
+    bound_periods: tuple[int, ...] = (),
+) -> ConstraintFunction | _BoundFeasibility:
     """Create a function that combines all constraint functions into a single one.
 
     Args:
@@ -4629,6 +4995,14 @@ def _get_feasibility(
         The combined constraint function (feasibility).
 
     """
+    if any(bound.kind == "dag" for bound in bound_specs):
+        flow = _get_U_and_F(
+            functions=functions,
+            constraints=constraints,
+            utility_names=(),
+            bound_specs=bound_specs,
+        )
+        return _BoundFeasibility(flow=flow, periods=bound_periods)
     if constraints:
         combined_constraint = concatenate_functions(
             functions=dict(constraints) | dict(functions),
@@ -4763,7 +5137,7 @@ def _unit_regime_mass_or_nan(
 
 def _publish_signature(
     *,
-    target: Callable[..., ArrayTree],
+    target: Callable[..., PytreeValue],
     arg_names: tuple[ReferenceName, ...],
     return_annotation: str | type[inspect.Signature.empty],
     name: str,

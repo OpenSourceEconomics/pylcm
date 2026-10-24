@@ -81,7 +81,7 @@ def _replay_bank(
         keeper_post_decision=jnp.full((n_subjects,), keeper_target),
         offset=jnp.full((n_subjects,), offset),
         transition_at=lambda action: action + jnp.asarray(offset),
-        regime=_StubRegime(simulation=SimpleNamespace()),
+        regime=_StubRegime(simulation=SimpleNamespace(post_decision_bounds=())),
         states=MappingProxyType({"state": jnp.zeros(n_subjects)}),
         flat_params=MappingProxyType({}),
         period=0,
@@ -93,6 +93,9 @@ def _replay_bank(
 def _baseline(*, monkeypatch, payload, replay, canonical_q, state=0.0):
     monkeypatch.setattr(simulation_module, "_canonical_Q_at_actions", canonical_q)
     monkeypatch.setattr(
+        simulation_module, "_evaluate_canonical_Q_at_actions", canonical_q
+    )
+    monkeypatch.setattr(
         simulation_module,
         "_nested_actions_are_intrinsically_admissible",
         lambda *, actions, **_: jnp.asarray(actions["outer"]) != 99.0,
@@ -102,7 +105,7 @@ def _baseline(*, monkeypatch, payload, replay, canonical_q, state=0.0):
         grid_actions=MappingProxyType(
             {"outer": jnp.asarray([99.0]), "inner": jnp.asarray([1.0])}
         ),
-        regime=_StubRegime(simulation=SimpleNamespace()),
+        regime=_StubRegime(simulation=SimpleNamespace(post_decision_bounds=())),
         states={"state": jnp.asarray([state])},
         canonical_states={"state": jnp.asarray([state])},
         action_names=("outer", "inner"),
@@ -383,7 +386,7 @@ def test_nested_keeper_proposal_is_not_rechecked_against_the_adjuster_mesh(
     emitted, value, fallback = (
         simulation_module._replace_continuous_action_with_policy_read(
             optimal_actions=grid_actions,
-            regime=_StubRegime(simulation=SimpleNamespace()),
+            regime=_StubRegime(simulation=SimpleNamespace(post_decision_bounds=())),
             sim_policy=payload,
             states=MappingProxyType({"state": jnp.asarray([1.0])}),
             flat_params=MappingProxyType({}),

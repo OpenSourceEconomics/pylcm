@@ -82,7 +82,12 @@ from _lcm.solution.contract import (
     simulation_route,
 )
 from _lcm.solution.dcegm import CELL_AXIS
-from _lcm.solution.feasibility import CountedGridSearch, FeasibilityKernelOutput
+from _lcm.solution.feasibility import (
+    BoundedResult,
+    BoundInputStatus,
+    CountedGridSearch,
+    FeasibilityKernelOutput,
+)
 from _lcm.time import TimeAxis
 from _lcm.transition_plans import SupportOrigin
 from _lcm.typing import (
@@ -272,6 +277,7 @@ class GridSearch(Solver):
         )
         from _lcm.regime_building.Q_and_F import (  # noqa: PLC0415
             has_objective_profile,
+            runtime_bound_specs,
         )
         from _lcm.solution.landing_counts import (  # noqa: PLC0415
             LandingCountedGridSearch,
@@ -292,17 +298,10 @@ class GridSearch(Solver):
         # - a `StateConditioned` `sigma` contributes one row per category of
         #   the conditioning state, ordered by that categorical's integer code,
         #   which the fold reduction gathers along the conditioning axis.
-        fold_weights: dict[StateName, FloatND] = {}
-        fold_conditioning: dict[StateName, StateName] = {}
-        for name in context.fold_state_names:
-            process = cast("_ContinuousStochasticProcess", context.grids[name])
-            if process.state_conditioned is None:
-                fold_weights[name] = process.get_transition_probs()[0]
-            else:
-                fold_weights[name] = get_conditioned_fold_weights_by_code(
-                    name=name, grid=process, grids=context.grids
-                )
-                fold_conditioning[name] = process.state_conditioned.on
+        fold_weights, fold_conditioning = _grid_search_fold_weights(
+            context=context,
+            get_conditioned_fold_weights_by_code=get_conditioned_fold_weights_by_code,
+        )
         action_streaming = _classify_action_streaming(context=context)
         stream_actions = action_streaming is _ActionStreamingDisposition.STREAMED
         action_partition_mesh = _action_partition_mesh(
@@ -343,6 +342,7 @@ class GridSearch(Solver):
         cell_width_keyword = (
             _select_cell_width_keyword(context=context) if cell_extent > 1 else None
         )
+        flattened_bound_programs: set[int] = set()
         for period, Q_and_F in context.Q_and_F_functions.items():
             q_id = id(Q_and_F)
             if q_id not in program_functions:
@@ -438,6 +438,17 @@ class GridSearch(Solver):
                     args=list(inspect.signature(reducer).parameters),
                     enforce=False,
                 )
+            n_runtime_bounds = len(runtime_bound_specs(function=Q_and_F))
+            if n_runtime_bounds and q_id not in flattened_bound_programs:
+                reducer = program_functions[q_id]
+                program_functions[q_id] = with_signature(
+                    _FlattenBoundedGridSearch(
+                        function=reducer, landings=bool(landing_checks_of(Q_and_F))
+                    ),
+                    args=list(inspect.signature(reducer).parameters),
+                    enforce=False,
+                )
+                flattened_bound_programs.add(q_id)
             target_regimes = (
                 ()
                 if period == context.solution_reachability.n_periods - 1
@@ -522,6 +533,10 @@ class GridSearch(Solver):
                             StateAxesLeading(state_names=(), dtype=jnp.int32, shape=()),
                         )
                     ),
+                    *(
+                        StateAxesLeading(state_names=(), dtype=jnp.bool_, shape=())
+                        for _ in range(2 * n_runtime_bounds)
+                    ),
                     # One raw landing total per raise-rule check the kernel counts.
                     *(
                         (
@@ -548,6 +563,7 @@ class GridSearch(Solver):
                 if not context.invariant_bindings
                 else _bound_programs(program=program, context=context),
                 landing_checks=landing_checks_of(Q_and_F),
+                n_runtime_bounds=n_runtime_bounds,
             )
         return SolutionKernels(period_kernels=MappingProxyType(result))
 
@@ -670,6 +686,26 @@ def _fail_if_decoupled_route_is_unsupported(
             + "."
         )
         raise ExecutionPlanningError(msg)
+
+
+def _grid_search_fold_weights(
+    *,
+    context: SolverBuildContext,
+    get_conditioned_fold_weights_by_code: Callable[..., FloatND],
+) -> tuple[dict[StateName, FloatND], dict[StateName, StateName]]:
+    """Build each folded process's marginal rows and conditioning names."""
+    fold_weights: dict[StateName, FloatND] = {}
+    fold_conditioning: dict[StateName, StateName] = {}
+    for name in context.fold_state_names:
+        process = cast("_ContinuousStochasticProcess", context.grids[name])
+        if process.state_conditioned is None:
+            fold_weights[name] = process.get_transition_probs()[0]
+        else:
+            fold_weights[name] = get_conditioned_fold_weights_by_code(
+                name=name, grid=process, grids=context.grids
+            )
+            fold_conditioning[name] = process.state_conditioned.on
+    return fold_weights, fold_conditioning
 
 
 def _classify_action_streaming(  # noqa: C901
@@ -950,10 +986,34 @@ class _GridSearchArgumentBuilder:
         )
 
 
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _FlattenBoundedGridSearch:
+    """Expose ordinary outputs and mandatory scalar flags to the role-owning core."""
+
+    function: Callable[..., PytreeValue]
+    landings: bool = False
+
+    def __call__(self, **kwargs: QAndFArg) -> tuple[PytreeValue, ...]:
+        result = self.function(**kwargs)
+        if type(result) is not BoundedResult or not result.bound_status:
+            raise TypeError(
+                "A runtime-bound core must produce mandatory integrity records."
+            )
+        outputs = cast("tuple[jax.Array, ...]", result.output)
+        flags = tuple(flag for status in result.bound_status for flag in status)
+        if self.landings:
+            return (*outputs[:-1], *flags, outputs[-1])
+        return (*outputs, *flags)
+
+
 @dataclass(frozen=True, kw_only=True)
 class _GridSearchPeriodKernel:
     """One period adapter whose native program graph is its sole core authority."""
 
+    n_runtime_bounds: int = field(
+        default=0, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Number of independently declared mandatory bound records."""
     _core_programs: Mapping[str, CoreProgram]
     """The immutable GridSearch program graph: `main`, or one program per code."""
     landing_checks: tuple[tuple[RegimeName, StateName], ...] = field(
@@ -1074,18 +1134,43 @@ class _GridSearchPeriodKernel:
             )
         )
         out = compiled_cores[core_key](**arguments)
+        landing_totals = None
         if self.landing_checks:
             from _lcm.solution.landing_counts import (  # noqa: PLC0415
                 fail_on_reached_landings,
             )
 
             *out, landing_totals = cast("tuple[PytreeValue, ...]", out)
-            fail_on_reached_landings(
-                totals=cast("IntND", landing_totals),
-                checks=self.landing_checks,
-                regime_name=argument_builder.regime_name,
-                period=period,
+            if not self.n_runtime_bounds:
+                fail_on_reached_landings(
+                    totals=cast("IntND", landing_totals),
+                    checks=self.landing_checks,
+                    regime_name=argument_builder.regime_name,
+                    period=period,
+                )
+        bound_status = ()
+        if self.n_runtime_bounds:
+            ordinary_count = (
+                4
+                if cast("tuple[OutputRoleLeaf, ...]", program.output_roles)[1]
+                is DISSOLUTION_FLAG
+                else 3
             )
+            # Scalar integrity flags follow the ordinary value/count channels.
+            numeric_outputs = cast("tuple[jax.Array, ...] | list[jax.Array]", out)
+            flag_values = numeric_outputs[ordinary_count:]
+            if len(flag_values) != 2 * self.n_runtime_bounds:
+                raise TypeError(
+                    "Mandatory bound records do not match declared scalar outputs."
+                )
+            bound_status = tuple(
+                BoundInputStatus(
+                    nonfinite_floor=flag_values[index],
+                    invalid_shifted_grid=flag_values[index + 1],
+                )
+                for index in range(0, len(flag_values), 2)
+            )
+            out = numeric_outputs[:ordinary_count]
         # A program declaring the value alone publishes no feasibility counts.
         if program.output_roles is VALUE:
             return KernelOutput(value=cast("FloatND", out))
@@ -1100,8 +1185,19 @@ class _GridSearchPeriodKernel:
                 value=V_arr,
                 solve_time_artifacts={DISSOLUTION_FLAG_ARTIFACT: dissolution},
                 feasibility_counts=(empty_count, other_inf_count),
+                bound_status=bound_status,
+                landing_totals=cast("IntND | None", landing_totals)
+                if self.n_runtime_bounds
+                else None,
+                landing_checks=self.landing_checks if self.n_runtime_bounds else (),
             )
         V_arr, empty_count, other_inf_count = cast("tuple[FloatND, IntND, IntND]", out)
         return FeasibilityKernelOutput(
-            value=V_arr, feasibility_counts=(empty_count, other_inf_count)
+            value=V_arr,
+            feasibility_counts=(empty_count, other_inf_count),
+            bound_status=bound_status,
+            landing_totals=cast("IntND | None", landing_totals)
+            if self.n_runtime_bounds
+            else None,
+            landing_checks=self.landing_checks if self.n_runtime_bounds else (),
         )

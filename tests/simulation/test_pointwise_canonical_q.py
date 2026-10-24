@@ -32,6 +32,7 @@ from lcm import (
 )
 from lcm.regime import Regime as UserRegime
 from lcm.typing import (
+    BoolND,
     ContinuousAction,
     ContinuousState,
     DiscreteAction,
@@ -169,13 +170,16 @@ def test_pointwise_canonical_q_at_the_grid_argmax_action_reproduces_its_value():
         flat_indices=grid_indices, grids=action_grids
     )
 
-    pointwise_values, feasible = regime.simulation.Q_and_F[period](
-        wealth=wealth,
-        **grid_actions,
-        next_regime_to_V_arr=next_regime_to_V_arr,
-        **flat_params,
-        period=jnp.int32(period),
-        age=age,
+    pointwise_values, feasible = cast(
+        "tuple[FloatND, BoolND]",
+        regime.simulation.Q_and_F[period](
+            wealth=wealth,
+            **grid_actions,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            **flat_params,
+            period=jnp.int32(period),
+            age=age,
+        ),
     )
 
     assert bool(jnp.all(feasible))

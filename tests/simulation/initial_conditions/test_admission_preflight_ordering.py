@@ -6,6 +6,7 @@ future implementation helper serves as the expected-result oracle.
 
 import dataclasses
 from types import MappingProxyType
+from typing import cast
 
 import jax.numpy as jnp
 import pytest
@@ -144,7 +145,9 @@ def test_unused_regime_feasibility_is_neither_built_nor_traced(
     ) -> ConstraintFunction:
         assert constraints is not unused, "Unused-regime constraints were composed."
         visited.append(constraints)
-        return original(functions=functions, constraints=constraints)
+        return cast(
+            "ConstraintFunction", original(functions=functions, constraints=constraints)
+        )
 
     monkeypatch.setattr(initial_module, "_get_feasibility", observe)
     _validate(

@@ -122,11 +122,21 @@ def test_a_carry_is_still_an_opaque_keyed_artifact() -> None:
 # `self.marginal_utility` in `_lcm/solution/nnbegm.py` is a utility-DAG
 # callable, `step.value` in `_lcm/solution/egm.py` is a step result, and
 # `keeper_output`/`keeper_result`/`adjuster_result`/`result` are readouts of a
-# reduction, not a carry. Excluding by base name rather than allowing by it
+# reduction, and `valuation`/`nb_result` in `_lcm/solution/egm.py` are query
+# results, not a carry. Excluding by base name rather than allowing by it
 # means an attribute read on any *other* name is presumed a carry read, so a
 # new carry-holding local the probe has never seen still trips it.
 _NON_CARRY_BASES = frozenset(
-    {"step", "keeper_output", "result", "keeper_result", "adjuster_result", "self"}
+    {
+        "step",
+        "keeper_output",
+        "result",
+        "keeper_result",
+        "adjuster_result",
+        "valuation",
+        "nb_result",
+        "self",
+    }
 )
 # `adjuster_carry` is exempt on top of that: the outer lift writes a new carry
 # from it rather than reading a published one.

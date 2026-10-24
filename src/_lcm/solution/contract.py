@@ -51,6 +51,9 @@ from _lcm.continuation import (
     EGMContinuationLayout,
 )
 from _lcm.egm.branch_aggregation import OuterBranchAggregator
+from _lcm.egm.dcegm_query_model import DCEGMQueryModel
+from _lcm.egm.nbegm_query_model import NBEGMQueryModel
+from _lcm.egm.scalar_query import ScalarEGMQueryModel
 from _lcm.engine import (
     ParamCheck,
     StateActionSpace,
@@ -58,6 +61,7 @@ from _lcm.engine import (
     place_template_on_regime_devices,
 )
 from _lcm.grids import Grid
+from _lcm.post_decision_bound import PostDecisionBoundSpec
 from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.collective import ParetoWeights
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
@@ -247,6 +251,24 @@ class SolverBuildContext:
     template yet; filled for the `declare_continuation_reads` call that follows
     once every regime is built.
     """
+
+    scalar_query_models: Mapping[RegimeName, ScalarEGMQueryModel] | None = None
+    """Trusted scalar query pools prepared once before numerical kernel factories."""
+
+    dcegm_query_models: Mapping[RegimeName, DCEGMQueryModel] | None = None
+    """Trusted DC query pools, independent of the consuming solver family."""
+
+    nbegm_query_models: Mapping[RegimeName, NBEGMQueryModel] | None = field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Independent canonical NB liquid/interval query pools for actual targets."""
+    nbegm_source_query_model: NBEGMQueryModel | None = field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Derived inner source authority; target reads retain the global registry."""
+
+    dcegm_source_query_model: DCEGMQueryModel | None = None
+    """Canonical derived inner producer view, leaving target-read authority intact."""
 
     solve_functions: MappingProxyType[FunctionName, UserFunction]
     """Normalized, unprocessed solve-phase declarations for this regime."""
@@ -735,6 +757,16 @@ class SolutionKernels:
     continuation_spec: ContinuationSpec | None = None
     """Template and identity of the continuation this solver's kernels publish."""
 
+    continuation_reader_capabilities: (
+        Mapping[int, Mapping[RegimeName, ContinuationCapabilities]] | None
+    ) = None
+    """Installed readers' capabilities by consuming source period and target."""
+
+    query_input_authorities: (
+        Mapping[int, tuple[tuple[RegimeName, int, PostDecisionBoundSpec], ...]] | None
+    ) = None
+    """Actual installed diagnostic-owner regime, period and bound for each slot."""
+
     param_checks: tuple[ParamCheck, ...] = ()
     """Preconditions the engine passes every parameter draw against real params.
 
@@ -768,6 +800,25 @@ class SolutionKernels:
 
     def __post_init__(self) -> None:
         """Snapshot mappings and reject contradictory artifact identities."""
+        if self.query_input_authorities is not None:
+            object.__setattr__(
+                self,
+                "query_input_authorities",
+                MappingProxyType(dict(self.query_input_authorities)),
+            )
+        if self.continuation_reader_capabilities is not None:
+            object.__setattr__(
+                self,
+                "continuation_reader_capabilities",
+                MappingProxyType(
+                    {
+                        period: MappingProxyType(dict(targets))
+                        for period, targets in (
+                            self.continuation_reader_capabilities.items()
+                        )
+                    }
+                ),
+            )
         object.__setattr__(
             self, "period_kernels", MappingProxyType(dict(self.period_kernels))
         )
@@ -1094,7 +1145,7 @@ def bind_roles(
     *,
     solver: Solver,
     role_type: type[Solver],
-    **roles: StateOrActionName | FunctionName | Solver | None,
+    **roles: StateOrActionName | FunctionName | Solver | PostDecisionBoundSpec | None,
 ) -> Solver:
     """Return a copy of `solver` carrying `roles`, keeping its own type.
 
