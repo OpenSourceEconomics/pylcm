@@ -20,7 +20,7 @@ from dags import with_signature
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.probability import is_represented_zero
 from _lcm.processes.base import standard_normal
-from _lcm.shock_registry import ShockBinding, ShockRegistry
+from _lcm.shock_registry import ShockBinding, ShockRegistry, law_input_validity
 from _lcm.typing import ArgmaxQOverAFunction, PRNGKeyND, PytreeValue, QAndFArg
 from _lcm.zero_safe import factored_weighted_term
 from lcm.exceptions import InvalidParamsError
@@ -160,25 +160,26 @@ class _CurrentIIDDraw:
                     for shock, law in binding.group.shocks.items()
                 )
             )[None]
+            inputs = _law_inputs(
+                binding=binding,
+                arguments={
+                    name: cast("QAndFArg", arguments[name])
+                    for name in (*binding.state_inputs, "period", "age")
+                },
+                params=params,
+            )
             realised, _ = binding.group._realise(  # noqa: SLF001 - shared internal law kernel
                 base_nodes=base,
                 nodes=None,
                 params=params,
                 scalar_cell_group=name,
-                inputs=_law_inputs(
-                    binding=binding,
-                    arguments={
-                        name: cast("QAndFArg", arguments[name])
-                        for name in (*binding.state_inputs, "period", "age")
-                    },
-                    params=params,
-                ),
+                inputs=inputs,
                 admitted_correlation_support=cast(
                     "BoolND | None", supplied.get(CORRELATION_SUPPORT_ARGUMENT)
                 ),
             )
             physical.update({key: value[0] for key, value in realised.values.items()})
-            valid &= realised.valid
+            valid &= realised.valid & law_input_validity(binding=binding, inputs=inputs)
         available = {**arguments, **physical}
         index, value = cast(
             "tuple[IntND, FloatND]",
@@ -406,7 +407,7 @@ class _CurrentIIDExpectation:
             row = indices[:, column]
             physical.update({key: value[row] for key, value in realised.values.items()})
             factors.extend(factor[row] for factor in group_factors)
-            valid &= realised.valid
+            valid &= realised.valid & law_input_validity(binding=binding, inputs=inputs)
         values, empty = jax.vmap(
             partial(_evaluate_node, function=self.function, arguments=arguments)
         )(physical)

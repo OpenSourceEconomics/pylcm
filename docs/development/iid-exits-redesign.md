@@ -255,6 +255,24 @@ contract. Solve laws use carried-state imputations; simulate laws receive actual
 rows. Law callables receive categorical state-grid values or explicit state-code
 arguments at their usual boundary.
 
+Discrete physical shocks expose their category code through either the bare name or the
+explicit `<shock>_code` alias. Continuous physical draws have no node-code alias.
+Categorical carried states use their declared domain for both solve imputations and
+actual simulation rows. Invalid imputed codes feed mandatory law integrity even when a
+code-reading callable would otherwise return finite parameters.
+
+Shared discrete projection admission consumes the demanded query's actual physical read
+closure. An unused group declaration does not create an observed category. Admitted
+reuse requires the same semantic law/helper bindings, parameter operand paths, ordered
+categorical domains and effective law-input projections. Continuous identity requires an
+effect-free direct-return JAXpr without equations or closed constants; finite discrete
+identity may instead enumerate the complete code domain with matching codecs. A private
+cardinality cap bounds exhaustive build-time work; direct-return proofs apply to large
+domains without enumeration. A failed proof names the shock, query and projection input.
+If an adopted EKL current law changes a relevant demanded input, the required joint CDF
+refinement remains separate from this private admission. The verified transition-local
+next-offer law is not itself a new current law.
+
 Simulation draws fresh addressed base innovations before the decision. Ordinary utility,
 reporting and transitions consume the same rounded physical realization, which survives
 result save/load. Compiler barriers preserve that physical boundary; an ordinary

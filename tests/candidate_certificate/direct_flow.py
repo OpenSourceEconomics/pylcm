@@ -583,7 +583,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 # Source seals and corridor anchors require semantic verification of the combined
 # inventories before refresh; these inherited pins deliberately retain that gate.
 _SOURCE_SEALS = {
-    "src/_lcm/current_iid.py": "218f0a98ad767b2cfc91e058a851a8c93616e4574fb9d56141ef47c7f0d977ec",
+    "src/_lcm/current_iid.py": "b133adda935ac217d0ab3fb99e65ae0ccd032156c9a55bfe9fd9cff9369ad43f",
     "src/_lcm/simulation/current_iid.py": "c675e9dffaa205b4049bf4c26438a70005766c368bc69a3dbb1d6e35cb66db99",
     "src/_lcm/egm/asset_row.py": "d7389b5048707dd9657638c790f9afbd8feb27893bcfd2bd6659da66199b069c",
     "src/_lcm/egm/continuation.py": "5a25a1183c81ef4c3e8e3c4aaebc6e4797ce04c9c55b88edefa7de7fc7946f9f",
@@ -707,7 +707,7 @@ _SOURCE_SEALS = {
     SIMULATION_SOURCE: "763b46456d25818d3d76e6e71b3977c5747132d248afdc76e80b58832cd8d9ac",
     SIMULATION_TRANSITIONS_SOURCE: "2a2d544bc4fd2063d71cab5a602c3486c8243ae950812c7756220a638e325887",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
-    MODEL_SOURCE: "0ee200c6c0d78f1b0fba8f4e0214557367648dfe063a4baec85bb3fc479139bf",
+    MODEL_SOURCE: "5d2f6fbe3fe054b07b7774949d7a99c32a60ffb7234d8319a68b9ebd2cff74a3",
     SOLVER_API_SOURCE: "bc9e7cd94009998acfc1f11d8da823475030879790a49f8192e1260012496c96",
     BACKWARD_INDUCTION_SOURCE: "459fa3e1cbe6c106c8e302d26ee1c2a9f423ad811265d6915005d49f15407c21",
     PERIOD_REPLAY_SOURCE: "2f0253693e474c70760a80ab6c07b5bdeb25ffa4aa77224e27ea5d15af5b1a55",
@@ -781,12 +781,12 @@ EXPECTED_UNIFORM_PROCESS_MUTATION_NAMES_SHA256 = (
 # that no family selects is a verifier error rather than a silent no-op.
 _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
     "src/_lcm/current_iid.py": (
-        "972912a5d45d0014b27f1ce595769c002497cfaccf7a472706173b48ed374c3e",
+        "3008bd126e1d16ef6d144a553d7f624cc2d658bac1fae69529293316a2867bf1",
         {
             "CurrentIIDPlan.wrap": "a9fcdbcb96e54728e40fcbfad47a7d8b47804e6fc027799a4580b0210e42ac34",
             "CurrentIIDDrawPlan.wrap": "9d932ec742fbebf3630b27aad7e06427d032f95c8161e4678c6bf02679f22ef0",
-            "_CurrentIIDExpectation.__call__": "c39d1aeb56aaaf47fa7d8815d5b2f3c2e4977e651c09f5a5b768012b20b88abe",
-            "_CurrentIIDDraw.__call__": "030f49fb286d334caeaf2148853f98949c7e8e168e4f9b36c22b9758f0be995b",
+            "_CurrentIIDExpectation.__call__": "ebf6948c705bda373c38680aee3e4ccbf6402be0df7f5e6890462c20d20b2031",
+            "_CurrentIIDDraw.__call__": "edd669fa81d7aabfca05dc918133bca80cc3e074cfb9d9be9f42f4a1313bf810",
             "_evaluate_node": "c628b5107c477ccf0dd688ec0d29b1a2f626a4a49298f9fb364a41476070958e",
         },
     ),
@@ -1529,7 +1529,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_validate_sharded_state_capability": "ee8b7e8a97fd413d2376a655558ea7b2a2ab61589a0ddd624ed44b69dfe5fa8d",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "d837bd4f6c97be377ae02dca1f2044e1eb9974c6e7e08bc48866bed0f6886b18",
-            "Model.__init__": "3652cc993283858ea51c0dbacc01e8c1ce09ed0f38ed303efbcddf3a825522c2",
+            "Model.__init__": "801a7602c0f1858b49bef3cfa68ba01f5b7e3db20ef021b51fb6e9520a316446",
             "Model.simulate": "7c20e0c114573ad2fe53566a0ead99413f8cfb0da018b69c5d62c4a8aea3582f",
             "Model._open_entry_allocations": "2d3a04ba171e7e79bb145481fb9859294a75004242c981ae32992f6121db017c",
             "Model._check_solution_result_structure": "3e2f19b7fae40cede786a1debce00175907dd9edf1f59c9ff17ebcf834637736",

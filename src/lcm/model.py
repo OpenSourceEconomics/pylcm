@@ -1146,7 +1146,7 @@ class Model:
         }
         discrete_names = declared_discrete_names(
             regimes=merged_regimes, derived_categoricals=derived_categoricals
-        )
+        ) | frozenset(self._shock_registry.discrete_grids)
         pruned_regimes, self.pruned_variables = prune_broadcast_variables(
             current_iid_state_inputs=self._shock_registry.state_inputs_by_regime,
             user_regimes=merged_regimes,
@@ -1193,9 +1193,12 @@ class Model:
             },
         )
         value_grids_by_regime = bind_reading_regimes(
-            value_grids=collect_adapter_grids(
-                regimes=pruned_regimes, derived_categoricals=derived_categoricals
-            ),
+            value_grids={
+                **collect_adapter_grids(
+                    regimes=pruned_regimes, derived_categoricals=derived_categoricals
+                ),
+                **self._shock_registry.discrete_grids,
+            },
             regimes=pruned_regimes,
         )
         adapters: AdapterMemo = {}
