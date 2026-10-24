@@ -44,10 +44,14 @@ from _lcm.regime_building.Q_and_F import (
     runtime_bound_specs,
 )
 from _lcm.solution.contract import ContinuationPayload, PeriodKernel, SolverBuildContext
-from _lcm.solution.grid_search import GridSearch, grid_search_query_inputs
+from _lcm.solution.grid_search import (
+    GridSearch,
+    _GridSearchArgumentBuilder,
+    grid_search_query_inputs,
+)
 from _lcm.time import TimeAxis
 from _lcm.typing import FlatParams, PytreeValue, QAndFKwargs, ShapeDtypePytree
-from _lcm.utils.dispatchers import productmap
+from _lcm.utils.dispatchers import productmap, vary_carry_like_body
 from lcm.exceptions import ExecutionPlanningError, UnsupportedOperationError
 from lcm.shocks import ShockGroupName
 from lcm.solver_api import KernelOutput
@@ -1065,6 +1069,89 @@ class _QueryArguments:
         return MappingProxyType(arguments)
 
 
+def query_parameter_namespaces(*, builder: CoreArgumentBuilder) -> frozenset[str]:
+    """Name fixed parameter roots read by native queries, including arrivals."""
+    from _lcm.arrival_publication import _PublicationArguments  # noqa: PLC0415
+    from _lcm.arrival_queries import (  # noqa: PLC0415
+        ArrivalSourceArguments,
+        _ArrivalArguments,
+        _IntegratedArguments,
+    )
+
+    while isinstance(builder, _PublicationArguments):
+        builder = builder.base
+    if isinstance(builder, _GridSearchArgumentBuilder):
+        return frozenset(
+            name
+            for plan in builder.arrival_queries.values()
+            for node in plan.queries.definitions.values()
+            for name in _query_node_parameter_namespaces(node=node, information=False)
+        ) | (
+            frozenset(name for name, _, _ in builder.current_iid_plan.bindings)
+            if builder.arrival_queries and builder.current_iid_plan is not None
+            else frozenset()
+        )
+    if isinstance(builder, ArrivalSourceArguments):
+        return query_parameter_namespaces(builder=builder.base) | frozenset(
+            name
+            for plan in builder.plans.values()
+            for node in plan.queries.definitions.values()
+            for name in _query_node_parameter_namespaces(node=node, information=False)
+        )
+    if isinstance(builder, _ArrivalArguments):
+        return frozenset(
+            name
+            for name, _, _ in (() if builder.plan is None else builder.plan.bindings)
+        )
+    if isinstance(builder, _IntegratedArguments):
+        return frozenset({builder.owner}) if builder.helper_names else frozenset()
+    if not isinstance(builder, _QueryArguments):
+        return frozenset()
+    return _query_node_parameter_namespaces(
+        node=builder.node, information=False
+    ) | frozenset(
+        name
+        for node in builder.information_nodes.values()
+        for name in _query_node_parameter_namespaces(node=node, information=True)
+    )
+
+
+def _query_node_parameter_namespaces(
+    *, node: QueryNode, information: bool
+) -> frozenset[str]:
+    """Mirror the node's action/law and exact producing projection operands."""
+    from _lcm.arrival_queries import _ArrivalArguments  # noqa: PLC0415
+
+    plan = (
+        node.context.current_iid_plans.get(node.read.period)
+        if node.operand_builder is None
+        else node.operand_builder.plan
+        if isinstance(node.operand_builder, _ArrivalArguments)
+        else None
+    )
+    names = {name for name, _, _ in (() if plan is None else plan.bindings)} | {
+        path[0]
+        for path in node.read.operand_paths.values()
+        if len(path) == _FLAT_OPERAND_PATH_LENGTH and isinstance(path[0], str)
+    }
+    if not information:
+        if node.operand_builder is None:
+            names.add(node.context.regime_name)
+            names.update(
+                name
+                for plan in node.context.arrival_queries.get(
+                    node.read.period, {}
+                ).values()
+                for child in plan.queries.definitions.values()
+                for name in _query_node_parameter_namespaces(
+                    node=child, information=False
+                )
+            )
+        else:
+            names.update(query_parameter_namespaces(builder=node.operand_builder))
+    return frozenset(names)
+
+
 def _query_projection_operands(
     *, node: QueryNode, context: CoreBuildContext
 ) -> Mapping[str, PytreeValue]:
@@ -1217,9 +1304,9 @@ def _query_cell(
     }
     if node.available is not None:
         active = _query_availability(node=node, available=available)
-        return jax.lax.cond(
-            active & live,
-            lambda: _active_query_cell(
+
+        def admitted() -> PolicyAnswer:
+            return _active_query_cell(
                 live=live,
                 source=source,
                 dependencies=dependencies,
@@ -1227,8 +1314,11 @@ def _query_cell(
                 period=period,
                 fixed=fixed,
                 projection_operands=projection_operands,
-            ),
-            lambda: (
+            )
+
+        absent = vary_carry_like_body(
+            body=lambda _carry: admitted(),
+            carry=(
                 jnp.full(
                     node.value_shape,
                     -jnp.inf,
@@ -1238,6 +1328,7 @@ def _query_cell(
                 jnp.asarray(a=True),
             ),
         )
+        return jax.lax.cond(active & live, admitted, lambda: absent)
     return _active_query_cell(
         live=live,
         source=source,
@@ -1280,10 +1371,11 @@ def _observation_available(
     active = jnp.asarray(a=False)
     for producer in node.observation_aliases[group]:
         fixed = arguments[producer]
-        active = jax.lax.cond(
-            active,
-            lambda: jnp.asarray(a=True),
-            lambda producer=producer, fixed=fixed: _query_availability(
+
+        def read_available(
+            *, producer: str = producer, fixed: Mapping[str, PytreeValue] = fixed
+        ) -> BoolND:
+            return _query_availability(
                 node=definitions[producer],
                 available={
                     **available,
@@ -1291,8 +1383,12 @@ def _observation_available(
                     "period": fixed["period"],
                     "age": fixed["age"],
                 },
-            ),
+            )
+
+        present = vary_carry_like_body(
+            body=lambda _carry: read_available(), carry=jnp.asarray(a=True)
         )
+        active = jax.lax.cond(active, lambda present=present: present, read_available)
     return active
 
 

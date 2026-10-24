@@ -307,8 +307,18 @@ _PROFILED_HELPER_MUTATIONS = {
     ),
     "simulation_entry:padding_budget_bypassed": (
         "src/_lcm/simulation/entry_allocations.py",
-        "                    budget_bytes=self.budget_bytes,",
-        "                    budget_bytes=2**63 - 1,",
+        (
+            "                    live_footprint=self.snapshot,\n"
+            "                    budget_devices=tuple(dict.fromkeys("
+            "(*self.devices, *live.spans))),\n"
+            "                    budget_bytes=self.budget_bytes,"
+        ),
+        (
+            "                    live_footprint=self.snapshot,\n"
+            "                    budget_devices=tuple(dict.fromkeys("
+            "(*self.devices, *live.spans))),\n"
+            "                    budget_bytes=2**63 - 1,"
+        ),
     ),
     "simulation_entry:excluded_source_inventory_omitted": (
         "src/_lcm/simulation/entry_allocations.py",

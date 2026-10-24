@@ -11,6 +11,7 @@ from collections.abc import Callable, Mapping
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import pytest
 
 from lcm import (
@@ -36,7 +37,16 @@ from lcm.exceptions import (
     InvalidParamsError,
     ModelInitializationError,
 )
-from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt, UserParams
+from lcm.solver_api import ResultRetention, SolutionResult
+from lcm.typing import (
+    BoolND,
+    ContinuousState,
+    FloatND,
+    ReferenceName,
+    ScalarInt,
+    UserFunction,
+    UserParams,
+)
 
 type TemplateNode = str | Mapping[str, TemplateNode]
 
@@ -664,3 +674,175 @@ def test_arrival_edge_parameter_uses_its_actual_date_in_solve_and_replay(
     arrival = frame.query("period == 1")
     np.testing.assert_array_equal(arrival["regime_name"], ["target"])
     np.testing.assert_array_equal(arrival["value"], [1.5])
+
+
+@categorical(ordered=False)
+class _ReadPriorityRegimeId:
+    source: ScalarInt
+    target: ScalarInt
+    reference: ScalarInt
+    fallback: ScalarInt
+
+
+def _priority_zero(x: ContinuousState) -> FloatND:
+    return 0.0 * x
+
+
+def _priority_h(x: ContinuousState) -> FloatND:
+    return 10.0 + x
+
+
+def _priority_target(h: FloatND) -> FloatND:
+    return 100.0 + h
+
+
+def _priority_reference(z: ContinuousState) -> FloatND:
+    return 2.0 + z
+
+
+def _priority_fallback(w: ContinuousState) -> FloatND:
+    return w
+
+
+def _priority_original_x(x: ContinuousState) -> ContinuousState:
+    return x
+
+
+def _priority_fallback_state(x: ContinuousState) -> ContinuousState:
+    return 10.0 + x
+
+
+def _priority_read_h(h: FloatND) -> BoolND:
+    return h < 5.0
+
+
+def _priority_read_quote(quote: FloatND) -> BoolND:
+    return quote < 5.0
+
+
+def _priority_read_x(x: FloatND) -> BoolND:
+    return x >= 2.5
+
+
+def _priority_read_v_target(V_target: FloatND) -> BoolND:
+    return V_target < 5.0
+
+
+def _read_priority_replay(
+    *, predicate: UserFunction, read_name: ReferenceName
+) -> tuple[SolutionResult, pd.DataFrame]:
+    """Replay a named comparison beside a genuinely live target helper h."""
+    grid = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
+    model = Model(
+        regimes={
+            "source": Regime(
+                states={"x": grid},
+                state_transitions={"x": fixed_transition("x")},
+                functions={"utility": _priority_zero},
+            ),
+            "target": Regime(
+                states={"x": grid},
+                functions={"utility": _priority_target, "h": _priority_h},
+            ),
+            "reference": Regime(
+                states={"z": grid}, functions={"utility": _priority_reference}
+            ),
+            "fallback": Regime(
+                states={"w": LinSpacedGrid(start=10.0, stop=11.0, n_points=2)},
+                functions={"utility": _priority_fallback},
+            ),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        regime_id_class=_ReadPriorityRegimeId,
+        initial_nodes={0: "source"},
+        edges={
+            "source": Transition(
+                law=ByAge(cases={0: "target"}),
+                arrivals={
+                    "target": ArrivalDecision(
+                        predicate=predicate,
+                        reads={
+                            read_name: ArrivalRead(
+                                kind="Raw",
+                                regime="reference",
+                                projection={"z": _priority_original_x},
+                            )
+                        },
+                        routes={
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="fallback",
+                                    projection={"w": _priority_fallback_state},
+                                )
+                            )
+                        },
+                    )
+                },
+            )
+        },
+    )
+    params = {"discount_factor": 0.5}
+    solution = model.solve(
+        params=params, retention=ResultRetention.VALUES, log_level="off"
+    )
+    frame = model.simulate(
+        params=params,
+        solution=solution,
+        initial_conditions={
+            "age": jnp.asarray([0.0, 0.0]),
+            "regime_id": jnp.full(2, _ReadPriorityRegimeId.source, dtype=jnp.int32),
+            "x": jnp.asarray([0.0, 1.0]),
+        },
+        seed=41,
+        log_level="off",
+    ).to_dataframe()
+    return solution, frame
+
+
+@pytest.mark.parametrize(
+    ("predicate", "read_name"),
+    [(_priority_read_h, "h"), (_priority_read_quote, "quote")],
+    ids=["live-target-helper", "disjoint-control"],
+)
+def test_arrival_explicit_read_precedes_its_same_named_target_helper(
+    *, predicate: UserFunction, read_name: ReferenceName
+) -> None:
+    """The declared reference value admits a target whose own helper would refuse."""
+    solution, frame = _read_priority_replay(predicate=predicate, read_name=read_name)
+    np.testing.assert_array_equal(solution.values[0]["source"], [55.0, 55.5])
+    landed = frame.loc[frame["period"] == 1].sort_values("subject_id")
+    np.testing.assert_array_equal(landed["subject_id"], [0, 1])
+    np.testing.assert_array_equal(
+        landed["regime_name"].to_numpy(), ["target", "target"]
+    )
+    np.testing.assert_array_equal(landed["x"], [0.0, 1.0])
+    np.testing.assert_array_equal(landed["value"], [110.0, 111.0])
+
+
+def test_arrival_read_state_alias_preserves_original_projection_inputs() -> None:
+    """Read x decides routing while fallback w uses the original landing x."""
+    solution, frame = _read_priority_replay(predicate=_priority_read_x, read_name="x")
+    np.testing.assert_array_equal(solution.values[0]["source"], [5.0, 55.5])
+    landed = frame.loc[frame["period"] == 1].sort_values("subject_id")
+    np.testing.assert_array_equal(landed["subject_id"], [0, 1])
+    np.testing.assert_array_equal(
+        landed["regime_name"].to_numpy(), ["fallback", "target"]
+    )
+    np.testing.assert_array_equal(landed["value"], [10.0, 111.0])
+    assert landed.iloc[0]["w"] == 10.0
+    assert landed.iloc[1]["x"] == 1.0
+
+
+def test_arrival_v_target_read_names_the_declared_reference_object() -> None:
+    """Explicit V_target reads the reference, independently of the acting target."""
+    solution, frame = _read_priority_replay(
+        predicate=_priority_read_v_target, read_name="V_target"
+    )
+    np.testing.assert_array_equal(solution.values[0]["source"], [55.0, 55.5])
+    landed = frame.loc[frame["period"] == 1].sort_values("subject_id")
+    np.testing.assert_array_equal(landed["subject_id"], [0, 1])
+    np.testing.assert_array_equal(
+        landed["regime_name"].to_numpy(), ["target", "target"]
+    )
+    np.testing.assert_array_equal(landed["x"], [0.0, 1.0])
+    np.testing.assert_array_equal(landed["value"], [110.0, 111.0])

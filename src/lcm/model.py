@@ -2170,6 +2170,7 @@ class Model:
         self,
         *,
         flat_params: FlatParams,
+        solve_parameter_views: Mapping[RegimeName, FlatParams] = MappingProxyType({}),
         params: UserParams,
         log: logging.Logger,
         retention: ResultRetention,
@@ -2200,6 +2201,7 @@ class Model:
             retained = self._component_schedule(
                 preparation=preparation,
                 flat_params=flat_params,
+                solve_parameter_views=solve_parameter_views,
                 log=log,
                 max_compilation_workers=max_compilation_workers,
                 process_grid_resolver=process_grid_resolver,
@@ -2216,6 +2218,7 @@ class Model:
             )
         internal_result = self._solve_compiled(
             flat_params=flat_params,
+            solve_parameter_views=solve_parameter_views,
             program_fingerprint=preparation.program_fingerprint,
             params=params,
             log=log,
@@ -2331,6 +2334,7 @@ class Model:
         *,
         preparation: _SolutionPreparation,
         flat_params: FlatParams,
+        solve_parameter_views: Mapping[RegimeName, FlatParams] = MappingProxyType({}),
         log: logging.Logger,
         max_compilation_workers: int | None,
         process_grid_resolver: ProcessGridResolver | None,
@@ -2365,6 +2369,7 @@ class Model:
             solve=functools.partial(
                 solve,
                 flat_params=flat_params,
+                solve_parameter_views=solve_parameter_views,
                 ages=self._time,
                 program_fingerprint=preparation.program_fingerprint,
                 logger=log,
@@ -2392,6 +2397,7 @@ class Model:
         self,
         *,
         flat_params: FlatParams,
+        solve_parameter_views: Mapping[RegimeName, FlatParams] = MappingProxyType({}),
         program_fingerprint: str,
         params: UserParams,
         log: logging.Logger,
@@ -2437,6 +2443,7 @@ class Model:
         try:
             internal_result = solve(
                 flat_params=flat_params,
+                solve_parameter_views=solve_parameter_views,
                 ages=self._time,
                 regimes=self._regimes,
                 program_fingerprint=program_fingerprint,
@@ -4153,6 +4160,11 @@ class Model:
                 )
                 solution = self._solve_from_flat_params(
                     flat_params=solve_params,
+                    solve_parameter_views=(
+                        MappingProxyType({})
+                        if entry_allocations is None
+                        else entry_allocations.solve_parameter_views
+                    ),
                     params=params,
                     log=log,
                     retention=ResultRetention.VALUES_AND_REPLAY,

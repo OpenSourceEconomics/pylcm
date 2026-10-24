@@ -409,6 +409,7 @@ _NO_DISSOLUTION_FLAGS: MappingProxyType[RegimeName, BoolND] = MappingProxyType({
 def solve(  # noqa: C901, PLR0912, PLR0915
     *,
     flat_params: FlatParams,
+    solve_parameter_views: Mapping[RegimeName, FlatParams] = MappingProxyType({}),
     ages: TimeAxis,
     regimes: MappingProxyType[RegimeName, Regime],
     program_fingerprint: str,
@@ -547,6 +548,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 regimes=regimes,
                 program_fingerprint=program_fingerprint,
                 flat_params=flat_params,
+                solve_parameter_views=solve_parameter_views,
                 ages=ages,
                 next_regime_to_V_arr=V_templates,
                 next_regime_to_continuation=next_regime_to_continuation,
@@ -909,7 +911,9 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                                 state_action_space=base_state_action_spaces[
                                     regime_name
                                 ],
-                                flat_params=flat_params,
+                                flat_params=solve_parameter_views.get(
+                                    regime_name, flat_params
+                                ),
                                 ages=ages,
                                 next_regime_to_V_arr=next_regime_to_V_arr,
                                 next_regime_to_continuation=next_regime_to_continuation,
@@ -4246,6 +4250,7 @@ def _prepare_solve_programs(
     regimes: MappingProxyType[RegimeName, Regime],
     program_fingerprint: str,
     flat_params: FlatParams,
+    solve_parameter_views: Mapping[RegimeName, FlatParams] = MappingProxyType({}),
     ages: TimeAxis,
     next_regime_to_V_arr: MappingProxyType[RegimeName, ValueTemplate],
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
@@ -4312,6 +4317,7 @@ def _prepare_solve_programs(
             regimes=regimes,
             program_fingerprint=program_fingerprint,
             flat_params=flat_params,
+            solve_parameter_views=solve_parameter_views,
             ages=ages,
             next_regime_to_V_arr=next_regime_to_V_arr,
             next_regime_to_continuation=next_regime_to_continuation,
@@ -4375,6 +4381,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     regimes: MappingProxyType[RegimeName, Regime],
     program_fingerprint: str,
     flat_params: FlatParams,
+    solve_parameter_views: Mapping[RegimeName, FlatParams] = MappingProxyType({}),
     ages: TimeAxis,
     next_regime_to_V_arr: MappingProxyType[RegimeName, ValueTemplate],
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
@@ -4472,6 +4479,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         regimes=regimes,
         program_fingerprint=program_fingerprint,
         flat_params=flat_params,
+        solve_parameter_views=solve_parameter_views,
         ages=ages,
         next_regime_to_V_arr=next_regime_to_V_arr,
         next_regime_to_continuation=next_regime_to_continuation,
@@ -4568,6 +4576,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                 tree=(
                     fixed_input_arrays,
                     flat_params,
+                    solve_parameter_views,
                     ages.values,
                     next_regime_to_V_arr,
                     next_regime_to_continuation,
@@ -6488,6 +6497,7 @@ def _resolve_output_layouts_and_lowering_keys(
     regimes: MappingProxyType[RegimeName, Regime],
     program_fingerprint: str,
     flat_params: FlatParams,
+    solve_parameter_views: Mapping[RegimeName, FlatParams] = MappingProxyType({}),
     ages: TimeAxis,
     next_regime_to_V_arr: MappingProxyType[RegimeName, ValueTemplate],
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
@@ -6564,7 +6574,9 @@ def _resolve_output_layouts_and_lowering_keys(
     """
     key = (
         None
-        if structural_blueprints is None or base_state_action_spaces is None
+        if structural_blueprints is None
+        or base_state_action_spaces is None
+        or solve_parameter_views
         else _structural_key(
             all_programs=all_programs,
             program_fingerprint=program_fingerprint,
@@ -6595,6 +6607,7 @@ def _resolve_output_layouts_and_lowering_keys(
             all_programs=all_programs,
             regimes=regimes,
             flat_params=flat_params,
+            solve_parameter_views=solve_parameter_views,
             ages=ages,
             next_regime_to_V_arr=next_regime_to_V_arr,
             next_regime_to_continuation=next_regime_to_continuation,
@@ -6659,6 +6672,7 @@ def _build_structural_blueprint(
     all_programs: Mapping[_CoreTriple, CoreProgram],
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
+    solve_parameter_views: Mapping[RegimeName, FlatParams] = MappingProxyType({}),
     ages: TimeAxis,
     next_regime_to_V_arr: MappingProxyType[RegimeName, ValueTemplate],
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
@@ -6732,7 +6746,7 @@ def _build_structural_blueprint(
                 templates=next_regime_to_continuation,
                 period=period + 1,
             ),
-            flat_params=flat_params,
+            flat_params=solve_parameter_views.get(regime_name, flat_params),
             period=period,
             ages=ages,
             edge_regime_to_V_arr=edge_kwargs.get("edge_regime_to_V_arr"),

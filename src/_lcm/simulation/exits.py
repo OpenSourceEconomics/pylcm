@@ -22,6 +22,7 @@ from _lcm.shock_overrides import CurrentIIDOverride
 from _lcm.shock_registry import ShockBinding
 from _lcm.simulation.program_types import subject_axis
 from _lcm.typing import FlatParams, PytreeValue
+from _lcm.utils.dispatchers import vary_carry_like_body
 from lcm.shocks import (
     BaseInnovations,
     Discrete,
@@ -480,22 +481,30 @@ class OriginalExitDecision:
             for member, query in targets.items():
                 node = self.queries.definitions[query]
                 selected = answer[1] == identifier
+
                 # Keep unavailable and unselected projections behind a scalar
                 # condition; vmap's select conversion must not be used here.
-                projections[query] = jax.lax.cond(
-                    selected,
-                    lambda query=query: dict(
+                def project(*, query: str = query) -> dict[str, FloatND | IntND]:
+                    return dict(
                         self.queries.project(
                             query=query,
                             states=states,
                             arguments=query_arguments,
                             frame=frame,
                         )
-                    ),
-                    lambda node=node: {
+                    )
+
+                neutral = vary_carry_like_body(
+                    body=lambda _carry, project=project: project(),
+                    carry={
                         name: jnp.zeros((), dtype=grid.dtype)
                         for name, grid in node.context.state_action_space.states.items()
                     },
+                )
+                projections[query] = jax.lax.cond(
+                    selected,
+                    project,
+                    lambda neutral=neutral: neutral,
                 )
                 helper = root.exit_adjustments.get(identifier, {}).get(member)
                 operands = {

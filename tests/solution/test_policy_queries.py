@@ -28,6 +28,7 @@ from _lcm.policy_queries import (
     build_policy_query_kernel,
     demanded_query_order,
 )
+from _lcm.query_information import InformationQueryCell
 from _lcm.solution import backward_induction as backward
 from _lcm.solution.contract import SolutionKernels, SolverBuildContext
 from _lcm.typing import PytreeValue
@@ -45,8 +46,9 @@ from lcm import (
 )
 from lcm.arrivals import ArrivalDecision, ArrivalRead
 from lcm.collective import ProjectedRegimeValue, StakeholderRoute
+from lcm.shocks import Normal, ShockGroup, UserNodes
 from lcm.solvers import EGM, GridSearch
-from lcm.typing import FloatND, IntND, RegimeName, ScalarInt
+from lcm.typing import BoolND, FloatND, IntND, RegimeName, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
 
 
@@ -1258,3 +1260,271 @@ def test_unavailable_benchmark_guards_domain_poison_and_its_derivative() -> None
 
     np.testing.assert_allclose(jax.jit(value)(jnp.asarray(0.0)), 5.0)
     np.testing.assert_allclose(jax.jit(jax.grad(value))(jnp.asarray(0.0)), 2.5)
+
+
+def _information_mesh_inputs(
+    *, guarded: bool, events: dict[str, list[float]]
+) -> tuple[Model, QueryNode, Mapping[str, PytreeValue]]:
+    """Bind a real terminal GridSearch reader and a state-dependent Normal law."""
+    _CONTEXTS.clear()
+
+    def mean(wealth: FloatND) -> FloatND:
+        return wealth
+
+    def observed_mean(wealth: FloatND) -> FloatND:
+        jax.debug.callback(lambda value: events["law"].append(float(value)), wealth)
+        return mean(wealth)
+
+    def settlement(wealth: FloatND) -> FloatND:
+        jax.debug.callback(
+            lambda value: events["projection"].append(float(value)), wealth
+        )
+        return jnp.sqrt(wealth)
+
+    def utility(*, wealth: FloatND, eps: FloatND) -> FloatND:
+        return wealth + eps
+
+    def available(wealth: FloatND) -> BoolND:
+        return wealth >= 0
+
+    model = Model(
+        regimes={
+            name: Regime(
+                states={"wealth": LinSpacedGrid(start=0, stop=1, n_points=2)},
+                functions={"utility": utility},
+                shocks=("innovation",),
+                solver=_CaptureGridSearch(),
+            )
+            for name in ("root", "target")
+        },
+        n_periods=1,
+        regime_id_class=_RegimeId,
+        initial_nodes=InitialNodes(by_period={0: ("root", "target")}),
+        edges={},
+        shocks={
+            "innovation": ShockGroup(
+                shocks={"eps": Normal(mu=mean, sigma=1)},
+                nodes=UserNodes(
+                    nodes=np.asarray([[-1.0], [1.0]]),
+                    weights=np.asarray([0.5, 0.5]),
+                ),
+            )
+        },
+    )
+    context = _CONTEXTS["target"]
+    # Instrument only the test-owned query adapter after valid durable construction.
+    plan = context.current_iid_plans[0]
+    assert plan is not None
+    ((group, binding, nodes),) = plan.bindings
+    assert group == "innovation"
+    law = binding.group.shocks["eps"]
+    assert isinstance(law, Normal)
+    observed_binding = replace(
+        binding,
+        group=replace(binding.group, shocks={"eps": replace(law, mu=observed_mean)}),
+    )
+    context = replace(
+        context,
+        current_iid_plans=MappingProxyType(
+            {0: replace(plan, bindings=((group, observed_binding, nodes),))}
+        ),
+    )
+    node = QueryNode(
+        read=replace(
+            _read(kind=QueryKind.PARTICIPATING, target="target"),
+            projection={"wealth": settlement},
+            operand_paths={},
+        ),
+        context=context,
+        available=available if guarded else None,
+    )
+    arguments = queries.ScalarPolicyQueries(
+        definitions={"target": node}, root="target", period=0
+    ).arguments(
+        context=CoreBuildContext(
+            state_action_space=context.state_action_space,
+            next_regime_to_V_arr={},
+            next_regime_to_continuation={},
+            flat_params={},
+            period=0,
+            ages=model._time,
+        )
+    )
+    return model, node, cast("Mapping[str, PytreeValue]", arguments["target"])
+
+
+@pytest.mark.parametrize("ancestor", [False, True])
+@pytest.mark.parametrize("gate", ["live", "availability", "admitted-poison"])
+def test_information_mesh_neutral_branch_keeps_axes_and_runtime_guard(
+    *, ancestor: bool, gate: str
+) -> None:
+    """Neutral answers keep manual types while inactive unsafe inputs stay unread."""
+    devices = tuple(jax.devices())[:2]
+    if len(devices) != 2:
+        pytest.skip("Select this test with at least two visible devices.")
+    mesh = jax.make_mesh((2,), ("X",), (jax.sharding.AxisType.Auto,), devices=devices)
+    events: dict[str, list[float]] = {"projection": [], "law": []}
+    _model, node, fixed = _information_mesh_inputs(
+        guarded=gate == "availability", events=events
+    )
+    definitions = {"target": node}
+    own = replace(node, ancestors=("parent",), available=None) if ancestor else node
+    if ancestor:
+        definitions = {"parent": node, "target": own}
+    cell = InformationQueryCell(
+        name="target",
+        node=own,
+        definitions=definitions,
+        period=0,
+        fixed=fixed,
+        projection_operands={},
+        information_arguments={"parent": fixed} if ancestor else {},
+    )
+
+    def local(arguments: Mapping[str, FloatND | BoolND]) -> PolicyAnswer:
+        answer = cell(
+            live=arguments["live"][0],
+            source={"wealth": arguments["wealth"][0]},
+            dependencies={},
+        )
+        for name, leaf in zip(
+            ("value", "action", "support", "valid"), answer, strict=True
+        ):
+            manual = getattr(jax.typeof(leaf), "manual_axis_type", None)
+            assert manual is not None
+            assert manual.varying <= frozenset({"X"}), (name, manual.varying)
+            if name == "value":
+                assert manual.varying == frozenset({"X"})
+        return answer[0][None], answer[1][None], answer[2][None], answer[3][None]
+
+    mapped = jax.shard_map(
+        local,
+        mesh=mesh,
+        in_specs=({"wealth": jax.P("X"), "live": jax.P("X")},),
+        out_specs=(jax.P("X"),) * 4,
+        check_vma=True,
+    )
+    inputs = {
+        "wealth": jax.device_put(
+            jnp.asarray([-1.0, 1.0]), jax.NamedSharding(mesh, jax.P("X"))
+        ),
+        "live": jax.device_put(
+            jnp.asarray([gate != "live", True]), jax.NamedSharding(mesh, jax.P("X"))
+        ),
+    }
+    jax.effects_barrier()
+    for values in events.values():
+        values.clear()
+    compiled = jax.jit(mapped).lower(inputs).compile()
+    assert not any(events.values()), "Abstract type alignment must not run callbacks."
+    answer = jax.block_until_ready(compiled(inputs))
+    jax.effects_barrier()
+    dimensions = (2,) if ancestor else ()
+    assert tuple(leaf.shape for leaf in answer) == (
+        (2, *dimensions),
+        (2, *dimensions, 2),
+        (2, *dimensions),
+        (2, *dimensions),
+    )
+    assert tuple(leaf.dtype for leaf in answer) == (
+        jnp.asarray(0.0).dtype,
+        jnp.int32,
+        jnp.bool_,
+        jnp.bool_,
+    )
+    assert all(leaf.sharding.spec == jax.P("X") for leaf in answer)
+    np.testing.assert_array_equal(answer[0][1], np.full(dimensions, 2.0))
+    np.testing.assert_array_equal(answer[1][1], np.zeros((*dimensions, 2), np.int32))
+    np.testing.assert_array_equal(answer[2][1], np.ones(dimensions, bool))
+    np.testing.assert_array_equal(answer[3][1], np.ones(dimensions, bool))
+    if gate == "admitted-poison":
+        assert -1.0 in events["projection"]
+        assert any(not np.isfinite(value) for value in events["law"])
+        np.testing.assert_array_equal(answer[3][0], np.zeros(dimensions, bool))
+    else:
+        np.testing.assert_array_equal(answer[0][0], np.full(dimensions, -np.inf))
+        np.testing.assert_array_equal(
+            answer[1][0], -np.ones((*dimensions, 2), np.int32)
+        )
+        np.testing.assert_array_equal(answer[2][0], np.zeros(dimensions, bool))
+        np.testing.assert_array_equal(answer[3][0], np.ones(dimensions, bool))
+        assert events["projection"]
+        assert events["law"]
+        assert all(value == 1.0 for value in events["projection"])
+        assert all(value == 1.0 for value in events["law"])
+
+
+@pytest.mark.parametrize("guarded", [False, True])
+def test_information_mesh_unavailable_observation_keeps_producer_unexecuted(
+    *, guarded: bool
+) -> None:
+    """The neutral frame preserves manual types without executing its physical law."""
+    devices = tuple(jax.devices())[:2]
+    if len(devices) != 2:
+        pytest.skip("Select this test with at least two visible devices.")
+    mesh = jax.make_mesh((2,), ("X",), (jax.sharding.AxisType.Auto,), devices=devices)
+    events: dict[str, list[float]] = {"projection": [], "law": []}
+    _model, producer, fixed = _information_mesh_inputs(guarded=guarded, events=events)
+    observer = replace(
+        producer,
+        observation_sources={"innovation": "producer"},
+        observation_aliases={"innovation": ("producer",)},
+        observation_counts=(2,),
+    )
+    cell = InformationQueryCell(
+        name="observer",
+        node=observer,
+        definitions={"observer": observer, "producer": producer},
+        period=0,
+        fixed=fixed,
+        projection_operands={},
+        information_arguments={"producer": fixed},
+    )
+
+    def local(wealth: FloatND) -> tuple[FloatND, BoolND, FloatND]:
+        frame, weights = cell._observer_row(
+            observer=observer,
+            target=producer,
+            group="innovation",
+            fixed=fixed,
+            row=jnp.int32(0),
+            observed=frozenset({"eps"}),
+            source={"wealth": wealth[0]},
+            frames={},
+        )
+        return frame.physical["eps"][None], frame.valid[None], weights[None]
+
+    mapped = jax.shard_map(
+        local,
+        mesh=mesh,
+        in_specs=jax.P("X"),
+        out_specs=(jax.P("X"),) * 3,
+        check_vma=True,
+    )
+    wealth = jax.device_put(
+        jnp.asarray([-1.0, 1.0]), jax.NamedSharding(mesh, jax.P("X"))
+    )
+    jax.effects_barrier()
+    for values in events.values():
+        values.clear()
+    compiled = jax.jit(mapped).lower(wealth).compile()
+    assert not any(events.values()), "Abstract frame alignment must not run callbacks."
+    physical, valid, weights = jax.block_until_ready(compiled(wealth))
+    jax.effects_barrier()
+    assert physical.shape == valid.shape == (2,)
+    assert weights.shape == (2, 1)
+    np.testing.assert_array_equal(physical[1], 0.0)
+    np.testing.assert_array_equal(valid[1], desired=True)
+    np.testing.assert_array_equal(weights[1], [0.5])
+    if guarded:
+        np.testing.assert_array_equal(physical[0], 0.0)
+        np.testing.assert_array_equal(valid[0], desired=True)
+        np.testing.assert_array_equal(weights[0], [1.0])
+        assert events["projection"]
+        assert events["law"]
+        assert all(value == 1.0 for value in events["projection"])
+        assert all(value == 1.0 for value in events["law"])
+    else:
+        assert -1.0 in events["projection"]
+        assert any(not np.isfinite(value) for value in events["law"])
+        np.testing.assert_array_equal(valid[0], desired=False)

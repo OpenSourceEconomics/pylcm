@@ -66,7 +66,7 @@ from lcm.exceptions import (
     RegimeInitializationError,
     UnsupportedOperationError,
 )
-from lcm.typing import BoolND, FloatND, Phase, RegimeName, UserFunction
+from lcm.typing import BoolND, FloatND, Phase, ReferenceName, RegimeName, UserFunction
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -769,6 +769,7 @@ def _bound_edge_function(
     target: RegimeName,
     path: tuple[str, ...],
     function: UserFunction,
+    read_names: Mapping[ReferenceName, ReferenceName] = MappingProxyType({}),
 ) -> Callable[..., PytreeValue]:
     """Bind source edge params while expanding helpers in landed target vocabulary."""
     branch = builder.canonical_regimes[source].edge_params_template
@@ -778,9 +779,12 @@ def _bound_edge_function(
     callback = rename_arguments(
         function,
         mapper={
-            name: builder.aliases[source, qname_from_tree_path((*path, name))]
-            for name in inspect.signature(function).parameters
-            if isinstance(branch.get(name), str)
+            **{
+                name: builder.aliases[source, qname_from_tree_path((*path, name))]
+                for name in inspect.signature(function).parameters
+                if isinstance(branch.get(name), str)
+            },
+            **read_names,
         },
     )
     combined = concatenate_functions(
@@ -794,7 +798,7 @@ def _bound_edge_function(
         mapper={
             name: builder.aliases[target, name]
             for name in inspect.signature(combined).parameters
-            if (target, name) in builder.aliases
+            if name not in read_names.values() and (target, name) in builder.aliases
         },
     )
 
@@ -868,6 +872,26 @@ def _bind_arrival(
             price_information=information,
         )
     }
+    occupied_names = {
+        *context.functions,
+        *context.grids,
+        *context.flat_param_names,
+        *builder.aliases.values(),
+        *declaration.reads,
+        *inspect.signature(declaration.predicate).parameters,
+        *(
+            name
+            for function in context.functions.values()
+            for name in inspect.signature(function).parameters
+        ),
+    }
+    read_names = {}
+    for index, name in enumerate(declaration.reads):
+        alias = f"_lcm_arrival_read_{index}"
+        while alias in occupied_names:
+            alias += "_"
+        read_names[name] = alias
+        occupied_names.add(alias)
     reads = {}
     for name, read in declaration.reads.items():
         mapped = {
@@ -907,7 +931,7 @@ def _bind_arrival(
                 source_projection=cast("Mapping[str, UserFunction]", mapped),
             )
         )
-        reads[name] = (
+        reads[read_names[name]] = (
             operand,
             read.field,
             None
@@ -980,6 +1004,7 @@ def _bind_arrival(
         target=target,
         path=(target, "predicate"),
         function=declaration.predicate,
+        read_names=read_names,
     )
     reducer = _ArrivalReducer(
         predicate=predicate,
@@ -995,7 +1020,7 @@ def _bind_arrival(
                 *(
                     name
                     for name in inspect.signature(predicate).parameters
-                    if name not in declaration.reads
+                    if name not in reads
                 ),
             )
         )

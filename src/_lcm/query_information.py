@@ -26,6 +26,7 @@ from _lcm.policy_queries import PolicyAnswer, QueryNode
 from _lcm.probability import is_represented_zero
 from _lcm.shock_registry import ShockBinding
 from _lcm.typing import PytreeValue, QAndFKwargs
+from _lcm.utils.dispatchers import vary_carry_like_body
 from _lcm.zero_safe import factored_weighted_term
 from lcm.shocks import ShockGroupName
 from lcm.typing import BoolND, FloatND, IntND
@@ -470,6 +471,9 @@ class InformationQueryCell:
             .at[0]
             .set((row == 0).astype(neutral_weights.dtype))
         )
+        neutral = vary_carry_like_body(
+            body=lambda _carry: produce(), carry=(neutral_frame, neutral_weights)
+        )
         return jax.lax.cond(
             _observation_available(
                 node=observer,
@@ -479,7 +483,7 @@ class InformationQueryCell:
                 available=available,
             ),
             produce,
-            lambda: (neutral_frame, neutral_weights),
+            lambda: neutral,
         )
 
     def _ancestors(
@@ -529,11 +533,14 @@ class InformationQueryCell:
                 jnp.arange(self._size(name=name, node=node), dtype=jnp.int32),
             )
 
+        absent = vary_carry_like_body(
+            body=lambda _carry: admitted(), carry=self._absent(position=position)
+        )
         return jax.lax.cond(
             live
             & self._available(node=node, fixed=fixed, source=source, frames=frames),
             admitted,
-            lambda: self._absent(position=position),
+            lambda: absent,
         )
 
     def _absent(self, *, position: int) -> PolicyAnswer:
@@ -626,6 +633,10 @@ class InformationQueryCell:
                 jnp.all(frame.valid) & jnp.all(valid),
             )
 
+        absent = vary_carry_like_body(
+            body=lambda _carry: admitted(),
+            carry=self._absent(position=len(self.node.ancestors)),
+        )
         return jax.lax.cond(
             live
             & self._available(
@@ -635,5 +646,5 @@ class InformationQueryCell:
                 frames=frames,
             ),
             admitted,
-            lambda: self._absent(position=len(self.node.ancestors)),
+            lambda: absent,
         )

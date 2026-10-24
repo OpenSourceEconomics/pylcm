@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "a337702afdf593a75e3c9c9d7e0d187a3b726e1b7e601ef5a7069049d28ff9fb",
+  "source_inventory_sha256": "5603db547b704bd669477c192b428b2b933efa8b1691ca9de222170812ae6fb5",
   "sources": [
     {
       "path": "src/_lcm/constraints/bounds.py",
@@ -410,7 +410,7 @@
     },
     {
       "path": "src/_lcm/simulation/entry_allocations.py",
-      "sha256": "088d79029e5166c81762e5075c0e7842771734ec6d2008816538a5bbeffc9255"
+      "sha256": "c8af9d9559b3864426264ac388dc6d55523aa31e57d801c9d8edd94f00599b1a"
     },
     {
       "path": "src/_lcm/simulation/entry_inputs.py",
@@ -514,7 +514,7 @@
     },
     {
       "path": "src/_lcm/simulation/subject_parallel.py",
-      "sha256": "2718be335aa7cf2770cfe63f1e30cff8be8b7a14908e0c50d64756db0b094370"
+      "sha256": "66d70a81a7ec535d92933bc8841c6bbe7472e227509f88fc6d3bdd00b6c95e76"
     },
     {
       "path": "src/_lcm/simulation/taste_stream.py",
@@ -546,7 +546,7 @@
     },
     {
       "path": "src/_lcm/solution/backward_induction.py",
-      "sha256": "66fdbcd57277c5534416a86dbc65ea8c173a9a850612deb068f88fab65910945"
+      "sha256": "90243ee031603f3b5255eaa013b604aafb7903c410618d736dd27194873975ed"
     },
     {
       "path": "src/_lcm/solution/collective_action_reduction.py",
@@ -710,7 +710,7 @@
     },
     {
       "path": "src/lcm/model.py",
-      "sha256": "97fefee6b6c8065c50af9dcac2d92659c22e47256f8c2d67669dcdc5071d03f8"
+      "sha256": "f79885362e8e56a4b498e384b66fe5b269afb0395a9924dbea95020472075ffe"
     },
     {
       "path": "src/lcm/regime.py",
