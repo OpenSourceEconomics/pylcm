@@ -12,7 +12,7 @@ import pytest
 from numpy.testing import assert_array_almost_equal
 
 from _lcm import shock_nodes
-from _lcm.current_iid import CURRENT_IID_ARGUMENT, CURRENT_IID_KEYS_ARGUMENT
+from _lcm.current_iid import CURRENT_IID_ARGUMENT
 from _lcm.execution.core_program import (
     CoreBuildContext,
     core_program_graph,
@@ -26,6 +26,7 @@ from _lcm.simulation.chunk_planning import (
     plan_simulation_chunks,
 )
 from _lcm.simulation.entry_allocations import SimulationEntryAllocations
+from _lcm.simulation.program_arguments import current_iid_arguments
 from _lcm.simulation.program_types import SUBJECT_WIDTH_KEYWORD
 from _lcm.simulation.random_address import RandomAddress, draw_row_keys
 from _lcm.simulation.residency import measure_buffer_footprint
@@ -1048,11 +1049,16 @@ def test_rbg_physical_replay_matches_scalar_addressed_draws(
         row_low=np.arange(7, dtype=np.uint32),
         period=0,
     )
-    program = model._regimes["alive"].simulation.programs.decision[0]
+    regime = model._regimes["alive"]
+    program = regime.simulation.programs.decision[0]
     output = jax.jit(program.function, static_argnames=(SUBJECT_WIDTH_KEYWORD,))(
         **{
-            CURRENT_IID_ARGUMENT: {"innovation": {}},
-            CURRENT_IID_KEYS_ARGUMENT: {"eps": keys},
+            **current_iid_arguments(
+                regime=regime,
+                flat_params={},
+                keys={"eps": keys},
+                overrides=MappingProxyType({}),
+            ),
             "period": jnp.int32(0),
             "age": jnp.int32(0),
             "next_regime_to_V_arr": {},

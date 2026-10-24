@@ -1879,6 +1879,7 @@ def _fingerprint_regime(
         pareto_weights=None,
         artifact_authorities=artifact_authorities or {},
         query_authority=None,
+        continuation_spec=None,
         state_action_space=_fingerprint_space,
         period_state_axes={
             0: {"wealth": np.asarray([1.0, 2.0])},

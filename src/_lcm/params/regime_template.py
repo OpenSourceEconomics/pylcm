@@ -592,6 +592,15 @@ def create_edge_params_template(
     law_params_by_path: list[tuple[tuple[str, ...], Mapping[ParameterName, str]]] = []
     for transition in declared_transitions:
         for path, func, gate in iter_transition_callables(transition):
+            if isinstance(gate, ArrivalDecision):
+                # Landed callbacks have no transition-local outputs. Other names
+                # are edge parameters, so do not walk same-named regime helpers.
+                _fail_if_a_next_name_is_read(
+                    consumer_name=qname_from_tree_path((EDGES, source, *path)),
+                    reserved=_next_names_reachable_from(
+                        func=func, functions={}, phase="solve"
+                    ),
+                )
             non_params = (
                 variables
                 if gate is None
