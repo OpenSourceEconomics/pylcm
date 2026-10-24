@@ -160,6 +160,16 @@ class SimulationPrograms:
     conditional continuous action. Empty for a regime with stakeholders.
     Compiled only when dispatched."""
 
+    exit_full: MappingProxyType[int, CoreProgram] = dataclasses.field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    """Original occupants' Full choices and held current-period draw frames."""
+
+    exit_participating: MappingProxyType[int, CoreProgram] = dataclasses.field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    """Final actors' Participating decisions after once-only routing/revelation."""
+
     grouping: SubjectGroupingRoute | None = None
     """The invariant state forward simulation groups subjects by, or `None`."""
 
@@ -192,6 +202,8 @@ class SimulationPrograms:
                 self.gate_route,
                 self.policy_prepare,
                 self.policy_rank,
+                self.exit_full,
+                self.exit_participating,
             )
             for program in family.values()
             for name in program.requirements.axis_names

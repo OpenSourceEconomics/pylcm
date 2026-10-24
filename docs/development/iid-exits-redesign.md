@@ -49,9 +49,9 @@ identifiers decide exact objective ties. Utility adjustments change both the exi
 and participation benchmark, once each at their specified use.
 
 Source-read shocks are observed; target-only shocks are hidden unless declared observed.
-Taste draws stay hidden. Shared innovations retain identity in base space and use the
-law at each evaluated state. A formation query cannot silently use an unobserved
-participation shock.
+Target taste draws stay hidden at the source choice. Shared innovations retain identity
+in base space and use the law at each evaluated state. A formation query cannot silently
+use an unobserved participation shock.
 
 Simulation uses immutable original subject rows and typed, versioned addresses. Each
 period permits one same-period move, one final-regime action and one scheduled
@@ -165,6 +165,22 @@ reject every nonlinear downstream reader, including CE, Euler inversion, constra
 availability, exit rules and simulation sampling.
 
 ## Information and hidden-query integration
+
+For source EV1 Full choices, optimize continuous actions within each existing
+discrete-action combination, then append one source taste component per exit in
+declaration order. The source regime's existing taste address supplies that one roster;
+continuous/global stay action IDs do not create additional independent tastes. Solve
+takes the logsum over admitted stay-combination maxima and admitted exit payoffs.
+Built-in dissolution (`unilateral` and `mutual`) admits its exit only when the kept stay
+set is empty; an exit roster position is masked otherwise. Consent admits formation only
+after its existing strict Raw comparisons pass. Simulation selects the route with the
+same source draw and publishes the selected unshocked value. Target taste remains hidden
+at the source, priced at its own logsum, then drawn at the destination address in its
+acting pass. An arbitrary custom Full selector is not generally an argmax and therefore
+has no canonical logsum integration; source EV1 with such a selector is unsupported and
+explicitly refused. This does not prevent a custom source rule from reading a
+canonically priced hidden target EV1 policy. Collective EV1 keeps its existing
+capability refusal.
 
 Keep target prescribed-policy information separate from caller pricing information.
 Additional caller knowledge does not change the target's participation policy. Evaluate

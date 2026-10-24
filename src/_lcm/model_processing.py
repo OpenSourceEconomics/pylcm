@@ -1307,8 +1307,30 @@ def _partial_fixed_params_into_regimes(
             regime_kernel_params(fixed_flat_params, regime_name=target_name)
             for target_name in regime.solution.transitions
         )
+        # A typed same-period query can read a fixed target outside the
+        # source's scheduled transition graph. Each kernel owns that closure.
+        bound_kernels = MappingProxyType(
+            {
+                period: kernel.with_fixed_params(fixed_flat_params=fixed_flat_params)
+                for period, kernel in regime.solution.period_kernels.items()
+            }
+        )
+        bound_exit_queries = MappingProxyType(
+            {
+                period: plan.with_fixed_params(fixed_flat_params=fixed_flat_params)
+                for period, plan in regime.simulation.exit_queries.items()
+            }
+        )
         if not reachable_fixed:
-            result[regime_name] = regime
+            result[regime_name] = dataclasses.replace(
+                regime,
+                solution=dataclasses.replace(
+                    regime.solution, period_kernels=bound_kernels
+                ),
+                simulation=dataclasses.replace(
+                    regime.simulation, exit_queries=bound_exit_queries
+                ),
+            )
             continue
 
         # Build new solution phase with partialled functions. The resolved
@@ -1327,14 +1349,7 @@ def _partial_fixed_params_into_regimes(
         new_solve = dataclasses.replace(
             solution,
             resolved_fixed_params=MappingProxyType(regime_fixed),
-            period_kernels=MappingProxyType(
-                {
-                    period: kernel.with_fixed_params(
-                        fixed_flat_params=fixed_flat_params
-                    )
-                    for period, kernel in solution.period_kernels.items()
-                }
-            ),
+            period_kernels=bound_kernels,
             compute_regime_transition_probs=(
                 functools.partial(
                     solution.compute_regime_transition_probs,
@@ -1363,6 +1378,7 @@ def _partial_fixed_params_into_regimes(
         simulation = regime.simulation
         new_simulate = dataclasses.replace(
             simulation,
+            exit_queries=bound_exit_queries,
             programs=dataclasses.replace(
                 simulation.programs,
                 **{

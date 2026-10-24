@@ -475,17 +475,8 @@ class GridSearch(Solver):
                     enforce=False,
                 )
                 flattened_bound_programs.add(q_id)
-            edge_reference_regimes = _edge_reference_regimes_for_targets(
-                context=context,
-                target_regimes=target_regimes,
-            )
-            argument_builder = _GridSearchArgumentBuilder(
-                current_iid_plan=current_iid_plan,
-                regime_name=context.regime_name,
-                target_regimes=target_regimes,
-                same_period_ref_regimes=context.same_period_ref_regimes,
-                edge_reference_regimes=edge_reference_regimes,
-                edge_target_regimes=context.edge_target_regimes,
+            argument_builder, value_reads = grid_search_query_inputs(
+                context=context, period=period
             )
             requirements = CoreExecutionRequirements(
                 reduced_axes=(
@@ -520,14 +511,7 @@ class GridSearch(Solver):
                     if cell_width_keyword is not None
                     else ()
                 ),
-                value_reads=_value_reads(
-                    regime_name=context.regime_name,
-                    period=period,
-                    target_regimes=target_regimes,
-                    same_period_ref_regimes=context.same_period_ref_regimes,
-                    edge_reference_regimes=edge_reference_regimes,
-                    edge_target_regimes=context.edge_target_regimes,
-                ),
+                value_reads=value_reads,
             )
             # A bound continuation needs its selected-view transfer even when
             # all local state and action products have extent one. "Dense"
@@ -798,6 +782,41 @@ def _supports_action_streaming(*, context: SolverBuildContext) -> bool:
         _classify_action_streaming(context=context)
         is _ActionStreamingDisposition.STREAMED
     )
+
+
+def grid_search_query_inputs(
+    *,
+    context: SolverBuildContext,
+    period: int,
+) -> tuple[_GridSearchArgumentBuilder, tuple[ValueRead, ...]]:
+    """Share canonical Q/F operand and continuation paths without another max."""
+    targets = (
+        ()
+        if period == context.solution_reachability.n_periods - 1
+        else context.solution_reachability.targets(
+            period=period, source=context.regime_name
+        )
+    )
+    references = _edge_reference_regimes_for_targets(
+        context=context, target_regimes=targets
+    )
+    builder = _GridSearchArgumentBuilder(
+        current_iid_plan=context.current_iid_plans.get(period),
+        regime_name=context.regime_name,
+        target_regimes=targets,
+        same_period_ref_regimes=context.same_period_ref_regimes,
+        edge_reference_regimes=references,
+        edge_target_regimes=context.edge_target_regimes,
+    )
+    reads = _value_reads(
+        regime_name=context.regime_name,
+        period=period,
+        target_regimes=targets,
+        same_period_ref_regimes=context.same_period_ref_regimes,
+        edge_reference_regimes=references,
+        edge_target_regimes=context.edge_target_regimes,
+    )
+    return builder, reads
 
 
 def _edge_reference_regimes_for_targets(

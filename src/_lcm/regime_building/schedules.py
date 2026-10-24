@@ -159,6 +159,72 @@ class RegimeSchedules:
     ] = MappingProxyType({})
     """Per source regime, its gated edges by gated target."""
 
+    query_nodes_by_phase: MappingProxyType[
+        PhaseKey, frozenset[tuple[int, RegimeName, str]]
+    ] = MappingProxyType({})
+    """Typed Raw/Participating Q/F contexts, distinct from stored Full demand."""
+
+    exit_acting_nodes: frozenset[tuple[int, RegimeName]] = frozenset()
+    """Potential final regimes acting once after an original subject exits."""
+
+    @property
+    def query_periods_by_phase(
+        self,
+    ) -> MappingProxyType[PhaseKey, MappingProxyType[RegimeName, tuple[int, ...]]]:
+        """Project typed context demand onto actual canonical build periods."""
+        return MappingProxyType(
+            {
+                phase: MappingProxyType(
+                    {
+                        name: tuple(sorted({p for p, n, _ in nodes if n == name}))
+                        for name in self.coverage_by_regime
+                    }
+                )
+                for phase, nodes in self.query_nodes_by_phase.items()
+            }
+        )
+
+    @property
+    def context_periods_by_regime(
+        self,
+    ) -> MappingProxyType[RegimeName, tuple[int, ...]]:
+        """Build queried Q/F without adding a target's stored Full bank."""
+        queried = {
+            (p, n) for nodes in self.query_nodes_by_phase.values() for p, n, _ in nodes
+        }
+        return MappingProxyType(
+            {
+                name: tuple(sorted(set(periods) | {p for p, n in queried if n == name}))
+                for name, periods in self.coverage_by_regime.items()
+            }
+        )
+
+    @property
+    def acting_periods_by_regime(self) -> MappingProxyType[RegimeName, tuple[int, ...]]:
+        """Retain physical transitions for original occupants and final actors."""
+        physical = self.visited_nodes | self.exit_acting_nodes
+        return MappingProxyType(
+            {
+                name: tuple(sorted(p for p, n in physical if n == name))
+                for name in self.coverage_by_regime
+            }
+        )
+
+    @property
+    def simulation_context_periods_by_regime(
+        self,
+    ) -> MappingProxyType[RegimeName, tuple[int, ...]]:
+        """Keep actual simulate declarations for synthetic queries too."""
+        queried = self.query_nodes_by_phase.get("simulation", frozenset())
+        return MappingProxyType(
+            {
+                name: tuple(
+                    sorted(set(periods) | {p for p, n, _ in queried if n == name})
+                )
+                for name, periods in self.acting_periods_by_regime.items()
+            }
+        )
+
     @property
     def targets_by_phase(
         self,
@@ -391,13 +457,13 @@ def lower_demanded_transitions(
     lowered laws.
     """
     lowered: dict[RegimeName, EngineLaw | None] = {}
-    visited_periods = schedules.visited_periods_by_regime
+    visited_periods = schedules.acting_periods_by_regime
     for name, declared in declared_transitions.items():
         if declared is None:
             lowered[name] = None
             continue
         law_by_period = schedules.law_by_period_by_regime[name]
-        solve_periods = schedules.coverage_by_regime[name]
+        solve_periods = schedules.context_periods_by_regime[name]
         if not solve_periods:
             if not law_by_period:
                 # A declared nonterminal law is a case law or a schedule of them.
@@ -494,13 +560,19 @@ def _lower(
     )
 
 
-def resolve_demand(
+def resolve_demand(  # noqa: C901 - shared fixed point for occupancy, values and typed query contexts
     *,
     schedules: RegimeSchedules,
     initial_nodes: frozenset[tuple[UserAge, RegimeName]],
     same_period_refs_by_regime: Mapping[RegimeName, tuple[RegimeName, ...]],
     terminal_regimes: frozenset[RegimeName],
     ages: TimeAxis,
+    policy_reads_by_phase: Mapping[
+        str, Mapping[tuple[int, RegimeName, str], tuple[tuple[RegimeName, str], ...]]
+    ] = MappingProxyType({}),
+    exit_targets_by_period: Mapping[
+        tuple[int, RegimeName], tuple[RegimeName, ...]
+    ] = MappingProxyType({}),
 ) -> RegimeSchedules:
     """Restrict `schedules` to the problems the starts require.
 
@@ -535,7 +607,51 @@ def resolve_demand(
     valued: set[tuple[int, RegimeName]] = set()
     support = schedules.support_by_phase
     value_reads = schedules.value_reads_by_phase
-    while work:
+    query_work: deque[tuple[str, int, RegimeName, str]] = deque()
+    queried: dict[str, set[tuple[int, RegimeName, str]]] = {
+        "solution": set(),
+        "simulation": set(),
+    }
+    acting: set[tuple[int, RegimeName]] = set()
+    while work or query_work:
+        if not work:
+            phase, period, name, kind = query_work.popleft()
+            if (period, name, kind) in queried[phase]:
+                continue
+            if name not in terminal_regimes and (
+                period not in available[name]
+                or not support[phase].get(name, {}).get(period, ())
+            ):
+                raise ModelInitializationError(
+                    _unavailable_message(
+                        requester=f"a {kind} {phase} policy query",
+                        name=name,
+                        period=period,
+                        side=phase,
+                        ages=ages,
+                    )
+                )
+            queried[phase].add((period, name, kind))
+            query_work.extend(
+                (phase, period, target, target_kind)
+                for target, target_kind in policy_reads_by_phase.get(phase, {}).get(
+                    (period, name, kind), ()
+                )
+            )
+            # Actual Q/F reads next-period Full continuation, even when no
+            # subject ever occupies this current-period query context.
+            work.extend(
+                (False, period + 1, target, f"the continuation of {kind}[{name}]")
+                for target in (
+                    *support["solution"].get(name, {}).get(period, ()),
+                    *value_reads["solution"].get(name, {}).get(period, ()),
+                )
+            )
+            work.extend(
+                (False, period, target, f"a stored reference of {kind}[{name}]")
+                for target in same_period_refs_by_regime.get(name, ())
+            )
+            continue
         physical, period, name, requester = work.popleft()
         done = visited if physical else valued
         if (period, name) in done:
@@ -559,6 +675,35 @@ def resolve_demand(
                 )
             )
         done.add((period, name))
+        query_work.extend(
+            (required_phase, period, target, kind)
+            for target, kind in policy_reads_by_phase.get(required_phase, {}).get(
+                (period, name, "Full"), ()
+            )
+        )
+        if physical:
+            for target in exit_targets_by_period.get((period, name), ()):
+                if (period, target) in acting:
+                    continue
+                acting.add((period, target))
+                work.extend(
+                    (True, period + 1, successor, f"the final exit actor {target!r}")
+                    for successor in (
+                        *support["simulation"].get(target, {}).get(period, ()),
+                        *schedules.landings_by_regime.get(target, {}).get(period, ()),
+                    )
+                )
+                work.extend(
+                    (
+                        False,
+                        period + 1,
+                        reference,
+                        f"the routing of final exit actor {target!r}",
+                    )
+                    for reference in value_reads["simulation"]
+                    .get(target, {})
+                    .get(period, ())
+                )
         here = f"the transition out of ({ages.exact_values[period]}, '{name}')"
         if physical:
             work.append((False, period, name, requester))
@@ -616,14 +761,22 @@ def resolve_demand(
         ),
         support_by_phase=MappingProxyType(
             {
-                "solution": _restricted(by_regime=support["solution"], keep=valued),
+                "solution": _restricted(
+                    by_regime=support["solution"],
+                    keep=valued
+                    | {(p, n) for nodes in queried.values() for p, n, _ in nodes},
+                ),
                 "simulation": _restricted(
-                    by_regime=support["simulation"], keep=visited
+                    by_regime=support["simulation"], keep=visited | acting
                 ),
             }
         ),
         valued_nodes=frozenset(valued),
         visited_nodes=frozenset(visited),
+        query_nodes_by_phase=MappingProxyType(
+            {phase: frozenset(nodes) for phase, nodes in queried.items()}
+        ),
+        exit_acting_nodes=frozenset(acting),
     )
 
 

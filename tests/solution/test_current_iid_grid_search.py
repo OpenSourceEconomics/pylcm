@@ -559,6 +559,7 @@ def _correlated_model() -> Model:
     )
 
 
+@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
 @pytest.mark.parametrize("rho", [0.0, 0.6, 1.0, -1.0])
 def test_runtime_correlation_is_a_dynamic_admitted_native_operand(rho: float) -> None:
     """Interior and exact singular supports use the supplied physical covariance."""
@@ -1746,6 +1747,7 @@ def _active_diagonal_value(
     return jnp.where((first == 0) & (second == 0), third, 0.0)
 
 
+@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
 @pytest.mark.parametrize("runtime", [False, True])
 @pytest.mark.parametrize("compiled", [False, True])
 def test_exact_positive_correlation_cannot_publish_a_collapsed_active_pivot(
@@ -1778,6 +1780,9 @@ def test_exact_positive_correlation_cannot_publish_a_collapsed_active_pivot(
         edges={},
         shocks={"joint": group},
         enable_jit=compiled,
+        execution_config=ExecutionConfig()
+        if compiled
+        else ExecutionConfig(device_memory_bytes=None),
     )
     try:
         result = model.solve(
@@ -1790,6 +1795,7 @@ def test_exact_positive_correlation_cannot_publish_a_collapsed_active_pivot(
     assert float(result.values[0]["alive"]) > 0
 
 
+@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
 @pytest.mark.parametrize("runtime", [False, True])
 @pytest.mark.parametrize("compiled", [False, True])
 def test_public_group_correlation_cannot_label_a_collapsed_pivot_valid(

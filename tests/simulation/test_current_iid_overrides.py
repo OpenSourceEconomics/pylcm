@@ -33,8 +33,6 @@ from lcm.shocks import (
 from lcm.typing import BoolND, FloatND, IntND, ScalarInt
 from tests.test_shock_overrides import _keys, _plan
 
-pytestmark = pytest.mark.coverage(backends=("cpu",), precisions="both")
-
 
 @categorical(ordered=False)
 class _Regimes:
@@ -117,6 +115,7 @@ def test_public_path_tag_binds_the_current_law(*, base: bool, budgeted: bool) ->
             )
 
 
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
 def test_public_entry_is_dated_and_path_tag_takes_precedence() -> None:
     """Only actual entry cells consume entry inputs, in original caller order."""
     model = _model()
@@ -164,6 +163,7 @@ def test_public_entry_is_dated_and_path_tag_takes_precedence() -> None:
     np.testing.assert_array_equal(overridden["eps"], 3.0)
 
 
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
 def test_untagged_current_iid_path_has_a_migration_error() -> None:
     with pytest.raises(
         InvalidSimulationInputError, match=r"BaseInnovations|PhysicalValues"
@@ -180,6 +180,7 @@ def test_untagged_current_iid_path_has_a_migration_error() -> None:
         )
 
 
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
 def test_wrapped_original_buffer_is_charged_before_conversion() -> None:
     """A wrapper cannot hide its existing device allocation from entry admission."""
     original = jnp.ones(8)
@@ -288,6 +289,7 @@ def test_subject_vmap_keeps_inactive_inverse_arithmetic_and_gradients_safe(
     np.testing.assert_array_equal(actual, expected)
 
 
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
 def test_superseded_physical_cell_does_not_undo_an_active_correlated_base() -> None:
     group = ShockGroup(
         shocks={"x": Normal(mu=0, sigma=1), "y": Normal(mu=0, sigma=1)},
@@ -314,11 +316,13 @@ def test_superseded_physical_cell_does_not_undo_an_active_correlated_base() -> N
     np.testing.assert_array_equal(actual.physical["y"], expected.physical["y"])
 
 
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
 def test_tagged_inputs_refuse_narrowing_before_public_consumption() -> None:
     with pytest.raises(ShockDeclarationError, match="narrow"):
         PhysicalValues(values=np.ones(3, dtype=np.int64))
 
 
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
 @pytest.mark.parametrize("masked", [False, True])
 def test_physical_dtype_precedes_inactive_sanitization(*, masked: bool) -> None:
     group = ShockGroup(shocks={"x": Normal(mu=0, sigma=1)}, nodes=MonteCarlo(2, seed=7))
@@ -333,6 +337,7 @@ def test_physical_dtype_precedes_inactive_sanitization(*, masked: bool) -> None:
         )
 
 
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
 def test_public_partial_correlated_frame_has_an_explicit_refusal() -> None:
     group = ShockGroup(
         shocks={"eps": Normal(mu=0, sigma=1), "other": Normal(mu=0, sigma=1)},
@@ -354,6 +359,7 @@ def test_public_partial_correlated_frame_has_an_explicit_refusal() -> None:
         )
 
 
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
 @pytest.mark.parametrize("shape", [(), (4, 3), (2,)])
 def test_public_path_shape_and_coverage_are_explicit(shape: tuple[int, ...]) -> None:
     with pytest.raises(InvalidSimulationInputError, match=r"shape|cover"):
@@ -373,6 +379,7 @@ def test_public_path_shape_and_coverage_are_explicit(shape: tuple[int, ...]) -> 
         )
 
 
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
 def test_unknown_tagged_name_is_not_ignored() -> None:
     with pytest.raises(InvalidSimulationInputError, match="not a named current-IID"):
         _model().simulate(
@@ -415,6 +422,7 @@ def test_budgeted_call_cache_retains_tag_schema_without_freezing_values() -> Non
         np.testing.assert_array_equal(frame["eps"], expected)
 
 
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
 def test_unread_path_prefix_does_not_consume_invalid_values() -> None:
     dtype = jnp.asarray(0.0).dtype
     paths = np.asarray([[np.nan, np.nan, 5], [1, 2, 3], [np.nan, 4, 6]], dtype=dtype)

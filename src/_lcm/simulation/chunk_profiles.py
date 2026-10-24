@@ -60,6 +60,7 @@ from _lcm.simulation.current_iid_overrides import CurrentIIDOverrideSchema
 from _lcm.simulation.diagnostic_operations import diagnostic_bindings
 from _lcm.simulation.dissolution_route import empty_gated_entries, record_open_entries
 from _lcm.simulation.entry_allocations import _pad_initial_leaf
+from _lcm.simulation.exit_profiles import profile_exit_period
 from _lcm.simulation.forward_program_profiles import (
     ForwardProgramProfile,
     _profile_program,
@@ -264,6 +265,8 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     ) as wave:
         for period in range(ages.n_periods):
             for name, regime in forward_regimes[period].items():
+                if period in regime.simulation.exit_queries:
+                    continue
                 profile_forward_unit(
                     runtime=runtime,
                     regimes=regimes,
@@ -340,8 +343,32 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
             subject_arg_names=("regime_ids",),
             subject_outputs=True,
         )
+        carrier, regime_ids, own_roles, prepared_exits = profile_exit_period(
+            inventory=inventory,
+            regimes=regimes,
+            period=period,
+            states=carrier,
+            regime_ids=regime_ids,
+            roles=own_roles,
+            regime_names_to_ids=regime_names_to_ids,
+            flat_params=flat_params,
+            values=values,
+            ages=ages,
+            key=key,
+            taste_key=taste_key,
+            n_subjects=n_subjects,
+            widths=widths,
+        )
         pending = payload_bytes(
-            tree=(carrier, regime_ids, own_roles, entries, key, taste_key)
+            tree=(
+                carrier,
+                regime_ids,
+                own_roles,
+                entries,
+                key,
+                taste_key,
+                prepared_exits,
+            )
         )
         inventory.close_unit()
         new_ids = regime_ids
@@ -365,6 +392,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                 taste_key=taste_key,
                 policy=(policies or {}).get(period, {}).get(name),
                 current_iid_override_schema=current_iid_override_schema,
+                prepared_decision=prepared_exits.get(name),
             )
             mask = inventory.operation(
                 function=_regime_mask,
@@ -372,7 +400,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                 subject_arg_names=("regime_ids",),
                 subject_outputs=True,
             )
-            if regime.has_taste_shocks:
+            if name not in prepared_exits and regime.has_taste_shocks:
                 _profile_taste(
                     inventory=inventory,
                     key=key,
@@ -380,7 +408,10 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                     width=n_subjects,
                     scalar_int=scalar_int,
                 )
-            if regime.simulation.current_iid_draw_plan is not None:
+            if (
+                name not in prepared_exits
+                and regime.simulation.current_iid_draw_plan is not None
+            ):
                 for _ in regime.simulation.current_iid_draw_plan.physical_names:
                     inventory.operation(
                         function=draw_window_keys,
@@ -403,7 +434,27 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                         subject_outputs=True,
                     )
             physical = {}
-            if regime.simulation.replay_route.consumer_route == "nnbegm_finite":
+            if name in prepared_exits:
+                indices, value, physical = prepared_exits[name]
+                inventory.operation(
+                    function=_first_empty_action_row,
+                    arguments={"indices": indices, "in_regime": mask},
+                    subject_arg_names=("indices", "in_regime"),
+                )
+                decoder = cores["action_decode"]
+                actions = inventory.compiled(
+                    name="_lookup_values_from_indices",
+                    executable=decoder.executable,
+                    memory=decoder.memory,
+                    arguments=decoder.arguments,
+                )
+                fallback = inventory.operation(
+                    function=_empty_fallback,
+                    arguments={"mask": mask},
+                    subject_arg_names=("mask",),
+                    subject_outputs=True,
+                )
+            elif regime.simulation.replay_route.consumer_route == "nnbegm_finite":
                 bank = cast(
                     "tuple[jax.ShapeDtypeStruct, ...]",
                     _record_core(
@@ -1303,6 +1354,8 @@ def _period_copy_reservation(
             regime.simulation.programs.forward_decision,
             regime.simulation.programs.gate_fold,
             regime.simulation.programs.gate_route,
+            regime.simulation.programs.exit_full,
+            regime.simulation.programs.exit_participating,
         )
         if period in family
         for read in family[period].requirements.value_reads

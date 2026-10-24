@@ -753,7 +753,13 @@ def transition_random_addresses(
         target, _, transition = name.partition("__")
         state = transition.removeprefix("next_")
         grid = regimes.get(target, regime).simulation.grids.get(state)
-        if isinstance(grid, _JointNormalCoordinate):
+        plan = regime.simulation.transition_plans.get(target)
+        lottery = None if plan is None else plan.lotteries.get(transition)
+        if lottery is not None and lottery.original_layout is not None:
+            # Splitting storage into fixed/rest codes does not rename the
+            # authored lottery or change its original-slot sampling address.
+            identity = lottery.original_layout.state_name
+        elif isinstance(grid, _JointNormalCoordinate):
             coordinate = int(state.removeprefix(f"{grid.group}_normal_"))
             identity = grid.joint.states[coordinate]
         else:

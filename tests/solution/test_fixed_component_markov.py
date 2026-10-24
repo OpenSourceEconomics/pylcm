@@ -199,9 +199,11 @@ def _model(
         states=model_states,
         state_transitions=model_laws,
         execution_config=ExecutionConfig(
+            # Eager execution cannot infer compiler-derived memory admission.
+            device_memory_bytes="device" if enable_jit else None,
             sharded_states=(("kind_health_fixed" if factored else "kind"),)
             if sharded
-            else ()
+            else (),
         ),
         initial_nodes={0: ("alive", "dead")},
         edges={

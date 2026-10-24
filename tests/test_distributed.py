@@ -757,7 +757,9 @@ def test_planned_solve_rejects_a_replicated_output_injected_after_kernel_call(
 
     monkeypatch.setattr(backward_induction, "_run_period_kernel", emit_replicated_V)
 
-    with pytest.raises(AssertionError, match="post-run repair is not permitted"):
+    with pytest.raises(
+        AssertionError, match=r"An assembled period value.*is not its template"
+    ):
         model.solve(
             log_level="off",
             params={"discount_factor": 0.95},

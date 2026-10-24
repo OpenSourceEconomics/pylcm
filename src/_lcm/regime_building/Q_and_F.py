@@ -841,6 +841,7 @@ class _QAndF:
         # the state-independent F here and ANDs its value constraints in only
         # after computing Q^s.
         U_arr, F_arr = cast("tuple[FloatND, BoolND]", utilities_and_F)
+        U_arr = jnp.asarray(U_arr)
         CE, _, *landing_counts = self.compute_CE(
             next_regime_to_V_arr=next_regime_to_V_arr,
             zero=jnp.zeros_like(U_arr),

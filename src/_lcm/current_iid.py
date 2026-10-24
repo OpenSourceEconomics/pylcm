@@ -6,7 +6,7 @@ and mandatory integrity summaries cross the native program boundary.
 
 import inspect
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 from fractions import Fraction
 from functools import partial
 from itertools import product
@@ -29,13 +29,17 @@ from lcm.shocks import (
     BaseInnovations,
     Discrete,
     LawValue,
+    LogNormal,
     NodeSet,
+    Normal,
+    NormalMixture,
     PhysicalValues,
     ShockGroupName,
     ShockName,
     ShockOverride,
     ShockReader,
     Uniform,
+    _resolve_parameter,
 )
 from lcm.typing import (
     BoolND,
@@ -62,6 +66,23 @@ type CurrentIIDDrawOutput = tuple[
 type NodeOperands = Mapping[
     ShockGroupName, Mapping[str, FloatND | Mapping[ShockName, IntND]]
 ]
+type AdmittedGroupParams = Mapping[
+    ShockGroupName, Mapping[ReferenceName, LawValue | BoolND]
+]
+
+
+def law_parameters(
+    *, params: Mapping[ReferenceName, LawValue | BoolND]
+) -> Mapping[ReferenceName, LawValue]:
+    """Separate the engine's admitted support marker from scientific operands."""
+    return cast(
+        "Mapping[ReferenceName, LawValue]",
+        {
+            name: value
+            for name, value in params.items()
+            if name != CORRELATION_SUPPORT_ARGUMENT
+        },
+    )
 
 
 class CurrentIIDDrawFrame(NamedTuple):
@@ -75,10 +96,16 @@ class CurrentIIDDrawFrame(NamedTuple):
     physical: Mapping[ShockName, FloatND | IntND]
     addressed_bases: Mapping[ShockName, FloatND]
     held_bases: Mapping[ShockName, FloatND]
-    source_params: Mapping[ShockGroupName, Mapping[ReferenceName, LawValue | BoolND]]
+    source_params: AdmittedGroupParams
     source_inputs: Mapping[ShockGroupName, Mapping[ReferenceName, LawValue]]
     recovery_error: Mapping[ShockName, FloatND]
     valid: BoolND
+    information_available: Mapping[ShockName, BoolND] = MappingProxyType({})
+    """Active producing observation context, separate from I/J and informativeness.
+
+    Empty means an ordinary produced frame. False entries accompany shape-only
+    inactive observer payloads and cannot reveal an independent innovation.
+    """
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -116,9 +143,7 @@ class CurrentIIDDrawPlan:
         self,
         *,
         keys: Mapping[ShockName, PRNGKeyND],
-        group_params: Mapping[
-            ShockGroupName, Mapping[ReferenceName, LawValue | BoolND]
-        ],
+        group_params: AdmittedGroupParams,
         arguments: Mapping[ReferenceName, PytreeValue],
         overrides: Mapping[ShockName, ShockOverride] = MappingProxyType({}),
         override_active: Mapping[ShockName, BoolND] = MappingProxyType({}),
@@ -494,7 +519,7 @@ class CurrentIIDPlan:
         self,
         *,
         arguments: Mapping[ReferenceName, QAndFArg],
-        group_params: Mapping[ShockGroupName, Mapping[ReferenceName, LawValue]],
+        group_params: AdmittedGroupParams,
         node_operands: NodeOperands,
         indices: IntND,
     ) -> tuple[Mapping[ShockName, FloatND | IntND], FloatND, ScalarBool]:
@@ -503,7 +528,39 @@ class CurrentIIDPlan:
         Query consumers retain node-level action identities. Ordinary integration
         consumes this same realization before reducing its selected values.
         """
+        frame, factors = self.realise_information_nodes(
+            arguments=arguments,
+            group_params=group_params,
+            node_operands=node_operands,
+            indices=indices,
+        )
+        return frame.physical, factors, frame.valid
+
+    def realise_information_nodes(
+        self,
+        *,
+        arguments: Mapping[ReferenceName, QAndFArg],
+        group_params: Mapping[
+            ShockGroupName, Mapping[ReferenceName, LawValue | BoolND]
+        ],
+        node_operands: NodeOperands,
+        indices: IntND,
+        observation: CurrentIIDDrawFrame | None = None,
+        observed: frozenset[ShockName] = frozenset(),
+        source_bindings: Mapping[ShockGroupName, ShockBinding] = MappingProxyType({}),
+    ) -> tuple[CurrentIIDDrawFrame, FloatND]:
+        """Project original hidden rows while fixing admitted physical information.
+
+        Categorical observations fix a code, never the held uniform. Their exact
+        enumeration axis is reduced through its first representative, without a
+        division by event mass. Thus null solve categories keep their finite
+        boundary values and the caller retains its own probability derivative.
+        """
         physical: dict[ShockName, FloatND | IntND] = {}
+        addressed = {}
+        held = {}
+        source_params = {}
+        source_inputs = {}
         factors = []
         valid = jnp.asarray(a=True, dtype=jnp.bool_)
         for column, (name, binding, fixed_nodes) in enumerate(self.bindings):
@@ -521,6 +578,75 @@ class CurrentIIDPlan:
                 if key != CORRELATION_SUPPORT_ARGUMENT
             }
             inputs = _law_inputs(binding=binding, arguments=arguments, params=params)
+            base = nodes.base_nodes
+            observed_codes = {}
+            representatives = {}
+            selected = observed & binding.group.shocks.keys()
+            if observation is not None and selected:
+                source = source_bindings.get(name, binding)
+                available = jnp.any(
+                    jnp.stack(
+                        tuple(
+                            observation.information_available.get(
+                                shock, jnp.asarray(a=True)
+                            )
+                            for shock in selected
+                        )
+                    )
+                )
+                informative = jax.lax.cond(
+                    available,
+                    lambda source=source, name=name: law_informativeness(
+                        binding=source,
+                        params=law_parameters(params=observation.source_params[name]),
+                        inputs=observation.source_inputs[name],
+                    ),
+                    lambda source=source: MappingProxyType(
+                        {shock: jnp.asarray(a=False) for shock in source.group.shocks}
+                    ),
+                )
+                mask = jnp.stack(
+                    tuple(
+                        informative[shock]
+                        & (shock in selected)
+                        & observation.information_available.get(
+                            shock, jnp.asarray(a=True)
+                        )
+                        for shock in binding.group.shocks
+                    )
+                )
+                identity = binding.group._has_identity_correlation(params=params)  # noqa: SLF001 - shared exact current-binding proof
+                valid &= identity | jnp.all(mask) | ~jnp.any(mask)
+                valid &= observation.valid
+                for axis, (shock, law) in enumerate(binding.group.shocks.items()):
+                    if shock not in selected:
+                        continue
+                    active = observation.information_available.get(
+                        shock, jnp.asarray(a=True)
+                    )
+                    if isinstance(law, Discrete):
+                        observed_codes[shock] = jnp.where(
+                            active,
+                            observation.physical[shock],
+                            nodes.discrete_codes[shock],
+                        )
+                        representatives[shock] = (
+                            active,
+                            nodes.discrete_codes[shock] == 0,
+                        )
+                    else:
+                        base = base.at[:, axis].set(
+                            jnp.where(
+                                informative[shock] & active,
+                                observation.held_bases[shock],
+                                base[:, axis],
+                            )
+                        )
+                nodes = replace(
+                    nodes,
+                    base_nodes=base,
+                    discrete_codes={**nodes.discrete_codes, **observed_codes},
+                )
             realised, group_factors = binding.group._realise(  # noqa: SLF001 - shared internal law kernel
                 base_nodes=nodes.base_nodes,
                 nodes=nodes,
@@ -533,9 +659,41 @@ class CurrentIIDPlan:
             )
             row = indices[:, column]
             physical.update({key: value[row] for key, value in realised.values.items()})
+            categorical_axis = 1
+            group_factors = list(group_factors)
+            for shock, law in binding.group.shocks.items():
+                if isinstance(law, Discrete):
+                    if shock in representatives:
+                        active, representative = representatives[shock]
+                        group_factors[categorical_axis] = jnp.where(
+                            active,
+                            representative.astype(nodes.weights.dtype),
+                            group_factors[categorical_axis],
+                        )
+                    categorical_axis += 1
+            for axis, shock in enumerate(binding.group.shocks):
+                addressed[shock] = cast("FloatND", node_operands[name]["base"])[
+                    row, axis
+                ]
+                held[shock] = nodes.base_nodes[row, axis]
+            source_params[name] = supplied
+            source_inputs[name] = inputs
             factors.extend(factor[row] for factor in group_factors)
             valid &= realised.valid & law_input_validity(binding=binding, inputs=inputs)
-        return MappingProxyType(physical), jnp.stack(factors), valid
+        return (
+            CurrentIIDDrawFrame(
+                physical=physical,
+                addressed_bases=addressed,
+                held_bases=held,
+                source_params=source_params,
+                source_inputs=source_inputs,
+                recovery_error={
+                    name: jnp.zeros_like(value) for name, value in held.items()
+                },
+                valid=valid,
+            ),
+            jnp.stack(factors),
+        )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -549,7 +707,7 @@ class _CurrentIIDExpectation:
 
     def __call__(self, **kwargs: QAndFArg) -> tuple[FloatND, BoolND, ScalarBool]:
         group_params = cast(
-            "Mapping[ShockGroupName, Mapping[ReferenceName, LawValue]]",
+            "Mapping[ShockGroupName, Mapping[ReferenceName, LawValue | BoolND]]",
             kwargs[CURRENT_IID_ARGUMENT],
         )
         node_operands = cast(
@@ -632,3 +790,39 @@ def _law_inputs(
                 }
             )
     return MappingProxyType(inputs)
+
+
+def law_informativeness(
+    *,
+    binding: ShockBinding,
+    params: Mapping[ReferenceName, LawValue],
+    inputs: Mapping[ReferenceName, LawValue],
+) -> Mapping[ShockName, BoolND]:
+    """Distinguish mathematical physical signals from held random addresses.
+
+    This is an exact structural decision in the active represented parameters,
+    not an inverse of rounded physical bits. The producing forward law remains
+    responsible for parameter/factor/numerical validity. A categorical observation
+    names its category, never its held common-uniform coordinate.
+    """
+    informative = {}
+    for name, law in binding.group.shocks.items():
+        parameters = {
+            item.name: _resolve_parameter(
+                value=getattr(law, item.name),
+                name=f"{name}__{item.name}",
+                params=params,
+                inputs=inputs,
+            )
+            for item in fields(law)
+            if item.name != "categories"
+        }
+        if isinstance(law, Normal | LogNormal):
+            informative[name] = parameters["sigma"] > 0
+        elif isinstance(law, Uniform):
+            informative[name] = parameters["stop"] > parameters["start"]
+        elif isinstance(law, NormalMixture | Discrete):
+            informative[name] = jnp.asarray(a=True)
+        else:
+            raise TypeError(f"Unrepresented physical information for {name!r}.")
+    return MappingProxyType(informative)

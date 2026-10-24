@@ -63,6 +63,7 @@ from _lcm.model_graph import (
     ModelGraph,
     bind_edge_laws,
     collect_declared_transitions,
+    demanded_exit_function_paths,
     naming_cells_without_edges,
     prepare_graph,
 )
@@ -552,6 +553,8 @@ def _simulation_programs(
             programs.transition,
             programs.route,
             programs.policy_prepare,
+            programs.exit_full,
+            programs.exit_participating,
         ):
             yield from family.values()
 
@@ -1147,7 +1150,7 @@ class Model:
         merged_regimes = {
             name: (
                 regime
-                if schedules.visited_periods_by_regime[name]
+                if schedules.simulation_context_periods_by_regime[name]
                 else project_onto_solve_phase(regime)
             )
             for name, regime in merged_regimes.items()
@@ -1162,8 +1165,8 @@ class Model:
             broadcast_variables=broadcast_variables,
             koopmans_aggregator=koopmans_aggregator,
             ages=self._time,
-            active_periods_by_regime=schedules.coverage_by_regime,
-            visited_periods_by_regime=schedules.visited_periods_by_regime,
+            active_periods_by_regime=schedules.context_periods_by_regime,
+            visited_periods_by_regime=schedules.simulation_context_periods_by_regime,
             discrete_names=discrete_names,
         )
         pruned_regimes, draw_only_processes = split_transition_only_folds(
@@ -1172,7 +1175,7 @@ class Model:
             laws=laws,
             koopmans_aggregator=koopmans_aggregator,
             ages=self._time,
-            active_periods_by_regime=schedules.coverage_by_regime,
+            active_periods_by_regime=schedules.context_periods_by_regime,
         )
         # Removal is regime-local; initialization preserves names another regime keeps.
         self._transition_only_shock_names = frozenset(
@@ -1248,9 +1251,9 @@ class Model:
             regime_id_class=regime_id_class,
             broadcast_variables=broadcast_variables,
             ages=self._time,
-            active_periods_by_regime=schedules.coverage_by_regime,
+            active_periods_by_regime=schedules.context_periods_by_regime,
             targets_by_phase=schedules.targets_by_phase,
-            visited_periods_by_regime=schedules.visited_periods_by_regime,
+            visited_periods_by_regime=schedules.simulation_context_periods_by_regime,
             removed_edge_reads=prepared_graph.removed_edge_reads,
             declared_function_regimes=declared_function_regimes,
             generated_function_names={
@@ -1300,13 +1303,19 @@ class Model:
             execution=self._execution, user_regimes=self.user_regimes, laws=laws
         )
         prepared_structure = prepare_model_structure(
+            original_periods_by_regime=schedules.visited_periods_by_regime,
+            exit_function_demand=demanded_exit_function_paths(
+                regimes=self.user_regimes, schedules=schedules, ages=self._time
+            ),
+            value_periods_by_regime=schedules.coverage_by_regime,
+            query_periods_by_phase=schedules.query_periods_by_phase,
             user_regimes=self.user_regimes,
             laws=laws,
             ages=self._time,
-            active_periods_by_regime=schedules.coverage_by_regime,
+            active_periods_by_regime=schedules.context_periods_by_regime,
             support_by_phase=schedules.support_by_phase,
             gated_source_periods=gated_source_periods(schedules=schedules),
-            visited_periods_by_regime=schedules.visited_periods_by_regime,
+            visited_periods_by_regime=schedules.acting_periods_by_regime,
             declared_transitions=self._declared_transitions,
             declared_edge_vocabulary=declared_edge_vocabulary,
             draw_only_processes=draw_only_processes,
@@ -3672,6 +3681,18 @@ class Model:
           policy.
         """
         reasons = []
+        if any(
+            period not in self._regimes[name].simulation.exit_queries
+            or self._regimes[name].simulation.exit_queries[period].full is None
+            for name, declaration in self.user_regimes.items()
+            if declaration.exits
+            for period in self._regimes[name].simulation.programs.decision
+            if (self._time.exact_values[period], name) in self._graph.visited_nodes
+        ):
+            raise UnsupportedOperationError(
+                "Current-period exit simulation requires bound native "
+                "exit query programs."
+            )
         for regime_name, regime in self._regimes.items():
             route = regime.simulation.replay_route
             if route.replay_mode is not ReplayMode.UNSUPPORTED:
@@ -3857,6 +3878,13 @@ class Model:
                 names=frozenset(self._shock_registry.innovations),
             )
         )
+        if (current_entries or current_paths) and any(
+            declaration.exits for declaration in self.user_regimes.values()
+        ):
+            raise UnsupportedOperationError(
+                "Tagged current-IID overrides with exits require mapped-query "
+                "history coverage and original-row custody during routing."
+            )
         initial_conditions = lower_initial_time(
             initial_conditions=self._encode_initial_values(
                 initial_conditions=initial_conditions,
@@ -5384,7 +5412,7 @@ class Model:
         self._validated_selection_params.add(digest)
 
     # keyword-only-exempt: primary-argument=params
-    def _process_params(  # noqa: C901 - parameter admission includes exit readiness
+    def _process_params(
         self,
         params: UserParams,
         *,
@@ -5399,10 +5427,6 @@ class Model:
         the dtype cast walks a uniform tree (no `pd.Series` to special-
         case).
         """
-        if any(regime.exits for regime in self.user_regimes.values()):
-            raise UnsupportedOperationError(
-                "Current-period exit execution requires native exit lowering."
-            )
         group_params = {
             name: value for name, value in params.items() if name in self.shocks
         }

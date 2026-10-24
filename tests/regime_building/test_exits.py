@@ -4,12 +4,13 @@ from collections.abc import Mapping
 from dataclasses import FrozenInstanceError, dataclass
 from typing import ClassVar
 
+import numpy as np
 import pytest
 
 import lcm
 from _lcm.grids import Grid
 from lcm import Consent, Counterparty, Exit, ExitTarget, Model, RuleResult
-from lcm.exceptions import RegimeInitializationError, UnsupportedOperationError
+from lcm.exceptions import RegimeInitializationError
 from lcm.exits import ExitRule
 from lcm.typing import BoolND, FloatND, IntND, UserParams
 
@@ -210,13 +211,13 @@ def test_exit_only_state_and_phase_parameters_remain_declared() -> None:
     assert "wealth" in model.user_regimes["source"].states
 
 
-def test_unlowered_exit_model_cannot_silently_run_a_stay_only_problem() -> None:
-    """An unlowered declaration cannot silently run a different economic problem."""
-    with pytest.raises(UnsupportedOperationError, match=r"exit.*lowering"):
-        _declared_model().solve(
-            params={"share": 0.5, "realized_share": 0.5, "threshold": 0.0, "cost": 0.0},
-            log_level="off",
-        )
+def test_bound_exit_model_cannot_silently_run_a_stay_only_problem() -> None:
+    """The public declaration's superior outside option changes its Full value."""
+    solution = _declared_model().solve(
+        params={"share": 1.0, "realized_share": 1.0, "threshold": 0.0, "cost": 0.0},
+        log_level="off",
+    )
+    np.testing.assert_array_equal(solution.values[0]["source"], [1.0, 1.0, 2.0])
 
 
 def _switch_wealth(wealth: FloatND) -> FloatND:

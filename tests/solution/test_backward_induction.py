@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
+from _lcm.current_iid import CurrentIIDPlan
 from _lcm.engine import Regime, StateActionSpace, placed_devices_for_ids
 from _lcm.execution.core_program import (
     CoreExecutionDisposition,
@@ -68,6 +69,9 @@ class MockSolutionPhase:
     `StateActionSpace` this mock hands out — a mock that claims axes the space
     does not carry makes the V topology and the rank rule disagree.
     """
+    current_iid_plans: MappingProxyType[int, CurrentIIDPlan | None] = dataclasses.field(
+        default_factory=lambda: MappingProxyType({})
+    )
     sharded_state_names: frozenset[StateOrActionName] = frozenset()
     """These dense fixture state axes have no declared device sharding."""
     action_partitions: int = 1

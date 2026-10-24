@@ -84,6 +84,8 @@ from _lcm.simulation.dissolution_route import (
     reroute_rows_without_feasible_action,
     rows_of,
 )
+from _lcm.simulation.exit_replay import prepare_exit_period
+from _lcm.simulation.exits import PreparedExitDecision
 from _lcm.simulation.gated_routing import (
     GatedRouteDelta,
     commit_gated_route_delta,
@@ -1023,6 +1025,33 @@ def _simulate_subject_chunk(  # noqa: PLR0915
         if memory is not None:
             memory.period_owner = owner
 
+        states, subject_regime_ids, own_stakeholder, prepared_exits = (
+            prepare_exit_period(
+                regimes=regimes,
+                period=period,
+                states=states,
+                regime_ids=subject_regime_ids,
+                roles=own_stakeholder,
+                regime_names_to_ids=regime_names_to_ids,
+                flat_params=flat_params,
+                ages=ages,
+                values=period_to_regime_to_V_arr,
+                owner=owner,
+                key=key,
+                subject_slice=subject_slice,
+                original_n_subjects=n_subjects
+                if original_n_subjects is None
+                else original_n_subjects,
+                memory=memory,
+                taste_key=taste_key,
+                taste_addresses=taste_addresses,
+            )
+        )
+        # Current exits are simultaneous. The scheduled transition accumulators
+        # start from final acting membership, after every original choice froze.
+        new_subject_regime_ids = subject_regime_ids
+        new_own_stakeholder = own_stakeholder
+
         ran_this_period: list[RegimeName] = []
         for regime_name, regime in active_regimes.items():
             dispatched_regime = _bind_unit_executor(
@@ -1040,6 +1069,7 @@ def _simulate_subject_chunk(  # noqa: PLR0915
                     source_roles,
                     entered_through,
                     new_entered_through,
+                    prepared_exits,
                 ),
             )
             (
@@ -1121,6 +1151,7 @@ def _simulate_subject_chunk(  # noqa: PLR0915
                 process_code_reads=process_code_reads,
                 dissolution_records=dissolution_records,
                 ran_this_period=tuple(ran_this_period),
+                prepared_decision=prepared_exits.get(regime_name),
             )
             ran_this_period.append(regime_name)
             states = new_states
@@ -1144,6 +1175,7 @@ def _simulate_subject_chunk(  # noqa: PLR0915
                 ).close()
                 memory.close_unit()
 
+        del prepared_exits
         owner.finish()
         if memory is not None:
             memory.period_owner = None
@@ -1714,6 +1746,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
     ] = MappingProxyType({}),
     dissolution_records: list[DissolutionFallback] | None = None,
     ran_this_period: tuple[RegimeName, ...] = (),
+    prepared_decision: PreparedExitDecision | None = None,
 ) -> tuple[
     PeriodRegimeSimulationData,
     StatesPerRegime,
@@ -1797,6 +1830,8 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             runtime checks are on.
         ran_this_period: The regimes that already ran this period. A row whose
             dissolution route leads into one of them cannot act this period.
+        prepared_decision: Final actions already selected by the immutable
+            original-subject exit pass, or `None` for an ordinary decision.
 
     Returns:
         Tuple containing:
@@ -1949,7 +1984,24 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
     direct_nnbegm_replay = replay_route.consumer_route == "nnbegm_finite" and (
         isinstance(sim_policy, NNBEGMSimPolicy)
     )
-    if built_reader is not None:
+    current_shocks: Mapping[str, FloatND | IntND] = MappingProxyType({})
+    if prepared_decision is not None:
+        # The immutable original-source pass already made the one Full choice
+        # and revealed a mover's final Participating action. Only this final
+        # actor advances below; it must never make another Full decision here.
+        current_shocks = prepared_decision.physical
+        V_arr = prepared_decision.value
+        optimal_actions = run_simulation_operation(
+            memory=memory,
+            function=_lookup_values_from_indices,
+            arguments={
+                "flat_indices": prepared_decision.indices,
+                "grids": state_action_space.actions,
+            },
+            subject_arg_names=("flat_indices",),
+        )
+        nested_fallback = None
+    elif built_reader is not None:
         optimal_actions, V_arr = _read_external_replay(
             reader=built_reader,
             regime_name=regime_name,
@@ -2000,7 +2052,6 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             )
             taste_shock_kwargs = {"taste_shock_key": gumbel_keys}
 
-        current_shocks: Mapping[str, FloatND | IntND] = MappingProxyType({})
         current_iid_keys = MappingProxyType({})
         if regime.simulation.current_iid_draw_plan is not None:
             if not isinstance(subject_slice, slice):

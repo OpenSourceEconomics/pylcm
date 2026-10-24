@@ -7,7 +7,12 @@ from typing import cast
 
 from lcm.exits import Consent, Exit
 from lcm.phased import Phased
-from lcm.typing import Phase, UserFunction
+from lcm.typing import Phase, RegimeName, UserFunction
+
+type ExitFunctionPath = tuple[str, ...]
+type ExitFunctionDemand = Mapping[
+    RegimeName, Mapping[Phase, frozenset[ExitFunctionPath]]
+]
 
 
 def rule_operands(*, stakeholders: tuple[str, ...] | None) -> frozenset[str]:

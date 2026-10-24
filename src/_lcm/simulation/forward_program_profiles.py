@@ -63,6 +63,11 @@ type _FiniteDecisionOutput = tuple[
     jax.ShapeDtypeStruct,
     jax.ShapeDtypeStruct,
 ]
+type PreparedDecisionProfile = tuple[
+    jax.ShapeDtypeStruct,
+    jax.ShapeDtypeStruct,
+    Mapping[str, jax.ShapeDtypeStruct],
+]
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -178,6 +183,7 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
     policy: SimulationPolicy | None = None,
     wave: CompilationWave | None = None,
     current_iid_override_schema: CurrentIIDOverrideSchema = (),
+    prepared_decision: PreparedDecisionProfile | None = None,
 ) -> Mapping[str, ForwardProgramProfile]:
     """Bind one actual current carrier to its decision, transition and route.
 
@@ -340,7 +346,25 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
             sharding=subject,
         )
     )
-    if regime.simulation.replay_route.consumer_route == "nnbegm_finite":
+    if prepared_decision is not None:
+        indices, _, current_shocks = prepared_decision
+        decoder_arguments = {
+            "flat_indices": indices,
+            "grids": _shared_tree(tree=base.actions, devices=devices),
+        }
+        decoded = runtime.operations.prepare_abstract(
+            function=_lookup_values_from_indices,
+            arguments=decoder_arguments,
+            subject_arg_names=("flat_indices",),
+            devices=devices,
+        )
+        profiles["action_decode"] = ForwardProgramProfile(
+            executable=decoded.executable,
+            memory=decoded.memory,
+            arguments=MappingProxyType(decoder_arguments),
+        )
+        actions = decoded.executable.out_info
+    elif regime.simulation.replay_route.consumer_route == "nnbegm_finite":
         actions, _, _ = cast(
             "_FiniteDecisionOutput",
             _profile_finite_decision(

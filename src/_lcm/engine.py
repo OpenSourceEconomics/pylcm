@@ -79,6 +79,7 @@ from lcm.typing import (
 if TYPE_CHECKING:
     from _lcm.current_iid import CurrentIIDDrawPlan, CurrentIIDPlan
     from _lcm.regime_building.gated_edges import ResolvedGatedEdge
+    from _lcm.simulation.exits import ExitSimulationPlan
     from _lcm.solution.contract import PeriodKernel
 
     # The contract module imports this one at runtime, so `PeriodKernel` is
@@ -90,6 +91,8 @@ else:
     # Current-IID declarations reach the solver facade while it imports engine.
     type CurrentIIDPlan = object
     type CurrentIIDDrawPlan = object
+    # The simulation query metadata imports the canonical engine declarations.
+    type ExitSimulationPlan = object
     PeriodKernelsMapping = Mapping
 
 # A precondition a solver can only check once parameter *values* exist. Kernels
@@ -1072,6 +1075,11 @@ class SimulationPhase:
     compiled function sets. Reading phase-dependent data through this
     namespace makes the phase explicit at every call site.
     """
+
+    exit_queries: Mapping[int, ExitSimulationPlan] = dataclasses.field(
+        default=MappingProxyType({}), metadata={"fingerprint_omit_if_default": True}
+    )
+    """Bound original Full and final Participating policies for current exits."""
 
     current_iid_draw_plan: CurrentIIDDrawPlan | None = dataclasses.field(
         default=None, metadata={"fingerprint_omit_if_default": True}

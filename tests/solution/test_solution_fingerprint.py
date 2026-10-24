@@ -1868,6 +1868,7 @@ def _fingerprint_regime(
 ) -> EngineRegime:
     """Build a minimal canonical-regime shape with age-specific state support."""
     solution = SimpleNamespace(
+        current_iid_plans=MappingProxyType({}),
         state_names=("wealth",),
         action_names=(),
         functions={},
@@ -2033,6 +2034,7 @@ def test_project_solution_params_removes_only_proven_transition_truth() -> None:
     )
     utility = _callable_with_params("helper__current_value")
     solution = SimpleNamespace(
+        current_iid_plans=MappingProxyType({}),
         functions={"nested": {"utility": utility}},
         continuation_functions={},
         constraints={},

@@ -1003,3 +1003,127 @@ def test_query_refuses_a_declared_endogenous_grid_owner(owner: RegimeName) -> No
             root="root",
             chunk_size=2,
         )
+
+
+def test_participation_callback_reads_mapped_state_and_current_params() -> None:
+    """The queried household's lagged state determines its threshold adjustment."""
+    model = _native_model(enable_jit=True, parameterized=True)
+    original = model._regimes["root"]
+    kernel = original.solution.period_kernels[0]
+    assert isinstance(kernel, queries._PolicyQueryKernel)
+
+    def adjusted_keep(
+        *, q: FloatND, outside: PolicyAnswer, wealth: FloatND, utility_f__gain: FloatND
+    ) -> jax.Array:
+        return jnp.all(q >= outside[0] + wealth * utility_f__gain)
+
+    root = replace(kernel.definitions["root"], participation=adjusted_keep)
+    updated = build_policy_query_kernel(
+        root_context=kernel.root_context,
+        period=0,
+        definitions={**kernel.definitions, "root": root},
+        root="root",
+        chunk_size=kernel.chunk_size,
+    )
+    object.__setattr__(
+        model,
+        "_regimes",
+        MappingProxyType(
+            dict(model._regimes)
+            | {
+                "root": replace(
+                    original,
+                    solution=replace(
+                        original.solution, period_kernels=MappingProxyType({0: updated})
+                    ),
+                )
+            }
+        ),
+    )
+    result = model.solve(
+        params={"root": {"utility_f": {"gain": 1.0}, "utility_m": {"gain": 1.0}}},
+        log_level="off",
+        runtime_checks=False,
+    )
+    np.testing.assert_allclose(result.values[0]["root"], [[3, 1.5], [4, 2.5], [5, 3.5]])
+
+
+def test_mapped_query_accepts_a_python_scalar_constant() -> None:
+    """A constant settlement has no undeclared numerical axis."""
+    model = _native_model(enable_jit=True)
+    original = model._regimes["root"]
+    kernel = original.solution.period_kernels[0]
+    assert isinstance(kernel, queries._PolicyQueryKernel)
+
+    def constant() -> float:
+        return 0.5
+
+    target = kernel.definitions["target"]
+    updated = build_policy_query_kernel(
+        root_context=kernel.root_context,
+        period=0,
+        definitions={
+            **kernel.definitions,
+            "target": replace(
+                target, read=replace(target.read, projection={"wealth": constant})
+            ),
+        },
+        root="root",
+        chunk_size=kernel.chunk_size,
+    )
+    object.__setattr__(
+        model,
+        "_regimes",
+        MappingProxyType(
+            dict(model._regimes)
+            | {
+                "root": replace(
+                    original,
+                    solution=replace(
+                        original.solution, period_kernels=MappingProxyType({0: updated})
+                    ),
+                )
+            }
+        ),
+    )
+    result = model.solve(params={}, log_level="off", runtime_checks=False)
+    np.testing.assert_allclose(result.values[0]["root"], [[2, 0.5], [3, 1.5], [2, 5]])
+
+
+def test_unavailable_benchmark_guards_domain_poison_and_its_derivative() -> None:
+    """Unavailable sqrt inputs cannot poison another source cell's tangent."""
+    _native_model(enable_jit=True)
+    context = _CONTEXTS["target"]
+
+    def settlement(*, wealth: FloatND, shift: FloatND) -> FloatND:
+        return jnp.sqrt(wealth + shift)
+
+    def available(wealth: FloatND) -> jax.Array:
+        return wealth >= 0
+
+    node = QueryNode(
+        read=replace(
+            _read(kind=QueryKind.PARTICIPATING, target="target"),
+            projection={"wealth": settlement},
+        ),
+        context=context,
+        available=available,
+    )
+    core = queries._QueryCore(node=node, period=0)
+
+    def value(shift: FloatND) -> FloatND:
+        answer = core(
+            **{
+                queries._SOURCE: {"wealth": jnp.asarray([-1.0, 1.0])},
+                queries._LIVE: jnp.ones((2,), dtype=bool),
+                queries._PROJECTION: {"shift": shift},
+                "period": jnp.int32(0),
+                "age": jnp.int32(0),
+                "action": context.state_action_space.actions["action"],
+                "next_regime_to_V_arr": {},
+            }
+        )
+        return jnp.sum(jnp.where(answer[2][:, None], answer[0], 0.0))
+
+    np.testing.assert_allclose(jax.jit(value)(jnp.asarray(0.0)), 5.0)
+    np.testing.assert_allclose(jax.jit(jax.grad(value))(jnp.asarray(0.0)), 2.5)

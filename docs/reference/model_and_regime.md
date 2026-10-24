@@ -224,6 +224,7 @@ A general regime declares:
 | `taste_shocks`          | Optional EV1 taste-shock configuration                                        |
 | `koopmans_aggregator`   | Optional regime-level continuation aggregator, `Phased` or `Decoupled`        |
 | `certainty_equivalent`  | Optional regime-level lottery reduction                                       |
+| `exits`                 | Named current-period moves with mapped policy queries                         |
 | `description`           | Human-readable description                                                    |
 
 Use `Regime.replace(...)` to derive a modified immutable declaration.
@@ -237,6 +238,50 @@ equivalent because they have no continuation.
 required by EGM-family solvers. See
 [Consumption-saving regimes and margins](consumption_savings.md). Collective fields on
 `Regime` are documented separately in [Collective regimes](collective_regimes.md).
+
+(api-current-exits)=
+
+## Current-period exits
+
+`Regime(exits={name: Exit(...)})` declares a move before the period's action. Scheduled
+next-period transitions remain in `Model(edges=...)`.
+
+- `Exit(targets=..., rule=..., available=None, observes=())` names each source
+  stakeholder's destination. A singleton uses the key `"self"`.
+- `ExitTarget(regime=..., projection=..., role=None, utility_adjustment=None)` names a
+  real destination and maps its complete current state. A collective destination
+  requires its stakeholder `role`. The adjustment reads source states and parameters and
+  enters the exit payoff once. A projection may use `Phased(solve=..., simulate=...)`
+  settlements; it does not change information.
+- `Consent(counterparty=Counterparty(regime=..., role=..., projection=...))` compares
+  each party's payoff at the destination's common Participating policy strictly against
+  that party's Raw stay value. Equality keeps the original state.
+- Built-in `rule="unilateral"` or `"mutual"` declares dissolution participation. A
+  callable rule explicitly declares Boolean `reads_outside_values` metadata and returns
+  `RuleResult(action=...)`, a scalar integer global alternative ID.
+
+A custom rule can request `Q_<stakeholder>` (`Q_self` for a singleton), `exit_payoffs`
+(exit name to member to value), `availability`, `alternative_ids`, `pareto_weights`, and
+ordinary named source states, helpers and parameters. Stay IDs follow the flattened
+C-order action product; exit IDs follow in declaration order. Invalid IDs are errors.
+Custom multi-exit choices use one shared authored rule; competing rules do not define an
+arbitration order.
+
+`available` reads states, parameters and observed shocks, and precedes unsafe benchmark
+evaluation. `observes` adds target information available at the exit choice. Hidden
+target shocks are priced before the source choice and revealed when a mover executes the
+destination's Participating action. Partial observation of a correlated group is
+refused; see the adopted [IID and exit contract](../development/iid-exits-redesign.md).
+
+Native current-period exits use each queried regime's declared `GridSearch` solver.
+Endogenous-grid query reconstruction is not implemented. Query admission also refuses
+folded, invariant or co-mapped state layouts, action partitioning, stored Full-value
+references and runtime-bound query status adapters.
+
+Collective decisions with current-IID shocks remain explicitly refused. Collective EV1
+tastes and custom source selectors combined with source EV1 tastes are explicitly
+refused. Simulation also refuses tagged current-IID overrides when a model declares
+exits.
 
 (api-extreme-value-taste-shocks)=
 

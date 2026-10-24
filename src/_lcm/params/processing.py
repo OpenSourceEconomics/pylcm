@@ -598,9 +598,11 @@ def create_params_template(  # noqa: C901, PLR0912 - validate ordinary and exit 
     arg_names = _edge_arg_names(regimes)
 
     for name, regime in regimes.items():
-        # A regime no required problem solves reads no parameter.
+        # Query-only canonical contexts read parameters without publishing Full.
         regime_template = (
-            dict(regime.regime_params_template) if regime.active_periods else {}
+            dict(regime.regime_params_template)
+            if regime.solution.period_kernels
+            else {}
         )
         template[name] = regime_template
 

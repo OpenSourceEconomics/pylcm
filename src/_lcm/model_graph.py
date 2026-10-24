@@ -9,6 +9,7 @@ from typing import Literal, cast
 
 import jax.numpy as jnp
 
+from _lcm.exits import ExitFunctionDemand, exit_functions, exits_for_phase
 from _lcm.gated_edge import GatedEdge, gated_edge_from_gate
 from _lcm.reachability import ModelReachability, PhaseReachability
 from _lcm.regime_building.fixed_regime_support import prune_fixed_regime_support
@@ -245,7 +246,12 @@ def prepare_graph(
         ages=ages,
         source_ages_by_phase=source_ages,
     )
+    policy_reads, exit_targets = _exit_policy_demand(
+        regimes=fixed_support.user_regimes, schedules=after, ages=ages
+    )
     schedules = resolve_demand(
+        policy_reads_by_phase=policy_reads,
+        exit_targets_by_period=exit_targets,
         schedules=after,
         initial_nodes=initial_nodes,
         same_period_refs_by_regime={
@@ -272,6 +278,117 @@ def prepare_graph(
             bound=bound, edges=edges, after=after, ages=ages
         ),
         cells_without_edges=cells_without_edges,
+    )
+
+
+def _exit_policy_demand(  # noqa: C901 - phase-specific typed reads and actual actor demand
+    *,
+    regimes: Mapping[RegimeName, Regime],
+    schedules: RegimeSchedules,
+    ages: TimeAxis,
+) -> tuple[
+    Mapping[
+        str, Mapping[tuple[int, RegimeName, str], tuple[tuple[RegimeName, str], ...]]
+    ],
+    Mapping[tuple[int, RegimeName], tuple[RegimeName, ...]],
+]:
+    """Declare typed reads without pretending a policy query is a Full value."""
+    from _lcm.exits import exits_for_phase  # noqa: PLC0415
+
+    reads = {"solution": {}, "simulation": {}}
+    actors = {}
+    if not any(regime.exits for regime in regimes.values()):
+        return reads, actors
+    for phase, side in (("solution", "solve"), ("simulation", "simulate")):
+        for source, regime in regimes.items():
+            declarations = exits_for_phase(exits=regime.exits, phase=side)
+            for period in schedules.coverage_by_regime[source]:
+                for kind in ("Raw", "Participating", "Full"):
+                    required = []
+                    final = []
+                    for declaration in declarations.values():
+                        if kind == "Raw" or _exit_is_statically_unavailable(
+                            predicate=declaration.available,
+                            period=period,
+                            ages=ages,
+                        ):
+                            continue
+                        if kind == "Participating" and (
+                            isinstance(declaration.rule, Consent)
+                            or (
+                                callable(declaration.rule)
+                                and not declaration._reads_outside_values  # noqa: SLF001 - frozen declaration metadata
+                            )
+                        ):
+                            continue
+                        required.extend(
+                            (target.regime, "Participating")
+                            for target in declaration.targets.values()
+                        )
+                        if isinstance(declaration.rule, Consent):
+                            required.extend(
+                                (
+                                    (source, "Raw"),
+                                    (declaration.rule.counterparty.regime, "Raw"),
+                                )
+                            )
+                        if kind == "Full":
+                            final.extend(
+                                target.regime for target in declaration.targets.values()
+                            )
+                    reads[phase][period, source, kind] = tuple(dict.fromkeys(required))
+                    if phase == "simulation" and kind == "Full":
+                        actors[period, source] = tuple(dict.fromkeys(final))
+    return reads, actors
+
+
+def demanded_exit_function_paths(
+    *,
+    regimes: Mapping[RegimeName, Regime],
+    schedules: RegimeSchedules,
+    ages: TimeAxis,
+) -> ExitFunctionDemand:
+    """Keep callback namespaces only where an actual typed policy reads them."""
+    result = {name: {} for name in regimes}
+    for phase, side in (("solution", "solve"), ("simulation", "simulate")):
+        full = (
+            schedules.valued_nodes if phase == "solution" else schedules.visited_nodes
+        )
+        contexts = set(schedules.query_nodes_by_phase.get(phase, frozenset()))
+        contexts.update((p, n, "Full") for p, n in full)
+        if phase == "simulation":
+            contexts.update(
+                (p, n, "Participating") for p, n in schedules.exit_acting_nodes
+            )
+        for owner, regime in regimes.items():
+            paths = set()
+            for period, name, kind in contexts:
+                if name != owner or kind == "Raw":
+                    continue
+                for exit_name, declaration in exits_for_phase(
+                    exits=regime.exits, phase=side
+                ).items():
+                    if kind == "Participating" and (
+                        isinstance(declaration.rule, Consent)
+                        or (
+                            callable(declaration.rule)
+                            and not declaration._reads_outside_values  # noqa: SLF001 - frozen declaration metadata
+                        )
+                    ):
+                        continue
+                    inactive = _exit_is_statically_unavailable(
+                        predicate=declaration.available, period=period, ages=ages
+                    )
+                    paths.update(
+                        path
+                        for path in exit_functions(
+                            exits={exit_name: declaration}, phase=side
+                        )
+                        if not inactive or path[-1] in {"available", "rule"}
+                    )
+            result[owner][side] = frozenset(paths)
+    return MappingProxyType(
+        {name: MappingProxyType(phases) for name, phases in result.items()}
     )
 
 

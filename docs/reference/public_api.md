@@ -20,6 +20,11 @@ documentation and tests.
 | [`lcm.PeriodCandidate`](model_and_regime.md#api-period-candidate-lowering)                           | Exact primary ranked-width request                |
 | [`lcm.LoweredPeriodCandidate`](model_and_regime.md#api-period-candidate-lowering)                    | Immutable descriptors and raw unoptimized IR      |
 | [`lcm.Regime`](model_and_regime.md#api-regime)                                                       | General regime                                    |
+| [`lcm.Exit`](model_and_regime.md#api-current-exits)                                                  | Named current-period move                         |
+| [`lcm.ExitTarget`](model_and_regime.md#api-current-exits)                                            | Mapped destination policy and adjustment          |
+| [`lcm.Consent`](model_and_regime.md#api-current-exits)                                               | Strict formation consent                          |
+| [`lcm.Counterparty`](model_and_regime.md#api-current-exits)                                          | Counterparty Raw policy context                   |
+| [`lcm.RuleResult`](model_and_regime.md#api-current-exits)                                            | Custom rule's stable alternative ID               |
 | [`lcm.ExecutionConfig`](runtime_and_results.md#execution-configuration)                              | Devices, budget, sharded states, widths, donation |
 | [`lcm.InvariantBlockSchedule`](runtime_and_results.md#execution-configuration)                       | Period- or block-major invariant schedule         |
 | [`lcm.ConsumptionSavingsRegime`](consumption_savings.md#api-consumption-savings-regime)              | One liquid margin                                 |

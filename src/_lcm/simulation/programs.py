@@ -581,9 +581,7 @@ def forward_regimes_by_period(
             active={
                 name: regime
                 for name, regime in regimes.items()
-                if period in regime.active_periods
-                and name
-                in regime.simulation.reachability.active_regimes_by_period[period]
+                if period in regime.simulation.programs.decision
             },
             regimes=regimes,
         )
