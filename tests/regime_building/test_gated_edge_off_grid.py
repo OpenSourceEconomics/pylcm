@@ -1374,3 +1374,228 @@ def test_distinct_incoming_sources_keep_their_own_tuple_routes() -> None:
     np.testing.assert_array_equal(final["x"], [0.75, 0.875, 0.75])
     np.testing.assert_array_equal(final["value_f"], [1.0, 1.0, 1.0])
     np.testing.assert_array_equal(final["value_m"], [2.0, 2.0, 2.0])
+
+
+@categorical(ordered=False)
+class _ExtraOriginRegimeId:
+    source: ScalarInt
+    target: ScalarInt
+    fallback: ScalarInt
+    future: ScalarInt
+    fallback_future: ScalarInt
+
+
+def _extra_origin_future_value(
+    *, x: ContinuousState, payoff: FloatND, period: ScalarInt, age: FloatND
+) -> FloatND:
+    return payoff + 0.0 * x + (period - 2) + (age - 2)
+
+
+def _extra_origin_arrival_model() -> Model:
+    """The rejected branch reads a later value outside target Full's inputs."""
+    return Model(
+        regimes={
+            "source": Regime(
+                actions={"risk": DiscreteGrid(category_class=Risk)},
+                functions={"utility": _crossing_source},
+                state_transitions={"x": _crossing_landing},
+            ),
+            "target": Regime(
+                states={"x": _WITNESS_X},
+                actions={"risk": DiscreteGrid(category_class=Risk)},
+                functions={"utility": _future_crossing_target},
+                state_transitions={"x": _identity_x},
+            ),
+            "fallback": Regime(
+                states={"x": _WITNESS_X},
+                functions={"utility": _negative_fallback},
+                state_transitions={"x": _identity_x},
+            ),
+            "future": Regime(
+                states={"x": _WITNESS_X},
+                functions={"utility": _future_arrival_value},
+            ),
+            "fallback_future": Regime(
+                states={"x": _WITNESS_X},
+                functions={"utility": _extra_origin_future_value},
+            ),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
+        regime_id_class=_ExtraOriginRegimeId,
+        initial_nodes={0: "source"},
+        edges={
+            "source": Transition(
+                law=ByAge(cases={0: "target"}),
+                arrivals={
+                    "target": ArrivalDecision(
+                        predicate=_crossing_floor,
+                        reads={
+                            "V_target": ArrivalRead(
+                                kind="Participating",
+                                regime="target",
+                                projection={"x": _identity_x},
+                            )
+                        },
+                        routes={
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="fallback",
+                                    projection={"x": _identity_x},
+                                )
+                            )
+                        },
+                    )
+                },
+            ),
+            "target": Transition(law=ByAge(cases={1: "future"})),
+            "fallback": Transition(law=ByAge(cases={1: "fallback_future"})),
+        },
+    )
+
+
+def test_arrival_borrows_a_distinct_fallback_future_original(*, monkeypatch) -> None:
+    """Extra native custody preserves the original that reverses the source rank."""
+    from _lcm.arrival_continuation import (  # noqa: PLC0415
+        ARRIVAL_CONTINUATION,
+        ArrivalContinuation,
+    )
+    from _lcm.arrival_publication import _BorrowedArrivalKernel  # noqa: PLC0415
+    from _lcm.execution.value_transfer import ValueArtifactKind  # noqa: PLC0415
+    from _lcm.policy_queries import _PolicyQueryKernel  # noqa: PLC0415
+
+    published = []
+    consumed = []
+    publish = _BorrowedArrivalKernel.__call__
+    consume = _PolicyQueryKernel.__call__
+
+    def observe_publish(self, **arguments):
+        output = publish(self, **arguments)
+        if self.template.regime == "target" and arguments["period"] == 1:
+            payload = output.continuations[ARRIVAL_CONTINUATION]
+            assert isinstance(payload, ArrivalContinuation)
+            original = arguments["next_regime_to_V_arr"]["fallback_future"]
+            names = [
+                name
+                for name, origin in self.origins.items()
+                if origin.kind is ValueArtifactKind.REGIME_VALUE
+                and origin.regime == "fallback_future"
+                and origin.period == 2
+            ]
+            assert names
+            for name in names:
+                assert payload.operands[name] is original
+                origin = self.origins[name]
+                reads = [
+                    read
+                    for program in self.core_programs().values()
+                    for read in program.requirements.value_reads
+                    if read.target == origin
+                ]
+                assert reads
+                assert all(
+                    read.source.source_regime == "target"
+                    and read.source.source_period == 1
+                    and read.source.argument is not None
+                    and read.source.path
+                    for read in reads
+                )
+            published.append((payload, original, tuple(names)))
+        return output
+
+    def observe_consume(self, **arguments):
+        if self.root_context.regime_name == "source" and arguments["period"] == 0:
+            published_payload, original, names = published[0]
+            payload = arguments["next_regime_to_continuation"]["target"]
+            assert isinstance(payload, ArrivalContinuation)
+            assert payload.schema == published_payload.schema
+            assert payload.period == 1
+            assert all(payload.operands[name] is original for name in names)
+            assert not original.is_deleted()
+            consumed.append(original)
+        return consume(self, **arguments)
+
+    monkeypatch.setattr(_BorrowedArrivalKernel, "__call__", observe_publish)
+    monkeypatch.setattr(_PolicyQueryKernel, "__call__", observe_consume)
+    model = _extra_origin_arrival_model()
+    params = {"discount_factor": 0.5, "fallback_future": {"payoff": 6.0}}
+    solution = model.solve(params=params, log_level="off")
+    np.testing.assert_array_equal(
+        np.stack((solution.values[2]["future"], solution.values[2]["fallback_future"])),
+        [[1.0, 1.0], [6.0, 6.0]],
+    )
+    np.testing.assert_array_equal(np.asarray(solution.values[0]["source"]), 0.75)
+    assert consumed
+    assert consumed[0] is published[0][1]
+    # Public ValueStore reads are independent copies; live custody above uses
+    # the original native array throughout publication and source consumption.
+    np.testing.assert_array_equal(
+        np.asarray(published[0][1]),
+        np.asarray(solution.values[2]["fallback_future"]),
+    )
+    frame = model.simulate(
+        params=params,
+        solution=solution,
+        initial_conditions={
+            "age": jnp.asarray([0.0]),
+            "regime_id": jnp.asarray([_ExtraOriginRegimeId.source]),
+            "x": jnp.asarray([0.0]),
+        },
+        log_level="off",
+    ).to_dataframe(use_categorical_codes=True)
+    np.testing.assert_array_equal(frame.query("period == 0")["risk"], [int(Risk.risky)])
+    arrival = frame.query("period == 1")
+    np.testing.assert_array_equal(arrival["regime_name"], ["fallback"])
+    np.testing.assert_array_equal(arrival["x"], [0.5])
+    np.testing.assert_array_equal(arrival["value"], [1.0])
+    np.testing.assert_array_equal(
+        frame.query("period == 2")["regime_name"], ["fallback_future"]
+    )
+
+
+@pytest.mark.parametrize("extra_origin", [False, True])
+def test_arrival_publisher_reuses_stable_native_callable_identities(
+    *, extra_origin: bool
+) -> None:
+    """Authority, preparation and dispatch share the same native callables."""
+    from types import MappingProxyType  # noqa: PLC0415
+
+    from _lcm.arrival_publication import _BorrowedArrivalKernel  # noqa: PLC0415
+
+    model = (
+        _extra_origin_arrival_model() if extra_origin else _future_arrival_floor_model()
+    )
+    kernel = model._regimes["target"].solution.period_kernels[1]
+    assert isinstance(kernel, _BorrowedArrivalKernel)
+    graph = kernel.core_programs()
+    assert graph is kernel.core_programs()
+    for name, program in graph.items():
+        repeated = kernel.core_programs()[name]
+        assert repeated is program
+        assert repeated.function is program.function
+        assert type(program.function).__eq__ is object.__eq__
+        assert type(program.function).__hash__ is object.__hash__
+        assert repeated.requirements.value_reads is program.requirements.value_reads
+        if program.checked_variant is not None:
+            assert repeated.checked_variant is program.checked_variant
+            assert type(program.checked_variant.function).__eq__ is object.__eq__
+            assert type(program.checked_variant.function).__hash__ is object.__hash__
+        if not extra_origin:
+            assert program is kernel.base.core_programs()[name]
+    assert set(kernel.origins.values()) <= {
+        read.target
+        for program in graph.values()
+        for read in program.requirements.value_reads
+    }
+    rebound = kernel.with_fixed_params(fixed_flat_params=MappingProxyType({}))
+    assert rebound is not kernel
+    assert rebound.core_programs() is rebound.core_programs()
+    assert rebound.core_programs() is not graph
+    assert tuple(
+        (read.target, read.source)
+        for program in rebound.core_programs().values()
+        for read in program.requirements.value_reads
+    ) == tuple(
+        (read.target, read.source)
+        for program in graph.values()
+        for read in program.requirements.value_reads
+    )
