@@ -6742,20 +6742,14 @@ def _process_regime_core(
             for (user_regime, process), grid in carried_process_grids.items()
         }
         | {
-            f"{user_regime}__next_{process}": _get_stochastic_next_function_for_process(
-                name=process, grid=grid.to_jax()
-            )
-            for (user_regime, process), grid in carried_process_grids.items()
+            f"{user_regime}__next_{process}": _get_next_for_process(grid=grid.to_jax())
+            for (user_regime, process), grid in (
+                carried_process_grids | entered_process_grids
+            ).items()
         }
         | {
             f"weight_{user_regime}__next_{process}": _get_entry_weights_for_process(
                 name=process, grid=grid
-            )
-            for (user_regime, process), grid in entered_process_grids.items()
-        }
-        | {
-            f"{user_regime}__next_{process}": _get_entry_next_for_process(
-                grid=grid.to_jax()
             )
             for (user_regime, process), grid in entered_process_grids.items()
         }
@@ -7984,18 +7978,6 @@ def _get_discrete_markov_next_function(
     return next_func
 
 
-def _get_stochastic_next_function_for_process(
-    *, name: str, grid: Float1D
-) -> Callable[..., IntND]:
-    """Get function returning the indices in the vf arr of the next process states."""
-
-    @with_signature(args={f"{name}": "ContinuousState"}, return_annotation="Int1D")
-    def next_func(**kwargs: EconFunctionArg) -> Int1D:  # noqa: ARG001
-        return jnp.arange(grid.shape[0], dtype=jnp.int32)
-
-    return next_func
-
-
 def _process_family(grid: _ContinuousStochasticProcess) -> Family:
     """Map a supported process to its state-conditioned family.
 
@@ -8310,12 +8292,18 @@ def _get_weights_func_for_process(
     A node draw needs this: rows extrapolated along the edge segment can carry
     negative weights, which are no probabilities to sample with.
 
+    An unconditioned IID process has one row repeated, so its weights are that row
+    and read no current value: the continuation is then constant along the process's
+    axis rather than recomputed at each of its nodes.
+
     """
     sc = grid.state_conditioned
     if sc is not None:
         # `sc.on` may be absent from `grids`; the callee raises a clear message naming
         # the offending state.
         return _get_conditioned_weights_func(name=name, grid=grid, sc=sc, grids=grids)
+    if isinstance(grid, _IIDProcess):
+        return _get_entry_weights_for_process(name=name, grid=grid)
 
     if grid.params_to_pass_at_runtime:
         n_points = grid.n_points
@@ -8374,11 +8362,11 @@ def _get_weights_func_for_process(
     return weights_func
 
 
-def _get_entry_next_for_process(*, grid: Float1D) -> Callable[..., IntND]:
-    """Get the next-index function for a process the source does not carry.
+def _get_next_for_process(*, grid: Float1D) -> Callable[..., IntND]:
+    """Get the next-index function of a process: every node of the target's axis.
 
-    The target's nodes are the process's own, and no current value selects
-    among them, so the signature is empty.
+    The next-period value of a process lands on the process's own nodes whatever
+    its current value, which only selects the weights, so the signature is empty.
     """
 
     @with_signature(args={}, return_annotation="Int1D")
@@ -8391,11 +8379,12 @@ def _get_entry_next_for_process(*, grid: Float1D) -> Callable[..., IntND]:
 def _get_entry_weights_for_process(
     *, name: str, grid: _IIDProcess
 ) -> Callable[..., FloatND]:
-    """Get the entry weights of an IID process the source does not carry.
+    """Get the weights of an unconditioned IID process.
 
     Every row of an IID transition matrix is the same unconditional
-    distribution, so the entry weights are row zero and no current value is
-    needed to choose the row.
+    distribution, so the weights are row zero and no current value is needed to
+    choose the row. This serves a source that carries the process as much as
+    one that enters it.
     """
     if grid.params_to_pass_at_runtime:
         fixed_params = dict(grid.params)

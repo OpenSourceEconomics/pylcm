@@ -652,8 +652,8 @@ def _continuation_unread_state_names(
     flat cell lets the continuation be computed once per remaining cell and
     broadcast along it. The result is empty when:
 
-    - the kernel does not state what its continuation reads (terminal and
-      collective kernels, or a dependency with variadic arguments);
+    - the kernel does not state what its continuation reads (terminal
+      kernels, or a dependency with variadic arguments);
     - the continuation reads every cell state, or none of them, so no state
       would remain to tile.
     """

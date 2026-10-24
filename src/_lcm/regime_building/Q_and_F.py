@@ -2005,6 +2005,9 @@ def get_Q_and_F_collective(
         build_W_kwargs=_build_W_kwargs,
         value_constraint_machinery=value_constraint_machinery,
         arg_names=tuple(arg_names_of_Q_and_F),
+        continuation_reads=_continuation_reads(
+            deps=continuation_deps, arg_names=continuation_arg_names
+        ),
         landing_checks=cast("_ComputeCE", compute_CE).landing_checks,
     )
 
@@ -2025,6 +2028,12 @@ class _CollectiveQAndF:
     """The value-constraint readers and evaluators."""
     arg_names: tuple[ReferenceName, ...]
     """The published argument names, in order."""
+    continuation_reads: frozenset[str] | None
+    """Every argument the continuation reads from the cell, or `None` if unknown.
+
+    A state outside it enters every stakeholder's `Q` only through utility,
+    feasibility and `W`, so the continuation is constant along that state's axis.
+    """
     landing_checks: tuple[LandingCheck, ...] = field(
         default=(), metadata={"fingerprint_omit_if_default": True}
     )

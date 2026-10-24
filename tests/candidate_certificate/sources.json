@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "d96713ccde15165c35ba1c303d697198db983189fda708f73910ff687ff33f0d",
+  "source_inventory_sha256": "f0a6cb2945b0004a763f64ff4579cef37b1d44a0563d051c96104820f2a26a4e",
   "sources": [
     {
       "path": "src/_lcm/constraints/bounds.py",
@@ -314,7 +314,7 @@
     },
     {
       "path": "src/_lcm/regime_building/Q_and_F.py",
-      "sha256": "c3c6b31eed41b3dee28b060829ce576111feba5f477f4347829360417e9abd41"
+      "sha256": "b78487af9260641ff6313e76c53a70bb3bfee002b7794b0eb25f298a525fd9ef"
     },
     {
       "path": "src/_lcm/regime_building/age_normalization.py",
@@ -338,7 +338,7 @@
     },
     {
       "path": "src/_lcm/regime_building/processing.py",
-      "sha256": "4d4ccba1d8f41293a9baedf3e3ac2fac55cc507b94475cb53c6659a7770cd928"
+      "sha256": "6cb918900a106908e91bdab4bd3ffc15ac39013e5bb1399fbc79f231ebb0796b"
     },
     {
       "path": "src/_lcm/regime_building/zero_safe.py",
@@ -566,7 +566,7 @@
     },
     {
       "path": "src/_lcm/solution/grid_search.py",
-      "sha256": "1a359235d613d166d7ed41cbba994f1b550a03f09a5cba3865a843f9fc72b50f"
+      "sha256": "ddd472ee2bb2ebb63d307d3d3e46f3f7d87f6947843c54678b009ec7b36a472d"
     },
     {
       "path": "src/_lcm/solution/kernel_output.py",
@@ -646,7 +646,7 @@
     },
     {
       "path": "src/_lcm/utils/dispatchers.py",
-      "sha256": "7fddf74528a232338d5969cc18f8e4157f8ec195d1f568f5e2e8e03337d9065c"
+      "sha256": "a78d5271fcfc7437b68bd755ce7c2b8b0b78d5f26ed00a3fb4424133725da8b2"
     },
     {
       "path": "src/_lcm/utils/functools.py",
