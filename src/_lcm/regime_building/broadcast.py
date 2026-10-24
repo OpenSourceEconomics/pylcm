@@ -272,6 +272,9 @@ def merge_model_slots(
 
 def prune_broadcast_variables(
     *,
+    current_iid_state_inputs: Mapping[
+        RegimeName, frozenset[StateName]
+    ] = MappingProxyType({}),
     user_regimes: Mapping[RegimeName, UserRegime],
     laws: RegimeLaws,
     broadcast_variables: Mapping[RegimeName, frozenset[StateOrActionName]],
@@ -333,6 +336,7 @@ def prune_broadcast_variables(
     )
     all_regime_names = frozenset(user_regimes)
     kept = compute_kept_variables(
+        current_iid_state_inputs=current_iid_state_inputs,
         user_regimes=user_regimes,
         laws=laws,
         candidates=broadcast_variables,
@@ -384,6 +388,9 @@ def prune_broadcast_variables(
 
 def compute_kept_variables(
     *,
+    current_iid_state_inputs: Mapping[
+        RegimeName, frozenset[StateName]
+    ] = MappingProxyType({}),
     user_regimes: Mapping[RegimeName, UserRegime],
     laws: RegimeLaws,
     candidates: Mapping[RegimeName, frozenset[StateOrActionName]],
@@ -453,6 +460,7 @@ def compute_kept_variables(
         regime_name: frozenset(
             (set(user_regime.states) | set(user_regime.actions))
             - candidates_by_regime[regime_name]
+            | current_iid_state_inputs.get(regime_name, frozenset())
         )
         for regime_name, user_regime in user_regimes.items()
     }

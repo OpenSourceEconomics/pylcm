@@ -230,10 +230,57 @@ must remain finite. Unresolved active arithmetic returns a dedicated invalid-law
 clipping an active pivot is not proof of factorization. Rounded residual equality is not
 required at host-admitted zero pivots.
 
+Fixed declarations obey the same active-pivot validity requirement: exact host PSD
+admission alone does not certify rounded factor arithmetic.
+
 Derivatives hold admitted support fixed. Interior positive-definite derivatives use the
 dynamic factor arithmetic. At singular support, derivatives have the interpretation of
 tangents within the declared PSD stratum; crossing rank has no derivative guarantee.
 Primal validity and finiteness of consumed derivatives are separate obligations.
+
+## Native singleton GridSearch integration
+
+Each real state cell evaluates complete joint node rows, applies its phase-specific law,
+and invokes the canonical feasible action reducer before the weighted sum. Hard maximum
+and EV1 keep that order. Node coordinates are temporary operands, with exact resolved
+support and algorithm identity; stored values retain only real state axes. Ordinary
+state tiling, hard-max action streaming and state/subject sharding use the existing
+native program and admission paths. Every retained period's support bank and published
+physical simulation bank contributes to memory admission.
+
+Group law parameters use direct `params[group][slot]` leaves, including fixed slots. Law
+helpers use their transitive dependency closure. Shared economic or report helpers
+retain their ordinary regime parameters independently. A native cell requires scalar
+resolved marginal parameters, or a categorical probability vector; a helper may consume
+an array and select a scalar. Standalone group transforms retain their cell-batching
+contract. Solve laws use carried-state imputations; simulate laws receive actual carried
+rows. Law callables receive categorical state-grid values or explicit state-code
+arguments at their usual boundary.
+
+Simulation draws fresh addressed base innovations before the decision. Ordinary utility,
+reporting and transitions consume the same rounded physical realization, which survives
+result save/load. Compiler barriers preserve that physical boundary; an ordinary
+consumer cannot recover an unrepresented base coordinate by reassociation. Mandatory law
+and factor integrity is enforced even with logging and optional checks disabled.
+
+Weight factors retain support before their rounded product underflows, including factors
+inside a joint categorical group. Finite rare-weight times large-value terms and finite
+zero-primal weight derivatives use the shared scaled arithmetic. Active-dtype/backend
+value cotangents can still underflow before a large upstream payoff derivative; this
+extreme sensitivity is not an accuracy-qualified marginal channel. Later economic
+marginals must weight their explicitly represented derivative values.
+
+Uncomposed current-IID intersections fail explicitly: non-GridSearch or collective
+decisions, Decoupled objectives, legacy folded axes, action partitions, co-mapped or
+invariant state blocks, bound/query reconstruction, and gated or same-period value
+readers. Refusals follow actual owners and incoming readers, preserving unrelated legacy
+components. Policy lookup awaits explicit observation/conditional semantics. Signed rule
+ancestry is refused at the native decision boundary. These scoped holds do not retire
+legacy routes or complete the later exit, query and signed-reader stages.
+
+Ordinary affine normal/lognormal and uniform declarations can reproduce the former
+folded rule. This does not establish finite-rule parity for mixture physical bins or
+conditioned max-scale bins; the compatibility contract below governs those declarations.
 
 ## Legacy constructor rules
 

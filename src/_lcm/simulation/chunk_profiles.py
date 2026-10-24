@@ -88,7 +88,7 @@ from _lcm.simulation.random import (
     _generate_rowed_simulation_keys,
     _generate_windowed_simulation_keys,
 )
-from _lcm.simulation.random_address import RandomAddress
+from _lcm.simulation.random_address import RandomAddress, draw_window_keys
 from _lcm.simulation.replay_inputs import replay_payload_reads
 from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.subject_groups import grouped_rows, type_local_transfer
@@ -180,7 +180,10 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     original order.
     """
     # `simulate` reaches this module through chunk admission, so import lazily.
-    from _lcm.simulation.simulate import _first_empty_action_row  # noqa: PLC0415
+    from _lcm.simulation.simulate import (  # noqa: PLC0415
+        _current_iid_invalid,
+        _first_empty_action_row,
+    )
 
     if population < original_population or original_population <= 0 or n_subjects <= 0:
         raise ExecutionPlanningError("Chunk profiles need a valid positive population.")
@@ -373,6 +376,29 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                     width=n_subjects,
                     scalar_int=scalar_int,
                 )
+            if regime.simulation.current_iid_draw_plan is not None:
+                for _ in regime.simulation.current_iid_draw_plan.physical_names:
+                    inventory.operation(
+                        function=draw_window_keys,
+                        arguments={
+                            "key": key,
+                            "address_words": jax.ShapeDtypeStruct(
+                                (8,), np.uint32, sharding=shared
+                            ),
+                            "subject_start": jax.ShapeDtypeStruct(
+                                (2,), np.uint32, sharding=shared
+                            ),
+                            "last_real_subject": jax.ShapeDtypeStruct(
+                                (2,), np.uint32, sharding=shared
+                            ),
+                            "period": jax.ShapeDtypeStruct(
+                                (), np.uint32, sharding=shared
+                            ),
+                        },
+                        static_arguments={"subject_count": n_subjects},
+                        subject_outputs=True,
+                    )
+            physical = {}
             if regime.simulation.replay_route.consumer_route == "nnbegm_finite":
                 bank = cast(
                     "tuple[jax.ShapeDtypeStruct, ...]",
@@ -409,6 +435,13 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                     "tuple[jax.ShapeDtypeStruct, jax.ShapeDtypeStruct]",
                     decision_outputs[:2],
                 )
+                if regime.simulation.current_iid_draw_plan is not None:
+                    physical = decision_outputs[2]
+                    inventory.operation(
+                        function=_current_iid_invalid,
+                        arguments={"invalid": decision_outputs[3], "in_regime": mask},
+                        subject_arg_names=("invalid", "in_regime"),
+                    )
                 if not base_spaces[name].states and indices.ndim == 0:
                     indices, value = cast(
                         "tuple[jax.ShapeDtypeStruct, jax.ShapeDtypeStruct]",
@@ -451,7 +484,15 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                     subject_arg_names=("mask",),
                     subject_outputs=True,
                 )
-            record = (value, actions, carrier[name], mask, own_roles, fallback)
+            record = (
+                value,
+                actions,
+                carrier[name],
+                mask,
+                own_roles,
+                fallback,
+                physical,
+            )
             records.append(record)
             period_values.append(value)
             period_masks.append(cast("jax.ShapeDtypeStruct", mask))

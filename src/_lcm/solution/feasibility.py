@@ -33,7 +33,9 @@ from lcm.typing import (
 
 type FeasibilityCounts = tuple[IntND, IntND]
 type CountedGridSearchOutput = (
-    tuple[FloatND, IntND, IntND] | tuple[FloatND, BoolND, IntND, IntND]
+    tuple[FloatND, IntND, IntND]
+    | tuple[FloatND, BoolND, IntND, IntND]
+    | tuple[FloatND, IntND, IntND, ScalarBool]
 )
 
 if TYPE_CHECKING:
@@ -639,6 +641,8 @@ class FeasibilityKernelOutput(KernelOutput):
 
     feasibility_counts: FeasibilityCounts
     """Counts of empty-action states and other infinite-valued states."""
+    current_iid_invalid: ScalarBool | None = None
+    """Mandatory unresolved-current-law summary on integrated routes."""
     bound_status: tuple[BoundInputStatus, ...] = ()
     """Mandatory scalar integrity records, independently of economic counts."""
     query_status: tuple[QueryInputStatus, ...] | None = None
@@ -714,15 +718,27 @@ class CountedGridSearch:
     """Reduce canonical feasibility and final values inside the admitted program."""
 
     function: Callable[
-        ..., tuple[FloatND, BoolND] | BoundedResult[tuple[FloatND, BoolND]]
+        ...,
+        tuple[FloatND, BoolND]
+        | tuple[FloatND, BoolND, ScalarBool]
+        | BoundedResult[tuple[FloatND, BoolND]],
     ]
     collective: bool
+    current_iid: bool = False
+    """Consume and reduce the current-law integrity leaf independently of F."""
 
     def __call__(
         self, **kwargs: QAndFArg
     ) -> CountedGridSearchOutput | BoundedResult[CountedGridSearchOutput]:
         """Count state cells, treating a household as a single decision."""
         evaluated = self.function(**kwargs)
+        current_iid_invalid = None
+        if self.current_iid:
+            value, empty, invalid = cast(
+                "tuple[FloatND, BoolND, ScalarBool]", evaluated
+            )
+            current_iid_invalid = jnp.any(invalid)
+            evaluated = (value, empty)
         value, empty = cast(
             "tuple[FloatND, BoolND]",
             evaluated.output if type(evaluated) is BoundedResult else evaluated,
@@ -737,6 +753,8 @@ class CountedGridSearch:
             if self.collective
             else (value, empty_count, other_inf_count)
         )
+        if self.current_iid:
+            return cast("CountedGridSearchOutput", (*output, current_iid_invalid))
         return (
             BoundedResult[CountedGridSearchOutput](
                 output=output, bound_status=evaluated.bound_status

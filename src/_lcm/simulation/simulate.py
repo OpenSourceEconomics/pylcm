@@ -65,6 +65,7 @@ from _lcm.simulation.chunk_inputs import (
     prepare_simulation_chunk_inputs,
 )
 from _lcm.simulation.chunk_offload import chunk_host_device, offload_chunk
+from _lcm.simulation.current_iid import prepare_current_iid_keys
 from _lcm.simulation.diagnostic_operations import (
     owned_value_nan_count,
     period_value_flags,
@@ -113,6 +114,7 @@ from _lcm.simulation.plan_summary import (
 from _lcm.simulation.policy_diagnostics import dropped_candidate_counts
 from _lcm.simulation.policy_programs import ReplayPayload
 from _lcm.simulation.program_arguments import (
+    current_iid_arguments,
     decision_arguments,
     gate_fold_arguments,
     gate_route_arguments,
@@ -207,6 +209,7 @@ from lcm.exceptions import (
     InvalidSimulationInputError,
     InvalidValueFunctionError,
     NoFeasibleActionError,
+    ShockDeclarationError,
     UnrepresentableOuterCandidateError,
 )
 from lcm.result import SimulationResult
@@ -1988,16 +1991,50 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             )
             taste_shock_kwargs = {"taste_shock_key": gumbel_keys}
 
+        current_shocks: Mapping[str, FloatND | IntND] = MappingProxyType({})
+        current_iid_keys = MappingProxyType({})
+        if regime.simulation.current_iid_draw_plan is not None:
+            if not isinstance(subject_slice, slice):
+                raise ExecutionPlanningError(
+                    "Current IID replay does not cover grouped subject rows."
+                )
+            current_iid_keys = prepare_current_iid_keys(
+                plan=regime.simulation.current_iid_draw_plan,
+                key=key,
+                period=period,
+                subject_slice=subject_slice,
+                original_n_subjects=n_subjects
+                if original_n_subjects is None
+                else original_n_subjects,
+                memory=memory,
+            )
+
         def decide(
             *, space: StateActionSpace, in_regime: Bool1D
         ) -> tuple[IntND, FloatND, int]:
+            nonlocal current_shocks
             decision_outputs = execute_simulation_program(
                 programs=regime.simulation.programs,
                 family="decision",
                 period=period,
                 n_subjects=n_chunk_subjects,
                 arguments=decision_arguments(
-                    states=space.states,
+                    current_iid=current_iid_arguments(
+                        regime=regime, flat_params=flat_params, keys=current_iid_keys
+                    ),
+                    states={
+                        **space.states,
+                        **(
+                            {
+                                name: states[regime_name][name]
+                                for name in (
+                                    regime.simulation.current_iid_draw_plan.state_inputs
+                                )
+                            }
+                            if regime.simulation.current_iid_draw_plan is not None
+                            else {}
+                        ),
+                    },
                     discrete_actions=space.discrete_actions,
                     continuous_actions=space.continuous_actions,
                     taste_keys=taste_shock_kwargs,
@@ -2008,6 +2045,34 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                     age=age,
                 ),
             )
+            if regime.simulation.current_iid_draw_plan is not None:
+                if (
+                    not isinstance(decision_outputs, tuple)
+                    or len(decision_outputs) != 4  # noqa: PLR2004 - declared replay tuple
+                ):
+                    raise TypeError(
+                        "Current IID replay must publish physical draws "
+                        "and mandatory validity."
+                    )
+                indices, values, physical, invalid = decision_outputs
+                current_shocks = cast("Mapping[str, FloatND | IntND]", physical)
+                invalid = cast("BoolND", invalid)
+                if invalid.shape != in_regime.shape or invalid.dtype != jnp.bool_:
+                    raise TypeError(
+                        "Current IID replay validity must be Boolean per subject."
+                    )
+                if bool(
+                    run_simulation_operation(
+                        memory=memory,
+                        function=_current_iid_invalid,
+                        arguments={"invalid": invalid, "in_regime": in_regime},
+                    )
+                ):
+                    raise ShockDeclarationError(
+                        "Current IID law is invalid or unresolved "
+                        "during physical replay."
+                    )
+                decision_outputs = (indices, values)
             indices, values = consume_runtime_bound_outputs(
                 outputs=cast("tuple[QAndFArg, ...]", decision_outputs),
                 bound_specs=regime.simulation.post_decision_bounds,
@@ -2157,6 +2222,9 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
     )
 
     simulation_result = PeriodRegimeSimulationData(
+        shocks=current_shocks
+        if regime.simulation.current_iid_draw_plan is not None
+        else MappingProxyType({}),
         V_arr=V_arr,
         actions=optimal_actions,
         states=states[regime_name],
@@ -2172,6 +2240,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             memory.hold(tree=(simulation_result, next_states_key, next_regime_key, key))
 
         next_states = calculate_next_states(
+            current_shocks=simulation_result.shocks,
             regime=regime,
             regimes=regimes,
             process_nodes=process_node_arguments(
@@ -2199,6 +2268,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
         # runs against the pre-advance carrier; only then do the next-period
         # states replace it.
         new_subject_regime_ids = calculate_next_regime_membership(
+            current_shocks=simulation_result.shocks,
             regime=regime,
             state_action_space=state_action_space,
             optimal_actions=optimal_actions,
@@ -4831,6 +4901,11 @@ def _genuine_rows(*, subject_slice: slice | SubjectRows, n_real: int) -> np.ndar
         rows = subject_slice.rows
         return np.concatenate(([True], rows[1:] != rows[:-1]))
     return np.arange(subject_slice.start, subject_slice.stop) < n_real
+
+
+def _current_iid_invalid(*, invalid: BoolND, in_regime: BoolND) -> BoolND:
+    """Consume native law status only for occupant rows, independently of logging."""
+    return jnp.any(invalid & in_regime)
 
 
 def _first_empty_action_row(*, indices: IntND, in_regime: BoolND) -> IntND:

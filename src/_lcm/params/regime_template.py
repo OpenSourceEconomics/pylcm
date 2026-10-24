@@ -11,6 +11,7 @@ declaration holds — its regime-transition law, gates, gate references and rout
 fallbacks — and returns that source's branch of `params["edges"]`.
 """
 
+import inspect
 from collections.abc import Iterator, Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
@@ -85,12 +86,13 @@ type _CallableSlot = StateTransitionEntry | DecomposedTransition
 type _LawNode = TransitionLaw | TargetLawCell | None
 
 
-def create_regime_params_template(
+def create_regime_params_template(  # noqa: C901 - classify ordinary and law-only roots
     *,
     user_regime: UserRegime,
     law: RegimeLaw,
     other_regime_state_names: frozenset[StateName] = frozenset(),
     declared_variables: frozenset[ReferenceName] = frozenset(),
+    current_iid_helpers: frozenset[FunctionName] = frozenset(),
 ) -> RegimeParamsTemplate:
     """Create parameter template from a regime specification.
 
@@ -162,6 +164,20 @@ def create_regime_params_template(
     # parameter would answer a next-period question with a constant the user
     # supplies. That is rejected rather than classified.
     template_functions = _collect_all_functions_for_template(user_regime, law=law)
+    shared_helpers = set(user_regime.output_only_functions) & current_iid_helpers
+    for phase in ("solve", "simulate"):
+        functions = user_regime.get_all_functions(phase=phase, law=law)
+        pending = [
+            func for name, func in functions.items() if name not in current_iid_helpers
+        ]
+        while pending:
+            function = pending.pop()
+            for name in inspect.signature(function).parameters:
+                if name in current_iid_helpers and name not in shared_helpers:
+                    shared_helpers.add(name)
+                    if name in functions:
+                        pending.append(functions[name])
+    law_only_helpers = current_iid_helpers - shared_helpers
     _fail_if_a_next_name_is_read_outside_a_transition(
         user_regime, template_functions=template_functions
     )
@@ -204,6 +220,11 @@ def create_regime_params_template(
 
     for name, func in template_functions.items():
         if name in edge_entry_names:
+            continue
+        if name in law_only_helpers:
+            # Keep the ordinary function-pool entry with an empty namespace;
+            # its arguments are bound exclusively by the current-law closure.
+            function_params[name] = {}
             continue
         # State and action names appearing in a function's signature are
         # exempt from param-template extraction: pylcm wires those values

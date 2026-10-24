@@ -24,8 +24,12 @@ from jaxtyping import Num
 
 from _lcm.beartype_conf import SHOCK_CONF
 from _lcm.grids.categorical import DataclassInstance
-from _lcm.processes.base import StateConditioned
-from _lcm.processes.joint_normal import _exact_zero_pivots, covariance_factor
+from _lcm.probability import is_represented_zero
+from _lcm.processes.base import StateConditioned, sealed
+from _lcm.processes.joint_normal import (
+    _exact_zero_pivots,
+    admitted_correlation_factor,
+)
 from lcm.exceptions import GridInitializationError, ShockDeclarationError
 from lcm.grids import DiscreteGrid
 from lcm.typing import (
@@ -75,6 +79,7 @@ class ShockReader(Enum):
     """Semantic readers, including nonlinear consumers of a stored channel."""
 
     LINEAR_EXPECTATION = "linear expectation"
+    DECISION = "decision"
     DISCRETE_LAW = "discrete law"
     CONSTRAINT = "constraint"
     REGIME_TRANSITION = "regime transition"
@@ -555,7 +560,7 @@ class ShockGroup:
         """
         return self._realise(
             base_nodes=base_nodes, params=params, inputs=inputs, nodes=None
-        )
+        )[0]
 
     def realise(
         self,
@@ -567,7 +572,7 @@ class ShockGroup:
         """Evaluate all quadrature nodes, enumerating discrete outcomes exactly."""
         return self._realise(
             base_nodes=nodes.base_nodes, params=params, inputs=inputs, nodes=nodes
-        )
+        )[0]
 
     def bind_correlation(
         self, *, correlation: tuple[tuple[float, ...], ...] | Float2D | HostArray
@@ -609,7 +614,9 @@ class ShockGroup:
         params: Mapping[ParameterName, LawValue],
         inputs: Mapping[ReferenceName, LawValue],
         nodes: NodeSet | None,
-    ) -> Realisation:
+        admitted_correlation_support: BoolND | None = None,
+        scalar_cell_group: ShockGroupName | None = None,
+    ) -> tuple[Realisation, tuple[FloatND, ...]]:
         if base_nodes.ndim < 2 or base_nodes.shape[-1] != len(self.shocks):  # noqa: PLR2004 - final axes are nodes and shock columns
             raise ShockDeclarationError(
                 "Base nodes must have a final column per named shock."
@@ -629,7 +636,9 @@ class ShockGroup:
                 raise ShockDeclarationError(
                     "corr must have a row and column per shock."
                 )
-            if self.correlation is None:
+            if self.correlation is None and admitted_correlation_support is not None:
+                zero_pivots = admitted_correlation_support
+            elif self.correlation is None:
                 if isinstance(matrix, jax.core.Tracer):
                     if self._correlation_support is None:
                         raise ShockDeclarationError(
@@ -643,10 +652,14 @@ class ShockGroup:
                 concrete = np.asarray(matrix, dtype=np.dtype(jnp.result_type(0.0)))
                 _validate_correlation(correlation=concrete, size=len(self.shocks))
                 zero_pivots = _correlation_pivots(concrete)
-            base = jnp.matmul(
-                base, covariance_factor(cov=corr, zero_pivots=zero_pivots).T
+            factor, factor_valid = admitted_correlation_factor(
+                correlation=corr,
+                zero_pivots=jnp.asarray(zero_pivots, dtype=jnp.bool_),
             )
+            valid &= factor_valid
+            base = jnp.matmul(base, factor.T)
         weights = jnp.ones(base.shape[:-1]) if nodes is None else nodes.weights
+        weight_factors = [weights]
         values: dict[ShockName, FloatND | IntND] = {}
         cell_shape: tuple[int, ...] = ()
         for column, (name, law) in enumerate(self.shocks.items()):
@@ -660,6 +673,15 @@ class ShockGroup:
                 for item in fields(law)
                 if item.name != "categories"
             }
+            if scalar_cell_group is not None:
+                for parameter, value in parameters.items():
+                    expected_rank = 1 if parameter == "probs" else 0
+                    if value.ndim != expected_rank:
+                        raise ShockDeclarationError(
+                            f"Group {scalar_cell_group!r}, shock {name!r}: "
+                            f"{parameter} must resolve to a scalar cell parameter "
+                            "(or a single categorical probability vector)."
+                        )
             shapes = [
                 value.shape[:-1] if key == "probs" else value.shape
                 for key, value in parameters.items()
@@ -699,12 +721,15 @@ class ShockGroup:
                 else:
                     codes = nodes.discrete_codes[name]
                     values[name] = codes
-                    weights = weights * jnp.take(probs, codes, axis=-1)
+                    categorical_weights = jnp.take(probs, codes, axis=-1)
+                    weight_factors.append(categorical_weights)
+                    weights = weights * categorical_weights
             else:
                 value, law_valid = _continuous_value(
                     law=law, coordinate=coordinate, parameters=parameters
                 )
-                values[name] = value
+                # Ordinary consumers must see these rounded physical bits.
+                values[name] = sealed(value)
                 valid &= law_valid & jnp.all(jnp.isfinite(value))
                 if isinstance(law, Uniform):
                     valid &= jnp.all((coordinate >= 0) & (coordinate <= 1))
@@ -716,12 +741,20 @@ class ShockGroup:
             raise ShockDeclarationError(
                 "Shock values have incompatible cell shapes."
             ) from error
-        return Realisation(
+        realised = Realisation(
             MappingProxyType(
                 {name: jnp.broadcast_to(value, shape) for name, value in values.items()}
             ),
             jnp.broadcast_to(weights, shape),
             valid & jnp.all(jnp.isfinite(weights)),
+        )
+        if scalar_cell_group is not None and shape != base_nodes.shape[:-1]:
+            raise ShockDeclarationError(
+                f"Group {scalar_cell_group!r} must resolve to "
+                "one scalar cell's node rows."
+            )
+        return realised, tuple(
+            jnp.broadcast_to(value, shape) for value in weight_factors
         )
 
     def validate_dependencies(  # noqa: C901 - traverse named callable and lookup dependencies
@@ -959,6 +992,7 @@ def _continuous_value(
         value = parameters["mu"] + parameters["sigma"] * coordinate
         if isinstance(law, LogNormal):
             value = jnp.exp(value)
+            return value, jnp.all(~is_represented_zero(value))
     elif isinstance(law, NormalMixture):
         from _lcm.shock_quantile import (  # noqa: PLC0415 - isolate derivative kernel
             mixture_quantile,

@@ -43,6 +43,7 @@ from _lcm.continuation import (
     EGMContinuationSpec,
     FiniteOuterQuerySpec,
 )
+from _lcm.current_iid import CurrentIIDDrawPlan, CurrentIIDPlan
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.budget import (
     DCEGM_BUDGET_CONSTRAINT_NAME,
@@ -174,6 +175,7 @@ from _lcm.regime_building.phases import (
     phase_variation_paths,
 )
 from _lcm.regime_law import RegimeLaw, RegimeLaws
+from _lcm.shock_registry import ShockBinding
 from _lcm.simulation.program_types import (
     _PerSubjectFunction,
     route_output_roles,
@@ -183,6 +185,8 @@ from _lcm.simulation.programs import (
     attach_gated_simulation_programs,
     build_simulation_programs,
 )
+from lcm.shocks import ShockGroupName
+from lcm.typing import Phase
 
 if TYPE_CHECKING:
     from _lcm.solution.dcegm import _BoundDCEGM
@@ -244,7 +248,7 @@ from _lcm.solution.shipped_solvers import (
     fail_if_solver_is_not_shipped,
 )
 from _lcm.state_action_space import create_state_action_space
-from _lcm.time import TimeAxis, coordinate_at
+from _lcm.time import TimeAxis, coordinate_at, coordinate_kind
 from _lcm.transition_plans import (
     InterpolationBasisInfo,
     LotteryIndexCoordinate,
@@ -303,6 +307,7 @@ from lcm.exceptions import (
     InvalidRegimeTransitionProbabilitiesError,
     ModelInitializationError,
     RegimeInitializationError,
+    UnsupportedOperationError,
 )
 from lcm.phased import Phased
 from lcm.regime import ProjectedRegimeValue, StateTransitionEntry
@@ -322,6 +327,7 @@ from lcm.solvers import (
     AdaptiveOuterMesh,
     EnvelopeConfig,
     FiniteOuterGrid,
+    GridSearch,
     Solver,
     UniformObservedFixedCost,
 )
@@ -350,6 +356,11 @@ class PreparedModelStructure:
 
     representative_user_regimes: MappingProxyType[RegimeName, FinalizedUserRegime]
     """Age-normalized user regimes used for phase compilation."""
+
+    current_iid_bindings: Mapping[
+        tuple[RegimeName, Phase, ShockGroupName], ShockBinding
+    ] = MappingProxyType({})
+    """Current-phase innovation bindings supplied by model authority."""
 
     laws: RegimeLaws
     """Each regime's law, bound from `Model(edges=...)`, by regime name."""
@@ -790,6 +801,16 @@ def process_regimes(
             # transition-only shock is no state of any regime, but its draw is
             # a transition value all the same.
             regime_name: create_regime_params_template(
+                current_iid_helpers=frozenset(
+                    name
+                    for (
+                        owner,
+                        _,
+                        _,
+                    ), binding in prepared_structure.current_iid_bindings.items()
+                    if owner == regime_name
+                    for name in binding.functions
+                ),
                 user_regime=user_regime,
                 law=laws[regime_name],
                 other_regime_state_names=frozenset(
@@ -803,7 +824,17 @@ def process_regimes(
                     for shocks in prepared_structure.draw_only_processes.values()
                     for state_name in shocks
                 ),
-                declared_variables=edge_vocabulary[regime_name].variables,
+                declared_variables=edge_vocabulary[regime_name].variables
+                | frozenset(
+                    name
+                    for (
+                        owner,
+                        _,
+                        _,
+                    ), binding in prepared_structure.current_iid_bindings.items()
+                    if owner == regime_name
+                    for name in binding.group.shocks
+                ),
             )
             for regime_name, user_regime in representative_user_regimes.items()
         }
@@ -854,6 +885,7 @@ def process_regimes(
     )
 
     build_canonical_regimes = _CanonicalRegimeBuilder(
+        current_iid_bindings=prepared_structure.current_iid_bindings,
         ages=ages,
         post_decision_bounds=MappingProxyType(
             {
@@ -1035,6 +1067,11 @@ class _CanonicalRegimeBuilder:
 
     ages: TimeAxis
     """The AgeGrid for the model."""
+
+    current_iid_bindings: Mapping[
+        tuple[RegimeName, Phase, ShockGroupName], ShockBinding
+    ] = MappingProxyType({})
+    """Model-owned innovation declarations by consumer and phase."""
 
     post_decision_bounds: MappingProxyType[
         RegimeName, tuple[PostDecisionBoundSpec, ...]
@@ -1258,6 +1295,17 @@ class _CanonicalRegimeBuilder:
             )
 
             solution_build = _build_solution_phase(
+                current_iid_bindings=MappingProxyType(
+                    {
+                        group: binding
+                        for (
+                            owner,
+                            phase,
+                            group,
+                        ), binding in self.current_iid_bindings.items()
+                        if owner == regime_name and phase == "solve"
+                    }
+                ),
                 spec=spec,
                 scalar_query_models=scalar_query_models,
                 dcegm_query_models=dcegm_query_models,
@@ -1319,6 +1367,17 @@ class _CanonicalRegimeBuilder:
             solution = solution_build.phase
 
             simulation = _build_simulation_phase(
+                current_iid_bindings=MappingProxyType(
+                    {
+                        name: binding
+                        for (
+                            owner,
+                            phase,
+                            name,
+                        ), binding in self.current_iid_bindings.items()
+                        if owner == regime_name and phase == "simulate"
+                    }
+                ),
                 spec=spec,
                 post_decision_bounds=solution.post_decision_bounds,
                 user_regime=user_regime,
@@ -4236,8 +4295,9 @@ def _solver_with_query_authority(
     return solver
 
 
-def _build_solution_phase(  # noqa: PLR0915
+def _build_solution_phase(  # noqa: C901, PLR0912, PLR0915 - native route admission
     *,
+    current_iid_bindings: Mapping[ShockGroupName, ShockBinding] = MappingProxyType({}),
     spec: PhasedRegimeSpec,
     regime_name: RegimeName,
     user_regimes: Mapping[RegimeName, UserRegime],
@@ -4356,6 +4416,51 @@ def _build_solution_phase(  # noqa: PLR0915
         or (dcegm_query_models or {}).get(regime_name)
         or (nbegm_query_models or {}).get(regime_name)
     )
+    if current_iid_bindings:
+        unsupported = [
+            label
+            for active, label in (
+                (not isinstance(solver, GridSearch), "non-GridSearch solver"),
+                (stakeholders is not None, "collective decision"),
+                (bool(fold_state_names), "legacy folded IID axes"),
+                (action_partitions > 1, "action partitions"),
+                (
+                    spec.solution.objective_aggregator is not None
+                    or spec.simulation.objective_aggregator is not None,
+                    "Decoupled decision",
+                ),
+                (bool(invariant_bindings), "invariant blocks"),
+                (
+                    bool(post_decision_bounds) or query_model is not None,
+                    "bound or query reconstruction",
+                ),
+                (
+                    bool(gated_continuations)
+                    or bool(laws[regime_name].gated_edges)
+                    or any(
+                        regime_name
+                        in (*law.gated_edges, *_edge_reference_regimes(law=law))
+                        for law in laws.values()
+                    ),
+                    "gated value channel",
+                ),
+                (
+                    bool(same_period_ref_regimes)
+                    or any(
+                        ref.regime == regime_name
+                        for other in user_regimes.values()
+                        for ref in other.same_period_refs.values()
+                    ),
+                    "same-period value channel",
+                ),
+            )
+            if active
+        ]
+        if unsupported:
+            raise UnsupportedOperationError(
+                f"Current IID in regime {regime_name!r} is not yet composed "
+                f"with {', '.join(unsupported)}."
+            )
     if query_model is not None:
         solver = _solver_with_query_authority(solver=solver, query_model=query_model)
         post_decision_bounds = (query_model.authority.bound,)
@@ -4525,6 +4630,11 @@ def _build_solution_phase(  # noqa: PLR0915
             transitions=core.transitions,
             grids=all_grids[regime_name],
         )
+        if current_iid_bindings and co_map_state_names:
+            raise UnsupportedOperationError(
+                f"Current IID in regime {regime_name!r} is not yet composed "
+                "with co-map."
+            )
         # A co-mapped state's axis is sliced only off the leaves that carry it; a
         # target regime where the state is pruned keeps its full leaf (`None`).
         co_map_v_arr_in_axes = tuple(
@@ -4610,6 +4720,18 @@ def _build_solution_phase(  # noqa: PLR0915
     # plus the regime's continuation template. `GridSearch` wraps the
     # max-Q-over-a grid search; `DCEGM` wraps the EGM step.
     context = SolverBuildContext(
+        current_iid_plans=MappingProxyType(
+            {
+                period: CurrentIIDPlan.create(
+                    bindings=current_iid_bindings,
+                    age=ages.exact_values[period],
+                    coordinate_kind=coordinate_kind(ages),
+                )
+                for period in Q_and_F_functions
+            }
+        )
+        if current_iid_bindings
+        else MappingProxyType({}),
         regime_name=regime_name,
         scalar_query_models=scalar_query_models,
         dcegm_query_models=dcegm_query_models,
@@ -4761,6 +4883,7 @@ def _build_solution_phase(  # noqa: PLR0915
     )
 
     phase = SolutionPhase(
+        current_iid_plans=context.current_iid_plans,
         continuation_reader_capabilities=solver_kernels.continuation_reader_capabilities,
         _variables=variables,
         query_authority=None if query_model is None else query_model.authority,
@@ -5425,6 +5548,7 @@ def _share_finite_nbegm_policy_floor(
 
 def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     *,
+    current_iid_bindings: Mapping[ShockGroupName, ShockBinding] = MappingProxyType({}),
     spec: PhasedRegimeSpec,
     user_regime: UserRegime,
     law: RegimeLaw,
@@ -5858,6 +5982,9 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
             ).by_period
 
     per_subject_decisions = _build_per_subject_decisions_per_period(
+        current_iid_draw_plan=CurrentIIDDrawPlan(bindings=current_iid_bindings)
+        if current_iid_bindings
+        else None,
         state_action_space=state_action_space,
         Q_and_F_functions=Q_and_F_functions,
         has_taste_shocks=has_taste_shocks,
@@ -6148,7 +6275,12 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     )
 
     programs = build_simulation_programs(
-        context=solver_context,
+        context=dataclass_replace(
+            solver_context,
+            current_iid_draw_plan=CurrentIIDDrawPlan(bindings=current_iid_bindings)
+            if current_iid_bindings
+            else None,
+        ),
         Q_and_F_functions=Q_and_F_functions,
         per_subject_decisions=per_subject_decisions,
         per_subject_transitions=next_state_build.per_subject_by_period,
@@ -6161,6 +6293,9 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     )
 
     return SimulationPhase(
+        current_iid_draw_plan=CurrentIIDDrawPlan(bindings=current_iid_bindings)
+        if current_iid_bindings
+        else None,
         _variables=simulation_variables,
         grids=simulate_grids,
         carried_only_state_names=frozenset(carried_grids),
@@ -9792,6 +9927,7 @@ def _build_Q_and_F_per_period(
 
 def _build_per_subject_decisions_per_period(
     *,
+    current_iid_draw_plan: CurrentIIDDrawPlan | None = None,
     state_action_space: StateActionSpace,
     Q_and_F_functions: MappingProxyType[int, QAndFFunction],
     has_taste_shocks: bool = False,
@@ -9831,6 +9967,8 @@ def _build_per_subject_decisions_per_period(
                 stakeholders=stakeholders,
                 pareto_weights=pareto_weights,
             )
+            if current_iid_draw_plan is not None:
+                built[q_id] = current_iid_draw_plan.wrap(built[q_id])
         result[period] = built[q_id]
     return MappingProxyType(result)
 

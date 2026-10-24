@@ -116,10 +116,12 @@ from lcm.typing import (
     ReferenceName,
     RegimeName,
     ScalarInt,
+    UserFacingRegimeParamsTemplate,
     UserParams,
     UserParamsLeaf,
     UserParamsNode,
 )
+from tests.candidate_certificate import direct_flow
 from tests.candidate_certificate.direct_flow import (
     _DECOUPLED_BOUND_MUTATION_NAMES,
     _decoupled_bound_transport_errors,
@@ -195,7 +197,9 @@ class _EvaluateBlock(Protocol):
 def _mutable_params_template(*, model: Model) -> _ModelParams:
     """Copy annotation leaves into a mutable tree accepting supplied values."""
     params: _ModelParams = {}
-    for regime, functions in model.get_params_template().items():
+    for regime, functions in cast(
+        "dict[str, UserFacingRegimeParamsTemplate]", model.get_params_template()
+    ).items():
         regime_params: dict[FunctionName | RegimeName, dict[str, _TemplateNode]] = {}
         for name, branch in functions.items():
             regime_params[name] = dict(branch)
@@ -3247,3 +3251,140 @@ def test_final_nested_sources_have_literal_inventory_obligations() -> None:
     assert isinstance(
         _parse("src/_lcm/egm/upper_envelope/segment_envelope.py"), ast.Module
     )
+
+
+def test_current_iid_adapter_contract_preserves_canonical_decision_transport() -> None:
+    """Preserve the canonical reducer and mandatory publication status."""
+
+    trees = {
+        "src/_lcm/current_iid.py": _parse("src/_lcm/current_iid.py"),
+        "src/_lcm/simulation/current_iid.py": _parse(
+            "src/_lcm/simulation/current_iid.py"
+        ),
+        "src/_lcm/regime_building/max_Q_over_a.py": _parse(
+            "src/_lcm/regime_building/max_Q_over_a.py"
+        ),
+        "src/_lcm/regime_building/processing.py": _parse(
+            "src/_lcm/regime_building/processing.py"
+        ),
+        "src/_lcm/simulation/programs.py": _parse("src/_lcm/simulation/programs.py"),
+        "src/_lcm/solution/feasibility.py": _parse("src/_lcm/solution/feasibility.py"),
+        "src/_lcm/solution/grid_search.py": _parse("src/_lcm/solution/grid_search.py"),
+        "src/_lcm/solution/backward_induction.py": _parse(
+            "src/_lcm/solution/backward_induction.py"
+        ),
+        "src/_lcm/simulation/simulate.py": _parse("src/_lcm/simulation/simulate.py"),
+    }
+    assert hasattr(direct_flow, "current_iid_adapter_errors")
+    assert direct_flow.current_iid_adapter_errors(trees=trees) == []
+
+
+_CURRENT_IID_ADAPTER_MUTATIONS = (
+    (
+        "omit_dense_wrap",
+        "src/_lcm/regime_building/max_Q_over_a.py",
+        "        max_Q_over_a = current_iid_plan.wrap(max_Q_over_a)",
+        "        pass",
+    ),
+    (
+        "wrong_dense_guard",
+        "src/_lcm/regime_building/max_Q_over_a.py",
+        "if current_iid_plan is not None:",
+        "if current_iid_plan is None:",
+    ),
+    (
+        "rewire_dense_reducer",
+        "src/_lcm/regime_building/max_Q_over_a.py",
+        "current_iid_plan.wrap(max_Q_over_a)",
+        "current_iid_plan.wrap(Q_and_F)",
+    ),
+    (
+        "omit_stream_wrap",
+        "src/_lcm/regime_building/max_Q_over_a.py",
+        "        streamed_max_Q_over_a = current_iid_plan.wrap(streamed_max_Q_over_a)",
+        "        pass",
+    ),
+    (
+        "rewire_physical_reducer",
+        "src/_lcm/current_iid.py",
+        "partial(_evaluate_node, function=self.function, arguments=arguments)",
+        (
+            "partial(_evaluate_node, function=lambda **kwargs: (0.0, False), "
+            "arguments=arguments)"
+        ),
+    ),
+    (
+        "omit_solve_status",
+        "src/_lcm/current_iid.py",
+        "return jnp.sum(terms), jnp.any(support & empty), ~valid",
+        "return jnp.sum(terms), jnp.any(support & empty), False",
+    ),
+    (
+        "omit_replay_status",
+        "src/_lcm/current_iid.py",
+        "return index, value, physical, ~valid",
+        "return index, value, physical, False",
+    ),
+    (
+        "omit_publication_status",
+        "src/_lcm/solution/grid_search.py",
+        "current_iid_invalid=current_iid_invalid,",
+        "current_iid_invalid=None,",
+    ),
+    (
+        "rewire_key_producer",
+        "src/_lcm/simulation/current_iid.py",
+        "function=draw_window_keys,",
+        "function=lambda **kwargs: None,",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("name", "source", "before", "after"), _CURRENT_IID_ADAPTER_MUTATIONS
+)
+def test_current_iid_adapter_rejects_rewiring(
+    *, name: str, source: direct_flow.SourcePath, before: str, after: str
+) -> None:
+    """Each new adapter obligation must independently reject its defect."""
+
+    trees = {
+        path: _parse(path)
+        for path in (
+            "src/_lcm/current_iid.py",
+            "src/_lcm/simulation/current_iid.py",
+            "src/_lcm/regime_building/max_Q_over_a.py",
+            "src/_lcm/regime_building/processing.py",
+            "src/_lcm/simulation/programs.py",
+            "src/_lcm/solution/feasibility.py",
+            "src/_lcm/solution/grid_search.py",
+            "src/_lcm/solution/backward_induction.py",
+            "src/_lcm/simulation/simulate.py",
+        )
+    }
+    assert direct_flow.current_iid_adapter_errors(trees=trees) == []
+    text = (Path(__file__).parents[1] / source).read_text()
+    assert before in text, name
+    trees[source] = ast.parse(text.replace(before, after, 1))
+    assert direct_flow.current_iid_adapter_errors(trees=trees), name
+
+
+def test_current_iid_adapter_requires_implementation_proof() -> None:
+
+    trees = {path: _parse(path) for path in direct_flow._CERTIFIED_CORRIDOR_SOURCES}
+    assert direct_flow.current_iid_adapter_errors(trees=trees) == []
+    del trees["src/_lcm/current_iid.py"]
+    assert (
+        "current IID adapter: missing source src/_lcm/current_iid.py"
+        in direct_flow.current_iid_adapter_errors(trees=trees)
+    )
+
+
+def test_current_iid_projection_does_not_change_unrelated_ast() -> None:
+
+    tree = ast.parse("def unrelated(x):\n    return x + 1")
+    projected = direct_flow._candidate_value_projection(tree)
+    assert ast.dump(projected, include_attributes=False) == ast.dump(
+        tree, include_attributes=False
+    )
+    assert direct_flow._current_iid_builder_guard_errors(tree)

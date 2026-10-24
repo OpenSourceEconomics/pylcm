@@ -172,9 +172,12 @@ type UserParams = Mapping[str, UserParamsNode]
 # `edges` slot's target, gate reference or route — before rendered annotation
 # leaves. The `edges` branch maps each source regime to its slots.
 type _UserFacingTemplateNode = str | dict[str, _UserFacingTemplateNode]
+type UserFacingRegimeParamsTemplate = dict[
+    FunctionName | RegimeName, dict[str, _UserFacingTemplateNode]
+]
 type UserFacingParamsTemplate = dict[
     RegimeName,
-    dict[FunctionName | RegimeName, dict[str, _UserFacingTemplateNode]],
+    UserFacingRegimeParamsTemplate | dict[ParameterName, str],
 ]
 
 

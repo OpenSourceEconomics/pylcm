@@ -9,6 +9,7 @@ cases, including value-only problems, and one parameter name has one schema.
 """
 
 from collections.abc import Callable, Mapping
+from typing import cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -42,6 +43,7 @@ from lcm.typing import (
     FloatND,
     RegimeName,
     ScalarInt,
+    UserFacingRegimeParamsTemplate,
     UserFunction,
 )
 from tests.regime_building.test_same_period_ref_period_axes import (
@@ -588,7 +590,10 @@ def test_conflicting_schemas_of_one_required_parameter_fail() -> None:
 
 def test_a_schema_conflict_in_an_unrequired_case_is_not_required() -> None:
     """With only the late case required, `rate` has the late case's schema."""
-    template = _two_schema_model({55: "working"}).get_params_template()
+    template = cast(
+        "dict[str, UserFacingRegimeParamsTemplate]",
+        _two_schema_model({55: "working"}).get_params_template(),
+    )
     assert template["edges"]["working"]["working"] == {"rate": "ScalarInt"}
 
 
@@ -632,9 +637,10 @@ def _value_only_model() -> Model:
 
 def test_a_parameter_of_a_value_only_regime_is_kept() -> None:
     """The perceived regime is never visited, yet its `bonus` is required."""
-    assert _value_only_model().get_params_template()["perceived"]["utility"] == {
-        "bonus": "float"
-    }
+    assert cast(
+        "dict[str, UserFacingRegimeParamsTemplate]",
+        _value_only_model().get_params_template(),
+    )["perceived"]["utility"] == {"bonus": "float"}
 
 
 def _grown(*, wealth: ContinuousState, growth: float) -> ContinuousState:
@@ -667,5 +673,8 @@ def _producer_model(initial_nodes: UserInitialNodes) -> Model:
 
 def test_a_late_root_keeps_the_producer_of_its_exit_target() -> None:
     """A start at 55 still requires the wealth producer into retirement."""
-    template = _producer_model({55: "working"}).get_params_template()
+    template = cast(
+        "dict[str, UserFacingRegimeParamsTemplate]",
+        _producer_model({55: "working"}).get_params_template(),
+    )
     assert template["working"]["retirement"]["next_wealth"] == {"growth": "float"}
