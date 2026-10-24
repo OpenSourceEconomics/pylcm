@@ -350,6 +350,12 @@ def _validate_callable_borrowing_solver(
 
 def validate_model_inputs(
     *,
+    current_iid_helpers: Mapping[
+        RegimeName, frozenset[FunctionName]
+    ] = MappingProxyType({}),
+    current_iid_state_inputs: Mapping[
+        RegimeName, frozenset[StateName]
+    ] = MappingProxyType({}),
     user_regimes: Mapping[RegimeName, UserRegime],
     laws: RegimeLaws,
     regime_id_class: type[DataclassInstance],
@@ -437,6 +443,7 @@ def validate_model_inputs(
         )
 
     _validate_function_usage(
+        current_iid_helpers=current_iid_helpers,
         user_regimes=solver_validation_regimes,
         declared_regimes=declared_function_regimes or solver_validation_regimes,
         generated_function_names=generated_function_names,
@@ -475,6 +482,7 @@ def validate_model_inputs(
         )
     error_messages.extend(
         _validate_all_variables_used(
+            current_iid_state_inputs=current_iid_state_inputs,
             user_regimes=user_regimes,
             laws=laws,
             broadcast_variables=broadcast_variables,
@@ -511,6 +519,7 @@ def validate_model_inputs(
 
 def _validate_function_usage(
     *,
+    current_iid_helpers: Mapping[RegimeName, frozenset[FunctionName]],
     user_regimes: Mapping[RegimeName, UserRegime],
     declared_regimes: Mapping[RegimeName, UserRegime],
     generated_function_names: Mapping[RegimeName, frozenset[FunctionName]],
@@ -542,6 +551,7 @@ def _validate_function_usage(
             functions={**regime.functions, **declared.functions},
         )
         direct = reads[name]
+        direct.update(current_iid_helpers.get(name, frozenset()))
         direct.update(engine_function_names(regime))
         direct.update(regime.decomposed_constraints)
         direct.update(regime.value_constraints)
@@ -730,6 +740,9 @@ def _model_wide_conditioning_names(
 
 def _validate_all_variables_used(
     *,
+    current_iid_state_inputs: Mapping[
+        RegimeName, frozenset[StateName]
+    ] = MappingProxyType({}),
     user_regimes: Mapping[RegimeName, UserRegime],
     laws: RegimeLaws,
     broadcast_variables: Mapping[RegimeName, frozenset[str]],
@@ -887,6 +900,9 @@ def _validate_all_variables_used(
         # own `on` state — so a conditioner is credited to every regime that carries it,
         # not only the process's own regime.
         reachable = set(reachable) | (conditioning_names & variable_names)
+        reachable |= (
+            current_iid_state_inputs.get(regime_name, frozenset()) & variable_names
+        )
         # A process state has no `next_<state>` function node, so a computation
         # that reads its next-period draw ends the walk at a leaf. The draw is
         # taken from the state, so reading it is a use of the state.

@@ -340,6 +340,7 @@ def create_regime_state_action_space(
 
 def calculate_next_states(
     *,
+    current_shocks: Mapping[str, FloatND | IntND] = MappingProxyType({}),
     regime: Regime,
     regimes: Mapping[RegimeName, Regime],
     optimal_actions: MappingProxyType[ActionName, FloatND | IntND],
@@ -429,6 +430,7 @@ def calculate_next_states(
                 period=period,
                 n_subjects=len(subjects_in_regime),
                 arguments=transition_arguments(
+                    current_shocks=current_shocks,
                     states=state_action_space.states,
                     carried=simulate_only_states,
                     process_nodes={} if process_nodes is None else process_nodes,
@@ -481,6 +483,7 @@ def calculate_next_states(
 
 def calculate_next_regime_membership(
     *,
+    current_shocks: Mapping[str, FloatND | IntND] = MappingProxyType({}),
     regime: Regime,
     state_action_space: StateActionSpace,
     optimal_actions: MappingProxyType[ActionName, FloatND | IntND],
@@ -550,6 +553,7 @@ def calculate_next_regime_membership(
             period=period,
             n_subjects=len(subjects_in_regime),
             arguments=transition_arguments(
+                current_shocks=current_shocks,
                 states=state_action_space.states,
                 carried=simulate_only_states,
                 actions=optimal_actions,

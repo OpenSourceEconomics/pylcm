@@ -140,7 +140,7 @@ def test_final_nested_runner_keeps_a_distinct_required_population(
     assert report["clean"]["ok"]
     assert report["clean"]["errors"] == []
     assert report["mutation_count"] == 421
-    assert report["supplemental_mutation_count"] == 96
+    assert report["supplemental_mutation_count"] == 97
     assert report["retained_prefix_mutation_count"] == 113
     assert report["outer_helper_mutation_count"] == 40
     cases = report["final_nested_mutations"]
@@ -152,7 +152,7 @@ def test_final_nested_runner_keeps_a_distinct_required_population(
     for name, result in cases.items():
         assert result["rejected"], name
         assert result["errors"], name
-        assert len(result["offending_paths"]) == 1, name
+        assert result["offending_paths"] == [result["path"]], name
         diagnostic = direct_flow._final_nested_primary_diagnostic(name=name)
         assert diagnostic in result["errors"], name
         assert tuple(
@@ -214,7 +214,7 @@ def test_final_nested_failure_prevents_the_actual_runner_aggregate(
     assert report["clean"]["ok"]
     assert report["clean"]["errors"] == []
     assert report["mutation_count"] == 421
-    assert report["supplemental_mutation_count"] == 96
+    assert report["supplemental_mutation_count"] == 97
     assert report["retained_prefix_mutation_count"] == 113
     assert report["outer_helper_mutation_count"] == 40
     assert not report["all_rejected"]

@@ -25,6 +25,7 @@ from lcm import (
     categorical,
 )
 from lcm.exceptions import (
+    InvalidParamsError,
     RegimeInitializationError,
     ShockDeclarationError,
     UnsupportedOperationError,
@@ -139,16 +140,19 @@ def test_group_template_is_distinct_from_ordinary_model_parameters() -> None:
             model._shock_registry.bindings["alive", "solve", "earnings"].params_template
         ),
         model.get_params_template(),
-    ) == ({"eps__sigma": "float"}, {"alive": {"utility": {}}})
+    ) == (
+        {"eps__sigma": "float"},
+        {"alive": {"utility": {}}, "earnings": {"eps__sigma": "float"}},
+    )
 
 
-def test_current_iid_execution_is_explicitly_unsupported() -> None:
+def test_current_iid_execution_requires_declared_group_parameters() -> None:
 
     model = _consumer(
         regime=Regime(functions={"utility": _utility}, shocks=("earnings",)),
         group=_group(),
     )
-    with pytest.raises(UnsupportedOperationError, match="integrated current-IID"):
+    with pytest.raises(InvalidParamsError, match=r"missing.*eps__sigma"):
         model.solve(params={}, log_level="off")
 
 
@@ -160,7 +164,7 @@ def test_unlowered_physical_draw_is_not_an_ordinary_parameter() -> None:
 
     with pytest.raises(UnsupportedOperationError, match="integrated shock lowering"):
         _consumer(
-            regime=Regime(functions={"utility": _shock_utility}, shocks=("earnings",)),
+            regime=Regime(functions={"utility": _shock_utility}),
             group=_group(),
         )
 
@@ -322,7 +326,6 @@ def test_state_law_draw_is_not_an_ordinary_parameter() -> None:
                     states={"wealth": LinSpacedGrid(start=1, stop=2, n_points=3)},
                     state_transitions={"wealth": _shock_utility},
                     functions={"utility": _utility},
-                    shocks=("earnings",),
                 )
             },
             regime_id_class=Status,

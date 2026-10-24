@@ -7,13 +7,14 @@ that rule by a superficially similar base-node rule.
 
 import inspect
 from collections.abc import Iterator, Mapping
-from dataclasses import dataclass, fields, is_dataclass
+from dataclasses import dataclass, fields, is_dataclass, replace
 from types import MappingProxyType
 from typing import cast
 
 from _lcm.grids import DiscreteGrid
 from _lcm.processes.iid import _IIDProcess
 from _lcm.processes.joint_normal import JointNormalIIDProcess
+from _lcm.regime_building.value_adapter import adapt_user_function
 from _lcm.regime_law import RegimeLaw, RegimeLaws
 from _lcm.utils.error_messages import path_segment_name_errors
 from lcm.exceptions import ShockDeclarationError, UnsupportedOperationError
@@ -27,6 +28,7 @@ from lcm.shocks import (
     ShockName,
     Uniform,
     _arguments,
+    _ConditionedLookup,
     _fingerprint,
 )
 from lcm.typing import (
@@ -109,13 +111,34 @@ class ShockRegistry:
     signed_origins: frozenset[ShockGroupName]
     """Declared signed ancestry, retained independently of evaluated weight signs."""
 
-    def fail_if_execution_is_unsupported(self) -> None:
-        """Refuse execution until current-IID kernels consume these bindings."""
-        if self.bindings:
-            raise UnsupportedOperationError(
-                "Regime.shocks requires integrated current-IID kernels; "
-                "registry declarations cannot execute as ordinary parameters."
+    @property
+    def params_template(self) -> Mapping[ShockGroupName, Mapping[ParameterName, str]]:
+        """Return the shared group-local runtime slots of active declarations."""
+        groups: dict[ShockGroupName, dict[ParameterName, str]] = {}
+        for (_, _, name), binding in self.bindings.items():
+            if binding.params_template:
+                groups.setdefault(name, {}).update(binding.params_template)
+        return MappingProxyType(
+            {name: MappingProxyType(slots) for name, slots in groups.items()}
+        )
+
+    @property
+    def state_inputs_by_regime(self) -> Mapping[RegimeName, frozenset[StateName]]:
+        """Retain current-law state dependencies in both canonical phase walks."""
+        inputs: dict[RegimeName, frozenset[StateName]] = {}
+        for (regime, _, _), binding in self.bindings.items():
+            inputs[regime] = inputs.get(regime, frozenset()) | binding.state_inputs
+        return MappingProxyType(inputs)
+
+    @property
+    def helper_inputs_by_regime(self) -> Mapping[RegimeName, frozenset[FunctionName]]:
+        """Retain only helpers transitively read by a declared law."""
+        helpers: dict[RegimeName, frozenset[FunctionName]] = {}
+        for (regime, _, _), binding in self.bindings.items():
+            helpers[regime] = helpers.get(regime, frozenset()) | frozenset(
+                binding.functions
             )
+        return MappingProxyType(helpers)
 
 
 def create_shock_registry(
@@ -206,12 +229,27 @@ def create_shock_registry(
                     )
                 }
                 bindings[regime_name, phase, group_name] = ShockBinding(
-                    group=group.bind_conditioning(state_grids=state_grids),
+                    group=_adapt_law_values(
+                        group=group.bind_conditioning(state_grids=state_grids),
+                        grids=state_grids,
+                    ),
                     state_inputs=state_inputs,
                     state_domains=MappingProxyType(
                         {name: regime.states[name] for name in state_inputs}
                     ),
-                    functions=functions,
+                    functions=MappingProxyType(
+                        {
+                            name: cast(
+                                "LawCallable",
+                                adapt_user_function(
+                                    func=function, value_grids=state_grids, encode=None
+                                ),
+                            )
+                            for name, function in _law_helpers(
+                                group=group, functions=functions
+                            ).items()
+                        }
+                    ),
                     params_template=_create_group_template(
                         group=group,
                         states=frozenset(regime.states),
@@ -220,7 +258,12 @@ def create_shock_registry(
                 )
             _fail_if_shock_reads_are_unlowered(
                 declaration=(regime, laws.get(regime_name)),
-                shock_names=frozenset(innovations),
+                shock_names=frozenset(innovations)
+                - frozenset(
+                    name
+                    for group_name in regime.shocks
+                    for name in groups[group_name].shocks
+                ),
             )
     return ShockRegistry(
         groups=groups,
@@ -231,6 +274,46 @@ def create_shock_registry(
             name for name, group in groups.items() if group.signed
         ),
     )
+
+
+def _adapt_law_values(
+    *, group: ShockGroup, grids: Mapping[StateName, DiscreteGrid]
+) -> ShockGroup:
+    """Decode only user callable reads; conditioned lookups deliberately read codes."""
+    laws = {}
+    for name, law in group.shocks.items():
+        changes = {
+            item.name: adapt_user_function(func=value, value_grids=grids, encode=None)
+            for item in fields(law)
+            if item.name != "categories"
+            and callable(value := getattr(law, item.name))
+            and not isinstance(value, _ConditionedLookup)
+        }
+        laws[name] = replace(law, **changes)
+    adapted = replace(group, shocks=laws)
+    object.__setattr__(adapted, "_correlation_support", group._correlation_support)  # noqa: SLF001 - preserve admitted support
+    return adapted
+
+
+def _law_helpers(
+    *, group: ShockGroup, functions: Mapping[FunctionName, LawCallable]
+) -> Mapping[FunctionName, LawCallable]:
+    """Select the transitive callable closure without executing unrelated nodes."""
+    selected: dict[FunctionName, LawCallable] = {}
+
+    def visit(name: ReferenceName) -> None:
+        if name in functions and name not in selected:
+            selected[name] = functions[name]
+            for argument in _arguments(functions[name]):
+                visit(argument)
+
+    for law in group.shocks.values():
+        for item in fields(law):
+            value = getattr(law, item.name)
+            if item.name != "categories" and callable(value):
+                for argument in _arguments(value):
+                    visit(argument)
+    return MappingProxyType(selected)
 
 
 def _create_group_template(  # noqa: C901 - enumerate law slots and callable leaves
@@ -273,7 +356,18 @@ def _phase_functions(
     return MappingProxyType(
         {
             name: cast("LawCallable", selected)
-            for name, value in regime.decomposed_functions.items()
+            for name, value in {
+                **regime.decomposed_functions,
+                **(
+                    {
+                        name: value
+                        for name, value in regime.states.items()
+                        if isinstance(value, Phased)
+                    }
+                    if phase == "solve"
+                    else {}
+                ),
+            }.items()
             if callable(selected := _phase_value(value=value, phase=phase))
         }
     )

@@ -6,6 +6,7 @@ from typing import cast
 
 import jax
 
+from _lcm.current_iid import CURRENT_IID_ARGUMENT, CURRENT_IID_KEYS_ARGUMENT
 from _lcm.engine import Regime, StateActionSpace
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.typing import PRNGKeyND, PytreeValue, QualifiedName, ShapeDtypePytree
@@ -21,6 +22,9 @@ from lcm.typing import (
 
 def decision_arguments(
     *,
+    current_iid: Mapping[
+        ReferenceName, PytreeValue | ShapeDtypePytree
+    ] = MappingProxyType({}),
     states: Mapping[StateName, PytreeValue | ShapeDtypePytree],
     discrete_actions: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
     continuous_actions: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
@@ -37,12 +41,36 @@ def decision_arguments(
         **discrete_actions,
         **continuous_actions,
         **taste_keys,
+        **current_iid,
         "next_regime_to_V_arr": next_values,
         **references,
         **params,
         "period": period,
         "age": age,
     }
+
+
+def current_iid_arguments(
+    *,
+    regime: Regime,
+    flat_params: Mapping[str, PytreeValue | ShapeDtypePytree],
+    keys: Mapping[str, PRNGKeyND | jax.ShapeDtypeStruct],
+) -> Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]:
+    """Use the same group/key operands for forward profiling and dispatch."""
+    plan = regime.simulation.current_iid_draw_plan
+    if plan is None:
+        return MappingProxyType({})
+    return cast(
+        "Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]",
+        MappingProxyType(
+            {
+                CURRENT_IID_KEYS_ARGUMENT: keys,
+                CURRENT_IID_ARGUMENT: {
+                    name: flat_params.get(name, {}) for name in plan.bindings
+                },
+            }
+        ),
+    )
 
 
 def process_node_arguments(
@@ -66,6 +94,9 @@ def process_node_arguments(
 
 def transition_arguments(
     *,
+    current_shocks: Mapping[
+        ReferenceName, PytreeValue | ShapeDtypePytree
+    ] = MappingProxyType({}),
     states: Mapping[StateName, PytreeValue | ShapeDtypePytree],
     carried: Mapping[StateName, PytreeValue | ShapeDtypePytree],
     actions: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
@@ -79,6 +110,7 @@ def transition_arguments(
     return {
         **states,
         **carried,
+        **current_shocks,
         **({} if process_nodes is None else process_nodes),
         **actions,
         **keys,

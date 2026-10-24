@@ -91,7 +91,19 @@ _RANDOM_HELPER_MUTATIONS = {
 _PROFILED_HELPER_MUTATIONS = {
     "automatic_params:consumer_devices_ignored": (
         "src/_lcm/simulation/entry_allocations.py",
-        "devices = phase.placed_devices()",
+        (
+            "devices = tuple(\n"
+            "                dict.fromkeys(\n"
+            "                    device\n"
+            "                    for phase in phases\n"
+            "                    for device in (\n"
+            "                        phase.placed_devices()\n"
+            "                        if phase.sharded_state_names\n"
+            "                        else phase.placed_devices()[:1]\n"
+            "                    )\n"
+            "                )\n"
+            "            )"
+        ),
         "devices = self.devices[:1]",
     ),
     "automatic_params:copies_not_owned": (
@@ -307,8 +319,8 @@ _PROFILED_HELPER_MUTATIONS = {
     ),
     "simulation_entry:parameter_writer_bypassed": (
         "src/lcm/model.py",
-        "flat_params, array_writer=array_writer",
-        "flat_params, array_writer=None",
+        "            flat_params, array_writer=array_writer\n",
+        "            flat_params, array_writer=None\n",
     ),
     "simulation_entry:integer_upload_bypassed": (
         "src/_lcm/dtypes.py",
@@ -1361,6 +1373,7 @@ def test_supplemental_sources_complete_the_pinned_registry_coverage() -> None:
     final_nested = direct_flow.final_nested_mutation_specs(repo_root=root)
     child_native = direct_flow.child_native_mutation_specs(repo_root=root)
     additional_helpers = direct_flow.additional_helper_mutation_specs(repo_root=root)
+    current_iid = direct_flow.current_iid_mutation_specs(repo_root=root)
 
     assert set(decoupled) == {
         "decoupled_bound:action_adapter_bypassed",
@@ -1374,6 +1387,7 @@ def test_supplemental_sources_complete_the_pinned_registry_coverage() -> None:
     }
 
     assert set(supplemental) == {
+        "simulation_taste_stream:destination_name_ignored",
         "solve_completion:conflict_wait_bypassed",
         "eager_core:planned_operand_placement_bypassed",
         "runtime_sharding:physical_partition_ignored",
@@ -1486,6 +1500,7 @@ def test_supplemental_sources_complete_the_pinned_registry_coverage() -> None:
         final_nested,
         child_native,
         additional_helpers,
+        current_iid,
     )
     for index, left in enumerate(families):
         for right in families[index + 1 :]:

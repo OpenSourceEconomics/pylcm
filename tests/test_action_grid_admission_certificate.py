@@ -32,10 +32,10 @@ def test_action_grid_controls_preserve_historical_mutation_populations() -> None
         _name_digest(registered)
         == "f58754206b785f05a7dff36c690946024effc931c888c72383fc0bd98be060cd"
     )
-    assert len(supplemental) == 96
+    assert len(supplemental) == 97
     assert (
         _name_digest(supplemental)
-        == "bfb20467575ab892db7be74b859bac0288c8840f7a1aeb36eb13dee129ed3490"
+        == "3feb53024d4903cc245632895f4237a694517ed9f38f48d0e5b5feb7f5611204"
     )
     assert len(uniform) == 37
     assert (
@@ -71,6 +71,7 @@ def _nested_corridor_controls() -> dict[str, dict[str, str]]:
             direct_flow.final_nested_mutation_specs,
             direct_flow.child_native_mutation_specs,
             direct_flow.additional_helper_mutation_specs,
+            direct_flow.current_iid_mutation_specs,
         )
         for name, spec in generator(repo_root=root).items()
     }

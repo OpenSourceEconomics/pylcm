@@ -4,7 +4,7 @@ import inspect
 from fractions import Fraction
 from functools import partial
 from pathlib import Path
-from typing import NotRequired
+from typing import NotRequired, cast
 
 import jax
 import jax.numpy as jnp
@@ -34,6 +34,7 @@ from lcm.typing import (
     FloatND,
     Period,
     ScalarInt,
+    UserFacingRegimeParamsTemplate,
     UserFunction,
     ValueND,
 )
@@ -372,7 +373,9 @@ def test_temporal_decorator_survives_outer_beartype() -> None:
 
 
 def test_template_identifies_temporal_slot() -> None:
-    template = _model().get_params_template()
+    template = cast(
+        "dict[str, UserFacingRegimeParamsTemplate]", _model().get_params_template()
+    )
     assert "TimeVarying" in template["work"]["utility"]["wage"]
 
 
@@ -1110,7 +1113,12 @@ def test_joint_temporal_roles_read_the_source_period() -> None:
 
 
 def test_joint_template_identifies_temporal_roles() -> None:
-    template = flatten_to_qnames(_joint_model().get_params_template())
+    template = flatten_to_qnames(
+        cast(
+            "dict[str, UserFacingRegimeParamsTemplate]",
+            _joint_model().get_params_template(),
+        )
+    )
     assert "TimeVarying" in template["work__done__match__support__scale"]
     assert "TimeVarying" in template["work__done__match__probabilities__probability"]
     assert "TimeVarying" in template["work__done__next_wealth__shift"]

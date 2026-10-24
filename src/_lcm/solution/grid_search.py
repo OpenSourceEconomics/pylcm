@@ -25,7 +25,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from types import MappingProxyType
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import jax
 import jax.numpy as jnp
@@ -33,6 +33,12 @@ from beartype import beartype
 from dags import with_signature
 
 from _lcm.beartype_conf import REGIME_CONF
+
+if TYPE_CHECKING:
+    from _lcm.current_iid import CurrentIIDPlan
+else:
+    # The innovation registry reaches this solver through the public Regime facade.
+    type CurrentIIDPlan = object
 from _lcm.constraints.routes import (
     ConstraintRoute,
     ConstraintRouteKey,
@@ -110,6 +116,7 @@ from lcm.typing import (
     BoolND,
     FloatND,
     IntND,
+    ScalarBool,
 )
 
 # Planner name of the flattened Cartesian action axis grid search reduces.
@@ -346,7 +353,8 @@ class GridSearch(Solver):
         )
         flattened_bound_programs: set[int] = set()
         for period, Q_and_F in context.Q_and_F_functions.items():
-            q_id = id(Q_and_F)
+            current_iid_plan = context.current_iid_plans.get(period)
+            q_id = id(current_iid_plan) if current_iid_plan is not None else id(Q_and_F)
             target_regimes = (
                 ()
                 if period == context.solution_reachability.n_periods - 1
@@ -435,15 +443,19 @@ class GridSearch(Solver):
                     program_functions[q_id] = (
                         get_streaming_max_Q_over_a(
                             **common_kwargs,
+                            current_iid_plan=current_iid_plan,
                             action_width_keyword=action_width_keyword,
                         )
                         if stream_actions
-                        else get_max_Q_over_a(**common_kwargs)
+                        else get_max_Q_over_a(
+                            **common_kwargs, current_iid_plan=current_iid_plan
+                        )
                     )
                 reducer = program_functions[q_id]
                 counted = CountedGridSearch(
                     function=cast("Callable[..., tuple[FloatND, BoolND]]", reducer),
                     collective=context.stakeholders is not None,
+                    current_iid=current_iid_plan is not None,
                 )
                 program_functions[q_id] = with_signature(
                     LandingCountedGridSearch(counted=counted)
@@ -468,6 +480,7 @@ class GridSearch(Solver):
                 target_regimes=target_regimes,
             )
             argument_builder = _GridSearchArgumentBuilder(
+                current_iid_plan=current_iid_plan,
                 regime_name=context.regime_name,
                 target_regimes=target_regimes,
                 same_period_ref_regimes=context.same_period_ref_regimes,
@@ -541,6 +554,11 @@ class GridSearch(Solver):
                         )
                     ),
                     *(
+                        (StateAxesLeading(state_names=(), dtype=jnp.bool_, shape=()),)
+                        if current_iid_plan is not None
+                        else ()
+                    ),
+                    *(
                         StateAxesLeading(state_names=(), dtype=jnp.bool_, shape=())
                         for _ in range(2 * n_runtime_bounds)
                     ),
@@ -566,13 +584,30 @@ class GridSearch(Solver):
                 donation_candidates=(),
             )
             result[period] = _GridSearchPeriodKernel(
+                current_iid=current_iid_plan is not None,
                 _core_programs=MappingProxyType({"main": program})
                 if not context.invariant_bindings
                 else _bound_programs(program=program, context=context),
                 landing_checks=landing_checks_of(Q_and_F),
                 n_runtime_bounds=n_runtime_bounds,
             )
-        return SolutionKernels(period_kernels=MappingProxyType(result))
+        return SolutionKernels(
+            period_kernels=MappingProxyType(result),
+            period_group_keys=MappingProxyType(
+                {
+                    period: (
+                        "current-iid",
+                        period,
+                        tuple(
+                            (name, nodes.fingerprint)
+                            for name, _, nodes in plan.bindings
+                        ),
+                    )
+                    for period, plan in context.current_iid_plans.items()
+                    if plan is not None
+                }
+            ),
+        )
 
 
 def _bound_programs(
@@ -883,6 +918,8 @@ class _GridSearchArgumentBuilder:
     """Build the one GridSearch program's arguments for lowering and execution."""
 
     regime_name: RegimeName
+    current_iid_plan: CurrentIIDPlan | None = None
+    """Current joint support whose group parameters are shared model operands."""
     target_regimes: tuple[RegimeName, ...]
     """The period targets whose next-period values the program reads."""
     same_period_ref_regimes: tuple[RegimeName, ...] = ()
@@ -912,6 +949,19 @@ class _GridSearchArgumentBuilder:
             "period": jnp.int32(context.period),
             "age": ages.values[context.period],
         }
+        if self.current_iid_plan is not None:
+            from _lcm.current_iid import (  # noqa: PLC0415
+                CURRENT_IID_ARGUMENT,
+                CURRENT_IID_NODES_ARGUMENT,
+                CURRENT_IID_ROWS_ARGUMENT,
+            )
+
+            arguments[CURRENT_IID_ARGUMENT] = {
+                name: dict(flat_params.get(name, {}))
+                for name, _, _ in self.current_iid_plan.bindings
+            }
+            arguments[CURRENT_IID_NODES_ARGUMENT] = self.current_iid_plan.node_operands
+            arguments[CURRENT_IID_ROWS_ARGUMENT] = self.current_iid_plan.indices
         if self.same_period_ref_regimes:
             reference_values = (
                 MappingProxyType(
@@ -1028,6 +1078,10 @@ class _GridSearchPeriodKernel:
         default=0, metadata={"fingerprint_omit_if_default": True}
     )
     """Number of independently declared mandatory bound records."""
+    current_iid: bool = field(
+        default=False, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Whether the native output must include current-law validity."""
     _core_programs: Mapping[str, CoreProgram]
     """The immutable GridSearch program graph: `main`, or one program per code."""
     landing_checks: tuple[tuple[RegimeName, StateName], ...] = field(
@@ -1092,7 +1146,7 @@ class _GridSearchPeriodKernel:
             ),
         )
 
-    def __call__(
+    def __call__(  # noqa: C901 - validate native output roles before publication
         self,
         *,
         compiled_cores: Mapping[str, Callable[..., PytreeValue]],
@@ -1148,6 +1202,18 @@ class _GridSearchPeriodKernel:
             )
         )
         out = compiled_cores[core_key](**arguments)
+        current_iid_invalid = None
+        if self.current_iid:
+            if not isinstance(out, tuple) or len(out) != 4:  # noqa: PLR2004 - declared integrity tuple
+                raise TypeError("Mandatory current-IID integrity output is missing.")
+            *ordinary, current_iid_invalid = out
+            current_iid_invalid = cast("ScalarBool", current_iid_invalid)
+            if (
+                current_iid_invalid.shape != ()
+                or current_iid_invalid.dtype != jnp.bool_
+            ):
+                raise TypeError("Current-IID integrity must be a scalar Boolean.")
+            out = tuple(ordinary)
         landing_totals = None
         if self.landing_checks:
             from _lcm.solution.landing_counts import (  # noqa: PLC0415
@@ -1208,6 +1274,7 @@ class _GridSearchPeriodKernel:
         V_arr, empty_count, other_inf_count = cast("tuple[FloatND, IntND, IntND]", out)
         return FeasibilityKernelOutput(
             value=V_arr,
+            current_iid_invalid=current_iid_invalid,
             feasibility_counts=(empty_count, other_inf_count),
             bound_status=bound_status,
             landing_totals=cast("IntND | None", landing_totals)

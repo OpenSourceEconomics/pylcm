@@ -155,10 +155,35 @@ class SimulationEntryAllocations:
         # A source's edge slots are read by the source's kernels, so they go
         # where the source runs.
         for path, parameters in flat_namespaces(flat_params):
-            phase = regimes[path[-1]].solution
-            devices = phase.placed_devices()
-            if not phase.sharded_state_names:
-                devices = devices[:1]
+            phases = (
+                (regimes[path[-1]].solution,)
+                if path[-1] in regimes
+                else tuple(
+                    regime.solution
+                    for regime in regimes.values()
+                    if any(
+                        name == path[-1]
+                        for plan in regime.solution.current_iid_plans.values()
+                        if plan is not None
+                        for name, _, _ in plan.bindings
+                    )
+                )
+            )
+            devices = tuple(
+                dict.fromkeys(
+                    device
+                    for phase in phases
+                    for device in (
+                        phase.placed_devices()
+                        if phase.sharded_state_names
+                        else phase.placed_devices()[:1]
+                    )
+                )
+            )
+            if not devices:
+                raise RuntimeError(
+                    f"Solve parameter root {path!r} has no declared consumer."
+                )
             live = self.snapshot()
             arguments = place_simulation_arguments(
                 arguments={"solve_params": parameters},

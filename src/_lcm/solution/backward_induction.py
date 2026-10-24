@@ -283,6 +283,7 @@ from lcm.exceptions import (
     ExecutionPlanningError,
     InvalidValueFunctionError,
     ModelInitializationError,
+    ShockDeclarationError,
 )
 from lcm.execution import WidthSearch
 from lcm.solver_api import (
@@ -610,6 +611,12 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 for regime in regimes.values()
                 if regime.solution.period_state_axes is not None
             ),
+            tuple(
+                (plan.node_operands, plan.indices)
+                for regime in regimes.values()
+                for plan in regime.solution.current_iid_plans.values()
+                if plan is not None
+            ),
             input_templates.next_regime_to_V_arr,
             input_templates.next_regime_to_continuation,
             input_templates.next_edge_to_V_arr,
@@ -906,6 +913,15 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                                 selected_artifact_keys=selected_artifact_keys,
                             ),
                         )
+                        if (
+                            type(output) is FeasibilityKernelOutput
+                            and output.current_iid_invalid is not None
+                            and bool(output.current_iid_invalid)
+                        ):
+                            raise ShockDeclarationError(
+                                "Current-IID law is invalid or unresolved "
+                                f"in {regime_name!r}, period {period}."
+                            )
                         runtime_bounds = tuple(
                             bound
                             for bound in regime.solution.post_decision_bounds
@@ -4296,6 +4312,11 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                             regime.solution.resolved_fixed_params,
                             _retained_base_space_arrays(regime=regime),
                             regime.derived_categorical_code_arrays,
+                            tuple(
+                                (plan.node_operands, plan.indices)
+                                for plan in regime.solution.current_iid_plans.values()
+                                if plan is not None
+                            ),
                         )
                         for regime in regimes.values()
                     ),

@@ -15,7 +15,7 @@ from _lcm.processes.base import sealed, standard_normal
 from _lcm.processes.iid import NormalIIDProcess
 from _lcm.typing import PRNGKeyND
 from lcm.exceptions import GridInitializationError
-from lcm.typing import Float1D, Float2D, FloatND, StateName
+from lcm.typing import BoolND, Float1D, Float2D, FloatND, StateName
 
 type NormalMean = tuple[float | int, ...] | Float1D
 type NormalCovariance = tuple[tuple[float | int, ...], ...] | Float2D
@@ -311,6 +311,45 @@ def covariance_factor(
 
 # Host consumers share the forward map's compiled factor, and so its rank.
 compiled_covariance_factor = jax.jit(covariance_factor, static_argnames="zero_pivots")
+
+
+def admitted_correlation_factor(
+    *, correlation: Float2D, zero_pivots: BoolND
+) -> tuple[Float2D, BoolND]:
+    """Factor a unit-diagonal matrix with exact host-owned support as data.
+
+    Host admission proves PSD for this invocation. On that fixed support stratum,
+    active pivots still need resolved finite positive arithmetic. A rounded zero
+    residual is not evidence of exact zero support. Safe operands precede each
+    root and division, including inactive columns, so singular support has finite
+    tangents along its admitted stratum.
+    """
+    residual = correlation
+    factor = jnp.zeros_like(correlation)
+    valid = jnp.all(jnp.isfinite(correlation))
+    for column in range(correlation.shape[0]):
+        zero = zero_pivots[column]
+        pivot = residual[column, column]
+        resolved = jnp.isfinite(pivot) & (pivot > 0)
+        valid &= zero | resolved
+        safe_pivot = jnp.where(zero | ~resolved, 1.0, pivot)
+        for row in range(column, correlation.shape[0]):
+            value = jnp.where(zero, 0.0, residual[row, column] / jnp.sqrt(safe_pivot))
+            factor = factor.at[row, column].set(value)
+        for row in range(column + 1, correlation.shape[0]):
+            for other in range(column + 1, correlation.shape[0]):
+                correction = jnp.where(
+                    zero,
+                    0.0,
+                    sealed(
+                        sealed(residual[row, column] * residual[other, column])
+                        / safe_pivot
+                    ),
+                )
+                residual = residual.at[row, other].set(
+                    sealed(residual[row, other] - correction)
+                )
+    return factor, valid & jnp.all(jnp.isfinite(factor))
 
 
 def _rounded_zero_pivots(

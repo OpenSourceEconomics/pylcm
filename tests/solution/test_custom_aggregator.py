@@ -2,6 +2,7 @@
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -38,6 +39,7 @@ from lcm.typing import (
     Period,
     ScalarInt,
     StateName,
+    UserFacingRegimeParamsTemplate,
     UserFunction,
     _UserFacingTemplateNode,
 )
@@ -730,7 +732,11 @@ def _solve_with_aggregator_slot(
             )
         },
     )
-    template = dict(model.get_params_template()["alive"]["koopmans_aggregator"])
+    template = dict(
+        cast("dict[str, UserFacingRegimeParamsTemplate]", model.get_params_template())[
+            "alive"
+        ]["koopmans_aggregator"]
+    )
     params = {
         "alive": {
             "koopmans_aggregator": aggregator_params,

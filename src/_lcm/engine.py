@@ -77,6 +77,7 @@ from lcm.typing import (
 )
 
 if TYPE_CHECKING:
+    from _lcm.current_iid import CurrentIIDDrawPlan, CurrentIIDPlan
     from _lcm.regime_building.gated_edges import ResolvedGatedEdge
     from _lcm.solution.contract import PeriodKernel
 
@@ -86,6 +87,9 @@ if TYPE_CHECKING:
     # (see the runtime alias below).
     type PeriodKernelsMapping = Mapping[int, PeriodKernel]
 else:
+    # Current-IID declarations reach the solver facade while it imports engine.
+    type CurrentIIDPlan = object
+    type CurrentIIDDrawPlan = object
     PeriodKernelsMapping = Mapping
 
 # A precondition a solver can only check once parameter *values* exist. Kernels
@@ -350,6 +354,11 @@ class SolutionPhase:
     space. Reading phase-dependent data through this namespace makes the
     phase explicit at every call site.
     """
+
+    current_iid_plans: Mapping[int, CurrentIIDPlan | None] = dataclasses.field(
+        default=MappingProxyType({}), metadata={"fingerprint_omit_if_default": True}
+    )
+    """Exact current-law support; its banks are model-owned native operands."""
 
     _variables: Variables
     """Solve states and actions, with kind/topology/process tags.
@@ -1064,6 +1073,11 @@ class SimulationPhase:
     namespace makes the phase explicit at every call site.
     """
 
+    current_iid_draw_plan: CurrentIIDDrawPlan | None = dataclasses.field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Native physical realization shared by decision, flow and transitions."""
+
     _variables: Variables
     """Simulate states (solve states plus carried-only states, appended) and
     actions.
@@ -1768,6 +1782,13 @@ _MAX_SIMULATED_V_RANK = 2
 class PeriodRegimeSimulationData:
     """Raw simulation data for one period in one regime."""
 
+    shocks: Mapping[str, FloatND | IntND] = dataclasses.field(
+        default=MappingProxyType({}),
+        kw_only=True,
+        metadata={"fingerprint_omit_if_default": True},
+    )
+    """Realized current innovations, separate from persistent state coordinates."""
+
     V_arr: FloatND
     """Value function array for all subjects at this period.
 
@@ -1868,6 +1889,7 @@ jax.tree_util.register_dataclass(
         "V_arr",
         "actions",
         "states",
+        "shocks",
         "in_regime",
         "own_stakeholder",
         "nested_policy_fallback",

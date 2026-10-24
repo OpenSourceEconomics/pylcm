@@ -815,6 +815,7 @@ def _raw_results_to_array_tree(
                 "V_arr": data.V_arr,
                 "actions": dict(data.actions),
                 "states": dict(data.states),
+                **({"shocks": dict(data.shocks)} if data.shocks else {}),
                 "in_regime": data.in_regime,
                 "own_stakeholder": data.own_stakeholder,
                 "nested_policy_fallback": data.nested_policy_fallback,
@@ -855,6 +856,7 @@ def _restored_period_data(tree: Mapping[str, ArrayTree]) -> PeriodRegimeSimulati
         V_arr=_restored_array(tree["V_arr"]),
         actions=_restored_arrays(tree["actions"]),
         states=_restored_arrays(tree["states"]),
+        shocks=_restored_arrays(tree.get("shocks", {})),
         in_regime=in_regime,
         own_stakeholder=jnp.full_like(in_regime, NO_ROLE, dtype=jnp.int32)
         if own_stakeholder is None

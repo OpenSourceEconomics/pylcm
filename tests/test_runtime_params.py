@@ -2,6 +2,7 @@
 
 import warnings
 from collections.abc import Mapping
+from typing import cast
 
 import cloudpickle
 import jax.numpy as jnp
@@ -27,6 +28,7 @@ from lcm.typing import (
     FloatND,
     FunctionName,
     ScalarInt,
+    UserFacingRegimeParamsTemplate,
     UserFunction,
     UserParams,
 )
@@ -143,7 +145,9 @@ def test_runtime_grid_requires_points_or_n_points():
 
 def test_get_params_template_lists_each_parameter_with_its_annotation():
     """Each regime maps its functions to their parameters' annotation names."""
-    assert _make_model().get_params_template() == {
+    assert cast(
+        "dict[str, UserFacingRegimeParamsTemplate]", _make_model().get_params_template()
+    ) == {
         "alive": {
             "utility": {},
             "borrowing_constraint": {},
@@ -157,7 +161,9 @@ def test_get_params_template_lists_each_parameter_with_its_annotation():
 
 def test_get_params_template_is_built_from_plain_dicts():
     """Every branch of the template is a plain `dict` a user can fill in."""
-    template = _make_model().get_params_template()
+    template = cast(
+        "dict[str, UserFacingRegimeParamsTemplate]", _make_model().get_params_template()
+    )
     branch_types = {type(template)} | {
         type(branch)
         for regime in template.values()
@@ -169,8 +175,12 @@ def test_get_params_template_is_built_from_plain_dicts():
 def test_get_params_template_returns_a_fresh_copy_on_each_call():
     """Filling in one returned template leaves the next call's template as is."""
     model = _make_model()
-    model.get_params_template()["alive"]["next_wealth"]["interest_rate"] = "filled"
-    template = model.get_params_template()
+    cast("dict[str, UserFacingRegimeParamsTemplate]", model.get_params_template())[
+        "alive"
+    ]["next_wealth"]["interest_rate"] = "filled"
+    template = cast(
+        "dict[str, UserFacingRegimeParamsTemplate]", model.get_params_template()
+    )
     assert template["alive"]["next_wealth"]["interest_rate"] == "float"
 
 
@@ -211,7 +221,10 @@ def test_near_miss_names_do_not_warn_at_build() -> None:
 
 def test_get_params_template_notes_near_miss_names(near_miss_model: Model) -> None:
     """The returned template suggests nearby state, action and function names."""
-    assert near_miss_model.get_params_template()["alive"]["utility"] == {
+    assert cast(
+        "dict[str, UserFacingRegimeParamsTemplate]",
+        near_miss_model.get_params_template(),
+    )["alive"]["utility"] == {
         "consumptioz": "FloatND  [close to action 'consumption'; typo?]",
         "wealt": "FloatND  [close to state 'wealth'; typo?]",
         "resourcz": "FloatND  [close to function 'resources'; typo?]",
@@ -233,8 +246,14 @@ def test_near_miss_names_leave_the_internal_template_plain(
 
 def test_near_miss_template_is_a_fresh_copy(near_miss_model: Model) -> None:
     """Filling a displayed suggestion leaves the next template copy intact."""
-    near_miss_model.get_params_template()["alive"]["utility"]["consumptioz"] = "filled"
-    assert near_miss_model.get_params_template()["alive"]["utility"]["consumptioz"] == (
+    cast(
+        "dict[str, UserFacingRegimeParamsTemplate]",
+        near_miss_model.get_params_template(),
+    )["alive"]["utility"]["consumptioz"] = "filled"
+    assert cast(
+        "dict[str, UserFacingRegimeParamsTemplate]",
+        near_miss_model.get_params_template(),
+    )["alive"]["utility"]["consumptioz"] == (
         "FloatND  [close to action 'consumption'; typo?]"
     )
 
@@ -261,7 +280,9 @@ def _template_constraint(
 def test_get_params_template_notes_constraint_arguments() -> None:
     """A constraint's unresolved argument receives the same near-miss note."""
     model = _make_model(constraints={"limit": _template_constraint})
-    assert model.get_params_template()["alive"]["limit"] == {
+    assert cast(
+        "dict[str, UserFacingRegimeParamsTemplate]", model.get_params_template()
+    )["alive"]["limit"] == {
         "consumptioz": "FloatND  [close to action 'consumption'; typo?]"
     }
 
@@ -279,7 +300,9 @@ def test_get_params_template_notes_both_phase_variants() -> None:
     model = _make_model(
         utility=Phased(solve=_utility, simulate=_template_phase_utility)
     )
-    assert model.get_params_template()["alive"]["utility"] == {
+    assert cast(
+        "dict[str, UserFacingRegimeParamsTemplate]", model.get_params_template()
+    )["alive"]["utility"] == {
         "consumptioz": "FloatND  [close to action 'consumption'; typo?]"
     }
 
@@ -290,7 +313,12 @@ def test_get_params_template_omits_fixed_near_miss_parameters() -> None:
         utility=_template_phase_utility,
         fixed_params={"consumptioz": 0.5},
     )
-    assert model.get_params_template()["alive"].get("utility", {}) == {}
+    assert (
+        cast("dict[str, UserFacingRegimeParamsTemplate]", model.get_params_template())[
+            "alive"
+        ].get("utility", {})
+        == {}
+    )
 
 
 def _template_threshold_utility(
@@ -314,7 +342,9 @@ def test_get_params_template_uses_the_sequence_matcher_threshold() -> None:
         regime_id_class=RegimeId,
         initial_nodes={0: "alive"},
     )
-    assert model.get_params_template()["alive"]["utility"] == {
+    assert cast(
+        "dict[str, UserFacingRegimeParamsTemplate]", model.get_params_template()
+    )["alive"]["utility"] == {
         "abxde": "FloatND  [close to state 'abcde'; typo?]",
         "abxyf": "FloatND",
     }
@@ -341,7 +371,9 @@ def test_get_params_template_ignores_masked_and_other_regime_names() -> None:
         regime_id_class=RegimeId,
         initial_nodes={0: "alive"},
     )
-    assert model.get_params_template()["alive"]["utility"] == {"resourcz": "FloatND"}
+    assert cast(
+        "dict[str, UserFacingRegimeParamsTemplate]", model.get_params_template()
+    )["alive"]["utility"] == {"resourcz": "FloatND"}
 
 
 def _template_grid_utility(*, consumption: ContinuousAction, point: FloatND) -> FloatND:
@@ -355,7 +387,12 @@ def test_get_params_template_leaves_runtime_grid_entries_plain() -> None:
         utility=_template_grid_utility,
         functions={"point": _template_resources},
     )
-    assert model.get_params_template()["alive"]["wealth"]["points"] == "Float1D"
+    assert (
+        cast("dict[str, UserFacingRegimeParamsTemplate]", model.get_params_template())[
+            "alive"
+        ]["wealth"]["points"]
+        == "Float1D"
+    )
 
 
 def _template_pruned_utility(
@@ -394,7 +431,9 @@ def test_get_params_template_notes_pruned_broadcast_variables(
 ) -> None:
     """A misspelling retains its hint when the unread broadcast variable is pruned."""
     model = _make_pruned_template_model(variable_kind)
-    assert model.get_params_template()["alive"]["utility"] == {
+    assert cast(
+        "dict[str, UserFacingRegimeParamsTemplate]", model.get_params_template()
+    )["alive"]["utility"] == {
         "consumptioz": f"FloatND  [close to {variable_kind} 'consumption'; typo?]"
     }
 
@@ -404,7 +443,9 @@ def test_pruned_broadcast_variable_hints_survive_pickle(variable_kind: str) -> N
     """Model persistence preserves suggestions for pruned broadcast variables."""
     model = _make_pruned_template_model(variable_kind)
     restored = cloudpickle.loads(cloudpickle.dumps(model))
-    assert restored.get_params_template() == model.get_params_template()
+    assert cast(
+        "dict[str, UserFacingRegimeParamsTemplate]", restored.get_params_template()
+    ) == cast("dict[str, UserFacingRegimeParamsTemplate]", model.get_params_template())
 
 
 def _template_composed_resources_utility(
@@ -423,7 +464,9 @@ def test_get_params_template_notes_composed_function_names() -> None:
         variant="negm",
         utility_function=_template_composed_resources_utility,
     )
-    assert model.get_params_template()["alive"]["utility"] == {
+    assert cast(
+        "dict[str, UserFacingRegimeParamsTemplate]", model.get_params_template()
+    )["alive"]["utility"] == {
         "resourcz": "FloatND  [close to function 'resources'; typo?]"
     }
 
@@ -437,7 +480,9 @@ def _template_constraint_reference_utility(
 def test_get_params_template_notes_near_constraint_names() -> None:
     """An unresolved argument can suggest a nearby constraint function's name."""
     model = _make_model(utility=_template_constraint_reference_utility)
-    assert model.get_params_template()["alive"]["utility"] == {
+    assert cast(
+        "dict[str, UserFacingRegimeParamsTemplate]", model.get_params_template()
+    )["alive"]["utility"] == {
         "borrowing_contraint": (
             "FloatND  [close to function 'borrowing_constraint'; typo?]"
         )
@@ -456,9 +501,9 @@ def test_get_params_template_notes_carried_state_function_arguments() -> None:
             simulate=LinSpacedGrid(start=1, stop=10, n_points=5),
         )
     )
-    assert model.get_params_template()["alive"]["wealth"] == {
-        "wealt": "FloatND  [close to state 'wealth'; typo?]"
-    }
+    assert cast(
+        "dict[str, UserFacingRegimeParamsTemplate]", model.get_params_template()
+    )["alive"]["wealth"] == {"wealt": "FloatND  [close to state 'wealth'; typo?]"}
 
 
 def test_runtime_grid_in_params_template():
