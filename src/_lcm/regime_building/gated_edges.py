@@ -1892,9 +1892,10 @@ def build_fallback_state_projector(
     does not need the fallback's VALUE (Wbar already folds that in) but does
     need the fallback's own STATE coordinates, to write the dissolved/rejected
     stakeholder's next-period row into `states[fallback.regime]`. Reuses the
-    identical projection-function construction (same `dag_pool`, same
-    `concatenate_functions` targets) so the coordinates are guaranteed
-    consistent with whatever the fold read.
+    identical projection-function construction (the same `dag_pool` minus the
+    target's carried-state imputations, the same `concatenate_functions`
+    targets) so the coordinates are guaranteed consistent with whatever the
+    fold read.
 
     **Which states it projects.** A written row is a SIMULATE-phase object, so
     the projector covers the fallback regime's simulate states — its solve
@@ -1948,9 +1949,11 @@ def build_fallback_state_projector(
             i.e. exactly the slots a routed row occupies there.
         target_regime_name: The regime the gated edge lands on, which qualifies
             the projections' parameter names and names the fenced target.
-        target_state_names: The TARGET regime's own state names, i.e. exactly
-            those arguments the router binds from the realized candidate target
-            states rather than from a params namespace.
+        target_state_names: The TARGET regime's simulate-phase state names, i.e.
+            exactly those arguments the router binds from the realized candidate
+            target states rather than from a params namespace. A carried state is
+            among them, so a projection reads its realized value, never its
+            solve-phase imputation.
         target_functions: The target regime's processed functions (projections
             are expressed in terms of the target's own states/helpers).
         target_deterministic_transitions: The target regime's merged
@@ -1966,11 +1969,17 @@ def build_fallback_state_projector(
         regime's own state-coordinate arrays. It carries an `arg_provenance`
         attribute (`EdgeArgProvenance`) saying which namespace resolves each.
     """
-    dag_pool = _build_target_dag_pool(
-        target_functions=target_functions,
-        target_deterministic_transitions=target_deterministic_transitions,
-        edge_target=target_regime_name,
-    )
+    # A state the target carries only in simulation is a solve-phase imputation
+    # among its functions; the projector reads the realized state instead.
+    dag_pool = {
+        name: func
+        for name, func in _build_target_dag_pool(
+            target_functions=target_functions,
+            target_deterministic_transitions=target_deterministic_transitions,
+            edge_target=target_regime_name,
+        ).items()
+        if name not in target_state_names
+    }
     # The same fences the solve-side fold runs over this very leg's fallback
     # projections, from the same helper. `dag_pool` is the GATED TARGET's nodes, so
     # the fence's `edge_target` names the gated target whose node would capture a

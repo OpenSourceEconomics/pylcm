@@ -2529,9 +2529,9 @@ def _attach_gated_edge_folds(
                             leg.realized_fallback.regime
                         ].simulation.state_names,
                         target_regime_name=target_name,
-                        target_state_names=regime_to_v_interpolation_info[
-                            target_name
-                        ].state_names,
+                        # The router binds the realized candidate landing, so a
+                        # state the target carries only in simulation is a state.
+                        target_state_names=regimes[target_name].simulation.state_names,
                         target_functions=target_solution.functions,
                         target_deterministic_transitions=(
                             target_deterministic_transitions
