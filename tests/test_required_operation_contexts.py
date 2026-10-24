@@ -351,6 +351,24 @@ def test_simulate_side_factory_runs_only_where_its_regime_is_visited(
     assert set(calls) == ages
 
 
+def test_an_ordinary_unvisited_phase_function_reads_its_helper() -> None:
+    """A helper consumed by an ordinary declared phase function remains available."""
+
+    def read_report(report: FloatND) -> FloatND:
+        return report
+
+    perceived = _wealth_regime(
+        utility=Phased(solve=_backward_utility, simulate=read_report)
+    )
+    model = _demand_model(
+        promote=False,
+        perceived=perceived.replace(
+            functions={**perceived.functions, "report": _wealth_utility}
+        ),
+    )
+    assert "report" in model.user_regimes["perceived"].functions
+
+
 def _late_choice(*, late_rate: float) -> IntND:
     return jnp.where(late_rate >= 0.5, _DemandId.end, _DemandId.other_end)
 

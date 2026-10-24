@@ -493,12 +493,11 @@ def _next_wealth_spent_clipped(
     return jnp.maximum(_next_wealth_spent(wealth=wealth, consumption=consumption), 10)
 
 
-# `_PARAMS` without the interest rate, which the laws below do not read.
+# The replacement laws below read neither interest rate nor labor income.
 _PARAMS_WITHOUT_RATE: UserParams = {
     "discount_factor": 0.95,
     "working_life": {
         "utility": {"disutility_of_work": 0.5},
-        "labor_income": {"wage": 1.5},
     },
     "final_age_alive": 50 + (_N_PERIODS - 2) * 10,
 }
@@ -508,7 +507,12 @@ def _model_with_law(law: UserFunction) -> Model:
     regime = _value_grid_model(enable_jit=True).user_regimes["working_life"]
     return _model_with(
         working_life=regime.replace(
-            state_transitions={**dict(regime.state_transitions), "wealth": law}
+            state_transitions={**dict(regime.state_transitions), "wealth": law},
+            functions={
+                name: func
+                for name, func in regime.functions.items()
+                if name != "labor_income"
+            },
         )
     )
 
@@ -616,7 +620,14 @@ def test_law_reading_a_sibling_next_state_is_checked_as_the_solve_composes_it():
     with_room = regime.replace(
         states={**dict(regime.states), "room": DiscreteGrid(values=np.array([0, 1]))},
         state_transitions={"wealth": _next_wealth_by_room, "room": _next_room},
-        functions={**dict(regime.functions), "utility": _utility_with_room},
+        functions={
+            **{
+                name: func
+                for name, func in regime.functions.items()
+                if name != "labor_income"
+            },
+            "utility": _utility_with_room,
+        },
     )
     _model_with(working_life=with_room).validate_transitions(
         params=_PARAMS_WITHOUT_RATE

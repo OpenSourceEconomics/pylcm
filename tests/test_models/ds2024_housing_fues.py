@@ -106,7 +106,7 @@ def inverse_marginal_utility(
     return marginal_continuation ** (-1.0 / gamma_c)
 
 
-def build_model(  # noqa: C901
+def build_model(
     *,
     variant: Literal["dcegm", "brute"] = "dcegm",
     n_grid: int,
@@ -165,10 +165,6 @@ def build_model(  # noqa: C901
             )
         )
     )
-
-    def housing_stock(housing: DiscreteState) -> FloatND:
-        """Held housing stock `h` of the current discrete housing state."""
-        return stock_levels[housing]
 
     def serviced_housing(housing_choice: DiscreteAction) -> FloatND:
         """Serviced housing this period — the chosen next stock `H'`."""
@@ -277,7 +273,6 @@ def build_model(  # noqa: C901
         "utility": utility,
         "housing_cost": housing_cost,
         "serviced_housing": serviced_housing,
-        "housing_stock": housing_stock,
         "income_value": income_value,
     }
 

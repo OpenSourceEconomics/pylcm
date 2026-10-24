@@ -180,7 +180,11 @@ def _renamed_one_asset_model(*, solver, n_consumption=14):
         states={"wealth": wealth_grid},
         state_transitions={"wealth": {"alive": next_wealth, "gone": next_wealth}},
         constraints={} if isinstance(solver, EGM) else {"feasible": feasible},
-        functions={"utility": utility, "resources": resources, "savings": savings},
+        functions={
+            "utility": utility,
+            "savings": savings,
+            **({"resources": resources} if isinstance(solver, EGM) else {}),
+        },
         solver=solver,
         **(
             {

@@ -368,7 +368,8 @@ def test_additional_targets_read_carried_value() -> None:
     """
     regime = _build_pension_regime()
     regime = regime.replace(
-        functions={**regime.functions, "pension_double": _pension_double}
+        functions={**regime.functions, "pension_double": _pension_double},
+        output_only_functions=("pension_double",),
     )
     model = Model(
         regimes={"working": regime, "dead": _DEAD},

@@ -313,7 +313,9 @@ def test_continuation_helper_resolves_from_the_solve_phase():
         state_transitions={"good": StochasticTransition(func=next_good)},
         **common,
     )
-    last = Regime(state_transitions={}, **common)
+    last = Regime(state_transitions={}, **common).replace(
+        functions={"utility": utility}
+    )
     model = Model(
         edges={
             "live": Transition(

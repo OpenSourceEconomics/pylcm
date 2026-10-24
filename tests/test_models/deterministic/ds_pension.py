@@ -356,7 +356,11 @@ def get_model(
         else {"feasible": feasible_retired},
         functions={
             "utility": utility_retired,
-            "resources": resources_retired,
+            **(
+                {"resources": resources_retired}
+                if isinstance(retired_solver, EGM)
+                else {}
+            ),
             "savings": savings_retired,
             **_euler_inversion_functions(
                 solver=retired_solver, analytic=analytic_inverse_marginal_utility

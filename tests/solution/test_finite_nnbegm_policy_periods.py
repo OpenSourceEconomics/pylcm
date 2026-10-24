@@ -96,7 +96,6 @@ def _model(*, specialized: bool, subset: bool) -> Model:
             "savings": original.savings,
             "new_illiquid": original.new_illiquid,
             "inverse_marginal_utility": original.inverse_marginal_utility,
-            "chosen_floor_helper": original.chosen_floor_helper,
             "resources": original.resources,
             "floor_coefficient": coefficient,
         },

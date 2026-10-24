@@ -152,7 +152,6 @@ def _make_dead_regime() -> UserRegime:
         },
         functions={
             "utility": bequest_utility,
-            "bequest_weight": bequest_weight,
         },
     )
 

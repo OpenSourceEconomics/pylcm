@@ -63,7 +63,6 @@ def _valid_regime() -> NestedConsumptionSavingsRegime:
             "new_illiquid": n_nbegm_toy.new_illiquid,
             "resources": n_nbegm_toy.resources,
             "liquid_savings": n_nbegm_toy.liquid_savings,
-            "credited": n_nbegm_toy.credited,
         },
         liquid=LiquidMargin(
             state="wealth",

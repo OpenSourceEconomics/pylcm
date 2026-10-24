@@ -214,9 +214,9 @@ def test_state_read_through_a_dormant_selector_function_is_no_parameter(
 ):
     """A state a selector reads through a function stays a state at every horizon.
 
-    The function's own parameter is its only slot in every regime that declares
-    it, a model-level one reaching `dead` as well, and the selector's free
-    parameter is the only edge slot, whether or not the selector runs.
+    The function's own parameter is its only slot in `alive`, and the selector's
+    free parameter is the only edge slot, whether or not the selector runs.
+    `dead` masks a model-level score because it never consumes it.
     """
     model = _dormant_scored_selector_model(
         function_level=function_level, n_periods=n_periods
@@ -228,7 +228,7 @@ def test_state_read_through_a_dormant_selector_function_is_no_parameter(
     ) == (
         {
             "alive": {"scale": "float"},
-            "dead": {"scale": "float"} if function_level == "model" else {},
+            "dead": {},
             "edges": {},
         },
         {("alive", "cutoff")},
@@ -438,11 +438,23 @@ def test_solution_does_not_depend_on_the_level_supplying_a_law_value(params):
     )
 
 
+def _read_edges(edges: FloatND) -> FloatND:
+    return edges
+
+
+def _edges_name_identity(wealth: ContinuousState) -> FloatND:
+    return wealth
+
+
 @pytest.mark.parametrize(
     ("regime_name", "functions"),
     [
         pytest.param("edges", {}, id="regime"),
-        pytest.param("working", {"edges": lambda wealth: wealth}, id="function"),
+        pytest.param(
+            "working",
+            {"utility": _read_edges, "edges": _edges_name_identity},
+            id="function",
+        ),
     ],
 )
 def test_edges_is_reserved_as_a_regime_and_function_name(*, regime_name, functions):
@@ -456,7 +468,7 @@ def test_edges_is_reserved_as_an_argument_name():
     with pytest.raises(InvalidNameError, match="edges"):
         _named_model(
             regime_name="working",
-            functions={"bonus": _bonus_from_edges},
+            functions={"utility": _bonus_from_edges},
         )
 
 
@@ -835,7 +847,12 @@ def _dormant_scored_selector_model(*, function_level: str, n_periods: int) -> Mo
                     **({"score": _score} if on_regime else {}),
                 }
             ),
-            "dead": Regime(functions={"utility": _constant_utility}),
+            "dead": Regime(
+                functions={
+                    "utility": _constant_utility,
+                    **({"score": None} if not on_regime else {}),
+                }
+            ),
         },
         regime_id_class=_LifeId,
         initial_nodes={0: "alive"},

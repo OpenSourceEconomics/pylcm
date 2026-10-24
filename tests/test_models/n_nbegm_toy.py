@@ -52,6 +52,7 @@ from lcm.solvers import (
     OuterBranchAggregator,
     OuterSearch,
     TwoMarginSolver,
+    UniformObservedFixedCost,
 )
 from lcm.transition import AgeSpecializedFunction, AgeSpecializedGrid
 from lcm.typing import (
@@ -321,7 +322,6 @@ def build_model(
         ),
         "resources": resources,
         "liquid_savings": liquid_savings,
-        "credited": credited,
     }
     if variant == "negm":
         # With `outer_cost` declared, pylcm composes the resources function
@@ -329,8 +329,12 @@ def build_model(
         # direct `resources` definition would double-declare it.
         del functions["resources"]
         functions["resources_before_outer_cost"] = resources_before_outer_cost
+        functions["credited"] = credited
         functions["inverse_marginal_utility"] = inverse_marginal_utility
-    if adjustment_cost is not None:
+    if (
+        isinstance(adjustment_cost, UniformObservedFixedCost)
+        and adjustment_cost.scale_function == "adjustment_scale"
+    ):
         functions["adjustment_scale"] = (
             adjustment_scale if scale_function is None else scale_function
         )

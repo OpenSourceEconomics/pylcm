@@ -923,6 +923,9 @@ def _project_user_regime_declaration(
                     )
                     for name, value in all_fields
                     if name != "description"
+                    # An empty reporting declaration adds no semantic facts to
+                    # the pre-existing feature-free model identity.
+                    and not (name == "output_only_functions" and value == ())
                 }
             ),
         }

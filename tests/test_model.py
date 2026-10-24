@@ -1,19 +1,24 @@
+from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Literal
 
 import jax.numpy as jnp
 import pytest
+from numpy.testing import assert_array_almost_equal as aaae
 
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_law import bind_regime_law
 from _lcm.user_regime_validation import validate_regime_law
 from lcm import (
     AgeGrid,
+    CollectiveUtility,
     DeterministicTransition,
     DiscreteGrid,
     LinearAggregator,
     LinearExpectation,
     LinSpacedGrid,
     Model,
+    Phased,
     StochasticTransition,
     Transition,
     categorical,
@@ -21,6 +26,7 @@ from lcm import (
 )
 from lcm.exceptions import (
     InvalidNameError,
+    InvalidParamsError,
     ModelInitializationError,
     RegimeInitializationError,
 )
@@ -31,9 +37,11 @@ from lcm.typing import (
     ContinuousState,
     DiscreteState,
     FloatND,
+    FunctionName,
     ScalarInt,
+    UserFunction,
 )
-from tests.conftest import bind_laws
+from tests.conftest import DECIMAL_PRECISION, bind_laws
 
 
 def test_regime_invalid_states():
@@ -688,3 +696,344 @@ def test_state_only_in_transitions_with_terminal_regime():
             )
         },
     )
+
+
+@categorical(ordered=False)
+class _OutputRegimeId:
+    alive: ScalarInt
+
+
+def _output_utility(wealth: FloatND) -> FloatND:
+    return wealth
+
+
+def _output_report(*, wealth: FloatND, report_scale: float) -> FloatND:
+    return wealth * report_scale
+
+
+def _output_identity(report: FloatND) -> FloatND:
+    return report
+
+
+def _output_from_helper(helper: FloatND) -> FloatND:
+    return helper
+
+
+def _output_model(
+    *,
+    functions: Mapping[FunctionName, UserFunction | Phased | CollectiveUtility],
+    model_output: tuple[FunctionName, ...] = (),
+    regime_output: tuple[FunctionName, ...] = (),
+) -> Model:
+    return Model(
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        regime_id_class=_OutputRegimeId,
+        regimes={
+            "alive": UserRegime(
+                states={"wealth": LinSpacedGrid(start=1.0, stop=3.0, n_points=3)},
+                functions=functions,
+                **({"output_only_functions": regime_output} if regime_output else {}),
+            )
+        },
+        initial_nodes={0: "alive"},
+        edges={},
+        **({"output_only_functions": model_output} if model_output else {}),
+    )
+
+
+@pytest.mark.parametrize(
+    "message", ["alive", "report", "unused", "Remove", "output_only_functions="]
+)
+def test_unread_functions_name_regime_and_every_function(message: str) -> None:
+    """Unconsumed functions require an explicit output declaration."""
+    with pytest.raises(RegimeInitializationError, match=message):
+        _output_model(
+            functions={
+                "utility": _output_utility,
+                "report": _output_report,
+                "unused": lambda: 1.0,
+            }
+        )
+
+
+@pytest.fixture(params=["model", "regime"])
+def output_only_model(request: pytest.FixtureRequest) -> Model:
+    """Build an output-only report declared at either supported level."""
+    return _output_model(
+        functions={"utility": _output_utility, "report": _output_report},
+        model_output=("report",) if request.param == "model" else (),
+        regime_output=("report",) if request.param == "regime" else (),
+    )
+
+
+def test_output_only_declaration_reaches_finalized_regime(
+    output_only_model: Model,
+) -> None:
+    """An output declaration survives model finalization."""
+    assert output_only_model.user_regimes["alive"].output_only_functions == ("report",)
+
+
+def test_output_only_functions_keep_runtime_params(output_only_model: Model) -> None:
+    """An output-only target lists its unresolved arguments as runtime params."""
+    assert "report_scale" in output_only_model.get_params_template()["alive"]["report"]
+
+
+def test_output_only_functions_require_runtime_params(output_only_model: Model) -> None:
+    """Output-only targets require their ordinary runtime params at solve."""
+    with pytest.raises(InvalidParamsError, match=r"Missing required parameter\(s\)"):
+        output_only_model.solve(params={}, log_level="off")
+
+
+@pytest.mark.parametrize(
+    ("targets", "column", "expected"),
+    [
+        (["report", "utility"], "report", [4.0, 8.0]),
+        (["report", "utility"], "utility", [1.0, 2.0]),
+        ("all", "report", [4.0, 8.0]),
+    ],
+)
+def test_output_only_functions_report_runtime_values(
+    *,
+    output_only_model: Model,
+    targets: list[FunctionName] | Literal["all"],
+    column: FunctionName,
+    expected: list[float],
+) -> None:
+    """Reporting evaluates output-only and ordinary targets with supplied params."""
+    result = output_only_model.simulate(
+        log_level="off",
+        params={"alive": {"report": {"report_scale": 4.0}}},
+        initial_conditions={
+            "age": jnp.array([0.0, 0.0]),
+            "wealth": jnp.array([1.0, 2.0]),
+            "regime_id": jnp.array([0, 0]),
+        },
+    )
+    aaae(
+        result.to_dataframe(additional_targets=targets)[column],
+        expected,
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+def test_read_helper_is_reportable_without_output_only_declaration() -> None:
+    """A function consumed by utility remains an available reporting target."""
+    model = _output_model(
+        functions={
+            "utility": _output_identity,
+            "report": _output_utility,
+        }
+    )
+    result = model.simulate(
+        log_level="off",
+        params={},
+        initial_conditions={
+            "age": jnp.array([0.0]),
+            "wealth": jnp.array([2.0]),
+            "regime_id": jnp.array([0]),
+        },
+    )
+    aaae(
+        result.to_dataframe(additional_targets=["report"])["report"],
+        [2.0],
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+@pytest.mark.parametrize(
+    ("model_output", "regime_output", "message"),
+    [
+        (("report",), ("report",), "both|model level.*regime level"),
+        (("missing",), (), "missing"),
+        ((), ("missing",), "missing"),
+        ((), ("utility",), "utility.*read|read.*utility"),
+        (("utility",), (), "utility.*read|read.*utility"),
+    ],
+)
+def test_output_only_declarations_reject_conflicts_missing_and_read_names(
+    *,
+    model_output: tuple[FunctionName, ...],
+    regime_output: tuple[FunctionName, ...],
+    message: str,
+) -> None:
+    """Output declarations name existing unread functions at exactly one level."""
+    with pytest.raises(
+        (ModelInitializationError, RegimeInitializationError), match=message
+    ):
+        _output_model(
+            functions={"utility": _output_utility, "report": _output_report},
+            model_output=model_output,
+            regime_output=regime_output,
+        )
+
+
+@pytest.mark.parametrize("level", ["model", "regime"])
+def test_collective_utility_cannot_be_declared_output_only(level: str) -> None:
+    """A collective utility declaration is already consumed by the engine."""
+    with pytest.raises(RegimeInitializationError, match=r"reads.*utility"):
+        _output_model(
+            functions={
+                "utility": CollectiveUtility(
+                    utilities={"first": _output_utility, "second": _output_utility}
+                )
+            },
+            model_output=("utility",) if level == "model" else (),
+            regime_output=("utility",) if level == "regime" else (),
+        )
+
+
+def test_output_only_dependency_is_an_ordinary_read() -> None:
+    """Output-only functions may use helpers without declaring those helpers."""
+    model = _output_model(
+        functions={
+            "utility": _output_utility,
+            "report": _output_from_helper,
+            "helper": _output_utility,
+        },
+        regime_output=("report",),
+    )
+    assert set(model.user_regimes["alive"].functions) == {"utility", "report", "helper"}
+
+
+def test_output_only_dependency_cannot_be_declared_for_output() -> None:
+    """A helper consumed by a reporting function is already read."""
+    with pytest.raises(RegimeInitializationError, match=r"reads.*helper"):
+        _output_model(
+            functions={
+                "utility": _output_utility,
+                "report": _output_from_helper,
+                "helper": _output_utility,
+            },
+            regime_output=("report", "helper"),
+        )
+
+
+def test_simulation_phase_function_consumers_count_as_reads() -> None:
+    """A helper used only by a simulation-phase utility is read by the model."""
+    model = _output_model(
+        functions={
+            "utility": Phased(solve=_output_utility, simulate=_output_identity),
+            "report": _output_utility,
+        }
+    )
+    assert "report" in model.user_regimes["alive"].functions
+
+
+@pytest.fixture
+def output_only_broadcast_model() -> Model:
+    """Build a reporting target that reads a model-level state."""
+    return Model(
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        regime_id_class=_OutputRegimeId,
+        regimes={"alive": UserRegime(functions={"utility": lambda: 0.0})},
+        states={"wealth": LinSpacedGrid(start=1.0, stop=3.0, n_points=3)},
+        functions={"report": _output_report},
+        output_only_functions=("report",),
+        initial_nodes={0: "alive"},
+        edges={},
+    )
+
+
+def test_output_only_reporting_retains_broadcast_inputs_by_reachability(
+    output_only_broadcast_model: Model,
+) -> None:
+    """An explicitly retained reporting target consumes its broadcast inputs."""
+    assert "wealth" in output_only_broadcast_model.user_regimes["alive"].states
+
+
+def test_output_only_broadcast_inputs_are_not_runtime_params(
+    output_only_broadcast_model: Model,
+) -> None:
+    """A reporting input supplied by a model-level state needs no runtime param."""
+    assert (
+        "wealth"
+        not in output_only_broadcast_model.get_params_template()["alive"]["report"]
+    )
+
+
+@pytest.fixture(params=[False, True])
+def masked_output_only_model(
+    request: pytest.FixtureRequest,
+) -> Model:
+    """A shared reporting declaration applies only where the function survives."""
+
+    @categorical(ordered=False)
+    class RegimeId:
+        alive: ScalarInt
+        dead: ScalarInt
+
+    mask = request.param
+    return Model(
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        regime_id_class=RegimeId,
+        regimes={
+            "alive": UserRegime(
+                functions={
+                    "utility": lambda: 0.0,
+                    **({} if mask else {"report": lambda: 2.0}),
+                }
+            ),
+            "dead": UserRegime(
+                functions={"utility": lambda: 0.0, **({"report": None} if mask else {})}
+            ),
+        },
+        functions={"report": lambda: 2.0} if mask else {},
+        output_only_functions=("report",),
+        initial_nodes={0: "alive"},
+        edges={},
+    )
+
+
+def test_model_output_only_names_apply_where_defined(
+    masked_output_only_model: Model,
+) -> None:
+    """A shared reporting declaration reaches a regime that defines the target."""
+    assert masked_output_only_model.user_regimes["alive"].output_only_functions == (
+        "report",
+    )
+
+
+def test_model_output_only_names_respect_masks(masked_output_only_model: Model) -> None:
+    """A shared reporting declaration excludes regimes without the target."""
+    assert masked_output_only_model.user_regimes["dead"].output_only_functions == ()
+
+
+def test_model_output_only_names_keep_functions_masked(
+    masked_output_only_model: Model,
+) -> None:
+    """A model-level reporting declaration does not restore a masked target."""
+    assert "report" not in masked_output_only_model.user_regimes["dead"].functions
+
+
+def _output_positive(report: FloatND) -> BoolND:
+    return report > 0.0
+
+
+@pytest.mark.parametrize("declare_constraint", [False, True])
+def test_constraints_read_their_helpers_and_need_no_output_declaration(
+    *,
+    declare_constraint: bool,
+) -> None:
+    """Constraints are engine consumers of the functions their predicates read."""
+
+    def build() -> Model:
+        return Model(
+            ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+            regime_id_class=_OutputRegimeId,
+            regimes={
+                "alive": UserRegime(
+                    states={"wealth": LinSpacedGrid(start=1.0, stop=3.0, n_points=3)},
+                    functions={"utility": _output_utility, "report": _output_utility},
+                    constraints={"allowed": _output_positive},
+                    output_only_functions=("allowed",) if declare_constraint else (),
+                )
+            },
+            initial_nodes={0: "alive"},
+            edges={},
+        )
+
+    if declare_constraint:
+        with pytest.raises(RegimeInitializationError, match=r"reads.*allowed"):
+            build()
+    else:
+        assert "report" in build().user_regimes["alive"].functions
