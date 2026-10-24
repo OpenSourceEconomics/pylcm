@@ -2549,8 +2549,10 @@ def _fail_if_rerouted_into_a_regime_that_ran(
 ) -> None:
     """Raise if a rerouted row's fallback already ran this period.
 
-    Gated targets and fallbacks that form a cycle run in declaration order, so a
-    fallback can precede a target it serves. A row routed into it would not act
+    Regimes run in dependency order, each gated target before its fallbacks.
+    When gated targets and fallbacks form a cycle, no regime may be ready; the
+    earliest-declared regime still waiting then runs next, so a fallback can
+    precede a target it serves. A row routed into such a fallback would not act
     this period.
     """
     if not ran_this_period:
