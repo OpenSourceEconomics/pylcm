@@ -941,6 +941,7 @@ def process_regimes(  # noqa: PLR0915 - assemble canonical phase contexts before
                     regime_name
                 ],
                 edge_params_template=regime_to_edge_params_template[regime_name],
+                arrival_targets=frozenset(laws[regime_name].arrivals),
             )
             for regime_name in user_regimes
         }
@@ -4697,6 +4698,7 @@ def _build_solution_phase(  # noqa: C901, PLR0912, PLR0915 - native route admiss
         regime_params_template=regime_params_template,
         granular_param_expansions=granular_param_expansions,
         edge_params_template=edge_params_template,
+        arrival_targets=frozenset(laws[regime_name].arrivals),
     )
 
     routing_functions, routing_constraints = _canonical_constraint_routing_inputs(
@@ -5934,6 +5936,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         regime_params_template=regime_params_template,
         granular_param_expansions=granular_param_expansions,
         edge_params_template=edge_params_template,
+        arrival_targets=frozenset(law.arrivals),
     )
 
     routing = _route_constraints(
@@ -8201,6 +8204,7 @@ def _engine_flat_param_names(
     regime_params_template: RegimeParamsTemplate,
     granular_param_expansions: MappingProxyType[FunctionName, tuple[str, ...]],
     edge_params_template: EdgeParamsTemplate,
+    arrival_targets: frozenset[RegimeName],
 ) -> frozenset[str]:
     """Return the regime's flat param names in the engine's binding vocabulary.
 
@@ -8208,9 +8212,10 @@ def _engine_flat_param_names(
     by their per-target spellings (`<target>__<law>__<param>`); everything
     else passes through unchanged. A source's kernels evaluate its
     regime-transition law, so its law's edge slots join the vocabulary under
-    their `flat_params["edges"][source]` keys. The gate and projection slots do
-    not: the edge fold binds those on the target's grid, and no regime kernel
-    reads them.
+    their `flat_params["edges"][source]` keys. Declared arrival predicate and
+    projection slots join them: native arrival queries read these source-owned
+    edge parameters at their actual destination date. Legacy Gate slots stay
+    excluded because their fold binds them separately on the target's grid.
     """
     names: set[str] = set()
     for name in get_flat_param_names(regime_params_template):
@@ -8222,8 +8227,15 @@ def _engine_flat_param_names(
             )
         else:
             names.add(name)
-    return frozenset(names) | _law_param_names(
-        edge_params_template=edge_params_template
+    return (
+        frozenset(names)
+        | _law_param_names(edge_params_template=edge_params_template)
+        | frozenset(
+            name
+            for name in get_flat_param_names(edge_params_template)
+            if is_gated_cell_slot(name)
+            and tree_path_from_qname(name)[0] in arrival_targets
+        )
     )
 
 

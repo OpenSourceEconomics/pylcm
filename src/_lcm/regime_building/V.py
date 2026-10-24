@@ -329,11 +329,19 @@ def _get_V_interpolator_process_aware(
         axis_coord_names.append(coord_name)
 
     read_name = "__read__" if categorical_axes else "__fval__"
-    funcs[read_name] = _get_interpolator(
-        name_of_values_on_grid=V_arr_name,
-        axis_names=axis_coord_names,
-        pinned_axis_names=frozenset(axis.coord_name for axis in categorical_axes),
-    )
+    if axis_coord_names:
+        funcs[read_name] = _get_interpolator(
+            name_of_values_on_grid=V_arr_name,
+            axis_names=axis_coord_names,
+            pinned_axis_names=frozenset(axis.coord_name for axis in categorical_axes),
+        )
+    else:
+        # A stateless value (or a fully co-mapped value) is already a scalar.
+        # Use the ordinary reader's lookup rather than a zero-dimensional stencil.
+        funcs[read_name] = _get_lookup_function(
+            array_name=V_arr_name,
+            axis_names=[],
+        )
     if categorical_axes:
         funcs["__fval__"] = _get_named_category_guard(
             read_name=read_name,

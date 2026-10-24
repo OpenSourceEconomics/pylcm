@@ -15,6 +15,8 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    ArrivalDecision,
+    ArrivalRead,
     ByAge,
     Gate,
     LinSpacedGrid,
@@ -23,16 +25,18 @@ from lcm import (
     Regime,
     StakeholderRoute,
     StochasticTransition,
+    TimeVarying,
     Transition,
     categorical,
     fixed_transition,
+    time_varying_params,
 )
 from lcm.exceptions import (
     InvalidNameError,
     InvalidParamsError,
     ModelInitializationError,
 )
-from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
+from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt, UserParams
 
 type TemplateNode = str | Mapping[str, TemplateNode]
 
@@ -360,3 +364,303 @@ def test_gate_parameter_beside_an_unknown_leaf_is_refused():
             },
             log_level="off",
         )
+
+
+@categorical(ordered=False)
+class _ArrivalDomainRegimeId:
+    source: ScalarInt
+    target: ScalarInt
+    fallback: ScalarInt
+    done: ScalarInt
+
+
+def _arrival_domain_utility(*, x: ContinuousState, y: ContinuousState) -> FloatND:
+    return 1.0 + x + 0.0 * y
+
+
+def _arrival_domain_utility_from_h(
+    *, h: ContinuousState, y: ContinuousState
+) -> FloatND:
+    return 1.0 + h + 0.0 * y
+
+
+def _arrival_domain_identity_x(x: ContinuousState) -> ContinuousState:
+    return x
+
+
+def _arrival_domain_identity_y(y: ContinuousState) -> ContinuousState:
+    return y
+
+
+def _arrival_domain_next_y(next_y: ContinuousState) -> FloatND:
+    return next_y
+
+
+def _arrival_domain_transition_from_h(h: FloatND) -> ContinuousState:
+    return h
+
+
+def _arrival_domain_compare(*, V_target: FloatND, h: float) -> BoolND:
+    return V_target >= h
+
+
+def _arrival_domain_compare_next(*, V_target: FloatND, next_y: FloatND) -> BoolND:
+    return V_target >= next_y
+
+
+def _arrival_domain_open(V_target: FloatND) -> BoolND:
+    return V_target >= 2.25
+
+
+def _arrival_domain_fallback_utility(
+    *, x: ContinuousState, y: ContinuousState
+) -> FloatND:
+    return 0.25 + 2.0 * x + 0.0 * y
+
+
+def _arrival_domain_project_h(h: float) -> ContinuousState:
+    return jnp.asarray(h)
+
+
+def _arrival_domain_project_next(next_y: FloatND) -> ContinuousState:
+    return next_y
+
+
+def _arrival_domain_model(
+    *,
+    consumer: str,
+    bad_name: str,
+    with_arrival: bool = True,
+    temporal_h: bool = False,
+    fixed_params: UserParams | None = None,
+) -> Model:
+    """Valid ordinary law helpers must not leak into an arrival consumer.
+
+    Source0 enters target1, which enters done2. The target helper h is either
+    its current x or a legitimate next_y input to the target's x state law.
+    An arrival callback's h is its own independent edge parameter, even when
+    a target or source helper uses that spelling. Exact aliasing must occur
+    before target-function concatenation; a direct next_y remains phase-invalid.
+    """
+    grid = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
+    target_functions = {"utility": _arrival_domain_utility}
+    target_laws = {"x": fixed_transition("x"), "y": fixed_transition("y")}
+    source_functions = {"utility": _arrival_domain_utility}
+    source_laws = {"x": fixed_transition("x"), "y": fixed_transition("y")}
+    if bad_name == "target_helper":
+        target_functions["h"] = _arrival_domain_identity_x
+        target_functions["utility"] = _arrival_domain_utility_from_h
+    elif bad_name == "transitive_next":
+        target_functions["h"] = _arrival_domain_next_y
+        target_laws["x"] = _arrival_domain_transition_from_h
+    elif bad_name == "source_helper":
+        source_functions["h"] = _arrival_domain_next_y
+        source_laws["x"] = _arrival_domain_transition_from_h
+    project = (
+        _arrival_domain_project_next
+        if bad_name == "direct_next"
+        else _arrival_domain_project_h
+    )
+    predicate = (
+        _arrival_domain_compare_next
+        if consumer == "predicate" and bad_name == "direct_next"
+        else _arrival_domain_compare
+        if consumer == "predicate"
+        else _arrival_domain_open
+    )
+    if temporal_h:
+        predicate = time_varying_params("h")(predicate)
+    return Model(
+        regimes={
+            "source": Regime(
+                states={"x": grid, "y": grid},
+                state_transitions=source_laws,
+                functions=source_functions,
+            ),
+            "target": Regime(
+                states={"x": grid, "y": grid},
+                state_transitions=target_laws,
+                functions=target_functions,
+            ),
+            "fallback": Regime(
+                states={"x": grid, "y": grid},
+                functions={"utility": _arrival_domain_fallback_utility},
+            ),
+            "done": Regime(
+                states={"x": grid, "y": grid},
+                functions={"utility": _arrival_domain_utility},
+            ),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
+        regime_id_class=_ArrivalDomainRegimeId,
+        initial_nodes={0: "source"},
+        fixed_params=fixed_params or {},
+        edges={
+            "source": Transition(
+                law=ByAge(cases={0: "target"}),
+                arrivals={
+                    "target": ArrivalDecision(
+                        predicate=predicate,
+                        reads={
+                            "V_target": ArrivalRead(
+                                kind="IntegratedFull",
+                                regime="target",
+                                projection={
+                                    "x": project
+                                    if consumer == "read_projection"
+                                    else _arrival_domain_identity_x,
+                                    "y": _arrival_domain_identity_y,
+                                },
+                            )
+                        },
+                        routes={
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="fallback",
+                                    projection={
+                                        "x": project
+                                        if consumer == "fallback_projection"
+                                        else _arrival_domain_identity_x,
+                                        "y": _arrival_domain_identity_y,
+                                    },
+                                )
+                            )
+                        },
+                    )
+                }
+                if with_arrival
+                else {},
+            ),
+            "target": Transition(law=ByAge(cases={1: "done"})),
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    "consumer", ["predicate", "read_projection", "fallback_projection"]
+)
+@pytest.mark.parametrize("bad_name", ["direct_next"])
+def test_arrival_consumer_refuses_reserved_next_names(
+    *, consumer: str, bad_name: str
+) -> None:
+    """A transition-local value is unavailable to the landed arrival decision."""
+    with pytest.raises(InvalidNameError, match="next_y"):
+        _arrival_domain_model(consumer=consumer, bad_name=bad_name)
+
+
+@pytest.mark.parametrize(
+    ("consumer", "bad_name"),
+    [
+        ("predicate", "source_helper"),
+        ("predicate", "target_helper"),
+        ("predicate", "transitive_next"),
+        ("read_projection", "target_helper"),
+        ("fallback_projection", "target_helper"),
+    ],
+)
+def test_arrival_own_edge_parameter_precedes_target_helper_concatenation(
+    *, consumer: str, bad_name: str
+) -> None:
+    """The exact edge slot controls the Boolean rule or projected coordinate."""
+    model = _arrival_domain_model(consumer=consumer, bad_name=bad_name)
+    path = (
+        ("predicate",)
+        if consumer == "predicate"
+        else ("references", "V_target", "x")
+        if consumer == "read_projection"
+        else ("routes", "only", "fallback", "x")
+    )
+    assert leaf_paths(tree=model.get_params_template()["edges"]) == {
+        ("source", "target", *path, "h")
+    }
+    settings = (0.5, 5.0) if consumer == "predicate" else (0.0, 1.0)
+    for h in settings:
+        branch = {"h": h}
+        for segment in reversed(path):
+            branch = {segment: branch}
+        solution = model.solve(
+            params={"discount_factor": 0.5, "edges": {"source": {"target": branch}}},
+            log_level="off",
+        )
+        expected = []
+        for x in (0.0, 1.0):
+            for y in (0.0, 1.0):
+                landing_x = y if bad_name == "source_helper" else x
+                future_x = y if bad_name == "transitive_next" else landing_x
+                target = 1.0 + landing_x + 0.5 * (1.0 + future_x)
+                comparison = 1.5 + 1.5 * h if consumer == "read_projection" else target
+                threshold = h if consumer == "predicate" else 2.25
+                fallback_x = h if consumer == "fallback_projection" else landing_x
+                fallback = 0.25 + 2.0 * fallback_x
+                continued = target if comparison >= threshold else fallback
+                expected.append(1.0 + x + 0.5 * continued)
+        np.testing.assert_array_equal(
+            np.sort(np.asarray(solution.values[0]["source"]).ravel()),
+            np.sort(np.asarray(expected)),
+        )
+
+
+@pytest.mark.parametrize("bad_name", ["target_helper", "transitive_next"])
+def test_arrival_admission_fixture_has_valid_ordinary_target_helpers(
+    *, bad_name: str
+) -> None:
+    """The ordinary target payoff/transition owns these helpers legitimately."""
+    model = _arrival_domain_model(
+        consumer="predicate", bad_name=bad_name, with_arrival=False
+    )
+    assert model.get_params_template()["target"]["utility"] == {}
+
+
+def test_arrival_source_only_helper_stays_an_independent_edge_parameter() -> None:
+    """A source's valid next_y helper cannot capture the arrival's free h."""
+    model = _arrival_domain_model(consumer="predicate", bad_name="source_helper")
+    assert leaf_paths(tree=model.get_params_template()["edges"]) == {
+        ("source", "target", "predicate", "h")
+    }
+
+
+@pytest.mark.parametrize("fixed", [False, True])
+def test_arrival_edge_parameter_uses_its_actual_date_in_solve_and_replay(
+    *, fixed: bool
+) -> None:
+    """Source-date h rejects, but the true arrival-date h accepts the target."""
+    params = {
+        "discount_factor": 0.5,
+        "edges": {
+            "source": {
+                "target": {
+                    "predicate": {
+                        "h": TimeVarying(
+                            values=jnp.asarray([5.0, 0.5, 5.0]), ages=(0, 1, 2)
+                        )
+                    }
+                }
+            }
+        },
+    }
+    model = _arrival_domain_model(
+        consumer="predicate",
+        bad_name="target_helper",
+        temporal_h=True,
+        fixed_params=params if fixed else None,
+    )
+    runtime = {} if fixed else params
+    solution = model.solve(params=runtime, log_level="off")
+    np.testing.assert_array_equal(
+        np.sort(np.asarray(solution.values[0]["source"]).ravel()),
+        [1.75, 1.75, 3.5, 3.5],
+    )
+    frame = model.simulate(
+        params=runtime,
+        solution=solution,
+        initial_conditions={
+            "age": jnp.asarray([0.0]),
+            "regime_id": jnp.asarray([_ArrivalDomainRegimeId.source]),
+            "x": jnp.asarray([0.0]),
+            "y": jnp.asarray([0.0]),
+        },
+        log_level="off",
+    ).to_dataframe(use_categorical_codes=True)
+    arrival = frame.query("period == 1")
+    np.testing.assert_array_equal(arrival["regime_name"], ["target"])
+    np.testing.assert_array_equal(arrival["value"], [1.5])
