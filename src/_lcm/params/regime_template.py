@@ -21,6 +21,7 @@ from typing import Literal, cast
 import dags.tree as dt
 from dags.tree import qname_from_tree_path, tree_path_from_qname
 
+from _lcm.exits import exit_functions, rule_operands
 from _lcm.grids import DiscreteGrid, IrregSpacedGrid
 from _lcm.params.edges import (
     EDGES,
@@ -309,6 +310,14 @@ def create_regime_params_template(  # noqa: C901 - classify ordinary and law-onl
             f"state, or action in the regime. Rename one of the two."
         )
 
+    per_target_params.update(
+        _exit_params_template(
+            user_regime=user_regime,
+            variables=variables,
+            reserved=frozenset(function_params) | frozenset(per_target_params),
+        )
+    )
+
     return MappingProxyType(
         {
             **{k: MappingProxyType(v) for k, v in function_params.items()},
@@ -320,6 +329,37 @@ def create_regime_params_template(  # noqa: C901 - classify ordinary and law-onl
             },
         }
     )
+
+
+def _exit_params_template(
+    *,
+    user_regime: UserRegime,
+    variables: frozenset[ReferenceName],
+    reserved: frozenset[str],
+) -> dict[str, dict[str, _TemplateBranch]]:
+    """Union both settlement phases under each declaration's exact public path."""
+    if not user_regime.exits:
+        return {}
+    if "exits" in reserved:
+        raise InvalidNameError("Exit parameters conflict with the regime name 'exits'.")
+    exit_params: dict[str, _TemplateBranch] = {}
+    for phase in ("solve", "simulate"):
+        functions = exit_functions(exits=user_regime.exits, phase=phase)
+        for path, function in functions.items():
+            params = _discovered_params(
+                name=qname_from_tree_path(path),
+                func=function,
+                non_params=variables
+                | rule_operands(stakeholders=user_regime.stakeholders)
+                if path[-1] == "rule"
+                else variables,
+                strip_target_value_operands=False,
+            )
+            branch = exit_params.setdefault(path[1], {})
+            for segment in path[2:]:
+                branch = cast("_TemplateBranch", branch.setdefault(segment, {}))
+            branch.update(params)
+    return {"exits": exit_params}
 
 
 @dataclass(frozen=True)

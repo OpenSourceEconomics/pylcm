@@ -564,7 +564,7 @@ def find_param_candidates(
     return tuple(candidates)
 
 
-def create_params_template(
+def create_params_template(  # noqa: C901, PLR0912 - validate ordinary and exit namespaces
     regimes: MappingProxyType[RegimeName, Regime],
 ) -> ParamsTemplate:
     """Create params_template from internal regimes and validate name uniqueness.
@@ -610,7 +610,14 @@ def create_params_template(
                     f"Parameter {key!r} in regime {name!r} must be nested under "
                     f"a function name, e.g., {{'function_name': {{'{key}': type}}}}"
                 )
-            if key in regime_names:
+            if key == "exits":
+                for path in _leaf_paths(val):
+                    if errors := path_segment_name_errors(
+                        kind="Exit parameter", names=path
+                    ):
+                        raise InvalidNameError(errors[0])
+                    arg_names |= frozenset((path[-1],))
+            elif key in regime_names:
                 # A target branch: per-target transition params nested under
                 # the target regime's name.
                 for func_key, func_val in val.items():

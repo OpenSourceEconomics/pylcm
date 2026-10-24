@@ -1,10 +1,13 @@
 """Resolve explicit model topology and bind it to the numerical transition laws."""
 
+import inspect
 from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal, cast
+
+import jax.numpy as jnp
 
 from _lcm.gated_edge import GatedEdge, gated_edge_from_gate
 from _lcm.reachability import ModelReachability, PhaseReachability
@@ -42,6 +45,7 @@ from lcm.exceptions import (
     ModelInitializationError,
     RegimeInitializationError,
 )
+from lcm.exits import Consent
 from lcm.phased import Phased
 from lcm.regime import Regime
 from lcm.transition import (
@@ -251,6 +255,12 @@ def prepare_graph(
         terminal_regimes=frozenset(name for name, law in laws.items() if law.terminal),
         ages=ages,
     )
+    _validate_exit_availability(
+        regimes=fixed_support.user_regimes,
+        demanded=schedules,
+        available=after,
+        ages=ages,
+    )
     return GraphPreparation(
         regimes=fixed_support.user_regimes,
         laws=fixed_support.laws,
@@ -263,6 +273,69 @@ def prepare_graph(
         ),
         cells_without_edges=cells_without_edges,
     )
+
+
+def _validate_exit_availability(
+    *,
+    regimes: Mapping[RegimeName, Regime],
+    demanded: RegimeSchedules,
+    available: RegimeSchedules,
+    ages: TimeAxis,
+) -> None:
+    """Check query contexts against available problems before demand prunes them."""
+    for source, regime in regimes.items():
+        for phase, periods in (
+            ("solution", demanded.coverage_by_regime[source]),
+            ("simulation", demanded.visited_periods_by_regime[source]),
+        ):
+            for name, declaration in regime.exits.items():
+                contexts = [
+                    ("destination", target.regime)
+                    for target in declaration.targets.values()
+                ]
+                if isinstance(declaration.rule, Consent):
+                    contexts.append(
+                        ("counterparty", declaration.rule.counterparty.regime)
+                    )
+                for kind, target in contexts:
+                    for period in periods:
+                        if period not in available.coverage_by_regime[target] or (
+                            target in available.support_by_phase[phase]
+                            and not available.support_by_phase[phase][target].get(
+                                period
+                            )
+                        ):
+                            if _exit_is_statically_unavailable(
+                                predicate=declaration.available,
+                                period=period,
+                                ages=ages,
+                            ):
+                                continue
+                            raise RegimeInitializationError(
+                                f"Exit {source}.{name} {kind} {target!r} is inactive "
+                                f"at {ages.exact_values[period]} in {phase}."
+                            )
+
+
+def _exit_is_statically_unavailable(
+    *, predicate: UserFunction | None, period: int, ages: TimeAxis
+) -> bool:
+    """Prove false only over the complete singleton time-input domain.
+
+    State-dependent or runtime-parameter predicates may be true somewhere;
+    no sampled state or guessed parameter can certify their unavailability.
+    """
+    if predicate is None:
+        return False
+    names = set(inspect.signature(predicate).parameters)
+    if names - {"period", "age"}:
+        return False
+    inputs = {
+        "period": jnp.asarray(period, dtype=jnp.int32),
+        "age": ages.values[period],
+    }
+    value = jnp.asarray(predicate(**{name: inputs[name] for name in names}))
+    return value.ndim == 0 and value.dtype.kind == "b" and not bool(value)
 
 
 def _validate_graph_coordinate_kind(

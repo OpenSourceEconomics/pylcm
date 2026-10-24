@@ -38,6 +38,7 @@ from typing import Literal, TypedDict, cast, no_type_check
 
 from dags import get_ancestors
 
+from _lcm.exits import exit_functions
 from _lcm.processes import _ContinuousStochasticProcess, _IIDProcess
 from _lcm.reachability import PhaseName, candidate_targets_from_transition
 from _lcm.regime_building.age_specialization import resolve_node
@@ -749,6 +750,12 @@ def root_functions(
         | _transition_roots(regime=regime, law=laws[regime_name], phase=phase)
         | _value_aware_roots(regime=regime)
         | _incoming_edge_roots(regime_name=regime_name, laws=laws)
+        | {
+            "__".join(path): function
+            for path, function in exit_functions(
+                exits=regime.exits, phase=phase
+            ).items()
+        }
     )
 
 
