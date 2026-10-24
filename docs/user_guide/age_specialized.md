@@ -74,8 +74,7 @@ Do not place the marker directly in `state_transitions`.
 
 ## Age-specialized grids
 
-`AgeSpecializedGrid(build, signature)` varies a continuous state's numerical grid with
-age:
+`AgeSpecializedGrid(build)` varies a continuous state's numerical grid with age:
 
 ```python
 from lcm import AgeSpecializedGrid, LinSpacedGrid
@@ -87,13 +86,14 @@ states = {
             stop=ASSET_MAX,
             n_points=40,
         ),
-        signature=lambda age: borrowing_floor(age),
     )
 }
 ```
 
 The grid class, number of nodes, shape, and dtype remain fixed; bounds or node values
-may change. Equal signatures must resolve to identical grids.
+may change. Ages whose built grids are equal share one compiled program. An optional
+`signature=lambda age: ...` replaces that key; equal signatures must then resolve to
+identical grids, which pylcm checks at build time.
 
 Use an age-specialized grid only for a continuous state whose points are known at model
 construction. Runtime-supplied points use `IrregSpacedGrid(n_points=...)` instead.

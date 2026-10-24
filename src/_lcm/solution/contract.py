@@ -390,7 +390,8 @@ class SolverBuildContext:
     ) = None
     """Immutable mapping of period to each regime's age-specialization signature.
 
-    The user's own `AgeSpecializedGrid.signature(age)` values, joined by the
+    The `AgeSpecializedGrid` signatures (declared, or derived from the built grid),
+    joined by the
     `AgeSpecializedFunction.signature(age)` values of a regime declaring a function
     marker, so a solver that groups periods into shared compiled programs can fold
     its targets' signatures at `period + 1` into the group key. Periods whose

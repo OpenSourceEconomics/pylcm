@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "5a186514211ffc1cef158d5ed73a62a2bea6d62c44e2a53805201e911e1e72e1",
+  "source_inventory_sha256": "1920874b286a6673bc0a1af197902652d9e0ab4173e94719e368972e5af3d6e5",
   "sources": [
     {
       "path": "src/_lcm/constraints/bounds.py",
@@ -318,7 +318,7 @@
     },
     {
       "path": "src/_lcm/regime_building/age_normalization.py",
-      "sha256": "b63cc450f56e446ba24cb5c5e6e83ab9f048f6db3f9b745f8b80efe5f59442a0"
+      "sha256": "65601fa2da76f018fb695a76500e2917f518e98407fa6d2dd259a3f3a5bd1df9"
     },
     {
       "path": "src/_lcm/regime_building/argmax.py",
@@ -542,7 +542,7 @@
     },
     {
       "path": "src/_lcm/solution/contract.py",
-      "sha256": "abbbfd8b877f663cbd1df9a5ff9e24b31eaffdf76585b34fe5724438488a1c0d"
+      "sha256": "e2caab2e0c4f3aacf5ea833875ff9b68aef2e0ec999b43a5894a4bd131233928"
     },
     {
       "path": "src/_lcm/solution/dcegm.py",

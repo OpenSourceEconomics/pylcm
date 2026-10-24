@@ -18,8 +18,9 @@ After this step:
 - no downstream object retains a `build(age)` factory, so backward induction,
   simulation, AOT compilation, diagnostics, and output only *select* prebuilt objects.
 
-Grid sharing across periods is keyed on the explicit, user-declared
-`AgeSpecializedGrid.signature(age)` contract (recorded in the schedule);
+Grid sharing across periods is keyed on `AgeSpecializedGrid.signature(age)`, or,
+when none is declared, on the built grid's class, node dtype and node bytes
+(recorded in the schedule);
 `assert_continuation_grids_agree` cross-checks a shared group's resolved nodes at
 build time, so an under-specified signature raises instead of silently merging
 periods with genuinely different grids.
@@ -32,6 +33,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import NoReturn, TypeVar, cast, overload
 
+import numpy as np
 from jax import numpy as jnp
 
 from _lcm.constraints.dynamic_bound import ScalarFloor
@@ -189,10 +191,12 @@ class AgeGridSchedule:
         period: int,
         regime_name: RegimeName,
     ) -> Hashable:
-        """Explicit per-state signatures for a regime's grids at `period`.
+        """Per-state grid signatures for a regime's grids at `period`.
 
-        The user-declared `AgeSpecializedGrid.signature(age)` values — the sole
-        contract that decides whether two periods may share a compiled program.
+        Each is the user-declared `AgeSpecializedGrid.signature(age)` value, or
+        the built grid's class, node dtype and node bytes when none is declared —
+        the sole contract that decides whether two periods may share a compiled
+        program.
         """
         entries = self.by_period.get(period, {}).get(regime_name, {})
         return tuple(
@@ -351,11 +355,11 @@ def continuation_grid_signature_from_schedule(
     target_period: int,
     target_regimes: tuple[RegimeName, ...],
 ) -> Hashable:
-    """Explicit grid-signature key for a period's continuation targets at `t+1`.
+    """Grid-signature key for a period's continuation targets at `t+1`.
 
-    Contains only the user-declared `AgeSpecializedGrid.signature(age)` values of the
-    actual target regimes' grids at `target_period` — not bounds, nodes, bytes, or
-    concrete objects. Periods whose continuation grids share these signatures may
+    Contains only the `AgeSpecializedGrid` signatures (see
+    `AgeGridSchedule.grid_signature`) of the actual target regimes' grids at
+    `target_period`. Periods whose continuation grids share these signatures may
     share a compiled `Q_and_F`.
     """
     if grid_schedule is None:
@@ -380,12 +384,13 @@ def assert_continuation_grids_agree(
 ) -> None:
     """Raise if periods sharing a Q_and_F group disagree on resolved continuation nodes.
 
-    `AgeSpecializedGrid.signature(age)` is a cheap, user-supplied pre-filter for
-    program sharing, not a correctness guarantee: two periods can share a signature
-    while `build(age)` resolves to genuinely different grids (an under-specified or
-    constant signature). Comparing every group member's resolved nodes at build
-    time turns that mistake into a loud, actionable error instead of a silently
-    wrong Q_and_F.
+    An explicit `AgeSpecializedGrid.signature(age)` is a cheap, user-supplied
+    pre-filter for program sharing, not a correctness guarantee: two periods can
+    share a signature while `build(age)` resolves to genuinely different grids (an
+    under-specified or constant signature). The default signature keys on the node
+    bytes, so it never groups periods this check rejects. Comparing every group
+    member's resolved nodes at build time turns that mistake into a loud,
+    actionable error instead of a silently wrong Q_and_F.
     """
     if grid_schedule is None or not periods[1:]:
         return
@@ -767,7 +772,11 @@ def _resolve_grid_marker(
         concrete_by_period[period] = ResolvedAgeGrid(
             grid=grid,
             nodes=nodes,
-            signature=marker.signature(age),
+            signature=(
+                (type(grid), str(nodes.dtype), np.asarray(nodes).tobytes())
+                if marker.signature is None
+                else marker.signature(age)
+            ),
         )
     representative_period = active_periods[0]
     return _ResolvedGridMarker(

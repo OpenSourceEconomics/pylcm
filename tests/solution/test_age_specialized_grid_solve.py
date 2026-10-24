@@ -29,6 +29,7 @@ import numpy as np
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
+from _lcm.dtypes import canonical_float_dtype
 from _lcm.grids.continuous import ContinuousGrid
 from _lcm.regime_building.age_specialization import _TRAIT_DESCRIPTIONS, _GridTraits
 from lcm import (
@@ -171,6 +172,26 @@ def _moving_floor_grid():
         build=lambda age: LinSpacedGrid(start=floor(age), stop=20.0, n_points=12),
         signature=floor,
     )
+
+
+def test_default_signature_reproduces_explicit_signature_solve():
+    """A grid without `signature` solves to the same V, bit for bit, as with one.
+
+    The explicit `floor` signature is correct for this grid: it distinguishes
+    exactly the ages whose nodes differ, so both keys group the same periods.
+    """
+    explicit = _moving_floor_grid()
+    default = AgeSpecializedGrid(build=explicit.build)
+    v_explicit = _model(explicit).solve(params=_PARAMS, log_level="debug").values
+    v_default = _model(default).solve(params=_PARAMS, log_level="debug").values
+    assert jnp.asarray(v_default[0]["alive"]).dtype == canonical_float_dtype()
+    for period in range(_N):
+        if "alive" not in v_explicit[period]:
+            continue
+        np.testing.assert_array_equal(
+            np.asarray(v_default[period]["alive"]),
+            np.asarray(v_explicit[period]["alive"]),
+        )
 
 
 def test_moving_floor_no_nan_poisoning():

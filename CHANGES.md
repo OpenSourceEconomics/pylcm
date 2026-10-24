@@ -5,6 +5,13 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Age-specialized grids
+
+- `AgeSpecializedGrid(build=...)` no longer requires `signature`. Without it, ages
+  share one compiled program exactly when the grids `build(age)` returns have the same
+  class, node dtype and node bytes. An explicit `signature` still works and may be
+  coarser. `AgeSpecializedFunction` still requires `signature`.
+
 ### Reachable discrete states
 
 - `Model(composite_states={"history": CompositeState(members=..., start_codes=...)})`
