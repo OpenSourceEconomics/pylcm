@@ -491,7 +491,12 @@ class RevealedExitDecision:
                 name: _draw_base_value(key=keys[name], uniform=uniform)
                 for name, uniform in self.uniform_bases.items()
             },
-            held_bases={**held_bases, **frame.held_bases},
+            held_bases={
+                name: frame.held_bases[name]
+                if name in frame.held_bases
+                else held_bases[name]
+                for name in self.uniform_bases
+            },
         )
         frame = _observe_query_frame(
             queries=self.queries,
