@@ -11,6 +11,26 @@ The owner authorized choosing these contracts in the implementation conversation
 standalone reference establishes its arithmetic; each engine route must also be
 connected to that reference through the public model API.
 
+## Accepted scope
+
+On 2026-10-24 the owner confirmed that faithful EKL remains a required acceptance case,
+while the engine also supports generic positive-cost formation and independent hidden
+shocks. EKL's formation adjustment uses the mapped lagged marital state, so newlyweds
+have no lagged divorce cost; both spouses' offers are observed/shared at marital choice.
+Action-dependent next-period offer laws retain their dating. The generic positive-cost
+and hidden-offer witnesses test additional engine behavior.
+
+Partial observation of correlated shocks is deferred. Refuse a query requiring that
+conditional distribution explicitly. Wholly hidden groups retain their joint law.
+Partial correlated physical overrides are also deferred: require a complete physical
+frame for that group or use named base-innovation overrides and the forward transform.
+Independent physical overrides remain supported. These decisions supersede the earlier
+general Gaussian conditional-query and partial-physical-completion plan.
+
+Legacy compatibility is not an acceptance requirement. Migrate callers directly to the
+new API. Use focused local correctness checks; long certificate and broad platform
+campaigns run in CI rather than blocking every implementation change locally.
+
 ## Invariants
 
 Current IID shocks have no axis in stored values, continuation carries or policies.
@@ -144,76 +164,54 @@ Signed quadrature is linear-only. Propagate its provenance into stored channels 
 reject every nonlinear downstream reader, including CE, Euler inversion, constraints,
 availability, exit rules and simulation sampling.
 
-## Conditional query representation
+## Information and hidden-query integration
 
-The conditional operator is versioned as `pylcm.conditional.v1`. It conditions under the
-declared scientific law and preserves the joint rows of the hidden numerical rule. A
-finite node table is an integration rule; its accidental empirical dependence does not
-define a copula. Conditional refactorization has its own quadrature error. There is no
-general finite tower identity: a rule on the diagonal points `(-1, -1), (1, 1)` can
-integrate `x * y` differently from nested conditioning under independent normal laws.
-Retained and recomputed execution must still agree for the same declared conditional
+Keep target prescribed-policy information separate from caller pricing information.
+Additional caller knowledge does not change the target's participation policy. Evaluate
+that policy at each hidden node before pricing its selected action and stakeholder
+tuple. Independent hidden shocks, including target taste shocks, are integrated before
+the source decision and revealed only when the destination acts. A supplied hidden
+override does not become an observed pricing operand.
+
+For a wholly hidden group, use its original joint forward operator, preserving row
+order, weights, duplicates and dependence. For independent observed/hidden coordinates,
+fix the observed physical operands and project the same numerical rows onto the hidden
+coordinates. Do not infer scientific dependence by filtering a finite node table or
+replace a hidden correlated group by independent marginals. A finite rule has no general
+tower identity; retained and recomputed execution must agree for the same chosen
 operator.
 
-A generated mathematical physical signal has an explicit internal representation: its
-rounded physical value, the current source-law binding and, for an informative
-continuous marginal, its authorized marginal base coordinate: the correlated Gaussian
-coordinate for a normal-base law or the independent uniform for a uniform law. That
-coordinate represents the invertible mathematical observation before rounding. It is a
-dynamic operand of the query, and its representation and source binding enter query
-identity. This is an augmented signal representation, not conditioning on the physical
-scalar's bits alone: distinct signals can round to the same scalar and give different
-conditional prices. Certification names this represented object. It does not claim a
-scalar inverse can recover information lost to rounding.
+If declared dependence connects observed and hidden coordinates, refuse the requested
+partial observation instead of performing Gaussian conditional refactorization. Validate
+runtime correlation at each invocation; a cached independent view cannot admit later
+cross-correlation. Derivatives of an admitted independent view hold that independence
+partition fixed. General correlated conditional moments and derivatives are deferred.
 
-Informative eligibility uses exact represented law-domain tests. Normal and lognormal
-zero scales and uniform equal endpoints reveal no innovation. A categorical outcome
-reveals its common-uniform interval. Neither permits a generated latent witness to
-disclose additional information. An informative generated witness requires valid
-source-law provenance and a finite, resolved physical transform. A physical override has
-no generated witness; its inverse and support consistency need separate admission.
-Hidden simulation draws remain in the revelation record until the destination acts.
+Ordinary equations consume the sealed rounded physical value. Retain original named base
+innovations and producing-law context for shared-law replay and later revelation; they
+are not extra observations available to utility, availability or participation.
+Source/target bindings, observed names, target policy information, clock, dtype and rule
+identity belong to the query identity. Keep this preparation within the admitted query
+chunk and account for its outputs, transfers and failed-reader lifetimes.
 
-For Gaussian conditioning, order informative observed coordinates first, followed by
-hidden coordinates in original declared order. Exact host admission supplies the pivot
-support of that permutation. Traced factor and triangular-solve arithmetic use safe
-operands and mandatory unresolved status. Redundant observed pivots contribute no
-independent innovation; engine-generated supported observations do not require an exact
-rounded residual-equality test. Project the declared base rows onto the named hidden
-innovation columns, retaining weights, order and duplicates, and apply the joint
-conditional factor. Do not construct independent marginal rules. Correlation,
-informative subset, factor convention, source/target bindings, clock, dtype and rule
-bytes belong to the derived identity.
+Shared categorical observations retain the common-uniform interval semantics required by
+the shared-discrete projection contract. Unchanged partitions preserve the category,
+including a null solve category, without dividing by its mass. Changed partitions use
+qualified common-CDF refinement; unresolved consumed derivatives fail separately from
+primal validity. An actual zero-probability observation is an integrity failure. A null
+solve node can still contribute a finite `dmass * value`; never drop that derivative.
 
-Without informative observations, retain the original forward operator exactly. An
-informative view with a wholly deterministic conditional state evaluates that state
-directly with unit mass. Residual uncertainty uses the projected rule's unchanged
-weights. Record rule-mass discrepancy separately; these branches do not claim identical
-finite rounding across different information views. Exact categorical event conditioning
-uses common-CDF interval intersections and event-mass division where needed, subject to
-the shared-discrete projection contract.
+Named base overrides use the admitted forward law. Independent physical overrides and
+complete correlated physical frames require source-law inversion/support validation;
+being complete is not a validation bypass. Refuse partial correlated physical frames and
+mixed base/physical forms within a correlated component. Preserve producing context,
+original row/address, path-versus-entry precedence and actual revelation timing. Full
+frames, singular support and unresolved inverses retain their explicit integrity gates.
 
-Actual zero-probability observations require an integrity refusal. Null solve nodes are
-different: they retain safe finite conditional payloads where a zero mass has a nonzero
-derivative. With unchanged shared categorical partitions the target category is the same
-category, including a null solve category, without division by its mass.
-Changed-partition zero-width limits require a qualified extension; unresolved consumed
-derivatives fail separately from primal declaration validity. Never turn an unreachable
-solve node into a global invalid-law failure or drop a finite `dmass * value` term.
-
-State-dependent informative subsets are prepared within the admitted query chunk by
-canonical programs. Host support classification and its transfers, metadata, numeric
-variants and failed-reader owners share the query budget and lifetime contract. Avoid
-population-sized preparation and a global subset bank. Keep target prescribed-policy
-information separate from caller pricing information: additional caller knowledge does
-not change the target's participation policy.
-
-Acceptance separates observation representation/inversion, factor arithmetic,
-conditional quadrature, nested-rule discrepancy, mapped-state representation and
-execution equality. Qualify each with its own independent witnesses and scales;
-arbitrary user rules and payoffs have no universal error bound. Structural comparisons
-remain exact on the declared represented prices. These are implementation contracts;
-native public solve/simulation and override qualification remain required gates.
+Acceptance covers independent hidden pricing, preserved wholly hidden joint dependence,
+fully observed correlated inputs, explicit partial-observation/override refusals,
+shared-U boundaries, original-row revelation and execution equality. Numerical levels
+and structural action/exit decisions remain distinct acceptance channels.
 
 ## Runtime correlation admission
 
