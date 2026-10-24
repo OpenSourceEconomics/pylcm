@@ -392,6 +392,17 @@ class PreparedModelStructure:
     draw takes it from these processes as a transition-local lottery.
     """
 
+    broadcast_variables: MappingProxyType[RegimeName, frozenset[StateOrActionName]] = (
+        MappingProxyType({})
+    )
+    """Per regime, state names merged from the model-level state slot.
+
+    Action names are excluded: a masked model action can share its name with a
+    regime-local state. Error messages read this state provenance to say whether
+    a regime carries a state from its own `Regime(states=...)` or from
+    `Model(states=...)`.
+    """
+
 
 def prepare_model_structure(
     *,
@@ -410,6 +421,8 @@ def prepare_model_structure(
     visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
     draw_only_processes: Mapping[RegimeName, Mapping[StateName, _IIDProcess]]
     | None = None,
+    broadcast_variables: Mapping[RegimeName, frozenset[StateOrActionName]]
+    | None = None,
 ) -> PreparedModelStructure:
     """Prepare normalized declarations and static phase graphs once.
 
@@ -419,7 +432,8 @@ def prepare_model_structure(
     `visited_periods_by_regime` are the periods a subject can occupy, where the
     simulate graph is active. `declared_transitions` are the `Transition`s as
     `Model(edges=...)` declares them and `declared_edge_vocabulary` the names
-    each regime declares before demand prunes any.
+    each regime declares before demand prunes any. `broadcast_variables` are,
+    per regime, the state names merged in from `Model(states=...)`.
     """
     raw_phase_specs = normalize_all_regime_phases(user_regimes=user_regimes, laws=laws)
     age_normalization = normalize_age_specialization(
@@ -457,6 +471,7 @@ def prepare_model_structure(
                 for name, processes in (draw_only_processes or {}).items()
             }
         ),
+        broadcast_variables=MappingProxyType(dict(broadcast_variables or {})),
     )
 
 
@@ -509,12 +524,14 @@ def process_regimes(
         phase_reachability=reachability.solution,
         specs=phased_specs,
         ages=ages,
+        broadcast_variables=prepared_structure.broadcast_variables,
     )
     state_handoff_errors += _state_handoff_errors(
         phase_name="simulation",
         phase_reachability=reachability.simulation,
         specs=phased_specs,
         ages=ages,
+        broadcast_variables=prepared_structure.broadcast_variables,
     )
     if state_handoff_errors:
         raise ModelInitializationError(format_messages(state_handoff_errors))
@@ -3733,8 +3750,14 @@ def _state_handoff_errors(
     phase_reachability: PhaseReachability,
     specs: Mapping[RegimeName, PhasedRegimeSpec],
     ages: TimeAxis,
+    broadcast_variables: Mapping[RegimeName, frozenset[StateOrActionName]],
 ) -> tuple[str, ...]:
-    """Return errors for target states without a valid retained-edge handoff."""
+    """Return errors for target states without a valid retained-edge handoff.
+
+    Each error names the declaration the target carries the state from: its own
+    `Regime(states=...)`, or `Model(states=...)` when `broadcast_variables`
+    lists the state for the target.
+    """
     phase_slices: dict[RegimeName, RegimePhaseSpec] = {
         regime_name: getattr(spec, phase_name) for regime_name, spec in specs.items()
     }
@@ -3812,19 +3835,36 @@ def _state_handoff_errors(
                         if isinstance(target_grid, _ContinuousStochasticProcess)
                         else "state"
                     )
+                    # A model-level state redeclared on the source is refused as
+                    # ambiguous, so only the entry law fixes that case.
+                    if state_name in broadcast_variables.get(target, ()):
+                        declaration = (
+                            "the model-level `Model(states=...)` declaration, "
+                            f"kept on '{target}' because '{target}' uses it"
+                        )
+                        fixes = (
+                            "Define a target-specific entry law for "
+                            f"'{state_name}' on '{source}', or narrow the "
+                            "transition's static target support."
+                        )
+                    else:
+                        declaration = "its own `Regime(states=...)` declaration"
+                        fixes = (
+                            f"Declare '{state_name}' on '{source}', define a "
+                            "target-specific entry law, or narrow the "
+                            "transition's static target support."
+                        )
                     error_messages.append(
                         f"{phase_name} phase, period {period} "
                         f"(age {_display_age(ages=ages, period=period)}), "
                         f"source '{source}' -> "
                         f"period {period + 1} "
                         f"(age {_display_age(ages=ages, period=period + 1)}), "
-                        f"target '{target}' retains a {status.name} edge. The "
-                        f"target declares {state_kind} '{state_name}', but the "
+                        f"target '{target}' retains a {status.name} edge. "
+                        f"'{target}' carries {state_kind} '{state_name}' from "
+                        f"{declaration}, but the "
                         f"source does not carry '{state_name}' and defines no "
-                        f"entry law, so no next-period value exists. Declare "
-                        f"'{state_name}' on '{source}', define a target-specific "
-                        f"entry law, or narrow the transition's static target "
-                        f"support."
+                        f"entry law, so no next-period value exists. {fixes}"
                     )
     return tuple(error_messages)
 
