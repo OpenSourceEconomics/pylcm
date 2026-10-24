@@ -1,18 +1,14 @@
-"""Collective and value-dependent choice declared inside the slots that carry them.
+"""Collective utilities, source arrivals, and current participation declarations.
 
-A regime says who its stakeholders are in `functions["utility"]` and what a
-value-reading feasibility constraint is in `constraints`; where a
-value-dependent transition routes is a `Gate` beside the source's law in
-`Model(edges=...)`.
-Nothing about the model changes: the declarations are lowered onto the same
-stakeholders, value constraints, references and gated edges the engine has
-always run, so a model written this way solves to the numbers the same model
-written the long way solves to.
+Current dissolution belongs to an own Exit; a separate arrival decision reads
+its Part support after landing. Non-exit value constraints retain their own
+projected references. The public declaration paths determine roles, phases,
+parameter namespaces and the canonical policy problems the model evaluates.
 """
 
 import dataclasses
 from collections.abc import Mapping
-from typing import Literal, TypedDict, cast
+from typing import TypedDict, cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -26,10 +22,11 @@ from _lcm.regime_law import RegimeLaw, bind_regime_law
 from lcm import (
     AgeGrid,
     AgeRange,
+    ArrivalDecision,
+    ArrivalRead,
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
-    Gate,
     Model,
     ParetoObjective,
     Phased,
@@ -42,19 +39,26 @@ from lcm import (
     fixed_transition,
 )
 from lcm.exceptions import RegimeInitializationError
+from lcm.exits import Exit, ExitRule, ExitTarget
 from lcm.regime import RegimeReplacement
 from lcm.transition import PhaseTransitionLaw, StochasticTransition
-from lcm.typing import FloatND, FunctionName, RegimeName, ScalarInt, UserFunction
+from lcm.typing import (
+    BoolND,
+    FloatND,
+    FunctionName,
+    RegimeName,
+    ScalarInt,
+    UserFunction,
+)
 from tests.conftest import DECIMAL_PRECISION, bind_laws
 from tests.regime_building.test_collective_regime_simulate import (
     _BETA,
     _WAGE_3,
     _identity_wage,
-    _ir_f,
-    _ir_m,
     _make_dissolution_regimes,
     _married_dissolution_transition,
-    _no_dissolution_gate,
+    _participation_support,
+    _ParticipationRule,
     _prob_one,
     _u_married_ir_f,
     _u_married_ir_m,
@@ -70,15 +74,15 @@ class _Snapshot(TypedDict):
     pareto_objective: ParetoObjective | None
     value_constraints: dict[FunctionName, UserFunction]
     same_period_refs: dict[str, ProjectedRegimeValue]
-    gated_edges: dict[
+    arrivals: dict[
         RegimeName,
         tuple[
             UserFunction,
             dict[str, tuple[str | None, ProjectedRegimeValue]],
-            dict[str, ProjectedRegimeValue],
-            Literal["pointwise", "reject"],
+            dict[str, ArrivalRead],
         ],
     ]
+    exits: dict[str, tuple[type[ExitRule], dict[str, ExitTarget]]]
 
 
 _AGES = AgeGrid(start=0, inclusive_stop=3, step="Y")
@@ -87,8 +91,7 @@ _PARAMS = {
     "married": {"koopmans_aggregator": {"discount_factor": _BETA}},
     "married_ir": {
         "koopmans_aggregator": {"discount_factor": _BETA},
-        "ir_f": {"delta_f": 0.5},
-        "ir_m": {"delta_m": 0.2},
+        "exits": {"dissolve": {"rule": {"delta_f": 0.5, "delta_m": 0.2}}},
     },
     "married_terminal": {},
     "single_f": {"koopmans_aggregator": {"discount_factor": _BETA}},
@@ -134,12 +137,27 @@ def test_collective_utility_becomes_one_utility_function_per_stakeholder():
     assert regime.decomposed_functions["utility_m"] is _u_married_ir_m
 
 
-def test_value_dependent_constraint_keeps_its_references_local():
-    """A constraint's own references reach the regime under the names it reads."""
-    regime = _new_vocabulary_regimes()["married_ir"]
+def _reference_cap(*, V_single_f_ref: FloatND) -> BoolND:
+    return V_single_f_ref <= 6.0
 
-    assert set(regime.value_constraints) == {"ir_f", "ir_m"}
-    assert set(regime.same_period_refs) == {"V_single_f_ref", "V_single_m_ref"}
+
+def test_value_dependent_constraint_keeps_its_references_local() -> None:
+    """A non-exit value cap keeps its projected reference local to its constraint."""
+    regime = _new_vocabulary_regimes()["married_ir"].replace(
+        exits={},
+        constraints={
+            "reference_cap": ValueDependentConstraint(
+                predicate=_reference_cap,
+                references={
+                    "V_single_f_ref": ProjectedRegimeValue(
+                        regime="single_f", projection={"wage": _identity_wage}
+                    )
+                },
+            )
+        },
+    )
+    assert set(regime.value_constraints) == {"reference_cap"}
+    assert set(regime.same_period_refs) == {"V_single_f_ref"}
     assert regime.same_period_refs["V_single_f_ref"].regime == "single_f"
 
 
@@ -153,12 +171,12 @@ def test_value_dependent_transition_keeps_the_ordinary_transition_entry():
 
 def test_value_dependent_transition_routes_each_stakeholder_to_her_own_fallback():
     """Each source stakeholder's route keeps all four of its destinations."""
-    edge = _bound_laws()["married"].gated_edges["married_ir"]
+    edge = _bound_laws()["married"].arrivals["married_ir"]
 
-    assert edge.legs["f"].target_stakeholder == "f"
-    assert edge.legs["f"].solve_fallback.regime == "single_f"
-    assert edge.legs["m"].target_stakeholder == "m"
-    assert edge.legs["m"].solve_fallback.regime == "single_m"
+    assert edge.routes["f"].target_stakeholder == "f"
+    assert edge.routes["f"].solve_fallback.regime == "single_f"
+    assert edge.routes["m"].target_stakeholder == "m"
+    assert edge.routes["m"].solve_fallback.regime == "single_m"
 
 
 def test_the_two_vocabularies_solve_to_the_same_values():
@@ -201,7 +219,7 @@ def test_an_edge_inside_a_phased_transition_solves_to_the_unphased_values():
             law=ByAge(
                 cases={AgeRange(exclusive_stop=1): Phased(solve=law, simulate=law)}
             ),
-            gates=married.gates,
+            arrivals=married.arrivals,
         ),
     )
     unphased = _solve(regimes=_new_vocabulary_regimes(), married=married)
@@ -227,7 +245,7 @@ def _solve(*, regimes, married: Transition):
             "married": Transition(
                 targets={"married_ir": 0, "single_f": 0, "single_m": 0},
                 law=married.law,
-                gates=married.gates,
+                arrivals=married.arrivals,
             ),
             "married_ir": {"married_terminal": 1},
             "single_f": {"single_f_terminal": 1},
@@ -262,23 +280,18 @@ def _new_vocabulary_regimes() -> dict[str, Regime]:
                 utilities={"f": _u_married_ir_f, "m": _u_married_ir_m}
             )
         },
-        constraints={
-            "ir_f": ValueDependentConstraint(
-                predicate=_ir_f,
-                references={
-                    "V_single_f_ref": ProjectedRegimeValue(
+        exits={
+            "dissolve": Exit(
+                targets={
+                    "f": ExitTarget(
                         regime="single_f", projection={"wage": _identity_wage}
-                    )
-                },
-            ),
-            "ir_m": ValueDependentConstraint(
-                predicate=_ir_m,
-                references={
-                    "V_single_m_ref": ProjectedRegimeValue(
+                    ),
+                    "m": ExitTarget(
                         regime="single_m", projection={"wage": _identity_wage}
-                    )
+                    ),
                 },
-            ),
+                rule=_ParticipationRule(),
+            )
         },
     )
     married_terminal = Regime(
@@ -313,7 +326,7 @@ def _new_vocabulary_regimes() -> dict[str, Regime]:
 
 
 def _married_transition() -> Transition:
-    """`married`'s age-0 transition: a gated edge into `married_ir`.
+    """`married`'s arrival decision into `married_ir` after age 0.
 
     Each stakeholder's route falls back to her own single regime, so a model
     declares `married` with `married_ir`, `single_f` and `single_m` as targets.
@@ -326,14 +339,23 @@ def _married_transition() -> Transition:
                 }
             }
         ),
-        gates={"married_ir": _dissolution_gate()},
+        arrivals={"married_ir": _dissolution_arrival()},
     )
 
 
-def _dissolution_gate() -> Gate:
-    """`married`'s gate into `married_ir`, each route to her own single regime."""
-    return Gate(
-        predicate=_no_dissolution_gate,
+def _dissolution_arrival() -> ArrivalDecision:
+    """`married`'s arrival into `married_ir`, each route to her own single regime."""
+    return ArrivalDecision(
+        predicate=_participation_support,
+        reads={
+            "target_support": ArrivalRead(
+                regime="married_ir",
+                stakeholder="f",
+                kind="Participating",
+                field="support",
+                projection={"wage": _identity_wage},
+            )
+        },
         routes={
             "f": StakeholderRoute(
                 target_stakeholder="f",
@@ -397,7 +419,7 @@ def _phased_edge_law() -> RegimeLaw:
                         )
                     }
                 ),
-                gates={"married_ir": _dissolution_gate()},
+                arrivals={"married_ir": _dissolution_arrival()},
             )
         }
     )["married"]
@@ -409,14 +431,14 @@ def test_a_gate_beside_a_phased_law_is_one_edge():
     The perceived meeting probability and the realized one are a legitimate
     wedge, so the law may differ by phase. The gate, the routes, the
     references and the off-grid contract are declared once beside it, so the
-    law carries one `gated_edges` entry and each phase keeps its own
+    law carries one `arrivals` entry and each phase keeps its own
     probability.
     """
     law = _phased_edge_law()
 
-    edge = law.gated_edges["married_ir"]
-    assert edge.gate is _no_dissolution_gate
-    assert set(edge.legs) == {"f", "m"}
+    edge = law.arrivals["married_ir"]
+    assert edge.predicate is _participation_support
+    assert set(edge.routes) == {"f", "m"}
 
     transition = law.decomposed_transition
     assert isinstance(transition, Phased)
@@ -425,7 +447,7 @@ def test_a_gate_beside_a_phased_law_is_one_edge():
 
 
 def _derived_snapshot(*, regime: Regime, law: RegimeLaw) -> _Snapshot:
-    """The five engine-facing facts a regime's declarations and law determine.
+    """The canonical engine-facing facts a regime's declarations and law determine.
 
     Flattened into plain data so that two regimes built by different code paths
     — or by the same code path before and after a refactoring — compare by
@@ -436,75 +458,79 @@ def _derived_snapshot(*, regime: Regime, law: RegimeLaw) -> _Snapshot:
         "pareto_objective": regime.pareto_objective,
         "value_constraints": dict(regime.value_constraints),
         "same_period_refs": dict(regime.same_period_refs),
-        "gated_edges": {
+        "arrivals": {
             target: (
-                edge.gate,
+                decision.predicate,
                 {
-                    source: (leg.target_stakeholder, leg.solve_fallback)
-                    for source, leg in edge.legs.items()
+                    source: (route.target_stakeholder, route.solve_fallback)
+                    for source, route in decision.routes.items()
                 },
-                dict(edge.gate_refs),
-                edge.off_grid,
+                dict(decision.reads),
             )
-            for target, edge in law.gated_edges.items()
+            for target, decision in law.arrivals.items()
+        },
+        "exits": {
+            name: (type(declaration.rule), dict(declaration.targets))
+            for name, declaration in regime.exits.items()
         },
     }
 
 
 def _expected_snapshots() -> dict[RegimeName, _Snapshot]:
-    """What each shape of the dissolution miniature must derive, spelled out."""
+    """Canonical source arrivals and own current participation stay distinct."""
     fallback_f = ProjectedRegimeValue(
         regime="single_f", projection={"wage": _identity_wage}
     )
     fallback_m = ProjectedRegimeValue(
         regime="single_m", projection={"wage": _identity_wage}
     )
+    plain: _Snapshot = {
+        "stakeholders": None,
+        "pareto_objective": None,
+        "value_constraints": {},
+        "same_period_refs": {},
+        "arrivals": {},
+        "exits": {},
+    }
     return {
         "married": {
+            **plain,
             "stakeholders": ("f", "m"),
-            "pareto_objective": None,
-            "value_constraints": {},
-            "same_period_refs": {},
-            "gated_edges": {
+            "arrivals": {
                 "married_ir": (
-                    _no_dissolution_gate,
+                    _participation_support,
+                    {"f": ("f", fallback_f), "m": ("m", fallback_m)},
                     {
-                        "f": ("f", fallback_f),
-                        "m": ("m", fallback_m),
+                        "target_support": ArrivalRead(
+                            regime="married_ir",
+                            stakeholder="f",
+                            kind="Participating",
+                            field="support",
+                            projection={"wage": _identity_wage},
+                        )
                     },
-                    {},
-                    "pointwise",
                 )
             },
         },
         "married_ir": {
+            **plain,
             "stakeholders": ("f", "m"),
-            "pareto_objective": None,
-            "value_constraints": {"ir_f": _ir_f, "ir_m": _ir_m},
-            "same_period_refs": {
-                "V_single_f_ref": ProjectedRegimeValue(
-                    regime="single_f", projection={"wage": _identity_wage}
-                ),
-                "V_single_m_ref": ProjectedRegimeValue(
-                    regime="single_m", projection={"wage": _identity_wage}
-                ),
+            "exits": {
+                "dissolve": (
+                    _ParticipationRule,
+                    {
+                        "f": ExitTarget(
+                            regime="single_f", projection={"wage": _identity_wage}
+                        ),
+                        "m": ExitTarget(
+                            regime="single_m", projection={"wage": _identity_wage}
+                        ),
+                    },
+                )
             },
-            "gated_edges": {},
         },
-        "married_terminal": {
-            "stakeholders": ("f", "m"),
-            "pareto_objective": None,
-            "value_constraints": {},
-            "same_period_refs": {},
-            "gated_edges": {},
-        },
-        "single_f": {
-            "stakeholders": None,
-            "pareto_objective": None,
-            "value_constraints": {},
-            "same_period_refs": {},
-            "gated_edges": {},
-        },
+        "married_terminal": {**plain, "stakeholders": ("f", "m")},
+        "single_f": plain,
     }
 
 
@@ -512,7 +538,7 @@ def _expected_snapshots() -> dict[RegimeName, _Snapshot]:
     "regime_name", ["married", "married_ir", "married_terminal", "single_f"]
 )
 def test_the_declarations_determine_every_engine_facing_fact(regime_name):
-    """One regime's declarations fix all five facts the engine reads off it.
+    """One regime's declarations fix the canonical facts the engine reads off it.
 
     A gated regime, a value-constrained one, a plain collective one and a
     singleton: between them they cover every shape a declaration can take. The

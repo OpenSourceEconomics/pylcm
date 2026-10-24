@@ -42,8 +42,8 @@ from tests.regime_building.test_collective_regime_simulate import (
 _EXPECTED_TEMPLATE_LEAVES = frozenset(
     {
         "married__koopmans_aggregator__discount_factor",
-        "married_ir__ir_f__delta_f",
-        "married_ir__ir_m__delta_m",
+        "married_ir__exits__dissolve__rule__delta_f",
+        "married_ir__exits__dissolve__rule__delta_m",
         "married_ir__koopmans_aggregator__discount_factor",
         "single_f__koopmans_aggregator__discount_factor",
         "single_m__koopmans_aggregator__discount_factor",

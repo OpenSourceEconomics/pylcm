@@ -1,37 +1,17 @@
-"""Integration tests for forward simulation of collective regimes.
+"""Canonical collective policy, arrival, and own-role simulation fixtures.
 
-pylcm simulate recomputes the argmax per period against the STORED next-period
-V rather than storing policies. For a collective regime this means, per
-simulated household:
+The joint policy chooses one common action and publishes both member values.
+Source-owned arrival decisions run after the scheduled landing and before the
+final actor's action. Current participation exits retain threshold-only slack
+and pay each member's full single payoff when the kept set is empty.
 
-1. **Household argmax at the realized state** — the joint action `a*` both
-   stakeholders follow, recomputed the same way `get_max_Q_over_a`'s collective
-   branch does at solve (`collective_argmax_and_readout`, `Q_arr` carrying a
-   trailing stakeholder axis); each stakeholder's own value is read off at
-   that shared argmax and both continue to be tracked (a trailing stakeholder
-   axis on the recorded `V_arr`, mirroring the solve-side V topology).
-2. **The value router (gated edges)** — a regime declaring `gated_edges`
-   substitutes the target's gated continuation `Wbar` for the raw target V
-   before choosing this period's action (exactly like the solve-side kernel's
-   `_with_edge_substitution`, but computed from the already-solved solution),
-   then interpolates the SAME boolean `gate` at the realized candidate
-   target-state draw to decide ACTUAL regime routing: the target when open, a
-   leg's fallback regime (with its own projected states) when closed.
-3. **The stochastic offer draw** — a target-only `StochasticTransition` state
-   (e.g. a drawn spouse type) is realized by the ordinary,
-   collective-agnostic `calculate_next_states` machinery; nothing
-   gated-edge-specific is needed for the draw itself.
-
-Dissolution (a COLLECTIVE source's multi-leg gated edge) is a documented SCOPE
-FENCE: forward simulation is a fixed-size population pass, so one row cannot
-literally become two independently-tracked future rows. What is tested here is
-that EVERY leg's own fallback (regime, state) is computed correctly and
-written into that fallback regime's per-subject state slot, and that the row's
-own continuing membership follows the leg matching this `simulate()` call's
-each row's own role; see `_lcm.simulation.gated_routing`'s module docstring.
+A fixed population keeps each original subject and its own current role;
+settling a household does not create another subject for its other member.
 """
 
+from collections.abc import Mapping
 from types import MappingProxyType
+from typing import ClassVar
 
 import jax.numpy as jnp
 import numpy as np
@@ -51,22 +31,22 @@ from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
     AgeRange,
+    ArrivalDecision,
+    ArrivalRead,
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
-    Gate,
     LinSpacedGrid,
     Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
     Transition,
-    ValueDependentConstraint,
     categorical,
     fixed_transition,
 )
 from lcm.ages import AgeGrid
-from lcm.exceptions import InvalidSimulationInputError, NoFeasibleActionError
+from lcm.exits import Exit, ExitTarget, RuleResult
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.result import SimulationResult
 from lcm.solver_api import (
@@ -83,6 +63,7 @@ from lcm.typing import (
     DiscreteAction,
     DiscreteState,
     FloatND,
+    IntND,
     RegimeName,
     ScalarInt,
 )
@@ -410,8 +391,8 @@ def _consent_laws() -> dict[RegimeName, RegimeLawDeclaration | Transition]:
                     }
                 }
             ),
-            gates={
-                "married_terminal": Gate(
+            arrivals={
+                "married_terminal": ArrivalDecision(
                     predicate=_consent_gate,
                     routes={
                         "f": StakeholderRoute(
@@ -422,12 +403,26 @@ def _consent_laws() -> dict[RegimeName, RegimeLawDeclaration | Transition]:
                             ),
                         )
                     },
-                    references={
-                        "V_single_f_ref": ProjectedRegimeValue(
+                    reads={
+                        "V_target_f": ArrivalRead(
+                            regime="married_terminal",
+                            stakeholder="f",
+                            kind="Participating",
+                            projection={"wage": _identity_wage},
+                        ),
+                        "V_target_m": ArrivalRead(
+                            regime="married_terminal",
+                            stakeholder="m",
+                            kind="Participating",
+                            projection={"wage": _identity_wage},
+                        ),
+                        "V_single_f_ref": ArrivalRead(
+                            kind="Raw",
                             regime="single_f_terminal",
                             projection={"wage": _identity_wage},
                         ),
-                        "V_single_m_ref": ProjectedRegimeValue(
+                        "V_single_m_ref": ArrivalRead(
+                            kind="Raw",
                             regime="single_m_terminal",
                             projection={"wage": _identity_wage},
                         ),
@@ -629,12 +624,45 @@ def _ir_m(*, Q_m: FloatND, V_single_m_ref: FloatND, delta_m: FloatND) -> BoolND:
     return Q_m >= V_single_m_ref - delta_m
 
 
-def _no_dissolution_gate(D_target: BoolND) -> BoolND:
-    return ~D_target
+class _ParticipationRule:
+    """One common action meets both thresholds; dissolution pays full outside value."""
+
+    reads_outside_values: ClassVar[bool] = True
+
+    def __call__(
+        self,
+        *,
+        Q_f: FloatND,
+        Q_m: FloatND,
+        exit_payoffs: Mapping[str, Mapping[str, FloatND]],
+        alternative_ids: IntND,
+        pareto_weights: Mapping[str, FloatND],
+        delta_f: FloatND,
+        delta_m: FloatND,
+    ) -> RuleResult:
+        q_f, q_m = Q_f.reshape(-1), Q_m.reshape(-1)
+        outside = exit_payoffs["dissolve"]
+        kept = (
+            jnp.isfinite(q_f)
+            & jnp.isfinite(q_m)
+            & _ir_f(Q_f=q_f, V_single_f_ref=outside["f"], delta_f=delta_f)
+            & _ir_m(Q_m=q_m, V_single_m_ref=outside["m"], delta_m=delta_m)
+        )
+        objective = pareto_weights["f"] * jnp.where(
+            pareto_weights["f"] == 0, 0.0, q_f
+        ) + pareto_weights["m"] * jnp.where(pareto_weights["m"] == 0, 0.0, q_m)
+        stay = jnp.argmax(jnp.where(kept, objective, -jnp.inf))
+        return RuleResult(
+            action=alternative_ids[jnp.where(jnp.any(kept), stay, q_f.size)]
+        )
+
+
+def _participation_support(*, target_support: BoolND) -> BoolND:
+    return target_support
 
 
 def _married_dissolution_transition() -> Transition:
-    """Return `married`'s transition: its gated edge into `married_ir` at age 0.
+    """Return the source-owned arrival into `married_ir` after age 0.
 
     The edge's stakeholder routes fall back to `single_f` / `single_m`, so
     `married` reaches all three at age 0.
@@ -647,9 +675,18 @@ def _married_dissolution_transition() -> Transition:
                 }
             }
         ),
-        gates={
-            "married_ir": Gate(
-                predicate=_no_dissolution_gate,
+        arrivals={
+            "married_ir": ArrivalDecision(
+                predicate=_participation_support,
+                reads={
+                    "target_support": ArrivalRead(
+                        regime="married_ir",
+                        stakeholder="f",
+                        kind="Participating",
+                        field="support",
+                        projection={"wage": _identity_wage},
+                    )
+                },
                 routes={
                     "f": StakeholderRoute(
                         target_stakeholder="f",
@@ -725,23 +762,18 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
                 utilities={"f": _u_married_ir_f, "m": _u_married_ir_m}
             )
         },
-        constraints={
-            "ir_f": ValueDependentConstraint(
-                predicate=_ir_f,
-                references={
-                    "V_single_f_ref": ProjectedRegimeValue(
+        exits={
+            "dissolve": Exit(
+                targets={
+                    "f": ExitTarget(
                         regime="single_f", projection={"wage": _identity_wage}
-                    )
-                },
-            ),
-            "ir_m": ValueDependentConstraint(
-                predicate=_ir_m,
-                references={
-                    "V_single_m_ref": ProjectedRegimeValue(
+                    ),
+                    "m": ExitTarget(
                         regime="single_m", projection={"wage": _identity_wage}
-                    )
+                    ),
                 },
-            ),
+                rule=_ParticipationRule(),
+            )
         },
     )
     married_terminal = Regime(
@@ -793,8 +825,8 @@ def _solve_dissolution():
             "married_ir": MappingProxyType(
                 {
                     "koopmans_aggregator__discount_factor": jnp.asarray(_BETA),
-                    "ir_f__delta_f": jnp.asarray(0.5),
-                    "ir_m__delta_m": jnp.asarray(0.2),
+                    "exits__dissolve__rule__delta_f": jnp.asarray(0.5),
+                    "exits__dissolve__rule__delta_m": jnp.asarray(0.2),
                 }
             ),
             "married_terminal": MappingProxyType({}),
@@ -833,8 +865,8 @@ def test_dissolution_edge_routes_the_row_to_its_own_roles_single_regime():
     ages, regimes, regime_names_to_ids, flat_params, solution, dissolution_flags = (
         _solve_dissolution()
     )
-    np.testing.assert_array_equal(
-        np.asarray(dissolution_flags[1]["married_ir"]), [False, True, False]
+    np.testing.assert_allclose(
+        np.asarray(solution[1]["married_ir"])[1], [5.5, 1.0], rtol=1e-6
     )
 
     initial_conditions = MappingProxyType(
@@ -944,26 +976,21 @@ def _simulate_directly_in_married_ir(*, wages: list[float]) -> SimulationResult:
     )
 
 
-def test_value_masked_solve_stores_minus_inf_at_the_empty_cell():
-    """The solve phase's value-aware mask leaves married_ir empty at wage=2."""
-    *_, solution, _ = _solve_dissolution()
+def test_empty_participation_publishes_the_original_exit_payoffs() -> None:
+    """Full pays the original outside tuple where no common stay action participates."""
+    _, _, _, _, values, _ = _solve_dissolution()
+    np.testing.assert_allclose(values[1]["married_ir"][1], [5.5, 1.0], rtol=1e-6)
 
-    np.testing.assert_allclose(
-        np.asarray(solution[1]["married_ir"])[1], [-np.inf, -np.inf]
+
+def test_initial_households_with_empty_participation_take_their_own_exit() -> None:
+    """An initial wife exits the empty wage cell under her current policy."""
+    result = _simulate_directly_in_married_ir(wages=[1.0, 2.0, 3.0])
+    np.testing.assert_array_equal(
+        result.raw_results["single_f"][1].in_regime, [False, True, False]
     )
-
-
-def test_value_masked_simulate_refuses_the_solved_empty_cell():
-    """Simulate applies the solve's mask: the household at wage=2 has no action.
-
-    The gated edge routes real households away from this cell; one placed on it
-    directly is refused, named by its state, rather than assigned an action.
-    """
-    with pytest.raises(
-        NoFeasibleActionError,
-        match=r"Regime 'married_ir', period 1, state \{'wage': 2\.0\} has no",
-    ):
-        _simulate_directly_in_married_ir(wages=[1.0, 2.0, 3.0])
+    np.testing.assert_allclose(
+        result.raw_results["single_f"][1].V_arr[1], 5.5, rtol=1e-6
+    )
 
 
 def test_value_masked_simulate_reports_the_solved_values_off_the_empty_cell():
@@ -1077,8 +1104,8 @@ def _consent_discrete_axis_laws() -> dict[
                     }
                 }
             ),
-            gates={
-                "married_terminal": Gate(
+            arrivals={
+                "married_terminal": ArrivalDecision(
                     predicate=_consent_gate,
                     routes={
                         "f": StakeholderRoute(
@@ -1092,15 +1119,29 @@ def _consent_discrete_axis_laws() -> dict[
                             ),
                         )
                     },
-                    references={
-                        "V_single_f_ref": ProjectedRegimeValue(
+                    reads={
+                        "V_target_f": ArrivalRead(
+                            regime="married_terminal",
+                            stakeholder="f",
+                            kind="Participating",
+                            projection={"wage": _identity_wage, "educ": _identity_educ},
+                        ),
+                        "V_target_m": ArrivalRead(
+                            regime="married_terminal",
+                            stakeholder="m",
+                            kind="Participating",
+                            projection={"wage": _identity_wage, "educ": _identity_educ},
+                        ),
+                        "V_single_f_ref": ArrivalRead(
+                            kind="Raw",
                             regime="single_f_terminal",
                             projection={
                                 "wage": _identity_wage,
                                 "educ": _identity_educ,
                             },
                         ),
-                        "V_single_m_ref": ProjectedRegimeValue(
+                        "V_single_m_ref": ArrivalRead(
+                            kind="Raw",
                             regime="single_m_terminal",
                             projection={"wage": _identity_wage},
                         ),
@@ -1298,21 +1339,15 @@ _DISSOLUTION_PARAMS = {
 }
 
 
-def test_public_model_solve_dissolution_artifact_matches_internal_solve():
-    """The default `SolutionResult` surfaces the same addressed `D` array.
-
-    Same hand-computed cell as the internal-harness test
-    (`test_dissolution_edge_routes_the_row_to_its_own_roles_single_regime`):
-    D=True only at wage=2 for `married_ir` in period 1.
-    """
-    model = _make_dissolution_model()
-    solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="debug")
-    dissolution_flags = solution.replay_artifacts.project(DISSOLUTION_FLAG)
-    np.testing.assert_array_equal(
-        np.asarray(dissolution_flags[1]["married_ir"]), [False, True, False]
+def test_public_model_prices_the_actual_participation_routes() -> None:
+    """Arrival continuation discounts the kept policy or full outside payoff once."""
+    result = _make_dissolution_model().solve(
+        params=_DISSOLUTION_PARAMS, log_level="off"
     )
     np.testing.assert_allclose(
-        np.asarray(solution.values[1]["married_ir"])[1], [-np.inf, -np.inf]
+        result.values[0]["married"],
+        _BETA * np.array([[2.0, 1.0], [5.5, 1.0], [6.0, 3.0]]),
+        rtol=1e-6,
     )
 
 
@@ -1441,8 +1476,8 @@ def test_public_model_simulate_runs_edge_fold_collision_guard_on_supplied_result
     )
 
 
-def test_public_model_simulate_without_required_dissolution_artifact_fails_closed():
-    """A values-only result cannot replay a dissolution-gated model."""
+def test_public_model_replays_participation_from_values_only() -> None:
+    """Current participation replay needs values, without a dissolution artifact."""
     model = _make_dissolution_model()
     solution = model.solve(
         params=_DISSOLUTION_PARAMS,
@@ -1461,17 +1496,17 @@ def test_public_model_simulate_without_required_dissolution_artifact_fails_close
             ),
         }
     )
-    with pytest.raises(
-        InvalidSimulationInputError,
-        match=r"pylcm\.collective\.dissolution_flag.*not_requested",
-    ):
-        model.simulate(
-            params=_DISSOLUTION_PARAMS,
-            initial_conditions=initial_conditions,
-            solution=solution,
-            log_level="debug",
-            seed=0,
-        )
+    result = model.simulate(
+        params=_DISSOLUTION_PARAMS,
+        initial_conditions=initial_conditions,
+        solution=solution,
+        log_level="debug",
+        seed=0,
+    )
+    np.testing.assert_array_equal(result.raw_results["single_f"][1].in_regime, [True])
+    np.testing.assert_allclose(
+        result.raw_results["single_f"][1].V_arr, [5.5], rtol=1e-6
+    )
 
 
 # Test 7: `to_dataframe()` flattens a collective regime's 2D per-stakeholder value
@@ -1714,9 +1749,16 @@ def _repeating_self_loop_laws() -> dict[RegimeName, RegimeLawDeclaration | Trans
                 },
                 then={"src_exit": exit_cell},
             ),
-            gates={
-                "src": Gate(
+            arrivals={
+                "src": ArrivalDecision(
                     predicate=_repeat_gate,
+                    reads={
+                        "V_target": ArrivalRead(
+                            regime="src",
+                            kind="IntegratedFull",
+                            projection={"wage": _identity_wage},
+                        )
+                    },
                     routes={
                         "only": StakeholderRoute(
                             fallback=ProjectedRegimeValue(

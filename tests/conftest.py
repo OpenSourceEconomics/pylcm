@@ -734,7 +734,7 @@ def bind_laws(
     """Bind each regime's declared law the way `Model(edges=...)` binds it.
 
     `declared` maps every regime to its law between regimes, `None` for a
-    terminal regime, or to a `Transition` whose gates the law carries along.
+    terminal regime, or to a `Transition` whose gates and arrivals travel with it.
     """
     return MappingProxyType(
         {
@@ -745,6 +745,7 @@ def bind_laws(
                         target: gated_edge_from_gate(gate)
                         for target, gate in law.gates.items()
                     },
+                    arrivals=law.arrivals,
                 )
                 if isinstance(law, Transition)
                 else bind_regime_law(law)
@@ -776,10 +777,14 @@ def build_prepared_structure(
         declared_transitions={name: law.transition for name, law in laws.items()},
         code_by_name={name: code for code, name in enumerate(laws)},
     )
-    # Lowering keeps each regime's law only; its gates stay those it declares.
+    # Lowering keeps the law; source-owned gates and arrivals stay attached.
     bound = MappingProxyType(
         {
-            name: bind_regime_law(transition, gated_edges=laws[name].gated_edges)
+            name: bind_regime_law(
+                transition,
+                gated_edges=laws[name].gated_edges,
+                arrivals=laws[name].arrivals,
+            )
             for name, transition in lowered.items()
         }
     )
@@ -788,6 +793,11 @@ def build_prepared_structure(
         laws=bound,
         ages=ages,
         active_periods_by_regime=schedules.coverage_by_regime,
+        # This kernel harness permits starts at every pre-existing covered date.
+        # Query demand never widens its original occupants or stored Full bank.
+        original_periods_by_regime=schedules.coverage_by_regime,
+        value_periods_by_regime=schedules.coverage_by_regime,
+        query_periods_by_phase=schedules.query_periods_by_phase,
         support_by_phase=schedules.support_by_phase,
         gated_source_periods=gated_source_periods(schedules=schedules),
         # The bound laws stand in for the declarations a `Model` would hold.
@@ -805,6 +815,7 @@ def build_prepared_structure(
                         )
                         for target, edge in law.gated_edges.items()
                     },
+                    arrivals=law.arrivals,
                 ),
             )
             for name, law in bound.items()

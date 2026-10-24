@@ -1236,11 +1236,10 @@ def _initial_own_stakeholder(
     The seed is demanded exactly where the answer turns on it, which is a
     property of the starting regime rather than of the model:
 
-    - A role selects among a gated edge's legs, so it is read only where some
-      regime the cohort can still arrive at declares an edge with more than one
-      leg. A row keeps its role across an ordinary regime transition, so the
-      question is asked over the start's forward closure, not over its own
-      edges alone.
+    - A role selects among a current exit's member destinations or an incoming
+      decision's source routes, as well as a gated edge's legs. A row keeps its
+      role across an ordinary regime transition, so the question is asked over
+      the start's forward closure, not over its own decisions alone.
     - A collective start whose closure contains no such edge has no route,
       regime or state projection that can differ by role, and needs no seed —
       a role-routing regime elsewhere in the model decides nothing for it.
@@ -1270,9 +1269,28 @@ def _initial_own_stakeholder(
         name for name, regime in regimes.items() if regime.stakeholders is not None
     ]
     role_routing = frozenset(
-        name
-        for name, regime in regimes.items()
-        if any(len(edge.legs) > 1 for edge in regime.gated_edges.values())
+        {
+            name
+            for name, regime in regimes.items()
+            if any(len(edge.legs) > 1 for edge in regime.gated_edges.values())
+            or any(
+                plan.full is not None
+                and any(
+                    len(targets) > 1
+                    for targets in plan.full.definitions[
+                        plan.full.root
+                    ].exit_targets.values()
+                )
+                for plan in regime.simulation.exit_queries.values()
+            )
+        }
+        | {
+            source
+            for regime in regimes.values()
+            for plan in regime.simulation.exit_queries.values()
+            for source, entry in plan.arrivals.items()
+            if len(entry.target_roles) > 1
+        }
     )
     reachability = next(iter(regimes.values())).simulation.reachability
     starts_needing_a_role = {
@@ -1312,7 +1330,7 @@ def _initial_own_stakeholder(
                 "an `own_stakeholder` entry in `initial_conditions`, naming the "
                 f"role each one occupies (one of {dict(role_ids)}). They can "
                 f"reach the collective regime(s) {reachable_routes}, which "
-                "declare a gated edge whose legs differ by stakeholder, and "
+                "declare routes that differ by stakeholder, and "
                 "which partner a row is decides which of them it takes — so it "
                 "is a modelling decision rather than something the engine may "
                 "pick."
