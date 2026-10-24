@@ -1,22 +1,9 @@
-"""Simulated routing reads the target's own value on that period's state grid.
+"""Arrival comparisons read the target's stored value on its actual age grid.
 
-Deciding which regime a subject occupies next is a separate computation from
-the folded continuation `Wbar`: the fold reads the target's value at its grid
-NODES, by exact indexing, while routing recomputes the gate at the realized
-candidate state and so INTERPOLATES that same value. The interpolation measures
-the realized state against the target regime's grid, which must be the grid the
-target was solved on in the period whose value is being read.
-
-An `AgeSpecializedGrid` on the target is what makes the two distinguishable. It
-holds `n_points` fixed while the bounds move with age, so every array in the
-gate has the same shape at every age and no shape check can separate the
-periods — only the coordinate the realized state maps to, and through it the
-regime the subject ends up in.
-
-The gate here reads the target's VALUE rather than its state, because a state
-operand is bound from the realized draw and never touches a grid. The account's
-value is convex in its balance, so the same balance read one period's nodes off
-returns a different number rather than the same one.
+The account's value is convex in balance and its grid changes with age. An
+explicit IntegratedFull reader preserves that represented value comparison;
+the final action uses the canonical Participating problem at the same landing.
+Source continuation pricing and simulation settlement use the same arrival rule.
 """
 
 import jax.numpy as jnp
@@ -26,8 +13,9 @@ from numpy.testing import assert_array_almost_equal as aaae
 from lcm import (
     AgeGrid,
     AgeSpecializedGrid,
+    ArrivalDecision,
+    ArrivalRead,
     ByAge,
-    Gate,
     LinSpacedGrid,
     Model,
     ProjectedRegimeValue,
@@ -57,9 +45,8 @@ _GATE_FLOOR = 10.0
 # The balance the saver carries into the account.
 _ENTRY_BALANCE = 4.0
 
-# `saver`'s value at the age at which it opens the account: the fold reads the
-# account's value at its NODES, so it is `_ENTRY_BALANCE**2` discounted once,
-# whichever grid the ROUTING gate happens to measure against.
+# At the actual age-2 landing the represented account value clears its floor.
+# The saver receives the canonical account payoff discounted exactly once.
 _EXPECTED_SAVER_V_AT_AGE_1 = 8.0
 
 _ANNUITY_BASE = 100.0
@@ -93,12 +80,10 @@ def test_simulated_gate_reads_the_target_value_at_its_own_period_axes() -> None:
 
 
 def test_gated_continuation_is_unchanged_by_which_grid_the_routing_gate_reads() -> None:
-    """The age-1 saver is worth `8` whichever grid the routing gate measures on.
+    """The source prices the same age-2 arrival that simulation settles.
 
-    The folded continuation reads the account's value at its grid NODES, by
-    exact indexing, so no interpolation and no grid enters it. Pinning it here
-    is what makes the routing assertion above a statement about routing alone
-    rather than about a continuation that moved with it.
+    At the landing balance of four, the explicit represented value is sixteen
+    and clears the strict floor. The canonical account payoff is discounted once.
     """
     model = _build_model()
     result = _simulate(model)
@@ -138,9 +123,8 @@ def _build_model() -> Model:
       age 1 and `[0, 16]` at age 2.
     - `annuity` pays $100 + \\text{principal}$ on `[0, 4, 8]`, so its value is
       `[100, 104, 108]`.
-    - The age-2 fold reads the account's value at its own nodes: `0` clears
-      nothing and takes the annuity's `100`, `16` clears the floor of `10` and
-      keeps the account, so `Wbar = [100, 16]`.
+    - The age-2 represented comparison rejects balance zero and accepts balance
+      four. These are Boolean branches even though the annuity pays more.
     - The saver enters at balance `4`, the top node of age 2's grid, so its
       age-1 value is $0 + 0.5 \\cdot 16 = 8$.
 
@@ -158,8 +142,15 @@ def _build_model() -> Model:
             1: {"account": opening},
         }
     )
-    account_gate = Gate(
+    account_gate = ArrivalDecision(
         predicate=_account_value_clears_the_floor,
+        reads={
+            "V_target": ArrivalRead(
+                kind="IntegratedFull",
+                regime="account",
+                projection={"balance": _principal_from_balance},
+            )
+        },
         routes={
             "only": StakeholderRoute(
                 fallback=ProjectedRegimeValue(
@@ -194,7 +185,7 @@ def _build_model() -> Model:
             "saver": Transition(
                 targets={"saver": 0, "account": (0, 1), "annuity": (0, 1)},
                 law=saver_law,
-                gates={"account": account_gate},
+                arrivals={"account": account_gate},
             )
         },
     )

@@ -1,18 +1,9 @@
-"""A gated edge reads its gate reference on that period's own state grid.
+"""An explicit arrival reference reads its own age-specialized stored value.
 
-A `GatedEdge`'s gate may read another regime's same-period value at a projected
-coordinate (`gate_refs`). That value is interpolated on the REFERENCE regime's
-grid, so the grid the interpolator measures coordinates against must be the one
-the reference regime was solved on in the period whose value is being folded —
-not the grid of some other age at which the reference happens to be active.
-
-An `AgeSpecializedGrid` on the REFERENCE regime is what makes the two
-distinguishable. It holds `n_points` fixed while the bounds move with age, so
-every array in the fold has the same shape at every age and no shape check can
-separate the periods. The target regime and the leg's fallback regime both carry
-age-invariant grids here, so the reference regime's own axes are the only thing
-under test — and what they decide is the gate, a discrete branch: reading them
-at the wrong age hands the source the fallback's value instead of the target's.
+The arrival decision names the index's IntegratedFull value representation.
+Its own exact-date grid binds the landing projection before the strict Boolean
+hurdle. Canonical Participating target and fallback action problems remain
+separate from this comparison; a more valuable fallback cannot force rejection.
 """
 
 import jax.numpy as jnp
@@ -22,8 +13,9 @@ from numpy.testing import assert_array_almost_equal as aaae
 from lcm import (
     AgeGrid,
     AgeSpecializedGrid,
+    ArrivalDecision,
+    ArrivalRead,
     ByAge,
-    Gate,
     LinSpacedGrid,
     Model,
     ProjectedRegimeValue,
@@ -97,9 +89,8 @@ def test_gated_edge_gate_ref_is_read_at_its_own_period_axes() -> None:
 def test_simulated_gated_edge_gate_ref_is_read_at_its_own_period_axes() -> None:
     """A simulated saver's value at age 1 reads `index` on age 2's grid.
 
-    Simulation rebuilds the gated continuation from the stored value functions
-    rather than reusing the solved one, so it owes the same folded value as
-    backward induction: an age-1 saver is worth `2`.
+    Simulation reconstructs the same dated arrival read and canonical policy
+    as backward induction: an age-1 saver is worth `2`.
     """
     model = _build_model()
     solution = model.solve(
@@ -161,10 +152,9 @@ def _build_model() -> Model:
     - `account` pays out its balance, so its value is `[0, 4]`.
     - `annuity` pays $100 + \\text{principal}$ on `[0, 4, 8]`, so its value is
       `[100, 104, 108]`.
-    - The age-2 fold reads the index at a level equal to the balance: `0` at
-      balance `0` and `4` at balance `4`. Only the latter clears the hurdle of
-      `3`, so the gate is shut at balance `0` (the annuity's `100`) and open at
-      balance `4` (the account's own `4`), giving `Wbar = [100, 4]`.
+    - The age-2 arrival reads the represented index at a level equal to balance:
+      `0` at balance `0` and `4` at balance `4`. Only the latter clears the
+      strict hurdle of `3`, selecting the account despite the higher annuity.
     - The saver enters at balance `4`, the top node of the account's grid, so
       its age-1 value is $0 + 0.5 \\cdot 4 = 2$.
     - At age 0 the saver stays put with probability one, so its value is
@@ -180,7 +170,7 @@ def _build_model() -> Model:
         cases={0: {"saver": staying_put, "account": opening}, 1: {"account": opening}}
     )
     saver_gates = {
-        "account": Gate(
+        "account": ArrivalDecision(
             predicate=_index_clears_the_hurdle,
             routes={
                 "only": StakeholderRoute(
@@ -190,8 +180,9 @@ def _build_model() -> Model:
                     )
                 )
             },
-            references={
-                "index_value": ProjectedRegimeValue(
+            reads={
+                "index_value": ArrivalRead(
+                    kind="IntegratedFull",
                     regime="index",
                     projection={"level": _level_from_balance},
                 )
@@ -230,7 +221,7 @@ def _build_model() -> Model:
             "saver": Transition(
                 targets={"saver": 0, "account": (0, 1), "annuity": (0, 1)},
                 law=saver_law,
-                gates=saver_gates,
+                arrivals=saver_gates,
             )
         },
     )
