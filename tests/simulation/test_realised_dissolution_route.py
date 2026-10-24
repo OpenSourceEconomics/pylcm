@@ -426,3 +426,174 @@ def test_an_off_grid_rerouted_state_is_refused_at_the_period_it_acts_in():
     )
     with pytest.raises(OffGridStateError, match=r"target='alone_m', period=1,"):
         _simulate_at_wage_two(model=model)
+
+
+@categorical(ordered=False)
+class TwoSourceId:
+    s1: ScalarInt
+    s2: ScalarInt
+    x: ScalarInt
+    f1: ScalarInt
+    f2: ScalarInt
+
+
+def _work_utility(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
+    return wage + work
+
+
+def _empty_around_two(*, wage: ContinuousState) -> BoolND:
+    return (wage - 2.0) ** 2 > 0.5
+
+
+def _certain_entry(*, wage: ContinuousState) -> FloatND:
+    return 1.0 + 0.0 * wage
+
+
+def _always_open(*, wage: ContinuousState) -> BoolND:
+    return wage >= 0.0
+
+
+def _plus_seven(wage: ContinuousState) -> ContinuousState:
+    return wage + 7.0
+
+
+def _gated_entry_into_x(
+    *, fallback: str, projection: Callable[[ContinuousState], ContinuousState]
+) -> Transition:
+    """Enter `x` through a gate that always opens; the realised state routes."""
+    return Transition(
+        law=ByAge(cases={0: {"x": StochasticTransition(func=_certain_entry)}}),
+        gates={
+            "x": Gate(
+                predicate=_always_open,
+                routes={
+                    "only": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
+                            regime=fallback, projection={"wage": projection}
+                        )
+                    )
+                },
+            )
+        },
+    )
+
+
+def _two_source_model() -> Model:
+    """`s1` and `s2` both gate into `x`, with fallbacks `f1` and `f2`.
+
+    `x` is empty around wage 2. Rows that find no action in `x` leave it in one
+    decision but for two destinations: `f1` doubles the wage and clips it to
+    `[1, 3]`, `f2` adds 7 and clips it to `[5, 9]`.
+    """
+    grid = IrregSpacedGrid(points=np.array([1.0, 2.0, 3.0]))
+    source = Regime(
+        states={"wage": grid},
+        state_transitions={"wage": _keep_wage},
+        functions={"utility": _u_source},
+    )
+    return Model(
+        regimes={
+            "s1": source,
+            "s2": source,
+            "x": Regime(
+                states={"wage": grid},
+                actions={"work": DiscreteGrid(category_class=Work)},
+                functions={"utility": _work_utility},
+                constraints={"feasible": _empty_around_two},
+            ),
+            "f1": Regime(
+                states={
+                    "wage": IrregSpacedGrid(
+                        points=np.array([1.0, 2.0, 3.0]), off_grid="clip_state"
+                    )
+                },
+                functions={"utility": _u_source},
+            ),
+            "f2": Regime(
+                states={
+                    "wage": IrregSpacedGrid(
+                        points=np.array([5.0, 7.0, 9.0]), off_grid="clip_state"
+                    )
+                },
+                functions={"utility": _u_source},
+            ),
+        },
+        edges={
+            "s1": _gated_entry_into_x(fallback="f1", projection=_double),
+            "s2": _gated_entry_into_x(fallback="f2", projection=_plus_seven),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
+        initial_nodes={0: ("s1", "s2")},
+        regime_id_class=TwoSourceId,
+    )
+
+
+def _simulate_two_sources(*, log_level: LogLevel = "off"):
+    model = _two_source_model()
+    params = {
+        name: {"koopmans_aggregator": {"discount_factor": 1.0}}
+        if name in {"s1", "s2"}
+        else {}
+        for name in model.regime_names_to_ids
+    }
+    ids = model.regime_names_to_ids
+    return model.simulate(
+        params=params,
+        initial_conditions={
+            "wage": jnp.array([1.0, 1.75, 2.25, 3.0]),
+            "age": jnp.zeros(4),
+            "regime_id": jnp.array([ids["s1"], ids["s1"], ids["s2"], ids["s2"]]),
+        },
+        solution=model.solve(params=params, log_level="off"),
+        log_level=log_level,
+        seed=0,
+    )
+
+
+def test_a_mixed_batch_reaches_each_fallback_at_its_own_clipped_state():
+    """One decision in `x` sends rows to two fallbacks, each clipped by its own grid.
+
+    Wages 1 and 3 are feasible in `x` and stay; 1.75 (from `s1`) doubles to 3.5,
+    clipped to 3 in `f1`; 2.25 (from `s2`) moves to 9.25, clipped to 9 in `f2`.
+    Clipping both with one destination's nodes would give 3 for both.
+    """
+    rows = (
+        _simulate_two_sources()
+        .to_dataframe()
+        .query("period == 1")
+        .sort_values("subject_id")
+    )
+    assert list(zip(rows["regime_name"], rows["wage"], strict=True)) == [
+        ("x", 1.0),
+        ("f1", 3.0),
+        ("f2", 9.0),
+        ("x", 3.0),
+    ]
+
+
+def test_a_mixed_batch_counts_each_off_grid_landing_once_at_its_own_fallback(
+    caplog: pytest.LogCaptureFixture,
+):
+    """The realised off-grid count for each fallback holds only its own row.
+
+    The other row's wage is off each fallback's grid too, so a count that did not
+    restrict itself to the rows landing in that fallback would report 2.
+    """
+    with caplog.at_level(logging.INFO, logger="lcm"):
+        _simulate_two_sources(log_level="progress")
+    counts = sorted(
+        record.getMessage()
+        for record in caplog.records
+        if "phase='realized'" in record.getMessage()
+        and "regime='x'" in record.getMessage()
+    )
+    assert counts == [
+        (
+            "Off-grid next states: regime='x', target='f1', period=1, "
+            "state='wage', phase='realized', count=1"
+        ),
+        (
+            "Off-grid next states: regime='x', target='f2', period=1, "
+            "state='wage', phase='realized', count=1"
+        ),
+    ]
