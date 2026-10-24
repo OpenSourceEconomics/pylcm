@@ -983,13 +983,17 @@ def build_solution_authority(  # noqa: C901, PLR0915
             if (
                 continuation_spec is not None
                 and continuation_spec.artifact_key not in custom_authorities
+                and (
+                    not continuation_spec.templates_by_period
+                    or period in continuation_spec.templates_by_period
+                )
             ):
                 continuation_ref = ArtifactRef(
                     period=period,
                     regime=regime_name,
                     key=continuation_spec.artifact_key,
                 )
-                continuation_template = continuation_spec.template
+                continuation_template = continuation_spec.template_at(period=period)
                 if isinstance(continuation_spec, EGMContinuationSpec):
                     _validate_model_query_spec(
                         regime=regime,

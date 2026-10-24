@@ -17,6 +17,7 @@ from _lcm.execution.core_program import (
     CoreExecutionRequirements,
     CoreProgram,
 )
+from _lcm.regime_building.collective import NO_ROLE
 from _lcm.shock_overrides import CurrentIIDOverride
 from _lcm.shock_registry import ShockBinding
 from _lcm.simulation.program_types import subject_axis
@@ -64,6 +65,19 @@ type ParticipatingExitOutput = tuple[
 
 
 @dataclass(frozen=True, kw_only=True)
+class ArrivalEntryPlan:
+    """One incoming edge's source-owned answer and actual target roles."""
+
+    queries: ScalarPolicyQueries
+    target_roles: Mapping[str, str | None]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "target_roles", MappingProxyType(dict(self.target_roles))
+        )
+
+
+@dataclass(frozen=True, kw_only=True)
 class ExitSimulationPlan:
     """Original Full choice and revealed destination Participating policies."""
 
@@ -75,16 +89,20 @@ class ExitSimulationPlan:
     """Own physical columns consumed by this actor's Participating policy."""
     fixed_flat_params: FlatParams = MappingProxyType({})
     """All bound query-context operands, retaining their canonical namespace."""
+    arrivals: Mapping[RegimeName, ArrivalEntryPlan] = MappingProxyType({})
+    """Incoming-edge rules, separate from this actor's ordinary Full policy."""
 
     @property
     def final_actors(self) -> tuple[RegimeName, ...]:
         """Direct move destinations; incoming Part actors create no Full occupants."""
-        if self.full is None:
-            return ()
-        root = self.full.definitions[self.full.root]
         return tuple(
             dict.fromkeys(
-                self.full.definitions[query].read.target
+                queries.definitions[query].read.target
+                for queries in (
+                    *((self.full,) if self.full is not None else ()),
+                    *(entry.queries for entry in self.arrivals.values()),
+                )
+                for root in (queries.definitions[queries.root],)
                 for targets in root.exit_targets.values()
                 for query in targets.values()
             )
@@ -95,6 +113,7 @@ class ExitSimulationPlan:
         object.__setattr__(
             self, "participating", MappingProxyType(dict(self.participating))
         )
+        object.__setattr__(self, "arrivals", MappingProxyType(dict(self.arrivals)))
 
     def with_fixed_params(self, *, fixed_flat_params: FlatParams) -> Self:
         """Bind target operands without assuming they are ordinary edge targets."""
@@ -120,6 +139,7 @@ def install_exit_simulation_queries(
     This builds genuine forward programs beside the ordinary actor programs. A
     query-only counterparty remains a transient reader, not a simulated occupant.
     """
+    from _lcm.arrival_queries import bind_arrival_query_graph  # noqa: PLC0415
     from _lcm.current_iid import CurrentIIDPlan  # noqa: PLC0415
     from _lcm.exit_queries import bind_exit_query_graph  # noqa: PLC0415
     from _lcm.policy_queries import QueryKind, ScalarPolicyQueries  # noqa: PLC0415
@@ -154,9 +174,42 @@ def install_exit_simulation_queries(
         (owner, period)
         for owner, period in original_actors
         if contexts[owner].user_regimes_at(period=period)[owner].exits
+        or contexts[owner].arrival_queries.get(period)
     }
     full_queries = {}
+    arrivals: dict[tuple[str, int], dict[str, ArrivalEntryPlan]] = {}
+    for source, context in contexts.items():
+        for source_period, plans in context.arrival_queries.items():
+            for target in plans:
+                period = source_period + 1
+                declaration = context.laws[source].arrivals[target]
+                entry = bind_arrival_query_graph(
+                    contexts=contexts,
+                    canonical_regimes=canonical_regimes,
+                    source=source,
+                    target=target,
+                    period=period,
+                    phase="simulate",
+                    declaration=declaration,
+                )
+                arrivals.setdefault((target, period), {})[source] = ArrivalEntryPlan(
+                    queries=entry.queries,
+                    target_roles={
+                        member: route.target_stakeholder
+                        for member, route in declaration.routes.items()
+                    },
+                )
     actors = set(roots)
+    for (target, period), entries in arrivals.items():
+        actors.add((target, period))
+        actors.update(
+            (entry.queries.definitions[query].read.target, period)
+            for entry in entries.values()
+            for targets in entry.queries.definitions[
+                entry.queries.root
+            ].exit_targets.values()
+            for query in targets.values()
+        )
     for owner, period in sorted(roots):
         definitions, root = bind_exit_query_graph(
             contexts=contexts,
@@ -204,7 +257,14 @@ def install_exit_simulation_queries(
         draw = contexts[owner].current_iid_draw_plan or CurrentIIDDrawPlan(bindings={})
         uniform_bases = {
             name: isinstance(law, Uniform | Discrete)
-            for node in (queries or actor_queries).definitions.values()
+            for reader in (
+                queries or actor_queries,
+                *(
+                    entry.queries
+                    for entry in arrivals.get((owner, period), {}).values()
+                ),
+            )
+            for node in reader.definitions.values()
             for binding in (
                 ()
                 if node.context.current_iid_draw_plan is None
@@ -217,6 +277,7 @@ def install_exit_simulation_queries(
         programs = regime.simulation.programs
         plan = ExitSimulationPlan(
             full=queries,
+            arrivals=arrivals.get((owner, period), {}),
             participating={
                 actor: query
                 for (actor, p), query in participating.items()
@@ -233,6 +294,21 @@ def install_exit_simulation_queries(
                 ),
                 programs=replace(
                     programs,
+                    arrival_entry=MappingProxyType(
+                        {
+                            **programs.arrival_entry,
+                            **{
+                                (period, source): exit_policy_program(
+                                    queries=entry.queries,
+                                    draw=draw,
+                                    uniform_bases=uniform_bases,
+                                    original=True,
+                                    program_name=f"simulate_arrival_entry:{source}",
+                                )
+                                for source, entry in plan.arrivals.items()
+                            },
+                        }
+                    ),
                     exit_full=MappingProxyType(
                         {
                             **programs.exit_full,
@@ -686,17 +762,23 @@ def exit_policy_program(
     draw: CurrentIIDDrawPlan,
     uniform_bases: Mapping[str, bool],
     original: bool,
+    program_name: str | None = None,
 ) -> CoreProgram:
     """Declare the native subject program and every retained draw-frame leaf."""
     # Imports stay below engine construction: programs imports the engine's
     # forward declarations, while this builder runs only after contexts exist.
     from _lcm.current_iid import CORRELATION_SUPPORT_ARGUMENT  # noqa: PLC0415
+    from _lcm.simulation.arrival_values import (  # noqa: PLC0415 - canonical query contexts must exist
+        arrival_replay_value_reads,
+    )
     from _lcm.simulation.programs import (  # noqa: PLC0415
         _ArgumentsBoundAtDispatch,
         _SubjectTiled,
     )
 
-    name = "simulate_exit_full" if original else "simulate_exit_participating"
+    name = program_name or (
+        "simulate_exit_full" if original else "simulate_exit_participating"
+    )
     draw = _query_draw(queries=queries, draw=draw)
     body = (
         OriginalExitDecision(queries=queries, draw=draw, uniform_bases=uniform_bases)
@@ -795,7 +877,7 @@ def exit_policy_program(
         ),
         requirements=CoreExecutionRequirements(
             tiled_axes=(subject_axis(state_names=()),),
-            value_reads=queries.value_reads(core_key=name),
+            value_reads=arrival_replay_value_reads(queries=queries, core_key=name),
         ),
         output_roles=roles,
         disposition=CoreExecutionDisposition.PLANNED,
@@ -815,6 +897,57 @@ class ExitRoute(NamedTuple):
 
 
 type ExitRouteFields = tuple[RegimeName, RegimeName, int, int | None, int, str]
+
+
+def arrival_entry_routes(
+    *,
+    regimes: Mapping[RegimeName, Regime],
+    target: RegimeName,
+    source: RegimeName,
+    entry: ArrivalEntryPlan,
+    first_code: int,
+) -> tuple[
+    tuple[ExitRoute, ...], tuple[tuple[int | None, int, int], ...], Mapping[str, str]
+]:
+    """Bind original roles and edge branches to immutable routing instructions."""
+    if first_code >= -1:
+        raise ValueError(
+            "Incoming arrival route tags must be below empty support (-1)."
+        )
+    queries = entry.queries
+    root = queries.definitions[queries.root]
+    routes, codes, addresses = [], [], {}
+    code = first_code
+    for branch, members in root.exit_targets.items():
+        for member, query in members.items():
+            read = queries.definitions[query].read
+            address = f"{target}:{source}:{query}"
+            addresses[address] = query
+            role = (
+                None
+                if regimes[source].stakeholders is None
+                else regimes[source].stakeholder_names_to_ids[member]
+            )
+            codes.append((role, branch, code))
+            target_role = entry.target_roles[member] if branch == 0 else read.role
+            if regimes[read.target].stakeholders is not None and target_role is None:
+                raise ValueError("A collective arrival route needs its declared role.")
+            routes.append(
+                ExitRoute(
+                    source=target,
+                    target=read.target,
+                    identifier=code,
+                    source_role=None,
+                    target_role=NO_ROLE
+                    if regimes[read.target].stakeholders is None
+                    else regimes[read.target].stakeholder_names_to_ids[
+                        cast("str", target_role)
+                    ],
+                    projection=address,
+                )
+            )
+            code -= 1
+    return tuple(routes), tuple(codes), MappingProxyType(addresses)
 
 
 def route_original_subjects(

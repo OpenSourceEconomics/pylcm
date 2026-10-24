@@ -1631,6 +1631,17 @@ class _CanonicalRegimeBuilder:
         declared = _with_declared_continuation_reads(
             canonical_regimes=canonical_regimes, solution_builds=solution_builds
         )
+        solution_contexts = {
+            name: build.context for name, build in solution_builds.items()
+        }
+        if any(law.arrivals for law in self.laws.values()):
+            from _lcm.arrival_queries import (  # noqa: PLC0415 - all canonical action contexts must exist first
+                install_arrival_source_queries,
+            )
+
+            solution_contexts = install_arrival_source_queries(
+                canonical_regimes=declared, contexts=solution_contexts
+            )
         if not any(
             regime.exits
             or (
@@ -1638,22 +1649,43 @@ class _CanonicalRegimeBuilder:
                 and any(solution_builds[name].context.current_iid_plans.values())
             )
             for name, regime in self.representative_user_regimes.items()
+        ) and not any(
+            context.arrival_queries for context in solution_contexts.values()
         ):
             return declared
         from _lcm.exit_queries import install_exit_policy_queries  # noqa: PLC0415
 
         declared = install_exit_policy_queries(
             canonical_regimes=declared,
-            contexts={name: build.context for name, build in solution_builds.items()},
+            contexts=solution_contexts,
             value_periods_by_regime=self.value_periods_by_regime,
         )
+        if any(context.arrival_queries for context in solution_contexts.values()):
+            from _lcm.arrival_publication import (  # noqa: PLC0415 - requires complete canonical query graphs
+                install_arrival_publishers,
+            )
+
+            declared = install_arrival_publishers(
+                canonical_regimes=declared, contexts=solution_contexts
+            )
         from _lcm.simulation.exits import (  # noqa: PLC0415
             install_exit_simulation_queries,
         )
 
+        simulation_contexts = {
+            name: build.context for name, build in simulation_builds.items()
+        }
+        if any(context.arrival_queries for context in solution_contexts.values()):
+            from _lcm.arrival_queries import (  # noqa: PLC0415 - both actual flow and pricing contexts exist
+                install_arrival_replay_sources,
+            )
+
+            simulation_contexts = install_arrival_replay_sources(
+                contexts=simulation_contexts, pricing_contexts=solution_contexts
+            )
         return install_exit_simulation_queries(
             canonical_regimes=declared,
-            contexts={name: build.context for name, build in simulation_builds.items()},
+            contexts=simulation_contexts,
             original_periods_by_regime=self.original_periods_by_regime,
         )
 
@@ -3105,9 +3137,10 @@ def _fail_if_collective_regime_targets_unsupported(
     source expects every target leaf to carry the identical trailing
     stakeholder axis, and a singleton source expects none. Per-stakeholder
     routing across stakeholder layouts (dissolution into `single_f`/`single_m`,
-    marriage formation) is the gated-edge machinery, so any
-    non-terminal regime whose reachable target declares a different
-    `stakeholders` tuple is rejected here. Both-`None` (the singleton default)
+    marriage formation) requires a declared gated edge or typed arrival decision.
+    Each returns a continuation in the original source's stakeholder layout.
+    An ordinary non-terminal transition whose reachable target declares a
+    different `stakeholders` tuple is rejected here. Both-`None` (the singleton default)
     never enters the comparison, so today's path is untouched.
 
     Args:
@@ -3130,10 +3163,14 @@ def _fail_if_collective_regime_targets_unsupported(
                 continue
             if user_regime.stakeholders is None and target_regime.stakeholders is None:
                 continue
-            # A target reached through a DECLARED gated
-            # edge is exempt — the edge folds a gated continuation object matching
-            # the SOURCE's stakeholder layout, so the mixed-topology read is safe.
-            if target_regime_name in laws[regime_name].gated_edges:
+            # Declared gates and arrivals return source-owned continuation
+            # values through explicit member routes. Ordinary transitions still
+            # require identical layouts; declaration of another target grants
+            # no exemption to this one.
+            if (
+                target_regime_name in laws[regime_name].gated_edges
+                or target_regime_name in laws[regime_name].arrivals
+            ):
                 continue
             if user_regime.stakeholders != target_regime.stakeholders:
                 msg = (
@@ -3144,9 +3181,9 @@ def _fail_if_collective_regime_targets_unsupported(
                     "target of a collective regime must be a collective regime "
                     "with the identical `stakeholders` tuple (and a singleton "
                     "regime cannot target a collective one). Per-stakeholder "
-                    "routing to different regimes (e.g. dissolution into "
-                    "single-person regimes) is the gated-edge machinery and "
-                    "is not yet implemented. Declare a `GatedEdge` instead."
+                    "routing across these layouts requires a `GatedEdge` or "
+                    "an `ArrivalDecision` with explicit stakeholder routes "
+                    "for this target."
                 )
                 raise NotImplementedError(msg)
 

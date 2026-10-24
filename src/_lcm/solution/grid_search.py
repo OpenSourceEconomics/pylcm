@@ -35,8 +35,11 @@ from dags import with_signature
 from _lcm.beartype_conf import REGIME_CONF
 
 if TYPE_CHECKING:
+    from _lcm.arrival_queries import ArrivalQueryPlan
     from _lcm.current_iid import CurrentIIDPlan
 else:
+    # Arrival query construction imports the engine before solver contexts finish.
+    type ArrivalQueryPlan = object
     # The innovation registry reaches this solver through the public Regime facade.
     type CurrentIIDPlan = object
 from _lcm.constraints.routes import (
@@ -807,6 +810,7 @@ def grid_search_query_inputs(
         same_period_ref_regimes=context.same_period_ref_regimes,
         edge_reference_regimes=references,
         edge_target_regimes=context.edge_target_regimes,
+        arrival_queries=context.arrival_queries.get(period, MappingProxyType({})),
     )
     reads = _value_reads(
         regime_name=context.regime_name,
@@ -816,6 +820,15 @@ def grid_search_query_inputs(
         edge_reference_regimes=references,
         edge_target_regimes=context.edge_target_regimes,
     )
+    if builder.arrival_queries:
+        from _lcm.arrival_queries import arrival_source_value_reads  # noqa: PLC0415
+
+        reads = (
+            *reads,
+            *arrival_source_value_reads(
+                plans=builder.arrival_queries, source=context.regime_name, period=period
+            ),
+        )
     return builder, reads
 
 
@@ -944,11 +957,21 @@ class _GridSearchArgumentBuilder:
     same_period_ref_regimes: tuple[RegimeName, ...] = ()
     edge_reference_regimes: tuple[RegimeName, ...] = ()
     edge_target_regimes: tuple[RegimeName, ...] = ()
+    arrival_queries: Mapping[RegimeName, ArrivalQueryPlan] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
 
     def __call__(
         self, context: CoreBuildContext
     ) -> Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]:
         """Return the exact kwargs shared by lowering and the runtime call."""
+        if self.arrival_queries:
+            from _lcm.arrival_queries import ArrivalSourceArguments  # noqa: PLC0415
+
+            return ArrivalSourceArguments(
+                base=replace(self, arrival_queries=MappingProxyType({})),
+                plans=self.arrival_queries,
+            )(context)
         state_action_space = cast("StateActionSpace", context.state_action_space)
         next_regime_to_V_arr = context.next_regime_to_V_arr
         flat_params = cast("FlatParams", context.flat_params)

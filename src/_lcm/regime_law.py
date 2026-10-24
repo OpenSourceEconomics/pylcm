@@ -27,6 +27,7 @@ from _lcm.regime_building.transition_support import (
 )
 from _lcm.typing import RegimeName
 from _lcm.utils.containers import ensure_containers_are_immutable
+from lcm.arrivals import ArrivalDecision
 from lcm.phased import Phased
 from lcm.transition import (
     ByAge,
@@ -72,6 +73,11 @@ class RegimeLaw:
     `GatedEdge`.
     """
 
+    arrivals: MappingProxyType[RegimeName, ArrivalDecision] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    """Dated typed decisions, retaining each scheduled edge's own provenance."""
+
     @property
     def terminal(self) -> bool:
         """Whether the regime has no outgoing edges."""
@@ -109,6 +115,7 @@ def bind_regime_law(
     transition: RegimeLawDeclaration,
     *,
     gated_edges: Mapping[RegimeName, GatedEdge] = MappingProxyType({}),
+    arrivals: Mapping[RegimeName, ArrivalDecision] = MappingProxyType({}),
 ) -> RegimeLaw:
     """Validate a source's law and attach the gated edges that apply to it.
 
@@ -134,6 +141,13 @@ def bind_regime_law(
             {
                 target: edge
                 for target, edge in gated_edges.items()
+                if named is None or target in named
+            }
+        ),
+        arrivals=ensure_containers_are_immutable(
+            {
+                target: decision
+                for target, decision in arrivals.items()
                 if named is None or target in named
             }
         ),

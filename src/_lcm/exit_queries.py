@@ -575,6 +575,10 @@ class _QueryGraphBuilder:
         """Bind a demanded typed read and reject genuine recursive policy cycles."""
         from _lcm.model_graph import _exit_is_statically_unavailable  # noqa: PLC0415
 
+        if kind not in {QueryKind.RAW, QueryKind.PARTICIPATING, QueryKind.FULL}:
+            raise ValueError(
+                "The policy graph builder requires Raw, Participating or Full."
+            )
         if (kind, owner) in ancestry:
             raise ValueError(f"Policy query cycle: {(*ancestry, (kind, owner))!r}")
         context = self.contexts[owner]
@@ -1225,9 +1229,13 @@ def install_exit_policy_queries(
                 and period not in value_periods_by_regime.get(owner, ())
             ):
                 continue
-            if context.user_regimes_at(period=period)[owner].exits or (
-                context.stakeholders is not None
-                and context.current_iid_plans.get(period) is not None
+            if (
+                context.arrival_queries.get(period)
+                or context.user_regimes_at(period=period)[owner].exits
+                or (
+                    context.stakeholders is not None
+                    and context.current_iid_plans.get(period) is not None
+                )
             ):
                 kernels[period] = lower_exit_queries(
                     contexts=contexts,

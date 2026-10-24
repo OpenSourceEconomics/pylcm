@@ -4,9 +4,11 @@ The private adapter installed below is a stage fixture. Public Exit declarations
 and integrated collective publication are qualified by their own later stages.
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
+from typing import cast
 
 import jax
 import jax.numpy as jnp
@@ -15,6 +17,8 @@ import pytest
 
 import lcm
 from _lcm import policy_queries as queries
+from _lcm.arrival_queries import bind_arrival_query_graph
+from _lcm.execution.core_program import CoreBuildContext
 from _lcm.execution.output_layout import StateAxesLeading, resolve_output_layout
 from _lcm.policy_queries import (
     PolicyAnswer,
@@ -26,6 +30,7 @@ from _lcm.policy_queries import (
 )
 from _lcm.solution import backward_induction as backward
 from _lcm.solution.contract import SolutionKernels, SolverBuildContext
+from _lcm.typing import PytreeValue
 from lcm import (
     CollectiveUtility,
     ConsumptionSavingsRegime,
@@ -38,6 +43,8 @@ from lcm import (
     Regime,
     categorical,
 )
+from lcm.arrivals import ArrivalDecision, ArrivalRead
+from lcm.collective import ProjectedRegimeValue, StakeholderRoute
 from lcm.solvers import EGM, GridSearch
 from lcm.typing import FloatND, IntND, RegimeName, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
@@ -95,6 +102,28 @@ def test_query_cycles_and_foreign_full_reads_refuse() -> None:
             reads={"a": reads["a"], "b": replace(reads["b"], kind=QueryKind.FULL)},
             dependencies={"a": ("b",), "b": ()},
             roots=("a",),
+        )
+
+
+def test_integrated_value_reader_is_only_an_arrival_comparison_operand() -> None:
+    """A represented Full payload cannot become a policy/support dependency."""
+    reads = {
+        "arrival": _read(kind=QueryKind.ARRIVAL, target="target"),
+        "stored": _read(kind=QueryKind.INTEGRATED_FULL, target="target"),
+    }
+    assert demanded_query_order(
+        reads=reads,
+        dependencies={"arrival": ("stored",), "stored": ()},
+        roots=("arrival",),
+    ) == ("stored", "arrival")
+    with pytest.raises(ValueError, match="Only an arrival comparison"):
+        demanded_query_order(
+            reads={
+                **reads,
+                "arrival": replace(reads["arrival"], kind=QueryKind.PARTICIPATING),
+            },
+            dependencies={"arrival": ("stored",), "stored": ()},
+            roots=("arrival",),
         )
 
 
@@ -334,6 +363,108 @@ def _native_model(
         ),
     )
     return model
+
+
+def test_arrival_consumer_uses_boolean_rule_and_source_owned_answer_shape() -> None:
+    """A singleton arrival on a household context does not rerun its argmax."""
+    _native_model(enable_jit=False)
+
+    def decide(*, target: PolicyAnswer, outside: PolicyAnswer) -> PolicyAnswer:
+        accept = (target[0][0] > 0.75) & target[2]
+        return (
+            jnp.where(accept, target[0][0], outside[0]),
+            jnp.asarray(-1, jnp.int32),
+            jnp.where(accept, target[2], outside[2]),
+            target[3] & outside[3],
+        )
+
+    node = QueryNode(
+        read=_read(kind=QueryKind.ARRIVAL, target="target"),
+        context=_CONTEXTS["target"],
+        inputs={"target": "part", "outside": "outside"},
+        operand_builder=lambda _context: {},
+        decision=decide,
+        answer_shape=(),
+    )
+    answer = queries._query_cell(
+        jnp.asarray(a=True),
+        {"wealth": jnp.asarray(0.5)},
+        {
+            "target": (
+                jnp.asarray([0.5, 2.0]),
+                jnp.asarray(0, jnp.int32),
+                jnp.asarray(a=True),
+                jnp.asarray(a=True),
+            ),
+            "outside": (
+                jnp.asarray(-2.0),
+                jnp.asarray(0, jnp.int32),
+                jnp.asarray(a=True),
+                jnp.asarray(a=True),
+            ),
+        },
+        node=node,
+        period=0,
+        fixed={"period": jnp.asarray(0), "age": jnp.asarray(0)},
+        projection_operands={},
+    )
+    np.testing.assert_array_equal(np.asarray(answer[0]), -2.0)
+    assert bool(answer[2])
+    assert bool(answer[3])
+
+
+def test_bound_arrival_strict_hurdle_uses_one_household_participating_tuple() -> None:
+    """An exact threshold can reject a target even when a member's fallback is worse."""
+    model = _native_model(enable_jit=False)
+    declaration = ArrivalDecision(
+        predicate=lambda benchmark: benchmark > 2.0,
+        reads={
+            "benchmark": ArrivalRead(
+                regime="target",
+                projection={"wealth": _identity},
+                stakeholder="f",
+                kind="Participating",
+            )
+        },
+        routes={
+            member: StakeholderRoute(
+                target_stakeholder=member,
+                fallback=ProjectedRegimeValue(
+                    regime="root",
+                    projection={"wealth": _identity},
+                    stakeholder=member,
+                ),
+            )
+            for member in ("f", "m")
+        },
+    )
+    plan = bind_arrival_query_graph(
+        contexts=_CONTEXTS,
+        canonical_regimes=model._regimes,
+        source="root",
+        target="target",
+        period=0,
+        phase="solve",
+        declaration=declaration,
+    )
+    arguments = plan.queries.arguments(
+        context=CoreBuildContext(
+            state_action_space=_CONTEXTS["target"].state_action_space,
+            next_regime_to_V_arr={},
+            next_regime_to_continuation={},
+            flat_params={},
+            period=0,
+            ages=model._time,
+        )
+    )
+    answer = plan.queries(
+        states={"wealth": jnp.asarray(0.5)},
+        arguments=cast("Mapping[str, Mapping[str, PytreeValue]]", arguments),
+    )
+    np.testing.assert_array_equal(answer[0], [0.5, 3.5])
+    assert int(answer[1]) == 1
+    assert bool(answer[2])
+    assert bool(answer[3])
 
 
 @pytest.mark.parametrize("enable_jit", [False, True])

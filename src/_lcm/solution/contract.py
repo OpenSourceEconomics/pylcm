@@ -126,16 +126,19 @@ from lcm.typing import Float1D, FloatND, UserFunction
 # enumerates the payload classes the shipped routes declare.
 
 if TYPE_CHECKING:
+    from _lcm.arrival_queries import ArrivalQueryPlan
     from _lcm.current_iid import CurrentIIDDrawPlan, CurrentIIDPlan
     from _lcm.regime_building.finalize import FinalizedUserRegime
     from _lcm.regime_building.V import VInterpolationInfo
     from _lcm.regime_law import RegimeLaw
 
     type RegimeLawsMapping = Mapping[RegimeName, RegimeLaw]
+    type ArrivalQueriesMapping = Mapping[int, Mapping[RegimeName, ArrivalQueryPlan]]
 
     type UserRegimesMapping = Mapping[RegimeName, FinalizedUserRegime]
     type RegimeToVInterpolationInfo = MappingProxyType[RegimeName, VInterpolationInfo]
 else:
+    ArrivalQueriesMapping = Mapping
     # The innovation plan imports the solver facade through its law registry.
     type CurrentIIDPlan = object
     type CurrentIIDDrawPlan = object
@@ -265,6 +268,10 @@ class SolverBuildContext:
     template yet; filled for the `declare_continuation_reads` call that follows
     once every regime is built.
     """
+    arrival_queries: ArrivalQueriesMapping = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    """Actual next-date policy/value read graphs inside this source's Q/F."""
 
     scalar_query_models: Mapping[RegimeName, ScalarEGMQueryModel] | None = None
     """Trusted scalar query pools prepared once before numerical kernel factories."""

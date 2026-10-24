@@ -51,6 +51,7 @@ from _lcm.typing import (
 )
 from _lcm.utils.error_messages import path_segment_name_errors
 from _lcm.utils.functools import get_union_of_args, is_user_function
+from lcm.arrivals import ArrivalDecision
 from lcm.collective import Gate
 from lcm.decoupled import (
     koopmans_aggregator_variants,
@@ -595,7 +596,11 @@ def create_edge_params_template(
                 variables
                 if gate is None
                 else _gated_edge_wired_names(
-                    gate_reference_names=frozenset(gate.references),
+                    gate_reference_names=frozenset(
+                        gate.reads
+                        if isinstance(gate, ArrivalDecision)
+                        else gate.references
+                    ),
                     target_state_names=(
                         vocabulary_by_regime[path[0]].states
                         if path[0] in vocabulary_by_regime
@@ -607,7 +612,7 @@ def create_edge_params_template(
                 name="edge",
                 func=func,
                 non_params=non_params,
-                strip_target_value_operands=gate is not None,
+                strip_target_value_operands=isinstance(gate, Gate),
                 kind=(
                     "Edge-callable (at "
                     f"{user_path(path=(EDGES, source, *path))}) argument"
@@ -663,7 +668,7 @@ def iter_transition_callables(
     transition: Transition,
     *,
     phase: Phase | None = None,
-) -> Iterator[tuple[tuple[str, ...], UserFunction, Gate | None]]:
+) -> Iterator[tuple[tuple[str, ...], UserFunction, Gate | ArrivalDecision | None]]:
     """Yield every callable a `Transition` holds, at its declaration path.
 
     Args:
@@ -677,8 +682,13 @@ def iter_transition_callables(
 
     """
     yield from iter_edge_callables(law=transition.law, path=(), phase=phase)
-    for target_regime_name, gate in transition.gates.items():
-        yield from _gate_callables(gate=gate, path=(target_regime_name,), phase=phase)
+    for target_regime_name, decision in {
+        **transition.gates,
+        **transition.arrivals,
+    }.items():
+        yield from _route_decision_callables(
+            decision=decision, path=(target_regime_name,), phase=phase
+        )
 
 
 def iter_edge_callables(
@@ -729,15 +739,21 @@ def iter_edge_callables(
         raise TypeError(msg)
 
 
-def _gate_callables(
-    *, gate: Gate, path: tuple[str, ...], phase: Phase | None = None
-) -> Iterator[tuple[tuple[str, ...], UserFunction, Gate | None]]:
-    """Yield a gate's callables at their declaration paths below its target."""
-    yield (*path, PREDICATE), gate.predicate, gate
-    for ref_name, ref in gate.references.items():
+def _route_decision_callables(
+    *,
+    decision: Gate | ArrivalDecision,
+    path: tuple[str, ...],
+    phase: Phase | None = None,
+) -> Iterator[tuple[tuple[str, ...], UserFunction, Gate | ArrivalDecision | None]]:
+    """Yield landed-domain callbacks at their own edge-parameter paths."""
+    yield (*path, PREDICATE), decision.predicate, decision
+    references = (
+        decision.reads if isinstance(decision, ArrivalDecision) else decision.references
+    )
+    for ref_name, ref in references.items():
         for state_name, projection in ref.projection.items():
-            yield (*path, REFERENCES, ref_name, state_name), projection, gate
-    for route_name, route in gate.routes.items():
+            yield (*path, REFERENCES, ref_name, state_name), projection, decision
+    for route_name, route in decision.routes.items():
         for fallback_phase, ref in _fallbacks_by_phase(
             solve=route.solve_fallback,
             simulate=route.simulate_fallback,
@@ -753,7 +769,7 @@ def _gate_callables(
                 *(() if fallback_phase is None else (fallback_phase,)),
             )
             for state_name, projection in ref.projection.items():
-                yield (*prefix, state_name), projection, gate
+                yield (*prefix, state_name), projection, decision
 
 
 def _insert_edge_slot(

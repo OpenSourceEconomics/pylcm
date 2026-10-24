@@ -40,6 +40,7 @@ from _lcm.user_regime_validation import (
     fail_if_a_joint_target_is_unreachable,
     validate_regimes,
 )
+from lcm.arrivals import ArrivalDecision
 from lcm.collective import Gate
 from lcm.exceptions import (
     InvalidRegimeTransitionProbabilitiesError,
@@ -570,6 +571,9 @@ def bind_edge_laws(
                 gated_edges=_declared_gated_edges(
                     source=name, declared=declared, resolved=resolved
                 ),
+                arrivals=_declared_arrivals(
+                    source=name, declared=declared, resolved=resolved
+                ),
             )
             for name in regimes
         }
@@ -694,7 +698,7 @@ def _derived_target_ages(
                 return None
             for name in names:
                 selected.setdefault(name, set()).add(ages.exact_values[period])
-    for target, gate in transition.gates.items():
+    for target, gate in {**transition.gates, **transition.arrivals}.items():
         for route in gate.routes.values():
             for fallback in {
                 (
@@ -778,6 +782,36 @@ def _declared_gated_edges(
             for target, gate in {**simulate, **solve}.items()
         }
     )
+
+
+def _declared_arrivals(
+    *,
+    source: RegimeName,
+    declared: Mapping[Side, PhaseEdges],
+    resolved: Mapping[Side, ResolvedEdges],
+) -> MappingProxyType[RegimeName, ArrivalDecision]:
+    """Retain the incoming edge's typed decision through both actual phases."""
+    by_side = {}
+    for side in _PHASE_SIDES:
+        declaration = declared[side].get(source)
+        arrivals = declaration.arrivals if isinstance(declaration, Transition) else {}
+        reached = resolved[side].get(source, {})
+        if set(arrivals) - set(reached):
+            raise ModelInitializationError(
+                f"ArrivalDecision of {source!r} names an unscheduled {side} target."
+            )
+        by_side[side] = arrivals
+    solve, simulate = by_side["solve"], by_side["simulate"]
+    for target in solve.keys() | simulate.keys():
+        shared = target in resolved["solve"].get(source, {}) and target in resolved[
+            "simulate"
+        ].get(source, {})
+        if shared and solve.get(target) != simulate.get(target):
+            raise ModelInitializationError(
+                f"ArrivalDecision of {source!r} into {target!r} differs by phase; "
+                "declare differing settlements with Phased fallback projections."
+            )
+    return MappingProxyType({**simulate, **solve})
 
 
 def _targets_by_period(
@@ -958,6 +992,7 @@ def bind_graph_support(
                 )
                 fallbacks = _gate_fallbacks(
                     gated_edges=source_law.gated_edges,
+                    arrivals=source_law.arrivals,
                     targets=targets[side],
                     side=side,
                 )
@@ -1028,7 +1063,9 @@ def bind_graph_support(
                 targets=(),
             )
         )
-        result[source] = bind_regime_law(bound, gated_edges=source_law.gated_edges)
+        result[source] = bind_regime_law(
+            bound, gated_edges=source_law.gated_edges, arrivals=source_law.arrivals
+        )
     return MappingProxyType(result), MappingProxyType(dropped)
 
 
@@ -1263,14 +1300,18 @@ def _gate_fallbacks(
     gated_edges: Mapping[RegimeName, GatedEdge],
     targets: tuple[RegimeName, ...],
     side: Side,
+    arrivals: Mapping[RegimeName, ArrivalDecision] = MappingProxyType({}),
 ) -> tuple[RegimeName, ...]:
     """The gate-closed regimes of the gated targets among `targets`, for one side."""
     return tuple(
         dict.fromkeys(
             (leg.solve_fallback if side == "solve" else leg.simulate_fallback).regime
-            for target, edge in gated_edges.items()
+            for target, routes in (
+                *((target, edge.legs) for target, edge in gated_edges.items()),
+                *((target, decision.routes) for target, decision in arrivals.items()),
+            )
             if target in targets
-            for leg in edge.legs.values()
+            for leg in routes.values()
         )
     )
 

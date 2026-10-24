@@ -42,6 +42,7 @@ from jax._src.dtypes import ExtendedDType
 from jax._src.lib import xla_client
 from jaxtyping import Float, Int, Scalar
 
+from _lcm.continuation import ContinuationSpec
 from _lcm.engine import (
     Regime,
     StateActionSpace,
@@ -596,6 +597,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         next_regime_to_V_arr=V_templates,
         next_regime_to_continuation=next_regime_to_continuation,
         next_edge_to_V_arr=edge_templates,
+        continuation_templates_by_period=_dated_continuation_templates(regimes=regimes),
     )
     # The rolling V and gated-edge mappings hold only values the solve has
     # computed; before the last period there are none.
@@ -626,6 +628,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             ),
             input_templates.next_regime_to_V_arr,
             input_templates.next_regime_to_continuation,
+            input_templates.continuation_templates_by_period,
             input_templates.next_edge_to_V_arr,
         )
     )
@@ -999,6 +1002,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                             regime_name=regime_name,
                             period=period,
                             continuation_publishers=next_regime_to_continuation,
+                            continuation_spec=continuation_spec,
                         )
                         if result.continuation is not None:
                             period_continuations[regime_name] = result.continuation
@@ -1305,6 +1309,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 next_regime_to_V_arr, next_regime_to_continuation = (
                     _roll_continuation_inputs(
                         regimes=regimes,
+                        period=period,
                         period_solution=period_solution,
                         period_continuations=period_continuations,
                         V_templates=input_templates.next_regime_to_V_arr,
@@ -2051,6 +2056,7 @@ def _period_shared_transfer_plan(
 def _roll_continuation_inputs(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
+    period: int,
     period_solution: dict[RegimeName, FloatND],
     period_continuations: dict[RegimeName, ContinuationPayload],
     V_templates: MappingProxyType[RegimeName, ValueTemplate],
@@ -2066,12 +2072,9 @@ def _roll_continuation_inputs(
     the next period. A regime inactive this period drops out, and nothing keeps
     its earlier value alive for the roll.
 
-    The carry mapping keeps its full template key set — a carry for every
-    carry-producing regime — and updates only the entries solved this period.
-    A regime *inactive* this period keeps the prior period's entry. That relies
-    on the invariant that every continuation-publishing regime publishes on
-    each of its active periods — the solve loop enforces this before rolling,
-    so an active publisher can never fall through to the stale prior carry.
+    Constant-schema carries keep their template key set and update the entries
+    solved this period. Date-specific carries keep only this period's actual
+    publications, so an undemanded arrival cannot retain another date's operands.
 
     Returns:
         Tuple of the rolled V mapping and the rolled carry mapping.
@@ -2087,18 +2090,19 @@ def _roll_continuation_inputs(
             if regime_name in period_solution
         }
     )
-    rolled_continuation = MappingProxyType(
-        {
-            regime_name: _match_continuation_template_sharding(
+    rolled_continuation = {}
+    for regime_name, regime in regimes.items():
+        spec = regime.solution.continuation_spec
+        if spec is None:
+            continue
+        if regime_name in period_continuations:
+            rolled_continuation[regime_name] = _match_continuation_template_sharding(
                 continuation=period_continuations[regime_name],
-                template=next_regime_to_continuation[regime_name],
+                template=spec.template_at(period=period),
             )
-            if regime_name in period_continuations
-            else next_regime_to_continuation[regime_name]
-            for regime_name in next_regime_to_continuation
-        }
-    )
-    return rolled_V_arr, rolled_continuation
+        elif not spec.templates_by_period:
+            rolled_continuation[regime_name] = next_regime_to_continuation[regime_name]
+    return rolled_V_arr, MappingProxyType(rolled_continuation)
 
 
 # A gated edge's continuation slot is keyed by the
@@ -2435,6 +2439,7 @@ def _fail_if_continuation_publisher_returned_none(
     regime_name: RegimeName,
     period: int,
     continuation_publishers: Mapping[RegimeName, ContinuationPayload],
+    continuation_spec: ContinuationSpec | None = None,
 ) -> None:
     """Fail loud if a continuation-publishing regime published nothing.
 
@@ -2443,7 +2448,12 @@ def _fail_if_continuation_publisher_returned_none(
     silently roll the stale prior period's carry forward — wrong numbers, not a
     crash — so surface the offending (regime, period) instead.
     """
-    if result.continuation is None and regime_name in continuation_publishers:
+    expected = (
+        regime_name in continuation_publishers
+        if continuation_spec is None or not continuation_spec.templates_by_period
+        else period in continuation_spec.templates_by_period
+    )
+    if result.continuation is None and expected:
         msg = (
             f"Regime '{regime_name}' declares a continuation template but its "
             f"kernel returned no continuation in solved period {period}. A "
@@ -2451,6 +2461,20 @@ def _fail_if_continuation_publisher_returned_none(
             f"period it solves."
         )
         raise RuntimeError(msg)
+
+
+def _dated_continuation_templates(
+    *, regimes: Mapping[RegimeName, Regime]
+) -> MappingProxyType[RegimeName, MappingProxyType[int, ContinuationPayload]]:
+    """Inventory every concrete producer schema under its actual date."""
+    return MappingProxyType(
+        {
+            name: MappingProxyType(dict(spec.templates_by_period))
+            for name, regime in regimes.items()
+            if (spec := regime.solution.continuation_spec) is not None
+            and spec.templates_by_period
+        }
+    )
 
 
 def _build_continuation_templates(
@@ -2464,10 +2488,11 @@ def _build_continuation_templates(
     MappingProxyType[RegimeName, ContinuationPayload],
     MappingProxyType[_EdgeKey, jax.ShapeDtypeStruct],
 ]:
-    """Build the period-invariant continuation-input templates.
+    """Build value templates and representative continuation-input templates.
 
-    All mappings keep the same pytree structure (keys and shapes) across all
-    periods, avoiding JIT re-compilation from pytree mismatches. The V and
+    Dated continuation schemas are inventoried separately and selected by actual
+    producer date when lowering a reader. Constant schemas preserve their
+    original pytree structure across periods. The V and
     gated-edge templates occupy no device memory: programs are lowered against
     them but never called with them.
 
@@ -2512,6 +2537,26 @@ def _build_continuation_templates(
         }
     )
     return next_regime_to_V_arr, next_regime_to_continuation, next_edge_to_V_arr
+
+
+def _continuation_templates_for_period(
+    *,
+    regimes: Mapping[RegimeName, Regime],
+    templates: Mapping[RegimeName, ContinuationPayload],
+    period: int,
+) -> MappingProxyType[RegimeName, ContinuationPayload]:
+    """Select actual producer-date schemas before constructing native inputs."""
+    selected = {}
+    for name, regime in regimes.items():
+        spec = regime.solution.continuation_spec
+        if spec is None:
+            continue
+        if spec.templates_by_period:
+            if period in spec.templates_by_period:
+                selected[name] = spec.template_at(period=period)
+        elif name in templates:
+            selected[name] = templates[name]
+    return MappingProxyType(selected)
 
 
 def _edge_kwargs(
@@ -3127,7 +3172,12 @@ def _rolled_aliases(
     """
     n_periods = _model_n_periods(regimes=regimes)
     fold_dispatches = frozenset(_gated_edge_fold_dispatches(regimes=regimes))
-    aliases: dict[ValueArtifactAddress, ValueArtifactAddress] = {}
+    aliases: dict[ValueArtifactAddress, ValueArtifactAddress] = {
+        alias: origin
+        for regime in regimes.values()
+        if (spec := regime.solution.continuation_spec) is not None
+        for alias, origin in spec.stored_value_aliases().items()
+    }
     pending = list(artifacts)
     while pending:
         artifact = pending.pop()
@@ -3209,7 +3259,7 @@ def _retained_continuation_leaves(
     for ref in sorted(persistable_artifact_refs):
         spec = continuation_specs.get(ref.regime)
         template = published_continuation_template(
-            continuation_specs=continuation_specs, target=ref.regime
+            continuation_specs=continuation_specs, target=ref.regime, period=ref.period
         )
         if spec is None or template is None or spec.artifact_key != ref.key:
             continue
@@ -4516,6 +4566,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                     ages.values,
                     next_regime_to_V_arr,
                     next_regime_to_continuation,
+                    _dated_continuation_templates(regimes=regimes),
                     next_edge_to_V_arr,
                     tuple(
                         (
@@ -4546,6 +4597,9 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                 templates=SolveInputMappings(
                     next_regime_to_V_arr=next_regime_to_V_arr,
                     next_regime_to_continuation=next_regime_to_continuation,
+                    continuation_templates_by_period=_dated_continuation_templates(
+                        regimes=regimes
+                    ),
                     next_edge_to_V_arr=next_edge_to_V_arr,
                 ),
                 program_metadata=representative_metadata,
@@ -6668,7 +6722,11 @@ def _build_structural_blueprint(
                 else block_state_action_space(space=state_action_space, binding=binding)
             ),
             next_regime_to_V_arr=next_regime_to_V_arr,
-            next_regime_to_continuation=next_regime_to_continuation,
+            next_regime_to_continuation=_continuation_templates_for_period(
+                regimes=regimes,
+                templates=next_regime_to_continuation,
+                period=period + 1,
+            ),
             flat_params=flat_params,
             period=period,
             ages=ages,

@@ -816,7 +816,9 @@ def _edge_param_periods(
                 for target, selector in declaration.targets.items()
             }
         )
-        is_gate = len(slot) > 1 and slot[0] in declaration.gates
+        is_gate = len(slot) > 1 and (
+            slot[0] in declaration.gates or slot[0] in declaration.arrivals
+        )
         for period in periods:
             if period >= ages.n_periods - 1:
                 continue

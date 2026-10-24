@@ -30,6 +30,7 @@ from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.simulation import (
     population_operations,
 )
+from _lcm.simulation.arrival_routing import record_arrival_entries
 from _lcm.simulation.assembly import (
     _concatenate_arrays,
     _slice_array,
@@ -350,6 +351,8 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
             states=carrier,
             regime_ids=regime_ids,
             roles=own_roles,
+            entered_through=regime_ids,
+            source_roles=own_roles,
             regime_names_to_ids=regime_names_to_ids,
             flat_params=flat_params,
             values=values,
@@ -810,6 +813,7 @@ def _profile_next_subjects(
                 },
                 subject_arg_names=("codes", "subjects", "new_regime_ids"),
             )
+    drawn_arrival_ids = new_ids
     carrier = cast("Mapping[str, Mapping[str, jax.ShapeDtypeStruct]]", advanced)
     if period in regime.simulation.programs.gate_route:
         shared = simulation_value_sharding(
@@ -895,6 +899,30 @@ def _profile_next_subjects(
                     int(regime_names_to_ids[target]) for target in route_delta
                 ),
             },
+            subject_outputs=True,
+        )
+    arrival_targets = tuple(
+        target
+        for target in names
+        if period + 1 in regimes[target].simulation.exit_queries
+        and name in regimes[target].simulation.exit_queries[period + 1].arrivals
+    )
+    if arrival_targets:
+        inventory.operation(
+            function=record_arrival_entries,
+            arguments={
+                "drawn_ids": drawn_arrival_ids,
+                "routed_ids": new_ids,
+                "holders": mask,
+                "entries": new_ids,
+            },
+            static_arguments={
+                "source_id": int(regime_names_to_ids[name]),
+                "target_ids": tuple(
+                    int(regime_names_to_ids[target]) for target in arrival_targets
+                ),
+            },
+            subject_arg_names=("drawn_ids", "routed_ids", "holders", "entries"),
             subject_outputs=True,
         )
     carrier = _profile_clip_next_states(
@@ -1357,6 +1385,7 @@ def _period_copy_reservation(
             regime.simulation.programs.gate_route,
             regime.simulation.programs.exit_full,
             regime.simulation.programs.exit_participating,
+            *regime.simulation.programs.arrival_families,
         )
         if period in family
         for read in family[period].requirements.value_reads

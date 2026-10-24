@@ -55,6 +55,11 @@ class SolveInputMappings[Value: ValueTemplate]:
     completed; the template mapping holds an abstract `Wbar` for every edge.
     """
 
+    continuation_templates_by_period: MappingProxyType[
+        RegimeName, MappingProxyType[int, ContinuationPayload]
+    ] = dataclasses.field(default_factory=lambda: MappingProxyType({}))
+    """Date-specific solve-lifetime placeholders, with their producer identities."""
+
 
 def locate_artifact[Value: ValueTemplate](
     *, inputs: SolveInputMappings[Value], artifact: ValueArtifactAddress
@@ -72,8 +77,15 @@ def locate_artifact[Value: ValueTemplate](
         if artifact.target_regime is None:
             return None
         return inputs.next_edge_to_V_arr.get((artifact.regime, artifact.target_regime))
-    payload = inputs.next_regime_to_continuation.get(artifact.regime)
-    if not isinstance(payload, ContinuationReader):
+    dated = inputs.continuation_templates_by_period.get(artifact.regime)
+    payload = (
+        dated.get(artifact.period)
+        if dated is not None
+        else inputs.next_regime_to_continuation.get(artifact.regime)
+    )
+    if not isinstance(payload, ContinuationReader) or (
+        getattr(payload, "artifact_key", None) != artifact.artifact_key
+    ):
         return None
     return payload.leaves().get(artifact.leaf_path)
 

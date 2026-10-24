@@ -14,6 +14,13 @@ from _lcm.execution.core_program import CoreBuildContext
 from _lcm.execution.value_transfer import ValueArtifactKind
 from _lcm.regime_building.collective import NO_ROLE
 from _lcm.shock_registry import ShockBinding
+from _lcm.simulation.arrival_routing import (
+    arrival_frame_bases,
+    arrival_route_codes,
+    ordinary_exit_rows,
+    pending_arrival_rows,
+)
+from _lcm.simulation.arrival_values import arrival_replay_context
 from _lcm.simulation.chunk_operations import regime_mask
 from _lcm.simulation.current_iid import prepare_current_iid_keys
 from _lcm.simulation.current_iid_overrides import (
@@ -26,6 +33,7 @@ from _lcm.simulation.exits import (
     OriginalExitOutput,
     ParticipatingExitOutput,
     PreparedExitDecision,
+    arrival_entry_routes,
     route_original_subjects,
 )
 from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
@@ -37,9 +45,11 @@ from _lcm.simulation.value_reads import PeriodSimulationReads
 from _lcm.time import TimeAxis
 from _lcm.typing import (
     ArrayTree,
+    ArrivalQueryArguments,
     FlatParams,
     PRNGKeyND,
     PytreeValue,
+    QAndFKwargs,
     RegimeNamesToIds,
     StatesPerRegime,
 )
@@ -63,13 +73,15 @@ type _QueryArguments = dict[str, dict[str, PytreeValue]]
 type _FinalDecisionOutput = tuple[IntND, FloatND, Mapping[str, FloatND | IntND]]
 
 
-def prepare_exit_period(
+def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's ordered owner walk
     *,
     regimes: Mapping[RegimeName, Regime],
     period: int,
     states: StatesPerRegime,
     regime_ids: IntND,
     roles: IntND,
+    entered_through: IntND | None = None,
+    source_roles: IntND | None = None,
     regime_names_to_ids: RegimeNamesToIds,
     flat_params: FlatParams,
     ages: TimeAxis,
@@ -139,6 +151,23 @@ def prepare_exit_period(
     projected = {}
     adjustments = {}
     routes = []
+    pending_entries = {}
+    for name, regime in actors.items():
+        for source in regime.simulation.exit_queries[period].arrivals:
+            if entered_through is None or source_roles is None:
+                continue
+            pending_entries[name, source] = run_simulation_operation(
+                memory=memory,
+                function=pending_arrival_rows,
+                arguments={
+                    "regime_ids": regime_ids,
+                    "entered_through": entered_through,
+                    "source_id": regime_names_to_ids[source],
+                    "target_id": regime_names_to_ids[name],
+                },
+                subject_arg_names=("regime_ids", "entered_through"),
+                subject_outputs=True,
+            )
     for name, regime in actors.items():
         plan = regime.simulation.exit_queries[period]
         if plan.full is None:
@@ -146,6 +175,19 @@ def prepare_exit_period(
         holders = regime_mask(
             regime_ids=regime_ids, regime_id=regime_names_to_ids[name], memory=memory
         )
+        incoming = tuple(
+            pending
+            for (target, _), pending in pending_entries.items()
+            if target == name
+        )
+        if incoming:
+            holders = run_simulation_operation(
+                memory=memory,
+                function=ordinary_exit_rows,
+                arguments={"holders": holders, "pending": incoming},
+                subject_arg_names=("holders", "pending"),
+                subject_outputs=True,
+            )
         arguments = _query_arguments(
             plan=plan,
             queries=plan.full,
@@ -223,6 +265,97 @@ def prepare_exit_period(
                         projection=address,
                     )
                 )
+    decisions = {name: record[0][1] for name, record in originals.items()}
+    arrival_frames = {}
+    arrival_pending = {}
+    for (name, source), holders in pending_entries.items():
+        regime = actors[name]
+        plan = regime.simulation.exit_queries[period]
+        entry = plan.arrivals[source]
+        queries = entry.queries
+        family = f"arrival_entry:{source}"
+        output = _dispatch(
+            regime=regime,
+            family=family,
+            period=period,
+            arguments={
+                "states": states[name],
+                "keys": keys,
+                "overrides": overrides,
+                "query_arguments": _query_arguments(
+                    plan=plan,
+                    queries=queries,
+                    states=states[name],
+                    flat_params=flat_params,
+                    period=period,
+                    ages=ages,
+                    values=values,
+                    owner=owner,
+                    unit=name,
+                    family=family,
+                    regime=regime,
+                ),
+                "_holders": holders,
+                "taste_keys": {queries.root: taste_banks[name]}
+                if name in taste_banks
+                else {},
+                "group_params": {
+                    group: dict(flat_params.get(group, {})) for group in bindings
+                },
+            },
+            n_subjects=regime_ids.size,
+            memory=memory,
+            roots=(
+                states,
+                regime_ids,
+                roles,
+                originals,
+                keys,
+                taste_banks,
+                projected,
+                adjustments,
+                overrides,
+                decisions,
+                arrival_frames,
+            ),
+        )
+        answer, frame_payload, entry_projections, entry_adjustments = cast(
+            "OriginalExitOutput", output
+        )
+        frame = CurrentIIDDrawFrame(*frame_payload)
+        _check_answer(answer=answer, frame=frame, holders=holders, memory=memory)
+        edge = f"{name}:{source}"
+        arrival_frames[edge], arrival_pending[edge] = frame, holders
+        next_code = (
+            min((-1, *(route.identifier for route in routes if route.source == name)))
+            - 1
+        )
+        entry_routes, codes, addresses = arrival_entry_routes(
+            regimes=regimes,
+            target=name,
+            source=source,
+            entry=entry,
+            first_code=next_code,
+        )
+        routes.extend(entry_routes)
+        for address, query in addresses.items():
+            projected[address], adjustments[address] = (
+                entry_projections[query],
+                entry_adjustments[query],
+            )
+        decisions[name] = run_simulation_operation(
+            memory=memory,
+            function=arrival_route_codes,
+            arguments={
+                "original": decisions[name],
+                "incoming": answer[1],
+                "pending": holders,
+                "source_roles": source_roles,
+            },
+            static_arguments={"codes": tuple(codes)},
+            subject_arg_names=("original", "incoming", "pending", "source_roles"),
+            subject_outputs=True,
+        )
     final_ids, final_roles, final_states, moved, paid = run_simulation_operation(
         memory=memory,
         function=route_original_subjects,
@@ -230,7 +363,7 @@ def prepare_exit_period(
             "original_regime_ids": regime_ids,
             "original_roles": roles,
             "original_states": states,
-            "decisions": {name: record[0][1] for name, record in originals.items()},
+            "decisions": decisions,
             "projections": projected,
             "adjustments": adjustments,
             "regime_ids": regime_names_to_ids,
@@ -284,6 +417,37 @@ def prepare_exit_period(
         subject_outputs=True,
     )
     prepared = {}
+    if arrival_frames:
+        bases, produced = run_simulation_operation(
+            memory=memory,
+            function=arrival_frame_bases,
+            arguments={
+                "bases": bases,
+                "produced": produced,
+                "incoming_bases": {
+                    edge: frame.held_bases for edge, frame in arrival_frames.items()
+                },
+                "incoming_available": {
+                    edge: frame.information_available
+                    for edge, frame in arrival_frames.items()
+                },
+                "pending": arrival_pending,
+            },
+            static_arguments={
+                "physical_names": tuple(
+                    (edge, tuple(frame.physical))
+                    for edge, frame in arrival_frames.items()
+                )
+            },
+            subject_arg_names=(
+                "bases",
+                "produced",
+                "incoming_bases",
+                "incoming_available",
+                "pending",
+            ),
+            subject_outputs=True,
+        )
     for name, regime in actors.items():
         plan = regime.simulation.exit_queries[period]
         queries = plan.participating[name]
@@ -425,6 +589,10 @@ def exit_bindings(
         for queries in (
             regime.simulation.exit_queries[period].full,
             *regime.simulation.exit_queries[period].participating.values(),
+            *(
+                entry.queries
+                for entry in regime.simulation.exit_queries[period].arrivals.values()
+            ),
         )
         if queries is not None
         for node in queries.definitions.values()
@@ -454,26 +622,33 @@ def _query_arguments(
         {
             name: dict(row)
             for name, row in queries.arguments(
-                context=CoreBuildContext(
-                    state_action_space=replace(
-                        context.state_action_space,
-                        states=MappingProxyType(dict(states)),
+                context=arrival_replay_context(
+                    queries=queries,
+                    values=values,
+                    context=CoreBuildContext(
+                        state_action_space=replace(
+                            context.state_action_space,
+                            states=MappingProxyType(dict(states)),
+                        ),
+                        next_regime_to_V_arr=values.get(period + 1, {}),
+                        next_regime_to_continuation={},
+                        flat_params=flat_params,
+                        period=period,
+                        ages=ages,
+                        same_period_regime_to_V_arr=values.get(period, {}),
+                        edge_regime_to_V_arr=values.get(period + 1, {}),
                     ),
-                    next_regime_to_V_arr=values.get(period + 1, {}),
-                    next_regime_to_continuation={},
-                    flat_params=flat_params,
-                    period=period,
-                    ages=ages,
-                    same_period_regime_to_V_arr=values.get(period, {}),
-                    edge_regime_to_V_arr=values.get(period + 1, {}),
                 ),
                 fixed_flat_params=plan.fixed_flat_params,
             ).items()
         },
     )
-    for read in getattr(regime.simulation.programs, family)[
-        period
-    ].requirements.value_reads:
+    program = (
+        regime.simulation.programs.arrival_program(family=family, period=period)
+        if family.startswith("arrival_entry:")
+        else getattr(regime.simulation.programs, family)[period]
+    )
+    for read in program.requirements.value_reads:
         if read.target.kind is not ValueArtifactKind.REGIME_VALUE:
             raise ExecutionPlanningError(
                 "Exit replay needs canonical regime-value query operands."
@@ -489,19 +664,36 @@ def _set_read(
     *, arguments: _QueryArguments, path: tuple[str | int, ...], array: jax.Array
 ) -> None:
     """Replace the exact leaf, without flattening or dropping nested query paths."""
-    current = cast("dict[str, PytreeValue]", arguments)
-    for step in path[:-1]:
-        if not isinstance(step, str) or not isinstance(current[step], Mapping):
-            raise ExecutionPlanningError(
-                "A GridSearch query value read needs its declared mapping path."
+    replaced = _replace_query_read(node=arguments, path=path, array=array)
+    arguments.clear()
+    arguments.update(cast("_QueryArguments", replaced))
+
+
+def _replace_query_read(
+    *, node: PytreeValue, path: tuple[str | int, ...], array: jax.Array
+) -> PytreeValue:
+    if not path:
+        return array
+    step, *remaining = path
+    if isinstance(node, ArrivalQueryArguments) and step == "by_target":
+        return ArrivalQueryArguments(
+            by_target=cast(
+                "Mapping[str, Mapping[str, QAndFKwargs]]",
+                _replace_query_read(
+                    node=node.by_target, path=tuple(remaining), array=array
+                ),
             )
-        nested = dict(cast("Mapping[str, PytreeValue]", current[step]))
-        current[step] = nested
-        current = nested
-    final = path[-1]
-    if not isinstance(final, str):
-        raise ExecutionPlanningError("A GridSearch query value leaf needs a name.")
-    current[final] = array
+        )
+    if isinstance(node, Mapping) and isinstance(step, str) and step in node:
+        return {
+            **node,
+            step: _replace_query_read(
+                node=node[step], path=tuple(remaining), array=array
+            ),
+        }
+    raise ExecutionPlanningError(
+        "A GridSearch query value read needs its declared mapping/arrival field path."
+    )
 
 
 def _dispatch(

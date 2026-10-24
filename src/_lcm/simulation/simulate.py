@@ -57,6 +57,7 @@ from _lcm.regime_building.Q_and_F import (
 )
 from _lcm.simulation import chunk_operations, population_operations
 from _lcm.simulation.additional_targets import _compute_targets
+from _lcm.simulation.arrival_routing import record_arrival_entries
 from _lcm.simulation.assembly import concatenate_arrays, take_rows
 from _lcm.simulation.chunk_admission import PreparedSimulationChunks
 from _lcm.simulation.chunk_inputs import (
@@ -1032,6 +1033,8 @@ def _simulate_subject_chunk(  # noqa: PLR0915
                 states=states,
                 regime_ids=subject_regime_ids,
                 roles=own_stakeholder,
+                entered_through=entered_through,
+                source_roles=source_roles,
                 regime_names_to_ids=regime_names_to_ids,
                 flat_params=flat_params,
                 ages=ages,
@@ -2360,6 +2363,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             memory=memory,
             runtime_checks=validation_enabled(logger),
         )
+        drawn_arrival_ids = new_subject_regime_ids
         # A subject's raw codes are checked against the regime it was drawn to
         # before a gate can read a value at them or reroute the subject.
         if validation_enabled(logger):
@@ -2472,6 +2476,32 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                     },
                     subject_outputs=True,
                 )
+        arrival_targets = tuple(
+            target
+            for target in realization_targets_next_period
+            if period + 1 in regimes[target].simulation.exit_queries
+            and regime_name
+            in regimes[target].simulation.exit_queries[period + 1].arrivals
+        )
+        if arrival_targets and new_entered_through is not None:
+            new_entered_through = run_simulation_operation(
+                memory=memory,
+                function=record_arrival_entries,
+                arguments={
+                    "drawn_ids": drawn_arrival_ids,
+                    "routed_ids": new_subject_regime_ids,
+                    "holders": subject_ids_in_regime,
+                    "entries": new_entered_through,
+                },
+                static_arguments={
+                    "source_id": int(regime_names_to_ids[regime_name]),
+                    "target_ids": tuple(
+                        int(regime_names_to_ids[target]) for target in arrival_targets
+                    ),
+                },
+                subject_arg_names=("drawn_ids", "routed_ids", "holders", "entries"),
+                subject_outputs=True,
+            )
         states = clip_next_states(
             states=next_states,
             regimes=regimes,

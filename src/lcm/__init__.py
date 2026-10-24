@@ -95,6 +95,7 @@ from _lcm.variables import (  # noqa: E402
     _bind_forward_refs as _bind_variables_forward_refs,
 )
 from lcm.ages import AgeGrid  # noqa: E402
+from lcm.arrivals import ArrivalDecision, ArrivalRead  # noqa: E402
 from lcm.case_piece import (  # noqa: E402
     affine_breakpoint,
     case_boundary,
@@ -241,6 +242,8 @@ __all__ = [
     "AgeRange",
     "AgeSpecializedFunction",
     "AgeSpecializedGrid",
+    "ArrivalDecision",
+    "ArrivalRead",
     "ByAge",
     "ByPeriod",
     "CESAggregator",

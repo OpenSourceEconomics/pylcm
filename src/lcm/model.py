@@ -562,6 +562,7 @@ def _simulation_programs(
             programs.policy_prepare,
             programs.exit_full,
             programs.exit_participating,
+            *programs.arrival_families,
         ):
             yield from family.values()
 
@@ -1157,6 +1158,7 @@ class Model:
                 name: bind_regime_law(
                     transition,
                     gated_edges=prepared_graph.laws[name].gated_edges,
+                    arrivals=prepared_graph.laws[name].arrivals,
                 )
                 for name, transition in demanded_transitions.items()
             }

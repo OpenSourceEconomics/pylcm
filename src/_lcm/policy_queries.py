@@ -18,6 +18,7 @@ from dags import with_signature
 from _lcm.current_iid import CurrentIIDDrawFrame
 from _lcm.engine import StateActionSpace
 from _lcm.execution.core_program import (
+    CoreArgumentBuilder,
     CoreBuildContext,
     CoreExecutionDisposition,
     CoreExecutionRequirements,
@@ -31,10 +32,17 @@ from _lcm.execution.liveness import PlannedInputLiveness
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
 from _lcm.execution.pending_work import PendingSolveWork
 from _lcm.grids import DiscreteGrid
+from _lcm.params.edges import regime_kernel_params
 from _lcm.regime_building.argmax import argmax_and_max
 from _lcm.regime_building.collective import ParetoWeights, collective_argmax_and_readout
 from _lcm.regime_building.max_Q_over_a import _evaluate_pareto_weights
-from _lcm.regime_building.Q_and_F import runtime_bound_specs
+from _lcm.regime_building.Q_and_F import (
+    QAndFParts,
+    _CollectiveQAndF,
+    _QAndF,
+    has_arrival_queries,
+    runtime_bound_specs,
+)
 from _lcm.solution.contract import ContinuationPayload, PeriodKernel, SolverBuildContext
 from _lcm.solution.grid_search import GridSearch, grid_search_query_inputs
 from _lcm.time import TimeAxis
@@ -56,11 +64,13 @@ _FLAT_OPERAND_PATH_LENGTH = 2
 
 
 class QueryKind(StrEnum):
-    """Distinct current-period action problems, never durable value lookups."""
+    """Action problems and explicitly distinct nonpublishing arrival readers."""
 
     RAW = "Raw"
     PARTICIPATING = "Participating"
     FULL = "Full"
+    ARRIVAL = "Arrival"
+    INTEGRATED_FULL = "IntegratedFull"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -153,6 +163,11 @@ def demanded_query_order(
                 raise ValueError(f"Undeclared policy query {upstream!r}.")
             if reads[upstream].kind is QueryKind.FULL:
                 raise ValueError(f"Query {name!r} cannot read Full query {upstream!r}.")
+            if (
+                reads[upstream].kind is QueryKind.INTEGRATED_FULL
+                and reads[name].kind is not QueryKind.ARRIVAL
+            ):
+                raise ValueError("Only an arrival comparison may read IntegratedFull.")
         graph[name] = dependencies[name]
         pending.extend(reversed(dependencies[name]))
     try:
@@ -193,6 +208,12 @@ class QueryNode:
     """Equivalent producing contexts whose guarded availability is combined."""
     observation_counts: tuple[int, ...] = ()
     """Declared original row count of each target-only observation group."""
+    operand_builder: CoreArgumentBuilder | None = None
+    """Explicit numeric operands for a nonpublishing arrival/value reader."""
+    operand_value_reads: tuple[ValueRead, ...] = ()
+    """Absolute native value authority of that reader's dynamic operands."""
+    answer_shape: tuple[int, ...] | None = None
+    """Source-owned payoff tuple when it differs from the physical context."""
 
     def __post_init__(self) -> None:
         """Freeze edges and require the actual canonical target authority."""
@@ -242,6 +263,54 @@ class QueryNode:
             raise ValueError("A query's target differs from its canonical Q/F owner.")
         if self.read.kind is QueryKind.RAW and self.participation is not None:
             raise ValueError("Raw queries cannot impose dissolution participation.")
+        self._validate_reader_contract()
+
+    def _validate_reader_contract(self) -> None:
+        """Keep nonpublishing numeric readers out of policy action entrypoints."""
+        consumer = self.read.kind in {QueryKind.ARRIVAL, QueryKind.INTEGRATED_FULL}
+        if consumer:
+            if self.operand_builder is None or self.decision is None:
+                raise ValueError(
+                    "An arrival reader needs explicit operands and a rule."
+                )
+            if self.participation is not None:
+                raise ValueError(
+                    "An arrival reader cannot define action participation."
+                )
+            if self.read.kind is QueryKind.INTEGRATED_FULL and self.inputs:
+                raise ValueError("An integrated value reader cannot read policies.")
+        elif (
+            self.operand_builder is not None
+            or self.operand_value_reads
+            or self.answer_shape is not None
+        ):
+            raise ValueError("Policy queries must use their canonical Q/F operands.")
+        object.__setattr__(self, "operand_value_reads", tuple(self.operand_value_reads))
+        if self.answer_shape is not None:
+            shape = tuple(self.answer_shape)
+            if any(
+                isinstance(size, bool) or not isinstance(size, int) or size < 0
+                for size in shape
+            ):
+                raise ValueError("A reader answer shape needs nonnegative dimensions.")
+            object.__setattr__(self, "answer_shape", shape)
+
+    @property
+    def value_shape(self) -> tuple[int, ...]:
+        """Return the answer owner's tuple shape, independent of physical laws."""
+        if self.answer_shape is not None:
+            return self.answer_shape
+        stakeholders = self.context.stakeholders
+        return () if stakeholders is None else (len(stakeholders),)
+
+
+def _node_inputs(
+    *, node: QueryNode, period: int
+) -> tuple[CoreArgumentBuilder, tuple[ValueRead, ...]]:
+    """Keep value-reader operands separate from canonical policy action inputs."""
+    if node.operand_builder is not None:
+        return node.operand_builder, node.operand_value_reads
+    return grid_search_query_inputs(context=node.context, period=period)
 
 
 # Values at one common selected action, stable action id, support, integrity.
@@ -372,9 +441,7 @@ class ScalarPolicyQueries:
             {
                 name: _QueryArguments(
                     node=node,
-                    base=grid_search_query_inputs(
-                        context=node.context, period=self.period
-                    )[0],
+                    base=_node_inputs(node=node, period=node.read.period)[0],
                     fixed_flat_params=fixed_flat_params,
                     information_nodes={
                         key: self.definitions[key]
@@ -421,9 +488,7 @@ class ScalarPolicyQueries:
                 ),
             )
             for name, node in self.definitions.items()
-            for read in grid_search_query_inputs(
-                context=node.context, period=self.period
-            )[1]
+            for read in _node_inputs(node=node, period=node.read.period)[1]
         )
 
     def __call__(
@@ -460,13 +525,13 @@ class ScalarPolicyQueries:
             )
 
             if has_information(
-                node=node, definitions=self.definitions, period=self.period
+                node=node, definitions=self.definitions, period=node.read.period
             ):
                 cell = InformationQueryCell(
                     name=name,
                     node=node,
                     definitions=self.definitions,
-                    period=self.period,
+                    period=node.read.period,
                     fixed={
                         key: value for key, value in fixed.items() if key != _PROJECTION
                     },
@@ -495,7 +560,7 @@ class ScalarPolicyQueries:
                     for operand, producer in node.inputs.items()
                 },
                 node=node,
-                period=self.period,
+                period=node.read.period,
                 fixed={
                     key: value for key, value in fixed.items() if key != _PROJECTION
                 },
@@ -600,9 +665,7 @@ def build_policy_query_kernel(
     for name in order:
         node = definitions[name]
         _admit_node(node=node, period=period)
-        base, value_reads = grid_search_query_inputs(
-            context=node.context, period=period
-        )
+        base, value_reads = _node_inputs(node=node, period=period)
         builder = _QueryArguments(
             node=node,
             base=base,
@@ -650,11 +713,7 @@ def build_policy_query_kernel(
             if information
             else ()
         )
-        shape = (chunk_size, *information_shape) + (
-            ()
-            if node.context.stakeholders is None
-            else (len(node.context.stakeholders),)
-        )
+        shape = (chunk_size, *information_shape, *node.value_shape)
         programs[name] = CoreProgram(
             name=name,
             function=_QueryCore(
@@ -825,11 +884,17 @@ def _finish_bank(*, shape: tuple[int, ...], size: int) -> _FinishBank:
 def _admit_node(*, node: QueryNode, period: int) -> None:
     """Refuse an unrepresented action/status or information intersection."""
     context = node.context
-    _admit_query_solver(context=context, period=period)
     if node.read.phase != "solve" or node.read.period != period:
         raise UnsupportedOperationError(
             "A policy query needs its exact solve phase/period."
         )
+    if node.read.kind is QueryKind.INTEGRATED_FULL:
+        if set(node.read.projection) != set(context.state_action_space.state_names):
+            raise ValueError(
+                "A stored-value reader needs its complete declared schema."
+            )
+        return
+    _admit_query_solver(context=context, period=period)
     if period not in context.Q_and_F_functions:
         raise ValueError("The target action problem is inactive at this period.")
     if set(node.read.projection) != set(context.state_action_space.state_names):
@@ -950,7 +1015,9 @@ class _QueryArguments:
         arguments = dict(
             self.base(
                 replace(
-                    context, state_action_space=self.node.context.state_action_space
+                    context,
+                    period=self.node.read.period,
+                    state_action_space=self.node.context.state_action_space,
                 )
             )
         )
@@ -977,11 +1044,12 @@ class _QueryArguments:
                     name: {
                         **{
                             key: value
-                            for key, value in grid_search_query_inputs(
-                                context=node.context, period=context.period
+                            for key, value in _node_inputs(
+                                node=node, period=node.read.period
                             )[0](
                                 replace(
                                     context,
+                                    period=node.read.period,
                                     state_action_space=node.context.state_action_space,
                                 )
                             ).items()
@@ -1010,7 +1078,9 @@ def _query_projection_operands(
             isinstance(step, str) for step in path
         ):
             raise ValueError("Query operands need canonical flat namespace paths.")
-        operands[name] = context.flat_params[cast("str", path[0])][cast("str", path[1])]
+        operands[name] = regime_kernel_params(
+            cast("FlatParams", context.flat_params), regime_name=cast("str", path[0])
+        )[cast("str", path[1])]
     return MappingProxyType(operands)
 
 
@@ -1160,9 +1230,7 @@ def _query_cell(
             ),
             lambda: (
                 jnp.full(
-                    ()
-                    if node.context.stakeholders is None
-                    else (len(node.context.stakeholders),),
+                    node.value_shape,
                     -jnp.inf,
                 ),
                 jnp.asarray(-1, dtype=jnp.int32),
@@ -1284,6 +1352,21 @@ def _active_query_cell(
     arguments = {**fixed, **projection_operands, **mapped}
     arguments.setdefault(_PHYSICAL_CONTEXTS, {})
     context = node.context
+    if node.read.kind in {QueryKind.ARRIVAL, QueryKind.INTEGRATED_FULL}:
+        operands = {**arguments, **dependencies}
+        decision = node.decision
+        if decision is None:
+            raise ValueError("An arrival reader needs its declared decision rule.")
+        answer = decision(
+            **{name: operands[name] for name in inspect.signature(decision).parameters}
+        )
+        _validate_decision_answer(node=node, answer=answer)
+        return (
+            answer[0],
+            answer[1],
+            live & answer[2],
+            ~live | (answer[3] & _mapped_query_valid(node=node, mapped=mapped)),
+        )
     action_point = with_signature(
         functools.partial(
             _query_action,
@@ -1335,25 +1418,7 @@ def _active_query_cell(
         value = jnp.stack(tuple(values[name] for name in context.stakeholders))
     else:
         action, value = argmax_and_max(a=q, where=feasible, initial=-jnp.inf)
-    valid = (
-        jnp.all(valid)
-        & jnp.all(
-            jnp.stack(
-                tuple(
-                    jnp.any(mapped[name] == context.state_action_space.states[name])
-                    for name, grid in context.grids.items()
-                    if name in mapped and isinstance(grid, DiscreteGrid)
-                )
-                or (jnp.asarray(a=True),)
-            )
-        )
-        & jnp.all(
-            jnp.stack(
-                tuple(jnp.all(jnp.isfinite(value)) for value in mapped.values())
-                or (jnp.asarray(a=True),)
-            )
-        )
-    )
+    valid = jnp.all(valid) & _mapped_query_valid(node=node, mapped=mapped)
     answer = (
         value,
         jnp.where(support, action, -1).astype(jnp.int32),
@@ -1387,13 +1452,42 @@ def _active_query_cell(
                 for name in inspect.signature(node.decision).parameters
             }
         )
-        if answer[1].shape != () or answer[1].dtype != jnp.int32:
-            raise ValueError("A bound query decision must return one stable int32 ID.")
-        if answer[2].shape != () or answer[2].dtype != jnp.bool_:
-            raise ValueError("A bound query decision must return scalar support.")
-        if answer[3].shape != () or answer[3].dtype != jnp.bool_:
-            raise ValueError("A bound query decision must return scalar integrity.")
+        _validate_decision_answer(node=node, answer=answer)
     return answer
+
+
+def _mapped_query_valid(
+    *, node: QueryNode, mapped: Mapping[str, FloatND | IntND]
+) -> BoolND:
+    """Keep category and finite-state integrity mandatory for every reader kind."""
+    context = node.context
+    return jnp.all(
+        jnp.stack(
+            tuple(
+                jnp.any(mapped[name] == context.state_action_space.states[name])
+                for name, grid in context.grids.items()
+                if name in mapped and isinstance(grid, DiscreteGrid)
+            )
+            or (jnp.asarray(a=True),)
+        )
+    ) & jnp.all(
+        jnp.stack(
+            tuple(jnp.all(jnp.isfinite(value)) for value in mapped.values())
+            or (jnp.asarray(a=True),)
+        )
+    )
+
+
+def _validate_decision_answer(*, node: QueryNode, answer: PolicyAnswer) -> None:
+    """Require the declared answer owner and mandatory scalar status channels."""
+    if answer[0].shape != node.value_shape:
+        raise ValueError("A bound query decision returned a different payoff shape.")
+    if answer[1].shape != () or answer[1].dtype != jnp.int32:
+        raise ValueError("A bound query decision must return one stable int32 ID.")
+    if answer[2].shape != () or answer[2].dtype != jnp.bool_:
+        raise ValueError("A bound query decision must return scalar support.")
+    if answer[3].shape != () or answer[3].dtype != jnp.bool_:
+        raise ValueError("A bound query decision must return scalar integrity.")
 
 
 def _taste_query_choice(
@@ -1485,9 +1579,19 @@ def _query_action(
         node.context.Q_and_F_functions[period],
     )
     inputs = {**arguments, **actions}
-    q, ordinary = function(
-        **{name: inputs[name] for name in inspect.signature(function).parameters}
-    )
+    call_arguments = {
+        name: inputs[name] for name in inspect.signature(function).parameters
+    }
+    continuation_valid = jnp.asarray(a=True)
+    if has_arrival_queries(function=function):
+        parts = cast(
+            "Callable[..., QAndFParts]",
+            cast("_QAndF | _CollectiveQAndF", function).parts,
+        )(**call_arguments)
+        q, ordinary = parts.Q, parts.F
+        continuation_valid = cast("BoolND", parts.continuation_valid)
+    else:
+        q, ordinary = function(**call_arguments)
     expected_q_shape = (
         () if node.context.stakeholders is None else (len(node.context.stakeholders),)
     )
@@ -1497,7 +1601,9 @@ def _query_action(
         raise TypeError("Canonical query feasibility must be boolean.")
     if ordinary.ndim != 0:
         raise ValueError("Canonical query feasibility must be scalar per action.")
-    valid = ~jnp.any(ordinary & jnp.any(jnp.isnan(q)))
+    valid = (~ordinary | continuation_valid) & ~jnp.any(
+        ordinary & jnp.any(jnp.isnan(q))
+    )
     if node.participation is None:
         return q, ordinary, valid
     operands = {**inputs, **dependencies, "q": q}

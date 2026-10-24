@@ -34,7 +34,9 @@ from lcm.shocks import (
 )
 from lcm.typing import FunctionName, ReferenceName, RegimeName, StateName, UserFunction
 
-type QueryKindName = Literal["Raw", "Participating", "Full"]
+type QueryKindName = Literal[
+    "Raw", "Participating", "Full", "Arrival", "IntegratedFull"
+]
 type OperandPath = tuple[str | int, ...]
 
 _MAX_FINITE_PROJECTION_CELLS = 4096

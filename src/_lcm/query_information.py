@@ -54,10 +54,14 @@ def support_shape(
     *, node: QueryNode, definitions: Mapping[str, QueryNode], period: int
 ) -> tuple[int, ...]:
     """Name only ancestor information axes that have a numerical node operator."""
+    if period != node.read.period:
+        raise ValueError("Information shape needs the query's actual period.")
     return tuple(
-        support_size(node=definitions[name], period=period)
+        support_size(node=definitions[name], period=definitions[name].read.period)
         for name in node.ancestors
-        if _has_local_information(node=definitions[name], period=period)
+        if _has_local_information(
+            node=definitions[name], period=definitions[name].read.period
+        )
     )
 
 
@@ -65,8 +69,10 @@ def has_information(
     *, node: QueryNode, definitions: Mapping[str, QueryNode], period: int
 ) -> bool:
     """Whether this producer or its producing context has current node support."""
+    if period != node.read.period:
+        raise ValueError("Information demand needs the query's actual period.")
     return any(
-        _has_local_information(node=candidate, period=period)
+        _has_local_information(node=candidate, period=candidate.read.period)
         for candidate in (node, *(definitions[name] for name in node.ancestors))
     )
 
@@ -116,7 +122,8 @@ def _bindings(
         {} if plan is None else {name: binding for name, binding, _ in plan.bindings}
     )
     for group, producer in node.observation_sources.items():
-        target_plan = definitions[producer].context.current_iid_plans[period]
+        target = definitions[producer]
+        target_plan = target.context.current_iid_plans[target.read.period]
         if target_plan is None:
             raise ValueError("An observed group requires its producing law plan.")
         bindings[group] = next(
@@ -143,7 +150,7 @@ class InformationQueryCell:
         return (
             1
             if name == self.realised_root
-            else support_size(node=node, period=self.period)
+            else support_size(node=node, period=node.read.period)
         )
 
     def __call__(
@@ -245,7 +252,7 @@ class InformationQueryCell:
             },
         }
         mapped = _mapped_query_states(node=node, available=available)
-        plan = node.context.current_iid_plans.get(self.period)
+        plan = node.context.current_iid_plans.get(node.read.period)
         parent = node.ancestors[-1] if node.ancestors else None
         previous = None if parent is None else frames[parent]
         if plan is None:
@@ -266,7 +273,7 @@ class InformationQueryCell:
                 else _bindings(
                     node=self.definitions[parent],
                     definitions=self.definitions,
-                    period=self.period,
+                    period=self.definitions[parent].read.period,
                 ),
             )
         if not node.observation_sources:
@@ -378,7 +385,7 @@ class InformationQueryCell:
             _observation_inputs,
         )
 
-        plan = target.context.current_iid_plans[self.period]
+        plan = target.context.current_iid_plans[target.read.period]
         if plan is None:
             raise ValueError("An observation needs an actual producing law.")
         binding, nodes = next(
@@ -397,7 +404,7 @@ class InformationQueryCell:
                 group=group,
                 definitions=self.definitions,
                 arguments=self.information_arguments,
-                period=self.period,
+                period=target.read.period,
                 available=available,
             )
             site = CurrentIIDPlan(
@@ -501,7 +508,7 @@ class InformationQueryCell:
             frame, _ = self._realise(
                 node=node, fixed=fixed, source=source, frames=frames
             )
-            if not _has_local_information(node=node, period=self.period):
+            if not _has_local_information(node=node, period=node.read.period):
                 return self._ancestors(
                     position=position + 1,
                     frames={**frames, name: frame},
@@ -533,13 +540,11 @@ class InformationQueryCell:
         dimensions = tuple(
             self._size(name=name, node=self.definitions[name])
             for name in self.node.ancestors[position:]
-            if _has_local_information(node=self.definitions[name], period=self.period)
+            if _has_local_information(
+                node=self.definitions[name], period=self.definitions[name].read.period
+            )
         )
-        members = (
-            ()
-            if self.node.context.stakeholders is None
-            else (len(self.node.context.stakeholders),)
-        )
+        members = self.node.value_shape
         return (
             jnp.full((*dimensions, *members), -jnp.inf),
             jnp.full(
@@ -571,7 +576,9 @@ class InformationQueryCell:
             )
 
             def point(row: IntND) -> PolicyAnswer:
-                local = _has_local_information(node=self.node, period=self.period)
+                local = _has_local_information(
+                    node=self.node, period=self.node.read.period
+                )
                 physical = {} if not local else _row(frame=frame, row=row).physical
                 dependency_index = (*indices, row) if local else indices
                 projected = {
@@ -588,7 +595,7 @@ class InformationQueryCell:
                     source,
                     projected,
                     node=self.node,
-                    period=self.period,
+                    period=self.node.read.period,
                     fixed={
                         **self.fixed,
                         **physical,

@@ -43,8 +43,9 @@ import _lcm.zero_safe as zero_safe_declarations
 import lcm.exceptions as lcm_exceptions
 import lcm.koopmans_aggregation as koopmans_declarations
 from _lcm.certainty_equivalent import CertaintyEquivalent
-from _lcm.continuation import EGMQuerySpec
+from _lcm.continuation import ContinuationSpec, EGMQuerySpec
 from _lcm.engine import NNBEGMPolicyRead, Regime
+from _lcm.execution.value_transfer import ValueArtifactAddress
 from _lcm.grids import DiscreteGrid, Grid
 from _lcm.optimization.golden_section import GoldenSectionResult
 from _lcm.params.edges import EDGES, flat_namespaces, regime_kernel_params
@@ -805,6 +806,16 @@ def fingerprint_model_structure(
                 },
                 **(
                     {
+                        "dated_continuation_custody": _dated_continuation_identity(
+                            spec=spec
+                        )
+                    }
+                    if (spec := regime.solution.continuation_spec) is not None
+                    and spec.templates_by_period
+                    else {}
+                ),
+                **(
+                    {
                         "query_authority": _query_semantic_descriptor(
                             regime.solution.query_authority
                         ),
@@ -883,6 +894,50 @@ def fingerprint_model_structure(
     if shock_fixed_params:
         hasher.visit(value=("current-iid-fixed-params", 1, shock_fixed_params))
     return hasher.hexdigest()
+
+
+def _dated_continuation_identity(*, spec: ContinuationSpec) -> _Reachable:
+    """Seal dated schemas and origin owners without hashing numeric placeholders."""
+    return (
+        (spec.artifact_key.type_id, spec.artifact_key.schema_version),
+        tuple(
+            (
+                period,
+                str(jax.tree.structure(template)),
+                tuple(
+                    (tuple(leaf.shape), str(leaf.dtype))
+                    for leaf in jax.tree.leaves(template)
+                ),
+            )
+            for period, template in sorted(spec.templates_by_period.items())
+        ),
+        tuple(
+            (
+                _continuation_origin_identity(alias),
+                _continuation_origin_identity(origin),
+            )
+            for alias, origin in spec.stored_value_aliases().items()
+        ),
+    )
+
+
+def _continuation_origin_identity(
+    artifact: ValueArtifactAddress,
+) -> tuple[_Reachable, ...]:
+    """Serialize canonical artifact enums by their declared stable values."""
+    return (
+        artifact.kind.value,
+        artifact.period,
+        artifact.regime,
+        artifact.target_regime,
+        None
+        if artifact.artifact_key is None
+        else (
+            artifact.artifact_key.type_id,
+            artifact.artifact_key.schema_version,
+        ),
+        artifact.leaf_path,
+    )
 
 
 def _query_semantic_descriptor(spec: EGMQuerySpec) -> EGMQuerySpec:
@@ -977,6 +1032,7 @@ def _project_user_regime_declaration(
                     and not (
                         name in {"output_only_functions", "shocks"} and value == ()
                     )
+                    and not (name == "arrivals" and not value)
                 }
             ),
         }

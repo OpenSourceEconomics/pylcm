@@ -9,7 +9,8 @@ adds every layout property a reading parent needs.
 from collections.abc import Hashable, Mapping
 from dataclasses import dataclass, fields
 from dataclasses import field as dataclass_field
-from typing import Literal, cast
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Literal, cast
 
 import jax.numpy as jnp
 from dags import get_ancestors
@@ -19,6 +20,9 @@ from _lcm.egm.carry import EGMCarry
 from _lcm.post_decision_bound import PostDecisionBoundSpec
 from lcm.solver_api import EGM_CONTINUATION, ArtifactKey, ContinuationArtifact
 from lcm.typing import ActionName, FunctionName, ReferenceName, StateName, UserFunction
+
+if TYPE_CHECKING:
+    from _lcm.execution.value_transfer import ValueArtifactAddress
 
 # Backward induction stores and forwards this channel without reading its fields.
 type ContinuationPayload = ContinuationArtifact
@@ -473,6 +477,11 @@ class ContinuationSpec:
     artifact_key: ArtifactKey
     """Versioned identity under which the kernel publishes this payload."""
 
+    templates_by_period: Mapping[int, ContinuationArtifact] = dataclass_field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    """Actual producer-date schemas when demanded operand trees vary by date."""
+
     def __post_init__(self) -> None:
         if self.template.artifact_key != self.artifact_key:
             msg = (
@@ -480,6 +489,30 @@ class ContinuationSpec:
                 f"not the declared {self.artifact_key}."
             )
             raise ValueError(msg)
+        templates = dict(self.templates_by_period)
+        for period, template in templates.items():
+            if type(period) is not int or period < 0:
+                raise ValueError("A continuation schema needs a nonnegative period.")
+            if template.artifact_key != self.artifact_key:
+                raise ValueError(
+                    f"The continuation template at period {period} carries key "
+                    f"{template.artifact_key}, not {self.artifact_key}."
+                )
+        object.__setattr__(self, "templates_by_period", MappingProxyType(templates))
+
+    def template_at(self, *, period: int) -> ContinuationArtifact:
+        """Return the schema of this exact producer, without borrowing a date."""
+        if not self.templates_by_period:
+            return self.template
+        if period not in self.templates_by_period:
+            raise ValueError(f"No continuation schema is declared at period {period}.")
+        return self.templates_by_period[period]
+
+    def stored_value_aliases(
+        self,
+    ) -> Mapping[ValueArtifactAddress, ValueArtifactAddress]:
+        """Declare transported leaves that retain another stored artifact's buffer."""
+        return MappingProxyType({})
 
 
 @dataclass(frozen=True, kw_only=True)
