@@ -129,6 +129,7 @@ from lcm.consumption_savings_regime import (  # noqa: E402
 )
 from lcm.decoupled import Decoupled  # noqa: E402
 from lcm.execution import ExecutionConfig, InvariantBlockSchedule  # noqa: E402
+from lcm.exits import Consent, Counterparty, Exit, ExitTarget, RuleResult  # noqa: E402
 from lcm.fixed_forms import (  # noqa: E402
     cash_on_hand_with_subsidy,
     liquid_law_from_resources,
@@ -248,11 +249,15 @@ __all__ = [
     "CompositeState",
     "Condition",
     "ConditionalAction",
+    "Consent",
     "ConsumptionSavingsRegime",
+    "Counterparty",
     "Decoupled",
     "DeterministicTransition",
     "DiscreteGrid",
     "ExecutionConfig",
+    "Exit",
+    "ExitTarget",
     "ExtremeValueTasteShocks",
     "Gate",
     "GridBreakpoint",
@@ -289,6 +294,7 @@ __all__ = [
     "QuasiArithmeticMean",
     "Regime",
     "RouwenhorstAR1Process",
+    "RuleResult",
     "SimulateSnapshot",
     "SimulationResult",
     "SolveSnapshot",

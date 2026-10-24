@@ -42,6 +42,7 @@ from lcm.decoupled import (
     resolve_koopmans_aggregator,
 )
 from lcm.exceptions import RegimeInitializationError
+from lcm.exits import Exit
 from lcm.phased import Phased
 from lcm.shocks import ShockGroupName
 from lcm.taste_shocks import ExtremeValueTasteShocks
@@ -95,6 +96,7 @@ class _SlotsBesideFunctions(TypedDict, total=False):
     solver: _solvers.Solver
     taste_shocks: ExtremeValueTasteShocks | None
     shocks: tuple[ShockGroupName, ...]
+    exits: Mapping[str, Exit]
     koopmans_aggregator: UserFunction | Phased | Decoupled | None
     certainty_equivalent: CertaintyEquivalent | None
     description: str
@@ -311,6 +313,9 @@ class Regime:
     shocks: tuple[ShockGroupName, ...] = ()
     """Model-level current-IID group references, separate from state processes."""
 
+    exits: Mapping[str, Exit] = field(default_factory=lambda: MappingProxyType({}))
+    """Named current-period choices to mapped destination policies."""
+
     description: str = ""
     """Description of the regime."""
 
@@ -473,6 +478,7 @@ class Regime:
         self._make_field_immutable(name="derived_categoricals")
         self._make_field_immutable(name="value_constraints")
         self._make_field_immutable(name="same_period_refs")
+        self._make_field_immutable(name="exits")
 
     def _lower_value_dependent_declarations(self) -> None:
         """Derive the engine-facing views of the collective declarations.

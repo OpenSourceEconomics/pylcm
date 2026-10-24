@@ -312,6 +312,7 @@ from _lcm.typing import (
 )
 from _lcm.user_regime_validation import (
     fail_if_a_folded_conditioner_can_move,
+    validate_exit_targets,
     validate_regimes,
 )
 from _lcm.utils.containers import (
@@ -1097,6 +1098,7 @@ class Model:
         self._param_name_candidates = _get_param_name_candidates(merged_regimes)
         validate_time_declarations(regimes=merged_regimes, laws=laws, ages=self._time)
         validate_regimes(regimes=merged_regimes, laws=laws)
+        validate_exit_targets(regimes=merged_regimes, laws=laws)
         # What each regime declares before demand prunes any: a declared law
         # reads these as variables at every horizon, never as parameters, and a
         # Series indexed by one keeps its labels.
@@ -5345,7 +5347,7 @@ class Model:
         self._validated_selection_params.add(digest)
 
     # keyword-only-exempt: primary-argument=params
-    def _process_params(
+    def _process_params(  # noqa: C901 - parameter admission includes exit readiness
         self,
         params: UserParams,
         *,
@@ -5360,6 +5362,10 @@ class Model:
         the dtype cast walks a uniform tree (no `pd.Series` to special-
         case).
         """
+        if any(regime.exits for regime in self.user_regimes.values()):
+            raise UnsupportedOperationError(
+                "Current-period exit execution requires native exit lowering."
+            )
         group_params = {
             name: value for name, value in params.items() if name in self.shocks
         }
