@@ -193,8 +193,16 @@ def resolve_output_layout(
     )
 
     value_sharding = _require_value_sharding(value_template=value_template)
-    value_shape = getattr(value_template, "shape", None)
-    value_dtype = getattr(value_template, "dtype", None)
+    first_role = jax.tree.leaves(output_roles)[0]
+    # A transient query publishes an explicit chunk prototype, not a durable V
+    # axis. Its placement still comes from the actual occupant's device set.
+    explicit = isinstance(first_role, StateAxesLeading)
+    value_shape = (
+        first_role.shape if explicit else getattr(value_template, "shape", None)
+    )
+    value_dtype = (
+        first_role.dtype if explicit else getattr(value_template, "dtype", None)
+    )
     if value_shape is None or value_dtype is None:
         msg = "A planned value template must expose an absolute shape and dtype."
         raise TypeError(msg)
@@ -359,7 +367,18 @@ def _validate_output_roles(
         )
         raise TypeError(msg)
     value_positions = [index for index, role in enumerate(role_leaves) if role is VALUE]
-    if value_positions != [0]:
+    if not value_positions:
+        if not all(
+            isinstance(role, StateAxesLeading)
+            and role.shape is not None
+            and role.dtype is not None
+            for role in role_leaves
+        ):
+            raise ValueError(
+                f"Core {core_key!r} transient outputs need explicit shape and dtype "
+                "on every leaf."
+            )
+    elif value_positions != [0]:
         msg = (
             f"Core {core_key!r} must declare exactly one VALUE leaf, in the first "
             f"position of its output-role tree; got {roles!r}."

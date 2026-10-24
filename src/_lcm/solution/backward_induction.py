@@ -56,6 +56,7 @@ from _lcm.execution.core_program import (
     CoreExecutionDisposition,
     CoreExecutionRequirements,
     CoreProgram,
+    InternalDispatch,
     InvariantBinding,
     MaterializedCoreProgram,
     ProgramScope,
@@ -149,6 +150,7 @@ from _lcm.execution.value_transfer import (
 from _lcm.execution.workspace_planning import (
     BoundedWidthSelector,
     CompilerMemoryReservation,
+    WorkspaceBudgetError,
     WorkspacePlan,
     compiler_memory_reservation,
     plan_workspace,
@@ -538,41 +540,46 @@ def solve(  # noqa: C901, PLR0912, PLR0915
 
     # Resolve every solve program, then compile unique lowerings when enabled.
     diagnostics_enabled = validation_enabled(logger)
-    compiled_programs = _compile_all_functions(
-        regimes=regimes,
-        program_fingerprint=program_fingerprint,
-        flat_params=flat_params,
-        ages=ages,
-        next_regime_to_V_arr=V_templates,
-        next_regime_to_continuation=next_regime_to_continuation,
-        next_edge_to_V_arr=edge_templates,
-        enable_jit=enable_jit,
-        execution=resolved_execution,
-        capture_periods=()
-        if period_capture is None
-        else period_capture.request.periods,
-        retain_replay=retain_replay,
-        retain_all_artifacts=retain_all_artifacts,
-        persistable_artifact_refs=persistable_artifact_refs,
-        max_compilation_workers=max_compilation_workers,
-        logger=logger,
-        fixed_input_arrays=(
-            retained_input_arrays,
-            tuple(
-                (space.states, space.discrete_actions, space.continuous_actions)
-                for space in base_state_action_spaces.values()
-            ),
-        ),
-        process_grid_resolver=process_grid_resolver,
-        call_id=call_id,
-        gather_checks={} if gather_checks is None else gather_checks,
-        executable_cache=ExecutableCache()
-        if executable_cache is None
-        else executable_cache,
-        structural_blueprints=structural_blueprints,
-        base_state_action_spaces=base_state_action_spaces,
-        collect_continuation_read_counts=diagnostics_enabled,
-    )
+    while True:
+        try:
+            compiled_programs = _compile_all_functions(
+                regimes=regimes,
+                program_fingerprint=program_fingerprint,
+                flat_params=flat_params,
+                ages=ages,
+                next_regime_to_V_arr=V_templates,
+                next_regime_to_continuation=next_regime_to_continuation,
+                next_edge_to_V_arr=edge_templates,
+                enable_jit=enable_jit,
+                execution=resolved_execution,
+                capture_periods=()
+                if period_capture is None
+                else period_capture.request.periods,
+                retain_replay=retain_replay,
+                retain_all_artifacts=retain_all_artifacts,
+                persistable_artifact_refs=persistable_artifact_refs,
+                max_compilation_workers=max_compilation_workers,
+                logger=logger,
+                fixed_input_arrays=(
+                    retained_input_arrays,
+                    tuple(
+                        (space.states, space.discrete_actions, space.continuous_actions)
+                        for space in base_state_action_spaces.values()
+                    ),
+                ),
+                process_grid_resolver=process_grid_resolver,
+                call_id=call_id,
+                gather_checks={} if gather_checks is None else gather_checks,
+                executable_cache=ExecutableCache()
+                if executable_cache is None
+                else executable_cache,
+                structural_blueprints=structural_blueprints,
+                base_state_action_spaces=base_state_action_spaces,
+                collect_continuation_read_counts=diagnostics_enabled,
+            )
+            break
+        except _CellBudgetError as error:
+            regimes = _narrow_native_closure(regimes=regimes, error=error)
     compiled_functions = compiled_programs.executables
     replay_dispatches = {
         (regime_name, period)
@@ -873,7 +880,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                             templates=input_templates,
                             registry=buffer_registry,
                         )
-                        output, blocked = _run_dispatch_unit(
+                        output, _blocked = _run_dispatch_unit(
                             value_template=input_templates.next_regime_to_V_arr[
                                 regime_name
                             ],
@@ -983,11 +990,9 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                         V_arr = _publish_kernel_value(
                             value=V_arr,
                             compiled_cores=compiled_functions[(regime_name, period)],
-                            assembled_template=(
-                                input_templates.next_regime_to_V_arr[regime_name]
-                                if blocked
-                                else None
-                            ),
+                            assembled_template=input_templates.next_regime_to_V_arr[
+                                regime_name
+                            ],
                         )
                         _fail_if_continuation_publisher_returned_none(
                             result=result,
@@ -2353,9 +2358,9 @@ def _publish_kernel_value(
 ) -> FloatND:
     """Publish a period value after asserting its planned placement.
 
-    A value assembled from invariant blocks is checked against the regime's
-    value template, `assembled_template`, since each compiled core produced
-    only one block of it.
+    The solve loop supplies the canonical regime value template independently
+    of transient program outputs. A query closure may begin with a target tuple
+    on a mapped chunk; that first producer cannot define durable publication.
 
     Every compiled core has already asserted its complete runtime output tree
     against the layout used to lower it at the compiled-core seam; here only the
@@ -2363,7 +2368,8 @@ def _publish_kernel_value(
     unpacked the rest of its tree into channels. The check reads the first
     compiled core the period dispatched, whatever its name, since a
     retention-scoped graph compiles one program under one name and another under
-    another. A core without a resolved layout cannot publish a value: nothing is
+    another. A direct caller without an assembled template checks that layout.
+    A core without a resolved layout cannot publish a value: nothing is
     re-placed here. Continuation rolling keeps its independent placement repair,
     which is a different producer/consumer boundary.
     """
@@ -3620,10 +3626,22 @@ def _internal_reservations_by_cell(
     otherwise the full logical payload is reserved on every cell device. Neither
     fallback placement nor alias overlap is claimed to be exact allocator storage.
     """
-    by_cell: dict[tuple[RegimeName, int], dict[tuple[str, str], int]] = {}
+    by_cell: dict[tuple[RegimeName, int], dict[Hashable, int]] = {}
+    host_templates: dict[tuple[RegimeName, int, str], ShapeDtypePytree] = {}
+    native_by_cell: dict[tuple[RegimeName, int], dict[str, ResolvedCoreProgram]] = {}
     for candidate, program in programs.items():
         cell = candidate[0][:2]
         sizes = by_cell.setdefault(cell, {})
+        representative = native_by_cell.setdefault(cell, {}).setdefault(
+            candidate[0][2], program
+        )
+        if (
+            representative.requirements.internal_schedule
+            != program.requirements.internal_schedule
+        ):
+            raise ExecutionPlanningError(
+                "Native candidates disagree on their internal schedule."
+            )
         for name, reference in program.requirements.internal_inputs.items():
             size = sum(
                 _internal_leaf_bytes(leaf=leaf)
@@ -3632,9 +3650,164 @@ def _internal_reservations_by_cell(
             )
             key = (reference.producer, reference.label)
             sizes[key] = max(sizes.get(key, 0), size)
+        for label, tree in program.requirements.host_buffers.items():
+            owner = (*cell, label)
+            if owner in host_templates and (
+                jax.tree.structure(host_templates[owner]) != jax.tree.structure(tree)
+                or tuple(jax.tree.leaves(host_templates[owner]))
+                != tuple(jax.tree.leaves(tree))
+            ):
+                raise ExecutionPlanningError(
+                    f"Host buffer {owner!r} has conflicting templates."
+                )
+            host_templates[owner] = tree
+            sizes[("host", label, "template")] = sum(
+                _internal_leaf_bytes(leaf=leaf) for leaf in jax.tree.leaves(tree)
+            )
+    for cell, members in native_by_cell.items():
+        schedules = tuple(
+            program.requirements.internal_schedule for program in members.values()
+        )
+        if not any(schedules):
+            continue
+        schedule = schedules[0]
+        if not schedule or any(other != schedule for other in schedules):
+            raise ExecutionPlanningError(
+                "Every cell core must declare the same closed internal schedule."
+            )
+        sizes = by_cell[cell]
+        peak = _scheduled_internal_peak(
+            programs=members, sizes=sizes, schedule=schedule
+        )
+        host_sizes = {
+            key: value
+            for key, value in sizes.items()
+            if len(cast("tuple[Hashable, ...]", key)) == _HOST_OWNER_KEY_LENGTH
+        }
+        by_cell[cell] = {**host_sizes, ("closed_schedule_peak",): peak}
     return MappingProxyType(
         {cell: sum(sizes.values()) for cell, sizes in by_cell.items()}
     )
+
+
+_HOST_OWNER_KEY_LENGTH = 3
+
+
+def _scheduled_internal_peak(
+    *,
+    programs: Mapping[str, ResolvedCoreProgram],
+    sizes: Mapping[Hashable, int],
+    schedule: tuple[InternalDispatch, ...],
+) -> int:
+    """Validate actual graph bindings, then charge output-before-input-release peaks."""
+    required = {
+        name
+        for name, program in programs.items()
+        if program.internal_outputs or program.requirements.internal_inputs
+    }
+    if {step.name for step in schedule} != required:
+        raise ExecutionPlanningError(
+            "Closed internal schedule omits or adds a graph program."
+        )
+    for name in required:
+        program = programs[name]
+        if program.internal_outputs:
+            _require_complete_internal_output_roles(program=program)
+    accesses = _internal_schedule_accesses(
+        programs=programs, sizes=sizes, schedule=schedule
+    )
+    ledger = PlannedInputLiveness(dispatch_accesses=accesses)
+    live: dict[tuple[str, int, str], int] = {}
+    peak = 0
+    for step in schedule:
+        for spec in programs[step.name].internal_outputs:
+            key = step.name, spec.label
+            if key not in sizes:
+                raise ExecutionPlanningError(
+                    "Closed internal output has no inventoried consumer template."
+                )
+            live[(*step.identity, spec.label)] = sizes[key]
+        # A returned output exists while all inputs of its reader still exist.
+        peak = max(peak, sum(live.values()))
+        ledger.commit_successful_dispatch(dispatch=step.identity)
+        for artifact in tuple(live):
+            if ledger.is_release_eligible(artifact=artifact):
+                del live[artifact]
+    ledger.assert_solve_complete()
+    return peak
+
+
+def _require_complete_internal_output_roles(*, program: ResolvedCoreProgram) -> None:
+    """Every held producer leaf must belong to an inventoried internal subtree."""
+    for path, _role in jax.tree.flatten_with_path(program.output_roles)[0]:
+        steps = tuple(
+            key.idx
+            if isinstance(key, jax.tree_util.SequenceKey)
+            else key.key
+            if isinstance(key, jax.tree_util.DictKey)
+            else key.name
+            for key in path
+        )
+        if not any(
+            steps[: len(spec.path)] == spec.path for spec in program.internal_outputs
+        ):
+            raise ExecutionPlanningError(
+                "Closed internal schedule has an unowned producer output leaf."
+            )
+
+
+def _internal_schedule_accesses(
+    *,
+    programs: Mapping[str, ResolvedCoreProgram],
+    sizes: Mapping[Hashable, int],
+    schedule: tuple[InternalDispatch, ...],
+) -> Mapping[tuple[str, int], tuple[tuple[str, int, str], ...]]:
+    """Require every binding to name an actual, preceding output generation."""
+    seen: set[tuple[str, int]] = set()
+    generations: dict[str, set[int]] = {}
+    accesses: dict[tuple[str, int], tuple[tuple[str, int, str], ...]] = {}
+    for step in schedule:
+        if step.identity in seen:
+            raise ExecutionPlanningError(
+                "Closed internal schedule repeats a generation."
+            )
+        program = programs[step.name]
+        refs = program.requirements.internal_inputs
+        if step.inputs.keys() != refs.keys():
+            raise ExecutionPlanningError(
+                "Closed internal schedule has missing or extra reader bindings."
+            )
+        reads = []
+        for operand, producer in step.inputs.items():
+            ref = refs[operand]
+            if producer[0] != ref.producer or producer not in seen:
+                raise ExecutionPlanningError(
+                    "Closed internal schedule has an unresolved producer generation."
+                )
+            labels = {spec.label for spec in programs[ref.producer].internal_outputs}
+            if ref.label not in labels or (ref.producer, ref.label) not in sizes:
+                raise ExecutionPlanningError(
+                    "Closed internal schedule lacks a complete output template."
+                )
+            reads.append((*producer, ref.label))
+        accesses[step.identity] = tuple(reads)
+        seen.add(step.identity)
+        generations.setdefault(step.name, set()).add(step.generation)
+    if any(values != set(range(len(values))) for values in generations.values()):
+        raise ExecutionPlanningError(
+            "Closed internal schedule has missing generation identities."
+        )
+    consumed = {artifact for reads in accesses.values() for artifact in reads}
+    produced = {
+        (*step.identity, spec.label)
+        for step in schedule
+        for spec in programs[step.name].internal_outputs
+    }
+    if produced != consumed:
+        raise ExecutionPlanningError(
+            "Closed internal schedule has an unconsumed output generation."
+        )
+    return MappingProxyType(accesses)
 
 
 def _internal_leaf_bytes(*, leaf: jax.ShapeDtypeStruct) -> int:
@@ -3890,6 +4063,40 @@ def _triples_within_budget(
     )
 
 
+class _CellBudgetError(WorkspaceBudgetError):
+    """A budget-only refusal tied to one actual regime-period core."""
+
+    def __init__(self, *, message: str, triple: _CoreTriple) -> None:
+        super().__init__(message)
+        self.triple = triple
+
+
+def _narrow_native_closure(
+    *, regimes: MappingProxyType[RegimeName, Regime], error: _CellBudgetError
+) -> MappingProxyType[RegimeName, Regime]:
+    """Rebuild an entire native closure before lowering its smaller candidate.
+
+    Only a measured budget refusal enters this path. Malformed reports, layouts,
+    statuses and other planning errors remain fatal. No candidate has dispatched.
+    """
+    name, period, _core = error.triple
+    regime = regimes[name]
+    kernel = regime.solution.period_kernels[period]
+    narrow = getattr(kernel, "narrow_workspace", None)
+    replacement = None if narrow is None else narrow()
+    if replacement is None:
+        raise error
+    kernels = dict(regime.solution.period_kernels)
+    kernels[period] = replacement
+    updated = dataclasses.replace(
+        regime,
+        solution=dataclasses.replace(
+            regime.solution, period_kernels=MappingProxyType(kernels)
+        ),
+    )
+    return MappingProxyType({**regimes, name: updated})
+
+
 def _width_selection_failure(
     *,
     triple: _CoreTriple,
@@ -3924,7 +4131,11 @@ def _width_selection_failure(
             "rejected candidate(s) whose donating variant already exceeded the "
             "budget."
         )
-    return ExecutionPlanningError(msg)
+    return (
+        _CellBudgetError(message=msg, triple=triple)
+        if isinstance(error, WorkspaceBudgetError)
+        else ExecutionPlanningError(msg)
+    )
 
 
 def _select_period_programs(
@@ -5238,7 +5449,7 @@ def _bounded_plan(
             "already keeps resident at its position reach the budget, so no "
             "workspace fits beside them."
         )
-        raise ExecutionPlanningError(msg)
+        raise WorkspaceBudgetError(msg)
     widths = source.selected(triple=triple)
     if widths is None:
         selector = source.selectors[triple]
@@ -5248,8 +5459,8 @@ def _bounded_plan(
                 f"{_describe_candidate(candidate=(triple, ()))} admits was refused, "
                 "so its bounded width search had nothing narrower to propose."
             )
-            raise ExecutionPlanningError(msg)
-        raise ExecutionPlanningError(selector.exhaustion_message(budget=budget_bytes))
+            raise WorkspaceBudgetError(msg)
+        raise WorkspaceBudgetError(selector.exhaustion_message(budget=budget_bytes))
     executable = compiled_by_width[_width_key(widths=widths)]
     memory = memory_by_compiled_id[id(executable)]
     return WorkspacePlan(

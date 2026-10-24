@@ -258,8 +258,11 @@ _PROFILED_HELPER_MUTATIONS = {
     ),
     "simulation_entry:fixed_solve_inventory_omitted": (
         "src/_lcm/solution/backward_induction.py",
-        "        fixed_input_arrays=(\n            retained_input_arrays,",
-        "        fixed_input_arrays=(\n            (),",
+        (
+            "                fixed_input_arrays=(\n"
+            "                    retained_input_arrays,"
+        ),
+        "                fixed_input_arrays=(\n                    (),",
     ),
     "simulation_entry:fixed_solve_inputs_rebound": (
         "src/_lcm/solution/backward_induction.py",
@@ -458,20 +461,20 @@ _PROFILED_HELPER_MUTATIONS = {
     "solution_runtime:fixed_source_owners_omitted": (
         "src/_lcm/solution/backward_induction.py",
         (
-            "        fixed_input_arrays=(\n"
-            "            retained_input_arrays,\n"
-            "            tuple(\n"
-            "                (space.states, space.discrete_actions, "
+            "                fixed_input_arrays=(\n"
+            "                    retained_input_arrays,\n"
+            "                    tuple(\n"
+            "                        (space.states, space.discrete_actions, "
             "space.continuous_actions)\n"
-            "                for space in base_state_action_spaces.values()"
+            "                        for space in base_state_action_spaces.values()"
         ),
         (
-            "        fixed_input_arrays=(\n"
-            "            retained_input_arrays,\n"
-            "            tuple(\n"
-            "                (space.states, space.discrete_actions, "
+            "                fixed_input_arrays=(\n"
+            "                    retained_input_arrays,\n"
+            "                    tuple(\n"
+            "                        (space.states, space.discrete_actions, "
             "space.continuous_actions)\n"
-            "                for space in ()"
+            "                        for space in ()"
         ),
     ),
     "solution_runtime:internal_output_reservation_omitted": (
