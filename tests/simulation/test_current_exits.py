@@ -808,7 +808,11 @@ def test_original_innovation_keys_remain_charged_until_routing(
             checkpoints.append("route")
         return host_dispatch(self, **call)
 
-    model = _hidden_offer_model(observed=False, enable_jit=True)
+    model = _hidden_offer_model(
+        observed=False,
+        enable_jit=True,
+        execution_config=ExecutionConfig(device_memory_bytes=2**26),
+    )
     solution = model.solve(params={}, log_level="off", runtime_checks=False)
     with monkeypatch.context() as capture:
         capture.setattr(SimulationRuntime, "dispatch", observe_native)
