@@ -111,16 +111,18 @@ def build_model(
                 liquid=margin,
                 states={
                     "liquid": IrregSpacedGrid(
-                        points=(425.0, 425.25)
-                        if interior
-                        else (floor + 0.25, floor + 0.5)
+                        points=np.array(
+                            (425.0, 425.25) if interior else (floor + 0.25, floor + 0.5)
+                        )
                     )
                 },
                 actions={
                     "consumption": IrregSpacedGrid(
-                        points=(424.25, 424.5, 424.75, 425.0)
-                        if interior
-                        else (0.125, 0.25, 0.5, 1.0)
+                        points=np.array(
+                            (424.25, 424.5, 424.75, 425.0)
+                            if interior
+                            else (0.125, 0.25, 0.5, 1.0)
+                        )
                     )
                 },
                 functions={
@@ -134,16 +136,20 @@ def build_model(
                         margin=margin, lower=lower if callable_floor else floor
                     )
                 },
-                solver=EGM(savings_grid=IrregSpacedGrid(points=parent_nodes)),
+                solver=EGM(savings_grid=IrregSpacedGrid(points=np.array(parent_nodes))),
             ),
             "child": ConsumptionSavingsRegime(
                 liquid=margin,
                 states={
                     "liquid": IrregSpacedGrid(
-                        points=(3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0)
+                        points=np.array([3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0])
                     )
                 },
-                actions={"consumption": IrregSpacedGrid(points=(0.25, 1.0, 3.0, 6.0))},
+                actions={
+                    "consumption": IrregSpacedGrid(
+                        points=np.array([0.25, 1.0, 3.0, 6.0])
+                    )
+                },
                 functions={
                     "utility": utility,
                     "resources": resources,
@@ -151,11 +157,15 @@ def build_model(
                 },
                 state_transitions={"liquid": child_law},
                 constraints=child_constraints,
-                solver=NBEGM(savings_grid=IrregSpacedGrid(points=(0.0, 0.5, 1.0))),
+                solver=NBEGM(
+                    savings_grid=IrregSpacedGrid(points=np.array([0.0, 0.5, 1.0]))
+                ),
             ),
             "done": Regime(
                 states={
-                    "liquid": IrregSpacedGrid(points=(4.0, 4.75, 5.5, 6.25, 7.0, 21.25))
+                    "liquid": IrregSpacedGrid(
+                        points=np.array([4.0, 4.75, 5.5, 6.25, 7.0, 21.25])
+                    )
                 },
                 functions={"utility": terminal},
             ),

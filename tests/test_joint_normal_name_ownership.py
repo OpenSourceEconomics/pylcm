@@ -462,7 +462,7 @@ def test_shared_coordinate_spelling_keeps_each_regimes_rows(
             runtime_checks=True,
             log_level="off",
         )
-        .to_dataframe(use_labels=False)
+        .to_dataframe(use_categorical_codes=True)
         .sort_values(["subject_id", "period"])
     )
     np.testing.assert_allclose(
@@ -490,7 +490,7 @@ def test_mixed_rows_publish_their_own_physical_states(
             runtime_checks=True,
             log_level="off",
         )
-        .to_dataframe(use_labels=False)
+        .to_dataframe(use_categorical_codes=True)
         .sort_values(["subject_id", "period"])
     )
     published = np.concatenate(
@@ -678,7 +678,7 @@ def test_cross_regime_input_and_publication_resolve_names_per_row(
             runtime_checks=True,
             log_level="off",
         )
-        .to_dataframe(use_labels=False)
+        .to_dataframe(use_categorical_codes=True)
         .sort_values(["subject_id", "period"])
     )
     tolerance = 128 * np.finfo(frame["value"].to_numpy().dtype).eps
@@ -740,7 +740,7 @@ def test_integer_shared_coordinate_column_keeps_joint_initial_shocks(
             runtime_checks=True,
             log_level="off",
         )
-        .to_dataframe(use_labels=False)
+        .to_dataframe(use_categorical_codes=True)
         .sort_values(["subject_id", "period"])
     )
     observed = np.concatenate(

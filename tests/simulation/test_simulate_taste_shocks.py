@@ -70,7 +70,7 @@ def test_simulated_work_frequency_converges_to_softmax_probability():
         seed=5471,
     )
 
-    df = result.to_dataframe(use_labels=False)
+    df = result.to_dataframe(use_categorical_codes=True)
     work_freq = df.query("period == 0")["work"].mean()
     expected = _reference_work_probability(
         wealth=initial_wealth, scale=scale, discount_factor=discount_factor
@@ -107,7 +107,7 @@ def test_taste_shock_draws_are_invariant_to_subject_chunking():
             log_level="debug",
             seed=5471,
         )
-        .to_dataframe(use_labels=False)
+        .to_dataframe(use_categorical_codes=True)
         for batch_size in (0, 16)
     }
 
@@ -146,6 +146,10 @@ def test_repeated_simulation_draws_identical_taste_shock_choices():
         max_compilation_workers=1,
     )
 
-    lazy_work = lazy_result.to_dataframe(use_labels=False).query("period == 0")["work"]
-    warm_work = warm_result.to_dataframe(use_labels=False).query("period == 0")["work"]
+    lazy_work = lazy_result.to_dataframe(use_categorical_codes=True).query(
+        "period == 0"
+    )["work"]
+    warm_work = warm_result.to_dataframe(use_categorical_codes=True).query(
+        "period == 0"
+    )["work"]
     np.testing.assert_array_equal(warm_work.to_numpy(), lazy_work.to_numpy())

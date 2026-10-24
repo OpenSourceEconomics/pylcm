@@ -42,7 +42,7 @@ def _literal_model(*, terminal_capacity: int | None) -> Model:
     """Keep one actual DC source beside independently declared target producers."""
     seed = _model(literal=True, parent_nodes=(-0.125, 0.5, 1.0))
     parent = seed.user_regimes["parent"].replace(
-        solver=DCEGM(savings_grid=IrregSpacedGrid(points=(-0.125, 0.5, 1.0)))
+        solver=DCEGM(savings_grid=IrregSpacedGrid(points=np.array([-0.125, 0.5, 1.0])))
     )
     if terminal_capacity is None:
         child = seed.user_regimes["child"]
@@ -60,7 +60,9 @@ def _literal_model(*, terminal_capacity: int | None) -> Model:
             "child": Regime(
                 states={
                     "liquid": IrregSpacedGrid(
-                        points=tuple(float(i) for i in range(terminal_capacity))
+                        points=np.array(
+                            tuple(float(i) for i in range(terminal_capacity))
+                        )
                     )
                 },
                 functions={"utility": _economic},

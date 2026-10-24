@@ -150,7 +150,7 @@ def test_discrete_action_regime_consumption_can_leave_the_action_grid():
         log_level="debug",
     )
     period_0 = (
-        result.to_dataframe(use_labels=False)
+        result.to_dataframe(use_categorical_codes=True)
         .query("period == 0 and regime_name == 'working_life'")
         .sort_values("subject_id")
     )

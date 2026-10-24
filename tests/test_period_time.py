@@ -1106,7 +1106,7 @@ def test_valid_clock_support_preserves_solve_and_simulation(
         seed=123,
         log_level=log_level,
     )
-    frame = simulation.to_dataframe(use_labels=False)
+    frame = simulation.to_dataframe(use_categorical_codes=True)
     assert len(frame) == 2 * n_subjects
     np.testing.assert_array_equal(
         np.sort(frame["period"].to_numpy()),

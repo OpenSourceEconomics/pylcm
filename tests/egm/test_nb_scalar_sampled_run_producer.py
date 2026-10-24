@@ -96,20 +96,28 @@ def _model(*, kind: Literal["continuous_kink", "jump"], callable_floor: bool) ->
         regimes={
             "parent": ConsumptionSavingsRegime(
                 liquid=margin,
-                states={"liquid": IrregSpacedGrid(points=(5.0, 6.0))},
-                actions={"consumption": IrregSpacedGrid(points=(0.025, 0.5, 1.0, 3.0))},
+                states={"liquid": IrregSpacedGrid(points=np.array([5.0, 6.0]))},
+                actions={
+                    "consumption": IrregSpacedGrid(
+                        points=np.array([0.025, 0.5, 1.0, 3.0])
+                    )
+                },
                 functions={**functions, "resources": _resources},
                 constraints={
                     "borrowing": post_decision_lower_bound(margin=margin, lower=0.0)
                 },
                 state_transitions={"liquid": _identity},
-                solver=EGM(savings_grid=IrregSpacedGrid(points=(0.0, 0.5, 2.0))),
+                solver=EGM(
+                    savings_grid=IrregSpacedGrid(points=np.array([0.0, 0.5, 2.0]))
+                ),
             ),
             "child": ConsumptionSavingsRegime(
                 liquid=margin,
-                states={"liquid": IrregSpacedGrid(points=(0.75, 1.5, 3.0))},
+                states={"liquid": IrregSpacedGrid(points=np.array([0.75, 1.5, 3.0]))},
                 actions={
-                    "consumption": IrregSpacedGrid(points=(0.025, 0.05, 0.25, 0.5, 1.0))
+                    "consumption": IrregSpacedGrid(
+                        points=np.array([0.025, 0.05, 0.25, 0.5, 1.0])
+                    )
                 },
                 functions={**functions, "resources": _budget, "tax": tax},
                 constraints={
@@ -120,12 +128,14 @@ def _model(*, kind: Literal["continuous_kink", "jump"], callable_floor: bool) ->
                 state_transitions={"liquid": _landing},
                 solver=NBEGM(
                     savings_grid=IrregSpacedGrid(
-                        points=(0.0, 0.5, 1.0) if callable_floor else (0.5, 1.0, 1.5)
+                        points=np.array(
+                            (0.0, 0.5, 1.0) if callable_floor else (0.5, 1.0, 1.5)
+                        )
                     )
                 ),
             ),
             "done": Regime(
-                states={"liquid": IrregSpacedGrid(points=(4.0, 5.5, 10.0))},
+                states={"liquid": IrregSpacedGrid(points=np.array([4.0, 5.5, 10.0]))},
                 functions={"utility": _terminal},
             ),
         },

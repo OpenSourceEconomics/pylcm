@@ -94,9 +94,11 @@ def _build_model(
         regimes={
             "saving": ConsumptionSavingsRegime(
                 liquid=margin,
-                states={"liquid": IrregSpacedGrid(points=(0.75, 1.5, 3.0))},
+                states={"liquid": IrregSpacedGrid(points=np.array([0.75, 1.5, 3.0]))},
                 actions={
-                    "consumption": IrregSpacedGrid(points=(0.125, 0.25, 0.5, 1.0)),
+                    "consumption": IrregSpacedGrid(
+                        points=np.array([0.125, 0.25, 0.5, 1.0])
+                    ),
                     **(
                         {"choice": DiscreteGrid(category_class=Choice)}
                         if with_discrete
@@ -113,11 +115,15 @@ def _build_model(
                 constraints={
                     "borrowing": post_decision_lower_bound(margin=margin, lower=lower)
                 },
-                solver=NBEGM(savings_grid=IrregSpacedGrid(points=(0.0, 0.5, 1.0))),
+                solver=NBEGM(
+                    savings_grid=IrregSpacedGrid(points=np.array([0.0, 0.5, 1.0]))
+                ),
             ),
             "done": Regime(
                 states={
-                    "liquid": IrregSpacedGrid(points=(4.0, 4.75, 5.5, 6.25, 7.0, 8.5))
+                    "liquid": IrregSpacedGrid(
+                        points=np.array([4.0, 4.75, 5.5, 6.25, 7.0, 8.5])
+                    )
                 },
                 functions={"utility": terminal},
             ),

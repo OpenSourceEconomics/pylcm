@@ -1607,7 +1607,7 @@ def _simulate_dedup_model(*, model: Model, params: _ModelParams):
         },
         log_level="debug",
     )
-    frame = result.to_dataframe(use_labels=False)
+    frame = result.to_dataframe(use_categorical_codes=True)
     return frame[frame["period"] == 0].sort_values("subject_id")
 
 
@@ -1797,7 +1797,7 @@ def _simulate_acting(
         },
         log_level="debug",
     )
-    frame = result.to_dataframe(use_labels=False)
+    frame = result.to_dataframe(use_categorical_codes=True)
     period_0 = frame[frame["period"] == 0]
     return {
         name: period_0[name].to_numpy().tolist() for name in ("work", "consumption")
@@ -1900,7 +1900,7 @@ def _simulate_mask_case(
         },
         log_level="debug",
     )
-    frame = result.to_dataframe(use_labels=False)
+    frame = result.to_dataframe(use_categorical_codes=True)
     period_0 = frame[frame["period"] == 0]
     return {name: period_0[name].to_numpy().tolist() for name in period_0.columns}
 
@@ -1913,12 +1913,12 @@ def _period_zero_action_views(
     action_names = tuple(raw_period.actions)
     raw = {name: raw_period.actions[name].tolist() for name in action_names}
 
-    frame = result.to_dataframe(use_labels=False)
+    frame = result.to_dataframe(use_categorical_codes=True)
     frame = frame[frame["period"] == 0].sort_values("subject_id")
     ordinary = {name: frame[name].to_numpy().tolist() for name in action_names}
 
     enriched_frame = result.to_dataframe(
-        additional_targets=["utility"], use_labels=False
+        additional_targets=["utility"], use_categorical_codes=True
     )
     enriched_frame = enriched_frame[enriched_frame["period"] == 0].sort_values(
         "subject_id"
@@ -2241,7 +2241,7 @@ def _simulate_taste_mask_case(
             log_level="debug",
             seed=409,
         )
-    frame = result.to_dataframe(use_labels=False)
+    frame = result.to_dataframe(use_categorical_codes=True)
     period_0 = frame[frame["period"] == 0]
     return {name: period_0[name].to_numpy().tolist() for name in period_0.columns}
 
@@ -2282,7 +2282,7 @@ def test_collapsing_plain_callable_dedup_keys_changes_the_published_candidate(
         solution=values,
         log_level="debug",
     )
-    frame = result.to_dataframe(use_labels=False)
+    frame = result.to_dataframe(use_categorical_codes=True)
     period_0 = frame[frame["period"] == 0].sort_values("subject_id")
 
     observed = list(
@@ -2312,12 +2312,14 @@ def test_padded_heterogeneous_candidates_remain_subject_aligned():
     assert raw.actions["work"].tolist() == [0, 1, 0]
     assert raw.actions["consumption"].tolist() == [1.0, 3.0, 1.0]
 
-    period_0 = result.to_dataframe(use_labels=False)
+    period_0 = result.to_dataframe(use_categorical_codes=True)
     period_0 = period_0[period_0["period"] == 0].sort_values("subject_id")
     assert period_0["work"].to_numpy().tolist() == [0, 1, 0]
     assert period_0["consumption"].to_numpy().tolist() == [1.0, 3.0, 1.0]
 
-    enriched = result.to_dataframe(additional_targets=["utility"], use_labels=False)
+    enriched = result.to_dataframe(
+        additional_targets=["utility"], use_categorical_codes=True
+    )
     enriched = enriched[enriched["period"] == 0].sort_values("subject_id")
     assert enriched["work"].to_numpy().tolist() == [0, 1, 0]
     assert enriched["consumption"].to_numpy().tolist() == [1.0, 3.0, 1.0]
@@ -2340,7 +2342,9 @@ def test_additional_targets_preserve_unbatched_selected_candidates():
     assert raw.actions["work"].tolist() == [0, 1, 0]
     assert raw.actions["consumption"].tolist() == [1.0, 3.0, 1.0]
 
-    frame = result.to_dataframe(additional_targets=["utility"], use_labels=False)
+    frame = result.to_dataframe(
+        additional_targets=["utility"], use_categorical_codes=True
+    )
     period_0 = frame[frame["period"] == 0].sort_values("subject_id")
     assert period_0["work"].to_numpy().tolist() == [0, 1, 0]
     assert period_0["consumption"].to_numpy().tolist() == [1.0, 3.0, 1.0]
@@ -2418,9 +2422,11 @@ def _simulate_zero_weight_fold(model: Model) -> tuple[list[int], list[int], list
         seed=409,
     )
     raw = result.raw_results["src"][0].actions["work"].tolist()
-    frame = result.to_dataframe(use_labels=False)
+    frame = result.to_dataframe(use_categorical_codes=True)
     frame = frame[frame["period"] == 0].sort_values("subject_id")
-    enriched = result.to_dataframe(additional_targets=["utility"], use_labels=False)
+    enriched = result.to_dataframe(
+        additional_targets=["utility"], use_categorical_codes=True
+    )
     enriched = enriched[enriched["period"] == 0].sort_values("subject_id")
     return (
         raw,
@@ -2496,7 +2502,9 @@ def _simulate_seeded_taste_routing(*, model: Model) -> tuple[list[int], list[int
         seed=409,
     )
     raw = result.raw_results["acting"][0].actions["work"].tolist()
-    frame = result.to_dataframe(additional_targets=["utility"], use_labels=False)
+    frame = result.to_dataframe(
+        additional_targets=["utility"], use_categorical_codes=True
+    )
     period_0 = frame[frame["period"] == 0].sort_values("subject_id")
     return raw, period_0["work"].to_numpy().tolist()
 

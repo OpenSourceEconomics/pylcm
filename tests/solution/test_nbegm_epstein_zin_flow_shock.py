@@ -44,15 +44,17 @@ _LIQUID_GRID = LinSpacedGrid(start=0.5, stop=20.0, n_points=15)
 # the value is first-order in the action-grid gap — a dense grid alone leaves
 # the brute reference visibly below the true corner value.
 _CONSUMPTION_GRID = IrregSpacedGrid(
-    points=tuple(
-        np.unique(
-            np.concatenate(
-                [
-                    np.linspace(0.1, 21.0, 160),
-                    np.linspace(0.5, 20.0, 15) + _BASE_INCOME,
-                ]
-            )
-        ).tolist()
+    points=np.array(
+        tuple(
+            np.unique(
+                np.concatenate(
+                    [
+                        np.linspace(0.1, 21.0, 160),
+                        np.linspace(0.5, 20.0, 15) + _BASE_INCOME,
+                    ]
+                )
+            ).tolist()
+        )
     )
 )
 _SAVINGS_GRID = LinSpacedGrid(start=0.0, stop=18.0, n_points=80)

@@ -46,12 +46,14 @@ from tests.solution._nb_query_resource_oracle import (
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
-_LIQUID = IrregSpacedGrid(points=(0.0, 0.25, 0.5, 0.75, 1.0, 2.0, 4.0, 8.0))
-_STOCK = IrregSpacedGrid(points=(0.0, 1.0))
+_LIQUID = IrregSpacedGrid(points=np.array([0.0, 0.25, 0.5, 0.75, 1.0, 2.0, 4.0, 8.0]))
+_STOCK = IrregSpacedGrid(points=np.array([0.0, 1.0]))
 _OUTER = (0.0, 0.5, 1.0)
-_SAVINGS = IrregSpacedGrid(points=(0.0, 0.25, 0.5, 1.0, 2.0, 4.0))
-_CONSUMPTION = IrregSpacedGrid(points=(0.125, 0.25, 0.5, 0.75, 1.0, 2.0, 4.0, 8.0))
-_INVESTMENT = IrregSpacedGrid(points=(-1.0, -0.5, 0.0, 0.5, 1.0))
+_SAVINGS = IrregSpacedGrid(points=np.array([0.0, 0.25, 0.5, 1.0, 2.0, 4.0]))
+_CONSUMPTION = IrregSpacedGrid(
+    points=np.array([0.125, 0.25, 0.5, 0.75, 1.0, 2.0, 4.0, 8.0])
+)
+_INVESTMENT = IrregSpacedGrid(points=np.array([-1.0, -0.5, 0.0, 0.5, 1.0]))
 PARAMS = {
     "parent": {"koopmans_aggregator": {"discount_factor": 0.5}},
     "child": {"koopmans_aggregator": {"discount_factor": 0.0}},
@@ -194,7 +196,9 @@ def make_model(
         ),
         solver=NNBEGM(
             inner=NBEGM(savings_grid=_SAVINGS),
-            outer_search=FiniteOuterGrid(grid=IrregSpacedGrid(points=outer_nodes)),
+            outer_search=FiniteOuterGrid(
+                grid=IrregSpacedGrid(points=np.array(outer_nodes))
+            ),
         ),
     )
     child = ConsumptionSavingsRegime(

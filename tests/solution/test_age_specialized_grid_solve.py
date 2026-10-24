@@ -409,7 +409,7 @@ def test_builtin_grids_are_never_weak_typed():
     for built_in in (
         LinSpacedGrid(start=0.0, stop=1.0, n_points=3),
         LogSpacedGrid(start=1.0, stop=10.0, n_points=3),
-        IrregSpacedGrid(points=[0.0, 0.5, 1.0]),
+        IrregSpacedGrid(points=np.array([0.0, 0.5, 1.0])),
     ):
         assert not built_in.to_jax().weak_type
 
@@ -499,7 +499,7 @@ def test_grid_mode_switch_across_ages_is_rejected():
 
     def build(age):
         if age == 20:
-            return IrregSpacedGrid(points=[0.5, 5.0, 25.0])
+            return IrregSpacedGrid(points=np.array([0.5, 5.0, 25.0]))
         return IrregSpacedGrid(n_points=3)  # points supplied at runtime
 
     grid = AgeSpecializedGrid(build=build, signature=lambda age: age == 20)

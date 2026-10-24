@@ -15,8 +15,9 @@ precision.
 
 import math
 from fractions import Fraction
-from functools import partial
+from functools import partial, wraps
 from types import MappingProxyType
+from typing import cast
 
 import jax
 import jax.numpy as jnp
@@ -49,6 +50,7 @@ from lcm import (
     JointTransition,
     LinSpacedGrid,
     Model,
+    ParetoObjective,
     Periods,
     Phased,
     ProjectedRegimeValue,
@@ -134,11 +136,13 @@ def _value_grid_model(*, enable_jit: bool) -> Model:
     working_life = UserRegime(
         actions={
             "labor_supply": DiscreteGrid(category_class=LaborSupply),
-            "consumption": DiscreteGrid(values=[1.0, 2.0]),
+            "consumption": DiscreteGrid(values=np.array([1.0, 2.0])),
         },
         states={
             "wealth": DiscreteGrid(
-                values=[_WEALTH_OFFSET, _WEALTH_OFFSET + 1, _WEALTH_OFFSET + 2]
+                values=np.array(
+                    [_WEALTH_OFFSET, _WEALTH_OFFSET + 1, _WEALTH_OFFSET + 2]
+                )
             )
         },
         state_transitions={"wealth": _next_wealth},
@@ -212,7 +216,8 @@ def _simulated_codes(model: Model) -> pd.DataFrame:
         initial_conditions=_INITIAL_CONDITIONS,
         seed=0,
         log_level="off",
-    ).to_dataframe(use_labels=False)
+        use_categorical_codes=True,
+    ).to_dataframe(use_categorical_codes=True)
     return frame.sort_values(["subject_id", "period"]).reset_index(drop=True)
 
 
@@ -239,7 +244,7 @@ def test_value_grid_tolerance_enters_the_model_fingerprint():
     tolerant = regime.replace(
         actions={
             **dict(regime.actions),
-            "consumption": DiscreteGrid(values=[1.0, 2.0], tolerance=1e-6),
+            "consumption": DiscreteGrid(values=np.array([1.0, 2.0]), tolerance=1e-6),
         }
     )
     ages = AgeGrid(start=50, inclusive_stop=50 + (_N_PERIODS - 1) * 10, step="10Y")
@@ -253,7 +258,7 @@ def test_value_grid_tolerance_enters_the_model_fingerprint():
     assert other._model_structure_fingerprint != model._model_structure_fingerprint
 
 
-_WEALTH = DiscreteGrid(values=[10, 11, 12])
+_WEALTH = DiscreteGrid(values=np.array([10, 11, 12]))
 _VALUE_GRIDS = MappingProxyType({"wealth": _WEALTH})
 
 
@@ -343,12 +348,11 @@ def test_model_refuses_one_name_with_different_values():
                     functions={"utility": lambda: 0.0},
                 ),
                 "b": UserRegime(
-                    states={"wealth": DiscreteGrid(values=[0, 1, 2])},
+                    states={"wealth": DiscreteGrid(values=np.array([0, 1, 2]))},
                     state_transitions={"wealth": _identity_wealth},
                     functions={"utility": lambda: 0.0},
                 ),
             },
-            laws={},
             derived_categoricals={},
         )
 
@@ -370,7 +374,10 @@ def test_fixed_value_grid_state_repeats_the_reference_per_value(law):
     model = _value_grid_model(enable_jit=True)
     regime = model.user_regimes["working_life"]
     with_bracket = regime.replace(
-        states={**dict(regime.states), "bracket": DiscreteGrid(values=[5, 7])},
+        states={
+            **dict(regime.states),
+            "bracket": DiscreteGrid(values=np.array([5, 7])),
+        },
         state_transitions={**dict(regime.state_transitions), "bracket": law},
         functions={**dict(regime.functions), "utility": _utility_with_bracket},
     )
@@ -402,8 +409,8 @@ def _utility_with_bracket(
     )
 
 
-def test_model_refuses_an_age_specialized_function_beside_a_value_grid():
-    """An age-specialized function in a regime with value grids is refused."""
+def test_an_age_specialized_function_beside_a_value_grid_solves_as_unmarked():
+    """An age-specialized function reads the values of a value grid."""
     model = _value_grid_model(enable_jit=True)
     regime = model.user_regimes["working_life"]
     specialized = regime.replace(
@@ -414,8 +421,18 @@ def test_model_refuses_an_age_specialized_function_beside_a_value_grid():
             ),
         }
     )
-    with pytest.raises(RegimeInitializationError, match="age-specialized"):
-        _model_with(working_life=specialized)
+    got, expected = (
+        candidate.solve(params=_PARAMS, log_level="off").values
+        for candidate in (_model_with(working_life=specialized), model)
+    )
+    pairs = [
+        (np.asarray(got[period][regime]), np.asarray(expected[period][regime]))
+        for period in expected
+        for regime in expected[period]
+    ]
+    assert len(pairs) == sum(len(regimes) for regimes in got.values())
+    for got_values, expected_values in pairs:
+        np.testing.assert_array_equal(got_values, expected_values)
 
 
 def _model_with(*, working_life: UserRegime) -> Model:
@@ -597,7 +614,7 @@ def test_law_reading_a_sibling_next_state_is_checked_as_the_solve_composes_it():
     """
     regime = _value_grid_model(enable_jit=True).user_regimes["working_life"]
     with_room = regime.replace(
-        states={**dict(regime.states), "room": DiscreteGrid(values=[0, 1])},
+        states={**dict(regime.states), "room": DiscreteGrid(values=np.array([0, 1]))},
         state_transitions={"wealth": _next_wealth_by_room, "room": _next_room},
         functions={**dict(regime.functions), "utility": _utility_with_room},
     )
@@ -678,7 +695,7 @@ def test_koopmans_aggregator_reads_the_value_of_a_derived_categorical(
     )
     working = UserRegime(
         functions={"utility": _zero_utility, "bonus": bonus},
-        derived_categoricals={"bonus": DiscreteGrid(values=nodes)},
+        derived_categoricals={"bonus": DiscreteGrid(values=np.array(nodes))},
         koopmans_aggregator=None if location == "model" else declaration,
     )
     model = _one_period_model(
@@ -710,7 +727,7 @@ def test_decoupled_objective_selects_by_the_values_of_an_action(
         return jnp.asarray(hours, dtype=float) + 0.0 * utility + 0.0 * CE
 
     working = UserRegime(
-        actions={"hours": DiscreteGrid(values=nodes)},
+        actions={"hours": DiscreteGrid(values=np.array(nodes))},
         functions={"utility": _utility_of_hours},
         koopmans_aggregator=Decoupled(
             objective=Phased(solve=select, simulate=select) if phased else select,
@@ -739,7 +756,7 @@ def test_one_function_in_both_phases_keeps_the_feasible_set(
         return h > 0.0
 
     working = UserRegime(
-        states={"hours": DiscreteGrid(values=nodes)},
+        states={"hours": DiscreteGrid(values=np.array(nodes))},
         state_transitions={"hours": fixed_transition("hours")},
         functions={
             "h": (
@@ -776,7 +793,7 @@ def _case_regime(*, nodes, value_side: str) -> UserRegime:
     return UserRegime(
         states={
             "wealth": LinSpacedGrid(start=1, stop=2, n_points=2),
-            "hours": DiscreteGrid(values=nodes),
+            "hours": DiscreteGrid(values=np.array(nodes)),
         },
         state_transitions={
             "wealth": fixed_transition("wealth"),
@@ -815,60 +832,6 @@ def test_case_pieces_survive_three_reuses_of_a_finalized_regime(
         )
 
 
-def _working_hours_utility(*, hours: DiscreteState) -> FloatND:
-    return jnp.asarray(hours, dtype=float)
-
-
-def _law_at_zero(*, hours: DiscreteState) -> ScalarInt:
-    return jnp.where(hours <= 15, _WorkingDead.working, _WorkingDead.dead)
-
-
-def _law_at_one(*, hours: DiscreteState) -> ScalarInt:
-    return jnp.full_like(hours, _WorkingDead.dead, dtype=jnp.int32)
-
-
-def _flat_law(*, hours: DiscreteState, age: float) -> ScalarInt:
-    return jnp.where(
-        (age == 0) & (hours <= 15), _WorkingDead.working, _WorkingDead.dead
-    )
-
-
-@pytest.mark.parametrize("law_form", ["flat", "by_age"])
-def test_regime_transition_law_reading_a_value_grid_is_refused_in_any_form(law_form):
-    """A regime law that reads a value grid is refused, flat or scheduled by age."""
-    law = (
-        DeterministicTransition(func=_flat_law)
-        if law_form == "flat"
-        else ByAge(
-            cases={
-                0: DeterministicTransition(func=_law_at_zero),
-                1: DeterministicTransition(func=_law_at_one),
-            }
-        )
-    )
-    working = UserRegime(
-        states={"hours": DiscreteGrid(values=[10, 20])},
-        state_transitions={"hours": fixed_transition("hours")},
-        functions={"utility": _working_hours_utility},
-    )
-    with pytest.raises(RegimeInitializationError, match="regime transition law"):
-        Model(
-            regimes={
-                "working": working,
-                "dead": UserRegime(functions={"utility": _zero_utility}),
-            },
-            regime_id_class=_WorkingDead,
-            ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
-            initial_nodes={0: "working"},
-            edges={
-                "working": Transition(
-                    targets={"working": (0,), "dead": (0, 1)}, law=law
-                )
-            },
-            enable_jit=False,
-        )
-
-
 def _bonus_regime(kind: str) -> UserRegime:
     def integer_bonus() -> FloatND:
         return jnp.int32(20)
@@ -886,7 +849,7 @@ def _bonus_regime(kind: str) -> UserRegime:
         },
         derived_categoricals={
             "bonus": DiscreteGrid(
-                values=[10, 20] if kind == "integer" else [10.0, 20.0]
+                values=np.array([10, 20] if kind == "integer" else [10.0, 20.0])
             )
         },
     )
@@ -949,43 +912,50 @@ def _impute_twenty() -> DiscreteState:
     return jnp.int32(20)
 
 
-def test_an_imputation_reading_a_value_grid_is_refused():
-    """A carried state's solve imputation that reads a value grid is refused."""
-    working = UserRegime(
-        states={
-            "hours": DiscreteGrid(values=[10, 20]),
-            "earnings": Phased(
-                solve=_hours_as_float,
-                simulate=LinSpacedGrid(start=0, stop=30, n_points=2),
-            ),
-        },
-        state_transitions={
-            "hours": fixed_transition("hours"),
-            "earnings": fixed_transition("earnings"),
-        },
-        functions={"utility": _earnings_utility},
-    )
-    with pytest.raises(RegimeInitializationError, match="imputation"):
-        _one_period_model(working=working, enable_jit=False)
+def _impute_high_code() -> DiscreteState:
+    return jnp.int32(1)
 
 
-def test_an_imputed_value_grid_state_is_refused():
-    """A carried state declared with values in its simulate phase is refused."""
-    working = UserRegime(
-        states={
-            "wealth": LinSpacedGrid(start=0, stop=30, n_points=4),
-            "hours": Phased(
-                solve=_impute_twenty, simulate=DiscreteGrid(values=[10, 20])
+def _hours_of_code_as_float(*, hours: DiscreteState) -> FloatND:
+    return jnp.asarray(jnp.asarray([10.0, 20.0])[hours], dtype=float)
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_an_imputed_value_grid_state_matches_its_twin_on_codes(*, enable_jit):
+    """An imputation returning a value lands on that value's code."""
+    got, expected = (
+        _one_period_model(
+            working=UserRegime(
+                states={
+                    "wealth": LinSpacedGrid(start=0, stop=30, n_points=4),
+                    "hours": Phased(
+                        solve=_impute_twenty if values else _impute_high_code,
+                        simulate=DiscreteGrid(values=np.array([10, 20]))
+                        if values
+                        else DiscreteGrid(category_class=_HoursCodes),
+                    ),
+                },
+                state_transitions={
+                    "wealth": _hours_as_float if values else _hours_of_code_as_float,
+                    "hours": fixed_transition("hours"),
+                },
+                functions={"utility": _wealth_utility},
             ),
-        },
-        state_transitions={
-            "wealth": _hours_as_float,
-            "hours": fixed_transition("hours"),
-        },
-        functions={"utility": _wealth_utility},
+            enable_jit=enable_jit,
+            n_periods=2,
+        )
+        .solve(params={"discount_factor": 1.0}, log_level="off")
+        .values
+        for values in (True, False)
     )
-    with pytest.raises(RegimeInitializationError, match="imputation"):
-        _one_period_model(working=working, enable_jit=False, n_periods=2)
+    pairs = [
+        (np.asarray(got[period][regime]), np.asarray(expected[period][regime]))
+        for period in expected
+        for regime in expected[period]
+    ]
+    assert len(pairs) == sum(len(regimes) for regimes in got.values())
+    for got_values, expected_values in pairs:
+        np.testing.assert_array_equal(got_values, expected_values)
 
 
 def _wealth_utility(*, wealth: ContinuousState) -> FloatND:
@@ -1006,7 +976,7 @@ def _imputation_regime(*, nodes, marked, category_control=False) -> UserRegime:
         grid = DiscreteGrid(category_class=_HoursCodes)
     else:
         impute = _hours_as_float
-        grid = DiscreteGrid(values=nodes)
+        grid = DiscreteGrid(values=np.array(nodes))
     return UserRegime(
         states={
             "hours": grid,
@@ -1023,16 +993,26 @@ def _imputation_regime(*, nodes, marked, category_control=False) -> UserRegime:
     )
 
 
+@pytest.mark.parametrize("marked", [False, True])
 @pytest.mark.parametrize("nodes", _NODE_PAIRS)
-@pytest.mark.parametrize("marked", [False, True], ids=["plain", "age-specialized"])
-def test_an_imputation_reading_a_value_grid_is_refused_in_any_spelling(
-    *, nodes, marked
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_an_imputation_reading_a_value_grid_matches_its_twin_on_codes(
+    *, nodes, enable_jit, marked
 ):
-    """The refusal holds whether or not the imputation is age-specialized."""
-    with pytest.raises(RegimeInitializationError, match=r"imputation.*earnings"):
-        _one_period_model(
-            working=_imputation_regime(nodes=nodes, marked=marked), enable_jit=False
+    """A carried state's imputation reads the values of a value grid."""
+    got, expected = (
+        _first_values(
+            model=_one_period_model(
+                working=_imputation_regime(
+                    nodes=nodes, marked=marked, category_control=category_control
+                ),
+                enable_jit=enable_jit,
+            ),
+            params={"discount_factor": 1.0},
         )
+        for category_control in (False, True)
+    )
+    np.testing.assert_array_equal(got, expected)
 
 
 @pytest.mark.parametrize("nodes", _NODE_PAIRS)
@@ -1052,16 +1032,21 @@ def test_an_age_specialized_imputation_of_category_codes_still_solves(
 
 
 @pytest.mark.parametrize("nodes", _NODE_PAIRS)
-def test_a_phased_age_specialized_utility_beside_a_value_grid_is_refused(nodes):
-    """An age-specialized utility inside `Phased` is refused beside a value grid."""
+def test_a_phased_age_specialized_utility_beside_a_value_grid_reads_values(nodes):
+    """An age-specialized utility inside `Phased` receives each node's value."""
     marker = _specialize(_hours_as_float)
     working = UserRegime(
-        states={"hours": DiscreteGrid(values=nodes)},
+        states={"hours": DiscreteGrid(values=np.array(nodes))},
         state_transitions={"hours": fixed_transition("hours")},
         functions={"utility": Phased(solve=marker, simulate=marker)},
     )
-    with pytest.raises(RegimeInitializationError, match=r"age-specialized.*utility"):
-        _one_period_model(working=working, enable_jit=False)
+    np.testing.assert_array_equal(
+        _first_values(
+            model=_one_period_model(working=working, enable_jit=False),
+            params={"discount_factor": 1.0},
+        ),
+        np.asarray(nodes, dtype=float),
+    )
 
 
 def _choice_utility(*, choice: DiscreteAction) -> FloatND:
@@ -1082,7 +1067,7 @@ def _constraint_regime(*, nodes, category_control=False) -> UserRegime:
         def available(*, hours: DiscreteState, choice: DiscreteAction) -> BoolND:
             return (choice == 0) | (hours >= threshold)
 
-        grid = DiscreteGrid(values=nodes)
+        grid = DiscreteGrid(values=np.array(nodes))
     return UserRegime(
         states={"hours": grid},
         state_transitions={"hours": fixed_transition("hours")},
@@ -1093,10 +1078,12 @@ def _constraint_regime(*, nodes, category_control=False) -> UserRegime:
 
 
 @pytest.mark.parametrize("nodes", _NODE_PAIRS)
-def test_an_age_specialized_constraint_beside_a_value_grid_is_refused(nodes):
-    """An age-specialized constraint is refused in a regime with value grids."""
-    with pytest.raises(RegimeInitializationError, match=r"age-specialized.*available"):
-        _one_period_model(working=_constraint_regime(nodes=nodes), enable_jit=False)
+def test_an_age_specialized_constraint_beside_a_value_grid_reads_values(nodes):
+    """An age-specialized constraint compares each node's value to the threshold."""
+    model = _one_period_model(working=_constraint_regime(nodes=nodes), enable_jit=False)
+    np.testing.assert_array_equal(
+        _first_values(model=model, params={"discount_factor": 1.0}), [0.0, 1.0]
+    )
 
 
 @pytest.mark.parametrize("enable_jit", [False, True])
@@ -1111,9 +1098,8 @@ def test_an_age_specialized_constraint_on_category_codes_still_solves(enable_jit
     )
 
 
-@pytest.mark.parametrize("phased", [False, True])
-def test_a_model_level_derived_value_grid_counts_for_the_refusals(phased):
-    """A derived value grid declared on the model makes its regimes refuse markers."""
+def test_a_model_level_derived_value_grid_counts_for_the_refusals():
+    """A model-level derived value grid makes its regimes refuse conditions."""
 
     def bonus() -> DiscreteState:
         return jnp.int32(20)
@@ -1121,18 +1107,14 @@ def test_a_model_level_derived_value_grid_counts_for_the_refusals(phased):
     def utility(*, bonus: DiscreteState) -> FloatND:
         return jnp.asarray(bonus, dtype=float)
 
-    marker = _specialize(utility)
     working = UserRegime(
-        functions={
-            "bonus": bonus,
-            "utility": Phased(solve=marker, simulate=marker) if phased else marker,
-        }
+        functions={"bonus": bonus, "utility": utility},
+        constraints={"enough": ref("bonus") >= 15},
     )
-    with pytest.raises(RegimeInitializationError, match=r"age-specialized.*utility"):
+    with pytest.raises(RegimeInitializationError, match=r"condition.*enough"):
         collect_value_grids(
             regimes={"working": working},
-            laws={},
-            derived_categoricals={"bonus": DiscreteGrid(values=[10, 20])},
+            derived_categoricals={"bonus": DiscreteGrid(values=np.array([10, 20]))},
         )
 
 
@@ -1578,7 +1560,7 @@ def _u_single_terminal(*, wealth: ContinuousState, kind: DiscreteState) -> Float
 def test_phased_stakeholder_utility_beside_a_value_grid_elsewhere_builds(*, enable_jit):
     """A value grid in another regime leaves the household's `Phased` body alone."""
     wealth = LinSpacedGrid(start=1.0, stop=3.0, n_points=3)
-    kind = DiscreteGrid(values=[10, 20])
+    kind = DiscreteGrid(values=np.array([10, 20]))
     phased = Phased(solve=_u_m, simulate=_u_m_simulate)
     model = Model(
         regimes={
@@ -1772,7 +1754,7 @@ def test_checked_simulation_accepts_a_source_only_markov_draw(
         seed=19,
         log_level="off",
         runtime_checks=True,
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
     source = panel.loc[panel["period"] == 0]
     target = panel.loc[panel["period"] == 1]
     assert len(source) == len(target) == 3
@@ -2242,7 +2224,7 @@ def test_on_grid_phased_law_behind_a_value_gate_simulates_to_the_target(*, enabl
         seed=3,
         log_level="off",
         runtime_checks=True,
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
     later = panel.loc[panel["period"] == 1].sort_values("subject_id")
     assert later["regime_name"].tolist() == ["target", "target"]
     np.testing.assert_array_equal(later["kind"].to_numpy(), [0, 1])
@@ -2343,7 +2325,7 @@ def _simulate_between_nodes(
         seed=3,
         log_level="off",
         runtime_checks=True,
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
 
 
 @pytest.mark.parametrize("enable_jit", [False, True])
@@ -2529,3 +2511,452 @@ def test_drawn_code_count_refuses_codes_that_are_not_signed_integers(*, codes):
             subjects=jnp.ones(3, dtype=bool),
             new_regime_ids=jnp.ones(3, dtype=jnp.int32),
         )
+
+
+# A reader of a value grid and the same reader on category codes. The value
+# model declares `income` by its values; the code twin declares a category
+# class and converts each code by hand before it calls the same function. Both
+# models must give identical V and identical simulated codes.
+
+_INCOME_VALUES = (1.0, 2.0, 4.0)
+
+
+def _income_of_code(code: DiscreteState) -> FloatND:
+    return jnp.asarray(_INCOME_VALUES)[code]
+
+
+def _on_codes[F: UserFunction](func: F) -> F:
+    """The same function, reading `income` as a code and converting it by hand."""
+
+    @wraps(func)
+    def on_codes(**kwargs):
+        return func(**{**kwargs, "income": _income_of_code(kwargs["income"])})
+
+    return cast("F", on_codes)
+
+
+def _as_declared[F: UserFunction](func: F) -> F:
+    return func
+
+
+def _income_grid(*, values: bool) -> DiscreteGrid:
+    if values:
+        return DiscreteGrid(values=np.array(_INCOME_VALUES))
+    return DiscreteGrid(category_class=_ThreeCodes)
+
+
+def _income_utility(*, income: DiscreteState, a: DiscreteAction) -> FloatND:
+    return income * a + 0.5 * (1 - a)
+
+
+def _survives_deterministically(*, income: DiscreteState, age: float) -> ScalarInt:
+    return jnp.where(
+        (age == 0) & (income >= 2.0), _WorkingDead.working, _WorkingDead.dead
+    )
+
+
+def _survives_at_high_income(*, income: DiscreteState) -> ScalarInt:
+    return jnp.where(income >= 2.0, _WorkingDead.working, _WorkingDead.dead)
+
+
+def _survival_probability(*, income: DiscreteState) -> FloatND:
+    return income / 5.0
+
+
+def _death_probability(*, income: DiscreteState) -> FloatND:
+    return 1.0 - income / 5.0
+
+
+def _survival_vector(*, income: DiscreteState) -> FloatND:
+    return jnp.stack([income / 5.0, 1.0 - income / 5.0])
+
+
+def _regime_law(*, form: str, values: bool):
+    convert = _as_declared if values else _on_codes
+    return {
+        "deterministic": DeterministicTransition(
+            func=convert(_survives_deterministically)
+        ),
+        "by_age_deterministic": ByAge(
+            cases={
+                0: DeterministicTransition(func=convert(_survives_at_high_income)),
+                1: "dead",
+            }
+        ),
+        # The last working age has one exit, so the stochastic forms are
+        # scheduled by age.
+        "per_target": ByAge(
+            cases={
+                0: {
+                    "working": StochasticTransition(
+                        func=convert(_survival_probability)
+                    ),
+                    "dead": StochasticTransition(func=convert(_death_probability)),
+                },
+                1: "dead",
+            }
+        ),
+        "phased_vector": ByAge(
+            cases={
+                0: Phased(
+                    solve=StochasticTransition(func=convert(_survival_vector)),
+                    simulate=StochasticTransition(func=convert(_survival_vector)),
+                ),
+                1: "dead",
+            }
+        ),
+    }[form]
+
+
+def _income_model(*, working: UserRegime, law, enable_jit: bool = True) -> Model:
+    return Model(
+        regimes={
+            "working": working,
+            "dead": UserRegime(functions={"utility": _zero_utility}),
+        },
+        regime_id_class=_WorkingDead,
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
+        initial_nodes={0: "working"},
+        edges={
+            "working": Transition(targets={"working": (0,), "dead": (0, 1)}, law=law)
+        },
+        enable_jit=enable_jit,
+    )
+
+
+def _income_regime(*, values: bool, **slots) -> UserRegime:
+    convert = _as_declared if values else _on_codes
+    return UserRegime(
+        states={"income": _income_grid(values=values)},
+        state_transitions={"income": fixed_transition("income")},
+        actions={"a": DiscreteGrid(category_class=_TwoCodes)},
+        functions={"utility": convert(_income_utility)},
+        **slots,
+    )
+
+
+_INCOME_PARAMS: UserParams = {"discount_factor": 0.9}
+
+
+def _assert_identical_solutions_and_simulations(
+    *,
+    got: Model,
+    expected: Model,
+    params: UserParams = _INCOME_PARAMS,
+    regime_id: ScalarInt = _WorkingDead.working,
+) -> None:
+    got_solution = got.solve(params=params, log_level="off")
+    expected_solution = expected.solve(params=params, log_level="off")
+    pairs = [
+        (
+            np.asarray(got_solution.values[period][regime]),
+            np.asarray(expected_solution.values[period][regime]),
+        )
+        for period in expected_solution.values
+        for regime in expected_solution.values[period]
+    ]
+    assert len(pairs) == sum(len(r) for r in got_solution.values.values())
+    for got_values, expected_values in pairs:
+        np.testing.assert_array_equal(got_values, expected_values)
+    initial_conditions = {
+        "income": jnp.asarray([0, 1, 2, 2, 1, 0], dtype=jnp.int32),
+        "age": jnp.zeros(6),
+        "regime_id": jnp.full(6, regime_id),
+    }
+    frames = [
+        model.simulate(
+            params=params,
+            initial_conditions=initial_conditions,
+            solution=solution,
+            seed=3,
+            log_level="off",
+            use_categorical_codes=True,
+        )
+        .to_dataframe(use_categorical_codes=True)
+        .sort_values(["subject_id", "period"])
+        .reset_index(drop=True)
+        for model, solution in ((got, got_solution), (expected, expected_solution))
+    ]
+    assert_frame_equal(frames[0], frames[1])
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+@pytest.mark.parametrize(
+    "form", ["deterministic", "by_age_deterministic", "per_target", "phased_vector"]
+)
+def test_regime_transition_law_reads_the_values_of_a_value_grid(*, form, enable_jit):
+    """A regime law reading a value grid matches its twin on converted codes."""
+    got, expected = (
+        _income_model(
+            working=_income_regime(values=values),
+            law=_regime_law(form=form, values=values),
+            enable_jit=enable_jit,
+        )
+        for values in (True, False)
+    )
+    _assert_identical_solutions_and_simulations(got=got, expected=expected)
+
+
+def _scaled_income_utility(
+    *, income: DiscreteState, a: DiscreteAction, scale: float = 1.0
+) -> FloatND:
+    return scale * income * a + 0.5 * (1 - a)
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_partial_user_function_reading_a_value_grid_keeps_its_bound_arguments(
+    *, enable_jit
+):
+    """A `partial` reading values asks for no parameter its keywords fix."""
+    got, expected = (
+        _income_model(
+            working=_income_regime(values=values).replace(
+                functions={
+                    "utility": partial(
+                        _scaled_income_utility
+                        if values
+                        else _on_codes(_scaled_income_utility),
+                        scale=2.0,
+                    )
+                }
+            ),
+            law=_regime_law(form="per_target", values=values),
+            enable_jit=enable_jit,
+        )
+        for values in (True, False)
+    )
+    _assert_identical_solutions_and_simulations(got=got, expected=expected)
+
+
+def _float_grid_built_without_x64() -> DiscreteGrid:
+    previous = jax.config.read("jax_enable_x64")
+    jax.config.update("jax_enable_x64", val=False)
+    try:
+        return DiscreteGrid(values=np.array([0.1, 0.7]))
+    finally:
+        jax.config.update("jax_enable_x64", val=previous)
+
+
+@pytest.mark.usefixtures("x64_enabled")
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_float_value_grid_built_before_x64_holds_float64_values_in_the_model(
+    *, enable_jit
+):
+    """A float64 model reads float64 values of a grid built while x64 was off."""
+    working = UserRegime(
+        states={"hours": _float_grid_built_without_x64()},
+        state_transitions={"hours": fixed_transition("hours")},
+        functions={"utility": _hours_as_float},
+    )
+    got = _first_values(
+        model=_one_period_model(working=working, enable_jit=enable_jit),
+        params={"discount_factor": 1.0},
+    )
+    np.testing.assert_array_equal(got, np.asarray([0.1, 0.7], dtype=np.float64))
+
+
+def _income_utility_f(*, income: DiscreteState, a: DiscreteAction) -> FloatND:
+    return income * a + 0.5 * (1 - a)
+
+
+def _income_utility_m(*, income: DiscreteState, a: DiscreteAction) -> FloatND:
+    return 0.5 * income * (1 - a) + a
+
+
+def _income_utility_terminal(*, income: DiscreteState) -> FloatND:
+    return 0.25 * income
+
+
+def _weight_f(*, income: DiscreteState) -> FloatND:
+    """At income 4 the household works: `3.5 * 0.16 > 0.5`; at its code 2 not."""
+    return income**2 / 100.0
+
+
+def _participation_at_income(
+    *, Q_f: FloatND, a: DiscreteAction, income: DiscreteState
+) -> BoolND:
+    return (a == 0) | (Q_f >= 2.0 * income - 3.0)
+
+
+def _couple_regime(*, values: bool, terminal: bool) -> UserRegime:
+    convert = _as_declared if values else _on_codes
+    if terminal:
+        return UserRegime(
+            states={"income": _income_grid(values=values)},
+            functions={
+                "utility": CollectiveUtility(
+                    utilities={
+                        "f": convert(_income_utility_terminal),
+                        "m": convert(_income_utility_terminal),
+                    }
+                )
+            },
+        )
+    return UserRegime(
+        states={"income": _income_grid(values=values)},
+        state_transitions={"income": fixed_transition("income")},
+        actions={"a": DiscreteGrid(category_class=_TwoCodes)},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={
+                    "f": convert(_income_utility_f),
+                    "m": convert(_income_utility_m),
+                },
+                objective=ParetoObjective(weights={"f": convert(_weight_f), "m": 0.5}),
+            )
+        },
+        constraints={
+            "participation": ValueDependentConstraint(
+                predicate=convert(_participation_at_income)
+            )
+        },
+    )
+
+
+def _couple_model(*, values: bool, enable_jit: bool) -> Model:
+    convert = _as_declared if values else _on_codes
+    law = ByAge(
+        cases={
+            0: {
+                "couple": StochasticTransition(func=convert(_survival_probability)),
+                "couple_terminal": StochasticTransition(
+                    func=convert(_death_probability)
+                ),
+            },
+            1: "couple_terminal",
+        }
+    )
+    return Model(
+        regimes={
+            "couple": _couple_regime(values=values, terminal=False),
+            "couple_terminal": _couple_regime(values=values, terminal=True),
+        },
+        regime_id_class=_CoupleTerminal,
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
+        initial_nodes={0: "couple"},
+        edges={
+            "couple": Transition(
+                targets={"couple": (0,), "couple_terminal": (0, 1)}, law=law
+            )
+        },
+        enable_jit=enable_jit,
+    )
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_collective_regime_reads_the_values_of_a_value_grid(*, enable_jit):
+    """A household's utilities, weights, value constraint and law read values."""
+    _assert_identical_solutions_and_simulations(
+        got=_couple_model(values=True, enable_jit=enable_jit),
+        expected=_couple_model(values=False, enable_jit=enable_jit),
+        regime_id=_CoupleTerminal.couple,
+    )
+
+
+def _gate_at_high_income(*, income: DiscreteState, V_target: FloatND) -> BoolND:
+    return (income >= 2.0) & (V_target > -1.0)
+
+
+def _project_income_down(*, income: DiscreteState) -> DiscreteState:
+    return jnp.maximum(income / 2.0, 1.0)
+
+
+def _project_income_down_on_codes(*, income: DiscreteState) -> DiscreteState:
+    projected = _project_income_down(income=_income_of_code(income))
+    return jnp.searchsorted(jnp.asarray(_INCOME_VALUES), projected).astype(jnp.int32)
+
+
+def _twice_income(*, income: DiscreteState) -> FloatND:
+    return 2.0 * income
+
+
+def _gated_income_model(*, values: bool, enable_jit: bool) -> Model:
+    convert = _as_declared if values else _on_codes
+    terminal = {
+        name: UserRegime(
+            states={"income": _income_grid(values=values)},
+            functions={"utility": convert(utility)},
+        )
+        for name, utility in (
+            ("target", _income_utility_terminal),
+            ("fallback", _twice_income),
+        )
+    }
+    gate = Gate(
+        predicate=convert(_gate_at_high_income),
+        routes={
+            "only": StakeholderRoute(
+                fallback=ProjectedRegimeValue(
+                    regime="fallback",
+                    projection={
+                        "income": _project_income_down
+                        if values
+                        else _project_income_down_on_codes
+                    },
+                )
+            )
+        },
+    )
+    return Model(
+        regimes={"source": _income_regime(values=values), **terminal},
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        edges={"source": Transition(law="target", gates={"target": gate})},
+        initial_nodes={0: "source"},
+        regime_id_class=_SourceTargetFallback,
+        enable_jit=enable_jit,
+    )
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_gated_edge_reads_and_projects_the_values_of_a_value_grid(*, enable_jit):
+    """A gate and its fallback projection read values; the projection returns one."""
+    _assert_identical_solutions_and_simulations(
+        got=_gated_income_model(values=True, enable_jit=enable_jit),
+        expected=_gated_income_model(values=False, enable_jit=enable_jit),
+        regime_id=_SourceTargetFallback.source,
+    )
+
+
+def _income_after_event(*, draw: Int1D, income: DiscreteState) -> DiscreteState:
+    """Event `[1]` doubles income up to its top value; event `[0]` keeps it."""
+    return jnp.where(draw[0] == 1, jnp.minimum(2.0 * income, 4.0), income)
+
+
+def _income_after_event_on_codes(
+    *, draw: Int1D, income: DiscreteState
+) -> DiscreteState:
+    landed = _income_after_event(draw=draw, income=_income_of_code(income))
+    return jnp.searchsorted(jnp.asarray(_INCOME_VALUES), landed).astype(jnp.int32)
+
+
+def _raise_probabilities(*, income: DiscreteState) -> FloatND:
+    return jnp.stack([income / 5.0, 1.0 - income / 5.0])
+
+
+def _joint_income_model(*, values: bool, enable_jit: bool) -> Model:
+    convert = _as_declared if values else _on_codes
+    kernel = JointTransition(
+        support_size=2,
+        support=jnp.asarray([[0], [1]], dtype=jnp.int32),
+        probabilities=convert(_raise_probabilities),
+        outputs={
+            "income": _income_after_event if values else _income_after_event_on_codes
+        },
+    )
+    working = _income_regime(values=values).replace(
+        state_transitions={}, joint_transitions={"working": {"draw": kernel}}
+    )
+    return _income_model(
+        working=working,
+        law=_regime_law(form="per_target", values=values),
+        enable_jit=enable_jit,
+    )
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_joint_transition_reads_and_returns_the_values_of_a_value_grid(*, enable_jit):
+    """A joint lottery reads values in its probabilities and outputs values."""
+    _assert_identical_solutions_and_simulations(
+        got=_joint_income_model(values=True, enable_jit=enable_jit),
+        expected=_joint_income_model(values=False, enable_jit=enable_jit),
+    )

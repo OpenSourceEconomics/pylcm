@@ -270,8 +270,8 @@ def test_generous_budget_foreign_copy_is_valid_and_preserves_originals() -> None
         log_level="off",
     )
     assert_frame_equal(
-        actual.to_dataframe(use_labels=False),
-        expected.to_dataframe(use_labels=False),
+        actual.to_dataframe(use_categorical_codes=True),
+        expected.to_dataframe(use_categorical_codes=True),
         check_exact=True,
     )
     assert len(foreign._consumed_views) == 1

@@ -149,7 +149,9 @@ def test_additive_shock_reads_the_target_grid_like_the_ordinary_law(
     source_points = tuple(value - shock_offset for value in landings)
     grids = {
         "log": lambda: LogSpacedGrid(start=scale, stop=4 * scale, n_points=3),
-        "irregular": lambda: IrregSpacedGrid(points=(scale, 2 * scale, 4 * scale)),
+        "irregular": lambda: IrregSpacedGrid(
+            points=np.array([scale, 2 * scale, 4 * scale])
+        ),
         "linear": lambda: LinSpacedGrid(start=scale, stop=4 * scale, n_points=3),
     }
 
@@ -157,7 +159,7 @@ def test_additive_shock_reads_the_target_grid_like_the_ordinary_law(
         return jnp.asarray(shock_offset)
 
     alive = Regime(
-        states={"wealth": IrregSpacedGrid(points=source_points)},
+        states={"wealth": IrregSpacedGrid(points=np.array(source_points))},
         state_transitions={"wealth": _law(route)},
         functions={"utility": _zero_utility, "base": _identity, "shock": shock},
     )
@@ -201,7 +203,7 @@ def _log_choice_oracle() -> tuple[int, Fraction]:
 def _log_choice_model(*, route: str, enable_jit: bool) -> Model:
     alive = Regime(
         states={"wealth": LinSpacedGrid(start=4.0, stop=5.0, n_points=2)},
-        actions={"choice": IrregSpacedGrid(points=(0.0, 1.0))},
+        actions={"choice": IrregSpacedGrid(points=np.array([0.0, 1.0]))},
         state_transitions={"wealth": _law(route)},
         functions={
             "utility": _log_choice_utility,
@@ -360,7 +362,7 @@ def _rare_event_model(
             "u": DiscreteGrid(_Binary),
             "v": DiscreteGrid(_Binary),
         },
-        actions={"safe": IrregSpacedGrid(points=(0.0, 1.0))},
+        actions={"safe": IrregSpacedGrid(points=np.array([0.0, 1.0]))},
         state_transitions={
             "wealth": _law(route),
             "u": StochasticTransition(func=probabilities),
@@ -491,7 +493,7 @@ def _rare_finite_model(
             "u": DiscreteGrid(_Binary),
             "v": DiscreteGrid(_Binary),
         },
-        actions={"safe": IrregSpacedGrid(points=(0.0, 1.0))},
+        actions={"safe": IrregSpacedGrid(points=np.array([0.0, 1.0]))},
         state_transitions={
             "wealth": _law(route),
             "u": StochasticTransition(func=probabilities),

@@ -98,7 +98,7 @@ def test_lookup_policy_equals_what_simulate_records(*, solved, column):
         },
         log_level="off",
         seed=0,
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
     alive = df.query("regime_name == 'working_life'")
     got, expected = [], []
     for period, rows in alive.groupby("period"):
@@ -314,7 +314,7 @@ def test_lookup_policy_above_range_continuous_state_equals_simulate(solved):
         },
         log_level="off",
         seed=0,
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
     first = df.query("period == 0")
     got = _lookup(solved, period=0, states={"wealth": wealth})
     np.testing.assert_allclose(

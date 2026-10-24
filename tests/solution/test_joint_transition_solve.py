@@ -375,7 +375,9 @@ def _bdy_model(*, enable_jit: bool, support_size: int = 2) -> Model:
     return Model(
         regimes={
             "single": Regime(
-                states={"wealth": IrregSpacedGrid(points=_BDY_WEALTH_POINTS[:-1])},
+                states={
+                    "wealth": IrregSpacedGrid(points=np.array(_BDY_WEALTH_POINTS[:-1]))
+                },
                 functions={"utility": _bdy_single_utility},
                 joint_transitions={
                     "couple": {
@@ -393,14 +395,16 @@ def _bdy_model(*, enable_jit: bool, support_size: int = 2) -> Model:
                 },
             ),
             "single_terminal": Regime(
-                states={"wealth": IrregSpacedGrid(points=_BDY_WEALTH_POINTS[:-1])},
+                states={
+                    "wealth": IrregSpacedGrid(points=np.array(_BDY_WEALTH_POINTS[:-1]))
+                },
                 functions={"utility": _bdy_fallback_utility},
             ),
             "couple": Regime(
                 actions={"household_choice": DiscreteGrid(category_class=BDYChoice)},
                 states={
-                    "wealth": IrregSpacedGrid(points=_BDY_WEALTH_POINTS),
-                    "ybar_p": IrregSpacedGrid(points=(-1.0, 1.0)),
+                    "wealth": IrregSpacedGrid(points=np.array(_BDY_WEALTH_POINTS)),
+                    "ybar_p": IrregSpacedGrid(points=np.array([-1.0, 1.0])),
                     "eps_p": DiscreteGrid(category_class=BDYEps),
                 },
                 functions={
@@ -527,7 +531,7 @@ def test_bdy_simulation_samples_one_shared_match_and_agrees_with_solve() -> None
         solution=solution,
         log_level="debug",
     )
-    frame = result.to_dataframe(use_labels=False, terminal_rows="all")
+    frame = result.to_dataframe(use_categorical_codes=True, terminal_rows="all")
     couple = frame.query('regime_name == "couple"')
 
     realized_pairs = set(zip(couple["ybar_p"], couple["eps_p"], strict=True))

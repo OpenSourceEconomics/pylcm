@@ -16,6 +16,8 @@ chosen, death occurs at a fixed age) as in the original paper.
 
 import statistics
 
+import numpy as np
+
 from lcm import DeterministicTransition, Transition
 
 from . import _gpu_mem
@@ -170,9 +172,11 @@ def _make_model_and_params(
             # and a uniform grid under-resolves the lowest wealth nodes by
             # orders of magnitude.
             savings_grid=IrregSpacedGrid(
-                points=tuple(
-                    400.0 * (i / (_SOLVE_SAVINGS_N_POINTS - 1)) ** 3
-                    for i in range(_SOLVE_SAVINGS_N_POINTS)
+                points=np.array(
+                    tuple(
+                        400.0 * (i / (_SOLVE_SAVINGS_N_POINTS - 1)) ** 3
+                        for i in range(_SOLVE_SAVINGS_N_POINTS)
+                    )
                 )
             ),
         )

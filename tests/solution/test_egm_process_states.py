@@ -81,7 +81,9 @@ CONSUMPTION_GRID = LinSpacedGrid(start=0.25, stop=60.0, n_points=600)
 
 # Exogenous end-of-period savings grid, cubically clustered toward the
 # borrowing limit where the value function curves hardest.
-SAVINGS_GRID = IrregSpacedGrid(points=tuple(60.0 * (i / 119) ** 3 for i in range(120)))
+SAVINGS_GRID = IrregSpacedGrid(
+    points=np.array(tuple(60.0 * (i / 119) ** 3 for i in range(120)))
+)
 
 # Lowest wealth nodes excluded from the brute-force comparison (wealth below
 # ~9): there the coarse consumption grid and the curvature of log utility

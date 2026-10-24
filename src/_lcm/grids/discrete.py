@@ -7,8 +7,8 @@ movement over the codes is declared with `StochasticTransition`, not here.
 
 import itertools
 import math
-from collections.abc import Sequence
 from fractions import Fraction
+from typing import NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -20,7 +20,7 @@ from jaxtyping import Int
 
 from _lcm.beartype_conf import GRID_CONF
 from _lcm.dtypes import canonical_float_dtype
-from _lcm.grids.base import Grid
+from _lcm.grids.base import Grid, UserVector, fail_if_not_a_numeric_vector
 from _lcm.grids.categorical import (
     DataclassInstance,
     _validate_discrete_grid,
@@ -39,9 +39,6 @@ _INT32_MAX = jnp.iinfo(jnp.int32).max
 # A code array of any integer width; with x64 enabled, `jnp.array([0])` is int64.
 type _CodeIndex = Int[Array, "..."]
 
-# A declared value, before it is normalized to a Python scalar.
-type _UserValue = int | float | np.integer | np.floating
-
 
 class DiscreteGrid(Grid):
     """A discrete grid defining the outcome space of a discrete variable.
@@ -50,8 +47,9 @@ class DiscreteGrid(Grid):
 
     - `category_class`: named categories. User functions receive the code of a
       category.
-    - `values`: numbers, e.g. `values=[0, 20, 40]` or `values=range(31)`. The
-      codes are the positions `0..n-1` of the values.
+    - `values`: a one-dimensional NumPy or JAX array of numbers, e.g.
+      `values=jnp.array([0, 20, 40])` or `values=jnp.arange(31)`. The codes are
+      the positions `0..n-1` of the values.
 
     A value returned for a value grid names a node when it equals that node. For
     float values, `tolerance` widens the match to any value within that absolute
@@ -61,9 +59,10 @@ class DiscreteGrid(Grid):
         category_class: The category class representing the grid categories. Must
             be a dataclass with fields that have unique int values. The legacy
             single-positional-argument form remains supported for compatibility.
-        values: The numbers the variable takes, as a sequence or a one-dimensional
-            array: strictly ascending, finite, and all integers or all floats.
+        values: The numbers the variable takes, as a one-dimensional NumPy or JAX
+            array of integer or floating dtype: strictly ascending and finite.
             Integers are stored as int32, floats at the canonical float dtype.
+            Lists, tuples and ranges are refused.
         tolerance: The absolute distance within which a float matches a node. Zero
             (exact match) by default. Must be below half the smallest gap between
             values, and at least the float spacing at every value when positive.
@@ -80,7 +79,7 @@ class DiscreteGrid(Grid):
         self,
         *legacy_category_class: type[DataclassInstance],
         category_class: type[DataclassInstance] | None = None,
-        values: Sequence[_UserValue] | np.ndarray | ValueND | None = None,
+        values: UserVector | None = None,
         tolerance: float = 0.0,
     ) -> None:
         if len(legacy_category_class) > 1:
@@ -117,60 +116,34 @@ class DiscreteGrid(Grid):
         self.__codes = tuple(int(code) for code in category_codes.values())
         self.__ordered: bool = getattr(category_class, "_ordered", False)
         self.__values: tuple[int | float, ...] | None = None
-        self.__value_array: Int1D | Float1D | None = None
-        self.__midpoints = None
+        self.__nodes_by_dtype: dict[np.dtype, _Nodes] = {}
         self.__tolerance = 0.0
         self.__holds_integers = False
 
     def __init_values(
         self,
         *,
-        values: Sequence[_UserValue] | np.ndarray | ValueND,
+        values: UserVector,
         tolerance: float,
     ) -> None:
         """Validate and store a value grid's numbers and tolerance."""
-        if isinstance(values, np.ndarray | jax.Array):
-            if values.ndim != 1:
-                raise GridInitializationError(
-                    f"`values` must be one-dimensional, got shape {values.shape}."
-                )
-            declared = _validate_values(np.asarray(values).tolist())
-        else:
-            declared = _validate_values(values)
+        fail_if_not_a_numeric_vector(
+            value=values,
+            argument="values",
+            example="DiscreteGrid(values=jnp.array([0, 5, 10]))",
+        )
+        declared = _validate_values(np.asarray(values).tolist())
         is_integer = isinstance(declared[0], int)
-        value_array = jnp.asarray(
-            declared, dtype=jnp.int32 if is_integer else canonical_float_dtype()
-        )
-        stored = tuple(value_array.tolist())
-        # A finite declared float can overflow the canonical precision.
-        if not is_integer and not all(math.isfinite(value) for value in stored):
-            raise GridInitializationError(
-                f"`values` must remain finite at {value_array.dtype}; got {stored}."
-            )
-        # Distinct floats can round to equal nodes at the canonical precision.
-        collision = _value_order_error(stored)
-        if collision is not None:
-            raise GridInitializationError(
-                f"{collision} The values collide after rounding to {value_array.dtype}."
-            )
-        _validate_tolerance(
-            tolerance=tolerance, value_array=value_array, is_integer=is_integer
-        )
-        self.__midpoints: Float1D | None = (
-            None
-            if is_integer
-            else jnp.asarray(
-                _downward_midpoints(nodes=np.asarray(value_array)),
-                dtype=value_array.dtype,
-            )
-        )
+        self.__values = declared
+        self.__tolerance = float(tolerance)
+        self.__holds_integers = is_integer
+        self.__nodes_by_dtype = {}
+        # Validated at the precision in force now; `values_to_jax` and every
+        # other read build and validate the nodes again at a later precision.
+        self.__nodes()
         self.__categories = tuple(repr(value) for value in declared)
         self.__codes = tuple(range(len(declared)))
         self.__ordered = True
-        self.__values = declared
-        self.__value_array = value_array
-        self.__tolerance = float(tolerance)
-        self.__holds_integers = is_integer
 
     @property
     def categories(self) -> tuple[str, ...]:
@@ -212,11 +185,15 @@ class DiscreteGrid(Grid):
     def values_to_jax(self) -> Int1D | Float1D:
         """Return the values of a value grid, int32 or at the canonical float dtype.
 
+        The float dtype is the one in force when this is called, not when the grid
+        was built, so a grid built before x64 is enabled holds float64 values in a
+        float64 model.
+
         Raises:
             GridInitializationError: If the grid is declared with a category class.
 
         """
-        return self.__require_value_array()
+        return self.__nodes().values
 
     def encode(self, value: ArrayLike) -> IntND:
         """Return the code of the node each value names, else `MISSING_CAT_CODE`.
@@ -229,8 +206,8 @@ class DiscreteGrid(Grid):
             TypeError: If an integer grid receives non-integer values.
 
         """
-        nodes = self.__require_value_array()
-        if self.__midpoints is None:
+        nodes, midpoints = self.__nodes()
+        if midpoints is None:
             value = _classify_integers(value)
             index = jnp.clip(
                 jnp.searchsorted(nodes, value, side="left"), 0, nodes.shape[0] - 1
@@ -238,7 +215,7 @@ class DiscreteGrid(Grid):
             matches = nodes[index] == value
         else:
             value = _as_float_query(value=value, dtype=nodes.dtype)
-            index = _nearest_index(midpoints=self.__midpoints, value=value)
+            index = _nearest_index(midpoints=midpoints, value=value)
             matches = _within_tolerance(
                 value=value, node=nodes[index], tolerance=self.__tolerance
             )
@@ -251,7 +228,7 @@ class DiscreteGrid(Grid):
         on a float grid and `MISSING_CAT_CODE` on an integer grid. Nothing is
         clamped or wrapped onto a node.
         """
-        nodes = self.__require_value_array()
+        nodes = self.__nodes().values
         codes = _classify_integers(code)
         n_nodes = nodes.shape[0]
         index = jnp.where((codes >= 0) & (codes < n_nodes), codes, n_nodes)
@@ -272,38 +249,80 @@ class DiscreteGrid(Grid):
             TypeError: If the grid holds integer values, which laws return exactly.
 
         """
-        nodes = self.__require_value_array()
-        if self.__midpoints is None:
+        nodes, midpoints = self.__nodes()
+        if midpoints is None:
             msg = (
                 "`nearest` snaps floats onto a float value grid. An integer value "
                 "grid matches the integers a law returns exactly."
             )
             raise TypeError(msg)
         value = _as_float_query(value=value, dtype=nodes.dtype)
-        snapped = nodes[_nearest_index(midpoints=self.__midpoints, value=value)]
+        snapped = nodes[_nearest_index(midpoints=midpoints, value=value)]
         return jnp.where(jnp.isnan(value), jnp.nan, snapped)
 
-    def __require_value_array(self) -> Int1D | Float1D:
-        if self.__value_array is None:
+    def __nodes(self) -> _Nodes:
+        """Return the nodes at the canonical precision, validating them there once."""
+        if self.__values is None:
             raise GridInitializationError(
                 "Only a DiscreteGrid declared with `values` has values; this grid "
                 f"has the categories {self.categories}."
             )
-        return self.__value_array
+        dtype = np.dtype(
+            jnp.int32 if self.__holds_integers else canonical_float_dtype()
+        )
+        if dtype not in self.__nodes_by_dtype:
+            self.__nodes_by_dtype[dtype] = _build_nodes(
+                declared=self.__values, tolerance=self.__tolerance, dtype=dtype
+            )
+        return self.__nodes_by_dtype[dtype]
 
 
-def _validate_values(values: Sequence[_UserValue]) -> tuple[int | float, ...]:
+class _Nodes(NamedTuple):
+    """A value grid's nodes at one precision."""
+
+    values: Int1D | Float1D
+    """The nodes, int32 or at one float dtype."""
+    midpoints: Float1D | None
+    """The downward midpoints between float nodes; `None` for integers."""
+
+
+def _build_nodes(
+    *, declared: tuple[int | float, ...], tolerance: float, dtype: np.dtype
+) -> _Nodes:
+    """Store the declared values at `dtype`, or raise if they do not survive it."""
+    is_integer = dtype.kind == "i"
+    value_array = jnp.asarray(declared, dtype=dtype)
+    stored = tuple(value_array.tolist())
+    # A finite declared float can overflow the canonical precision.
+    if not is_integer and not all(math.isfinite(value) for value in stored):
+        raise GridInitializationError(
+            f"`values` must remain finite at {value_array.dtype}; got {stored}."
+        )
+    # Distinct floats can round to equal nodes at the canonical precision.
+    collision = _value_order_error(stored)
+    if collision is not None:
+        raise GridInitializationError(
+            f"{collision} The values collide after rounding to {value_array.dtype}."
+        )
+    _validate_tolerance(
+        tolerance=tolerance, value_array=value_array, is_integer=is_integer
+    )
+    midpoints = (
+        None
+        if is_integer
+        else jnp.asarray(
+            _downward_midpoints(nodes=np.asarray(value_array)),
+            dtype=value_array.dtype,
+        )
+    )
+    return _Nodes(values=value_array, midpoints=midpoints)
+
+
+def _validate_values(values: list[int | float]) -> tuple[int | float, ...]:
     """Return the values as Python scalars, or raise if they are no value grid."""
     if len(values) == 0:
         raise GridInitializationError("`values` must hold at least one value.")
-    bools = [i for i, value in enumerate(values) if isinstance(value, bool | np.bool_)]
-    if bools:
-        raise GridInitializationError(
-            f"`values` must be numbers; the entries at {bools} are bool."
-        )
-    scalars = tuple(
-        value.item() if isinstance(value, np.generic) else value for value in values
-    )
+    scalars = tuple(values)
     message = _value_kind_error(scalars) or _value_order_error(scalars)
     if message is not None:
         raise GridInitializationError(message)
@@ -311,8 +330,12 @@ def _validate_values(values: Sequence[_UserValue]) -> tuple[int | float, ...]:
 
 
 def _value_kind_error(scalars: tuple[int | float, ...]) -> str | None:
-    """Report values that are mixed, outside int32, or not finite."""
-    if all(isinstance(value, int) for value in scalars):
+    """Report integer values outside int32 or float values that are not finite.
+
+    The scalars come from one array's `tolist()`, so they are all `int` or all
+    `float`.
+    """
+    if isinstance(scalars[0], int):
         out_of_range = [
             value for value in scalars if not MISSING_CAT_CODE < value < 2**31
         ]
@@ -322,15 +345,10 @@ def _value_kind_error(scalars: tuple[int | float, ...]) -> str | None:
                 f"[{MISSING_CAT_CODE + 1}, {2**31 - 1}]; got {out_of_range}."
             )
         return None
-    if all(isinstance(value, float) for value in scalars):
-        non_finite = [value for value in scalars if not math.isfinite(value)]
-        if non_finite:
-            return f"`values` must be finite; got {non_finite}."
-        return None
-    return (
-        "`values` must be all integers or all floats; got "
-        f"{[type(value).__name__ for value in scalars]}."
-    )
+    non_finite = [value for value in scalars if not math.isfinite(value)]
+    if non_finite:
+        return f"`values` must be finite; got {non_finite}."
+    return None
 
 
 def _value_order_error(scalars: tuple[int | float, ...]) -> str | None:

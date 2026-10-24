@@ -110,7 +110,9 @@ def test_fixed_state_keeps_its_value_in_simulation() -> None:
         log_level="debug",
         seed=42,
     )
-    df = result.to_dataframe(use_labels=False).sort_values(["subject_id", "period"])
+    df = result.to_dataframe(use_categorical_codes=True).sort_values(
+        ["subject_id", "period"]
+    )
     work_rows = df.loc[df["regime_name"] == "work"]
     for subject_id, expected in ((0, _Health.bad), (1, _Health.good)):
         values = work_rows.loc[work_rows["subject_id"] == subject_id, "health"]

@@ -517,7 +517,7 @@ def test_member_law_reading_a_float_helper_simulates_like_dense() -> None:
         .simulate(
             params=_PARAMS, initial_conditions=conditions, log_level="off", seed=5
         )
-        .to_dataframe(use_labels=False)[
+        .to_dataframe(use_categorical_codes=True)[
             ["subject_id", "period", "regime_name", "choice"]
         ]
         .reset_index(drop=True)
@@ -808,7 +808,7 @@ def _assert_fractional_transition(
         seed=7,
         log_level="off",
     ).to_dataframe(
-        use_labels=False, additional_targets=["a", "b"] if composite else None
+        use_categorical_codes=True, additional_targets=["a", "b"] if composite else None
     )
     live = panel.loc[panel["regime_name"] == "live"].sort_values("period")
     np.testing.assert_array_equal(live["period"].to_numpy(), [0, 1])

@@ -113,5 +113,5 @@ def test_admission_preserves_every_public_finite_replay_column(
             log_level="off",
             seed=17,
         )
-        frames.append(result.to_dataframe(use_labels=False))
+        frames.append(result.to_dataframe(use_categorical_codes=True))
     assert_frame_equal(frames[0], frames[1], check_exact=True)

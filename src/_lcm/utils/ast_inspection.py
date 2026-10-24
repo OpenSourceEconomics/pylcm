@@ -11,6 +11,7 @@ def time_index_names(
     *, func: UserFunction, array_param_name: ParameterName
 ) -> frozenset[str]:
     """Find visible age/period reads even in computed or multiple subscripts."""
+    func = getattr(func, "__lcm_source__", func)
     sources = getattr(inspect.unwrap(func), "__lcm_sources__", None)
     if sources is not None:
         return frozenset().union(
@@ -51,6 +52,11 @@ def _get_func_indexing_params(
     it is itself wrapped (a `StochasticTransition`); those laws are inspected
     instead, and each law reading the array must index it alike.
 
+    A wrapper that names the function it stands in for (`__lcm_source__`) is
+    inspected through that function. An index the wrapper publishes under
+    another name, the code `<name>_code` published as `<name>`, is returned
+    under the published name.
+
     Args:
         func: The function to inspect.
         array_param_name: The array parameter whose subscripts to inspect.
@@ -64,6 +70,15 @@ def _get_func_indexing_params(
         ValueError: If computed indices are used instead of bare names.
 
     """
+    source = getattr(func, "__lcm_source__", None)
+    if source is not None:
+        published = inspect.signature(func).parameters
+        return [
+            name if name in published else name.removesuffix("_code")
+            for name in _get_func_indexing_params(
+                func=source, array_param_name=array_param_name
+            )
+        ]
     sources = getattr(inspect.unwrap(func), "__lcm_sources__", None)
     if sources is not None:
         return _indexing_params_of_sources(
@@ -126,6 +141,35 @@ def _get_func_indexing_params(
         raise ValueError(msg)
 
     return []
+
+
+def value_indexed_arrays(
+    *, func: UserFunction, names: frozenset[str]
+) -> tuple[tuple[str, str], ...]:
+    """Return each `(array, name)` where `func` indexes an argument by one of `names`.
+
+    Only a subscript of one of `func`'s own arguments counts, and only a bare
+    name inside its index. A function whose source cannot be read reports none.
+    """
+    if not names:
+        return ()
+    source = _source_of(func)
+    if source is None:
+        return ()
+    arguments = set(inspect.signature(func).parameters)
+    return tuple(
+        sorted(
+            {
+                (node.value.id, index.id)
+                for node in ast.walk(ast.parse(source))
+                if isinstance(node, ast.Subscript)
+                and isinstance(node.value, ast.Name)
+                and node.value.id in arguments
+                for index in ast.walk(node.slice)
+                if isinstance(index, ast.Name) and index.id in names
+            }
+        )
+    )
 
 
 def _source_of(func: UserFunction) -> str | None:

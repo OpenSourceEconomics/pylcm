@@ -299,7 +299,7 @@ def test_empty_other_regime_and_padded_rows_do_not_refuse_owned_decisions(
         log_level="off",
         seed=0,
     )
-    frame = result.to_dataframe(use_labels=False)
+    frame = result.to_dataframe(use_categorical_codes=True)
     np.testing.assert_array_equal(
         frame.loc[frame["regime_name"] == "working", "consumption"], [2.0] * 4
     )
@@ -351,7 +351,7 @@ def test_feasible_negative_infinity_does_not_refuse_the_action(
         runtime_checks=False,
         seed=0,
     )
-    frame = result.to_dataframe(use_labels=False)
+    frame = result.to_dataframe(use_categorical_codes=True)
     np.testing.assert_array_equal(
         frame.loc[frame["regime_name"] == "working", "consumption"], [1.0]
     )
@@ -371,7 +371,7 @@ def test_feasible_simulation_keeps_the_optimal_action(*, enable_jit: bool) -> No
         log_level="off",
         seed=0,
     )
-    frame = result.to_dataframe(use_labels=False)
+    frame = result.to_dataframe(use_categorical_codes=True)
     np.testing.assert_array_equal(
         frame.loc[frame["regime_name"] == "working", "consumption"], [2.0, 2.0]
     )

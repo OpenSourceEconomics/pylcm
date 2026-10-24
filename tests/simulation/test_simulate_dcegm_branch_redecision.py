@@ -119,7 +119,7 @@ def _simulate_period_0(*, model: Model, off_grid_wealth: np.ndarray):
         initial_conditions=initial_conditions,
         log_level="debug",
     )
-    return result.to_dataframe(use_labels=False).query("period == 0")
+    return result.to_dataframe(use_categorical_codes=True).query("period == 0")
 
 
 def _off_grid_wealth_straddling_the_switch() -> np.ndarray:

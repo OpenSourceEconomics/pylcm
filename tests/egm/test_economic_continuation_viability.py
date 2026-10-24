@@ -161,23 +161,25 @@ def build_allocation_model(
                 liquid=margin,
                 states={
                     "wealth": IrregSpacedGrid(
-                        points=(0.75 * allocation.cash, allocation.cash)
+                        points=np.array([0.75 * allocation.cash, allocation.cash])
                     )
                 },
-                actions={"consumption": IrregSpacedGrid(points=actions)},
+                actions={"consumption": IrregSpacedGrid(points=np.array(actions))},
                 functions=functions,
                 state_transitions={"wealth": parent_law},
                 constraints={},
                 solver=EGM(
                     savings_grid=IrregSpacedGrid(
-                        points=full_nodes if parent_nodes is None else parent_nodes
+                        points=np.array(
+                            full_nodes if parent_nodes is None else parent_nodes
+                        )
                     )
                 ),
             ),
             "saving": ConsumptionSavingsRegime(
                 liquid=margin,
-                states={"wealth": IrregSpacedGrid(points=child_nodes)},
-                actions={"consumption": IrregSpacedGrid(points=actions)},
+                states={"wealth": IrregSpacedGrid(points=np.array(child_nodes))},
+                actions={"consumption": IrregSpacedGrid(points=np.array(actions))},
                 functions=functions,
                 state_transitions={"wealth": child_law},
                 constraints={
@@ -188,16 +190,16 @@ def build_allocation_model(
                 },
                 solver=EGM(
                     savings_grid=IrregSpacedGrid(
-                        points=tuple(
-                            allocation.child_floor + node for node in full_nodes
+                        points=np.array(
+                            tuple(allocation.child_floor + node for node in full_nodes)
+                            if literal_child
+                            else full_nodes
                         )
-                        if literal_child
-                        else full_nodes
                     )
                 ),
             ),
             "done": Regime(
-                states={"wealth": IrregSpacedGrid(points=terminal_nodes)},
+                states={"wealth": IrregSpacedGrid(points=np.array(terminal_nodes))},
                 functions={"utility": terminal_utility},
             ),
         },

@@ -140,8 +140,8 @@ shock_persistence = 0.975
 wealth_normalization = jnp.array([43978, 48201])
 
 
-_WEALTH_GRID_POINTS = tuple(
-    float(30.0 * (jnp.exp(jnp.log(100.0) / 49 * i) - 1.0) / 99.0) for i in range(50)
+_WEALTH_GRID_POINTS = np.array(
+    [float(30.0 * (jnp.exp(jnp.log(100.0) / 49 * i) - 1.0) / 99.0) for i in range(50)]
 )
 
 

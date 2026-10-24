@@ -18,6 +18,7 @@ thresholds in between.
 import functools
 
 import jax.numpy as jnp
+import numpy as np
 
 from lcm import (
     AgeGrid,
@@ -182,7 +183,9 @@ dead = Regime(
 # are cubically clustered toward the limit: the value function curves hardest
 # where the constraint starts to bind, and the published V is interpolated
 # from endogenous points spaced like the savings nodes.
-SAVINGS_GRID = IrregSpacedGrid(points=tuple(400.0 * (i / 199) ** 3 for i in range(200)))
+SAVINGS_GRID = IrregSpacedGrid(
+    points=np.array(tuple(400.0 * (i / 199) ** 3 for i in range(200)))
+)
 
 LIQUID_MARGIN = LiquidMargin(
     state="wealth",

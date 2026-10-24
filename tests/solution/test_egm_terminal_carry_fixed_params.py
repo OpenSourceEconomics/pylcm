@@ -54,7 +54,9 @@ CONSUMPTION_GRID = LinSpacedGrid(start=1.0, stop=400.0, n_points=500)
 # Dense terminal wealth grid: the bequest continuation is read by linear
 # interpolation on this grid, so it must resolve the curvature of `log`.
 BEQUEST_WEALTH_GRID = LinSpacedGrid(start=1.0, stop=400.0, n_points=600)
-SAVINGS_GRID = IrregSpacedGrid(points=tuple(400.0 * (i / 199) ** 3 for i in range(200)))
+SAVINGS_GRID = IrregSpacedGrid(
+    points=np.array(tuple(400.0 * (i / 199) ** 3 for i in range(200)))
+)
 
 # Consumption-equivalence scale the bequest utility reads through a helper
 # function. Supplied via `fixed_params` in the fixed parametrisation; the

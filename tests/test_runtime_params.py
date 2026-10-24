@@ -1,6 +1,7 @@
 """Tests for runtime-supplied grid points (IrregSpacedGrid)."""
 
 import jax.numpy as jnp
+import numpy as np
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
@@ -97,7 +98,7 @@ def test_runtime_grid_to_jax_raises_before_substitution():
 
 def test_fixed_grid_not_runtime():
     """IrregSpacedGrid with fixed points should not need runtime points."""
-    grid = IrregSpacedGrid(points=[1.0, 2.0, 3.0])
+    grid = IrregSpacedGrid(points=np.array([1.0, 2.0, 3.0]))
     assert not grid.pass_points_at_runtime
     assert grid.n_points == 3
 
@@ -177,7 +178,7 @@ def test_runtime_grid_matches_fixed():
 
     # Fixed-points model
     model_fixed = _make_model(
-        wealth_grid=IrregSpacedGrid(points=list(points.tolist())),
+        wealth_grid=IrregSpacedGrid(points=np.array(list(points.tolist()))),
     )
     params_fixed = {"discount_factor": 0.95, "interest_rate": 0.05}
     V_fixed = model_fixed.solve(params=params_fixed, log_level="debug").values
@@ -249,7 +250,7 @@ def test_runtime_action_grid_matches_fixed():
     points = jnp.linspace(0.1, 5.0, 5)
 
     model_fixed = _make_action_grid_model(
-        consumption_grid=IrregSpacedGrid(points=list(points.tolist())),
+        consumption_grid=IrregSpacedGrid(points=np.array(list(points.tolist()))),
     )
     params_fixed = {"discount_factor": 0.95, "interest_rate": 0.05}
     V_fixed = model_fixed.solve(params=params_fixed, log_level="debug").values

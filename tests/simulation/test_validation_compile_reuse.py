@@ -73,7 +73,7 @@ def _simulate(*, model, params, initial_conditions) -> pd.DataFrame:
         initial_conditions=initial_conditions,
         log_level="warning",
         seed=0,
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
 
 
 def _reciprocal(*, x: jax.Array, denominator: float) -> jax.Array:

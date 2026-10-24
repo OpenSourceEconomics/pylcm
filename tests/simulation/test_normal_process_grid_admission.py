@@ -221,7 +221,7 @@ def test_normal_support_preserves_saved_identity_value_and_policy(
         result.period_to_regime_to_V_arr[0]["alive"], expected_values
     )
     np.testing.assert_array_equal(
-        result.to_dataframe(use_labels=False)
+        result.to_dataframe(use_categorical_codes=True)
         .iloc[0][["income", "saving", "value"]]
         .to_numpy(dtype=float),
         [2.0, 1.0, 3.0],

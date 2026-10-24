@@ -973,7 +973,7 @@ def test_temporal_constraint_changes_the_feasible_action(
         seed=5,
         log_level="off",
     )
-    frame = result.to_dataframe(use_labels=False)
+    frame = result.to_dataframe(use_categorical_codes=True)
     for period, action, value in ((0, 0, 2.5), (1, 1, 5.0)):
         rows = frame.loc[frame["period"] == period]
         assert len(rows) == n_subjects
@@ -1046,7 +1046,7 @@ def test_managed_lottery_composes_with_explicit_period(
         seed=3,
         log_level="off",
     )
-    frame = result.to_dataframe(use_labels=False)
+    frame = result.to_dataframe(use_categorical_codes=True)
     np.testing.assert_array_equal(frame["period"], [1, 2])
     np.testing.assert_allclose(frame["value"], [5.5, 11.0])
     np.testing.assert_array_equal(frame.loc[frame["period"] == 2, "outcome"], [1])

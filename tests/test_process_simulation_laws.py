@@ -130,7 +130,7 @@ def test_phased_ar1_keeps_solve_law_and_uses_distinct_forward_law() -> None:
         initial_conditions=initial,
         seed=537,
         log_level="off",
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
     reference = (
         _model(simulate)
         .simulate(
@@ -139,7 +139,7 @@ def test_phased_ar1_keeps_solve_law_and_uses_distinct_forward_law() -> None:
             seed=537,
             log_level="off",
         )
-        .to_dataframe(use_labels=False)
+        .to_dataframe(use_categorical_codes=True)
     )
     np.testing.assert_array_equal(got["income"], reference["income"])
     assert not np.array_equal(
@@ -147,7 +147,7 @@ def test_phased_ar1_keeps_solve_law_and_uses_distinct_forward_law() -> None:
         ordinary.simulate(
             params={}, initial_conditions=initial, seed=537, log_level="off"
         )
-        .to_dataframe(use_labels=False)
+        .to_dataframe(use_categorical_codes=True)
         .loc[lambda frame: frame["period"] == 1, "income"]
         .to_numpy(),
     )
@@ -177,7 +177,7 @@ def test_native_iid_node_simulation_and_repeat_seed(*, fold: bool) -> None:
             initial_conditions=initial,
             seed=537,
             log_level="off",
-        ).to_dataframe(use_labels=False)
+        ).to_dataframe(use_categorical_codes=True)
         for _ in range(2)
     ]
     np.testing.assert_array_equal(frames[0]["income"], frames[1]["income"])
@@ -187,7 +187,7 @@ def test_native_iid_node_simulation_and_repeat_seed(*, fold: bool) -> None:
 
 def test_runtime_supplied_node_markov_rows_and_support() -> None:
     nodes = (-1.3, 0.1, 2.4)
-    process = TauchenAR1Process.on_nodes(nodes=nodes, simulate_draws="nodes")
+    process = TauchenAR1Process.on_nodes(nodes=np.array(nodes), simulate_draws="nodes")
     model = _model(process)
     params = {"alive": {"income": {"rho": 0.6, "sigma": 0.4}}}
     initial = {
@@ -197,7 +197,7 @@ def test_runtime_supplied_node_markov_rows_and_support() -> None:
     }
     frame = model.simulate(
         params=params, initial_conditions=initial, seed=537, log_level="off"
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
     realized = frame.loc[frame["period"] == 1, "income"].to_numpy()
     support = np.asarray(process.get_gridpoints())
     assert np.isin(realized, support).all()
@@ -284,7 +284,7 @@ def test_phased_process_conditioning_is_an_intrinsic_state_dependency() -> None:
         },
         seed=537,
         log_level="off",
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
     assert np.isfinite(frame.loc[frame["period"] == 1, "income"]).all()
 
 
@@ -315,7 +315,7 @@ def test_node_operand_names_do_not_unmap_similarly_named_states() -> None:
         },
         seed=537,
         log_level="off",
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
     assert frame.loc[frame["period"] == 1, "nodes_income"].shape == (2,)
 
 
@@ -340,7 +340,7 @@ def test_node_draws_do_not_depend_on_runtime_checks_or_logging(
         initial_conditions=initial,
         seed=537,
         log_level="off",
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
     got = model.simulate(
         params={},
         solution=solution,
@@ -348,7 +348,7 @@ def test_node_draws_do_not_depend_on_runtime_checks_or_logging(
         seed=537,
         log_level=log_level,
         runtime_checks=runtime_checks,
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
     np.testing.assert_array_equal(got["income"], reference["income"])
 
 
@@ -446,7 +446,7 @@ def _local_draw_terminal_wealth(*, model: Model, params: UserParams) -> np.ndarr
         },
         seed=537,
         log_level="off",
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
     wealth = frame.loc[frame["period"] == 1, "wealth"].to_numpy()
     assert wealth.shape == (4,)
     return wealth
@@ -680,7 +680,7 @@ def test_node_draw_from_beyond_the_top_node_follows_the_top_node_row() -> None:
             },
             seed=537,
             log_level="off",
-        ).to_dataframe(use_labels=False)
+        ).to_dataframe(use_categorical_codes=True)
         return frame.loc[frame["period"] == 1, "income"].to_numpy()
 
     np.testing.assert_array_equal(realized(top + 5.0), realized(top))

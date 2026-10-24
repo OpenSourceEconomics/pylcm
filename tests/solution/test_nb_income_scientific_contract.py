@@ -143,7 +143,7 @@ def _bind_inputs(*, capture: NativeIncomeCapture, root: Path) -> _Inputs:
         panel = _load(root=root, filename=f"{solver}-period0.npz")
         np.testing.assert_array_equal(panel["subject_id"], np.arange(60))
         np.testing.assert_array_equal(panel["period"], np.zeros(60))
-        public = capture.simulations[solver].to_dataframe(use_labels=False)
+        public = capture.simulations[solver].to_dataframe(use_categorical_codes=True)
         actual = public.query("period == 0").sort_values("subject_id")
         np.testing.assert_array_equal(actual["subject_id"], panel["subject_id"])
         np.testing.assert_array_equal(actual["consumption"], panel["consumption"])

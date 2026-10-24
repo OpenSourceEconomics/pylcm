@@ -1,6 +1,7 @@
 from types import MappingProxyType
 
 import jax.numpy as jnp
+import numpy as np
 from numpy.testing import assert_array_equal
 
 from _lcm.engine import StateActionSpace, VariableInfo, Variables
@@ -49,7 +50,7 @@ def test_create_state_action_space_solution_discrete_action_continuous_state():
     )
     grids = MappingProxyType(
         {
-            "wealth": IrregSpacedGrid(points=[0.0, 50.0, 100.0]),
+            "wealth": IrregSpacedGrid(points=np.array([0.0, 50.0, 100.0])),
             "work": DiscreteGrid(category_class=WorkChoice),
         }
     )
@@ -75,8 +76,8 @@ def test_create_state_action_space_solution_continuous_action():
     )
     grids = MappingProxyType(
         {
-            "wealth": IrregSpacedGrid(points=[0.0, 50.0, 100.0]),
-            "consumption": IrregSpacedGrid(points=[0.0, 25.0, 50.0]),
+            "wealth": IrregSpacedGrid(points=np.array([0.0, 50.0, 100.0])),
+            "consumption": IrregSpacedGrid(points=np.array([0.0, 25.0, 50.0])),
         }
     )
 
@@ -108,7 +109,7 @@ def test_state_action_space_replace_method():
     )
     grids = MappingProxyType(
         {
-            "wealth": IrregSpacedGrid(points=[0.0, 50.0, 100.0]),
+            "wealth": IrregSpacedGrid(points=np.array([0.0, 50.0, 100.0])),
             "work": DiscreteGrid(category_class=WorkChoice),
         }
     )

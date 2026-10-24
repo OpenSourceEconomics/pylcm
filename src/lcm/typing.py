@@ -131,6 +131,12 @@ type UserInitialConditions = Mapping[
     StateName | Literal["regime_id"], Array | np.ndarray
 ]
 
+# Initial conditions as a caller gives them to `Model.simulate`: also pandas
+# Series, and for a state declared with `values` a Categorical of those values.
+type UserInitialConditionsInput = Mapping[
+    StateName | Literal["regime_id"], Array | np.ndarray | pd.Series | pd.Categorical
+]
+
 
 # Boundary leaf type — accepted by `Model.__init__` / `Model.solve` /
 # `Model.simulate` and canonicalized by `cast_params_to_canonical_dtypes`.

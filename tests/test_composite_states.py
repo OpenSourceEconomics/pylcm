@@ -263,7 +263,8 @@ def _panel(*, model: Model, composite: bool) -> pd.DataFrame:
         log_level="off",
         seed=11,
     ).to_dataframe(
-        use_labels=False, additional_targets=list(_MEMBERS) if composite else None
+        use_categorical_codes=True,
+        additional_targets=list(_MEMBERS) if composite else None,
     )
     columns = ["subject_id", "period", "regime_name", "choice", "consumption"]
     out = frame[[*columns, "wealth", "offer", *_MEMBERS]].copy()
@@ -325,7 +326,7 @@ def test_labelled_initial_frame_names_members_like_the_dense_model() -> None:
     def run(model: Model) -> pd.DataFrame:
         return model.simulate(
             params=_PARAMS, initial_conditions=frame, log_level="off", seed=11
-        ).to_dataframe(use_labels=False)[["subject_id", "period", "choice"]]
+        ).to_dataframe(use_categorical_codes=True)[["subject_id", "period", "choice"]]
 
     pd.testing.assert_frame_equal(run(_composite()), run(_model()))
 
@@ -478,7 +479,7 @@ def test_member_on_a_value_grid_is_refused() -> None:
     """Members are read as codes, so a member declared by its values is refused."""
     with pytest.raises(ModelInitializationError, match=r"'a'.*values"):
         _two_bit_model(
-            a_grid=DiscreteGrid(values=[10, 20]),
+            a_grid=DiscreteGrid(values=np.array([10, 20])),
             choice_grid=DiscreteGrid(_Bit),
             transitions={"a": fixed_transition("a"), "b": _next_b_from_choice},
         )
@@ -489,7 +490,7 @@ def test_member_law_reading_a_value_grid_is_refused() -> None:
     with pytest.raises(ModelInitializationError, match=r"next_a.*'choice'"):
         _two_bit_model(
             a_grid=DiscreteGrid(_Bit),
-            choice_grid=DiscreteGrid(values=[10, 20]),
+            choice_grid=DiscreteGrid(values=np.array([10, 20])),
             transitions={"a": _next_a_from_numeric_choice, "b": fixed_transition("b")},
         )
 
@@ -575,7 +576,7 @@ def test_labelled_start_with_nonzero_member_label_decodes_to_its_code() -> None:
     panel = (
         _two_start_codes()
         .simulate(params=_PARAMS, initial_conditions=frame, log_level="off", seed=3)
-        .to_dataframe(use_labels=False, additional_targets=list(_MEMBERS))
+        .to_dataframe(use_categorical_codes=True, additional_targets=list(_MEMBERS))
     )
     first = panel[panel["period"] == 0].sort_values("subject_id")
     assert first[list(_MEMBERS)].to_numpy().tolist() == [[1, 0, 0], [0, 0, 0]]

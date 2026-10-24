@@ -348,7 +348,7 @@ def _model(
 
 _UNIT_GRIDS = {
     "linear": LinSpacedGrid(start=-4, stop=19, n_points=24),
-    "fixed_irregular": IrregSpacedGrid(points=tuple(range(-4, 20))),
+    "fixed_irregular": IrregSpacedGrid(points=np.array(tuple(range(-4, 20)))),
 }
 
 
@@ -864,7 +864,7 @@ def test_unsupported_continuous_sharding_refuses_at_construction(
 _NONUNIFORM_GRIDS = {
     # Dense near the borrowing limit, sparse at the top, like a sinh asset grid.
     "fixed_irregular": IrregSpacedGrid(
-        points=tuple((-4 + 23 * np.linspace(0, 1, 24) ** 2).tolist())
+        points=np.array(tuple((-4 + 23 * np.linspace(0, 1, 24) ** 2).tolist()))
     ),
     # Log grids need positive assets, so their models save inside [1, 19].
     "log": LogSpacedGrid(start=1, stop=19, n_points=24),

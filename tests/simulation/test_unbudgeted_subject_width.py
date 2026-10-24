@@ -222,7 +222,7 @@ def test_results_are_identical_across_the_old_and_the_derived_width(
                 solution=solution,
                 log_level="off",
                 seed=12345,
-            ).to_dataframe(use_labels=False)
+            ).to_dataframe(use_categorical_codes=True)
         )
     assert list(frames[0].columns) == list(frames[1].columns)
     for column in frames[0].columns:

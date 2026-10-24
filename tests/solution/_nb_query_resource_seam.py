@@ -282,10 +282,10 @@ def make_model(*, kind: ResourceKind) -> Model:
         post_decision_state="savings",
     )
     passive = {
-        "stock": IrregSpacedGrid(points=PASSIVE_NODES),
-        "z": IrregSpacedGrid(points=PASSIVE_NODES),
+        "stock": IrregSpacedGrid(points=jnp.array(PASSIVE_NODES)),
+        "z": IrregSpacedGrid(points=jnp.array(PASSIVE_NODES)),
     }
-    liquid = IrregSpacedGrid(points=(0.0, 0.25, 0.5, 1.0, 2.0, 4.0))
+    liquid = IrregSpacedGrid(points=jnp.array((0.0, 0.25, 0.5, 1.0, 2.0, 4.0)))
     common: dict[str, UserFunction] = {
         "savings": savings,
         "inverse_marginal_utility": inverse_marginal_utility,
@@ -296,7 +296,9 @@ def make_model(*, kind: ResourceKind) -> Model:
         states={"liquid": liquid, **passive},
         actions={
             "job": DiscreteGrid(category_class=Job),
-            "consumption": IrregSpacedGrid(points=(0.125, 0.25, 0.5, 1.0, 2.0, 4.0)),
+            "consumption": IrregSpacedGrid(
+                points=jnp.array((0.125, 0.25, 0.5, 1.0, 2.0, 4.0))
+            ),
         },
         functions={**common, "utility": utility, "resources": RESOURCES[kind]},
         constraints={"borrowing": borrowing, "eligibility": eligibility},
@@ -305,12 +307,16 @@ def make_model(*, kind: ResourceKind) -> Model:
             "stock": fixed_transition("stock"),
             "z": fixed_transition("z"),
         },
-        solver=NBEGM(savings_grid=IrregSpacedGrid(points=(0.0, 0.25, 0.5, 1.0, 2.0))),
+        solver=NBEGM(
+            savings_grid=IrregSpacedGrid(points=jnp.array((0.0, 0.25, 0.5, 1.0, 2.0)))
+        ),
     )
     parent = ConsumptionSavingsRegime(
         liquid=margin,
         states={"liquid": liquid, **passive},
-        actions={"consumption": IrregSpacedGrid(points=(0.125, 0.25, 0.5, 1.0))},
+        actions={
+            "consumption": IrregSpacedGrid(points=jnp.array((0.125, 0.25, 0.5, 1.0)))
+        },
         functions={
             **common,
             "utility": parent_utility,
@@ -318,7 +324,9 @@ def make_model(*, kind: ResourceKind) -> Model:
         },
         constraints={"borrowing": borrowing},
         state_transitions={"liquid": next_liquid, "stock": next_stock, "z": next_z},
-        solver=NBEGM(savings_grid=IrregSpacedGrid(points=(0.0, 0.25, 0.5, 1.0))),
+        solver=NBEGM(
+            savings_grid=IrregSpacedGrid(points=jnp.array((0.0, 0.25, 0.5, 1.0)))
+        ),
     )
     return Model(
         regimes={
@@ -327,7 +335,7 @@ def make_model(*, kind: ResourceKind) -> Model:
             "done": Regime(
                 states={
                     "liquid": IrregSpacedGrid(
-                        points=(0.0, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0)
+                        points=jnp.array((0.0, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0))
                     ),
                     **passive,
                 },

@@ -253,7 +253,7 @@ def test_automatic_simulation_consumes_each_admitted_runtime_process(
         initial_conditions=initial,
         log_level="debug",
     )
-    first = result.to_dataframe(use_labels=False).iloc[0]
+    first = result.to_dataframe(use_categorical_codes=True).iloc[0]
 
     np.testing.assert_array_equal(
         first[["income", "saving", "value"]].to_numpy(dtype=float),
@@ -306,7 +306,7 @@ def test_runtime_process_support_changes_public_value_and_saving() -> None:
             seed=0,
             log_level="debug",
         )
-        frame = result.to_dataframe(use_labels=False)
+        frame = result.to_dataframe(use_categorical_codes=True)
         initial_row = frame.loc[frame["period"] == 0]
         assert len(initial_row) == 1
         np.testing.assert_array_equal(
@@ -636,7 +636,9 @@ def test_given_node_supports_preserve_distinct_axes(*, runtime: bool) -> None:
     required = jax.sharding.SingleDeviceSharding(jax.devices()[0])
     for nodes in ((-1.0, 0.0, 1.0), (-2.0, 0.0, 2.0)):
         process = TauchenAR1Process.on_nodes(
-            nodes=nodes, rho=None if runtime else 1.0, sigma=None if runtime else 0.1
+            nodes=np.array(nodes),
+            rho=None if runtime else 1.0,
+            sigma=None if runtime else 0.1,
         )
         actual = owner(spec=process, parameters=parameters, required=required)
         np.testing.assert_array_equal(actual, jax.numpy.asarray(nodes))
@@ -646,7 +648,9 @@ def test_given_node_support_refuses_insufficient_placement_budget() -> None:
     """A constant physical axis cannot bypass device allocation admission."""
     owner = _owner(parameters={})
     owner.budget_bytes = 0
-    process = TauchenAR1Process.on_nodes(nodes=(-1.0, 0.0, 1.0), rho=1.0, sigma=0.1)
+    process = TauchenAR1Process.on_nodes(
+        nodes=np.array([-1.0, 0.0, 1.0]), rho=1.0, sigma=0.1
+    )
     required = jax.sharding.SingleDeviceSharding(jax.devices()[0])
     with pytest.raises(ExecutionPlanningError):
         owner(spec=process, parameters={}, required=required)
@@ -700,7 +704,7 @@ def test_given_node_supports_keep_signed_zero_at_every_reuse_layer(
             nodes = (
                 (lower, zero, upper) if n_points == 3 else (lower, -1.0, zero, upper)
             )
-            process = TauchenAR1Process.on_nodes(nodes=nodes, sigma=0.1)
+            process = TauchenAR1Process.on_nodes(nodes=np.array(nodes), sigma=0.1)
             actual = owners[min(index, len(owners) - 1)](
                 spec=process, parameters=params, required=required
             )
@@ -722,7 +726,7 @@ def test_given_node_trace_identity_includes_active_float_dtype() -> None:
         for x64 in (False, True):
             jax.config.update("jax_enable_x64", val=x64)
             params = {"rho": jax.numpy.asarray(1, dtype=jax.numpy.int32)}
-            process = TauchenAR1Process.on_nodes(nodes=nodes, sigma=1, mu=0)
+            process = TauchenAR1Process.on_nodes(nodes=np.array(nodes), sigma=1, mu=0)
             owner = _owner(parameters=params)
             try:
                 actual = owner(
@@ -780,8 +784,8 @@ def test_automatic_solution_keeps_supplied_axis_zero_signs(
         regimes={
             "done": Regime(
                 states={
-                    "x": TauchenAR1Process.on_nodes(nodes=x_nodes, sigma=0.1),
-                    "y": TauchenAR1Process.on_nodes(nodes=y_nodes, sigma=0.1),
+                    "x": TauchenAR1Process.on_nodes(nodes=np.array(x_nodes), sigma=0.1),
+                    "y": TauchenAR1Process.on_nodes(nodes=np.array(y_nodes), sigma=0.1),
                 },
                 functions={"utility": _sign_sensitive_utility},
             )

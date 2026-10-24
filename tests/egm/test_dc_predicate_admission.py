@@ -89,15 +89,17 @@ def _euler_model_and_params(*, predicate: bool) -> tuple[Model, UserParams]:
         post_decision_state="savings",
     )
     passive = {
-        "z": IrregSpacedGrid(points=(0.0, 1.0)),
-        "w": IrregSpacedGrid(points=(0.0, 1.0, 2.0)),
+        "z": IrregSpacedGrid(points=np.array([0.0, 1.0])),
+        "w": IrregSpacedGrid(points=np.array([0.0, 1.0, 2.0])),
     }
     child = ConsumptionSavingsRegime(
         liquid=margin,
-        states={"liquid": IrregSpacedGrid(points=(0.0, 0.5, 1.5)), **passive},
+        states={"liquid": IrregSpacedGrid(points=np.array([0.0, 0.5, 1.5])), **passive},
         actions={
             "job": DiscreteGrid(category_class=Job),
-            "consumption": IrregSpacedGrid(points=(0.025, 0.125, 0.5, 1.0, 4.0)),
+            "consumption": IrregSpacedGrid(
+                points=np.array([0.025, 0.125, 0.5, 1.0, 4.0])
+            ),
         },
         functions={
             "utility": _child_utility,
@@ -115,16 +117,16 @@ def _euler_model_and_params(*, predicate: bool) -> tuple[Model, UserParams]:
             "w": fixed_transition("w"),
         },
         solver=DCEGM(
-            savings_grid=IrregSpacedGrid(points=(0.0, 0.5, 1.5)),
+            savings_grid=IrregSpacedGrid(points=np.array([0.0, 0.5, 1.5])),
             n_constrained_points=4,
         ),
     )
     parent = ConsumptionSavingsRegime(
         liquid=margin,
-        states={"liquid": IrregSpacedGrid(points=(0.375, 0.5)), **passive},
+        states={"liquid": IrregSpacedGrid(points=np.array([0.375, 0.5])), **passive},
         actions={
             "route": DiscreteGrid(category_class=Job),
-            "consumption": IrregSpacedGrid(points=(0.025, 0.125, 0.25)),
+            "consumption": IrregSpacedGrid(points=np.array([0.025, 0.125, 0.25])),
         },
         functions={
             "utility": _parent_utility,
@@ -139,7 +141,7 @@ def _euler_model_and_params(*, predicate: bool) -> tuple[Model, UserParams]:
             "w": _child_w,
         },
         solver=DCEGM(
-            savings_grid=IrregSpacedGrid(points=(0.25, 0.375, 0.5)),
+            savings_grid=IrregSpacedGrid(points=np.array([0.25, 0.375, 0.5])),
             n_constrained_points=4,
         ),
     )
@@ -148,7 +150,10 @@ def _euler_model_and_params(*, predicate: bool) -> tuple[Model, UserParams]:
             "parent": parent,
             "child": child,
             "done": Regime(
-                states={"liquid": IrregSpacedGrid(points=(0.0, 16.0)), **passive},
+                states={
+                    "liquid": IrregSpacedGrid(points=np.array([0.0, 16.0])),
+                    **passive,
+                },
                 functions={"utility": _terminal},
             ),
         },

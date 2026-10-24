@@ -272,7 +272,7 @@ def _identity_parent_model(*, literal: bool, dead_source: bool = False) -> Model
     parent = base.user_regimes["parent"]
     if dead_source:
         parent = replace(
-            parent, states={"wealth": IrregSpacedGrid(points=(-0.125, 0.0))}
+            parent, states={"wealth": IrregSpacedGrid(points=np.array([-0.125, 0.0]))}
         )
     return Model(
         regimes={"parent": parent, "child": child, "done": base.user_regimes["done"]},
@@ -377,7 +377,8 @@ def test_actual_child_failure_survives_literal_source_with_optional_checks_off(
         parent = base.user_regimes["parent"]
         if dead_source:
             parent = replace(
-                parent, states={"liquid": IrregSpacedGrid(points=(0.175, 0.2))}
+                parent,
+                states={"liquid": IrregSpacedGrid(points=np.array([0.175, 0.2]))},
             )
         model = Model(
             regimes={**base.user_regimes, "parent": parent},

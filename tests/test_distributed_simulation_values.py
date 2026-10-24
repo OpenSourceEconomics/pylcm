@@ -333,8 +333,8 @@ def test_placed_solution_simulates_to_the_single_device_result(
     """Full and proper submeshes preserve all seven subjects' simulated paths."""
     _, actual, _ = _simulate(n_types=n_types, devices=devices, sharded=True)
     _, expected, _ = _simulate(n_types=n_types, devices=(0,), sharded=False)
-    got = actual.to_dataframe(use_labels=False)
-    want = expected.to_dataframe(use_labels=False)
+    got = actual.to_dataframe(use_categorical_codes=True)
+    want = expected.to_dataframe(use_categorical_codes=True)
     pd.testing.assert_index_equal(got.index, want.index)
     pd.testing.assert_index_equal(got.columns, want.columns)
     for column in want:
@@ -438,8 +438,8 @@ def test_fixed_inner_subject_width_survives_outer_device_alignment(
     )
     _, expected, _ = _simulate(n_types=4, devices=(0,), sharded=False)
     got, want = (
-        actual.to_dataframe(use_labels=False),
-        expected.to_dataframe(use_labels=False),
+        actual.to_dataframe(use_categorical_codes=True),
+        expected.to_dataframe(use_categorical_codes=True),
     )
     for name in want:
         if name == "value":

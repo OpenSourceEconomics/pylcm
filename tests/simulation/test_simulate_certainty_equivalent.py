@@ -41,7 +41,7 @@ def test_simulated_period0_consumption_matches_reference_policy():
         },
         log_level="debug",
     )
-    df = result.to_dataframe(use_labels=False)
+    df = result.to_dataframe(use_categorical_codes=True)
     period0 = df.query("period == 0").sort_index()
 
     _, policy_c = _reference_backward_induction(
@@ -84,7 +84,7 @@ def test_bad_health_cost_drains_wealth_in_simulation():
         log_level="debug",
         seed=7,
     )
-    df = result.to_dataframe(use_labels=False)
+    df = result.to_dataframe(use_categorical_codes=True)
     alive = df[df["regime_name"] == "alive"].sort_values(["subject_id", "period"])
     curr = alive.groupby("subject_id").nth(0)
     following = alive.groupby("subject_id").nth(1)
@@ -121,7 +121,7 @@ def test_bequest_scale_scales_the_dead_regime_utility():
         log_level="debug",
         seed=7,
     )
-    df = result.to_dataframe(use_labels=False, additional_targets=["utility"])
+    df = result.to_dataframe(use_categorical_codes=True, additional_targets=["utility"])
     dead = df[df["regime_name"] == "dead"]
     assert len(dead) > 0
     np.testing.assert_allclose(
@@ -144,7 +144,7 @@ def _simulated_period0_consumption(
         },
         log_level="debug",
     )
-    df = result.to_dataframe(use_labels=False)
+    df = result.to_dataframe(use_categorical_codes=True)
     return df.query("period == 0")["consumption"].to_numpy()
 
 

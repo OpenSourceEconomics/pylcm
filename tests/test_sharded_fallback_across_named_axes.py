@@ -398,8 +398,8 @@ def _report(
     tolerance = 10.0**-decimal
     try:
         pd.testing.assert_frame_equal(
-            simulated.to_dataframe(use_labels=False),
-            expected_frame.to_dataframe(use_labels=False),
+            simulated.to_dataframe(use_categorical_codes=True),
+            expected_frame.to_dataframe(use_categorical_codes=True),
             rtol=tolerance,
             atol=tolerance,
         )

@@ -328,7 +328,7 @@ def test_simulation_publishes_the_supplied_physical_initial_state(
         runtime_checks=True,
         log_level="off",
     )
-    frame = result.to_dataframe(use_labels=False)
+    frame = result.to_dataframe(use_categorical_codes=True)
     initial = frame.loc[frame["period"] == 0, ["x", "y"]].to_numpy() / scale
     np.testing.assert_array_equal(initial, ((0.0, 1.0),))
 

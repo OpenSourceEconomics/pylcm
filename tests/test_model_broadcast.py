@@ -502,7 +502,7 @@ def test_model_broadcast_solves_and_simulates() -> None:
         log_level="debug",
         seed=3,
     )
-    df = result.to_dataframe(use_labels=False)
+    df = result.to_dataframe(use_categorical_codes=True)
     work_rows = df.loc[df["regime_name"] == "work"].sort_values(
         ["subject_id", "period"]
     )

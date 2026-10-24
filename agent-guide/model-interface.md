@@ -243,6 +243,19 @@ laws or joint transition supports and probabilities. It checks active periods an
 grids with numerical checks always enabled and no console output. Utilities, solver
 outputs and general deterministic next-state finiteness are outside this preflight.
 
+### Discrete values and codes
+
+`DiscreteGrid(values=jnp.array([0, 5, 10]))` declares a discrete variable by its numbers;
+`values` is always a one-dimensional NumPy or JAX array, never a list or tuple; the
+same holds for `IrregSpacedGrid(points=...)` and `TauchenAR1Process.on_nodes(nodes=...)`. A user
+function reading `experience` receives the value (pandas: the category); reading
+`experience_code` receives the int32 position (pandas: the code). `<name>_code` exists
+for every discrete state and action, and for a category class equals `<name>`. Index
+parameter arrays with the code, `wage_premium[experience_code]`, and label the
+`pd.Series` level `experience` with the values; pylcm aligns it to grid order.
+`table[experience]` on a value grid is refused at model build, and no state, action,
+function or constraint may be named `<name>_code` for a discrete `<name>`.
+
 ### Derived Categoricals
 
 When parameters are indexed by a DAG function output (not a model state/action), declare
@@ -428,7 +441,7 @@ df = result.to_dataframe(additional_targets=["utility", "consumption"])
 df = result.to_dataframe(additional_targets="all")
 
 # Integer codes instead of categorical labels
-df = result.to_dataframe(use_labels=False)
+df = result.to_dataframe(use_categorical_codes=True)
 
 # Keep the frozen post-entry terminal-regime rows (absorbing representation);
 # the default (terminal_rows="first") emits each subject's terminal entry row only

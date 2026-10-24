@@ -585,7 +585,7 @@ def test_runtime_grid_param_rejected():
 def test_runtime_grid_param_on_supplied_nodes_names_the_public_constructor():
     """The refusal tells the user to pass the parameter to `on_nodes`."""
     income = TauchenAR1Process.on_nodes(
-        nodes=(-1.0, 0.0, 1.0),
+        nodes=np.array([-1.0, 0.0, 1.0]),
         rho=None,
         sigma=StateConditioned(on="uncertainty", by={"low": 0.1, "high": 0.3}),
     )

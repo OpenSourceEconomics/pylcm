@@ -55,10 +55,26 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   for category grids as well, which used to clamp silently. An integer value grid has
   no NaN, so a user function reading such a state receives `MISSING_CAT_CODE`, the
   int32 minimum, while the value function there is still NaN.
-- `DiscreteGrid(values=[0, 20, 40])` declares a discrete variable by its numbers instead
-  of a category class. Values are strictly ascending, finite, and all integers (stored
-  as int32) or all floats (stored at the canonical float dtype). Codes stay `0..n-1`;
+- `DiscreteGrid(values=jnp.array([0, 20, 40]))` declares a discrete variable by its
+  numbers instead of a category class. `values` is a one-dimensional NumPy or JAX
+  array of integer or floating dtype; lists, tuples and ranges are refused. Values are
+  strictly ascending and finite, integers are stored as int32 and floats at the
+  canonical float dtype. Codes stay `0..n-1`;
   `categories` holds the `repr` of each value.
+- A user function may read `<name>_code` for any discrete variable `<name>`, state or
+  action, in functions, constraints, state transitions and regime-transition laws. For
+  a value grid `<name>` is the value (pandas: the category) and `<name>_code` the int32
+  position (pandas: the code); for a category class both are the code. A parameter
+  array indexed by `<name>_code` takes a `pd.Series` whose level is named `<name>` and
+  labelled by the values or category labels, aligned to grid order in any written
+  order. Indexing an array by the value of a value grid (`table[experience]`) is
+  refused at model build, naming `experience_code` as the fix, and a state, action,
+  function or constraint named `<name>_code` for a discrete `<name>` is refused as a
+  name collision.
+- `IrregSpacedGrid(points=...)` and `TauchenAR1Process.on_nodes(nodes=...)` take only
+  a one-dimensional NumPy or JAX array of integer or floating dtype, as
+  `DiscreteGrid(values=...)` does; `on_nodes` now accepts arrays, and a list, tuple or
+  range is refused with an error that shows the array spelling.
 - A float matches a node exactly unless the grid declares an absolute `tolerance`,
   which must lie below half the smallest gap between values; integer grids take
   integers and match them exactly. `grid.encode` maps values to codes (off-grid values
@@ -68,12 +84,38 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   law of a value-grid state returns a value, which becomes the code of its node. A
   stochastic law reads values and still returns probabilities in the order of
   `values`. Integer values arrive as int32, as codes do. A variable declared with values
-  must carry the same values and tolerance in every regime. Value grids are not yet
-  supported for joint transitions, condition constraints, collective regimes,
-  carried-state imputations, age-specialized functions, or regime transition laws
-  that read them; the model raises for these. Age-specialized readers are refused
-  in functions, constraints and carried-state imputations; this includes `Phased`
-  function declarations and model-level derived value grids.
+  must carry the same values and tolerance in every regime. Regime transition laws,
+  gates and their projections, collective regimes (stakeholder utilities, Pareto
+  weights, value-dependent constraints and their projections), joint transitions
+  and carried-state imputations read values too; a projection, a joint output and an
+  imputation of a value-grid state return a value. A `functools.partial` reading a
+  value grid asks only for the arguments it leaves free. Condition constraints that
+  read a value grid, and age-specialized functions, constraints and imputations in a
+  regime with value grids, are refused; this includes `Phased` function
+  declarations and model-level derived value grids.
+- A float value grid holds its values at the precision of the model that uses it,
+  so a grid built before x64 is enabled holds float64 values in a float64 model.
+  Values that collide at that precision raise when the model is built.
+- Breaking: `use_labels` is renamed `use_categorical_codes`, with the opposite meaning,
+  in `SimulationResult.to_dataframe`, `SolutionResult.value_array` and
+  `SolutionResult.value_frame`; `SimulationResult.save` takes
+  `df_use_categorical_codes`. The default `False` keeps categorical columns and
+  coordinates; `True` gives integer codes. There is no alias for the old name.
+- Behavior change: the user-facing boundaries speak a value grid's values instead of its
+  codes. `to_dataframe` gives an ordered numeric Categorical over all of the grid's
+  values (cast with `.astype(float)` for arithmetic). Initial conditions, as a mapping or
+  a frame, take the values, as numbers or as such a Categorical, whose categories must
+  be exactly the grid's values in order; integers match exactly, floats within the
+  grid's tolerance, and anything else raises naming the value. A `pd.Series` level in
+  `params` takes the values as labels and refuses string spellings. `lookup_policy`
+  reads states and `action_grids` in values and returns a value-grid action as an array
+  of its values. `value_array` and `value_frame` use the values as coordinates.
+  `use_categorical_codes=True` on `solve`, `simulate`, `validate_transitions`,
+  `validate_initial_conditions`, `initial_conditions_feasibility` and `lookup_policy`
+  switches these inputs and outputs to integer codes, for category-class grids as well.
+  `shock_paths` keeps category codes for every discrete state, so a path replays exactly.
+  A mapping of initial conditions also accepts pandas Series, and Categoricals for value
+  grids.
 
 ### Time-inconsistent agents with `Decoupled`
 
@@ -171,7 +213,7 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 - `SolutionResult.value_array(period=..., regime=...)` returns an xarray `DataArray`
   named `V` with one dimension per state axis, the resolved grid nodes as coordinates,
-  discrete states labelled as categoricals in declaration order (`use_labels=False` for
+  discrete states labelled as categoricals in declaration order (`use_categorical_codes=True` for
   integer codes), and a `stakeholder` dimension for collective regimes. It wraps the
   stored value without a host copy; `.sel(...)` selects a curve or surface by name before
   any table is built. `SolutionResult.value_frame(...)` returns the same values as a long

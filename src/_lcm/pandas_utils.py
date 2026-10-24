@@ -35,7 +35,7 @@ from _lcm.reachability import ModelReachability
 from _lcm.regime_building.collective import NO_ROLE, build_role_vocabulary
 from _lcm.regime_law import RegimeLaws
 from _lcm.simulation.initial_conditions import MISSING_CAT_CODE, PSEUDO_STATE_NAMES
-from _lcm.time import TimeAxis, coordinate_kind
+from _lcm.time import TimeAxis, coordinate_kind, specialization_coordinate_at
 from _lcm.typing import (
     FlatParams,
     FunctionName,
@@ -47,8 +47,9 @@ from _lcm.typing import (
 from _lcm.utils.ast_inspection import _get_func_indexing_params, time_index_names
 from _lcm.utils.functools import is_user_function
 from _lcm.utils.namespace import ParamsQnameDepth
+from _lcm.value_grid_inputs import encode_grid_codes, encode_grid_values
 from lcm.decoupled import koopmans_aggregator_variants
-from lcm.exceptions import InvalidParamsError
+from lcm.exceptions import InvalidInitialConditionsError, InvalidParamsError
 from lcm.params import (
     TimeVarying,
     UnlabelledTimeParameterWarning,
@@ -59,6 +60,7 @@ from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.transition import (
     AgeCaseLaw,
+    AgeSpecializedFunction,
     AgeSpecializedGrid,
     ByAge,
     JointTransition,
@@ -110,13 +112,14 @@ def has_series(params: Mapping[str, UserParamsNode]) -> bool:
     return False
 
 
-def initial_conditions_from_dataframe(  # noqa: C901
+def initial_conditions_from_dataframe(  # noqa: C901, PLR0912
     *,
     df: pd.DataFrame,
     user_regimes: Mapping[RegimeName, UserRegime],
     regime_names_to_ids: RegimeNamesToIds,
     array_writer: CanonicalArrayWriter | None = None,
     ages: TimeAxis | None = None,
+    use_categorical_codes: bool = False,
 ) -> InitialConditions:
     """Convert a DataFrame of initial conditions to LCM initial conditions format.
 
@@ -128,6 +131,10 @@ def initial_conditions_from_dataframe(  # noqa: C901
             indices.
         array_writer: Optional owner admitting each numeric device upload after
             label validation and host conversion.
+        use_categorical_codes: Whether discrete state columns hold integer codes.
+            By default a category-class state holds its labels and a state
+            declared with `values` its numbers, as `SimulationResult.to_dataframe`
+            publishes them.
 
     Returns:
         Immutable mapping of state names (plus `"regime_id"`, and
@@ -141,6 +148,8 @@ def initial_conditions_from_dataframe(  # noqa: C901
             missing, contains invalid regime names, has unknown columns, is
             missing required states, or categorical columns contain invalid
             labels.
+        InvalidInitialConditionsError: If a value-grid column holds a value that
+            names no node, or a code column a value that is no code.
 
     """
     if "regime_name" not in df.columns:
@@ -207,6 +216,24 @@ def initial_conditions_from_dataframe(  # noqa: C901
                 continue
 
             values = group[col]
+            grid = discrete_grids.get(col)
+            name = f"initial_conditions[{col!r}] in regime {regime_name!r}"
+            if grid is not None and use_categorical_codes:
+                result_arrays[col][idx] = encode_grid_codes(
+                    grid=grid,
+                    codes=values,
+                    name=name,
+                    error_type=InvalidInitialConditionsError,
+                )
+                continue
+            if grid is not None and grid.values is not None:  # noqa: PD011
+                result_arrays[col][idx] = encode_grid_values(
+                    grid=grid,
+                    values=values,
+                    name=name,
+                    error_type=InvalidInitialConditionsError,
+                )
+                continue
             if hasattr(values, "cat"):
                 values = values.astype(str)
 
@@ -364,6 +391,7 @@ def convert_series_in_params(
     required_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
     reachability: ModelReachability | None = None,
     phase_transitions: Mapping[Phase, Mapping[RegimeName, Transition]] | None = None,
+    use_categorical_codes: bool = False,
 ) -> FlatParams:
     """Convert pd.Series leaves in already-broadcast internal params to JAX arrays.
 
@@ -397,6 +425,9 @@ def convert_series_in_params(
             completed leaves while the parameter mapping is assembled.
         phase_transitions: Declarations retaining their owning phase, including
             inferred targets, for phase-specific temporal coverage.
+        use_categorical_codes: Whether a Series level named by a discrete
+            variable holds integer codes. By default it holds the labels of a
+            category class or the numbers of a grid declared with `values`.
 
     Returns:
         Immutable mapping with the same structure, Series replaced by JAX
@@ -421,6 +452,7 @@ def convert_series_in_params(
                             array_writer=array_writer,
                             required_periods_by_regime=required_periods_by_regime,
                             reachability=reachability,
+                            use_categorical_codes=use_categorical_codes,
                             declarations_by_phase=(
                                 None
                                 if phase_transitions is None
@@ -437,11 +469,29 @@ def convert_series_in_params(
             )
             continue
         user_regime = user_regimes[regime_name]
-        solve_funcs = user_regime.get_all_functions(
-            phase="solve", law=laws[regime_name]
+        regime_periods = (
+            tuple(range(ages.n_periods))
+            if required_periods_by_regime is None
+            else required_periods_by_regime.get(regime_name, ())
         )
-        simulate_funcs = user_regime.get_all_functions(
-            phase="simulate", law=laws[regime_name]
+        solve_funcs, simulate_funcs = (
+            _resolve_age_specialized(
+                functions=user_regime.get_all_functions(
+                    phase=phase, law=laws[regime_name]
+                ),
+                ages=ages,
+                periods=regime_periods
+                if reachability is None
+                else tuple(
+                    period
+                    for period in regime_periods
+                    if regime_name
+                    in reachability.for_phase(
+                        "solution" if phase == "solve" else "simulation"
+                    ).active_regimes_by_period[period]
+                ),
+            )
+            for phase in ("solve", "simulate")
         )
         all_funcs: dict[str, _ParamConsumer] = {**solve_funcs, **simulate_funcs}
         for name in solve_funcs.keys() & simulate_funcs.keys():
@@ -502,6 +552,7 @@ def convert_series_in_params(
                 regime_name=regime_name,
                 declared_categoricals=declared_vocabulary[regime_name].categoricals,
                 array_writer=array_writer,
+                use_categorical_codes=use_categorical_codes,
                 required_periods=_regime_param_periods(
                     parts=parts,
                     func_name=resolved_func_name,
@@ -534,6 +585,7 @@ def _convert_edge_params(
     required_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
     reachability: ModelReachability | None = None,
     declarations_by_phase: Mapping[Phase, Transition] | None = None,
+    use_categorical_codes: bool = False,
 ) -> MappingProxyType[str, _ConvertedParamsNode]:
     """Convert the Series leaves of one source's `edges` slots.
 
@@ -554,6 +606,7 @@ def _convert_edge_params(
         regime_names_to_ids: Immutable mapping from regime names to integer
             indices.
         array_writer: Optional owner admitting each Series upload.
+        use_categorical_codes: Whether a discrete level holds integer codes.
 
     Returns:
         The slots with every Series replaced by its array.
@@ -594,6 +647,7 @@ def _convert_edge_params(
             regime_name=regime_name,
             declared_categoricals=declared_vocabulary[regime_name].categoricals,
             array_writer=array_writer,
+            use_categorical_codes=use_categorical_codes,
             required_periods=_edge_param_periods(
                 declarations=declared_transitions,
                 declarations_by_phase=declarations_by_phase,
@@ -868,6 +922,33 @@ def _resolve_param_consumer(
     )
 
 
+def _resolve_age_specialized(
+    *,
+    functions: Mapping[str, UserFunction],
+    ages: TimeAxis,
+    periods: tuple[int, ...],
+) -> Mapping[str, UserFunction]:
+    """Replace each `AgeSpecializedFunction` by its function at the first period.
+
+    A marker publishes a generic signature and no source, so its parameters'
+    indexing and use are read off a function it builds. Every age's function has
+    one call signature and one body, so any period the phase reads the regime at
+    serves; a marker is built nowhere else, since its factory may hold only those
+    periods. Without such a period the marker is never read and stays as it is.
+    """
+    if not periods:
+        return functions
+    coordinate = specialization_coordinate_at(ages=ages, period=periods[0])
+    return MappingProxyType(
+        {
+            name: func.build(coordinate)
+            if isinstance(func, AgeSpecializedFunction)
+            else func
+            for name, func in functions.items()
+        }
+    )
+
+
 def _convert_param_value(
     *,
     value: UserParamsNode | LeafEntry,
@@ -881,6 +962,7 @@ def _convert_param_value(
     declared_categoricals: Mapping[ReferenceName, DiscreteGrid],
     array_writer: CanonicalArrayWriter | None = None,
     required_periods: tuple[int, ...] | None = None,
+    use_categorical_codes: bool = False,
 ) -> _ConvertedParamsNode:
     """Convert a single param value, dispatching on type.
 
@@ -899,6 +981,7 @@ def _convert_param_value(
         declared_categoricals: The discrete grids `regime_name` declares, demand
             pruned or not.
         array_writer: Optional owner admitting each nested Series upload.
+        use_categorical_codes: Whether a discrete level holds integer codes.
 
     Returns:
         Converted value: JAX array for Series, a `UserMappingLeaf` /
@@ -917,6 +1000,7 @@ def _convert_param_value(
         regime_names_to_ids=regime_names_to_ids,
         regime_name=regime_name,
         declared_categoricals=declared_categoricals,
+        use_categorical_codes=use_categorical_codes,
         array_writer=array_writer,
         required_periods=required_periods,
     )
@@ -956,6 +1040,7 @@ def _convert_param_value(
             declared_categoricals=declared_categoricals,
             array_writer=array_writer,
             required_periods=support,
+            use_categorical_codes=use_categorical_codes,
         )
     # `convert_series_in_params` runs between broadcast and canonicalization,
     # so leaves are still in user form. Preserve that user form on output:
@@ -1018,6 +1103,7 @@ def array_from_series(
     declared_categoricals: Mapping[ReferenceName, DiscreteGrid] = MappingProxyType({}),
     array_writer: CanonicalArrayWriter | None = None,
     required_periods: tuple[int, ...] | None = None,
+    use_categorical_codes: bool = False,
 ) -> FloatND:
     """Convert a pandas Series to a JAX array.
 
@@ -1046,6 +1132,11 @@ def array_from_series(
         declared_categoricals: Discrete grids `regime_name` declares, which label
             a level whose variable demand pruned from the regime.
         array_writer: Optional owner admitting the completed numeric device array.
+        use_categorical_codes: Whether a level named by a discrete variable holds
+            integer codes. By default a category-class level holds its string
+            labels, and a level of a grid declared with `values` holds those
+            numbers: integers matched exactly, floats within the grid's
+            tolerance.
 
     Returns:
         JAX array with axes corresponding to the indexing parameters in
@@ -1088,6 +1179,14 @@ def array_from_series(
         **declared_categoricals,
         **_resolve_categoricals(user_regimes=user_regimes, regime_name=regime_name),
     }
+    # An index `<name>_code` is the position of the discrete variable `<name>`,
+    # whose level the Series names `<name>`.
+    indexing_params = [
+        param.removesuffix("_code")
+        if param not in grids and param.removesuffix("_code") in grids
+        else param
+        for param in indexing_params
+    ]
 
     # Replace internal "period" with user-facing "age"
     display_params = [
@@ -1095,7 +1194,10 @@ def array_from_series(
     ]
 
     level_mappings = _build_level_mappings_for_param(
-        indexing_params=display_params, grids=grids, ages=ages
+        indexing_params=display_params,
+        grids=grids,
+        ages=ages,
+        use_categorical_codes=use_categorical_codes,
     )
 
     # Append outcome axis for transition probability arrays (next_* functions
@@ -1110,6 +1212,7 @@ def array_from_series(
                 grids=grids,
                 user_regimes=user_regimes,
                 regime_names_to_ids=regime_names_to_ids,
+                use_categorical_codes=use_categorical_codes,
             )
             level_mappings = (*level_mappings, outcome_mapping)
 
@@ -1276,6 +1379,12 @@ class _LevelMapping:
     valid_labels: tuple[str, ...] = ()
     """Valid label names, for error messages. Empty for age levels."""
 
+    grid: DiscreteGrid | None = None
+    """The discrete grid of the level, which encodes values or checks codes."""
+
+    reads_codes: bool = False
+    """Whether the level holds the grid's integer codes instead of its labels."""
+
 
 @dataclass(frozen=True, kw_only=True)
 class _RegimeIdCode:
@@ -1301,15 +1410,19 @@ def _age_level_mapping(ages: TimeAxis) -> _LevelMapping:
     )
 
 
-def _grid_level_mapping(*, name: str, grid: DiscreteGrid) -> _LevelMapping:
+def _grid_level_mapping(
+    *, name: str, grid: DiscreteGrid, reads_codes: bool = False
+) -> _LevelMapping:
     """Create a `_LevelMapping` for a categorical dimension.
 
     Args:
         name: Level name in the MultiIndex.
         grid: The `DiscreteGrid` defining valid categories.
+        reads_codes: Whether the level holds integer codes instead of labels or
+            values.
 
     Returns:
-        `_LevelMapping` mapping category labels to integer codes.
+        `_LevelMapping` mapping the level's labels, values or codes to codes.
 
     """
     label_to_code = dict(zip(grid.categories, grid.codes, strict=True))
@@ -1318,6 +1431,8 @@ def _grid_level_mapping(*, name: str, grid: DiscreteGrid) -> _LevelMapping:
         size=len(grid.categories),
         get_code_from_label=label_to_code.__getitem__,
         valid_labels=grid.categories,
+        grid=grid,
+        reads_codes=reads_codes,
     )
 
 
@@ -1326,6 +1441,7 @@ def _build_level_mappings_for_param(
     indexing_params: list[str],
     grids: Mapping[str, DiscreteGrid],
     ages: TimeAxis,
+    use_categorical_codes: bool = False,
 ) -> tuple[_LevelMapping, ...]:
     """Build level mappings for `array_from_series` from indexing params.
 
@@ -1334,6 +1450,7 @@ def _build_level_mappings_for_param(
             `"period"` already replaced by `"age"`.
         grids: Categorical grid lookup.
         ages: The model's `AgeGrid`.
+        use_categorical_codes: Whether discrete levels hold integer codes.
 
     Returns:
         Tuple of `_LevelMapping` instances.
@@ -1344,7 +1461,11 @@ def _build_level_mappings_for_param(
         if param == coordinate_kind(ages):
             mappings.append(_age_level_mapping(ages))
         elif param in grids:
-            mappings.append(_grid_level_mapping(name=param, grid=grids[param]))
+            mappings.append(
+                _grid_level_mapping(
+                    name=param, grid=grids[param], reads_codes=use_categorical_codes
+                )
+            )
         else:
             msg = (
                 f"Unrecognised indexing parameter '{param}'. Expected 'age' "
@@ -1363,6 +1484,7 @@ def _build_outcome_mapping(
     grids: Mapping[str, DiscreteGrid],
     user_regimes: Mapping[RegimeName, UserRegime],
     regime_names_to_ids: RegimeNamesToIds,
+    use_categorical_codes: bool = False,
 ) -> _LevelMapping:
     """Build a `_LevelMapping` for the outcome axis of a `next_*` function.
 
@@ -1377,6 +1499,8 @@ def _build_outcome_mapping(
         user_regimes: Mapping of regime names to user-provided `Regime` instances.
         regime_names_to_ids: Immutable mapping from regime names to integer
             indices.
+        use_categorical_codes: Whether a state's outcome level holds integer
+            codes; a `next_regime` level always holds regime names.
 
     Returns:
         `_LevelMapping` for the outcome (last) axis.
@@ -1401,9 +1525,17 @@ def _build_outcome_mapping(
         if target_user_regime is not None and state_name in target_user_regime.states:
             target_grid = target_user_regime.states[state_name]
             if isinstance(target_grid, DiscreteGrid):
-                return _grid_level_mapping(name=f"next_{state_name}", grid=target_grid)
+                return _grid_level_mapping(
+                    name=f"next_{state_name}",
+                    grid=target_grid,
+                    reads_codes=use_categorical_codes,
+                )
 
-    return _grid_level_mapping(name=f"next_{state_name}", grid=grids[state_name])
+    return _grid_level_mapping(
+        name=f"next_{state_name}",
+        grid=grids[state_name],
+        reads_codes=use_categorical_codes,
+    )
 
 
 def _require_temporal_cells(
@@ -1485,6 +1617,15 @@ def _scatter_series(
         for mapping in level_mappings
     ]
 
+    # Distinct float labels can name the same value-grid node within its
+    # tolerance. Detect duplicate encoded keys before scattering: checking raw
+    # labels alone permits an overwrite and may hide a missing required cell.
+    duplicate_codes = pd.MultiIndex.from_arrays(index_arrays).duplicated(keep=False)
+    if duplicate_codes.any():
+        raise InvalidParamsError(
+            f"{name}: multiple selected labels encode to the same grid cell: "
+            f"{series.index[duplicate_codes].tolist()[:8]}."
+        )
     result = np.full(shape, fill_value)
     result[tuple(index_arrays)] = series.to_numpy()
     return _write_pandas_array(
@@ -1509,6 +1650,15 @@ def _map_level(*, mapping: _LevelMapping, level_values: pd.Index) -> np.ndarray:
         ValueError: If any label is not valid for the mapping.
 
     """
+    grid = mapping.grid
+    if grid is not None and mapping.reads_codes:
+        return encode_grid_codes(
+            grid=grid, codes=level_values, name=f"Series index level {mapping.name!r}"
+        )
+    if grid is not None and grid.values is not None:  # noqa: PD011
+        return encode_grid_values(
+            grid=grid, values=level_values, name=f"Series index level {mapping.name!r}"
+        )
     # Categorical levels must use string labels matching grid category names.
     # Reject integer labels early with a clear message instead of a cryptic KeyError.
     if mapping.valid_labels and any(not isinstance(v, str) for v in level_values):

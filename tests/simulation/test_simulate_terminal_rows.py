@@ -72,8 +72,8 @@ def test_first_is_the_default(result: SimulationResult):
 
 
 def test_first_composes_with_integer_codes(result: SimulationResult) -> None:
-    """The filter applies identically under `use_labels=False`."""
-    df = result.to_dataframe(use_labels=False, terminal_rows="first")
+    """The filter applies identically under `use_categorical_codes=True`."""
+    df = result.to_dataframe(use_categorical_codes=True, terminal_rows="first")
     dead_rows_per_subject = (
         df.loc[df["regime_name"] == "dead"].groupby("subject_id").size()
     )
@@ -82,12 +82,12 @@ def test_first_composes_with_integer_codes(result: SimulationResult) -> None:
 
 
 @pytest.mark.parametrize("df_additional_targets", [None, []])
-@pytest.mark.parametrize("use_labels", [True, False])
+@pytest.mark.parametrize("use_categorical_codes", [True, False])
 def test_saved_terminal_panel_matches_default_and_loaded_projection(
     *,
     tmp_path: Path,
     df_additional_targets: list[FunctionName] | None,
-    use_labels: bool,
+    use_categorical_codes: bool,
 ) -> None:
     """Saved and restored panels keep one entry row per terminal subject."""
     model = get_model(certainty_equivalent=PowerMean())
@@ -102,7 +102,9 @@ def test_saved_terminal_panel_matches_default_and_loaded_projection(
         log_level="off",
         seed=42,
     )
-    all_rows = simulation.to_dataframe(terminal_rows="all", use_labels=use_labels)
+    all_rows = simulation.to_dataframe(
+        terminal_rows="all", use_categorical_codes=use_categorical_codes
+    )
     first_period = (
         all_rows.loc[all_rows["regime_name"] == "dead"]
         .groupby("subject_id")["period"]
@@ -115,22 +117,28 @@ def test_saved_terminal_panel_matches_default_and_loaded_projection(
     assert len(first_period) == N_SUBJECTS
     assert len(expected) < len(all_rows)
     pd.testing.assert_frame_equal(
-        simulation.to_dataframe(use_labels=use_labels), expected, check_exact=True
+        simulation.to_dataframe(use_categorical_codes=use_categorical_codes),
+        expected,
+        check_exact=True,
     )
 
     simulation.save(
         directory=tmp_path,
         df_additional_targets=df_additional_targets,
-        df_use_labels=use_labels,
+        df_use_categorical_codes=use_categorical_codes,
     )
     saved = pd.read_feather(tmp_path / "simulated_data.arrow")
     restored = SimulationResult.load(directory=tmp_path)
     pd.testing.assert_frame_equal(saved, expected, check_exact=True)
     pd.testing.assert_frame_equal(
-        restored.to_dataframe(use_labels=use_labels), expected, check_exact=True
+        restored.to_dataframe(use_categorical_codes=use_categorical_codes),
+        expected,
+        check_exact=True,
     )
     pd.testing.assert_frame_equal(
-        restored.to_dataframe(terminal_rows="all", use_labels=use_labels),
+        restored.to_dataframe(
+            terminal_rows="all", use_categorical_codes=use_categorical_codes
+        ),
         all_rows,
         check_exact=True,
     )

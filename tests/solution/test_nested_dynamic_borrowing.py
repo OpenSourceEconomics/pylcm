@@ -65,12 +65,14 @@ pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_R
 
 type Family = Literal["negm", "nnbegm"]
 
-_LIQUID = IrregSpacedGrid(points=(0.0, 0.25, 0.5, 0.75, 1.0, 2.0, 4.0, 8.0))
-_STOCK = IrregSpacedGrid(points=(0.0, 1.0, 2.0))
-_OUTER = IrregSpacedGrid(points=(0.0, 1.0, 2.0))
-_SAVINGS = IrregSpacedGrid(points=(0.0, 0.25, 0.5, 1.0, 2.0, 4.0))
-_CONSUMPTION = IrregSpacedGrid(points=(0.125, 0.25, 0.5, 0.75, 1.0, 2.0, 4.0, 8.0))
-_INVESTMENT = IrregSpacedGrid(points=(-2.0, -1.0, 0.0, 1.0, 2.0))
+_LIQUID = IrregSpacedGrid(points=np.array([0.0, 0.25, 0.5, 0.75, 1.0, 2.0, 4.0, 8.0]))
+_STOCK = IrregSpacedGrid(points=np.array([0.0, 1.0, 2.0]))
+_OUTER = IrregSpacedGrid(points=np.array([0.0, 1.0, 2.0]))
+_SAVINGS = IrregSpacedGrid(points=np.array([0.0, 0.25, 0.5, 1.0, 2.0, 4.0]))
+_CONSUMPTION = IrregSpacedGrid(
+    points=np.array([0.125, 0.25, 0.5, 0.75, 1.0, 2.0, 4.0, 8.0])
+)
+_INVESTMENT = IrregSpacedGrid(points=np.array([-2.0, -1.0, 0.0, 1.0, 2.0]))
 _PARAMS = {"discount_factor": 0.0}
 _LOGGER = logging.getLogger(__name__)
 
@@ -502,13 +504,13 @@ def _ces_model(*, lower: float | UserFunction) -> Model:
         resources="resources",
         post_decision_state="savings",
     )
-    stock = IrregSpacedGrid(points=(0.0, 1.0, 2.0))
-    liquid = IrregSpacedGrid(points=(0.0, 0.5, 1.0, 2.0, 4.0, 8.0))
+    stock = IrregSpacedGrid(points=np.array([0.0, 1.0, 2.0]))
+    liquid = IrregSpacedGrid(points=np.array([0.0, 0.5, 1.0, 2.0, 4.0, 8.0]))
     alive = NestedConsumptionSavingsRegime(
         states={"liquid": liquid, "illiquid": stock},
         actions={
             "consumption": IrregSpacedGrid(
-                points=(0.125, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0)
+                points=np.array([0.125, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0])
             ),
             "investment": _INVESTMENT,
         },

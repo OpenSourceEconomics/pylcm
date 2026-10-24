@@ -50,7 +50,7 @@ def test_supplied_paths_on_subject_mesh(*, budget: int | None) -> None:
         "cpu",
     )
     rows = (
-        result.to_dataframe(use_labels=False)
+        result.to_dataframe(use_categorical_codes=True)
         .reset_index()
         .query("regime_name == 'alive'")
     )

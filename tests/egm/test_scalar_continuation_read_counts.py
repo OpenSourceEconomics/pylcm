@@ -44,7 +44,7 @@ def test_scalar_owned_read_counts_actual_first_node_and_rescore_activity() -> No
     )
     seed = _model(literal=False, parent_nodes=points)
     child = seed.user_regimes["child"].replace(
-        solver=EGM(savings_grid=IrregSpacedGrid(points=(0.0, 0.5, 2.0)))
+        solver=EGM(savings_grid=IrregSpacedGrid(points=np.array([0.0, 0.5, 2.0])))
     )
     model = Model(
         regimes={**seed.user_regimes, "child": child},

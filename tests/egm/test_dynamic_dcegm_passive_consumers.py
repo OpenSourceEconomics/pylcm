@@ -150,7 +150,7 @@ def _terminal(
 
 def _parent_savings_grid() -> IrregSpacedGrid:
     """Retain exact saving offsets while declaring the physical source origin."""
-    grid = IrregSpacedGrid(points=(0.25, 0.375, 0.5))
+    grid = IrregSpacedGrid(points=np.array([0.25, 0.375, 0.5]))
     nodes = jnp.asarray(grid.to_jax(), dtype=jnp.asarray(0.0).dtype)
     offsets = nodes - nodes[0]
     np.testing.assert_array_equal(
@@ -164,7 +164,7 @@ def _parent_savings_grid() -> IrregSpacedGrid:
 
 def _child_savings_grid() -> IrregSpacedGrid:
     """Retain exact child saving offsets with a covering raw declaration."""
-    grid = IrregSpacedGrid(points=(0.5, 1.0, 1.5))
+    grid = IrregSpacedGrid(points=np.array([0.5, 1.0, 1.5]))
     nodes = jnp.asarray(grid.to_jax(), dtype=jnp.asarray(0.0).dtype)
     offsets = nodes - nodes[0]
     np.testing.assert_array_equal(
@@ -187,15 +187,17 @@ def _model_and_params(*, ev1: bool, equality: bool) -> tuple[Model, UserParams]:
         post_decision_state="savings",
     )
     passive = {
-        "z": IrregSpacedGrid(points=(0.0, 1.0)),
-        "w": IrregSpacedGrid(points=(0.0, 1.0, 2.0)),
+        "z": IrregSpacedGrid(points=np.array([0.0, 1.0])),
+        "w": IrregSpacedGrid(points=np.array([0.0, 1.0, 2.0])),
     }
     child = ConsumptionSavingsRegime(
         liquid=margin,
-        states={"liquid": IrregSpacedGrid(points=(0.0, 0.5, 1.5)), **passive},
+        states={"liquid": IrregSpacedGrid(points=np.array([0.0, 0.5, 1.5])), **passive},
         actions={
             "job": DiscreteGrid(category_class=Job),
-            "consumption": IrregSpacedGrid(points=(0.025, 0.125, 0.5, 1.0, 4.0)),
+            "consumption": IrregSpacedGrid(
+                points=np.array([0.025, 0.125, 0.5, 1.0, 4.0])
+            ),
         },
         functions={
             "utility": _utility,
@@ -216,8 +218,8 @@ def _model_and_params(*, ev1: bool, equality: bool) -> tuple[Model, UserParams]:
     )
     parent = ConsumptionSavingsRegime(
         liquid=margin,
-        states={"liquid": IrregSpacedGrid(points=(0.375, 0.5)), **passive},
-        actions={"consumption": IrregSpacedGrid(points=(0.025, 0.125, 0.25))},
+        states={"liquid": IrregSpacedGrid(points=np.array([0.375, 0.5])), **passive},
+        actions={"consumption": IrregSpacedGrid(points=np.array([0.025, 0.125, 0.25]))},
         functions={
             "utility": _parent_utility,
             "resources": _parent_resources,
@@ -234,7 +236,7 @@ def _model_and_params(*, ev1: bool, equality: bool) -> tuple[Model, UserParams]:
         ),
     )
     done = Regime(
-        states={"liquid": IrregSpacedGrid(points=(0.0, 16.0)), **passive},
+        states={"liquid": IrregSpacedGrid(points=np.array([0.0, 16.0])), **passive},
         functions={"utility": _terminal},
     )
     model = Model(

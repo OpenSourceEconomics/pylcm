@@ -118,8 +118,12 @@ def build_dynamic_egm_model(
         regimes={
             "saving": ConsumptionSavingsRegime(
                 liquid=margin,
-                states={"wealth": IrregSpacedGrid(points=current_nodes)},
-                actions={"consumption": IrregSpacedGrid(points=(0.25, 0.5, 1.0, 2.0))},
+                states={"wealth": IrregSpacedGrid(points=np.array(current_nodes))},
+                actions={
+                    "consumption": IrregSpacedGrid(
+                        points=np.array([0.25, 0.5, 1.0, 2.0])
+                    )
+                },
                 functions={
                     "utility": utility,
                     **(
@@ -138,16 +142,19 @@ def build_dynamic_egm_model(
                 },
                 solver=EGM(
                     savings_grid=IrregSpacedGrid(
-                        points=source_nodes
-                        if literal is None
-                        else tuple(
-                            literal + (node - source_nodes[0]) for node in source_nodes
+                        points=np.array(
+                            source_nodes
+                            if literal is None
+                            else tuple(
+                                literal + (node - source_nodes[0])
+                                for node in source_nodes
+                            )
                         ),
                     )
                 ),
             ),
             "done": Regime(
-                states={"wealth": IrregSpacedGrid(points=terminal_nodes)},
+                states={"wealth": IrregSpacedGrid(points=np.array(terminal_nodes))},
                 functions={"utility": terminal_utility},
             ),
         },
@@ -586,8 +593,12 @@ def build_parent_model(
         regimes={
             "parent": ConsumptionSavingsRegime(
                 liquid=margin,
-                states={state_name: IrregSpacedGrid(points=current_nodes)},
-                actions={"consumption": IrregSpacedGrid(points=(0.05, 0.1, 0.2, 0.4))},
+                states={state_name: IrregSpacedGrid(points=np.array(current_nodes))},
+                actions={
+                    "consumption": IrregSpacedGrid(
+                        points=np.array([0.05, 0.1, 0.2, 0.4])
+                    )
+                },
                 functions=functions,
                 state_transitions={state_name: parent_law},
                 constraints={
@@ -598,13 +609,19 @@ def build_parent_model(
                 if own_floor
                 else {},
                 solver=(NBEGM if nb_parent else EGM)(
-                    savings_grid=IrregSpacedGrid(points=(0.4, 0.5, 0.6))
+                    savings_grid=IrregSpacedGrid(points=np.array([0.4, 0.5, 0.6]))
                 ),
             ),
             "saving": ConsumptionSavingsRegime(
                 liquid=margin,
-                states={state_name: IrregSpacedGrid(points=(0.75, 1.0, 2.0, 3.0))},
-                actions={"consumption": IrregSpacedGrid(points=(0.25, 0.5, 1.0, 2.0))},
+                states={
+                    state_name: IrregSpacedGrid(points=np.array([0.75, 1.0, 2.0, 3.0]))
+                },
+                actions={
+                    "consumption": IrregSpacedGrid(
+                        points=np.array([0.25, 0.5, 1.0, 2.0])
+                    )
+                },
                 functions=functions,
                 state_transitions={state_name: next_wealth},
                 constraints={
@@ -614,12 +631,16 @@ def build_parent_model(
                 },
                 solver=EGM(
                     savings_grid=IrregSpacedGrid(
-                        points=(0.5, 1.0, 1.5) if literal_child else (0.0, 0.5, 1.0)
+                        points=np.array(
+                            (0.5, 1.0, 1.5) if literal_child else (0.0, 0.5, 1.0)
+                        )
                     )
                 ),
             ),
             "done": Regime(
-                states={state_name: IrregSpacedGrid(points=(4.0, 5.5, 7.0, 8.5))},
+                states={
+                    state_name: IrregSpacedGrid(points=np.array([4.0, 5.5, 7.0, 8.5]))
+                },
                 functions={
                     "utility": rename_arguments(
                         terminal_utility, mapper={"wealth": "liquid"}
@@ -1293,7 +1314,7 @@ def test_dynamic_egm_simulation_uses_actual_subject_floor() -> None:
         },
         log_level="off",
         seed=42,
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
     np.testing.assert_array_equal(frame.query("period == 0")["consumption"], [0.5])
 
 

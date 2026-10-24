@@ -58,6 +58,7 @@ holds, with `c = (alpha / mc)^{1/gamma_C}` the inverse marginal utility.
 from typing import Literal
 
 import jax.numpy as jnp
+import numpy as np
 
 from _lcm.typing import DataclassInstance
 from lcm import (
@@ -271,9 +272,11 @@ def build_model(
         start=0.05, stop=liquid_max, n_points=n_consumption
     )
     savings_grid = IrregSpacedGrid(
-        points=tuple(
-            (liquid_max + housing_max) * (i / (n_savings - 1)) ** 2
-            for i in range(n_savings)
+        points=np.array(
+            tuple(
+                (liquid_max + housing_max) * (i / (n_savings - 1)) ** 2
+                for i in range(n_savings)
+            )
         )
     )
 

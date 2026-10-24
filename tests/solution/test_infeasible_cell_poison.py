@@ -196,7 +196,9 @@ def test_grid_search_feasible_nan_is_detected_in_cached_solution_simulation() ->
         log_level="off",
         runtime_checks=True,
     )
-    assert np.isfinite(healthy.to_dataframe(use_labels=False)["value"].to_numpy()).all()
+    assert np.isfinite(
+        healthy.to_dataframe(use_categorical_codes=True)["value"].to_numpy()
+    ).all()
     with pytest.raises(InvalidValueFunctionError, match="alive"):
         model.simulate(
             params=params,
@@ -273,14 +275,14 @@ def _assert_same_public_result(
         initial_conditions=initial,
         seed=19,
         log_level="off",
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
     actual_path = model.simulate(
         params=poisoned_params,
         solution=poisoned,
         initial_conditions=initial,
         seed=19,
         log_level="off",
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
     assert tuple(actual_path.columns) == tuple(expected_path.columns)
     assert "value" in actual_path.columns
     assert set(actual_path.loc[actual_path["regime_name"] == "alive", "period"]) == {
@@ -690,7 +692,9 @@ def _fold_model() -> Model:
                 n_points=3, mu=0.0, sigma=0.25, gauss_hermite=True, fold=True
             ),
         },
-        actions={"consumption": IrregSpacedGrid(points=(-1.0, 0.0, 1.0, 2.0, 3.0))},
+        actions={
+            "consumption": IrregSpacedGrid(points=np.array([-1.0, 0.0, 1.0, 2.0, 3.0]))
+        },
         state_transitions={
             "wealth": AdditiveShockTransition(
                 base="before_bill", shock="negative_cost"
@@ -850,14 +854,14 @@ def test_raw_domain_invalid_utility_matches_native_fold_and_literal_oracle() -> 
         initial_conditions=initial,
         seed=19,
         log_level="off",
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
     actual_path = model.simulate(
         params=poisoned_params,
         solution=poisoned,
         initial_conditions=initial,
         seed=19,
         log_level="off",
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
     assert tuple(actual_path.columns) == tuple(expected_path.columns)
     for column in expected_path.columns:
         if expected_path[column].to_numpy().dtype.kind in "biufc":

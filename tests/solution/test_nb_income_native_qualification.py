@@ -224,8 +224,8 @@ def _assert_unhooked_parity(
         log_level="off",
     )
     jax.effects_barrier()
-    actual = simulated.to_dataframe(use_labels=False)
-    expected = capture.simulations[solver].to_dataframe(use_labels=False)
+    actual = simulated.to_dataframe(use_categorical_codes=True)
+    expected = capture.simulations[solver].to_dataframe(use_categorical_codes=True)
     pd.testing.assert_frame_equal(actual, expected, check_exact=True)
     actions = actual.query("period == 0").sort_values("subject_id")["consumption"]
     _assert_array_bits(actual=actions.to_numpy(), expected=capture.actions[solver])
@@ -240,7 +240,7 @@ def _assert_saved_panel(
     solver: str,
 ) -> None:
     """Decode actual saved public panel strings and compare original columns."""
-    public = capture.simulations[solver].to_dataframe(use_labels=False)
+    public = capture.simulations[solver].to_dataframe(use_categorical_codes=True)
     entry = next(
         entry
         for entry in capture.manifest["saved"]

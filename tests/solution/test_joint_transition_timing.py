@@ -63,7 +63,7 @@ def test_action_maximizes_expected_continuation_not_each_realized_node(
                 },
             ),
             "target": Regime(
-                states={"payoff": IrregSpacedGrid(points=(0.0, 6.0, 10.0))},
+                states={"payoff": IrregSpacedGrid(points=np.array([0.0, 6.0, 10.0]))},
                 functions={"utility": lambda payoff: payoff},
             ),
         },

@@ -117,10 +117,10 @@ def make_model(
     callable floor can be replaced so a second public witness reuses the same
     parent, transitions and terminal law.
     """
-    liquid = IrregSpacedGrid(points=(0.0, 1.0, 2.0))
-    child_stock = IrregSpacedGrid(points=(0.0, 1.0))
-    parent_stock = IrregSpacedGrid(points=(0.0, stock, 1.0))
-    savings_grid = IrregSpacedGrid(points=(0.0, 0.25, 1.0, 2.0))
+    liquid = IrregSpacedGrid(points=jnp.array((0.0, 1.0, 2.0)))
+    child_stock = IrregSpacedGrid(points=jnp.array((0.0, 1.0)))
+    parent_stock = IrregSpacedGrid(points=jnp.array((0.0, stock, 1.0)))
+    savings_grid = IrregSpacedGrid(points=jnp.array((0.0, 0.25, 1.0, 2.0)))
     margin = LiquidMargin(
         state="liquid",
         action="consumption",
@@ -135,11 +135,15 @@ def make_model(
             states={"liquid": liquid, "stock": child_stock if child else parent_stock},
             actions={
                 "consumption": IrregSpacedGrid(
-                    points=child_consumption_points
-                    if child
-                    else (0.125, 0.5, 1.0, 2.0, 4.0, 16.0)
+                    points=jnp.array(
+                        child_consumption_points
+                        if child
+                        else (0.125, 0.5, 1.0, 2.0, 4.0, 16.0)
+                    )
                 ),
-                "investment": IrregSpacedGrid(points=(-1.0, -0.5, 0.0, 0.5, 1.0)),
+                "investment": IrregSpacedGrid(
+                    points=jnp.array((-1.0, -0.5, 0.0, 0.5, 1.0))
+                ),
             },
             functions={
                 "gross": _child_gross if child else _parent_gross,
@@ -171,7 +175,7 @@ def make_model(
             ),
             solver=NEGM(
                 inner=DCEGM(savings_grid=savings_grid),
-                outer_grid=IrregSpacedGrid(points=(0.0, 1.0)),
+                outer_grid=IrregSpacedGrid(points=jnp.array((0.0, 1.0))),
             ),
         )
 

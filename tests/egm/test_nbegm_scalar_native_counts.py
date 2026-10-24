@@ -43,10 +43,12 @@ def _nb_parent_and_child() -> Model:
         regimes={
             **seed.user_regimes,
             "parent": seed.user_regimes["parent"].replace(
-                solver=NBEGM(savings_grid=IrregSpacedGrid(points=points))
+                solver=NBEGM(savings_grid=IrregSpacedGrid(points=np.array(points)))
             ),
             "child": seed.user_regimes["child"].replace(
-                solver=NBEGM(savings_grid=IrregSpacedGrid(points=(0.0, 0.5, 2.0)))
+                solver=NBEGM(
+                    savings_grid=IrregSpacedGrid(points=np.array([0.0, 0.5, 2.0]))
+                )
             ),
         },
         ages=seed.ages,

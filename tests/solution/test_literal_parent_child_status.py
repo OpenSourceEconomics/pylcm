@@ -109,7 +109,7 @@ def make_literal_parent_model(
         solver=NNBEGM(
             inner=NBEGM(savings_grid=fixture._SAVINGS),
             outer_search=outer_search
-            or FiniteOuterGrid(grid=IrregSpacedGrid(points=fixture._OUTER)),
+            or FiniteOuterGrid(grid=IrregSpacedGrid(points=np.array(fixture._OUTER))),
         ),
     )
     child = ConsumptionSavingsRegime(
@@ -311,7 +311,7 @@ def test_inherited_child_fold_rejects_a_row_that_lost_its_slots() -> None:
 # budgets. At the default tolerances it exhausts the round budget and fails
 # closed, which is the mesh's own contract rather than a transport property.
 _ADAPTIVE_MESH = AdaptiveOuterMesh(
-    initial_grid=IrregSpacedGrid(points=fixture._OUTER),
+    initial_grid=IrregSpacedGrid(points=np.array(fixture._OUTER)),
     value_atol=1e-3,
     value_rtol=1e-3,
 )

@@ -524,7 +524,7 @@ def test_dcegm_simulated_markov_health_path_matches_brute_force():
             seed=7,
         )
         realized[solver] = (
-            result.to_dataframe(use_labels=False)
+            result.to_dataframe(use_categorical_codes=True)
             .query("regime_name == 'working_life'")
             .sort_values(["subject_id", "period"])
         )

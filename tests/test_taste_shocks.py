@@ -318,13 +318,13 @@ def test_location_zero_utility_shift_moves_value_by_constant_and_keeps_choices()
         initial_conditions=initial_conditions,
         log_level="debug",
         seed=5471,
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
     location_zero_choices = location_zero_model.simulate(
         params=location_zero_params,
         initial_conditions=initial_conditions,
         log_level="debug",
         seed=5471,
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
 
     first_period = "period == 0"
     np.testing.assert_array_equal(

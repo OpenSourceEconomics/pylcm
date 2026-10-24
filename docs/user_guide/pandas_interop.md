@@ -34,8 +34,15 @@ result = model.simulate(
 - `"regime_name"` column is required. Use regime names as strings (e.g., `"working"`).
 - Discrete states use string labels from the model's categorical classes (e.g., `"good"`
   instead of `0`). Labels are validated and mapped to integer codes automatically.
+- A discrete state declared with [values](grids.md#discrete-grids-with-numeric-values)
+  takes those numbers, matched exactly for integers and within the grid's tolerance for
+  floats; a value on no node raises.
 - Continuous states pass through as-is.
-- `Categorical` dtype columns are also supported.
+- `Categorical` dtype columns are also supported, including the numeric Categoricals
+  `SimulationResult.to_dataframe()` publishes for value grids, so rows of a simulated
+  panel are valid initial conditions.
+- `simulate(..., use_categorical_codes=True)` reads every discrete column as integer
+  codes instead.
 
 The example above is for an age model. A model declared with `n_periods` requires an
 integer `"period"` column instead of `"age"`. Use exactly the coordinate kind the model
@@ -80,7 +87,11 @@ Each `pd.Series` must have:
 
 - A **named** `MultiIndex` (or named `Index` for 1-D arrays). Level names must match the
   function's indexing parameters.
-- **String labels** for discrete variables, matching the model's categorical classes.
+- **String labels** for discrete variables, matching the model's categorical classes,
+  and the **values** themselves for a variable declared with
+  [values](grids.md#discrete-grids-with-numeric-values) (`0, 4, 10`, not `"4"`). Pass
+  `use_categorical_codes=True` to `solve` or `simulate` to index every discrete level by
+  integer codes instead.
 - **`"age"`** for an age model, with actual values from its `AgeGrid`, or **`"period"`**
   for a period model, with integer computational indices. These names are never
   interchangeable, even when the numerical labels coincide.
@@ -93,6 +104,34 @@ Each `pd.Series` must have:
 A discrete state or action labels a level wherever the regime declares it, including a
 horizon at which no demanded function reads it and the model prunes it: the parameter a
 dormant law reads keeps its slot, and its Series converts by the same categories.
+
+A function indexes an array by the codes of a discrete variable, its positions in
+pandas' terms. For a variable declared with values, the function reads `<name>` as the
+value (pandas: the category) and `<name>_code` as the int32 position (pandas: the code),
+and indexes with the code:
+
+```python
+def wage(*, experience, experience_code, wage_premium, base_wage):
+    return base_wage * (1 + 0.02 * experience + wage_premium[experience_code])
+
+
+params = {
+    "working_life": {
+        "wage": {
+            "wage_premium": pd.Series(
+                [0.25, 0.0, 0.1], index=pd.Index([10, 0, 5], name="experience")
+            ),
+            "base_wage": 2.0,
+        }
+    }
+}
+```
+
+The level is still named `experience` and labelled by the values; pylcm places each
+label at its code, whatever order the Series is written in. Indexing by the value,
+`wage_premium[experience]`, is refused when the model is built, because the value 10 is
+no position of a three-node grid. For a category class `<name>` already holds the code,
+so `<name>_code` equals it and either spelling indexes the same way.
 
 Level order does not matter — levels are reordered to match the function signature
 automatically.

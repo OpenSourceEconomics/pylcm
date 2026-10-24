@@ -87,8 +87,8 @@ def _case_numbers() -> tuple[ScalarFloat, ScalarFloat, ScalarFloat]:
 def _model_and_params(*, epsilon: float, scale: float) -> tuple[Model, UserParams]:
     """Build two passive axes and an affine terminal continuation in liquid."""
     passive = {
-        "z": IrregSpacedGrid(points=(0.0, 1.0)),
-        "w": IrregSpacedGrid(points=(0.0, 1.0, 2.0)),
+        "z": IrregSpacedGrid(points=np.array([0.0, 1.0])),
+        "w": IrregSpacedGrid(points=np.array([0.0, 1.0, 2.0])),
     }
     margin = LiquidMargin(
         state="liquid",
@@ -105,8 +105,12 @@ def _model_and_params(*, epsilon: float, scale: float) -> tuple[Model, UserParam
 
     child = ConsumptionSavingsRegime(
         liquid=margin,
-        states={"liquid": IrregSpacedGrid(points=(0.0, 0.5, 1.0)), **passive},
-        actions={"consumption": IrregSpacedGrid(points=(0.025, 0.125, 0.5, 1.0, 4.0))},
+        states={"liquid": IrregSpacedGrid(points=np.array([0.0, 0.5, 1.0])), **passive},
+        actions={
+            "consumption": IrregSpacedGrid(
+                points=np.array([0.025, 0.125, 0.5, 1.0, 4.0])
+            )
+        },
         functions={
             "utility": _parent_utility,
             "resources": _resources,
@@ -122,14 +126,14 @@ def _model_and_params(*, epsilon: float, scale: float) -> tuple[Model, UserParam
             "w": fixed_transition("w"),
         },
         solver=DCEGM(
-            savings_grid=IrregSpacedGrid(points=(0.0, 0.5, 1.0)),
+            savings_grid=IrregSpacedGrid(points=np.array([0.0, 0.5, 1.0])),
             n_constrained_points=4,
         ),
     )
     parent = ConsumptionSavingsRegime(
         liquid=margin,
-        states={"liquid": IrregSpacedGrid(points=(0.125, 0.25)), **passive},
-        actions={"consumption": IrregSpacedGrid(points=(0.025, 0.125, 0.25))},
+        states={"liquid": IrregSpacedGrid(points=np.array([0.125, 0.25])), **passive},
+        actions={"consumption": IrregSpacedGrid(points=np.array([0.025, 0.125, 0.25]))},
         functions={
             "utility": _parent_utility,
             "resources": _parent_resources,
@@ -141,7 +145,7 @@ def _model_and_params(*, epsilon: float, scale: float) -> tuple[Model, UserParam
         },
         state_transitions={"liquid": _liquid_law, "z": child_z, "w": child_w},
         solver=DCEGM(
-            savings_grid=IrregSpacedGrid(points=(0.0, 0.125, 0.25)),
+            savings_grid=IrregSpacedGrid(points=np.array([0.0, 0.125, 0.25])),
             n_constrained_points=4,
         ),
     )
@@ -150,7 +154,10 @@ def _model_and_params(*, epsilon: float, scale: float) -> tuple[Model, UserParam
             "parent": parent,
             "child": child,
             "done": Regime(
-                states={"liquid": IrregSpacedGrid(points=(0.0, 0.5, 1.0)), **passive},
+                states={
+                    "liquid": IrregSpacedGrid(points=np.array([0.0, 0.5, 1.0])),
+                    **passive,
+                },
                 functions={"utility": _terminal},
             ),
         },

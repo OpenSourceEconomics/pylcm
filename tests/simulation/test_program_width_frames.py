@@ -37,7 +37,7 @@ def _baseline(*, witness: str, seed: int) -> _Baseline:
         seed=seed,
         log_level="off",
     )
-    frame = result.to_dataframe(use_labels=False)
+    frame = result.to_dataframe(use_categorical_codes=True)
     norms = (
         reference_additive_norms(model=model, result=result, frame=frame)
         if witness == "multi_regime"
@@ -69,10 +69,10 @@ def _frames(
         # checked call, without retaining the warm-up result or its frame.
         model.simulate(
             params=params, initial_conditions=initial, seed=seed, log_level="off"
-        ).to_dataframe(use_labels=False)
+        ).to_dataframe(use_categorical_codes=True)
     got = model.simulate(
         params=params, initial_conditions=initial, seed=seed, log_level="off"
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
     return got, expected
 
 

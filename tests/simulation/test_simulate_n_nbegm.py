@@ -85,7 +85,7 @@ def _solve_and_simulate_with_outer_action_points(
     model = toy.build_model(
         variant="n_nbegm",
         n_periods=2,
-        illiquid_investment_grid=IrregSpacedGrid(points=points),
+        illiquid_investment_grid=IrregSpacedGrid(points=np.array(points)),
     )
     solution = model.solve(
         params=_PARAMS,

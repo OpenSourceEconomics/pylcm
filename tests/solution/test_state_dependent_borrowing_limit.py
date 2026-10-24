@@ -278,7 +278,7 @@ def _model(*, solver: str, limit: str, lower: _Lower, taxed: bool) -> Model:
             functions=functions,
             liquid=margin,
             solver=_SOLVERS[solver](
-                IrregSpacedGrid(points=_savings_points(grid_start))
+                IrregSpacedGrid(points=np.array(_savings_points(grid_start)))
             ),
         )
     done = Regime(
@@ -355,7 +355,7 @@ def _period0_consumption(
         solution=model.solve(params=params, log_level="off"),
         seed=528,
         log_level="off",
-    ).to_dataframe(use_labels=False)
+    ).to_dataframe(use_categorical_codes=True)
     period0 = simulated.query("period == 0").sort_values("subject_id")
     return period0["consumption"].to_numpy()
 

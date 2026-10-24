@@ -431,7 +431,7 @@ def _create_model_observers(
             )
         simulations[solver] = result
         jax.effects_barrier()
-        frame = result.to_dataframe(use_labels=False)
+        frame = result.to_dataframe(use_categorical_codes=True)
         save(
             filename=f"{solver}-simulation.npz",
             arrays={name: frame[name].to_numpy() for name in frame},

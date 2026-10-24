@@ -325,7 +325,7 @@ def test_preflight_action_grid_preserves_order_dtypes_and_public_decisions(
         solution=solution,
         log_level=log_level,
     )
-    rows = result.to_dataframe(use_labels=False)
+    rows = result.to_dataframe(use_categorical_codes=True)
     np.testing.assert_array_equal(
         rows.loc[
             rows["regime_name"] == "alive", ["wealth", "choice", "saving", "value"]
@@ -398,7 +398,7 @@ def test_repeated_simulation_reuses_only_action_grid_executable_code(
             log_level="debug",
         )
         np.testing.assert_array_equal(
-            result.to_dataframe(use_labels=False)
+            result.to_dataframe(use_categorical_codes=True)
             .iloc[0][["choice", "saving", "value"]]
             .to_numpy(dtype=float),
             [1, 1, 6],
@@ -425,7 +425,7 @@ def test_distinct_regime_products_are_cumulatively_owned_during_preflight(
     assert len(products) == 2
     np.testing.assert_array_equal(products[0]["saving"], [0, 1, 2, 0, 1, 2])
     np.testing.assert_array_equal(products[1]["saving"], [0, 1, 2, 3, 0, 1, 2, 3])
-    rows = result.to_dataframe(use_labels=False)
+    rows = result.to_dataframe(use_categorical_codes=True)
     np.testing.assert_array_equal(
         rows.loc[
             rows["regime_name"].isin(["alive", "other"]), ["choice", "saving", "value"]
@@ -514,7 +514,7 @@ def test_preflight_releases_cartesian_owners_without_cyclic_gc(
                 log_level="debug",
             )
             np.testing.assert_array_equal(
-                result.to_dataframe(use_labels=False)
+                result.to_dataframe(use_categorical_codes=True)
                 .iloc[0][["choice", "saving", "value"]]
                 .to_numpy(dtype=float),
                 [1, 1, 6],

@@ -1,5 +1,6 @@
 """Solution metadata, artifact-contract comparison, and the labelled solution result."""
 
+import ast
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -148,18 +149,35 @@ class SolutionResult:
         return save_solution(solution=self, path=path)
 
     def value_array(
-        self, *, period: int, regime: RegimeName, use_labels: bool = True
+        self,
+        *,
+        period: int,
+        regime: RegimeName,
+        use_categorical_codes: bool = False,
     ) -> xr.DataArray:
         """Return one value-function array with its state coordinates, named `V`.
 
         Dimensions follow the stored value schema's axis order, including a
         trailing `stakeholder` dimension for collective values; a regime without
         states yields a zero-dimensional array. Coordinates are the resolved
-        process and period-specific grid nodes used by this solve. With
-        `use_labels=True`, discrete states carry their labels as an (ordered)
-        categorical index in declaration order, matching simulation labels;
-        otherwise they carry integer codes. Axis names must be unique and must
-        not be `V`.
+        process and period-specific grid nodes used by this solve. By default, a
+        category-class state carries its labels as an (ordered) categorical index
+        in declaration order, matching simulation labels, and a state declared
+        with `values` carries those numbers, so `.sel(experience=4)` picks a node
+        by its value. With `use_categorical_codes=True` every discrete state
+        carries its integer codes. Axis names must be unique and must not be `V`.
+
+        Coordinates, like every other boundary (initial conditions, params,
+        `to_dataframe`, `lookup_policy`), use a value grid's values by default.
+        `Model.simulate(shock_paths=...)` is the exception: it takes category
+        codes even for a value grid, because a code names its node exactly and
+        so replays a path exactly and losslessly. A code maps to its value as
+        `grid.values[code]`, and values map to codes with `grid.encode`:
+
+        ```python
+        grid = DiscreteGrid(values=jnp.array([0, 4, 10]))
+        grid.values[2]  # 10
+        ```
 
         The array wraps the stored value as is, so a device-resident value stays
         on its device until it is converted. Select coordinates with `.sel`
@@ -179,19 +197,29 @@ class SolutionResult:
         for axis in schema.named_axes:
             nodes = pd.Index(np.asarray(axis.coordinates))
             domain = schema.categorical_domains.get(axis.name)
-            if use_labels and domain is not None:
-                nodes = pd.CategoricalIndex(
-                    pd.Categorical.from_codes(
-                        pd.Index(domain.codes).get_indexer(nodes),
-                        categories=pd.Index(domain.labels),
-                        ordered=domain.ordered,
+            if not use_categorical_codes and domain is not None:
+                positions = pd.Index(domain.codes).get_indexer(nodes)
+                values = _domain_values(domain.labels)
+                nodes = (
+                    pd.CategoricalIndex(
+                        pd.Categorical.from_codes(
+                            positions,
+                            categories=pd.Index(domain.labels),
+                            ordered=domain.ordered,
+                        )
                     )
+                    if values is None
+                    else pd.Index(np.asarray(values)[positions])
                 )
             coordinates[axis.name] = nodes
         return xr.DataArray(value, dims=schema.axis_names, coords=coordinates, name="V")
 
     def value_frame(
-        self, *, period: int, regime: RegimeName, use_labels: bool = True
+        self,
+        *,
+        period: int,
+        regime: RegimeName,
+        use_categorical_codes: bool = False,
     ) -> pd.DataFrame:
         """Return grid values in long form, with state columns followed by `V`.
 
@@ -204,7 +232,29 @@ class SolutionResult:
         first to convert only part of it. For values between nodes, use
         `Model.lookup_policy`, which uses simulation's interpolation.
         """
-        array = self.value_array(period=period, regime=regime, use_labels=use_labels)
+        array = self.value_array(
+            period=period,
+            regime=regime,
+            use_categorical_codes=use_categorical_codes,
+        )
         if not array.dims:
             return pd.DataFrame({"V": np.asarray(array).reshape(-1)})
         return array.to_dataframe().reset_index()
+
+
+def _domain_values(labels: tuple[str, ...]) -> tuple[int | float, ...] | None:
+    """Return the values of a value grid's categories, or `None` for labels.
+
+    A value grid's categories are the `repr` of its numbers. A category class's
+    are field names, which are identifiers and so never read as a number.
+    """
+    values = []
+    for label in labels:
+        try:
+            value = ast.literal_eval(label)
+        except ValueError, SyntaxError:
+            return None
+        if type(value) not in (int, float):
+            return None
+        values.append(value)
+    return tuple(values)

@@ -319,7 +319,7 @@ def test_lookup_policy_matches_the_pin_constraint(inactive_value: float) -> None
         np.testing.assert_array_equal(looked_up[True][name], expected, err_msg=name)
 
 
-SHIFT_GRID = DiscreteGrid(values=[0, 8, 12])
+SHIFT_GRID = DiscreteGrid(values=np.array([0, 8, 12]))
 
 
 def _utility_with_shift(
@@ -603,7 +603,7 @@ def _age_specialized_model(
     """The utility is the only reader of labor and hours and is built per age or
     period. With `model_level`, labor and hours are declared on the model, so
     broadcast pruning sees them only through their readers."""
-    grid = IrregSpacedGrid(points=(0.0, 1.0, 2.0))
+    grid = IrregSpacedGrid(points=np.array([0.0, 1.0, 2.0]))
     hours: ContinuousGrid = (
         ConditionalAction(
             grid=grid, active_when={"labor": Labor.yes}, inactive_value=0.0
@@ -772,7 +772,7 @@ def _visit_model() -> Model:
         actions={
             "labor": DiscreteGrid(category_class=Labor),
             "hours": ConditionalAction(
-                grid=IrregSpacedGrid(points=(0.0, 1.0, 2.0)),
+                grid=IrregSpacedGrid(points=np.array([0.0, 1.0, 2.0])),
                 active_when={"labor": Labor.yes},
                 inactive_value=0.0,
             ),

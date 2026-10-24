@@ -68,7 +68,7 @@ def _probabilities(**kwargs: FloatND) -> dict[str, FloatND]:
 def _build_producer(*, monkeypatch: pytest.MonkeyPatch) -> _SolveOneCombo:
     """Use an analytic child read to isolate current-cell producer economics."""
     solver = DCEGM(
-        savings_grid=IrregSpacedGrid(points=(0.0, 0.5, 1.0, 1.5)),
+        savings_grid=IrregSpacedGrid(points=np.array([0.0, 0.5, 1.0, 1.5])),
         n_constrained_points=4,
     )._with_liquid_margin(
         _BoundLiquidMargin(

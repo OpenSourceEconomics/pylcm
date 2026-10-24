@@ -119,7 +119,7 @@ def test_literal_query_keeps_original_nodes_and_reports_actual_grid_corruption(
     _pools, models, _authorities = _observe_real_builders(monkeypatch=monkeypatch)
     exponent = 25 if jnp.asarray(0.0).dtype == jnp.float32 else 54
     origin = -float(2**exponent)
-    grid = IrregSpacedGrid(points=(origin, 1.0, 5.0))
+    grid = IrregSpacedGrid(points=np.array([origin, 1.0, 5.0]))
     _model(predicate=True, later_jump=False, savings_grid=grid)
     assert len(models) == 1
     model = models[0]
@@ -253,7 +253,7 @@ def _model(
         post_decision_state="savings",
     )
     grid = (
-        IrregSpacedGrid(points=(0.0, 0.5, 1.5))
+        IrregSpacedGrid(points=np.array([0.0, 0.5, 1.5]))
         if savings_grid is None
         else savings_grid
     )
@@ -261,13 +261,15 @@ def _model(
     child = ConsumptionSavingsRegime(
         liquid=liquid_margin,
         states={
-            "liquid": IrregSpacedGrid(points=(0.0, 0.5, 1.5)),
-            "z": IrregSpacedGrid(points=(0.0, 1.0)),
-            "w": IrregSpacedGrid(points=(0.0, 1.0, 2.0)),
+            "liquid": IrregSpacedGrid(points=np.array([0.0, 0.5, 1.5])),
+            "z": IrregSpacedGrid(points=np.array([0.0, 1.0])),
+            "w": IrregSpacedGrid(points=np.array([0.0, 1.0, 2.0])),
         },
         actions={
             "job": DiscreteGrid(category_class=original.Job),
-            "consumption": IrregSpacedGrid(points=(0.025, 0.125, 0.5, 1.0, 4.0)),
+            "consumption": IrregSpacedGrid(
+                points=np.array([0.025, 0.125, 0.5, 1.0, 4.0])
+            ),
         },
         functions={
             "utility": original._child_utility,
@@ -298,9 +300,9 @@ def _model(
             "child": child,
             "done": Regime(
                 states={
-                    "liquid": IrregSpacedGrid(points=(0.0, 16.0)),
-                    "z": IrregSpacedGrid(points=(0.0, 1.0)),
-                    "w": IrregSpacedGrid(points=(0.0, 1.0, 2.0)),
+                    "liquid": IrregSpacedGrid(points=np.array([0.0, 16.0])),
+                    "z": IrregSpacedGrid(points=np.array([0.0, 1.0])),
+                    "w": IrregSpacedGrid(points=np.array([0.0, 1.0, 2.0])),
                 },
                 functions={"utility": original._terminal},
             ),

@@ -17,6 +17,7 @@ be solved on each period's own nodes.
 
 import dataclasses
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
@@ -142,9 +143,8 @@ def test_dcegm_solves_an_age_varying_euler_state_finitely(shift_per_year):
 
     def shifted(age):
         shift = shift_per_year * (age - MIN_AGE)
-        nodes = np.asarray(WEALTH_GRID.to_jax())
         return dataclasses.replace(
-            WEALTH_GRID, points=tuple(float(node) + shift for node in nodes)
+            WEALTH_GRID, points=jnp.asarray(WEALTH_GRID.to_jax()) + shift
         )
 
     grid = AgeSpecializedGrid(
@@ -433,10 +433,7 @@ def test_no_age_marker_reaches_a_solver_build_context(monkeypatch):
         AgeSpecializedGrid(
             build=lambda age: dataclasses.replace(
                 WEALTH_GRID,
-                points=tuple(
-                    float(node) + 0.25 * (age - MIN_AGE)
-                    for node in np.asarray(WEALTH_GRID.to_jax())
-                ),
+                points=jnp.asarray(WEALTH_GRID.to_jax()) + 0.25 * (age - MIN_AGE),
             ),
             signature=lambda age: age - MIN_AGE,
         )

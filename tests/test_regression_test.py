@@ -181,7 +181,7 @@ def _create_grid(
         lin_points = np.linspace(start, stop, n_points)
         log_points = np.logspace(np.log10(start), np.log10(stop), n_points)
         irreg_points = tuple((lin_points + log_points) / 2)
-        return IrregSpacedGrid(points=irreg_points)
+        return IrregSpacedGrid(points=np.array(irreg_points))
     msg = f"Unknown grid type: {grid_type}"
     raise ValueError(msg)
 

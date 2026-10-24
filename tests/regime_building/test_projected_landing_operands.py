@@ -55,7 +55,7 @@ from tests.conftest import DECIMAL_PRECISION
 _X = LinSpacedGrid(start=0.0, stop=2.0, n_points=3)
 
 # The one action lands at x = 0.5, strictly inside the cell [0, 1].
-_SAVING = IrregSpacedGrid(points=(0.5, 2.0))
+_SAVING = IrregSpacedGrid(points=np.array([0.5, 2.0]))
 
 
 @categorical(ordered=False)
@@ -229,7 +229,7 @@ class CoupledRegimeId:
     alone_m: ScalarInt
 
 
-_WAGE = IrregSpacedGrid(points=(1.0, 2.0, 3.0))
+_WAGE = IrregSpacedGrid(points=np.array([1.0, 2.0, 3.0]))
 
 # The fallback pays this everywhere, so any finite source value identifies the
 # closed branch and any `-inf` identifies the open one.
@@ -301,7 +301,7 @@ def _coupled_model(saving_points) -> Model:
             "source": Regime(
                 states={"wage": _WAGE},
                 state_transitions={"wage": _next_wage},
-                actions={"saving": IrregSpacedGrid(points=saving_points)},
+                actions={"saving": IrregSpacedGrid(points=np.array(saving_points))},
                 functions={"utility": _u_source},
             ),
             "pair": Regime(

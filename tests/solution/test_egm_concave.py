@@ -250,7 +250,7 @@ def test_dcegm_with_interest_matches_closed_form_on_dense_wealth_grid():
             # Cubic node clustering toward the borrowing limit, as the value
             # function curves hardest there.
             savings_grid=IrregSpacedGrid(
-                points=tuple(400.0 * (i / 199) ** 3 for i in range(200))
+                points=np.array(tuple(400.0 * (i / 199) ** 3 for i in range(200)))
             ),
             n_constrained_points=64,
         ),
@@ -349,7 +349,7 @@ def test_neg_inf_bequest_node_does_not_wipe_the_continuation():
     discount_factor = 0.98
     bequest_points = (0.0, *(float(x) for x in np.geomspace(0.005, 400.0, 400)))
     bequest_dead = UserRegime(
-        states={"wealth": IrregSpacedGrid(points=bequest_points)},
+        states={"wealth": IrregSpacedGrid(points=np.array(bequest_points))},
         functions={"utility": _bequest_utility},
     )
     model = Model(

@@ -3,6 +3,7 @@
 from typing import Literal
 
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 from lcm import (
@@ -65,7 +66,7 @@ def test_model_preserves_an_unchanged_phased_stakeholder(*, value_grid: bool) ->
         }
     )
     bonus_grid = (
-        DiscreteGrid(values=[10, 20])
+        DiscreteGrid(values=np.array([10, 20]))
         if value_grid
         else DiscreteGrid(category_class=Bonus)
     )

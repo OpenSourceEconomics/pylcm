@@ -12,6 +12,7 @@ of Fella, Gallipoli & Pan (RED 2019). See `tests/test_fgp_model.py`.
 import functools
 from typing import Literal
 
+import numpy as np
 from jax import numpy as jnp
 
 from lcm import (
@@ -123,7 +124,9 @@ def create_model(
             stop=wealth_stop,
             n_points=wealth_n_points,
         )
-        wealth_grid = IrregSpacedGrid(points=tuple(lin_grid.to_jax().tolist()))
+        wealth_grid = IrregSpacedGrid(
+            points=np.array(tuple(lin_grid.to_jax().tolist()))
+        )
     else:
         wealth_grid_cls = LogSpacedGrid if wealth_grid_type == "log" else LinSpacedGrid
         wealth_grid = wealth_grid_cls(

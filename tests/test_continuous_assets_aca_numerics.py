@@ -250,7 +250,7 @@ def test_two_coordinate_values_and_carried_simulation_match_reference(  # noqa: 
             max_compilation_workers=1,
         )
         frames.append(
-            result.to_dataframe(use_labels=False)
+            result.to_dataframe(use_categorical_codes=True)
             .sort_values(["subject_id", "period"])
             .reset_index(drop=True)
         )

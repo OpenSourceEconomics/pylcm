@@ -6,6 +6,10 @@ values of the value-grid variables it reads, and, for a deterministic law or a
 derived categorical of such a grid, so that the value it returns becomes the
 code of the node it names. A value on no node becomes `MISSING_CAT_CODE`.
 
+An argument `<name>_code` of any discrete variable `<name>`, declared by values
+or by a category class, receives the code itself. For a category class the code
+is what `<name>` holds as well.
+
 The wrapper publishes `DiscreteState` for every decoded argument and encoded
 return, the annotation the engine's own nodes carry for codes, so the DAG sees
 one annotation per node whichever function names it.
@@ -13,19 +17,27 @@ one annotation per node whichever function names it.
 
 import dataclasses
 import inspect
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import cast, no_type_check
 
-from dags import get_annotations
+from dags import get_annotations, get_free_arguments
 
 from _lcm.constraints.ir import Condition
-from _lcm.grids import DiscreteGrid
+from _lcm.gated_edge import GatedEdge
+from _lcm.grids import DiscreteGrid, Grid
 from _lcm.identity_transition import _IdentityTransition
-from _lcm.regime_law import DecomposedTransition, RegimeLaws
+from _lcm.processes.joint_normal import JointNormalIIDProcess
+from _lcm.regime_building.schedules import RegimeTransitionLaw
+from _lcm.regime_law import RegimeLaw, RegimeLaws
 from _lcm.typing import EconFunctionArg, FunctionName, RegimeName
-from lcm.collective import CollectiveUtility, ValueDependentConstraint
+from _lcm.utils.ast_inspection import value_indexed_arrays
+from lcm.collective import (
+    CollectiveUtility,
+    ProjectedRegimeValue,
+    ValueDependentConstraint,
+)
 from lcm.decoupled import Decoupled
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
@@ -36,17 +48,39 @@ from lcm.regime import (
     StateTransitionEntry,
 )
 from lcm.regime import Regime as UserRegime
-from lcm.transition import AgeSpecializedFunction, JointTransition, StochasticTransition
-from lcm.typing import StateName, StateOrActionName, UserFunction, ValueND
+from lcm.transition import (
+    AgeSpecializedFunction,
+    AgeSpecializedGrid,
+    DeterministicTransition,
+    JointTransition,
+    StochasticTransition,
+)
+from lcm.typing import StateOrActionName, UserFunction, ValueND
 
 _CODE_ANNOTATION = "DiscreteState"
 
-# One entry of a regime's `functions`, `state_transitions` or `constraints`.
-type AdaptableEntry = FunctionEntry | StateTransitionEntry | ConstraintEntry | Decoupled
+# The suffix of an argument that reads the code of a discrete variable.
+CODE_SUFFIX = "_code"
 
-# The adapters built for one model: each authored function and encoding grid
-# (by identity) to the function and its adapter.
-type AdapterMemo = dict[tuple[int, int], tuple[UserFunction, ValueAdapter]]
+# One entry of a regime's `functions`, `states`, `state_transitions`,
+# `constraints` or `joint_transitions`.
+type AdaptableEntry = (
+    FunctionEntry
+    | StateEntry
+    | StateTransitionEntry
+    | ConstraintEntry
+    | Decoupled
+    | JointTransition
+    | Mapping[str, JointTransition | Phased]
+)
+
+# The adapters built for one model: each authored function or age-specialized
+# marker and encoding grid (by identity) to the declaration and its adapter.
+type AdapterMemo = dict[
+    tuple[int, int],
+    tuple[UserFunction, ValueAdapter]
+    | tuple[AgeSpecializedFunction, AgeSpecializedFunction],
+]
 
 # The attributes an adapter publishes itself and never takes from its function.
 _ADAPTER_OWN_ATTRIBUTES: frozenset[str] = frozenset(
@@ -59,6 +93,8 @@ _ADAPTER_OWN_ATTRIBUTES: frozenset[str] = frozenset(
         "__annotations__",
         "__annotate__",
         "__dict__",
+        "__lcm_source__",
+        "_reads",
     }
 )
 
@@ -66,7 +102,6 @@ _ADAPTER_OWN_ATTRIBUTES: frozenset[str] = frozenset(
 def collect_value_grids(
     *,
     regimes: Mapping[RegimeName, UserRegime],
-    laws: RegimeLaws,
     derived_categoricals: Mapping[FunctionName, DiscreteGrid],
 ) -> MappingProxyType[StateOrActionName, DiscreteGrid]:
     """Return the value grid of every variable a model declares by its values.
@@ -79,6 +114,8 @@ def collect_value_grids(
         RegimeInitializationError: If a name is a value grid in one declaration
             and differs in another, or a value grid meets a declaration that
             would read its codes.
+        GridInitializationError: If a grid's values do not survive the
+            precision in force, for instance collide once rounded to float32.
 
     """
     declarations: dict[StateOrActionName, list[tuple[RegimeName, DiscreteGrid]]] = {}
@@ -118,14 +155,128 @@ def collect_value_grids(
                 "values and tolerance everywhere. The numeric kind (all integers "
                 "or all floats) must also match."
             )
+        # A grid built at another precision holds its nodes at the model's
+        # from here on; values that do not survive that precision raise now.
+        value_grid.values_to_jax()
     if value_grids:
-        _fail_if_unsupported_reader(
-            regimes=regimes,
-            laws=laws,
-            value_grids=value_grids,
-            model_derived_categoricals=derived_categoricals,
-        )
+        _fail_if_unsupported_reader(regimes=regimes, value_grids=value_grids)
     return MappingProxyType(value_grids)
+
+
+def collect_adapter_grids(
+    *,
+    regimes: Mapping[RegimeName, UserRegime],
+    derived_categoricals: Mapping[FunctionName, DiscreteGrid],
+) -> MappingProxyType[StateOrActionName, DiscreteGrid]:
+    """Return the grid of every discrete variable a user function can read.
+
+    A variable declared by its values maps to its value grid, which decodes and
+    encodes it. Every other discrete variable maps to one of its category grids,
+    which only marks that `<name>_code` reads its code.
+
+    Raises:
+        RegimeInitializationError: If a regime declares a variable, function or
+            constraint named `<name>_code` for a discrete variable `<name>`, or
+            as `collect_value_grids` does.
+
+    """
+    value_grids = collect_value_grids(
+        regimes=regimes, derived_categoricals=derived_categoricals
+    )
+    grids = dict(
+        _declared_discrete_grids(
+            regimes=regimes, derived_categoricals=derived_categoricals
+        )
+    )
+    _fail_if_a_name_spells_a_code(regimes=regimes, discrete_names=frozenset(grids))
+    _fail_if_a_condition_reads_a_code(regimes=regimes, discrete_names=frozenset(grids))
+    return MappingProxyType({**grids, **value_grids})
+
+
+def declared_discrete_names(
+    *,
+    regimes: Mapping[RegimeName, UserRegime],
+    derived_categoricals: Mapping[FunctionName, DiscreteGrid],
+) -> frozenset[StateOrActionName]:
+    """Return the name of every declared discrete variable, whose code is readable."""
+    return frozenset(
+        name
+        for name, _ in _declared_discrete_grids(
+            regimes=regimes, derived_categoricals=derived_categoricals
+        )
+    )
+
+
+def _declared_discrete_grids(
+    *,
+    regimes: Mapping[RegimeName, UserRegime],
+    derived_categoricals: Mapping[FunctionName, DiscreteGrid],
+) -> list[tuple[StateOrActionName, DiscreteGrid]]:
+    """Return every declared discrete grid with its name, both sides of `Phased`."""
+    found = list(derived_categoricals.items())
+    for regime in regimes.values():
+        for name, entry in {
+            **dict(regime.states),
+            **dict(regime.actions),
+            **dict(regime.derived_categoricals),
+        }.items():
+            sides = (
+                (entry.solve, entry.simulate) if isinstance(entry, Phased) else (entry,)
+            )
+            found.extend(
+                (name, side) for side in sides if isinstance(side, DiscreteGrid)
+            )
+    return found
+
+
+def _fail_if_a_name_spells_a_code(
+    *, regimes: Mapping[RegimeName, UserRegime], discrete_names: frozenset[str]
+) -> None:
+    """Raise where a declared name is `<name>_code` of a discrete variable."""
+    collisions = sorted(
+        f"'{name}' in regime '{regime_name}'"
+        for regime_name, regime in regimes.items()
+        for name in (
+            *regime.states,
+            *regime.actions,
+            *regime.derived_categoricals,
+            *regime.decomposed_functions,
+            *regime.constraints,
+        )
+        if name.endswith(CODE_SUFFIX)
+        and name.removesuffix(CODE_SUFFIX) in discrete_names
+    )
+    if collisions:
+        raise RegimeInitializationError(
+            f"{', '.join(collisions)} collides with the code of a discrete "
+            f"variable: an argument `<name>{CODE_SUFFIX}` reads the code of the "
+            "discrete variable `<name>`. Rename it."
+        )
+
+
+def _fail_if_a_condition_reads_a_code(
+    *, regimes: Mapping[RegimeName, UserRegime], discrete_names: frozenset[str]
+) -> None:
+    """Raise where a condition constraint names `<name>_code` of a discrete variable.
+
+    A condition is a tree of names the engine resolves against its own nodes,
+    and no node holds a code under that name.
+    """
+    problems = sorted(
+        f"the condition constraint '{name}' of '{regime_name}' reads `{read}`"
+        for regime_name, regime in regimes.items()
+        for name, entry in regime.constraints.items()
+        if isinstance(entry, Condition)
+        for read in sorted(entry.dependencies)
+        if read.endswith(CODE_SUFFIX)
+        and read.removesuffix(CODE_SUFFIX) in discrete_names
+    )
+    if problems:
+        raise RegimeInitializationError(
+            f"{'; '.join(problems)}. A condition cannot read the code of a "
+            f"discrete variable; write the constraint as a function with the "
+            f"argument `<name>{CODE_SUFFIX}`."
+        )
 
 
 def _value_grid_key(
@@ -166,25 +317,215 @@ def adapt_user_function(
     # user's function, so a regime reused in another model is wrapped once.
     if isinstance(func, ValueAdapter):
         func = func.func
+    reads = _read_names(func)
     decoded = {
         name: value_grids[grid_name]
-        for name in _read_names(func)
+        for name in reads
         if (grid_name := _value_grid_name(name=name, value_grids=value_grids))
         is not None
     }
-    if not decoded and encode is None:
+    codes = {
+        name: name.removesuffix(CODE_SUFFIX)
+        for name in reads
+        if name.endswith(CODE_SUFFIX)
+        and name.removesuffix(CODE_SUFFIX) in value_grids
+        and name not in value_grids
+    }
+    if not decoded and not codes and encode is None:
         return func
     key = (id(func), id(encode))
     if adapters is not None and key in adapters:
         return adapters[key][1]
-    adapter = ValueAdapter(func=func, decoded=MappingProxyType(decoded), encode=encode)
+    _fail_if_an_array_is_indexed_by_a_value(func=func, decoded=decoded)
+    adapter = ValueAdapter(
+        func=func,
+        decoded=MappingProxyType(decoded),
+        codes=MappingProxyType(codes),
+        encode=encode,
+    )
     if adapters is not None:
         # The function is kept with its adapter, so its id cannot be reused.
         adapters[key] = (func, adapter)
     return adapter
 
 
-def adapt_entry(
+def adapt_regime_laws(
+    *,
+    laws: RegimeLaws,
+    value_grids: Mapping[StateOrActionName, DiscreteGrid],
+    adapters: AdapterMemo | None = None,
+) -> MappingProxyType[RegimeName, RegimeLaw]:
+    """Adapt every regime transition law to read the values of value grids.
+
+    A law still returns a regime code or probabilities over regimes, so nothing
+    it returns is encoded. A regime name and a terminal law read nothing.
+    """
+    adapters = {} if adapters is None else adapters
+    return MappingProxyType(
+        {
+            name: law
+            if not value_grids or law.terminal
+            else _adapt_regime_law(law=law, value_grids=value_grids, adapters=adapters)
+            for name, law in laws.items()
+        }
+    )
+
+
+def _adapt_regime_law(
+    *,
+    law: RegimeLaw,
+    value_grids: Mapping[StateOrActionName, DiscreteGrid],
+    adapters: AdapterMemo,
+) -> RegimeLaw:
+    """Adapt one law's transition and gated edges; keep the law if neither changes."""
+    transition = (
+        law.transition
+        if isinstance(law.transition, str)
+        else cast(
+            "RegimeTransitionLaw",
+            adapt_entry(
+                entry=cast("AdaptableEntry", law.transition),
+                value_grids=value_grids,
+                encode=None,
+                adapters=adapters,
+            ),
+        )
+    )
+    gated_edges = {
+        target: _adapt_gated_edge(edge=edge, value_grids=value_grids, adapters=adapters)
+        for target, edge in law.gated_edges.items()
+    }
+    if transition is law.transition and all(
+        gated_edges[target] is edge for target, edge in law.gated_edges.items()
+    ):
+        return law
+    return dataclasses.replace(
+        law, transition=transition, gated_edges=MappingProxyType(gated_edges)
+    )
+
+
+def adapt_collective_utility(
+    *,
+    declaration: CollectiveUtility,
+    engine_functions: Mapping[FunctionName, UserFunction | Phased | None],
+    value_grids: Mapping[StateOrActionName, DiscreteGrid],
+    adapters: AdapterMemo,
+) -> CollectiveUtility:
+    """Return the household declaration with the bodies the engine runs.
+
+    Each stakeholder's body is the adapted `utility_<s>` the engine holds, so the
+    declaration and the engine name one object, and each Pareto weight reads
+    values. A declaration that reads no value grid is returned as declared.
+    """
+    utilities = {
+        stakeholder: None
+        if body is None
+        else cast(
+            "UserFunction | Phased",
+            engine_functions.get(f"utility_{stakeholder}", body),
+        )
+        for stakeholder, body in declaration.utilities.items()
+    }
+    objective = declaration.objective
+    if objective is not None:
+        weights = {
+            stakeholder: weight
+            if isinstance(weight, float | int)
+            else adapt_user_function(
+                func=weight, value_grids=value_grids, encode=None, adapters=adapters
+            )
+            for stakeholder, weight in objective.weights.items()
+        }
+        if any(weights[s] is not w for s, w in objective.weights.items()):
+            objective = dataclasses.replace(objective, weights=weights)
+    if objective is declaration.objective and all(
+        utilities[s] is body for s, body in declaration.utilities.items()
+    ):
+        return declaration
+    return dataclasses.replace(declaration, utilities=utilities, objective=objective)
+
+
+def _adapt_gated_edge(
+    *,
+    edge: GatedEdge,
+    value_grids: Mapping[StateOrActionName, DiscreteGrid],
+    adapters: AdapterMemo,
+) -> GatedEdge:
+    """Adapt a gated edge's gate, its routes' fallbacks and its references.
+
+    The edge is kept as declared if none of them changes.
+    """
+    gate = adapt_user_function(
+        func=edge.gate, value_grids=value_grids, encode=None, adapters=adapters
+    )
+    fallbacks = {
+        name: _adapt_reference(
+            reference=route.fallback, value_grids=value_grids, adapters=adapters
+        )
+        for name, route in edge.legs.items()
+    }
+    gate_refs = {
+        name: cast(
+            "ProjectedRegimeValue",
+            _adapt_reference(
+                reference=reference, value_grids=value_grids, adapters=adapters
+            ),
+        )
+        for name, reference in edge.gate_refs.items()
+    }
+    if (
+        gate is edge.gate
+        and all(fallbacks[name] is route.fallback for name, route in edge.legs.items())
+        and all(gate_refs[name] is ref for name, ref in edge.gate_refs.items())
+    ):
+        return edge
+    return dataclasses.replace(
+        edge,
+        gate=gate,
+        legs=MappingProxyType(
+            {
+                name: dataclasses.replace(route, fallback=fallbacks[name])
+                for name, route in edge.legs.items()
+            }
+        ),
+        gate_refs=MappingProxyType(gate_refs),
+    )
+
+
+def _adapt_reference(
+    *,
+    reference: ProjectedRegimeValue | Phased,
+    value_grids: Mapping[StateOrActionName, DiscreteGrid],
+    adapters: AdapterMemo,
+) -> ProjectedRegimeValue | Phased:
+    """Adapt a projection: it reads values and returns each value-grid state's code.
+
+    A projection lands on the reference regime's state of the same name, whose
+    grid is the model's one grid of that name.
+    """
+    if isinstance(reference, Phased):
+        solve, simulate = (
+            _adapt_reference(reference=side, value_grids=value_grids, adapters=adapters)
+            for side in (reference.solve, reference.simulate)
+        )
+        if solve is reference.solve and simulate is reference.simulate:
+            return reference
+        return Phased(solve=solve, simulate=simulate)
+    projection = {
+        name: adapt_user_function(
+            func=func,
+            value_grids=value_grids,
+            encode=encoding_grid(value_grids=value_grids, name=name),
+            adapters=adapters,
+        )
+        for name, func in reference.projection.items()
+    }
+    if all(projection[name] is func for name, func in reference.projection.items()):
+        return reference
+    return dataclasses.replace(reference, projection=projection)
+
+
+def adapt_entry(  # noqa: PLR0911
     *,
     entry: AdaptableEntry,
     value_grids: Mapping[StateOrActionName, DiscreteGrid],
@@ -194,53 +535,66 @@ def adapt_entry(
     """Adapt every user function inside one regime slot entry.
 
     Walks `Phased` sides, per-target mappings, both functions of a `Decoupled`
-    Koopmans aggregator and the probability function of a `StochasticTransition`,
-    which is decoded only: it returns probabilities over codes. With `adapters`,
-    one authored function gets one adapter wherever it appears, so a function
-    shared by both phases stays one function.
+    Koopmans aggregator, the function of a `DeterministicTransition`, the
+    predicate and projections of a `ValueDependentConstraint`, the callables of
+    a `JointTransition`, the probability function of a `StochasticTransition`,
+    which is decoded only: it returns probabilities over codes, and every
+    function an `AgeSpecializedFunction` builds. With `adapters`, one authored
+    function gets one adapter wherever it appears, so a function shared by both
+    phases stays one function.
     """
-    # Without value grids nothing changes. Conditions and the collective
-    # declarations carry no user function over variables, and an identity law
-    # maps codes to codes exactly as it maps values to values.
+    # Without value grids nothing changes. A grid declares no function. A
+    # condition is a tree of names, not a function; the model refuses one that
+    # reads a value or a code. A household's stakeholder bodies
+    # are adapted as the regime's `utility_<s>` functions. An identity law maps
+    # codes to codes exactly as it maps values to values.
     if not value_grids or isinstance(
         entry,
         Condition
         | CollectiveUtility
-        | ValueDependentConstraint
         | _IdentityTransition
-        | AgeSpecializedFunction
+        | AgeSpecializedGrid
+        | Grid
+        | JointNormalIIDProcess
         | None,
     ):
         return entry
     adapters = {} if adapters is None else adapters
+    if isinstance(entry, AgeSpecializedFunction):
+        return _adapt_age_specialized(
+            entry=entry, value_grids=value_grids, encode=encode, adapters=adapters
+        )
+    if isinstance(entry, ValueDependentConstraint):
+        return _adapt_value_dependent_constraint(
+            entry=entry, value_grids=value_grids, adapters=adapters
+        )
     if isinstance(entry, Phased):
         return _adapt_phased(
             entry=entry, value_grids=value_grids, encode=encode, adapters=adapters
         )
     if isinstance(entry, Mapping):
-        return cast(
-            "AdaptableEntry",
-            MappingProxyType(
-                {
-                    key: adapt_entry(
-                        entry=value,
-                        value_grids=value_grids,
-                        encode=encode,
-                        adapters=adapters,
-                    )
-                    for key, value in entry.items()
-                }
-            ),
-        )
+        adapted = {
+            key: adapt_entry(
+                entry=value, value_grids=value_grids, encode=encode, adapters=adapters
+            )
+            for key, value in entry.items()
+        }
+        if all(adapted[key] is value for key, value in entry.items()):
+            return entry
+        return cast("AdaptableEntry", MappingProxyType(adapted))
     if isinstance(entry, Decoupled):
         return _adapt_decoupled(entry=entry, value_grids=value_grids, adapters=adapters)
-    if isinstance(entry, StochasticTransition):
-        return dataclasses.replace(
-            entry,
-            func=adapt_user_function(
-                func=entry.func, value_grids=value_grids, encode=None, adapters=adapters
-            ),
+    if isinstance(entry, JointTransition):
+        return _adapt_joint(entry=entry, value_grids=value_grids, adapters=adapters)
+    if isinstance(entry, StochasticTransition | DeterministicTransition):
+        # A stochastic law returns probabilities over codes, never a value.
+        func = adapt_user_function(
+            func=entry.func,
+            value_grids=value_grids,
+            encode=None if isinstance(entry, StochasticTransition) else encode,
+            adapters=adapters,
         )
+        return entry if func is entry.func else dataclasses.replace(entry, func=func)
     return adapt_user_function(
         func=cast("UserFunction", entry),
         value_grids=value_grids,
@@ -270,6 +624,129 @@ def _adapt_phased(
     if solve is entry.solve and simulate is entry.simulate:
         return entry
     return Phased(solve=solve, simulate=simulate)
+
+
+def _adapt_age_specialized(
+    *,
+    entry: AgeSpecializedFunction,
+    value_grids: Mapping[StateOrActionName, DiscreteGrid],
+    encode: DiscreteGrid | None,
+    adapters: AdapterMemo,
+) -> AgeSpecializedFunction:
+    """Return a marker whose `build(age)` adapts the function the entry builds.
+
+    The marker's contract gives every age's function one call signature, so
+    every age is adapted alike and the signature key carries over unchanged. One
+    marker gets one adapted marker, so a marker shared by both phases stays one.
+    """
+    key = (id(entry), id(encode))
+    if key in adapters:
+        return cast("AgeSpecializedFunction", adapters[key][1])
+    adapted = dataclasses.replace(
+        entry,
+        build=AdaptedBuild(
+            build=entry.build,
+            value_grids=MappingProxyType(dict(value_grids)),
+            encode=encode,
+        ),
+    )
+    # The marker is kept with its adapted twin, so its id cannot be reused.
+    adapters[key] = (entry, adapted)
+    return adapted
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class AdaptedBuild:
+    """The `build` of an age-specialized marker whose functions read codes.
+
+    A frozen callable instance for the reason `ValueAdapter` is one: a function
+    defined per model build would be pinned by the beartype claw's memo.
+    """
+
+    build: Callable[[float], UserFunction]
+    """The marker's own factory, which builds functions that read values."""
+    value_grids: MappingProxyType[StateOrActionName, DiscreteGrid]
+    """The grid of every discrete variable a built function can read."""
+    encode: DiscreteGrid | None
+    """The grid whose code a built function's returned value names, if any."""
+
+    def __call__(self, age: float) -> UserFunction:
+        return adapt_user_function(
+            func=self.build(age), value_grids=self.value_grids, encode=self.encode
+        )
+
+
+def _adapt_value_dependent_constraint(
+    *,
+    entry: ValueDependentConstraint,
+    value_grids: Mapping[StateOrActionName, DiscreteGrid],
+    adapters: AdapterMemo,
+) -> ValueDependentConstraint:
+    """Adapt the predicate and the projections, keeping the entry if neither changes."""
+    predicate = adapt_user_function(
+        func=entry.predicate, value_grids=value_grids, encode=None, adapters=adapters
+    )
+    references = {
+        name: cast(
+            "ProjectedRegimeValue",
+            _adapt_reference(
+                reference=reference, value_grids=value_grids, adapters=adapters
+            ),
+        )
+        for name, reference in entry.references.items()
+    }
+    if predicate is entry.predicate and all(
+        references[name] is reference for name, reference in entry.references.items()
+    ):
+        return entry
+    return dataclasses.replace(entry, predicate=predicate, references=references)
+
+
+def _adapt_joint(
+    *,
+    entry: JointTransition,
+    value_grids: Mapping[StateOrActionName, DiscreteGrid],
+    adapters: AdapterMemo,
+) -> JointTransition:
+    """Adapt a joint lottery: each output returns its state's code.
+
+    The probabilities and a callable support read values; a literal support is
+    the author's own numbers, which the outputs read as declared.
+    """
+    probabilities = adapt_user_function(
+        func=entry.probabilities,
+        value_grids=value_grids,
+        encode=None,
+        adapters=adapters,
+    )
+    support = (
+        adapt_user_function(
+            func=cast("UserFunction", entry.support),
+            value_grids=value_grids,
+            encode=None,
+            adapters=adapters,
+        )
+        if callable(entry.support)
+        else entry.support
+    )
+    outputs = {
+        name: adapt_user_function(
+            func=func,
+            value_grids=value_grids,
+            encode=encoding_grid(value_grids=value_grids, name=name),
+            adapters=adapters,
+        )
+        for name, func in entry.outputs.items()
+    }
+    if (
+        probabilities is entry.probabilities
+        and support is entry.support
+        and all(outputs[name] is func for name, func in entry.outputs.items())
+    ):
+        return entry
+    return dataclasses.replace(
+        entry, probabilities=probabilities, support=support, outputs=outputs
+    )
 
 
 def _adapt_decoupled(
@@ -306,6 +783,8 @@ class ValueAdapter:
     """The user function, which reads values."""
     decoded: MappingProxyType[str, DiscreteGrid]
     """The grid of each argument the function reads as a value."""
+    codes: MappingProxyType[str, StateOrActionName] = MappingProxyType({})
+    """The variable each `<name>_code` argument reads the code of."""
     encode: DiscreteGrid | None
     """The grid whose code the returned value names, if any."""
 
@@ -319,23 +798,40 @@ class ValueAdapter:
             value = getattr(self.func, name, None)
             if value is not None:
                 object.__setattr__(self, name, value)
+        # Array subscripts are read off the source of the function the user wrote.
+        object.__setattr__(self, "__lcm_source__", self.func)
+        # A `partial` keeps the keywords it fixes in its signature; the adapter
+        # publishes only the arguments the engine supplies, and a `<name>_code`
+        # argument as the variable `<name>` whose code the engine holds.
+        free = _read_names(self.func)
+        object.__setattr__(self, "_reads", free)
+        code_reads = {*self.decoded, *self.codes.values()}
         annotations = {
-            name: _CODE_ANNOTATION if name in self.decoded else annotation
+            self.codes.get(name, name): _CODE_ANNOTATION
+            if self.codes.get(name, name) in code_reads
+            else annotation
             for name, annotation in get_annotations(self.func).items()
+            if name in free
         }
+        return_annotation = get_annotations(self.func).get("return")
         if self.encode is not None:
-            annotations["return"] = _CODE_ANNOTATION
+            return_annotation = _CODE_ANNOTATION
+        if return_annotation is not None:
+            annotations["return"] = return_annotation
         signature = inspect.signature(self.func)
+        published: dict[str, inspect.Parameter] = {}
+        for parameter in signature.parameters.values():
+            name = self.codes.get(parameter.name, parameter.name)
+            if parameter.name in free and name not in published:
+                published[name] = parameter.replace(
+                    name=name,
+                    annotation=annotations.get(name, parameter.annotation),
+                )
         object.__setattr__(
             self,
             "__signature__",
             signature.replace(
-                parameters=[
-                    parameter.replace(annotation=annotations[parameter.name])
-                    if parameter.name in annotations
-                    else parameter
-                    for parameter in signature.parameters.values()
-                ],
+                parameters=list(published.values()),
                 return_annotation=annotations.get(
                     "return", signature.return_annotation
                 ),
@@ -348,93 +844,78 @@ class ValueAdapter:
     def __call__(self, **kwargs: EconFunctionArg) -> ValueND:
         result = self.func(
             **{
-                name: self.decoded[name].decode(value)
+                name: kwargs[self.codes[name]]
+                if name in self.codes
+                else self.decoded[name].decode(kwargs[name])
                 if name in self.decoded
-                else value
-                for name, value in kwargs.items()
+                else kwargs[name]
+                for name in self._reads
             }
         )
         return result if self.encode is None else self.encode.encode(result)
 
 
 def _read_names(func: UserFunction) -> tuple[str, ...]:
-    """Return the names a user function reads."""
-    return tuple(inspect.signature(func).parameters)
+    """Return the names a user function reads, without a `partial`'s fixed ones."""
+    return tuple(get_free_arguments(func))
 
 
 def _value_grid_name(
     *, name: str, value_grids: Mapping[StateOrActionName, DiscreteGrid]
 ) -> StateOrActionName | None:
     """Return the value grid an argument reads: `x` or the next state `next_x`."""
-    if name in value_grids:
-        return name
-    if name.startswith("next_") and name.removeprefix("next_") in value_grids:
-        return name.removeprefix("next_")
+    for grid_name in (name, name.removeprefix("next_")):
+        grid = value_grids.get(grid_name)
+        if grid is not None and grid.values is not None:
+            return grid_name
     return None
+
+
+def encoding_grid(
+    *, value_grids: Mapping[StateOrActionName, DiscreteGrid], name: str
+) -> DiscreteGrid | None:
+    """Return the value grid a returned value of `name` is encoded on, if any."""
+    grid = value_grids.get(name)
+    return grid if grid is not None and grid.values is not None else None
+
+
+def _fail_if_an_array_is_indexed_by_a_value(
+    *, func: UserFunction, decoded: Mapping[str, DiscreteGrid]
+) -> None:
+    """Raise where `func` indexes an array argument by a value-grid variable's value.
+
+    An array is laid out over a variable's codes, so its position is the code;
+    reading `<name>_code` gives it.
+    """
+    found = value_indexed_arrays(
+        func=func,
+        names=frozenset(name for name in decoded if not name.startswith("next_")),
+    )
+    if found:
+        func_name = getattr(func, "__name__", type(func).__name__)
+        reads = ", ".join(
+            f"`{array}[{name}]` (write `{array}[{name}{CODE_SUFFIX}]`)"
+            for array, name in found
+        )
+        raise RegimeInitializationError(
+            f"'{func_name}' indexes an array by the value of a value grid: {reads}. "
+            f"An array's positions are a variable's codes; read the code as the "
+            f"argument `<name>{CODE_SUFFIX}`."
+        )
 
 
 def _fail_if_unsupported_reader(
     *,
     regimes: Mapping[RegimeName, UserRegime],
-    laws: RegimeLaws,
     value_grids: Mapping[StateOrActionName, DiscreteGrid],
-    model_derived_categoricals: Mapping[FunctionName, DiscreteGrid],
 ) -> None:
     """Raise where a value grid meets a declaration that would read its codes."""
-    problems: list[str] = []
-    for regime_name, regime in regimes.items():
-        declared = {
-            name
-            for name in (
-                *regime.states,
-                *regime.actions,
-                *regime.derived_categoricals,
-                *model_derived_categoricals,
-            )
-            if name in value_grids
-        }
-        if declared and regime.stakeholders is not None:
-            problems.append(f"'{regime_name}' is a collective regime")
-        problems.extend(
-            f"the imputation of the carried state '{name}' of '{regime_name}'"
-            for name, entry in regime.states.items()
-            if isinstance(entry, Phased)
-            and (
-                _imputation_meets_value_grids(
-                    entry=entry, name=name, value_grids=value_grids
-                )
-                # A marker's published *args/**kwargs do not describe the
-                # concrete reader. Its supported part-2a outcome is refusal.
-                or (bool(declared) and _contains_age_specialized(entry))
-            )
-        )
-        problems.extend(
-            f"the joint transition '{key}' to '{target}' of '{regime_name}'"
-            for target, joints in regime.joint_transitions.items()
-            for key, joint in joints.items()
-            if _joint_names(joint) & _value_names(value_grids)
-        )
-        problems.extend(
-            f"the condition constraint '{name}' of '{regime_name}'"
-            for name, entry in regime.constraints.items()
-            if isinstance(entry, Condition) and entry.dependencies & set(value_grids)
-        )
-        if declared:
-            for slot_name, slot in (
-                ("function", regime.decomposed_functions),
-                ("constraint", regime.constraints),
-                ("state transition", regime.state_transitions),
-            ):
-                problems.extend(
-                    f"the age-specialized {slot_name} '{name}' of '{regime_name}'"
-                    for name, entry in slot.items()
-                    if _contains_age_specialized(entry)
-                )
-    problems.extend(
-        f"the regime transition law of '{regime_name}'"
-        for regime_name, law in laws.items()
-        if set(_law_reads(law.decomposed_transition)) & _value_names(value_grids)
-    )
+    problems = [
+        f"the condition constraint '{name}' of '{regime_name}'"
+        for regime_name, regime in regimes.items()
+        for name, entry in regime.constraints.items()
+        if isinstance(entry, Condition) and entry.dependencies & set(value_grids)
+    ]
     if problems:
         raise RegimeInitializationError(
             "Value grids are not supported where these declarations read them: "
@@ -443,67 +924,6 @@ def _fail_if_unsupported_reader(
         )
 
 
-def _contains_age_specialized(entry: AdaptableEntry | StateEntry) -> bool:
-    """Inspect marker leaves, never the generic signature of a build-time marker."""
-    if isinstance(entry, Phased):
-        return _contains_age_specialized(entry.solve) or _contains_age_specialized(
-            entry.simulate
-        )
-    if isinstance(entry, Mapping):
-        return any(_contains_age_specialized(cell) for cell in entry.values())
-    if isinstance(entry, StochasticTransition):
-        return _contains_age_specialized(entry.func)
-    return isinstance(entry, AgeSpecializedFunction)
-
-
 def _value_names(value_grids: Mapping[StateOrActionName, DiscreteGrid]) -> set[str]:
     """Return every argument name that reads a value grid: `x` and `next_x`."""
     return {*value_grids, *(f"next_{name}" for name in value_grids)}
-
-
-def _joint_names(joint: JointTransition | Phased) -> set[str]:
-    """Return the outputs and the arguments of a joint transition's callables."""
-    sides = (joint.solve, joint.simulate) if isinstance(joint, Phased) else (joint,)
-    return {
-        name
-        for side in sides
-        if isinstance(side, JointTransition)
-        for name in (
-            *side.outputs,
-            *(
-                read
-                for func in (side.probabilities, side.support, *side.outputs.values())
-                if callable(func)
-                for read in _read_names(cast("UserFunction", func))
-            ),
-        )
-    }
-
-
-def _law_reads(law: DecomposedTransition) -> Iterator[str]:
-    """Yield the arguments of every callable node of a regime transition law."""
-    if isinstance(law, Phased):
-        yield from _law_reads(law.solve)
-        yield from _law_reads(law.simulate)
-    elif isinstance(law, Mapping):
-        for cell in law.values():
-            yield from _law_reads(cell)
-    elif isinstance(law, StochasticTransition):
-        yield from _read_names(law.func)
-    elif callable(law):
-        yield from _read_names(cast("UserFunction", law))
-
-
-def _imputation_meets_value_grids(
-    *, entry: Phased, name: StateName, value_grids: Mapping[str, DiscreteGrid]
-) -> bool:
-    """Return whether a carried state's imputation reads or imputes a value grid."""
-    imputations = [side for side in (entry.solve, entry.simulate) if callable(side)]
-    return bool(imputations) and (
-        name in value_grids
-        or any(
-            set(_read_names(cast("UserFunction", imputation)))
-            & _value_names(value_grids)
-            for imputation in imputations
-        )
-    )

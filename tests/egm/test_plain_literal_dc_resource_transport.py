@@ -95,8 +95,10 @@ def _model(
         regimes={
             "parent": ConsumptionSavingsRegime(
                 liquid=margin,
-                states={"liquid": IrregSpacedGrid(points=parent_liquid)},
-                actions={"consumption": IrregSpacedGrid(points=(0.025, 0.05, 0.1))},
+                states={"liquid": IrregSpacedGrid(points=np.array(parent_liquid))},
+                actions={
+                    "consumption": IrregSpacedGrid(points=np.array([0.025, 0.05, 0.1]))
+                },
                 functions={
                     "utility": _source_utility,
                     "resources": _parent_resources,
@@ -107,13 +109,19 @@ def _model(
                     "borrowing": post_decision_lower_bound(margin=margin, lower=0.2)
                 },
                 state_transitions={"liquid": _source_law},
-                solver=EGM(savings_grid=IrregSpacedGrid(points=parent_savings)),
+                solver=EGM(
+                    savings_grid=IrregSpacedGrid(points=np.array(parent_savings))
+                ),
             ),
             "child": ConsumptionSavingsRegime(
                 liquid=margin,
-                states={"liquid": IrregSpacedGrid(points=(0.0, 0.5, 1.0, 1.5))},
+                states={
+                    "liquid": IrregSpacedGrid(points=np.array([0.0, 0.5, 1.0, 1.5]))
+                },
                 actions={
-                    "consumption": IrregSpacedGrid(points=(0.025, 0.05, 0.25, 0.5, 1.0))
+                    "consumption": IrregSpacedGrid(
+                        points=np.array([0.025, 0.05, 0.25, 0.5, 1.0])
+                    )
                 },
                 functions={
                     "utility": _utility,
@@ -129,12 +137,12 @@ def _model(
                 },
                 state_transitions={"liquid": _ordinary_law},
                 solver=DCEGM(
-                    savings_grid=IrregSpacedGrid(points=(0.5, 1.0, 1.5)),
+                    savings_grid=IrregSpacedGrid(points=np.array([0.5, 1.0, 1.5])),
                     n_constrained_points=4,
                 ),
             ),
             "done": Regime(
-                states={"liquid": IrregSpacedGrid(points=(5.5, 7.0, 8.5))},
+                states={"liquid": IrregSpacedGrid(points=np.array([5.5, 7.0, 8.5]))},
                 functions={"utility": _terminal},
             ),
         },

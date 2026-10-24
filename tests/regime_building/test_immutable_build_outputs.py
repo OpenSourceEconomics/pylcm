@@ -138,6 +138,7 @@ def _regime_cases(model: Model) -> dict[str, Callable[[], Sized]]:
             kept=unkept,
             ages=None,
             active_periods=None,
+            discrete_names=frozenset(),
         ),
         "phase_fixed_point": lambda: _phase_fixed_point(
             **shared, phase_name="solution"

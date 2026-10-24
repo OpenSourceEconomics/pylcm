@@ -20,7 +20,7 @@ from _lcm.simulation.additional_targets import (
     _compute_targets,
     _filter_targets_for_regime,
 )
-from _lcm.simulation.result_metadata import ResultMetadata
+from _lcm.simulation.result_metadata import CategoryValue, ResultMetadata
 from _lcm.time import TimeAxis, coordinate_kind
 from _lcm.typing import (
     ActionName,
@@ -492,11 +492,12 @@ def _convert_to_categorical(
     df: pd.DataFrame,
     metadata: ResultMetadata,
 ) -> pd.DataFrame:
-    """Convert discrete columns to pandas Categorical dtype with string labels.
+    """Convert discrete columns to pandas Categorical dtype.
 
     Converts:
     - regime_name column: uses regime_names as categories
-    - discrete state/action columns: uses categories from simulation metadata
+    - discrete state/action columns: uses categories from simulation metadata,
+      the string labels of a category class or the numbers of a value grid
 
     """
     df = df.copy()
@@ -543,19 +544,19 @@ def _remap_codes_per_regime(
     *,
     df: pd.DataFrame,
     var_name: str,
-    merged_categories: tuple[str, ...],
+    merged_categories: tuple[CategoryValue, ...],
     ordered: bool,
     metadata: ResultMetadata,
 ) -> pd.Categorical:
-    """Map per-regime integer codes to labels, then build a merged Categorical.
+    """Map per-regime integer codes to categories, then build a merged Categorical.
 
     When regimes define different categories for the same variable, the raw integer
     codes in the DataFrame correspond to each regime's own category ordering. This
-    function converts per-regime codes to string labels, then wraps them in a
+    function converts per-regime codes to categories, then wraps them in a
     Categorical with the merged category set.
 
     """
-    labels = pd.Series(pd.NA, index=df.index, dtype="string")
+    labels = pd.Series(pd.NA, index=df.index, dtype=object)
 
     for regime_name in metadata.regime_names:
         regime_cats = metadata.regime_discrete_categories.get((regime_name, var_name))
@@ -611,7 +612,7 @@ def _roles_to_categorical(
 def _codes_to_categorical(
     *,
     codes: pd.Series,
-    categories: tuple[str, ...],
+    categories: tuple[CategoryValue, ...],
     ordered: bool = False,
 ) -> pd.Categorical | pd.Series:
     """Convert integer codes to Categorical, handling NaN and out-of-range values.
@@ -632,13 +633,13 @@ def _codes_to_categorical(
 
     if has_nan.any():
         int_codes = [-1 if pd.isna(c) else int(c) for c in codes_array]
-        return pd.Categorical.from_codes(  # ty: ignore[invalid-return-type]
+        return pd.Categorical.from_codes(  # ty: ignore[no-matching-overload]
             int_codes,
             categories=pd.Index(categories),
             ordered=ordered,
         )
 
-    return pd.Categorical.from_codes(  # ty: ignore[invalid-return-type]
+    return pd.Categorical.from_codes(  # ty: ignore[no-matching-overload]
         codes_array.astype(int),
         categories=pd.Index(categories),
         ordered=ordered,

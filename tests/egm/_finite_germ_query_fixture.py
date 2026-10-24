@@ -1,6 +1,7 @@
 """Public declarations for finite query component records."""
 
 import jax.numpy as jnp
+import numpy as np
 
 from _lcm.egm.dcegm_query import DCEGMQuery
 from _lcm.egm.step import _EGMStep
@@ -38,10 +39,10 @@ def make_canonical_model(
     child_gross: UserFunction | None = None,
 ) -> Model:
     """Declare the finite nested model with its original grids and economic laws."""
-    liquid = IrregSpacedGrid(points=(0.0, 0.5, 1.0, 2.0))
-    stock = IrregSpacedGrid(points=(0.0, 1.0))
-    action = IrregSpacedGrid(points=(0.125, 0.5, 1.0, 2.0))
-    savings_grid = IrregSpacedGrid(points=(0.0, 0.25, 1.0, 2.0))
+    liquid = IrregSpacedGrid(points=np.array([0.0, 0.5, 1.0, 2.0]))
+    stock = IrregSpacedGrid(points=np.array([0.0, 1.0]))
+    action = IrregSpacedGrid(points=np.array([0.125, 0.5, 1.0, 2.0]))
+    savings_grid = IrregSpacedGrid(points=np.array([0.0, 0.25, 1.0, 2.0]))
     nested_margin = LiquidMargin(
         state="liquid",
         action="consumption",
@@ -56,7 +57,9 @@ def make_canonical_model(
                 states={"liquid": liquid, "stock": stock},
                 actions={
                     "consumption": action,
-                    "investment": IrregSpacedGrid(points=(-1.0, 0.0, 1.0, 2.0)),
+                    "investment": IrregSpacedGrid(
+                        points=np.array([-1.0, 0.0, 1.0, 2.0])
+                    ),
                 },
                 functions={
                     "gross": original._gross,
@@ -83,14 +86,16 @@ def make_canonical_model(
                 ),
                 solver=NEGM(
                     inner=DCEGM(savings_grid=savings_grid),
-                    outer_grid=IrregSpacedGrid(points=(1.0, 2.0)),
+                    outer_grid=IrregSpacedGrid(points=np.array([1.0, 2.0])),
                 ),
             ),
             "child": NestedConsumptionSavingsRegime(
                 states={"liquid": liquid, "stock": stock},
                 actions={
                     "consumption": action,
-                    "investment": IrregSpacedGrid(points=(-1.0, 0.0, 1.0, 2.0)),
+                    "investment": IrregSpacedGrid(
+                        points=np.array([-1.0, 0.0, 1.0, 2.0])
+                    ),
                 },
                 functions={
                     "gross": original._gross if child_gross is None else child_gross,
@@ -125,7 +130,7 @@ def make_canonical_model(
                 ),
                 solver=NEGM(
                     inner=DCEGM(savings_grid=savings_grid),
-                    outer_grid=IrregSpacedGrid(points=(1.0, 2.0)),
+                    outer_grid=IrregSpacedGrid(points=np.array([1.0, 2.0])),
                 ),
             ),
             "done": Regime(

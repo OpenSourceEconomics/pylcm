@@ -271,7 +271,7 @@ class SimulationResult:
         self,
         *,
         additional_targets: Sequence[FunctionName] | Literal["all"] | None = None,
-        use_labels: bool = True,
+        use_categorical_codes: bool = False,
         terminal_rows: Literal["first", "all"] = "first",
     ) -> pd.DataFrame:
         """Convert simulation results to a flat pandas DataFrame.
@@ -286,9 +286,13 @@ class SimulationResult:
                 that target will have NaN. The result's saved outer chunk extent
                 also bounds the number of subject-period rows evaluated together
                 for these deferred targets.
-            use_labels: If True (default), discrete variables (states, actions, and
-                regime) are returned as pandas Categorical dtype with string labels.
-                If False, discrete variables are returned as integer codes.
+            use_categorical_codes: If False (default), discrete variables (states,
+                actions, and regime) are returned as pandas Categorical columns. A
+                category-class grid's categories are its string labels. A grid
+                declared with `values` gives an ordered Categorical whose
+                categories are those numbers, all of them, observed or not; cast
+                with `.astype(float)` before arithmetic. If True, discrete
+                variables are returned as integer codes.
             terminal_rows: Which rows to emit for a subject in a terminal regime.
                 Terminal regimes are absorbing: after entry, the subject is carried
                 with frozen state through every later period the regime is active.
@@ -321,7 +325,7 @@ class SimulationResult:
                 terminal_regime_names=self._terminal_regime_names,
             )
 
-        if use_labels:
+        if not use_categorical_codes:
             return _convert_to_categorical(df=df, metadata=self._metadata)
 
         return df
@@ -331,7 +335,7 @@ class SimulationResult:
         *,
         directory: Path,
         df_additional_targets: Sequence[FunctionName] | Literal["all"] | None = None,
-        df_use_labels: bool = True,
+        df_use_categorical_codes: bool = False,
     ) -> Path:
         """Persist the result to a directory.
 
@@ -350,9 +354,9 @@ class SimulationResult:
           chunk specs needed to reassemble on `load`.
         - `simulated_data.arrow` — a feather dump of
           `self.to_dataframe(additional_targets=df_additional_targets,
-          use_labels=df_use_labels)`, ready for downstream consumers
-          that want the flat per-subject view without re-instantiating
-          a `SimulationResult`.
+          use_categorical_codes=df_use_categorical_codes)`, ready for
+          downstream consumers that want the flat per-subject view without
+          re-instantiating a `SimulationResult`.
 
         Args:
             directory: Target directory. Created if it does not exist;
@@ -365,9 +369,9 @@ class SimulationResult:
                 DAG outputs into the artifact, or `"all"` to include every
                 available target — the latter can grow the file by an order
                 of magnitude on large models with many DAG leaves.
-            df_use_labels: Whether discrete variables are stored as
-                pandas `Categorical` labels (default) or integer codes.
-                Forwarded to `to_dataframe`.
+            df_use_categorical_codes: Whether discrete variables are stored as
+                pandas `Categorical` columns (default) or integer codes.
+                Forwarded to `to_dataframe` as `use_categorical_codes`.
 
         Returns:
             The directory the result was written to.
@@ -442,7 +446,7 @@ class SimulationResult:
         # save doesn't leave stale per-subject data on disk.
         df = self.to_dataframe(
             additional_targets=df_additional_targets,
-            use_labels=df_use_labels,
+            use_categorical_codes=df_use_categorical_codes,
         )
         # Object columns can contain JAX 0-d arrays from constant targets.
         # Coerce those scalars for Feather while preserving numeric and

@@ -251,8 +251,8 @@ def test_heterogeneous_health_solve_simulate() -> None:
     assert list(period_2["health"]) == ["bad", "good"]
 
 
-def test_heterogeneous_health_simulate_use_labels_false() -> None:
-    """With use_labels=False, health column contains raw integer codes."""
+def test_heterogeneous_health_simulate_with_categorical_codes() -> None:
+    """With use_categorical_codes=True, health column contains raw integer codes."""
     model = make_heterogeneous_health_model()
     df = pd.DataFrame(
         {
@@ -272,7 +272,7 @@ def test_heterogeneous_health_simulate_use_labels_false() -> None:
         params={"bonus": 0.0, "discount_factor": 0.95},
         initial_conditions=ic,
     )
-    out = result.to_dataframe(use_labels=False)
+    out = result.to_dataframe(use_categorical_codes=True)
 
     # health column should contain integer codes, not Categorical
     assert not isinstance(out["health"].dtype, CategoricalDtype)
