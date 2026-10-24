@@ -62,7 +62,14 @@ class _ConditionedLookup:
 
     def __call__(self, **inputs: LawValue) -> FloatND:
         code = jnp.asarray(inputs[self.on])
-        return jnp.take(jnp.asarray(self.values), code, mode="fill", fill_value=jnp.nan)
+        if code.dtype.kind not in "iu":
+            return jnp.full(code.shape, jnp.nan)
+        index = jnp.where(
+            (code >= 0) & (code < len(self.values)), code, len(self.values)
+        )
+        return jnp.take(
+            jnp.asarray(self.values), index, mode="fill", fill_value=jnp.nan
+        )
 
 
 type LawCallable = Callable[..., FloatND]
@@ -791,10 +798,10 @@ class ShockGroup:
             if name in functions:
                 for argument in _arguments(functions[name]):
                     visit(name=argument, stack=(*stack, name))
+            elif name.endswith("_code") and name[:-5] in states:
+                visit(name=name[:-5], stack=stack)
             elif name in states:
                 leaves.add(name)
-            elif name.endswith("_code") and name[:-5] in states:
-                leaves.add(name[:-5])
 
         for law in self.shocks.values():
             for item in fields(law):
