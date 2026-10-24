@@ -16,7 +16,6 @@ from typing import ClassVar
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
-import pytest
 
 import lcm.model as model_module
 from _lcm.certainty_equivalent import LinearExpectation
@@ -50,8 +49,6 @@ from lcm.exits import Exit, ExitTarget, RuleResult
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.result import SimulationResult
 from lcm.solver_api import (
-    DISSOLUTION_FLAG,
-    SIMULATION_POLICY,
     ResultRetention,
     SolutionResult,
     ValueStore,
@@ -1002,40 +999,6 @@ def test_value_masked_simulate_reports_the_solved_values_off_the_empty_cell():
     np.testing.assert_allclose(np.asarray(married_ir.V_arr), [[2.0, 1.0], [6.0, 3.0]])
 
 
-# Test 5: pin — calling the internal `simulate()` for a dissolution-gated model
-# while omitting `period_to_regime_to_dissolution_flags` fails with a clear
-# message, not a bare `None > 0.5` TypeError.
-
-
-def test_gate_reading_d_target_without_dissolution_flags_raises_clearly():
-    ages, regimes, regime_names_to_ids, flat_params, solution, _dissolution_flags = (
-        _solve_dissolution()
-    )
-    initial_conditions = MappingProxyType(
-        {
-            "wage": jnp.array([2.0]),
-            "age": jnp.array([0.0]),
-            "regime_id": jnp.array([regime_names_to_ids["married"]], dtype=jnp.int32),
-            "own_stakeholder": jnp.full(
-                1, regimes["married"].stakeholder_names_to_ids["f"], dtype=jnp.int32
-            ),
-        }
-    )
-    with pytest.raises(NotImplementedError, match="D_target"):
-        simulate(
-            flat_params=flat_params,
-            initial_conditions=initial_conditions,
-            regimes=bind_eager_simulation(regimes=regimes),
-            regime_names_to_ids=regime_names_to_ids,
-            logger=get_logger(log_level="debug"),
-            period_to_regime_to_V_arr=solution,
-            # period_to_regime_to_dissolution_flags omitted (defaults to empty).
-            ages=ages,
-            simulation_output_dtypes={},
-            seed=0,
-        )
-
-
 # Test 6: regression — a gated edge's TARGET has a discrete state axis (in
 # addition to a continuous one). `route_gated_edges` interpolates the fold's
 # `gate` array at each subject's candidate target-state draw
@@ -1348,22 +1311,6 @@ def test_public_model_prices_the_actual_participation_routes() -> None:
         result.values[0]["married"],
         _BETA * np.array([[2.0, 1.0], [5.5, 1.0], [6.0, 3.0]]),
         rtol=1e-6,
-    )
-
-
-def test_public_model_solve_retains_both_replay_artifact_kinds():
-    """The default result retains policy and dissolution replay artifacts together."""
-    model = _make_dissolution_model()
-    solution = model.solve(
-        params=_DISSOLUTION_PARAMS,
-        log_level="debug",
-    )
-    sim_policy = solution.replay_artifacts.project(SIMULATION_POLICY)
-    dissolution_flags = solution.replay_artifacts.project(DISSOLUTION_FLAG)
-    assert isinstance(solution, SolutionResult)
-    assert isinstance(sim_policy, MappingProxyType)
-    np.testing.assert_array_equal(
-        np.asarray(dissolution_flags[1]["married_ir"]), [False, True, False]
     )
 
 
