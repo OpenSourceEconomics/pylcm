@@ -56,6 +56,7 @@ from _lcm.simulation.chunk_profile_inventory import (
     maximum_bytes,
     payload_bytes,
 )
+from _lcm.simulation.current_iid_overrides import CurrentIIDOverrideSchema
 from _lcm.simulation.diagnostic_operations import diagnostic_bindings
 from _lcm.simulation.dissolution_route import empty_gated_entries, record_open_entries
 from _lcm.simulation.entry_allocations import _pad_initial_leaf
@@ -161,6 +162,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None = None,
     max_compilation_workers: int | None = None,
     group_sizes: tuple[int, ...] | None = None,
+    current_iid_override_schema: CurrentIIDOverrideSchema = (),
 ) -> SimulationChunkProfile:
     """Prepare actual compiled stages for one proposed outer population extent.
 
@@ -281,6 +283,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                     taste_key=taste_key,
                     policy=(policies or {}).get(period, {}).get(name),
                     wave=wave,
+                    current_iid_override_schema=current_iid_override_schema,
                 )
     regime_ids, own_roles = cast(
         "tuple[jax.ShapeDtypeStruct, jax.ShapeDtypeStruct]",
@@ -361,6 +364,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                 ordinary_key=key,
                 taste_key=taste_key,
                 policy=(policies or {}).get(period, {}).get(name),
+                current_iid_override_schema=current_iid_override_schema,
             )
             mask = inventory.operation(
                 function=_regime_mask,

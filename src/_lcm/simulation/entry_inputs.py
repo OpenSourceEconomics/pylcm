@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import jax
+import numpy as np
 import pandas as pd
 
 from _lcm.engine import placed_devices_for_ids
@@ -22,11 +23,11 @@ from _lcm.simulation.residency import (
     require_transfer_headroom,
 )
 from _lcm.solution.retained_buffers import retained_solution_buffers
+from lcm.shocks import BaseInnovations, PhysicalValues, ShockOverride
 from lcm.typing import (
     ActionName,
     PRNGKey,
     StateName,
-    UserInitialConditions,
     UserParams,
     UserParamsNode,
 )
@@ -43,14 +44,23 @@ else:
 # The caller inputs a budgeted public call owns: a simulation's initial
 # conditions, or a policy lookup's states and action grids.
 type EntryCallerInputs = (
-    UserInitialConditions
+    Mapping[
+        StateName, jax.Array | np.ndarray | pd.Series | pd.Categorical | ShockOverride
+    ]
     | pd.DataFrame
     | tuple[Mapping[StateName, jax.Array], Mapping[ActionName, jax.Array] | None]
 )
 
 # A value the caller-array walk reaches: a parameter node, an entry input, the
 # data of a mapping or sequence leaf, or an absent action-grid mapping.
-type _CallerValue = UserParamsNode | EntryCallerInputs | LeafEntry | None
+type _CallerValue = (
+    UserParamsNode
+    | EntryCallerInputs
+    | LeafEntry
+    | ShockOverride
+    | pd.Categorical
+    | None
+)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -128,6 +138,8 @@ def _caller_arrays(
             arrays.append(value)
         elif isinstance(value, UserMappingLeaf | UserSequenceLeaf):
             pending.append(value.data)
+        elif isinstance(value, BaseInnovations | PhysicalValues):
+            pending.append(value.values)
         elif isinstance(value, Mapping):
             pending.extend(value.values())
         elif isinstance(value, tuple | list):

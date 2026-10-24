@@ -158,6 +158,12 @@ from _lcm.regime_law import RegimeLaws, bind_regime_law
 from _lcm.shock_registry import ShockRegistry, create_shock_registry
 from _lcm.simulation.chunk_admission import prepare_simulation_chunks
 from _lcm.simulation.compile import bind_simulation_runtime
+from _lcm.simulation.current_iid_overrides import (
+    ShockPathsInput,
+    SimulationInitialConditionsInput,
+    resolve_current_iid_overrides,
+    split_current_iid_inputs,
+)
 from _lcm.simulation.entry_allocations import SimulationEntryAllocations
 from _lcm.simulation.entry_inputs import capture_simulation_entry_inputs
 from _lcm.simulation.host_operations import ProfiledSimulationOperations
@@ -360,7 +366,7 @@ from lcm.regime import (
 )
 from lcm.regime import Regime as UserRegime
 from lcm.result import PolicyLookup, SimulationResult
-from lcm.shocks import ShockGroup, ShockGroupName
+from lcm.shocks import BaseInnovations, PhysicalValues, ShockGroup, ShockGroupName
 from lcm.solver_api import (
     DISSOLUTION_FLAG,
     EGM_CONTINUATION,
@@ -445,7 +451,7 @@ def _same_exactly_typed(
 # The caller inputs a budgeted public call owns: a simulation's initial
 # conditions, or a policy lookup's states and action grids.
 type _EntryInputs = (
-    UserInitialConditions
+    SimulationInitialConditionsInput
     | pd.DataFrame
     | tuple[Mapping[StateName, jax.Array], Mapping[ActionName, jax.Array] | None]
 )
@@ -3696,13 +3702,13 @@ class Model:
         self,
         *,
         params: UserParams,
-        initial_conditions: UserInitialConditionsInput | pd.DataFrame,
+        initial_conditions: SimulationInitialConditionsInput | pd.DataFrame,
         solution: _SolutionResultBoundary | None = None,
         log_level: LogLevel,
         runtime_checks: bool = True,
         seed: UserSeed | None = None,
         taste_shock_seed: UserSeed | None = None,
-        shock_paths: Mapping[StateName, jax.Array | np.ndarray] | None = None,
+        shock_paths: ShockPathsInput | None = None,
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
         max_compilation_workers: int | None = None,
@@ -3743,6 +3749,9 @@ class Model:
                 column carrying regime label strings, labels for category-class
                 states and values for value-grid states (auto-converted via
                 `initial_conditions_from_dataframe`).
+                A named current-IID shock may instead carry a `BaseInnovations`
+                or `PhysicalValues` entry vector. Its tag applies at each row's
+                actual entry period, before fresh draws in subsequent periods.
                 A subject starting in a COLLECTIVE regime that can reach a
                 value-dependent transition declaring more than one route --- its
                 own, or one further along --- also needs an `"own_stakeholder"`
@@ -3789,6 +3798,12 @@ class Model:
                 are ignored.
                 Transition-local draws use the destination's period. Solve
                 expectations and unnamed shocks' seeded streams are unchanged.
+                Named current-IID shocks require explicit `BaseInnovations` or
+                `PhysicalValues` records. A path's tag and cells supersede any
+                entry-only record of that name. Base coordinates use the current
+                law at each event; supplied physical values use their producing
+                law's support and inverse. Supplied values do not change the
+                policy's declared information.
             log_level: Console verbosity: off, warning, progress or debug.
             runtime_checks: Validate computed transition probabilities, NaN values
                 and numerical feasibility/replay checks; raise on the first failure.
@@ -3817,6 +3832,31 @@ class Model:
         taste_shock_seed = canonicalize_simulation_seed(
             seed=taste_shock_seed, name="taste_shock_seed"
         )
+        entry_allocations = self._open_entry_allocations(
+            params=params,
+            inputs=initial_conditions,
+            solution=solution,
+            random_roots=tuple(
+                key for key in (seed, taste_shock_seed) if isinstance(key, jax.Array)
+            ),
+            data_roots=tuple(
+                value
+                for path in (shock_paths or {}).values()
+                if isinstance(
+                    value := path.values  # noqa: PD011 - tagged numeric record
+                    if isinstance(path, BaseInnovations | PhysicalValues)
+                    else path,
+                    jax.Array,
+                )
+            ),
+        )
+        initial_conditions, current_entries, current_paths, shock_paths = (
+            split_current_iid_inputs(
+                initial=initial_conditions,
+                paths=shock_paths,
+                names=frozenset(self._shock_registry.innovations),
+            )
+        )
         initial_conditions = lower_initial_time(
             initial_conditions=self._encode_initial_values(
                 initial_conditions=initial_conditions,
@@ -3839,21 +3879,6 @@ class Model:
                     self._fail_if_component_simulation_is_unsupported(log_path=log_path)
                 self._fail_if_declared_entry_is_not_permitted(
                     initial_conditions=initial_conditions
-                )
-                entry_allocations = self._open_entry_allocations(
-                    params=params,
-                    inputs=initial_conditions,
-                    solution=solution,
-                    random_roots=tuple(
-                        key
-                        for key in (seed, taste_shock_seed)
-                        if isinstance(key, jax.Array)
-                    ),
-                    data_roots=tuple(
-                        path
-                        for path in (shock_paths or {}).values()
-                        if isinstance(path, jax.Array)
-                    ),
                 )
                 # The canonical parameters bind both the supplied result preflight
                 # and an automatic solve. Process them once and keep one
@@ -3978,6 +4003,14 @@ class Model:
                 )
                 self._fail_if_entry_is_not_permitted(
                     initial_conditions=initial_conditions
+                )
+                current_iid_overrides = resolve_current_iid_overrides(
+                    entries=current_entries,
+                    paths=current_paths,
+                    initial=initial_conditions,
+                    regimes=self._regimes,
+                    ages=self._time,
+                    regime_names_to_ids=self.regime_names_to_ids,
                 )
                 if entry_allocations is not None:
                     entry_allocations.publish(stage="initial", tree=initial_conditions)
@@ -4167,6 +4200,9 @@ class Model:
                         initial_conditions=initial_conditions,
                         regime_names_to_ids=self.regime_names_to_ids,
                         original_population=original_n_subjects,
+                        current_iid_override_schema=()
+                        if current_iid_overrides is None
+                        else current_iid_overrides.schema,
                         retained_footprint=entry_allocations.snapshot(),
                         independent_taste=taste_shock_seed is not None,
                         taste_prng_impl=(
@@ -4224,6 +4260,7 @@ class Model:
                 seed=seed,
                 taste_shock_seed=taste_shock_seed,
                 shock_paths=resolved_shock_paths,
+                current_iid_overrides=current_iid_overrides,
                 process_code_reads=self._process_code_reads,
                 subject_batch_size=compile_batch_size,
                 original_n_subjects=original_n_subjects,

@@ -405,10 +405,12 @@ OUTER_GOLDEN_SECTION_SOURCE = "src/_lcm/optimization/golden_section.py"
 
 _CURRENT_IID_SOURCE = "src/_lcm/current_iid.py"
 _CURRENT_IID_KEYS_SOURCE = "src/_lcm/simulation/current_iid.py"
+_CURRENT_IID_OVERRIDES_SOURCE = "src/_lcm/simulation/current_iid_overrides.py"
 
 _CERTIFIED_CORRIDOR_SOURCES = (
     _CURRENT_IID_SOURCE,
     _CURRENT_IID_KEYS_SOURCE,
+    _CURRENT_IID_OVERRIDES_SOURCE,
     "src/lcm/shocks.py",
     "src/_lcm/shock_overrides.py",
     "src/_lcm/egm/upper_envelope/__init__.py",
@@ -585,7 +587,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 # Source seals and corridor anchors require semantic verification of the combined
 # inventories before refresh; these inherited pins deliberately retain that gate.
 _SOURCE_SEALS = {
-    "src/_lcm/current_iid.py": "69f8f423947f0917fea35699c25afe7f336ed97e08a0bf53dee2a20c6fddd9b6",
+    "src/_lcm/current_iid.py": "03dfb6342ffc3be6c4434fc7415a44a65186230614e0868764e9ebed991d9341",
     "src/_lcm/simulation/current_iid.py": "c675e9dffaa205b4049bf4c26438a70005766c368bc69a3dbb1d6e35cb66db99",
     "src/_lcm/egm/asset_row.py": "d7389b5048707dd9657638c790f9afbd8feb27893bcfd2bd6659da66199b069c",
     "src/_lcm/egm/continuation.py": "5a25a1183c81ef4c3e8e3c4aaebc6e4797ce04c9c55b88edefa7de7fc7946f9f",
@@ -638,16 +640,16 @@ _SOURCE_SEALS = {
     RUNTIME_SHARDING_SOURCE: "13f6b68846532c6631f27db1c84b47f6c866a992e037dfd8e40c791c16f50f90",
     COMBINED_ABSTRACT_PROGRAM_INPUTS_SOURCE: "1ade513e829c0bd8e053b90ab312e53f7b51a5a4da6ae1000079c5684a8017e4",
     COMBINED_ASSEMBLY_SOURCE: "7e1a7967d013827a9fe51862d304e686105ae7886b3539122289ef3866f5f94a",
-    COMBINED_CHUNK_ADMISSION_SOURCE: "1bf5fdb05046e9edfd7f93a6e666999b48973fae4c2025320c3b79011f967716",
+    COMBINED_CHUNK_ADMISSION_SOURCE: "7548c6211ea77b5a6fe25f06e78b31a42a467888e1fa29f8024c9c5a7efa07d0",
     COMBINED_CHUNK_OFFLOAD_SOURCE: "4afae1dea7452ecada529d2ffd60026bae24c945fcf9ac8c021445c4ec7e073c",
     COMBINED_CHUNK_OPERATIONS_SOURCE: "481b768fc97b134c671c386336a25e9e3e78b631a0a3bc4643d9e74d0ba47e54",
     COMBINED_CHUNK_PLANNING_SOURCE: "807378c7ac745eb7fc3d42c27020f6b40d10d40da3041dcdb647e7e2d3e0d90a",
     COMBINED_CHUNK_PROFILE_INVENTORY_SOURCE: "85070e5f57210e201be248c1f2deae8068dce674112f13efdb0eb94c1dd7f7b4",
-    COMBINED_CHUNK_PROFILES_SOURCE: "679b246f48592570a55ed01b063d4c89b90838d7cd6b7c7f93d45a0b9b64890b",
+    COMBINED_CHUNK_PROFILES_SOURCE: "dff362a784c52c2b1b48d4a782b531142dadaab990eaefa3a4e451ede422a7dc",
     COMBINED_DIAGNOSTIC_OPERATIONS_SOURCE: "477f39609fff5371d88d941cc5c4a0c9ab9fe3692ad2845a3fc3a6befb633f42",
-    COMBINED_FORWARD_PROGRAM_PROFILES_SOURCE: "f243ac9cb5978efb683bc67289db29f5962bf8625f817e280cb492e41e8039d4",
+    COMBINED_FORWARD_PROGRAM_PROFILES_SOURCE: "e6a151136e4e6fd0c45480dc5e842383bc195be6809e9883fda01ba7e7aadef2",
     COMBINED_POPULATION_OPERATIONS_SOURCE: "a9fdd59887462abc4e2f4321730bcfb397f69ba5f44f3db08001288773082ab8",
-    COMBINED_PROGRAM_ARGUMENTS_SOURCE: "dc4d2e2fd0a5a4f65afcd8cc72a5baa638aab80aa27a6398f90e4fd994f510a6",
+    COMBINED_PROGRAM_ARGUMENTS_SOURCE: "5e6ba71d048f239f295f33ba8d6bb3e35ea09715ea2f2f5aefa296fba5d73add",
     COMBINED_SOLUTION_COPIES_SOURCE: "fbe188d3954a523522624823c769fda4c5831e138d2cb8421fc0f1453946886d",
     COMBINED_RESULT_SNAPSHOT_SOURCE: "95a3cd4e31bff7587defb208790620657eea96bfe6d78559f82ebfe7947aed18",
     COMBINED_VALIDATE_V_SOURCE: "70609bbd14dba6eeccf204a8f112c78cbd85799efbd007ecb880157259ecd2f3",
@@ -672,7 +674,7 @@ _SOURCE_SEALS = {
     SIMULATION_VALUE_READS_SOURCE: "4ed63570347beab876c3ff87854dae6d84e9e9f2aa8755a261d65897ea0eba32",
     SIMULATION_VALUE_PLACEMENT_SOURCE: "afd58b343d0385934c3add5552d7926dc3f9ba2700e5a40b26a65a62a75b1e68",
     SIMULATION_CHUNK_INPUTS_SOURCE: "33449e9833e30dbe50f455603916489145b5ec9484639acf0609e8927bca42ed",
-    SIMULATION_ENTRY_INPUTS_SOURCE: "44f24b2c57d551088ed220b6726c17f0b6a4a0bf37ee56f1f20c29a0560f216f",
+    SIMULATION_ENTRY_INPUTS_SOURCE: "4cc1968398b169fe94d7ebde349b58192dabfca4bee93f1d5e98a0d3da0839e7",
     SIMULATION_RESIDENCY_SOURCE: "269a66f4a0abd46e3bb6b9bd8b9df6c3c73bd5507c2c236edea7d881efe78274",
     SIMULATION_GATED_ROUTING_SOURCE: "3a1685c78c9d1dd345e4242bc008f2858578725232b85610d12fa08535f82274",
     VALUE_TOPOLOGY_SOURCE: "0cdf79a071b34cdae497863d1b1a56e3cee3d39dda86239615a078b51eaf6026",
@@ -681,7 +683,7 @@ _SOURCE_SEALS = {
     LIVENESS_SOURCE: "056bda4d48f26768ed8615925ce8ff89665bb8eed94b59d69f02701a95943dff",
     CONTINUATION_READS_SOURCE: "144206aa7175163a4dcb365da8765942a9f2c8a530ea41e102d540fa4dfe057d",
     WORKSPACE_PLANNING_SOURCE: "31ca5578da208e786d82a99bd167acd76267380f3fcd169766f080a0a042d990",
-    SIMULATION_PROGRAMS_SOURCE: "df9fef7dc2e2cdb6cf686539bd118fd236937a3c53f3528be2e8f59e174a9d5e",
+    SIMULATION_PROGRAMS_SOURCE: "dceff3a6c73b3c74864807ef9b06201b637572e620c8f4c168e6f9eb180ebab3",
     SIMULATION_PROGRAM_TYPES_SOURCE: "d6abdc13894b09b44309fb45c571d233bd20cb330101ff8b0ef7a9e4624fc3a7",
     SIMULATION_RUNTIME_SOURCE: "b2e308916c1ff657ef06cbd9a5805de868fc28f2d474b9e9f172a341f3fa0fd6",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
@@ -706,10 +708,10 @@ _SOURCE_SEALS = {
     PROBABILITY_SOURCE: "60ccd04b143c714360388fcce2730804a4ca729ea4db82e4a0100732e155e53f",
     ENGINE_SOURCE: "6d8bd203b66ab31e3bce7418b4bb5637a31d028d57fe9f275418e67c9f7d59d0",
     STATE_ACTION_SPACE_SOURCE: "bc1d4b798ae1beeef6ce6f655ba61cd3bbf064dbd1910b14aa5cf8ce28954e95",
-    SIMULATION_SOURCE: "6c503c06f0e9a31e7ff2e89ae8071ac1234918d2352a40187e18406fa79b87c7",
+    SIMULATION_SOURCE: "7eb6ff3260f39f0db6bb32c5a0f471cf6ad62dde3431f9d1c84f6b34c5256e64",
     SIMULATION_TRANSITIONS_SOURCE: "2a2d544bc4fd2063d71cab5a602c3486c8243ae950812c7756220a638e325887",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
-    MODEL_SOURCE: "02d00ac6604fcba65f1d52e94de78bdd8d2f37b0164f9a3dfb95183028e9c068",
+    MODEL_SOURCE: "2fd54d7efefa8cea892370f65b759a844383fc434a9b36ef075f25c22d8ba3e5",
     SOLVER_API_SOURCE: "bc9e7cd94009998acfc1f11d8da823475030879790a49f8192e1260012496c96",
     BACKWARD_INDUCTION_SOURCE: "bb0ac04c70bf627e76be3ea5764095184eea69d44d29c5f922e96ce384ab26d7",
     PERIOD_REPLAY_SOURCE: "2f0253693e474c70760a80ab6c07b5bdeb25ffa4aa77224e27ea5d15af5b1a55",
@@ -760,7 +762,8 @@ _SOURCE_SEALS = {
     "src/_lcm/power_mean.py": "1580447a1ca5f6385556438105069bfb15d211bd6da40819b096ad84b2e77cb5",
     "src/_lcm/simulation/random_address.py": "17f60140770dbd144c57cfd3daccb76a88196acd9e681f2abff8c2eefb37a913",
     "src/lcm/shocks.py": "0afdce985697fd971c0d9458ec7a9537731c8b7dddf650554999775240990868",
-    "src/_lcm/shock_overrides.py": "3db3c4802d80d8dd0f8d638d754a8e5a1b7f2a8b77fcbbd4be77b485c5444bd7",
+    "src/_lcm/shock_overrides.py": "4ae4a8a7afc16b25970024080a663fdb1ea134d65491b37cdc5d5e1066f0e4d6",
+    "src/_lcm/simulation/current_iid_overrides.py": "7c9267acde153da0243f2dd27456f485b7ed8b2ad675f4a25ffdbe7672f1c65e",
 }
 
 EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 421
@@ -803,22 +806,35 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/shock_overrides.py": (
-        "b26bea0a8830d16387cb2a59fc6b905affe4ff66c2b6b27baab3330dd0251031",
+        "6dbe49ce7b0a263e6b4920971e11df81970f403004238a4d949844546a31d0cc",
         {
-            "_inverse": "ea5a546e9fc75c7ff7d905b92edda05024f9d6db02b98dfd3d2b27a7d9cf693f",
-            "_recover_correlated": "ad484b7ff4e0a36589de701d7e30fd71e636d159c915a22ad7ea0c913dd15978",
-            "apply_overrides": "0fb05d65230e909d662e2282b118a0c50da97ef85bfa37f3a6ad3b8241155835",
+            "_flatten_override": "edb14b6f253fe08300be4c6a0fb384d53654bf5a4460590cc9312c05eb82639a",
+            "_flatten_override_with_keys": "b59c5584a47f2d873fbb65f9a90d02690c3c9917ead9ef29fccba4624f570db4",
+            "_unflatten_override": "1948a8607582b4202a2211d79232cead2e7ed51f86edbcb86d84f9641b8bfa79",
+            "_inverse": "b0161b7c19fb88a0dd60be09522d15830f806d3d74ff55ac1a61f27d4e6a73a5",
+            "_recover_correlated": "660c83959773ba76b075df0484e207546b5689dadaff2f9538eb3262571461a4",
+            "apply_overrides": "5489fff15cf1424c6372eaa164fb9dba11a0b311c5c3f6f1ff9b28ee947717d3",
+        },
+    ),
+    _CURRENT_IID_OVERRIDES_SOURCE: (
+        "c2898157e9ac466fe709ca4c49c6cf2c16a016ce00b0dd276f84c9e2ac546ede",
+        {
+            "CurrentIIDOverrides.schema": "85e28ec3820472a9ca5093f22676172b6d5f1065775a44bf3b6a913c093c5fa8",
+            "split_current_iid_inputs": "2fba8863d5a348f2840d1b9461d90a83f2abd83756ee5e6389d2e940ab719f3d",
+            "resolve_current_iid_overrides": "260ffdcec57ccaf26800ed56a1c1f1367b690b776ebc637412de831171494925",
+            "gather_current_iid_overrides": "e26858641ea06a09dae949814aa29d6472bd37922a888674e9eec707fc232b5a",
+            "current_iid_override_prototype": "12e8ccde0d5f3ddabd21a92cc85f093128928333923f3e215ffdce898388263b",
         },
     ),
     "src/_lcm/current_iid.py": (
-        "4341bce674d5d1f8027eed6fdef8de777fd578e4b22bec9778d3691085adb756",
+        "fe3fdaabe3ac8d0c1f542d133d403d0c4974eaa3dcca1a63ed259feed47c3062",
         {
             "CurrentIIDPlan.wrap": "a9fcdbcb96e54728e40fcbfad47a7d8b47804e6fc027799a4580b0210e42ac34",
-            "CurrentIIDDrawPlan.wrap": "9d932ec742fbebf3630b27aad7e06427d032f95c8161e4678c6bf02679f22ef0",
+            "CurrentIIDDrawPlan.wrap": "481df62f00544beb8a3df789a4be5d684713e4218aea5ef7bb8409339a3eab00",
             "_CurrentIIDExpectation.__call__": "70d8a3a7f13089a3a628b820efa9d5f662f58902f8a37c4290340387c32cc278",
-            "_CurrentIIDDraw.__call__": "e93ee3e33e049bd05015c3d61622b31484875e983657ababda16fac0e8a6771d",
+            "_CurrentIIDDraw.__call__": "5778e92311929a7533b4f21b933a0ba754515ecf928fd27704aad842c52fd4ee",
             "_evaluate_node": "c628b5107c477ccf0dd688ec0d29b1a2f626a4a49298f9fb364a41476070958e",
-            "CurrentIIDDrawPlan.realise": "00cb5389abeb26f3e13bf3d32e69f4cfd15a51823240773cc97a20061204c631",
+            "CurrentIIDDrawPlan.realise": "29f22fa655c3301bd667ff299b684ee12de2e9a8d0b001558248f9a01d84b255",
             "_draw_base_value": "4554e685f57a99188070a0050d53d1caa2b36c79d9c023ed629ea25aece79746",
             "_law_inputs": "b29f6f0fc9a9a5e0e206bad5d4888e74fdcef311ca2fe8aac47160398bde06a0",
         },
@@ -1292,11 +1308,11 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SIMULATION_ENTRY_INPUTS_SOURCE: (
-        "377aaa182a0004d22f71c1ed8f53b682b623f690328e50e9186373e60ae91b4e",
+        "ab92ff72cdf347d2aadbe49dc2d4dddd3b9ebc56fd5e9d4e5468628ace04dc2a",
         {
             "SimulationEntryInputs.footprint": "1953575a6f4762e5d24f20332868a5dfbffd884d41ac4334b8455317dfb55355",
             "capture_simulation_entry_inputs": "08797a7cb0a3caa760f9eb24fd99d21b3f3fe239192a61bafc9301dc706ffd14",
-            "_caller_arrays": "ee4e16b5f1f25036f1c23004d847c17eca19ca6d88e0b353cfebd736dc883b9e",
+            "_caller_arrays": "59f486ba1f3c9b4c1214fe02612bcc95effed5d636f01e942c129fc073ac256e",
         },
     ),
     SIMULATION_RESIDENCY_SOURCE: (
@@ -1467,24 +1483,24 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     COMBINED_CHUNK_ADMISSION_SOURCE: (
-        "87bb08a1fe5f5f3dc9699a5c34b299a95c64cf6a8e1a3225ea32842dbfb9cdc3",
+        "987bba113227a2cab699f0115f871fd969e31217cfa26bd4da6069a3d4206300",
         {
-            "_ChunkProfiler.profile_widths": "b7a9346339afcbbad29681f08c675fca425956b8bd8ee0769fe1cbb436b3b7c0",
-            "_simulation_chunk_profile_key": "a5f7a053c76422275310491213d67f6d00bc90150300e63678413d8e3b1a1d79",
+            "_ChunkProfiler.profile_widths": "a25b5f1cc2d1bccc3a93264e0850a19cf7bf1a3e7c8cbeb36e5f28cbee95990b",
+            "_simulation_chunk_profile_key": "54e6264ac5185d5ba882fff6ead768e4dc99fc8c0c1c361e2930772ce621b0a2",
             "_independent_outer_candidates": "823294bb69d6649f9e4b3b9da1df9c070c39fc7e2945db56cd9bcbabac98da73",
             "_independent_anchor_widths": "1c9375085f39b01649366f937b1eb59c5fc120ba611efbe8870a4e0c9d40d078",
             "_plan_independent_chunks": "030a717fb2310c2c85cf9daa0a75ec918dc8e33dab682ba642fcbba27f723015",
             "_profile_independent_candidate": "ce068ef18ed9af1fe995d9d31853fce46414f4f8508fa94c8ada778556213491",
-            "prepare_simulation_chunks": "a34e071da6c8ed66ef1f047af9ebe8b6c213fd2692895e0954c5168e82e7b187",
+            "prepare_simulation_chunks": "406df91c133bd9b50c2d3a959bc8d114db7539ffae59d8b2def2814aba73efdc",
             "_ChunkProfiler.__call__": "dfdaeb448cdff047ed8bad87b46cbce7649782bd9ae525af5b240a0d836aa2f1",
             "_common_axes": "277ef7d313404ccdd8610cf7f5a4896b38710693206a213f6728e4377cf637ef",
             "PreparedSimulationChunks.require_chunk": "4c567102baec45a7386ba33c9159ea2ce4a29fa292795c29b41faa18021e94a6",
         },
     ),
     COMBINED_CHUNK_PROFILES_SOURCE: (
-        "4d54d2f946fcd2f5eb9e418bb37fc8f2b20f2d67f18d39f30515c4002945f330",
+        "462c6feb37bfef3406d3d020685a3c86dc1d7faafbfe7d8bbf6c8b76a00547b5",
         {
-            "profile_simulation_chunk": "86497f59e7bdcc57082abb848ea2238aab31e49d3c298041671af0c271d5540c",
+            "profile_simulation_chunk": "bfeddf70825d67d563722a78bcb2963eda14f6ad804738eb00d6c2ba2215c965",
             "_period_copy_reservation": "bf995f9f6b2ee949a83d862cac85fb1e0148fd80ac225c0e0c469f6f758b05f2",
             "_policy_read_sources": "a83d15eb8de8a505e80cdce7a9448b11d7a9ab3001e92beb7676b491fb63245e",
             "_retained_read_source": "e0233031b8fb4dcb494575a397f5c2e9ccbfd45a69d0e6f951bb3612323cf82f",
@@ -1499,10 +1515,10 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     COMBINED_FORWARD_PROGRAM_PROFILES_SOURCE: (
-        "75ce9e38ccce57791e1cd698482736ec3bd632635d96dbf51f14b3ce1a925bdf",
+        "62851a4abe126694555c71faebdafaedef4225d3ff6dc2a602424c57d6661c89",
         {
             "profile_forward_programs": "effdfca96bc6322a037b7f0b4b9d93f97a776a55db9d0de0fcf60d32dddf7a3d",
-            "profile_forward_unit": "ce0e0e50f5e0821cfc185aaeb041ddd5e2b6484670da7813ed5d8dd6986a95ee",
+            "profile_forward_unit": "80d0df5f9b0b3bccf0d538a3916dcfa2ede942aef982b42632f6295ae8b810d2",
             "_profile_finite_decision": "5ca35d7e729d991a97f4d22e3f1a65b997c0403769ae6b76e5a35e512e5e66b0",
             "_abstract_policy_leaf": "96e133ac576cd9b40afbf10907084378253b43bf9376d39d0faa3743d58b0cd2",
             "AbstractSimulationProfile.__post_init__": "cbd87055b30ad84f7904480cff150f5d376033767ac3e759cfb7a086d7d19123",
@@ -1516,7 +1532,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     COMBINED_PROGRAM_ARGUMENTS_SOURCE: (
-        "23d33bbe4342bf4a061a8ece0a28d5ede87e0182452ab209d5e4379698727442",
+        "38a2057986b6e0700683957506a7fd9b90035a82e7f429b2ed0c3d4e6f39015b",
         {
             "policy_prepare_arguments": "8e82a8646d7b7553c1ce0748d6b321a72ad2a6542caff4ec92f5820733bbb8dd",
             "policy_rank_arguments": "451148291aca1118a504f213973ee246b11226789800fbcce38c47f866003730",
@@ -1527,10 +1543,10 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SIMULATION_SOURCE: (
-        "8235ebac3ca976ed0743ff663f712529ebdd374e591ba3df78b908d3abef7b45",
+        "eb5368f19a4ef7019f4ce4d3be195f799c72c7f4f9edb131c65b88ddbe774911",
         {
-            "simulate": "593879871c079ab0b4d68db1d53c49ef5a995e891d24357a0c4ecd331c7c3204",
-            "_simulate_regime_in_period": "2b9afb92b506b2e80c2179a92c0a95fcd0ab711bf837ddc5822ec6b8f5969a7e",
+            "simulate": "8897c1793dd6986d68ff9eab4affc7609c80b245dcb24368b44169d9c82ba800",
+            "_simulate_regime_in_period": "79c1021548dcc60c03128bd1710cf805c42c64f1614883ee9995056d253e68b5",
             "_execute_finite_replay": "dd01d79a502c1027cd08f0656c59c6bbab7080c848a706bcac631e63188edc1f",
             "_announce_dropped_outer_candidates": "977a3fc8627f295ad6837b46fcf94672449b532263c674be2209e509d6c088cd",
             "_report_dropped_outer_candidates": "0825c06c02ecfe2ad8270e6d606c67f3063f945befeccf6debb4880194d54dc1",
@@ -1538,7 +1554,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_concatenate_chunk_results": "e1217d0e707ef6a8b3d00dcef6abce948d065e125fc2886336bf537d276c1a41",
             "_validate_period_values": "30fe242e786e7e38637d380ecad0aa4d1689bc71c1fa9cbf2ae3c781e011a3c3",
             "_validate_simulated_value": "5938880b9d43f485c98f21b559d9b6d9326adc0dfde9dbca9d6a831e128cfd00",
-            "_simulate_subject_chunk": "564e9333b0ccba573ebadb93190df556faec47a1585fcb201c159f87ba18be0c",
+            "_simulate_subject_chunk": "aaf33cb882a0f602d36add2d79c726ce6363e61bb83cc8f91b4bffc0eeca6b5f",
             "_bind_unit_executor": "a787e30bafb80053703e1f4ce0c1d84feb5ac522cd41349665c600dcf9f1eda5",
             "_lookup_values_from_indices": "ebc4a036a447857f061c117b2eb0c9b9e61d5f17a40e90ea14a6e6205233ea9f",
             "_read_external_replay": "392ae18dc5916b0dd6b9539f395002fb97b1d1d985a8b985dc547785cd98ab53",
@@ -1557,13 +1573,13 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     MODEL_SOURCE: (
-        "2f9282c7939f73511b200e7720e6323f0c1c3d71cad2e57b97b153dd0af926ce",
+        "4660bf796d2873e01cebda74a32ecdeaaf3d876728b366d72c9c24ce37b46bff",
         {
             "_validate_sharded_state_capability": "ee8b7e8a97fd413d2376a655558ea7b2a2ab61589a0ddd624ed44b69dfe5fa8d",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "d837bd4f6c97be377ae02dca1f2044e1eb9974c6e7e08bc48866bed0f6886b18",
             "Model.__init__": "e10ed1c8beee24431054a12d00b78dc9062e5592633fbe2f61cbb1dae50f5879",
-            "Model.simulate": "7c20e0c114573ad2fe53566a0ead99413f8cfb0da018b69c5d62c4a8aea3582f",
+            "Model.simulate": "b794284cb582fb2d69832944d0c580ed7264344b17ada5a07acfc4d417068e54",
             "Model._open_entry_allocations": "2d3a04ba171e7e79bb145481fb9859294a75004242c981ae32992f6121db017c",
             "Model._check_solution_result_structure": "3e2f19b7fae40cede786a1debce00175907dd9edf1f59c9ff17ebcf834637736",
             "Model._consume_foreign_solution": "15a780da8bc0f5d8767481fc4f9442fd846d29e6105f72d9b795266256e328ff",
@@ -2449,7 +2465,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SIMULATION_PROGRAMS_SOURCE: (
-        "d72efd0cf068ebb3f859659243603ab29ce8229013ac66786c3877039500450c",
+        "22146ebd552cf602d1db9ec618814b36e43e28fd44de57d493b5c3a95ab3c820",
         {
             "build_simulation_programs": "8ceaebd8690ffa08850a57ea1815f2a644ab86fe908b3a870ab0656422333133",
             "_decision_programs": "6ddd6ba41dbe7356290788faa1940a0b91f1fcb28a47508486ab354ebbdc50d1",
@@ -2459,7 +2475,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_GateFoldBody.__call__": "b24892f48c809e6aa25853831c72319e979078ae0dc0aa08a389755b2e2412e1",
             "_GateRouteBody.__call__": "bed23e58107f4a0b676644c86e50fc7fd545f1cb3ed8387126e735189740f73b",
             "_fail_if_the_streamed_reduction_is_wrong": "4393d8f3dc1dded01122dc6bf97e4f51c88e52f3804f79b08d600bc75496dd0a",
-            "_decision_subject_arg_names": "b160c76c4ccbc70914a7f6aec5ece0e5979a4bad8b74c91815e2a0b2ec3d76a6",
+            "_decision_subject_arg_names": "bcf384bb7218cb328b3494a3eda67a40b1f23bd438663562315a47c47272f803",
             "_decision_value_reads": "7480309f78099994ba417dab87ff44c8ccc545f662855a44bc142bd3509cc1a9",
             "_decision_body": "52627da58e6da7fc90bf91601f65f99ec34977fd271b671706226554daed74b7",
             "_StreamedArgmaxQOverA.__call__": "3c4cb78e3289f57c94159a454a18cca66ddd03be73a7fd1212e05892944855f0",
@@ -10064,9 +10080,19 @@ _CURRENT_IID_ADAPTER_CONTRACTS = _contracts(
             "_validate_override_array",
         ),
         "src/_lcm/shock_overrides.py": (
+            "_flatten_override",
+            "_flatten_override_with_keys",
+            "_unflatten_override",
             "_inverse",
             "_recover_correlated",
             "apply_overrides",
+        ),
+        _CURRENT_IID_OVERRIDES_SOURCE: (
+            "CurrentIIDOverrides.schema",
+            "split_current_iid_inputs",
+            "resolve_current_iid_overrides",
+            "gather_current_iid_overrides",
+            "current_iid_override_prototype",
         ),
         "src/_lcm/current_iid.py": (
             "CurrentIIDPlan.wrap",
@@ -10195,7 +10221,7 @@ def current_iid_adapter_errors(
         (
             _CURRENT_IID_SOURCE,
             "_CurrentIIDDraw.__call__",
-            "frame = self.plan.realise(keys=keys, group_params=group_params, arguments=arguments)",
+            "frame = self.plan.realise(keys=keys, group_params=group_params, arguments=arguments, overrides={name: BaseInnovations(values=cast('FloatND', item.values)) if item.kind == 'base' else PhysicalValues(values=cast('FloatND | IntND', item.values)) for name, item in overrides.items()}, override_active={name: cast('BoolND', item.active) for name, item in overrides.items()})",
         ),
         (
             _CURRENT_IID_SOURCE,
@@ -17516,6 +17542,12 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
 
 _CURRENT_IID_ADAPTER_MUTATIONS = (
     (
+        "current_iid:missing_override_gather_proof",
+        "src/_lcm/simulation/current_iid_overrides.py",
+        "def gather_current_iid_overrides(",
+        "def unavailable_override_gather_proof(",
+    ),
+    (
         "current_iid:missing_override_callable_proof",
         "src/_lcm/shock_overrides.py",
         "def apply_overrides(",
@@ -17626,6 +17658,7 @@ _CURRENT_IID_ADAPTER_MUTATIONS = (
 )
 _EXPECTED_CURRENT_IID_MUTATION_NAMES = frozenset(
     (
+        "current_iid:missing_override_gather_proof",
         "current_iid:missing_override_callable_proof",
         "current_iid:missing_factor_callable_proof",
         "current_iid:detour_host_replay_status",
@@ -17647,7 +17680,7 @@ _EXPECTED_CURRENT_IID_MUTATION_NAMES = frozenset(
     )
 )
 EXPECTED_CURRENT_IID_MUTATION_NAMES_SHA256 = (
-    "c7a4cc1fcee93b6acbfa27ec11ea10588cf3e7608e3fab858f56969ef50335fe"
+    "e0c95ee607e1f8b3d1479ba048692d1b3e6e8ddcf081a59ff56da0875868bac5"
 )
 
 

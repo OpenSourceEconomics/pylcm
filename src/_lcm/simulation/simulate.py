@@ -66,6 +66,10 @@ from _lcm.simulation.chunk_inputs import (
 )
 from _lcm.simulation.chunk_offload import chunk_host_device, offload_chunk
 from _lcm.simulation.current_iid import prepare_current_iid_keys
+from _lcm.simulation.current_iid_overrides import (
+    CurrentIIDOverrides,
+    gather_current_iid_overrides,
+)
 from _lcm.simulation.diagnostic_operations import (
     owned_value_nan_count,
     period_value_flags,
@@ -261,6 +265,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
     prepared_chunks: PreparedSimulationChunks | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
     shock_paths: Mapping[StateName, np.ndarray] = MappingProxyType({}),
+    current_iid_overrides: CurrentIIDOverrides | None = None,
     process_code_reads: Mapping[
         RegimeName, Mapping[StateName, _ContinuousStochasticProcess]
     ] = MappingProxyType({}),
@@ -646,6 +651,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
                         call_inputs=call_inputs,
                         process_grid_resolver=process_grid_resolver,
                         shock_paths=shock_paths,
+                        current_iid_overrides=current_iid_overrides,
                         process_code_reads=process_code_reads,
                         dissolution_records=dissolution_records,
                     )
@@ -861,6 +867,7 @@ def _simulate_subject_chunk(  # noqa: PLR0915
     ] = MappingProxyType({}),
     process_grid_resolver: ProcessGridResolver | None = None,
     shock_paths: Mapping[StateName, np.ndarray] = MappingProxyType({}),
+    current_iid_overrides: CurrentIIDOverrides | None = None,
     process_code_reads: Mapping[
         RegimeName, Mapping[StateName, _ContinuousStochasticProcess]
     ] = MappingProxyType({}),
@@ -1085,6 +1092,7 @@ def _simulate_subject_chunk(  # noqa: PLR0915
                 key=key,
                 taste_key=taste_key,
                 taste_address=taste_addresses.get((period, regime_name)),
+                current_iid_overrides=current_iid_overrides,
                 logger=logger,
                 n_subjects=n_subjects,
                 subject_slice=subject_slice,
@@ -1697,6 +1705,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
     taste_key: PRNGKeyND | None = None,
     taste_address: tuple[int, ...] | None = None,
     supplied_shocks: Mapping[str, np.ndarray] = MappingProxyType({}),
+    current_iid_overrides: CurrentIIDOverrides | None = None,
     source_roles: Int1D | None = None,
     entered_through: Int1D | None = None,
     new_entered_through: Int1D | None = None,
@@ -2020,7 +2029,17 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 n_subjects=n_chunk_subjects,
                 arguments=decision_arguments(
                     current_iid=current_iid_arguments(
-                        regime=regime, flat_params=flat_params, keys=current_iid_keys
+                        regime=regime,
+                        flat_params=flat_params,
+                        keys=current_iid_keys,
+                        overrides=gather_current_iid_overrides(
+                            bank=current_iid_overrides,
+                            names=()
+                            if regime.simulation.current_iid_draw_plan is None
+                            else regime.simulation.current_iid_draw_plan.physical_names,
+                            period=period,
+                            subject_slice=subject_slice,
+                        ),
                     ),
                     states={
                         **space.states,
@@ -2070,7 +2089,9 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 ):
                     raise ShockDeclarationError(
                         "Current IID law is invalid or unresolved "
-                        "during physical replay."
+                        "during physical replay. Correlated physical overrides "
+                        "require a complete physical frame on active cells; "
+                        "otherwise supply named base innovations."
                     )
                 decision_outputs = (indices, values)
             indices, values = consume_runtime_bound_outputs(

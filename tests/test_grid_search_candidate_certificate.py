@@ -3260,6 +3260,9 @@ def test_current_iid_adapter_contract_preserves_canonical_decision_transport() -
         "src/_lcm/current_iid.py": _parse("src/_lcm/current_iid.py"),
         "src/lcm/shocks.py": _parse("src/lcm/shocks.py"),
         "src/_lcm/shock_overrides.py": _parse("src/_lcm/shock_overrides.py"),
+        "src/_lcm/simulation/current_iid_overrides.py": _parse(
+            "src/_lcm/simulation/current_iid_overrides.py"
+        ),
         "src/_lcm/simulation/current_iid.py": _parse(
             "src/_lcm/simulation/current_iid.py"
         ),
@@ -3282,6 +3285,12 @@ def test_current_iid_adapter_contract_preserves_canonical_decision_transport() -
 
 
 _CURRENT_IID_ADAPTER_MUTATIONS = (
+    (
+        "missing_override_gather_proof",
+        "src/_lcm/simulation/current_iid_overrides.py",
+        "def gather_current_iid_overrides(",
+        "def unavailable_override_gather_proof(",
+    ),
     (
         "missing_override_callable_proof",
         "src/_lcm/shock_overrides.py",
@@ -3368,6 +3377,7 @@ def test_current_iid_adapter_rejects_rewiring(
             "src/_lcm/current_iid.py",
             "src/lcm/shocks.py",
             "src/_lcm/shock_overrides.py",
+            "src/_lcm/simulation/current_iid_overrides.py",
             "src/_lcm/simulation/current_iid.py",
             "src/_lcm/regime_building/max_Q_over_a.py",
             "src/_lcm/regime_building/processing.py",
@@ -3387,7 +3397,12 @@ def test_current_iid_adapter_rejects_rewiring(
 
 @pytest.mark.parametrize(
     "source",
-    ["src/_lcm/current_iid.py", "src/lcm/shocks.py", "src/_lcm/shock_overrides.py"],
+    [
+        "src/_lcm/current_iid.py",
+        "src/lcm/shocks.py",
+        "src/_lcm/shock_overrides.py",
+        "src/_lcm/simulation/current_iid_overrides.py",
+    ],
 )
 def test_current_iid_adapter_requires_implementation_proof(
     *, source: direct_flow.SourcePath

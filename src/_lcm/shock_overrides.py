@@ -5,18 +5,23 @@ deterministic coordinates reuse the caller's named addressed draw. Every numeric
 support/recovery failure reaches the mandatory validity channel.
 """
 
-from collections.abc import Mapping
-from dataclasses import fields
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, fields
 from types import MappingProxyType
-from typing import NamedTuple
+from typing import Literal, NamedTuple
 
+import jax
 import jax.numpy as jnp
+import numpy as np
 from jax.scipy.special import ndtr, ndtri
+from jaxtyping import Bool
 
+from _lcm.typing import PytreeChild
 from lcm.exceptions import ShockDeclarationError
 from lcm.shocks import (
     BaseInnovations,
     Discrete,
+    HostArray,
     Law,
     LawValue,
     LogNormal,
@@ -34,6 +39,65 @@ from lcm.shocks import (
 from lcm.typing import BoolND, FloatND, IntND, ParameterName, ReferenceName
 
 
+@dataclass(frozen=True, kw_only=True)
+class CurrentIIDOverride:
+    """Private native operand with a static tag and explicit dated activation.
+
+    Abstract profiles use descriptors here; public records accept numerical arrays
+    only. The actual scalar producer validates the public record at consumption.
+    """
+
+    kind: Literal["base", "physical"]
+    """Scientific interpretation of the supplied numeric coordinate."""
+    values: FloatND | IntND | HostArray | jax.ShapeDtypeStruct
+    """One subject-axis leaf, or its exact native prototype."""
+    # Jaxtyping consumes the string as an array shape, not a forward reference.
+    active: BoolND | Bool[np.ndarray, "..."] | jax.ShapeDtypeStruct  # noqa: UP037
+    """Whether this row consumes the input at this computational period."""
+
+
+def _flatten_override(
+    item: CurrentIIDOverride,
+) -> tuple[tuple[PytreeChild, PytreeChild], tuple[Literal["base", "physical"]]]:
+    return (item.values, item.active), (item.kind,)
+
+
+def _flatten_override_with_keys(
+    item: CurrentIIDOverride,
+) -> tuple[
+    tuple[tuple[jax.tree_util.GetAttrKey, PytreeChild], ...],
+    tuple[Literal["base", "physical"]],
+]:
+    return (
+        (
+            (jax.tree_util.GetAttrKey("values"), item.values),
+            (jax.tree_util.GetAttrKey("active"), item.active),
+        ),
+        (item.kind,),
+    )
+
+
+# keyword-only-exempt: library-callback=jax.tree_util.register_pytree_with_keys
+def _unflatten_override(
+    metadata: tuple[Literal["base", "physical"]], children: Iterable[PytreeChild]
+) -> CurrentIIDOverride:
+    """Rebuild JAX's abstract/transform tree without widening checked inputs."""
+    values, active = children
+    result = object.__new__(CurrentIIDOverride)
+    object.__setattr__(result, "kind", metadata[0])
+    object.__setattr__(result, "values", values)
+    object.__setattr__(result, "active", active)
+    return result
+
+
+jax.tree_util.register_pytree_with_keys(
+    CurrentIIDOverride,
+    _flatten_override_with_keys,
+    _unflatten_override,
+    _flatten_override,
+)
+
+
 class OverrideBases(NamedTuple):
     """Held independent coordinates, exact supplied physical bits and status."""
 
@@ -43,7 +107,7 @@ class OverrideBases(NamedTuple):
     requires_witness: BoolND
 
 
-def apply_overrides(
+def apply_overrides(  # noqa: C901 - scalar law/support cases and dated activation
     *,
     group: ShockGroup,
     addressed: Mapping[ShockName, FloatND],
@@ -51,6 +115,8 @@ def apply_overrides(
     params: Mapping[ParameterName, LawValue],
     inputs: Mapping[ReferenceName, LawValue],
     admitted_correlation_support: BoolND | None,
+    active: Mapping[ShockName, BoolND] = MappingProxyType({}),
+    fallback_physical: Mapping[ShockName, FloatND | IntND] = MappingProxyType({}),
 ) -> OverrideBases:
     """Recover one complete scalar frame under its original producing law.
 
@@ -64,18 +130,37 @@ def apply_overrides(
     correlated = group.correlation is not _Independence.DEFAULT
     identity = group._has_identity_correlation(params=params)  # noqa: SLF001 - shared exact current-binding proof
     partial_physical = bool(physical_names) and physical_names != group.shocks.keys()
-    if partial_physical and correlated and isinstance(identity, bool) and not identity:
+    if (
+        not active
+        and partial_physical
+        and correlated
+        and isinstance(identity, bool)
+        and not identity
+    ):
         raise ShockDeclarationError(
             "Correlated overrides require a complete physical frame alone; "
             f"physical={sorted(physical_names)}, group={sorted(group.shocks)}."
         )
     bases = dict(addressed)
     valid = jnp.asarray(a=True)
-    if partial_physical:
+    physical_active = jnp.stack(
+        tuple(
+            jnp.asarray(active.get(name, True))
+            if name in physical_names
+            else jnp.asarray(a=False)
+            for name in group.shocks
+        )
+    )
+    any_physical, complete_physical = (
+        jnp.any(physical_active),
+        jnp.all(physical_active),
+    )
+    if active:
+        valid &= identity | ~any_physical | complete_physical
+    elif partial_physical:
         valid &= identity
     requires_witness = jnp.asarray(a=False)
-    coordinates = {}
-    informative = {}
+    coordinates, informative = {}, {}
     for name, item in overrides.items():
         if name not in group.shocks:
             raise ShockDeclarationError(f"Unknown shock override {name!r}.")
@@ -89,6 +174,19 @@ def apply_overrides(
                 "A current-IID override must be a real scalar cell."
             )
         law = group.shocks[name]
+        enabled = jnp.asarray(active.get(name, True))
+        if active:
+            # Sanitize before inversion, so unread NaNs never enter arithmetic.
+            fallback = (
+                addressed[name]
+                if isinstance(item, BaseInnovations)
+                else fallback_physical[name]
+            )
+            if isinstance(item, PhysicalValues) and value.dtype != fallback.dtype:
+                raise ShockDeclarationError(
+                    "Physical values must use their producing law's dtype."
+                )
+            value = jnp.where(enabled, value, fallback)
         valid &= jnp.isfinite(value)
         if isinstance(item, BaseInnovations):
             # The canonical forward producer validates each law's base support:
@@ -108,11 +206,16 @@ def apply_overrides(
             }
             valid &= _law_validity(law=law, parameters=parameters)
             coordinate, observed, inverse_valid = _inverse(
-                law=law, physical=value, parameters=parameters, residual=addressed[name]
+                law=law,
+                physical=value,
+                parameters=parameters,
+                residual=addressed[name],
+                enabled=enabled,
             )
-            valid &= inverse_valid
+            valid &= ~enabled | inverse_valid
             coordinates[name], informative[name] = coordinate, observed
             bases[name] = coordinate
+        bases[name] = jnp.where(enabled, bases[name], addressed[name])
     if physical and correlated and not partial_physical:
         correlated_bases, correlated_valid, requires_witness = _recover_correlated(
             group=group,
@@ -122,9 +225,15 @@ def apply_overrides(
             addressed=addressed,
             admitted_correlation_support=admitted_correlation_support,
             identity=jnp.asarray(identity),
+            enabled=any_physical,
         )
         bases.update(correlated_bases)
-        valid &= correlated_valid
+        valid &= ~any_physical | correlated_valid
+        requires_witness &= any_physical
+        bases = {
+            name: jnp.where(any_physical, value, addressed[name])
+            for name, value in bases.items()
+        }
     return OverrideBases(
         MappingProxyType(bases), MappingProxyType(physical), valid, requires_witness
     )
@@ -139,6 +248,7 @@ def _recover_correlated(
     addressed: Mapping[ShockName, FloatND],
     admitted_correlation_support: BoolND | None,
     identity: BoolND,
+    enabled: BoolND,
 ) -> tuple[Mapping[ShockName, FloatND], BoolND, BoolND]:
     """Invert the admitted triangular factor, retaining addressed null coordinates."""
     valid = jnp.asarray(a=True)
@@ -154,9 +264,9 @@ def _recover_correlated(
     independent = jnp.stack(tuple(addressed.values()))
     for index, name in enumerate(group.shocks):
         contribution = jnp.sum(factor[index, :index] * independent[:index])
-        residual = coordinates[name] - contribution
+        residual = jnp.where(enabled, coordinates[name] - contribution, 0.0)
         diagonal = factor[index, index]
-        recovered = residual / jnp.where(diagonal > 0, diagonal, 1.0)
+        recovered = residual / jnp.where(enabled & (diagonal > 0), diagonal, 1.0)
         # External support is proved by the actual producing forward evaluation,
         # after recovering the candidate. A proximity envelope cannot authenticate
         # a complete external frame, even with this exact admitted rank.
@@ -180,6 +290,7 @@ def _inverse(
     physical: FloatND | IntND,
     parameters: Mapping[ParameterName, FloatND],
     residual: FloatND,
+    enabled: BoolND,
 ) -> tuple[FloatND, BoolND, BoolND]:
     """Return a recovered coordinate, whether it reveals a base, and support."""
     if isinstance(law, Discrete):
@@ -216,7 +327,9 @@ def _inverse(
             if isinstance(law, LogNormal)
             else physical
         )
-        coordinate = (value - mu) / jnp.where(scale > 0, scale, 1.0)
+        coordinate = jnp.where(enabled, value - mu, 0.0) / jnp.where(
+            enabled & (scale > 0), scale, 1.0
+        )
         support = (physical > 0) if isinstance(law, LogNormal) else jnp.asarray(a=True)
         support &= (scale > 0) | (physical == deterministic)
         return (
@@ -227,7 +340,9 @@ def _inverse(
     if isinstance(law, Uniform):
         start, stop = parameters["start"], parameters["stop"]
         width = stop - start
-        coordinate = (physical - start) / jnp.where(width > 0, width, 1.0)
+        coordinate = jnp.where(enabled, physical - start, 0.0) / jnp.where(
+            enabled & (width > 0), width, 1.0
+        )
         support = (physical >= start) & (physical <= stop)
         support &= (width == 0) | ((coordinate >= 0) & (coordinate <= 1))
         return (
@@ -237,14 +352,16 @@ def _inverse(
         )
     if isinstance(law, NormalMixture):
         p = parameters["p1"]
-        first = (physical - parameters["mu1"]) / jnp.where(
-            parameters["sigma1"] > 0, parameters["sigma1"], 1.0
+        first = jnp.where(enabled, physical - parameters["mu1"], 0.0) / jnp.where(
+            enabled & (parameters["sigma1"] > 0), parameters["sigma1"], 1.0
         )
-        second = (physical - parameters["mu2"]) / jnp.where(
-            parameters["sigma2"] > 0, parameters["sigma2"], 1.0
+        second = jnp.where(enabled, physical - parameters["mu2"], 0.0) / jnp.where(
+            enabled & (parameters["sigma2"] > 0), parameters["sigma2"], 1.0
         )
         cdf = p * ndtr(first) + (1 - p) * ndtr(second)
         survival = p * ndtr(-first) + (1 - p) * ndtr(-second)
+        cdf = jnp.where(enabled, cdf, 0.5)
+        survival = jnp.where(enabled, survival, 0.5)
         coordinate = jnp.where(cdf <= 0.5, ndtri(cdf), -ndtri(survival))  # noqa: PLR2004 - choose the numerically resolved CDF/survival half
         return coordinate, jnp.asarray(a=True), jnp.isfinite(coordinate)
     raise ShockDeclarationError("Unsupported physical inverse.")

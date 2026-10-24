@@ -24,6 +24,10 @@ from _lcm.regime_building.Q_and_F import (
     SAME_PERIOD_PARAMS_ARG,
     SAME_PERIOD_V_ARG,
 )
+from _lcm.simulation.current_iid_overrides import (
+    CurrentIIDOverrideSchema,
+    current_iid_override_prototype,
+)
 from _lcm.simulation.operand_placement import subject_operand_sharding
 from _lcm.simulation.policy_programs import ReplayPayload
 from _lcm.simulation.program_arguments import (
@@ -173,6 +177,7 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
     taste_key: jax.ShapeDtypeStruct | None,
     policy: SimulationPolicy | None = None,
     wave: CompilationWave | None = None,
+    current_iid_override_schema: CurrentIIDOverrideSchema = (),
 ) -> Mapping[str, ForwardProgramProfile]:
     """Bind one actual current carrier to its decision, transition and route.
 
@@ -384,6 +389,14 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
                     )
                     for name in regime.simulation.current_iid_draw_plan.physical_names
                 },
+                overrides=current_iid_override_prototype(
+                    schema=current_iid_override_schema,
+                    names=()
+                    if regime.simulation.current_iid_draw_plan is None
+                    else regime.simulation.current_iid_draw_plan.physical_names,
+                    n_subjects=n_subjects,
+                    sharding=subject,
+                ),
             ),
             states={
                 **states,

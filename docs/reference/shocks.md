@@ -154,11 +154,28 @@ epsilon, and is checked again when runtime correlation changes. A genuinely noni
 group, including a block-diagonal group, retains the complete-group physical-input
 restriction; this interface does not perform component completion.
 
-The current scalar draw producer returns exact supplied physical bits, addressed and
-held independent bases, producing parameters/inputs, recovery errors, and mandatory
-validity. Public entry/path routing and cross-regime custody must bind those records
-before accepting them as model inputs; the tags alone do not authorize a new simulation
-input route.
+For an ordinary GridSearch simulation, `shock_paths` maps a named current shock to one
+of these records. Its array has shape `(periods,)` for a common path, or
+`(subjects, periods)` in original initial-condition row order. Mapping-form
+`initial_conditions` can include tagged `(subjects,)` entry values on current-shock
+names. An entry value applies only at that subject's actual entry period; subsequent
+periods use fresh addressed draws. A path supersedes the entry value and its tag for the
+same name. Current shocks in DataFrame inputs require the tagged mapping form. Untagged
+current-shock arrays receive an explicit migration error. Ordinary persistent states and
+transition-local state paths retain their own input interpretation.
+
+Shape and dtype are checked at the boundary. Law support and correlated completeness are
+enforced on the cells actually consumed; values before entry and unread tail cells do
+not condition a draw. This does not introduce a missing-value convention. Input records
+retain their original buffers through memory admission; only the current original-row
+chunk is uploaded as draw operands. Native profiles carry array-free tag/dtype
+prototypes, and changing a tag or value cannot reuse a stale interpretation.
+
+The scalar draw producer returns exact supplied physical bits, addressed and held
+independent bases, producing parameters/inputs, recovery errors and mandatory validity.
+Cross-regime routing and EGM replay must preserve that producing context and bind their
+own information/reconstruction contracts; a supplied input does not authorize policy
+conditioning on a hidden value.
 
 ## Validity and signed provenance
 
@@ -201,10 +218,10 @@ as ordinary regime parameters. Integrated execution must explicitly project thos
 from `params[group]`, bind correlation support and enforce per-invocation exact host
 correlation admission, numerical validity and signed ancestry.
 
-Registry declarations can be inspected and persisted. Execution of a regime referencing
-a group, or construction of an ordinary function reading an unlowered physical shock, is
-explicitly refused until integrated current-IID kernels are available. This boundary
-prevents a physical draw from silently becoming a free parameter.
+Registry declarations can be inspected and persisted. Ordinary GridSearch consumers bind
+the current law inside their node decision and fresh simulation draw. Solver/query
+intersections require their corresponding integrated producer and otherwise refuse
+explicitly. An unlowered physical shock cannot silently become a free parameter.
 
 Legacy IID state processes retain their public classes, state layouts, phase-specific
 laws, transition timing, fold flags and simulation draw modes. Compatibility records

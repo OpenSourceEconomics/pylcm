@@ -217,6 +217,7 @@ class _ForwardProfileInputs(TypedDict):
     taste_key: forward_profiles.jax.ShapeDtypeStruct | None
     policy: NotRequired[forward_profiles.SimulationPolicy | None]
     wave: NotRequired[forward_profiles.CompilationWave | None]
+    current_iid_override_schema: NotRequired[forward_profiles.CurrentIIDOverrideSchema]
 
 
 class _RegimeSimulationInputs(TypedDict):
@@ -265,6 +266,7 @@ class _RegimeSimulationInputs(TypedDict):
     ]
     taste_key: NotRequired[simulate.PRNGKeyND | None]
     taste_address: NotRequired[tuple[int, ...] | None]
+    current_iid_overrides: NotRequired[simulate.CurrentIIDOverrides | None]
 
 
 _CASES: Mapping[str, _ForwardCase] = {

@@ -20,15 +20,17 @@ from dags import with_signature
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.probability import is_represented_zero
 from _lcm.processes.base import standard_normal
-from _lcm.shock_overrides import apply_overrides
+from _lcm.shock_overrides import CurrentIIDOverride, apply_overrides
 from _lcm.shock_registry import ShockBinding, ShockRegistry, law_input_validity
 from _lcm.typing import ArgmaxQOverAFunction, PRNGKeyND, PytreeValue, QAndFArg
 from _lcm.zero_safe import factored_weighted_term
 from lcm.exceptions import InvalidParamsError, ShockDeclarationError
 from lcm.shocks import (
+    BaseInnovations,
     Discrete,
     LawValue,
     NodeSet,
+    PhysicalValues,
     ShockGroupName,
     ShockName,
     ShockOverride,
@@ -50,6 +52,7 @@ CURRENT_IID_ARGUMENT = "_lcm_current_iid"
 CURRENT_IID_NODES_ARGUMENT = "_lcm_current_iid_nodes"
 CURRENT_IID_ROWS_ARGUMENT = "_lcm_current_iid_rows"
 CURRENT_IID_KEYS_ARGUMENT = "_lcm_current_iid_keys"
+CURRENT_IID_OVERRIDES_ARGUMENT = "_lcm_current_iid_overrides"
 CORRELATION_SUPPORT_ARGUMENT = "_lcm_corr_zero_pivots"
 
 type CurrentIIDMaxOutput = tuple[FloatND, BoolND, ScalarBool]
@@ -118,6 +121,7 @@ class CurrentIIDDrawPlan:
         ],
         arguments: Mapping[ReferenceName, PytreeValue],
         overrides: Mapping[ShockName, ShockOverride] = MappingProxyType({}),
+        override_active: Mapping[ShockName, BoolND] = MappingProxyType({}),
     ) -> CurrentIIDDrawFrame:
         """Produce one scalar cell, retaining its producing context and named bases.
 
@@ -159,6 +163,24 @@ class CurrentIIDDrawPlan:
                 params=params,
             )
             support = cast("BoolND | None", supplied.get(CORRELATION_SUPPORT_ARGUMENT))
+            active = {
+                shock: enabled
+                for shock, enabled in override_active.items()
+                if shock in binding.group.shocks
+            }
+            fallback_physical = {}
+            if active:
+                ordinary, _ = binding.group._realise(  # noqa: SLF001
+                    base_nodes=jnp.stack(tuple(addressed.values()))[None],
+                    nodes=None,
+                    params=params,
+                    inputs=inputs,
+                    scalar_cell_group=name,
+                    admitted_correlation_support=support,
+                )
+                fallback_physical = {
+                    shock: value[0] for shock, value in ordinary.values.items()
+                }
             override = apply_overrides(
                 group=binding.group,
                 addressed=addressed,
@@ -170,6 +192,8 @@ class CurrentIIDDrawPlan:
                 params=params,
                 inputs=inputs,
                 admitted_correlation_support=support,
+                active=active,
+                fallback_physical=fallback_physical,
             )
             addressed_bases.update(addressed)
             held_bases.update(override.bases)
@@ -187,12 +211,14 @@ class CurrentIIDDrawPlan:
                 ),
             )
             physical.update({key: value[0] for key, value in realised.values.items()})
-            for shock, supplied_physical in override.physical.items():
+            for shock, supplied_value in override.physical.items():
                 produced = physical[shock]
-                if produced.dtype != supplied_physical.dtype:
+                if produced.dtype != supplied_value.dtype:
                     raise ShockDeclarationError(
                         "Physical values must use their producing law's dtype."
                     )
+                enabled = jnp.asarray(active.get(shock, True))
+                supplied_physical = jnp.where(enabled, supplied_value, produced)
                 if produced.dtype.kind == "f":
                     bits = jnp.uint64 if produced.dtype.itemsize == 8 else jnp.uint32  # noqa: PLR2004 - active IEEE float word width
                     witnessed = jax.lax.bitcast_convert_type(
@@ -245,6 +271,7 @@ class CurrentIIDDrawPlan:
                             "age",
                             CURRENT_IID_ARGUMENT,
                             CURRENT_IID_KEYS_ARGUMENT,
+                            CURRENT_IID_OVERRIDES_ARGUMENT,
                         )
                     )
                 ),
@@ -268,13 +295,33 @@ class _CurrentIIDDraw:
             kwargs[CURRENT_IID_ARGUMENT],
         )
         keys = cast("Mapping[ShockName, PRNGKeyND]", kwargs[CURRENT_IID_KEYS_ARGUMENT])
+        overrides = cast(
+            "Mapping[ShockName, CurrentIIDOverride]",
+            kwargs.get(CURRENT_IID_OVERRIDES_ARGUMENT, {}),
+        )
         arguments = {
             name: value
             for name, value in kwargs.items()
-            if name not in {CURRENT_IID_ARGUMENT, CURRENT_IID_KEYS_ARGUMENT}
+            if name
+            not in {
+                CURRENT_IID_ARGUMENT,
+                CURRENT_IID_KEYS_ARGUMENT,
+                CURRENT_IID_OVERRIDES_ARGUMENT,
+            }
         }
         frame = self.plan.realise(
-            keys=keys, group_params=group_params, arguments=arguments
+            keys=keys,
+            group_params=group_params,
+            arguments=arguments,
+            overrides={
+                name: BaseInnovations(values=cast("FloatND", item.values))
+                if item.kind == "base"
+                else PhysicalValues(values=cast("FloatND | IntND", item.values))
+                for name, item in overrides.items()
+            },
+            override_active={
+                name: cast("BoolND", item.active) for name, item in overrides.items()
+            },
         )
         physical, valid = frame.physical, frame.valid
         available = {**arguments, **physical}

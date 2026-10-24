@@ -6,9 +6,14 @@ from typing import cast
 
 import jax
 
-from _lcm.current_iid import CURRENT_IID_ARGUMENT, CURRENT_IID_KEYS_ARGUMENT
+from _lcm.current_iid import (
+    CURRENT_IID_ARGUMENT,
+    CURRENT_IID_KEYS_ARGUMENT,
+    CURRENT_IID_OVERRIDES_ARGUMENT,
+)
 from _lcm.engine import Regime, StateActionSpace
 from _lcm.processes.base import _ContinuousStochasticProcess
+from _lcm.shock_overrides import CurrentIIDOverride
 from _lcm.typing import PRNGKeyND, PytreeValue, QualifiedName, ShapeDtypePytree
 from lcm.typing import (
     ContinuousState,
@@ -55,6 +60,7 @@ def current_iid_arguments(
     regime: Regime,
     flat_params: Mapping[str, PytreeValue | ShapeDtypePytree],
     keys: Mapping[str, PRNGKeyND | jax.ShapeDtypeStruct],
+    overrides: Mapping[str, CurrentIIDOverride] = MappingProxyType({}),
 ) -> Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]:
     """Use the same group/key operands for forward profiling and dispatch."""
     plan = regime.simulation.current_iid_draw_plan
@@ -65,6 +71,7 @@ def current_iid_arguments(
         MappingProxyType(
             {
                 CURRENT_IID_KEYS_ARGUMENT: keys,
+                CURRENT_IID_OVERRIDES_ARGUMENT: overrides,
                 CURRENT_IID_ARGUMENT: {
                     name: flat_params.get(name, {}) for name in plan.bindings
                 },

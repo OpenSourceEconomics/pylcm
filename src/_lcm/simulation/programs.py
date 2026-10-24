@@ -38,7 +38,7 @@ import jax
 import jax.numpy as jnp
 from dags import with_signature
 
-from _lcm.current_iid import CURRENT_IID_KEYS_ARGUMENT
+from _lcm.current_iid import CURRENT_IID_KEYS_ARGUMENT, CURRENT_IID_OVERRIDES_ARGUMENT
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.engine import Regime
 from _lcm.execution.core_program import (
@@ -795,6 +795,7 @@ def _decision_subject_arg_names(*, context: SolverBuildContext) -> tuple[str, ..
                     *names,
                     *sorted(context.current_iid_draw_plan.state_inputs),
                     CURRENT_IID_KEYS_ARGUMENT,
+                    CURRENT_IID_OVERRIDES_ARGUMENT,
                 )
             )
         )
