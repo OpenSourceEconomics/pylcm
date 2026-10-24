@@ -51,6 +51,74 @@ type HostArray = Num[np.ndarray, "..."]
 type LawValue = float | int | FloatND | IntND | HostArray | tuple[float, ...]
 
 
+@beartype(conf=SHOCK_CONF)
+@dataclass(frozen=True, kw_only=True)
+class BaseInnovations:
+    """Named independent innovations, before correlation and physical transforms.
+
+    Normal-base values are finite real numbers. Uniform-law support is [0,1];
+    categorical bases use [0,1), as does the random uniform generator.
+    Validation against the producing law occurs when the engine binds the input.
+    Arrays remain explicit pytree leaves for placement and residency accounting.
+    """
+
+    values: FloatND | IntND | HostArray
+    """Scalar cell, entry vector, or common/subject-specific dated input array."""
+
+    def __post_init__(self) -> None:
+        _validate_override_array(values=self.values)
+        if self.values.dtype.kind != "f":
+            raise ShockDeclarationError(
+                "Base innovations require floating-point coordinates."
+            )
+
+
+@beartype(conf=SHOCK_CONF)
+@dataclass(frozen=True, kw_only=True)
+class PhysicalValues:
+    """Physical observations to invert under their producing law and context.
+
+    A supplied value does not declare that a policy can observe it. Correlated
+    physical inputs require a complete supported frame, without mixed base inputs.
+    """
+
+    values: FloatND | IntND | HostArray
+    """Physical values; categorical observations use integer category codes."""
+
+    def __post_init__(self) -> None:
+        _validate_override_array(values=self.values)
+
+
+def _validate_override_array(*, values: FloatND | IntND | HostArray) -> None:
+    """Reject narrowing before pytree tracing can erase the caller's dtype."""
+    dtype = values.dtype
+    if values.ndim > 2 or dtype.kind not in "fiu":  # noqa: PLR2004 - common paths or subject-by-period paths
+        raise ShockDeclarationError(
+            "Shock inputs require real scalar, vector, or matrix arrays."
+        )
+    target_bytes = (
+        np.dtype(jnp.result_type(0.0)).itemsize
+        if dtype.kind == "f"
+        else np.dtype(np.int32).itemsize
+    )
+    if dtype.itemsize > target_bytes or dtype.kind == "u":
+        raise ShockDeclarationError(
+            "Shock input dtype would narrow; provide active-precision floats "
+            "or int32 codes."
+        )
+
+
+jax.tree_util.register_dataclass(
+    BaseInnovations, data_fields=("values",), meta_fields=()
+)
+jax.tree_util.register_dataclass(
+    PhysicalValues, data_fields=("values",), meta_fields=()
+)
+
+
+type ShockOverride = BaseInnovations | PhysicalValues
+
+
 @dataclass(frozen=True)
 class _ConditionedLookup:
     """Category-code lookup with a fixed declared conditioning-state dependency."""
@@ -614,6 +682,69 @@ class ShockGroup:
             raise ShockDeclarationError("Runtime corr support changed; bind it again.")
         return support
 
+    def _has_identity_correlation(
+        self, *, params: Mapping[ParameterName, LawValue]
+    ) -> bool | BoolND:
+        """Prove exact identity at the current binding, without admitting a factor.
+
+        Fixed declarations use host metadata rounded to the active dtype. Runtime
+        matrices remain dynamic, so the proof is recomputed on every invocation.
+        Consumers must separately retain canonical correlation/factor validity.
+        """
+        size = len(self.shocks)
+        if self.correlation is _Independence.DEFAULT:
+            return True
+        if self.correlation is not None:
+            matrix = np.asarray(self.correlation, dtype=np.dtype(jnp.result_type(0.0)))
+            return bool(np.array_equal(matrix, np.eye(size, dtype=matrix.dtype)))
+        matrix = params.get("corr")
+        if matrix is None:
+            raise ShockDeclarationError(
+                "Runtime corr must be supplied in the group namespace."
+            )
+        corr = jnp.asarray(matrix)
+        if corr.shape != (size, size):
+            raise ShockDeclarationError("corr must have a row and column per shock.")
+        return jnp.all(corr == jnp.eye(size, dtype=corr.dtype))
+
+    def _correlation_factor(
+        self,
+        *,
+        params: Mapping[ParameterName, LawValue],
+        admitted_correlation_support: BoolND | None = None,
+    ) -> tuple[FloatND, BoolND]:
+        """Share the admitted active-precision factor between forward and inverse."""
+        valid = jnp.asarray(a=True)
+        matrix = params.get("corr") if self.correlation is None else self.correlation
+        if matrix is None:
+            raise ShockDeclarationError(
+                "Runtime corr must be supplied in the group namespace."
+            )
+        corr = jnp.asarray(matrix)
+        if corr.shape != (len(self.shocks), len(self.shocks)):
+            raise ShockDeclarationError("corr must have a row and column per shock.")
+        if self.correlation is None and admitted_correlation_support is not None:
+            zero_pivots = admitted_correlation_support
+        elif self.correlation is None:
+            if isinstance(matrix, jax.core.Tracer):
+                if self._correlation_support is None:
+                    raise ShockDeclarationError(
+                        "Bind runtime corr support before tracing the transform."
+                    )
+                zero_pivots = self._correlation_support
+                valid &= _runtime_support_validity(corr=corr, support=zero_pivots)
+            else:
+                zero_pivots = self.validate_runtime_correlation(correlation=corr)
+        else:
+            concrete = np.asarray(matrix, dtype=np.dtype(jnp.result_type(0.0)))
+            _validate_correlation(correlation=concrete, size=len(self.shocks))
+            zero_pivots = _correlation_pivots(concrete)
+        factor, factor_valid = admitted_correlation_factor(
+            correlation=corr,
+            zero_pivots=jnp.asarray(zero_pivots, dtype=jnp.bool_),
+        )
+        return factor, valid & factor_valid
+
     def _realise(  # noqa: C901, PLR0912, PLR0915 - each law contributes values and validity once
         self,
         *,
@@ -631,37 +762,9 @@ class ShockGroup:
         valid = jnp.all(jnp.isfinite(base_nodes))
         base = base_nodes
         if self.correlation is not _Independence.DEFAULT:
-            matrix = (
-                params.get("corr") if self.correlation is None else self.correlation
-            )
-            if matrix is None:
-                raise ShockDeclarationError(
-                    "Runtime corr must be supplied in the group namespace."
-                )
-            corr = jnp.asarray(matrix)
-            if corr.shape != (len(self.shocks), len(self.shocks)):
-                raise ShockDeclarationError(
-                    "corr must have a row and column per shock."
-                )
-            if self.correlation is None and admitted_correlation_support is not None:
-                zero_pivots = admitted_correlation_support
-            elif self.correlation is None:
-                if isinstance(matrix, jax.core.Tracer):
-                    if self._correlation_support is None:
-                        raise ShockDeclarationError(
-                            "Bind runtime corr support before tracing the transform."
-                        )
-                    zero_pivots = self._correlation_support
-                    valid &= _runtime_support_validity(corr=corr, support=zero_pivots)
-                else:
-                    zero_pivots = self.validate_runtime_correlation(correlation=corr)
-            else:
-                concrete = np.asarray(matrix, dtype=np.dtype(jnp.result_type(0.0)))
-                _validate_correlation(correlation=concrete, size=len(self.shocks))
-                zero_pivots = _correlation_pivots(concrete)
-            factor, factor_valid = admitted_correlation_factor(
-                correlation=corr,
-                zero_pivots=jnp.asarray(zero_pivots, dtype=jnp.bool_),
+            factor, factor_valid = self._correlation_factor(
+                params=params,
+                admitted_correlation_support=admitted_correlation_support,
             )
             valid &= factor_valid
             base = jnp.matmul(base, factor.T)

@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "b30e7fd876a268e852d9997643b82a14112a08876a6e30eecf692f807573f068",
+  "source_inventory_sha256": "d6ad4af6f254f8bd0a7c4351b8929d03a0c41ac04b9924a4d2edec86bba18be1",
   "sources": [
     {
       "path": "src/_lcm/constraints/bounds.py",
@@ -34,7 +34,7 @@
     },
     {
       "path": "src/_lcm/current_iid.py",
-      "sha256": "b133adda935ac217d0ab3fb99e65ae0ccd032156c9a55bfe9fd9cff9369ad43f"
+      "sha256": "f7c231775e2629eb8469c822f818816b7dd2cc3bee6c3bba919d1ce292435888"
     },
     {
       "path": "src/_lcm/dtypes.py",
@@ -347,6 +347,10 @@
     {
       "path": "src/_lcm/regime_building/zero_safe.py",
       "sha256": "301fcd3bec1211b60872159fe585e55e9742be62a975dd76b33f6f5cb45971e5"
+    },
+    {
+      "path": "src/_lcm/shock_overrides.py",
+      "sha256": "3db3c4802d80d8dd0f8d638d754a8e5a1b7f2a8b77fcbbd4be77b485c5444bd7"
     },
     {
       "path": "src/_lcm/simulation/action_grids.py",
@@ -711,6 +715,10 @@
     {
       "path": "src/lcm/result.py",
       "sha256": "a84d216d5063b60fb5cd14548266986da36d2f32caee7a4f806a2b5261872814"
+    },
+    {
+      "path": "src/lcm/shocks.py",
+      "sha256": "0afdce985697fd971c0d9458ec7a9537731c8b7dddf650554999775240990868"
     }
   ]
 }

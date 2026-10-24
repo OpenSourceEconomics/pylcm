@@ -409,6 +409,8 @@ _CURRENT_IID_KEYS_SOURCE = "src/_lcm/simulation/current_iid.py"
 _CERTIFIED_CORRIDOR_SOURCES = (
     _CURRENT_IID_SOURCE,
     _CURRENT_IID_KEYS_SOURCE,
+    "src/lcm/shocks.py",
+    "src/_lcm/shock_overrides.py",
     "src/_lcm/egm/upper_envelope/__init__.py",
     "src/_lcm/egm/upper_envelope/segment_envelope.py",
     "src/_lcm/egm/nested_floor.py",
@@ -583,7 +585,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 # Source seals and corridor anchors require semantic verification of the combined
 # inventories before refresh; these inherited pins deliberately retain that gate.
 _SOURCE_SEALS = {
-    "src/_lcm/current_iid.py": "b133adda935ac217d0ab3fb99e65ae0ccd032156c9a55bfe9fd9cff9369ad43f",
+    "src/_lcm/current_iid.py": "f7c231775e2629eb8469c822f818816b7dd2cc3bee6c3bba919d1ce292435888",
     "src/_lcm/simulation/current_iid.py": "c675e9dffaa205b4049bf4c26438a70005766c368bc69a3dbb1d6e35cb66db99",
     "src/_lcm/egm/asset_row.py": "d7389b5048707dd9657638c790f9afbd8feb27893bcfd2bd6659da66199b069c",
     "src/_lcm/egm/continuation.py": "5a25a1183c81ef4c3e8e3c4aaebc6e4797ce04c9c55b88edefa7de7fc7946f9f",
@@ -757,6 +759,8 @@ _SOURCE_SEALS = {
     "src/_lcm/egm/ez_kernel.py": "568caa5183613de012ae4c7b433b5bf058d5594ef3d5263963c25f2b7302c269",
     "src/_lcm/power_mean.py": "1580447a1ca5f6385556438105069bfb15d211bd6da40819b096ad84b2e77cb5",
     "src/_lcm/simulation/random_address.py": "17f60140770dbd144c57cfd3daccb76a88196acd9e681f2abff8c2eefb37a913",
+    "src/lcm/shocks.py": "0afdce985697fd971c0d9458ec7a9537731c8b7dddf650554999775240990868",
+    "src/_lcm/shock_overrides.py": "3db3c4802d80d8dd0f8d638d754a8e5a1b7f2a8b77fcbbd4be77b485c5444bd7",
 }
 
 EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 421
@@ -780,14 +784,43 @@ EXPECTED_UNIFORM_PROCESS_MUTATION_NAMES_SHA256 = (
 # `_surface_pin`, so one reviewed fact is never written twice, and a stored pin
 # that no family selects is a verifier error rather than a silent no-op.
 _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
+    "src/lcm/shocks.py": (
+        "f5da3b0a8a8cd27dd0a2fca0b0ba4f51ad3db37e9e70da1f58abf04728641321",
+        {
+            "BaseInnovations.__post_init__": "f881b9a60ffff3c463ce4634482537616c91472d0d6c0738852bd1abe0887525",
+            "PhysicalValues.__post_init__": "a7ae8f2100a70874e481e2bab3ed06ba2099ba794e6467a542b0dce42c2e7d22",
+            "ShockGroup._correlation_factor": "63131c3fc79d6ea15d665202027320733069aa201528b47a83a3290642c9ab41",
+            "ShockGroup._has_identity_correlation": "64d074fcb1627d6131ef7e6bf2cbe83680517393bedb055cb111d9b0915f01ca",
+            "ShockGroup._realise": "ea6c3d934cf5ba92fd9751cd125503556bd5124b0a0270c9537902f2f1b286c0",
+            "ShockGroup.validate_runtime_correlation": "43808302a68465c883813581ac0c7f8e22724e1e04d546536814358e30204d26",
+            "_continuous_value": "2cfd7501a31336a6508ac7c448029e2bf07d1da0ce2f95604fe6ae553871f8f6",
+            "_correlation_pivots": "00aa6d7b708eed0e08b2586c83a7f8b50bbb57bdfa208e7cc0dd569d93b93268",
+            "_law_validity": "cb654b7e88ff187f30340f9c01e4e83d616aefb0ffff409a7b35e042feb59cde",
+            "_resolve_parameter": "b9c6ee41d3b6ed31ab4773e27606374b3f3dc7061934367a97ed105acf7b1e75",
+            "_runtime_support_validity": "e01d0604977cbf07322b20099429dda05d4b3b3d184ea7744b0bc7b9f68754c8",
+            "_validate_correlation": "3382c36108771bbd9eb9d7276871ddf6279b167fbb2d7f7b470c3a2ccea15b57",
+            "_validate_override_array": "37956f38f5bc7c2ffa72c0c54f08ee8d21ddeaa5195bb8b7d345503acfdfe744",
+        },
+    ),
+    "src/_lcm/shock_overrides.py": (
+        "b26bea0a8830d16387cb2a59fc6b905affe4ff66c2b6b27baab3330dd0251031",
+        {
+            "_inverse": "ea5a546e9fc75c7ff7d905b92edda05024f9d6db02b98dfd3d2b27a7d9cf693f",
+            "_recover_correlated": "ad484b7ff4e0a36589de701d7e30fd71e636d159c915a22ad7ea0c913dd15978",
+            "apply_overrides": "0fb05d65230e909d662e2282b118a0c50da97ef85bfa37f3a6ad3b8241155835",
+        },
+    ),
     "src/_lcm/current_iid.py": (
-        "3008bd126e1d16ef6d144a553d7f624cc2d658bac1fae69529293316a2867bf1",
+        "ec15632e8e0482b02404764210362dc79911330d8d135238cd37391367c2c47b",
         {
             "CurrentIIDPlan.wrap": "a9fcdbcb96e54728e40fcbfad47a7d8b47804e6fc027799a4580b0210e42ac34",
             "CurrentIIDDrawPlan.wrap": "9d932ec742fbebf3630b27aad7e06427d032f95c8161e4678c6bf02679f22ef0",
             "_CurrentIIDExpectation.__call__": "ebf6948c705bda373c38680aee3e4ccbf6402be0df7f5e6890462c20d20b2031",
-            "_CurrentIIDDraw.__call__": "edd669fa81d7aabfca05dc918133bca80cc3e074cfb9d9be9f42f4a1313bf810",
+            "_CurrentIIDDraw.__call__": "e93ee3e33e049bd05015c3d61622b31484875e983657ababda16fac0e8a6771d",
             "_evaluate_node": "c628b5107c477ccf0dd688ec0d29b1a2f626a4a49298f9fb364a41476070958e",
+            "CurrentIIDDrawPlan.realise": "00cb5389abeb26f3e13bf3d32e69f4cfd15a51823240773cc97a20061204c631",
+            "_draw_base_value": "4554e685f57a99188070a0050d53d1caa2b36c79d9c023ed629ea25aece79746",
+            "_law_inputs": "b29f6f0fc9a9a5e0e206bad5d4888e74fdcef311ca2fe8aac47160398bde06a0",
         },
     ),
     "src/_lcm/simulation/current_iid.py": (
@@ -10013,12 +10046,35 @@ return gathered[..., 0]
 
 _CURRENT_IID_ADAPTER_CONTRACTS = _contracts(
     {
+        "src/lcm/shocks.py": (
+            "BaseInnovations.__post_init__",
+            "PhysicalValues.__post_init__",
+            "ShockGroup._correlation_factor",
+            "ShockGroup._has_identity_correlation",
+            "ShockGroup._realise",
+            "ShockGroup.validate_runtime_correlation",
+            "_continuous_value",
+            "_correlation_pivots",
+            "_law_validity",
+            "_resolve_parameter",
+            "_runtime_support_validity",
+            "_validate_correlation",
+            "_validate_override_array",
+        ),
+        "src/_lcm/shock_overrides.py": (
+            "_inverse",
+            "_recover_correlated",
+            "apply_overrides",
+        ),
         "src/_lcm/current_iid.py": (
             "CurrentIIDPlan.wrap",
             "CurrentIIDDrawPlan.wrap",
             "_CurrentIIDExpectation.__call__",
             "_CurrentIIDDraw.__call__",
             "_evaluate_node",
+            "CurrentIIDDrawPlan.realise",
+            "_draw_base_value",
+            "_law_inputs",
         ),
         "src/_lcm/simulation/current_iid.py": ("prepare_current_iid_keys",),
         "src/_lcm/regime_building/processing.py": (
@@ -10135,6 +10191,16 @@ def current_iid_adapter_errors(
         offending.add(MAX_Q_SOURCE)
     obligations = (
         (
+            _CURRENT_IID_SOURCE,
+            "_CurrentIIDDraw.__call__",
+            "frame = self.plan.realise(keys=keys, group_params=group_params, arguments=arguments)",
+        ),
+        (
+            _CURRENT_IID_SOURCE,
+            "_CurrentIIDDraw.__call__",
+            "physical, valid = frame.physical, frame.valid",
+        ),
+        (
             PROCESSING_SOURCE,
             "_build_per_subject_decisions_per_period",
             "if current_iid_draw_plan is not None:\n    built[q_id] = current_iid_draw_plan.wrap(built[q_id])",
@@ -10157,7 +10223,7 @@ def current_iid_adapter_errors(
         (
             _CURRENT_IID_SOURCE,
             "_CurrentIIDDraw.__call__",
-            "return index, value, physical, ~valid",
+            "return index, value, dict(physical), ~valid",
         ),
         (
             FEASIBILITY_SOURCE,
@@ -17448,6 +17514,18 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
 
 _CURRENT_IID_ADAPTER_MUTATIONS = (
     (
+        "current_iid:missing_override_callable_proof",
+        "src/_lcm/shock_overrides.py",
+        "def apply_overrides(",
+        "def unavailable_override_proof(",
+    ),
+    (
+        "current_iid:missing_factor_callable_proof",
+        "src/lcm/shocks.py",
+        "def _correlation_factor(",
+        "def _unavailable_factor_proof(",
+    ),
+    (
         "current_iid:omit_dense_wrap",
         "src/_lcm/regime_building/max_Q_over_a.py",
         "        max_Q_over_a = current_iid_plan.wrap(max_Q_over_a)",
@@ -17486,8 +17564,8 @@ _CURRENT_IID_ADAPTER_MUTATIONS = (
     (
         "current_iid:omit_replay_status",
         "src/_lcm/current_iid.py",
-        "return index, value, physical, ~valid",
-        "return index, value, physical, False",
+        "return index, value, dict(physical), ~valid",
+        "return index, value, dict(physical), False",
     ),
     (
         "current_iid:omit_publication_status",
@@ -17546,6 +17624,8 @@ _CURRENT_IID_ADAPTER_MUTATIONS = (
 )
 _EXPECTED_CURRENT_IID_MUTATION_NAMES = frozenset(
     (
+        "current_iid:missing_override_callable_proof",
+        "current_iid:missing_factor_callable_proof",
         "current_iid:detour_host_replay_status",
         "current_iid:detour_host_solve_status",
         "current_iid:disable_occupant_status_reduction",
@@ -17565,7 +17645,7 @@ _EXPECTED_CURRENT_IID_MUTATION_NAMES = frozenset(
     )
 )
 EXPECTED_CURRENT_IID_MUTATION_NAMES_SHA256 = (
-    "4d33bd43df8873a9a9864c7d246cfe6096a95683ceafa666f02b1a7e3f995945"
+    "c7a4cc1fcee93b6acbfa27ec11ea10588cf3e7608e3fab858f56969ef50335fe"
 )
 
 
