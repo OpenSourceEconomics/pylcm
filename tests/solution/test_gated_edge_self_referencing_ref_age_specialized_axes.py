@@ -1,17 +1,8 @@
-"""A gate reference naming the gated target is read on that period's own grid.
+"""A represented arrival reference reads its own exact age-specialized grid.
 
-A `ProjectedRegimeValue` may name the very regime its edge gates. The fold then reads
-that regime's value twice over — once as the target it folds, once as the
-reference its gate consults — and the reference read goes through an
-interpolator that closes over the grid's nodes. So the name the reference
-carries must not change which age's nodes the fold uses.
-
-An `AgeSpecializedGrid` is what makes a wrong choice visible: `n_points` stays
-fixed while the bounds move with age, so a reference read against another
-period's nodes lands on a different node of the same value array and no shape
-check can object. The two regimes here are built to be mathematically
-interchangeable — `mirror` carries an identical grid and an identical value — so
-a difference between them is a difference in bookkeeping, not in the model.
+The named IntegratedFull object may be the scheduled target or a value-only
+mirror with another state name. Both have identical grids and values. Their
+references must therefore give identical arrival pricing and routing at each age.
 """
 
 import jax.numpy as jnp
@@ -22,8 +13,9 @@ from numpy.testing import assert_array_almost_equal as aaae
 from lcm import (
     AgeGrid,
     AgeSpecializedGrid,
+    ArrivalDecision,
+    ArrivalRead,
     ByAge,
-    Gate,
     LinSpacedGrid,
     Model,
     ProjectedRegimeValue,
@@ -104,8 +96,7 @@ def test_the_saver_is_priced_at_the_continuation_it_actually_receives(
     Waiting pays nothing, so a saver at the age it opens the account is worth
     exactly `beta` times whatever it continues into. The gate decides which
     regime that is, and the router re-decides it from the same predicate, so the
-    two answers have to describe one household: a fold whose gate shuts prices
-    an annuitant, and a router whose gate opens delivers an accountholder.
+    two answers have to describe the same branch at the same arrival date.
     """
     model = _build_model(reference_regime=reference_regime)
     params = {"discount_factor": _DISCOUNT_FACTOR}
@@ -127,21 +118,31 @@ def test_the_saver_is_priced_at_the_continuation_it_actually_receives(
     )
 
 
-def test_a_self_referencing_gate_ref_splits_the_fold_by_target_grid() -> None:
-    """A gate reference naming the target obliges the fold to compile per grid.
+def test_self_reference_binds_distinct_actual_arrival_dates() -> None:
+    """Bind each native arrival query to its exact target date.
 
-    The fold interpolates whatever regime its references name. When one of them
-    is the target and the target's grid moves with age, the fold closes over
-    those moving nodes and owes one compiled object per distinct set of them —
-    the same obligation a reference to any other age-specialized regime creates.
+    Both source dates must bind an IntegratedFull read of the account at their
+    own arrival date, including an account that is terminal before model end.
     """
-    edge = (
-        _build_model(reference_regime="account")
-        ._regimes["saver"]
-        .gated_edges["account"]
-    )
+    from _lcm.policy_queries import QueryKind, _PolicyQueryKernel  # noqa: PLC0415
 
-    assert len({id(fold) for fold in edge.folds_by_period.values()}) == 2
+    model = _build_model(reference_regime="account")
+    plans = []
+    for source_period in (0, 1):
+        kernel = model._regimes["saver"].solution.period_kernels[source_period]
+        assert isinstance(kernel, _PolicyQueryKernel)
+        plan = kernel.root_context.arrival_queries[source_period]["account"]
+        assert plan.period == source_period + 1
+        represented = [
+            node
+            for node in plan.queries.definitions.values()
+            if node.read.kind is QueryKind.INTEGRATED_FULL
+        ]
+        assert len(represented) == 1
+        assert represented[0].read.target == "account"
+        assert represented[0].read.period == source_period + 1
+        plans.append(plan)
+    assert plans[0] is not plans[1]
 
 
 def _build_model(*, reference_regime: RegimeName) -> Model:
@@ -173,7 +174,7 @@ def _build_model(*, reference_regime: RegimeName) -> Model:
         cases={0: {"saver": staying_put, "account": opening}, 1: {"account": opening}}
     )
     saver_gates = {
-        "account": Gate(
+        "account": ArrivalDecision(
             predicate=_clears_the_hurdle,
             routes={
                 "only": StakeholderRoute(
@@ -183,9 +184,11 @@ def _build_model(*, reference_regime: RegimeName) -> Model:
                     )
                 )
             },
-            references={
-                "ref_value": ProjectedRegimeValue(
-                    regime=reference_regime, projection=projection
+            reads={
+                "ref_value": ArrivalRead(
+                    kind="IntegratedFull",
+                    regime=reference_regime,
+                    projection=projection,
                 )
             },
         ),
@@ -224,7 +227,7 @@ def _build_model(*, reference_regime: RegimeName) -> Model:
             "saver": Transition(
                 targets={"saver": 0, "account": (0, 1), "annuity": (0, 1)},
                 law=saver_law,
-                gates=saver_gates,
+                arrivals=saver_gates,
             )
         },
     )

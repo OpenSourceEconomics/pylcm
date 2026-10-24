@@ -1017,9 +1017,13 @@ def execute_simulation_program(
         "gate_route": programs.gate_route,
         "policy_prepare": programs.policy_prepare,
         "policy_rank": programs.policy_rank,
+        "exit_full": programs.exit_full,
+        "exit_participating": programs.exit_participating,
     }
     return programs.executor.dispatch(
-        program=families[family][period],
+        program=programs.arrival_program(family=family, period=period)
+        if family.startswith("arrival_entry:")
+        else families[family][period],
         arguments=arguments,
         period=period,
         n_subjects=n_subjects,

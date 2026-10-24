@@ -5,18 +5,18 @@ declaration:
 
 - a household of two takes ONE consumption decision, and each partner's own
   value at that common choice is published — `CollectiveUtility`;
-- the household is feasible only where each partner is at least as well off in
-  it as alone in the same period — `ValueDependentConstraint`, reading the
-  singles' current-period value functions;
+- the household stays only where each partner meets their same-period outside
+  option, with the declared participation slack — a current `Exit` rule;
 - a single marries only under mutual consent, and a couple whose feasible set
-  is empty dissolves back to two singles — a `Gate` on the transition, whose
-  predicate compares values on the target regime's grid.
+  is empty dissolves back to two singles — an `ArrivalDecision` after the
+  scheduled landing and before its action.
 
-The dissolution gate is keyed by the CONTINUING collective regime under
-`predicate = ~D_couple`: the gate-open branch is staying married, and each partner's
-route fallback is her or his own single regime. Keying it by one partner's
-single regime would send both partners there whenever the couple stays
-together.
+Dissolution reads the continuing couple's actual participating-policy support;
+each partner's fallback is her or his own single regime. Formation compares
+the target's common participating policy with each single's Raw policy at the
+landing. The participation slack changes willingness to stay, while a partner
+who leaves receives the full single payoff. Initial households obey the same
+current dissolution rule as later arrivals.
 
 The partners differ only in income. Alone, each keeps their own; married, the
 household pools both and splits consumption evenly. Her income is the higher
@@ -35,24 +35,25 @@ it usable as a benchmark workload as well as a worked example.
 """
 
 from collections.abc import Callable, Mapping
-from typing import Literal
+from typing import ClassVar, Literal
 
 import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
+    ArrivalDecision,
+    ArrivalRead,
     ByAge,
     CollectiveUtility,
     ExecutionConfig,
-    Gate,
     LinSpacedGrid,
     Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
-    ValueDependentConstraint,
     categorical,
 )
+from lcm.exits import Exit, ExitTarget, RuleResult
 from lcm.transition import StochasticTransition, Transition
 from lcm.typing import (
     BoolND,
@@ -127,6 +128,9 @@ def get_model(
     )
     last_age = n_periods - 1
     probability = _transition_probabilities(last_age=last_age)
+    source_ages = jnp.arange(last_age, dtype=float)
+    staying_can_arrive = bool(jnp.any(probability["stays_married"](source_ages) > 0))
+    meeting_can_arrive = bool(jnp.any(probability["meets_a_partner"](source_ages) > 0))
 
     couple_law = _until_last_age(
         {
@@ -138,9 +142,18 @@ def get_model(
         terminal="couple_terminal",
         last_age=last_age,
     )
-    couple_gates = {
-        "couple": Gate(
-            predicate=_no_dissolution,
+    couple_arrivals = {
+        "couple": ArrivalDecision(
+            predicate=_has_policy_support,
+            reads={
+                "target_support": ArrivalRead(
+                    regime="couple",
+                    stakeholder="f",
+                    kind="Participating",
+                    field="support",
+                    projection={"wealth": _identity_wealth},
+                )
+            },
             routes={
                 "f": StakeholderRoute(
                     target_stakeholder="f",
@@ -169,25 +182,20 @@ def get_model(
                 utilities={"f": _couple_utility_f, "m": _couple_utility_m}
             ),
         },
-        constraints={
-            "participation_f": ValueDependentConstraint(
-                predicate=_participation_f,
-                references={
-                    "V_alone_f": ProjectedRegimeValue(
+        exits={
+            "dissolve": Exit(
+                targets={
+                    "f": ExitTarget(
                         regime="single_f",
                         projection={"wealth": _half_of_couple_wealth},
-                    )
-                },
-            ),
-            "participation_m": ValueDependentConstraint(
-                predicate=_participation_m,
-                references={
-                    "V_alone_m": ProjectedRegimeValue(
+                    ),
+                    "m": ExitTarget(
                         regime="single_m",
                         projection={"wealth": _half_of_couple_wealth},
-                    )
+                    ),
                 },
-            ),
+                rule=_ParticipationRule(),
+            )
         },
     )
     couple_terminal = Regime(
@@ -214,8 +222,8 @@ def get_model(
         terminal="single_f_terminal",
         last_age=last_age,
     )
-    single_f_gates = {
-        "couple": Gate(
+    single_f_arrivals = {
+        "couple": ArrivalDecision(
             predicate=_mutual_consent,
             routes={
                 "her": StakeholderRoute(
@@ -226,13 +234,27 @@ def get_model(
                     ),
                 )
             },
-            references={
-                "V_alone_f": ProjectedRegimeValue(
+            reads={
+                "V_target_f": ArrivalRead(
+                    regime="couple",
+                    stakeholder="f",
+                    kind="Participating",
+                    projection={"wealth": _identity_wealth},
+                ),
+                "V_target_m": ArrivalRead(
+                    regime="couple",
+                    stakeholder="m",
+                    kind="Participating",
+                    projection={"wealth": _identity_wealth},
+                ),
+                "V_alone_f": ArrivalRead(
                     regime="single_f",
+                    kind="Raw",
                     projection={"wealth": _half_of_couple_wealth},
                 ),
-                "V_alone_m": ProjectedRegimeValue(
+                "V_alone_m": ArrivalRead(
                     regime="single_m",
+                    kind="Raw",
                     projection={"wealth": _half_of_couple_wealth},
                 ),
             },
@@ -244,7 +266,7 @@ def get_model(
         # grid is entered at is not the one her own regime would carry
         # forward. A law that ignored that would land every bride at the
         # bottom of the couple's grid, where the household is infeasible and
-        # the consent gate shuts for reasons that are an artifact.
+        # the arrival decision refuses for reasons that are an artifact.
         state_transitions={
             "wealth": {
                 "couple": _pooled_wealth,
@@ -271,8 +293,8 @@ def get_model(
         terminal="single_m_terminal",
         last_age=last_age,
     )
-    single_m_gates = {
-        "couple": Gate(
+    single_m_arrivals = {
+        "couple": ArrivalDecision(
             predicate=_mutual_consent,
             routes={
                 "his": StakeholderRoute(
@@ -283,13 +305,27 @@ def get_model(
                     ),
                 )
             },
-            references={
-                "V_alone_f": ProjectedRegimeValue(
+            reads={
+                "V_target_f": ArrivalRead(
+                    regime="couple",
+                    stakeholder="f",
+                    kind="Participating",
+                    projection={"wealth": _identity_wealth},
+                ),
+                "V_target_m": ArrivalRead(
+                    regime="couple",
+                    stakeholder="m",
+                    kind="Participating",
+                    projection={"wealth": _identity_wealth},
+                ),
+                "V_alone_f": ArrivalRead(
                     regime="single_f",
+                    kind="Raw",
                     projection={"wealth": _half_of_couple_wealth},
                 ),
-                "V_alone_m": ProjectedRegimeValue(
+                "V_alone_m": ArrivalRead(
                     regime="single_m",
+                    kind="Raw",
                     projection={"wealth": _half_of_couple_wealth},
                 ),
             },
@@ -309,9 +345,18 @@ def get_model(
     )
     return Model(
         edges={
-            "couple": Transition(law=couple_law, gates=couple_gates),
-            "single_f": Transition(law=single_f_law, gates=single_f_gates),
-            "single_m": Transition(law=single_m_law, gates=single_m_gates),
+            "couple": Transition(
+                law=couple_law,
+                arrivals=couple_arrivals if staying_can_arrive else {},
+            ),
+            "single_f": Transition(
+                law=single_f_law,
+                arrivals=single_f_arrivals if meeting_can_arrive else {},
+            ),
+            "single_m": Transition(
+                law=single_m_law,
+                arrivals=single_m_arrivals if meeting_can_arrive else {},
+            ),
         },
         regimes={
             "couple": couple,
@@ -359,8 +404,7 @@ def get_params(
             "utility_f": {"marriage_premium": marriage_premium},
             "utility_m": {"marriage_premium": marriage_premium},
             "next_wealth": {"interest_rate": interest_rate},
-            "participation_f": {"slack": participation_slack},
-            "participation_m": {"slack": participation_slack},
+            "exits": {"dissolve": {"rule": {"slack": participation_slack}}},
         },
         "couple_terminal": {},
         "single_f": {
@@ -468,6 +512,10 @@ def _next_couple_wealth(
     return (1.0 + interest_rate) * (wealth - consumption) + INCOME_F + INCOME_M
 
 
+def _identity_wealth(wealth: ContinuousState) -> ContinuousState:
+    return wealth
+
+
 def _half_of_couple_wealth(wealth: ContinuousState) -> ContinuousState:
     """A partner's share of household wealth, at the couple's own coordinate."""
     return 0.5 * wealth
@@ -494,9 +542,42 @@ def _mutual_consent(
     return (V_target_f > V_alone_f) & (V_target_m > V_alone_m)
 
 
-def _no_dissolution(D_target: BoolND) -> BoolND:
-    """The couple continues wherever its feasible set is not empty."""
-    return ~D_target
+class _ParticipationRule:
+    """Choose one common action satisfying both participation thresholds."""
+
+    reads_outside_values: ClassVar[bool] = True
+
+    def __call__(
+        self,
+        *,
+        Q_f: FloatND,
+        Q_m: FloatND,
+        exit_payoffs: Mapping[str, Mapping[str, FloatND]],
+        alternative_ids: IntND,
+        pareto_weights: Mapping[str, FloatND],
+        slack: float,
+    ) -> RuleResult:
+        q_f, q_m = Q_f.reshape(-1), Q_m.reshape(-1)
+        outside = exit_payoffs["dissolve"]
+        kept = (
+            jnp.isfinite(q_f)
+            & jnp.isfinite(q_m)
+            & _participation_f(Q_f=q_f, V_alone_f=outside["f"], slack=slack)
+            & _participation_m(Q_m=q_m, V_alone_m=outside["m"], slack=slack)
+        )
+        # Mask zero-weight members before multiplying ordinary-infeasible -inf.
+        objective = pareto_weights["f"] * jnp.where(
+            pareto_weights["f"] == 0, 0.0, q_f
+        ) + pareto_weights["m"] * jnp.where(pareto_weights["m"] == 0, 0.0, q_m)
+        stay = jnp.argmax(jnp.where(kept, objective, -jnp.inf))
+        return RuleResult(
+            action=alternative_ids[jnp.where(jnp.any(kept), stay, q_f.size)]
+        )
+
+
+def _has_policy_support(target_support: BoolND) -> BoolND:
+    """The couple continues wherever its actual feasible set is not empty."""
+    return target_support
 
 
 # keyword-only-exempt: primary-argument=law

@@ -206,7 +206,7 @@ def test_function_params_no_qname_separator():
         ),
     }
     with pytest.raises(InvalidNameError):
-        create_params_template(MappingProxyType(regimes))
+        create_params_template(regimes=MappingProxyType(regimes))
 
 
 def test_regime_name_no_qname_separator():
@@ -217,7 +217,7 @@ def test_regime_name_no_qname_separator():
         ),
     }
     with pytest.raises(InvalidNameError):
-        create_params_template(MappingProxyType(regimes))
+        create_params_template(regimes=MappingProxyType(regimes))
 
 
 def test_function_name_no_qname_separator():
@@ -228,7 +228,7 @@ def test_function_name_no_qname_separator():
         ),
     }
     with pytest.raises(InvalidNameError):
-        create_params_template(MappingProxyType(regimes))
+        create_params_template(regimes=MappingProxyType(regimes))
 
 
 def test_regime_function_names_disjoint():
@@ -240,7 +240,7 @@ def test_regime_function_names_disjoint():
         ),
     }
     with pytest.raises(InvalidNameError):
-        create_params_template(MappingProxyType(regimes))
+        create_params_template(regimes=MappingProxyType(regimes))
 
 
 def test_regime_argument_names_disjoint():
@@ -252,7 +252,7 @@ def test_regime_argument_names_disjoint():
         ),
     }
     with pytest.raises(InvalidNameError):
-        create_params_template(MappingProxyType(regimes))
+        create_params_template(regimes=MappingProxyType(regimes))
 
 
 def test_missing_parameter_raises_error(params_template):

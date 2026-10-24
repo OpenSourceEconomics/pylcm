@@ -14,9 +14,10 @@ import pytest
 from lcm import (
     AgeGrid,
     AgeRange,
+    ArrivalDecision,
+    ArrivalRead,
     ByAge,
     DiscreteGrid,
-    Gate,
     LinSpacedGrid,
     Model,
     ProjectedRegimeValue,
@@ -116,9 +117,16 @@ def _build_model(*, with_bystander: bool) -> Model:
                 law=ByAge(
                     cases={40: {"target": StochasticTransition(func=_certain_target)}}
                 ),
-                gates={
-                    "target": Gate(
+                arrivals={
+                    "target": ArrivalDecision(
                         predicate=_gate,
+                        reads={
+                            "V_target": ArrivalRead(
+                                kind="IntegratedFull",
+                                regime="target",
+                                projection={"x": _identity_x},
+                            )
+                        },
                         routes={
                             "only": StakeholderRoute(
                                 fallback=ProjectedRegimeValue(

@@ -28,6 +28,7 @@ from _lcm.grids.continuous import ContinuousGrid
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.time import ModelTime, TimeAxis, coordinate_kind
 from _lcm.typing import EconFunctionArg, PytreeValue, StateName
+from lcm.arrivals import ArrivalDecision
 from lcm.collective import Gate
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
@@ -248,6 +249,11 @@ class Transition:
     )
     """One `Gate` per value-dependent destination, keyed by that destination."""
 
+    arrivals: Mapping[RegimeName, ArrivalDecision] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    """Typed arrival decisions attached to actual scheduled incoming edges."""
+
     def __post_init__(self) -> None:
         if self.law is None:
             raise RegimeInitializationError(
@@ -272,6 +278,11 @@ class Transition:
             object.__setattr__(self, "targets", MappingProxyType(dict(self.targets)))
         object.__setattr__(self, "law", snapshot_transition_containers(self.law))
         object.__setattr__(self, "gates", MappingProxyType(dict(self.gates)))
+        object.__setattr__(self, "arrivals", MappingProxyType(dict(self.arrivals)))
+        if self.gates.keys() & self.arrivals.keys():
+            raise RegimeInitializationError(
+                "A scheduled target cannot declare both a Gate and an ArrivalDecision."
+            )
 
 
 @overload

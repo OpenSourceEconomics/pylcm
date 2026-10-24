@@ -151,11 +151,13 @@ _SURFACE_COOWNERS = {
         "S03 scalar dependency",
         "reviewed S04/S05 dependency",
         "S02 query/status dependency",
+        "current IID adapter",
     ),
     "src/_lcm/solution/nbegm.py": ("reviewed S04/S05 dependency",),
     "src/_lcm/regime_building/processing.py": (
         "S03 scalar dependency",
         "S02 query/status dependency",
+        "current IID adapter",
     ),
     "src/_lcm/egm/nbegm_step.py": ("retained DC/NB dependency",),
 }

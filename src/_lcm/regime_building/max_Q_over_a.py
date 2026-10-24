@@ -21,6 +21,7 @@ import jax.numpy as jnp
 from dags import with_signature
 from jax import Array
 
+from _lcm.current_iid import CurrentIIDDrawOutput, CurrentIIDMaxOutput, CurrentIIDPlan
 from _lcm.execution.placement import ACTION_PARTITION_AXIS
 from _lcm.logsum import EULER_GAMMA, logsum_and_softmax
 from _lcm.regime_building.argmax import argmax_and_max
@@ -62,10 +63,12 @@ from lcm.typing import BoolND, FloatND, IntND, ReferenceName, ScalarFloat
 # Flat param name of the EV1 taste-shock scale (template pseudo-function entry).
 TASTE_SHOCK_SCALE_PARAM = "taste_shocks__scale"
 
-type MaxOutput = FloatND | tuple[FloatND, BoolND]
+type MaxOutput = FloatND | tuple[FloatND, BoolND] | CurrentIIDMaxOutput
 type BoundedMaxOutput = MaxOutput | BoundedResult[MaxOutput]
 type ArgmaxOutput = tuple[IntND, FloatND]
-type BoundedArgmaxOutput = ArgmaxOutput | BoundedResult[ArgmaxOutput]
+type BoundedArgmaxOutput = (
+    ArgmaxOutput | BoundedResult[ArgmaxOutput] | CurrentIIDDrawOutput
+)
 type ActionFunction = Callable[
     ..., tuple[FloatND, BoolND] | BoundedResult[BoundedActionOutput]
 ]
@@ -104,6 +107,7 @@ def _evaluate_pareto_weights(
 
 def get_max_Q_over_a(
     *,
+    current_iid_plan: CurrentIIDPlan | None = None,
     Q_and_F: RawActionFunction,
     batch_sizes: dict[StateName, int],
     action_names: tuple[ActionName, ...],
@@ -283,6 +287,9 @@ def get_max_Q_over_a(
             enforce=False,
         )
 
+    if current_iid_plan is not None:
+        max_Q_over_a = current_iid_plan.wrap(max_Q_over_a)
+
     inner_state_names = tuple(
         name for name in state_names if name not in co_map_state_names
     )
@@ -399,7 +406,9 @@ class _SmoothedMaxQOverA:
         output: MaxOutput = (
             (smoothed, ~jnp.any(F_arr)) if self.return_feasibility else smoothed
         )
-        return _with_bound_summary(evaluated=evaluated, output=output)
+        return _with_bound_summary(
+            evaluated=evaluated, output=cast("MaxOutput", output)
+        )
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -478,11 +487,14 @@ class _HardMaxQOverA:
             )
         value = Q_arr.max(where=F_arr, initial=-jnp.inf)
         output = (value, ~jnp.any(F_arr)) if self.return_feasibility else value
-        return _with_bound_summary(evaluated=evaluated, output=output)
+        return _with_bound_summary(
+            evaluated=evaluated, output=cast("MaxOutput", output)
+        )
 
 
 def get_streaming_max_Q_over_a(
     *,
+    current_iid_plan: CurrentIIDPlan | None = None,
     Q_and_F: RawActionFunction,
     batch_sizes: dict[StateName, int],
     action_names: tuple[ActionName, ...],
@@ -589,6 +601,9 @@ def get_streaming_max_Q_over_a(
         ),
         enforce=False,
     )
+
+    if current_iid_plan is not None:
+        streamed_max_Q_over_a = current_iid_plan.wrap(streamed_max_Q_over_a)
 
     inner_state_names = tuple(
         name for name in state_names if name not in co_map_state_names
@@ -1290,7 +1305,7 @@ class _FoldedMaxQOverA:
             V_arr = self.fold_reducers[name](a=V_arr, axis=axis, weights=weights)
         return _with_bound_summary(
             evaluated=out,
-            output=V_arr if empty is None else (V_arr, empty),
+            output=cast("MaxOutput", V_arr if empty is None else (V_arr, empty)),
         )
 
 

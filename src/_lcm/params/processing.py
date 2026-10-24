@@ -564,8 +564,12 @@ def find_param_candidates(
     return tuple(candidates)
 
 
-def create_params_template(
+def create_params_template(  # noqa: C901, PLR0912 - validate ordinary and exit namespaces
+    *,
     regimes: MappingProxyType[RegimeName, Regime],
+    query_periods_by_phase: Mapping[
+        str, Mapping[RegimeName, tuple[int, ...]]
+    ] = MappingProxyType({}),
 ) -> ParamsTemplate:
     """Create params_template from internal regimes and validate name uniqueness.
 
@@ -578,6 +582,8 @@ def create_params_template(
     Args:
         regimes: Immutable mapping of regime names to Regime
             instances.
+        query_periods_by_phase: Actual solve and simulation query demand, distinct
+            from stored Full value periods and unused canonical kernels.
 
     Returns:
         The parameter template.
@@ -598,9 +604,12 @@ def create_params_template(
     arg_names = _edge_arg_names(regimes)
 
     for name, regime in regimes.items():
-        # A regime no required problem solves reads no parameter.
+        # Query-only canonical contexts read parameters without publishing Full.
         regime_template = (
-            dict(regime.regime_params_template) if regime.active_periods else {}
+            dict(regime.regime_params_template)
+            if regime.active_periods
+            or any(periods.get(name) for periods in query_periods_by_phase.values())
+            else {}
         )
         template[name] = regime_template
 
@@ -610,7 +619,14 @@ def create_params_template(
                     f"Parameter {key!r} in regime {name!r} must be nested under "
                     f"a function name, e.g., {{'function_name': {{'{key}': type}}}}"
                 )
-            if key in regime_names:
+            if key == "exits":
+                for path in _leaf_paths(val):
+                    if errors := path_segment_name_errors(
+                        kind="Exit parameter", names=path
+                    ):
+                        raise InvalidNameError(errors[0])
+                    arg_names |= frozenset((path[-1],))
+            elif key in regime_names:
                 # A target branch: per-target transition params nested under
                 # the target regime's name.
                 for func_key, func_val in val.items():

@@ -67,6 +67,13 @@ def unit_value_reads(
     reads = list(
         decision_reads(regime=regime, period=period, policy=policy, reader=reader)
     )
+    for family in (
+        regime.simulation.programs.exit_full,
+        regime.simulation.programs.exit_participating,
+        *regime.simulation.programs.arrival_families,
+    ):
+        if period in family:
+            reads.extend(family[period].requirements.value_reads)
     reads.extend(
         gate_reads(regime=regime, name=name, period=period, values=values, flags=flags)
     )

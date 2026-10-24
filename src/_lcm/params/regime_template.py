@@ -11,6 +11,7 @@ declaration holds — its regime-transition law, gates, gate references and rout
 fallbacks — and returns that source's branch of `params["edges"]`.
 """
 
+import inspect
 from collections.abc import Iterator, Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
@@ -20,6 +21,7 @@ from typing import Literal, cast
 import dags.tree as dt
 from dags.tree import qname_from_tree_path, tree_path_from_qname
 
+from _lcm.exits import ExitFunctionPath, exit_functions, rule_operands
 from _lcm.grids import DiscreteGrid, IrregSpacedGrid
 from _lcm.params.edges import (
     EDGES,
@@ -49,6 +51,7 @@ from _lcm.typing import (
 )
 from _lcm.utils.error_messages import path_segment_name_errors
 from _lcm.utils.functools import get_union_of_args, is_user_function
+from lcm.arrivals import ArrivalDecision
 from lcm.collective import Gate
 from lcm.decoupled import (
     koopmans_aggregator_variants,
@@ -85,12 +88,15 @@ type _CallableSlot = StateTransitionEntry | DecomposedTransition
 type _LawNode = TransitionLaw | TargetLawCell | None
 
 
-def create_regime_params_template(
+def create_regime_params_template(  # noqa: C901 - classify ordinary and law-only roots
     *,
     user_regime: UserRegime,
     law: RegimeLaw,
     other_regime_state_names: frozenset[StateName] = frozenset(),
     declared_variables: frozenset[ReferenceName] = frozenset(),
+    current_iid_helpers: frozenset[FunctionName] = frozenset(),
+    exit_function_paths: Mapping[Phase, frozenset[ExitFunctionPath]] | None = None,
+    exit_helper_roots: Mapping[Phase, tuple[UserFunction, ...]] | None = None,
 ) -> RegimeParamsTemplate:
     """Create parameter template from a regime specification.
 
@@ -162,6 +168,27 @@ def create_regime_params_template(
     # parameter would answer a next-period question with a constant the user
     # supplies. That is rejected rather than classified.
     template_functions = _collect_all_functions_for_template(user_regime, law=law)
+    excluded_exit_helpers = _undemanded_exit_helpers(
+        user_regime=user_regime,
+        template_functions=template_functions,
+        exit_function_paths=exit_function_paths,
+        current_iid_helpers=current_iid_helpers,
+        ordinary_roots=exit_helper_roots,
+    )
+    shared_helpers = set(user_regime.output_only_functions) & current_iid_helpers
+    for phase in ("solve", "simulate"):
+        functions = user_regime.get_all_functions(phase=phase, law=law)
+        pending = [
+            func for name, func in functions.items() if name not in current_iid_helpers
+        ]
+        while pending:
+            function = pending.pop()
+            for name in inspect.signature(function).parameters:
+                if name in current_iid_helpers and name not in shared_helpers:
+                    shared_helpers.add(name)
+                    if name in functions:
+                        pending.append(functions[name])
+    law_only_helpers = current_iid_helpers - shared_helpers
     _fail_if_a_next_name_is_read_outside_a_transition(
         user_regime, template_functions=template_functions
     )
@@ -203,7 +230,14 @@ def create_regime_params_template(
     )
 
     for name, func in template_functions.items():
+        if name in excluded_exit_helpers:
+            continue
         if name in edge_entry_names:
+            continue
+        if name in law_only_helpers:
+            # Keep the ordinary function-pool entry with an empty namespace;
+            # its arguments are bound exclusively by the current-law closure.
+            function_params[name] = {}
             continue
         # State and action names appearing in a function's signature are
         # exempt from param-template extraction: pylcm wires those values
@@ -288,6 +322,15 @@ def create_regime_params_template(
             f"state, or action in the regime. Rename one of the two."
         )
 
+    per_target_params.update(
+        _exit_params_template(
+            user_regime=user_regime,
+            variables=variables,
+            reserved=frozenset(function_params) | frozenset(per_target_params),
+            demanded_paths=exit_function_paths,
+        )
+    )
+
     return MappingProxyType(
         {
             **{k: MappingProxyType(v) for k, v in function_params.items()},
@@ -299,6 +342,110 @@ def create_regime_params_template(
             },
         }
     )
+
+
+def _undemanded_exit_helpers(
+    *,
+    user_regime: UserRegime,
+    template_functions: Mapping[FunctionName, UserFunction | Phased],
+    exit_function_paths: Mapping[Phase, frozenset[ExitFunctionPath]] | None,
+    current_iid_helpers: frozenset[FunctionName],
+    ordinary_roots: Mapping[Phase, tuple[UserFunction, ...]] | None,
+) -> frozenset[FunctionName]:
+    """Drop slots exclusive to ignored callbacks, preserving independent readers."""
+    if not user_regime.exits or exit_function_paths is None or ordinary_roots is None:
+        return frozenset()
+    from _lcm.regime_building.broadcast import (  # noqa: PLC0415 - shared solver root vocabulary
+        engine_function_names,
+    )
+
+    ignored = set()
+    required = set()
+    protected = (set(template_functions) - user_regime.decomposed_functions.keys()) | {
+        "utility",
+        *(f"utility_{member}" for member in user_regime.stakeholders or ()),
+        *user_regime.output_only_functions,
+        *user_regime.derived_categoricals,
+        *current_iid_helpers,
+        *engine_function_names(user_regime),
+    }
+    for phase in ("solve", "simulate"):
+        pool = {}
+        for name, value in template_functions.items():
+            function = getattr(value, phase) if isinstance(value, Phased) else value
+            if callable(function):
+                pool[name] = cast("UserFunction", function)
+
+        def reads(
+            *,
+            functions: Sequence[UserFunction],
+            pool: Mapping[FunctionName, UserFunction] = pool,
+        ) -> set[FunctionName]:
+            pending = list(functions)
+            found = set()
+            while pending:
+                for name in inspect.signature(pending.pop()).parameters:
+                    if name in pool and name not in found:
+                        found.add(name)
+                        pending.append(pool[name])
+            return found
+
+        callbacks = exit_functions(exits=user_regime.exits, phase=phase)
+        demanded = exit_function_paths.get(phase, frozenset())
+        local_ignored = reads(
+            functions=[
+                function for path, function in callbacks.items() if path not in demanded
+            ]
+        )
+        roots = [
+            function
+            for name, function in pool.items()
+            if name not in local_ignored or name in protected
+        ]
+        roots.extend(
+            function for path, function in callbacks.items() if path in demanded
+        )
+        roots.extend(ordinary_roots.get(phase, ()))
+        ignored.update(local_ignored)
+        required.update(reads(functions=roots))
+        required.update(protected)
+    return frozenset(ignored - required)
+
+
+def _exit_params_template(
+    *,
+    user_regime: UserRegime,
+    variables: frozenset[ReferenceName],
+    reserved: frozenset[str],
+    demanded_paths: Mapping[Phase, frozenset[ExitFunctionPath]] | None,
+) -> dict[str, dict[str, _TemplateBranch]]:
+    """Union both settlement phases under each declaration's exact public path."""
+    if not user_regime.exits:
+        return {}
+    if "exits" in reserved:
+        raise InvalidNameError("Exit parameters conflict with the regime name 'exits'.")
+    exit_params: dict[str, _TemplateBranch] = {}
+    for phase in ("solve", "simulate"):
+        functions = exit_functions(exits=user_regime.exits, phase=phase)
+        for path, function in functions.items():
+            if demanded_paths is not None and path not in demanded_paths.get(
+                phase, frozenset()
+            ):
+                continue
+            params = _discovered_params(
+                name=qname_from_tree_path(path),
+                func=function,
+                non_params=variables
+                | rule_operands(stakeholders=user_regime.stakeholders)
+                if path[-1] == "rule"
+                else variables,
+                strip_target_value_operands=False,
+            )
+            branch = exit_params.setdefault(path[1], {})
+            for segment in path[2:]:
+                branch = cast("_TemplateBranch", branch.setdefault(segment, {}))
+            branch.update(params)
+    return {} if not exit_params else {"exits": exit_params}
 
 
 @dataclass(frozen=True)
@@ -445,11 +592,24 @@ def create_edge_params_template(
     law_params_by_path: list[tuple[tuple[str, ...], Mapping[ParameterName, str]]] = []
     for transition in declared_transitions:
         for path, func, gate in iter_transition_callables(transition):
+            if isinstance(gate, ArrivalDecision):
+                # Landed callbacks have no transition-local outputs. Other names
+                # are edge parameters, so do not walk same-named regime helpers.
+                _fail_if_a_next_name_is_read(
+                    consumer_name=qname_from_tree_path((EDGES, source, *path)),
+                    reserved=_next_names_reachable_from(
+                        func=func, functions={}, phase="solve"
+                    ),
+                )
             non_params = (
                 variables
                 if gate is None
                 else _gated_edge_wired_names(
-                    gate_reference_names=frozenset(gate.references),
+                    gate_reference_names=frozenset(
+                        gate.reads
+                        if isinstance(gate, ArrivalDecision)
+                        else gate.references
+                    ),
                     target_state_names=(
                         vocabulary_by_regime[path[0]].states
                         if path[0] in vocabulary_by_regime
@@ -461,7 +621,7 @@ def create_edge_params_template(
                 name="edge",
                 func=func,
                 non_params=non_params,
-                strip_target_value_operands=gate is not None,
+                strip_target_value_operands=isinstance(gate, Gate),
                 kind=(
                     "Edge-callable (at "
                     f"{user_path(path=(EDGES, source, *path))}) argument"
@@ -517,7 +677,7 @@ def iter_transition_callables(
     transition: Transition,
     *,
     phase: Phase | None = None,
-) -> Iterator[tuple[tuple[str, ...], UserFunction, Gate | None]]:
+) -> Iterator[tuple[tuple[str, ...], UserFunction, Gate | ArrivalDecision | None]]:
     """Yield every callable a `Transition` holds, at its declaration path.
 
     Args:
@@ -531,8 +691,13 @@ def iter_transition_callables(
 
     """
     yield from iter_edge_callables(law=transition.law, path=(), phase=phase)
-    for target_regime_name, gate in transition.gates.items():
-        yield from _gate_callables(gate=gate, path=(target_regime_name,), phase=phase)
+    for target_regime_name, decision in {
+        **transition.gates,
+        **transition.arrivals,
+    }.items():
+        yield from _route_decision_callables(
+            decision=decision, path=(target_regime_name,), phase=phase
+        )
 
 
 def iter_edge_callables(
@@ -583,15 +748,21 @@ def iter_edge_callables(
         raise TypeError(msg)
 
 
-def _gate_callables(
-    *, gate: Gate, path: tuple[str, ...], phase: Phase | None = None
-) -> Iterator[tuple[tuple[str, ...], UserFunction, Gate | None]]:
-    """Yield a gate's callables at their declaration paths below its target."""
-    yield (*path, PREDICATE), gate.predicate, gate
-    for ref_name, ref in gate.references.items():
+def _route_decision_callables(
+    *,
+    decision: Gate | ArrivalDecision,
+    path: tuple[str, ...],
+    phase: Phase | None = None,
+) -> Iterator[tuple[tuple[str, ...], UserFunction, Gate | ArrivalDecision | None]]:
+    """Yield landed-domain callbacks at their own edge-parameter paths."""
+    yield (*path, PREDICATE), decision.predicate, decision
+    references = (
+        decision.reads if isinstance(decision, ArrivalDecision) else decision.references
+    )
+    for ref_name, ref in references.items():
         for state_name, projection in ref.projection.items():
-            yield (*path, REFERENCES, ref_name, state_name), projection, gate
-    for route_name, route in gate.routes.items():
+            yield (*path, REFERENCES, ref_name, state_name), projection, decision
+    for route_name, route in decision.routes.items():
         for fallback_phase, ref in _fallbacks_by_phase(
             solve=route.solve_fallback,
             simulate=route.simulate_fallback,
@@ -607,7 +778,7 @@ def _gate_callables(
                 *(() if fallback_phase is None else (fallback_phase,)),
             )
             for state_name, projection in ref.projection.items():
-                yield (*prefix, state_name), projection, gate
+                yield (*prefix, state_name), projection, decision
 
 
 def _insert_edge_slot(

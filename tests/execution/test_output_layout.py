@@ -173,7 +173,8 @@ def test_terminal_carry_decorator_rejects_unaware_base():
     [DISSOLUTION_FLAG, (VALUE, VALUE), (DISSOLUTION_FLAG, VALUE)],
 )
 def test_resolver_rejects_malformed_role_trees(roles):
-    with pytest.raises(ValueError, match="exactly one VALUE"):
+    match = "explicit" if roles is DISSOLUTION_FLAG else "exactly one VALUE"
+    with pytest.raises(ValueError, match=match):
         resolve_output_layout(
             core_key="main",
             value_template=_template(collective=True),
@@ -548,7 +549,8 @@ def test_lowered_leaf_metadata_mismatch_names_the_offending_leaf():
     ],
 )
 def test_resolver_requires_exactly_one_value_leaf_in_the_first_position(roles):
-    with pytest.raises(ValueError, match="exactly one VALUE"):
+    match = "explicit" if isinstance(roles, StateAxesLeading) else "exactly one VALUE"
+    with pytest.raises(ValueError, match=match):
         resolve_output_layout(
             core_key="main",
             value_template=_template(),

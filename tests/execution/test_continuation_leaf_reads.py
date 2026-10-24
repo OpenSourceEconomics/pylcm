@@ -15,6 +15,11 @@ import numpy as np
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
+from _lcm.arrival_continuation import (
+    ARRIVAL_CONTINUATION,
+    ArrivalContinuation,
+    ArrivalContinuationSpec,
+)
 from _lcm.egm.carry import build_template_egm_carry
 from _lcm.execution.core_program import (
     CoreBuildContext,
@@ -30,6 +35,7 @@ from _lcm.execution.core_program import (
     materialize_core_program,
     resolve_core_program,
 )
+from _lcm.execution.liveness import PlannedInputLiveness
 from _lcm.execution.output_layout import VALUE
 from _lcm.execution.value_transfer import (
     ResolvedValueTransfer,
@@ -39,17 +45,268 @@ from _lcm.execution.value_transfer import (
     ValueInputChannel,
     ValueTransferKind,
 )
+from _lcm.simulation.arrival_values import _original_value
 from _lcm.solution.backward_induction import (
     _classify_dispatch_value_artifacts,
     _ProgramExecutionMetadata,
 )
+from _lcm.solution.continuation_reads import continuation_leaf_reads
+from _lcm.solution.solve_inputs import (
+    SolveInputMappings,
+    locate_artifact,
+    substitute_artifact,
+)
+from _lcm.solution.undeclared_reads import _continuation_leaf_pins
 from _lcm.typing import PytreeValue
+from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import EGM_CONTINUATION
 from lcm.solvers import EGM
 from lcm.typing import RegimeName
 from tests.conftest import DECIMAL_PRECISION
 from tests.solution.test_egm_solver import _SAVINGS_GRID, _model
 from tests.test_models.dcegm_paper_twin import build_dcegm_model
+
+
+@pytest.mark.parametrize("defect", ["kind", "date", "path", "origin"])
+def test_arrival_replay_refuses_an_unqualified_original(*, defect: str) -> None:
+    """Absolute replay reads retain kind, date, leaf and model-origin authority."""
+    alias = ValueArtifactAddress(
+        kind=ValueArtifactKind.CONTINUATION_LEAF,
+        period=4,
+        regime="retired",
+        artifact_key=ARRIVAL_CONTINUATION,
+        leaf_path=("operands", "future_value"),
+    )
+    if defect == "origin":
+        with pytest.raises(ExecutionPlanningError, match=r"undeclared.*origin"):
+            _original_value(address=alias, aliases={})
+        return
+    if defect == "path":
+        with pytest.raises(ValueError, match=r"explicit argument.*qualified leaf path"):
+            ValueConsumerAddress(
+                source_period=3,
+                source_regime="working",
+                core_key="arrival",
+                channel=ValueInputChannel.ARRIVAL_REPLAY_VALUE,
+                argument="query_arguments",
+                path=(),
+            )
+        return
+    sharding = _replicated_sharding()
+    with pytest.raises(
+        ValueError,
+        match="only original regime values"
+        if defect == "kind"
+        else "later than next period",
+    ):
+        ResolvedValueTransfer(
+            target=alias
+            if defect == "kind"
+            else ValueArtifactAddress(
+                kind=ValueArtifactKind.REGIME_VALUE,
+                period=4,
+                regime="retired",
+            ),
+            source=ValueConsumerAddress(
+                source_period=3,
+                source_regime="working",
+                core_key="arrival",
+                channel=ValueInputChannel.ARRIVAL_REPLAY_VALUE,
+                argument="query_arguments",
+                path=("query_1", "V_arr"),
+            ),
+            kind=ValueTransferKind.ALIGNED_LOCAL,
+            stored_sharding=sharding,
+            source_sharding=sharding,
+            expected_shape=(5,),
+            expected_dtype=jnp.float32,
+        )
+
+
+def test_arrival_continuation_read_keeps_the_transported_array_identity() -> None:
+    """A predecessor reads the actual later-value array through dated custody."""
+    future_value = jnp.asarray([3.0, 7.0])
+    payload = ArrivalContinuation(
+        regime="retired",
+        period=4,
+        schema="retired:Participating:next-value-period-5",
+        operands={"future_value": future_value},
+    )
+    (read,) = continuation_leaf_reads(
+        template=payload,
+        artifact_key=ARRIVAL_CONTINUATION,
+        target="retired",
+        source_regime="working",
+        source_period=3,
+        core_key="main",
+    )
+    program = _materialize(
+        reads=(read,), arguments={"next_regime_to_continuation": {"retired": payload}}
+    )
+    assert read.target.period == 4
+    assert read.target.artifact_key == ARRIVAL_CONTINUATION
+    assert read.target.leaf_path == ("operands", "future_value")
+    assert _value_read_argument_leaf(program=program, read=read) is future_value
+    assert payload.leaves()[read.target.leaf_path] is future_value
+
+
+def test_arrival_continuation_snapshots_paths_without_copying_aliased_arrays() -> None:
+    """Distinct declared operands sharing one buffer retain that same buffer."""
+    value = jnp.asarray([1.0, 2.0])
+    operands = {"first": value, "second": value}
+    payload = ArrivalContinuation(
+        regime="retired", period=4, schema="shared-law", operands=operands
+    )
+    operands["first"] = jnp.zeros_like(value)
+    assert payload.operands["first"] is value
+    assert payload.operands["second"] is value
+    leaves, structure = jax.tree.flatten(payload)
+    rebuilt = jax.tree.unflatten(structure, leaves)
+    assert rebuilt.operands["first"] is value
+    assert rebuilt.period == 4
+
+
+def test_arrival_continuation_is_a_numeric_pytree_under_native_transforms() -> None:
+    """Compilation preserves producer identity while consuming dynamic leaves."""
+    payload = ArrivalContinuation(
+        regime="retired",
+        period=4,
+        schema="participating-action-problem",
+        operands={"future_value": jnp.asarray([3.0, 7.0])},
+    )
+    result = jax.jit(lambda item: item.operands["future_value"] + 1.0)(payload)
+    np.testing.assert_array_equal(result, [4.0, 8.0])
+
+
+def test_dated_continuation_release_uses_its_actual_producer_schema() -> None:
+    """A terminal payload releases to its own placeholder, not an earlier schema."""
+    representative = ArrivalContinuation(
+        regime="retired",
+        period=3,
+        schema="nonterminal",
+        operands={"future_value": jnp.asarray([3.0, 7.0])},
+    )
+    terminal_template = ArrivalContinuation(
+        regime="retired",
+        period=4,
+        schema="terminal",
+        operands={"utility_parameter": jnp.asarray(0.0)},
+    )
+    terminal = ArrivalContinuation(
+        regime="retired",
+        period=4,
+        schema="terminal",
+        operands={"utility_parameter": jnp.asarray(2.0)},
+    )
+    templates = SolveInputMappings(
+        next_regime_to_V_arr=MappingProxyType({}),
+        next_regime_to_continuation=MappingProxyType({"retired": representative}),
+        next_edge_to_V_arr=MappingProxyType({}),
+        continuation_templates_by_period=MappingProxyType(
+            {"retired": MappingProxyType({3: representative, 4: terminal_template})}
+        ),
+    )
+    inputs = SolveInputMappings(
+        next_regime_to_V_arr=MappingProxyType({}),
+        next_regime_to_continuation=MappingProxyType({"retired": terminal}),
+        next_edge_to_V_arr=MappingProxyType({}),
+    )
+    artifact = ValueArtifactAddress(
+        kind=ValueArtifactKind.CONTINUATION_LEAF,
+        period=4,
+        regime="retired",
+        artifact_key=ARRIVAL_CONTINUATION,
+        leaf_path=("operands", "utility_parameter"),
+    )
+    assert (
+        locate_artifact(inputs=templates, artifact=artifact)
+        is (terminal_template.operands["utility_parameter"])
+    )
+    replaced = substitute_artifact(
+        inputs=inputs, templates=templates, artifact=artifact
+    )
+    assert (
+        locate_artifact(inputs=replaced, artifact=artifact)
+        is (terminal_template.operands["utility_parameter"])
+    )
+    wrong_date = ValueArtifactAddress(
+        kind=ValueArtifactKind.CONTINUATION_LEAF,
+        period=5,
+        regime="retired",
+        artifact_key=ARRIVAL_CONTINUATION,
+        leaf_path=("operands", "future_value"),
+    )
+    assert locate_artifact(inputs=templates, artifact=wrong_date) is None
+    wrong_object = ValueArtifactAddress(
+        kind=ValueArtifactKind.CONTINUATION_LEAF,
+        period=4,
+        regime="retired",
+        artifact_key=EGM_CONTINUATION,
+        leaf_path=("operands", "utility_parameter"),
+    )
+    assert locate_artifact(inputs=templates, artifact=wrong_object) is None
+
+
+def test_transport_keeps_a_later_value_alive_until_the_predecessor_finishes() -> None:
+    """Failed source consumption cannot close the transported origin's lifetime."""
+    template = ArrivalContinuation(
+        regime="retired",
+        period=4,
+        schema="Participating:next-value-period-5",
+        operands={"future_value": jnp.zeros(2)},
+    )
+    origin = ValueArtifactAddress(
+        kind=ValueArtifactKind.REGIME_VALUE, period=5, regime="retired"
+    )
+    spec = ArrivalContinuationSpec(
+        template=template,
+        artifact_key=ARRIVAL_CONTINUATION,
+        templates_by_period={4: template},
+        origins_by_period={4: {"future_value": origin}},
+    )
+    aliases = spec.stored_value_aliases()
+    (arrival,) = aliases
+    ledger = PlannedInputLiveness(
+        dispatch_accesses={(4, "producer"): (origin,), (3, "source"): (arrival,)},
+        aliases=aliases,
+    )
+    ledger.commit_successful_dispatch(dispatch=(4, "producer"))
+    assert not ledger.is_release_eligible(artifact=origin)
+    assert ledger.remaining_consumers(artifact=arrival) == 1
+    assert (3, "source") in ledger.pending_dispatches
+    ledger.commit_successful_dispatch(dispatch=(3, "source"))
+    assert ledger.is_release_eligible(artifact=origin)
+    assert ledger.is_release_eligible(artifact=arrival)
+    ledger.assert_solve_complete()
+
+
+@pytest.mark.parametrize("every_leaf", [False, True])
+def test_ordinary_value_inventory_does_not_demand_an_unpublished_arrival_date(
+    *, every_leaf: bool
+) -> None:
+    """A V-only predecessor does not manufacture a sparse payload publication."""
+    template = ArrivalContinuation(
+        regime="retired",
+        period=4,
+        schema="arrival-at-4-only",
+        operands={"future_value": jnp.zeros(2)},
+    )
+    spec = ArrivalContinuationSpec(
+        template=template,
+        artifact_key=ARRIVAL_CONTINUATION,
+        templates_by_period={4: template},
+    )
+    assert (
+        _continuation_leaf_pins(
+            continuation_specs={"retired": spec},
+            target_name="retired",
+            period=3,
+            every_leaf=every_leaf,
+        )
+        == ()
+    )
+    with pytest.raises(ValueError, match="at period 3"):
+        spec.template_at(period=3)
 
 
 @dataclass(frozen=True, kw_only=True)

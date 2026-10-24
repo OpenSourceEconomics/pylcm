@@ -26276,6 +26276,7 @@ packages:
   - orbax-checkpoint>=0.11
   - pandas
   - pyarrow
+  - scipy>=1.16
   - xarray>=2026.1
   requires_python: '>=3.14'
 - pypi: git+https://github.com/OpenSourceEconomics/aca-model.git?rev=bfcbbc3fc2be736a7ff2e976f12e14a70e60001d#bfcbbc3fc2be736a7ff2e976f12e14a70e60001d

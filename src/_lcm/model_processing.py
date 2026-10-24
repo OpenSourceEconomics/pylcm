@@ -138,7 +138,10 @@ def build_regimes_and_template(
             prepared_structure=prepared_structure,
             execution=execution,
         )
-        params_template = create_params_template(regimes)
+        params_template = create_params_template(
+            regimes=regimes,
+            query_periods_by_phase=prepared_structure.query_periods_by_phase,
+        )
     else:
         regimes, params_template = _build_regimes_and_template_with_fixed_params(
             ages=ages,
@@ -202,7 +205,10 @@ def _build_regimes_and_template_with_fixed_params(
         prepared_structure=prepared_structure,
         execution=execution,
     )
-    raw_params_template = create_params_template(raw_regimes)
+    raw_params_template = create_params_template(
+        regimes=raw_regimes,
+        query_periods_by_phase=prepared_structure.query_periods_by_phase,
+    )
 
     fixed_flat_params = _resolve_fixed_params(
         fixed_params=dict(fixed_params),
@@ -219,6 +225,7 @@ def _build_regimes_and_template_with_fixed_params(
         phase_transitions=phase_transitions,
         declared_vocabulary=prepared_structure.declared_edge_vocabulary,
         reachability=prepared_structure.reachability,
+        query_periods_by_phase=prepared_structure.query_periods_by_phase,
         required_periods_by_regime={
             name: tuple(
                 sorted(
@@ -350,6 +357,12 @@ def _validate_callable_borrowing_solver(
 
 def validate_model_inputs(
     *,
+    current_iid_helpers: Mapping[
+        RegimeName, frozenset[FunctionName]
+    ] = MappingProxyType({}),
+    current_iid_state_inputs: Mapping[
+        RegimeName, frozenset[StateName]
+    ] = MappingProxyType({}),
     user_regimes: Mapping[RegimeName, UserRegime],
     laws: RegimeLaws,
     regime_id_class: type[DataclassInstance],
@@ -437,6 +450,7 @@ def validate_model_inputs(
         )
 
     _validate_function_usage(
+        current_iid_helpers=current_iid_helpers,
         user_regimes=solver_validation_regimes,
         declared_regimes=declared_function_regimes or solver_validation_regimes,
         generated_function_names=generated_function_names,
@@ -475,6 +489,7 @@ def validate_model_inputs(
         )
     error_messages.extend(
         _validate_all_variables_used(
+            current_iid_state_inputs=current_iid_state_inputs,
             user_regimes=user_regimes,
             laws=laws,
             broadcast_variables=broadcast_variables,
@@ -511,6 +526,7 @@ def validate_model_inputs(
 
 def _validate_function_usage(
     *,
+    current_iid_helpers: Mapping[RegimeName, frozenset[FunctionName]],
     user_regimes: Mapping[RegimeName, UserRegime],
     declared_regimes: Mapping[RegimeName, UserRegime],
     generated_function_names: Mapping[RegimeName, frozenset[FunctionName]],
@@ -542,6 +558,7 @@ def _validate_function_usage(
             functions={**regime.functions, **declared.functions},
         )
         direct = reads[name]
+        direct.update(current_iid_helpers.get(name, frozenset()))
         direct.update(engine_function_names(regime))
         direct.update(regime.decomposed_constraints)
         direct.update(regime.value_constraints)
@@ -730,6 +747,9 @@ def _model_wide_conditioning_names(
 
 def _validate_all_variables_used(
     *,
+    current_iid_state_inputs: Mapping[
+        RegimeName, frozenset[StateName]
+    ] = MappingProxyType({}),
     user_regimes: Mapping[RegimeName, UserRegime],
     laws: RegimeLaws,
     broadcast_variables: Mapping[RegimeName, frozenset[str]],
@@ -887,6 +907,9 @@ def _validate_all_variables_used(
         # own `on` state — so a conditioner is credited to every regime that carries it,
         # not only the process's own regime.
         reachable = set(reachable) | (conditioning_names & variable_names)
+        reachable |= (
+            current_iid_state_inputs.get(regime_name, frozenset()) & variable_names
+        )
         # A process state has no `next_<state>` function node, so a computation
         # that reads its next-period draw ends the walk at a leaf. The draw is
         # taken from the state, so reading it is a use of the state.
@@ -1291,8 +1314,30 @@ def _partial_fixed_params_into_regimes(
             regime_kernel_params(fixed_flat_params, regime_name=target_name)
             for target_name in regime.solution.transitions
         )
+        # A typed same-period query can read a fixed target outside the
+        # source's scheduled transition graph. Each kernel owns that closure.
+        bound_kernels = MappingProxyType(
+            {
+                period: kernel.with_fixed_params(fixed_flat_params=fixed_flat_params)
+                for period, kernel in regime.solution.period_kernels.items()
+            }
+        )
+        bound_exit_queries = MappingProxyType(
+            {
+                period: plan.with_fixed_params(fixed_flat_params=fixed_flat_params)
+                for period, plan in regime.simulation.exit_queries.items()
+            }
+        )
         if not reachable_fixed:
-            result[regime_name] = regime
+            result[regime_name] = dataclasses.replace(
+                regime,
+                solution=dataclasses.replace(
+                    regime.solution, period_kernels=bound_kernels
+                ),
+                simulation=dataclasses.replace(
+                    regime.simulation, exit_queries=bound_exit_queries
+                ),
+            )
             continue
 
         # Build new solution phase with partialled functions. The resolved
@@ -1311,14 +1356,7 @@ def _partial_fixed_params_into_regimes(
         new_solve = dataclasses.replace(
             solution,
             resolved_fixed_params=MappingProxyType(regime_fixed),
-            period_kernels=MappingProxyType(
-                {
-                    period: kernel.with_fixed_params(
-                        fixed_flat_params=fixed_flat_params
-                    )
-                    for period, kernel in solution.period_kernels.items()
-                }
-            ),
+            period_kernels=bound_kernels,
             compute_regime_transition_probs=(
                 functools.partial(
                     solution.compute_regime_transition_probs,
@@ -1347,6 +1385,7 @@ def _partial_fixed_params_into_regimes(
         simulation = regime.simulation
         new_simulate = dataclasses.replace(
             simulation,
+            exit_queries=bound_exit_queries,
             programs=dataclasses.replace(
                 simulation.programs,
                 **{

@@ -22,6 +22,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from _lcm.engine import Regime
+from _lcm.execution.core_program import core_program_graph
 from _lcm.params.edges import EDGES, flat_namespaces
 from _lcm.simulation.entry_inputs import SimulationEntryInputs, SolutionResultBoundary
 from _lcm.simulation.host_operations import ProfiledSimulationOperations
@@ -93,6 +94,11 @@ class SimulationEntryAllocations:
     process_grid_resolver: SimulationProcessGrids = dataclasses.field(init=False)
     """Call-owned runtime support admitted before any authority or solve reads it."""
 
+    solve_parameter_views: Mapping[RegimeName, FlatParams] = dataclasses.field(
+        default_factory=lambda: MappingProxyType({}), init=False
+    )
+    """Call-owned root-consumer params shared by query lowering and dispatch."""
+
     def __post_init__(self) -> None:
         """Bind grid admission to the complete entry ownership inventory."""
         self.process_grid_resolver = SimulationProcessGrids(
@@ -155,10 +161,35 @@ class SimulationEntryAllocations:
         # A source's edge slots are read by the source's kernels, so they go
         # where the source runs.
         for path, parameters in flat_namespaces(flat_params):
-            phase = regimes[path[-1]].solution
-            devices = phase.placed_devices()
-            if not phase.sharded_state_names:
-                devices = devices[:1]
+            phases = (
+                (regimes[path[-1]].solution,)
+                if path[-1] in regimes
+                else tuple(
+                    regime.solution
+                    for regime in regimes.values()
+                    if any(
+                        name == path[-1]
+                        for plan in regime.solution.current_iid_plans.values()
+                        if plan is not None
+                        for name, _, _ in plan.bindings
+                    )
+                )
+            )
+            devices = tuple(
+                dict.fromkeys(
+                    device
+                    for phase in phases
+                    for device in (
+                        phase.placed_devices()
+                        if phase.sharded_state_names
+                        else phase.placed_devices()[:1]
+                    )
+                )
+            )
+            if not devices:
+                raise RuntimeError(
+                    f"Solve parameter root {path!r} has no declared consumer."
+                )
             live = self.snapshot()
             arguments = place_simulation_arguments(
                 arguments={"solve_params": parameters},
@@ -177,7 +208,68 @@ class SimulationEntryAllocations:
                 placed_edges[path[-1]] = on_devices
             else:
                 placed[path[0]] = on_devices
-        return MappingProxyType(placed)
+        flat = MappingProxyType(placed)
+        self._place_query_solve_parameters(flat_params=flat, regimes=regimes)
+        return flat
+
+    def _place_query_solve_parameters(
+        self, *, flat_params: FlatParams, regimes: Mapping[RegimeName, Regime]
+    ) -> None:
+        """Admit only actual query consumers' copies, retaining every source."""
+        from _lcm.policy_queries import query_parameter_namespaces  # noqa: PLC0415
+
+        views: dict[RegimeName, FlatParams] = {}
+        self.solve_parameter_views = MappingProxyType(views)
+        self._stages["query_solve_params"] = views
+        for owner, regime in regimes.items():
+            namespaces = frozenset(
+                name
+                for kernel in regime.solution.period_kernels.values()
+                for program in core_program_graph(kernel=kernel).values()
+                for name in query_parameter_namespaces(builder=program.argument_builder)
+            )
+            if not namespaces:
+                continue
+            parameters = dict(flat_params)
+            namespace_values = dict(flat_namespaces(flat_params))
+            for name in namespaces & regimes.keys():
+                parameters[name] = MappingProxyType(
+                    {
+                        **regimes[name].solution.resolved_fixed_params,
+                        **namespace_values.get((name,), {}),
+                    }
+                )
+            edges = {
+                path[-1]: values
+                for path, values in namespace_values.items()
+                if path[0] == EDGES
+            }
+            if edges:
+                parameters[EDGES] = MappingProxyType(edges)
+            view = MappingProxyType(parameters)
+            # Publish the live containers before transfers. A later refusal keeps
+            # originals and completed copies owned until the public call closes.
+            views[owner] = view
+            devices = regime.solution.placed_devices()
+            if not regime.solution.sharded_state_names:
+                devices = devices[:1]
+            for path, values in flat_namespaces(view):
+                if path[-1] not in namespaces:
+                    continue
+                live = self.snapshot()
+                copied = place_simulation_arguments(
+                    arguments={"query_solve_params": values},
+                    subject_arg_names=(),
+                    value_reads=(),
+                    devices=devices,
+                    budget_bytes=self.budget_bytes,
+                    live_footprint=live,
+                    budget_devices=tuple(dict.fromkeys((*self.devices, *live.spans))),
+                )["query_solve_params"]
+                if path[0] == EDGES:
+                    edges[path[-1]] = copied
+                else:
+                    parameters[path[0]] = copied
 
     def copy_solution_leaf(self, *, leaf: jax.Array, label: str) -> jax.Array:
         """Admit and own a private copy in its original source layout."""
@@ -275,6 +367,7 @@ class SimulationEntryAllocations:
     def close(self) -> None:
         """Release auxiliary owners after the receiving scope owns their trees."""
         self._stages.clear()
+        self.solve_parameter_views = MappingProxyType({})
         self._pending.clear()
         self.solution = None
         self.model_roots = ()

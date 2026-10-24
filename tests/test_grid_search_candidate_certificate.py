@@ -81,7 +81,6 @@ from _lcm.simulation import programs as simulation_programs_module
 from _lcm.simulation import runtime as simulation_runtime_module
 from _lcm.simulation import taste_stream as taste_stream_module
 from _lcm.simulation.memory import SimulationMemory
-from _lcm.simulation.subject_groups import SubjectRows
 from _lcm.solution import action_streaming as action_streaming_module
 from _lcm.solution import grid_search as grid_search_module
 from _lcm.solution.action_reduction import HardMaxResult
@@ -117,10 +116,12 @@ from lcm.typing import (
     ReferenceName,
     RegimeName,
     ScalarInt,
+    UserFacingRegimeParamsTemplate,
     UserParams,
     UserParamsLeaf,
     UserParamsNode,
 )
+from tests.candidate_certificate import direct_flow
 from tests.candidate_certificate.direct_flow import (
     _DECOUPLED_BOUND_MUTATION_NAMES,
     _decoupled_bound_transport_errors,
@@ -166,13 +167,13 @@ class _KernelOutputArguments(TypedDict, closed=True):
     feasibility_counts: tuple[IntND, IntND]
 
 
-class _SimulationKeyArguments(TypedDict, closed=True):
+class _TasteKeyArguments(TypedDict, closed=True):
     key: PRNGKeyND
-    names: list[str]
-    n_initial_states: int
-    subject_slice: NotRequired[slice | SubjectRows | None]
-    original_n_subjects: NotRequired[int | None]
-    memory: NotRequired[SimulationMemory | None]
+    address_words: tuple[int, ...]
+    subject_slice: slice
+    original_n_subjects: int
+    memory: SimulationMemory | None
+    period: NotRequired[int]
 
 
 class _EvaluateBlockArguments(TypedDict, closed=True):
@@ -196,7 +197,9 @@ class _EvaluateBlock(Protocol):
 def _mutable_params_template(*, model: Model) -> _ModelParams:
     """Copy annotation leaves into a mutable tree accepting supplied values."""
     params: _ModelParams = {}
-    for regime, functions in model.get_params_template().items():
+    for regime, functions in cast(
+        "dict[str, UserFacingRegimeParamsTemplate]", model.get_params_template()
+    ).items():
         regime_params: dict[FunctionName | RegimeName, dict[str, _TemplateNode]] = {}
         for name, branch in functions.items():
             regime_params[name] = dict(branch)
@@ -631,6 +634,7 @@ def test_q_and_f_arrays_reach_full_reducers_without_candidate_transformation():
     assert isinstance(_parse("src/_lcm/simulation/result_metadata.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/simulation/additional_targets.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/simulation/random.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/random_address.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/regime_building/zero_safe.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/solution/contract.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/grids/__init__.py"), ast.Module)
@@ -797,8 +801,8 @@ _FOLDED_BODY_MUTATIONS = {
         ),
     ),
     "published_value_changed": (
-        "output=V_arr if empty is None else (V_arr, empty),",
-        "output=-V_arr if empty is None else (-V_arr, empty),",
+        'output=cast("MaxOutput", V_arr if empty is None else (V_arr, empty)),',
+        'output=cast("MaxOutput", -V_arr if empty is None else (-V_arr, empty)),',
     ),
     "empty_support_dropped": (
         "empty = jnp.any(empty & support, axis=axis)",
@@ -2541,18 +2545,15 @@ def test_reassigning_taste_keys_changes_the_public_candidate(
         subject_width=_RNG_SUBJECT_BATCH_SIZE,
     )
     baseline = _simulate_seeded_taste_routing(model=model)
-    original = taste_stream_module.generate_simulation_keys
+    original = taste_stream_module.generate_taste_shock_keys
 
     def reassigned_keys(
-        **kwargs: Unpack[_SimulationKeyArguments],
-    ) -> tuple[PRNGKeyND, dict[str, PRNGKeyND]]:
-        next_key, keys = original(**kwargs)
-        return next_key, {
-            name: jnp.roll(values, 1, axis=0) for name, values in keys.items()
-        }
+        **kwargs: Unpack[_TasteKeyArguments],
+    ) -> PRNGKeyND:
+        return jnp.roll(original(**kwargs), 1, axis=0)
 
     monkeypatch.setattr(
-        taste_stream_module, "generate_simulation_keys", reassigned_keys
+        taste_stream_module, "generate_taste_shock_keys", reassigned_keys
     )
     shifted = _simulate_seeded_taste_routing(model=model)
 
@@ -3250,3 +3251,175 @@ def test_final_nested_sources_have_literal_inventory_obligations() -> None:
     assert isinstance(
         _parse("src/_lcm/egm/upper_envelope/segment_envelope.py"), ast.Module
     )
+
+
+def test_current_iid_adapter_contract_preserves_canonical_decision_transport() -> None:
+    """Preserve the canonical reducer and mandatory publication status."""
+
+    trees = {
+        "src/_lcm/current_iid.py": _parse("src/_lcm/current_iid.py"),
+        "src/lcm/shocks.py": _parse("src/lcm/shocks.py"),
+        "src/_lcm/shock_overrides.py": _parse("src/_lcm/shock_overrides.py"),
+        "src/_lcm/simulation/current_iid_overrides.py": _parse(
+            "src/_lcm/simulation/current_iid_overrides.py"
+        ),
+        "src/_lcm/simulation/current_iid.py": _parse(
+            "src/_lcm/simulation/current_iid.py"
+        ),
+        "src/_lcm/regime_building/max_Q_over_a.py": _parse(
+            "src/_lcm/regime_building/max_Q_over_a.py"
+        ),
+        "src/_lcm/regime_building/processing.py": _parse(
+            "src/_lcm/regime_building/processing.py"
+        ),
+        "src/_lcm/simulation/programs.py": _parse("src/_lcm/simulation/programs.py"),
+        "src/_lcm/solution/feasibility.py": _parse("src/_lcm/solution/feasibility.py"),
+        "src/_lcm/solution/grid_search.py": _parse("src/_lcm/solution/grid_search.py"),
+        "src/_lcm/solution/backward_induction.py": _parse(
+            "src/_lcm/solution/backward_induction.py"
+        ),
+        "src/_lcm/simulation/simulate.py": _parse("src/_lcm/simulation/simulate.py"),
+    }
+    assert hasattr(direct_flow, "current_iid_adapter_errors")
+    assert direct_flow.current_iid_adapter_errors(trees=trees) == []
+
+
+_CURRENT_IID_ADAPTER_MUTATIONS = (
+    (
+        "missing_override_gather_proof",
+        "src/_lcm/simulation/current_iid_overrides.py",
+        "def gather_current_iid_overrides(",
+        "def unavailable_override_gather_proof(",
+    ),
+    (
+        "missing_override_callable_proof",
+        "src/_lcm/shock_overrides.py",
+        "def apply_overrides(",
+        "def unavailable_override_proof(",
+    ),
+    (
+        "missing_factor_callable_proof",
+        "src/lcm/shocks.py",
+        "def _correlation_factor(",
+        "def _unavailable_factor_proof(",
+    ),
+    (
+        "omit_dense_wrap",
+        "src/_lcm/regime_building/max_Q_over_a.py",
+        "        max_Q_over_a = current_iid_plan.wrap(max_Q_over_a)",
+        "        pass",
+    ),
+    (
+        "wrong_dense_guard",
+        "src/_lcm/regime_building/max_Q_over_a.py",
+        "if current_iid_plan is not None:",
+        "if current_iid_plan is None:",
+    ),
+    (
+        "rewire_dense_reducer",
+        "src/_lcm/regime_building/max_Q_over_a.py",
+        "current_iid_plan.wrap(max_Q_over_a)",
+        "current_iid_plan.wrap(Q_and_F)",
+    ),
+    (
+        "omit_stream_wrap",
+        "src/_lcm/regime_building/max_Q_over_a.py",
+        "        streamed_max_Q_over_a = current_iid_plan.wrap(streamed_max_Q_over_a)",
+        "        pass",
+    ),
+    (
+        "rewire_physical_reducer",
+        "src/_lcm/current_iid.py",
+        "partial(_evaluate_node, function=self.function, arguments=arguments)",
+        (
+            "partial(_evaluate_node, function=lambda **kwargs: (0.0, False), "
+            "arguments=arguments)"
+        ),
+    ),
+    (
+        "omit_solve_status",
+        "src/_lcm/current_iid.py",
+        "return jnp.sum(terms), jnp.any(support & empty), ~valid",
+        "return jnp.sum(terms), jnp.any(support & empty), False",
+    ),
+    (
+        "omit_replay_status",
+        "src/_lcm/current_iid.py",
+        "return index, value, dict(physical), ~valid",
+        "return index, value, dict(physical), False",
+    ),
+    (
+        "omit_publication_status",
+        "src/_lcm/solution/grid_search.py",
+        "current_iid_invalid=current_iid_invalid,",
+        "current_iid_invalid=None,",
+    ),
+    (
+        "rewire_key_producer",
+        "src/_lcm/simulation/current_iid.py",
+        "function=draw_window_keys,",
+        "function=lambda **kwargs: None,",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("name", "source", "before", "after"), _CURRENT_IID_ADAPTER_MUTATIONS
+)
+def test_current_iid_adapter_rejects_rewiring(
+    *, name: str, source: direct_flow.SourcePath, before: str, after: str
+) -> None:
+    """Each new adapter obligation must independently reject its defect."""
+
+    trees = {
+        path: _parse(path)
+        for path in (
+            "src/_lcm/current_iid.py",
+            "src/lcm/shocks.py",
+            "src/_lcm/shock_overrides.py",
+            "src/_lcm/simulation/current_iid_overrides.py",
+            "src/_lcm/simulation/current_iid.py",
+            "src/_lcm/regime_building/max_Q_over_a.py",
+            "src/_lcm/regime_building/processing.py",
+            "src/_lcm/simulation/programs.py",
+            "src/_lcm/solution/feasibility.py",
+            "src/_lcm/solution/grid_search.py",
+            "src/_lcm/solution/backward_induction.py",
+            "src/_lcm/simulation/simulate.py",
+        )
+    }
+    assert direct_flow.current_iid_adapter_errors(trees=trees) == []
+    text = (Path(__file__).parents[1] / source).read_text()
+    assert before in text, name
+    trees[source] = ast.parse(text.replace(before, after, 1))
+    assert direct_flow.current_iid_adapter_errors(trees=trees), name
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "src/_lcm/current_iid.py",
+        "src/lcm/shocks.py",
+        "src/_lcm/shock_overrides.py",
+        "src/_lcm/simulation/current_iid_overrides.py",
+    ],
+)
+def test_current_iid_adapter_requires_implementation_proof(
+    *, source: direct_flow.SourcePath
+) -> None:
+    trees = {path: _parse(path) for path in direct_flow._CERTIFIED_CORRIDOR_SOURCES}
+    assert direct_flow.current_iid_adapter_errors(trees=trees) == []
+    del trees[source]
+    assert (
+        f"current IID adapter: missing source {source}"
+        in direct_flow.current_iid_adapter_errors(trees=trees)
+    )
+
+
+def test_current_iid_projection_does_not_change_unrelated_ast() -> None:
+    tree = ast.parse("def unrelated(x):\n    return x + 1")
+    projected = direct_flow._candidate_value_projection(tree)
+    assert ast.dump(projected, include_attributes=False) == ast.dump(
+        tree, include_attributes=False
+    )
+    assert direct_flow._current_iid_builder_guard_errors(tree)

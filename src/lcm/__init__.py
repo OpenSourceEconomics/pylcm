@@ -95,6 +95,7 @@ from _lcm.variables import (  # noqa: E402
     _bind_forward_refs as _bind_variables_forward_refs,
 )
 from lcm.ages import AgeGrid  # noqa: E402
+from lcm.arrivals import ArrivalDecision, ArrivalRead  # noqa: E402
 from lcm.case_piece import (  # noqa: E402
     affine_breakpoint,
     case_boundary,
@@ -129,6 +130,7 @@ from lcm.consumption_savings_regime import (  # noqa: E402
 )
 from lcm.decoupled import Decoupled  # noqa: E402
 from lcm.execution import ExecutionConfig, InvariantBlockSchedule  # noqa: E402
+from lcm.exits import Consent, Counterparty, Exit, ExitTarget, RuleResult  # noqa: E402
 from lcm.fixed_forms import (  # noqa: E402
     cash_on_hand_with_subsidy,
     liquid_law_from_resources,
@@ -231,6 +233,8 @@ jax.tree_util.register_pytree_node(
     lambda keys, values: MappingProxyType(dict(zip(keys, values, strict=True))),
 )
 
+from lcm import shocks  # noqa: E402
+
 __all__ = [
     "EULER_GAMMA",
     "AdditiveShockTransition",
@@ -238,6 +242,8 @@ __all__ = [
     "AgeRange",
     "AgeSpecializedFunction",
     "AgeSpecializedGrid",
+    "ArrivalDecision",
+    "ArrivalRead",
     "ByAge",
     "ByPeriod",
     "CESAggregator",
@@ -246,11 +252,15 @@ __all__ = [
     "CompositeState",
     "Condition",
     "ConditionalAction",
+    "Consent",
     "ConsumptionSavingsRegime",
+    "Counterparty",
     "Decoupled",
     "DeterministicTransition",
     "DiscreteGrid",
     "ExecutionConfig",
+    "Exit",
+    "ExitTarget",
     "ExtremeValueTasteShocks",
     "Gate",
     "GridBreakpoint",
@@ -287,6 +297,7 @@ __all__ = [
     "QuasiArithmeticMean",
     "Regime",
     "RouwenhorstAR1Process",
+    "RuleResult",
     "SimulateSnapshot",
     "SimulationResult",
     "SolveSnapshot",
@@ -321,6 +332,7 @@ __all__ = [
     "post_decision_lower_bound",
     "ref",
     "save_solution",
+    "shocks",
     "smooth_helper",
     "stochastic_transition",
     "time_varying_params",

@@ -472,9 +472,16 @@ def _subject_occupancy(
             for name in current:
                 occupancy[name][rows, period] = True
             if period + 1 < n_periods:
-                current = {
+                actors = current | {
                     target
                     for source in current
+                    if (plan := regimes[source].simulation.exit_queries.get(period))
+                    is not None
+                    for target in plan.final_actors
+                }
+                current = {
+                    target
+                    for source in actors
                     if period in regimes[source].simulation.feasibility_pools_by_period
                     for target in regimes[source].simulation.reachability.targets(
                         period=period, source=source

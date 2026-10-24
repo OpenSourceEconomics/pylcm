@@ -167,7 +167,9 @@ def prune_fixed_regime_support(
             joint_transitions=joint_transitions,
         )
         pruned_laws[name] = bind_regime_law(
-            transition, gated_edges=laws[name].gated_edges
+            transition,
+            gated_edges=laws[name].gated_edges,
+            arrivals=laws[name].arrivals,
         )
     return FixedRegimeSupport(
         user_regimes=MappingProxyType(result),

@@ -1,26 +1,30 @@
-"""The PRNG keys behind every simulation draw.
-
-`create_simulation_key` turns a caller seed into the call's root key,
-`site_simulation_key` derives one key per `(period, regime)` draw site from it,
-`split_simulation_key` and `generate_simulation_keys` derive the site's streams and
-per-subject keys, and `draw_random_seed` supplies a seed when the caller
-gave none.
-"""
+"""Address simulation innovations by typed name, original row and period."""
 
 import os
+from collections.abc import Mapping
+from types import MappingProxyType
 from typing import Literal
 
 import jax
-import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jaxtyping import Int, Scalar, UInt32
 
 from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
+from _lcm.simulation.random_address import (
+    RandomAddress,
+    RowWords,
+    Word,
+    draw_row_keys,
+    draw_window_keys,
+    encode_subject_row,
+)
 from _lcm.simulation.subject_groups import SubjectRows
 from _lcm.typing import PRNGKeyND
 from lcm.exceptions import ExecutionPlanningError, InvalidSimulationInputError
 from lcm.typing import PRNGKey, UserSeed
+
+_INITIAL_PERIOD = 0
 
 
 def canonicalize_simulation_seed(
@@ -158,109 +162,89 @@ def generate_simulation_keys(
     subject_slice: slice | SubjectRows | None = None,
     original_n_subjects: int | None = None,
     memory: SimulationMemory | None = None,
+    period: int = 0,
+    addresses: Mapping[str, RandomAddress] = MappingProxyType({}),
 ) -> tuple[PRNGKeyND, dict[str, PRNGKeyND]]:
-    """Generate pseudo-random number generator keys (PRNG keys) for simulation.
+    """Address each named innovation by original row and computational period.
 
-    PRNG keys in JAX are immutable objects used to control random number generation.
-    A key can be used to generate a stream of random numbers, e.g., given a key, one can
-    call jax.random.normal(key) to generate a stream of normal random numbers. In order
-    to ensure that each simulation is based on a different stream of random numbers, we
-    split the key into one key per initial state for each stochastic variable,
-    and one key that will be passed to the next iteration in order to generate new keys.
-
-    The per-subject split is sized to `original_n_subjects` (the user's real
-    population, defaulting to `n_initial_states`), so each real subject's key — and
-    the carry key (`keys[0]`) — is independent of both how subjects are chunked and
-    of any per-device padding. The stream is then assembled to length
-    `n_initial_states`:
-
-    - **Device padding** (`original_n_subjects < n_initial_states`): the trailing
-      `n_initial_states - original_n_subjects` slots duplicate the last real
-      subject's key, so pad rows reproduce a duplicate-last-subject simulation.
-    - **Chunking** (`subject_slice` given): the assembled full-population stream is
-      sliced to the chunk's global-index window, so a chunk reproduces exactly the
-      keys it would get in a single pass.
-    - **Grouping** (`SubjectRows` given): the assembled stream is gathered at the
-      chunk's original rows, so each subject keeps its own row's keys wherever its
-      group places it.
-
-    See the JAX documentation for more details:
-    https://docs.jax.dev/en/latest/random-numbers.html#random-numbers-in-jax
-
-    Args:
-        key: Random key.
-        names: List of names for which a key is to be generated.
-        n_initial_states: Number of initial states the simulate dispatch sees
-            (the full population, possibly padded for sharding).
-        subject_slice: When given, the contiguous global-index slice of the subjects
-            being simulated in this chunk, or the original rows of a grouped
-            chunk. `None` returns keys for all subjects.
-        original_n_subjects: Number of subjects before per-device padding. Defaults
-            to `n_initial_states` (no padding). When smaller, the per-subject split
-            is sized to it so real subjects' draws are device-count-invariant.
-
-    Returns:
-        - Updated random key.
-        - Mapping with one per-subject key array for each name in names (padded to
-          `n_initial_states`, then sliced to `subject_slice` when given).
-
+    Return the root unchanged. Binding names remain the consumer's DAG names;
+    `addresses` supplies semantic identities independent of regime qualification.
+    Only this chunk's keys are constructed, and padding repeats the last real row.
     """
+    if type(period) is not int or not 0 <= period < 2**32:
+        raise ExecutionPlanningError(
+            "A random period must fit an unsigned 32-bit word."
+        )
+    real = n_initial_states if original_n_subjects is None else original_n_subjects
+    if not 0 < real <= n_initial_states <= 2**64:
+        raise ExecutionPlanningError("A random population requires valid uint64 rows.")
+    encoded_addresses = tuple(
+        addresses.get(name, RandomAddress(kind="state", name=name)).words()
+        for name in names
+    )
+    static_arguments = {
+        "names": tuple(names),
+        "n_initial_states": n_initial_states,
+        "original_n_subjects": real,
+        "partitionable": jax.config.jax_threefry_partitionable,
+        "addresses": encoded_addresses,
+    }
     if isinstance(subject_slice, SubjectRows):
-        return run_simulation_operation(
+        original_rows = np.asarray(subject_slice.rows)
+        if (
+            original_rows.ndim != 1
+            or original_rows.dtype.kind not in "iu"
+            or np.any(original_rows < 0)
+            or int(original_rows.max(initial=0)) >= n_initial_states
+        ):
+            raise ExecutionPlanningError(
+                "Grouped random rows must belong to the population."
+            )
+        rows = np.asarray(original_rows, dtype=np.uint64)
+        rows = np.minimum(rows, np.uint64(real - 1))
+        words = np.stack((rows >> np.uint64(32), rows), axis=-1).astype(np.uint32)
+        return key, run_simulation_operation(
             memory=memory,
             function=_generate_rowed_simulation_keys,
-            arguments={"key": key, "rows": subject_slice.rows},
+            arguments={"key": key, "rows": words, "period": np.uint32(period)},
             static_arguments={
-                "names": tuple(names),
-                "n_initial_states": n_initial_states,
-                "original_n_subjects": original_n_subjects,
-                "partitionable": jax.config.jax_threefry_partitionable,
+                name: value
+                for name, value in static_arguments.items()
+                if name not in ("n_initial_states", "original_n_subjects")
             },
+            subject_arg_names=("rows",),
+            subject_outputs=True,
         )
-    if memory is not None and subject_slice is not None:
-        start, width = _validated_chunk_window(
-            subject_slice=subject_slice, n_initial_states=n_initial_states
-        )
-        return memory.run(
-            function=_generate_windowed_simulation_keys,
-            arguments={"key": key, "start": np.int32(start)},
-            static_arguments={
-                "names": tuple(names),
-                "n_initial_states": n_initial_states,
-                "original_n_subjects": original_n_subjects,
-                "partitionable": jax.config.jax_threefry_partitionable,
-                "width": width,
-            },
-        )
-    return run_simulation_operation(
+    subject_slice = (
+        slice(0, n_initial_states) if subject_slice is None else subject_slice
+    )
+    start, width = _validated_chunk_window(
+        subject_slice=subject_slice, n_initial_states=n_initial_states
+    )
+    return key, run_simulation_operation(
         memory=memory,
-        function=_generate_simulation_keys,
-        arguments={"key": key},
-        static_arguments={
-            "names": tuple(names),
-            "n_initial_states": n_initial_states,
-            "original_n_subjects": original_n_subjects,
-            "partitionable": jax.config.jax_threefry_partitionable,
-            "subject_window": (
-                None
-                if subject_slice is None
-                else (subject_slice.start, subject_slice.stop, subject_slice.step)
-            ),
+        function=_generate_windowed_simulation_keys,
+        arguments={
+            "key": key,
+            "start": encode_subject_row(start),
+            "period": np.uint32(period),
         },
+        static_arguments={**static_arguments, "width": width},
+        subject_outputs=True,
     )
 
 
 def _validated_chunk_window(
     *, subject_slice: slice, n_initial_states: int
 ) -> tuple[int, int]:
-    """Refuse invalid dynamic-slice bounds before an allocation can clamp them."""
+    """Refuse invalid chunk bounds instead of silently clamping or striding."""
     start = 0 if subject_slice.start is None else subject_slice.start
     stop = n_initial_states if subject_slice.stop is None else subject_slice.stop
     if (
         type(start) is not int
         or type(stop) is not int
         or subject_slice.step not in (None, 1)
-        or not 0 <= start < stop <= n_initial_states <= np.iinfo(np.int32).max
+        or not 0 <= start < stop <= n_initial_states <= 2**64
     ):
         raise ExecutionPlanningError(
             "A budgeted RNG chunk window needs in-range increasing bounds "
@@ -272,84 +256,65 @@ def _validated_chunk_window(
 def _generate_windowed_simulation_keys(
     *,
     key: PRNGKeyND,
-    start: Int[Scalar, ""],
+    start: RowWords,
     names: tuple[str, ...],
     n_initial_states: int,
     original_n_subjects: int | None,
     partitionable: bool,
     width: int,
-) -> tuple[PRNGKeyND, dict[str, PRNGKeyND]]:
-    """Select a dynamic start from the identical full split and duplicate-last pad."""
-    next_key, full_keys = _generate_simulation_keys(
-        key=key,
-        names=names,
-        n_initial_states=n_initial_states,
-        original_n_subjects=original_n_subjects,
-        partitionable=partitionable,
-        subject_window=None,
-    )
-    return next_key, {
-        name: jax.lax.dynamic_slice_in_dim(keys, start, width, axis=0)
-        for name, keys in full_keys.items()
-    }
+    period: int | np.uint32 | Word = _INITIAL_PERIOD,
+    addresses: tuple[tuple[int, ...], ...] | None = None,
+) -> dict[str, PRNGKeyND]:
+    """Construct addressed keys directly for a dynamic original-row window."""
+    real = n_initial_states if original_n_subjects is None else original_n_subjects
+    last = encode_subject_row(real - 1)
+    with jax.threefry_partitionable(partitionable):
+        return {
+            f"key_{name}": draw_window_keys(
+                key=key,
+                address_words=np.asarray(
+                    RandomAddress(kind="state", name=name).words()
+                    if addresses is None
+                    else addresses[index],
+                    dtype=np.uint32,
+                ),
+                subject_start=start,
+                last_real_subject=last,
+                subject_count=width,
+                period=period,
+            )
+            for index, name in enumerate(names)
+        }
 
 
 def _generate_rowed_simulation_keys(
     *,
     key: PRNGKeyND,
-    rows: Int[Array, " width"] | np.ndarray,
+    rows: UInt32[Array | np.ndarray, "rows 2"],
     names: tuple[str, ...],
-    n_initial_states: int,
-    original_n_subjects: int | None,
     partitionable: bool,
-) -> tuple[PRNGKeyND, dict[str, PRNGKeyND]]:
-    """Gather original rows from the identical full split and duplicate-last pad."""
-    next_key, full_keys = _generate_simulation_keys(
-        key=key,
-        names=names,
-        n_initial_states=n_initial_states,
-        original_n_subjects=original_n_subjects,
-        partitionable=partitionable,
-        subject_window=None,
-    )
-    return next_key, {name: keys[rows] for name, keys in full_keys.items()}
-
-
-def _generate_simulation_keys(
-    *,
-    key: PRNGKeyND,
-    names: tuple[str, ...],
-    n_initial_states: int,
-    original_n_subjects: int | None,
-    partitionable: bool,
-    subject_window: tuple[int | None, int | None, int | None] | None,
-) -> tuple[PRNGKeyND, dict[str, PRNGKeyND]]:
-    """Form the existing full-population stream and select its declared window."""
-    if original_n_subjects is None:
-        original_n_subjects = n_initial_states
-    pad = n_initial_states - original_n_subjects
-    simulation_keys = {}
-    next_key = key
+    period: int | np.uint32 | Word = _INITIAL_PERIOD,
+    addresses: tuple[tuple[int, ...], ...] | None = None,
+) -> dict[str, PRNGKeyND]:
+    """Address grouped subjects by their encoded original rows."""
     with jax.threefry_partitionable(partitionable):
-        for name in names:
-            keys = jax.random.split(key=next_key, num=original_n_subjects + 1)
-            next_key = keys[0]
-            per_subject_keys = keys[1:]
-            if pad > 0:
-                per_subject_keys = jnp.concatenate(
-                    [per_subject_keys, jnp.repeat(per_subject_keys[-1:], pad, axis=0)]
-                )
-            if subject_window is not None:
-                per_subject_keys = per_subject_keys[slice(*subject_window)]
-            simulation_keys[f"key_{name}"] = per_subject_keys
-    return next_key, simulation_keys
+        return {
+            f"key_{name}": draw_row_keys(
+                key=key,
+                address_words=np.asarray(
+                    RandomAddress(kind="state", name=name).words()
+                    if addresses is None
+                    else addresses[index],
+                    dtype=np.uint32,
+                ),
+                row_high=rows[:, 0],
+                row_low=rows[:, 1],
+                period=period,
+            )
+            for index, name in enumerate(names)
+        }
 
 
 def draw_random_seed() -> int:
-    """Generate a random seed using the operating system's secure entropy pool.
-
-    Returns:
-        Random seed.
-
-    """
+    """Generate a random seed using the operating system's secure entropy pool."""
     return int.from_bytes(os.urandom(4), "little")

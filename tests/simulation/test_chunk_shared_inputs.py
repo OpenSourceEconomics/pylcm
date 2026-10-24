@@ -102,11 +102,13 @@ def test_draw_ids_are_constructed_inside_the_admitted_numerical_body(
     )
     expected = np.asarray(
         [
-            jax.random.choice(
-                key,
-                np.asarray([2, 9], dtype=np.int32),
-                p=rows if scalar else rows[position],
-            )
+            np.asarray([2, 9], dtype=np.int32)[
+                np.searchsorted(
+                    np.cumsum(rows if scalar else rows[position]),
+                    float(jax.random.uniform(key, dtype=jnp.zeros(()).dtype)),
+                    side="right",
+                )
+            ]
             for position, key in enumerate(keys)
         ]
     )

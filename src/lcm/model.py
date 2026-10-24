@@ -63,6 +63,7 @@ from _lcm.model_graph import (
     ModelGraph,
     bind_edge_laws,
     collect_declared_transitions,
+    demanded_exit_function_paths,
     naming_cells_without_edges,
     prepare_graph,
 )
@@ -155,8 +156,19 @@ from _lcm.regime_building.value_adapter import (
     process_code_reads,
 )
 from _lcm.regime_law import RegimeLaws, bind_regime_law
+from _lcm.shock_registry import (
+    ShockRegistry,
+    bind_fixed_shock_params,
+    create_shock_registry,
+)
 from _lcm.simulation.chunk_admission import prepare_simulation_chunks
 from _lcm.simulation.compile import bind_simulation_runtime
+from _lcm.simulation.current_iid_overrides import (
+    ShockPathsInput,
+    SimulationInitialConditionsInput,
+    resolve_current_iid_overrides,
+    split_current_iid_inputs,
+)
 from _lcm.simulation.entry_allocations import SimulationEntryAllocations
 from _lcm.simulation.entry_inputs import capture_simulation_entry_inputs
 from _lcm.simulation.host_operations import ProfiledSimulationOperations
@@ -311,6 +323,7 @@ from _lcm.typing import (
 )
 from _lcm.user_regime_validation import (
     fail_if_a_folded_conditioner_can_move,
+    validate_exit_targets,
     validate_regimes,
 )
 from _lcm.utils.containers import (
@@ -358,6 +371,7 @@ from lcm.regime import (
 )
 from lcm.regime import Regime as UserRegime
 from lcm.result import PolicyLookup, SimulationResult
+from lcm.shocks import BaseInnovations, PhysicalValues, ShockGroup, ShockGroupName
 from lcm.solver_api import (
     DISSOLUTION_FLAG,
     EGM_CONTINUATION,
@@ -399,6 +413,7 @@ from lcm.transition import (
 )
 from lcm.typing import (
     Bool1D,
+    Float2D,
     FloatND,
     Intermediate,
     IntND,
@@ -406,6 +421,7 @@ from lcm.typing import (
     PRNGKey,
     ReferenceName,
     UserFacingParamsTemplate,
+    UserFacingRegimeParamsTemplate,
     UserFunction,
     UserInitialConditions,
     UserInitialConditionsInput,
@@ -440,7 +456,7 @@ def _same_exactly_typed(
 # The caller inputs a budgeted public call owns: a simulation's initial
 # conditions, or a policy lookup's states and action grids.
 type _EntryInputs = (
-    UserInitialConditions
+    SimulationInitialConditionsInput
     | pd.DataFrame
     | tuple[Mapping[StateName, jax.Array], Mapping[ActionName, jax.Array] | None]
 )
@@ -507,6 +523,10 @@ class _PickledModel(TypedDict):
     _execution: ResolvedExecution
     reachability: ModelReachability
     _graph: ModelGraph
+    _query_periods_by_phase: MappingProxyType[
+        str, MappingProxyType[RegimeName, tuple[int, ...]]
+    ]
+    _shock_registry: NotRequired[ShockRegistry]
     _params_template: ParamsTemplate
     _param_name_candidates: NotRequired[
         MappingProxyType[RegimeName, MappingProxyType[ReferenceName, str]]
@@ -540,6 +560,9 @@ def _simulation_programs(
             programs.transition,
             programs.route,
             programs.policy_prepare,
+            programs.exit_full,
+            programs.exit_participating,
+            *programs.arrival_families,
         ):
             yield from family.values()
 
@@ -739,6 +762,14 @@ class Model:
     """Immutable admissible starts, keyed by the model's exact time coordinate."""
 
     @property
+    def shocks(self) -> Mapping[ShockGroupName, ShockGroup]:
+        """Return immutable model-level current-IID declarations."""
+        return self._shock_registry.groups
+
+    _shock_registry: ShockRegistry
+    """Named innovation identities and unpruned consumer/legacy declarations."""
+
+    @property
     def graph(self) -> ModelGraph:
         """Return the immutable declared and effective model graph."""
         return self._graph
@@ -758,6 +789,11 @@ class Model:
 
     _params_template: ParamsTemplate
     """Template for the model parameters."""
+
+    _query_periods_by_phase: MappingProxyType[
+        str, MappingProxyType[RegimeName, tuple[int, ...]]
+    ]
+    """Exact phase query dates retained independently of stored Full and actors."""
 
     _param_name_candidates: MappingProxyType[
         RegimeName, MappingProxyType[ReferenceName, str]
@@ -823,6 +859,7 @@ class Model:
         n_periods: int | None = None,
         regimes: Mapping[RegimeName, UserRegime],
         regime_id_class: type[DataclassInstance],
+        shocks: Mapping[ShockGroupName, ShockGroup] = MappingProxyType({}),
         enable_jit: bool = True,
         durable_identity: bool = True,
         fixed_params: UserParams = MappingProxyType({}),
@@ -857,6 +894,10 @@ class Model:
                 zero. This mode has no age grid.
             description: Description of the model.
             regime_id_class: Dataclass mapping regime names to integer indices.
+            shocks: Named current-IID declarations, referenced by Regime.shocks.
+                Runtime law slots use `params[group][slot]`, independently of
+                ordinary regime parameters. Singleton GridSearch integrates the
+                nodewise decision and replays fresh physical realizations.
             enable_jit: Whether to JIT-compile the functions of the internal
                 regimes.
             durable_identity: Whether to require a persistable semantic identity.
@@ -932,6 +973,7 @@ class Model:
                     n_periods=n_periods,
                     regimes=regimes,
                     regime_id_class=regime_id_class,
+                    shocks=shocks,
                     enable_jit=False,
                     durable_identity=False,
                     fixed_params=fixed_params,
@@ -962,6 +1004,7 @@ class Model:
         self._edges = cast("ModelEdges", snapshot_transition_containers(edges))
         # The engine reads each joint normal declaration in its lowered form;
         # the caller's regimes keep the declarations as written.
+        declared_shock_regimes = regimes
         regimes = {
             name: regime.lower_joint_normal_processes()
             for name, regime in regimes.items()
@@ -984,7 +1027,11 @@ class Model:
         ) = factor_fixed_components(
             regimes=regimes,
             laws=laws,
-            fixed_params=self.fixed_params,
+            fixed_params={
+                name: value
+                for name, value in self.fixed_params.items()
+                if name not in shocks
+            },
             states=states,
             state_transitions=state_transitions,
             functions=functions,
@@ -992,7 +1039,16 @@ class Model:
             actions=actions,
             derived_categoricals=derived_categoricals,
         )
-        self.fixed_params = ensure_containers_are_immutable(fixed_params)
+        self.fixed_params = ensure_containers_are_immutable(
+            {
+                **fixed_params,
+                **{
+                    name: value
+                    for name, value in self.fixed_params.items()
+                    if name in shocks
+                },
+            }
+        )
         self._simulate_runtime_regimes = {}
         self._shock_path_runtime_regimes = {}
         self._simulate_entry_operations = ProfiledSimulationOperations()
@@ -1053,10 +1109,22 @@ class Model:
             model_slots=model_slots,
             output_only_functions=output_only_functions,
         )
+        self._shock_registry = create_shock_registry(
+            shocks=shocks,
+            regimes=merged_regimes,
+            legacy_regimes=declared_shock_regimes,
+            model_states=states,
+            laws=laws,
+        )
+        fixed_params, shock_consumed_params = bind_fixed_shock_params(
+            registry=self._shock_registry, fixed_params=self.fixed_params
+        )
+        self.fixed_params = ensure_containers_are_immutable(fixed_params)
         declared_function_regimes = merged_regimes
         self._param_name_candidates = _get_param_name_candidates(merged_regimes)
         validate_time_declarations(regimes=merged_regimes, laws=laws, ages=self._time)
         validate_regimes(regimes=merged_regimes, laws=laws)
+        validate_exit_targets(regimes=merged_regimes, laws=laws)
         # What each regime declares before demand prunes any: a declared law
         # reads these as variables at every horizon, never as parameters, and a
         # Series indexed by one keeps its labels.
@@ -1068,7 +1136,11 @@ class Model:
             edges=graph_edges,
             ages=self._time,
             initial_nodes=resolved_initial_nodes,
-            fixed_params=self.fixed_params,
+            fixed_params={
+                name: value
+                for name, value in self.fixed_params.items()
+                if name not in self.shocks
+            },
         )
         merged_regimes, schedules = prepared_graph.regimes, prepared_graph.schedules
         self._cells_without_edges = prepared_graph.cells_without_edges
@@ -1086,6 +1158,7 @@ class Model:
                 name: bind_regime_law(
                     transition,
                     gated_edges=prepared_graph.laws[name].gated_edges,
+                    arrivals=prepared_graph.laws[name].arrivals,
                 )
                 for name, transition in demanded_transitions.items()
             }
@@ -1095,22 +1168,23 @@ class Model:
         merged_regimes = {
             name: (
                 regime
-                if schedules.visited_periods_by_regime[name]
+                if schedules.simulation_context_periods_by_regime[name]
                 else project_onto_solve_phase(regime)
             )
             for name, regime in merged_regimes.items()
         }
         discrete_names = declared_discrete_names(
             regimes=merged_regimes, derived_categoricals=derived_categoricals
-        )
+        ) | frozenset(self._shock_registry.discrete_grids)
         pruned_regimes, self.pruned_variables = prune_broadcast_variables(
+            current_iid_state_inputs=self._shock_registry.state_inputs_by_regime,
             user_regimes=merged_regimes,
             laws=laws,
             broadcast_variables=broadcast_variables,
             koopmans_aggregator=koopmans_aggregator,
             ages=self._time,
-            active_periods_by_regime=schedules.coverage_by_regime,
-            visited_periods_by_regime=schedules.visited_periods_by_regime,
+            active_periods_by_regime=schedules.context_periods_by_regime,
+            visited_periods_by_regime=schedules.simulation_context_periods_by_regime,
             discrete_names=discrete_names,
         )
         pruned_regimes, draw_only_processes = split_transition_only_folds(
@@ -1119,7 +1193,7 @@ class Model:
             laws=laws,
             koopmans_aggregator=koopmans_aggregator,
             ages=self._time,
-            active_periods_by_regime=schedules.coverage_by_regime,
+            active_periods_by_regime=schedules.context_periods_by_regime,
         )
         # Removal is regime-local; initialization preserves names another regime keeps.
         self._transition_only_shock_names = frozenset(
@@ -1141,12 +1215,19 @@ class Model:
             params_consumed_by_binder,
         ) = bind_fixed_process_laws(
             user_regimes=pruned_regimes,
-            fixed_params=self.fixed_params,
+            fixed_params={
+                name: value
+                for name, value in self.fixed_params.items()
+                if name not in self.shocks
+            },
         )
         value_grids_by_regime = bind_reading_regimes(
-            value_grids=collect_adapter_grids(
-                regimes=pruned_regimes, derived_categoricals=derived_categoricals
-            ),
+            value_grids={
+                **collect_adapter_grids(
+                    regimes=pruned_regimes, derived_categoricals=derived_categoricals
+                ),
+                **self._shock_registry.discrete_grids,
+            },
             regimes=pruned_regimes,
         )
         adapters: AdapterMemo = {}
@@ -1181,14 +1262,16 @@ class Model:
         self.user_regimes = finalized_regimes
         validate_regimes(regimes=self.user_regimes, laws=laws)
         validate_model_inputs(
+            current_iid_helpers=self._shock_registry.helper_inputs_by_regime,
+            current_iid_state_inputs=self._shock_registry.state_inputs_by_regime,
             user_regimes=self.user_regimes,
             laws=laws,
             regime_id_class=regime_id_class,
             broadcast_variables=broadcast_variables,
             ages=self._time,
-            active_periods_by_regime=schedules.coverage_by_regime,
+            active_periods_by_regime=schedules.context_periods_by_regime,
             targets_by_phase=schedules.targets_by_phase,
-            visited_periods_by_regime=schedules.visited_periods_by_regime,
+            visited_periods_by_regime=schedules.simulation_context_periods_by_regime,
             removed_edge_reads=prepared_graph.removed_edge_reads,
             declared_function_regimes=declared_function_regimes,
             generated_function_names={
@@ -1238,13 +1321,19 @@ class Model:
             execution=self._execution, user_regimes=self.user_regimes, laws=laws
         )
         prepared_structure = prepare_model_structure(
+            original_periods_by_regime=schedules.visited_periods_by_regime,
+            exit_function_demand=demanded_exit_function_paths(
+                regimes=self.user_regimes, schedules=schedules, ages=self._time
+            ),
+            value_periods_by_regime=schedules.coverage_by_regime,
+            query_periods_by_phase=schedules.query_periods_by_phase,
             user_regimes=self.user_regimes,
             laws=laws,
             ages=self._time,
-            active_periods_by_regime=schedules.coverage_by_regime,
+            active_periods_by_regime=schedules.context_periods_by_regime,
             support_by_phase=schedules.support_by_phase,
             gated_source_periods=gated_source_periods(schedules=schedules),
-            visited_periods_by_regime=schedules.visited_periods_by_regime,
+            visited_periods_by_regime=schedules.acting_periods_by_regime,
             declared_transitions=self._declared_transitions,
             declared_edge_vocabulary=declared_edge_vocabulary,
             draw_only_processes=draw_only_processes,
@@ -1255,6 +1344,7 @@ class Model:
                 for regime_name, names in broadcast_variables.items()
             },
         )
+        self._query_periods_by_phase = prepared_structure.query_periods_by_phase
         self.reachability = dataclasses.replace(
             prepared_structure.reachability,
             nodes=frozenset(
@@ -1278,16 +1368,24 @@ class Model:
         self.initial_nodes = InitialNodes._from_pairs(  # noqa: SLF001
             pairs=resolved_initial_nodes, kind=self._time.kind
         )
+        prepared_structure = dataclasses.replace(
+            prepared_structure, current_iid_bindings=self._shock_registry.bindings
+        )
         self._regimes, self._params_template = build_regimes_and_template(
             ages=self._time,
             user_regimes=self.user_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
             enable_jit=enable_jit,
-            fixed_params=residual_fixed_params,
+            fixed_params={
+                name: value
+                for name, value in residual_fixed_params.items()
+                if name not in self.shocks
+            },
             params_already_consumed=(
                 params_consumed_by_binder
                 | prepared_graph.consumed_param_keys
                 | composite_consumed_params
+                | shock_consumed_params
             ),
             prepared_structure=prepared_structure,
             phase_transitions=self.declared_transitions,
@@ -1349,6 +1447,7 @@ class Model:
         self.enable_jit = enable_jit
         self.simulation_output_dtypes = _get_output_dtypes(
             user_regimes=self.user_regimes,
+            shocks=self.shocks,
             regime_names_to_ids=self.regime_names_to_ids,
         )
         self._solution_param_projection: SolutionParamProjection = (
@@ -1448,6 +1547,12 @@ class Model:
                 laws=self._graph.laws,
                 regime_names_to_ids=self.regime_names_to_ids,
                 binding_recorder=recorder,
+                shock_groups=self.shocks,
+                shock_fixed_params={
+                    name: value
+                    for name, value in self.fixed_params.items()
+                    if name in self.shocks
+                },
             )
         except (TypeError, ValueError) as error:
             msg = (
@@ -1518,7 +1623,9 @@ class Model:
             regime_names_to_ids=self.regime_names_to_ids,
             _execution=self._execution,
             reachability=self.reachability,
+            _query_periods_by_phase=self._query_periods_by_phase,
             _graph=self._graph,
+            _shock_registry=self._shock_registry,
             _params_template=self._params_template,
             _param_name_candidates=self._param_name_candidates,
             _regimes=self._regimes,
@@ -1545,6 +1652,12 @@ class Model:
         Resealing records the bindings read by this process's copies of the callables.
         """
         self.__dict__.update(state)
+        self._shock_registry = state.get("_shock_registry") or create_shock_registry(
+            shocks={},
+            regimes=self.user_regimes,
+            legacy_regimes=self.user_regimes,
+            model_states={},
+        )
         self._param_name_candidates = state.get(
             "_param_name_candidates", _get_param_name_candidates(self.user_regimes)
         )
@@ -1688,8 +1801,11 @@ class Model:
         the model level. Each call returns a fresh copy of plain dicts that the
         caller may fill in.
 
+        Referenced current-IID groups add direct `template[group][slot]`
+        annotations. Fixed group slots are omitted.
+
         """
-        template = {
+        template: dict[str, UserFacingRegimeParamsTemplate] = {
             regime_name: {
                 name: {arg: _readable_template(node) for arg, node in branch.items()}
                 for name, branch in regime_template.items()
@@ -1713,7 +1829,15 @@ class Model:
                             | finalized_candidates[regime_name]
                         ),
                     )
-        return template
+        group_templates = {
+            name: {
+                slot: value
+                for slot, value in slots.items()
+                if slot not in cast("UserParams", self.fixed_params.get(name, {}))
+            }
+            for name, slots in self._shock_registry.params_template.items()
+        }
+        return {**template, **group_templates}
 
     @beartype(conf=PARAMS_CONF)
     def _compile_period_cores(
@@ -2046,6 +2170,7 @@ class Model:
         self,
         *,
         flat_params: FlatParams,
+        solve_parameter_views: Mapping[RegimeName, FlatParams] = MappingProxyType({}),
         params: UserParams,
         log: logging.Logger,
         retention: ResultRetention,
@@ -2076,6 +2201,7 @@ class Model:
             retained = self._component_schedule(
                 preparation=preparation,
                 flat_params=flat_params,
+                solve_parameter_views=solve_parameter_views,
                 log=log,
                 max_compilation_workers=max_compilation_workers,
                 process_grid_resolver=process_grid_resolver,
@@ -2092,6 +2218,7 @@ class Model:
             )
         internal_result = self._solve_compiled(
             flat_params=flat_params,
+            solve_parameter_views=solve_parameter_views,
             program_fingerprint=preparation.program_fingerprint,
             params=params,
             log=log,
@@ -2207,6 +2334,7 @@ class Model:
         *,
         preparation: _SolutionPreparation,
         flat_params: FlatParams,
+        solve_parameter_views: Mapping[RegimeName, FlatParams] = MappingProxyType({}),
         log: logging.Logger,
         max_compilation_workers: int | None,
         process_grid_resolver: ProcessGridResolver | None,
@@ -2241,6 +2369,7 @@ class Model:
             solve=functools.partial(
                 solve,
                 flat_params=flat_params,
+                solve_parameter_views=solve_parameter_views,
                 ages=self._time,
                 program_fingerprint=preparation.program_fingerprint,
                 logger=log,
@@ -2268,6 +2397,7 @@ class Model:
         self,
         *,
         flat_params: FlatParams,
+        solve_parameter_views: Mapping[RegimeName, FlatParams] = MappingProxyType({}),
         program_fingerprint: str,
         params: UserParams,
         log: logging.Logger,
@@ -2313,6 +2443,7 @@ class Model:
         try:
             internal_result = solve(
                 flat_params=flat_params,
+                solve_parameter_views=solve_parameter_views,
                 ages=self._time,
                 regimes=self._regimes,
                 program_fingerprint=program_fingerprint,
@@ -3579,6 +3710,18 @@ class Model:
           policy.
         """
         reasons = []
+        if any(
+            period not in self._regimes[name].simulation.exit_queries
+            or self._regimes[name].simulation.exit_queries[period].full is None
+            for name, declaration in self.user_regimes.items()
+            if declaration.exits
+            for period in self._regimes[name].simulation.programs.decision
+            if (self._time.exact_values[period], name) in self._graph.visited_nodes
+        ):
+            raise UnsupportedOperationError(
+                "Current-period exit simulation requires bound native "
+                "exit query programs."
+            )
         for regime_name, regime in self._regimes.items():
             route = regime.simulation.replay_route
             if route.replay_mode is not ReplayMode.UNSUPPORTED:
@@ -3609,13 +3752,13 @@ class Model:
         self,
         *,
         params: UserParams,
-        initial_conditions: UserInitialConditionsInput | pd.DataFrame,
+        initial_conditions: SimulationInitialConditionsInput | pd.DataFrame,
         solution: _SolutionResultBoundary | None = None,
         log_level: LogLevel,
         runtime_checks: bool = True,
         seed: UserSeed | None = None,
         taste_shock_seed: UserSeed | None = None,
-        shock_paths: Mapping[StateName, jax.Array | np.ndarray] | None = None,
+        shock_paths: ShockPathsInput | None = None,
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
         max_compilation_workers: int | None = None,
@@ -3656,6 +3799,9 @@ class Model:
                 column carrying regime label strings, labels for category-class
                 states and values for value-grid states (auto-converted via
                 `initial_conditions_from_dataframe`).
+                A named current-IID shock may instead carry a `BaseInnovations`
+                or `PhysicalValues` entry vector. Its tag applies at each row's
+                actual entry period, before fresh draws in subsequent periods.
                 A subject starting in a COLLECTIVE regime that can reach a
                 value-dependent transition declaring more than one route --- its
                 own, or one further along --- also needs an `"own_stakeholder"`
@@ -3702,6 +3848,12 @@ class Model:
                 are ignored.
                 Transition-local draws use the destination's period. Solve
                 expectations and unnamed shocks' seeded streams are unchanged.
+                Named current-IID shocks require explicit `BaseInnovations` or
+                `PhysicalValues` records. A path's tag and cells supersede any
+                entry-only record of that name. Base coordinates use the current
+                law at each event; supplied physical values use their producing
+                law's support and inverse. Supplied values do not change the
+                policy's declared information.
             log_level: Console verbosity: off, warning, progress or debug.
             runtime_checks: Validate computed transition probabilities, NaN values
                 and numerical feasibility/replay checks; raise on the first failure.
@@ -3730,6 +3882,31 @@ class Model:
         taste_shock_seed = canonicalize_simulation_seed(
             seed=taste_shock_seed, name="taste_shock_seed"
         )
+        entry_allocations = self._open_entry_allocations(
+            params=params,
+            inputs=initial_conditions,
+            solution=solution,
+            random_roots=tuple(
+                key for key in (seed, taste_shock_seed) if isinstance(key, jax.Array)
+            ),
+            data_roots=tuple(
+                value
+                for path in (shock_paths or {}).values()
+                if isinstance(
+                    value := path.values  # noqa: PD011 - tagged numeric record
+                    if isinstance(path, BaseInnovations | PhysicalValues)
+                    else path,
+                    jax.Array,
+                )
+            ),
+        )
+        initial_conditions, current_entries, current_paths, shock_paths = (
+            split_current_iid_inputs(
+                initial=initial_conditions,
+                paths=shock_paths,
+                names=frozenset(self._shock_registry.innovations),
+            )
+        )
         initial_conditions = lower_initial_time(
             initial_conditions=self._encode_initial_values(
                 initial_conditions=initial_conditions,
@@ -3752,21 +3929,6 @@ class Model:
                     self._fail_if_component_simulation_is_unsupported(log_path=log_path)
                 self._fail_if_declared_entry_is_not_permitted(
                     initial_conditions=initial_conditions
-                )
-                entry_allocations = self._open_entry_allocations(
-                    params=params,
-                    inputs=initial_conditions,
-                    solution=solution,
-                    random_roots=tuple(
-                        key
-                        for key in (seed, taste_shock_seed)
-                        if isinstance(key, jax.Array)
-                    ),
-                    data_roots=tuple(
-                        path
-                        for path in (shock_paths or {}).values()
-                        if isinstance(path, jax.Array)
-                    ),
                 )
                 # The canonical parameters bind both the supplied result preflight
                 # and an automatic solve. Process them once and keep one
@@ -3892,6 +4054,14 @@ class Model:
                 self._fail_if_entry_is_not_permitted(
                     initial_conditions=initial_conditions
                 )
+                current_iid_overrides = resolve_current_iid_overrides(
+                    entries=current_entries,
+                    paths=current_paths,
+                    initial=initial_conditions,
+                    regimes=self._regimes,
+                    ages=self._time,
+                    regime_names_to_ids=self.regime_names_to_ids,
+                )
                 if entry_allocations is not None:
                     entry_allocations.publish(stage="initial", tree=initial_conditions)
                 # Validate canonical device-aligned inputs before automatic
@@ -3990,6 +4160,11 @@ class Model:
                 )
                 solution = self._solve_from_flat_params(
                     flat_params=solve_params,
+                    solve_parameter_views=(
+                        MappingProxyType({})
+                        if entry_allocations is None
+                        else entry_allocations.solve_parameter_views
+                    ),
                     params=params,
                     log=log,
                     retention=ResultRetention.VALUES_AND_REPLAY,
@@ -4080,6 +4255,9 @@ class Model:
                         initial_conditions=initial_conditions,
                         regime_names_to_ids=self.regime_names_to_ids,
                         original_population=original_n_subjects,
+                        current_iid_override_schema=()
+                        if current_iid_overrides is None
+                        else current_iid_overrides.schema,
                         retained_footprint=entry_allocations.snapshot(),
                         independent_taste=taste_shock_seed is not None,
                         taste_prng_impl=(
@@ -4137,6 +4315,7 @@ class Model:
                 seed=seed,
                 taste_shock_seed=taste_shock_seed,
                 shock_paths=resolved_shock_paths,
+                current_iid_overrides=current_iid_overrides,
                 process_code_reads=self._process_code_reads,
                 subject_batch_size=compile_batch_size,
                 original_n_subjects=original_n_subjects,
@@ -5275,6 +5454,12 @@ class Model:
         the dtype cast walks a uniform tree (no `pd.Series` to special-
         case).
         """
+        group_params = {
+            name: value for name, value in params.items() if name in self.shocks
+        }
+        params = {
+            name: value for name, value in params.items() if name not in self.shocks
+        }
         flat_params = broadcast_to_template(
             params=rename_split_params(
                 params=params, splits=self._fixed_component_splits
@@ -5294,6 +5479,7 @@ class Model:
             declared_vocabulary=self._declared_edge_vocabulary,
             reachability=self.reachability,
             use_categorical_codes=use_categorical_codes,
+            query_periods_by_phase=self._query_periods_by_phase,
             required_periods_by_regime={
                 name: tuple(
                     sorted(
@@ -5324,8 +5510,59 @@ class Model:
                 for regime_name, regime in self._regimes.items()
             },
         )
+        ordinary_flat_params = flat_params
+        if self.shocks:
+            from _lcm.current_iid import resolve_group_params  # noqa: PLC0415
+
+            group_flat_params = cast(
+                "FlatParams",
+                resolve_group_params(
+                    registry=self._shock_registry,
+                    params=group_params,
+                    fixed_params={
+                        name: value
+                        for name, value in self.fixed_params.items()
+                        if name in self.shocks
+                    },
+                ),
+            )
+            correlation_support = {
+                name: self.shocks[name].validate_runtime_correlation(
+                    correlation=cast("Float2D | np.ndarray", slots["corr"])
+                )
+                for name, slots in group_flat_params.items()
+                if self.shocks[name].correlation is None
+            }
+            from _lcm.current_iid import CORRELATION_SUPPORT_ARGUMENT  # noqa: PLC0415
+
+            group_flat_params = cast(
+                "FlatParams",
+                MappingProxyType(
+                    {
+                        name: MappingProxyType(
+                            {
+                                **slots,
+                                **(
+                                    {
+                                        CORRELATION_SUPPORT_ARGUMENT: np.asarray(
+                                            correlation_support[name], dtype=np.bool_
+                                        )
+                                    }
+                                    if name in correlation_support
+                                    else {}
+                                ),
+                            }
+                        )
+                        for name, slots in group_flat_params.items()
+                    }
+                ),
+            )
+            group_flat_params = cast_params_to_canonical_dtypes(
+                group_flat_params, array_writer=array_writer
+            )
+            flat_params = MappingProxyType({**flat_params, **group_flat_params})
         _validate_param_types(flat_params)
-        fail_if_nonpositive_taste_shock_scale(flat_params)
+        fail_if_nonpositive_taste_shock_scale(ordinary_flat_params)
         for regime_name, regime in self._regimes.items():
             if not regime.active_periods:
                 continue
@@ -5451,6 +5688,11 @@ def _fail_if_policy_lookup_unsupported(
     keep_intermediates: tuple[Intermediate, ...],
 ) -> None:
     """Raise when policy lookup cannot reproduce the regime's simulated decision."""
+    if regime.simulation.current_iid_draw_plan is not None:
+        raise UnsupportedOperationError(
+            "Current IID policy queries require an explicit observation or "
+            "conditional query operator."
+        )
     if regime.gated_edges:
         msg = (
             "Policy lookup supports regimes without gated edges; "

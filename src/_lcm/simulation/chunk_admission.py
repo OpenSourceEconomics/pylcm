@@ -32,6 +32,7 @@ from _lcm.simulation.chunk_planning import (
 )
 from _lcm.simulation.chunk_profile_cache import profile_cache_registry
 from _lcm.simulation.chunk_profiles import profile_simulation_chunk
+from _lcm.simulation.current_iid_overrides import CurrentIIDOverrideSchema
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.programs import budgeted_simulation_programs_ready
 from _lcm.simulation.residency import (
@@ -141,6 +142,7 @@ def prepare_simulation_chunks(
     process_grid_resolver: ProcessGridResolver | None = None,
     max_compilation_workers: int | None = None,
     group_sizes: tuple[int, ...] | None = None,
+    current_iid_override_schema: CurrentIIDOverrideSchema = (),
 ) -> PreparedSimulationChunks:
     """Select a complete admitted outer cohort with the top-first planner.
 
@@ -231,6 +233,7 @@ def prepare_simulation_chunks(
         devices=devices,
         max_compilation_workers=max_compilation_workers,
         group_sizes=group_sizes,
+        current_iid_override_schema=current_iid_override_schema,
     )
     plan = _plan_independent_chunks(profiler=profiler, alignment=alignment)
     return PreparedSimulationChunks(
@@ -262,6 +265,7 @@ def _simulation_chunk_profile_key(
     log_level: LogLevel,
     runtime_checks: bool = True,
     group_sizes: tuple[int, ...] | None = None,
+    current_iid_override_schema: CurrentIIDOverrideSchema = (),
 ) -> tuple[Hashable, ...]:
     """Return the canonical, versioned cache key for `profile_simulation_chunk`.
 
@@ -288,7 +292,7 @@ def _simulation_chunk_profile_key(
       that leaves every covered shape untouched (extremely unlikely given how
       regimes are constructed) would not be distinguished by this key.
     """
-    version = 2  # bump when any component below changes meaning
+    version = 3  # bump when any component below changes meaning
     key_version = ("chunk-profile-key", version)
     program_identity = (
         tuple(sorted(regimes)),
@@ -301,6 +305,7 @@ def _simulation_chunk_profile_key(
     )
     axes_and_widths = tuple(sorted(widths.items()))
     argument_metadata = (
+        current_iid_override_schema,
         _abstract_value_key(value=call_inputs.flat_params),
         _abstract_value_key(
             value=tuple(
@@ -370,6 +375,7 @@ class _ChunkProfiler:
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None = None
     max_compilation_workers: int | None = None
     group_sizes: tuple[int, ...] | None = None
+    current_iid_override_schema: CurrentIIDOverrideSchema = ()
 
     def planning_population(self, *, alignment: int) -> int:
         """Return the largest extent one chunk can need: a group, or everyone."""
@@ -445,6 +451,7 @@ class _ChunkProfiler:
             "log_level": self.log_level,
             "runtime_checks": self.runtime_checks,
             "group_sizes": self.group_sizes,
+            "current_iid_override_schema": self.current_iid_override_schema,
         }
         return profile_cache_registry().get_or_build(
             runtime_token=self.runtime.profile_cache_token,

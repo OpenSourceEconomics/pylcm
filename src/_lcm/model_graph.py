@@ -1,11 +1,15 @@
 """Resolve explicit model topology and bind it to the numerical transition laws."""
 
+import inspect
 from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal, cast
 
+import jax.numpy as jnp
+
+from _lcm.exits import ExitFunctionDemand, exit_functions, exits_for_phase
 from _lcm.gated_edge import GatedEdge, gated_edge_from_gate
 from _lcm.reachability import ModelReachability, PhaseReachability
 from _lcm.regime_building.fixed_regime_support import prune_fixed_regime_support
@@ -36,12 +40,14 @@ from _lcm.user_regime_validation import (
     fail_if_a_joint_target_is_unreachable,
     validate_regimes,
 )
+from lcm.arrivals import ArrivalDecision
 from lcm.collective import Gate
 from lcm.exceptions import (
     InvalidRegimeTransitionProbabilitiesError,
     ModelInitializationError,
     RegimeInitializationError,
 )
+from lcm.exits import Consent
 from lcm.phased import Phased
 from lcm.regime import Regime
 from lcm.transition import (
@@ -241,7 +247,12 @@ def prepare_graph(
         ages=ages,
         source_ages_by_phase=source_ages,
     )
+    policy_reads, exit_targets = _exit_policy_demand(
+        regimes=fixed_support.user_regimes, schedules=after, ages=ages
+    )
     schedules = resolve_demand(
+        policy_reads_by_phase=policy_reads,
+        exit_targets_by_period=exit_targets,
         schedules=after,
         initial_nodes=initial_nodes,
         same_period_refs_by_regime={
@@ -249,6 +260,12 @@ def prepare_graph(
             for name, regime in fixed_support.user_regimes.items()
         },
         terminal_regimes=frozenset(name for name, law in laws.items() if law.terminal),
+        ages=ages,
+    )
+    _validate_exit_availability(
+        regimes=fixed_support.user_regimes,
+        demanded=schedules,
+        available=after,
         ages=ages,
     )
     return GraphPreparation(
@@ -263,6 +280,180 @@ def prepare_graph(
         ),
         cells_without_edges=cells_without_edges,
     )
+
+
+def _exit_policy_demand(  # noqa: C901 - phase-specific typed reads and actual actor demand
+    *,
+    regimes: Mapping[RegimeName, Regime],
+    schedules: RegimeSchedules,
+    ages: TimeAxis,
+) -> tuple[
+    Mapping[
+        str, Mapping[tuple[int, RegimeName, str], tuple[tuple[RegimeName, str], ...]]
+    ],
+    Mapping[tuple[int, RegimeName], tuple[RegimeName, ...]],
+]:
+    """Declare typed reads without pretending a policy query is a Full value."""
+    from _lcm.exits import exits_for_phase  # noqa: PLC0415
+
+    reads = {"solution": {}, "simulation": {}}
+    actors = {}
+    if not any(regime.exits for regime in regimes.values()):
+        return reads, actors
+    for phase, side in (("solution", "solve"), ("simulation", "simulate")):
+        for source, regime in regimes.items():
+            declarations = exits_for_phase(exits=regime.exits, phase=side)
+            for period in schedules.coverage_by_regime[source]:
+                for kind in ("Raw", "Participating", "Full"):
+                    required = []
+                    final = []
+                    for declaration in declarations.values():
+                        if kind == "Raw" or _exit_is_statically_unavailable(
+                            predicate=declaration.available,
+                            period=period,
+                            ages=ages,
+                        ):
+                            continue
+                        if kind == "Participating" and (
+                            isinstance(declaration.rule, Consent)
+                            or (
+                                callable(declaration.rule)
+                                and not declaration._reads_outside_values  # noqa: SLF001 - frozen declaration metadata
+                            )
+                        ):
+                            continue
+                        required.extend(
+                            (target.regime, "Participating")
+                            for target in declaration.targets.values()
+                        )
+                        if isinstance(declaration.rule, Consent):
+                            required.extend(
+                                (
+                                    (source, "Raw"),
+                                    (declaration.rule.counterparty.regime, "Raw"),
+                                )
+                            )
+                        if kind == "Full":
+                            final.extend(
+                                target.regime for target in declaration.targets.values()
+                            )
+                    reads[phase][period, source, kind] = tuple(dict.fromkeys(required))
+                    if phase == "simulation" and kind == "Full":
+                        actors[period, source] = tuple(dict.fromkeys(final))
+    return reads, actors
+
+
+def demanded_exit_function_paths(
+    *,
+    regimes: Mapping[RegimeName, Regime],
+    schedules: RegimeSchedules,
+    ages: TimeAxis,
+) -> ExitFunctionDemand:
+    """Keep callback namespaces only where an actual typed policy reads them."""
+    result = {name: {} for name in regimes}
+    for phase, side in (("solution", "solve"), ("simulation", "simulate")):
+        full = (
+            schedules.valued_nodes if phase == "solution" else schedules.visited_nodes
+        )
+        contexts = set(schedules.query_nodes_by_phase.get(phase, frozenset()))
+        contexts.update((p, n, "Full") for p, n in full)
+        if phase == "simulation":
+            contexts.update(
+                (p, n, "Participating") for p, n in schedules.exit_acting_nodes
+            )
+        for owner, regime in regimes.items():
+            paths = set()
+            for period, name, kind in contexts:
+                if name != owner or kind == "Raw":
+                    continue
+                for exit_name, declaration in exits_for_phase(
+                    exits=regime.exits, phase=side
+                ).items():
+                    if kind == "Participating" and (
+                        isinstance(declaration.rule, Consent)
+                        or (
+                            callable(declaration.rule)
+                            and not declaration._reads_outside_values  # noqa: SLF001 - frozen declaration metadata
+                        )
+                    ):
+                        continue
+                    inactive = _exit_is_statically_unavailable(
+                        predicate=declaration.available, period=period, ages=ages
+                    )
+                    paths.update(
+                        path
+                        for path in exit_functions(
+                            exits={exit_name: declaration}, phase=side
+                        )
+                        if not inactive or path[-1] in {"available", "rule"}
+                    )
+            result[owner][side] = frozenset(paths)
+    return MappingProxyType(
+        {name: MappingProxyType(phases) for name, phases in result.items()}
+    )
+
+
+def _validate_exit_availability(
+    *,
+    regimes: Mapping[RegimeName, Regime],
+    demanded: RegimeSchedules,
+    available: RegimeSchedules,
+    ages: TimeAxis,
+) -> None:
+    """Check query contexts against available problems before demand prunes them."""
+    for source, regime in regimes.items():
+        for phase, periods in (
+            ("solution", demanded.coverage_by_regime[source]),
+            ("simulation", demanded.visited_periods_by_regime[source]),
+        ):
+            for name, declaration in regime.exits.items():
+                contexts = [
+                    ("destination", target.regime)
+                    for target in declaration.targets.values()
+                ]
+                if isinstance(declaration.rule, Consent):
+                    contexts.append(
+                        ("counterparty", declaration.rule.counterparty.regime)
+                    )
+                for kind, target in contexts:
+                    for period in periods:
+                        if period not in available.coverage_by_regime[target] or (
+                            target in available.support_by_phase[phase]
+                            and not available.support_by_phase[phase][target].get(
+                                period
+                            )
+                        ):
+                            if _exit_is_statically_unavailable(
+                                predicate=declaration.available,
+                                period=period,
+                                ages=ages,
+                            ):
+                                continue
+                            raise RegimeInitializationError(
+                                f"Exit {source}.{name} {kind} {target!r} is inactive "
+                                f"at {ages.exact_values[period]} in {phase}."
+                            )
+
+
+def _exit_is_statically_unavailable(
+    *, predicate: UserFunction | None, period: int, ages: TimeAxis
+) -> bool:
+    """Prove false only over the complete singleton time-input domain.
+
+    State-dependent or runtime-parameter predicates may be true somewhere;
+    no sampled state or guessed parameter can certify their unavailability.
+    """
+    if predicate is None:
+        return False
+    names = set(inspect.signature(predicate).parameters)
+    if names - {"period", "age"}:
+        return False
+    inputs = {
+        "period": jnp.asarray(period, dtype=jnp.int32),
+        "age": ages.values[period],
+    }
+    value = jnp.asarray(predicate(**{name: inputs[name] for name in names}))
+    return value.ndim == 0 and value.dtype.kind == "b" and not bool(value)
 
 
 def _validate_graph_coordinate_kind(
@@ -378,6 +569,9 @@ def bind_edge_laws(
             name: bind_regime_law(
                 bound[name],
                 gated_edges=_declared_gated_edges(
+                    source=name, declared=declared, resolved=resolved
+                ),
+                arrivals=_declared_arrivals(
                     source=name, declared=declared, resolved=resolved
                 ),
             )
@@ -504,7 +698,7 @@ def _derived_target_ages(
                 return None
             for name in names:
                 selected.setdefault(name, set()).add(ages.exact_values[period])
-    for target, gate in transition.gates.items():
+    for target, gate in {**transition.gates, **transition.arrivals}.items():
         for route in gate.routes.values():
             for fallback in {
                 (
@@ -588,6 +782,36 @@ def _declared_gated_edges(
             for target, gate in {**simulate, **solve}.items()
         }
     )
+
+
+def _declared_arrivals(
+    *,
+    source: RegimeName,
+    declared: Mapping[Side, PhaseEdges],
+    resolved: Mapping[Side, ResolvedEdges],
+) -> MappingProxyType[RegimeName, ArrivalDecision]:
+    """Retain the incoming edge's typed decision through both actual phases."""
+    by_side = {}
+    for side in _PHASE_SIDES:
+        declaration = declared[side].get(source)
+        arrivals = declaration.arrivals if isinstance(declaration, Transition) else {}
+        reached = resolved[side].get(source, {})
+        if set(arrivals) - set(reached):
+            raise ModelInitializationError(
+                f"ArrivalDecision of {source!r} names an unscheduled {side} target."
+            )
+        by_side[side] = arrivals
+    solve, simulate = by_side["solve"], by_side["simulate"]
+    for target in solve.keys() | simulate.keys():
+        shared = target in resolved["solve"].get(source, {}) and target in resolved[
+            "simulate"
+        ].get(source, {})
+        if shared and solve.get(target) != simulate.get(target):
+            raise ModelInitializationError(
+                f"ArrivalDecision of {source!r} into {target!r} differs by phase; "
+                "declare differing settlements with Phased fallback projections."
+            )
+    return MappingProxyType({**simulate, **solve})
 
 
 def _targets_by_period(
@@ -768,6 +992,7 @@ def bind_graph_support(
                 )
                 fallbacks = _gate_fallbacks(
                     gated_edges=source_law.gated_edges,
+                    arrivals=source_law.arrivals,
                     targets=targets[side],
                     side=side,
                 )
@@ -838,7 +1063,9 @@ def bind_graph_support(
                 targets=(),
             )
         )
-        result[source] = bind_regime_law(bound, gated_edges=source_law.gated_edges)
+        result[source] = bind_regime_law(
+            bound, gated_edges=source_law.gated_edges, arrivals=source_law.arrivals
+        )
     return MappingProxyType(result), MappingProxyType(dropped)
 
 
@@ -1073,14 +1300,18 @@ def _gate_fallbacks(
     gated_edges: Mapping[RegimeName, GatedEdge],
     targets: tuple[RegimeName, ...],
     side: Side,
+    arrivals: Mapping[RegimeName, ArrivalDecision] = MappingProxyType({}),
 ) -> tuple[RegimeName, ...]:
     """The gate-closed regimes of the gated targets among `targets`, for one side."""
     return tuple(
         dict.fromkeys(
             (leg.solve_fallback if side == "solve" else leg.simulate_fallback).regime
-            for target, edge in gated_edges.items()
+            for target, routes in (
+                *((target, edge.legs) for target, edge in gated_edges.items()),
+                *((target, decision.routes) for target, decision in arrivals.items()),
+            )
             if target in targets
-            for leg in edge.legs.values()
+            for leg in routes.values()
         )
     )
 

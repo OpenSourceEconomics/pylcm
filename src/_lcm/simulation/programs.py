@@ -38,6 +38,8 @@ import jax
 import jax.numpy as jnp
 from dags import with_signature
 
+from _lcm.current_iid import CURRENT_IID_KEYS_ARGUMENT, CURRENT_IID_OVERRIDES_ARGUMENT
+from _lcm.dtypes import canonical_float_dtype
 from _lcm.engine import Regime
 from _lcm.execution.core_program import (
     CoreBuildContext,
@@ -118,6 +120,7 @@ from _lcm.typing import (
 )
 from _lcm.utils.dispatchers import map_over_leading_axis, productmap
 from lcm.exceptions import ExecutionPlanningError
+from lcm.shocks import Discrete
 from lcm.typing import (
     Bool1D,
     BoolND,
@@ -376,6 +379,30 @@ def _decision_programs(
             output_roles=(
                 ACTION_INDEX,
                 DECISION_VALUE,
+                *(
+                    (
+                        {
+                            shock: StateAxesLeading(
+                                state_names=(),
+                                dtype=jnp.int32
+                                if isinstance(law, Discrete)
+                                else canonical_float_dtype(),
+                                shape=(),
+                            )
+                            for binding in (
+                                context.current_iid_draw_plan.bindings.values()
+                            )
+                            for shock, law in binding.group.shocks.items()
+                        },
+                        StateAxesLeading(
+                            state_names=(),
+                            n_free_leading_axes=1,
+                            dtype=jnp.bool_,
+                        ),
+                    )
+                    if context.current_iid_draw_plan is not None
+                    else ()
+                ),
                 *_bound_output_roles(function=Q_and_F_functions[period]),
             ),
             disposition=CoreExecutionDisposition.PLANNED,
@@ -558,9 +585,7 @@ def forward_regimes_by_period(
             active={
                 name: regime
                 for name, regime in regimes.items()
-                if period in regime.active_periods
-                and name
-                in regime.simulation.reachability.active_regimes_by_period[period]
+                if period in regime.simulation.programs.decision
             },
             regimes=regimes,
         )
@@ -765,6 +790,17 @@ def _decision_subject_arg_names(*, context: SolverBuildContext) -> tuple[str, ..
     names = tuple(context.state_action_space.states)
     if context.has_taste_shocks:
         names = (*names, "taste_shock_key")
+    if context.current_iid_draw_plan is not None:
+        names = tuple(
+            dict.fromkeys(
+                (
+                    *names,
+                    *sorted(context.current_iid_draw_plan.state_inputs),
+                    CURRENT_IID_KEYS_ARGUMENT,
+                    CURRENT_IID_OVERRIDES_ARGUMENT,
+                )
+            )
+        )
     return names
 
 
@@ -859,6 +895,8 @@ def _decision_body(
         return_annotation="tuple[IntND, FloatND]",
         enforce=False,
     )
+    if context.current_iid_draw_plan is not None:
+        cell = context.current_iid_draw_plan.wrap(cell)
     return _SubjectTiled(
         func=cell, subject_arg_names=subject_arg_names, n_bound_records=n_bound_records
     )

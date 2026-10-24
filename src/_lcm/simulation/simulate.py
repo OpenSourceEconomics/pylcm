@@ -57,6 +57,7 @@ from _lcm.regime_building.Q_and_F import (
 )
 from _lcm.simulation import chunk_operations, population_operations
 from _lcm.simulation.additional_targets import _compute_targets
+from _lcm.simulation.arrival_routing import record_arrival_entries
 from _lcm.simulation.assembly import concatenate_arrays, take_rows
 from _lcm.simulation.chunk_admission import PreparedSimulationChunks
 from _lcm.simulation.chunk_inputs import (
@@ -65,6 +66,11 @@ from _lcm.simulation.chunk_inputs import (
     prepare_simulation_chunk_inputs,
 )
 from _lcm.simulation.chunk_offload import chunk_host_device, offload_chunk
+from _lcm.simulation.current_iid import prepare_current_iid_keys
+from _lcm.simulation.current_iid_overrides import (
+    CurrentIIDOverrides,
+    gather_current_iid_overrides,
+)
 from _lcm.simulation.diagnostic_operations import (
     owned_value_nan_count,
     period_value_flags,
@@ -79,6 +85,8 @@ from _lcm.simulation.dissolution_route import (
     reroute_rows_without_feasible_action,
     rows_of,
 )
+from _lcm.simulation.exit_replay import prepare_exit_period
+from _lcm.simulation.exits import PreparedExitDecision
 from _lcm.simulation.gated_routing import (
     GatedRouteDelta,
     commit_gated_route_delta,
@@ -113,6 +121,7 @@ from _lcm.simulation.plan_summary import (
 from _lcm.simulation.policy_diagnostics import dropped_candidate_counts
 from _lcm.simulation.policy_programs import ReplayPayload
 from _lcm.simulation.program_arguments import (
+    current_iid_arguments,
     decision_arguments,
     gate_fold_arguments,
     gate_route_arguments,
@@ -127,9 +136,8 @@ from _lcm.simulation.programs import (
 from _lcm.simulation.random import (
     create_simulation_key,
     draw_random_seed,
-    site_simulation_key,
-    split_simulation_key,
 )
+from _lcm.simulation.random_address import RANDOM_ADDRESS_VERSION
 from _lcm.simulation.replay_inputs import PreparedReplayReader, place_replay_payload
 from _lcm.simulation.residency import (
     DeviceBufferFootprint,
@@ -208,6 +216,7 @@ from lcm.exceptions import (
     InvalidSimulationInputError,
     InvalidValueFunctionError,
     NoFeasibleActionError,
+    ShockDeclarationError,
     UnrepresentableOuterCandidateError,
 )
 from lcm.result import SimulationResult
@@ -259,6 +268,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
     prepared_chunks: PreparedSimulationChunks | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
     shock_paths: Mapping[StateName, np.ndarray] = MappingProxyType({}),
+    current_iid_overrides: CurrentIIDOverrides | None = None,
     process_code_reads: Mapping[
         RegimeName, Mapping[StateName, _ContinuousStochasticProcess]
     ] = MappingProxyType({}),
@@ -347,23 +357,17 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
         if seed is None:
             seed = draw_random_seed()
 
-        taste_addresses = (
-            MappingProxyType({})
-            if taste_shock_seed is None
-            else build_taste_stream_addresses(
-                ages=ages,
-                discrete_actions_by_regime={
-                    name: {
-                        action: grid
-                        for action in regime.solution.action_names
-                        if isinstance(
-                            grid := regime.solution.grids[action], DiscreteGrid
-                        )
-                    }
-                    for name, regime in regimes.items()
-                    if regime.has_taste_shocks
-                },
-            )
+        taste_addresses = build_taste_stream_addresses(
+            ages=ages,
+            discrete_actions_by_regime={
+                name: {
+                    action: grid
+                    for action in regime.solution.action_names
+                    if isinstance(grid := regime.solution.grids[action], DiscreteGrid)
+                }
+                for name, regime in regimes.items()
+                if regime.has_taste_shocks
+            },
         )
 
         logger.info("Starting simulation")
@@ -650,6 +654,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
                         call_inputs=call_inputs,
                         process_grid_resolver=process_grid_resolver,
                         shock_paths=shock_paths,
+                        current_iid_overrides=current_iid_overrides,
                         process_code_reads=process_code_reads,
                         dissolution_records=dissolution_records,
                     )
@@ -747,6 +752,16 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
             simulation_output_dtypes=simulation_output_dtypes,
             subject_batch_size=subject_batch_size,
             nested_policy_regimes=nested_policy_regimes,
+            randomness={
+                "address_version": RANDOM_ADDRESS_VERSION,
+                "prng_impl": str(jax.random.key_impl(seed))
+                if isinstance(seed, jax.Array)
+                else "threefry2x32",
+                "taste_prng_impl": str(jax.random.key_impl(taste_shock_seed))
+                if isinstance(taste_shock_seed, jax.Array)
+                else "threefry2x32",
+                "precision": "float64" if jax.config.jax_enable_x64 else "float32",
+            },
         )
         # Diagnostic-only attribute, mirroring how `Model.simulate` attaches
         # `_solution`: never part of the constructor's persisted fields, so it is
@@ -855,6 +870,7 @@ def _simulate_subject_chunk(  # noqa: PLR0915
     ] = MappingProxyType({}),
     process_grid_resolver: ProcessGridResolver | None = None,
     shock_paths: Mapping[StateName, np.ndarray] = MappingProxyType({}),
+    current_iid_overrides: CurrentIIDOverrides | None = None,
     process_code_reads: Mapping[
         RegimeName, Mapping[StateName, _ContinuousStochasticProcess]
     ] = MappingProxyType({}),
@@ -1010,6 +1026,36 @@ def _simulate_subject_chunk(  # noqa: PLR0915
         if memory is not None:
             memory.period_owner = owner
 
+        states, subject_regime_ids, own_stakeholder, prepared_exits = (
+            prepare_exit_period(
+                regimes=regimes,
+                period=period,
+                states=states,
+                regime_ids=subject_regime_ids,
+                roles=own_stakeholder,
+                entered_through=entered_through,
+                source_roles=source_roles,
+                regime_names_to_ids=regime_names_to_ids,
+                flat_params=flat_params,
+                ages=ages,
+                values=period_to_regime_to_V_arr,
+                owner=owner,
+                key=key,
+                subject_slice=subject_slice,
+                original_n_subjects=n_subjects
+                if original_n_subjects is None
+                else original_n_subjects,
+                memory=memory,
+                taste_key=taste_key,
+                taste_addresses=taste_addresses,
+                current_iid_overrides=current_iid_overrides,
+            )
+        )
+        # Current exits are simultaneous. The scheduled transition accumulators
+        # start from final acting membership, after every original choice froze.
+        new_subject_regime_ids = subject_regime_ids
+        new_own_stakeholder = own_stakeholder
+
         ran_this_period: list[RegimeName] = []
         for regime_name, regime in active_regimes.items():
             dispatched_regime = _bind_unit_executor(
@@ -1027,6 +1073,7 @@ def _simulate_subject_chunk(  # noqa: PLR0915
                     source_roles,
                     entered_through,
                     new_entered_through,
+                    prepared_exits,
                 ),
             )
             (
@@ -1076,14 +1123,10 @@ def _simulate_subject_chunk(  # noqa: PLR0915
                         period=period, source=regime_name
                     )
                 ),
-                key=site_simulation_key(
-                    key=key,
-                    period=period,
-                    regime_id=int(regime_names_to_ids[regime_name]),
-                    memory=memory,
-                ),
+                key=key,
                 taste_key=taste_key,
                 taste_address=taste_addresses.get((period, regime_name)),
+                current_iid_overrides=current_iid_overrides,
                 logger=logger,
                 n_subjects=n_subjects,
                 subject_slice=subject_slice,
@@ -1112,6 +1155,7 @@ def _simulate_subject_chunk(  # noqa: PLR0915
                 process_code_reads=process_code_reads,
                 dissolution_records=dissolution_records,
                 ran_this_period=tuple(ran_this_period),
+                prepared_decision=prepared_exits.get(regime_name),
             )
             ran_this_period.append(regime_name)
             states = new_states
@@ -1135,6 +1179,7 @@ def _simulate_subject_chunk(  # noqa: PLR0915
                 ).close()
                 memory.close_unit()
 
+        del prepared_exits
         owner.finish()
         if memory is not None:
             memory.period_owner = None
@@ -1696,6 +1741,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
     taste_key: PRNGKeyND | None = None,
     taste_address: tuple[int, ...] | None = None,
     supplied_shocks: Mapping[str, np.ndarray] = MappingProxyType({}),
+    current_iid_overrides: CurrentIIDOverrides | None = None,
     source_roles: Int1D | None = None,
     entered_through: Int1D | None = None,
     new_entered_through: Int1D | None = None,
@@ -1704,6 +1750,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
     ] = MappingProxyType({}),
     dissolution_records: list[DissolutionFallback] | None = None,
     ran_this_period: tuple[RegimeName, ...] = (),
+    prepared_decision: PreparedExitDecision | None = None,
 ) -> tuple[
     PeriodRegimeSimulationData,
     StatesPerRegime,
@@ -1787,6 +1834,8 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             runtime checks are on.
         ran_this_period: The regimes that already ran this period. A row whose
             dissolution route leads into one of them cannot act this period.
+        prepared_decision: Final actions already selected by the immutable
+            original-subject exit pass, or `None` for an ordinary decision.
 
     Returns:
         Tuple containing:
@@ -1939,7 +1988,24 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
     direct_nnbegm_replay = replay_route.consumer_route == "nnbegm_finite" and (
         isinstance(sim_policy, NNBEGMSimPolicy)
     )
-    if built_reader is not None:
+    current_shocks: Mapping[str, FloatND | IntND] = MappingProxyType({})
+    if prepared_decision is not None:
+        # The immutable original-source pass already made the one Full choice
+        # and revealed a mover's final Participating action. Only this final
+        # actor advances below; it must never make another Full decision here.
+        current_shocks = prepared_decision.physical
+        V_arr = prepared_decision.value
+        optimal_actions = run_simulation_operation(
+            memory=memory,
+            function=_lookup_values_from_indices,
+            arguments={
+                "flat_indices": prepared_decision.indices,
+                "grids": state_action_space.actions,
+            },
+            subject_arg_names=("flat_indices",),
+        )
+        nested_fallback = None
+    elif built_reader is not None:
         optimal_actions, V_arr = _read_external_replay(
             reader=built_reader,
             regime_name=regime_name,
@@ -1986,19 +2052,63 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 subject_slice=subject_slice,
                 original_n_subjects=original_n_subjects,
                 memory=memory,
+                period=period,
             )
             taste_shock_kwargs = {"taste_shock_key": gumbel_keys}
+
+        current_iid_keys = MappingProxyType({})
+        if regime.simulation.current_iid_draw_plan is not None:
+            if not isinstance(subject_slice, slice):
+                raise ExecutionPlanningError(
+                    "Current IID replay does not cover grouped subject rows."
+                )
+            current_iid_keys = prepare_current_iid_keys(
+                plan=regime.simulation.current_iid_draw_plan,
+                key=key,
+                period=period,
+                subject_slice=subject_slice,
+                original_n_subjects=n_subjects
+                if original_n_subjects is None
+                else original_n_subjects,
+                memory=memory,
+            )
 
         def decide(
             *, space: StateActionSpace, in_regime: Bool1D
         ) -> tuple[IntND, FloatND, int]:
+            nonlocal current_shocks
             decision_outputs = execute_simulation_program(
                 programs=regime.simulation.programs,
                 family="decision",
                 period=period,
                 n_subjects=n_chunk_subjects,
                 arguments=decision_arguments(
-                    states=space.states,
+                    current_iid=current_iid_arguments(
+                        regime=regime,
+                        flat_params=flat_params,
+                        keys=current_iid_keys,
+                        overrides=gather_current_iid_overrides(
+                            bank=current_iid_overrides,
+                            names=()
+                            if regime.simulation.current_iid_draw_plan is None
+                            else regime.simulation.current_iid_draw_plan.physical_names,
+                            period=period,
+                            subject_slice=subject_slice,
+                        ),
+                    ),
+                    states={
+                        **space.states,
+                        **(
+                            {
+                                name: states[regime_name][name]
+                                for name in (
+                                    regime.simulation.current_iid_draw_plan.state_inputs
+                                )
+                            }
+                            if regime.simulation.current_iid_draw_plan is not None
+                            else {}
+                        ),
+                    },
                     discrete_actions=space.discrete_actions,
                     continuous_actions=space.continuous_actions,
                     taste_keys=taste_shock_kwargs,
@@ -2009,6 +2119,36 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                     age=age,
                 ),
             )
+            if regime.simulation.current_iid_draw_plan is not None:
+                if (
+                    not isinstance(decision_outputs, tuple)
+                    or len(decision_outputs) != 4  # noqa: PLR2004 - declared replay tuple
+                ):
+                    raise TypeError(
+                        "Current IID replay must publish physical draws "
+                        "and mandatory validity."
+                    )
+                indices, values, physical, invalid = decision_outputs
+                current_shocks = cast("Mapping[str, FloatND | IntND]", physical)
+                invalid = cast("BoolND", invalid)
+                if invalid.shape != in_regime.shape or invalid.dtype != jnp.bool_:
+                    raise TypeError(
+                        "Current IID replay validity must be Boolean per subject."
+                    )
+                if bool(
+                    run_simulation_operation(
+                        memory=memory,
+                        function=_current_iid_invalid,
+                        arguments={"invalid": invalid, "in_regime": in_regime},
+                    )
+                ):
+                    raise ShockDeclarationError(
+                        "Current IID law is invalid or unresolved "
+                        "during physical replay. Correlated physical overrides "
+                        "require a complete physical frame on active cells; "
+                        "otherwise supply named base innovations."
+                    )
+                decision_outputs = (indices, values)
             indices, values = consume_runtime_bound_outputs(
                 outputs=cast("tuple[QAndFArg, ...]", decision_outputs),
                 bound_specs=regime.simulation.post_decision_bounds,
@@ -2158,6 +2298,9 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
     )
 
     simulation_result = PeriodRegimeSimulationData(
+        shocks=current_shocks
+        if regime.simulation.current_iid_draw_plan is not None
+        else MappingProxyType({}),
         V_arr=V_arr,
         actions=optimal_actions,
         states=states[regime_name],
@@ -2168,14 +2311,14 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
 
     # Update states and regime membership for next period
     if not regime.terminal:
-        next_states_key, next_regime_key, key = split_simulation_key(
-            key=key, memory=memory
-        )
+        next_states_key = next_regime_key = key
         if memory is not None:
             memory.hold(tree=(simulation_result, next_states_key, next_regime_key, key))
 
         next_states = calculate_next_states(
+            current_shocks=simulation_result.shocks,
             regime=regime,
+            regimes=regimes,
             process_nodes=process_node_arguments(
                 regime=regime,
                 regimes=regimes,
@@ -2201,6 +2344,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
         # runs against the pre-advance carrier; only then do the next-period
         # states replace it.
         new_subject_regime_ids = calculate_next_regime_membership(
+            current_shocks=simulation_result.shocks,
             regime=regime,
             state_action_space=state_action_space,
             optimal_actions=optimal_actions,
@@ -2219,6 +2363,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             memory=memory,
             runtime_checks=validation_enabled(logger),
         )
+        drawn_arrival_ids = new_subject_regime_ids
         # A subject's raw codes are checked against the regime it was drawn to
         # before a gate can read a value at them or reroute the subject.
         if validation_enabled(logger):
@@ -2331,6 +2476,32 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                     },
                     subject_outputs=True,
                 )
+        arrival_targets = tuple(
+            target
+            for target in realization_targets_next_period
+            if period + 1 in regimes[target].simulation.exit_queries
+            and regime_name
+            in regimes[target].simulation.exit_queries[period + 1].arrivals
+        )
+        if arrival_targets and new_entered_through is not None:
+            new_entered_through = run_simulation_operation(
+                memory=memory,
+                function=record_arrival_entries,
+                arguments={
+                    "drawn_ids": drawn_arrival_ids,
+                    "routed_ids": new_subject_regime_ids,
+                    "holders": subject_ids_in_regime,
+                    "entries": new_entered_through,
+                },
+                static_arguments={
+                    "source_id": int(regime_names_to_ids[regime_name]),
+                    "target_ids": tuple(
+                        int(regime_names_to_ids[target]) for target in arrival_targets
+                    ),
+                },
+                subject_arg_names=("drawn_ids", "routed_ids", "holders", "entries"),
+                subject_outputs=True,
+            )
         states = clip_next_states(
             states=next_states,
             regimes=regimes,
@@ -4835,6 +5006,11 @@ def _genuine_rows(*, subject_slice: slice | SubjectRows, n_real: int) -> np.ndar
         rows = subject_slice.rows
         return np.concatenate(([True], rows[1:] != rows[:-1]))
     return np.arange(subject_slice.start, subject_slice.stop) < n_real
+
+
+def _current_iid_invalid(*, invalid: BoolND, in_regime: BoolND) -> BoolND:
+    """Consume native law status only for occupant rows, independently of logging."""
+    return jnp.any(invalid & in_regime)
 
 
 def _first_empty_action_row(*, indices: IntND, in_regime: BoolND) -> IntND:

@@ -30,6 +30,7 @@ from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.simulation import (
     population_operations,
 )
+from _lcm.simulation.arrival_routing import record_arrival_entries
 from _lcm.simulation.assembly import (
     _concatenate_arrays,
     _slice_array,
@@ -56,9 +57,11 @@ from _lcm.simulation.chunk_profile_inventory import (
     maximum_bytes,
     payload_bytes,
 )
+from _lcm.simulation.current_iid_overrides import CurrentIIDOverrideSchema
 from _lcm.simulation.diagnostic_operations import diagnostic_bindings
 from _lcm.simulation.dissolution_route import empty_gated_entries, record_open_entries
 from _lcm.simulation.entry_allocations import _pad_initial_leaf
+from _lcm.simulation.exit_profiles import profile_exit_period
 from _lcm.simulation.forward_program_profiles import (
     ForwardProgramProfile,
     _profile_program,
@@ -87,14 +90,12 @@ from _lcm.simulation.random import (
     _create_simulation_key,
     _generate_rowed_simulation_keys,
     _generate_windowed_simulation_keys,
-    _site_simulation_key,
-    _split_simulation_key,
 )
+from _lcm.simulation.random_address import RandomAddress, draw_window_keys
 from _lcm.simulation.replay_inputs import replay_payload_reads
 from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.subject_groups import grouped_rows, type_local_transfer
 from _lcm.simulation.taste_stream import (
-    _advance_simulation_taste_key,
     draw_taste_shock_keys,
 )
 from _lcm.simulation.transitions import (
@@ -105,6 +106,7 @@ from _lcm.simulation.transitions import (
     _draw_random_regime_ids_from_scalars,
     _update_regime_ids,
     drawn_code_checks,
+    transition_random_addresses,
 )
 from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.solution.backward_induction import (
@@ -162,6 +164,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None = None,
     max_compilation_workers: int | None = None,
     group_sizes: tuple[int, ...] | None = None,
+    current_iid_override_schema: CurrentIIDOverrideSchema = (),
 ) -> SimulationChunkProfile:
     """Prepare actual compiled stages for one proposed outer population extent.
 
@@ -181,7 +184,10 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     original order.
     """
     # `simulate` reaches this module through chunk admission, so import lazily.
-    from _lcm.simulation.simulate import _first_empty_action_row  # noqa: PLC0415
+    from _lcm.simulation.simulate import (  # noqa: PLC0415
+        _current_iid_invalid,
+        _first_empty_action_row,
+    )
 
     if population < original_population or original_population <= 0 or n_subjects <= 0:
         raise ExecutionPlanningError("Chunk profiles need a valid positive population.")
@@ -260,6 +266,8 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     ) as wave:
         for period in range(ages.n_periods):
             for name, regime in forward_regimes[period].items():
+                if period in regime.simulation.exit_queries:
+                    continue
                 profile_forward_unit(
                     runtime=runtime,
                     regimes=regimes,
@@ -279,6 +287,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                     taste_key=taste_key,
                     policy=(policies or {}).get(period, {}).get(name),
                     wave=wave,
+                    current_iid_override_schema=current_iid_override_schema,
                 )
     regime_ids, own_roles = cast(
         "tuple[jax.ShapeDtypeStruct, jax.ShapeDtypeStruct]",
@@ -335,8 +344,35 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
             subject_arg_names=("regime_ids",),
             subject_outputs=True,
         )
+        carrier, regime_ids, own_roles, prepared_exits = profile_exit_period(
+            inventory=inventory,
+            regimes=regimes,
+            period=period,
+            states=carrier,
+            regime_ids=regime_ids,
+            roles=own_roles,
+            entered_through=regime_ids,
+            source_roles=own_roles,
+            regime_names_to_ids=regime_names_to_ids,
+            flat_params=flat_params,
+            values=values,
+            ages=ages,
+            key=key,
+            taste_key=taste_key,
+            n_subjects=n_subjects,
+            widths=widths,
+            current_iid_override_schema=current_iid_override_schema,
+        )
         pending = payload_bytes(
-            tree=(carrier, regime_ids, own_roles, entries, key, taste_key)
+            tree=(
+                carrier,
+                regime_ids,
+                own_roles,
+                entries,
+                key,
+                taste_key,
+                prepared_exits,
+            )
         )
         inventory.close_unit()
         new_ids = regime_ids
@@ -359,6 +395,8 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                 ordinary_key=key,
                 taste_key=taste_key,
                 policy=(policies or {}).get(period, {}).get(name),
+                current_iid_override_schema=current_iid_override_schema,
+                prepared_decision=prepared_exits.get(name),
             )
             mask = inventory.operation(
                 function=_regime_mask,
@@ -366,17 +404,61 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                 subject_arg_names=("regime_ids",),
                 subject_outputs=True,
             )
-            if regime.has_taste_shocks:
+            if name not in prepared_exits and regime.has_taste_shocks:
                 _profile_taste(
                     inventory=inventory,
                     key=key,
                     taste_key=taste_key,
-                    population=padded,
-                    original_population=original_population,
                     width=n_subjects,
                     scalar_int=scalar_int,
                 )
-            if regime.simulation.replay_route.consumer_route == "nnbegm_finite":
+            if (
+                name not in prepared_exits
+                and regime.simulation.current_iid_draw_plan is not None
+            ):
+                for _ in regime.simulation.current_iid_draw_plan.physical_names:
+                    inventory.operation(
+                        function=draw_window_keys,
+                        arguments={
+                            "key": key,
+                            "address_words": jax.ShapeDtypeStruct(
+                                (8,), np.uint32, sharding=shared
+                            ),
+                            "subject_start": jax.ShapeDtypeStruct(
+                                (2,), np.uint32, sharding=shared
+                            ),
+                            "last_real_subject": jax.ShapeDtypeStruct(
+                                (2,), np.uint32, sharding=shared
+                            ),
+                            "period": jax.ShapeDtypeStruct(
+                                (), np.uint32, sharding=shared
+                            ),
+                        },
+                        static_arguments={"subject_count": n_subjects},
+                        subject_outputs=True,
+                    )
+            physical = {}
+            if name in prepared_exits:
+                indices, value, physical = prepared_exits[name]
+                inventory.operation(
+                    function=_first_empty_action_row,
+                    arguments={"indices": indices, "in_regime": mask},
+                    subject_arg_names=("indices", "in_regime"),
+                )
+                decoder = cores["action_decode"]
+                actions = inventory.compiled(
+                    name="_lookup_values_from_indices",
+                    executable=decoder.executable,
+                    memory=decoder.memory,
+                    arguments=decoder.arguments,
+                )
+                fallback = inventory.operation(
+                    function=_empty_fallback,
+                    arguments={"mask": mask},
+                    subject_arg_names=("mask",),
+                    subject_outputs=True,
+                )
+            elif regime.simulation.replay_route.consumer_route == "nnbegm_finite":
                 bank = cast(
                     "tuple[jax.ShapeDtypeStruct, ...]",
                     _record_core(
@@ -412,6 +494,13 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                     "tuple[jax.ShapeDtypeStruct, jax.ShapeDtypeStruct]",
                     decision_outputs[:2],
                 )
+                if regime.simulation.current_iid_draw_plan is not None:
+                    physical = decision_outputs[2]
+                    inventory.operation(
+                        function=_current_iid_invalid,
+                        arguments={"invalid": decision_outputs[3], "in_regime": mask},
+                        subject_arg_names=("invalid", "in_regime"),
+                    )
                 if not base_spaces[name].states and indices.ndim == 0:
                     indices, value = cast(
                         "tuple[jax.ShapeDtypeStruct, jax.ShapeDtypeStruct]",
@@ -454,7 +543,15 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                     subject_arg_names=("mask",),
                     subject_outputs=True,
                 )
-            record = (value, actions, carrier[name], mask, own_roles, fallback)
+            record = (
+                value,
+                actions,
+                carrier[name],
+                mask,
+                own_roles,
+                fallback,
+                physical,
+            )
             records.append(record)
             period_values.append(value)
             period_masks.append(cast("jax.ShapeDtypeStruct", mask))
@@ -589,34 +686,22 @@ def _profile_next_subjects(
     jax.ShapeDtypeStruct,
 ]:
     """Advance state, membership and ordinary-key metadata in actual dispatch order."""
-    site_scalar = jax.ShapeDtypeStruct((), np.uint32)
-    site_key = cast(
-        "jax.ShapeDtypeStruct",
-        inventory.operation(
-            function=_site_simulation_key,
-            arguments={"key": key, "period": site_scalar, "regime_id": site_scalar},
-        ),
-    )
-    split = cast(
-        "tuple[jax.ShapeDtypeStruct, ...]",
-        inventory.operation(
-            function=_split_simulation_key,
-            arguments={"key": site_key},
-            static_arguments={"partitionable": jax.config.jax_threefry_partitionable},
-        ),
+    stochastic_names = tuple(
+        binding.removeprefix("key_")
+        for binding in _stochastic_keys(regime=regime, key=key)
     )
     _profile_keys(
         inventory=inventory,
-        key=split[0],
-        names=tuple(
-            name.removeprefix("key_")
-            for name in _stochastic_keys(regime=regime, key=key)
-        ),
+        key=key,
+        names=stochastic_names,
         population=population,
         original_population=original_population,
         width=width,
         scalar_int=scalar_int,
         rows=subject_rows,
+        addresses=transition_random_addresses(
+            regime=regime, regimes=regimes, names=stochastic_names
+        ),
     )
     raw = (
         _record_core(
@@ -671,13 +756,14 @@ def _profile_next_subjects(
         )
     _, draw_keys = _profile_keys(
         inventory=inventory,
-        key=split[1],
+        key=key,
         names=("regime_transition",),
         population=population,
         original_population=original_population,
         width=width,
         scalar_int=scalar_int,
         rows=subject_rows,
+        addresses={"regime_transition": RandomAddress(kind="regime", name="regime")},
     )
     rows = tuple(route[target] for target in names)
     drawn = inventory.operation(
@@ -727,6 +813,7 @@ def _profile_next_subjects(
                 },
                 subject_arg_names=("codes", "subjects", "new_regime_ids"),
             )
+    drawn_arrival_ids = new_ids
     carrier = cast("Mapping[str, Mapping[str, jax.ShapeDtypeStruct]]", advanced)
     if period in regime.simulation.programs.gate_route:
         shared = simulation_value_sharding(
@@ -814,6 +901,30 @@ def _profile_next_subjects(
             },
             subject_outputs=True,
         )
+    arrival_targets = tuple(
+        target
+        for target in names
+        if period + 1 in regimes[target].simulation.exit_queries
+        and name in regimes[target].simulation.exit_queries[period + 1].arrivals
+    )
+    if arrival_targets:
+        inventory.operation(
+            function=record_arrival_entries,
+            arguments={
+                "drawn_ids": drawn_arrival_ids,
+                "routed_ids": new_ids,
+                "holders": mask,
+                "entries": new_ids,
+            },
+            static_arguments={
+                "source_id": int(regime_names_to_ids[name]),
+                "target_ids": tuple(
+                    int(regime_names_to_ids[target]) for target in arrival_targets
+                ),
+            },
+            subject_arg_names=("drawn_ids", "routed_ids", "holders", "entries"),
+            subject_outputs=True,
+        )
     carrier = _profile_clip_next_states(
         inventory=inventory,
         regime=regime,
@@ -828,7 +939,6 @@ def _profile_next_subjects(
         next_period=period + 1,
         runtime_checks=runtime_checks,
     )
-    key = split[2]
     return carrier, key, new_ids, own_roles
 
 
@@ -1177,27 +1287,47 @@ def _profile_keys(
     width: int,
     scalar_int: jax.ShapeDtypeStruct,
     rows: jax.ShapeDtypeStruct | None = None,
+    addresses: Mapping[str, RandomAddress] = MappingProxyType({}),
 ) -> tuple[jax.ShapeDtypeStruct, Mapping[str, jax.ShapeDtypeStruct]]:
-    """Profile the original full split, windowed or gathered at a chunk's rows."""
+    """Profile the addressed innovations at a contiguous or grouped row window."""
     static_arguments: dict[str, StaticArgument] = {
         "names": names,
         "n_initial_states": population,
         "original_n_subjects": original_population,
         "partitionable": jax.config.jax_threefry_partitionable,
+        "addresses": tuple(
+            addresses.get(name, RandomAddress(kind="state", name=name)).words()
+            for name in names
+        ),
     }
+    period = jax.ShapeDtypeStruct((), np.uint32, sharding=scalar_int.sharding)
     if rows is None:
         function = _generate_windowed_simulation_keys
-        arguments = {"key": key, "start": scalar_int}
+        arguments = {
+            "key": key,
+            "start": jax.ShapeDtypeStruct(
+                (2,), np.uint32, sharding=scalar_int.sharding
+            ),
+            "period": period,
+        }
         static_arguments["width"] = width
     else:
         function = _generate_rowed_simulation_keys
-        arguments = {"key": key, "rows": rows}
-    return cast(
-        "tuple[jax.ShapeDtypeStruct, Mapping[str, jax.ShapeDtypeStruct]]",
+        static_arguments.pop("n_initial_states")
+        static_arguments.pop("original_n_subjects")
+        arguments = {
+            "key": key,
+            "rows": jax.ShapeDtypeStruct((width, 2), np.uint32, sharding=rows.sharding),
+            "period": period,
+        }
+    return key, cast(
+        "Mapping[str, jax.ShapeDtypeStruct]",
         inventory.operation(
             function=function,
             arguments=arguments,
             static_arguments=static_arguments,
+            subject_arg_names=() if rows is None else ("rows",),
+            subject_outputs=True,
         ),
     )
 
@@ -1207,36 +1337,15 @@ def _profile_taste(
     inventory: ChunkProfileInventory,
     key: jax.ShapeDtypeStruct,
     taste_key: jax.ShapeDtypeStruct | None,
-    population: int,
-    original_population: int,
     width: int,
     scalar_int: jax.ShapeDtypeStruct,
 ) -> None:
     """Include the exact ordinary or independent taste-key body and carry."""
-    if taste_key is None:
-        _profile_keys(
-            inventory=inventory,
-            key=key,
-            names=("taste_shock",),
-            population=population,
-            original_population=original_population,
-            width=width,
-            scalar_int=scalar_int,
-        )
-        return
-    inventory.operation(
-        function=_advance_simulation_taste_key,
-        arguments={"key": key},
-        static_arguments={
-            "original_n_subjects": original_population,
-            "partitionable": jax.config.jax_threefry_partitionable,
-        },
-    )
     shared = scalar_int.sharding
     inventory.operation(
         function=draw_taste_shock_keys,
         arguments={
-            "key": taste_key,
+            "key": key if taste_key is None else taste_key,
             "address_words": jax.ShapeDtypeStruct(
                 (8,), np.dtype(np.uint32), sharding=shared
             ),
@@ -1246,6 +1355,7 @@ def _profile_taste(
             "last_real_subject": jax.ShapeDtypeStruct(
                 (2,), np.dtype(np.uint32), sharding=shared
             ),
+            "period": jax.ShapeDtypeStruct((), np.uint32, sharding=shared),
         },
         static_arguments={"subject_count": width},
         subject_outputs=True,
@@ -1273,6 +1383,9 @@ def _period_copy_reservation(
             regime.simulation.programs.forward_decision,
             regime.simulation.programs.gate_fold,
             regime.simulation.programs.gate_route,
+            regime.simulation.programs.exit_full,
+            regime.simulation.programs.exit_participating,
+            *regime.simulation.programs.arrival_families,
         )
         if period in family
         for read in family[period].requirements.value_reads

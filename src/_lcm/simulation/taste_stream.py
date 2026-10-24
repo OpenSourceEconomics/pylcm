@@ -1,34 +1,31 @@
-"""Address common taste-shock keys by exact age, action domain and subject row."""
+"""Address destination taste draws by original subject row and period."""
 
-import functools
-import hashlib
-import json
-import struct
 from collections.abc import Mapping
-from fractions import Fraction
 from types import MappingProxyType
 
 import jax
-import jax.numpy as jnp
 import numpy as np
-from jax._src.dtypes import ExtendedDType
 from jaxtyping import Key, UInt32
 
 from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
-from _lcm.simulation.random import _create_simulation_key, generate_simulation_keys
+from _lcm.simulation.random import _create_simulation_key
+from _lcm.simulation.random_address import (
+    RandomAddress,
+    draw_window_keys,
+)
 from _lcm.time import TimeAxis
 from _lcm.typing import ArrayTree, PRNGKeyND
 from lcm.exceptions import ExecutionPlanningError
 from lcm.grids import DiscreteGrid
-from lcm.typing import ActionName, PRNGKey, RegimeName, UserAge
+from lcm.typing import ActionName, PRNGKey, RegimeName
 
-type _DiscreteDomain = tuple[tuple[str, tuple[tuple[str, int], ...]], ...]
 type _AddressWords = UInt32[jax.Array | np.ndarray, "8"]
 type _RowWords = UInt32[jax.Array | np.ndarray, "2"]
 type _Word = UInt32[jax.Array, ""]
 type _ScalarKey = Key[jax.Array, ""]
 
 _WORD_BASE = 2**32
+_INITIAL_PERIOD = 0
 
 
 def create_taste_shock_key(
@@ -66,34 +63,23 @@ def prepare_decision_taste_keys(
     subject_slice: slice,
     original_n_subjects: int | None,
     memory: SimulationMemory | None,
+    period: int = 0,
 ) -> tuple[PRNGKeyND, PRNGKeyND]:
-    """Select ordinary or addressed taste keys while preserving ordinary advancement."""
-    if taste_key is None:
-        key, keys = generate_simulation_keys(
-            key=key,
-            names=["taste_shock"],
-            n_initial_states=n_subjects,
-            subject_slice=subject_slice,
-            original_n_subjects=original_n_subjects,
-            memory=memory,
-        )
-        return key, keys["key_taste_shock"]
+    """Address destination taste draws without advancing the ordinary root."""
     if taste_address is None:
         raise ExecutionPlanningError(
             "Independent taste stream lacks its domain address."
         )
     real_subjects = n_subjects if original_n_subjects is None else original_n_subjects
-    next_key = advance_simulation_taste_key(
-        key=key, original_n_subjects=real_subjects, memory=memory
-    )
     taste_keys = generate_taste_shock_keys(
-        key=taste_key,
+        key=key if taste_key is None else taste_key,
         address_words=taste_address,
         subject_slice=subject_slice,
         original_n_subjects=real_subjects,
         memory=memory,
+        period=period,
     )
-    return next_key, taste_keys
+    return key, taste_keys
 
 
 def generate_taste_shock_keys(
@@ -103,6 +89,7 @@ def generate_taste_shock_keys(
     subject_slice: slice,
     original_n_subjects: int,
     memory: SimulationMemory | None,
+    period: int = 0,
 ) -> PRNGKeyND:
     """Admit only this chunk's addressed keys, with dynamic age and row words."""
     start = subject_slice.start
@@ -114,6 +101,7 @@ def generate_taste_shock_keys(
             "address_words": np.asarray(address_words, dtype=np.uint32),
             "subject_start": _encode_subject_row(row=start),
             "last_real_subject": _encode_subject_row(row=original_n_subjects - 1),
+            "period": np.uint32(period),
         },
         static_arguments={"subject_count": subject_slice.stop - start},
         subject_outputs=True,
@@ -123,11 +111,7 @@ def generate_taste_shock_keys(
 def advance_simulation_taste_key(
     *, key: PRNGKeyND, original_n_subjects: int, memory: SimulationMemory | None
 ) -> PRNGKeyND:
-    """Preserve the ordinary carry when an independent taste draw replaces its bank.
-
-    The numerical split still has its original population size. Its compiler
-    scratch is measured as-is; only the unused taste-key output bank is omitted.
-    """
+    """Preserve the immutable ordinary root after an independent taste draw."""
     return run_simulation_operation(
         memory=memory,
         function=_advance_simulation_taste_key,
@@ -144,29 +128,14 @@ def build_taste_stream_addresses(
     ages: TimeAxis,
     discrete_actions_by_regime: Mapping[RegimeName, Mapping[ActionName, DiscreteGrid]],
 ) -> MappingProxyType[tuple[int, RegimeName], tuple[int, ...]]:
-    """Describe matching ages and ordered choices without regime identity.
-
-    The caller supplies the actual discrete product-axis order. Labels and codes
-    describe each axis in that same order; continuous grids do not enter this
-    address. Regime names only locate the returned metadata. Equal exact ages
-    and domains share a stream even across different regimes and horizons.
-    """
-    domains: dict[str, _DiscreteDomain] = {
-        regime: tuple(
-            (name, tuple(zip(grid.categories, grid.codes, strict=True)))
-            for name, grid in actions.items()
-        )
-        for regime, actions in discrete_actions_by_regime.items()
-    }
-    encoded: dict[tuple[UserAge, _DiscreteDomain], tuple[int, ...]] = {}
-    addresses: dict[tuple[int, RegimeName], tuple[int, ...]] = {}
-    for period, age in enumerate(ages.exact_values):
-        for regime, domain in domains.items():
-            identity = (age, domain)
-            if identity not in encoded:
-                encoded[identity] = _taste_address_words(age=age, domain=domain)
-            addresses[(period, regime)] = encoded[identity]
-    return MappingProxyType(addresses)
+    """Name each destination's taste stream independently of mutable action grids."""
+    return MappingProxyType(
+        {
+            (period, regime): RandomAddress(kind="taste", name=regime).words()
+            for period in range(ages.n_periods)
+            for regime in discrete_actions_by_regime
+        }
+    )
 
 
 def _encode_subject_row(*, row: int) -> _RowWords:
@@ -179,25 +148,13 @@ def _encode_subject_row(*, row: int) -> _RowWords:
 
 
 def _advance_simulation_taste_key(
-    *, key: PRNGKeyND, original_n_subjects: int, partitionable: bool
+    *,
+    key: PRNGKeyND,
+    original_n_subjects: int,  # noqa: ARG001 - compatibility adapter signature
+    partitionable: bool,  # noqa: ARG001 - compatibility adapter signature
 ) -> PRNGKeyND:
-    """Compute exactly the carry from the existing population-wide split."""
-    with jax.threefry_partitionable(partitionable):
-        return jax.random.split(key=key, num=original_n_subjects + 1)[0]
-
-
-def _taste_address_words(*, age: UserAge, domain: _DiscreteDomain) -> tuple[int, ...]:
-    """Hash an unambiguous versioned UTF-8 representation into ordered words."""
-    rational_age = Fraction(age)
-    payload = (
-        "pylcm.taste-stream.v1",
-        (rational_age.numerator, rational_age.denominator),
-        domain,
-    )
-    serialized = json.dumps(
-        payload, ensure_ascii=False, allow_nan=False, separators=(",", ":")
-    ).encode("utf-8")
-    return struct.unpack(">8I", hashlib.sha256(serialized).digest())
+    """Return the immutable ordinary root after an independent taste draw."""
+    return key
 
 
 def draw_taste_shock_keys(
@@ -207,6 +164,7 @@ def draw_taste_shock_keys(
     subject_start: _RowWords,
     last_real_subject: _RowWords,
     subject_count: int,
+    period: int | _Word | np.uint32 = _INITIAL_PERIOD,
 ) -> PRNGKeyND:
     """Fold dynamic time/domain metadata and uint64 global rows into a key.
 
@@ -220,73 +178,11 @@ def draw_taste_shock_keys(
     `scalar_draw_axis` names, which tells the decision to draw from it as a
     scalar too.
     """
-    if type(subject_count) is not int or not 0 <= subject_count < 2**64:
-        raise ValueError("A taste-key chunk requires a nonnegative uint64 row count.")
-    address = jnp.asarray(address_words)
-    start = jnp.asarray(subject_start)
-    last = jnp.asarray(last_real_subject)
-    addressed_key = key
-    for position in range(8):
-        addressed_key = jax.random.fold_in(addressed_key, address[position])
-
-    offset_high, offset_low = _row_offset_words(count=subject_count)
-    low = start[1] + offset_low
-    carry = (low < start[1]).astype(jnp.uint32)
-    high_before_carry = start[0] + offset_high
-    overflow = (high_before_carry < start[0]) | (
-        (high_before_carry == np.uint32(_WORD_BASE - 1)) & (carry != 0)
+    return draw_window_keys(
+        key=key,
+        address_words=address_words,
+        subject_start=subject_start,
+        last_real_subject=last_real_subject,
+        subject_count=subject_count,
+        period=period,
     )
-    high = high_before_carry + carry
-    padded = overflow | (high > last[0]) | ((high == last[0]) & (low > last[1]))
-    row_high = jnp.where(padded, last[0], high)
-    row_low = jnp.where(padded, last[1], low)
-    draw_axis = scalar_draw_axis(dtype=addressed_key.dtype)
-    fold = (
-        jax.custom_batching.sequential_vmap(_fold_subject_key)
-        if draw_axis
-        else _fold_subject_key
-    )
-    keys = jax.vmap(fold, in_axes=(None, 0, 0))(addressed_key, row_high, row_low)
-    return keys.reshape(*keys.shape, *draw_axis)
-
-
-def scalar_draw_axis(*, dtype: np.dtype | ExtendedDType) -> tuple[int, ...]:
-    """Return the per-subject axis that marks an independent key for scalar draws.
-
-    Batched Threefry folds and draws equal the per-key ones, so its keys keep
-    the plain subject axis and the decision's vectorized draw. Batched RBG draws
-    and unsafe-RBG folds are not maps over the keys, so an independent key of
-    any other implementation gets a trailing length-one axis and is folded and
-    drawn as a scalar.
-    """
-    return () if dtype == _threefry_key_dtype() else (1,)
-
-
-@functools.cache
-def _threefry_key_dtype() -> ExtendedDType:
-    return jax.eval_shape(
-        functools.partial(jax.random.key, 0, impl="threefry2x32")
-    ).dtype
-
-
-def _row_offset_words(*, count: int) -> tuple[jax.Array, jax.Array]:
-    """Represent chunk offsets without relying on an enabled uint64 dtype."""
-    high_blocks: list[jax.Array] = []
-    low_blocks: list[jax.Array] = []
-    for start in range(0, count, _WORD_BASE):
-        size = min(_WORD_BASE, count - start)
-        low = jnp.arange(size, dtype=jnp.uint32)
-        high_blocks.append(jnp.full_like(low, start // _WORD_BASE))
-        low_blocks.append(low)
-    if not low_blocks:
-        empty = jnp.empty((0,), dtype=jnp.uint32)
-        return empty, empty
-    if len(low_blocks) == 1:
-        return high_blocks[0], low_blocks[0]
-    return jnp.concatenate(high_blocks), jnp.concatenate(low_blocks)
-
-
-# keyword-only-exempt: library-callback=jax.vmap
-def _fold_subject_key(key: _ScalarKey, high: _Word, low: _Word) -> _ScalarKey:
-    """Address one subject without shape-dependent random splitting."""
-    return jax.random.fold_in(jax.random.fold_in(key, high), low)

@@ -43,8 +43,9 @@ import _lcm.zero_safe as zero_safe_declarations
 import lcm.exceptions as lcm_exceptions
 import lcm.koopmans_aggregation as koopmans_declarations
 from _lcm.certainty_equivalent import CertaintyEquivalent
-from _lcm.continuation import EGMQuerySpec
+from _lcm.continuation import ContinuationSpec, EGMQuerySpec
 from _lcm.engine import NNBEGMPolicyRead, Regime
+from _lcm.execution.value_transfer import ValueArtifactAddress
 from _lcm.grids import DiscreteGrid, Grid
 from _lcm.optimization.golden_section import GoldenSectionResult
 from _lcm.params.edges import EDGES, flat_namespaces, regime_kernel_params
@@ -70,6 +71,8 @@ from lcm.case_piece import (
 )
 from lcm.decoupled import Decoupled
 from lcm.phased import Phased
+from lcm.shocks import Discrete as DiscreteShock
+from lcm.shocks import ShockGroup, ShockGroupName, _correlation_record
 from lcm.solver_api import (
     ArtifactChannel,
     AxisRole,
@@ -83,6 +86,7 @@ from lcm.typing import (
     ContinuousState,
     DiscreteAction,
     DiscreteState,
+    UserParams,
 )
 
 # beartype compiles every guard it writes under this synthetic filename.
@@ -433,7 +437,7 @@ def project_solution_params(
     # A source's law slots are read by its own transitions, so the source's
     # realized-only names apply to its edge slots as well.
     for path, leaves in flat_namespaces(flat_params):
-        realized_only = realized_only_by_regime[path[-1]]
+        realized_only = realized_only_by_regime.get(path[-1], frozenset())
         kept = MappingProxyType(
             {name: value for name, value in leaves.items() if name not in realized_only}
         )
@@ -747,6 +751,8 @@ def fingerprint_model_structure(
     laws: _FingerprintLaws,
     regime_names_to_ids: RegimeNamesToIds,
     binding_recorder: BindingRecorder | None = None,
+    shock_groups: Mapping[ShockGroupName, ShockGroup] = MappingProxyType({}),
+    shock_fixed_params: UserParams = MappingProxyType({}),
 ) -> str:
     """Hash the mathematical facts a model fixes at build.
 
@@ -800,6 +806,16 @@ def fingerprint_model_structure(
                 },
                 **(
                     {
+                        "dated_continuation_custody": _dated_continuation_identity(
+                            spec=spec
+                        )
+                    }
+                    if (spec := regime.solution.continuation_spec) is not None
+                    and spec.templates_by_period
+                    else {}
+                ),
+                **(
+                    {
                         "query_authority": _query_semantic_descriptor(
                             regime.solution.query_authority
                         ),
@@ -808,6 +824,32 @@ def fingerprint_model_structure(
                     else {}
                 ),
                 "period_state_axes": regime.solution.period_state_axes,
+                **(
+                    {
+                        "current_iid_support": {
+                            period: (
+                                tuple(
+                                    (
+                                        group_name,
+                                        nodes,
+                                        tuple(binding.group.shocks.items()),
+                                        binding.state_inputs,
+                                        binding.state_domains,
+                                        binding.functions,
+                                    )
+                                    for group_name, binding, nodes in plan.bindings
+                                ),
+                                plan.indices,
+                            )
+                            for period, plan in (
+                                regime.solution.current_iid_plans.items()
+                            )
+                            if plan is not None
+                        }
+                    }
+                    if regime.solution.current_iid_plans
+                    else {}
+                ),
                 **(
                     {
                         "finite_policy_query_authority": _query_semantic_descriptor(
@@ -833,7 +875,69 @@ def fingerprint_model_structure(
     )
     hasher = _SemanticHasher(binding_recorder=binding_recorder)
     hasher.visit(value=record)
+    if shock_groups:
+        hasher.visit(
+            value=(
+                "current-iid-registry",
+                1,
+                {
+                    name: (
+                        tuple(group.shocks.items()),
+                        group.nodes,
+                        _correlation_record(group.correlation),
+                        group._correlation_support,  # noqa: SLF001 - identity retains the prepared rank support
+                    )
+                    for name, group in shock_groups.items()
+                },
+            )
+        )
+    if shock_fixed_params:
+        hasher.visit(value=("current-iid-fixed-params", 1, shock_fixed_params))
     return hasher.hexdigest()
+
+
+def _dated_continuation_identity(*, spec: ContinuationSpec) -> _Reachable:
+    """Seal dated schemas and origin owners without hashing numeric placeholders."""
+    return (
+        (spec.artifact_key.type_id, spec.artifact_key.schema_version),
+        tuple(
+            (
+                period,
+                str(jax.tree.structure(template)),
+                tuple(
+                    (tuple(leaf.shape), str(leaf.dtype))
+                    for leaf in jax.tree.leaves(template)
+                ),
+            )
+            for period, template in sorted(spec.templates_by_period.items())
+        ),
+        tuple(
+            (
+                _continuation_origin_identity(alias),
+                _continuation_origin_identity(origin),
+            )
+            for alias, origin in spec.stored_value_aliases().items()
+        ),
+    )
+
+
+def _continuation_origin_identity(
+    artifact: ValueArtifactAddress,
+) -> tuple[_Reachable, ...]:
+    """Serialize canonical artifact enums by their declared stable values."""
+    return (
+        artifact.kind.value,
+        artifact.period,
+        artifact.regime,
+        artifact.target_regime,
+        None
+        if artifact.artifact_key is None
+        else (
+            artifact.artifact_key.type_id,
+            artifact.artifact_key.schema_version,
+        ),
+        artifact.leaf_path,
+    )
 
 
 def _query_semantic_descriptor(spec: EGMQuerySpec) -> EGMQuerySpec:
@@ -925,7 +1029,10 @@ def _project_user_regime_declaration(
                     if name != "description"
                     # An empty reporting declaration adds no semantic facts to
                     # the pre-existing feature-free model identity.
-                    and not (name == "output_only_functions" and value == ())
+                    and not (
+                        name in {"output_only_functions", "shocks"} and value == ()
+                    )
+                    and not (name == "arrivals" and not value)
                 }
             ),
         }
@@ -1148,6 +1255,14 @@ class _SemanticHasher:
                     self.visit(value=value.values_to_jax())
                     self.visit(value=value.tolerance)
                 self.frame(label="DiscreteGrid-end")
+                return
+            if type(value) is DiscreteShock:
+                # A categorical law consumes the validated category code/label
+                # declaration, rather than arbitrary behavior of its class.
+                self.frame(label="DiscreteShock-start")
+                self.visit(value=DiscreteGrid(category_class=value.categories))
+                self.visit(value=value.probs)
+                self.frame(label="DiscreteShock-end")
                 return
             if isinstance(value, Phased):
                 if type(value) is not Phased:

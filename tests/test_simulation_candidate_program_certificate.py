@@ -72,20 +72,38 @@ _RANDOM_HELPER_MUTATIONS = {
     "simulation_random:population_split_context_ignored": (
         (
             '"partitionable": jax.config.jax_threefry_partitionable,\n'
-            '            "subject_window":'
+            '        "addresses":'
         ),
-        '"partitionable": False,\n            "subject_window":',
+        '"partitionable": False,\n        "addresses":',
     ),
     "simulation_random:declared_population_mode_ignored": (
-        "with jax.threefry_partitionable(partitionable):\n        for name in names:",
-        "with jax.threefry_partitionable(False):\n        for name in names:",
+        (
+            "with jax.threefry_partitionable(partitionable):\n        return {\n"
+            '            f"key_{name}": draw_window_keys('
+        ),
+        (
+            "with jax.threefry_partitionable(False):\n        return {\n"
+            '            f"key_{name}": draw_window_keys('
+        ),
     ),
 }
 
 _PROFILED_HELPER_MUTATIONS = {
     "automatic_params:consumer_devices_ignored": (
         "src/_lcm/simulation/entry_allocations.py",
-        "devices = phase.placed_devices()",
+        (
+            "devices = tuple(\n"
+            "                dict.fromkeys(\n"
+            "                    device\n"
+            "                    for phase in phases\n"
+            "                    for device in (\n"
+            "                        phase.placed_devices()\n"
+            "                        if phase.sharded_state_names\n"
+            "                        else phase.placed_devices()[:1]\n"
+            "                    )\n"
+            "                )\n"
+            "            )"
+        ),
         "devices = self.devices[:1]",
     ),
     "automatic_params:copies_not_owned": (
@@ -240,8 +258,11 @@ _PROFILED_HELPER_MUTATIONS = {
     ),
     "simulation_entry:fixed_solve_inventory_omitted": (
         "src/_lcm/solution/backward_induction.py",
-        "        fixed_input_arrays=(\n            retained_input_arrays,",
-        "        fixed_input_arrays=(\n            (),",
+        (
+            "                fixed_input_arrays=(\n"
+            "                    retained_input_arrays,"
+        ),
+        "                fixed_input_arrays=(\n                    (),",
     ),
     "simulation_entry:fixed_solve_inputs_rebound": (
         "src/_lcm/solution/backward_induction.py",
@@ -286,8 +307,18 @@ _PROFILED_HELPER_MUTATIONS = {
     ),
     "simulation_entry:padding_budget_bypassed": (
         "src/_lcm/simulation/entry_allocations.py",
-        "                    budget_bytes=self.budget_bytes,",
-        "                    budget_bytes=2**63 - 1,",
+        (
+            "                    live_footprint=self.snapshot,\n"
+            "                    budget_devices=tuple(dict.fromkeys("
+            "(*self.devices, *live.spans))),\n"
+            "                    budget_bytes=self.budget_bytes,"
+        ),
+        (
+            "                    live_footprint=self.snapshot,\n"
+            "                    budget_devices=tuple(dict.fromkeys("
+            "(*self.devices, *live.spans))),\n"
+            "                    budget_bytes=2**63 - 1,"
+        ),
     ),
     "simulation_entry:excluded_source_inventory_omitted": (
         "src/_lcm/simulation/entry_allocations.py",
@@ -301,8 +332,8 @@ _PROFILED_HELPER_MUTATIONS = {
     ),
     "simulation_entry:parameter_writer_bypassed": (
         "src/lcm/model.py",
-        "flat_params, array_writer=array_writer",
-        "flat_params, array_writer=None",
+        "            flat_params, array_writer=array_writer\n",
+        "            flat_params, array_writer=None\n",
     ),
     "simulation_entry:integer_upload_bypassed": (
         "src/_lcm/dtypes.py",
@@ -353,19 +384,14 @@ _PROFILED_HELPER_MUTATIONS = {
         "or False",
     ),
     "simulation_taste_stream:namespace_changed": (
-        "src/_lcm/simulation/taste_stream.py",
-        '"pylcm.taste-stream.v1",',
-        '"pylcm.taste-stream.v2",',
+        "src/_lcm/simulation/random_address.py",
+        'RANDOM_ADDRESS_VERSION = "pylcm.random.v1"',
+        'RANDOM_ADDRESS_VERSION = "pylcm.random.v2"',
     ),
-    "simulation_taste_stream:action_domain_ignored": (
+    "simulation_taste_stream:ordinary_root_advanced": (
         "src/_lcm/simulation/taste_stream.py",
-        "        domain,\n    )",
-        "        (),\n    )",
-    ),
-    "simulation_taste_stream:ordinary_carry_not_advanced": (
-        "src/_lcm/simulation/taste_stream.py",
-        "return next_key, taste_keys",
         "return key, taste_keys",
+        "return jax.random.fold_in(key, 1), taste_keys",
     ),
     "simulation_taste_stream:ambient_implementation_used": (
         "src/_lcm/simulation/taste_stream.py",
@@ -445,20 +471,20 @@ _PROFILED_HELPER_MUTATIONS = {
     "solution_runtime:fixed_source_owners_omitted": (
         "src/_lcm/solution/backward_induction.py",
         (
-            "        fixed_input_arrays=(\n"
-            "            retained_input_arrays,\n"
-            "            tuple(\n"
-            "                (space.states, space.discrete_actions, "
+            "                fixed_input_arrays=(\n"
+            "                    retained_input_arrays,\n"
+            "                    tuple(\n"
+            "                        (space.states, space.discrete_actions, "
             "space.continuous_actions)\n"
-            "                for space in base_state_action_spaces.values()"
+            "                        for space in base_state_action_spaces.values()"
         ),
         (
-            "        fixed_input_arrays=(\n"
-            "            retained_input_arrays,\n"
-            "            tuple(\n"
-            "                (space.states, space.discrete_actions, "
+            "                fixed_input_arrays=(\n"
+            "                    retained_input_arrays,\n"
+            "                    tuple(\n"
+            "                        (space.states, space.discrete_actions, "
             "space.continuous_actions)\n"
-            "                for space in ()"
+            "                        for space in ()"
         ),
     ),
     "solution_runtime:internal_output_reservation_omitted": (
@@ -1360,6 +1386,7 @@ def test_supplemental_sources_complete_the_pinned_registry_coverage() -> None:
     final_nested = direct_flow.final_nested_mutation_specs(repo_root=root)
     child_native = direct_flow.child_native_mutation_specs(repo_root=root)
     additional_helpers = direct_flow.additional_helper_mutation_specs(repo_root=root)
+    current_iid = direct_flow.current_iid_mutation_specs(repo_root=root)
 
     assert set(decoupled) == {
         "decoupled_bound:action_adapter_bypassed",
@@ -1373,6 +1400,7 @@ def test_supplemental_sources_complete_the_pinned_registry_coverage() -> None:
     }
 
     assert set(supplemental) == {
+        "simulation_taste_stream:destination_name_ignored",
         "solve_completion:conflict_wait_bypassed",
         "eager_core:planned_operand_placement_bypassed",
         "runtime_sharding:physical_partition_ignored",
@@ -1485,6 +1513,7 @@ def test_supplemental_sources_complete_the_pinned_registry_coverage() -> None:
         final_nested,
         child_native,
         additional_helpers,
+        current_iid,
     )
     for index, left in enumerate(families):
         for right in families[index + 1 :]:

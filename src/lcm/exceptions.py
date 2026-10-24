@@ -127,6 +127,10 @@ class ModelInitializationError(PyLCMError):
     """Raised when there is an error in the model initialization."""
 
 
+class ShockDeclarationError(ModelInitializationError):
+    """Raised when shock laws, node rules or their readers are invalid."""
+
+
 class RegimeInitializationError(ModelInitializationError):
     """Raised when there is an error in the regime initialization.
 

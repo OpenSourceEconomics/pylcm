@@ -399,25 +399,28 @@ counterfactual = counterfactual_model.simulate(
 )
 ```
 
-A draw corresponds to an exact age, a subject's row position in the initial conditions,
-and an ordered discrete-action domain. Regime names, policy parameters, horizon
-endpoints, subject chunks and padding do not identify the draw. Keep people in
-corresponding input rows; DataFrame index labels do not provide subject identity.
-Changing the policy can change choices and state paths even with common shocks.
+A taste key identifies a computational period, the destination regime's name and a
+subject's original row position in the initial conditions. Age labels, policy
+parameters, horizon endpoints, subject chunks and padding do not identify the key. Keep
+people in corresponding input rows; DataFrame index labels do not provide subject
+identity. Renaming the destination changes its taste stream. Changing the policy can
+change choices and state paths even with common shocks.
 
-The discrete domain includes the ordered action names and each action's ordered category
-labels and codes. Renaming, reordering or resizing it changes the stream; individual
-categories are not matched across incompatible domains. Continuous-action grids do not
-enter the address. Changing a taste-shock scale multiplies the same standardized draw,
-so equal scaled shocks additionally require equal scales.
+Action grids do not enter the key address. Comparing individual standardized taste
+shocks still requires the same ordered discrete-action domain and draw shape: category
+labels are not matched across incompatible domains. Changing a taste-shock scale
+multiplies the same standardized draw, so equal scaled shocks additionally require equal
+scales.
 
 The independent stream uses Threefry for integer seeds. A supplied typed root retains
 its PRNG implementation; with an RBG or unsafe-RBG root, each subject's draw comes from
 its own addressed key under every subject width and padding. Exact comparisons require
-matching numerical precision, backend and JAX random configuration. It does not alter
-the ordinary key-chain advancement directly. `taste_shock_seed=None` uses the existing
-ordinary stream, and the optional seed changes neither solutions nor their compatibility
-fingerprints.
+matching numerical precision, backend and JAX random configuration. Ordinary and taste
+innovations use distinct versioned address domains, and their roots remain unchanged.
+`taste_shock_seed=None` uses the ordinary root with the taste address domain. Simulation
+results expose the address version, PRNG implementations and precision through
+`result.randomness`; saved results retain that metadata. The optional seed changes
+neither solutions nor their compatibility fingerprints.
 
 ### Heterogeneous initial ages
 

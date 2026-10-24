@@ -20,6 +20,11 @@ documentation and tests.
 | [`lcm.PeriodCandidate`](model_and_regime.md#api-period-candidate-lowering)                           | Exact primary ranked-width request                |
 | [`lcm.LoweredPeriodCandidate`](model_and_regime.md#api-period-candidate-lowering)                    | Immutable descriptors and raw unoptimized IR      |
 | [`lcm.Regime`](model_and_regime.md#api-regime)                                                       | General regime                                    |
+| [`lcm.Exit`](model_and_regime.md#api-current-exits)                                                  | Named current-period move                         |
+| [`lcm.ExitTarget`](model_and_regime.md#api-current-exits)                                            | Mapped destination policy and adjustment          |
+| [`lcm.Consent`](model_and_regime.md#api-current-exits)                                               | Strict formation consent                          |
+| [`lcm.Counterparty`](model_and_regime.md#api-current-exits)                                          | Counterparty Raw policy context                   |
+| [`lcm.RuleResult`](model_and_regime.md#api-current-exits)                                            | Custom rule's stable alternative ID               |
 | [`lcm.ExecutionConfig`](runtime_and_results.md#execution-configuration)                              | Devices, budget, sharded states, widths, donation |
 | [`lcm.InvariantBlockSchedule`](runtime_and_results.md#execution-configuration)                       | Period- or block-major invariant schedule         |
 | [`lcm.ConsumptionSavingsRegime`](consumption_savings.md#api-consumption-savings-regime)              | One liquid margin                                 |
@@ -39,6 +44,7 @@ documentation and tests.
 
 | Public name                                                                             | Canonical documentation              |
 | --------------------------------------------------------------------------------------- | ------------------------------------ |
+| [`lcm.shocks`](shocks.md)                                                               | Named IID laws and integration rules |
 | [`lcm.AgeGrid`](grids_and_processes.md#api-lifecycle-and-categorical-grids)             | Lifecycle grid                       |
 | [`lcm.categorical`](grids_and_processes.md#api-lifecycle-and-categorical-grids)         | Category declaration                 |
 | [`lcm.characteristics`](grids_and_processes.md#api-lifecycle-and-categorical-grids)     | Checked category characteristics     |
@@ -68,6 +74,8 @@ documentation and tests.
 | [`lcm.StochasticTransition`](transitions.md#api-state-transitions)             | Stochastic transition wrapper       |
 | [`lcm.AdditiveShockTransition`](transitions.md#api-additive-shock-transitions) | Additive continuous-state shock law |
 | [`lcm.Transition`](transitions.md#api-regime-transitions)                      | Graph edges with their regime law   |
+| [`lcm.ArrivalDecision`](model_and_regime.md#api-arrival-decisions)             | Incoming edge's arrival rule        |
+| [`lcm.ArrivalRead`](model_and_regime.md#api-arrival-reads)                     | Typed projected arrival comparison  |
 | [`lcm.JointTransition`](transitions.md#api-joint-transitions)                  | Shared-draw joint law               |
 | [`lcm.ByAge`](transitions.md#api-dated-regime-transitions)                     | Numerical laws by exact source age  |
 | [`lcm.AgeRange`](transitions.md#api-dated-regime-transitions)                  | Half-open age interval              |

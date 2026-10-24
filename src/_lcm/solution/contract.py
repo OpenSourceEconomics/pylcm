@@ -126,15 +126,22 @@ from lcm.typing import Float1D, FloatND, UserFunction
 # enumerates the payload classes the shipped routes declare.
 
 if TYPE_CHECKING:
+    from _lcm.arrival_queries import ArrivalQueryPlan
+    from _lcm.current_iid import CurrentIIDDrawPlan, CurrentIIDPlan
     from _lcm.regime_building.finalize import FinalizedUserRegime
     from _lcm.regime_building.V import VInterpolationInfo
     from _lcm.regime_law import RegimeLaw
 
     type RegimeLawsMapping = Mapping[RegimeName, RegimeLaw]
+    type ArrivalQueriesMapping = Mapping[int, Mapping[RegimeName, ArrivalQueryPlan]]
 
     type UserRegimesMapping = Mapping[RegimeName, FinalizedUserRegime]
     type RegimeToVInterpolationInfo = MappingProxyType[RegimeName, VInterpolationInfo]
 else:
+    ArrivalQueriesMapping = Mapping
+    # The innovation plan imports the solver facade through its law registry.
+    type CurrentIIDPlan = object
+    type CurrentIIDDrawPlan = object
     # Resolving the element types closes a cycle via the `lcm.solvers` façade,
     # which re-exports `Solver` from this module. ty reads the precise types
     # above; the beartype claw checks only the outer container at runtime.
@@ -222,6 +229,16 @@ class SolverBuildContext:
     regime_name: RegimeName
     """Name of the regime the kernels are built for."""
 
+    current_iid_plans: Mapping[int, CurrentIIDPlan | None] = field(
+        default=MappingProxyType({}), metadata={"fingerprint_omit_if_default": True}
+    )
+    """Exact-age current innovation support, separate from real state axes."""
+
+    current_iid_draw_plan: CurrentIIDDrawPlan | None = field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Current-phase physical replay, with no quadrature or persistent axes."""
+
     ages: TimeAxis
     """The model's lifecycle age grid.
 
@@ -251,6 +268,10 @@ class SolverBuildContext:
     template yet; filled for the `declare_continuation_reads` call that follows
     once every regime is built.
     """
+    arrival_queries: ArrivalQueriesMapping = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    """Actual next-date policy/value read graphs inside this source's Q/F."""
 
     scalar_query_models: Mapping[RegimeName, ScalarEGMQueryModel] | None = None
     """Trusted scalar query pools prepared once before numerical kernel factories."""

@@ -6,7 +6,7 @@ age name the source's destinations there.
 """
 
 from collections.abc import Mapping
-from typing import Unpack
+from typing import Unpack, cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -33,7 +33,7 @@ from lcm.exceptions import (
 from lcm.regime import Regime as UserRegime
 from lcm.regime import RegimeReplacement
 from lcm.transition import AgeSelector
-from lcm.typing import FloatND, ScalarFloat, ScalarInt
+from lcm.typing import FloatND, ScalarFloat, ScalarInt, UserFacingRegimeParamsTemplate
 
 
 @categorical(ordered=False)
@@ -188,7 +188,9 @@ def test_template_has_per_target_regime_transition_keys() -> None:
         ),
         work_edges={"work": (0, 1), "dead": (0, 1, 2)},
     )
-    template = model.get_params_template()
+    template = cast(
+        "dict[str, UserFacingRegimeParamsTemplate]", model.get_params_template()
+    )
     assert "hazard" in template["edges"]["work"]["dead"]
     assert "hazard" in template["edges"]["work"]["work"]
 
@@ -292,7 +294,9 @@ def test_disjoint_phase_targets_price_perceived_choice_and_realize_exit(
             },
         ),
     )
-    template = model.get_params_template()["edges"]["work"]
+    template = cast(
+        "dict[str, UserFacingRegimeParamsTemplate]", model.get_params_template()
+    )["edges"]["work"]
     assert "perceived_mass" in template["dead"]
     assert "realized_mass" in template["retired"]
     params = {"discount_factor": 1.0, "perceived_mass": 1.0, "realized_mass": 1.0}
@@ -458,5 +462,7 @@ def test_per_target_regime_transition_leaves_no_target_branch_under_source() -> 
     """Granular cells add no target branch to the source regime's template."""
     work = _build_regime()
     model = _build_model(work=work)
-    template = model.get_params_template()
+    template = cast(
+        "dict[str, UserFacingRegimeParamsTemplate]", model.get_params_template()
+    )
     assert not {"work", "retired", "dead"} & set(template["work"])

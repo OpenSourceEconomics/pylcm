@@ -334,6 +334,7 @@ def _extract_period_data(
     for name in regime_actions:
         if name in result.actions:
             data[name] = result.actions[name]
+    data.update(result.shocks)
 
     return data
 

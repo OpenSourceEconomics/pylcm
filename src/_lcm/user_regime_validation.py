@@ -45,6 +45,7 @@ from _lcm.utils.functools import is_user_function
 from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from lcm.decoupled import Decoupled
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
+from lcm.exits import Consent, Exit
 from lcm.koopmans_aggregation import CESAggregator, LinearAggregator
 from lcm.phased import Phased
 from lcm.solvers import NBEGM, NNBEGM, GridSearch
@@ -55,7 +56,7 @@ from lcm.transition import (
     JointTransition,
     StochasticTransition,
 )
-from lcm.typing import UserFunction
+from lcm.typing import Phase, UserFunction
 
 if TYPE_CHECKING:
     from lcm.regime import Regime, StateEntry, StateTransitionEntry
@@ -147,6 +148,100 @@ def validate_regimes(*, regimes: Mapping[RegimeName, Regime], laws: RegimeLaws) 
         validate_regime_law(regime, law=laws[name])
 
 
+def validate_exit_targets(
+    *, regimes: Mapping[RegimeName, Regime], laws: RegimeLaws
+) -> None:
+    """Bind declared destinations to real policy roles and complete phase states."""
+    from _lcm.exits import exits_for_phase  # noqa: PLC0415 - phase validator cycle
+
+    for source, regime in regimes.items():
+        for phase in ("solve", "simulate"):
+            for name, declaration in exits_for_phase(
+                exits=regime.exits, phase=phase
+            ).items():
+                for target in declaration.targets.values():
+                    context = f"Exit {source}.{name}"
+                    if target.regime not in regimes:
+                        raise RegimeInitializationError(
+                            f"{context} names unknown destination {target.regime!r}."
+                        )
+                    destination = regimes[target.regime]
+                    if target.role not in (destination.stakeholders or (None,)):
+                        raise RegimeInitializationError(
+                            f"{context} has invalid destination role {target.role!r}."
+                        )
+                    _validate_exit_projection(
+                        context=context,
+                        projection=target.projection,
+                        destination=destination,
+                        law=laws[target.regime],
+                        phase=phase,
+                    )
+                _validate_counterparty(
+                    declaration=declaration,
+                    context=f"Exit {source}.{name} counterparty",
+                    regimes=regimes,
+                    laws=laws,
+                    phase=phase,
+                )
+
+
+def _validate_counterparty(
+    *,
+    declaration: Exit,
+    context: str,
+    regimes: Mapping[RegimeName, Regime],
+    laws: RegimeLaws,
+    phase: Phase,
+) -> None:
+    """Bind the other formation member to its own complete Raw stay context."""
+    if not isinstance(declaration.rule, Consent):
+        return
+    counterparty = declaration.rule.counterparty
+    if counterparty.regime not in regimes:
+        raise RegimeInitializationError(
+            f"{context} names unknown regime {counterparty.regime!r}."
+        )
+    # The role belongs to the formation destination, rather than its singleton Raw.
+    for target in declaration.targets.values():
+        destination = regimes[target.regime]
+        if (
+            destination.stakeholders is None
+            or counterparty.role not in destination.stakeholders
+            or counterparty.role == target.role
+        ):
+            raise RegimeInitializationError(
+                f"{context} has invalid destination role {counterparty.role!r}."
+            )
+    _validate_exit_projection(
+        context=context,
+        projection=counterparty.projection,
+        destination=regimes[counterparty.regime],
+        law=laws[counterparty.regime],
+        phase=phase,
+    )
+
+
+def _validate_exit_projection(
+    *,
+    context: str,
+    projection: Mapping[StateName, UserFunction] | Phased,
+    destination: Regime,
+    law: RegimeLaw,
+    phase: Phase,
+) -> None:
+    """Require a complete mapping into the actual phase's destination state."""
+    spec = normalize_regime_phases(destination, law=law)
+    expected = set(
+        getattr(spec, "solution" if phase == "solve" else "simulation").grid_states
+    )
+    if not isinstance(projection, Mapping) or set(projection) != expected:
+        raise RegimeInitializationError(
+            f"{context} {phase} projection must name destination states "
+            f"{sorted(expected)!r}."
+        )
+
+
 def validate_regime(regime: Regime) -> None:
     """Validate what a regime declares on its own, without its law.
 
@@ -184,9 +279,40 @@ def validate_regime(regime: Regime) -> None:
         )
 
     _validate_mapping_contents(regime)
+    _validate_exits(regime)
     _validate_logical_consistency(regime)
     _validate_fold_declarations(regime)
     validate_law_free_phase_grammar(regime)
+
+
+def _validate_exits(regime: Regime) -> None:
+    """Require a complete benchmark for the source's actual stakeholder layout."""
+    if not regime.exits:
+        return
+    from lcm.exits import Consent, Exit  # noqa: PLC0415 - Regime imports this validator
+
+    expected = set(regime.stakeholders or ("self",))
+    if errors := path_segment_name_errors(kind="Exit", names=regime.exits):
+        raise RegimeInitializationError(errors[0])
+    for name, declaration in regime.exits.items():
+        if not isinstance(declaration, Exit):
+            raise RegimeInitializationError(
+                f"Exit {name!r} must be an Exit declaration."
+            )
+        if set(declaration.targets) != expected:
+            raise RegimeInitializationError(
+                f"Exit {name!r} targets must name {sorted(expected)!r}."
+            )
+    if (
+        sum(
+            isinstance(declaration.rule, str | Consent)
+            for declaration in regime.exits.values()
+        )
+        > 1
+    ):
+        raise RegimeInitializationError(
+            "More than one built-in exit requires an explicit custom multi-exit rule."
+        )
 
 
 # keyword-only-exempt: primary-argument=regime

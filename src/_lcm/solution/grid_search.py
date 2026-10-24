@@ -25,7 +25,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from types import MappingProxyType
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import jax
 import jax.numpy as jnp
@@ -33,6 +33,15 @@ from beartype import beartype
 from dags import with_signature
 
 from _lcm.beartype_conf import REGIME_CONF
+
+if TYPE_CHECKING:
+    from _lcm.arrival_queries import ArrivalQueryPlan
+    from _lcm.current_iid import CurrentIIDPlan
+else:
+    # Arrival query construction imports the engine before solver contexts finish.
+    type ArrivalQueryPlan = object
+    # The innovation registry reaches this solver through the public Regime facade.
+    type CurrentIIDPlan = object
 from _lcm.constraints.routes import (
     ConstraintRoute,
     ConstraintRouteKey,
@@ -110,6 +119,7 @@ from lcm.typing import (
     BoolND,
     FloatND,
     IntND,
+    ScalarBool,
 )
 
 # Planner name of the flattened Cartesian action axis grid search reduces.
@@ -346,7 +356,8 @@ class GridSearch(Solver):
         )
         flattened_bound_programs: set[int] = set()
         for period, Q_and_F in context.Q_and_F_functions.items():
-            q_id = id(Q_and_F)
+            current_iid_plan = context.current_iid_plans.get(period)
+            q_id = id(current_iid_plan) if current_iid_plan is not None else id(Q_and_F)
             target_regimes = (
                 ()
                 if period == context.solution_reachability.n_periods - 1
@@ -435,15 +446,19 @@ class GridSearch(Solver):
                     program_functions[q_id] = (
                         get_streaming_max_Q_over_a(
                             **common_kwargs,
+                            current_iid_plan=current_iid_plan,
                             action_width_keyword=action_width_keyword,
                         )
                         if stream_actions
-                        else get_max_Q_over_a(**common_kwargs)
+                        else get_max_Q_over_a(
+                            **common_kwargs, current_iid_plan=current_iid_plan
+                        )
                     )
                 reducer = program_functions[q_id]
                 counted = CountedGridSearch(
                     function=cast("Callable[..., tuple[FloatND, BoolND]]", reducer),
                     collective=context.stakeholders is not None,
+                    current_iid=current_iid_plan is not None,
                 )
                 program_functions[q_id] = with_signature(
                     LandingCountedGridSearch(counted=counted)
@@ -463,16 +478,8 @@ class GridSearch(Solver):
                     enforce=False,
                 )
                 flattened_bound_programs.add(q_id)
-            edge_reference_regimes = _edge_reference_regimes_for_targets(
-                context=context,
-                target_regimes=target_regimes,
-            )
-            argument_builder = _GridSearchArgumentBuilder(
-                regime_name=context.regime_name,
-                target_regimes=target_regimes,
-                same_period_ref_regimes=context.same_period_ref_regimes,
-                edge_reference_regimes=edge_reference_regimes,
-                edge_target_regimes=context.edge_target_regimes,
+            argument_builder, value_reads = grid_search_query_inputs(
+                context=context, period=period
             )
             requirements = CoreExecutionRequirements(
                 reduced_axes=(
@@ -507,14 +514,7 @@ class GridSearch(Solver):
                     if cell_width_keyword is not None
                     else ()
                 ),
-                value_reads=_value_reads(
-                    regime_name=context.regime_name,
-                    period=period,
-                    target_regimes=target_regimes,
-                    same_period_ref_regimes=context.same_period_ref_regimes,
-                    edge_reference_regimes=edge_reference_regimes,
-                    edge_target_regimes=context.edge_target_regimes,
-                ),
+                value_reads=value_reads,
             )
             # A bound continuation needs its selected-view transfer even when
             # all local state and action products have extent one. "Dense"
@@ -539,6 +539,11 @@ class GridSearch(Solver):
                             StateAxesLeading(state_names=(), dtype=jnp.int32, shape=()),
                             StateAxesLeading(state_names=(), dtype=jnp.int32, shape=()),
                         )
+                    ),
+                    *(
+                        (StateAxesLeading(state_names=(), dtype=jnp.bool_, shape=()),)
+                        if current_iid_plan is not None
+                        else ()
                     ),
                     *(
                         StateAxesLeading(state_names=(), dtype=jnp.bool_, shape=())
@@ -566,13 +571,30 @@ class GridSearch(Solver):
                 donation_candidates=(),
             )
             result[period] = _GridSearchPeriodKernel(
+                current_iid=current_iid_plan is not None,
                 _core_programs=MappingProxyType({"main": program})
                 if not context.invariant_bindings
                 else _bound_programs(program=program, context=context),
                 landing_checks=landing_checks_of(Q_and_F),
                 n_runtime_bounds=n_runtime_bounds,
             )
-        return SolutionKernels(period_kernels=MappingProxyType(result))
+        return SolutionKernels(
+            period_kernels=MappingProxyType(result),
+            period_group_keys=MappingProxyType(
+                {
+                    period: (
+                        "current-iid",
+                        period,
+                        tuple(
+                            (name, nodes.fingerprint)
+                            for name, _, nodes in plan.bindings
+                        ),
+                    )
+                    for period, plan in context.current_iid_plans.items()
+                    if plan is not None
+                }
+            ),
+        )
 
 
 def _bound_programs(
@@ -765,6 +787,51 @@ def _supports_action_streaming(*, context: SolverBuildContext) -> bool:
     )
 
 
+def grid_search_query_inputs(
+    *,
+    context: SolverBuildContext,
+    period: int,
+) -> tuple[_GridSearchArgumentBuilder, tuple[ValueRead, ...]]:
+    """Share canonical Q/F operand and continuation paths without another max."""
+    targets = (
+        ()
+        if period == context.solution_reachability.n_periods - 1
+        else context.solution_reachability.targets(
+            period=period, source=context.regime_name
+        )
+    )
+    references = _edge_reference_regimes_for_targets(
+        context=context, target_regimes=targets
+    )
+    builder = _GridSearchArgumentBuilder(
+        current_iid_plan=context.current_iid_plans.get(period),
+        regime_name=context.regime_name,
+        target_regimes=targets,
+        same_period_ref_regimes=context.same_period_ref_regimes,
+        edge_reference_regimes=references,
+        edge_target_regimes=context.edge_target_regimes,
+        arrival_queries=context.arrival_queries.get(period, MappingProxyType({})),
+    )
+    reads = _value_reads(
+        regime_name=context.regime_name,
+        period=period,
+        target_regimes=targets,
+        same_period_ref_regimes=context.same_period_ref_regimes,
+        edge_reference_regimes=references,
+        edge_target_regimes=context.edge_target_regimes,
+    )
+    if builder.arrival_queries:
+        from _lcm.arrival_queries import arrival_source_value_reads  # noqa: PLC0415
+
+        reads = (
+            *reads,
+            *arrival_source_value_reads(
+                plans=builder.arrival_queries, source=context.regime_name, period=period
+            ),
+        )
+    return builder, reads
+
+
 def _edge_reference_regimes_for_targets(
     *,
     context: SolverBuildContext,
@@ -883,16 +950,28 @@ class _GridSearchArgumentBuilder:
     """Build the one GridSearch program's arguments for lowering and execution."""
 
     regime_name: RegimeName
+    current_iid_plan: CurrentIIDPlan | None = None
+    """Current joint support whose group parameters are shared model operands."""
     target_regimes: tuple[RegimeName, ...]
     """The period targets whose next-period values the program reads."""
     same_period_ref_regimes: tuple[RegimeName, ...] = ()
     edge_reference_regimes: tuple[RegimeName, ...] = ()
     edge_target_regimes: tuple[RegimeName, ...] = ()
+    arrival_queries: Mapping[RegimeName, ArrivalQueryPlan] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
 
     def __call__(
         self, context: CoreBuildContext
     ) -> Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]:
         """Return the exact kwargs shared by lowering and the runtime call."""
+        if self.arrival_queries:
+            from _lcm.arrival_queries import ArrivalSourceArguments  # noqa: PLC0415
+
+            return ArrivalSourceArguments(
+                base=replace(self, arrival_queries=MappingProxyType({})),
+                plans=self.arrival_queries,
+            )(context)
         state_action_space = cast("StateActionSpace", context.state_action_space)
         next_regime_to_V_arr = context.next_regime_to_V_arr
         flat_params = cast("FlatParams", context.flat_params)
@@ -912,6 +991,19 @@ class _GridSearchArgumentBuilder:
             "period": jnp.int32(context.period),
             "age": ages.values[context.period],
         }
+        if self.current_iid_plan is not None:
+            from _lcm.current_iid import (  # noqa: PLC0415
+                CURRENT_IID_ARGUMENT,
+                CURRENT_IID_NODES_ARGUMENT,
+                CURRENT_IID_ROWS_ARGUMENT,
+            )
+
+            arguments[CURRENT_IID_ARGUMENT] = {
+                name: dict(flat_params.get(name, {}))
+                for name, _, _ in self.current_iid_plan.bindings
+            }
+            arguments[CURRENT_IID_NODES_ARGUMENT] = self.current_iid_plan.node_operands
+            arguments[CURRENT_IID_ROWS_ARGUMENT] = self.current_iid_plan.indices
         if self.same_period_ref_regimes:
             reference_values = (
                 MappingProxyType(
@@ -1028,6 +1120,10 @@ class _GridSearchPeriodKernel:
         default=0, metadata={"fingerprint_omit_if_default": True}
     )
     """Number of independently declared mandatory bound records."""
+    current_iid: bool = field(
+        default=False, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Whether the native output must include current-law validity."""
     _core_programs: Mapping[str, CoreProgram]
     """The immutable GridSearch program graph: `main`, or one program per code."""
     landing_checks: tuple[tuple[RegimeName, StateName], ...] = field(
@@ -1092,7 +1188,7 @@ class _GridSearchPeriodKernel:
             ),
         )
 
-    def __call__(
+    def __call__(  # noqa: C901 - validate native output roles before publication
         self,
         *,
         compiled_cores: Mapping[str, Callable[..., PytreeValue]],
@@ -1148,6 +1244,18 @@ class _GridSearchPeriodKernel:
             )
         )
         out = compiled_cores[core_key](**arguments)
+        current_iid_invalid = None
+        if self.current_iid:
+            if not isinstance(out, tuple) or len(out) != 4:  # noqa: PLR2004 - declared integrity tuple
+                raise TypeError("Mandatory current-IID integrity output is missing.")
+            *ordinary, current_iid_invalid = out
+            current_iid_invalid = cast("ScalarBool", current_iid_invalid)
+            if (
+                current_iid_invalid.shape != ()
+                or current_iid_invalid.dtype != jnp.bool_
+            ):
+                raise TypeError("Current-IID integrity must be a scalar Boolean.")
+            out = tuple(ordinary)
         landing_totals = None
         if self.landing_checks:
             from _lcm.solution.landing_counts import (  # noqa: PLC0415
@@ -1208,6 +1316,7 @@ class _GridSearchPeriodKernel:
         V_arr, empty_count, other_inf_count = cast("tuple[FloatND, IntND, IntND]", out)
         return FeasibilityKernelOutput(
             value=V_arr,
+            current_iid_invalid=current_iid_invalid,
             feasibility_counts=(empty_count, other_inf_count),
             bound_status=bound_status,
             landing_totals=cast("IntND | None", landing_totals)

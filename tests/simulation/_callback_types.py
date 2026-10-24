@@ -151,6 +151,7 @@ class ChunkProfileInputs(TypedDict):
     ]
     max_compilation_workers: NotRequired[int | None]
     group_sizes: NotRequired[tuple[int, ...] | None]
+    current_iid_override_schema: NotRequired[chunk_profiles.CurrentIIDOverrideSchema]
 
 
 class ChunkProfileKeyInputs(TypedDict):
@@ -183,6 +184,7 @@ class ChunkProfileKeyInputs(TypedDict):
     log_level: chunk_admission.LogLevel
     runtime_checks: NotRequired[bool]
     group_sizes: NotRequired[tuple[int, ...] | None]
+    current_iid_override_schema: NotRequired[chunk_admission.CurrentIIDOverrideSchema]
 
 
 class HostDispatch(TypedDict):
@@ -254,6 +256,7 @@ class ChunkPreparation(TypedDict):
     process_grid_resolver: NotRequired[chunk_admission.ProcessGridResolver | None]
     max_compilation_workers: NotRequired[int | None]
     group_sizes: NotRequired[tuple[int, ...] | None]
+    current_iid_override_schema: NotRequired[chunk_admission.CurrentIIDOverrideSchema]
 
 
 class RuntimePrepare(TypedDict):

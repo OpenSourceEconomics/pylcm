@@ -38,6 +38,7 @@ from typing import Literal, TypedDict, cast, no_type_check
 
 from dags import get_ancestors
 
+from _lcm.exits import exit_functions
 from _lcm.processes import _ContinuousStochasticProcess, _IIDProcess
 from _lcm.reachability import PhaseName, candidate_targets_from_transition
 from _lcm.regime_building.age_specialization import resolve_node
@@ -272,6 +273,9 @@ def merge_model_slots(
 
 def prune_broadcast_variables(
     *,
+    current_iid_state_inputs: Mapping[
+        RegimeName, frozenset[StateName]
+    ] = MappingProxyType({}),
     user_regimes: Mapping[RegimeName, UserRegime],
     laws: RegimeLaws,
     broadcast_variables: Mapping[RegimeName, frozenset[StateOrActionName]],
@@ -333,6 +337,7 @@ def prune_broadcast_variables(
     )
     all_regime_names = frozenset(user_regimes)
     kept = compute_kept_variables(
+        current_iid_state_inputs=current_iid_state_inputs,
         user_regimes=user_regimes,
         laws=laws,
         candidates=broadcast_variables,
@@ -384,6 +389,9 @@ def prune_broadcast_variables(
 
 def compute_kept_variables(
     *,
+    current_iid_state_inputs: Mapping[
+        RegimeName, frozenset[StateName]
+    ] = MappingProxyType({}),
     user_regimes: Mapping[RegimeName, UserRegime],
     laws: RegimeLaws,
     candidates: Mapping[RegimeName, frozenset[StateOrActionName]],
@@ -453,6 +461,7 @@ def compute_kept_variables(
         regime_name: frozenset(
             (set(user_regime.states) | set(user_regime.actions))
             - candidates_by_regime[regime_name]
+            | current_iid_state_inputs.get(regime_name, frozenset())
         )
         for regime_name, user_regime in user_regimes.items()
     }
@@ -741,6 +750,12 @@ def root_functions(
         | _transition_roots(regime=regime, law=laws[regime_name], phase=phase)
         | _value_aware_roots(regime=regime)
         | _incoming_edge_roots(regime_name=regime_name, laws=laws)
+        | {
+            "__".join(path): function
+            for path, function in exit_functions(
+                exits=regime.exits, phase=phase
+            ).items()
+        }
     )
 
 
