@@ -78,6 +78,15 @@ and `DiscreteGrid(values=...)`; lists and tuples are refused. Nodes must be fini
 strictly increasing at the working precision. Ordinary Tauchen construction still places
 its own stationary grid.
 
+The factory accepts `transition_rule="midpoint"` (default), `"density"` (row-normalized
+normal densities at state nodes, computed in log space), or `"innovation_quadrature"`
+(standardized innovation weights mapped linearly to adjacent state nodes, with targets
+clipped to endpoints). For innovation quadrature, supply `n_quadrature` (default 9), or
+both `innovation_nodes` and `innovation_weights` arrays. Explicit weights are normalized
+finite nonnegative masses with positive total. Quadrature configuration is static, not a
+process parameter. All rules accept `StateConditioned` scales. Continuous simulation
+retains the normal law; node simulation uses the selected matrix.
+
 A process owns its transition mechanism. Adding a second law under `state_transitions`
 is an ambiguous declaration and is rejected.
 

@@ -115,10 +115,23 @@ class TauchenAR1Process(_AR1Process):
         rho: float | None = None,
         sigma: float | StateConditioned | None = None,
         mu: float | None = 0.0,
+        transition_rule: Literal[
+            "midpoint", "innovation_quadrature", "density"
+        ] = "midpoint",
+        n_quadrature: int | None = None,
+        innovation_nodes: UserVector | None = None,
+        innovation_weights: UserVector | None = None,
     ) -> TauchenAR1Process:
         """Bin an AR(1) law on finite increasing physical nodes.
 
-        Bin edges are adjacent midpoints, with open first and last tails.
+        The default rule integrates midpoint bins with open first and last tails.
+        ``density`` normalizes normal densities at the nodes; it ignores cell widths.
+        ``innovation_quadrature`` maps standardized innovations linearly to adjacent
+        state nodes, clipping targets to the endpoints. Supply ``n_quadrature``
+        (default 9 Gauss-Hermite points), or both innovation arrays. Weights must be
+        finite, nonnegative, and have positive total mass; they are normalized.
+        Continuous simulation still draws the normal law. Node simulation samples
+        the selected transition matrix. Ordinary Tauchen construction is unchanged.
         The nodes do not depend on stationarity, so unit roots are supported.
         Unspecified law parameters are supplied at solve or simulation time.
         `nodes` is a one-dimensional NumPy or JAX array of integer or floating
@@ -129,7 +142,16 @@ class TauchenAR1Process(_AR1Process):
             argument="nodes",
             example="TauchenAR1Process.on_nodes(nodes=jnp.array([-1.0, 0.0, 1.0]))",
         )
+        quadrature_nodes, quadrature_weights = _prepare_innovation_quadrature(
+            transition_rule=transition_rule,
+            n_quadrature=n_quadrature,
+            innovation_nodes=innovation_nodes,
+            innovation_weights=innovation_weights,
+        )
         return _TauchenOnNodesProcess(
+            transition_rule=transition_rule,
+            innovation_nodes=quadrature_nodes,
+            innovation_weights=quadrature_weights,
             nodes=tuple(float(node) for node in np.asarray(nodes).tolist()),
             simulate_draws=simulate_draws,
             n_points=len(nodes),
@@ -211,12 +233,24 @@ class TauchenAR1Process(_AR1Process):
 @beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
 class _TauchenOnNodesProcess(TauchenAR1Process):
-    """Tauchen bins on a fixed physical axis independent of law parameters."""
+    """AR(1) transition rules on a fixed physical axis independent of law parameters."""
 
     nodes: tuple[float, ...]
+    transition_rule: Literal["midpoint", "innovation_quadrature", "density"] = (
+        "midpoint"
+    )
+    innovation_nodes: tuple[float, ...] = ()
+    innovation_weights: tuple[float, ...] = ()
 
     _NON_PARAM_FIELDS: ClassVar[frozenset[str]] = (
-        TauchenAR1Process._NON_PARAM_FIELDS | {"nodes", "n_std"}  # noqa: SLF001
+        TauchenAR1Process._NON_PARAM_FIELDS  # noqa: SLF001
+        | {
+            "nodes",
+            "n_std",
+            "transition_rule",
+            "innovation_nodes",
+            "innovation_weights",
+        }
     )
 
     def __post_init__(self) -> None:
@@ -257,31 +291,111 @@ class _TauchenOnNodesProcess(TauchenAR1Process):
         return grid_coordinates.get_irreg_coordinate(value=value, points=self.to_jax())
 
     def compute_transition_probs(self, **kwargs: ScalarFloat | ScalarInt) -> FloatND:
-        """Integrate each conditional normal over midpoint bins and open tails."""
+        """Evaluate the selected transition row at each supplied source node."""
+        return jax.vmap(partial(self.compute_transition_row, **kwargs))(self.to_jax())
+
+    # keyword-only-exempt: library-callback=jax.vmap
+    def compute_transition_row(
+        self,
+        from_value: ScalarFloat,
+        *,
+        rho: ScalarFloat | ScalarInt,
+        sigma: ScalarFloat | ScalarInt,
+        mu: ScalarFloat | ScalarInt,
+    ) -> Float1D:
+        """Return destination probabilities at an actual physical source value."""
         nodes = self.compute_gridpoints()
-        return jax.vmap(
-            partial(
-                _tauchen_on_nodes_row,
-                nodes=nodes,
-                rho=kwargs["rho"],
-                sigma=kwargs["sigma"],
-                mu=kwargs["mu"],
-            ),
-            in_axes=0,
-        )(nodes)
+        if self.transition_rule == "midpoint":
+            return tauchen_row(
+                nodes=nodes, from_value=from_value, rho=rho, sigma=sigma, mu=mu
+            )
+        mean = mu + sealed(rho * from_value)
+        if self.transition_rule == "density":
+            upper = jnp.clip(jnp.searchsorted(nodes, mean), 1, len(nodes) - 1)
+            lower = upper - 1
+            nearest = jnp.where(
+                mean - nodes[lower] <= nodes[upper] - mean, lower, upper
+            )
+            center = nodes[nearest]
+            # Subtract the nearest node's log density before squaring can overflow.
+            half_difference = nodes * 0.5 - center * 0.5
+            delta = 2 * (half_difference / sigma)
+            centered_sum = (half_difference + (center - mean)) / sigma
+            is_center = jnp.arange(len(nodes)) == nearest
+            # Equal distances have zero log ratio, even when their scaled gap overflows.
+            zero_ratio = is_center | (jnp.isinf(delta) & (centered_sum == 0))
+            safe_delta = jnp.where(zero_ratio, 0.0, delta)
+            safe_sum = jnp.where(zero_ratio, 0.0, centered_sum)
+            return jax.nn.softmax(-safe_delta * safe_sum)
+        innovations = jnp.asarray(self.innovation_nodes, dtype=nodes.dtype)
+        weights = jnp.asarray(self.innovation_weights, dtype=nodes.dtype)
+        targets = jnp.clip(mean + sigma * innovations, nodes[0], nodes[-1])
+        lower = jnp.clip(
+            jnp.searchsorted(nodes, targets, side="right") - 1, 0, len(nodes) - 2
+        )
+        upper_share = (targets - nodes[lower]) / (nodes[lower + 1] - nodes[lower])
+        row = jnp.zeros_like(nodes).at[lower].add(weights * (1 - upper_share))
+        return row.at[lower + 1].add(weights * upper_share)
 
 
-# keyword-only-exempt: library-callback=jax.vmap
-def _tauchen_on_nodes_row(
-    from_value: ScalarFloat,
+def _prepare_innovation_quadrature(
     *,
-    nodes: Float1D,
-    rho: ScalarFloat | ScalarInt,
-    sigma: ScalarFloat | ScalarInt,
-    mu: ScalarFloat | ScalarInt,
-) -> Float1D:
-    """Bind the physical source value for a vmapped direct-CDF row."""
-    return tauchen_row(nodes=nodes, from_value=from_value, rho=rho, sigma=sigma, mu=mu)
+    transition_rule: Literal["midpoint", "innovation_quadrature", "density"],
+    n_quadrature: int | None,
+    innovation_nodes: UserVector | None,
+    innovation_weights: UserVector | None,
+) -> tuple[tuple[float, ...], tuple[float, ...]]:
+    """Validate the rule and freeze a standardized innovation probability measure."""
+    if transition_rule not in {"midpoint", "innovation_quadrature", "density"}:
+        raise GridInitializationError("Unknown on_nodes transition_rule.")
+    supplied = innovation_nodes is not None or innovation_weights is not None
+    if transition_rule != "innovation_quadrature":
+        if n_quadrature is not None or supplied:
+            raise GridInitializationError(
+                "Quadrature inputs require innovation_quadrature."
+            )
+        return (), ()
+    if supplied:
+        if (
+            innovation_nodes is None
+            or innovation_weights is None
+            or n_quadrature is not None
+        ):
+            raise GridInitializationError(
+                "Supply both innovation arrays, or n_quadrature."
+            )
+        for name, value in (
+            ("innovation_nodes", innovation_nodes),
+            ("innovation_weights", innovation_weights),
+        ):
+            fail_if_not_a_numeric_vector(
+                value=value, argument=name, example=f"{name}=jnp.array([0.0])"
+            )
+        points = np.asarray(innovation_nodes, dtype=canonical_float_dtype())
+        weights = np.asarray(innovation_weights, dtype=canonical_float_dtype())
+    else:
+        count = 9 if n_quadrature is None else n_quadrature
+        if isinstance(count, bool) or count < 1:
+            raise GridInitializationError("n_quadrature must be a positive integer.")
+        points, weights = np.polynomial.hermite_e.hermegauss(count)
+        points = points.astype(canonical_float_dtype())
+        weights = weights.astype(canonical_float_dtype())
+    if (
+        not len(points)
+        or points.shape != weights.shape
+        or not np.isfinite(points).all()
+        or not np.isfinite(weights).all()
+        or not np.all(weights >= 0)
+        or not np.any(weights > 0)
+    ):
+        raise GridInitializationError(
+            "Innovation nodes and nonnegative weights must be finite, nonempty, "
+            "equal-length vectors with positive total mass."
+        )
+    # Scaling first avoids overflow when finite relative weights have a large total.
+    weights = weights / weights.max()
+    weights = weights / weights.sum()
+    return tuple(float(x) for x in points), tuple(float(x) for x in weights)
 
 
 @beartype(conf=GRID_CONF)

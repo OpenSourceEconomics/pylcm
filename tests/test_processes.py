@@ -10,12 +10,14 @@ from itertools import pairwise
 from pathlib import Path
 from typing import Literal
 
+import jax
 import numpy as np
 import pandas as pd
 import pytest
 from jax import jacrev, jit, vmap
 from jax import numpy as jnp
 from numpy.testing import assert_array_almost_equal as aaae
+from numpy.typing import NDArray
 from pandas.testing import assert_frame_equal
 from quantecon.markov.approximation import rouwenhorst as qe_rouwenhorst
 from quantecon.markov.approximation import tauchen as qe_tauchen
@@ -27,10 +29,12 @@ from typing_extensions import TypedDict
 from _lcm.config import TEST_DATA
 from _lcm.processes.ar1 import _AR1Process
 from _lcm.processes.state_conditioned import conditioned_row
+from _lcm.regime_building.processing import _get_weights_func_for_process
 from _lcm.typing import DataclassInstance
 from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
+    DiscreteGrid,
     InitialNodes,
     LogNormalIIDProcess,
     Model,
@@ -38,6 +42,7 @@ from lcm import (
     NormalMixtureIIDProcess,
     Regime,
     RouwenhorstAR1Process,
+    StateConditioned,
     TauchenAR1Process,
     TauchenNormalMixtureAR1Process,
     UniformIIDProcess,
@@ -1649,3 +1654,338 @@ def test_tauchen_on_adjacent_nodes_two_period_value_uses_exact_bins(
         nodes=nodes, rho=1.0, mu=0.0, sigma=sigma
     ) @ np.asarray([0.0, 1.0])
     aaae(solution.values[0]["alive"], expected, decimal=DECIMAL_PRECISION)
+
+
+def _reference_on_nodes_rule(
+    *,
+    nodes: NDArray[np.float64],
+    rho: float,
+    sigma: float,
+    mu: float,
+    rule: Literal["density", "innovation_quadrature"],
+) -> NDArray[np.float64]:
+    """Scalar formulas, independent of the JAX row builders and scatter operations."""
+    matrix = np.zeros((len(nodes), len(nodes)))
+    if rule == "density":
+        for i, source in enumerate(nodes):
+            logs = [
+                -0.5 * ((target - mu - rho * source) / sigma) ** 2 for target in nodes
+            ]
+            masses = [math.exp(value - max(logs)) for value in logs]
+            matrix[i] = [mass / sum(masses) for mass in masses]
+    else:
+        shocks, weights = np.polynomial.hermite_e.hermegauss(9)
+        weights /= weights.sum()
+        for i, source in enumerate(nodes):
+            for shock, weight in zip(shocks, weights, strict=True):
+                target = min(
+                    max(mu + rho * source + sigma * shock, nodes[0]), nodes[-1]
+                )
+                lower = 0
+                while lower < len(nodes) - 2 and target > nodes[lower + 1]:
+                    lower += 1
+                share = (target - nodes[lower]) / (nodes[lower + 1] - nodes[lower])
+                matrix[i, lower] += weight * (1 - share)
+                matrix[i, lower + 1] += weight * share
+    return matrix
+
+
+@pytest.mark.parametrize("rule", ["density", "innovation_quadrature"])
+@pytest.mark.parametrize("rho", [-1.2, 0.0, 0.9, 1.0])
+@pytest.mark.parametrize("compiled", [False, True])
+def test_tauchen_on_nodes_transition_rules_match_scalar_reference(
+    *, rule: Literal["density", "innovation_quadrature"], rho: float, compiled: bool
+) -> None:
+    """Each selected rule gives the declared conditional law on irregular nodes."""
+    nodes = np.array([-1.0, -0.4, 0.0, 0.5, 1.2])
+    process = TauchenAR1Process.on_nodes(
+        nodes=nodes, rho=rho, sigma=0.3, mu=0.2, transition_rule=rule
+    )
+    operation = (
+        jit(process.compute_transition_probs)
+        if compiled
+        else process.compute_transition_probs
+    )
+    got = operation(rho=jnp.asarray(rho), sigma=jnp.asarray(0.3), mu=jnp.asarray(0.2))
+    expected = _reference_on_nodes_rule(
+        nodes=nodes, rho=rho, sigma=0.3, mu=0.2, rule=rule
+    )
+    aaae(got, expected, decimal=DECIMAL_PRECISION)
+    aaae(got.sum(axis=1), np.ones(len(nodes)), decimal=DECIMAL_PRECISION)
+    assert np.all(got >= 0)
+    assert set(process.params) == {"rho", "sigma", "mu"}
+
+
+@pytest.mark.parametrize("rule", ["density", "innovation_quadrature"])
+@pytest.mark.parametrize("runtime", [False, True])
+def test_tauchen_on_nodes_transition_rule_values_match_independent_bellman_sum(
+    *, rule: Literal["density", "innovation_quadrature"], runtime: bool
+) -> None:
+    """Bellman values use the selected row, not an implicit midpoint approximation."""
+    nodes = np.array([-1.0, -0.4, 0.0, 0.5, 1.2])
+    process = TauchenAR1Process.on_nodes(
+        nodes=nodes,
+        rho=None if runtime else 1.0,
+        sigma=None if runtime else 0.3,
+        mu=None if runtime else 0.2,
+        transition_rule=rule,
+    )
+
+    def square(income: ContinuousState) -> FloatND:
+        return income**2
+
+    model = Model(
+        regimes={
+            name: Regime(states={"income": process}, functions={"utility": square})
+            for name in ("alive", "dead")
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        regime_id_class=RegimeId,
+        initial_nodes={0: "alive"},
+        edges={"alive": {"dead": 0}},
+        fixed_params={"discount_factor": 0.9},
+    )
+    matrix = _reference_on_nodes_rule(
+        nodes=nodes, rho=1.0, sigma=0.3, mu=0.2, rule=rule
+    )
+    expected = np.array(
+        [
+            source**2
+            + 0.9
+            * sum(weight * target**2 for weight, target in zip(row, nodes, strict=True))
+            for source, row in zip(nodes, matrix, strict=True)
+        ]
+    )
+    params = (
+        {
+            name: {"income": {"rho": 1.0, "sigma": 0.3, "mu": 0.2}}
+            for name in ("alive", "dead")
+        }
+        if runtime
+        else {}
+    )
+    got = model.solve(params=params, log_level="off", runtime_checks=True)
+    aaae(got.values[0]["alive"], expected, decimal=DECIMAL_PRECISION)
+
+
+@categorical(ordered=False)
+class _QuadratureRisk:
+    low: ScalarInt
+    high: ScalarInt
+
+
+@pytest.mark.parametrize("rule", ["density", "innovation_quadrature"])
+@pytest.mark.parametrize(("risk", "sigma"), [(0, 0.15), (1, 0.6)])
+def test_tauchen_on_nodes_conditioned_transition_rule(
+    *, rule: Literal["density", "innovation_quadrature"], risk: int, sigma: float
+) -> None:
+    """A conditioned scale selects the same rule as an unconditioned declaration."""
+    nodes = np.array([-1.0, -0.4, 0.0, 0.5, 1.2])
+    process = TauchenAR1Process.on_nodes(
+        nodes=nodes,
+        rho=1.0,
+        mu=0.2,
+        transition_rule=rule,
+        sigma=StateConditioned(on="risk", by={"low": 0.15, "high": 0.6}),
+    )
+    operation = _get_weights_func_for_process(
+        name="income",
+        grid=process,
+        grids={"income": process, "risk": DiscreteGrid(category_class=_QuadratureRisk)},
+    )
+    expected = _reference_on_nodes_rule(
+        nodes=nodes, rho=1.0, sigma=sigma, mu=0.2, rule=rule
+    )[3]
+    got = jit(operation)(income=jnp.asarray(0.5), risk=jnp.int32(risk))
+    aaae(got, expected, decimal=DECIMAL_PRECISION)
+
+
+def test_tauchen_on_nodes_density_far_tail_remains_a_probability_law() -> None:
+    """A distant conditional mean cannot turn every node density into zero."""
+    process = TauchenAR1Process.on_nodes(
+        nodes=np.array([-1.0, 0.0, 1.0]),
+        rho=0.0,
+        sigma=1e-10,
+        mu=1e10,
+        transition_rule="density",
+    )
+    got = jit(process.compute_transition_probs)(**process.params)
+    np.testing.assert_array_equal(got, np.array([[0.0, 0.0, 1.0]] * 3))
+
+
+def test_tauchen_on_nodes_custom_innovation_lottery_maps_and_clips() -> None:
+    """Relative innovation masses split between adjacent nodes and clip at ends."""
+    process = TauchenAR1Process.on_nodes(
+        nodes=np.array([-2.0, 0.0, 1.0]),
+        rho=0.0,
+        sigma=1.0,
+        transition_rule="innovation_quadrature",
+        innovation_nodes=np.array([-9.0, -1.0, 0.25, 9.0]),
+        innovation_weights=np.array([1.0, 2.0, 4.0, 1.0]),
+    )
+    expected = np.array([[2.0, 4.0, 2.0]] * 3) / 8
+    aaae(process.get_transition_probs(), expected, decimal=DECIMAL_PRECISION)
+
+
+@pytest.mark.parametrize("count", [1, 3, 9])
+def test_tauchen_on_nodes_quadrature_count_matches_explicit_nodes(count: int) -> None:
+    """A Gauss-Hermite count and its explicit standardized lottery are equivalent."""
+    points, weights = np.polynomial.hermite_e.hermegauss(count)
+    nodes = np.array([-1.0, 0.0, 2.0])
+    automatic = TauchenAR1Process.on_nodes(
+        nodes=nodes,
+        rho=1.0,
+        sigma=0.2,
+        transition_rule="innovation_quadrature",
+        n_quadrature=count,
+    )
+    explicit = TauchenAR1Process.on_nodes(
+        nodes=nodes,
+        rho=1.0,
+        sigma=0.2,
+        transition_rule="innovation_quadrature",
+        innovation_nodes=points,
+        innovation_weights=weights,
+    )
+    aaae(
+        automatic.get_transition_probs(),
+        explicit.get_transition_probs(),
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+@pytest.mark.parametrize("rule", ["midpoint", "density", "innovation_quadrature"])
+def test_tauchen_on_nodes_rule_preserves_continuous_draws(
+    rule: Literal["midpoint", "density", "innovation_quadrature"],
+) -> None:
+    """Changing the solve rule does not change the continuous simulation law."""
+    nodes = np.array([-1.0, 0.0, 1.0])
+    ordinary = TauchenAR1Process.on_nodes(nodes=nodes, rho=0.8, sigma=0.3, mu=0.1)
+    changed = TauchenAR1Process.on_nodes(
+        nodes=nodes, rho=0.8, sigma=0.3, mu=0.1, transition_rule=rule
+    )
+    key = jax.random.key(72)
+    expected = ordinary.draw_shock(
+        params=ordinary.params, key=key, current_value=jnp.asarray(0.2)
+    )
+    got = changed.draw_shock(
+        params=changed.params, key=key, current_value=jnp.asarray(0.2)
+    )
+    np.testing.assert_array_equal(got, expected)
+
+
+@pytest.mark.parametrize(
+    ("points", "weights"),
+    [
+        ((), ()),
+        ((0.0,), (1.0, 2.0)),
+        ((float("nan"),), (1.0,)),
+        ((0.0,), (float("inf"),)),
+        ((0.0,), (-1.0,)),
+        ((0.0,), (0.0,)),
+    ],
+)
+def test_tauchen_on_nodes_refuses_invalid_innovation_lotteries(
+    *, points: tuple[float, ...], weights: tuple[float, ...]
+) -> None:
+    with pytest.raises(GridInitializationError):
+        TauchenAR1Process.on_nodes(
+            nodes=np.array([-1.0, 1.0]),
+            transition_rule="innovation_quadrature",
+            innovation_nodes=np.array(points),
+            innovation_weights=np.array(weights),
+        )
+
+
+@pytest.mark.parametrize("count", [0, -1, True])
+def test_tauchen_on_nodes_refuses_invalid_quadrature_count(count: int) -> None:
+    with pytest.raises(GridInitializationError):
+        TauchenAR1Process.on_nodes(
+            nodes=np.array([-1.0, 1.0]),
+            transition_rule="innovation_quadrature",
+            n_quadrature=count,
+        )
+
+
+@pytest.mark.parametrize("rule", ["midpoint", "density"])
+def test_tauchen_on_nodes_refuses_unused_quadrature_inputs(
+    rule: Literal["midpoint", "density"],
+) -> None:
+    with pytest.raises(GridInitializationError, match="require innovation_quadrature"):
+        TauchenAR1Process.on_nodes(
+            nodes=np.array([-1.0, 1.0]), transition_rule=rule, n_quadrature=3
+        )
+
+
+def test_tauchen_on_nodes_requires_one_complete_quadrature_declaration() -> None:
+    nodes = np.array([-1.0, 1.0])
+    with pytest.raises(GridInitializationError, match="Supply both"):
+        TauchenAR1Process.on_nodes(
+            nodes=nodes,
+            transition_rule="innovation_quadrature",
+            innovation_nodes=np.array([0.0]),
+        )
+    with pytest.raises(GridInitializationError, match="Supply both"):
+        TauchenAR1Process.on_nodes(
+            nodes=nodes,
+            transition_rule="innovation_quadrature",
+            innovation_nodes=np.array([0.0]),
+            innovation_weights=np.array([1.0]),
+            n_quadrature=1,
+        )
+
+
+def test_tauchen_on_nodes_density_scale_derivative_matches_normalized_density() -> None:
+    """The scale derivative differentiates the same normalized node probabilities."""
+    nodes = np.array([-1.0, -0.4, 0.0, 0.5, 1.2])
+    rho, sigma, mu = 0.9, 0.3, 0.2
+    process = TauchenAR1Process.on_nodes(nodes=nodes, transition_rule="density")
+    weights = _reference_on_nodes_rule(
+        nodes=nodes, rho=rho, sigma=sigma, mu=mu, rule="density"
+    )
+    distances = nodes[None, :] - mu - rho * nodes[:, None]
+    squared = distances**2
+    expected = weights * (squared - (weights * squared).sum(axis=1)[:, None]) / sigma**3
+    got = jit(
+        jacrev(
+            lambda scale: process.compute_transition_probs(
+                rho=jnp.asarray(rho), sigma=scale, mu=jnp.asarray(mu)
+            )
+        )
+    )(jnp.asarray(sigma))
+    aaae(got, expected, decimal=DECIMAL_PRECISION)
+
+
+@pytest.mark.parametrize(
+    ("nodes", "mu", "sigma", "expected"),
+    [
+        ((-1.0, 0.0, 1.0), 1e30, 1e-30, (0.0, 0.0, 1.0)),
+        ((-1.0, 0.0, 1.0), -1e30, 1e-30, (1.0, 0.0, 0.0)),
+        ((-1e20, 1e20), 0.0, 1e-20, (0.5, 0.5)),
+    ],
+)
+def test_tauchen_on_nodes_density_extreme_tail_and_equal_distance_limits(
+    *, nodes: tuple[float, ...], mu: float, sigma: float, expected: tuple[float, ...]
+) -> None:
+    """Tail mass lands at the nearest endpoint; equidistant nodes divide it equally."""
+    process = TauchenAR1Process.on_nodes(
+        nodes=np.array(nodes), rho=0.0, sigma=sigma, mu=mu, transition_rule="density"
+    )
+    got = jit(process.compute_transition_probs)(**process.params)
+    np.testing.assert_array_equal(got, np.tile(expected, (len(nodes), 1)))
+
+
+def test_tauchen_on_nodes_density_equal_distance_location_derivative() -> None:
+    """Equal node densities retain their opposing location derivatives."""
+    process = TauchenAR1Process.on_nodes(
+        nodes=np.array([-1.0, 1.0]), transition_rule="density"
+    )
+    got = jit(
+        jacrev(
+            lambda location: process.compute_transition_probs(
+                rho=jnp.asarray(0.0), sigma=jnp.asarray(0.3), mu=location
+            )
+        )
+    )(jnp.asarray(0.0))
+    expected = np.tile(np.array([-0.5, 0.5]) / 0.3**2, (2, 1))
+    aaae(got, expected, decimal=DECIMAL_PRECISION)
