@@ -11,15 +11,21 @@ import jax
 import jax.numpy as jnp
 from dags import with_signature
 
-from _lcm.current_iid import CurrentIIDDrawFrame, CurrentIIDDrawPlan, _draw_base_value
+from _lcm.current_iid import (
+    CORRELATION_SUPPORT_ARGUMENT,
+    CurrentIIDDrawFrame,
+    CurrentIIDDrawPlan,
+    _draw_base_value,
+    _law_inputs,
+)
 from _lcm.execution.core_program import (
     CoreExecutionDisposition,
     CoreExecutionRequirements,
     CoreProgram,
 )
 from _lcm.regime_building.collective import NO_ROLE
-from _lcm.shock_overrides import CurrentIIDOverride
-from _lcm.shock_registry import ShockBinding
+from _lcm.shock_overrides import CurrentIIDOverride, supplied_group_values
+from _lcm.shock_registry import ShockBinding, law_input_validity
 from _lcm.simulation.program_types import subject_axis
 from _lcm.typing import FlatParams, PytreeValue
 from _lcm.utils.dispatchers import vary_carry_like_body
@@ -609,6 +615,7 @@ def _observe_query_frame(
     group_params: Mapping[str, Mapping[str, LawValue | BoolND]],
     overrides: Mapping[ShockName, CurrentIIDOverride],
     produced: Mapping[ShockName, BoolND] = MappingProxyType({}),
+    supplied_only: bool = False,
 ) -> CurrentIIDDrawFrame:
     """Transform only explicit observations in their exact producing context."""
     root = queries.definitions[queries.root]
@@ -634,6 +641,7 @@ def _observe_query_frame(
             producer=producer,
             overrides=overrides,
             produced=produced,
+            supplied_only=supplied_only,
         )
         # Abstract tracing fixes the exact output tree without executing an
         # inactive projection or physical law. The false payload is never an
@@ -683,6 +691,7 @@ def _produce_observed_group(
     producer: str,
     overrides: Mapping[ShockName, CurrentIIDOverride],
     produced: Mapping[ShockName, BoolND],
+    supplied_only: bool = False,
 ) -> ExitFramePayload:
     """Return the producer's numerical leaves across JAX's metadata boundary."""
     node = queries.definitions[producer]
@@ -698,6 +707,61 @@ def _produce_observed_group(
     if draw is None:
         raise ValueError("An observation producer must own its declared shock law.")
     binding = draw.bindings[group]
+    if supplied_only:
+        supplied = group_params.get(group, {})
+        params = {
+            name: value
+            for name, value in supplied.items()
+            if name != CORRELATION_SUPPORT_ARGUMENT
+        }
+        inputs = _law_inputs(
+            binding=binding,
+            arguments={
+                **producing_states,
+                # Canonical query metadata binds these scalar clock arrays.
+                "period": cast("IntND", fixed["period"]),
+                "age": cast("FloatND", fixed["age"]),
+            },
+            params=params,
+        )
+        names = binding.group.shocks.keys() & overrides.keys()
+        if (
+            any(overrides[name].kind == "base" for name in names)
+            and names != binding.group.shocks.keys()
+        ):
+            identity = binding.group._has_identity_correlation(params=params)  # noqa: SLF001 - seedless completeness proof only
+            if not isinstance(identity, bool) or not identity:
+                from lcm.exceptions import UnsupportedOperationError  # noqa: PLC0415
+
+                raise UnsupportedOperationError(
+                    f"Seedless mapped group {group!r} requires a complete base frame."
+                )
+        physical, valid = supplied_group_values(
+            group=binding.group,
+            supplied={
+                name: BaseInnovations(values=cast("FloatND", item.values))
+                if item.kind == "base"
+                else PhysicalValues(values=cast("FloatND | IntND", item.values))
+                for name, item in overrides.items()
+                if name in binding.group.shocks
+            },
+            params=params,
+            inputs=inputs,
+            admitted_correlation_support=cast(
+                "BoolND | None", supplied.get(CORRELATION_SUPPORT_ARGUMENT)
+            ),
+        )
+        return _frame_output(
+            frame=CurrentIIDDrawFrame(
+                physical=physical,
+                addressed_bases={},
+                held_bases={},
+                source_params={group: supplied},
+                source_inputs={group: inputs},
+                recovery_error={},
+                valid=valid & law_input_validity(binding=binding, inputs=inputs),
+            )
+        )
     return _frame_output(
         frame=_realise_frame(
             draw=CurrentIIDDrawPlan(bindings={group: binding}),
