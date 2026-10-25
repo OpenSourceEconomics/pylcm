@@ -1802,3 +1802,52 @@ def test_source_taste_competes_with_an_eligible_consent_formation() -> None:
         assert bool(support)
         assert bool(valid)
     assert literal_routes == {False, True}
+
+
+@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.parametrize("n_points", [64, 65])
+def test_custom_outside_choice_ignores_padded_query_lanes(*, n_points: int) -> None:
+    """A declared outside choice keeps every live source value on a partial chunk."""
+    wealth = LinSpacedGrid(start=0.0, stop=1.0, n_points=n_points)
+    model = Model(
+        regimes={
+            "single_f": Regime(
+                states={"wealth": wealth},
+                actions={
+                    "action": DiscreteGrid(values=np.asarray([0], dtype=np.int32))
+                },
+                functions={"utility": _strict_stay},
+                exits={
+                    "leave": Exit(
+                        targets={
+                            "self": ExitTarget(
+                                regime="single_m", projection={"wealth": _wealth}
+                            )
+                        },
+                        rule=_ReturnedRule(action=1),
+                    )
+                },
+            ),
+            "single_m": Regime(
+                states={"wealth": wealth}, functions={"utility": _single}
+            ),
+        },
+        regime_id_class=_Singles,
+        n_periods=1,
+        initial_nodes=InitialNodes(by_period={0: ("single_f",)}),
+        edges={},
+        enable_jit=True,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
+    )
+    kernel = model._regimes["single_f"].solution.period_kernels[0]
+    assert isinstance(kernel, _PolicyQueryKernel)
+    assert kernel.chunk_size == 64
+    assert n_points % kernel.chunk_size == (0 if n_points == 64 else 1)
+    assert any(
+        node.decision is not None and node.available is None
+        for node in kernel.definitions.values()
+    )
+    result = model.solve(params={}, log_level="off", runtime_checks=True)
+    np.testing.assert_array_equal(
+        result.values[0]["single_f"], np.full((n_points,), 5.0)
+    )
