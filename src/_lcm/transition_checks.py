@@ -2696,7 +2696,9 @@ def _discrete_off_grid_search(  # noqa: C901
             "Discrete validation has more outer blocks than an int32 loop can address."
         )
 
-    def scan_block(index: ScalarInt) -> tuple[BoolND, Mapping[str, FloatND | IntND]]:
+    def scan_block(
+        index: ScalarInt | int,
+    ) -> tuple[BoolND, Mapping[str, FloatND | IntND]]:
         fixed = tuple(
             axis[position]
             for axis, position in zip(
@@ -2713,7 +2715,7 @@ def _discrete_off_grid_search(  # noqa: C901
 
     # keyword-only-exempt: library-callback=jax.lax.fori_loop
     def merge(
-        index: ScalarInt,
+        index: ScalarInt | int,
         current: tuple[BoolND, Mapping[str, FloatND | IntND]],
     ) -> tuple[BoolND, Mapping[str, FloatND | IntND]]:
         found, coordinates = scan_block(index)
