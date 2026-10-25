@@ -762,7 +762,7 @@ _SOURCE_SEALS = {
     "src/_lcm/power_mean.py": "1580447a1ca5f6385556438105069bfb15d211bd6da40819b096ad84b2e77cb5",
     "src/_lcm/simulation/random_address.py": "17f60140770dbd144c57cfd3daccb76a88196acd9e681f2abff8c2eefb37a913",
     "src/lcm/shocks.py": "118892103b41719b529842e83ed05d9d82f1c27ce3d9d6b03f197f98b68c1ccc",
-    "src/_lcm/shock_overrides.py": "40187092b68c124e6e6cea49ab7922857fa303abd75b6c9f72c0081f4b5f59f5",
+    "src/_lcm/shock_overrides.py": "89d13b523a6d0270e144ea60077c5e5f7e306a1b9da7878a9a9b565f920f6808",
     "src/_lcm/simulation/current_iid_overrides.py": "c5b8d450cdad4980a694df285502b70cf1238762440f1302d664b2e84d964ced",
 }
 
@@ -806,7 +806,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/shock_overrides.py": (
-        "704f3ca54670c40fe59fcd9a2d31aef99e3cad5499e38d48c5ac4175b9004895",
+        "819ad9eb2fd82474356ff86ddaa7945044bb20f1af414a0aa0eb4a957f23413e",
         {
             "_flatten_override": "edb14b6f253fe08300be4c6a0fb384d53654bf5a4460590cc9312c05eb82639a",
             "_flatten_override_with_keys": "b59c5584a47f2d873fbb65f9a90d02690c3c9917ead9ef29fccba4624f570db4",

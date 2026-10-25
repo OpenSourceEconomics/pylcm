@@ -156,12 +156,12 @@ class SuppliedEntryFrames:
             names = tuple(name for name in binding.group.shocks if name in entries)
             if not names:
                 continue
-            if any(isinstance(entries[name], BaseInnovations) for name in names):
-                identity = (
-                    False
-                    if binding.group.correlation is None
-                    else binding.group._has_identity_correlation(params={})  # noqa: SLF001 - fixed metadata proof only
-                )
+            if binding.group.correlation is not None and any(
+                isinstance(entries[name], BaseInnovations) for name in names
+            ):
+                # Runtime correlation is judged by the admitted scalar producer
+                # with this invocation's operands, never by a cached host proof.
+                identity = binding.group._has_identity_correlation(params={})  # noqa: SLF001 - fixed metadata proof only
                 if (not isinstance(identity, bool) or not identity) and len(
                     names
                 ) != len(binding.group.shocks):

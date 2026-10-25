@@ -1,7 +1,7 @@
 """Invert supplied current-IID observations without manufacturing latent evidence.
 
-This scalar-cell producer owns no random stream. Categorical intervals and unresolved
-deterministic coordinates reuse the caller's named addressed draw. Every numerical
+This scalar-cell producer owns no random stream. Categorical intervals and free
+producing coordinates reuse the caller's named addressed draw. Every numerical
 support/recovery failure reaches the mandatory validity channel.
 """
 
@@ -41,7 +41,17 @@ from lcm.shocks import (
     _resolve_parameter,
     _sample_discrete,
 )
-from lcm.typing import BoolND, FloatND, IntND, ParameterName, ReferenceName
+from lcm.typing import (
+    Bool1D,
+    BoolND,
+    Float1D,
+    Float2D,
+    FloatND,
+    IntND,
+    ParameterName,
+    ReferenceName,
+    ScalarBool,
+)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -278,13 +288,11 @@ def _recover_factor(
         params=params, admitted_correlation_support=admitted_correlation_support
     )
     valid &= factor_valid
-    observed = jnp.stack(tuple(informative.values()))
+    observed = jnp.stack(tuple(informative[name] for name in group.shocks))
     # A physically complete frame can still be latent-incomplete. The all
     # deterministic case conditions nothing and keeps every addressed base.
     all_observed, none_observed = jnp.all(observed), ~jnp.any(observed)
-    valid &= identity | all_observed | none_observed
-    # Only exact-zero factor columns (or constant marginal outputs) may be
-    # completed canonically for a support witness. These are never draw evidence.
+    # A seedless baseline is only a private support candidate, never draw evidence.
     independent = (
         jnp.stack(tuple(completion.values()))
         if completion is not None
@@ -305,11 +313,71 @@ def _recover_factor(
                 jnp.where(all_observed & (diagonal > 0), recovered, independent[index]),
             )
         )
+    mixed = enabled & ~identity & ~all_observed & ~none_observed
+
+    def recover_mixed() -> tuple[Float1D, ScalarBool]:
+        return _recover_mixed_factor(
+            factor=factor,
+            coordinates=jnp.stack(tuple(coordinates[name] for name in group.shocks)),
+            observed=observed,
+            baseline=independent,
+        )
+
+    independent, mixed_valid = jax.lax.cond(
+        mixed, recover_mixed, lambda: (independent, jnp.asarray(a=True))
+    )
+    valid &= mixed_valid
     return (
         MappingProxyType(dict(zip(group.shocks, independent, strict=True))),
         valid,
-        jnp.any(jnp.diag(factor) == 0),
+        jnp.any(jnp.diag(factor) == 0) | mixed,
     )
+
+
+def _recover_mixed_factor(
+    *,
+    factor: Float2D,
+    coordinates: Float1D,
+    observed: Bool1D,
+    baseline: Float1D,
+) -> tuple[Float1D, ScalarBool]:
+    """Construct a producing witness, retaining addressed free-coordinate bits.
+
+    Pivots choose a candidate only; exact canonical forward values prove support.
+    This completion is not a conditional Gaussian draw or a rank certificate.
+    """
+    matrix = jnp.where(observed[:, None], factor, 0.0)
+    rhs = jnp.where(
+        observed, coordinates - jnp.matmul(baseline[None], factor.T)[0], 0.0
+    )
+    used_rows = jnp.zeros(factor.shape[0], dtype=jnp.bool_)
+    pivot_rows = jnp.full(factor.shape[1], -1, dtype=jnp.int32)
+    valid = jnp.all(jnp.isfinite(matrix)) & jnp.all(jnp.isfinite(rhs))
+    rows = jnp.arange(factor.shape[0])
+    # Reverse columns keep earlier unconstrained addressed coordinates when possible.
+    for column in reversed(range(factor.shape[1])):
+        available = ~used_rows & (matrix[:, column] != 0)
+        active = jnp.any(available)
+        row = jnp.argmax(available).astype(jnp.int32)
+        denominator = jnp.where(active, matrix[row, column], 1.0)
+        normalized = matrix[row] / denominator
+        normalized_rhs = rhs[row] / denominator
+        multipliers = matrix[:, column].at[row].set(0.0)
+        reduced = matrix - multipliers[:, None] * normalized[None]
+        reduced_rhs = rhs - multipliers * normalized_rhs
+        reduced = reduced.at[row].set(normalized)
+        reduced_rhs = reduced_rhs.at[row].set(normalized_rhs)
+        reduced = reduced.at[:, column].set(jnp.where(rows == row, 1.0, 0.0))
+        matrix = jnp.where(active, reduced, matrix)
+        rhs = jnp.where(active, reduced_rhs, rhs)
+        valid &= jnp.all(jnp.isfinite(matrix)) & jnp.all(jnp.isfinite(rhs))
+        used_rows = used_rows.at[row].set(used_rows[row] | active)
+        pivot_rows = pivot_rows.at[column].set(jnp.where(active, row, -1))
+    pivoted = pivot_rows >= 0
+    updated = baseline + rhs[jnp.maximum(pivot_rows, 0)]
+    recovered = jnp.where(pivoted, updated, baseline)
+    recovered = jnp.where(jnp.all(factor == 0, axis=0), baseline, recovered)
+    return recovered, valid & jnp.all(jnp.isfinite(recovered))
 
 
 def _inverse(
@@ -484,12 +552,16 @@ def supplied_group_values(
 ) -> tuple[Mapping[ShockName, FloatND | IntND], BoolND]:
     """Validate supplied values or coordinates; return no latent draw evidence.
 
-    A complete mixed-informative correlated physical frame retains the existing
-    unresolved support status, rather than pretending to be a partial-input deferral.
+    Partial runtime groups expose only supplied marginals under this invocation's
+    exact identity and canonical factor/support checks. Complete correlated frames
+    use their producing-witness route; mixed-informative frames require an exact
+    canonical witness. Recovered support coordinates are not latent draw evidence.
     """
     physical_names, independent, identity = _supplied_form(
         group=group, supplied=supplied, params=params
     )
+    partial = supplied.keys() != group.shocks.keys()
+    marginal_only = independent or partial
     physical, coordinates, informative = {}, {}, {}
     valid = jnp.asarray(a=True)
     for name, item in supplied.items():
@@ -520,7 +592,7 @@ def supplied_group_values(
             coordinates[name], informative[name] = coordinate, observed
             physical[name] = value
             valid &= supported
-            if independent:
+            if marginal_only:
                 produced, resolved = _forward_supplied_law(
                     law=law, coordinate=coordinate, parameters=parameters
                 )
@@ -532,12 +604,25 @@ def supplied_group_values(
                 valid &= resolved & recovery
         else:
             coordinates[name] = value
-            if independent:
+            if marginal_only:
                 physical[name], resolved = _forward_supplied_law(
                     law=law, coordinate=value, parameters=parameters
                 )
                 valid &= resolved
-    if not independent:
+    if not independent and partial:
+        # Only actual identity permits a seedless partial frame. Canonical
+        # factor/support checks remain live even though no missing coordinate
+        # is transformed or exposed. Both proofs are dynamic invocation data.
+        factor, factor_valid = group._correlation_factor(  # noqa: SLF001 - original producing factor/status
+            params=params,
+            admitted_correlation_support=admitted_correlation_support,
+        )
+        valid &= (
+            jnp.asarray(identity)
+            & factor_valid
+            & jnp.all(factor == jnp.eye(len(group.shocks), dtype=factor.dtype))
+        )
+    elif not independent:
         physical, correlated_valid = _finish_supplied_group(
             group=group,
             coordinates=coordinates,
@@ -613,7 +698,7 @@ def _supplied_form(
     supplied: Mapping[ShockName, ShockOverride],
     params: Mapping[ParameterName, LawValue],
 ) -> tuple[set[ShockName], bool, bool | BoolND]:
-    """Apply the existing complete-correlated-frame grammar before inversion."""
+    """Retain full-frame grammar unless runtime identity can validate a partial."""
     unknown = supplied.keys() - group.shocks.keys()
     if unknown:
         raise ShockDeclarationError(f"Unknown shock overrides {sorted(unknown)}.")
@@ -623,7 +708,17 @@ def _supplied_form(
     physical_names = {
         name for name, item in supplied.items() if isinstance(item, PhysicalValues)
     }
-    if not independent and physical_names and physical_names != group.shocks.keys():
+    runtime_partial = (
+        bool(supplied)
+        and supplied.keys() != group.shocks.keys()
+        and not isinstance(identity, bool)
+    )
+    if (
+        not independent
+        and physical_names
+        and physical_names != group.shocks.keys()
+        and not runtime_partial
+    ):
         raise ShockDeclarationError(
             "Correlated overrides require a complete physical frame alone."
         )
@@ -631,6 +726,7 @@ def _supplied_form(
         not independent
         and not physical_names
         and supplied.keys() != group.shocks.keys()
+        and not runtime_partial
     ):
         raise ShockDeclarationError(
             "Supplied correlated base frames must determine every coordinate."
