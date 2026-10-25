@@ -7,8 +7,10 @@ savings motive (Carroll 1997, Deaton 1991).
 """
 
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
+from lcm.shocks import GaussHermite, Normal, PhysicalValues, Product
 from tests.conftest import X64_ENABLED
 from tests.test_models.precautionary_savings import RegimeId, get_model, get_params
 
@@ -28,7 +30,11 @@ def _simulate(*, shock_type, sigma, rho=0.0, mu=0.0):
         params=params,
         initial_conditions={
             "wealth": jnp.full(_N_SUBJECTS, 5.0),
-            "income": jnp.full(_N_SUBJECTS, unconditional_mean),
+            "income": (
+                PhysicalValues(values=jnp.full(_N_SUBJECTS, unconditional_mean))
+                if shock_type == "normal_gh"
+                else jnp.full(_N_SUBJECTS, unconditional_mean)
+            ),
             "age": jnp.full(_N_SUBJECTS, 20.0),
             "regime_id": jnp.array([RegimeId.alive] * _N_SUBJECTS),
         },
@@ -103,3 +109,99 @@ def test_precautionary_savings_versus_deterministic_baseline(shock_type):
     assert _mean_wealth_in_final_alive_period(
         df_stoch
     ) > _mean_wealth_in_final_alive_period(df_det)
+
+
+def test_normal_gh_declares_income_as_a_named_current_shock() -> None:
+    """Income is observed at choice time without a stored income-state axis."""
+    model = get_model(
+        n_periods=4,
+        shock_type="normal_gh",
+        wealth_n_points=3,
+        consumption_n_points=3,
+        income_n_points=3,
+    )
+    assert set(model.user_regimes["alive"].states) == {"wealth"}
+    assert model.user_regimes["alive"].shocks == ("income_risk",)
+    group = model.shocks["income_risk"]
+    assert set(group.shocks) == {"income"}
+    assert isinstance(group.shocks["income"], Normal)
+    assert isinstance(group.nodes, Product)
+    assert group.nodes.rules == {"income": GaussHermite(n=3)}
+    assert model.get_params_template()["income_risk"] == {
+        "income__mu": "float",
+        "income__sigma": "float",
+    }
+
+
+def test_normal_gh_replays_known_entry_income_and_dated_physical_paths() -> None:
+    """The same solution prices known current income before updating wealth."""
+    model = get_model(
+        n_periods=4,
+        shock_type="normal_gh",
+        wealth_n_points=3,
+        consumption_n_points=3,
+        income_n_points=3,
+    )
+    params = get_params(shock_type="normal_gh", mu=0.1, sigma=0.2, interest_rate=0.03)
+    solution = model.solve(params=params, log_level="off")
+    entry_income = jnp.array([0.37, -0.29])
+    initial = {
+        "age": jnp.array([20.0, 20.0]),
+        "wealth": jnp.array([10.0, 12.0]),
+        "income": PhysicalValues(values=entry_income),
+        "regime_id": jnp.array([RegimeId.alive, RegimeId.alive]),
+    }
+    entry_frame = model.simulate(
+        params=params,
+        solution=solution,
+        initial_conditions=initial,
+        seed=17,
+        log_level="off",
+    ).to_dataframe()
+    entry = entry_frame.loc[entry_frame["period"] == 0].sort_values("subject_id")
+    landed = entry_frame.loc[entry_frame["period"] == 1].sort_values("subject_id")
+    np.testing.assert_array_equal(entry["subject_id"], [0, 1])
+    np.testing.assert_array_equal(landed["subject_id"], [0, 1])
+    np.testing.assert_array_equal(entry["age"], [20.0, 20.0])
+    np.testing.assert_array_equal(landed["age"], [30.0, 30.0])
+    np.testing.assert_allclose(entry["income"], [0.37, -0.29], rtol=1e-6)
+    np.testing.assert_allclose(
+        landed["wealth"],
+        1.03 * (np.array([10.0, 12.0]) - entry["consumption"].to_numpy())
+        + np.exp(np.array([0.37, -0.29])),
+        rtol=1e-6,
+    )
+
+    physical_path = jnp.array([[0.37, 0.51, 0.11, 0.0], [-0.29, -0.43, 0.12, 0.0]])
+    path_frame = model.simulate(
+        params=params,
+        solution=solution,
+        initial_conditions=initial,
+        shock_paths={"income": PhysicalValues(values=physical_path)},
+        seed=23,
+        log_level="off",
+    ).to_dataframe()
+    for period, expected_income in enumerate(([0.37, -0.29], [0.51, -0.43])):
+        current = path_frame.loc[path_frame["period"] == period].sort_values(
+            "subject_id"
+        )
+        following = path_frame.loc[path_frame["period"] == period + 1].sort_values(
+            "subject_id"
+        )
+        np.testing.assert_array_equal(current["subject_id"], [0, 1])
+        np.testing.assert_array_equal(following["subject_id"], [0, 1])
+        np.testing.assert_array_equal(current["age"], [20.0 + 10 * period] * 2)
+        np.testing.assert_allclose(current["income"], expected_income, rtol=1e-6)
+        np.testing.assert_allclose(
+            following["wealth"],
+            1.03 * (current["wealth"].to_numpy() - current["consumption"].to_numpy())
+            + np.exp(np.array(expected_income)),
+            rtol=1e-6,
+        )
+    np.testing.assert_array_equal(initial["wealth"], [10.0, 12.0])
+    np.testing.assert_allclose(entry_income, [0.37, -0.29], rtol=1e-6)
+    np.testing.assert_allclose(
+        physical_path,
+        [[0.37, 0.51, 0.11, 0.0], [-0.29, -0.43, 0.12, 0.0]],
+        rtol=1e-6,
+    )

@@ -310,37 +310,25 @@ components. Policy lookup awaits explicit observation/conditional semantics. Sig
 ancestry is refused at the native decision boundary. These scoped holds do not retire
 legacy routes or complete the later exit, query and signed-reader stages.
 
-Ordinary affine normal/lognormal and uniform declarations can reproduce the former
-folded rule. This does not establish finite-rule parity for mixture physical bins or
-conditioned max-scale bins; the compatibility contract below governs those declarations.
+## Legacy migration
 
-## Legacy constructor rules
+Migrate legacy IID-state and folded declarations directly to named shock groups with
+explicit base rules. Retaining constructor spellings, physical-bin nodes or the former
+finite quadrature operator is not an acceptance requirement. Do not introduce frozen
+pullback anchors or a compatibility bridge to preserve those numerical choices.
 
-Retained IID constructor spellings return named shock groups at retirement. Their
-compatibility rule preserves the finite operator of formerly admitted fixed folded
-declarations. Standard new declarations retain their explicitly selected base rules.
-Continuous law identity and finite quadrature identity remain separate facts.
+Migration preserves the economic law, information available at choice, draw date and
+joint dependence. A current observed shock and a post-action transition-local lottery
+are distinct: moving the latter before choice changes the model. Persistent processes
+remain real states, with their node-mode and code support retained. State-conditioned
+laws must keep their actual conditioning date rather than merely reuse a state name.
+Simulation applies the declared physical law to addressed base draws.
 
-Fixed normal-mixture physical-bin rules use frozen pullbacks under their bound law.
-Fixed conditioned-normal rules use the union of category-specific pullbacks with the
-original category weights. Preserve original physical-node bytes, category identity,
-active support order and normalization semantics. A finite base-array round trip cannot
-represent every such pullback exactly. Constructor-generated compatibility rules may
-therefore retain typed frozen pullback anchors, authenticated against their bound law;
-arbitrary user nodes cannot forge a physical-value override. Anchors are fixed numerical
-coordinates, never persistent states or an alternative simulation law.
-
-Simulation always applies the true continuous law to addressed base draws. Compatibility
-anchors only preserve fixed-law solve operators. Unsupported cross-state anchor
-evaluation and unrestricted runtime mixture-shape compatibility require a named refusal
-or an explicit numerical migration; they cannot silently regenerate parameter-dependent
-base nodes. Uniform singleton compatibility retains its declared left endpoint.
-
-Preserving an atomic operator does not establish bitwise equality across changed
-compiler topologies. Compare levels using a declared summand scale and compare
-structural action ownership separately. A value tolerance cannot excuse a changed
-structural decision; an unresolved parity decision fails acceptance. Keep legacy
-consumers until their replacement's public-API parity and independent-oracle gates pass.
+Validate each replacement through the public API against its declared quadrature and
+independent economic oracle. Continuous-law identity and finite quadrature identity
+remain separate facts; neither implies bitwise equality across compiler topologies.
+Compare structural action ownership separately from value tolerances. Retire legacy
+consumers only after their replacement's required solver, query and replay gates pass.
 
 ## EKL migration and resources
 

@@ -41,6 +41,7 @@ from _lcm.regime_building.Q_and_F import (
     _CollectiveQAndF,
     _QAndF,
     has_arrival_queries,
+    has_objective_profile,
     runtime_bound_specs,
 )
 from _lcm.solution.contract import ContinuationPayload, PeriodKernel, SolverBuildContext
@@ -901,6 +902,7 @@ def _admit_node(*, node: QueryNode, period: int) -> None:
     _admit_query_solver(context=context, period=period)
     if period not in context.Q_and_F_functions:
         raise ValueError("The target action problem is inactive at this period.")
+    _admit_query_objective(context=context, period=period)
     if set(node.read.projection) != set(context.state_action_space.state_names):
         raise ValueError("A query needs a complete canonical target-state projection.")
     if context.has_taste_shocks and context.stakeholders is not None:
@@ -923,6 +925,15 @@ def _admit_node(*, node: QueryNode, period: int) -> None:
     if runtime_bound_specs(function=context.Q_and_F_functions[period]):
         raise UnsupportedOperationError(
             "Query bound integrity must have a native status adapter."
+        )
+
+
+def _admit_query_objective(*, context: SolverBuildContext, period: int) -> None:
+    """Refuse a separate selection profile the query does not transport."""
+    if has_objective_profile(Q_and_F=context.Q_and_F_functions[period]):
+        raise UnsupportedOperationError(
+            "Native policy query does not represent Decoupled objective selection; "
+            "the query reduces reported values."
         )
 
 

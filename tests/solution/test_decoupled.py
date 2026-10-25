@@ -33,6 +33,7 @@ from lcm.exceptions import (
     ModelInitializationError,
     NoFeasibleActionError,
     RegimeInitializationError,
+    UnsupportedOperationError,
 )
 from lcm.solvers import GridSearch
 from lcm.typing import (
@@ -1443,6 +1444,91 @@ def test_a_gated_source_refuses_a_decoupled_aggregator() -> None:
                                     target_stakeholder="f",
                                     fallback=lcm.ProjectedRegimeValue(
                                         regime="alive", projection={"wealth": _stay}
+                                    ),
+                                )
+                            },
+                        )
+                    },
+                )
+            },
+            enable_jit=False,
+        )
+
+
+def test_a_typed_arrival_source_refuses_unrepresented_decoupled_selection() -> None:
+    """A native source query must not rank actions by the reported value."""
+
+    @lcm.categorical(ordered=False)
+    class ArrivalRegimeId:
+        alive: ScalarInt
+        couple: ScalarInt
+        alone: ScalarInt
+
+    def source_utility(*, wealth: ContinuousState, effort: ContinuousAction) -> FloatND:
+        return wealth + effort
+
+    def opposite_objective(*, utility: FloatND, CE: FloatND) -> FloatND:
+        return -utility + CE
+
+    wealth = lcm.LinSpacedGrid(start=1, stop=5, n_points=3)
+    # Equal continuation makes effort zero the objective maximizer; the
+    # reported aggregator instead ranks effort one highest.
+    effort = lcm.LinSpacedGrid(start=0, stop=1, n_points=2)
+    with pytest.raises(UnsupportedOperationError, match="Decoupled"):
+        lcm.Model(
+            regimes={
+                "alive": lcm.Regime(
+                    states={"wealth": wealth},
+                    state_transitions={"wealth": _stay},
+                    actions={"effort": effort},
+                    functions={"utility": source_utility},
+                    koopmans_aggregator=lcm.Decoupled(
+                        objective=opposite_objective, value=additive
+                    ),
+                ),
+                "couple": lcm.Regime(
+                    states={"wealth": wealth},
+                    functions={
+                        "utility": lcm.CollectiveUtility(
+                            utilities={"f": _wealth_utility, "m": _wealth_utility}
+                        )
+                    },
+                ),
+                "alone": lcm.Regime(
+                    states={"wealth": wealth},
+                    functions={"utility": _wealth_utility},
+                ),
+            },
+            ages=lcm.AgeGrid(start=0, inclusive_stop=1, step="Y"),
+            regime_id_class=ArrivalRegimeId,
+            initial_nodes=lcm.InitialNodes(by_age={0.0: "alive"}),
+            edges={
+                "alive": lcm.Transition(
+                    law="couple",
+                    arrivals={
+                        "couple": lcm.ArrivalDecision(
+                            predicate=_couple_is_better,
+                            reads={
+                                "V_target_f": lcm.ArrivalRead(
+                                    regime="couple",
+                                    stakeholder="f",
+                                    kind="Raw",
+                                    field="value",
+                                    projection={"wealth": _stay},
+                                ),
+                                "V_target_m": lcm.ArrivalRead(
+                                    regime="couple",
+                                    stakeholder="m",
+                                    kind="Raw",
+                                    field="value",
+                                    projection={"wealth": _stay},
+                                ),
+                            },
+                            routes={
+                                "self": lcm.StakeholderRoute(
+                                    target_stakeholder="f",
+                                    fallback=lcm.ProjectedRegimeValue(
+                                        regime="alone", projection={"wealth": _stay}
                                     ),
                                 )
                             },

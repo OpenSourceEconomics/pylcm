@@ -1,7 +1,7 @@
 """Consumption-savings model with income shocks for economic validation tests.
 
-Supports IID shocks (Normal GH) and persistent AR(1) shocks (Rouwenhorst, Tauchen)
-with configurable interest rate and wealth grid type.
+Supports observed current IID income (Normal GH) and persistent AR(1) income
+(Rouwenhorst, Tauchen), with configurable interest rate and wealth grid type.
 
 With FGP-calibrated parameters (LogSpacedGrid for wealth, interest rate = 0.04,
 rho = 0.95, sigma = 0.1269, beta = 0.96), this replicates the simplified benchmark
@@ -22,7 +22,6 @@ from lcm import (
     LinSpacedGrid,
     LogSpacedGrid,
     Model,
-    NormalIIDProcess,
     Regime,
     RouwenhorstAR1Process,
     TauchenAR1Process,
@@ -30,6 +29,7 @@ from lcm import (
     categorical,
 )
 from lcm.execution import ExecutionConfig
+from lcm.shocks import GaussHermite, Normal, Product, ShockGroup
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -43,13 +43,11 @@ type ShockType = Literal["normal_gh", "rouwenhorst", "tauchen"]
 type WealthGridType = Literal["lin", "log", "irreg"]
 
 _SHOCK_GRID_CLASSES = {
-    "normal_gh": NormalIIDProcess,
     "rouwenhorst": RouwenhorstAR1Process,
     "tauchen": TauchenAR1Process,
 }
 
 _SHOCK_GRID_KWARGS: dict[str, dict[str, bool | float]] = {
-    "normal_gh": {"gauss_hermite": True},
     "rouwenhorst": {},
     "tauchen": {"gauss_hermite": False, "n_std": 3.0},
 }
@@ -103,13 +101,13 @@ def create_model(
 
     Args:
         n_periods: Number of periods.
-        shock_type: Type of income shock grid.
+        shock_type: Current IID income law or persistent income process.
         wealth_grid_type: "lin", "log", or "irreg" for wealth grid.
         wealth_start: Start of wealth grid.
         wealth_stop: Stop of wealth grid.
         wealth_n_points: Number of wealth grid points.
         consumption_n_points: Number of consumption grid points.
-        income_n_points: Number of income grid points.
+        income_n_points: IID base quadrature nodes or persistent income grid points.
         execution_config: Optional hardware-local execution controls.
 
     Returns:
@@ -135,17 +133,20 @@ def create_model(
             n_points=wealth_n_points,
         )
 
-    shock_grid_cls = _SHOCK_GRID_CLASSES[shock_type]
-    income_grid = shock_grid_cls(
-        n_points=income_n_points,
-        **_SHOCK_GRID_KWARGS[shock_type],  # ty: ignore[invalid-argument-type]
+    income_grid = (
+        None
+        if shock_type == "normal_gh"
+        else _SHOCK_GRID_CLASSES[shock_type](
+            n_points=income_n_points,
+            **_SHOCK_GRID_KWARGS[shock_type],  # ty: ignore[invalid-argument-type]
+        )
     )
 
     alive_law = DeterministicTransition(func=next_regime)
     alive = Regime(
         states={
             "wealth": wealth_grid,
-            "income": income_grid,
+            **({} if income_grid is None else {"income": income_grid}),
         },
         state_transitions={
             "wealth": next_wealth,
@@ -157,6 +158,7 @@ def create_model(
         },
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
+        shocks=("income_risk",) if shock_type == "normal_gh" else (),
     )
 
     dead = Regime(
@@ -178,6 +180,16 @@ def create_model(
         initial_nodes={20: "alive"},
         ages=AgeGrid(start=20, inclusive_stop=20 + (n_periods - 1) * 10, step="10Y"),
         fixed_params={"final_age_alive": final_age_alive},
+        shocks=(
+            {
+                "income_risk": ShockGroup(
+                    shocks={"income": Normal()},
+                    nodes=Product(income=GaussHermite(n=income_n_points)),
+                )
+            }
+            if shock_type == "normal_gh"
+            else {}
+        ),
         execution_config=(
             ExecutionConfig() if execution_config is None else execution_config
         ),
@@ -232,15 +244,15 @@ def get_params(
         Parameter dict ready for model.solve().
 
     """
-    if shock_type == "normal_gh":
-        shock_params: dict[str, float] = {"mu": mu, "sigma": sigma}
-    else:
-        shock_params = {"mu": mu, "sigma": sigma, "rho": rho}
-
-    return {
-        "discount_factor": discount_factor,
-        "alive": {
-            "income": shock_params,
-            "next_wealth": {"interest_rate": interest_rate},
-        },
+    alive_params: dict[str, UserParamsNode] = {
+        "next_wealth": {"interest_rate": interest_rate},
     }
+    params: dict[str, UserParamsNode] = {
+        "discount_factor": discount_factor,
+        "alive": alive_params,
+    }
+    if shock_type == "normal_gh":
+        params["income_risk"] = {"income__mu": mu, "income__sigma": sigma}
+    else:
+        alive_params["income"] = {"mu": mu, "sigma": sigma, "rho": rho}
+    return params

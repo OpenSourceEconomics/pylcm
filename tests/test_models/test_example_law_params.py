@@ -141,7 +141,10 @@ def test_precautionary_params_fit_every_horizon(
         initial_conditions={
             "age": jnp.array([20.0]),
             "wealth": jnp.array([10.0]),
-            "income": jnp.array([0.0]),
+            # This helper validates declared states and the wealth-only constraint.
+            # Tagged current income is covered by the public simulation replay in
+            # test_economic_validation; this helper does not yet split those tags.
+            **({} if shock_type == "normal_gh" else {"income": jnp.array([0.0])}),
             "regime_id": jnp.array([precautionary_savings.RegimeId.alive]),
         },
     )
