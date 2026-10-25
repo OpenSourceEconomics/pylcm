@@ -40,12 +40,13 @@ from _lcm.simulation.transitions import _count_drawn_off_grid_codes
 from lcm import (
     AgeGrid,
     AgeRange,
+    ArrivalDecision,
+    ArrivalRead,
     ByAge,
     CollectiveUtility,
     Decoupled,
     DeterministicTransition,
     DiscreteGrid,
-    Gate,
     InitialNodes,
     JointTransition,
     LinSpacedGrid,
@@ -71,7 +72,7 @@ from lcm.consumption_savings_regime import (
 from lcm.exceptions import InvalidStateTransitionError, RegimeInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.regime import StochasticTransition
-from lcm.solver_api import SolutionResult
+from lcm.solver_api import ResultRetention, SolutionResult
 from lcm.solvers import DCEGM
 from lcm.transition import AgeSpecializedFunction
 from lcm.typing import (
@@ -2135,11 +2136,18 @@ def _gated_model(
         edges={
             "source": Transition(
                 law="target",
-                gates={
-                    "target": Gate(
+                arrivals={
+                    "target": ArrivalDecision(
                         predicate=gate,
+                        reads={
+                            "V_target": ArrivalRead(
+                                kind="Raw",
+                                regime="target",
+                                projection={"kind": fixed_transition("kind")},
+                            )
+                        },
                         routes={
-                            "only": StakeholderRoute(
+                            "self": StakeholderRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback",
                                     projection={"kind": _project_kind},
@@ -2173,7 +2181,15 @@ def test_off_grid_law_behind_a_value_gate_is_refused(
         law=_invalid_when_working(bad_code),
         enable_jit=enable_jit,
     )
-    with pytest.raises(InvalidStateTransitionError, match="ordinary constraint"):
+    with pytest.raises(
+        InvalidStateTransitionError,
+        match=(
+            r"^In regime 'source' at age 0 \(period 0\), "
+            r"the law 'next_kind' to regime 'target' leaves its grid "
+            r"at the feasible cell \{'kind': 'low', 'a': 'high'\}\. "
+            r"It returns a code outside 0\.\.1\.$"
+        ),
+    ):
         model.solve(params=_PARAMS_ONE, log_level="off", runtime_checks=True)
 
 
@@ -2212,7 +2228,15 @@ def test_simulation_only_off_grid_law_behind_a_value_gate_is_refused(*, enable_j
         law=Phased(solve=_kind_stays, simulate=_invalid_when_working(2)),
         enable_jit=enable_jit,
     )
-    with pytest.raises(InvalidStateTransitionError, match="ordinary constraint"):
+    with pytest.raises(
+        InvalidStateTransitionError,
+        match=(
+            r"^In regime 'source' at age 0 \(period 0\), "
+            r"the law 'next_kind' to regime 'target' leaves its grid "
+            r"at the feasible cell \{'kind': 'low', 'a': 'high'\}\. "
+            r"It returns a code outside 0\.\.1\.$"
+        ),
+    ):
         model.solve(params=_PARAMS_ONE, log_level="off", runtime_checks=True)
 
 
@@ -2272,11 +2296,18 @@ def _between_nodes_model(
         return jnp.where(bad, bad_code, kind).astype(jnp.int32)
 
     kind = DiscreteGrid(category_class=_TwoCodes)
-    gates = {
-        "target": Gate(
+    arrivals = {
+        "target": ArrivalDecision(
             predicate=_threshold_gate,
+            reads={
+                "V_target": ArrivalRead(
+                    kind="Raw",
+                    regime="target",
+                    projection={"kind": fixed_transition("kind")},
+                )
+            },
             routes={
-                "only": StakeholderRoute(
+                "self": StakeholderRoute(
                     fallback=ProjectedRegimeValue(
                         regime="fallback", projection={"kind": _project_kind}
                     )
@@ -2313,7 +2344,9 @@ def _between_nodes_model(
         },
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         edges={
-            "source": Transition(law="target", gates=gates) if gated else {"target": 0}
+            "source": Transition(law="target", arrivals=arrivals)
+            if gated
+            else {"target": 0}
         },
         initial_nodes={0: "source"},
         regime_id_class=_SourceTargetFallback,
@@ -2418,7 +2451,15 @@ def test_ordinarily_excluded_action_between_nodes_simulates_to_the_target(
 def test_a_grid_node_inside_the_window_is_refused_before_the_solve(*, enable_jit):
     """With a node at 0.5 the preflight sees the bad code itself."""
     model = _between_nodes_model(enable_jit=enable_jit, n_wealth_points=3)
-    with pytest.raises(InvalidStateTransitionError, match="ordinary constraint"):
+    with pytest.raises(
+        InvalidStateTransitionError,
+        match=(
+            r"^In regime 'source' at age 0 \(period 0\), "
+            r"the law 'next_kind' to regime 'target' leaves its grid "
+            r"at the feasible cell \{'kind': 'low', 'wealth': 0\.5, "
+            r"'a': 'high'\}\. It returns a code outside 0\.\.1\.$"
+        ),
+    ):
         model.solve(params=_PARAMS_ONE, log_level="off", runtime_checks=True)
 
 
@@ -2893,10 +2934,17 @@ def _gated_income_model(*, values: bool, enable_jit: bool) -> Model:
             ("fallback", _twice_income),
         )
     }
-    gate = Gate(
+    arrival = ArrivalDecision(
         predicate=convert(_gate_at_high_income),
+        reads={
+            "V_target": ArrivalRead(
+                kind="Raw",
+                regime="target",
+                projection={"income": fixed_transition("income")},
+            )
+        },
         routes={
-            "only": StakeholderRoute(
+            "self": StakeholderRoute(
                 fallback=ProjectedRegimeValue(
                     regime="fallback",
                     projection={
@@ -2911,7 +2959,7 @@ def _gated_income_model(*, values: bool, enable_jit: bool) -> Model:
     return Model(
         regimes={"source": _income_regime(values=values), **terminal},
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
-        edges={"source": Transition(law="target", gates={"target": gate})},
+        edges={"source": Transition(law="target", arrivals={"target": arrival})},
         initial_nodes={0: "source"},
         regime_id_class=_SourceTargetFallback,
         enable_jit=enable_jit,
@@ -2926,6 +2974,86 @@ def test_gated_edge_reads_and_projects_the_values_of_a_value_grid(*, enable_jit)
         expected=_gated_income_model(values=False, enable_jit=enable_jit),
         regime_id=_SourceTargetFallback.source,
     )
+
+
+def test_nonmonotone_arrival_window_keeps_only_the_middle_value() -> None:
+    """The Boolean window keeps the middle even though every fallback pays more."""
+    income = _income_grid(values=True)
+    model = Model(
+        regimes={
+            "source": _income_regime(values=True),
+            "target": UserRegime(
+                states={"income": income},
+                functions={"utility": _income_utility_terminal},
+            ),
+            "fallback": UserRegime(
+                states={"income": income}, functions={"utility": _twice_income}
+            ),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        edges={
+            "source": Transition(
+                law="target",
+                arrivals={
+                    "target": ArrivalDecision(
+                        predicate=_window_gate(center=0.5, width=0.2),
+                        reads={
+                            "V_target": ArrivalRead(
+                                kind="Raw",
+                                regime="target",
+                                projection={"income": fixed_transition("income")},
+                            )
+                        },
+                        routes={
+                            "self": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="fallback",
+                                    projection={"income": fixed_transition("income")},
+                                )
+                            )
+                        },
+                    )
+                },
+            )
+        },
+        initial_nodes={0: "source"},
+        regime_id_class=_SourceTargetFallback,
+    )
+    params: UserParams = {"discount_factor": 0.5}
+    solution = model.solve(
+        params=params,
+        retention=ResultRetention.VALUES,
+        log_level="off",
+        runtime_checks=True,
+    )
+    # Income values [1, 2, 4] give target [.25, .5, 1] and fallback [2, 4, 8].
+    # Source flow [1, 2, 4] plus half the selected continuation is [2, 2.25, 8].
+    np.testing.assert_array_equal(solution.values[1]["target"], [0.25, 0.5, 1.0])
+    np.testing.assert_array_equal(solution.values[1]["fallback"], [2.0, 4.0, 8.0])
+    np.testing.assert_array_equal(solution.values[0]["source"], [2.0, 2.25, 8.0])
+    frame = model.simulate(
+        params=params,
+        initial_conditions={
+            "income": jnp.asarray([0, 1, 2], dtype=jnp.int32),
+            "age": jnp.zeros(3),
+            "regime_id": jnp.full(3, _SourceTargetFallback.source, dtype=jnp.int32),
+        },
+        use_categorical_codes=True,
+        solution=solution,
+        seed=3,
+        log_level="off",
+        runtime_checks=True,
+    ).to_dataframe(use_categorical_codes=True)
+    source = frame.loc[frame["period"] == 0].sort_values("subject_id")
+    landed = frame.loc[frame["period"] == 1].sort_values("subject_id")
+    np.testing.assert_array_equal(source["subject_id"], [0, 1, 2])
+    np.testing.assert_array_equal(source["value"], [2.0, 2.25, 8.0])
+    np.testing.assert_array_equal(landed["subject_id"], [0, 1, 2])
+    np.testing.assert_array_equal(landed["income"], [0, 1, 2])
+    np.testing.assert_array_equal(
+        landed["regime_name"], ["fallback", "target", "fallback"]
+    )
+    np.testing.assert_array_equal(landed["value"], [2.0, 0.5, 8.0])
 
 
 def _income_after_event(*, draw: Int1D, income: DiscreteState) -> DiscreteState:

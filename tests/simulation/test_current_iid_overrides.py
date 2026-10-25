@@ -12,13 +12,19 @@ from pandas.testing import assert_frame_equal
 
 from _lcm.simulation.entry_inputs import capture_simulation_entry_inputs
 from lcm import (
+    ArrivalDecision,
+    ArrivalRead,
     DiscreteGrid,
     ExecutionConfig,
     InitialNodes,
+    LinSpacedGrid,
     Model,
     Periods,
+    ProjectedRegimeValue,
     Regime,
     SimulationResult,
+    StakeholderRoute,
+    Transition,
     categorical,
 )
 from lcm.exceptions import (
@@ -29,13 +35,16 @@ from lcm.exceptions import (
 from lcm.shocks import (
     BaseInnovations,
     Discrete,
+    GaussHermite,
     MonteCarlo,
     Normal,
     PhysicalValues,
+    Product,
     ShockGroup,
     Uniform,
 )
 from lcm.typing import BoolND, FloatND, IntND, ScalarInt
+from tests.conftest import DECIMAL_PRECISION
 from tests.test_shock_overrides import _keys, _plan
 
 
@@ -576,3 +585,199 @@ def test_discrete_override_labels_codes_and_saved_raw_values(
         np.testing.assert_array_equal(
             loaded.raw_results[regime_name][period].shocks["eps"], values
         )
+
+
+@categorical(ordered=False)
+class _ArrivalRegimes:
+    source: ScalarInt
+    target: ScalarInt
+    fallback: ScalarInt
+
+
+@categorical(ordered=True)
+class _ArrivalBinary:
+    low: ScalarInt
+    high: ScalarInt
+
+
+def _arrival_source(*, x: FloatND, source_signal: FloatND) -> FloatND:
+    return x + 0.0 * source_signal
+
+
+def _arrival_target(*, x: FloatND, offer: IntND, choice: IntND) -> FloatND:
+    return x + offer + choice * (2.0 * offer - 1.0)
+
+
+def _arrival_fallback(*, x: FloatND) -> FloatND:
+    return x - 2.0
+
+
+def _arrival_double(*, x: FloatND) -> FloatND:
+    return 2.0 * x
+
+
+def _arrival_identity(*, x: FloatND) -> FloatND:
+    return x
+
+
+def _arrival_accept(*, x: FloatND, V_target: FloatND) -> BoolND:
+    return V_target > x + 0.5
+
+
+def _arrival_model(*, observed: bool) -> Model:
+    return Model(
+        regimes={
+            "source": Regime(
+                states={"x": LinSpacedGrid(start=1.0, stop=3.0, n_points=3)},
+                state_transitions={"x": _arrival_double},
+                functions={"utility": _arrival_source},
+                shocks=("source_noise",),
+            ),
+            "target": Regime(
+                states={"x": LinSpacedGrid(start=2.0, stop=6.0, n_points=3)},
+                functions={"utility": _arrival_target},
+                actions={"choice": DiscreteGrid(category_class=_ArrivalBinary)},
+                shocks=("target_offer",),
+            ),
+            "fallback": Regime(
+                states={"x": LinSpacedGrid(start=2.0, stop=6.0, n_points=3)},
+                functions={"utility": _arrival_fallback},
+            ),
+        },
+        shocks={
+            "source_noise": ShockGroup(
+                shocks={"source_signal": Normal(mu=0, sigma=1)},
+                nodes=Product(source_signal=GaussHermite(3)),
+            ),
+            "target_offer": ShockGroup(
+                shocks={"offer": Discrete(categories=_ArrivalBinary, probs=(0.5, 0.5))}
+            ),
+        },
+        n_periods=2,
+        initial_nodes=InitialNodes(by_period={0: "source"}),
+        regime_id_class=_ArrivalRegimes,
+        edges={
+            "source": Transition(
+                targets={
+                    "target": Periods(values=(0,)),
+                    "fallback": Periods(values=(0,)),
+                },
+                law="target",
+                arrivals={
+                    "target": ArrivalDecision(
+                        predicate=_arrival_accept,
+                        observes=("offer",) if observed else (),
+                        reads={
+                            "V_target": ArrivalRead(
+                                regime="target",
+                                kind="Raw",
+                                projection={"x": _arrival_identity},
+                            )
+                        },
+                        routes={
+                            "self": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="fallback",
+                                    projection={"x": _arrival_identity},
+                                )
+                            )
+                        },
+                    )
+                },
+            )
+        },
+    )
+
+
+def _arrival_initial() -> dict[str, jax.Array]:
+    return {
+        "period": jnp.zeros(3, dtype=jnp.int32),
+        "regime_id": jnp.zeros(3, dtype=jnp.int32),
+        "x": jnp.asarray([3.0, 1.0, 2.0]),
+    }
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_incoming_arrival_history_refuses_a_missing_consumed_period() -> None:
+    """The incoming-only target consumes its offer at the landing date."""
+    model = _arrival_model(observed=True)
+    with pytest.raises(InvalidSimulationInputError, match=r"offer.*cover period 1"):
+        model.simulate(
+            params={"discount_factor": 0.5},
+            initial_conditions=_arrival_initial(),
+            shock_paths={"offer": BaseInnovations(values=jnp.asarray([0.25]))},
+            seed=17,
+            log_level="off",
+            runtime_checks=False,
+        )
+
+
+@pytest.mark.parametrize("observed", [False, True])
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_incoming_arrival_history_keeps_rows_and_declared_information(
+    *, observed: bool
+) -> None:
+    """Low supplied offers affect observed consent, but never hidden pricing."""
+    frame = (
+        _arrival_model(observed=observed)
+        .simulate(
+            params={"discount_factor": 0.5},
+            initial_conditions=_arrival_initial(),
+            shock_paths={
+                "offer": PhysicalValues(
+                    values=jnp.asarray([[1, 0], [0, 1], [1, 0]], dtype=jnp.int32)
+                )
+            },
+            seed=17,
+            log_level="off",
+            runtime_checks=False,
+        )
+        .to_dataframe(use_categorical_codes=True)
+    )
+    source = frame.loc[frame["period"] == 0].sort_values("subject_id")
+    np.testing.assert_array_almost_equal(
+        source["value"],
+        [6.0, 2.0, 4.0] if observed else [6.5, 2.5, 4.5],
+        decimal=DECIMAL_PRECISION,
+    )
+    landed = frame.loc[frame["period"] == 1].sort_values("subject_id")
+    np.testing.assert_array_equal(landed["subject_id"], [0, 1, 2])
+    np.testing.assert_array_equal(landed["x"], [6.0, 2.0, 4.0])
+    expected = ["fallback", "target", "fallback"] if observed else ["target"] * 3
+    np.testing.assert_array_equal(landed["regime_name"], expected)
+    kept = landed.loc[landed["regime_name"] == "target"]
+    offers = np.asarray([0, 1, 0])[kept["subject_id"].to_numpy(dtype=int)]
+    np.testing.assert_array_equal(kept["offer"], offers)
+    np.testing.assert_array_equal(kept["choice"], offers)
+    np.testing.assert_array_almost_equal(
+        landed["value"],
+        [4.0, 4.0, 2.0] if observed else [6.0, 4.0, 4.0],
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_unread_arrival_history_prefix_preserves_fresh_target_draws() -> None:
+    """A source-only input must not replace later target named draws."""
+    model = _arrival_model(observed=True)
+    frames = [
+        model.simulate(
+            params={"discount_factor": 0.5},
+            initial_conditions=_arrival_initial(),
+            shock_paths=paths,
+            seed=17,
+            log_level="off",
+            runtime_checks=False,
+        ).to_dataframe(use_categorical_codes=True)
+        for paths in (
+            None,
+            {"source_signal": BaseInnovations(values=jnp.asarray([123.0]))},
+        )
+    ]
+    landed = frames[0].loc[frames[0]["period"] == 1].sort_values("subject_id")
+    np.testing.assert_array_equal(landed["subject_id"], [0, 1, 2])
+    np.testing.assert_array_equal(landed["x"], [6.0, 2.0, 4.0])
+    assert_frame_equal(
+        frames[0].loc[frames[0]["period"] == 1],
+        frames[1].loc[frames[1]["period"] == 1],
+    )

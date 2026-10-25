@@ -30,9 +30,10 @@ from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
     AgeRange,
+    ArrivalDecision,
+    ArrivalRead,
     ByAge,
     DeterministicTransition,
-    Gate,
     LinSpacedGrid,
     Model,
     NormalIIDProcess,
@@ -48,7 +49,6 @@ from lcm.exceptions import (
     InvalidInitialConditionsError,
     InvalidRegimeTransitionProbabilitiesError,
     InvalidSimulationInputError,
-    RegimeInitializationError,
 )
 from lcm.initial_nodes import UserInitialNodes
 from lcm.phased import Phased
@@ -286,22 +286,28 @@ def _numeric_gate_model() -> Model:
             "source": Transition(
                 targets={"target": 40, "fallback": 40},
                 law=ByAge(cases={40: {"target": StochasticTransition(func=_prob_one)}}),
-                gates={
-                    "target": Gate(
+                arrivals={
+                    "target": ArrivalDecision(
                         predicate=_numeric_gate,
                         routes={
-                            "only": StakeholderRoute(
+                            "self": StakeholderRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback",
                                     projection={"wealth": _identity},
                                 )
                             )
                         },
-                        references={
-                            "V_reference": ProjectedRegimeValue(
+                        reads={
+                            "V_target": ArrivalRead(
+                                kind="Raw",
+                                regime="target",
+                                projection={"wealth": _identity},
+                            ),
+                            "V_reference": ArrivalRead(
+                                kind="Raw",
                                 regime="reference",
                                 projection={"wealth": _identity},
-                            )
+                            ),
                         },
                     )
                 },
@@ -322,7 +328,8 @@ def _numeric_gate_model() -> Model:
 def test_a_numeric_gate_output_fails_with_logging_off() -> None:
     """A gate returning floats instead of booleans is refused."""
     with pytest.raises(
-        RegimeInitializationError, match=r"returned dtype 'float(32|64)'"
+        ValueError,
+        match=r"^An arrival predicate must return a scalar Boolean\.(?:\n|$)",
     ):
         _numeric_gate_model().solve(params=_PARAMS, log_level="off")
 

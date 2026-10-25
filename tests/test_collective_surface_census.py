@@ -36,7 +36,6 @@ _TESTS_ROOT = Path(__file__).parent
 _ENGINE_LEVEL_MODULES = frozenset(
     {
         "tests/conftest.py",
-        "tests/regime_building/test_carried_state_through_gated_self_loop.py",
         "tests/regime_building/test_collective_extended_real.py",
         "tests/regime_building/test_decomposed_views.py",
         "tests/regime_building/test_fold_gate_guard.py",
@@ -45,7 +44,6 @@ _ENGINE_LEVEL_MODULES = frozenset(
         "tests/regime_building/test_gated_edge_arg_provenance.py",
         "tests/regime_building/test_gated_edge_gate_process_state_interpolation.py",
         "tests/regime_building/test_gated_edge_simulate_operand_recompute.py",
-        "tests/regime_building/test_route_conditions_on_ordinary_draw.py",
         "tests/regime_building/test_same_period_ref_process_state_interpolation.py",
         "tests/regime_building/test_same_period_ref_projection_free_params.py",
         "tests/regime_building/test_simulate_gate_param_and_leg_selection.py",

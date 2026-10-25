@@ -37,6 +37,7 @@ from _lcm.regime_building.schedules import RegimeTransitionLaw
 from _lcm.regime_law import RegimeLaw, RegimeLaws
 from _lcm.typing import EconFunctionArg, FunctionName, RegimeName
 from _lcm.utils.ast_inspection import value_indexed_arrays
+from lcm.arrivals import ArrivalDecision, ArrivalRead
 from lcm.collective import (
     CollectiveUtility,
     ProjectedRegimeValue,
@@ -623,7 +624,7 @@ def _adapt_regime_law(
     value_grids_by_regime: Mapping[RegimeName, Mapping[StateOrActionName, AdapterGrid]],
     adapters: AdapterMemo,
 ) -> RegimeLaw:
-    """Adapt one law's transition and gated edges; keep the law if neither changes."""
+    """Adapt the source law and target-dated gate and arrival callbacks."""
     transition = (
         law.transition
         if isinstance(law.transition, str)
@@ -645,12 +646,76 @@ def _adapt_regime_law(
         )
         for target, edge in law.gated_edges.items()
     }
-    if transition is law.transition and all(
-        gated_edges[target] is edge for target, edge in law.gated_edges.items()
+    arrivals = {
+        target: _adapt_arrival(
+            declaration=declaration,
+            value_grids=value_grids_by_regime[target],
+            adapters=adapters,
+        )
+        for target, declaration in law.arrivals.items()
+    }
+    if (
+        transition is law.transition
+        and all(gated_edges[target] is edge for target, edge in law.gated_edges.items())
+        and all(
+            arrivals[target] is declaration
+            for target, declaration in law.arrivals.items()
+        )
     ):
         return law
     return dataclasses.replace(
-        law, transition=transition, gated_edges=MappingProxyType(gated_edges)
+        law,
+        transition=transition,
+        gated_edges=MappingProxyType(gated_edges),
+        arrivals=MappingProxyType(arrivals),
+    )
+
+
+def _adapt_arrival(
+    *,
+    declaration: ArrivalDecision,
+    value_grids: Mapping[StateOrActionName, AdapterGrid],
+    adapters: AdapterMemo,
+) -> ArrivalDecision:
+    """Read landing values and encode projected read and settlement states."""
+    predicate = adapt_user_function(
+        func=declaration.predicate,
+        value_grids=value_grids,
+        encode=None,
+        adapters=adapters,
+    )
+    reads = {
+        name: cast(
+            "ArrivalRead",
+            _adapt_reference(
+                reference=read, value_grids=value_grids, adapters=adapters
+            ),
+        )
+        for name, read in declaration.reads.items()
+    }
+    fallbacks = {
+        name: _adapt_reference(
+            reference=route.fallback, value_grids=value_grids, adapters=adapters
+        )
+        for name, route in declaration.routes.items()
+    }
+    if (
+        predicate is declaration.predicate
+        and all(reads[name] is read for name, read in declaration.reads.items())
+        and all(
+            fallbacks[name] is route.fallback
+            for name, route in declaration.routes.items()
+        )
+    ):
+        return declaration
+    return dataclasses.replace(
+        declaration,
+        predicate=predicate,
+        reads=reads,
+        routes={
+            name: dataclasses.replace(route, fallback=fallbacks[name])
+            for name, route in declaration.routes.items()
+        },
     )
 
 

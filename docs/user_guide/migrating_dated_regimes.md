@@ -77,19 +77,19 @@ Code that read a regime's law back reads it from the model:
 | Removed                                 | Read instead                                   |
 | --------------------------------------- | ---------------------------------------------- |
 | `Regime.terminal`                       | `model.graph.laws[name].terminal`              |
-| `Regime.gated_edges`                    | `model.graph.laws[name].gated_edges`           |
+| value-reading `Regime.gated_edges`      | explicit `Transition(arrivals=...)`            |
 | `Regime.decomposed_transition`          | `model.graph.laws[name].decomposed_transition` |
 | the law passed as `regime_transitions=` | `model.declared_transitions[phase][name].law`  |
 
 `model.declared_transitions["solve"][name]` and
 `model.declared_transitions["simulate"][name]` are the `Transition` a source declared,
-exactly as declared: its `law`, its `gates` and its declared or derived `targets`. Edges
-declared for both phases give both phases the same `Transition`; a `Phased` `edges`
-mapping gives each phase its own. A source without a `Transition` in a phase is absent
-from that phase's mapping. `model.graph.laws[name]` is the law the solver and simulator
-evaluate: bound to the graph, pruned of fixed-zero cells and lowered to the ages the
-starts demand. A regime is terminal when it has no outgoing edge in `Model(edges=...)`,
-and `model.graph.laws[name].terminal` says so:
+exactly as declared: its `law`, its `arrivals` and its declared or derived `targets`.
+Edges declared for both phases give both phases the same `Transition`; a `Phased`
+`edges` mapping gives each phase its own. A source without a `Transition` in a phase is
+absent from that phase's mapping. `model.graph.laws[name]` is the law the solver and
+simulator evaluate: bound to the graph, pruned of fixed-zero cells and lowered to the
+ages the starts demand. A regime is terminal when it has no outgoing edge in
+`Model(edges=...)`, and `model.graph.laws[name].terminal` says so:
 
 ```python
 assert model.graph.laws["dead"].terminal
@@ -132,9 +132,9 @@ coverage. Replace age activity predicates with graph selectors and explicit star
 
 A law that names its destinations — a per-target mapping, a regime name, or a `ByAge` /
 `Phased` of those — makes `Transition.targets` optional: the destinations are derived
-from the law's keys at the non-final source ages each case covers, plus each gate's
-route fallback regimes at the ages of the gated target. A `targets` supplied with such a
-law must equal the derived mapping exactly, or `Model(...)` raises a
+from the law's keys at the non-final source ages each case covers, plus each arrival's
+route fallback regimes at the source ages of its scheduled target. A `targets` supplied
+with such a law must equal the derived mapping exactly, or `Model(...)` raises a
 `ModelInitializationError` listing both. Where a per-target law reaches more ages than
 the declared `targets`, wrap it in `ByAge(cases={ages: law})` restricted to those ages.
 A law over all targets still requires `targets`.
@@ -163,57 +163,150 @@ edges = {
 
 Here `worker` reaches `worker` and `dead` at every age below 64 and `retiree` at 64.
 
-(migrating-gates)=
+(current-shocks-and-exits)=
 
-## Declare gated destinations with `Gate`
+## Declare current shocks independently of states
 
-A value-dependent destination is declared in the `Transition`'s `gates`, beside the law,
-instead of as a cell of the law. The law cell supplies the target's probability like any
-other per-target cell, and the gate is keyed by the same target:
-
-| Removed                                                                                         | Current                                                                                                       |
-| ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| law cell `tgt: ValueDependentTransition(probability=p, gate=g, routes=r, gate_references=refs)` | law cell `tgt: p` (a `StochasticTransition`) plus `gates={tgt: Gate(predicate=g, routes=r, references=refs)}` |
-| `ValueDependentTransition(off_grid=...)`                                                        | `Gate(off_grid=...)`                                                                                          |
-
-A bare probability callable `p` becomes `StochasticTransition(func=p)`. One `Gate` per
-target holds at every age the target is reached and in both phases, so it is declared
-once rather than repeated per `ByAge` case or per `Phased` side; only a route's
-`fallback` may be `Phased`. With `Phased` edges, a target reached in both phases carries
-the equal `Gate` in both or none.
-
-The gated target's parameters move with it. Below `params["edges"][source][target]`:
-
-| Removed                                      | Current                                 |
-| -------------------------------------------- | --------------------------------------- |
-| `["probability"][arg]`                       | `[arg]`, as for any per-target cell     |
-| `["gate"][arg]`                              | `["predicate"][arg]`                    |
-| `["gate_references"][reference][state][arg]` | `["references"][reference][state][arg]` |
-| `["routes"][route]["fallback"][...]`         | unchanged                               |
+Declare current IID laws in `Model(shocks=...)` and name each consuming group in
+`Regime(shocks=...)`. The physical shock names are function arguments; they are not
+persistent state grids or stored value axes. For example, these declaration fragments
+use a runtime normal scale:
 
 ```python
-edges = {
-    "single_f": Transition(
-        law={
-            "couple": StochasticTransition(func=meets_a_partner),
-            "single_f": StochasticTransition(func=meets_nobody),
+from lcm import Regime
+from lcm.shocks import MonteCarlo, Normal, ShockGroup
+
+shocks = {
+    "risk": ShockGroup(
+        shocks={"eps": Normal(mu=1, sigma=None)},
+        nodes=MonteCarlo(2, seed=7),
+    )
+}
+regime = Regime(
+    functions={"utility": utility},
+    actions=actions,
+    shocks=("risk",),
+)
+params = {"risk": {"eps__sigma": 2.0}}
+```
+
+Pass `shocks` to the model alongside its regimes, lifecycle and edges. A function
+reading `eps` receives its physical realization. The finite `nodes` rule approximates
+expectations during solving; it does not restrict simulation to those nodes. Simulation
+uses fresh draws from the declared law. Keep genuinely persistent processes and their
+state transitions separate from this current-shock declaration.
+
+For tagged simulation inputs, use `BaseInnovations(values=...)` for innovations to
+transform through the current law, or `PhysicalValues(values=...)` for supplied physical
+realizations. A history is indexed by original subject row and computational period.
+Supplying a value does not declare it observed by another decision.
+
+Partial observation of a correlated group and partial correlated physical overrides are
+unsupported. A wholly hidden group retains its joint law; supported overrides use a
+complete physical frame or named base innovations. Independent hidden shocks remain
+available.
+
+The new current-shock path is qualified for the focused `GridSearch` cases. Its
+endogenous-grid publication and reconstruction are not implemented yet; that work
+remains gated on the production cost diagnostic. This migration does not establish
+support for those solver combinations.
+
+(migrating-gates)=
+
+## Preserve the economic date of a value-dependent decision
+
+Use `Regime(exits=...)` when a subject chooses whether to leave **in the current
+period**, before its final action. The exit target is a same-date Participating policy
+problem at the declared projection. This singleton fragment prices a target without
+observing its offer:
+
+```python
+from lcm import Exit, ExitTarget
+
+exits = {
+    "leave": Exit(
+        targets={
+            "self": ExitTarget(
+                regime="target",
+                projection={},
+                utility_adjustment=adjustment,
+            )
         },
-        gates={
-            "couple": Gate(
-                predicate=mutual_consent,
-                routes={"her": route_into_couple},
-                references={"V_alone_f": outside_option_f},
-            ),
-        },
-    ),
+        rule="unilateral",
+    )
 }
 ```
+
+Declare the target's group on its own `Regime(shocks=...)`. Add `observes=("offer",)` to
+the `Exit` only when that physical target offer is visible at the exit choice. Otherwise
+pricing integrates the hidden offer; after the irrevocable move the target acts with its
+actual realization. An exit's utility adjustment affects its benchmark and is paid once
+on settlement. It reads the exit source query's state, helper and observed-information
+context; `ExitTarget.projection` does not remap its inputs. When that source is itself a
+projected household query, its mapped household state is available to the adjustment. A
+lagged marital-status indicator there can make the adjustment zero for newlyweds.
+
+An old edge decision after a scheduled transition belongs in `Transition(arrivals=...)`:
+ordinary transition laws and state laws first produce the next-period landing, then its
+`ArrivalDecision` evaluates, then the selected regime acts. Moving it into a current
+`Exit` would change its economic date.
+
+This fragment, taken from the shipped collective example, reads the continuing
+household's policy support instead of a stored dissolution flag:
+
+```python
+from lcm import ArrivalDecision, ArrivalRead
+
+arrival = ArrivalDecision(
+    predicate=has_policy_support,
+    reads={
+        "target_support": ArrivalRead(
+            regime="married_with_participation",
+            stakeholder="f",
+            kind="Participating",
+            field="support",
+            projection={"wage": identity_wage},
+        )
+    },
+    routes=stakeholder_routes,
+)
+```
+
+Place it under `Transition(arrivals={"married_with_participation": arrival}, ...)`. Each
+source stakeholder's route declares its continuing role and its own projected fallback.
+The decision owns only subjects arriving on that incoming edge; unrelated ordinary draws
+and initial occupants do not borrow its fallback.
+
+`ArrivalRead(kind="Raw")` reads the unconstrained-by-participation action problem;
+`kind="Participating"` reads the actions kept by its exit rule. `field="support"`
+returns Boolean policy support rather than a numeric value. `kind="IntegratedFull"`
+explicitly reads the stored shock-integrated Full value and exposes neither policy
+support nor realized physical information. Name the reads in the predicate's signature;
+`V_target` is not injected implicitly, and `D_target` is unsupported.
+
+The arrival predicate must return a scalar Boolean. Its ordinary inputs and projections
+use the landed target's state and helper vocabulary. An explicit named read binds its
+own value operand, even when a target state or helper has the same name. Declare
+physical information with `ArrivalDecision.observes` or the individual
+`ArrivalRead.observes`; a supplied simulation path never enlarges that information.
+Preserve the original comparison, including its tie rule, target role, projection and
+fallback, when replacing a value-reading `Gate`.
+
+Custom current exit rules return `RuleResult` with a declared alternative identifier,
+and declare whether they read outside values through `reads_outside_values`. They do not
+return a Boolean arrival verdict. A custom source rule combined with source EV1 tastes
+is explicitly refused; this does not refuse a custom rule pricing a hidden EV1 target.
+
+See the executable declaration examples in `lcm_examples.collective_regimes` and
+`tests/simulation/test_current_exits.py`. The uncertainty and collective reference pages
+still describe parts of the former state-grid/value-gate interface; their rewrite is
+pending. Use the declarations above for this migration.
 
 (migrating-edge-parameters)=
 
 ## Move transition parameters under `edges`
 
-The regime-transition law, its gates, gate references and route fallbacks are declared
+The regime-transition law, its arrival decisions, reads and route fallbacks are declared
 in `Model(edges=...)`, and their parameters live there too: the parameter path of an
 edge-declared callable is its declaration path under `params["edges"]`. The source
 regime owns none of them, so its branch of the parameters has no `next_regime` or `gate`
@@ -224,13 +317,15 @@ source regime and keep their paths, `params[source][target]["next_<state>"]`.
 | ----------------------------------------------------------------- | ----------------------------------------------------------------------- |
 | `[source]["next_regime"][arg]` (a law over all targets)           | `[source][arg]`                                                         |
 | `[source][target]["next_regime"][arg]` (a per-target cell)        | `[source][target][arg]`                                                 |
-| the same, for a gated target's cell                               | `[source][target][arg]`                                                 |
-| `[source][target]["gate"][arg]`                                   | `[source][target]["predicate"][arg]`                                    |
-| `[source][target]["gate_ref_<reference>_<state>"][arg]`           | `[source][target]["references"][reference][state][arg]`                 |
+| the same, for an arrival target's cell                            | `[source][target][arg]`                                                 |
 | `[source][target]["leg_fallback_<regime>_<state>"][arg]`          | `[source][target]["routes"][route]["fallback"][state][arg]`             |
 | the same, solve side of a `Phased` fallback                       | `[source][target]["routes"][route]["fallback"]["solve"][state][arg]`    |
 | `[source][target]["simulate_leg_fallback_<regime>_<state>"][arg]` | `[source][target]["routes"][route]["fallback"]["simulate"][state][arg]` |
-| `[source][arg]`, where the law or a gate reads it                 | `[source][arg]`, or the model level                                     |
+| `[source][arg]`, where the law or an arrival reads it             | `[source][arg]`, or the model level                                     |
+
+Use `get_params_template()` for the exact predicate, read-projection and route paths of
+arrival decisions. Current `Exit` declarations belong to the regime, so their parameters
+stay in that regime's parameter branch.
 
 A law over all targets is a plain function, `DeterministicTransition`, a full-vector
 `StochasticTransition`, or `ByAge` / `Phased` around one; it has no `law` segment
@@ -258,7 +353,7 @@ first:
 
 1. its declaration path, e.g. `params["edges"]["working"]["dead"]["survival_rate"]`;
 1. `params["edges"][source][arg]`, which covers every callable below the source: the law
-   over all targets, each target's cell, gate predicates, gate references and route
+   over all targets, each target's cell, arrival predicates, read projections and route
    fallbacks;
 1. the model level, `params[arg]`, which also feeds regime functions.
 
@@ -285,7 +380,7 @@ functions keep their levels: function, regime, model.
 
 Every user-chosen name that becomes a parameter-path segment contains no `__` and does
 not start or end with `_`: regime (source and target), state, action, function and
-constraint names, gate `references` keys, `routes` keys, stakeholder names, and the
+constraint names, arrival `reads` keys, `routes` keys, stakeholder names, and the
 argument names of model functions, which become parameter names. A violation raises when
 the regime or model is built, naming the name and its kind. `edges` is reserved: no
 regime, function or function argument may take that name. A law argument may not share

@@ -47,10 +47,13 @@ from _lcm.simulation.simulate import simulate
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
+    ArrivalDecision,
+    ArrivalRead,
     ByAge,
     DiscreteGrid,
     Gate,
     LinSpacedGrid,
+    Model,
     Phased,
     ProjectedRegimeValue,
     Regime,
@@ -60,6 +63,7 @@ from lcm import (
 )
 from lcm.ages import AgeGrid
 from lcm.koopmans_aggregation import LinearAggregator
+from lcm.solver_api import ResultRetention
 from lcm.transition import StochasticTransition, Transition
 from lcm.typing import (
     BoolND,
@@ -68,7 +72,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.conftest import bind_laws, build_prepared_structure
+from tests.conftest import DECIMAL_PRECISION, bind_laws, build_prepared_structure
 from tests.simulation.test_runtime_helpers import bind_eager_simulation
 
 _BETA = 0.95
@@ -270,3 +274,99 @@ def test_carried_state_accumulates_through_gate_open_self_loop():
     career_1 = np.asarray(src_1.states["career"])
     # Household index 1 (wage=2) is the one that stays in `src` at period 1.
     np.testing.assert_allclose(career_1[1], 21.0, rtol=1e-6)
+
+
+@categorical(ordered=False)
+class _PublicRegimeId:
+    src: ScalarInt
+    src_exit: ScalarInt
+    src_fallback: ScalarInt
+
+
+def test_public_repeated_arrival_carries_career_once_before_the_ordinary_exit() -> None:
+    """A kept self-arrival increments true career once and then exits ordinarily."""
+    exit_cell = StochasticTransition(func=_prob_exit_boundary)
+    model = Model(
+        regimes=_make_regimes(),
+        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
+        regime_id_class=_PublicRegimeId,
+        initial_nodes={0: "src"},
+        edges={
+            "src": Transition(
+                targets={"src": 0, "src_exit": (0, 1), "src_fallback": 0},
+                law=ByAge.until(
+                    stop_age_exclusive=2,
+                    law={
+                        "src": StochasticTransition(func=_prob_stay),
+                        "src_exit": exit_cell,
+                    },
+                    then={"src_exit": exit_cell},
+                ),
+                arrivals={
+                    "src": ArrivalDecision(
+                        predicate=_repeat_gate,
+                        reads={
+                            "V_target": ArrivalRead(
+                                regime="src",
+                                kind="IntegratedFull",
+                                projection={"wage": _identity_wage},
+                            )
+                        },
+                        routes={
+                            "self": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="src_fallback",
+                                    projection={"wage": _identity_wage},
+                                )
+                            )
+                        },
+                    )
+                },
+            )
+        },
+    )
+    assert "career" not in model.user_regimes["src_fallback"].states
+    assert "career" not in model.user_regimes["src_exit"].states
+    params = {"discount_factor": _BETA}
+    solution = model.solve(
+        params=params, retention=ResultRetention.VALUES, log_level="off"
+    )
+    np.testing.assert_array_almost_equal(
+        solution.values[0]["src"], [1.095, 4.8025], decimal=DECIMAL_PRECISION
+    )
+    np.testing.assert_array_almost_equal(
+        solution.values[1]["src"], [1.475, 2.95], decimal=DECIMAL_PRECISION
+    )
+    assert "src" not in solution.values[2]
+    result = model.simulate(
+        params=params,
+        solution=solution,
+        initial_conditions={
+            "wage": jnp.asarray([1.0, 2.0]),
+            "career": jnp.asarray([10.0, 20.0]),
+            "age": jnp.asarray([0.0, 0.0]),
+            "regime_id": jnp.full(2, model.regime_names_to_ids["src"], dtype=jnp.int32),
+        },
+        seed=0,
+        log_level="off",
+    )
+    frame = result.to_dataframe()
+    original = frame.loc[frame["period"] == 0].sort_values("subject_id")
+    np.testing.assert_array_equal(original["subject_id"], [0, 1])
+    np.testing.assert_array_equal(original["career"], [10.0, 20.0])
+    landed = frame.loc[frame["period"] == 1].sort_values("subject_id")
+    np.testing.assert_array_equal(landed["subject_id"], [0, 1])
+    np.testing.assert_array_equal(landed["regime_name"], ["src_fallback", "src"])
+    np.testing.assert_array_equal(landed["wage"], [1.0, 2.0])
+    np.testing.assert_array_equal(
+        landed.loc[landed["regime_name"] == "src", "career"], [21.0]
+    )
+    np.testing.assert_array_almost_equal(
+        landed["value"], [0.1, 2.95], decimal=DECIMAL_PRECISION
+    )
+    assert "career" not in result.raw_results["src_fallback"][1].states
+    exited = frame.loc[(frame["period"] == 2) & (frame["regime_name"] == "src_exit")]
+    np.testing.assert_array_equal(exited["subject_id"], [1])
+    np.testing.assert_array_equal(exited["wage"], [2.0])
+    np.testing.assert_array_equal(exited["value"], [1.0])
+    assert "career" not in result.raw_results["src_exit"][2].states
