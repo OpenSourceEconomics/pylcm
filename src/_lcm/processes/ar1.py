@@ -6,6 +6,7 @@ matrix its discretization implies.
 """
 
 from abc import abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, fields
 from functools import partial
 from math import comb
@@ -317,25 +318,151 @@ class _TauchenOnNodesProcess(TauchenAR1Process):
                 mean - nodes[lower] <= nodes[upper] - mean, lower, upper
             )
             center = nodes[nearest]
-            # Subtract the nearest node's log density before squaring can overflow.
-            half_difference = nodes * 0.5 - center * 0.5
-            delta = 2 * (half_difference / sigma)
-            centered_sum = (half_difference + (center - mean)) / sigma
-            is_center = jnp.arange(len(nodes)) == nearest
-            # Equal distances have zero log ratio, even when their scaled gap overflows.
-            zero_ratio = is_center | (jnp.isinf(delta) & (centered_sum == 0))
-            safe_delta = jnp.where(zero_ratio, 0.0, delta)
-            safe_sum = jnp.where(zero_ratio, 0.0, centered_sum)
-            return jax.nn.softmax(-safe_delta * safe_sum)
+            return jax.nn.softmax(
+                _normal_log_contrasts(
+                    nodes=nodes,
+                    center=center,
+                    location=mu,
+                    shift=sealed(rho * from_value),
+                    sigma=sigma,
+                )
+            )
         innovations = jnp.asarray(self.innovation_nodes, dtype=nodes.dtype)
         weights = jnp.asarray(self.innovation_weights, dtype=nodes.dtype)
         targets = jnp.clip(mean + sigma * innovations, nodes[0], nodes[-1])
         lower = jnp.clip(
             jnp.searchsorted(nodes, targets, side="right") - 1, 0, len(nodes) - 2
         )
-        upper_share = (targets - nodes[lower]) / (nodes[lower + 1] - nodes[lower])
+        left, right = nodes[lower], nodes[lower + 1]
+        # Finite endpoints need not have a finite difference. Scale the operands
+        # before subtraction, but retain the resolution of small/adjacent cells.
+        wide = (
+            (left < 0)
+            & (right > 0)
+            & (
+                jnp.maximum(jnp.abs(left), jnp.abs(right))
+                > jnp.finfo(nodes.dtype).max / 2
+            )
+        )
+        scale = jnp.where(wide, 0.5, 1.0)
+        upper_share = (targets * scale - left * scale) / (right * scale - left * scale)
         row = jnp.zeros_like(nodes).at[lower].add(weights * (1 - upper_share))
         return row.at[lower + 1].add(weights * upper_share)
+
+
+def _rounded_sum_with_error(
+    *, left: FloatND, right: FloatND
+) -> tuple[FloatND, FloatND]:
+    """Two-sum with explicit rounding boundaries, also under XLA reassociation."""
+    total = sealed(left + right)
+    right_part = sealed(total - left)
+    left_error = sealed(left - sealed(total - right_part))
+    right_error = sealed(right - right_part)
+    return total, sealed(left_error + right_error)
+
+
+def _normal_log_contrasts(
+    *,
+    nodes: Float1D,
+    center: ScalarFloat,
+    location: ScalarFloat | ScalarInt,
+    shift: ScalarFloat,
+    sigma: ScalarFloat | ScalarInt,
+) -> Float1D:
+    r"""Return log f(nodes) - log f(center), retaining the centred residual.
+
+    The exact contrast is -(x-c) * ((x+c)/2-location-shift) / sigma**2.
+    Carry midpoint and mean rounding errors until the large terms cancel. This
+    preserves both tiny drifts between distant nodes and half cells between
+    adjacent nodes. Scale mantissas before multiplication/division so a large
+    gap and a small residual do not overflow separately. Work remains linear in
+    the destination grid size; the independent tests use rational arithmetic.
+    """
+    midpoint, midpoint_error = _rounded_sum_with_error(
+        left=nodes * 0.5, right=center * 0.5
+    )
+    mean, mean_error = _rounded_sum_with_error(
+        left=jnp.asarray(location, dtype=nodes.dtype), right=shift
+    )
+    residual, residual_error = _rounded_sum_with_error(left=midpoint, right=-mean)
+    finite = jnp.isfinite(residual)
+    correction = sealed(sealed(residual_error + midpoint_error) - mean_error)
+    residual = jnp.where(finite, residual, 0.0) + jnp.where(finite, correction, 0.0)
+    half_gap = nodes * 0.5 - center * 0.5
+    # This grid/scale-only predicate stays scalar under the row vmap. Ordinary
+    # grids avoid exponent decomposition; extreme ranges retain the same law.
+    ordinary_range = jnp.max(jnp.abs(nodes)) / sigma <= jnp.finfo(nodes.dtype).max / 2
+    residual = jnp.where(nodes == center, 0.0, residual)
+    contrast = jax.lax.cond(
+        ordinary_range,
+        _ordinary_normal_contrast,
+        _extended_normal_contrast,
+        (half_gap, residual, jnp.asarray(sigma, dtype=nodes.dtype)),
+    )
+    # The nearest centre owns the saturated tail. Its own contrast is always zero.
+    return jnp.where(nodes == center, 0.0, jnp.where(finite, contrast, -jnp.inf))
+
+
+def _ordinary_normal_contrast_impl(
+    operands: tuple[FloatND, FloatND, FloatND],
+) -> FloatND:
+    """Form a compensated contrast when the grid/scale ratio fits."""
+    half_gap, residual, sigma = operands
+    return -(2 * (half_gap / sigma)) * (residual / sigma)
+
+
+def _extended_normal_contrast_impl(
+    operands: tuple[FloatND, FloatND, FloatND],
+) -> FloatND:
+    """Carry exponents separately when an intermediate scaled gap would overflow."""
+    half_gap, residual, sigma = operands
+    gap_mantissa, gap_exponent = jnp.frexp(half_gap)
+    residual_mantissa, residual_exponent = jnp.frexp(residual)
+    sigma_mantissa, sigma_exponent = jnp.frexp(sigma)
+    mantissa = -2 * gap_mantissa * residual_mantissa / sigma_mantissa**2
+    exponent = gap_exponent + residual_exponent - 2 * sigma_exponent
+    return jnp.ldexp(mantissa, exponent)
+
+
+# keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
+def _normal_contrast_jvp(
+    primals: tuple[tuple[FloatND, FloatND, FloatND]],
+    tangents: tuple[tuple[FloatND, FloatND, FloatND]],
+    *,
+    operation: Callable[[tuple[FloatND, FloatND, FloatND]], FloatND],
+) -> tuple[FloatND, FloatND]:
+    """Differentiate the same contrast, with zero slopes in saturated tails.
+
+    A nonfinite negative contrast gives an already-zero softmax mass. Safe
+    operands prevent its zero sensitivity meeting an overflowing scale slope;
+    probabilities are neither clipped nor renormalized by an extra threshold.
+    At finite contrasts these are the analytic partial derivatives, including
+    the nonzero location slope of an exact density tie.
+    """
+    (operands,), (operand_dots,) = primals, tangents
+    half_gap, residual, sigma = operands
+    gap_dot, residual_dot, sigma_dot = operand_dots
+    result = operation(operands)
+    finite = jnp.isfinite(result)
+    safe_sigma = jnp.where(finite, sigma, 1.0)
+    safe_gap = jnp.where(finite, half_gap, 0.0)
+    safe_residual = jnp.where(finite, residual, 0.0)
+    gap_slope = -(2 * (safe_residual / safe_sigma)) / safe_sigma
+    residual_slope = -(2 * (safe_gap / safe_sigma)) / safe_sigma
+    sigma_slope = -2 * (jnp.where(finite, result, 0.0) / safe_sigma)
+    return result, (
+        gap_slope * gap_dot + residual_slope * residual_dot + sigma_slope * sigma_dot
+    )
+
+
+_ordinary_normal_contrast = jax.custom_jvp(_ordinary_normal_contrast_impl)
+_ordinary_normal_contrast.defjvp(
+    partial(_normal_contrast_jvp, operation=_ordinary_normal_contrast_impl)
+)
+_extended_normal_contrast = jax.custom_jvp(_extended_normal_contrast_impl)
+_extended_normal_contrast.defjvp(
+    partial(_normal_contrast_jvp, operation=_extended_normal_contrast_impl)
+)
 
 
 def _prepare_innovation_quadrature(

@@ -61,6 +61,11 @@ from lcm.typing import (
     UserParams,
 )
 from tests.conftest import DECIMAL_PRECISION, X64_ENABLED
+from tests.test_models.on_nodes_oracles import (
+    density_derivative,
+    density_matrix,
+    quadrature_matrix,
+)
 from tests.test_models.processes import (
     MultiRegimeId,
     RegimeId,
@@ -1989,3 +1994,414 @@ def test_tauchen_on_nodes_density_equal_distance_location_derivative() -> None:
     )(jnp.asarray(0.0))
     expected = np.tile(np.array([-0.5, 0.5]) / 0.3**2, (2, 1))
     aaae(got, expected, decimal=DECIMAL_PRECISION)
+
+
+def _small_drift() -> tuple[float, float]:
+    exponent = 56 if X64_ENABLED else 26
+    return 2.0**-exponent, 2.0 ** (-exponent // 2)
+
+
+def _large_radius() -> float:
+    return 2.0 ** (1023 if X64_ENABLED else 127)
+
+
+def _evaluate_node_numerics(
+    *,
+    process: TauchenAR1Process,
+    rho: float,
+    sigma: float,
+    mu: float,
+    route: Literal["fixed", "eager", "jit"],
+) -> FloatND:
+    if route == "fixed":
+        return process.get_transition_probs()
+    operation = (
+        jax.jit(process.compute_transition_probs)
+        if route == "jit"
+        else process.compute_transition_probs
+    )
+    return operation(rho=jnp.asarray(rho), sigma=jnp.asarray(sigma), mu=jnp.asarray(mu))
+
+
+@pytest.mark.parametrize("route", ["fixed", "eager", "jit"])
+def test_density_small_drift_preserves_odds_and_a_finite_margin_choice(
+    route: Literal["fixed", "eager", "jit"],
+) -> None:
+    """A small positive drift makes the upper-node lottery beat a sure payoff of 0.7."""
+    nodes = (-1.0, 1.0)
+    mu, sigma = _small_drift()
+    process = TauchenAR1Process.on_nodes(
+        nodes=np.asarray(nodes),
+        rho=0.0,
+        sigma=sigma,
+        mu=mu,
+        transition_rule="density",
+    )
+    got = _evaluate_node_numerics(
+        process=process, rho=0.0, sigma=sigma, mu=mu, route=route
+    )
+    expected = density_matrix(nodes=nodes, rho=0.0, sigma=sigma, mu=mu)
+    # Exact log odds are 2*mu/sigma**2 = 2, so the upper mass is about 0.880797.
+    assert int(np.argmax([0.7, float(got[0, 1])])) == 1
+    np.testing.assert_array_almost_equal(got, expected, decimal=DECIMAL_PRECISION)
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+@pytest.mark.parametrize("scenario", ["ordinary", "small_drift", "saturated_tail"])
+@pytest.mark.parametrize("parameter", ["sigma", "mu", "rho"])
+def test_density_derivatives_differentiate_the_normalized_probability_law(
+    *, compiled: bool, scenario: str, parameter: Literal["sigma", "mu", "rho"]
+) -> None:
+    """Scale and location derivatives agree with the same normalized node law."""
+    if scenario == "ordinary":
+        nodes = (-1.0, -0.4, 0.0, 0.5, 1.2)
+        rho, sigma, mu = 0.9, 0.3, 0.2
+    elif scenario == "saturated_tail":
+        nodes = (-1.0, 0.0, 1.0)
+        rho = 0.0
+        sigma = 1e-200 if X64_ENABLED else 1e-30
+        mu = 1e200 if X64_ENABLED else 1e30
+    else:
+        nodes = (-1.0, 1.0)
+        rho = 0.0
+        mu, sigma = _small_drift()
+    # The oracle receives exactly the represented active-precision inputs.
+    dtype = np.float64 if X64_ENABLED else np.float32
+    nodes = tuple(float(value) for value in np.asarray(nodes, dtype=dtype))
+    rho, sigma, mu = (float(dtype(value)) for value in (rho, sigma, mu))
+    process = TauchenAR1Process.on_nodes(
+        nodes=np.asarray(nodes), transition_rule="density"
+    )
+
+    def matrix(value: jax.Array) -> FloatND:
+        return process.compute_transition_probs(
+            rho=value if parameter == "rho" else jnp.asarray(rho),
+            sigma=value if parameter == "sigma" else jnp.asarray(sigma),
+            mu=value if parameter == "mu" else jnp.asarray(mu),
+        )
+
+    derivative = jax.jacrev(matrix)
+    if compiled:
+        derivative = jax.jit(derivative)
+    got = derivative(jnp.asarray({"sigma": sigma, "mu": mu, "rho": rho}[parameter]))
+    expected = [
+        density_derivative(
+            nodes=nodes,
+            source=source,
+            rho=rho,
+            sigma=sigma,
+            mu=mu,
+            parameter=parameter,
+        )
+        for source in nodes
+    ]
+    tolerance = 10.0**-DECIMAL_PRECISION
+    np.testing.assert_allclose(got, expected, rtol=tolerance, atol=tolerance)
+
+
+@pytest.mark.parametrize("route", ["fixed", "eager", "jit"])
+def test_quadrature_finite_opposite_endpoints_preserve_a_half_lottery(
+    route: Literal["fixed", "eager", "jit"],
+) -> None:
+    """A central target splits mass equally despite raw segment-width overflow."""
+    radius = _large_radius()
+    nodes = (-radius, radius)
+    process = TauchenAR1Process.on_nodes(
+        nodes=np.asarray(nodes),
+        rho=0.0,
+        sigma=1.0,
+        mu=0.0,
+        transition_rule="innovation_quadrature",
+        innovation_nodes=np.asarray([0.0]),
+        innovation_weights=np.asarray([1.0]),
+    )
+    got = _evaluate_node_numerics(
+        process=process, rho=0.0, sigma=1.0, mu=0.0, route=route
+    )
+    expected = quadrature_matrix(
+        nodes=nodes,
+        rho=0.0,
+        sigma=1.0,
+        mu=0.0,
+        innovations=(0.0,),
+        relative_weights=(1.0,),
+    )
+    # Terminal values are (0,1), so the lottery must beat a certain payoff of 0.25.
+    assert int(np.argmax([0.25, float(got[0, 1])])) == 1
+    np.testing.assert_array_almost_equal(got, expected, decimal=DECIMAL_PRECISION)
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+@pytest.mark.parametrize("side", [-1.0, 1.0])
+def test_quadrature_finite_endpoints_have_exact_unit_mass(
+    *, compiled: bool, side: float
+) -> None:
+    """An exact endpoint target remains a valid unit mass on an overflowing span."""
+    radius = _large_radius()
+    nodes = (-radius, radius)
+    process = TauchenAR1Process.on_nodes(
+        nodes=np.asarray(nodes),
+        transition_rule="innovation_quadrature",
+        innovation_nodes=np.asarray([0.0]),
+        innovation_weights=np.asarray([1.0]),
+    )
+    got = _evaluate_node_numerics(
+        process=process,
+        rho=0.0,
+        sigma=1.0,
+        mu=side * radius,
+        route="jit" if compiled else "eager",
+    )
+    expected = quadrature_matrix(
+        nodes=nodes,
+        rho=0.0,
+        sigma=1.0,
+        mu=side * radius,
+        innovations=(0.0,),
+        relative_weights=(1.0,),
+    )
+    np.testing.assert_array_equal(got, expected)
+
+
+@categorical(ordered=False)
+class _BellmanRegime:
+    alive: ScalarInt
+    dead: ScalarInt
+
+
+def _no_payoff(income: ContinuousState) -> FloatND:
+    return jnp.zeros_like(income)
+
+
+def _upper_node_payoff(income: ContinuousState) -> FloatND:
+    return (income + 1.0) / 2.0
+
+
+@pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
+def test_density_two_period_bellman_value_retains_the_small_drift(
+    *, enable_jit: bool
+) -> None:
+    """Bellman integration of terminal payoffs zero and one retains the density odds."""
+    nodes = (-1.0, 1.0)
+    mu, sigma = _small_drift()
+    process = TauchenAR1Process.on_nodes(
+        nodes=np.asarray(nodes),
+        rho=0.0,
+        sigma=sigma,
+        mu=mu,
+        transition_rule="density",
+    )
+    model = Model(
+        regimes={
+            "alive": Regime(
+                states={"income": process}, functions={"utility": _no_payoff}
+            ),
+            "dead": Regime(
+                states={"income": process}, functions={"utility": _upper_node_payoff}
+            ),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        regime_id_class=_BellmanRegime,
+        initial_nodes={0: "alive"},
+        edges={"alive": {"dead": 0}},
+        fixed_params={"discount_factor": 1.0},
+        enable_jit=enable_jit,
+        durable_identity=False,
+    )
+    solution = model.solve(params={}, log_level="off", runtime_checks=True)
+    expected = np.asarray(
+        density_matrix(nodes=nodes, rho=0.0, sigma=sigma, mu=mu)
+    ) @ np.asarray([0.0, 1.0])
+    np.testing.assert_array_almost_equal(
+        solution.values[0]["alive"], expected, decimal=DECIMAL_PRECISION
+    )
+    np.testing.assert_array_equal(solution.values[1]["dead"], np.asarray([0.0, 1.0]))
+    # A caller comparing the resulting continuation with a sure 0.7 must choose it.
+    assert int(np.argmax([0.7, float(solution.values[0]["alive"][0])])) == 1
+
+
+def _evaluate_node_boundaries(
+    *, process: TauchenAR1Process, rho: float, sigma: float, mu: float, compiled: bool
+) -> FloatND:
+    operation = (
+        jax.jit(process.compute_transition_probs)
+        if compiled
+        else process.compute_transition_probs
+    )
+    return operation(rho=jnp.asarray(rho), sigma=jnp.asarray(sigma), mu=jnp.asarray(mu))
+
+
+def _assert_probability_matrix(
+    *, actual: FloatND, expected: tuple[tuple[float, ...], ...]
+) -> None:
+    np.testing.assert_array_almost_equal(actual, expected, decimal=DECIMAL_PRECISION)
+    assert np.isfinite(actual).all()
+    assert (np.asarray(actual) >= 0).all()
+    np.testing.assert_array_almost_equal(
+        np.asarray(actual).sum(axis=1),
+        np.ones(actual.shape[0]),
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+@pytest.mark.parametrize("scale_exponent", [-8, 0, 16])
+@pytest.mark.parametrize("sign", [-1.0, 1.0])
+@pytest.mark.parametrize("neighbor", [-1, 0, 1])
+def test_density_near_midpoint_drifts_survive_scaling_and_adjacent_float_changes(
+    *, compiled: bool, scale_exponent: int, sign: float, neighbor: int
+) -> None:
+    """Small drift, its adjacent floats, and physical rescalings retain their odds."""
+    dtype = np.float64 if X64_ENABLED else np.float32
+    exponent = 56 if X64_ENABLED else 26
+    radius = 2.0**scale_exponent
+    drift = dtype(sign * radius * 2.0**-exponent)
+    if neighbor:
+        drift = np.nextafter(drift, dtype(np.inf if neighbor > 0 else -np.inf))
+    mu = float(drift)
+    sigma = radius * 2.0 ** (-exponent // 2)
+    nodes = (-radius, radius)
+    process = TauchenAR1Process.on_nodes(
+        nodes=np.asarray(nodes), transition_rule="density"
+    )
+    got = _evaluate_node_boundaries(
+        process=process, rho=0.0, sigma=sigma, mu=mu, compiled=compiled
+    )
+    expected = density_matrix(nodes=nodes, rho=0.0, sigma=sigma, mu=mu)
+    _assert_probability_matrix(actual=got, expected=expected)
+    # The direction of this O(1) probability difference is a structural assertion.
+    assert bool(got[0, 1] > 0.5) == (sign > 0)
+    assert bool(got[0, 1] < 0.5) == (sign < 0)
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+@pytest.mark.parametrize("offset_exponent", [-8, 0, 16])
+@pytest.mark.parametrize("sign", [-1.0, 1.0])
+def test_density_adjacent_nodes_preserve_an_unrepresentable_midpoint(
+    *, compiled: bool, offset_exponent: int, sign: float
+) -> None:
+    """Adjacent physical nodes retain the half cell of an unrepresentable midpoint."""
+    dtype = np.float64 if X64_ENABLED else np.float32
+    first = dtype(sign * 2.0**offset_exponent)
+    second = np.nextafter(first, dtype(np.inf))
+    nodes = (float(first), float(second))
+    sigma = float(second) - float(first)
+    process = TauchenAR1Process.on_nodes(
+        nodes=np.asarray(nodes), transition_rule="density"
+    )
+    got = _evaluate_node_boundaries(
+        process=process, rho=1.0, sigma=sigma, mu=0.0, compiled=compiled
+    )
+    expected = density_matrix(nodes=nodes, rho=1.0, sigma=sigma, mu=0.0)
+    _assert_probability_matrix(actual=got, expected=expected)
+    # Rounding a midpoint before centering would turn one of these rows into a tie.
+    assert bool(got[0, 0] > got[0, 1])
+    assert bool(got[1, 1] > got[1, 0])
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+@pytest.mark.parametrize("span", ["below_threshold", "at_threshold", "above_threshold"])
+@pytest.mark.parametrize("target_in_radii", [-0.5, 0.0, 0.5])
+def test_quadrature_linear_shares_cross_the_raw_width_overflow_threshold(
+    *,
+    compiled: bool,
+    span: Literal["below_threshold", "at_threshold", "above_threshold"],
+    target_in_radii: float,
+) -> None:
+    """Neighboring radii across the overflow threshold preserve linear allocation."""
+    dtype = np.float64 if X64_ENABLED else np.float32
+    radius = dtype(np.finfo(dtype).max / 2.0)
+    if span == "below_threshold":
+        radius = np.nextafter(radius, dtype(0.0))
+    elif span == "above_threshold":
+        radius = np.nextafter(radius, dtype(np.inf))
+    a = float(radius)
+    nodes = (-a, a)
+    mu = target_in_radii * a
+    process = TauchenAR1Process.on_nodes(
+        nodes=np.asarray(nodes),
+        transition_rule="innovation_quadrature",
+        innovation_nodes=np.asarray([0.0]),
+        innovation_weights=np.asarray([1.0]),
+    )
+    got = _evaluate_node_boundaries(
+        process=process, rho=0.0, sigma=1.0, mu=mu, compiled=compiled
+    )
+    expected = quadrature_matrix(
+        nodes=nodes,
+        rho=0.0,
+        sigma=1.0,
+        mu=mu,
+        innovations=(0.0,),
+        relative_weights=(1.0,),
+    )
+    _assert_probability_matrix(actual=got, expected=expected)
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+@pytest.mark.parametrize("shape", ["symmetric", "long_left", "long_right"])
+@pytest.mark.parametrize("tail_weights", ["zero", "positive"])
+@pytest.mark.parametrize("reverse", [False, True], ids=["declared", "permuted"])
+def test_quadrature_unequal_spans_clipping_and_zero_mass_respect_the_same_lottery(
+    *,
+    compiled: bool,
+    shape: Literal["symmetric", "long_left", "long_right"],
+    tail_weights: Literal["zero", "positive"],
+    reverse: bool,
+) -> None:
+    """Unequal endpoints, clipping, zero masses, and ordering preserve the law."""
+    a = 2.0 ** (1023 if X64_ENABLED else 127)
+    left = -1.5 * a if shape == "long_left" else -a
+    right = 1.5 * a if shape == "long_right" else a
+    nodes = (left, right)
+    innovations = (-16.0, -1.0, 0.0, 0.5, 16.0)
+    weights = (
+        (0.0, 1.0, 3.0, 2.0, 0.0)
+        if tail_weights == "zero"
+        else (2.0, 0.0, 3.0, 1.0, 2.0)
+    )
+    if reverse:
+        innovations = innovations[::-1]
+        weights = weights[::-1]
+    # +/-16 innovations are outside the physical endpoints. The exact oracle clips
+    # them before allocation, without requiring their unbounded targets to be floats.
+    sigma = a / 4.0
+    process = TauchenAR1Process.on_nodes(
+        nodes=np.asarray(nodes),
+        transition_rule="innovation_quadrature",
+        innovation_nodes=np.asarray(innovations),
+        innovation_weights=np.asarray(weights),
+    )
+    got = _evaluate_node_boundaries(
+        process=process, rho=0.0, sigma=sigma, mu=0.0, compiled=compiled
+    )
+    expected = quadrature_matrix(
+        nodes=nodes,
+        rho=0.0,
+        sigma=sigma,
+        mu=0.0,
+        innovations=innovations,
+        relative_weights=weights,
+    )
+    _assert_probability_matrix(actual=got, expected=expected)
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+@pytest.mark.parametrize("sign", [-1.0, 1.0])
+def test_density_conditional_mean_retains_a_sub_ulp_shift(
+    *, compiled: bool, sign: float
+) -> None:
+    """A shift below the intercept's ULP still changes density odds materially."""
+    exponent = 56 if X64_ENABLED else 26
+    rho, sigma, mu = sign * 2.0 ** (-exponent - 1), 2.0 ** (-exponent // 2), 1.0
+    nodes = (0.0, 2.0)
+    process = TauchenAR1Process.on_nodes(
+        nodes=np.asarray(nodes), transition_rule="density"
+    )
+    got = _evaluate_node_boundaries(
+        process=process, rho=rho, sigma=sigma, mu=mu, compiled=compiled
+    )
+    expected = density_matrix(nodes=nodes, rho=rho, sigma=sigma, mu=mu)
+    _assert_probability_matrix(actual=got, expected=expected)
+    assert bool(got[1, 1] > 0.5) == (sign > 0)
+    assert bool(got[1, 1] < 0.5) == (sign < 0)
