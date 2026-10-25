@@ -163,7 +163,7 @@ from _lcm.shock_registry import (
 )
 from _lcm.simulation.chunk_admission import prepare_simulation_chunks
 from _lcm.simulation.compile import bind_simulation_runtime
-from _lcm.simulation.current_iid_entry import SuppliedEntryFrames
+from _lcm.simulation.current_iid_entry import SeededEntryFrames, SuppliedEntryFrames
 from _lcm.simulation.current_iid_overrides import (
     ShockPathsInput,
     SimulationInitialConditionsInput,
@@ -201,7 +201,7 @@ from _lcm.simulation.program_types import (
     SimulationProgramExecutor,
 )
 from _lcm.simulation.programs import KeptPartsPrograms, with_kept_action_parts
-from _lcm.simulation.random import canonicalize_simulation_seed
+from _lcm.simulation.random import canonicalize_simulation_seed, draw_random_seed
 from _lcm.simulation.replay_inputs import PreparedReplayReader
 from _lcm.simulation.residency import (
     DeviceBufferFootprint,
@@ -4065,6 +4065,8 @@ class Model:
                     ages=self._time,
                     regime_names_to_ids=self.regime_names_to_ids,
                 )
+                if seed is None:
+                    seed = draw_random_seed()
                 if entry_allocations is not None:
                     entry_allocations.publish(stage="initial", tree=initial_conditions)
                 # Validate canonical device-aligned inputs before automatic
@@ -4102,6 +4104,17 @@ class Model:
                         flat_params=flat_params,
                     )
                 validate_simulation_inputs(
+                    original_n_subjects=original_n_subjects,
+                    supplied_frames=SeededEntryFrames(
+                        entries=(
+                            MappingProxyType({})
+                            if current_iid_overrides is None
+                            else current_iid_overrides.entries
+                        ),
+                        flat_params=flat_params,
+                        seed=seed,
+                        overrides=current_iid_overrides,
+                    ),
                     initial_conditions=initial_conditions,
                     regimes=self._regimes,
                     regime_names_to_ids=self.regime_names_to_ids,

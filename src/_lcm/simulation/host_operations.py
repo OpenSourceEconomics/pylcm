@@ -29,7 +29,7 @@ from typing import cast
 import jax
 import numpy as np
 
-from _lcm.current_iid import CurrentIIDPlan
+from _lcm.current_iid import CurrentIIDDrawPlan, CurrentIIDPlan
 from _lcm.execution.workspace_planning import (
     CompilerMemoryReservation,
     compiler_memory_reservation,
@@ -72,9 +72,10 @@ type _OperandLeaf = (
 )
 
 # A model-owned input a `built` composer reads: a regime name, or one of the
-# regime's function, constraint, transition or transition-plan mappings and schema.
+# regime's function, constraint, transition or current-draw plan and schema.
 type _BuilderInput = (
-    RegimeName
+    CurrentIIDDrawPlan
+    | RegimeName
     | RegimeTransitionFunction
     | tuple[ReferenceName, ...]
     | tuple[int, ...]

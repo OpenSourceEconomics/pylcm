@@ -13,8 +13,6 @@ from jaxtyping import Int
 from _lcm.engine import Regime
 from _lcm.shock_overrides import CurrentIIDOverride
 from _lcm.simulation.exits import query_producing_bindings
-from _lcm.simulation.initial_conditions import resolve_initial_periods
-from _lcm.simulation.shock_paths import _subject_occupancy
 from _lcm.simulation.subject_groups import SubjectRows
 from _lcm.time import TimeAxis
 from _lcm.typing import RegimeNamesToIds
@@ -132,6 +130,13 @@ def resolve_current_iid_overrides(  # noqa: C901, PLR0912 - shapes and demanded 
     """Validate dated shapes and demanded coverage without uploading full banks."""
     if not entries and not paths:
         return None
+
+    # Entry frames import this module while the shared validator is initializing.
+    from _lcm.simulation.initial_conditions import (  # noqa: PLC0415
+        resolve_initial_periods,
+    )
+    from _lcm.simulation.shock_paths import _subject_occupancy  # noqa: PLC0415
+
     readers = {}
     for regime_name, regime in regimes.items():
         periods = {}

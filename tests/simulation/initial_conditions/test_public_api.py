@@ -1,7 +1,8 @@
 """Public `Model` methods for validating initial conditions without simulating."""
 
-from collections.abc import Generator
+from collections.abc import Callable, Generator, Mapping
 from fractions import Fraction
+from inspect import signature
 
 import jax.numpy as jnp
 import numpy as np
@@ -9,6 +10,16 @@ import pandas as pd
 import pytest
 from jax import Array
 
+from _lcm.engine import Regime as InternalRegime
+from _lcm.simulation.current_iid_entry import SeededEntryFrames
+from _lcm.simulation.initial_conditions import (
+    _regime_feasibility_function,
+    pad_initial_conditions_to_multiple,
+    validate_simulation_inputs,
+)
+from _lcm.simulation.memory import SimulationMemory
+from _lcm.time import TimeAxis
+from _lcm.utils.logging import get_logger
 from lcm import (
     AgeGrid,
     DeterministicTransition,
@@ -23,13 +34,30 @@ from lcm.exceptions import (
     InvalidInitialConditionsError,
     InvalidSimulationInputError,
     ModelSealError,
+    NoFeasibleActionError,
     ShockDeclarationError,
     UnsupportedOperationError,
 )
 from lcm.regime import Regime as UserRegime
-from lcm.shocks import BaseInnovations, Normal, PhysicalValues, ShockGroup, UserNodes
+from lcm.shocks import (
+    BaseInnovations,
+    Normal,
+    PhysicalValues,
+    ShockGroup,
+    Uniform,
+    UserNodes,
+)
 from lcm.transition import AgeSpecializedFunction
-from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
+from lcm.typing import (
+    BoolND,
+    ContinuousAction,
+    ContinuousState,
+    FloatND,
+    IntND,
+    ReferenceName,
+    RegimeName,
+    ScalarInt,
+)
 from tests.regime_building.test_collective_regime_simulate import (
     _DISSOLUTION_PARAMS as DISSOLUTION_PARAMS,
 )
@@ -699,7 +727,12 @@ def test_collective_start_without_roles_is_rejected_like_simulate(method: str) -
     assert str(from_method.value) == str(from_simulate.value)
 
 
-def _tagged_current_entry_model(*, shock_constraint: bool = True) -> Model:
+def _tagged_current_entry_model(
+    *,
+    shock_constraint: bool = True,
+    positive_shock: bool = False,
+    enable_jit: bool = False,
+) -> Model:
     """A terminal current-shock problem with independent literal entry oracles."""
 
     @categorical(ordered=False)
@@ -740,9 +773,15 @@ def _tagged_current_entry_model(*, shock_constraint: bool = True) -> Model:
         },
         shocks={
             "entry": ShockGroup(
-                shocks={"eps": Normal(mu=0, sigma=1)},
+                shocks={
+                    "eps": Uniform(start=0.25, stop=0.75)
+                    if positive_shock
+                    else Normal(mu=0, sigma=1)
+                },
                 nodes=UserNodes(
-                    nodes=np.array([[-1.0], [0.0], [1.0]]),
+                    nodes=np.array([[0.0], [0.5], [1.0]])
+                    if positive_shock
+                    else np.array([[-1.0], [0.0], [1.0]]),
                     weights=np.array([0.25, 0.5, 0.25]),
                 ),
             )
@@ -751,7 +790,7 @@ def _tagged_current_entry_model(*, shock_constraint: bool = True) -> Model:
         edges={},
         initial_nodes=InitialNodes(by_period={0: "alive"}),
         regime_id_class=EntryRegimeId,
-        enable_jit=False,
+        enable_jit=enable_jit,
     )
 
 
@@ -775,6 +814,40 @@ def test_tagged_current_physical_values_determine_public_entry_feasibility() -> 
         model.validate_initial_conditions(initial_conditions=initial, params={})
 
 
+def test_seeded_simulation_preflight_uses_the_supplied_current_entry_frame(
+    *, record_property: Callable[[str, str], None]
+) -> None:
+    """Enabled preflight judges the physical frame later used by original replay."""
+    model = _tagged_current_entry_model()
+    regime = model._regimes["alive"]
+    processed_signature = signature(regime.simulation.constraints["affordable"])
+    feasibility_signature = signature(
+        _regime_feasibility_function(regime=regime, memory=None)
+    )
+    record_property("processed_affordable_signature", str(processed_signature))
+    record_property("composed_feasibility_signature", str(feasibility_signature))
+    assert "eps" in processed_signature.parameters
+    assert "eps" in feasibility_signature.parameters
+
+    solution = model.solve(params={}, runtime_checks=True, log_level="warning")
+    physical = jnp.array([0.25, 0.75, 0.5, 0.125])
+    initial = _tagged_entry_initial(model=model, value=PhysicalValues(values=physical))
+    frame = model.simulate(
+        params={},
+        solution=solution,
+        initial_conditions=initial,
+        seed=17,
+        runtime_checks=True,
+        log_level="warning",
+    ).to_dataframe(use_categorical_codes=True)
+    rows = frame.sort_values("subject_id")
+    np.testing.assert_array_equal(rows["subject_id"], [0, 1, 2, 3])
+    np.testing.assert_array_equal(rows["period"], [0, 0, 0, 0])
+    np.testing.assert_array_equal(rows["eps"], [0.25, 0.75, 0.5, 0.125])
+    np.testing.assert_array_equal(rows["consumption"], [1.0, 1.0, 1.0, 1.0])
+    assert np.all(rows["consumption"].to_numpy() <= 1.0 + physical)
+
+
 def _tagged_entry_initial(
     *, model: Model, value: PhysicalValues | BaseInnovations | None
 ) -> dict[str, Array | PhysicalValues | BaseInnovations]:
@@ -786,6 +859,285 @@ def _tagged_entry_initial(
     if value is not None:
         initial["eps"] = value
     return initial
+
+
+@pytest.mark.parametrize("seed", [29, None], ids=("explicit-seed", "fresh-seed"))
+def test_seeded_entry_preflight_and_native_replay_use_the_same_frame(
+    *, monkeypatch: pytest.MonkeyPatch, seed: int | None
+) -> None:
+    """A bounded positive law needs no guessed draw to keep every row feasible."""
+    model = _tagged_current_entry_model(positive_shock=True)
+    solution = model.solve(params={}, runtime_checks=True, log_level="warning")
+    observed: dict[int, float] = {}
+    providers: list[SeededEntryFrames] = []
+    produce = SeededEntryFrames.physical_inputs
+
+    # keyword-only-exempt: library-callback=SeededEntryFrames.physical_inputs
+    def record(
+        self: SeededEntryFrames,
+        *,
+        regime: InternalRegime,
+        regime_name: RegimeName,
+        initial_states: Mapping[ReferenceName, FloatND | IntND],
+        indices: list[int],
+        periods: np.ndarray,
+        ages: TimeAxis,
+        needed: frozenset[ReferenceName],
+        memory: SimulationMemory | None,
+    ) -> Mapping[ReferenceName, FloatND | IntND]:
+        physical = produce(
+            self,
+            regime=regime,
+            regime_name=regime_name,
+            initial_states=initial_states,
+            indices=indices,
+            periods=periods,
+            ages=ages,
+            needed=needed,
+            memory=memory,
+        )
+        providers.append(self)
+        for row, value in zip(indices, np.asarray(physical["eps"]), strict=True):
+            observed[row] = float(value)
+        return physical
+
+    monkeypatch.setattr(SeededEntryFrames, "physical_inputs", record)
+    initial = _tagged_entry_initial(model=model, value=None)
+    rows = (
+        model.simulate(
+            params={},
+            solution=solution,
+            initial_conditions=initial,
+            seed=seed,
+            runtime_checks=True,
+            log_level="warning",
+        )
+        .to_dataframe(use_categorical_codes=True)
+        .sort_values("subject_id")
+    )
+    assert set(observed) == {0, 1, 2, 3}
+    np.testing.assert_array_equal(rows["subject_id"], [0, 1, 2, 3])
+    np.testing.assert_array_equal(rows["period"], [0, 0, 0, 0])
+    np.testing.assert_array_equal(rows["eps"], [observed[row] for row in range(4)])
+    assert np.all((rows["eps"] >= 0.25) & (rows["eps"] <= 0.75))
+    np.testing.assert_array_equal(rows["consumption"], [1.0, 1.0, 1.0, 1.0])
+    canonical, _, _ = model._canonical_feasibility_inputs(
+        initial_conditions=initial, params={}
+    )
+    selected = produce(
+        providers[0],
+        regime=model._regimes["alive"],
+        regime_name="alive",
+        initial_states=canonical,
+        indices=[3, 1],
+        periods=np.zeros(4, dtype=np.int32),
+        ages=model._time,
+        needed=frozenset({"eps"}),
+        memory=None,
+    )
+    np.testing.assert_array_equal(selected["eps"], rows["eps"].to_numpy()[[3, 1]])
+
+
+@pytest.mark.coverage(backends=("cpu", "gpu-small"), precisions="64")
+@pytest.mark.parametrize("supplied", [False, True], ids=("seeded", "physical"))
+def test_jitted_entry_preflight_matches_original_native_replay(
+    *, monkeypatch: pytest.MonkeyPatch, supplied: bool
+) -> None:
+    """Default-device JIT retains supplied or genuinely seeded entry frames."""
+    model = _tagged_current_entry_model(enable_jit=True, positive_shock=not supplied)
+    assert model.enable_jit
+    solution = model.solve(params={}, runtime_checks=True, log_level="warning")
+    observed: dict[int, float] = {}
+    produce = SeededEntryFrames.physical_inputs
+
+    # keyword-only-exempt: library-callback=SeededEntryFrames.physical_inputs
+    def record(
+        self: SeededEntryFrames,
+        *,
+        regime: InternalRegime,
+        regime_name: RegimeName,
+        initial_states: Mapping[ReferenceName, FloatND | IntND],
+        indices: list[int],
+        periods: np.ndarray,
+        ages: TimeAxis,
+        needed: frozenset[ReferenceName],
+        memory: SimulationMemory | None,
+    ) -> Mapping[ReferenceName, FloatND | IntND]:
+        physical = produce(
+            self,
+            regime=regime,
+            regime_name=regime_name,
+            initial_states=initial_states,
+            indices=indices,
+            periods=periods,
+            ages=ages,
+            needed=needed,
+            memory=memory,
+        )
+        for row, value in zip(indices, np.asarray(physical["eps"]), strict=True):
+            observed[row] = float(value)
+        return physical
+
+    monkeypatch.setattr(SeededEntryFrames, "physical_inputs", record)
+    initial = _tagged_entry_initial(
+        model=model,
+        value=PhysicalValues(values=jnp.array([0.25, 0.75, 0.5, 0.125]))
+        if supplied
+        else None,
+    )
+    rows = (
+        model.simulate(
+            params={},
+            solution=solution,
+            initial_conditions=initial,
+            seed=29,
+            runtime_checks=True,
+            log_level="warning",
+        )
+        .to_dataframe(use_categorical_codes=True)
+        .sort_values("subject_id")
+    )
+    assert set(observed) == {0, 1, 2, 3}
+    np.testing.assert_array_equal(rows["subject_id"], [0, 1, 2, 3])
+    np.testing.assert_array_equal(rows["period"], [0, 0, 0, 0])
+    np.testing.assert_array_equal(rows["eps"], [observed[row] for row in range(4)])
+    np.testing.assert_array_equal(rows["consumption"], [1.0, 1.0, 1.0, 1.0])
+    if supplied:
+        np.testing.assert_array_equal(rows["eps"], [0.25, 0.75, 0.5, 0.125])
+    else:
+        assert np.all((rows["eps"] >= 0.25) & (rows["eps"] <= 0.75))
+
+
+@pytest.mark.parametrize("last_physical", [0.75, -1.25], ids=("valid", "invalid"))
+def test_seeded_preflight_ignores_padding_but_checks_the_last_real_row(
+    *, last_physical: float
+) -> None:
+    """Alignment padding never becomes a new physical observation or subject."""
+    model = _tagged_current_entry_model()
+    initial: dict[str, Array | PhysicalValues] = {
+        "period": jnp.zeros(3, dtype=jnp.int32),
+        "wealth": jnp.ones(3),
+        "regime_id": jnp.full(3, model.regime_names_to_ids["alive"], dtype=jnp.int32),
+        "eps": PhysicalValues(values=jnp.array([0.25, 0.5, last_physical])),
+    }
+    canonical, flat_params, supplied = model._canonical_feasibility_inputs(
+        initial_conditions=initial, params={}
+    )
+    padded, original = pad_initial_conditions_to_multiple(
+        initial_conditions=canonical, multiple=4
+    )
+    assert original == 3
+    assert len(padded["regime_id"]) == 4
+    provider = SeededEntryFrames(
+        entries=supplied.entries, flat_params=flat_params, seed=17, overrides=None
+    )
+
+    def validate() -> None:
+        validate_simulation_inputs(
+            initial_conditions=padded,
+            regimes=model._regimes,
+            regime_names_to_ids=model.regime_names_to_ids,
+            flat_params=flat_params,
+            ages=model._time,
+            logger=get_logger(log_level="warning", runtime_checks=True),
+            supplied_frames=provider,
+            original_n_subjects=original,
+        )
+
+    if last_physical < -1.0:
+        with pytest.raises(NoFeasibleActionError, match=r"for 1 subject\(s\)"):
+            validate()
+    else:
+        validate()
+
+
+@pytest.mark.parametrize("supplied", [False, True], ids=("seeded", "physical"))
+def test_entry_law_context_matches_native_clock_and_period_dtype(
+    *, supplied: bool
+) -> None:
+    """Near-grid entry times are admitted but laws read the computational clock."""
+
+    @categorical(ordered=False)
+    class DatedEntryRegimeId:
+        alive: ScalarInt
+
+    def lower(*, age: FloatND, period: IntND) -> FloatND:
+        valid_clock = (age == 20.5 + period) & (period.dtype == jnp.int32)
+        return jnp.where(valid_clock, age + period, jnp.nan)
+
+    def upper(*, age: FloatND, period: IntND) -> FloatND:
+        return lower(age=age, period=period) + 0.5
+
+    template = _tagged_current_entry_model()
+    model = Model(
+        regimes=template.user_regimes,
+        shocks={
+            "entry": ShockGroup(
+                shocks={"eps": Uniform(start=lower, stop=upper)},
+                nodes=UserNodes(
+                    nodes=np.array([[0.0], [0.5], [1.0]]),
+                    weights=np.array([0.25, 0.5, 0.25]),
+                ),
+            )
+        },
+        ages=AgeGrid(exact_values=(Fraction(41, 2), Fraction(43, 2))),
+        edges={},
+        initial_nodes=InitialNodes(by_age={21.5: "alive"}),
+        regime_id_class=DatedEntryRegimeId,
+        enable_jit=False,
+    )
+    near_grid = jnp.full(2, 21.5 - 1e-4)
+    assert np.all(np.asarray(near_grid) < 21.5)
+    np.testing.assert_allclose(near_grid, [21.5, 21.5], rtol=1e-5, atol=1e-8)
+    initial: dict[str, Array | PhysicalValues] = {
+        "age": near_grid,
+        "wealth": jnp.ones(2),
+        "regime_id": jnp.full(2, model.regime_names_to_ids["alive"], dtype=jnp.int32),
+    }
+    if supplied:
+        initial["eps"] = PhysicalValues(values=jnp.array([22.625, 22.875]))
+        model.validate_initial_conditions(initial_conditions=initial, params={})
+    solution = model.solve(params={}, runtime_checks=True, log_level="warning")
+    rows = (
+        model.simulate(
+            params={},
+            solution=solution,
+            initial_conditions=initial,
+            seed=29,
+            runtime_checks=True,
+            log_level="warning",
+        )
+        .to_dataframe(use_categorical_codes=True)
+        .sort_values("subject_id")
+    )
+    canonical, flat_params, supplied_frames = model._canonical_feasibility_inputs(
+        initial_conditions=initial, params={}
+    )
+    provider = SeededEntryFrames(
+        entries=supplied_frames.entries,
+        flat_params=flat_params,
+        seed=29,
+        overrides=None,
+    )
+    direct = provider.physical_inputs(
+        regime=model._regimes["alive"],
+        regime_name="alive",
+        initial_states=canonical,
+        indices=[1, 0],
+        periods=np.ones(2, dtype=np.int64),
+        ages=model._time,
+        needed=frozenset({"eps"}),
+        memory=None,
+    )
+    np.testing.assert_array_equal(rows["subject_id"], [0, 1])
+    np.testing.assert_array_equal(rows["period"], [1, 1])
+    np.testing.assert_array_equal(rows["age"], [21.5, 21.5])
+    np.testing.assert_array_equal(rows["consumption"], [1.0, 1.0])
+    np.testing.assert_array_equal(direct["eps"], rows["eps"].to_numpy()[[1, 0]])
+    if supplied:
+        np.testing.assert_array_equal(rows["eps"], [22.625, 22.875])
+    else:
+        assert np.all((rows["eps"] >= 22.5) & (rows["eps"] <= 23.0))
 
 
 def test_supplied_entry_bases_forward_to_the_same_public_feasibility() -> None:
