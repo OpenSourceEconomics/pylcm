@@ -65,7 +65,12 @@ def _target(*, signal: FloatND, y: FloatND) -> FloatND:
     return signal + 0.0 * y
 
 
-def _model(*, budget_bytes: int | None = None) -> Model:
+def _model(
+    *,
+    budget_bytes: int | None = None,
+    ages: AgeGrid | None = None,
+    initial_nodes: InitialNodes | None = None,
+) -> Model:
     return Model(
         regimes={
             "source": Regime(
@@ -99,9 +104,11 @@ def _model(*, budget_bytes: int | None = None) -> Model:
                 ),
             )
         },
-        ages=AgeGrid(exact_values=(Fraction(41, 2),)),
+        ages=AgeGrid(exact_values=(Fraction(41, 2),)) if ages is None else ages,
         regime_id_class=_RegimeId,
-        initial_nodes=InitialNodes(by_age={20.5: "source"}),
+        initial_nodes=InitialNodes(by_age={20.5: "source"})
+        if initial_nodes is None
+        else initial_nodes,
         edges={},
         enable_jit=True,
         execution_config=ExecutionConfig(device_memory_bytes=budget_bytes),
@@ -326,3 +333,76 @@ def test_mapped_query_params_merge_fixed_and_runtime_edge_leaves() -> None:
     np.testing.assert_array_equal(
         edge_params(merged, source="runtime_only")["rate"], 11.0
     )
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_mapped_entry_mixed_dates_keep_original_rows() -> None:
+    """Interleaved entry cohorts use their own date and supplied physical frame."""
+    model = _model(
+        ages=AgeGrid(exact_values=(Fraction(41, 2), Fraction(95, 4))),
+        initial_nodes=InitialNodes(by_age={20.5: "source", 23.75: "source"}),
+    )
+    initial = {
+        "age": jnp.asarray([23.75 - 1e-4, 20.5 - 1e-4, 23.75 - 1e-4, 20.5 - 1e-4]),
+        "regime_id": jnp.zeros(4, dtype=jnp.int32),
+        "x": jnp.asarray([0.25, 1.0, 0.75, 0.5]),
+        "signal": PhysicalValues(values=jnp.asarray([35.25, 31.75, 35.75, 31.25])),
+    }
+    params = {"risk": {"width": 0.5}}
+    model.validate_initial_conditions(initial_conditions=initial, params=params)
+    np.testing.assert_array_equal(
+        model.initial_conditions_feasibility(initial_conditions=initial, params=params),
+        [True, True, True, True],
+    )
+    # Every wrong-date replacement is outside that row's genuine physical law.
+    swapped = {
+        **initial,
+        "signal": PhysicalValues(values=jnp.asarray([31.75, 35.25, 31.25, 35.75])),
+    }
+    with pytest.raises(ShockDeclarationError, match="mapped entry"):
+        model.validate_initial_conditions(initial_conditions=swapped, params=params)
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+@pytest.mark.parametrize("runtime_checks", [False, True])
+def test_dated_mapped_path_overrides_entry_in_original_row_order(
+    *,
+    runtime_checks: bool,
+) -> None:
+    """A subject-by-period physical path wins at each mapped entry date."""
+    model = _model(
+        ages=AgeGrid(exact_values=(Fraction(41, 2), Fraction(95, 4))),
+        initial_nodes=InitialNodes(by_age={20.5: "source", 23.75: "source"}),
+    )
+    initial = {
+        "age": np.asarray([23.75, 20.5, 23.75, 20.5]),
+        "regime_id": np.zeros(4, dtype=np.int32),
+        "x": jnp.asarray([0.25, 1.0, 0.75, 0.5]),
+        "signal": PhysicalValues(values=jnp.full(4, -999.0)),
+    }
+    frame = model.simulate(
+        params={"risk": {"width": 0.5}},
+        initial_conditions=initial,
+        shock_paths={
+            "signal": PhysicalValues(
+                values=jnp.asarray(
+                    [[31.0, 35.25], [31.75, 36.0], [31.5, 35.75], [31.25, 35.5]]
+                )
+            )
+        },
+        seed=17,
+        runtime_checks=runtime_checks,
+        log_level="off",
+    ).to_dataframe(use_categorical_codes=True)
+    for subject, period, mapped_y, signal in (
+        (0, 1, 10.25, 35.25),
+        (1, 0, 11.0, 31.75),
+        (2, 1, 10.75, 35.75),
+        (3, 0, 10.5, 31.25),
+    ):
+        selected = frame.loc[
+            (frame["subject_id"] == subject) & (frame["period"] == period)
+        ]
+        np.testing.assert_array_equal(selected["regime_name"], "target")
+        np.testing.assert_array_equal(selected["y"], mapped_y)
+        np.testing.assert_array_equal(selected["signal"], signal)
