@@ -326,6 +326,7 @@ def validate_simulation_inputs(  # noqa: C901
             summary=None,
             process_grid_resolver=process_grid_resolver,
             simulation_memory=memory,
+            simulation_producers=producers,
         )
         with contextlib.closing(
             _ValidationSummary(

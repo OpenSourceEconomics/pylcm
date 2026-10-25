@@ -505,9 +505,13 @@ def validate_transitions(
             logger=logger,
             summary=summary,
             process_grid_resolver=process_grid_resolver,
+            simulation_memory=memory,
+            simulation_producers=producers,
         )
         return
-    pending = _ValidationSummary(process_grid_resolver=process_grid_resolver)
+    pending = _ValidationSummary(
+        memory=memory, producers=producers, process_grid_resolver=process_grid_resolver
+    )
     try:
         try:
             _validate_transition_sequence(
@@ -535,6 +539,8 @@ def validate_transitions(
             logger=logger,
             summary=None,
             process_grid_resolver=process_grid_resolver,
+            simulation_memory=memory,
+            simulation_producers=producers,
         )
     _validate_off_grid_under(
         memory=memory,
@@ -1291,6 +1297,7 @@ def _validate_transition_sequence(
     summary: _ValidationSummary | None,
     process_grid_resolver: ProcessGridResolver | None = None,
     simulation_memory: SimulationMemory | None = None,
+    simulation_producers: ProfiledSimulationOperations | None = None,
 ) -> None:
     """Preserve family and item ordering for collection and serial diagnostics."""
     memory = (
@@ -1333,6 +1340,7 @@ def _validate_transition_sequence(
         summary=summary,
         process_grid_resolver=process_grid_resolver,
         memory=memory,
+        producers=simulation_producers,
     )
 
 
@@ -2159,6 +2167,7 @@ def validate_discrete_state_laws_all_periods(
     summary: _ValidationSummary | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
     memory: SimulationMemory | None = None,
+    producers: ProfiledSimulationOperations | None = None,
 ) -> None:
     """Validate that every deterministic law of a discrete state stays on its grid.
 
@@ -2223,6 +2232,11 @@ def validate_discrete_state_laws_all_periods(
                         {**regime.resolved_fixed_params, **regime_params}
                     ),
                     memory=current_memory,
+                    producers=(
+                        summary.producers
+                        if summary is not None and summary.producers is not None
+                        else producers
+                    ),
                 )
             except InvalidStateTransitionError as error:
                 if summary is not None:
@@ -2230,7 +2244,7 @@ def validate_discrete_state_laws_all_periods(
                 raise_or_warn(logger=logger, error=error)
 
 
-def _validate_discrete_state_laws(
+def _validate_discrete_state_laws(  # noqa: C901
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     regime_name: RegimeName,
@@ -2239,6 +2253,7 @@ def _validate_discrete_state_laws(
     state_action_space: StateActionSpace,
     params: FlatRegimeParams,
     memory: SimulationMemory | None,
+    producers: ProfiledSimulationOperations | None = None,
 ) -> None:
     """Check one regime's deterministic discrete laws at one period, each phase.
 
@@ -2371,50 +2386,351 @@ def _validate_discrete_state_laws(
                         f"__support_{name}_{index}": leaf
                         for index, leaf in enumerate(leaves)
                     }
-            law_names = frozenset(inspect.signature(laws).parameters)
-            law_codes, _, _ = _evaluate_feasible_rows(
-                law=_NamedArgumentsCall(func=laws, names=law_names),
-                feasibility=_NamedArgumentsCall(
-                    func=_every_cell_feasible, names=frozenset()
-                ),
-                grid_args=MappingProxyType(
-                    {k: v for k, v in law_grids.items() if k in law_names}
-                ),
-                scalar_kwargs=MappingProxyType(
-                    {k: v for k, v in scalar_kwargs.items() if k in law_names}
-                ),
-                memory=memory,
-            )
-            if not any(
-                _off_grid_rows(
-                    codes=law_codes[name],
-                    feasible=_every_cell_feasible(),
-                    target_grid=grid,
-                ).any()
-                for name, grid in target_grids.items()
+            # Preserve the old all-output coordinate order for diagnostics only.
+            # Each law below evaluates only its own actual DAG dependencies.
+            all_law_names = frozenset(inspect.signature(laws).parameters)
+            if any(
+                axis.shape[0] == 0
+                for key, axis in law_grids.items()
+                if key in all_law_names
             ):
                 continue
-            codes, feasible, point = _evaluate_on_feasible_rows(
-                law=laws,
-                phase=phase,
-                period=period,
-                grids=law_grids,
-                scalar_kwargs=scalar_kwargs,
-                memory=memory,
+            owner = memory.producers if memory is not None else producers
+            feasibility = _discrete_law_feasibility(
+                phase=phase, period=period, owner=owner
+            )
+            feasibility_names = frozenset(inspect.signature(feasibility).parameters)
+            diagnostic_names = tuple(
+                name for name in law_grids if name in all_law_names | feasibility_names
             )
             for name, target_grid in target_grids.items():
-                _fail_if_codes_leave_the_grid(
-                    codes=codes[name],
-                    feasible=feasible,
-                    point={k.removeprefix("__node_"): v for k, v in point.items()},
-                    target_grid=target_grid,
+                inputs = {
+                    "transitions": transitions,
+                    "functions": functions,
+                    "targets": (name,),
+                    "excluded": tuple(sorted(stochastic | lotteries)),
+                }
+                single = (
+                    _build_single_discrete_law(
+                        transitions=transitions,
+                        functions=functions,
+                        targets=(name,),
+                        excluded=tuple(sorted(stochastic | lotteries)),
+                    )
+                    if owner is None
+                    else owner.built(
+                        builder=_build_single_discrete_law,
+                        **cast("Mapping[str, _BuilderInput]", inputs),
+                    )
+                )
+                single_reads = frozenset(inspect.signature(single).parameters)
+                single_supports = {
+                    draw: events
+                    for draw, events in supports.items()
+                    if draw in single_reads
+                }
+                if single_supports:
+                    single = _AtSupportEvents(
+                        law=single,
+                        supports=tuple(
+                            (draw, jax.tree_util.tree_structure(events), len(leaves))
+                            for draw, events in single_supports.items()
+                            for leaves in (jax.tree_util.tree_leaves(events),)
+                        ),
+                    )
+                if not _consume_discrete_off_grid_flag(
+                    memory=memory,
+                    result=_find_discrete_law_off_grid(
+                        law=single,
+                        feasibility=_every_cell_feasible,
+                        name=name,
+                        target_size=len(target_grid.codes),
+                        grids=law_grids,
+                        scalar_kwargs=scalar_kwargs,
+                        memory=memory,
+                        owner=owner,
+                    ),
+                ):
+                    continue
+                cell = _consume_discrete_off_grid_cell(
+                    memory=memory,
+                    result=_find_discrete_law_off_grid(
+                        law=single,
+                        feasibility=feasibility,
+                        name=name,
+                        target_size=len(target_grid.codes),
+                        grids=law_grids,
+                        scalar_kwargs=scalar_kwargs,
+                        memory=memory,
+                        owner=owner,
+                    ),
+                    diagnostic_names=diagnostic_names,
+                    law_grids=law_grids,
                     source_grids=phase.grids,
+                )
+                if cell is None:
+                    continue
+                _raise_off_grid_at_cell(
+                    cell=cell,
+                    target_grid=target_grid,
                     description=(
                         f"In regime '{regime_name}' at age {age} (period {period}), "
                         f"the law '{name}' to regime '{target}'"
                     ),
                     value_dependent=regime.solution.counts_raise_landings,
                 )
+
+
+def _consume_discrete_off_grid_cell(
+    *,
+    memory: SimulationMemory | None,
+    result: tuple[BoolND, Mapping[str, FloatND | IntND]],
+    diagnostic_names: tuple[StateOrActionName, ...],
+    law_grids: Mapping[StateOrActionName, FloatND | IntND],
+    source_grids: Mapping[StateOrActionName, Grid],
+) -> Mapping[str, int | float | str] | None:
+    """Consume the wider witness without retaining device roots in the law loop."""
+    with _own_transition_outputs(memory=memory, outputs=result):
+        found, point = result
+        if not bool(np.asarray(found)):
+            return None
+        # Restore irrelevant axes at their first occurrence in the old ij product.
+        return {
+            key.removeprefix("__node_"): _cell_label(
+                code=point[key] if key in point else law_grids[key][0],
+                grid=source_grids.get(key.removeprefix("__node_")),
+            )
+            for key in diagnostic_names
+        }
+
+
+def _consume_discrete_off_grid_flag(
+    *,
+    memory: SimulationMemory | None,
+    result: tuple[BoolND, Mapping[str, FloatND | IntND]],
+) -> bool:
+    """Own and release the compact law-only witness before any wider producer."""
+    with _own_transition_outputs(memory=memory, outputs=result):
+        return bool(np.asarray(result[0]))
+
+
+def _build_single_discrete_law(
+    *,
+    transitions: Mapping[TransitionFunctionName, TransitionFunction],
+    functions: EconFunctionsMapping,
+    targets: tuple[TransitionFunctionName, ...],
+    excluded: tuple[str, ...],
+) -> Callable[..., _FeasibleRowsLawOutput]:
+    """Cache per-output composition against the original immutable phase pools."""
+    return get_next_state_function_for_solution(
+        transitions=MappingProxyType(
+            {key: value for key, value in transitions.items() if key not in excluded}
+        ),
+        functions=functions,
+        targets=targets,
+    )
+
+
+def _discrete_law_feasibility(
+    *,
+    phase: SolutionPhase | SimulationPhase,
+    period: int,
+    owner: ProfiledSimulationOperations | None,
+) -> ConstraintFunction:
+    """Bind the original phase's ordinary constraints at this exact date."""
+    functions, constraints = phase.feasibility_pools_by_period[period]
+    return cast(
+        "ConstraintFunction",
+        _get_feasibility(functions=functions, constraints=constraints)
+        if owner is None
+        else owner.built(
+            builder=_get_feasibility, functions=functions, constraints=constraints
+        ),
+    )
+
+
+def _find_discrete_law_off_grid(
+    *,
+    law: Callable[..., _FeasibleRowsLawOutput],
+    feasibility: Callable[..., BoolND],
+    name: str,
+    target_size: int,
+    grids: Mapping[StateOrActionName, FloatND | IntND],
+    scalar_kwargs: Mapping[ReferenceName, EconFunctionArg],
+    memory: SimulationMemory | None,
+    owner: ProfiledSimulationOperations | None,
+) -> tuple[BoolND, Mapping[str, FloatND | IntND]]:
+    """Reduce the complete actual read population to its first invalid cell."""
+    reads = frozenset(inspect.signature(law).parameters) | frozenset(
+        inspect.signature(feasibility).parameters
+    )
+    grid_args = {key: value for key, value in grids.items() if key in reads}
+    arguments = {
+        "grid_args": grid_args,
+        "scalar_kwargs": {
+            key: value for key, value in scalar_kwargs.items() if key in reads
+        },
+    }
+    widths = (
+        (_OFF_GRID_BLOCK_ROWS,)
+        if memory is None
+        else _off_grid_block_candidates(
+            n_rows=prod(axis.shape[0] for axis in grid_args.values())
+        )
+    )
+
+    def evaluate(width: int) -> tuple[BoolND, Mapping[str, FloatND | IntND]]:
+        inputs = {
+            "law": law,
+            "feasibility": feasibility,
+            "name": name,
+            "grid_names": tuple(grid_args),
+            "limits": (target_size, width),
+        }
+        function = (
+            _build_discrete_off_grid_search(
+                law=law,
+                feasibility=feasibility,
+                name=name,
+                grid_names=tuple(grid_args),
+                limits=(target_size, width),
+            )
+            if owner is None
+            else owner.built(
+                builder=_build_discrete_off_grid_search,
+                **cast("Mapping[str, _BuilderInput]", inputs),
+            )
+        )
+        return cast(
+            "tuple[BoolND, Mapping[str, FloatND | IntND]]",
+            function(**arguments)
+            if memory is None
+            else _evaluate_admitted_transition_producer(
+                function=function, arguments=arguments, memory=memory
+            ),
+        )
+
+    # Only planning refusals retry, before an executable is dispatched.
+    for width in widths[:-1]:
+        with suppress(ExecutionPlanningError):
+            return evaluate(width)
+    return evaluate(widths[-1])
+
+
+def _build_discrete_off_grid_search(
+    *,
+    law: Callable[..., _FeasibleRowsLawOutput],
+    feasibility: Callable[..., BoolND],
+    name: str,
+    grid_names: tuple[StateOrActionName, ...],
+    limits: tuple[int, int],
+) -> Callable[..., PytreeValue]:
+    """Retain one block traversal under the original model-owned producers."""
+    return jax.jit(
+        partial(
+            _discrete_off_grid_search,
+            law=_NamedArgumentsCall(
+                func=law, names=frozenset(inspect.signature(law).parameters)
+            ),
+            feasibility=_NamedArgumentsCall(
+                func=feasibility,
+                names=frozenset(inspect.signature(feasibility).parameters),
+            ),
+            name=name,
+            grid_names=grid_names,
+            target_size=limits[0],
+            block_rows=limits[1],
+        )
+    )
+
+
+def _discrete_off_grid_search(  # noqa: C901
+    *,
+    grid_args: Mapping[StateOrActionName, FloatND | IntND],
+    scalar_kwargs: EconFunctionKwargs,
+    law: Callable[..., _FeasibleRowsLawOutput],
+    feasibility: Callable[..., BoolND],
+    name: str,
+    grid_names: tuple[StateOrActionName, ...],
+    target_size: int,
+    block_rows: int,
+) -> tuple[BoolND, Mapping[str, FloatND | IntND]]:
+    """Visit every declared row with block-bounded scratch and scalar witnesses.
+
+    The trailing-axis layout is the existing off-grid count layout. Complete
+    traversal preserves all declared support events regardless of their mass.
+    The witness consists of scalar coordinates, never a global int32 row id.
+    """
+    if block_rows < 1 or block_rows > np.iinfo(np.int32).max:
+        raise ExecutionPlanningError("Discrete validation needs int32 block offsets.")
+    axes = tuple(jnp.asarray(grid_args[key]) for key in grid_names)
+    if any(axis.ndim != 1 for axis in axes):
+        raise ValueError("Discrete validation grids must be one-dimensional.")
+
+    def at_point(**kwargs: EconFunctionArg) -> BoolND:
+        code = jnp.asarray(law(**kwargs)[name])
+        return jnp.any(feasibility(**kwargs) & ((code < 0) | (code >= target_size)))
+
+    point = _GridPointCall(names=grid_names, scalar_kwargs=scalar_kwargs, func=at_point)
+    if not axes:
+        return point(), {}
+    neutral = (
+        jnp.zeros((), dtype=bool),
+        {
+            key: jnp.zeros((), dtype=axis.dtype)
+            for key, axis in zip(grid_names, axes, strict=True)
+        },
+    )
+    if any(axis.shape[0] == 0 for axis in axes):
+        return neutral
+    split = len(axes)
+    block = 1
+    while split and block * axes[split - 1].shape[0] <= block_rows:
+        split -= 1
+        block *= axes[split].shape[0]
+    outer, inner = axes[:split], axes[split:]
+    outer_shape = tuple(axis.shape[0] for axis in outer)
+    n_blocks = prod(outer_shape)
+    if n_blocks > np.iinfo(np.int32).max:
+        raise ExecutionPlanningError(
+            "Discrete validation has more outer blocks than an int32 loop can address."
+        )
+
+    def scan_block(index: ScalarInt) -> tuple[BoolND, Mapping[str, FloatND | IntND]]:
+        fixed = tuple(
+            axis[position]
+            for axis, position in zip(
+                outer, jnp.unravel_index(index, outer_shape), strict=True
+            )
+        )
+        if not inner:
+            return point(*fixed), dict(zip(grid_names, fixed, strict=True))
+        mesh = tuple(array.ravel() for array in jnp.meshgrid(*inner, indexing="ij"))
+        invalid = jax.vmap(partial(point, *fixed))(*mesh)
+        first = jnp.argmax(invalid).astype(jnp.int32)
+        coordinates = (*fixed, *(array[first] for array in mesh))
+        return jnp.any(invalid), dict(zip(grid_names, coordinates, strict=True))
+
+    # keyword-only-exempt: library-callback=jax.lax.fori_loop
+    def merge(
+        index: ScalarInt,
+        current: tuple[BoolND, Mapping[str, FloatND | IntND]],
+    ) -> tuple[BoolND, Mapping[str, FloatND | IntND]]:
+        found, coordinates = scan_block(index)
+        take = ~current[0] & found
+        return current[0] | found, {
+            key: jnp.where(take, coordinates[key], current[1][key])
+            for key in grid_names
+        }
+
+    if not outer:
+        return scan_block(jnp.int32(0))
+    return jax.lax.fori_loop(
+        jnp.int32(0),
+        jax.lax.optimization_barrier(jnp.int32(n_blocks)),
+        merge,
+        neutral,
+    )
 
 
 def _support_events(
@@ -2542,6 +2858,22 @@ def _fail_if_codes_leave_the_grid(
         name: _cell_label(code=values[row], grid=source_grids.get(name))
         for name, values in point.items()
     }
+    _raise_off_grid_at_cell(
+        cell=cell,
+        target_grid=target_grid,
+        description=description,
+        value_dependent=value_dependent,
+    )
+
+
+def _raise_off_grid_at_cell(
+    *,
+    cell: Mapping[str, int | float | str],
+    target_grid: DiscreteGrid,
+    description: str,
+    value_dependent: bool,
+) -> None:
+    """Keep the existing first-cell diagnostic for compact and array readers."""
     raise InvalidStateTransitionError(
         f"{description} leaves its grid at the feasible cell {cell}. "
         + _off_grid_remedy(target_grid)
