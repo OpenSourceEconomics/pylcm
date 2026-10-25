@@ -9,8 +9,10 @@ The model reproduces the dense model's values at every reachable cell and its
 simulated panel exactly.
 """
 
+import dataclasses
 import itertools
 from collections.abc import Mapping
+from types import MappingProxyType
 
 import cloudpickle
 import jax.numpy as jnp
@@ -32,7 +34,11 @@ from lcm import (
     categorical,
     fixed_transition,
 )
-from lcm.exceptions import InvalidInitialConditionsError, ModelInitializationError
+from lcm.exceptions import (
+    InvalidInitialConditionsError,
+    InvalidSimulationInputError,
+    ModelInitializationError,
+)
 from lcm.regime import ConstraintEntry, StateTransitionEntry
 from lcm.typing import (
     BoolND,
@@ -580,3 +586,57 @@ def test_labelled_start_with_nonzero_member_label_decodes_to_its_code() -> None:
     )
     first = panel[panel["period"] == 0].sort_values("subject_id")
     assert first[list(_MEMBERS)].to_numpy().tolist() == [[1, 0, 0], [0, 0, 0]]
+
+
+@pytest.mark.parametrize("round_trip", [False, True])
+def test_initial_state_grids_expand_composite_members(*, round_trip: bool) -> None:
+    """Initial-condition introspection exposes member grids, never generated codes."""
+    model = _composite()
+    if not round_trip:
+        for declaration in model._composite_states.values():
+            assert declaration.member_grids is not None
+            for regime_name in ("alive", "retired"):
+                originals = declaration.member_grids[regime_name]
+                exposed = model.initial_state_grids(regime_name=regime_name)
+                for member in _MEMBERS:
+                    assert exposed[member] is originals[member]
+    if round_trip:
+        model = cloudpickle.loads(cloudpickle.dumps(model))
+    grids = model.initial_state_grids(regime_name="alive")
+    assert set(grids) == {*_MEMBERS, "offer", "wealth"}
+    assert set(model.initial_state_names(regime_name="alive")) == set(grids)
+    for member in _MEMBERS:
+        grid = grids[member]
+        assert isinstance(grid, DiscreteGrid)
+        assert grid.categories == ("zero", "one", "two")
+        assert grid.codes == (0, 1, 2)
+    assert grids["wealth"] is model.user_regimes["alive"].states["wealth"]
+    assert set(model.initial_state_grids(regime_name="retired")) == set(_MEMBERS)
+    assert not model.initial_state_grids(regime_name="dead")
+    with pytest.raises(TypeError):
+        grids["invented"] = grids["wealth"]  # ty: ignore[invalid-assignment]
+    with pytest.raises(InvalidSimulationInputError, match="Unknown regime"):
+        model.initial_state_grids(regime_name="absent")
+
+
+def test_composite_archive_without_member_grids_keeps_simulation() -> None:
+    """Legacy archives remain simulatable but refuse unavailable grid inspection."""
+    model = _composite()
+    model._composite_states = MappingProxyType(
+        {
+            name: dataclasses.replace(lowering, member_grids=None)
+            for name, lowering in model._composite_states.items()
+        }
+    )
+    restored = cloudpickle.loads(cloudpickle.dumps(model))
+    assert set(restored.initial_state_names(regime_name="alive")) == {
+        *_MEMBERS,
+        "offer",
+        "wealth",
+    }
+    with pytest.raises(InvalidSimulationInputError, match="rebuild the model"):
+        restored.initial_state_grids(regime_name="alive")
+    pd.testing.assert_frame_equal(
+        _panel(model=restored, composite=True),
+        _panel(model=_composite(), composite=True),
+    )
