@@ -15,12 +15,17 @@ from _lcm.current_iid import (
     CurrentIIDDrawFrame,
     CurrentIIDDrawPlan,
 )
-from _lcm.shock_overrides import supplied_group_values
+from _lcm.shock_overrides import (
+    OverrideBases,
+    apply_overrides,
+    physical_recovery_status,
+    supplied_group_values,
+)
 from _lcm.shock_registry import ShockBinding
 from lcm import categorical
 from lcm import shocks as sh
 from lcm.exceptions import ShockDeclarationError
-from lcm.typing import FloatND, ScalarInt
+from lcm.typing import Float1D, FloatND, IntND, ScalarBool, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
 
 
@@ -286,35 +291,27 @@ def test_discrete_physical_uses_addressed_interval_residual() -> None:
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
-def test_correlated_noninformative_frame_preserves_or_refuses_latent_custody() -> None:
-    """Wholly constant frames reveal nothing; mixed frames need deferred completion."""
-    for second_scale, valid in ((0.0, True), (1.0, False)):
-        group = sh.ShockGroup(
-            shocks={
-                "a": sh.Normal(mu=2, sigma=0),
-                "b": sh.Normal(mu=3, sigma=second_scale),
-            },
-            correlation=((1.0, 0.5), (0.5, 1.0)),
-            nodes=sh.MonteCarlo(1, seed=0),
+def test_correlated_noninformative_frame_preserves_latent_custody() -> None:
+    """A wholly constant physical frame retains every addressed base coordinate."""
+    group = sh.ShockGroup(
+        shocks={"a": sh.Normal(mu=2, sigma=0), "b": sh.Normal(mu=3, sigma=0)},
+        correlation=((1.0, 0.5), (0.5, 1.0)),
+        nodes=sh.MonteCarlo(1, seed=0),
+    )
+    frame = _plan(group=group).realise(
+        keys=_keys(group=group),
+        group_params={},
+        arguments={"period": jnp.asarray(0, dtype=jnp.int32), "age": jnp.asarray(0.0)},
+        overrides={
+            "a": sh.PhysicalValues(values=jnp.asarray(2.0)),
+            "b": sh.PhysicalValues(values=jnp.asarray(3.0)),
+        },
+    )
+    assert bool(frame.valid)
+    for name in group.shocks:
+        np.testing.assert_array_equal(
+            frame.held_bases[name], frame.addressed_bases[name]
         )
-        frame = _plan(group=group).realise(
-            keys=_keys(group=group),
-            group_params={},
-            arguments={
-                "period": jnp.asarray(0, dtype=jnp.int32),
-                "age": jnp.asarray(0.0),
-            },
-            overrides={
-                "a": sh.PhysicalValues(values=jnp.asarray(2.0)),
-                "b": sh.PhysicalValues(values=jnp.asarray(3.0)),
-            },
-        )
-        assert bool(frame.valid) is valid
-        if valid:
-            for name in group.shocks:
-                np.testing.assert_array_equal(
-                    frame.held_bases[name], frame.addressed_bases[name]
-                )
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
@@ -660,3 +657,202 @@ def test_seedless_supplied_group_keeps_physical_bits_and_exact_joint_support(
             admitted_correlation_support=None,
         )
         assert not bool(consistent)
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+@pytest.mark.parametrize("compiled", [False, True])
+@pytest.mark.parametrize("constant_log_normal", [False, True])
+@pytest.mark.parametrize(
+    ("rho", "informative", "witness", "free_name"),
+    [
+        (0.5, "a", (2.0, 0.0), "b"),
+        (0.5, "b", (0.0, 2.0), "a"),
+        (1.0, "b", (2.0, 0.0), "b"),
+        (-1.0, "b", (2.0, 0.0), "b"),
+    ],
+)
+def test_complete_mixed_frame_recovers_canonical_witness(
+    *,
+    compiled: bool,
+    constant_log_normal: bool,
+    rho: float,
+    informative: sh.ShockName,
+    witness: tuple[float, float],
+    free_name: sh.ShockName,
+) -> None:
+    """A complete mixed frame recovers support and preserves free coordinate bits."""
+    group = sh.ShockGroup(
+        shocks={
+            name: sh.LogNormal(mu=0, sigma=0)
+            if constant_log_normal and name != informative
+            else sh.Normal(mu=0, sigma=int(name == informative))
+            for name in ("a", "b")
+        },
+        correlation=((1.0, rho), (rho, 1.0)),
+        nodes=sh.MonteCarlo(1, seed=0),
+    )
+    producing = group.transform(base_nodes=jnp.asarray([witness]))
+    producing.raise_if_invalid()
+    baseline = {"a": jnp.asarray(-0.0), "b": jnp.asarray(-0.0)}
+    supplied = {
+        name: sh.PhysicalValues(values=producing.values[name][0])
+        for name in reversed(tuple(group.shocks))
+    }
+
+    def recover() -> tuple[
+        OverrideBases, ScalarBool, Mapping[sh.ShockName, ScalarBool]
+    ]:
+        recovered = apply_overrides(
+            group=group,
+            addressed=baseline,
+            overrides=supplied,
+            params={},
+            inputs={},
+            admitted_correlation_support=None,
+        )
+        actual_bases = jnp.stack(tuple(recovered.bases[name] for name in group.shocks))
+        reconstructed = group.transform(base_nodes=actual_bases[None])
+        support = {}
+        for name in group.shocks:
+            physical = supplied[name].values
+            assert isinstance(physical, jax.Array)
+            supported, _ = physical_recovery_status(
+                produced=reconstructed.values[name][0],
+                supplied=physical,
+                requires_witness=recovered.requires_witness,
+            )
+            support[name] = supported
+        return recovered, reconstructed.valid, support
+
+    recovered, producing_valid, support = (jax.jit(recover) if compiled else recover)()
+    assert bool(recovered.valid)
+    assert bool(recovered.requires_witness)
+    assert bool(producing_valid)
+    assert all(bool(supported) for supported in support.values())
+    free_base = np.asarray(recovered.bases[free_name])
+    word_type = np.uint64 if free_base.dtype.itemsize == 8 else np.uint32
+    np.testing.assert_array_equal(
+        free_base.view(word_type),
+        np.asarray(baseline[free_name]).view(word_type),
+    )
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+@pytest.mark.parametrize("compiled", [False, True])
+def test_complete_mixed_actual_frame_keeps_original_addressed_custody(
+    *, compiled: bool
+) -> None:
+    """Overriding a full produced frame keeps original-row randomness distinct."""
+    group = sh.ShockGroup(
+        shocks={"a": sh.Normal(mu=0, sigma=0), "b": sh.Normal(mu=0, sigma=1)},
+        correlation=((1.0, 0.5), (0.5, 1.0)),
+        nodes=sh.MonteCarlo(1, seed=0),
+    )
+    plan = _plan(group=group)
+    keys = _keys(group=group)
+    arguments = {"period": jnp.asarray(0, dtype=jnp.int32), "age": jnp.asarray(0.0)}
+    original = plan.realise(keys=keys, group_params={}, arguments=arguments)
+    assert bool(original.valid)
+
+    def draw() -> CurrentIIDDrawFrame:
+        return plan.realise(
+            keys=keys,
+            group_params={},
+            arguments=arguments,
+            overrides={
+                name: sh.PhysicalValues(values=original.physical[name])
+                for name in reversed(tuple(group.shocks))
+            },
+        )
+
+    actual = (jax.jit(draw) if compiled else draw)()
+    assert bool(actual.valid)
+    for name in group.shocks:
+        np.testing.assert_array_equal(actual.physical[name], original.physical[name])
+        np.testing.assert_array_equal(
+            actual.addressed_bases[name], original.addressed_bases[name]
+        )
+        np.testing.assert_array_equal(
+            actual.held_bases[name], original.held_bases[name]
+        )
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+@pytest.mark.parametrize("compiled", [False, True])
+def test_complete_mixed_singular_support_rejects_adjacent_contradiction(
+    *, compiled: bool
+) -> None:
+    """A seedless support witness cannot authenticate contradictory physical bits."""
+    group = sh.ShockGroup(
+        shocks={
+            "a": sh.Normal(mu=0, sigma=1),
+            "b": sh.Normal(mu=0, sigma=0),
+            "c": sh.Normal(mu=0, sigma=1),
+        },
+        correlation=((1.0, 1.0, -1.0), (1.0, 1.0, -1.0), (-1.0, -1.0, 1.0)),
+        nodes=sh.MonteCarlo(1, seed=0),
+    )
+    producing = group.transform(base_nodes=jnp.asarray([[2.0, -0.0, 3.0]]))
+    producing.raise_if_invalid()
+
+    def recover(
+        last: FloatND,
+    ) -> tuple[Mapping[sh.ShockName, FloatND | IntND], ScalarBool]:
+        return supplied_group_values(
+            group=group,
+            supplied={
+                "c": sh.PhysicalValues(values=last),
+                "b": sh.PhysicalValues(values=producing.values["b"][0]),
+                "a": sh.PhysicalValues(values=producing.values["a"][0]),
+            },
+            params={},
+            inputs={},
+            admitted_correlation_support=None,
+        )
+
+    function = jax.jit(recover) if compiled else recover
+    physical, valid = function(producing.values["c"][0])
+    assert bool(valid)
+    for name in group.shocks:
+        np.testing.assert_array_equal(physical[name], producing.values[name][0])
+    adjacent = jnp.nextafter(producing.values["c"][0], jnp.asarray(jnp.inf))
+    assert bool(adjacent != producing.values["c"][0])
+    _, invalid = function(adjacent)
+    assert not bool(invalid)
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_complete_mixed_runtime_mask_uses_current_law_parameters() -> None:
+    """Runtime constant marginals select the current physical support equations."""
+    group = sh.ShockGroup(
+        shocks={"a": sh.Normal(mu=0, sigma=None), "b": sh.Normal(mu=0, sigma=None)},
+        correlation=((1.0, 1.0), (1.0, 1.0)),
+        nodes=sh.MonteCarlo(1, seed=0),
+    )
+
+    def recover(
+        scales: Float1D,
+    ) -> tuple[Mapping[sh.ShockName, FloatND | IntND], ScalarBool]:
+        params = {"a__sigma": scales[0], "b__sigma": scales[1]}
+        producing = group.transform(
+            base_nodes=jnp.asarray([[2.0, -0.0]]), params=params
+        )
+        return supplied_group_values(
+            group=group,
+            supplied={
+                name: sh.PhysicalValues(values=producing.values[name][0])
+                for name in reversed(tuple(group.shocks))
+            },
+            params=params,
+            inputs={},
+            admitted_correlation_support=None,
+        )
+
+    function = jax.jit(recover)
+    for scales in ((0.0, 1.0), (1.0, 0.0), (0.0, 0.0)):
+        physical, valid = function(jnp.asarray(scales))
+        assert bool(valid)
+        np.testing.assert_array_equal(
+            jnp.stack(tuple(physical[name] for name in group.shocks)),
+            2 * jnp.asarray(scales),
+        )

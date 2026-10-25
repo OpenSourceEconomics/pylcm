@@ -624,7 +624,7 @@ _SOURCE_SEALS = {
     LIQUID_BOUND_DECLARATION_SOURCE: "16118c29929f206f05925d88688edbc447f31c3a7aae1e73f022570e981ab886",
     FEASIBILITY_SOURCE: "8b43243a626cf4135e54f96a162c33f7ecc118808deb0452368bb7efb8031bd7",
     ACTION_GRID_SOURCE: "76a059f7cc7d7e7d2a99e0ffd626ddbd76b89724d5e24f3bb10ad86501268309",
-    SUPPORT_TRANSITION_CHECKS_SOURCE: "5ca25bcece4cce3e0180e47a257d1e303a6cc41b4ab7f319aa05e8f688f5af24",
+    SUPPORT_TRANSITION_CHECKS_SOURCE: "b40de931445392821449d6dd4b3a123ba0fca70268228b5581caea8a0b452c55",
     SUPPORT_DIAGNOSTICS_SOURCE: "477761e6556a83fd2e271e4ab6c258cf4799d62d10d3a2d46dbf31f69b7161d8",
     SUPPORT_PRECONDITIONS_SOURCE: "52c97f5f2f6e9e3b6a7ac7215181874cef52948f613f59c270ef9638a51493ac",
     SUPPORT_AUTHORITY_SOURCE: "4ea844674d9f503a496f208d3897352f2b78fb02670d8462d20cea9a3ea077e7",
@@ -715,7 +715,7 @@ _SOURCE_SEALS = {
     SOLVER_API_SOURCE: "bc9e7cd94009998acfc1f11d8da823475030879790a49f8192e1260012496c96",
     BACKWARD_INDUCTION_SOURCE: "90243ee031603f3b5255eaa013b604aafb7903c410618d736dd27194873975ed",
     PERIOD_REPLAY_SOURCE: "2f0253693e474c70760a80ab6c07b5bdeb25ffa4aa77224e27ea5d15af5b1a55",
-    INITIAL_CONDITIONS_SOURCE: "839c2e00f536a2142f3a6aa640197bf9cef20a5fd7a24c7b5b6a672e7578a4df",
+    INITIAL_CONDITIONS_SOURCE: "bb8e072ad4981e03f4a6980a1745d4b6ea78578529e041789576d5c6e3f156bb",
     RESULT_SOURCE: "a84d216d5063b60fb5cd14548266986da36d2f32caee7a4f806a2b5261872814",
     RESULT_DATAFRAME_SOURCE: "25a69be5f649e3b52dbcebd63656dd62311164fd4aa2b9d31051e14fe5b9864b",
     RESULT_METADATA_SOURCE: "ba9ec4f48e7df67b4a57a35cd3e781906d7ef64a35f3bc37238033c1c168df3e",
@@ -762,7 +762,7 @@ _SOURCE_SEALS = {
     "src/_lcm/power_mean.py": "1580447a1ca5f6385556438105069bfb15d211bd6da40819b096ad84b2e77cb5",
     "src/_lcm/simulation/random_address.py": "17f60140770dbd144c57cfd3daccb76a88196acd9e681f2abff8c2eefb37a913",
     "src/lcm/shocks.py": "118892103b41719b529842e83ed05d9d82f1c27ce3d9d6b03f197f98b68c1ccc",
-    "src/_lcm/shock_overrides.py": "40187092b68c124e6e6cea49ab7922857fa303abd75b6c9f72c0081f4b5f59f5",
+    "src/_lcm/shock_overrides.py": "89d13b523a6d0270e144ea60077c5e5f7e306a1b9da7878a9a9b565f920f6808",
     "src/_lcm/simulation/current_iid_overrides.py": "c5b8d450cdad4980a694df285502b70cf1238762440f1302d664b2e84d964ced",
 }
 
@@ -806,7 +806,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/shock_overrides.py": (
-        "704f3ca54670c40fe59fcd9a2d31aef99e3cad5499e38d48c5ac4175b9004895",
+        "819ad9eb2fd82474356ff86ddaa7945044bb20f1af414a0aa0eb4a957f23413e",
         {
             "_flatten_override": "edb14b6f253fe08300be4c6a0fb384d53654bf5a4460590cc9312c05eb82639a",
             "_flatten_override_with_keys": "b59c5584a47f2d873fbb65f9a90d02690c3c9917ead9ef29fccba4624f570db4",
@@ -1104,7 +1104,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
     INITIAL_CONDITIONS_SOURCE: (
         "438ded9ef5d826c9736cffba905f8198e04825b2e3a3b5508b1e601a3945e660",
         {
-            "validate_simulation_inputs": "e6521988b508ec6a67ecb291fefd868d96ddf279037e0f2d7aa6e74d900dc927",
+            "validate_simulation_inputs": "9ec7f8f50c4629f2de4eaef2865470018a8ce2e1dea616b1c453ce2b4af1779a",
             "_preflight_memory": "ca5810a8d31174676bdf127ae9811cb04adcf10762d8efd568b404334de01807",
             "_discrete_initial_specs": "6e837939569bad3b27093ab4a14ce38ad16756f86910f37127432d07291195a6",
             "_pack_initial_summary": "e674412100af558aae66243e25060f3ce8538ffd4ad138c7e0effd58e1e3357e",
@@ -2161,11 +2161,11 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SUPPORT_TRANSITION_CHECKS_SOURCE: (
-        "b731dce708d0a3a9e4cd4e5cc00bcf9d0040068b844b84e26f8d87089ee12bcb",
+        "835ba594261a71fb02ed9917ce48d3698b4cb5a4e3b905705f740a771562a1b4",
         {
             "_ValidationSummary.state_action_space": "130e9abc335a298a37205deb98e1a3583e7632fd371ad0feae8413d91732cc4f",
-            "validate_transitions": "2e2d544b4b2ad3360a4da004f84c834cec1f9fe708da3d59caf85601378556c2",
-            "_validate_transition_sequence": "0a00ef0423d5728ace28799afc955a31fad10cd103f8993121ddb0b3f65b9440",
+            "validate_transitions": "e3cf9c7f61aa3bd979d51f625d31ea0bf1a554c2a18e06db0535bbf77100256b",
+            "_validate_transition_sequence": "e6399ad3bbe56639ffdf5c7e7d27a9d2d41fb4026bc574ad25055c3bec811388",
             "validate_regime_transition_probs_all_periods": "bd4b49bcb10108dd06f79e01d59ee449cd7db25bfb9e15449561d23655392c02",
             "_validate_regime_transition_single": "689a067b3c00cd24ae46e69c12e1a2a0f8f6f530607b105de2403aee82bd13dd",
             "_evaluate_regime_probability_law": "c26148c3519d19ff749d06a65bb484f50fbf0a7ce0df36d09e1a1d98fbbf2e7f",
