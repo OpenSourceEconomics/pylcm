@@ -476,8 +476,9 @@ def _correlated_override_utility(
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
 @pytest.mark.parametrize("complete", [False, True])
+@pytest.mark.parametrize("runtime_checks", [False, True])
 def test_target_only_correlated_physical_frame_uses_mapped_producer(
-    *, complete: bool
+    *, complete: bool, runtime_checks: bool
 ) -> None:
     """A complete low physical frame reveals after exit; partial frames refuse."""
     model = Model(
@@ -535,7 +536,7 @@ def test_target_only_correlated_physical_frame_uses_mapped_producer(
                 shock_paths=paths,
                 seed=17,
                 log_level="off",
-                runtime_checks=False,
+                runtime_checks=runtime_checks,
             )
         return
     frame = model.simulate(
@@ -544,7 +545,7 @@ def test_target_only_correlated_physical_frame_uses_mapped_producer(
         shock_paths=paths,
         seed=17,
         log_level="off",
-        runtime_checks=False,
+        runtime_checks=runtime_checks,
     ).to_dataframe(use_categorical_codes=True)
     np.testing.assert_array_equal(frame["regime_name"], "target")
     np.testing.assert_array_equal(frame["first_signal"], -4.0)

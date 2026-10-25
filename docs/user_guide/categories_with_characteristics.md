@@ -53,9 +53,11 @@ LABOUR_STATUS = characteristics(
 The check raises when the table and the class disagree:
 
 - the table lists the categories of the class, in declaration order;
-- every category sets the same characteristics, in any order, each a Python `int` within
-  int32 or a `bool`, and no characteristic is the int32 minimum, which marks a missing
-  category;
+- every category sets the same characteristics, in any order;
+- each column contains only Python `bool`, only Python `int`, or only finite Python
+  `float` values; write `0.0` rather than `0` in a float column;
+- integer characteristics fit int32 and differ from the int32 minimum, which marks a
+  missing category;
 - no two categories share all characteristics.
 
 The last rule makes each category equal to its combination of characteristics. Two
@@ -92,6 +94,43 @@ def earnings(*, wage: FloatND, labour_status_has_job: BoolND) -> FloatND:
 - The table holds NumPy arrays, and `jnp.asarray` inside the function moves the column
   to the device when the function runs.
 
+## Attach numerical properties to a category
+
+A discrete category can carry several numerical properties. For example, each job type
+can specify both hours and a wage multiplier:
+
+```python
+@categorical(ordered=False)
+class Job:
+    none: ScalarInt
+    part_time: ScalarInt
+    full_time: ScalarInt
+
+
+JOBS = characteristics(
+    category_class=Job,
+    by_category={
+        "none": {"hours": 0, "wage_multiplier": 0.0},
+        "part_time": {"hours": 20, "wage_multiplier": 0.8},
+        "full_time": {"hours": 40, "wage_multiplier": 1.15},
+    },
+)
+
+
+def job_wage_multiplier(job: DiscreteState) -> FloatND:
+    return jnp.asarray(JOBS["wage_multiplier"])[job]
+```
+
+These values are illustrative. The job remains a discrete category with an integer code.
+Its wage multiplier is a property read by code, not a continuous action. A
+[numeric discrete grid](grids.md) instead supplies the numerical value of the variable
+itself; a continuous grid supports approximation over a continuous variable.
+
+The checked table stores bool columns as NumPy bool, integer columns as int32, and float
+columns as float64. Each column is read-only. Conversion with `jnp.asarray` uses the
+active JAX precision policy. Keep floats as properties: `category_with` accepts only
+integer and Boolean identifying columns.
+
 ## Map characteristics back to a category
 
 A deterministic transition can describe the next category by its characteristics.
@@ -119,6 +158,8 @@ def next_labour_status(*, labour_status_di_years: IntND, work: DiscreteAction) -
 
 - The characteristics you pass must tell all categories apart. A subset is enough when
   no two categories share it; otherwise `category_with` raises before reading any value.
+- Queried columns must have bool or signed-integer dtype. Float properties may be
+  present in the table, but cannot be queried, even with an integer query value.
 - Values are Python ints or bools, or JAX arrays of bool or signed-integer dtype, also
   inside `jit` and `vmap`, and broadcast against each other. Unsigned and float arrays
   raise, because JAX can compare them with int32 characteristics in a way that matches

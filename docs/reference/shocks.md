@@ -143,10 +143,13 @@ factor as the forward law, retaining addressed null coordinates. Singular joint-
 consistency requires an exact represented forward witness for the complete supplied
 frame; a rounded inverse without that witness remains unresolved. An EPS proximity check
 does not establish external support. Wholly deterministic compatible frames retain all
-addressed coordinates. A frame mixing informative and noninformative correlated
-coordinates requires deferred latent completion and is invalid. Named base overrides can
-instead use the forward transform. Supplying a value never makes it observed by a
-policy.
+addressed coordinates. Complete frames mixing informative and constant marginals use a
+canonical producing-coordinate witness. Free coordinates retain their addressed bits;
+the recovered coordinates are not a conditional latent draw. The original forward law
+must reproduce every supplied physical bit, or recovery remains unresolved. A seedless
+support check returns physical values and status without exporting latent coordinates.
+Named base overrides use the forward transform. Supplying a value never makes it
+observed by a policy.
 
 An explicit fixed or admitted runtime correlation matrix that is exactly identity uses
 the independent rules. The proof uses the current represented matrix, without an
@@ -170,6 +173,15 @@ not condition a draw. This does not introduce a missing-value convention. Input 
 retain their original buffers through memory admission; only the current original-row
 chunk is uploaded as draw operands. Native profiles carry array-free tag/dtype
 prototypes, and changing a tag or value cannot reuse a stale interpretation.
+
+Entry checks validate an explicitly observed target-only frame at the original subject's
+mapped producing context, with current parameters and the resolved clock. Fixed edge
+leaves survive runtime overrides of other slots; current-call values take precedence
+when both bind the same slot. An unavailable producer does not evaluate its numerical
+physical law. Hidden target-only inputs remain hidden during entry feasibility and are
+validated by the actual final actor when consumed. Seedless feasibility helpers do not
+select a policy to determine a hidden input's first producer; they explicitly refuse
+that unresolved producer context.
 
 The scalar draw producer returns exact supplied physical bits, addressed and held
 independent bases, producing parameters/inputs, recovery errors and mandatory validity.

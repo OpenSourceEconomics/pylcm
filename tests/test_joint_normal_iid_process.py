@@ -138,6 +138,10 @@ def test_physical_initial_state_names_and_bounds(
         if runtime
         else {}
     )
+    declarations = model.initial_state_grids(regime_name="working")
+    assert set(declarations) == set(model.user_regimes["working"].states)
+    for name, grid in declarations.items():
+        assert grid is model.user_regimes["working"].states[name]
     assert model.initial_state_names(regime_name="working") == ("x", "y")
     assert model.state_names(regime_name="working") == (
         "joint_normal_0",

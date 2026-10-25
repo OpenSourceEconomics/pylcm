@@ -21,7 +21,7 @@ from lcm import (
 from lcm.exceptions import CategoricalDefinitionError
 from lcm.regime import Regime
 from lcm.typing import DiscreteAction, DiscreteState, FloatND, IntND, ScalarInt
-from tests.conftest import X64_ENABLED
+from tests.conftest import DECIMAL_PRECISION, X64_ENABLED
 
 
 @categorical(ordered=False)
@@ -103,17 +103,10 @@ def _columns_without_characteristics():
     characteristics(category_class=_Two, by_category={"a": {}, "b": {}})
 
 
-def _columns_with_a_float():
-    characteristics(
-        category_class=_Two,
-        by_category={"a": {"x": 0.5}, "b": {"x": 1.0}},  # ty: ignore[invalid-argument-type]
-    )
-
-
 def _columns_with_a_float_in_a_later_row():
     characteristics(
         category_class=_Two,
-        by_category={"a": {"x": 0}, "b": {"x": 1.5}},  # ty: ignore[invalid-argument-type]
+        by_category={"a": {"x": 0}, "b": {"x": 1.5}},
     )
 
 
@@ -174,8 +167,7 @@ def _columns_for_a_plain_class():
         (_columns_in_wrong_order, r"declaration order, but lists \['b', 'a'\]"),
         (_columns_with_differing_characteristics, r"`b`.*\['y'\].*\['x'\]"),
         (_columns_without_characteristics, "at least one characteristic"),
-        (_columns_with_a_float, r"0\.5"),
-        (_columns_with_a_float_in_a_later_row, r"`b\.x` is 1\.5"),
+        (_columns_with_a_float_in_a_later_row, r"`x`.*int.*float"),
         (_columns_with_a_string_in_a_later_row, r"`b\.x` is 'q'"),
         (_columns_mixing_bool_and_int, r"`x`.*bool.*int"),
         (_columns_outside_int32, r"`b\.x`.*int32"),
@@ -759,3 +751,99 @@ def test_published_characteristics_appear_as_additional_targets():
     )
 
     np.testing.assert_array_equal(frame["status_di_years"], np.array([0, 0, 1, 2]))
+
+
+def _float_characteristics():
+    return characteristics(
+        category_class=_Two,
+        by_category={
+            "a": {"index": 0, "wage": 0.5, "employed": False},
+            "b": {"index": 1, "wage": 1.25, "employed": True},
+        },
+    )
+
+
+def test_characteristics_store_float_values_as_float64():
+    """Floating properties retain their values in a read-only float64 column."""
+    column = _float_characteristics()["wage"]
+    assert (column.dtype, column.tolist(), column.flags.writeable) == (
+        np.dtype(np.float64),
+        [0.5, 1.25],
+        False,
+    )
+
+
+@pytest.mark.parametrize("mode", ["eager", "jit", "vmap", "jit_vmap"])
+def test_float_characteristics_are_read_by_category_code(*, mode):
+    """Category codes select numerical properties under JAX transformations."""
+    columns = _float_characteristics()
+
+    def wage(code):
+        return jnp.asarray(columns["wage"])[code]
+
+    transforms = {
+        "eager": wage,
+        "jit": jax.jit(wage),
+        "vmap": jax.vmap(wage),
+        "jit_vmap": jax.jit(jax.vmap(wage)),
+    }
+    found = transforms[mode](jnp.array([1, 0, 1], dtype=jnp.int32))
+    np.testing.assert_array_almost_equal(
+        found, np.array([1.25, 0.5, 1.25]), decimal=DECIMAL_PRECISION
+    )
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf")])
+def test_characteristics_reject_nonfinite_float_properties(*, value):
+    """A numerical category property must be finite, including later rows."""
+    with pytest.raises(CategoricalDefinitionError, match="finite"):
+        characteristics(
+            category_class=_Two, by_category={"a": {"wage": 0.5}, "b": {"wage": value}}
+        )
+
+
+@pytest.mark.parametrize("first", [False, 0])
+def test_characteristics_reject_mixed_float_column_types(*, first):
+    """Each characteristic has one Python scalar type across its categories."""
+    with pytest.raises(CategoricalDefinitionError, match="mixes"):
+        characteristics(
+            category_class=_Two, by_category={"a": {"wage": first}, "b": {"wage": 1.25}}
+        )
+
+
+@pytest.mark.parametrize("mode", ["eager", "jit"])
+def test_category_with_ignores_unqueried_float_properties(*, mode):
+    """Integer identifying fields work in tables that also contain floats."""
+    columns = _float_characteristics()
+
+    def lookup(index):
+        return category_with(columns, index=index)
+
+    found = jax.jit(lookup)(jnp.int32(1)) if mode == "jit" else lookup(jnp.int32(1))
+    assert int(found) == 1
+
+
+@pytest.mark.parametrize("mode", ["eager", "jit"])
+def test_category_with_rejects_float_columns_even_for_integer_queries(*, mode):
+    """A float property cannot identify a category, even at an exact integer."""
+    columns = _float_characteristics()
+
+    def lookup(index):
+        return category_with(columns, index=index, wage=1)
+
+    with pytest.raises(CategoricalDefinitionError, match=r"float.*wage|wage.*float"):
+        jax.jit(lookup)(jnp.int32(1)) if mode == "jit" else lookup(jnp.int32(1))
+
+
+def test_category_with_rejects_python_float_queries():
+    """A float query cannot match an integer identifying field."""
+    with pytest.raises(CategoricalDefinitionError):
+        category_with(STATUS, di_years=1.0)  # ty: ignore[invalid-argument-type]
+
+
+def test_characteristics_reject_duplicate_float_rows():
+    """Float properties do not remove the requirement that category rows differ."""
+    with pytest.raises(CategoricalDefinitionError, match="same characteristics"):
+        characteristics(
+            category_class=_Two, by_category={"a": {"wage": 0.5}, "b": {"wage": 0.5}}
+        )

@@ -109,6 +109,17 @@ device-memory admission or subject padding. When a constraint depends on an
 age-specialized function, each subject is checked against the constraints and functions
 resolved at its own start period.
 
+`model.initial_state_grids(regime_name=...)` returns an immutable mapping of finalized
+public state declarations for initial-condition recipes. A generated `CompositeState`
+entry is replaced by its original member grids, preserving their category labels and
+codes. Ordinary grids, `Phased` declarations, and named joint-normal coordinate
+declarations keep their existing finalized form. `initial_state_names(regime_name=...)`
+gives physical per-subject names, expanding both composite members and joint-normal
+coordinates. These differ from `state_names` / `state_grid`, which describe value-array
+axes. A composite model restored from an archive without original grid metadata must be
+rebuilt before using `initial_state_grids`; its existing simulation behavior remains
+available.
+
 `model._regimes` is private canonical engine state.
 
 (api-initial-nodes)=
