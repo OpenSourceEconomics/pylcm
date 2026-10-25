@@ -2405,3 +2405,323 @@ def test_density_conditional_mean_retains_a_sub_ulp_shift(
     _assert_probability_matrix(actual=got, expected=expected)
     assert bool(got[1, 1] > 0.5) == (sign > 0)
     assert bool(got[1, 1] < 0.5) == (sign < 0)
+
+
+def _density_product_case(
+    *, sign: float, scale_exponent: int
+) -> tuple[tuple[float, float], float, float, float, int]:
+    epsilon = 2.0 ** (-52 if X64_ENABLED else -23)
+    scale = 2.0**scale_exponent
+    radius = (1.0 + epsilon) * scale
+    nodes = (-radius, radius)
+    rho, mu, sigma = 1.0 - epsilon, sign * scale, epsilon * scale
+    source_index = 0 if sign > 0 else 1
+    return nodes, rho, mu, sigma, source_index
+
+
+@pytest.mark.parametrize("route", ["fixed", "eager", "jit"])
+@pytest.mark.parametrize("sign", [-1.0, 1.0])
+@pytest.mark.parametrize("scale_exponent", [-8, 0, 16])
+def test_density_retains_the_product_residual_in_the_conditional_mean(
+    *, route: Literal["fixed", "eager", "jit"], sign: float, scale_exponent: int
+) -> None:
+    """The exact represented AR(1) law has log odds +/-2*(1+epsilon)."""
+    nodes, rho, mu, sigma, source_index = _density_product_case(
+        sign=sign, scale_exponent=scale_exponent
+    )
+    process = TauchenAR1Process.on_nodes(
+        nodes=np.asarray(nodes),
+        transition_rule="density",
+        rho=rho if route == "fixed" else None,
+        mu=mu if route == "fixed" else None,
+        sigma=sigma if route == "fixed" else None,
+    )
+    if route == "fixed":
+        actual = process.get_transition_probs()
+    else:
+        evaluate = process.compute_transition_probs
+        if route == "jit":
+            evaluate = jax.jit(evaluate)
+        actual = evaluate(
+            rho=jnp.asarray(rho), mu=jnp.asarray(mu), sigma=jnp.asarray(sigma)
+        )
+    expected = density_matrix(nodes=nodes, rho=rho, mu=mu, sigma=sigma)
+    assert np.isfinite(actual).all()
+    assert (np.asarray(actual) >= 0).all()
+    np.testing.assert_array_almost_equal(
+        np.asarray(actual).sum(axis=1), np.ones(2), decimal=DECIMAL_PRECISION
+    )
+    np.testing.assert_array_almost_equal(actual, expected, decimal=DECIMAL_PRECISION)
+
+    # A two-node terminal payoff (0,1) has expectation equal to the upper mass.
+    # The sure payoff has a finite margin on both sides of the lost-residual tie.
+    sure = 0.7 if sign > 0 else 0.3
+    expected_choice = 1 if sign > 0 else 0
+    assert int(np.argmax([sure, float(actual[source_index, 1])])) == expected_choice
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+@pytest.mark.parametrize("sign", [-1.0, 1.0])
+@pytest.mark.parametrize("parameter", ["sigma", "mu", "rho"])
+def test_density_product_residual_derivatives_follow_the_same_probability_law(
+    *, compiled: bool, sign: float, parameter: Literal["sigma", "mu", "rho"]
+) -> None:
+    """The retained product residual must also enter normalized-law derivatives."""
+    nodes, rho, mu, sigma, source_index = _density_product_case(
+        sign=sign, scale_exponent=0
+    )
+    process = TauchenAR1Process.on_nodes(
+        nodes=np.asarray(nodes),
+        transition_rule="density",
+        rho=None,
+        mu=None,
+        sigma=None,
+    )
+
+    def row(value: ScalarFloat) -> FloatND:
+        return process.compute_transition_probs(
+            rho=value if parameter == "rho" else jnp.asarray(rho),
+            mu=value if parameter == "mu" else jnp.asarray(mu),
+            sigma=value if parameter == "sigma" else jnp.asarray(sigma),
+        )[source_index]
+
+    differentiate = jax.jacrev(row)
+    if compiled:
+        differentiate = jax.jit(differentiate)
+    actual = differentiate(
+        jnp.asarray({"rho": rho, "mu": mu, "sigma": sigma}[parameter])
+    )
+    expected = density_derivative(
+        nodes=nodes,
+        source=nodes[source_index],
+        rho=rho,
+        mu=mu,
+        sigma=sigma,
+        parameter=parameter,
+    )
+    tolerance = 10.0**-DECIMAL_PRECISION
+    assert np.isfinite(actual).all()
+    np.testing.assert_allclose(actual, expected, rtol=tolerance, atol=tolerance)
+
+
+@categorical(ordered=False)
+class _ProductResidualRegime:
+    alive: ScalarInt
+    dead: ScalarInt
+
+
+def _product_residual_zero_payoff(income: ContinuousState) -> FloatND:
+    return jnp.zeros_like(income)
+
+
+def _product_residual_upper_payoff(income: ContinuousState) -> FloatND:
+    return jnp.where(income > 0, 1.0, 0.0)
+
+
+@pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
+@pytest.mark.parametrize("sign", [-1.0, 1.0])
+def test_density_product_residual_enters_public_two_period_values(
+    *, enable_jit: bool, sign: float
+) -> None:
+    """A checked public solve propagates the represented-input probability law."""
+    nodes, rho, mu, sigma, source_index = _density_product_case(
+        sign=sign, scale_exponent=0
+    )
+    process = TauchenAR1Process.on_nodes(
+        nodes=np.asarray(nodes),
+        transition_rule="density",
+        rho=rho,
+        mu=mu,
+        sigma=sigma,
+    )
+    model = Model(
+        regimes={
+            "alive": Regime(
+                states={"income": process},
+                functions={"utility": _product_residual_zero_payoff},
+            ),
+            "dead": Regime(
+                states={"income": process},
+                functions={"utility": _product_residual_upper_payoff},
+            ),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        regime_id_class=_ProductResidualRegime,
+        initial_nodes={0: "alive"},
+        edges={"alive": {"dead": 0}},
+        fixed_params={"discount_factor": 1.0},
+        enable_jit=enable_jit,
+        durable_identity=False,
+    )
+    solution = model.solve(params={}, log_level="off", runtime_checks=True)
+    terminal = np.asarray([0.0, 1.0])
+    expected = (
+        np.asarray(density_matrix(nodes=nodes, rho=rho, mu=mu, sigma=sigma)) @ terminal
+    )
+    actual = solution.values[0]["alive"]
+    assert np.isfinite(actual).all()
+    np.testing.assert_array_almost_equal(actual, expected, decimal=DECIMAL_PRECISION)
+    np.testing.assert_array_equal(solution.values[1]["dead"], terminal)
+    sure = 0.7 if sign > 0 else 0.3
+    expected_choice = 1 if sign > 0 else 0
+    assert int(np.argmax([sure, float(actual[source_index])])) == expected_choice
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+@pytest.mark.parametrize("sign", [-1.0, 1.0])
+@pytest.mark.parametrize("neighbor", [1, 2, 3])
+@pytest.mark.parametrize(
+    "physical_scale", ["subnormal_residual", "small", "unit", "large"]
+)
+def test_density_product_neighborhood_retains_residuals_outside_physical_range(
+    *, compiled: bool, sign: float, neighbor: int, physical_scale: str
+) -> None:
+    """Product neighborhoods and physical scales follow the exact-input law."""
+    dtype = np.float64 if X64_ENABLED else np.float32
+    epsilon = np.finfo(dtype).eps
+    exponent = {
+        "subnormal_residual": -1000 if X64_ENABLED else -110,
+        "small": -400 if X64_ENABLED else -40,
+        "unit": 0,
+        "large": 400 if X64_ENABLED else 60,
+    }[physical_scale]
+    scale = 2.0**exponent
+    radius = float(dtype((1.0 + neighbor * epsilon) * scale))
+    rho = float(dtype(1.0 - epsilon))
+    rounded_product = float(dtype(dtype(rho) * dtype(radius)))
+    mu = sign * rounded_product
+    sigma = float(dtype(epsilon * scale))
+    nodes = (-radius, radius)
+    assert np.isfinite([*nodes, rho, mu, sigma]).all()
+    assert sigma > 0
+    assert nodes[0] < nodes[1]
+    process = TauchenAR1Process.on_nodes(
+        nodes=np.asarray(nodes), transition_rule="density"
+    )
+    actual = _evaluate_node_boundaries(
+        process=process, rho=rho, sigma=sigma, mu=mu, compiled=compiled
+    )
+    expected = density_matrix(nodes=nodes, rho=rho, sigma=sigma, mu=mu)
+    _assert_probability_matrix(actual=actual, expected=expected)
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+@pytest.mark.parametrize("sign", [-1.0, 1.0])
+def test_density_exact_reference_keeps_overflowing_contrasts_nonpositive(
+    *, compiled: bool, sign: float
+) -> None:
+    """The product residual selects the correct saturated nearest-node mass."""
+    epsilon = 2.0 ** (-52 if X64_ENABLED else -23)
+    nodes = (-1.0 - epsilon, 1.0 + epsilon)
+    rho, mu = 1.0 - epsilon, sign
+    sigma = 2.0 ** (-600 if X64_ENABLED else -100)
+    process = TauchenAR1Process.on_nodes(
+        nodes=np.asarray(nodes), transition_rule="density"
+    )
+    actual = _evaluate_node_boundaries(
+        process=process, rho=rho, sigma=sigma, mu=mu, compiled=compiled
+    )
+    expected = density_matrix(nodes=nodes, rho=rho, sigma=sigma, mu=mu)
+    _assert_probability_matrix(actual=actual, expected=expected)
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+@pytest.mark.parametrize(
+    "direction", ["zero", "unit_sigma", "small_rho", "minnormal_rho"]
+)
+def test_density_scaled_directional_derivatives_do_not_materialize_infinite_partials(
+    *, compiled: bool, direction: str
+) -> None:
+    """Zero and small directions remain finite when an unused partial overflows."""
+    exponent = 600 if X64_ENABLED else 80
+    radius, source = 2.0**-exponent, 2.0**exponent
+    dtype = np.float64 if X64_ENABLED else np.float32
+    nodes = (-radius, radius, source)
+    process = TauchenAR1Process.on_nodes(
+        nodes=np.asarray(nodes), transition_rule="density"
+    )
+
+    def evaluate(params: FloatND) -> FloatND:
+        return process.compute_transition_probs(
+            rho=params[0], mu=jnp.asarray(0.0), sigma=params[1]
+        )[-1]
+
+    rho_dot = (
+        radius
+        if direction == "small_rho"
+        else np.finfo(dtype).tiny
+        if direction == "minnormal_rho"
+        else 0.0
+    )
+    sigma_dot = 1.0 if direction == "unit_sigma" else 0.0
+
+    def directional() -> FloatND:
+        return jax.jvp(
+            evaluate,
+            (jnp.asarray([0.0, radius]),),
+            (jnp.asarray([rho_dot, sigma_dot]),),
+        )[1]
+
+    actual = jax.jit(directional)() if compiled else directional()
+    # Exact symmetric two-point score formula; the third mass is saturated zero.
+    slope = 0.5 * float(Fraction(source) * Fraction(float(rho_dot)) / Fraction(radius))
+    expected = np.asarray([-slope, slope, 0.0])
+    assert np.isfinite(actual).all()
+    np.testing.assert_allclose(
+        actual, expected, rtol=10.0**-DECIMAL_PRECISION, atol=10.0**-DECIMAL_PRECISION
+    )
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+@pytest.mark.parametrize("parameter", ["mu", "sigma"])
+def test_density_finite_reverse_partials_ignore_an_overflowing_other_partial(
+    *, compiled: bool, parameter: Literal["mu", "sigma"]
+) -> None:
+    """Reverse-mode finite derivatives do not inherit an inactive infinite slope."""
+    exponent = 600 if X64_ENABLED else 80
+    radius, source = 2.0**-exponent, 2.0**exponent
+    nodes = (-radius, radius, source)
+    process = TauchenAR1Process.on_nodes(
+        nodes=np.asarray(nodes), transition_rule="density"
+    )
+
+    def evaluate(value: ScalarFloat) -> FloatND:
+        return process.compute_transition_probs(
+            rho=jnp.asarray(0.0),
+            mu=value if parameter == "mu" else jnp.asarray(0.0),
+            sigma=value if parameter == "sigma" else jnp.asarray(radius),
+        )[-1]
+
+    derivative = jax.jacrev(evaluate)
+    if compiled:
+        derivative = jax.jit(derivative)
+    actual = derivative(jnp.asarray(0.0 if parameter == "mu" else radius))
+    expected = density_derivative(
+        nodes=nodes, source=source, rho=0.0, sigma=radius, mu=0.0, parameter=parameter
+    )
+    assert np.isfinite(actual).all()
+    np.testing.assert_allclose(
+        actual, expected, rtol=10.0**-DECIMAL_PRECISION, atol=10.0**-DECIMAL_PRECISION
+    )
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+@pytest.mark.parametrize("sign", [-1.0, 1.0])
+def test_density_stored_subnormal_nodes_retain_their_order_and_reference(
+    *, compiled: bool, sign: float
+) -> None:
+    """Stored subnormal endpoints remain distinct in the selected density law."""
+    dtype = np.float64 if X64_ENABLED else np.float32
+    unit = float(np.nextafter(dtype(0.0), dtype(1.0)))
+    nodes = (-2 * unit, 0.0, 3 * unit)
+    assert np.isfinite(nodes).all()
+    assert nodes[0] < nodes[1] < nodes[2]
+    sigma, mu = unit, sign * unit
+    process = TauchenAR1Process.on_nodes(
+        nodes=np.asarray(nodes), transition_rule="density"
+    )
+    actual = _evaluate_node_boundaries(
+        process=process, rho=0.0, sigma=sigma, mu=mu, compiled=compiled
+    )
+    expected = density_matrix(nodes=nodes, rho=0.0, sigma=sigma, mu=mu)
+    _assert_probability_matrix(actual=actual, expected=expected)
