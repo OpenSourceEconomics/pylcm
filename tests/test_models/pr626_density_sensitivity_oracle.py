@@ -1,12 +1,9 @@
-"""OR2: independent exact-input two-node density sensitivity oracle.
+"""Independent exact-input normalized normal-density sensitivities.
 
-Only the Python standard library is used. Absolute log densities and score
-differences are exact Fractions. Decimal evaluates the two-node normalization
-and its derivative without subtracting two rounded, nearly equal scores.
-This is a new oracle extension; the historical OR1 is not changed.
-
-Run this file directly to print the full sign/neighborhood/scale witness matrix.
-This calculation is not execution of pylcm, JAX, or a model of its implementation.
+Fraction arithmetic forms absolute log densities and score differences from
+stored inputs. Decimal evaluates stable two-node normalization or general
+pairwise score fluxes. These test-only references do not reuse production
+centering, scaled representations or prefix/suffix reductions.
 """
 
 import math
