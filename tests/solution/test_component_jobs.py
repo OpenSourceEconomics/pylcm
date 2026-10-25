@@ -19,6 +19,7 @@ import pytest
 
 import lcm
 from _lcm import version
+from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.upper_envelope._exact_affine import ffi
 from _lcm.persistence.solution import _array_checksum
 from _lcm.simulation.current_iid_entry import SuppliedEntryFrames
@@ -84,7 +85,11 @@ def test_component_plan_rejects_supplied_entry_frames_before_publication(
             flat_params,
             SuppliedEntryFrames(
                 entries={
-                    "income": PhysicalValues(values=np.zeros(len(initial["wealth"])))
+                    "income": PhysicalValues(
+                        values=np.zeros(
+                            len(initial["wealth"]), dtype=canonical_float_dtype()
+                        )
+                    )
                 },
                 flat_params=flat_params,
             ),

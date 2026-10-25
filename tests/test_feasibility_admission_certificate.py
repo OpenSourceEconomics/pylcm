@@ -1,5 +1,6 @@
 """Independent byte-resealed controls for simulation feasibility admission."""
 
+import ast
 import hashlib
 from pathlib import Path
 from shutil import copyfile
@@ -8,6 +9,41 @@ import pytest
 
 from tests.candidate_certificate import direct_flow
 from tests.candidate_certificate.generate_sources import sha256_file
+
+
+def test_feasibility_wrapper_preserves_the_admitted_producer_handoff() -> None:
+    """Moved admission controls still protect the actual feasibility caller."""
+    root = Path(__file__).parents[1]
+    tree = ast.parse((root / direct_flow.INITIAL_CONDITIONS_SOURCE).read_text())
+    assert any(
+        isinstance(node, ast.ImportFrom)
+        and node.module == "_lcm.simulation.memory"
+        and any(
+            alias.name == "run_simulation_producer" and alias.asname is None
+            for alias in node.names
+        )
+        for node in tree.body
+    )
+    wrapper = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_run_profiled_feasibility"
+    )
+    assert ast.get_docstring(wrapper) is not None
+    expected = ast.parse(
+        "return run_simulation_producer("
+        "memory=memory, function=function, arguments=arguments)"
+    ).body
+    assert [ast.dump(node) for node in wrapper.body[1:]] == [
+        ast.dump(node) for node in expected
+    ]
+    assert (
+        "run_simulation_producer"
+        in direct_flow._SIMULATION_ADAPTER_CONTRACTS[
+            direct_flow.SIMULATION_MEMORY_SOURCE
+        ][1]
+    )
 
 
 def test_feasibility_controls_are_complete_and_disjoint() -> None:
