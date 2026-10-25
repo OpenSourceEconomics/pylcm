@@ -962,6 +962,9 @@ def test_regime_draw_reads_carried_value() -> None:
         regime_id_class=_RegimeId,
         initial_nodes={60: "working"},
     )
+    declarations = model.initial_state_grids(regime_name="working")
+    assert declarations["pension_wealth"] is working.states["pension_wealth"]
+    assert isinstance(declarations["pension_wealth"], Phased)
     params = _solve_params(model)
     result = model.simulate(
         log_level="debug",

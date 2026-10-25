@@ -45,9 +45,9 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 ### Categories with characteristics
 
 - `characteristics(category_class=..., by_category=...)` checks a table that lists
-  every category's `int` or `bool` characteristics against a categorical class and
+  every category's `int`, `bool` or finite `float` characteristics against a categorical class and
   returns read-only arrays indexed by code. `category_with(columns, **characteristics)`
-  maps bool or signed-integer characteristics back to a category code under `jit` and
+  maps only bool or signed-integer identifying columns back to a category code under `jit` and
   `vmap`, returning the int32 minimum where no category matches. A new user-guide page shows how to declare,
   publish and read such characteristics.
 

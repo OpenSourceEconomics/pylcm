@@ -4957,11 +4957,44 @@ class Model:
             call_roots=(states, space.states, grids, outputs),
         )
 
+    def initial_state_grids(
+        self, *, regime_name: RegimeName
+    ) -> MappingProxyType[StateName, StateEntry]:
+        """Return immutable public state declarations for initial-condition recipes.
+
+        Composite states expose their original member grids instead of the
+        generated code grid. Other declarations retain their finalized user
+        form, including `Phased` and joint-normal coordinates. This is not
+        a mapping of value-array axes: use `state_names` and `state_grid` for
+        those, and `initial_state_names` for physical per-subject names.
+
+        A composite model restored from an archive without original member-grid
+        metadata must be rebuilt to use this inspection method.
+        """
+        regime = self.user_regimes.get(regime_name)
+        if regime is None:
+            raise InvalidSimulationInputError(
+                f"Unknown regime {regime_name!r}; known: {tuple(self.user_regimes)}."
+            )
+        grids = dict(regime.states)
+        for name, lowering in self._composite_states.items():
+            if name not in grids:
+                continue
+            if not lowering.member_grids:
+                raise InvalidSimulationInputError(
+                    "Composite member-grid metadata is unavailable in this "
+                    "archive; rebuild the model to inspect initial-state grids."
+                )
+            grids.pop(name)
+            grids.update(lowering.member_grids[regime_name])
+        return MappingProxyType(grids)
+
     def initial_state_names(self, *, regime_name: RegimeName) -> tuple[StateName, ...]:
         """Return physical per-subject state names for initial observations.
 
         Includes folded and carried states. Joint-normal coordinates are replaced
-        by their declared physical names; value-array axes remain `state_names`.
+        by their declared physical names and composite codes by their members;
+        value-array axes remain `state_names`.
         """
         regime = self._regimes.get(regime_name)
         if regime is None:
@@ -4969,6 +5002,10 @@ class Model:
                 f"Unknown regime {regime_name!r}; known: {tuple(self._regimes)}."
             )
         names = dict.fromkeys(regime.simulation.state_names)
+        for name, lowering in self._composite_states.items():
+            if name in names:
+                names.pop(name)
+                names.update(dict.fromkeys(lowering.members))
         for group, process in joint_normal_declarations(
             regime.simulation.grids
         ).items():
