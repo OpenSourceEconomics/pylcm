@@ -242,9 +242,15 @@ def plan_component_jobs(
         job_rows_sha256 = None
         code_counts = None
     else:
-        canonical, flat_params = model._canonical_feasibility_inputs(  # noqa: SLF001
+        canonical, flat_params, supplied_frames = model._canonical_feasibility_inputs(  # noqa: SLF001
             initial_conditions=initial_conditions, params=params
         )
+        if supplied_frames.entries:
+            raise ExecutionPlanningError(
+                "Component job populations require ordinary state columns; "
+                "tagged current IID inputs are not represented by their population "
+                "digest and worker transport."
+            )
         job_rows_sha256, code_counts = _planned_rows(
             model=model,
             jobs=jobs,

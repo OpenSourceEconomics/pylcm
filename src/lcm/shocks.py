@@ -784,14 +784,9 @@ class ShockGroup:
                 if item.name != "categories"
             }
             if scalar_cell_group is not None:
-                for parameter, value in parameters.items():
-                    expected_rank = 1 if parameter == "probs" else 0
-                    if value.ndim != expected_rank:
-                        raise ShockDeclarationError(
-                            f"Group {scalar_cell_group!r}, shock {name!r}: "
-                            f"{parameter} must resolve to a scalar cell parameter "
-                            "(or a single categorical probability vector)."
-                        )
+                _check_scalar_law_parameters(
+                    parameters=parameters, group_name=scalar_cell_group, shock_name=name
+                )
             shapes = [
                 value.shape[:-1] if key == "probs" else value.shape
                 for key, value in parameters.items()
@@ -813,20 +808,10 @@ class ShockGroup:
             if isinstance(law, Discrete):
                 probs = parameters["probs"]
                 if nodes is None:
-                    last_positive = jnp.max(
-                        jnp.where(probs > 0, jnp.arange(probs.shape[-1]), -1), axis=-1
+                    code, code_valid = _sample_discrete(
+                        coordinate=coordinate, probs=probs
                     )
-                    cdf = jnp.where(
-                        jnp.arange(probs.shape[-1]) >= last_positive[..., None],
-                        1.0,
-                        jnp.cumsum(probs, axis=-1),
-                    )
-                    code = jnp.sum(coordinate[..., None] >= cdf, axis=-1).astype(
-                        jnp.int32
-                    )
-                    valid &= jnp.all((coordinate >= 0) & (coordinate < 1)) & jnp.all(
-                        code < probs.shape[-1]
-                    )
+                    valid &= code_valid
                     values[name] = code
                 else:
                     codes = nodes.discrete_codes[name]
@@ -1057,6 +1042,23 @@ def _validate_fixed_law(law: _Law) -> None:
             raise ShockDeclarationError(f"{name} must be nonnegative.")
 
 
+def _check_scalar_law_parameters(
+    *,
+    parameters: Mapping[ParameterName, FloatND],
+    group_name: str,
+    shock_name: ShockName,
+) -> None:
+    """Keep one common scalar-cell parameter boundary for forward and support."""
+    for parameter, value in parameters.items():
+        expected_rank = 1 if parameter == "probs" else 0
+        if value.ndim != expected_rank:
+            raise ShockDeclarationError(
+                f"Group {group_name!r}, shock {shock_name!r}: "
+                f"{parameter} must resolve to a scalar cell parameter "
+                "(or a single categorical probability vector)."
+            )
+
+
 def _law_validity(*, law: _Law, parameters: Mapping[ParameterName, FloatND]) -> BoolND:
     valid = jnp.ones((), dtype=bool)
     for value in parameters.values():
@@ -1088,6 +1090,28 @@ def _law_validity(*, law: _Law, parameters: Mapping[ParameterName, FloatND]) -> 
             & jnp.all(jnp.abs(jnp.sum(probs, axis=-1) - 1) <= tolerance)
         )
     raise ShockDeclarationError("Unsupported shock law.")
+
+
+def _discrete_cdf(*, probs: FloatND) -> FloatND:
+    """Share the represented category intervals between sampling and support."""
+    last_positive = jnp.max(
+        jnp.where(probs > 0, jnp.arange(probs.shape[-1]), -1), axis=-1
+    )
+    return jnp.where(
+        jnp.arange(probs.shape[-1]) >= last_positive[..., None],
+        1.0,
+        jnp.cumsum(probs, axis=-1),
+    )
+
+
+def _sample_discrete(*, coordinate: FloatND, probs: FloatND) -> tuple[IntND, BoolND]:
+    """Apply the existing inverse CDF to an explicitly supplied coordinate."""
+    cdf = _discrete_cdf(probs=probs)
+    code = jnp.sum(coordinate[..., None] >= cdf, axis=-1).astype(jnp.int32)
+    valid = jnp.all((coordinate >= 0) & (coordinate < 1)) & jnp.all(
+        code < probs.shape[-1]
+    )
+    return code, valid
 
 
 def _continuous_value(

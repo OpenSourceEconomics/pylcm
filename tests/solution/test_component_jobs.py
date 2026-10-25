@@ -14,16 +14,20 @@ from typing import Literal
 import h5py
 import jax
 import numpy as np
+import pandas as pd
 import pytest
 
 import lcm
 from _lcm import version
 from _lcm.egm.upper_envelope._exact_affine import ffi
 from _lcm.persistence.solution import _array_checksum
-from _lcm.typing import PytreeValue
+from _lcm.simulation.current_iid_entry import SuppliedEntryFrames
+from _lcm.simulation.current_iid_overrides import SimulationInitialConditionsInput
+from _lcm.typing import FlatParams, InitialConditions, PytreeValue
 from lcm import InvariantBlockSchedule, Model
 from lcm.exceptions import ExecutionPlanningError, SolutionIntegrityError
 from lcm.result import SimulationResult
+from lcm.shocks import PhysicalValues
 from lcm.solver_api import SolutionResult
 from lcm.typing import RegimeName, UserParams
 from tests.simulation import test_type_grouped_simulation as life_cycle
@@ -48,6 +52,57 @@ def _model(*, enable_jit: bool = True) -> Model:
         ),
         enable_jit=enable_jit,
     )
+
+
+def test_component_plan_rejects_supplied_entry_frames_before_publication(
+    *, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The canonicalizer handoff cannot silently lose tagged population inputs."""
+    component_jobs = importlib.import_module("lcm.component_jobs")
+    model = _model()
+    params = life_cycle._params(typed_dead=True)
+    initial = life_cycle._initial()
+    canonicalize = Model._canonical_feasibility_inputs
+
+    # keyword-only-exempt: library-callback=Model._canonical_feasibility_inputs
+    def _with_supplied_frame(
+        self: Model,
+        *,
+        initial_conditions: SimulationInitialConditionsInput | pd.DataFrame,
+        params: UserParams,
+        use_categorical_codes: bool = False,
+    ) -> tuple[InitialConditions, FlatParams, SuppliedEntryFrames]:
+        canonical, flat_params, supplied = canonicalize(
+            self,
+            initial_conditions=initial_conditions,
+            params=params,
+            use_categorical_codes=use_categorical_codes,
+        )
+        assert not supplied.entries
+        return (
+            canonical,
+            flat_params,
+            SuppliedEntryFrames(
+                entries={
+                    "income": PhysicalValues(values=np.zeros(len(initial["wealth"])))
+                },
+                flat_params=flat_params,
+            ),
+        )
+
+    monkeypatch.setattr(Model, "_canonical_feasibility_inputs", _with_supplied_frame)
+    directory = tmp_path / "jobs"
+    assert not directory.exists()
+    with pytest.raises(ExecutionPlanningError, match="tagged current IID inputs"):
+        component_jobs.plan_component_jobs(
+            model=model,
+            params=params,
+            directory=directory,
+            n_jobs=3,
+            initial_conditions=initial,
+            seed=7,
+        )
+    assert not directory.exists()
 
 
 type _LeafBytes = tuple[str, tuple[int, ...], bytes]

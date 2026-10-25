@@ -15,6 +15,7 @@ from _lcm.current_iid import (
     CurrentIIDDrawFrame,
     CurrentIIDDrawPlan,
 )
+from _lcm.shock_overrides import supplied_group_values
 from _lcm.shock_registry import ShockBinding
 from lcm import categorical
 from lcm import shocks as sh
@@ -617,3 +618,45 @@ def test_exact_identity_allows_partial_physical_and_runtime_change_refuses(
             overrides=overrides,
         )
         assert not bool(refused.valid)
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+@pytest.mark.parametrize(
+    ("rho", "sigma"), [(0.0, 1.0), (0.6, 1.0), (1.0, 1.0), (1.0, 0.0)]
+)
+def test_seedless_supplied_group_keeps_physical_bits_and_exact_joint_support(
+    *, rho: float, sigma: float
+) -> None:
+    """A support witness is not a latent draw, including singular constant laws."""
+    group = sh.ShockGroup(
+        shocks={"a": sh.Normal(mu=2, sigma=sigma), "b": sh.Normal(mu=2, sigma=sigma)},
+        correlation=((1.0, rho), (rho, 1.0)),
+        nodes=sh.MonteCarlo(1, seed=0),
+    )
+    observed = {
+        "b": sh.PhysicalValues(values=jnp.asarray(2.0)),
+        "a": sh.PhysicalValues(values=jnp.asarray(2.0)),
+    }
+    physical, valid = supplied_group_values(
+        group=group,
+        supplied=observed,
+        params={},
+        inputs={},
+        admitted_correlation_support=None,
+    )
+    assert bool(valid)
+    for name in group.shocks:
+        np.testing.assert_array_equal(physical[name], observed[name].values)
+    if rho == 1.0:
+        contradictory = dict(observed)
+        contradictory["b"] = sh.PhysicalValues(
+            values=jnp.nextafter(jnp.asarray(2.0), jnp.asarray(3.0))
+        )
+        _, consistent = supplied_group_values(
+            group=group,
+            supplied=contradictory,
+            params={},
+            inputs={},
+            admitted_correlation_support=None,
+        )
+        assert not bool(consistent)

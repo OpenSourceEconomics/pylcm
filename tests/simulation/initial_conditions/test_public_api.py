@@ -7,10 +7,12 @@ import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 import pytest
+from jax import Array
 
 from lcm import (
     AgeGrid,
     DeterministicTransition,
+    InitialNodes,
     IrregSpacedGrid,
     LinSpacedGrid,
     Model,
@@ -19,9 +21,13 @@ from lcm import (
 )
 from lcm.exceptions import (
     InvalidInitialConditionsError,
+    InvalidSimulationInputError,
     ModelSealError,
+    ShockDeclarationError,
+    UnsupportedOperationError,
 )
 from lcm.regime import Regime as UserRegime
+from lcm.shocks import BaseInnovations, Normal, PhysicalValues, ShockGroup, UserNodes
 from lcm.transition import AgeSpecializedFunction
 from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
 from tests.regime_building.test_collective_regime_simulate import (
@@ -691,3 +697,132 @@ def test_collective_start_without_roles_is_rejected_like_simulate(method: str) -
         getattr(model, method)(initial_conditions=initial, params=DISSOLUTION_PARAMS)
 
     assert str(from_method.value) == str(from_simulate.value)
+
+
+def _tagged_current_entry_model(*, shock_constraint: bool = True) -> Model:
+    """A terminal current-shock problem with independent literal entry oracles."""
+
+    @categorical(ordered=False)
+    class EntryRegimeId:
+        alive: ScalarInt
+
+    def utility(*, consumption: ContinuousAction) -> FloatND:
+        return consumption
+
+    def affordable(
+        *, consumption: ContinuousAction, wealth: ContinuousState, eps: FloatND
+    ) -> BoolND:
+        return consumption <= wealth + eps
+
+    def utility_with_shock(*, consumption: ContinuousAction, eps: FloatND) -> FloatND:
+        return consumption + eps
+
+    def affordable_without_shock(
+        *, consumption: ContinuousAction, wealth: ContinuousState
+    ) -> BoolND:
+        return consumption <= wealth
+
+    return Model(
+        regimes={
+            "alive": UserRegime(
+                states={"wealth": LinSpacedGrid(start=1, stop=2, n_points=2)},
+                actions={"consumption": LinSpacedGrid(start=0, stop=1, n_points=2)},
+                functions={
+                    "utility": utility if shock_constraint else utility_with_shock
+                },
+                constraints={
+                    "affordable": affordable
+                    if shock_constraint
+                    else affordable_without_shock
+                },
+                shocks=("entry",),
+            )
+        },
+        shocks={
+            "entry": ShockGroup(
+                shocks={"eps": Normal(mu=0, sigma=1)},
+                nodes=UserNodes(
+                    nodes=np.array([[-1.0], [0.0], [1.0]]),
+                    weights=np.array([0.25, 0.5, 0.25]),
+                ),
+            )
+        },
+        n_periods=1,
+        edges={},
+        initial_nodes=InitialNodes(by_period={0: "alive"}),
+        regime_id_class=EntryRegimeId,
+        enable_jit=False,
+    )
+
+
+def test_tagged_current_physical_values_determine_public_entry_feasibility() -> None:
+    """Identical states can have different feasibility under supplied entry shocks."""
+
+    model = _tagged_current_entry_model()
+    # These physical values are off the declared nodes. The zero action keeps
+    # every declared quadrature node feasible at wealth one.
+    initial: dict[str, Array | PhysicalValues] = {
+        "period": jnp.zeros(4, dtype=jnp.int32),
+        "wealth": jnp.ones(4),
+        "regime_id": jnp.full(4, model.regime_names_to_ids["alive"], dtype=jnp.int32),
+        "eps": PhysicalValues(values=jnp.array([0.25, -1.25, 0.75, -1.75])),
+    }
+
+    mask = model.initial_conditions_feasibility(initial_conditions=initial, params={})
+
+    np.testing.assert_array_equal(mask, np.array([True, False, True, False]))
+    with pytest.raises(InvalidInitialConditionsError):
+        model.validate_initial_conditions(initial_conditions=initial, params={})
+
+
+def _tagged_entry_initial(
+    *, model: Model, value: PhysicalValues | BaseInnovations | None
+) -> dict[str, Array | PhysicalValues | BaseInnovations]:
+    initial: dict[str, Array | PhysicalValues | BaseInnovations] = {
+        "period": jnp.zeros(4, dtype=jnp.int32),
+        "wealth": jnp.ones(4),
+        "regime_id": jnp.full(4, model.regime_names_to_ids["alive"], dtype=jnp.int32),
+    }
+    if value is not None:
+        initial["eps"] = value
+    return initial
+
+
+def test_supplied_entry_bases_forward_to_the_same_public_feasibility() -> None:
+    """Normal(0,1) maps the supplied coordinates to the same physical values."""
+    model = _tagged_current_entry_model()
+    initial = _tagged_entry_initial(
+        model=model, value=BaseInnovations(values=jnp.array([0.25, -1.25, 0.75, -1.75]))
+    )
+    mask = model.initial_conditions_feasibility(initial_conditions=initial, params={})
+    np.testing.assert_array_equal(mask, np.array([True, False, True, False]))
+
+
+def test_seedless_entry_helpers_require_their_actual_constraint_observation() -> None:
+    """Helpers cannot invent a draw for a genuinely demanded physical leaf."""
+    model = _tagged_current_entry_model()
+    initial = _tagged_entry_initial(model=model, value=None)
+    with pytest.raises(UnsupportedOperationError, match=r"alive.*eps.*period"):
+        model.initial_conditions_feasibility(initial_conditions=initial, params={})
+    with pytest.raises(UnsupportedOperationError, match=r"alive.*eps.*period"):
+        model.validate_initial_conditions(initial_conditions=initial, params={})
+
+
+def test_supplied_entry_tags_are_validated_even_without_a_shock_constraint() -> None:
+    """A supplied tag is checked; an unneeded absent draw is not manufactured."""
+    model = _tagged_current_entry_model(shock_constraint=False)
+    ordinary = _tagged_entry_initial(model=model, value=None)
+    np.testing.assert_array_equal(
+        model.initial_conditions_feasibility(initial_conditions=ordinary, params={}),
+        np.ones(4, dtype=bool),
+    )
+    invalid = _tagged_entry_initial(
+        model=model, value=PhysicalValues(values=jnp.array([jnp.nan, 0.0, 0.0, 0.0]))
+    )
+    with pytest.raises(ShockDeclarationError, match="Invalid supplied entry frame"):
+        model.initial_conditions_feasibility(initial_conditions=invalid, params={})
+    malformed = _tagged_entry_initial(
+        model=model, value=PhysicalValues(values=jnp.ones((2, 2)))
+    )
+    with pytest.raises(InvalidSimulationInputError, match="requires shape"):
+        model.validate_initial_conditions(initial_conditions=malformed, params={})

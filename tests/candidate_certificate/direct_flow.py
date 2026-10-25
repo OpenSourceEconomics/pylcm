@@ -587,7 +587,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 # Source seals and corridor anchors require semantic verification of the combined
 # inventories before refresh; these inherited pins deliberately retain that gate.
 _SOURCE_SEALS = {
-    "src/_lcm/current_iid.py": "98b7c6a8fee3f03a05f190651de79c9aa26bfb5fab0886ae4b97772afa7e0f57",
+    "src/_lcm/current_iid.py": "446197c595a530111419b718ed9e6f5dee5fa32136caf95979c0fcbf9f559aaf",
     "src/_lcm/simulation/current_iid.py": "c675e9dffaa205b4049bf4c26438a70005766c368bc69a3dbb1d6e35cb66db99",
     "src/_lcm/egm/asset_row.py": "d7389b5048707dd9657638c790f9afbd8feb27893bcfd2bd6659da66199b069c",
     "src/_lcm/egm/continuation.py": "5a25a1183c81ef4c3e8e3c4aaebc6e4797ce04c9c55b88edefa7de7fc7946f9f",
@@ -711,11 +711,11 @@ _SOURCE_SEALS = {
     SIMULATION_SOURCE: "13057b7743dbfc13bd1b25936d26d43205ce588f6d694bc0a2b80d9f4dd6078b",
     SIMULATION_TRANSITIONS_SOURCE: "5cef83cc6d594d6d7004dee5cfc82dec5be33d669ac7779d3f9a393058e548da",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
-    MODEL_SOURCE: "e5640ad99328aed63dbcac9fdecd2a23bf3fb5139c79399220952b413cd9e303",
+    MODEL_SOURCE: "e3db7cf83bfd70545ccf238612c1ed4eb6ba5d03238fcfd93db31f9d9ab97571",
     SOLVER_API_SOURCE: "bc9e7cd94009998acfc1f11d8da823475030879790a49f8192e1260012496c96",
     BACKWARD_INDUCTION_SOURCE: "90243ee031603f3b5255eaa013b604aafb7903c410618d736dd27194873975ed",
     PERIOD_REPLAY_SOURCE: "2f0253693e474c70760a80ab6c07b5bdeb25ffa4aa77224e27ea5d15af5b1a55",
-    INITIAL_CONDITIONS_SOURCE: "32cd0e16e0179ef9ef659a3cf87957233fee9680bdef812d44047ba86710f213",
+    INITIAL_CONDITIONS_SOURCE: "56d7b5d7435b50207d9bab7f0eb2142a5fe5aa38d5f9a958a2adabd4d3131827",
     RESULT_SOURCE: "a84d216d5063b60fb5cd14548266986da36d2f32caee7a4f806a2b5261872814",
     RESULT_DATAFRAME_SOURCE: "25a69be5f649e3b52dbcebd63656dd62311164fd4aa2b9d31051e14fe5b9864b",
     RESULT_METADATA_SOURCE: "ba9ec4f48e7df67b4a57a35cd3e781906d7ef64a35f3bc37238033c1c168df3e",
@@ -761,8 +761,8 @@ _SOURCE_SEALS = {
     "src/_lcm/egm/ez_kernel.py": "568caa5183613de012ae4c7b433b5bf058d5594ef3d5263963c25f2b7302c269",
     "src/_lcm/power_mean.py": "1580447a1ca5f6385556438105069bfb15d211bd6da40819b096ad84b2e77cb5",
     "src/_lcm/simulation/random_address.py": "17f60140770dbd144c57cfd3daccb76a88196acd9e681f2abff8c2eefb37a913",
-    "src/lcm/shocks.py": "0afdce985697fd971c0d9458ec7a9537731c8b7dddf650554999775240990868",
-    "src/_lcm/shock_overrides.py": "4ae4a8a7afc16b25970024080a663fdb1ea134d65491b37cdc5d5e1066f0e4d6",
+    "src/lcm/shocks.py": "118892103b41719b529842e83ed05d9d82f1c27ce3d9d6b03f197f98b68c1ccc",
+    "src/_lcm/shock_overrides.py": "40187092b68c124e6e6cea49ab7922857fa303abd75b6c9f72c0081f4b5f59f5",
     "src/_lcm/simulation/current_iid_overrides.py": "7365d115e3f0d1d8e3b1235227645c85896ff3444dfa7259d35dfc5d13b840a9",
 }
 
@@ -788,13 +788,13 @@ EXPECTED_UNIFORM_PROCESS_MUTATION_NAMES_SHA256 = (
 # that no family selects is a verifier error rather than a silent no-op.
 _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
     "src/lcm/shocks.py": (
-        "f5da3b0a8a8cd27dd0a2fca0b0ba4f51ad3db37e9e70da1f58abf04728641321",
+        "82a1cddf6936b6c31569f5df723c1371b61cc982bc82b435402a063373c4482c",
         {
             "BaseInnovations.__post_init__": "f881b9a60ffff3c463ce4634482537616c91472d0d6c0738852bd1abe0887525",
             "PhysicalValues.__post_init__": "a7ae8f2100a70874e481e2bab3ed06ba2099ba794e6467a542b0dce42c2e7d22",
             "ShockGroup._correlation_factor": "63131c3fc79d6ea15d665202027320733069aa201528b47a83a3290642c9ab41",
             "ShockGroup._has_identity_correlation": "64d074fcb1627d6131ef7e6bf2cbe83680517393bedb055cb111d9b0915f01ca",
-            "ShockGroup._realise": "ea6c3d934cf5ba92fd9751cd125503556bd5124b0a0270c9537902f2f1b286c0",
+            "ShockGroup._realise": "679cc71ccda5b7e17cc632c9332e840808a35dcadba561a7f2be551c444fdd82",
             "ShockGroup.validate_runtime_correlation": "43808302a68465c883813581ac0c7f8e22724e1e04d546536814358e30204d26",
             "_continuous_value": "2cfd7501a31336a6508ac7c448029e2bf07d1da0ce2f95604fe6ae553871f8f6",
             "_correlation_pivots": "00aa6d7b708eed0e08b2586c83a7f8b50bbb57bdfa208e7cc0dd569d93b93268",
@@ -806,14 +806,14 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/shock_overrides.py": (
-        "6dbe49ce7b0a263e6b4920971e11df81970f403004238a4d949844546a31d0cc",
+        "704f3ca54670c40fe59fcd9a2d31aef99e3cad5499e38d48c5ac4175b9004895",
         {
             "_flatten_override": "edb14b6f253fe08300be4c6a0fb384d53654bf5a4460590cc9312c05eb82639a",
             "_flatten_override_with_keys": "b59c5584a47f2d873fbb65f9a90d02690c3c9917ead9ef29fccba4624f570db4",
             "_unflatten_override": "1948a8607582b4202a2211d79232cead2e7ed51f86edbcb86d84f9641b8bfa79",
-            "_inverse": "b0161b7c19fb88a0dd60be09522d15830f806d3d74ff55ac1a61f27d4e6a73a5",
-            "_recover_correlated": "660c83959773ba76b075df0484e207546b5689dadaff2f9538eb3262571461a4",
-            "apply_overrides": "5489fff15cf1424c6372eaa164fb9dba11a0b311c5c3f6f1ff9b28ee947717d3",
+            "_inverse": "62519a8fa4dac189ece08dadf6520d6d8ebd7f76d596f2239d2e16b030c22e61",
+            "_recover_correlated": "324f06fdc6901cf43da77f8d6c262eb51021adbc80a057e9ee4195a1972aac34",
+            "apply_overrides": "8829911a548faec9548d02c9f4a0f137a8b141b3b4d0327bb35a396ac3e5840c",
         },
     ),
     _CURRENT_IID_OVERRIDES_SOURCE: (
@@ -827,7 +827,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/current_iid.py": (
-        "d7e0b85efc5441284ed87c919a89983c344858fac6e1953267bb7d0c0d6a0cc9",
+        "bc9ea3a8f0901f5b6c5ddf9aff6e6a0dca9c76ccba7f9cbb237fe0dc2a6bd268",
         {
             "CurrentIIDPlan.wrap": "a9fcdbcb96e54728e40fcbfad47a7d8b47804e6fc027799a4580b0210e42ac34",
             "CurrentIIDPlan.realise_nodes": "10f8f048fa4869011b54643a8b587a935d5cb357c4fec4d81fbe3b052b91cd49",
@@ -838,7 +838,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_CurrentIIDExpectation.__call__": "a5c7ad3150940b478a373f5f6f6e8370c9a246221a90986ccd896b62b58df417",
             "_CurrentIIDDraw.__call__": "5778e92311929a7533b4f21b933a0ba754515ecf928fd27704aad842c52fd4ee",
             "_evaluate_node": "c628b5107c477ccf0dd688ec0d29b1a2f626a4a49298f9fb364a41476070958e",
-            "CurrentIIDDrawPlan.realise": "a7be3cace7f7d9f7c1f47762f52964dfb92a8204ba95624063f04a228a787802",
+            "CurrentIIDDrawPlan.realise": "1c2c01b4f1a813501e97abd9ed98b1de5c1ff6db22be31dde6e3c7d25168cba4",
             "_draw_base_value": "4554e685f57a99188070a0050d53d1caa2b36c79d9c023ed629ea25aece79746",
             "_law_inputs": "b29f6f0fc9a9a5e0e206bad5d4888e74fdcef311ca2fe8aac47160398bde06a0",
         },
@@ -1102,19 +1102,19 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     INITIAL_CONDITIONS_SOURCE: (
-        "184a54b95e972a71924c506de2f818ee9fffd674463607b74c2f46d8c3175807",
+        "0ee7169dee40ffd817d37c7a56c6ef4cd6d442c7ec336e47bce425d0282fe13b",
         {
             "validate_simulation_inputs": "ec6295251006afe599dcb6d008c7e75f125c0703f262c8a194d54ca251bb968d",
             "_preflight_memory": "f422d02e3553d6c9f839dc586e7237deb82b365276c58942e782184fb6ac89de",
             "_discrete_initial_specs": "6e837939569bad3b27093ab4a14ce38ad16756f86910f37127432d07291195a6",
             "_pack_initial_summary": "e674412100af558aae66243e25060f3ce8538ffd4ad138c7e0effd58e1e3357e",
             "_read_initial_cohorts": "a720c185a1ac905d76fb08dcdba34b7a964b9bf8cf461ad31f7f4e29c86ab8e2",
-            "validate_initial_conditions": "5bd4508a22bf98537aac6bbf158f2fd0179f99fb508e68a3f41ffbefe7ec4942",
-            "_collect_feasibility_errors": "d0bd840b743a8538832ee5aa8a10e023e92cfa9b8559d077d9ce0973cc18ba42",
+            "validate_initial_conditions": "fe4e171bc628e2e626cc4551ecae5f34e68f0006c2d1a53b7e127f31fa864ec7",
+            "_collect_feasibility_errors": "9db3ff89bcbe114772b975e89747c1e1dea401d4789901b4fedceecc362de2fd",
             "_regime_views_by_start_pool": "c88cc1b948f62f55650b7be5d63e58096b570fad5c434328addc50de805c0da6",
             "_constraints_read_age_specialized_functions": "fe0bd564dc6a3bfbff42a2109c9cccc2eeecafd71d27036f48431af4c19a4b83",
-            "_check_regime_feasibility": "72c808a53cc090e4f17b2a1bdc4b717e15e90bf2c2327f07f1fdb77e46e6f01b",
-            "_regime_feasibility_mask": "1481a07c22127ab3fd5dbdfdc8075ab0f88e6da89b246f2fbf6b96460437012e",
+            "_check_regime_feasibility": "ea0c4a0511cb581f1dd1a71921f2a6e194ba66ac35b7ad94e5f42dc9bebcdd09",
+            "_regime_feasibility_mask": "0f9734f77d5bfc6a0b00d4796d87e263e3e58d08e4aa87476d6db2e206de8308",
             "_run_profiled_feasibility": "d741a229891de99952c847d28d2a3c7a5f4718d83f7ea24ac30fbee81591a25f",
             "_batched_feasibility_check": "9a4fdd6ce7fed08a0ac43507ba4f4167d9683bd84bb5b044abfc00f089cafcbe",
             "_evaluate_constant_feasibility": "598395298e67b40806256a1626043ffde0d3df09293e86a0c221cb266315bbd3",
@@ -1577,7 +1577,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     MODEL_SOURCE: (
-        "bf8817d85e7bfc79c162dd0f061a50ca8eb66d08ca93365b9557c8651292f6c1",
+        "698a194551666c62dabe9a9f6f2d06bca640efd0abbf66287cd6c57905959875",
         {
             "_validate_sharded_state_capability": "ee8b7e8a97fd413d2376a655558ea7b2a2ab61589a0ddd624ed44b69dfe5fa8d",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",

@@ -44,6 +44,7 @@ from _lcm.regime_building.Q_and_F import _BoundFeasibility, _get_feasibility
 from _lcm.simulation import population_operations
 from _lcm.simulation.action_grids import PreflightActionGrids
 from _lcm.simulation.assembly import slice_array
+from _lcm.simulation.current_iid_entry import SuppliedEntryFrames
 from _lcm.simulation.host_operations import ProfiledSimulationOperations, _BuilderInput
 from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
 from _lcm.simulation.operand_placement import place_simulation_arguments
@@ -980,6 +981,7 @@ def validate_initial_conditions(
     process_grid_resolver: ProcessGridResolver | None = None,
     action_grid_resolver: PreflightActionGrids | None = None,
     memory: SimulationMemory | None = None,
+    supplied_frames: SuppliedEntryFrames | None = None,
 ) -> None:
     """Validate initial conditions (regimes, states, and feasibility).
 
@@ -1012,6 +1014,7 @@ def validate_initial_conditions(
         ages=ages,
     )
     feasibility_errors = _collect_feasibility_errors(
+        supplied_frames=supplied_frames,
         initial_states=initial_states,
         regime_id_arr=regime_arr,
         regime_names_to_ids=regime_names_to_ids,
@@ -1042,6 +1045,7 @@ def initial_conditions_feasibility_mask(
     flat_params: FlatParams,
     ages: TimeAxis,
     process_grid_resolver: ProcessGridResolver | None = None,
+    supplied_frames: SuppliedEntryFrames | None = None,
 ) -> Bool1D:
     """Return the per-subject feasibility mask of canonical initial conditions.
 
@@ -1099,6 +1103,7 @@ def initial_conditions_feasibility_mask(
             ages=ages,
         ):
             verdict = _regime_feasibility_mask(
+                supplied_frames=supplied_frames,
                 regime=regime_view,
                 regime_name=regime_name,
                 initial_states=initial_states,
@@ -1610,6 +1615,7 @@ def _collect_feasibility_errors(
     process_grid_resolver: ProcessGridResolver | None = None,
     action_grid_resolver: PreflightActionGrids | None = None,
     memory: SimulationMemory | None = None,
+    supplied_frames: SuppliedEntryFrames | None = None,
 ) -> list[str]:
     """Collect errors about action feasibility for each subject.
 
@@ -1649,6 +1655,7 @@ def _collect_feasibility_errors(
             cohorts=cohorts,
         ):
             msg = _check_regime_feasibility(
+                supplied_frames=supplied_frames,
                 regime=regime_view,
                 regime_name=regime_name,
                 initial_states=initial_states,
@@ -1990,6 +1997,7 @@ def _check_regime_feasibility(
     process_grid_resolver: ProcessGridResolver | None = None,
     action_grid_resolver: PreflightActionGrids | None = None,
     memory: SimulationMemory | None = None,
+    supplied_frames: SuppliedEntryFrames | None = None,
 ) -> str | None:
     """Explain which subjects of a regime lack every feasible action.
 
@@ -2016,6 +2024,7 @@ def _check_regime_feasibility(
 
     """
     verdict = _regime_feasibility_mask(
+        supplied_frames=supplied_frames,
         regime=regime,
         regime_name=regime_name,
         initial_states=initial_states,
@@ -2119,6 +2128,7 @@ def _regime_feasibility_mask(  # noqa: C901, PLR0912
     process_grid_resolver: ProcessGridResolver | None = None,
     action_grid_resolver: PreflightActionGrids | None = None,
     memory: SimulationMemory | None = None,
+    supplied_frames: SuppliedEntryFrames | None = None,
 ) -> _RegimeFeasibility | None:
     """Decide for each subject of a regime whether some action combination is feasible.
 
@@ -2232,6 +2242,24 @@ def _regime_feasibility_mask(  # noqa: C901, PLR0912
                 )[0],
                 dtype=jnp.int32,
             )
+
+    if supplied_frames is not None:
+        physical = supplied_frames.physical_inputs(
+            regime=regime,
+            regime_name=regime_name,
+            initial_states=initial_states,
+            indices=subject_indices,
+            periods=(
+                np.asarray(cohorts.periods, dtype=np.int32)
+                if cohorts is not None
+                else resolve_initial_periods(
+                    ages=ages, initial_ages=initial_states["age"]
+                )[0]
+            ),
+            needed=frozenset(accepted),
+            memory=memory,
+        )
+        subject_states = {**subject_states, **physical}
 
     # Split actions and params — actions are vmapped over, params are not
     action_kwargs: dict[str, FloatND | IntND] = {

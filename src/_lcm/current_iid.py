@@ -20,7 +20,11 @@ from dags import with_signature
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.probability import is_represented_zero
 from _lcm.processes.base import standard_normal
-from _lcm.shock_overrides import CurrentIIDOverride, apply_overrides
+from _lcm.shock_overrides import (
+    CurrentIIDOverride,
+    apply_overrides,
+    physical_recovery_status,
+)
 from _lcm.shock_registry import ShockBinding, ShockRegistry, law_input_validity
 from _lcm.typing import ArgmaxQOverAFunction, PRNGKeyND, PytreeValue, QAndFArg
 from _lcm.zero_safe import factored_weighted_term
@@ -249,20 +253,13 @@ class CurrentIIDDrawPlan:
                     )
                 enabled = jnp.asarray(active.get(shock, True))
                 supplied_physical = jnp.where(enabled, supplied_value, produced)
-                if produced.dtype.kind == "f":
-                    bits = jnp.uint64 if produced.dtype.itemsize == 8 else jnp.uint32  # noqa: PLR2004 - active IEEE float word width
-                    witnessed = jax.lax.bitcast_convert_type(
-                        produced, bits
-                    ) == jax.lax.bitcast_convert_type(supplied_physical, bits)
-                else:
-                    witnessed = produced == supplied_physical
-                # Singular joint support imposes cross-coordinate restrictions;
-                # independent/full-rank support is not an exact-native-image test.
-                valid &= ~override.requires_witness | witnessed
-                recovery_error[shock] = produced.astype(
-                    canonical_float_dtype()
-                ) - supplied_physical.astype(canonical_float_dtype())
-                valid &= jnp.isfinite(recovery_error[shock])
+                recovered_valid, error = physical_recovery_status(
+                    produced=produced,
+                    supplied=supplied_physical,
+                    requires_witness=override.requires_witness,
+                )
+                valid &= recovered_valid
+                recovery_error[shock] = error
                 physical[shock] = supplied_physical
             valid &= (
                 override.valid

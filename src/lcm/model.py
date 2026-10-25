@@ -163,6 +163,7 @@ from _lcm.shock_registry import (
 )
 from _lcm.simulation.chunk_admission import prepare_simulation_chunks
 from _lcm.simulation.compile import bind_simulation_runtime
+from _lcm.simulation.current_iid_entry import SuppliedEntryFrames
 from _lcm.simulation.current_iid_overrides import (
     ShockPathsInput,
     SimulationInitialConditionsInput,
@@ -5102,7 +5103,7 @@ class Model:
     def validate_initial_conditions(
         self,
         *,
-        initial_conditions: UserInitialConditionsInput | pd.DataFrame,
+        initial_conditions: SimulationInitialConditionsInput | pd.DataFrame,
         params: UserParams,
         use_categorical_codes: bool = False,
     ) -> None:
@@ -5116,6 +5117,12 @@ class Model:
         failure to a warning. The verdict does not depend on how the check is
         executed: at present it runs in one eager pass on the default device,
         without device-memory admission or subject padding.
+
+        Current-IID feasibility checks do not draw random values. When composed
+        feasibility needs a current shock, supply a `PhysicalValues` or
+        `BaseInnovations` entry record. Supplied records are validated against
+        their producing law even when feasibility does not read that shock.
+        Unsupported frame or producer combinations raise.
 
         Args:
             initial_conditions: Starting regime and states, one entry per
@@ -5136,13 +5143,14 @@ class Model:
             ModelSealError: If a binding captured at `Model(...)` has moved.
 
         """
-        canonical, flat_params = self._canonical_feasibility_inputs(
+        canonical, flat_params, supplied_frames = self._canonical_feasibility_inputs(
             initial_conditions=initial_conditions,
             params=params,
             use_categorical_codes=use_categorical_codes,
         )
         validate_canonical_initial_conditions(
             initial_conditions=canonical,
+            supplied_frames=supplied_frames,
             regimes=self._regimes,
             regime_names_to_ids=self.regime_names_to_ids,
             flat_params=flat_params,
@@ -5153,7 +5161,7 @@ class Model:
     def initial_conditions_feasibility(
         self,
         *,
-        initial_conditions: UserInitialConditionsInput | pd.DataFrame,
+        initial_conditions: SimulationInitialConditionsInput | pd.DataFrame,
         params: UserParams,
         use_categorical_codes: bool = False,
     ) -> Bool1D:
@@ -5168,6 +5176,12 @@ class Model:
         mask is all `True`. The verdict does not depend on how the check is
         executed: at present it runs in one eager pass on the default device,
         without device-memory admission or subject padding.
+
+        Current-IID feasibility checks do not draw random values. When composed
+        feasibility needs a current shock, supply a `PhysicalValues` or
+        `BaseInnovations` entry record. Supplied records are validated against
+        their producing law even when feasibility does not read that shock.
+        Unsupported frame or producer combinations raise.
 
         Args:
             initial_conditions: Starting regime and states, one entry per
@@ -5187,13 +5201,14 @@ class Model:
             ModelSealError: If a binding captured at `Model(...)` has moved.
 
         """
-        canonical, flat_params = self._canonical_feasibility_inputs(
+        canonical, flat_params, supplied_frames = self._canonical_feasibility_inputs(
             initial_conditions=initial_conditions,
             params=params,
             use_categorical_codes=use_categorical_codes,
         )
         return initial_conditions_feasibility_mask(
             initial_conditions=canonical,
+            supplied_frames=supplied_frames,
             regimes=self._regimes,
             regime_names_to_ids=self.regime_names_to_ids,
             flat_params=flat_params,
@@ -5203,12 +5218,19 @@ class Model:
     def _canonical_feasibility_inputs(
         self,
         *,
-        initial_conditions: UserInitialConditionsInput | pd.DataFrame,
+        initial_conditions: SimulationInitialConditionsInput | pd.DataFrame,
         params: UserParams,
         use_categorical_codes: bool = False,
-    ) -> tuple[InitialConditions, FlatParams]:
+    ) -> tuple[InitialConditions, FlatParams, SuppliedEntryFrames]:
         """Canonicalize public feasibility inputs without allocation accounting."""
         self._check_identity_runtime()
+        initial_conditions, current_entries, current_paths, _ = (
+            split_current_iid_inputs(
+                initial=initial_conditions,
+                paths=None,
+                names=frozenset(self._shock_registry.innovations),
+            )
+        )
         initial_conditions = lower_initial_time(
             initial_conditions=self._encode_initial_values(
                 initial_conditions=initial_conditions,
@@ -5252,7 +5274,24 @@ class Model:
             unread_names=self._transition_only_shock_names,
         )
         self._fail_if_entry_is_not_permitted(initial_conditions=canonical)
-        return canonical, flat_params
+        overrides = resolve_current_iid_overrides(
+            entries=current_entries,
+            paths=current_paths,
+            initial=canonical,
+            regimes=self._regimes,
+            ages=self._time,
+            regime_names_to_ids=self.regime_names_to_ids,
+        )
+        return (
+            canonical,
+            flat_params,
+            SuppliedEntryFrames(
+                entries=MappingProxyType({})
+                if overrides is None
+                else overrides.entries,
+                flat_params=flat_params,
+            ),
+        )
 
     def _encode_initial_values(
         self,
