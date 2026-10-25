@@ -1493,7 +1493,7 @@ def _run_period_kernel(
     selected_artifact_keys: frozenset[ArtifactKey],
     period_capture: CaptureContext | None = None,
     captured_admission: Mapping[str, Mapping[str, int | None]] = MappingProxyType({}),
-    V_templates: Mapping[RegimeName, ValueTemplate] = (MappingProxyType({})),
+    V_templates: Mapping[RegimeName, ValueTemplate] = MappingProxyType({}),
 ) -> KernelOutput:
     """Invoke one regime's period adapter for one period.
 
@@ -1652,8 +1652,6 @@ def _captured_next_values(
     V_templates: Mapping[RegimeName, ValueTemplate],
 ) -> MappingProxyType[RegimeName, FloatND]:
     """Return every template regime's next-period value, zeros where none is held."""
-    if not V_templates:
-        return MappingProxyType(dict(next_regime_to_V_arr))
     return MappingProxyType(
         {
             name: next_regime_to_V_arr[name]
