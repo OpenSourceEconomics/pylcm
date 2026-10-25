@@ -75,6 +75,8 @@ type _OperandLeaf = (
 # regime's function, constraint, transition or current-draw plan and schema.
 type _BuilderInput = (
     CurrentIIDDrawPlan
+    | Callable[..., PytreeValue]
+    | bool
     | RegimeName
     | RegimeTransitionFunction
     | tuple[ReferenceName, ...]

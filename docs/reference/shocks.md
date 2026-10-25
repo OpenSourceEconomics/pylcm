@@ -174,6 +174,15 @@ retain their original buffers through memory admission; only the current origina
 chunk is uploaded as draw operands. Native profiles carry array-free tag/dtype
 prototypes, and changing a tag or value cannot reuse a stale interpretation.
 
+Entry checks validate an explicitly observed target-only frame at the original subject's
+mapped producing context, with current parameters and the resolved clock. Fixed edge
+leaves survive runtime overrides of other slots; current-call values take precedence
+when both bind the same slot. An unavailable producer does not evaluate its numerical
+physical law. Hidden target-only inputs remain hidden during entry feasibility and are
+validated by the actual final actor when consumed. Seedless feasibility helpers do not
+select a policy to determine a hidden input's first producer; they explicitly refuse
+that unresolved producer context.
+
 The scalar draw producer returns exact supplied physical bits, addressed and held
 independent bases, producing parameters/inputs, recovery errors and mandatory validity.
 Cross-regime routing and EGM replay must preserve that producing context and bind their

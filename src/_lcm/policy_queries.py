@@ -32,7 +32,7 @@ from _lcm.execution.liveness import PlannedInputLiveness
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
 from _lcm.execution.pending_work import PendingSolveWork
 from _lcm.grids import DiscreteGrid
-from _lcm.params.edges import regime_kernel_params
+from _lcm.params.edges import EDGES, flat_namespaces, regime_kernel_params
 from _lcm.regime_building.argmax import argmax_and_max
 from _lcm.regime_building.collective import ParetoWeights, collective_argmax_and_readout
 from _lcm.regime_building.max_Q_over_a import _evaluate_pareto_weights
@@ -51,12 +51,19 @@ from _lcm.solution.grid_search import (
     grid_search_query_inputs,
 )
 from _lcm.time import TimeAxis
-from _lcm.typing import FlatParams, PytreeValue, QAndFKwargs, ShapeDtypePytree
+from _lcm.typing import (
+    FlatEdgeParams,
+    FlatParams,
+    FlatRegimeParams,
+    PytreeValue,
+    QAndFKwargs,
+    ShapeDtypePytree,
+)
 from _lcm.utils.dispatchers import productmap, vary_carry_like_body
 from lcm.exceptions import ExecutionPlanningError, UnsupportedOperationError
 from lcm.shocks import ShockGroupName
 from lcm.solver_api import KernelOutput
-from lcm.typing import BoolND, FloatND, IntND, RegimeName, UserFunction
+from lcm.typing import BoolND, FloatND, IntND, RegimeName, StateName, UserFunction
 
 _SOURCE = "_lcm_query_source"
 _LIVE = "_lcm_query_live"
@@ -470,6 +477,33 @@ class ScalarPolicyQueries:
                         )
                     },
                 )(context)
+                for name, node in self.definitions.items()
+            }
+        )
+
+    def frame_arguments(
+        self,
+        *,
+        source_state_names: frozenset[StateName],
+        flat_params: FlatParams,
+        ages: TimeAxis,
+        fixed_flat_params: FlatParams = MappingProxyType({}),
+    ) -> Mapping[str, Mapping[str, PytreeValue]]:
+        """Bind only clock and settlement operands, without policy value inputs."""
+        params = _query_flat_params(
+            flat_params=flat_params, fixed_flat_params=fixed_flat_params
+        )
+        return MappingProxyType(
+            {
+                name: {
+                    "period": jnp.int32(node.read.period),
+                    "age": ages.values[node.read.period],
+                    _PROJECTION: _projection_operands(
+                        node=node,
+                        source_state_names=source_state_names,
+                        flat_params=params,
+                    ),
+                }
                 for name, node in self.definitions.items()
             }
         )
@@ -1014,17 +1048,9 @@ class _QueryArguments:
         """Build the exact prototype shared by lowering and every real chunk."""
         context = replace(
             context,
-            flat_params=MappingProxyType(
-                {
-                    name: MappingProxyType(
-                        {
-                            **self.fixed_flat_params.get(name, {}),
-                            **context.flat_params.get(name, {}),
-                        }
-                    )
-                    for name in self.fixed_flat_params.keys()
-                    | context.flat_params.keys()
-                }
+            flat_params=_query_flat_params(
+                flat_params=cast("FlatParams", context.flat_params),
+                fixed_flat_params=self.fixed_flat_params,
             ),
         )
         arguments = dict(
@@ -1167,17 +1193,50 @@ def _query_projection_operands(
     *, node: QueryNode, context: CoreBuildContext
 ) -> Mapping[str, PytreeValue]:
     """Bind each producing context's exact current-call settlement parameters."""
-    source = cast("StateActionSpace", context.state_action_space)
+    return _projection_operands(
+        node=node,
+        source_state_names=frozenset(
+            cast("StateActionSpace", context.state_action_space).state_names
+        ),
+        flat_params=cast("FlatParams", context.flat_params),
+    )
+
+
+def _query_flat_params(
+    *, flat_params: FlatParams, fixed_flat_params: FlatParams
+) -> FlatParams:
+    """Merge canonical namespaces with current-call parameters taking precedence."""
+    namespaces: dict[tuple[str, ...], FlatRegimeParams] = {}
+    for parameters in (fixed_flat_params, flat_params):
+        for path, leaves in flat_namespaces(parameters):
+            namespaces[path] = MappingProxyType({**namespaces.get(path, {}), **leaves})
+    merged: dict[RegimeName, FlatRegimeParams | FlatEdgeParams] = {
+        path[0]: leaves for path, leaves in namespaces.items() if path[0] != EDGES
+    }
+    if EDGES in fixed_flat_params or EDGES in flat_params:
+        merged[EDGES] = MappingProxyType(
+            {path[1]: leaves for path, leaves in namespaces.items() if path[0] == EDGES}
+        )
+    return MappingProxyType(merged)
+
+
+def _projection_operands(
+    *,
+    node: QueryNode,
+    source_state_names: frozenset[StateName],
+    flat_params: FlatParams,
+) -> Mapping[str, PytreeValue]:
+    """Read the same canonical settlement paths for policies and entry frames."""
     operands = {}
     for name, path in node.read.operand_paths.items():
-        if name in source.state_names or name in {"period", "age"}:
+        if name in source_state_names or name in {"period", "age"}:
             continue
         if len(path) != _FLAT_OPERAND_PATH_LENGTH or not all(
             isinstance(step, str) for step in path
         ):
             raise ValueError("Query operands need canonical flat namespace paths.")
         operands[name] = regime_kernel_params(
-            cast("FlatParams", context.flat_params), regime_name=cast("str", path[0])
+            flat_params, regime_name=cast("str", path[0])
         )[cast("str", path[1])]
     return MappingProxyType(operands)
 
