@@ -12,6 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 import pytest
+from beartype.roar import BeartypeCallHintParamViolation
 
 from _lcm import transition_checks
 from _lcm.grids.continuous import _clip_grid_value
@@ -30,6 +31,7 @@ from _lcm.simulation.host_operations import (
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.residency import measure_buffer_footprint
 from _lcm.simulation.transitions import _clip_next_states
+from _lcm.solution.feasibility import BoundedResult, BoundInputStatus
 from _lcm.typing import EconFunctionArg, EconFunctionKwargs
 from benchmarks.asv._compile_counters import count_compile_requests
 from lcm import (
@@ -46,10 +48,12 @@ from lcm import (
     NormalIIDProcess,
     ProjectedRegimeValue,
     StakeholderRoute,
+    StateConditioned,
     StochasticTransition,
     Transition,
     ValueDependentConstraint,
     categorical,
+    fixed_transition,
 )
 from lcm.consumption_savings_regime import (
     ConsumptionSavingsRegime,
@@ -62,6 +66,7 @@ from lcm.exceptions import (
     InvalidValueFunctionError,
     OffGridPolicyError,
     OffGridStateError,
+    ShockDeclarationError,
 )
 from lcm.grids import (
     ContinuousGrid,
@@ -72,6 +77,7 @@ from lcm.grids import (
     PiecewiseLogSpacedGrid,
 )
 from lcm.regime import Regime
+from lcm.shocks import Normal, ShockGroup, UserNodes
 from lcm.solvers import EGM
 from lcm.typing import (
     BoolND,
@@ -94,6 +100,187 @@ from tests.simulation.test_entry_operation_reuse import _HostCompilation
 class RegimeId:
     alive: ScalarInt
     terminal: ScalarInt
+
+
+@categorical(ordered=True)
+class _CurrentRisk:
+    low: ScalarInt
+    high: ScalarInt
+
+
+def _off_grid_current_scale(sigma: float) -> FloatND:
+    return jnp.asarray(sigma)
+
+
+def _off_grid_current_landing(*, income: FloatND, risk: DiscreteState) -> FloatND:
+    return income - risk
+
+
+def _off_grid_joint_landing(*, first: FloatND, second: FloatND) -> FloatND:
+    return jnp.where((first > 0) & (second > 0), 3.0, 1.0)
+
+
+def _current_off_grid_model(
+    *, rare_mass: float | None = None, budgeted: bool = False
+) -> Model:
+    """An exterior joint tail, or a source-conditioned interior landing."""
+    grid = LinSpacedGrid(start=0.5, stop=1.5, n_points=2, off_grid="raise")
+    if rare_mass is None:
+        states = {
+            "wealth": grid,
+            "risk": DiscreteGrid(category_class=_CurrentRisk),
+        }
+        transition = _off_grid_current_landing
+        shocks = {
+            "income_risk": ShockGroup(
+                shocks={
+                    "income": Normal(
+                        mu=StateConditioned(on="risk", by={"low": 0.75, "high": 1.75}),
+                        sigma=_off_grid_current_scale,
+                    )
+                },
+                nodes=UserNodes(nodes=np.array([[1.0]]), weights=np.array([1.0])),
+            )
+        }
+    else:
+        states = {"wealth": grid}
+        transition = _off_grid_joint_landing
+        shocks = {
+            name: ShockGroup(
+                shocks={name: Normal(mu=0, sigma=1)},
+                nodes=UserNodes(
+                    nodes=np.array([[0.0], [1.0]]),
+                    weights=np.array([1.0 - rare_mass, rare_mass]),
+                ),
+            )
+            for name in ("first", "second")
+        }
+    return Model(
+        regimes={
+            "alive": Regime(
+                functions={"utility": _terminal},
+                states=states,
+                state_transitions=(
+                    {"wealth": transition, "risk": fixed_transition("risk")}
+                    if rare_mass is None
+                    else {"wealth": transition}
+                ),
+                shocks=tuple(shocks),
+            ),
+            "terminal": Regime(
+                functions={"utility": _terminal}, states={"wealth": grid}
+            ),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        edges={"alive": {"terminal": 0}},
+        initial_nodes={0: "alive"},
+        regime_id_class=RegimeId,
+        shocks=shocks,
+        execution_config=ExecutionConfig(
+            device_memory_bytes=2**28 if budgeted else None
+        ),
+    )
+
+
+@pytest.mark.parametrize("budgeted", [False, True])
+def test_off_grid_preflight_realizes_source_conditioned_current_support(
+    *, budgeted: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nonzero base support and the source category give an interior landing."""
+    monkeypatch.setattr(transition_checks, "_OFF_GRID_BLOCK_ROWS", 2)
+    model = _current_off_grid_model(budgeted=budgeted)
+    model.validate_transitions(
+        params={"discount_factor": 1.0, "income_risk": {"sigma": 0.25}}
+    )
+    # The same cached producer must read new numerical group parameters.
+    with pytest.raises(OffGridStateError):
+        model.validate_transitions(
+            params={"discount_factor": 1.0, "income_risk": {"sigma": 1.0}}
+        )
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+@pytest.mark.parametrize("kind", ["null", "rare-live"])
+def test_off_grid_current_support_keeps_individually_live_factors(
+    *, kind: Literal["null", "rare-live"], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A null joint tail is ignored; underflow of a live product is not null."""
+    monkeypatch.setattr(transition_checks, "_OFF_GRID_BLOCK_ROWS", 2)
+    dtype = jnp.asarray(0.0).dtype
+    rare_mass = float(np.finfo(dtype).tiny) if kind == "rare-live" else 0.0
+    if kind == "rare-live":
+        assert rare_mass > 0
+        with np.errstate(under="ignore"):
+            assert np.multiply(rare_mass, rare_mass, dtype=dtype) == 0
+    model = _current_off_grid_model(rare_mass=rare_mass)
+    if rare_mass == 0:
+        model.validate_transitions(params={"discount_factor": 1.0})
+    else:
+        with pytest.raises(OffGridStateError):
+            model.validate_transitions(params={"discount_factor": 1.0})
+
+
+def test_off_grid_current_law_integrity_is_mandatory() -> None:
+    """Invalid scales cannot become an empty reached population with checks off."""
+    model = _current_off_grid_model()
+    with pytest.raises(ShockDeclarationError, match="Invalid current IID law"):
+        model.solve(
+            params={"discount_factor": 1.0, "income_risk": {"sigma": -0.25}},
+            log_level="off",
+            runtime_checks=False,
+        )
+
+
+@pytest.mark.parametrize("bounded", [False, True])
+def test_off_grid_current_counts_survive_abstract_reconstruction(
+    *, bounded: bool
+) -> None:
+    """Abstract tree transport preserves counts and separately mandatory status."""
+    counts = jnp.array([[2, 0]], dtype=jnp.int32)
+    record = transition_checks._CurrentIIDOffGridCounts(
+        counts=BoundedResult(
+            output=counts,
+            bound_status=(
+                BoundInputStatus(
+                    nonfinite_floor=jnp.asarray(a=False),
+                    invalid_shifted_grid=jnp.asarray(a=True),
+                ),
+            ),
+        )
+        if bounded
+        else counts,
+        invalid_law=jnp.asarray(a=True),
+    )
+    abstract = jax.eval_shape(lambda: record)
+    assert type(abstract) is transition_checks._CurrentIIDOffGridCounts
+    assert abstract.invalid_law.shape == ()
+    assert abstract.invalid_law.dtype == jnp.bool_
+    with pytest.raises(BeartypeCallHintParamViolation):
+        transition_checks._CurrentIIDOffGridCounts(
+            counts=record.counts, invalid_law=abstract.invalid_law
+        )
+    if not bounded:
+        with pytest.raises(BeartypeCallHintParamViolation):
+            transition_checks._CurrentIIDOffGridCounts(
+                counts=abstract.counts, invalid_law=record.invalid_law
+            )
+    zero = jax.tree.map(lambda leaf: jnp.zeros(leaf.shape, dtype=leaf.dtype), abstract)
+    reduced = jax.lax.fori_loop(
+        0,
+        3,
+        lambda _index, total: transition_checks._merge_off_grid_counts(
+            left=total, right=record
+        ),
+        zero,
+    )
+    assert bool(reduced.invalid_law)
+    if bounded:
+        assert isinstance(reduced.counts, BoundedResult)
+        np.testing.assert_array_equal(reduced.counts.output, [[6, 0]])
+        assert not bool(reduced.counts.bound_status[0].nonfinite_floor)
+        assert bool(reduced.counts.bound_status[0].invalid_shifted_grid)
+    else:
+        np.testing.assert_array_equal(reduced.counts, [[6, 0]])
 
 
 def _utility(*, consumption: ContinuousAction, reward: float) -> FloatND:

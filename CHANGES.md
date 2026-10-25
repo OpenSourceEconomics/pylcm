@@ -5,6 +5,16 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Stochastic-volatility example
+
+- The shipped example now declares current Normal income with positive base
+  Gauss-Hermite quadrature. An explicit `lagged_uncertainty` state preserves the
+  original law: next period's income scale depends on this period's uncertainty.
+  Initial callers declare both uncertainty states and tag known income with
+  `PhysicalValues`; income remains observed before consumption. Current policy
+  pricing replaces the former physical income-grid interpolation, so old finite-grid
+  values and seeded records are historical evidence rather than new-route baselines.
+
 ### Age-specialized grids
 
 - `AgeSpecializedGrid(build=...)` no longer requires `signature`. Without it, ages

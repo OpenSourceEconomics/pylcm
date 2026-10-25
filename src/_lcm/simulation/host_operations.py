@@ -29,12 +29,14 @@ from typing import cast
 import jax
 import numpy as np
 
+from _lcm.current_iid import CurrentIIDPlan
 from _lcm.execution.workspace_planning import (
     CompilerMemoryReservation,
     compiler_memory_reservation,
     plan_axis_free_workspace,
 )
 from _lcm.post_decision_bound import PostDecisionBoundSpec
+from _lcm.shock_registry import ShockBinding
 from _lcm.simulation.operand_placement import (
     place_simulation_arguments,
     subject_operand_sharding,
@@ -77,10 +79,16 @@ type _BuilderInput = (
     | tuple[ReferenceName, ...]
     | tuple[int, ...]
     | tuple[PostDecisionBoundSpec, ...]
+    | CurrentIIDPlan
     | Mapping[
         str,
-        EconFunction | ConstraintFunction | TransitionFunction | TargetTransitionPlan,
+        EconFunction
+        | ConstraintFunction
+        | TransitionFunction
+        | TargetTransitionPlan
+        | ShockBinding,
     ]
+    | None
 )
 
 
