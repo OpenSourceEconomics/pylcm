@@ -3,17 +3,29 @@
 import os
 import subprocess
 import sys
+from collections.abc import Callable, Mapping
 from copy import deepcopy
+from logging import Logger
 from pathlib import Path
-from types import MappingProxyType
-from typing import NotRequired, Unpack
+from types import MappingProxyType, SimpleNamespace
+from typing import Never, NotRequired, Unpack
 
 import numpy as np
 import pytest
 from numpy.typing import NDArray
 from typing_extensions import TypedDict
 
-from _lcm.typing import JSONValue, RegimeName, StateName
+from _lcm.continuation import ContinuationPayload
+from _lcm.engine import StateActionSpace
+from _lcm.time import TimeAxis
+from _lcm.typing import (
+    FlatParams,
+    FloatND,
+    JSONValue,
+    PytreeValue,
+    RegimeName,
+    StateName,
+)
 from benchmarks.grid_search_pair import (
     _ArrayManifest,
     _assert_pair_identity,
@@ -48,6 +60,7 @@ from benchmarks.grid_search_pair_worker import (
     _executed_float_dtype,
     _grid_extent,
     _hlo_census,
+    _kernel_execution_metadata,
 )
 
 
@@ -555,6 +568,228 @@ def test_block_result_projects_solution_result_dissolution_artifacts() -> None:
 
     assert result.values[0]["working"].calls == 1
     assert next(iter(result.replay_artifacts.values())).calls == 1
+
+
+class _MetadataKernelArguments(TypedDict, closed=True):
+    compiled_cores: Mapping[str, Callable[..., PytreeValue]]
+    state_action_space: StateActionSpace
+    next_regime_to_V_arr: Mapping[RegimeName, FloatND]
+    next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload]
+    flat_params: FlatParams
+    period: int
+    ages: TimeAxis
+    logger: Logger
+
+
+class _MetadataKernel:
+    """A declaration-only adapter that refuses parameter binding or execution."""
+
+    def __init__(self, *, programs: dict[str, SimpleNamespace]) -> None:
+        self.programs = programs
+        self.root = "full"
+        self.definitions = {
+            "raw": SimpleNamespace(read=SimpleNamespace(kind="Raw", target="working")),
+            "full": SimpleNamespace(
+                read=SimpleNamespace(kind="Full", target="working")
+            ),
+        }
+        self.root_context = SimpleNamespace(regime_name="working")
+
+    def core_programs(self) -> dict[str, SimpleNamespace]:
+        return self.programs
+
+    def with_fixed_params(self, *, fixed_flat_params: FlatParams) -> Never:
+        del fixed_flat_params
+        raise AssertionError("Metadata must not bind kernel parameters.")
+
+    def __call__(self, **kwargs: Unpack[_MetadataKernelArguments]) -> Never:
+        del kwargs
+        raise AssertionError("Metadata must not execute a numerical kernel.")
+
+
+def _metadata_program(*, disposition: str, action_reduction: bool) -> SimpleNamespace:
+    return SimpleNamespace(
+        disposition=disposition,
+        disposition_reason=None,
+        requirements=SimpleNamespace(
+            reduced_axes=(SimpleNamespace(name="action_product"),)
+            if action_reduction
+            else (),
+            internal_inputs={},
+        ),
+    )
+
+
+def _full_metadata_kernel() -> _MetadataKernel:
+    # Administrative/Raw decoys disagree with the actual Full root on both facts.
+    decoy = _metadata_program(disposition="dense", action_reduction=True)
+    publisher = _metadata_program(disposition="planned", action_reduction=False)
+    publisher.requirements.internal_inputs["answer"] = SimpleNamespace(
+        producer="full", label="answer"
+    )
+    return _MetadataKernel(
+        programs={
+            "_initialize": decoy,
+            "_source": decoy,
+            "raw": decoy,
+            "full": _metadata_program(disposition="planned", action_reduction=False),
+            "_publish": publisher,
+            "_finish": decoy,
+        }
+    )
+
+
+def test_query_metadata_uses_the_full_root_without_action_streaming() -> None:
+    """PLANNED Full publication differs from the first administrative/Raw nodes."""
+    assert _kernel_execution_metadata(_full_metadata_kernel()) == {
+        "streamed": False,
+        "execution_disposition": "planned",
+        "disposition_reason": None,
+    }
+
+
+@pytest.mark.parametrize(
+    "mutation", ["wrong-producer", "wrong-kind", "wrong-context", "unknown-family"]
+)
+def test_query_metadata_refuses_an_unproved_full_publication(mutation: str) -> None:
+    kernel = _full_metadata_kernel()
+    if mutation == "wrong-producer":
+        kernel.programs["_publish"].requirements.internal_inputs[
+            "answer"
+        ].producer = "raw"
+    elif mutation == "wrong-kind":
+        kernel.definitions["full"].read.kind = "Raw"
+    elif mutation == "wrong-context":
+        kernel.root_context.regime_name = "another_occupant"
+    else:
+        kernel.programs["unknown"] = _metadata_program(
+            disposition="planned", action_reduction=False
+        )
+    with pytest.raises(RuntimeError, match="declared occupant Full publication graph"):
+        _kernel_execution_metadata(kernel)
+
+
+def test_query_metadata_preserves_the_sole_main_action_reduction() -> None:
+    kernel = _MetadataKernel(
+        programs={
+            "main": _metadata_program(disposition="planned", action_reduction=True)
+        }
+    )
+    assert _kernel_execution_metadata(kernel) == {
+        "streamed": True,
+        "execution_disposition": "planned",
+        "disposition_reason": None,
+    }
+
+
+def test_query_metadata_does_not_unwrap_an_unknown_custody_lookalike() -> None:
+    class UnknownCustodyKernel(_MetadataKernel):
+        def __init__(self, *, base: _MetadataKernel) -> None:
+            self.base = base
+
+        def core_programs(self) -> dict[str, SimpleNamespace]:
+            return self.base.core_programs()
+
+    base = _full_metadata_kernel()
+    lookalike = UnknownCustodyKernel(base=base)
+    with pytest.raises(RuntimeError, match="declared occupant Full publication graph"):
+        _kernel_execution_metadata(lookalike)
+
+
+def test_collective_scenario_constructs_public_query_metadata(tmp_path: Path) -> None:
+    """A public household exposes Full graphs and declared exits/arrivals."""
+    code = """
+import sys
+from math import prod
+from pathlib import Path
+
+import jax
+
+jax.config.update("jax_enable_x64", False)
+jax.config.update("jax_platform_name", "cpu")
+
+from benchmarks.grid_search_pair_scenarios import SCENARIOS, build_scenario
+from benchmarks.grid_search_pair_worker import (
+    _assert_scenario_identity,
+    _import_lcm_with_version_shim,
+    _route_metadata,
+)
+
+target_src = (Path.cwd() / "src").resolve()
+sys.path.insert(0, str(target_src))
+lcm, version_shim = _import_lcm_with_version_shim(target_src=target_src)
+assert lcm.__version__ == version_shim["version"]
+
+from _lcm.arrival_publication import _BorrowedArrivalKernel
+from _lcm.policy_queries import QueryKind, _PolicyQueryKernel
+
+spec = SCENARIOS["collective-gs-vd"]
+model, params = build_scenario(name=spec.name)
+assert isinstance(params, dict)
+query_sites = set()
+for name, regime in model._regimes.items():
+    for period, kernel in regime.solution.period_kernels.items():
+        if type(kernel) is _BorrowedArrivalKernel:
+            kernel = kernel.base
+        if isinstance(kernel, _PolicyQueryKernel):
+            assert kernel.definitions[kernel.root].read.kind is QueryKind.FULL
+            query_sites.add((name, period))
+query_regimes = {name for name, _ in query_sites}
+assert query_regimes
+assert ("couple", 1) in query_sites
+routes = _route_metadata(model)
+_assert_scenario_identity(spec=spec, routes=routes)
+exit_owners = {name for name, regime in model.user_regimes.items() if regime.exits}
+arrival_owners = {
+    name for name, transition in model.declared_transitions["solve"].items()
+    if transition.arrivals
+}
+assert exit_owners and arrival_owners
+assert (exit_owners | arrival_owners) <= set(routes["gs_vd_regimes"])
+query_rows = [
+    row for row in routes["kernels"]
+    if (row["regime"], row["period"]) in query_sites
+    and row["action_names"] and prod(row["action_extents"]) > 1
+]
+assert query_rows
+assert all(
+    row["execution_disposition"] == spec.expected_head_disposition
+    and row["disposition_reason"] == spec.expected_head_disposition_reason
+    and not row["streamed"]
+    for row in query_rows
+), routes
+print("collective-gs-vd: public Full-query metadata verified")
+"""
+    repo_root = Path(__file__).resolve().parent.parent
+    completed = subprocess.run(
+        [
+            os.environ["PIXI_EXE"],
+            "run",
+            "--frozen",
+            "--no-install",
+            "--manifest-path",
+            os.environ["PIXI_PROJECT_MANIFEST"],
+            "-e",
+            os.environ["PIXI_ENVIRONMENT_NAME"],
+            "python",
+            "-c",
+            code,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=repo_root,
+        env=_worker_env(
+            harness_root=repo_root,
+            checkout=repo_root,
+            cache_dir=tmp_path / "cache",
+        ),
+        timeout=180,
+    )
+    assert completed.returncode == 0, (
+        f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+    )
+    assert "collective-gs-vd: public Full-query metadata verified" in completed.stdout
 
 
 def test_closure_scenarios_construct_with_their_declared_topology(

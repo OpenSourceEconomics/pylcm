@@ -1128,7 +1128,9 @@ class Model:
         # What each regime declares before demand prunes any: a declared law
         # reads these as variables at every horizon, never as parameters, and a
         # Series indexed by one keeps its labels.
-        declared_edge_vocabulary = create_edge_vocabulary(merged_regimes)
+        declared_edge_vocabulary = create_edge_vocabulary(
+            user_regimes=merged_regimes, shocks=self._shock_registry.groups
+        )
         self._declared_edge_vocabulary = declared_edge_vocabulary
         prepared_graph = prepare_graph(
             regimes=merged_regimes,

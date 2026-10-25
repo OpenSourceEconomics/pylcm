@@ -22,6 +22,7 @@ from lcm import (
     Periods,
     Phased,
     Regime,
+    Transition,
     categorical,
 )
 from lcm.exceptions import (
@@ -445,4 +446,26 @@ def test_physical_name_cannot_shadow_generated_collective_function() -> None:
                 }
             ),
             group=group,
+        )
+
+
+def _shock_regime_transition(eps: FloatND) -> ScalarInt:
+    return jnp.asarray(0.0 * eps, dtype=jnp.int32)
+
+
+def test_regime_law_draw_is_not_an_ordinary_parameter() -> None:
+    """A source's ordinary transition cannot read an unbound physical draw."""
+    with pytest.raises(UnsupportedOperationError, match="integrated shock lowering"):
+        Model(
+            n_periods=2,
+            regimes={"alive": Regime(functions={"utility": _utility})},
+            regime_id_class=Status,
+            initial_nodes=InitialNodes(by_period={0: "alive"}),
+            edges={
+                "alive": Transition(
+                    targets={"alive": Periods(values=(0,))},
+                    law=_shock_regime_transition,
+                )
+            },
+            shocks={"earnings": _group()},
         )

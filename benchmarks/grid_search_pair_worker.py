@@ -444,11 +444,41 @@ def _kernel_execution_metadata(kernel: PeriodKernel) -> _KernelExecution:
     graph_provider = getattr(kernel, "core_programs", None)
     if callable(graph_provider):
         programs = graph_provider()
-        if tuple(programs) != ("main",):
-            raise RuntimeError(
-                "GridSearch benchmark expected exactly one native 'main' program."
-            )
-        program = programs["main"]
+        if tuple(programs) == ("main",):
+            program = programs["main"]
+        else:
+            authority = kernel
+            custody_module = sys.modules.get("_lcm.arrival_publication")
+            if type(kernel) is getattr(custody_module, "_BorrowedArrivalKernel", None):
+                base = getattr(kernel, "base", None)
+                query_module = sys.modules.get("_lcm.policy_queries")
+                if type(base) is not getattr(query_module, "_PolicyQueryKernel", None):
+                    raise RuntimeError(
+                        "GridSearch benchmark needs a native Full query custody base."
+                    )
+                authority = base
+            root = getattr(authority, "root", None)
+            definitions = getattr(authority, "definitions", {})
+            read = getattr(definitions.get(root), "read", None)
+            context = getattr(authority, "root_context", None)
+            publisher = programs.get("_publish")
+            requirements = getattr(publisher, "requirements", None)
+            answer = getattr(requirements, "internal_inputs", {}).get("answer")
+            if (
+                root not in programs
+                or getattr(read, "kind", None) != "Full"
+                or getattr(read, "target", None)
+                != getattr(context, "regime_name", None)
+                or getattr(answer, "producer", None) != root
+                or getattr(answer, "label", None) != "answer"
+                or set(programs)
+                != {*definitions, "_initialize", "_source", "_publish", "_finish"}
+            ):
+                raise RuntimeError(
+                    "GridSearch benchmark expected native 'main' or the declared "
+                    "occupant Full publication graph."
+                )
+            program = programs[root]
         raw_disposition = program.disposition
         disposition = getattr(raw_disposition, "value", raw_disposition)
         reduced_axes = getattr(program.requirements, "reduced_axes", None)
@@ -480,6 +510,8 @@ def _route_metadata(model: Model) -> _RouteMetadata:
     collective_regimes: list[str] = []
     taste_shock_regimes: list[str] = []
     gs_vd_regimes: list[str] = []
+    declarations = getattr(model, "user_regimes", {})
+    transitions = getattr(model, "declared_transitions", {}).get("solve", {})
     for regime_name, regime in sorted(model._regimes.items()):  # noqa: SLF001
         fold_names = tuple(regime.fold_state_names)
         action_names = tuple(regime.solution.action_names)
@@ -494,7 +526,14 @@ def _route_metadata(model: Model) -> _RouteMetadata:
             taste_shock_regimes.append(regime_name)
         if collective:
             collective_regimes.append(regime_name)
-        if regime.same_period_ref_regimes or regime.gated_edges:
+        declaration = declarations.get(regime_name)
+        transition = transitions.get(regime_name)
+        if (
+            regime.same_period_ref_regimes
+            or regime.gated_edges
+            or getattr(declaration, "exits", {})
+            or getattr(transition, "arrivals", {})
+        ):
             gs_vd_regimes.append(regime_name)
         sharded_state_names = getattr(regime.solution, "sharded_state_names", None)
         if sharded_state_names is None:
@@ -507,7 +546,25 @@ def _route_metadata(model: Model) -> _RouteMetadata:
         if sharded_state_names:
             distributed_regimes.append(regime_name)
         for period, kernel in sorted(regime.solution.period_kernels.items()):
-            execution = _kernel_execution_metadata(kernel)
+            try:
+                execution = _kernel_execution_metadata(kernel)
+            except RuntimeError as error:
+                graph = kernel.core_programs()
+                root = getattr(kernel, "root", None)
+                read = getattr(
+                    getattr(kernel, "definitions", {}).get(root), "read", None
+                )
+                context = getattr(kernel, "root_context", None)
+                base = getattr(kernel, "base", None)
+                raise RuntimeError(
+                    f"{error} regime={regime_name!r}, period={period!r}, "
+                    f"kernel={type(kernel).__module__}.{type(kernel).__qualname__}, "
+                    f"base={type(base).__module__}.{type(base).__qualname__}, "
+                    f"programs={tuple(sorted(graph))!r}, root={root!r}, "
+                    f"read_kind={getattr(read, 'kind', None)!r}, "
+                    f"read_target={getattr(read, 'target', None)!r}, "
+                    f"context_regime={getattr(context, 'regime_name', None)!r}."
+                ) from error
             rows.append(
                 {
                     "regime": regime_name,

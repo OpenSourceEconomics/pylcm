@@ -834,7 +834,9 @@ def process_regimes(  # noqa: PLR0915 - assemble canonical phase contexts before
     # representative regime's names with those the regime declares before demand
     # prunes any: a declared law, and a regime function nothing demands, keeps
     # every variable it reads as a variable.
-    runtime_edge_vocabulary = create_edge_vocabulary(representative_user_regimes)
+    runtime_edge_vocabulary = create_edge_vocabulary(
+        user_regimes=representative_user_regimes
+    )
     edge_vocabulary = MappingProxyType(
         {
             name: vocabulary | prepared_structure.declared_edge_vocabulary[name]

@@ -527,7 +527,7 @@ def _query_copy_leaf(
     return node
 
 
-def test_collective_queries_share_original_value_copies_on_an_ordered_submesh(  # noqa: PLR0915 - keep the actual owner lifecycle in one witness
+def test_collective_queries_share_original_value_copies_on_an_ordered_submesh(  # noqa: C901, PLR0912, PLR0915 - keep the real read/refusal/copy lifecycle together
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Current and arrival queries share live future-value copies until completion."""
@@ -596,7 +596,25 @@ def test_collective_queries_share_original_value_copies_on_an_ordered_submesh(  
         {read.target for read in program.requirements.value_reads}
         for _, _, program in families
     ]
-    assert set.intersection(*addresses)
+    shared_targets = set.intersection(*addresses)
+    assert shared_targets
+    for target in shared_targets:
+        consumers = [
+            {
+                read.source
+                for read in program.requirements.value_reads
+                if read.target == target
+            }
+            for _, _, program in families
+        ]
+        assert all(consumers)
+        for index, left in enumerate(consumers):
+            assert all(left.isdisjoint(right) for right in consumers[index + 1 :])
+    for _, _, program in families:
+        for read in program.requirements.value_reads:
+            assert read.source.source_period == 1
+            assert read.source.source_regime == "married_ir"
+            assert read.source.core_key == program.name
     reads = tuple(
         read for _, _, program in families for read in program.requirements.value_reads
     )
@@ -629,6 +647,30 @@ def test_collective_queries_share_original_value_copies_on_an_ordered_submesh(  
     )
     states = {"wage": jnp.asarray([1.0, 2.0, 3.0, 1.0])}
     params = model._process_params(_DISSOLUTION_PARAMS)
+    family, queries, program = families[0]
+    missing = next(
+        read.target
+        for read in program.requirements.value_reads
+        if read.target in shared_targets
+    )
+    incomplete = {period: dict(values) for period, values in originals.items()}
+    del incomplete[missing.period][missing.regime]
+    with pytest.raises(KeyError) as error:
+        _query_arguments(
+            plan=plan,
+            queries=queries,
+            states=states,
+            flat_params=params,
+            period=1,
+            ages=model._time,
+            values=incomplete,
+            owner=owner,
+            unit="married_ir",
+            family=family,
+            regime=regime,
+        )
+    assert error.value.args == (missing.regime,)
+    assert not transferred
     copies = {}
     outputs = []
     for family, queries, program in families:

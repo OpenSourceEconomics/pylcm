@@ -26,6 +26,7 @@ from typing import cast, no_type_check
 
 import jax.numpy as jnp
 from dags import get_annotations, get_free_arguments
+from dags.signature import rename_arguments
 
 from _lcm.constraints.ir import Condition
 from _lcm.gated_edge import GatedEdge
@@ -671,6 +672,32 @@ def _adapt_regime_law(
     )
 
 
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _AdaptedArrivalPredicate:
+    """Canonical predicate reader plus the private names of its declared reads.
+
+    The declaration keeps its public read keys. Only the callback's input channel
+    is renamed before value adaptation, and the arrival lowerer reconnects that
+    channel to its query operands without rebuilding the retained adapter.
+    """
+
+    function: UserFunction
+    read_aliases: MappingProxyType[str, str]
+
+    def __post_init__(self) -> None:
+        for name in ("__module__", "__name__", "__qualname__", "__doc__"):
+            value = getattr(self.function, name, None)
+            if value is not None:
+                object.__setattr__(self, name, value)
+        object.__setattr__(self, "__signature__", inspect.signature(self.function))
+        object.__setattr__(self, "__annotations__", get_annotations(self.function))
+        object.__setattr__(self, "__lcm_source__", self.function)
+
+    @no_type_check
+    def __call__(self, **kwargs: EconFunctionArg) -> ValueND:
+        return self.function(**kwargs)
+
+
 def _adapt_arrival(
     *,
     declaration: ArrivalDecision,
@@ -678,12 +705,41 @@ def _adapt_arrival(
     adapters: AdapterMemo,
 ) -> ArrivalDecision:
     """Read landing values and encode projected read and settlement states."""
-    predicate = adapt_user_function(
-        func=declaration.predicate,
-        value_grids=value_grids,
-        encode=None,
-        adapters=adapters,
-    )
+    predicate = declaration.predicate
+    # Keep explicit read operands separate from same-spelled physical inputs.
+    # Adapt the actual reader here, with the canonical bindings and shared memo,
+    # so process-code admission sees exactly the adapter the lowerer will use.
+    if any(
+        name in value_grids
+        or (
+            name.endswith(CODE_SUFFIX) and name.removesuffix(CODE_SUFFIX) in value_grids
+        )
+        for name in declaration.reads
+    ):
+        occupied = set(inspect.signature(predicate).parameters) | set(value_grids)
+        aliases = {}
+        for index, name in enumerate(declaration.reads):
+            alias = f"_lcm_arrival_declared_read_{index}"
+            while alias in occupied:
+                alias += "_"
+            aliases[name] = alias
+            occupied.add(alias)
+        predicate = _AdaptedArrivalPredicate(
+            function=adapt_user_function(
+                func=rename_arguments(predicate, mapper=aliases),
+                value_grids=value_grids,
+                encode=None,
+                adapters=adapters,
+            ),
+            read_aliases=MappingProxyType(aliases),
+        )
+    else:
+        predicate = adapt_user_function(
+            func=declaration.predicate,
+            value_grids=value_grids,
+            encode=None,
+            adapters=adapters,
+        )
     reads = {
         name: cast(
             "ArrivalRead",

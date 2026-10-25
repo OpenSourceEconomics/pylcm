@@ -61,6 +61,7 @@ from lcm.exceptions import InvalidNameError, ModelInitializationError
 from lcm.phased import Phased
 from lcm.regime import ProjectedRegimeValue, StateTransitionEntry
 from lcm.regime import Regime as UserRegime
+from lcm.shocks import Discrete, ShockGroup, ShockGroupName
 from lcm.transition import (
     ByAge,
     DeterministicTransition,
@@ -459,7 +460,8 @@ class EdgeVocabulary:
 
     states: frozenset[StateName]
     """Its states and the code `<name>_code` of each discrete or process one, which
-    a gate or projection with this regime as target reads off the target grid."""
+    a gate or projection reads off the target grid, plus named physical inputs
+    and their helpers when the declared current-shock namespace is supplied."""
 
     categoricals: MappingProxyType[ReferenceName, DiscreteGrid]
     """Its discrete state and action grids, which label the levels of a Series
@@ -474,12 +476,15 @@ class EdgeVocabulary:
 
 
 def create_edge_vocabulary(
+    *,
     user_regimes: Mapping[RegimeName, UserRegime],
+    shocks: Mapping[ShockGroupName, ShockGroup] = MappingProxyType({}),
 ) -> MappingProxyType[RegimeName, EdgeVocabulary]:
     """Return the edge vocabulary of each regime.
 
     Args:
         user_regimes: User-form regimes, keyed by name.
+        shocks: Validated named current-shock groups of the model.
 
     Returns:
         Each regime's states, actions, functions and engine-wired names, and its
@@ -493,6 +498,7 @@ def create_edge_vocabulary(
                 states=frozenset(
                     {
                         *regime.states,
+                        *_physical_edge_names(regime=regime, shocks=shocks),
                         *(
                             f"{state}_code"
                             for state in (
@@ -508,6 +514,41 @@ def create_edge_vocabulary(
             for name, regime in user_regimes.items()
         }
     )
+
+
+def _physical_edge_names(
+    *, regime: UserRegime, shocks: Mapping[ShockGroupName, ShockGroup]
+) -> frozenset[ReferenceName]:
+    """Reserve global physical names and expand only target-bound shock helpers."""
+    reserved = frozenset(
+        name for group in shocks.values() for name in group.shocks
+    ) | frozenset(
+        f"{name}_code"
+        for group in shocks.values()
+        for name, law in group.shocks.items()
+        if isinstance(law, Discrete)
+    )
+    physical = frozenset(
+        name
+        for group in regime.shocks
+        if group in shocks
+        for name in shocks[group].shocks
+    )
+    if not physical:
+        return reserved
+    reached = set(physical) | {f"{name}_code" for name in physical}
+    while True:
+        helpers = {
+            name
+            for name, function in regime.decomposed_functions.items()
+            if any(
+                reached & inspect.signature(variant).parameters.keys()
+                for variant in _callables_in(value=function)
+            )
+        }
+        if helpers <= reached:
+            return reserved | frozenset(helpers)
+        reached.update(helpers)
 
 
 def _declared_categoricals(

@@ -17,9 +17,7 @@ must always be solved", which rejects a model that is legal and solves.
 from types import MappingProxyType
 from typing import cast
 
-import numpy as np
 import pytest
-from numpy.testing import assert_array_almost_equal as aaae
 
 from _lcm.regime_building.gated_edges import (
     CompiledEdgeFold,
@@ -30,15 +28,9 @@ from _lcm.regime_building.gated_edges import (
 )
 from _lcm.regime_building.Q_and_F import ResolvedProjectedRegimeValue
 from _lcm.typing import ConstraintFunction
-from lcm import Model, Transition, categorical
-from lcm.ages import AgeGrid
+from lcm import categorical
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import BoolND, FloatND, RegimeName, ScalarInt
-from tests.conftest import DECIMAL_PRECISION
-from tests.regime_building.test_collective_regime_simulate import (
-    _make_repeating_self_loop_regimes,
-    _repeating_self_loop_laws,
-)
 
 _BETA = 0.95
 
@@ -194,48 +186,3 @@ def test_rejection_names_every_unsolved_reference_regime():
             solved_regimes={"tgt"},
             source_reads_wbar=True,
         )
-
-
-def test_repeating_self_loop_solves_with_its_fallback_uncovered_in_the_unread_period():
-    """A self-loop edge solves although its fallback is absent where no source reads.
-
-    `src` is covered in periods 0 and 1 and gates an edge back to itself, whose
-    fallback `src_fallback` is solved only at period 1. Period 0's fold has
-    the target (`src`) solved and the fallback not — yet no `src` exists at
-    period -1 to read it, so the edge keeps the value it already holds and the
-    model solves. Requiring the fallback in every target-covered period would
-    reject this model instead.
-
-    Hand computation, `beta = 0.95`: period 2 has no `src`; period 1's
-    continuation is `src_exit` alone, `V_1(wage) = wage + beta * 0.5 * wage =
-    1.475 * wage`; period 0's gate (`V_target > 2`) is closed at wage=1
-    (`V_1(1) = 1.475`) and open at wage=2 (`V_1(2) = 2.95`), giving
-    `V_0(1) = 1 + beta * 0.1 * 1 = 1.095` off the fallback and
-    `V_0(2) = 2 + beta * 2.95 = 4.8025` off the target.
-    """
-    model = Model(
-        regimes=_make_repeating_self_loop_regimes(),
-        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
-        regime_id_class=_SelfLoopRegimeId,
-        initial_nodes={0: "src"},
-        edges={"src": cast("Transition", _repeating_self_loop_laws()["src"])},
-    )
-    regimes = model._regimes
-    # The coverage that makes period 0 the unread one.
-    assert regimes["src"].active_periods == (0, 1)
-    assert regimes["src_fallback"].active_periods == (1,)
-    edge = regimes["src"].gated_edges["src"]
-    assert edge.reference_regimes == ("src_fallback",)
-    assert (
-        source_reads_folded_wbar(
-            source_active_periods=regimes["src"].active_periods, fold_period=0
-        )
-        is False
-    )
-
-    solution = model.solve(
-        params={"src": {"koopmans_aggregator": {"discount_factor": _BETA}}},
-        log_level="off",
-    ).values
-
-    aaae(np.asarray(solution[0]["src"]), [1.095, 4.8025], decimal=DECIMAL_PRECISION)

@@ -821,7 +821,7 @@ def build_prepared_structure(
             for name, law in bound.items()
             if not law.terminal
         },
-        declared_edge_vocabulary=create_edge_vocabulary(user_regimes),
+        declared_edge_vocabulary=create_edge_vocabulary(user_regimes=user_regimes),
     )
 
 

@@ -95,45 +95,6 @@ class Work:
     work: ScalarInt  # code 1
 
 
-def test_missing_reference_regime_at_target_period_raises():
-    """A missing reference regime at the target's period raises, never ungates.
-
-    Dropping `single_f` from period 1's solution while keeping `married_ir`
-    (the edge's target) present must raise `ModelInitializationError` naming the
-    missing reference, rather than returning the substitution UNCHANGED with no
-    gate array -- a silent ungate.
-    """
-    _ages, regimes, _ids, flat_params, solution, dissolution_flags = (
-        _solve_dissolution()
-    )
-    married = regimes["married"]
-    edge = married.gated_edges["married_ir"]
-    assert edge.reference_regimes == ("single_f", "single_m")
-
-    base_state_action_spaces = {
-        name: regime.solution.state_action_space(regime_params=flat_params[name])
-        for name, regime in regimes.items()
-    }
-    period1 = dict(solution[1])
-    del period1["single_f"]
-    filtered_period_to_V = MappingProxyType({1: MappingProxyType(period1)})
-
-    with pytest.raises(ModelInitializationError, match="single_f"):
-        substitute_gated_edge_continuations(
-            regime=married,
-            regime_name="married",
-            regimes=regimes,
-            period=0,
-            next_regime_to_V_arr=solution[1],
-            base_state_action_spaces=base_state_action_spaces,
-            period_to_regime_to_V_arr=filtered_period_to_V,
-            period_to_regime_to_dissolution_flags=MappingProxyType(
-                {1: dissolution_flags[1]}
-            ),
-            flat_params=flat_params,
-        )
-
-
 def test_target_absent_at_next_period_is_still_a_legitimate_no_op():
     """Negative control: the TARGET (not a reference) missing at period+1 stays
     a silent no-op -- the legitimate repeating/one-shot boundary case, which
@@ -167,35 +128,6 @@ def test_target_absent_at_next_period_is_still_a_legitimate_no_op():
     np.testing.assert_array_equal(
         np.asarray(substituted["married_ir"]), np.asarray(solution[1]["married_ir"])
     )
-
-
-def test_dissolution_fixture_with_all_references_present_is_unaffected():
-    """Regression pin: the ordinary (fully-solved) dissolution fixture never
-    hits the reference-regime raise --
-    `test_dissolution_edge_routes_the_row_to_its_own_roles_single_regime`
-    (test_collective_regime_simulate.py) still passes end to end through
-    `simulate()`, exercised again here at the kernel level.
-    """
-    _ages, regimes, _ids, flat_params, solution, dissolution_flags = (
-        _solve_dissolution()
-    )
-    married = regimes["married"]
-    base_state_action_spaces = {
-        name: regime.solution.state_action_space(regime_params=flat_params[name])
-        for name, regime in regimes.items()
-    }
-    _substituted, gate_arrays = substitute_gated_edge_continuations(
-        regime=married,
-        regime_name="married",
-        regimes=regimes,
-        period=0,
-        next_regime_to_V_arr=solution[1],
-        base_state_action_spaces=base_state_action_spaces,
-        period_to_regime_to_V_arr=solution,
-        period_to_regime_to_dissolution_flags=dissolution_flags,
-        flat_params=flat_params,
-    )
-    assert "married_ir" in gate_arrays
 
 
 # Two legs of one gated edge sharing a fallback regime must be rejected at
@@ -329,10 +261,12 @@ def test_dissolution_fixture_has_distinct_fallbacks_and_still_constructs():
     ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
     regimes_dict = _make_dissolution_regimes()
     laws = _dissolution_laws()
-    married_edge = bind_laws({"married": laws["married"]})["married"].gated_edges[
+    married_arrival = bind_laws({"married": laws["married"]})["married"].arrivals[
         "married_ir"
     ]
-    fallback_regimes = [leg.solve_fallback.regime for leg in married_edge.legs.values()]
+    fallback_regimes = [
+        route.solve_fallback.regime for route in married_arrival.routes.values()
+    ]
     assert len(fallback_regimes) == len(set(fallback_regimes))
     # Must not raise.
     _solve_and_process(

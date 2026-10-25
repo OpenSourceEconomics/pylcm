@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "433ccda1e8d35934e808c136bd7da0d58781067acca27593ab649797705c8f92",
+  "source_inventory_sha256": "50f70d60f26a53cdc8a8909e132229bf9f2a17dc8ecd7cb5b8b17edc51ea451d",
   "sources": [
     {
       "path": "src/_lcm/constraints/bounds.py",
@@ -278,7 +278,7 @@
     },
     {
       "path": "src/_lcm/params/regime_template.py",
-      "sha256": "1f41865cfe5a73d13d1b6790376549c25b91077399fd6f1eedc80b12159b9286"
+      "sha256": "4b459d9eac328fd274ec8a7c6f21bae36233acceecd5a6fe32cc3e92f5e21b67"
     },
     {
       "path": "src/_lcm/persistence/solution.py",
@@ -342,7 +342,7 @@
     },
     {
       "path": "src/_lcm/regime_building/processing.py",
-      "sha256": "c9eec51fd691139b4b7398889b3ced565baf23e9501a7c4cb9555257e200f984"
+      "sha256": "56ee57cbc4ea9740be8792340efd86e221b788407530f6572a24d6e9b5aa7d76"
     },
     {
       "path": "src/_lcm/regime_building/zero_safe.py",
@@ -710,7 +710,7 @@
     },
     {
       "path": "src/lcm/model.py",
-      "sha256": "f79885362e8e56a4b498e384b66fe5b269afb0395a9924dbea95020472075ffe"
+      "sha256": "e5640ad99328aed63dbcac9fdecd2a23bf3fb5139c79399220952b413cd9e303"
     },
     {
       "path": "src/lcm/regime.py",

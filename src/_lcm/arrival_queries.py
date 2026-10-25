@@ -49,6 +49,9 @@ from _lcm.policy_queries import (
 )
 from _lcm.regime_building.Q_and_F import _CollectiveQAndF, _ComputeCE, _QAndF
 from _lcm.regime_building.V import get_V_interpolator
+from _lcm.regime_building.value_adapter import (
+    _AdaptedArrivalPredicate,
+)
 from _lcm.solution.contract import SolverBuildContext
 from _lcm.typing import (
     ArrivalQueryArguments,
@@ -66,6 +69,7 @@ from lcm.exceptions import (
     RegimeInitializationError,
     UnsupportedOperationError,
 )
+from lcm.shocks import Discrete
 from lcm.typing import BoolND, FloatND, Phase, ReferenceName, RegimeName, UserFunction
 
 
@@ -769,13 +773,30 @@ def _bound_edge_function(
     target: RegimeName,
     path: tuple[str, ...],
     function: UserFunction,
+    information: frozenset[str],
     read_names: Mapping[ReferenceName, ReferenceName] = MappingProxyType({}),
 ) -> Callable[..., PytreeValue]:
     """Bind source edge params while expanding helpers in landed target vocabulary."""
+    if isinstance(function, _AdaptedArrivalPredicate):
+        read_names = {
+            function.read_aliases.get(name, name): alias
+            for name, alias in read_names.items()
+        }
+        function = function.function
     branch = builder.canonical_regimes[source].edge_params_template
     for segment in path:
         child = branch.get(segment, {})
         branch = child if isinstance(child, Mapping) else {}
+    _validate_arrival_information(
+        builder=builder,
+        target=target,
+        function=function,
+        edge_parameters=frozenset(
+            name for name, value in branch.items() if isinstance(value, str)
+        ),
+        read_names=frozenset(read_names),
+        information=information,
+    )
     callback = rename_arguments(
         function,
         mapper={
@@ -801,6 +822,56 @@ def _bound_edge_function(
             if name not in read_names.values() and (target, name) in builder.aliases
         },
     )
+
+
+def _validate_arrival_information(
+    *,
+    builder: _QueryGraphBuilder,
+    target: RegimeName,
+    function: UserFunction,
+    edge_parameters: frozenset[str],
+    read_names: frozenset[ReferenceName],
+    information: frozenset[str],
+) -> None:
+    """Check primitive landed reads before an edge parameter can alias their names."""
+    context = builder.contexts[target]
+    plan = context.current_iid_plans.get(builder.period)
+    physical = {
+        name: law
+        for _, binding, _ in (() if plan is None else plan.bindings)
+        for name, law in binding.group.shocks.items()
+    }
+    continuous_codes = {
+        f"{name}_code"
+        for name, law in physical.items()
+        if not isinstance(law, Discrete)
+    }
+    discrete_codes = {
+        f"{name}_code": name
+        for name, law in physical.items()
+        if isinstance(law, Discrete)
+    }
+    pending = list(inspect.signature(function).parameters)
+    visited = set()
+    while pending:
+        name = pending.pop()
+        if name in read_names or name in visited:
+            continue
+        visited.add(name)
+        if name in continuous_codes:
+            raise UnsupportedOperationError(
+                f"Arrival input {name!r} cannot read a continuous physical shock's "
+                "code: a physical draw has no quadrature-node position."
+            )
+        physical_name = discrete_codes.get(name, name)
+        if physical_name in physical:
+            if physical_name not in information:
+                raise RegimeInitializationError(
+                    f"Arrival callback for {target!r} requires unobserved "
+                    f"physical input {physical_name!r}."
+                )
+        elif name not in edge_parameters and name in context.functions:
+            pending.extend(inspect.signature(context.functions[name]).parameters)
 
 
 def bind_arrival_query_graph(
@@ -901,6 +972,7 @@ def _bind_arrival(
                 target=target,
                 path=(target, "references", name, state),
                 function=function,
+                information=information,
             )
             for state, function in read.projection.items()
         }
@@ -963,6 +1035,7 @@ def _bind_arrival(
                     state,
                 ),
                 function=function,
+                information=information,
             )
             for state, function in fallback.projection.items()
         }
@@ -1004,6 +1077,7 @@ def _bind_arrival(
         target=target,
         path=(target, "predicate"),
         function=declaration.predicate,
+        information=information,
         read_names=read_names,
     )
     reducer = _ArrivalReducer(
@@ -1038,7 +1112,7 @@ def _bind_arrival(
             period=builder.period,
             projection=cast("Mapping[str, UserFunction]", projection),
             state_inputs=frozenset(context.state_action_space.state_names),
-            physical_inputs=frozenset(),
+            physical_inputs=information,
             operand_paths={
                 name: path
                 for name, path in builder.operand_paths.items()

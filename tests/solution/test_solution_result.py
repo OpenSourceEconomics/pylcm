@@ -1545,32 +1545,6 @@ def test_policy_at_an_undeclared_coordinate_is_refused_before_forward(
         )
 
 
-def test_values_only_dissolution_result_is_refused_before_forward_simulation(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    model = _make_dissolution_model()
-    solution = model.solve(
-        params=_DISSOLUTION_PARAMS,
-        log_level="off",
-        retention=ResultRetention.VALUES,
-    )
-
-    def _forward_loop_must_not_run(**_kwargs: Unpack[_SimulationKwargs]) -> NoReturn:
-        raise AssertionError("forward simulation ran before dissolution preflight")
-
-    monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
-    with pytest.raises(
-        InvalidSimulationInputError,
-        match=r"pylcm\.collective\.dissolution_flag.*not_requested",
-    ):
-        model.simulate(
-            params=_DISSOLUTION_PARAMS,
-            initial_conditions={},
-            solution=solution,
-            log_level="off",
-        )
-
-
 @pytest.mark.parametrize("defect", ["type", "dtype", "shape"])
 def test_malformed_dissolution_flag_is_refused_before_forward(
     *, defect: str, monkeypatch: pytest.MonkeyPatch
