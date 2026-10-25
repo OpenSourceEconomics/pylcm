@@ -5,6 +5,13 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Discrete state transition targets
+
+- A simple discrete-state law is checked against the target regimes retained by its
+  solve or simulate graph. A regime outside those targets no longer causes a
+  category mismatch. Per-target laws remain explicit mappings, and a simple law
+  still cannot cross different category sets on a retained edge.
+
 ### Stochastic-volatility example
 
 - The shipped example now declares current Normal income with positive base

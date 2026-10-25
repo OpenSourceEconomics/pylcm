@@ -653,7 +653,7 @@ def process_regimes(  # noqa: PLR0915 - assemble canonical phase contexts before
         laws=laws,
         nested_transitions_by_regime=solve_nested_transitions,
     )
-    _validate_categoricals(representative_user_regimes, laws=laws)
+    _validate_categoricals(representative_user_regimes, reachability=reachability)
 
     regime_to_variables = MappingProxyType(
         {
@@ -8998,13 +8998,16 @@ def _get_explicit_entry_weights_for_process(
 
 # keyword-only-exempt: primary-argument=user_regimes
 def _validate_categoricals(
-    user_regimes: Mapping[RegimeName, UserRegime], *, laws: RegimeLaws
+    user_regimes: Mapping[RegimeName, UserRegime],
+    *,
+    reachability: ModelReachability,
 ) -> None:
     """Validate that simple transitions don't span mismatched discrete grids.
 
     When a non-per-target-dict transition is used for a `DiscreteGrid` state, the same
-    function is applied to all target regimes. If a target regime has a different number
-    of categories for that state, JAX silently clips indices producing wrong results.
+    function is applied to the targets retained by its phase graph. If a target has
+    different categories for that state, JAX silently clips indices producing wrong
+    results.
 
     Also validates that the `ordered` flag is consistent across regimes for the same
     discrete state variable. Mixed ordered flags (one True, one False) are not allowed.
@@ -9021,18 +9024,28 @@ def _validate_categoricals(
     error_messages: list[str] = []
 
     for source_name, source_regime in user_regimes.items():
-        if laws[source_name].terminal:
-            continue
-
         for state_name, raw in source_regime.state_transitions.items():
-            source_grid = _get_simple_transition_discrete_grid(
-                user_regime=source_regime, state_name=state_name, raw=raw
-            )
+            source_grid = None
+            target_names: set[RegimeName] = set()
+            for phase in ("solution", "simulation"):
+                variant = (
+                    (raw.solve if phase == "solution" else raw.simulate)
+                    if isinstance(raw, Phased)
+                    else raw
+                )
+                phase_grid = _get_simple_transition_discrete_grid(
+                    user_regime=source_regime, state_name=state_name, raw=variant
+                )
+                if phase_grid is not None:
+                    source_grid = phase_grid
+                    target_names.update(
+                        reachability.for_phase(phase).union_targets(source=source_name)
+                    )
             if source_grid is None:
                 continue
 
-            for target_regime_name, target_regime in user_regimes.items():
-                target_grid = target_regime.states.get(state_name)
+            for target_regime_name in sorted(target_names):
+                target_grid = user_regimes[target_regime_name].states.get(state_name)
                 if not isinstance(target_grid, DiscreteGrid):
                     continue
 
