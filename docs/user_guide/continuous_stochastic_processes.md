@@ -265,6 +265,23 @@ TauchenAR1Process.on_nodes(
   node and normalizes the row in log space. It ignores cell widths: this is a discrete
   probability rule, not numerical integration of the continuous normal density.
 
+Density-rule first-order sensitivities use a dimensionless accuracy budget. For a
+component `D = partial p_i / partial theta`, use `g = sigma * D` for `mu`, `sigma` and
+the actual source state; use `g = D` for `rho`. Every successfully returned finite unit
+sensitivity satisfies `abs(g_computed - g_true) <= tau + tau*abs(g_true)`, with
+`tau=1e-12` at float64 and `tau=1e-5` at float32. Changing the physical unit of the
+state variable leaves this budget unchanged. An exact zero uses the absolute part of the
+budget.
+
+Differentiation checks the whole row, including parameter columns that the caller did
+not request. If rounding uncertainty prevents certification, it raises
+`DensityDerivativeAccuracyError`; under JIT the runtime callback reports the error when
+the result is synchronized. These checks transfer coefficient words to the host during
+AD. Primal solves do not perform the checks. They do not add a higher-order or universal
+subnormal-direction accuracy guarantee. A unit partial outside the floating format has
+no finite-value guarantee; scaled zero or small directions can still have finite normal
+results.
+
 All rules support finite unit-root or explosive persistence on these fixed nodes. They
 also support a `StateConditioned` innovation scale. Quadrature target clipping is part
 of that transition rule; it does not change the model's `off_grid` policy.

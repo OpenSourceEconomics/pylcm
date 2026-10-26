@@ -16,6 +16,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from beartype import beartype
+from jax.experimental import io_callback
 from jax.scipy.stats.norm import cdf
 
 from _lcm.beartype_conf import GRID_CONF
@@ -31,10 +32,11 @@ from _lcm.processes.base import (
     sealed,
     standard_normal,
 )
+from _lcm.processes.density_derivative_admission import _checked_density_coefficients
 from _lcm.processes.state_conditioned import tauchen_row
 from _lcm.typing import PRNGKeyND
 from lcm.exceptions import GridInitializationError
-from lcm.typing import Float1D, FloatND, IntND, ScalarFloat, ScalarInt
+from lcm.typing import Bool1D, Float1D, FloatND, IntND, ScalarFloat, ScalarInt
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -126,6 +128,10 @@ class TauchenAR1Process(_AR1Process):
 
         The default rule integrates midpoint bins with open first and last tails.
         ``density`` normalizes normal densities at the nodes; it ignores cell widths.
+        Its first-order sensitivities use dimensionless absolute and relative
+        error budgets of 1e-12 (float64) or 1e-5 (float32). Differentiation checks
+        every parameter column and raises `DensityDerivativeAccuracyError` if
+        any component cannot be certified. Checks run on the host during AD.
         ``innovation_quadrature`` maps standardized innovations linearly to adjacent
         state nodes, clipping targets to the endpoints. Supply ``n_quadrature``
         (default 9 Gauss-Hermite points), or both innovation arrays. Weights must be
@@ -560,7 +566,7 @@ def _scaled_linear_product(*, coefficient: _ScaledFloat, tangent: FloatND) -> Fl
 
 def _density_contrasts_and_gap(
     operands: tuple[Float1D, FloatND, FloatND, FloatND, FloatND],
-) -> tuple[Float1D, _ScaledFloat, _ScaledFloat]:
+) -> tuple[Float1D, _ScaledFloat, _ScaledFloat, IntND]:
     """Center on the exact nearest node and retain the complete affine residual."""
     nodes, location, rho, source, sigma = operands
     product_high, product_low = _scaled_product_words(left=rho, right=source)
@@ -595,7 +601,7 @@ def _density_contrasts_and_gap(
         contrast_words[1],
     )
     contrasts = _scaled_to_float(contrast_words)
-    return contrasts, half_gap, contrast_words
+    return contrasts, half_gap, contrast_words, center_index
 
 
 type _ScaledPair = tuple[_ScaledFloat, _ScaledFloat]
@@ -608,7 +614,9 @@ def _scaled_multiply(*, left: _ScaledFloat, right: _ScaledFloat) -> _ScaledFloat
     )
 
 
-def _scaled_exp(logarithm: Float1D) -> _ScaledFloat:
+def _scaled_exp(
+    logarithm: Float1D,
+) -> tuple[_ScaledFloat, tuple[Float1D, IntND, Float1D, Bool1D]]:
     """Keep recoverable normal-tail weights below physical exp underflow.
 
     The exponent floor is below any recoverable first derivative: finite IEEE
@@ -626,8 +634,10 @@ def _scaled_exp(logarithm: Float1D) -> _ScaledFloat:
     else:
         high, low = 0.693359375, -0.00021219444005469058
     residual = sealed(sealed(value - sealed(power * high)) - sealed(power * low))
-    mantissa, exponent = _normalize_scaled(mantissa=jnp.exp(residual), exponent=power)
-    return jnp.where(active, mantissa, 0.0), jnp.where(active, exponent, -100_000)
+    selected_exp = jax.lax.exp(residual, accuracy=jax.lax.Tolerance(ulps=2))
+    mantissa, exponent = _normalize_scaled(mantissa=selected_exp, exponent=power)
+    weights = jnp.where(active, mantissa, 0.0), jnp.where(active, exponent, -100_000)
+    return weights, (residual, power, selected_exp, active)
 
 
 def _scaled_accumulate(*, total: _ScaledPair, term: _ScaledFloat) -> _ScaledPair:
@@ -735,8 +745,10 @@ def _normal_density_row_jvp(
     (operands,), (dots,) = primals, tangents
     nodes, _location, rho, source, sigma = operands
     _nodes_dot, location_dot, rho_dot, source_dot, sigma_dot = dots
-    contrasts, half_gap, contrast_words = _density_contrasts_and_gap(operands)
-    weights = _scaled_exp(contrasts)
+    contrasts, half_gap, contrast_words, reference = _density_contrasts_and_gap(
+        operands
+    )
+    weights, exp_metadata = _scaled_exp(contrasts)
     other_weights = _scaled_other_sums(weights)
     total = _scaled_sum((weights, *other_weights))
     scale = _scaled_float(sigma)
@@ -756,6 +768,29 @@ def _normal_density_row_jvp(
     )
     rho_slope = _scaled_multiply(left=location_slope, right=_scaled_float(source))
     source_slope = _scaled_multiply(left=location_slope, right=_scaled_float(rho))
+    mantissas = jnp.stack(
+        (location_slope[0], rho_slope[0], source_slope[0], sigma_slope[0])
+    )
+    exponents = jnp.stack(
+        (location_slope[1], rho_slope[1], source_slope[1], sigma_slope[1])
+    )
+    checked_m, checked_e = io_callback(
+        _checked_density_coefficients,
+        (
+            jax.ShapeDtypeStruct(mantissas.shape, mantissas.dtype),
+            jax.ShapeDtypeStruct(exponents.shape, exponents.dtype),
+        ),
+        *operands,
+        reference,
+        *exp_metadata,
+        mantissas,
+        exponents,
+        ordered=False,
+    )
+    location_slope = checked_m[0], checked_e[0]
+    rho_slope = checked_m[1], checked_e[1]
+    source_slope = checked_m[2], checked_e[2]
+    sigma_slope = checked_m[3], checked_e[3]
     tangent = (
         _scaled_linear_product(coefficient=location_slope, tangent=location_dot)
         + _scaled_linear_product(coefficient=rho_slope, tangent=rho_dot)

@@ -220,3 +220,13 @@ class UnrepresentableOuterCandidateError(PyLCMError):
     candidate is dropped from that subject's choice set rather than published,
     and this reports how many were dropped.
     """
+
+
+class DensityDerivativeAccuracyError(PyLCMError, ArithmeticError):
+    """Raised when a density transition sensitivity cannot meet its accuracy budget.
+
+    Density-rule derivatives use dimensionless absolute and relative tolerances.
+    An unresolved component rejects the differentiated row instead of returning
+    a sensitivity outside that budget. Under JIT the runtime callback reports
+    this error when the differentiated result is synchronized.
+    """
