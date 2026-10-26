@@ -5913,8 +5913,8 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         Complete simulate functions container.
 
     """
-    # A regime is simulated only where a subject can stand in it, so no
-    # simulate-side program, factory or route exists at a value-only period.
+    # Occupied/acting periods own forward subject programs. Demanded query-only
+    # periods additionally need evaluator contexts, without gaining subject routes.
     simulated_periods = _simulated_periods(
         phase_reachability=simulation_reachability,
         regimes_to_active_periods=regimes_to_active_periods,
@@ -6065,12 +6065,9 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     type_local_Q_and_F_functions: MappingProxyType[int, QAndFFunction] = (
         MappingProxyType({})
     )
-    if _is_zero_node_regime(
-        law=law,
-        regime_name=regime_name,
-        regimes_to_active_periods=simulated_periods,
-    ):
-        # A nonterminal regime no required problem solves is never simulated.
+    if not law.terminal and not context_periods:
+        # Neither an occupied/acting period nor a query demands this nonterminal.
+        # Subject programs remain restricted to simulated_periods below.
         compute_regime_transition_probs = None
         per_subject_route = None
         realized_validation_probs = None
