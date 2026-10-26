@@ -13,13 +13,167 @@ coefficient has room for while staying normal, the remainder onto the product â€
 which is what `scaled_weighted_terms` does and what these tests pin.
 """
 
+from fractions import Fraction
+
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 from numpy.testing import assert_allclose
 
 from _lcm.regime_building.zero_safe import zero_safe_average
+from lcm.typing import FloatND
 from tests.conftest import DECIMAL_PRECISION
+
+
+def _scaled_mean_reference(
+    *, values: tuple[float, ...], weights: tuple[float, ...], shifts: tuple[int, ...]
+) -> tuple[float, tuple[float, ...], tuple[float, ...]]:
+    """Evaluate the mean and its derivatives with exact represented-input rationals."""
+    factors = tuple(Fraction(2) ** -shift for shift in shifts)
+    probabilities = tuple(
+        Fraction(weight) * factor
+        for weight, factor in zip(weights, factors, strict=True)
+    )
+    mass = sum(probabilities, Fraction())
+    mean = (
+        sum(
+            (p * Fraction(v) for p, v in zip(probabilities, values, strict=True)),
+            Fraction(),
+        )
+        / mass
+    )
+    weight_slopes = tuple(
+        float(factor * (Fraction(value) - mean) / mass)
+        for factor, value in zip(factors, values, strict=True)
+    )
+    return float(mean), weight_slopes, tuple(float(p / mass) for p in probabilities)
+
+
+@pytest.mark.parametrize("mode", ["eager", "jit", "vmap"])
+@pytest.mark.parametrize(
+    "case",
+    ["zero", "positive", "negative", "opposite", "dominant", "permuted", "shifted"],
+)
+def test_scaled_mean_normalizes_finite_slopes_before_tangent_arithmetic(
+    *, mode: str, case: str
+) -> None:
+    """Finite normalized derivatives survive extreme levels and opposite-sign gaps."""
+    peak = float(jnp.finfo(jnp.asarray(1.0).dtype).max)
+    specimens = {
+        "zero": ((peak, peak / 2), (1.0, 0.0), (0, 0)),
+        "positive": ((peak, peak / 2), (1.0, 0.5), (0, 0)),
+        "negative": ((-peak, -peak / 2), (1.0, 0.0), (0, 0)),
+        "opposite": ((peak, -peak), (1.0, 2.0), (0, 0)),
+        "dominant": ((peak, -peak), (3.0, 1.0), (0, 0)),
+        "permuted": ((peak / 2, peak), (0.0, 1.0), (0, 0)),
+        "shifted": ((peak, peak / 2), (1.0, 0.0), (7, 7)),
+    }
+    values, weights, shifts = specimens[case]
+    _, expected_weights, expected_values = _scaled_mean_reference(
+        values=values, weights=weights, shifts=shifts
+    )
+    scales = jnp.asarray(shifts, dtype=jnp.int32)
+
+    def derivatives(
+        *, values: FloatND, coefficients: FloatND
+    ) -> tuple[FloatND, FloatND, FloatND]:
+        def weight_function(weight: FloatND) -> FloatND:
+            return zero_safe_average(a=values, weights=weight, shifts=scales)
+
+        def value_function(value: FloatND) -> FloatND:
+            return zero_safe_average(a=value, weights=coefficients, shifts=scales)
+
+        return (
+            jax.grad(weight_function)(coefficients),
+            jax.jacfwd(weight_function)(coefficients),
+            jax.grad(value_function)(values),
+        )
+
+    evaluate = derivatives
+    value_array, weight_array = jnp.asarray(values), jnp.asarray(weights)
+    if mode == "jit":
+        evaluate = jax.jit(evaluate)
+    elif mode == "vmap":
+        evaluate = jax.jit(jax.vmap(evaluate))
+        value_array = jnp.stack([value_array, value_array])
+        weight_array = jnp.stack([weight_array, weight_array])
+    actual_weights, actual_forward, actual_values = evaluate(
+        values=value_array, coefficients=weight_array
+    )
+    expected_weight_array = np.asarray(expected_weights)
+    expected_value_array = np.asarray(expected_values)
+    if mode == "vmap":
+        expected_weight_array = np.stack([expected_weight_array] * 2)
+        expected_value_array = np.stack([expected_value_array] * 2)
+    for actual in (actual_weights, actual_forward):
+        assert_allclose(
+            actual,
+            expected_weight_array,
+            rtol=10.0**-DECIMAL_PRECISION,
+            atol=10.0**-DECIMAL_PRECISION,
+        )
+    assert_allclose(actual_values, expected_value_array, rtol=10.0**-DECIMAL_PRECISION)
+
+
+@pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
+def test_unperturbed_coefficients_do_not_poison_finite_value_derivatives(
+    *,
+    enable_jit: bool,
+) -> None:
+    """Value-only AD ignores an unperturbed, out-of-format coefficient partial."""
+    peak = jnp.finfo(jnp.asarray(1.0).dtype).max
+    values = jnp.asarray([peak, -peak])
+    weights = jnp.asarray([1.0, 0.0])
+    shifts = jnp.zeros(2, dtype=jnp.int32)
+
+    def average(value: FloatND) -> FloatND:
+        return zero_safe_average(a=value, weights=weights, shifts=shifts)
+
+    def forward(value: FloatND) -> FloatND:
+        return jax.jvp(average, (value,), (jnp.ones_like(value),))[1]
+
+    gradient = jax.grad(average)
+    evaluate_forward = forward
+    if enable_jit:
+        gradient, evaluate_forward = jax.jit(gradient), jax.jit(evaluate_forward)
+    assert_allclose(gradient(values), np.asarray([1.0, 0.0]), rtol=0, atol=0)
+    assert_allclose(evaluate_forward(values), 1.0, rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("mode", ["eager", "jit", "vmap"])
+@pytest.mark.parametrize("multiple", [1.0, 1.25, 1.5, 1.75, 2.0])
+def test_rare_large_value_keeps_a_normal_small_mean(
+    *, mode: str, multiple: float
+) -> None:
+    """A negligible large tail does not downscale the dominant normal contribution."""
+    dtype = np.dtype(jnp.asarray(1.0).dtype)
+    tiny = float(np.finfo(dtype).tiny)
+    values = (multiple * tiny, float(np.finfo(dtype).max))
+    weights = (1.0, tiny)
+    shifts = (
+        0,
+        3 * (800 if dtype.itemsize == 8 else 100) + int(np.finfo(dtype).minexp),
+    )
+    expected, _, _ = _scaled_mean_reference(
+        values=values, weights=weights, shifts=shifts
+    )
+
+    def average(*, values: FloatND, coefficients: FloatND) -> FloatND:
+        return zero_safe_average(
+            a=values, weights=coefficients, shifts=jnp.asarray(shifts, dtype=jnp.int32)
+        )
+
+    evaluate = average
+    value_array, weight_array = jnp.asarray(values), jnp.asarray(weights)
+    if mode == "jit":
+        evaluate = jax.jit(evaluate)
+    elif mode == "vmap":
+        evaluate = jax.jit(jax.vmap(evaluate))
+        value_array = jnp.stack([value_array] * 2)
+        weight_array = jnp.stack([weight_array] * 2)
+    actual = evaluate(values=value_array, coefficients=weight_array)
+    assert_allclose(actual, expected, rtol=10.0**-DECIMAL_PRECISION, atol=0)
 
 
 @pytest.mark.parametrize("weights", [(0.0, 1.0), (1.0, 2.0)])

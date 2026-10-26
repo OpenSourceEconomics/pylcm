@@ -17,8 +17,8 @@ from beartype import beartype
 from _lcm.beartype_conf import PARAMS_CONF, REGIME_CONF
 from _lcm.power_mean import weighted_power_mean
 from _lcm.probability import (
+    _unbiased_exponent,
     binades_above_smallest_normal,
-    binades_to_fit_product,
     is_live,
     is_negative,
     is_represented_zero,
@@ -660,13 +660,10 @@ def _scaled_lottery_terms(
     move it. A dead node takes no part in that choice: an unreachable node
     carrying a large shift would otherwise push every live weight down with it.
 
-    The row's own weight total joins that shift, scaled against the largest
-    value the row carries, so that the weighted sum cannot reach infinity while
-    the mean it states is an ordinary number. Two equally likely nodes near the
-    top of the range are the case: their mean is comfortably representable, but
-    the numerator alone is not. That correction is the smallest one that fits,
-    because every binade spent at the top is one the rarest term of the same
-    sum loses at the bottom.
+    Headroom bounds each actual scaled contribution, as well as the weight
+    total. An extremely rare large value must not force an unrelated normal
+    small contribution below the arithmetic range. A cardinality bound keeps
+    both sums below the top binade without materializing an overflowing product.
 
     A coefficient that is not a probability at all — negative, infinite, or
     NaN — is not a dead node and is not silently dropped. It poisons its whole
@@ -695,18 +692,24 @@ def _scaled_lottery_terms(
     common = jnp.min(jnp.where(live, shifts, unusable), axis=-1, keepdims=True)
     scale = (common - shifts).astype(jnp.int32)
 
-    on_common_scale = jnp.where(
-        live,
-        scaled_down_by_power_of_two(values=coefficients, shift=scale),
-        jnp.zeros_like(coefficients),
+    contribution_exponent = (
+        _unbiased_exponent(coefficients)
+        + scale
+        + jnp.maximum(_unbiased_exponent(jnp.abs(values)), 0)
     )
-    total = jnp.sum(on_common_scale, axis=-1, keepdims=True)
-    largest = jnp.max(
-        jnp.where(live, jnp.abs(values), jnp.zeros_like(values)),
+    largest_exponent = jnp.max(
+        jnp.where(live, contribution_exponent, jnp.iinfo(jnp.int32).min // 2),
         axis=-1,
         keepdims=True,
     )
-    full = scale - binades_to_fit_product(left=total, right=largest)
+    # Each product's two significands are below two; n terms add ceil(log2(n))
+    # binades. Keeping the bound below 2**(maxexp-1) leaves rounding headroom.
+    sum_binades = (values.shape[-1] - 1).bit_length()
+    headroom = jnp.maximum(
+        largest_exponent + 2 + sum_binades - (jnp.finfo(values.dtype).maxexp - 1),
+        0,
+    )
+    full = scale - headroom
 
     room = binades_above_smallest_normal(coefficients)
     on_weight = jnp.maximum(full, -room)

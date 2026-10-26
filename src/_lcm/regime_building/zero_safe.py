@@ -159,8 +159,17 @@ correctly-rounded/compensated summation, which is not implemented.
 
 import jax
 import jax.numpy as jnp
+from jax.custom_derivatives import SymbolicZero
 
 from _lcm.certainty_equivalent import _scaled_lottery_terms
+from _lcm.probability import (
+    _IntegerTangent,
+    _unbiased_exponent,
+    is_live,
+    is_represented_zero,
+    scaled_by_power_of_two,
+    scaled_down_by_power_of_two,
+)
 from _lcm.zero_safe import zero_safe_weighted_term
 from lcm.typing import FloatND, IntND
 
@@ -264,14 +273,7 @@ def zero_safe_average(
                 jnp.moveaxis(entry, axis, -1)
                 for entry in (values, coefficients, scales)
             )
-        terms, masses = _scaled_lottery_terms(
-            values=values, coefficients=coefficients, shifts=scales
-        )
-        total_weight = jnp.sum(masses, axis=-1)
-        _raise_if_concretely_zero(
-            total_weight=total_weight, context="zero_safe_average"
-        )
-        return jnp.sum(terms, axis=-1) / total_weight
+        return _scaled_mean_with_tangent(values, coefficients, scales)
 
     total_weight = jnp.sum(weights_arr, axis=axis)
     _raise_if_concretely_zero(total_weight=total_weight, context="zero_safe_average")
@@ -294,6 +296,93 @@ def zero_safe_average(
     )
     numerator = jnp.sum(terms, axis=axis)
     return numerator / total_weight
+
+
+# keyword-only-exempt: library-callback=jax.custom_jvp
+def _scaled_mean_primal(
+    values: FloatND, coefficients: FloatND, shifts: IntND
+) -> FloatND:
+    """Reduce one normalized lottery without exposing independent AD cotangents."""
+    terms, masses = _scaled_lottery_terms(
+        values=values, coefficients=coefficients, shifts=shifts
+    )
+    total_weight = jnp.sum(masses, axis=-1)
+    _raise_if_concretely_zero(total_weight=total_weight, context="zero_safe_average")
+    return jnp.sum(terms, axis=-1) / total_weight
+
+
+# keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
+def _scaled_mean_jvp(
+    primals: tuple[FloatND, FloatND, IntND],
+    tangents: tuple[
+        FloatND | SymbolicZero,
+        FloatND | SymbolicZero,
+        _IntegerTangent | SymbolicZero,
+    ],
+) -> tuple[FloatND, FloatND]:
+    """Form normalized slopes before the linear, transposable tangent sum.
+
+    An unperturbed channel contributes nothing, even if its partial derivative
+    is outside the dtype. Explicit directions through out-of-format partials
+    retain ordinary active-dtype tangent arithmetic, including zero times infinity.
+    """
+    values, coefficients, shifts = primals
+    values_dot, coefficients_dot, _ = tangents
+    mean = _scaled_mean_with_tangent(values, coefficients, shifts)
+
+    coefficient_exponent = _unbiased_exponent(coefficients)
+    live = is_live(coefficients) & jnp.isfinite(coefficients)
+    weight_exponent = coefficient_exponent - shifts
+    common = jnp.max(
+        jnp.where(live, weight_exponent, jnp.iinfo(jnp.int32).min // 2),
+        axis=-1,
+        keepdims=True,
+    )
+    unit_coefficients = _rescale_mean_operand(
+        values=coefficients, shift=-coefficient_exponent
+    )
+    mass = jnp.sum(
+        _rescale_mean_operand(values=unit_coefficients, shift=weight_exponent - common),
+        axis=-1,
+        keepdims=True,
+    )
+    mass_exponent = _unbiased_exponent(mass)
+    unit_mass = _rescale_mean_operand(values=mass, shift=-mass_exponent)
+
+    mean_column = mean[..., None]
+    safe_values = jnp.where(
+        is_represented_zero(coefficients) & ~jnp.isfinite(values), mean_column, values
+    )
+    value_exponent = _unbiased_exponent(
+        jnp.maximum(jnp.abs(safe_values), jnp.abs(mean_column))
+    )
+    unit_gap = _rescale_mean_operand(
+        values=safe_values, shift=-value_exponent
+    ) - _rescale_mean_operand(values=mean_column, shift=-value_exponent)
+    coefficient_slopes = _rescale_mean_operand(
+        values=unit_gap / unit_mass,
+        shift=value_exponent - shifts - common - mass_exponent,
+    )
+    value_slopes = _rescale_mean_operand(
+        values=unit_coefficients / unit_mass,
+        shift=weight_exponent - common - mass_exponent,
+    )
+    tangent = jnp.zeros_like(mean)
+    if not isinstance(coefficients_dot, SymbolicZero):
+        tangent = tangent + jnp.sum(coefficient_slopes * coefficients_dot, axis=-1)
+    if not isinstance(values_dot, SymbolicZero):
+        tangent = tangent + jnp.sum(value_slopes * values_dot, axis=-1)
+    return mean, tangent
+
+
+def _rescale_mean_operand(*, values: FloatND, shift: IntND) -> FloatND:
+    """Apply an integer power of two without a subnormal scaling operand."""
+    lowered = scaled_down_by_power_of_two(values=values, shift=jnp.minimum(shift, 0))
+    return scaled_by_power_of_two(values=lowered, shift=jnp.maximum(shift, 0))
+
+
+_scaled_mean_with_tangent = jax.custom_jvp(_scaled_mean_primal)
+_scaled_mean_with_tangent.defjvp(_scaled_mean_jvp, symbolic_zeros=True)
 
 
 def _raise_if_concretely_zero(*, total_weight: FloatND, context: str) -> None:
