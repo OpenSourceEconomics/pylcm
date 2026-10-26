@@ -640,3 +640,48 @@ def test_density_conditioned_routine_derivatives_have_no_certificate_callback(
             )
             tolerance = 10.0**-DECIMAL_PRECISION
             np.testing.assert_allclose(actual, expected, atol=tolerance, rtol=tolerance)
+
+
+@pytest.mark.parametrize("difference", ["sigma_by_category", "conditioning_state"])
+def test_supplied_node_law_comparison_keeps_conditioning_metadata(
+    *, difference: str
+) -> None:
+    left = TauchenAR1Process.on_nodes(
+        nodes=np.asarray([-1.0, 0.0, 1.0]),
+        rho=0.3,
+        sigma=StateConditioned(on="group", by={"low": 0.8, "high": 1.2}),
+    )
+    right = TauchenAR1Process.on_nodes(
+        nodes=np.asarray([-1.0, 0.0, 1.0]),
+        rho=0.3,
+        sigma=StateConditioned(
+            on="other_group" if difference == "conditioning_state" else "group",
+            by={"low": 0.9 if difference == "sigma_by_category" else 0.8, "high": 1.2},
+        ),
+    )
+    assert left.sigma == right.sigma
+    assert left.state_conditioned != right.state_conditioned
+    assert not left.has_same_law_as(right)
+    assert not right.has_same_law_as(left)
+
+
+@pytest.mark.parametrize("draw_mode", ["continuous", "nodes"])
+def test_supplied_node_law_comparison_ignores_only_draw_mode(
+    *, draw_mode: Literal["continuous", "nodes"]
+) -> None:
+    declaration = StateConditioned(on="group", by={"low": 0.8, "high": 1.2})
+    left = TauchenAR1Process.on_nodes(
+        nodes=np.asarray([-1.0, 0.0, 1.0]),
+        rho=0.3,
+        sigma=declaration,
+        simulate_draws="continuous",
+    )
+    right = TauchenAR1Process.on_nodes(
+        nodes=np.asarray([-1.0, 0.0, 1.0]),
+        rho=0.3,
+        sigma=declaration,
+        simulate_draws=draw_mode,
+    )
+    assert left.has_same_law_as(right)
+    assert right.has_same_law_as(left)
+    assert left.state_conditioned == right.state_conditioned == declaration

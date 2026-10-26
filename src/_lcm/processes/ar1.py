@@ -258,6 +258,14 @@ class _TauchenOnNodesProcess(TauchenAR1Process):
         }
     )
 
+    def has_same_law_as(self, other: _ContinuousStochasticProcess) -> bool:
+        """Compare the physical law, including state-conditioned scale declarations."""
+        return isinstance(other, _TauchenOnNodesProcess) and all(
+            getattr(self, spec.name) == getattr(other, spec.name)
+            for spec in fields(self)
+            if spec.name != "simulate_draws"
+        )
+
     def __post_init__(self) -> None:
         points = np.asarray(self.nodes, dtype=canonical_float_dtype())
         if (
