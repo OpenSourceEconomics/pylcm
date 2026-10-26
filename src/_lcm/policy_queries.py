@@ -744,7 +744,6 @@ def build_policy_query_kernel(
         from _lcm.query_information import (  # noqa: PLC0415 - keep information policy beside query core
             has_information,
             support_shape,
-            support_size,
         )
 
         information = has_information(node=node, definitions=definitions, period=period)
@@ -779,13 +778,7 @@ def build_policy_query_kernel(
                 ),
                 StateAxesLeading(
                     state_names=(),
-                    shape=(
-                        chunk_size,
-                        *information_shape,
-                        support_size(node=node, period=period),
-                    )
-                    if information
-                    else (chunk_size,),
+                    shape=(chunk_size,),
                     dtype=jnp.int32,
                 ),
                 StateAxesLeading(
@@ -1310,7 +1303,16 @@ class _QueryCore:
                     {name: answer[:3] for name, answer in dependencies.items()},
                 ),
             )
-            return cast("PolicyAnswer", (*answer[:3], jnp.all(answer[3])))
+            # Information consumers select their own actions; only values travel.
+            return cast(
+                "PolicyAnswer",
+                (
+                    answer[0],
+                    jnp.full(live.shape, -1, dtype=jnp.int32),
+                    answer[2],
+                    jnp.all(answer[3]),
+                ),
+            )
         cell = functools.partial(
             _query_cell,
             node=self.node,
