@@ -243,12 +243,7 @@ _PROFILED_HELPER_MUTATIONS = {
     ),
     "simulation_entry:compiled_solve_owners_omitted": (
         "src/lcm/model.py",
-        (
-            "                retained_input_arrays=(\n"
-            "                    *retained_input_arrays,\n"
-            "                    *self._retained_call_policy_arrays(),\n"
-            "                ),"
-        ),
+        "                retained_input_arrays=retained_input_arrays,",
         "                retained_input_arrays=(),",
     ),
     "simulation_entry:original_solve_inputs_omitted": (
@@ -281,8 +276,8 @@ _PROFILED_HELPER_MUTATIONS = {
     ),
     "simulation_entry:entry_model_roots_omitted": (
         "src/lcm/model.py",
-        "            model_roots=self._runtime_policy_roots(),",
-        "            model_roots=(),",
+        "            model_roots=(\n                self._time.values,",
+        "            model_roots=() and (\n                self._time.values,",
     ),
     "simulation_entry:preflight_owner_inventory_omitted": (
         "src/lcm/model.py",

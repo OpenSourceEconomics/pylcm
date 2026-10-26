@@ -363,11 +363,6 @@ class SolutionPhase:
     )
     """Exact current-law support; its banks are model-owned native operands."""
 
-    constant_roots: tuple[PytreeValue, ...] = dataclasses.field(
-        default=(), metadata={"fingerprint_omit_if_default": True}
-    )
-    """Concrete generated constants retained by this phase's function closures."""
-
     _variables: Variables
     """Solve states and actions, with kind/topology/process tags.
 
@@ -1090,11 +1085,6 @@ class SimulationPhase:
         default=None, metadata={"fingerprint_omit_if_default": True}
     )
     """Native physical realization shared by decision, flow and transitions."""
-
-    constant_roots: tuple[PytreeValue, ...] = dataclasses.field(
-        default=(), metadata={"fingerprint_omit_if_default": True}
-    )
-    """Concrete generated constants retained by this phase's function closures."""
 
     _variables: Variables
     """Simulate states (solve states plus carried-only states, appended) and

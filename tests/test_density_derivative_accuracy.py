@@ -1,10 +1,7 @@
 """Dimensionless accuracy and explicit admission for normal-density sensitivities."""
 
 import math
-from collections.abc import Callable
-from dataclasses import replace
 from fractions import Fraction
-from types import MappingProxyType
 from typing import Literal, NamedTuple
 
 import cloudpickle
@@ -13,9 +10,8 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.execution.footprint import concrete_device_bytes
 from _lcm.processes import density_derivative_admission as admission
-from _lcm.processes.ar1 import _TauchenOnNodesProcess
+from _lcm.processes.ar1 import _certify_density_derivative_row, _TauchenOnNodesProcess
 from _lcm.regime_building.processing import _get_weights_func_for_process
 from lcm import (
     AgeGrid,
@@ -36,7 +32,7 @@ type _Parameter = Literal["mu", "rho", "source", "sigma"]
 type _Method = Literal["jvp", "jacfwd", "jacrev"]
 type _Family = Literal["ordinary", "central", "higher_moment"]
 _RHO_ACCURACY_FAILURE = (
-    "DensityDerivativeAccuracyError: Cannot certify "
+    "Cannot certify "
     "the density transition derivative dimensionless "
     "accuracy budget for rho"
 )
@@ -84,19 +80,33 @@ def _inputs(
     )
 
 
+def _certify_case(case: _DensityInputs) -> None:
+    dtype = jnp.float64 if X64_ENABLED else jnp.float32
+    _certify_density_derivative_row(
+        (
+            jnp.asarray(case.nodes, dtype=dtype),
+            jnp.asarray(case.mu, dtype=dtype),
+            jnp.asarray(case.rho, dtype=dtype),
+            jnp.asarray(case.source, dtype=dtype),
+            jnp.asarray(case.sigma, dtype=dtype),
+        )
+    )
+
+
 def _derivative(
     *,
     case: _DensityInputs,
     parameter: _Parameter,
     method: _Method,
     compiled: bool,
-    runtime_checks: bool = True,
+    certify: bool = True,
 ) -> FloatND:
+    if certify:
+        _certify_case(case)
     dtype = jnp.float64 if X64_ENABLED else jnp.float32
     process = TauchenAR1Process.on_nodes(
         nodes=np.asarray(case.nodes),
         transition_rule="density",
-        runtime_checks=runtime_checks,
     )
     assert isinstance(process, _TauchenOnNodesProcess)
     point = jnp.asarray(getattr(case, parameter), dtype=dtype)
@@ -122,9 +132,6 @@ def _derivative(
     operation = jax.jit(differentiate) if compiled else differentiate
     actual = operation(point)
     jax.block_until_ready(actual)
-    # A global barrier also waits for unrelated failed checked calls.
-    if runtime_checks:
-        jax.effects_barrier()
     return actual
 
 
@@ -318,7 +325,7 @@ def test_density_assembled_bounds_cover_the_independent_law(
 
 @pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
 @pytest.mark.parametrize("method", ["jvp", "jacfwd", "jacrev"])
-def test_density_mapped_ambiguity_rejects_zero_source_sensitivities(
+def test_explicit_density_validation_checks_ambiguous_mapped_source_rows(
     *,
     compiled: bool,
     method: _Method,
@@ -349,16 +356,16 @@ def test_density_mapped_ambiguity_rejects_zero_source_sensitivities(
     if compiled:
         operation = jax.jit(operation)
 
-    def run_mapped() -> None:
-        actual = operation(jnp.asarray([0.0, 1.0]))
-        jax.block_until_ready(actual)
-        jax.effects_barrier()
+    actual = operation(jnp.asarray([0.0, 1.0]))
+    jax.block_until_ready(actual)
+    np.testing.assert_array_equal(actual, np.zeros_like(actual))
+    assert "io_callback" not in str(jax.make_jaxpr(operation)(jnp.asarray([0.0, 1.0])))
 
     with pytest.raises(
         (ArithmeticError, RuntimeError),
         match=_RHO_ACCURACY_FAILURE,
     ):
-        run_mapped()
+        _certify_case(case._replace(source=1.0))
 
 
 @pytest.mark.parametrize("field", ["powers", "coefficient_exponents"])
@@ -411,94 +418,20 @@ def test_density_unchecked_derivatives_keep_the_ordinary_normalized_law(
             parameter=parameter,
             method=method,
             compiled=compiled,
-            runtime_checks=False,
+            certify=False,
         )
     )
     tolerance = 10.0**-DECIMAL_PRECISION
     np.testing.assert_allclose(actual, expected, atol=tolerance, rtol=tolerance)
 
 
-def _factory_rho_derivative(
-    *,
-    process: _TauchenOnNodesProcess,
-    rho: ScalarFloat,
-    source: ScalarFloat,
-    mu: ScalarFloat,
-    sigma: ScalarFloat,
-) -> FloatND:
-    return jax.jacrev(
-        lambda value: process.compute_transition_row(
-            source,
-            rho=value,
-            mu=mu,
-            sigma=sigma,
-        )
-    )(rho)
-
-
-def _synchronize_policy_derivative(
-    *,
-    operation: Callable[..., FloatND],
-    process: _TauchenOnNodesProcess,
-    arguments: dict[str, ScalarFloat],
-) -> None:
-    # The concrete callable is produced by jit with this declared static process.
-    result = operation(process=process, **arguments)
-    jax.block_until_ready(result)
-    jax.effects_barrier()
-
-
-@pytest.mark.parametrize("first_checked", [False, True])
-def test_density_factory_policy_is_static_and_separates_jit_caches(
-    *, first_checked: bool
-) -> None:
-    case = _inputs(family="central", physical_scale=1.0, nonzero_source=True)
-    checked = TauchenAR1Process.on_nodes(
-        nodes=np.asarray(case.nodes),
-        transition_rule="density",
-        runtime_checks=True,
-    )
-    unchecked = TauchenAR1Process.on_nodes(
-        nodes=np.asarray(case.nodes),
-        transition_rule="density",
-        runtime_checks=False,
-    )
-    assert isinstance(checked, _TauchenOnNodesProcess)
-    assert isinstance(unchecked, _TauchenOnNodesProcess)
-    assert checked != unchecked
-    assert checked.has_same_law_as(unchecked)
-    operation = jax.jit(_factory_rho_derivative, static_argnames=("process",))
-    arguments = {
-        name: jnp.asarray(getattr(case, name))
-        for name in ("rho", "source", "mu", "sigma")
-    }
-    for checks in (first_checked, not first_checked, first_checked):
-        process = checked if checks else unchecked
-        if checks:
-            with pytest.raises(
-                (ArithmeticError, RuntimeError), match=_RHO_ACCURACY_FAILURE
-            ):
-                _synchronize_policy_derivative(
-                    operation=operation, process=process, arguments=arguments
-                )
-        else:
-            actual = operation(process=process, **arguments)
-            jax.block_until_ready(actual)
-            assert np.isfinite(np.asarray(actual)).all()
-            # Unchecked mode deliberately makes no certificate promise here.
-            assert float(actual[1]) == 0.0
-
-
-@pytest.mark.parametrize("runtime_checks", [False, True])
 @pytest.mark.parametrize("method", ["jvp", "jacfwd", "jacrev"])
-def test_density_unchecked_transformed_graph_has_no_certificate_callback(
-    *, runtime_checks: bool, method: _Method
+def test_density_routine_transformed_graph_has_no_certificate_callback(
+    *, method: _Method
 ) -> None:
     case = _inputs(family="ordinary", physical_scale=1.0)
     process = TauchenAR1Process.on_nodes(
-        nodes=np.asarray(case.nodes),
-        transition_rule="density",
-        runtime_checks=runtime_checks,
+        nodes=np.asarray(case.nodes), transition_rule="density"
     )
     assert isinstance(process, _TauchenOnNodesProcess)
 
@@ -518,12 +451,9 @@ def test_density_unchecked_transformed_graph_has_no_certificate_callback(
         derivative = (
             jax.jacfwd(evaluate) if method == "jacfwd" else jax.jacrev(evaluate)
         )
-    graph = str(jax.make_jaxpr(derivative)(jnp.asarray(case.mu)))
-    assert ("io_callback" in graph) is runtime_checks
-    result = jax.jit(derivative)(jnp.asarray(case.mu))
-    jax.block_until_ready(result)
-    if runtime_checks:
-        jax.effects_barrier()
+    assert "io_callback" not in str(jax.make_jaxpr(derivative)(jnp.asarray(case.mu)))
+    actual = jax.jit(derivative)(jnp.asarray(case.mu))
+    jax.block_until_ready(actual)
     expected = np.asarray(
         density_pairwise_derivative(
             nodes=case.nodes,
@@ -535,7 +465,7 @@ def test_density_unchecked_transformed_graph_has_no_certificate_callback(
         )
     )
     tolerance = 10.0**-DECIMAL_PRECISION
-    np.testing.assert_allclose(result, expected, atol=tolerance, rtol=tolerance)
+    np.testing.assert_allclose(actual, expected, atol=tolerance, rtol=tolerance)
 
 
 @categorical(ordered=False)
@@ -560,24 +490,28 @@ def _policy_terminal_payoff(income: ContinuousState) -> FloatND:
 
 def _policy_model(
     *,
-    factory_checks: bool = True,
     transition_rule: Literal["density", "midpoint"] = "density",
 ) -> Model:
+    case = _inputs(family="ordinary", physical_scale=1.0)._replace(rho=0.0)
     process = TauchenAR1Process.on_nodes(
-        nodes=np.asarray((-1.4, -0.1, 0.7, 1.2, 2.0)),
+        nodes=np.asarray(case.nodes),
         transition_rule=transition_rule,
-        rho=0.0,
-        mu=0.2,
+        rho=case.rho,
+        mu=case.mu,
         simulate_draws="nodes",
-        runtime_checks=factory_checks,
     )
     return Model(
         regimes={
             "alive": Regime(
-                states={"income": process}, functions={"utility": _policy_zero_payoff}
+                states={
+                    "income": process,
+                },
+                functions={"utility": _policy_zero_payoff},
             ),
             "dead": Regime(
-                states={"income": process},
+                states={
+                    "income": process,
+                },
                 functions={"utility": _policy_terminal_payoff},
             ),
         },
@@ -589,30 +523,23 @@ def _policy_model(
     )
 
 
+def _policy_params(*, model: Model, sigma: float | np.ndarray = 0.8) -> UserParams:
+    template = model.get_params_template()
+    return {
+        name: {"income": {"sigma": sigma}}
+        for name in ("alive", "dead")
+        if "income" in template.get(name, {})
+    }
+
+
 @pytest.mark.slow
-def test_density_public_call_policies_keep_separate_graphs_and_reusable_values() -> (
+def test_density_model_calls_keep_callback_free_derivatives_and_reusable_values() -> (
     None
 ):
     model = _policy_model()
     canonical = model._regimes
-    template = model.get_params_template()
-    params: UserParams = {
-        name: {"income": {"sigma": 0.8}}
-        for name in ("alive", "dead")
-        if "income" in template.get(name, {})
-    }
-    values = []
-    panels = []
-    expected = np.asarray(
-        density_pairwise_derivative(
-            nodes=(-1.4, -0.1, 0.7, 1.2, 2.0),
-            source=0.25,
-            rho=0.0,
-            mu=0.2,
-            sigma=0.8,
-            parameter="sigma",
-        )
-    )
+    params = _policy_params(model=model)
+    values, panels = [], []
     for checks in (True, False, True):
         solution = model.solve(params=params, log_level="off", runtime_checks=checks)
         values.append(np.asarray(solution.values[0]["alive"]))
@@ -635,50 +562,41 @@ def test_density_public_call_policies_keep_separate_graphs_and_reusable_values()
             .to_numpy()
         )
         assert model._regimes is canonical
-        selected = model._regimes_for_runtime_checks(runtime_checks=checks)
-        for phase in (selected["alive"].solution, selected["alive"].simulation):
+        for phase in (canonical["alive"].solution, canonical["alive"].simulation):
             weights = phase.functions["weight_dead__next_income"]
 
             def evaluate(sigma: ScalarFloat) -> FloatND:
                 return weights(income=jnp.asarray(0.25), income__sigma=sigma)  # noqa: B023 - synchronous transform
 
             operation = jax.jacrev(evaluate)
-            assert (
-                "io_callback" in str(jax.make_jaxpr(operation)(jnp.asarray(0.8)))
-            ) is checks
+            assert "io_callback" not in str(jax.make_jaxpr(operation)(jnp.asarray(0.8)))
             actual = jax.jit(operation)(jnp.asarray(0.8))
             jax.block_until_ready(actual)
-            if checks:
-                jax.effects_barrier()
+            case = _inputs(family="ordinary", physical_scale=1.0)._replace(rho=0.0)
+            expected = np.asarray(
+                density_pairwise_derivative(
+                    nodes=case.nodes,
+                    source=0.25,
+                    rho=case.rho,
+                    mu=case.mu,
+                    sigma=0.8,
+                    parameter="sigma",
+                )
+            )
             tolerance = 10.0**-DECIMAL_PRECISION
             np.testing.assert_allclose(actual, expected, atol=tolerance, rtol=tolerance)
     for current in values[1:]:
         np.testing.assert_array_equal(current, values[0])
     for current in panels[1:]:
         np.testing.assert_array_equal(current, panels[0])
-    assert (2, True) in model._simulate_runtime_regimes
-    assert (2, False) in model._simulate_runtime_regimes
     restored = cloudpickle.loads(cloudpickle.dumps(model))
     assert isinstance(restored, Model)
-    for checks in (True, False):
-        selected = restored._regimes_for_runtime_checks(runtime_checks=checks)
-        weights = selected["alive"].solution.functions["weight_dead__next_income"]
-        graph = jax.make_jaxpr(
-            jax.jacrev(
-                lambda sigma: weights(  # noqa: B023 - synchronous transform
-                    income=jnp.asarray(0.25),
-                    income__sigma=sigma,
-                )
-            )
-        )(jnp.asarray(0.8))
-        assert ("io_callback" in str(graph)) is checks
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("runtime_checks", [False, True])
 @pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
-def test_density_conditioned_policy_preserves_categories_and_source_derivatives(
-    *, runtime_checks: bool, compiled: bool
+def test_density_conditioned_routine_derivatives_have_no_certificate_callback(
+    *, compiled: bool
 ) -> None:
     case = _inputs(family="ordinary", physical_scale=1.0)
     process = TauchenAR1Process.on_nodes(
@@ -691,7 +609,6 @@ def test_density_conditioned_policy_preserves_categories_and_source_derivatives(
     weights = _get_weights_func_for_process(
         name="income",
         grid=process,
-        runtime_checks=runtime_checks,
         grids={"scale_group": DiscreteGrid(category_class=_PolicyScale)},
     )
     for code, sigma in ((_PolicyScale.low, 0.8), (_PolicyScale.high, 1.2)):
@@ -704,16 +621,13 @@ def test_density_conditioned_policy_preserves_categories_and_source_derivatives(
 
         for differentiate in (jax.jacfwd, jax.jacrev):
             operation = differentiate(evaluate)
-            assert (
-                "io_callback"
-                in str(jax.make_jaxpr(operation)(jnp.asarray(case.source)))
-            ) is runtime_checks
+            assert "io_callback" not in str(
+                jax.make_jaxpr(operation)(jnp.asarray(case.source))
+            )
             actual = (jax.jit(operation) if compiled else operation)(
                 jnp.asarray(case.source)
             )
             jax.block_until_ready(actual)
-            if runtime_checks:
-                jax.effects_barrier()
             expected = np.asarray(
                 density_pairwise_derivative(
                     nodes=case.nodes,
@@ -726,50 +640,3 @@ def test_density_conditioned_policy_preserves_categories_and_source_derivatives(
             )
             tolerance = 10.0**-DECIMAL_PRECISION
             np.testing.assert_allclose(actual, expected, atol=tolerance, rtol=tolerance)
-
-
-def test_density_call_policy_does_not_change_scientific_identity() -> None:
-    checked = _policy_model(factory_checks=True)
-    unchecked = _policy_model(factory_checks=False)
-    assert isinstance(checked._model_structure_fingerprint, str)
-    assert (
-        checked._model_structure_fingerprint == unchecked._model_structure_fingerprint
-    )
-
-
-def test_density_call_policy_roots_charge_inactive_bundle_constants() -> None:
-    model = _policy_model()
-    original = concrete_device_bytes(tree=model._runtime_policy_roots())
-    inactive = model._runtime_check_regimes[False]
-    extra = jnp.arange(37, dtype=jnp.float32)
-    regime = inactive["alive"]
-    altered = MappingProxyType(
-        {
-            **inactive,
-            "alive": replace(
-                regime,
-                solution=replace(
-                    regime.solution,
-                    constant_roots=(*regime.solution.constant_roots, extra),
-                ),
-            ),
-        }
-    )
-    model._runtime_check_regimes = MappingProxyType(
-        {
-            True: model._regimes,
-            False: altered,
-        }
-    )
-    charged = concrete_device_bytes(tree=model._runtime_policy_roots())
-    expected = concrete_device_bytes(tree=extra)
-    assert {
-        device: charged.get(device, 0) - original.get(device, 0)
-        for device in charged.keys() | original.keys()
-    } == dict(expected)
-
-
-def test_midpoint_call_policies_share_the_original_graph_inventory() -> None:
-    model = _policy_model(transition_rule="midpoint")
-    assert model._runtime_check_regimes[False] is model._regimes
-    assert model._retained_call_policy_arrays() == ()

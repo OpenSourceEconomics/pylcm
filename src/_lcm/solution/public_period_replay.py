@@ -159,7 +159,6 @@ def replay_public_period(
     params_fingerprint: str,
     require_reference: bool,
     validate_selection: Callable[[], None],
-    select_regimes: Callable[[bool], MappingProxyType[str, Regime]] | None = None,
 ) -> CapturedPeriodReplay:
     """Bind, compile and validate one captured period before dispatching it."""
     record = load_period_capture(directory=directory)
@@ -181,8 +180,6 @@ def replay_public_period(
         )
     if not _is_capture_metadata(metadata):
         raise ValueError("Period capture metadata must be a JSON object.")
-    if select_regimes is not None:
-        regimes = select_regimes(metadata["call_policy"]["runtime_checks"])
     name, period = metadata["regime"], metadata["period"]
     validate_capture_route(
         periods=((name, period),),

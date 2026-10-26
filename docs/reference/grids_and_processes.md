@@ -89,14 +89,12 @@ finite nonnegative masses with positive total. Quadrature configuration is stati
 process parameter. All rules accept `StateConditioned` scales. Continuous simulation
 retains the normal law; node simulation uses the selected matrix.
 
-Density-rule differentiation certifies a dimensionless componentwise absolute and
-relative budget (`1e-12` for float64, `1e-5` for float32). It checks the whole row and
-raises `DensityDerivativeAccuracyError` when a component cannot be certified. These host
-checks apply during first-order AD when `runtime_checks=True` (default). Standalone
-process calls use the factory setting; Model calls use their solve/simulate setting.
-With `False`, derivatives use the same normalized arithmetic without host certification.
-See the [accuracy metric](../user_guide/continuous_stochastic_processes.md) for the
-parameter scales and floating-range limits.
+Density-rule differentiation uses normalized scaled arithmetic without a host
+certificate. A private `_lcm` developer/test checker can certify deliberately supplied
+rows against a dimensionless absolute-plus-relative budget (`1e-12` at float64, `1e-5`
+at float32), or raise `DensityDerivativeAccuracyError`. It adds no check to solve,
+simulation or routine AD and is not a public model-validation API. See the
+[finite-row guarantee and developer invocation](../user_guide/continuous_stochastic_processes.md).
 
 A process owns its transition mechanism. Adding a second law under `state_transitions`
 is an ambiguous declaration and is rejected.

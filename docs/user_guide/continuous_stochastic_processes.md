@@ -265,27 +265,39 @@ TauchenAR1Process.on_nodes(
   node and normalizes the row in log space. It ignores cell widths: this is a discrete
   probability rule, not numerical integration of the continuous normal density.
 
-With `runtime_checks=True` (default), density-rule first-order sensitivities use a
-dimensionless accuracy budget. For a component `D = partial p_i / partial theta`, use
-`g = sigma * D` for `mu`, `sigma` and the actual source state; use `g = D` for `rho`.
-Every successfully returned finite unit sensitivity satisfies
-`abs(g_computed - g_true) <= tau + tau*abs(g_true)`, with `tau=1e-12` at float64 and
-`tau=1e-5` at float32. Changing the physical unit of the state variable leaves this
-budget unchanged. An exact zero uses the absolute part of the budget.
+Density-rule first-order derivatives use normalized scaled arithmetic. Routine process,
+solve and simulation calls do not run the expensive host accuracy certificate, at any
+`runtime_checks` setting. The usual probability, finiteness and feasibility checks still
+follow that setting. Routine density derivatives have no quantitative componentwise
+accuracy guarantee in ill-conditioned rows.
 
-Differentiation checks the whole row, including parameter columns that the caller did
-not request. If rounding uncertainty prevents certification, it raises
-`DensityDerivativeAccuracyError`; under JIT the runtime callback reports the error when
-the result is synchronized. These checks transfer coefficient words to the host during
-AD and can add substantial latency. `model.solve` and `model.simulate` use their
-`runtime_checks` argument; standalone process calls use the setting passed to
-`TauchenAR1Process.on_nodes`. With `runtime_checks=False`, the corrected normalized
-derivative arithmetic remains active, but the compiled derivative contains no host
-certificate callback and makes no componentwise accuracy-certificate promise. Primal
-solves do not perform these derivative checks. The checks do not add a higher-order or
-universal subnormal-direction accuracy guarantee. A unit partial outside the floating
-format has no finite-value guarantee; scaled zero or small directions can still have
-finite normal results.
+The stronger accuracy certificate is a private developer/test tool in `_lcm`, not a
+public model-validation API. Its need in an application has not been established. To
+exercise the maintained oracle and adversarial tests, run:
+
+```console
+pixi run -e tests-cpu pytest tests/test_density_derivative_accuracy.py -v
+```
+
+Developer code can deliberately call
+`_lcm.processes.ar1._certify_density_derivative_row((nodes, mu, rho, source, sigma))`
+with JAX arrays at the selected precision. `nodes` is a finite strictly increasing
+one-dimensional array; the remaining inputs are scalar arrays, with positive finite
+`sigma`. The operation synchronously runs the host checker in
+`_lcm.processes.density_derivative_admission`. It changes no model or subsequent
+compiled call and raises `DensityDerivativeAccuracyError` on an uncertifiable row.
+
+At that exact stored-input row it checks all local first-order unit partials in `mu`,
+`rho`, actual source and `sigma`. Define `g = sigma * partial p_i / partial theta` for
+every input except `rho`, where `g = partial p_i / partial rho`. The scale is held fixed
+in this error metric. Every successfully certified finite component meets
+`abs(g_computed - g_true) <= tau + tau*abs(g_true)`, with `tau=1e-12` at float64 and
+`tau=1e-5` at float32; exact zero uses the absolute allowance. Conservative rejection of
+the whole row is allowed. This does not certify unsampled sources or parameters,
+interpolated transition derivatives, a composed Bellman function, higher-order AD or all
+floating-point directions. Ordinary corrected derivatives do not carry this certificate
+guarantee. A unit partial outside the floating format has no finite-value guarantee;
+scaled zero or small directions can still have finite normal results.
 
 All rules support finite unit-root or explosive persistence on these fixed nodes. They
 also support a `StateConditioned` innovation scale. Quadrature target clipping is part

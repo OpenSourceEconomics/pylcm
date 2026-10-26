@@ -544,7 +544,6 @@ def process_regimes(  # noqa: PLR0915 - assemble canonical phase contexts before
     enable_jit: bool,
     prepared_structure: PreparedModelStructure,
     execution: ResolvedExecution | None = None,
-    runtime_checks: bool = True,
 ) -> MappingProxyType[RegimeName, Regime]:
     """Process finalized regimes into canonical regimes.
 
@@ -973,7 +972,6 @@ def process_regimes(  # noqa: PLR0915 - assemble canonical phase contexts before
     )
 
     build_canonical_regimes = _CanonicalRegimeBuilder(
-        runtime_checks=runtime_checks,
         current_iid_bindings=prepared_structure.current_iid_bindings,
         ages=ages,
         post_decision_bounds=MappingProxyType(
@@ -1052,22 +1050,6 @@ def process_regimes(  # noqa: PLR0915 - assemble canonical phase contexts before
         canonical_regimes=canonical_regimes, ages=ages
     )
     if gated_continuations_by_source:
-        retained_fold_roots = tuple(
-            (
-                regime.solution.constant_roots,
-                regime.simulation.constant_roots,
-                regime.solution.continuation_template,
-                tuple(regime.solution.continuation_spec.templates_by_period.values())
-                if regime.solution.continuation_spec is not None
-                else (),
-            )
-            for regime in canonical_regimes.values()
-        ) + tuple(
-            spec.target_ages
-            for schedules in gated_continuations_by_source.values()
-            for schedule in schedules.values()
-            for spec in schedule.by_period.values()
-        )
         canonical_regimes = _attach_gated_edge_folds(
             canonical_regimes=build_canonical_regimes(
                 gated_continuations_by_source=gated_continuations_by_source
@@ -1079,23 +1061,6 @@ def process_regimes(  # noqa: PLR0915 - assemble canonical phase contexts before
             period_to_regime_v_interp=period_to_regime_v_interp,
             grid_schedule=grid_schedule,
             enable_jit=enable_jit,
-        )
-
-    if gated_continuations_by_source:
-        canonical_regimes = MappingProxyType(
-            {
-                name: dataclass_replace(
-                    regime,
-                    solution=dataclass_replace(
-                        regime.solution,
-                        constant_roots=(
-                            *regime.solution.constant_roots,
-                            retained_fold_roots,
-                        ),
-                    ),
-                )
-                for name, regime in canonical_regimes.items()
-            }
         )
 
     canonical_regimes = attach_gated_simulation_programs(
@@ -1248,9 +1213,6 @@ class _CanonicalRegimeBuilder:
 
     ages: TimeAxis
     """The AgeGrid for the model."""
-
-    runtime_checks: bool = True
-    """Explicit call-policy specialization of generated process weights."""
 
     current_iid_bindings: Mapping[
         tuple[RegimeName, Phase, ShockGroupName], ShockBinding
@@ -1488,7 +1450,6 @@ class _CanonicalRegimeBuilder:
             )
 
             solution_build = _build_solution_phase(
-                runtime_checks=self.runtime_checks,
                 current_iid_bindings=MappingProxyType(
                     {
                         group: binding
@@ -1561,7 +1522,6 @@ class _CanonicalRegimeBuilder:
             solution = solution_build.phase
 
             simulation_build = _build_simulation_phase(
-                runtime_checks=self.runtime_checks,
                 query_periods=self.query_periods_by_phase.get("simulation", {}).get(
                     regime_name, ()
                 ),
@@ -4570,7 +4530,6 @@ def _solver_with_query_authority(
 
 def _build_solution_phase(  # noqa: C901, PLR0912, PLR0915 - native route admission
     *,
-    runtime_checks: bool = True,
     current_iid_bindings: Mapping[ShockGroupName, ShockBinding] = MappingProxyType({}),
     spec: PhasedRegimeSpec,
     regime_name: RegimeName,
@@ -4764,7 +4723,6 @@ def _build_solution_phase(  # noqa: C901, PLR0912, PLR0915 - native route admiss
     )
 
     core = _process_regime_core(
-        runtime_checks=runtime_checks,
         source_regime_name=regime_name,
         scalar_query_model=query_model,
         koopmans_aggregator=spec.solution.koopmans_aggregator,
@@ -5158,7 +5116,6 @@ def _build_solution_phase(  # noqa: C901, PLR0912, PLR0915 - native route admiss
     )
 
     phase = SolutionPhase(
-        constant_roots=core.constant_roots,
         current_iid_plans=context.current_iid_plans,
         continuation_reader_capabilities=solver_kernels.continuation_reader_capabilities,
         _variables=variables,
@@ -5824,7 +5781,6 @@ def _share_finite_nbegm_policy_floor(
 
 def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     *,
-    runtime_checks: bool = True,
     current_iid_bindings: Mapping[ShockGroupName, ShockBinding] = MappingProxyType({}),
     query_periods: tuple[int, ...] = (),
     acting_periods: tuple[int, ...] = (),
@@ -5998,7 +5954,6 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     )
 
     core = _process_regime_core(
-        runtime_checks=runtime_checks,
         source_regime_name=regime_name,
         koopmans_aggregator=spec.simulation.koopmans_aggregator,
         objective_aggregator=spec.simulation.objective_aggregator,
@@ -6611,7 +6566,6 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     )
 
     phase = SimulationPhase(
-        constant_roots=core.constant_roots,
         current_iid_draw_plan=CurrentIIDDrawPlan(bindings=current_iid_bindings)
         if current_iid_bindings
         else None,
@@ -6786,9 +6740,6 @@ class _ConstraintRoutingResult:
 class _CoreResult:
     """Result of core regime function processing for one phase."""
 
-    constant_roots: tuple[PytreeValue, ...]
-    """Concrete generated constants retained by this phase's function closures."""
-
     functions: EconFunctionsMapping
     """User functions (utility, helpers) with params renamed to qnames."""
 
@@ -6950,9 +6901,8 @@ def _partition_phase_functions(
     )
 
 
-def _process_regime_core(  # noqa: PLR0915
+def _process_regime_core(
     *,
-    runtime_checks: bool = True,
     source_regime_name: RegimeName,
     functions: Mapping[FunctionName, UserFunction],
     constraints: ProcessedConstraintsMapping,
@@ -7025,7 +6975,6 @@ def _process_regime_core(  # noqa: PLR0915
         transition names, and the next_regime function.
 
     """
-    constant_roots = list(_query_model_constant_roots(model=scalar_query_model))
     flat_grids = flatten_regime_namespace(all_grids)
     normalized_constraints = MappingProxyType(dict(constraints))
 
@@ -7118,7 +7067,6 @@ def _process_regime_core(  # noqa: PLR0915
                 ),
             )
         processed_functions[func_name] = _get_discrete_markov_next_function(
-            constant_roots=constant_roots,
             func=func,
             grid=flat_grids[func_name.replace("next_", "")].to_jax(),
         )
@@ -7174,7 +7122,6 @@ def _process_regime_core(  # noqa: PLR0915
     # that value needs the same split into node-basis weights a hand-written
     # entry law gets. Its DAG node has to exist before the split reads it.
     joint_transition_keys = _process_joint_transitions(
-        constant_roots=constant_roots,
         joint_transitions=joint_transitions,
         processed_functions=processed_functions,
         regime_params_template=regime_params_template,
@@ -7231,14 +7178,12 @@ def _process_regime_core(  # noqa: PLR0915
     processed_functions |= (
         {
             f"weight_{user_regime}__next_{process}": _get_weights_func_for_process(
-                constant_roots=constant_roots,
                 # A state-conditioned process resolves `state_conditioned.on`
                 # against the regime's own grids; without them the lookup finds
                 # nothing and the build fails with a misleading "must name a
                 # DiscreteGrid" error.
                 name=process,
                 grid=grid,
-                runtime_checks=runtime_checks,
                 grids=all_grids[user_regime],
                 clip_coordinate=phase_name == "simulation"
                 and grid.simulate_draws == "nodes",
@@ -7253,7 +7198,7 @@ def _process_regime_core(  # noqa: PLR0915
         }
         | {
             f"weight_{user_regime}__next_{process}": _get_entry_weights_for_process(
-                constant_roots=constant_roots, name=process, grid=grid
+                name=process, grid=grid
             )
             for (user_regime, process), grid in entered_process_grids.items()
         }
@@ -7267,7 +7212,6 @@ def _process_regime_core(  # noqa: PLR0915
         | {
             f"weight_{user_regime}__next_{process}": (
                 _get_explicit_entry_weights_for_process(
-                    constant_roots=constant_roots,
                     grid=grid,
                     entry_law=processed_functions[f"{user_regime}__next_{process}"],
                     physical_name=f"next_{process}",
@@ -7313,8 +7257,6 @@ def _process_regime_core(  # noqa: PLR0915
         source_draws=frozenset(source_draw_grids),
     )
     source_draw_keys = _add_source_draw_functions(
-        constant_roots=constant_roots,
-        runtime_checks=runtime_checks,
         processed_functions=processed_functions,
         source_draw_grids=source_draw_grids,
         source_grids=all_grids[source_regime_name],
@@ -7441,7 +7383,6 @@ def _process_regime_core(  # noqa: PLR0915
     )
 
     return _CoreResult(
-        constant_roots=tuple(constant_roots),
         functions=phase_functions,
         constraints=evaluated_constraints,
         constraint_functions=all_constraint_functions,
@@ -7457,7 +7398,6 @@ def _process_regime_core(  # noqa: PLR0915
 
 def _process_joint_transitions(
     *,
-    constant_roots: list[PytreeValue] | None = None,
     joint_transitions: Mapping[RegimeName, Mapping[str, JointTransition]],
     processed_functions: dict[str, EconFunction],
     regime_params_template: RegimeParamsTemplate,
@@ -7479,9 +7419,7 @@ def _process_joint_transitions(
                 cast("UserFunction", kernel.support)
                 if callable(kernel.support)
                 else _literal_joint_support(
-                    constant_roots=constant_roots,
-                    support=kernel.support,
-                    node_annotation=node_annotation,
+                    support=kernel.support, node_annotation=node_annotation
                 )
             )
             processed_functions[support_name] = _rename_params_to_qnames(
@@ -7543,8 +7481,6 @@ def _source_draws_read_by_target_laws(
 
 def _add_source_draw_functions(
     *,
-    constant_roots: list[PytreeValue] | None = None,
-    runtime_checks: bool = True,
     processed_functions: dict[str, EconFunction],
     source_draw_grids: Mapping[tuple[RegimeName, StateName], Grid],
     source_grids: Mapping[StateOrActionName, Grid],
@@ -7573,30 +7509,22 @@ def _add_source_draw_functions(
         if isinstance(grid, _ContinuousStochasticProcess):
             processed_functions[axis_name] = _joint_support_indices(grid.n_points)
             processed_functions[support_name] = _get_source_process_nodes(
-                constant_roots=constant_roots, name=state, grid=grid
+                name=state, grid=grid
             )
             processed_functions[f"weight_{axis_name}"] = (
                 _get_entry_weights_for_process(
-                    constant_roots=constant_roots,
-                    name=state,
-                    grid=draw_only_processes[state],
+                    name=state, grid=draw_only_processes[state]
                 )
                 if state in draw_only_processes
                 else _get_weights_func_for_process(
-                    constant_roots=constant_roots,
-                    name=state,
-                    grid=grid,
-                    grids=source_grids,
-                    runtime_checks=runtime_checks,
+                    name=state, grid=grid, grids=source_grids
                 )
             )
         else:
             codes = cast("DiscreteGrid", grid).to_jax()
             processed_functions[axis_name] = _joint_support_indices(codes.shape[0])
             processed_functions[support_name] = _literal_joint_support(
-                constant_roots=constant_roots,
-                support=codes,
-                node_annotation="DiscreteState",
+                support=codes, node_annotation="DiscreteState"
             )
             processed_functions[f"weight_{axis_name}"] = _rename_params_to_qnames(
                 func=markov_draw_laws[state],
@@ -7646,15 +7574,11 @@ def _names_read_by(
 
 
 def _get_source_process_nodes(
-    *,
-    constant_roots: list[PytreeValue] | None = None,
-    name: ProcessName,
-    grid: _ContinuousStochasticProcess,
+    *, name: ProcessName, grid: _ContinuousStochasticProcess
 ) -> Callable[..., FloatND]:
     """Get the provider of a source process's nodes, the support of its draw."""
     if grid.params_to_pass_at_runtime:
         fixed_params = dict(grid.params)
-        _retain_generated_constant(owners=constant_roots, value=fixed_params)
         runtime_param_names = {
             qname_from_tree_path((name, p)): p for p in grid.params_to_pass_at_runtime
         }
@@ -7674,7 +7598,6 @@ def _get_source_process_nodes(
         return nodes_runtime
 
     gridpoints = grid.get_gridpoints()
-    _retain_generated_constant(owners=constant_roots, value=gridpoints)
 
     @with_signature(args={}, return_annotation="ContinuousState", enforce=False)
     def nodes(*args: FloatND, **kwargs: FloatND) -> Float1D:  # noqa: ARG001
@@ -7730,14 +7653,9 @@ def _joint_node_annotation(
 
 
 def _literal_joint_support(
-    *,
-    constant_roots: list[PytreeValue] | None = None,
-    support: PytreeValue,
-    node_annotation: str,
+    *, support: PytreeValue, node_annotation: str
 ) -> EconFunction:
     """Lift an immutable literal support pytree into the target-local DAG."""
-
-    _retain_generated_constant(owners=constant_roots, value=support)
 
     @with_signature(args={}, return_annotation=node_annotation)
     def provide() -> PytreeValue:
@@ -8508,10 +8426,8 @@ def _fail_if_a_markov_law_names_a_continuous_state(
 
 
 def _get_discrete_markov_next_function(
-    *, constant_roots: list[PytreeValue] | None = None, func: UserFunction, grid: Int1D
+    *, func: UserFunction, grid: Int1D
 ) -> Callable[..., IntND]:
-    _retain_generated_constant(owners=constant_roots, value=grid)
-
     @with_signature(args=None, return_annotation="Int1D")
     @functools.wraps(func)
     def next_func(**kwargs: EconFunctionArg) -> Int1D:  # noqa: ARG001
@@ -8723,8 +8639,6 @@ def _validate_conditioned_process(
 
 def _get_conditioned_weights_func(
     *,
-    constant_roots: list[PytreeValue] | None = None,
-    runtime_checks: bool = True,
     name: ProcessName,
     grid: _ContinuousStochasticProcess,
     sc: StateConditioned,
@@ -8741,11 +8655,8 @@ def _get_conditioned_weights_func(
         name=name, grid=grid, sc=sc, grids=grids
     )
     nodes = grid.get_gridpoints()
-    _retain_generated_constant(owners=constant_roots, value=nodes)
     sigma_by_code = sigma_array_by_code(cond_grid=conditioning_grid, by=sc.by)
-    _retain_generated_constant(owners=constant_roots, value=sigma_by_code)
     fixed = dict(grid.params)
-    _retain_generated_constant(owners=constant_roots, value=fixed)
     mu_fixed, rho_fixed = fixed["mu"], fixed.get("rho")
 
     args = {name: "ContinuousState", sc.on: "DiscreteState"}
@@ -8755,11 +8666,7 @@ def _get_conditioned_weights_func(
         sigma = gather_sigma(sigma_by_code=sigma_by_code, code=kwargs[sc.on])
         if isinstance(grid, _TauchenOnNodesProcess):
             return grid.compute_transition_row(
-                kwargs[name],
-                rho=fixed["rho"],
-                sigma=sigma,
-                mu=mu_fixed,
-                runtime_checks=runtime_checks,
+                kwargs[name], rho=fixed["rho"], sigma=sigma, mu=mu_fixed
             )
         return conditioned_row(
             family=family,
@@ -8830,8 +8737,6 @@ def get_conditioned_fold_weights_by_code(
 
 def _get_weights_func_for_process(
     *,
-    constant_roots: list[PytreeValue] | None = None,
-    runtime_checks: bool = True,
     name: str,
     grid: _ContinuousStochasticProcess,
     grids: Mapping[StateOrActionName, Grid] = MappingProxyType({}),
@@ -8858,23 +8763,13 @@ def _get_weights_func_for_process(
     if sc is not None:
         # `sc.on` may be absent from `grids`; the callee raises a clear message naming
         # the offending state.
-        return _get_conditioned_weights_func(
-            constant_roots=constant_roots,
-            name=name,
-            grid=grid,
-            sc=sc,
-            grids=grids,
-            runtime_checks=runtime_checks,
-        )
+        return _get_conditioned_weights_func(name=name, grid=grid, sc=sc, grids=grids)
     if isinstance(grid, _IIDProcess):
-        return _get_entry_weights_for_process(
-            name=name, grid=grid, constant_roots=constant_roots
-        )
+        return _get_entry_weights_for_process(name=name, grid=grid)
 
     if grid.params_to_pass_at_runtime:
         n_points = grid.n_points
         fixed_params = dict(grid.params)
-        _retain_generated_constant(owners=constant_roots, value=fixed_params)
         runtime_param_names = {
             qname_from_tree_path((name, p)): p for p in grid.params_to_pass_at_runtime
         }
@@ -8892,13 +8787,7 @@ def _get_weights_func_for_process(
                 **{raw: kwargs[qn] for qn, raw in runtime_param_names.items()},
             }
             gridpoints = grid.compute_gridpoints(**process_kw)
-            transition_probs = (
-                grid._compute_transition_probs(  # noqa: SLF001 - call-owned process policy
-                    runtime_checks=runtime_checks, **process_kw
-                )
-                if isinstance(grid, _TauchenOnNodesProcess)
-                else grid.compute_transition_probs(**process_kw)
-            )
+            transition_probs = grid.compute_transition_probs(**process_kw)
             coord = get_irreg_coordinate(value=kwargs[name], points=gridpoints)
             if clip_coordinate:
                 coord = jnp.clip(coord, 0, n_points - 1)
@@ -8913,9 +8802,7 @@ def _get_weights_func_for_process(
         return weights_func_runtime
 
     gridpoints = grid.get_gridpoints()
-    _retain_generated_constant(owners=constant_roots, value=gridpoints)
     transition_probs = grid.get_transition_probs()
-    _retain_generated_constant(owners=constant_roots, value=transition_probs)
 
     @with_signature(
         args={f"{name}": "ContinuousState"},
@@ -8944,17 +8831,15 @@ def _get_next_for_process(*, grid: Float1D) -> Callable[..., IntND]:
     its current value, which only selects the weights, so the signature is empty.
     """
 
-    n_points = grid.shape[0]
-
     @with_signature(args={}, return_annotation="Int1D")
     def next_func(**kwargs: EconFunctionArg) -> Int1D:  # noqa: ARG001
-        return jnp.arange(n_points, dtype=jnp.int32)
+        return jnp.arange(grid.shape[0], dtype=jnp.int32)
 
     return next_func
 
 
 def _get_entry_weights_for_process(
-    *, constant_roots: list[PytreeValue] | None = None, name: str, grid: _IIDProcess
+    *, name: str, grid: _IIDProcess
 ) -> Callable[..., FloatND]:
     """Get the weights of an unconditioned IID process.
 
@@ -8965,7 +8850,6 @@ def _get_entry_weights_for_process(
     """
     if grid.params_to_pass_at_runtime:
         fixed_params = dict(grid.params)
-        _retain_generated_constant(owners=constant_roots, value=fixed_params)
         runtime_param_names = {
             qname_from_tree_path((name, p)): p for p in grid.params_to_pass_at_runtime
         }
@@ -8985,7 +8869,6 @@ def _get_entry_weights_for_process(
         return entry_weights_runtime
 
     transition_probs = grid.get_transition_probs()
-    _retain_generated_constant(owners=constant_roots, value=transition_probs)
 
     @with_signature(args={}, return_annotation="FloatND", enforce=False)
     def entry_weights(*args: FloatND, **kwargs: FloatND) -> Float1D:  # noqa: ARG001
@@ -8996,7 +8879,6 @@ def _get_entry_weights_for_process(
 
 def _get_explicit_entry_weights_for_process(
     *,
-    constant_roots: list[PytreeValue] | None = None,
     grid: _ContinuousStochasticProcess,
     entry_law: UserFunction,
     physical_name: TransitionFunctionName,
@@ -9054,7 +8936,6 @@ def _get_explicit_entry_weights_for_process(
 
     """
     gridpoints = grid.to_jax()
-    _retain_generated_constant(owners=constant_roots, value=gridpoints)
     n_points = gridpoints.shape[0]
     lower = float(gridpoints[0])
     upper = float(gridpoints[-1])
@@ -10953,28 +10834,3 @@ def _fail_if_a_synthesized_constraint_is_unmet(
         ),
     )
     _fail_if_a_constraint_cannot_be_met(plan=plan)
-
-
-def _retain_generated_constant(
-    *, owners: list[PytreeValue] | None, value: PytreeValue
-) -> None:
-    """Publish the actual closure constant to its construction-time owner."""
-    if owners is not None:
-        owners.append(value)
-
-
-def _query_model_constant_roots(
-    *, model: ScalarEGMQueryModel | DCEGMQueryModel | NBEGMQueryModel | None
-) -> tuple[PytreeValue, ...]:
-    """Publish generated query-coordinate arrays retained by solver closures."""
-    if model is None:
-        return ()
-    roots: tuple[PytreeValue, ...] = (model.offsets,)
-    if isinstance(model, DCEGMQueryModel | NBEGMQueryModel):
-        roots += (model.literal_nodes,)
-    if isinstance(model, NBEGMQueryModel):
-        roots += tuple(
-            _query_model_constant_roots(model=inner)
-            for inner in (model.finite_inner_models or {}).values()
-        )
-    return roots
