@@ -14,7 +14,7 @@ an accelerator.
 
 from collections.abc import Callable
 from types import MappingProxyType
-from typing import Literal, Unpack
+from typing import Literal, Unpack, cast
 
 import jax
 import jax.numpy as jnp
@@ -26,8 +26,12 @@ from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.execution.value_transfer import ValueArtifactAddress, ValueArtifactKind
 from _lcm.execution.workspace_planning import WorkspaceBudgetError
 from _lcm.solution import backward_induction
+from _lcm.solution.host_values import HostValueEntry, copy_values_to_host
+from _lcm.solution.result_snapshot import own_value_store
 from _lcm.utils.logging import get_logger
 from lcm import ExecutionConfig, InvariantBlockSchedule, Model
+from lcm.exceptions import ExecutionPlanningError
+from lcm.solver_api import ValueStore
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.regime_building.test_collective_regime_simulate import (
     _DISSOLUTION_PARAMS,
@@ -392,3 +396,54 @@ def test_a_residency_refusal_under_device_storage_names_host_storage() -> None:
 def test_a_residency_refusal_under_host_storage_does_not_name_it_again() -> None:
     """Host storage already keeps solved values off the device."""
     assert "value_storage" not in _cell_refusal(value_storage="host")
+
+
+_STORED_VALUE = jnp.ones((4, 2))
+
+
+def _host_store(*, budget_bytes: int | None) -> ValueStore:
+    """A store of three periods' host-stored values under one budget."""
+    return own_value_store(
+        {
+            period: copy_values_to_host(values={"a": _STORED_VALUE})
+            for period in range(3)
+        },
+        host_budget_bytes=budget_bytes,
+    )
+
+
+def test_materializing_host_values_above_the_budget_is_refused() -> None:
+    """Placing every stored value on the device at once must fit the budget."""
+    with pytest.raises(ExecutionPlanningError, match="value_storage"):
+        _host_store(budget_bytes=2 * _STORED_VALUE.nbytes).materialize()
+
+
+def test_materializing_host_values_within_the_budget_reads_them_on_the_device() -> None:
+    """A set that fits is placed on the device, one array per stored value."""
+    snapshot = _host_store(budget_bytes=3 * _STORED_VALUE.nbytes).materialize()
+
+    assert {
+        value.sharding.memory_kind
+        for regime_to_value in snapshot.values()
+        for value in regime_to_value.values()
+    } == {"device"}
+
+
+def test_an_unbudgeted_host_store_materializes_without_admission() -> None:
+    """Without a budget nothing is refused."""
+    assert len(_host_store(budget_bytes=None).materialize()) == 3
+
+
+def test_a_host_storage_solve_hands_its_budget_to_the_value_store() -> None:
+    """The store admits a full materialization against the solve's budget."""
+    model = _three_regime_model(
+        ExecutionConfig(value_storage="host", device_memory_bytes=_AMPLE_BUDGET)
+    )
+    solution = model.solve(params=_PARAMS, log_level="off")
+    entries = cast("ValueStore", solution.values)._entries.values()
+
+    assert entries
+    assert {
+        entry.budget_bytes for entry in entries if isinstance(entry, HostValueEntry)
+    } == {model._execution.device_memory_bytes}
+    assert all(isinstance(entry, HostValueEntry) for entry in entries)

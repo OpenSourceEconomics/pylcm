@@ -16,9 +16,11 @@ import jax
 import numpy as np
 from jax.sharding import SingleDeviceSharding
 
+from _lcm.execution.footprint import per_device_footprint
 from _lcm.typing import ArtifactPayload
 from lcm._solver_api.entries import _LazyEntry
 from lcm._solver_api.identity import LoadState
+from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import FloatND, RegimeName
 
 # The memory kind a stored value lives in.
@@ -79,6 +81,9 @@ class HostValueEntry(_LazyEntry):
     value: FloatND
     """The stored value, in pinned host memory."""
 
+    budget_bytes: int | None = None
+    """Per-device budget of the solve that stored the value; `None` unbudgeted."""
+
     @property
     def load_state(self) -> LoadState:
         """Nothing of a host-stored value is on a device until it is read."""
@@ -96,6 +101,45 @@ class HostValueEntry(_LazyEntry):
     def host_value(self) -> np.ndarray:
         """Return the value as a host array without placing it on a device."""
         return np.asarray(self.value)
+
+    @classmethod
+    def _admit_joint_materialization(cls, *, entries: tuple[_LazyEntry, ...]) -> None:
+        """Refuse to place host-stored values on the devices together above budget.
+
+        Raises:
+            ExecutionPlanningError: Naming each device whose need exceeds the
+                budget, with the remedies.
+
+        """
+        host_entries = tuple(
+            entry for entry in entries if isinstance(entry, HostValueEntry)
+        )
+        budgets = {
+            entry.budget_bytes
+            for entry in host_entries
+            if entry.budget_bytes is not None
+        }
+        if not budgets:
+            return
+        budget = min(budgets)
+        need: dict[int, int] = {}
+        for entry in host_entries:
+            footprint = per_device_footprint(array=entry.value)
+            for device in footprint.device_ids:
+                need[device] = need.get(device, 0) + footprint.bytes_per_device
+        over = {device: count for device, count in need.items() if count > budget}
+        if not over:
+            return
+        msg = (
+            f"Materializing {len(host_entries)} host-stored values at once needs "
+            f"{dict(sorted(over.items()))!r} bytes on devices whose budget is "
+            f"{budget} bytes. The solve ran with ExecutionConfig(value_storage="
+            "'host') because its values do not fit the devices together. Read them "
+            "one at a time with SolutionResult.value(period=..., regime=...), save "
+            "the result with SolutionResult.save, or raise "
+            "ExecutionConfig.device_memory_bytes."
+        )
+        raise ExecutionPlanningError(msg)
 
 
 class _RecentDeviceCopies:

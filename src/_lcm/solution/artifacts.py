@@ -117,12 +117,15 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
     flat_params: FlatParams,
     process_grid_resolver: ProcessGridResolver | None = None,
     component_values: RetainedComponentValues | None = None,
+    device_memory_bytes: int | None = None,
 ) -> SolutionResult:
     """Label existing engine outputs without changing their numerical meaning.
 
     A block-major solve passes its host retention as `component_values`; its
     values then come from there, one lazy entry per solved coordinate, and the
-    engine outputs carry no value array.
+    engine outputs carry no value array. A host-storage solve's values carry
+    `device_memory_bytes`, its per-device budget, so that placing all of them on
+    the devices at once is admitted against it.
     """
     value_coordinates = (
         tuple(
@@ -282,7 +285,10 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
 
     result = SolutionResult(
         values=(
-            own_value_store(internal_result.value_functions)
+            own_value_store(
+                internal_result.value_functions,
+                host_budget_bytes=device_memory_bytes,
+            )
             if component_values is None
             else component_values.value_store()
         ),

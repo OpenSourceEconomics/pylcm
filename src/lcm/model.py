@@ -2330,6 +2330,7 @@ class Model:
                 component_values=component_values,
                 flat_params=flat_params,
                 process_grid_resolver=process_grid_resolver,
+                device_memory_bytes=self._execution.device_memory_bytes,
             )
 
     def _component_schedule(
