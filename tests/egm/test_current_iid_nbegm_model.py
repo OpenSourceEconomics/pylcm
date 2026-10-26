@@ -17,6 +17,7 @@ from _lcm.egm.carry import EGMCarry
 from _lcm.egm.current_iid_case_u_replay import CASE_U_FUTURE_REPLAY, CaseUReplayChildren
 from _lcm.egm.current_iid_nbegm import NBCaseUArguments, NBCaseUProgram
 from _lcm.egm.current_iid_nbegm_r import NBCaseRProgram
+from _lcm.egm.current_iid_pullback import certify_resources_map
 from _lcm.egm.preferences import _PreferencesBuilder
 from _lcm.egm.projected_continuation import (
     PROJECTED_EGM_CONTINUATION,
@@ -26,6 +27,7 @@ from _lcm.egm.upper_envelope.certified_sign import backend_flushes_subnormals
 from _lcm.execution.core_program import CoreBuildContext
 from _lcm.simulation.entry_allocations import SimulationEntryAllocations
 from _lcm.solution.continuation_target import union_fixed_params, union_free_params
+from _lcm.solution.current_iid_case_r_build import _PositionalResources
 from _lcm.solution.current_iid_case_u_build import guard_case_u_shape
 from _lcm.solution.current_iid_case_u_native import (
     CaseUExactArguments,
@@ -67,8 +69,10 @@ from lcm.shocks import Discrete, PhysicalValues, ShockGroup, Uniform, UserNodes
 from lcm.solver_api import EGM_CONTINUATION, ArtifactRef, ArtifactStore, ResultRetention
 from lcm.solvers import DCEGM, NBEGM
 from lcm.typing import (
+    BoolND,
     ContinuousAction,
     FloatND,
+    IntND,
     ReferenceName,
     ScalarInt,
     UserParams,
@@ -82,6 +86,44 @@ from tests.egm.test_finite_nnbegm_query import _query
 from tests.simulation.test_case_u_reconstruction import _ReplayRegime
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
+
+
+def _mixed_dtype_resources(
+    *, wealth: FloatND, category: IntND, period: IntND, active: BoolND
+) -> FloatND:
+    return wealth + jnp.where(active, category + period, 0)
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_original_resources_certificate_accepts_actual_category_and_clock_dtypes() -> (
+    None
+):
+    """Both original resource builders supply dtype-polymorphic array operands."""
+    positional = _PositionalResources(
+        function=_mixed_dtype_resources,
+        names=("wealth", "category", "period", "active"),
+    )
+    dtype = jnp.asarray(0.0).dtype
+    certificate = certify_resources_map(
+        func=positional,
+        state_name="wealth",
+        abstract_args=(
+            jax.ShapeDtypeStruct((), dtype),
+            jax.ShapeDtypeStruct((), jnp.int32),
+            jax.ShapeDtypeStruct((), jnp.int32),
+            jax.ShapeDtypeStruct((), jnp.bool_),
+        ),
+        arg_names=positional.names,
+    )
+    assert certificate.violation is None
+    assert certificate.coefficient == 1
+    actual = jax.jit(positional)(
+        jnp.asarray(2.0), jnp.int32(3), jnp.int32(4), jnp.asarray(a=True)
+    )
+    np.testing.assert_array_equal(actual, 9.0)
+    assert actual.dtype == dtype
+    with pytest.raises(TypeError):
+        jax.make_jaxpr(positional)("not-an-array")
 
 
 def _utility(*, consumption: ContinuousAction, eps: FloatND) -> FloatND:
@@ -1587,7 +1629,7 @@ def test_original_nbegm_r_bank_direction_keeps_original_live_geometry(
     ):
         assert actual.dtype == expected.dtype
         assert actual.shape == expected.shape
-        assert np.asarray(actual).tobytes() == np.asarray(expected).tobytes()
+        np.testing.assert_array_equal(actual, expected)
     if probability > 0:
         for actual, expected in zip(
             jax.tree.leaves(direction),
@@ -1595,7 +1637,7 @@ def test_original_nbegm_r_bank_direction_keeps_original_live_geometry(
             strict=True,
         ):
             assert actual.dtype == expected.dtype
-            assert np.asarray(actual).tobytes() == np.asarray(expected).tobytes()
+            np.testing.assert_array_equal(actual, expected)
 
 
 @categorical(ordered=False)

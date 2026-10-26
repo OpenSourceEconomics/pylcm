@@ -42,7 +42,9 @@ class CommonResourcesPartition(NamedTuple):
 def pullback_native_partition(
     *,
     row: OwnedResourcesRow,
-    resources: Callable[[ScalarFloat, Mapping[ShockName, ScalarFloat]], ScalarFloat],
+    resources: Callable[
+        [ScalarFloat, Mapping[ShockName, ScalarFloat | ScalarInt]], ScalarFloat
+    ],
     physical: Mapping[ShockName, FloatND | IntND],
     live: BoolND,
     liquid_grid: Float1D,
@@ -67,7 +69,9 @@ def pullback_native_partition(
     active = jnp.arange(native.size) <= row.envelope.n_kept
     boundaries = jnp.where(active, native, row.borrowing_limit)
 
-    def one_draw(draw: Mapping[ShockName, ScalarFloat]) -> tuple[FloatND, ScalarBool]:
+    def one_draw(
+        draw: Mapping[ShockName, ScalarFloat | ScalarInt],
+    ) -> tuple[FloatND, ScalarBool]:
         def at_liquid(liquid: ScalarFloat) -> ScalarFloat:
             return resources(liquid, draw)
 
@@ -87,7 +91,7 @@ def pullback_native_partition(
         return records.reshape(-1), jnp.all(~active | valid)
 
     def supported_draw(
-        inputs: tuple[Mapping[ShockName, ScalarFloat], ScalarBool],
+        inputs: tuple[Mapping[ShockName, ScalarFloat | ScalarInt], ScalarBool],
     ) -> tuple[FloatND, ScalarBool]:
         draw, active_draw = inputs
         return jax.lax.cond(

@@ -62,7 +62,7 @@ from lcm.solver_api import (
     DeclaredReplay,
     PersistencePolicy,
 )
-from lcm.typing import FloatND, ReferenceName, RegimeName
+from lcm.typing import FloatND, ReferenceName, RegimeName, ValueND
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -72,7 +72,7 @@ class _PositionalResources:
     function: Callable[..., FloatND]
     names: tuple[ReferenceName, ...]
 
-    def __call__(self, *values: FloatND) -> FloatND:
+    def __call__(self, *values: ValueND) -> FloatND:
         return self.function(**dict(zip(self.names, values, strict=True)))
 
 

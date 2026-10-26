@@ -32,7 +32,15 @@ from _lcm.egm.query_data import QueryNodeKind
 from _lcm.probability import is_represented_zero
 from _lcm.typing import EconFunctionKwargs
 from lcm.shocks import ShockName
-from lcm.typing import BoolND, Float1D, FloatND, IntND, ScalarBool, ScalarFloat
+from lcm.typing import (
+    BoolND,
+    Float1D,
+    FloatND,
+    IntND,
+    ScalarBool,
+    ScalarFloat,
+    ScalarInt,
+)
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -242,7 +250,7 @@ def publish_balanced_resources(
     live = jnp.all(~is_represented_zero(reference.factors), axis=0)
 
     def resources_nodes(
-        inputs: tuple[Mapping[ShockName, ScalarFloat], ScalarBool],
+        inputs: tuple[Mapping[ShockName, ScalarFloat | ScalarInt], ScalarBool],
     ) -> Float1D:
         draw, active_draw = inputs
         return jax.lax.cond(
@@ -295,7 +303,7 @@ def publish_balanced_resources(
     # keyword-only-exempt: library-callback=jax.vmap
     def supported_link(left: ScalarFloat, right: ScalarFloat) -> ScalarBool:
         def supported_draw(
-            inputs: tuple[Mapping[ShockName, ScalarFloat], ScalarBool],
+            inputs: tuple[Mapping[ShockName, ScalarFloat | ScalarInt], ScalarBool],
         ) -> ScalarBool:
             draw, active_draw = inputs
 
@@ -364,7 +372,7 @@ def _pullback_balanced_partition(
     upper = reference.partition.points[jnp.maximum(reference.partition.length - 1, 0)]
 
     def one_draw(
-        inputs: tuple[Mapping[ShockName, ScalarFloat], ScalarBool],
+        inputs: tuple[Mapping[ShockName, ScalarFloat | ScalarInt], ScalarBool],
     ) -> tuple[Float1D, ScalarBool]:
         draw, live_draw = inputs
 

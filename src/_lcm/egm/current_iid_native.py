@@ -119,7 +119,7 @@ class BoundResourcesMap:
 
     # keyword-only-exempt: library-callback=typing.Callable
     def __call__(
-        self, liquid: ScalarFloat, physical: Mapping[ShockName, ScalarFloat]
+        self, liquid: ScalarFloat, physical: Mapping[ShockName, ScalarFloat | ScalarInt]
     ) -> ScalarFloat:
         values = {**self.pool, **physical, self.liquid_state: liquid}
         return self.function(**{name: values[name] for name in self.names})
@@ -206,7 +206,7 @@ class NativeCaseRCore:
         live = jnp.all(~is_represented_zero(factors), axis=0)
 
         def resource_bounds(
-            inputs: tuple[Mapping[ShockName, ScalarFloat], ScalarBool],
+            inputs: tuple[Mapping[ShockName, ScalarFloat | ScalarInt], ScalarBool],
         ) -> FloatND:
             draw, active = inputs
             return jax.lax.cond(
@@ -310,7 +310,7 @@ def replay_case_r_candidate(
     *,
     row: OwnedResourcesRow | NBEGMResourcesBank,
     liquid: ScalarFloat,
-    physical: Mapping[ShockName, ScalarFloat],
+    physical: Mapping[ShockName, ScalarFloat | ScalarInt],
     frame_valid: ScalarBool,
     resources: BoundResourcesMap,
     utility: BoundUtilityOfAction,

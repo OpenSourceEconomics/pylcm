@@ -285,6 +285,18 @@ _JAX_NUMERIC_PYTHON_FUNCTIONS = tuple(
     ).values()
     if isinstance(value, types.FunctionType)
 )
+# ``cond`` has a private omission marker, not an economic default operand.
+# Its meaning is the identity comparison in the original function's globals.
+_JAX_COND = jax.lax.cond
+_JAX_COND_CODE = _JAX_COND.__code__
+_JAX_COND_ORIGINAL = vars(_JAX_COND).get("__wrapped__")
+_JAX_COND_ORIGINAL_CODE = getattr(_JAX_COND_ORIGINAL, "__code__", None)
+_JAX_COND_MODULE = sys.modules.get("jax._src.lax.control_flow.conditionals")
+_JAX_COND_OPERAND_DEFAULT = (
+    vars(_JAX_COND_MODULE).get("_no_operand_sentinel")
+    if _JAX_COND_MODULE is not None
+    else None
+)
 _JAX_NUMERIC_PJIT_FUNCTIONS = tuple(
     (value, vars(value).get("_fun"), getattr(vars(value).get("_fun"), "__code__", None))
     for value in _JAX_PUBLIC_NUMERIC_VALUES
@@ -323,6 +335,18 @@ _NUMPY_SCALAR_TYPES = tuple(
     value
     for value in vars(np).values()
     if isinstance(value, type) and issubclass(value, np.generic)
+)
+_NUMPY_SCALAR_CATEGORIES = (
+    np.generic,
+    np.number,
+    np.integer,
+    np.signedinteger,
+    np.unsignedinteger,
+    np.inexact,
+    np.floating,
+    np.complexfloating,
+    np.flexible,
+    np.character,
 )
 _NUMPY_PUBLIC_TYPE_OBJECTS = tuple(
     value
@@ -1646,14 +1670,22 @@ class _SemanticHasher:
             label="native-python-function-start",
             payload=f"{function.__module__}.{function.__qualname__}".encode(),
         )
-        self._visit_signature(function)
+        cond_operand = function is _JAX_COND
+        if cond_operand:
+            _require_original_cond_operand_default(function=function)
+            self.frame(label="jax-cond-original-code")
+            self.visit(value=_JAX_COND_ORIGINAL_CODE)
+        self._visit_signature(function=function, cond_operand=cond_operand)
         self.visit(value=function.__code__)
         self.visit(value=function.__defaults__)
         self.visit(value=function.__kwdefaults__)
         self.frame(label="native-python-function-end")
 
     def _visit_native_numeric_type(self, value: type[_Reachable]) -> None:
-        """Hash a genuine NumPy/JAX scalar constructor by dtype and runtime seal."""
+        """Seal concrete scalar dtypes and abstract NumPy category identities."""
+        if _contains_identity(value=value, candidates=_NUMPY_SCALAR_CATEGORIES):
+            self._visit_type(value)
+            return
         self.frame(
             label="native-numeric-type-start",
             payload=f"{value.__module__}.{value.__qualname__}".encode(),
@@ -1664,8 +1696,12 @@ class _SemanticHasher:
 
     def _visit_signature(
         self,
+        *,
         function: Callable[..., _CallResult],
+        cond_operand: bool = False,
     ) -> None:
+        if cond_operand and function is not _JAX_COND:
+            raise TypeError("Only original JAX cond has native operand metadata.")
         try:
             signature = inspect.signature(function)
         except TypeError, ValueError:
@@ -1677,6 +1713,10 @@ class _SemanticHasher:
             self.visit(value=parameter.kind.value)
             if parameter.default is inspect.Signature.empty:
                 self.frame(label="default-empty")
+            elif cond_operand and parameter.name == "operand":
+                if parameter.default is not _JAX_COND_OPERAND_DEFAULT:
+                    raise TypeError("Original JAX cond operand signature changed.")
+                self.frame(label="jax-cond-omitted-operand")
             else:
                 self.visit(value=parameter.default)
             self._visit_annotation(parameter.annotation)
@@ -1788,7 +1828,7 @@ class _SemanticHasher:
                 label="transparent-beartype-start",
                 payload=f"{function.__module__}.{function.__qualname__}".encode(),
             )
-            self._visit_signature(function)
+            self._visit_signature(function=function)
             self.visit(value=wrapped, _ignore_beartype_guards=True)
             self.frame(label="transparent-beartype-end")
             return
@@ -1797,7 +1837,7 @@ class _SemanticHasher:
             label="function-start",
             payload=f"{function.__module__}.{function.__qualname__}".encode(),
         )
-        self._visit_signature(function)
+        self._visit_signature(function=function)
         self.visit(value=function.__code__)
         self.visit(value=function.__defaults__)
         self.visit(value=function.__kwdefaults__)
@@ -2139,7 +2179,7 @@ class _SemanticHasher:
             label="callable-object-start",
             payload=f"{type(value).__module__}.{type(value).__qualname__}".encode(),
         )
-        self._visit_signature(value)
+        self._visit_signature(function=value)
         self.frame(
             label="callable-name",
             payload=str(
@@ -2515,6 +2555,47 @@ def _has_exact_type[Candidate](
 ) -> bool:
     """Classify a value by type identity without invoking metaclass equality."""
     return _contains_identity(value=type(value), candidates=candidates)
+
+
+def _require_original_cond_operand_default(*, function: types.FunctionType) -> None:
+    """Authenticate only cond's original omission marker before native sealing."""
+    original = _JAX_COND_ORIGINAL
+    module = _JAX_COND_MODULE
+    if (
+        function is not _JAX_COND
+        or function.__code__ is not _JAX_COND_CODE
+        or module is None
+        or vars(module).get("cond") is not function
+        or vars(jax.lax).get("cond") is not function
+        or not isinstance(original, types.FunctionType)
+        or original.__code__ is not _JAX_COND_ORIGINAL_CODE
+        or original.__globals__ is not vars(module)
+        or vars(function).get("__wrapped__") is not original
+        or "__signature__" in vars(function)
+        or "__signature__" in vars(original)
+        or "__wrapped__" in vars(original)
+        or type(_JAX_COND_OPERAND_DEFAULT) is not object
+        or vars(module).get("_no_operand_sentinel") is not _JAX_COND_OPERAND_DEFAULT
+        or original.__defaults__ is not None
+        or original.__kwdefaults__ is None
+        or tuple(original.__kwdefaults__) != ("operand",)
+        or original.__kwdefaults__["operand"] is not _JAX_COND_OPERAND_DEFAULT
+        # The API-boundary wrapper has no defaults; these are still walked below.
+        or function.__defaults__ is not None
+        or function.__kwdefaults__ is not None
+    ):
+        raise TypeError("Original JAX cond operand default origin changed.")
+    cells = function.__closure__ or ()
+    if len(cells) != len(function.__code__.co_freevars):
+        raise TypeError("Original JAX cond boundary closure changed.")
+    for name, cell in zip(function.__code__.co_freevars, cells, strict=True):
+        if name == "fun":
+            try:
+                if cell.cell_contents is original:
+                    return
+            except ValueError:
+                pass
+    raise TypeError("Original JAX cond boundary callable changed.")
 
 
 def _is_captured_jax_python_function(value: _Reachable) -> bool:

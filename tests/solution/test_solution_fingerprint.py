@@ -1697,6 +1697,108 @@ def test_jax_ops_numeric_function_allowlist_is_identity_sealed(
     assert fingerprints._native_numeric_callable_kind(nominal_segment_sum) is None
 
 
+def test_original_cond_operand_omission_has_closed_native_metadata() -> None:
+    """The genuine native omission marker is metadata, never a numeric operand."""
+    assert fingerprints._semantic_fingerprint(jax.lax.cond) == (
+        fingerprints._semantic_fingerprint(jax.lax.cond)
+    )
+
+
+@pytest.mark.parametrize(
+    "scalar_type",
+    [
+        np.generic,
+        np.number,
+        np.integer,
+        np.signedinteger,
+        np.unsignedinteger,
+        np.inexact,
+        np.floating,
+        np.complexfloating,
+        np.flexible,
+        np.character,
+        np.float32,
+        np.int32,
+    ],
+)
+def test_numpy_scalar_categories_have_distinct_versioned_identity(
+    *, scalar_type: type[np.generic]
+) -> None:
+    """Abstract scalar categories have identity without a concrete dtype."""
+    fingerprint = fingerprints._semantic_fingerprint(scalar_type)
+    assert fingerprint == fingerprints._semantic_fingerprint(scalar_type)
+    assert fingerprint != fingerprints._semantic_fingerprint(np.float64)
+
+
+def test_nominal_numpy_scalar_category_cannot_spoof_native_identity() -> None:
+    class NominalFloating:
+        pass
+
+    NominalFloating.__module__ = "numpy"
+    NominalFloating.__name__ = "floating"
+    NominalFloating.__qualname__ = "floating"
+    assert not fingerprints._is_native_numeric_type(NominalFloating)
+    with pytest.raises(TypeError, match="direct class dependency"):
+        fingerprints._semantic_fingerprint(NominalFloating)
+
+
+@pytest.mark.parametrize(
+    "changed",
+    ["owner", "default", "signature", "wrappee", "export", "raw-default", "code"],
+)
+def test_cond_operand_origin_changes_refuse_native_sealing(
+    *, changed: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    genuine = jax.lax.cond
+    original = fingerprints._JAX_COND_ORIGINAL
+    module = fingerprints._JAX_COND_MODULE
+    assert isinstance(original, FunctionType)
+    assert isinstance(module, ModuleType)
+    baseline = fingerprints._semantic_fingerprint(genuine)
+    assert baseline
+    if changed == "owner":
+        monkeypatch.setattr(module, "_no_operand_sentinel", object())
+    elif changed == "default":
+        monkeypatch.setattr(original, "__kwdefaults__", {"operand": object()})
+    elif changed == "signature":
+        monkeypatch.setattr(
+            genuine,
+            "__signature__",
+            inspect.signature(genuine),
+            raising=False,
+        )
+    elif changed == "wrappee":
+        clone = FunctionType(original.__code__, original.__globals__)
+        monkeypatch.setattr(genuine, "__wrapped__", clone)
+    elif changed == "export":
+        monkeypatch.setattr(jax.lax, "cond", jax.lax.switch)
+    elif changed == "raw-default":
+        monkeypatch.setattr(
+            genuine,
+            "__kwdefaults__",
+            {"operand": fingerprints._JAX_COND_OPERAND_DEFAULT},
+        )
+    else:
+        monkeypatch.setattr(original, "__code__", _next_regime_code.__code__)
+    with pytest.raises(TypeError, match="Original JAX cond"):
+        fingerprints._semantic_fingerprint(genuine)
+
+
+def test_cond_omission_identity_does_not_admit_user_or_nominal_defaults() -> None:
+    marker = fingerprints._JAX_COND_OPERAND_DEFAULT
+
+    def nominal_cond(operand: object = marker) -> object:  # noqa: PAN001 - Deliberately tests an opaque user default, including the real native marker.
+        return operand
+
+    with pytest.raises(TypeError, match="default dependency for parameter 'operand'"):
+        fingerprints._semantic_fingerprint(nominal_cond)
+    nominal_cond.__module__ = jax.lax.cond.__module__
+    nominal_cond.__name__ = jax.lax.cond.__name__
+    nominal_cond.__qualname__ = jax.lax.cond.__qualname__
+    with pytest.raises(TypeError, match="default dependency for parameter 'operand'"):
+        fingerprints._semantic_fingerprint(nominal_cond)
+
+
 def test_numpy_dispatcher_alias_has_the_same_native_identity() -> None:
     assert fingerprints._semantic_fingerprint(np.linspace) == (
         fingerprints._semantic_fingerprint(_NUMPY_LINSPACE_ALIAS)

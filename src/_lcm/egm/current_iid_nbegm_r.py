@@ -38,6 +38,7 @@ from lcm.typing import (
     RegimeName,
     ScalarBool,
     ScalarFloat,
+    ScalarInt,
     StateName,
 )
 
@@ -141,7 +142,7 @@ class NBCaseRProgram:
 
         def support_at_state(liquid: ScalarFloat) -> FloatND:
             def support_at_draw(
-                frame: tuple[Mapping[ShockName, ScalarFloat], ScalarBool],
+                frame: tuple[Mapping[ShockName, ScalarFloat | ScalarInt], ScalarBool],
             ) -> ScalarFloat:
                 draw, active = frame
                 return jax.lax.cond(
@@ -190,7 +191,9 @@ class NBCaseRProgram:
         )
 
         def integrate(liquid: ScalarFloat) -> CurrentResourcesEvaluation:
-            def select(draw: Mapping[ShockName, ScalarFloat]) -> OwnedResourcesRead:
+            def select(
+                draw: Mapping[ShockName, ScalarFloat | ScalarInt],
+            ) -> OwnedResourcesRead:
                 return read_nbegm_resources_bank(
                     bank=bank,
                     resources=resources(liquid, draw),
@@ -211,7 +214,7 @@ class NBCaseRProgram:
             )
 
             def active_select(
-                frame: tuple[Mapping[ShockName, ScalarFloat], ScalarBool],
+                frame: tuple[Mapping[ShockName, ScalarFloat | ScalarInt], ScalarBool],
             ) -> OwnedResourcesRead:
                 draw, active = frame
                 return jax.lax.cond(active, lambda: select(draw), lambda: neutral)

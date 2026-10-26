@@ -415,7 +415,7 @@ class BalancedResourcesProgram:
 
         def matches(
             inputs: tuple[
-                Mapping[ShockName, ScalarFloat],
+                Mapping[ShockName, ScalarFloat | ScalarInt],
                 ScalarBool,
                 ScalarInt,
                 ScalarInt,

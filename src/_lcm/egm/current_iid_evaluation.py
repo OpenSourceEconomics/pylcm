@@ -61,7 +61,9 @@ class CurrentResourcesEvaluator:
 
     row: OwnedResourcesRow
     """Canonical candidate row constructed once on the common resources domain."""
-    resources: Callable[[ScalarFloat, Mapping[ShockName, ScalarFloat]], ScalarFloat]
+    resources: Callable[
+        [ScalarFloat, Mapping[ShockName, ScalarFloat | ScalarInt]], ScalarFloat
+    ]
     """Actual structurally certified resources function, with context bound."""
     resources_slope: ScalarFloat
     """Exact positive affine coefficient in the physical pre-shock liquid state."""
@@ -71,7 +73,10 @@ class CurrentResourcesEvaluator:
     """Original exact-envelope run authority, not a fabricated projection owner."""
 
     def node(
-        self, *, liquid: ScalarFloat, physical: Mapping[ShockName, ScalarFloat]
+        self,
+        *,
+        liquid: ScalarFloat,
+        physical: Mapping[ShockName, ScalarFloat | ScalarInt],
     ) -> OwnedResourcesRead:
         """Select policy/value/saving through the same actual resources coordinate."""
         return read_resources_candidate(
@@ -126,7 +131,7 @@ class CurrentResourcesEvaluator:
         live = jnp.all(~is_represented_zero(factors), axis=0)
 
         def select(
-            inputs: tuple[Mapping[ShockName, ScalarFloat], ScalarBool],
+            inputs: tuple[Mapping[ShockName, ScalarFloat | ScalarInt], ScalarBool],
         ) -> tuple[OwnedResourcesRead, ScalarBool, ScalarInt]:
             draw, active = inputs
             zero = jnp.zeros_like(liquid)
