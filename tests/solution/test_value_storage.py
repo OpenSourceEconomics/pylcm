@@ -13,7 +13,8 @@ an accelerator.
 """
 
 from collections.abc import Callable
-from typing import Unpack
+from types import MappingProxyType
+from typing import Literal, Unpack
 
 import jax
 import jax.numpy as jnp
@@ -21,6 +22,9 @@ import numpy as np
 import pytest
 from beartype.roar import BeartypeCallHintParamViolation
 
+from _lcm.execution.execution_plan import ResolvedExecution
+from _lcm.execution.value_transfer import ValueArtifactAddress, ValueArtifactKind
+from _lcm.execution.workspace_planning import WorkspaceBudgetError
 from _lcm.solution import backward_induction
 from _lcm.utils.logging import get_logger
 from lcm import ExecutionConfig, InvariantBlockSchedule, Model
@@ -30,6 +34,8 @@ from tests.regime_building.test_collective_regime_simulate import (
     _make_dissolution_model,
 )
 from tests.solution._callback_types import (
+    ResidentInventoryKwargs,
+    ResidentInventoryResult,
     RunPeriodKernelKwargs,
     RunPeriodKernelResult,
 )
@@ -293,3 +299,96 @@ def test_host_storage_routes_dissolutions_as_device_storage_does() -> None:
         )
 
     assert panels[0].equals(panels[1])
+
+
+# A budget no model here comes near, so the planner walks every cell's residency
+# without refusing one.
+_AMPLE_BUDGET = 2**32
+
+
+def _value_periods_charged_at_each_cell(
+    *, monkeypatch: pytest.MonkeyPatch, model: Model
+) -> list[tuple[int, frozenset[int]]]:
+    """Return, per planned cell, its period and the periods of the values it charges."""
+    inventories: list[ResidentInventoryResult] = []
+    resident_inventory_by_triple = backward_induction._resident_inventory_by_triple
+
+    def _capture(
+        **kwargs: Unpack[ResidentInventoryKwargs],
+    ) -> ResidentInventoryResult:
+        inventory = resident_inventory_by_triple(**kwargs)
+        inventories.append(inventory)
+        return inventory
+
+    with monkeypatch.context() as patch:
+        patch.setattr(backward_induction, "_resident_inventory_by_triple", _capture)
+        model.solve(params=_PARAMS, log_level="off")
+    return [
+        (
+            period,
+            frozenset(
+                artifact.period
+                for group in position.live.values()
+                for artifact in group
+                if isinstance(artifact, ValueArtifactAddress)
+                and artifact.kind is ValueArtifactKind.REGIME_VALUE
+            ),
+        )
+        for inventory in inventories
+        for (_regime, period, _core), position in inventory.items()
+    ]
+
+
+def test_host_storage_charges_the_planner_only_the_values_on_the_device(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Admission charges a cell its own period's values and the period it reads.
+
+    Under device storage every solved period's values stay resident, and the
+    planner charges them all.
+    """
+    host = _value_periods_charged_at_each_cell(
+        monkeypatch=monkeypatch,
+        model=_three_regime_model(
+            ExecutionConfig(value_storage="host", device_memory_bytes=_AMPLE_BUDGET)
+        ),
+    )
+    device = _value_periods_charged_at_each_cell(
+        monkeypatch=monkeypatch,
+        model=_three_regime_model(ExecutionConfig(device_memory_bytes=_AMPLE_BUDGET)),
+    )
+
+    assert host
+    assert all(charged <= {period, period + 1} for period, charged in host), host
+    assert not all(charged <= {period, period + 1} for period, charged in device), (
+        device
+    )
+
+
+def _cell_refusal(*, value_storage: Literal["device", "host"]) -> str:
+    """Return the message a cell's workspace refusal carries under one storage."""
+    error = backward_induction._width_selection_failure(
+        triple=("a", 0, "core"),
+        resident_bytes=200,
+        transfer_scratch_bytes={},
+        budget_bytes=100,
+        execution=ResolvedExecution(
+            device_ids=(0,),
+            sharded_states=frozenset(),
+            axis_widths=MappingProxyType({}),
+            device_memory_bytes=100,
+            value_storage=value_storage,
+        ),
+        error=WorkspaceBudgetError("No width fits."),
+    )
+    return str(error)
+
+
+def test_a_residency_refusal_under_device_storage_names_host_storage() -> None:
+    """A cell refused over what the plan keeps resident points to host storage."""
+    assert "value_storage='host'" in _cell_refusal(value_storage="device")
+
+
+def test_a_residency_refusal_under_host_storage_does_not_name_it_again() -> None:
+    """Host storage already keeps solved values off the device."""
+    assert "value_storage" not in _cell_refusal(value_storage="host")

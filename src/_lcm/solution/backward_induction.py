@@ -31,7 +31,7 @@ from collections.abc import (
 )
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from types import MappingProxyType, TracebackType
-from typing import Self, cast
+from typing import Literal, Self, cast
 
 import jax
 import numpy as np
@@ -2843,6 +2843,7 @@ def _build_planned_input_liveness(
     program_metadata: Mapping[_CoreTriple, _ProgramExecutionMetadata],
     retain_all_artifacts: bool,
     persistable_artifact_refs: frozenset[ArtifactRef],
+    value_storage: Literal["device", "host"] = "device",
 ) -> PlannedInputLiveness[_InputDispatch, ValueArtifactAddress]:
     """Build one exact-dispatch ledger without authorizing physical release.
 
@@ -2854,6 +2855,14 @@ def _build_planned_input_liveness(
     leaves of the EGM family and every reachable input of a program that
     declares no reads. A rolled entry whose producer does not run at its period
     aliases the same address one period later.
+
+    Under host value storage the result keeps no regime value on the device. A
+    value then stays there through its own period, while its peers run, and
+    through the next one, while the period reading it runs and its copy to the
+    host finishes. Every dispatch of those two periods counts as a reader of
+    it, so a residency walk drops it exactly when the solve does. Only the
+    residency walk reads such a ledger: release and donation keep the device
+    ledger, which never hands a value whose copy is in flight to another owner.
     """
     dispatch_accesses: dict[_InputDispatch, tuple[ValueArtifactAddress, ...]] = dict(
         _gated_edge_fold_dispatches(regimes=regimes)
@@ -2885,6 +2894,27 @@ def _build_planned_input_liveness(
         retain_all_artifacts=retain_all_artifacts,
         persistable_artifact_refs=persistable_artifact_refs,
     )
+    if value_storage == "host":
+        values_by_period: dict[int, list[ValueArtifactAddress]] = {}
+        for artifact in retained:
+            if artifact.kind is ValueArtifactKind.REGIME_VALUE:
+                values_by_period.setdefault(artifact.period, []).append(artifact)
+        retained = tuple(
+            artifact
+            for artifact in retained
+            if artifact.kind is not ValueArtifactKind.REGIME_VALUE
+        )
+        for dispatch, reads in tuple(dispatch_accesses.items()):
+            period = dispatch[0]
+            dispatch_accesses[dispatch] = tuple(
+                dict.fromkeys(
+                    (
+                        *reads,
+                        *values_by_period.get(period, ()),
+                        *values_by_period.get(period + 1, ()),
+                    )
+                )
+            )
     known = {
         *retained,
         *pinned_artifacts,
@@ -4186,6 +4216,21 @@ def _narrow_native_closure(
     return MappingProxyType({**regimes, name: updated})
 
 
+def _stored_values_note(*, execution: ResolvedExecution) -> str:
+    """Return the clause naming host storage when solved values count as resident.
+
+    Empty under host storage, which already keeps them off the device. Leading
+    space included, so a caller appends it to a sentence.
+    """
+    if execution.value_storage == "host":
+        return ""
+    return (
+        " The resident bytes include the values of every period solved so far; "
+        "ExecutionConfig(value_storage='host') keeps those in host memory and "
+        "leaves only the periods still being read on the device."
+    )
+
+
 def _width_selection_failure(
     *,
     triple: _CoreTriple,
@@ -4212,6 +4257,7 @@ def _width_selection_failure(
         f"resident on its busiest device against a {budget_bytes}-byte budget, "
         f"of which the period's transfer operators reserve up to {scratch} bytes "
         f"on a single device."
+        f"{_stored_values_note(execution=execution)}"
         f"{execution.device_memory_cap_note()} {error}"
     )
     if skipped_fallback_evaluations:
@@ -4637,7 +4683,17 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
             if budget_bytes is None
             else _resident_inventory_by_triple(
                 regimes=regimes,
-                ledger=input_liveness,
+                ledger=(
+                    input_liveness
+                    if execution.value_storage == "device"
+                    else _build_planned_input_liveness(
+                        regimes=regimes,
+                        program_metadata=representative_metadata,
+                        retain_all_artifacts=retain_all_artifacts,
+                        persistable_artifact_refs=persistable_artifact_refs,
+                        value_storage=execution.value_storage,
+                    )
+                ),
                 templates=SolveInputMappings(
                     next_regime_to_V_arr=next_regime_to_V_arr,
                     next_regime_to_continuation=next_regime_to_continuation,
