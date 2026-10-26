@@ -176,13 +176,20 @@ def _paired_max_jvp(
     values = jax.lax.optimization_barrier(values)
     values_dot, _, initial_dot = tangents
     best, best_id = _paired_max(values, ids, initial)
-    attains = (values == best[..., jnp.newaxis]).astype(values.dtype)
+    _, value_keys = _float_order_parts(values)
+    _, best_keys = _float_order_parts(best)
+    _, initial_key = _float_order_parts(initial)
+    attains = ((value_keys == best_keys[..., jnp.newaxis]) & ~jnp.isnan(values)).astype(
+        values.dtype
+    )
     count = jnp.sum(attains, axis=-1)
     elements_dot = jnp.sum(values_dot * attains, axis=-1) / jnp.maximum(count, 1)
     initial_dot = jnp.broadcast_to(initial_dot, best.shape)
     best_dot = jnp.where(
         count > 0,
-        jnp.where(initial == best, (elements_dot + initial_dot) / 2, elements_dot),
+        jnp.where(
+            initial_key == best_keys, (elements_dot + initial_dot) / 2, elements_dot
+        ),
         initial_dot,
     )
     return (best, best_id), (best_dot, np.zeros(best_id.shape, dtype=float0))
@@ -209,11 +216,35 @@ def _larger_value_then_smaller_id(
     """
     left_value, left_id = left
     right_value, right_id = right
-    tie = right_value == left_value
-    take_right = (right_value > left_value) | (tie & (right_id < left_id))
-    value = jnp.where(take_right, right_value, left_value)
-    value = jnp.where(tie & (left_value == 0), left_value + right_value, value)
+    if jnp.issubdtype(left_value.dtype, jnp.floating):
+        left_bits, left_key = _float_order_parts(left_value)
+        right_bits, right_key = _float_order_parts(right_value)
+        valid = ~jnp.isnan(left_value) & ~jnp.isnan(right_value)
+        tie = (right_key == left_key) & valid
+        take_right = ((right_key > left_key) & valid) | (tie & (right_id < left_id))
+        bits = jnp.where(take_right, right_bits, left_bits)
+        both_zero = (left_key == 0) & (right_key == 0)
+        bits = jnp.where(both_zero, left_bits & right_bits, bits)
+        value = jax.lax.bitcast_convert_type(bits, left_value.dtype)
+    else:
+        tie = right_value == left_value
+        take_right = (right_value > left_value) | (tie & (right_id < left_id))
+        value = jnp.where(take_right, right_value, left_value)
     return value, jnp.where(take_right, right_id, left_id)
+
+
+def _float_order_parts(values: FloatND) -> tuple[IntND, IntND]:
+    """Return stored bits and an integer order key, equating signed zeros.
+
+    Negative encodings reverse magnitude order. Barriers prevent the compiler
+    from replacing this stored-value order with flushing float comparisons.
+    """
+    integer = jnp.int32 if values.dtype == jnp.float32 else jnp.int64
+    bits = jax.lax.optimization_barrier(jax.lax.bitcast_convert_type(values, integer))
+    magnitude_mask = jnp.iinfo(integer).max
+    key = bits ^ ((bits >> (values.dtype.itemsize * 8 - 1)) & magnitude_mask)
+    key = jnp.where((bits & magnitude_mask) == 0, jnp.zeros_like(bits), key)
+    return bits, jax.lax.optimization_barrier(key)
 
 
 def _move_axes_to_back(

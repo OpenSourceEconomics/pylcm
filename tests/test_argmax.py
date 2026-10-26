@@ -415,3 +415,111 @@ def test_singleton_pair_keeps_the_identity_of_the_winning_candidate(
     )
     assert_array_equal(maximum, [-2.0, -2.0, 4.0])
     assert_array_equal(index, [NO_ID, 5, 3])
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+def test_singleton_floor_preserves_subnormal_bits_and_identity(
+    *, compiled: bool
+) -> None:
+    """The zero floor admits positive subnormals and rejects negative subnormals."""
+    dtype = np.dtype(jnp.asarray(0.0).dtype)
+    width = dtype.itemsize * 8
+    fraction_bits = 23 if width == 32 else 52
+    sign = 1 << (width - 1)
+    uint = np.dtype(f"uint{width}")
+    magnitudes = [1, 2, (1 << fraction_bits) - 1, 1 << fraction_bits]
+    encoded = np.asarray(
+        magnitudes + [sign | value for value in magnitudes] + [sign, 0],
+        dtype=uint,
+    ).reshape(-1, 1)
+    values = jnp.asarray(encoded.view(dtype))
+    ids = jnp.full(values.shape, 7, dtype=jnp.int32)
+    reduce = partial(max_and_smallest_id, initial=0.0)
+    public = partial(argmax_and_max, axis=1, initial=0.0)
+    if compiled:
+        reduce = jit(reduce)
+        public = jit(public)
+    maximum, identity = reduce(values=values, ids=ids)
+    index, public_maximum = public(a=values)
+    expected_bits = np.asarray(magnitudes + [0] * (len(magnitudes) + 2), dtype=uint)
+    assert_array_equal(np.asarray(maximum).view(uint), expected_bits)
+    assert_array_equal(np.asarray(public_maximum).view(uint), expected_bits)
+    assert_array_equal(identity, [7] * 4 + [NO_ID] * 4 + [7, 7])
+    assert_array_equal(index, np.zeros(len(encoded), dtype=np.int32))
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+def test_subnormal_order_and_zero_ties_have_the_maximum_gradient(
+    *, compiled: bool
+) -> None:
+    """Only represented winners receive tangents; signed-zero ties share them."""
+    dtype = np.dtype(jnp.asarray(0.0).dtype)
+    width = dtype.itemsize * 8
+    sign = 1 << (width - 1)
+    uint = np.dtype(f"uint{width}")
+    encoded = np.asarray(
+        [[1, sign | 1], [2, 1], [sign | 1, sign | 2], [1, 1], [sign, 0]],
+        dtype=uint,
+    )
+    values = jnp.asarray(encoded.view(dtype))
+    ids = jnp.broadcast_to(jnp.asarray([7, 3], dtype=jnp.int32), values.shape)
+    reduce = partial(max_and_smallest_id, initial=0.0)
+    derivative = grad(lambda a: reduce(values=a, ids=ids)[0].sum())
+    if compiled:
+        reduce = jit(reduce)
+        derivative = jit(derivative)
+    maximum, identity = reduce(values=values, ids=ids)
+    assert_array_equal(np.asarray(maximum).view(uint), [1, 2, 0, 1, 0])
+    assert_array_equal(identity, [7, 7, NO_ID, 3, 3])
+    assert_array_equal(
+        derivative(values), [[1, 0], [1, 0], [0, 0], [0.5, 0.5], [0.25, 0.25]]
+    )
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+@pytest.mark.parametrize(
+    "floor_index", [1, 2, -1], ids=["minimum", "second", "largest"]
+)
+def test_subnormal_floor_ties_preserve_values_ids_and_derivatives(
+    *, compiled: bool, floor_index: int
+) -> None:
+    """A subnormal floor wins below, shares a tie, and loses above its encoding."""
+    dtype = np.dtype(jnp.asarray(0.0).dtype)
+    width = dtype.itemsize * 8
+    fraction_bits = 23 if width == 32 else 52
+    uint = np.dtype(f"uint{width}")
+    floor_bits = (1 << fraction_bits) - 1 if floor_index < 0 else floor_index
+    initial = np.asarray(floor_bits, dtype=uint).view(dtype).item()
+    encoded = np.asarray([floor_bits - 1, floor_bits, floor_bits + 1], dtype=uint)
+    values = jnp.asarray(encoded.view(dtype).reshape(-1, 1))
+    ids = jnp.full(values.shape, 7, dtype=jnp.int32)
+    reduce = partial(max_and_smallest_id, initial=initial)
+    derivative = grad(lambda a: reduce(values=a, ids=ids)[0].sum())
+    if compiled:
+        reduce = jit(reduce)
+        derivative = jit(derivative)
+    maximum, identity = reduce(values=values, ids=ids)
+    assert_array_equal(
+        np.asarray(maximum).view(uint), [floor_bits, floor_bits, floor_bits + 1]
+    )
+    assert_array_equal(identity, [NO_ID, 7, 7])
+    assert_array_equal(derivative(values), [[0], [0.5], [1]])
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+def test_paired_float_order_retains_nan_mask_and_infinity_conventions(
+    *, compiled: bool
+) -> None:
+    """Masked NaNs do not compete; admitted NaNs poison value and reset index."""
+    values = jnp.asarray([[-jnp.inf, jnp.inf], [jnp.nan, 1.0], [1.0, jnp.nan]])
+    reduce = partial(argmax_and_max, axis=1, initial=-jnp.inf)
+    if compiled:
+        reduce = jit(reduce)
+    index, maximum = reduce(
+        a=values, where=jnp.asarray([[True, True], [False, True], [True, False]])
+    )
+    assert_array_equal(index, [1, 1, 0])
+    assert_array_equal(maximum, [jnp.inf, 1, 1])
+    index, maximum = reduce(a=values)
+    assert_array_equal(index, [1, 0, 0])
+    assert_array_equal(maximum, [jnp.inf, jnp.nan, jnp.nan])
