@@ -589,6 +589,7 @@ def _policy_model(
     )
 
 
+@pytest.mark.slow
 def test_density_public_call_policies_keep_separate_graphs_and_reusable_values() -> (
     None
 ):
@@ -673,6 +674,7 @@ def test_density_public_call_policies_keep_separate_graphs_and_reusable_values()
         assert ("io_callback" in str(graph)) is checks
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("runtime_checks", [False, True])
 @pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
 def test_density_conditioned_policy_preserves_categories_and_source_derivatives(
