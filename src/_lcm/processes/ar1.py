@@ -18,6 +18,7 @@ import numpy as np
 from beartype import beartype
 from jax.experimental import io_callback
 from jax.scipy.stats.norm import cdf
+from jaxtyping import Int
 
 from _lcm.beartype_conf import GRID_CONF
 from _lcm.dtypes import canonical_float_dtype
@@ -566,7 +567,7 @@ def _scaled_linear_product(*, coefficient: _ScaledFloat, tangent: FloatND) -> Fl
 
 def _density_contrasts_and_gap(
     operands: tuple[Float1D, FloatND, FloatND, FloatND, FloatND],
-) -> tuple[Float1D, _ScaledFloat, _ScaledFloat, IntND]:
+) -> tuple[Float1D, _ScaledFloat, _ScaledFloat, Int[jax.Array, ""]]:
     """Center on the exact nearest node and retain the complete affine residual."""
     nodes, location, rho, source, sigma = operands
     product_high, product_low = _scaled_product_words(left=rho, right=source)

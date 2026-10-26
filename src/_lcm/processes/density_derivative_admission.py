@@ -4,6 +4,7 @@ import math
 from itertools import accumulate
 
 import numpy as np
+from jax import Array
 from jaxtyping import Bool, Float, Int
 
 from lcm.exceptions import DensityDerivativeAccuracyError
@@ -11,6 +12,9 @@ from lcm.exceptions import DensityDerivativeAccuracyError
 type _HostFloat = Float[np.ndarray, "..."]
 type _HostInt = Int[np.ndarray, "..."]
 type _HostBool = Bool[np.ndarray, "..."]
+type _CallbackFloat = _HostFloat | Float[Array, "..."]
+type _CallbackInt = _HostInt | Int[Array, "..."]
+type _CallbackBool = _HostBool | Bool[Array, "..."]
 
 # Fixed-size words retain physical exponents without physical underflow.
 type _Word = tuple[float, int]
@@ -432,8 +436,8 @@ def _fail_if_invalid_density_arrays(
         )
 
 
-# keyword-only-exempt: library-callback=jax.experimental.io_callback
-def _checked_density_coefficients(
+def _certify_density_coefficients(
+    *,
     nodes: _HostFloat,
     location: _HostFloat,
     rho: _HostFloat,
@@ -593,3 +597,35 @@ def _checked_density_coefficients(
                     f"destination node {index}."
                 )
     return coefficient_mantissas, coefficient_exponents
+
+
+# keyword-only-exempt: library-callback=jax.experimental.io_callback
+def _checked_density_coefficients(
+    nodes: _CallbackFloat,
+    location: _CallbackFloat,
+    rho: _CallbackFloat,
+    source: _CallbackFloat,
+    sigma: _CallbackFloat,
+    reference: _CallbackInt,
+    residuals: _CallbackFloat,
+    powers: _CallbackInt,
+    selected_exp: _CallbackFloat,
+    active: _CallbackBool,
+    coefficient_mantissas: _CallbackFloat,
+    coefficient_exponents: _CallbackInt,
+) -> tuple[_HostFloat, _HostInt]:
+    """Resolve host callback array objects before checked NumPy arithmetic."""
+    return _certify_density_coefficients(
+        nodes=np.asarray(nodes),
+        location=np.asarray(location),
+        rho=np.asarray(rho),
+        source=np.asarray(source),
+        sigma=np.asarray(sigma),
+        reference=np.asarray(reference),
+        residuals=np.asarray(residuals),
+        powers=np.asarray(powers),
+        selected_exp=np.asarray(selected_exp),
+        active=np.asarray(active),
+        coefficient_mantissas=np.asarray(coefficient_mantissas),
+        coefficient_exponents=np.asarray(coefficient_exponents),
+    )

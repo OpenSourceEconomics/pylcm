@@ -21,6 +21,11 @@ from tests.test_models.pr626_density_sensitivity_oracle import (
 type _Parameter = Literal["mu", "rho", "source", "sigma"]
 type _Method = Literal["jvp", "jacfwd", "jacrev"]
 type _Family = Literal["ordinary", "central", "higher_moment"]
+_RHO_ACCURACY_FAILURE = (
+    "DensityDerivativeAccuracyError: Cannot certify "
+    "the density transition derivative dimensionless "
+    "accuracy budget for rho"
+)
 
 
 class _DensityInputs(NamedTuple):
@@ -171,7 +176,10 @@ def test_density_rejects_an_uncertified_dimensionless_rho_sensitivity(
     tau = 10.0**-DECIMAL_PRECISION
     assert np.isfinite(expected).all()
     assert abs(expected[1]) > tau + tau * abs(expected[1])
-    with pytest.raises((ArithmeticError, RuntimeError), match=r"(?i)(accuracy|certif)"):
+    with pytest.raises(
+        (ArithmeticError, RuntimeError),
+        match=_RHO_ACCURACY_FAILURE,
+    ):
         _derivative(case=case, parameter="rho", method=method, compiled=compiled)
 
 
@@ -323,7 +331,10 @@ def test_density_mapped_ambiguity_rejects_zero_source_sensitivities(
         jax.block_until_ready(actual)
         jax.effects_barrier()
 
-    with pytest.raises((ArithmeticError, RuntimeError), match=r"(?i)(accuracy|certif)"):
+    with pytest.raises(
+        (ArithmeticError, RuntimeError),
+        match=_RHO_ACCURACY_FAILURE,
+    ):
         run_mapped()
 
 
