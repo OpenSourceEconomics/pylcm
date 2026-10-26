@@ -49,6 +49,7 @@ from _lcm.execution.value_transfer import ValueArtifactAddress
 from _lcm.grids import DiscreteGrid, Grid
 from _lcm.optimization.golden_section import GoldenSectionResult
 from _lcm.params.edges import EDGES, flat_namespaces, regime_kernel_params
+from _lcm.processes.ar1 import _TauchenOnNodesProcess
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.value_adapter import AdaptedBuild, ValueAdapter
 from _lcm.regime_law import RegimeLaw
@@ -2047,6 +2048,12 @@ class _SemanticHasher:
             payload=f"{type(value).__module__}.{type(value).__qualname__}".encode(),
         )
         for declaration in dataclasses.fields(value):
+            # Runtime validation changes executable policy, not the process law.
+            if (
+                type(value) is _TauchenOnNodesProcess
+                and declaration.name == "runtime_checks"
+            ):
+                continue
             # An optional field left at its default hashes like its absence, so
             # declarations that never use it keep their durable fingerprint.
             if declaration.metadata.get("fingerprint_omit_if_default") and (

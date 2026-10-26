@@ -335,6 +335,7 @@ from _lcm.utils.logging import (
     LogLevel,
     get_call_logger,
     get_logger,
+    validation_enabled,
 )
 from _lcm.value_grid_inputs import (
     encode_grid_values,
@@ -533,6 +534,9 @@ class _PickledModel(TypedDict):
         MappingProxyType[RegimeName, MappingProxyType[ReferenceName, str]]
     ]
     _regimes: MappingProxyType[RegimeName, Regime]
+    _runtime_check_regimes: NotRequired[
+        MappingProxyType[bool, MappingProxyType[RegimeName, Regime]]
+    ]
     stakeholder_names_to_ids: MappingProxyType[str, int]
     enable_jit: bool
     simulation_output_dtypes: MappingProxyType[str, pd.CategoricalDtype]
@@ -776,6 +780,7 @@ class Model:
         return self._graph
 
     _regimes: MappingProxyType[RegimeName, Regime]
+    _runtime_check_regimes: MappingProxyType[bool, MappingProxyType[RegimeName, Regime]]
     """Canonical, processed regimes used by solve and simulate.
 
     Private: the canonical form is engine-internal. User code should read
@@ -819,12 +824,15 @@ class Model:
     Private: `execution_devices` is the public view of the device selection.
     """
 
-    _simulate_runtime_regimes: dict[int, MappingProxyType[RegimeName, Regime]]
+    _simulate_runtime_regimes: dict[
+        tuple[int, bool], MappingProxyType[RegimeName, Regime]
+    ]
     """Program executors shared by calls with the same outer subject shape."""
 
     _shock_path_runtime_regimes: dict[
         tuple[
             int,
+            bool,
             frozenset[StateName],
             frozenset[tuple[RegimeName, frozenset[QualifiedName]]],
         ],
@@ -1374,7 +1382,8 @@ class Model:
         prepared_structure = dataclasses.replace(
             prepared_structure, current_iid_bindings=self._shock_registry.bindings
         )
-        self._regimes, self._params_template = build_regimes_and_template(
+        build_regimes = functools.partial(
+            build_regimes_and_template,
             ages=self._time,
             user_regimes=self.user_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
@@ -1394,9 +1403,10 @@ class Model:
             phase_transitions=self.declared_transitions,
             execution=self._execution,
         )
-        self._regimes = admit_invariant_blocking(
+        self._regimes, self._params_template = build_regimes()
+        admit_regimes = functools.partial(
+            admit_invariant_blocking,
             user_regimes=self.user_regimes,
-            regimes=self._regimes,
             laws=laws,
             reachability=self.reachability,
             initial_nodes=self._resolved_initial_nodes,
@@ -1404,6 +1414,32 @@ class Model:
             fixed_component_splits=self._fixed_component_splits,
             block_widths=self._execution.invariant_block_widths,
             schedule=self._execution.invariant_block_schedule,
+        )
+        self._regimes = admit_regimes(regimes=self._regimes)
+        process_grids = [
+            grid
+            for regime in self._regimes.values()
+            for phase in (regime.solution, regime.simulation)
+            for grid in phase.grids.values()
+        ]
+        if prepared_structure.grid_schedule is not None:
+            process_grids.extend(
+                resolved.grid
+                for by_regime in prepared_structure.grid_schedule.by_period.values()
+                for by_state in by_regime.values()
+                for resolved in by_state.values()
+            )
+        if any(
+            isinstance(grid, _TauchenOnNodesProcess)
+            and grid.transition_rule == "density"
+            for grid in process_grids
+        ):
+            unchecked_regimes, _ = build_regimes(runtime_checks=False)
+            unchecked_regimes = admit_regimes(regimes=unchecked_regimes)
+        else:
+            unchecked_regimes = self._regimes
+        self._runtime_check_regimes = MappingProxyType(
+            {True: self._regimes, False: unchecked_regimes}
         )
         fail_if_endogenous_grid_reads_a_clipped_grid(
             solvers={name: regime.solver for name, regime in self.user_regimes.items()},
@@ -1632,6 +1668,7 @@ class Model:
             _params_template=self._params_template,
             _param_name_candidates=self._param_name_candidates,
             _regimes=self._regimes,
+            _runtime_check_regimes=self._runtime_check_regimes,
             stakeholder_names_to_ids=self.stakeholder_names_to_ids,
             enable_jit=self.enable_jit,
             simulation_output_dtypes=self.simulation_output_dtypes,
@@ -1655,6 +1692,9 @@ class Model:
         Resealing records the bindings read by this process's copies of the callables.
         """
         self.__dict__.update(state)
+        self._runtime_check_regimes = state.get(
+            "_runtime_check_regimes", MappingProxyType({True: self._regimes})
+        )
         self._shock_registry = state.get("_shock_registry") or create_shock_registry(
             shocks={},
             regimes=self.user_regimes,
@@ -2071,7 +2111,14 @@ class Model:
         # Keep parameter schema validation here. Replay applies optional
         # numerical selection checks only after binding the captured policy.
         flat_params = self._process_params(params, runtime_checks=False)
+
+        def replay_regimes(
+            runtime_checks: bool,  # noqa: FBT001 - replay policy callback
+        ) -> MappingProxyType[RegimeName, Regime]:
+            return self._regimes_for_runtime_checks(runtime_checks=runtime_checks)
+
         return replay_public_period(
+            select_regimes=replay_regimes,
             directory=Path(directory),
             flat_params=flat_params,
             regimes=self._regimes,
@@ -2157,10 +2204,15 @@ class Model:
             execution=self._execution,
             retention=retention,
             persistable_artifact_refs=preparation.persistable_artifact_refs,
-            program_fingerprint=preparation.program_fingerprint,
+            program_fingerprint=_checked_program_fingerprint(
+                program_fingerprint=preparation.program_fingerprint, runtime_checks=True
+            ),
             authority={
                 "model_identity": preparation.model_fingerprint,
-                "program_identity": preparation.program_fingerprint,
+                "program_identity": _checked_program_fingerprint(
+                    program_fingerprint=preparation.program_fingerprint,
+                    runtime_checks=True,
+                ),
                 "parameter_identity": self._params_fingerprint(flat_params=flat_params),
                 "artifact_refs": describe_lowering_value(
                     preparation.persistable_artifact_refs
@@ -2352,10 +2404,12 @@ class Model:
         `selected_components` scope the schedule solves the selected codes
         alone, and the scope records its retention.
         """
+        checks = validation_enabled(log)
+        regimes = self._regimes_for_runtime_checks(runtime_checks=checks)
         with solve_phase(name="solver_param_checks", logger=log, call_id=call_id):
-            check_solver_params(regimes=self._regimes, flat_params=flat_params)
+            check_solver_params(regimes=regimes, flat_params=flat_params)
             check_pareto_weights(
-                regimes=self._regimes,
+                regimes=regimes,
                 flat_params=flat_params,
                 ages=self._time,
                 process_grid_resolver=process_grid_resolver,
@@ -2363,7 +2417,7 @@ class Model:
         (state_name,) = self._execution.invariant_block_widths
         selection = active_component_selection()
         schedule = ComponentSchedule(
-            regimes=self._regimes,
+            regimes=regimes,
             state_name=state_name,
             flat_params=flat_params,
             device_ids=self._execution.device_ids,
@@ -2374,7 +2428,10 @@ class Model:
                 flat_params=flat_params,
                 solve_parameter_views=solve_parameter_views,
                 ages=self._time,
-                program_fingerprint=preparation.program_fingerprint,
+                program_fingerprint=_checked_program_fingerprint(
+                    program_fingerprint=preparation.program_fingerprint,
+                    runtime_checks=checks,
+                ),
                 logger=log,
                 enable_jit=self.enable_jit,
                 execution=self._execution,
@@ -2388,6 +2445,7 @@ class Model:
                 process_grid_resolver=process_grid_resolver,
                 call_id=call_id,
                 gather_checks=self._gather_checks,
+                retained_input_arrays=(self._runtime_policy_roots(),),
             ),
             logger=log,
             codes=None if selection is None else selection.codes,
@@ -2435,10 +2493,15 @@ class Model:
         Checked NaN failures save a partial snapshot at any output level.
         `_enforce_retention` caps snapshots at `log_keep_n_latest`.
         """
+        checks = validation_enabled(log)
+        regimes = self._regimes_for_runtime_checks(runtime_checks=checks)
+        program_fingerprint = _checked_program_fingerprint(
+            program_fingerprint=program_fingerprint, runtime_checks=checks
+        )
         with solve_phase(name="solver_param_checks", logger=log, call_id=call_id):
-            check_solver_params(regimes=self._regimes, flat_params=flat_params)
+            check_solver_params(regimes=regimes, flat_params=flat_params)
             check_pareto_weights(
-                regimes=self._regimes,
+                regimes=regimes,
                 flat_params=flat_params,
                 ages=self._time,
                 process_grid_resolver=process_grid_resolver,
@@ -2448,7 +2511,7 @@ class Model:
                 flat_params=flat_params,
                 solve_parameter_views=solve_parameter_views,
                 ages=self._time,
-                regimes=self._regimes,
+                regimes=regimes,
                 program_fingerprint=program_fingerprint,
                 logger=log,
                 enable_jit=self.enable_jit,
@@ -2459,7 +2522,10 @@ class Model:
                 retain_replay=retain_replay,
                 retain_all_artifacts=retain_all_artifacts,
                 persistable_artifact_refs=persistable_artifact_refs,
-                retained_input_arrays=retained_input_arrays,
+                retained_input_arrays=(
+                    *retained_input_arrays,
+                    self._runtime_policy_roots(),
+                ),
                 process_grid_resolver=process_grid_resolver,
                 call_id=call_id,
                 gather_checks=self._gather_checks,
@@ -2488,20 +2554,31 @@ class Model:
                 )
         return internal_result
 
-    def _runtime_regimes_for_shape(
-        self, *, compile_batch_size: int
+    def _regimes_for_runtime_checks(
+        self, *, runtime_checks: bool
     ) -> MappingProxyType[RegimeName, Regime]:
-        """Return the call-local regime copies sharing this shape's executor."""
+        """Select an immutable process-policy graph without changing model authority."""
+        if runtime_checks in self._runtime_check_regimes:
+            return self._runtime_check_regimes[runtime_checks]
+        raise ModelInitializationError(
+            "Rebuild this saved model to disable density derivative runtime checks."
+        )
+
+    def _runtime_regimes_for_shape(
+        self, *, compile_batch_size: int, runtime_checks: bool = True
+    ) -> MappingProxyType[RegimeName, Regime]:
+        """Return shape- and policy-specific executors from immutable phase graphs."""
+        key = (compile_batch_size, runtime_checks)
         with self._simulate_compile_lock:
-            if compile_batch_size not in self._simulate_runtime_regimes:
-                self._simulate_runtime_regimes[compile_batch_size] = (
-                    bind_simulation_runtime(
-                        regimes=self._regimes,
-                        execution=self._execution,
-                        enable_jit=self.enable_jit,
-                    )
+            if key not in self._simulate_runtime_regimes:
+                self._simulate_runtime_regimes[key] = bind_simulation_runtime(
+                    regimes=self._regimes_for_runtime_checks(
+                        runtime_checks=runtime_checks
+                    ),
+                    execution=self._execution,
+                    enable_jit=self.enable_jit,
                 )
-            return self._simulate_runtime_regimes[compile_batch_size]
+            return self._simulate_runtime_regimes[key]
 
     def _shock_path_regimes_for_shape(
         self,
@@ -2509,23 +2586,83 @@ class Model:
         compile_batch_size: int,
         supplied: frozenset[StateName],
         flat_params: FlatParams,
+        runtime_checks: bool = True,
     ) -> MappingProxyType[RegimeName, Regime]:
         """Return the runtime regimes with transitions reading the supplied shocks.
 
         Bound once per shape, supplied shock names and parameter names, so calls
         differing only in path values reuse one set of compiled programs.
         """
-        regimes = self._runtime_regimes_for_shape(compile_batch_size=compile_batch_size)
+        regimes = self._runtime_regimes_for_shape(
+            compile_batch_size=compile_batch_size, runtime_checks=runtime_checks
+        )
         if not supplied:
             return regimes
         param_names = kernel_param_names(regimes=regimes, params=flat_params)
-        key = (compile_batch_size, supplied, frozenset(param_names.items()))
+        key = (
+            compile_batch_size,
+            runtime_checks,
+            supplied,
+            frozenset(param_names.items()),
+        )
         with self._simulate_compile_lock:
             if key not in self._shock_path_runtime_regimes:
                 self._shock_path_runtime_regimes[key] = bind_shock_path_programs(
                     regimes=regimes, supplied=supplied, param_names=param_names
                 )
             return self._shock_path_runtime_regimes[key]
+
+    def _runtime_policy_roots(self) -> tuple[PytreeValue, ...]:
+        """Return concrete model owners kept live by both call policies.
+
+        The residency union deduplicates shared backing buffers. Inspect owning
+        fields directly so inventory does not construct another state space.
+        """
+        if self._runtime_check_regimes.get(False, self._regimes) is self._regimes:
+            return (
+                self._time.values,  # noqa: PD011
+                self.regime_names_to_ids,
+                tuple(
+                    (
+                        regime.resolved_fixed_params,
+                        regime.solution.resolved_fixed_params,
+                        regime.solution._base_state_action_space.states,  # noqa: SLF001
+                        regime.solution._base_state_action_space.actions,  # noqa: SLF001
+                        regime.derived_categorical_code_arrays,
+                    )
+                    for regime in self._regimes.values()
+                ),
+            )
+        return (
+            self._time.values,  # noqa: PD011
+            self.regime_names_to_ids,
+            tuple(
+                (
+                    regime.resolved_fixed_params,
+                    regime.derived_categorical_code_arrays,
+                    regime.solution.resolved_fixed_params,
+                    regime.solution._base_state_action_space.states,  # noqa: SLF001
+                    regime.solution._base_state_action_space.discrete_actions,  # noqa: SLF001
+                    regime.solution._base_state_action_space.continuous_actions,  # noqa: SLF001
+                    tuple((regime.solution.period_state_axes or {}).values()),
+                    regime.solution.continuation_template,
+                    tuple(
+                        regime.solution.continuation_spec.templates_by_period.values()
+                    )
+                    if regime.solution.continuation_spec is not None
+                    else (),
+                    regime.solution.constant_roots,
+                    regime.simulation.constant_roots,
+                    tuple(
+                        (plan.node_operands, plan.indices)
+                        for plan in regime.solution.current_iid_plans.values()
+                        if plan is not None
+                    ),
+                )
+                for regimes in self._runtime_check_regimes.values()
+                for regime in regimes.values()
+            ),
+        )
 
     def _open_entry_allocations(
         self,
@@ -2555,20 +2692,7 @@ class Model:
             operations=self._simulate_entry_operations,
             original_inputs=entry_inputs,
             solution=solution,
-            model_roots=(
-                self._time.values,  # noqa: PD011
-                self.regime_names_to_ids,
-                tuple(
-                    (
-                        regime.resolved_fixed_params,
-                        regime.solution.resolved_fixed_params,
-                        regime.solution._base_state_action_space.states,  # noqa: SLF001
-                        regime.solution._base_state_action_space.actions,  # noqa: SLF001
-                        regime.derived_categorical_code_arrays,
-                    )
-                    for regime in self._regimes.values()
-                ),
-            ),
+            model_roots=self._runtime_policy_roots(),
             devices=placed_devices_for_ids(
                 submesh_device_ids=(), visible_device_ids=self._execution.device_ids
             ),
@@ -4257,6 +4381,7 @@ class Model:
                 )
                 if entry_allocations is not None:
                     simulate_regimes = self._shock_path_regimes_for_shape(
+                        runtime_checks=runtime_checks,
                         compile_batch_size=padded_n_subjects,
                         supplied=frozenset(resolved_shock_paths),
                         flat_params=flat_params,
@@ -4310,6 +4435,7 @@ class Model:
                             multiple=compile_batch_size,
                         )
                     simulate_regimes = self._shock_path_regimes_for_shape(
+                        runtime_checks=runtime_checks,
                         compile_batch_size=compile_batch_size,
                         supplied=frozenset(resolved_shock_paths),
                         flat_params=flat_params,
@@ -6422,3 +6548,12 @@ def _map_lookup_arrays(
 def _leading_rows(*, array: jax.Array, n_rows: int) -> jax.Array:
     """Return the leading `n_rows` rows of `array`."""
     return array[:n_rows]
+
+
+def _checked_program_fingerprint(
+    *, program_fingerprint: str, runtime_checks: bool
+) -> str:
+    """Separate numerical-policy executables from scientific model identity."""
+    return hashlib.sha256(
+        f"{program_fingerprint}:runtime_checks={int(runtime_checks)}".encode()
+    ).hexdigest()

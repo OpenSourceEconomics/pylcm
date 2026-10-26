@@ -105,6 +105,7 @@ def build_regimes_and_template(
     prepared_structure: PreparedModelStructure,
     phase_transitions: Mapping[Phase, Mapping[RegimeName, Transition]],
     execution: ResolvedExecution | None = None,
+    runtime_checks: bool = True,
 ) -> tuple[MappingProxyType[RegimeName, Regime], ParamsTemplate]:
     """Build canonical regimes and params template in a single pass.
 
@@ -137,6 +138,7 @@ def build_regimes_and_template(
             enable_jit=enable_jit,
             prepared_structure=prepared_structure,
             execution=execution,
+            runtime_checks=runtime_checks,
         )
         params_template = create_params_template(
             regimes=regimes,
@@ -153,6 +155,7 @@ def build_regimes_and_template(
             prepared_structure=prepared_structure,
             phase_transitions=phase_transitions,
             execution=execution,
+            runtime_checks=runtime_checks,
         )
 
     # Replay bodies must consume the canonical functions after fixed parameters
@@ -177,6 +180,7 @@ def _build_regimes_and_template_with_fixed_params(
     prepared_structure: PreparedModelStructure,
     phase_transitions: Mapping[Phase, Mapping[RegimeName, Transition]],
     execution: ResolvedExecution | None = None,
+    runtime_checks: bool = True,
 ) -> tuple[MappingProxyType[RegimeName, Regime], ParamsTemplate]:
     """Build canonical regimes and template, then partial in fixed params.
 
@@ -204,6 +208,7 @@ def _build_regimes_and_template_with_fixed_params(
         enable_jit=enable_jit,
         prepared_structure=prepared_structure,
         execution=execution,
+        runtime_checks=runtime_checks,
     )
     raw_params_template = create_params_template(
         regimes=raw_regimes,

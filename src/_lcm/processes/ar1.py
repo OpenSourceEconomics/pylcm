@@ -124,6 +124,7 @@ class TauchenAR1Process(_AR1Process):
         n_quadrature: int | None = None,
         innovation_nodes: UserVector | None = None,
         innovation_weights: UserVector | None = None,
+        runtime_checks: bool = True,
     ) -> TauchenAR1Process:
         """Bin an AR(1) law on finite increasing physical nodes.
 
@@ -132,7 +133,10 @@ class TauchenAR1Process(_AR1Process):
         Its first-order sensitivities use dimensionless absolute and relative
         error budgets of 1e-12 (float64) or 1e-5 (float32). Differentiation checks
         every parameter column and raises `DensityDerivativeAccuracyError` if
-        any component cannot be certified. Checks run on the host during AD.
+        any component cannot be certified. Host checks during AD follow
+        `runtime_checks` (default True) for standalone use. Model solve/simulation
+        calls select their own `runtime_checks` policy. Disabling checks omits
+        the certificate; the normalized numerical derivative remains active.
         ``innovation_quadrature`` maps standardized innovations linearly to adjacent
         state nodes, clipping targets to the endpoints. Supply ``n_quadrature``
         (default 9 Gauss-Hermite points), or both innovation arrays. Weights must be
@@ -159,6 +163,7 @@ class TauchenAR1Process(_AR1Process):
             transition_rule=transition_rule,
             innovation_nodes=quadrature_nodes,
             innovation_weights=quadrature_weights,
+            runtime_checks=runtime_checks,
             nodes=tuple(float(node) for node in np.asarray(nodes).tolist()),
             simulate_draws=simulate_draws,
             n_points=len(nodes),
@@ -248,6 +253,7 @@ class _TauchenOnNodesProcess(TauchenAR1Process):
     )
     innovation_nodes: tuple[float, ...] = ()
     innovation_weights: tuple[float, ...] = ()
+    runtime_checks: bool = True
 
     _NON_PARAM_FIELDS: ClassVar[frozenset[str]] = (
         TauchenAR1Process._NON_PARAM_FIELDS  # noqa: SLF001
@@ -257,8 +263,17 @@ class _TauchenOnNodesProcess(TauchenAR1Process):
             "transition_rule",
             "innovation_nodes",
             "innovation_weights",
+            "runtime_checks",
         }
     )
+
+    def has_same_law_as(self, other: _ContinuousStochasticProcess) -> bool:
+        """Compare the physical declaration, independently of draw and check policy."""
+        return isinstance(other, _TauchenOnNodesProcess) and all(
+            getattr(self, spec.name) == getattr(other, spec.name)
+            for spec in fields(self)
+            if spec.name not in {"simulate_draws", "runtime_checks"}
+        )
 
     def __post_init__(self) -> None:
         points = np.asarray(self.nodes, dtype=canonical_float_dtype())
@@ -298,8 +313,20 @@ class _TauchenOnNodesProcess(TauchenAR1Process):
         return grid_coordinates.get_irreg_coordinate(value=value, points=self.to_jax())
 
     def compute_transition_probs(self, **kwargs: ScalarFloat | ScalarInt) -> FloatND:
+        """Evaluate the selected transition row using this declaration's checks."""
+        return self._compute_transition_probs(
+            runtime_checks=self.runtime_checks, **kwargs
+        )
+
+    def _compute_transition_probs(
+        self, *, runtime_checks: bool, **kwargs: ScalarFloat | ScalarInt
+    ) -> FloatND:
         """Evaluate the selected transition row at each supplied source node."""
-        return jax.vmap(partial(self.compute_transition_row, **kwargs))(self.to_jax())
+        return jax.vmap(
+            partial(
+                self.compute_transition_row, runtime_checks=runtime_checks, **kwargs
+            )
+        )(self.to_jax())
 
     # keyword-only-exempt: library-callback=jax.vmap
     def compute_transition_row(
@@ -309,6 +336,7 @@ class _TauchenOnNodesProcess(TauchenAR1Process):
         rho: ScalarFloat | ScalarInt,
         sigma: ScalarFloat | ScalarInt,
         mu: ScalarFloat | ScalarInt,
+        runtime_checks: bool | None = None,
     ) -> Float1D:
         """Return destination probabilities at an actual physical source value."""
         nodes = self.compute_gridpoints()
@@ -324,7 +352,8 @@ class _TauchenOnNodesProcess(TauchenAR1Process):
                     jnp.asarray(rho, dtype=nodes.dtype),
                     jnp.asarray(from_value, dtype=nodes.dtype),
                     jnp.asarray(sigma, dtype=nodes.dtype),
-                )
+                ),
+                self.runtime_checks if runtime_checks is None else runtime_checks,
             )
         mean = mu + sealed(rho * from_value)
         innovations = jnp.asarray(self.innovation_nodes, dtype=nodes.dtype)
@@ -725,15 +754,19 @@ def _normalized_density_slope(
     )
 
 
+# keyword-only-exempt: library-callback=jax.custom_jvp
 def _normal_density_row_impl(
     operands: tuple[Float1D, FloatND, FloatND, FloatND, FloatND],
+    runtime_checks: bool,  # noqa: FBT001 - JAX custom_jvp callback
 ) -> Float1D:
     """Evaluate the preserved represented-input density row."""
+    del runtime_checks
     return jax.nn.softmax(_density_contrasts_and_gap(operands)[0])
 
 
 # keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
 def _normal_density_row_jvp(
+    runtime_checks: bool,  # noqa: FBT001 - JAX custom_jvp callback
     primals: tuple[tuple[Float1D, FloatND, FloatND, FloatND, FloatND]],
     tangents: tuple[tuple[Float1D, FloatND, FloatND, FloatND, FloatND]],
 ) -> tuple[Float1D, Float1D]:
@@ -769,29 +802,30 @@ def _normal_density_row_jvp(
     )
     rho_slope = _scaled_multiply(left=location_slope, right=_scaled_float(source))
     source_slope = _scaled_multiply(left=location_slope, right=_scaled_float(rho))
-    mantissas = jnp.stack(
-        (location_slope[0], rho_slope[0], source_slope[0], sigma_slope[0])
-    )
-    exponents = jnp.stack(
-        (location_slope[1], rho_slope[1], source_slope[1], sigma_slope[1])
-    )
-    checked_m, checked_e = io_callback(
-        _checked_density_coefficients,
-        (
-            jax.ShapeDtypeStruct(mantissas.shape, mantissas.dtype),
-            jax.ShapeDtypeStruct(exponents.shape, exponents.dtype),
-        ),
-        *operands,
-        reference,
-        *exp_metadata,
-        mantissas,
-        exponents,
-        ordered=False,
-    )
-    location_slope = checked_m[0], checked_e[0]
-    rho_slope = checked_m[1], checked_e[1]
-    source_slope = checked_m[2], checked_e[2]
-    sigma_slope = checked_m[3], checked_e[3]
+    if runtime_checks:
+        mantissas = jnp.stack(
+            (location_slope[0], rho_slope[0], source_slope[0], sigma_slope[0])
+        )
+        exponents = jnp.stack(
+            (location_slope[1], rho_slope[1], source_slope[1], sigma_slope[1])
+        )
+        checked_m, checked_e = io_callback(
+            _checked_density_coefficients,
+            (
+                jax.ShapeDtypeStruct(mantissas.shape, mantissas.dtype),
+                jax.ShapeDtypeStruct(exponents.shape, exponents.dtype),
+            ),
+            *operands,
+            reference,
+            *exp_metadata,
+            mantissas,
+            exponents,
+            ordered=False,
+        )
+        location_slope = checked_m[0], checked_e[0]
+        rho_slope = checked_m[1], checked_e[1]
+        source_slope = checked_m[2], checked_e[2]
+        sigma_slope = checked_m[3], checked_e[3]
     tangent = (
         _scaled_linear_product(coefficient=location_slope, tangent=location_dot)
         + _scaled_linear_product(coefficient=rho_slope, tangent=rho_dot)
@@ -801,7 +835,7 @@ def _normal_density_row_jvp(
     return jax.nn.softmax(contrasts), tangent
 
 
-_normal_density_row = jax.custom_jvp(_normal_density_row_impl)
+_normal_density_row = jax.custom_jvp(_normal_density_row_impl, nondiff_argnums=(1,))
 _normal_density_row.defjvp(_normal_density_row_jvp)
 
 

@@ -646,7 +646,11 @@ or a DataFrame with a `regime_name` column.
 `progress` adds timing, and `debug` adds value statistics. `runtime_checks=True`
 independently enables numerical probability, NaN and existing feasibility/replay checks
 and raises on failure at every verbosity. `runtime_checks=False` explicitly skips those
-checks, including during automatic solving. Construction, parameter schema,
+checks, including during automatic solving. This also selects whether first-order AD of
+a density-rule process certifies its dimensionless derivative accuracy on the host.
+Disabling checks keeps the normalized derivative arithmetic and omits that certificate.
+The call policy is part of executable identity; alternating checked and unchecked calls
+does not change the canonical model declaration. Construction, parameter schema,
 initial-condition structure and solution-identity validation always run. Infinity-only
 value diagnostics remain warnings; an application requiring all stored values finite
 must retain that stronger invariant.
