@@ -17,12 +17,14 @@ import jax.numpy as jnp
 import jax.scipy as jsp
 import numpy as np
 import pytest
+from dags import concatenate_functions
 from numpy._core.overrides import array_function_dispatch
 
 import _lcm.grids.continuous as grid_declarations
 import lcm.model as lcm_model
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.constraints.ir import And
+from _lcm.egm.query_data import QueryNodeKind
 from _lcm.engine import Regime as EngineRegime
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.processes.grid_resolution import ProcessGridResolver
@@ -43,8 +45,15 @@ from lcm import (
     ref,
 )
 from lcm.case_piece import CaseBoundary
+from lcm.execution import (
+    ExecutionConfig,
+    InvariantBlockSchedule,
+    WidthSearch,
+    WidthSearchPolicy,
+)
 from lcm.regime import FunctionEntry, StateTransitionEntry
 from lcm.regime import Regime as UserRegime
+from lcm.shocks import GaussHermite, Normal, Product, ShockGroup
 from lcm.solver_api import (
     ArtifactChannel,
     ArtifactDescriptor,
@@ -1148,6 +1157,7 @@ def test_trusted_frozen_dependencies_bind_their_semantic_state(
         LinSpacedGrid,
         np.dtype,
         partial,
+        MappingProxyType,
         inspect.Signature.empty,
         And,
         dags_exceptions.InvalidFunctionArgumentsError,
@@ -1158,6 +1168,7 @@ def test_trusted_frozen_dependencies_bind_their_semantic_state(
         "grid-class",
         "numpy-dtype-class",
         "partial-class",
+        "mapping-proxy",
         "inspect-empty",
         "constraint-class",
         "dags-exception-class",
@@ -1202,6 +1213,7 @@ def test_forged_beartype_wrappers_fail_closed() -> None:
     changed = _forge_beartype_wrapper(1)
     assert baseline(2) != changed(2)
 
+    changed.__module__ = "_lcm.solution.current_iid_case_u_build"
     for function in (baseline, changed):
         with pytest.raises(TypeError, match="uncaptured transparent beartype wrapper"):
             fingerprints._semantic_fingerprint(function)
@@ -1577,6 +1589,15 @@ def test_numpy_protocol_subclass_dependency_fails_closed() -> None:
 def test_direct_enum_dependency_fails_closed() -> None:
     with pytest.raises(TypeError, match="custom Enum semantic value"):
         fingerprints._semantic_fingerprint(_uses_enum_dependency)
+
+
+def test_default_shock_independence_has_a_distinct_declaration_fingerprint() -> None:
+    group = ShockGroup(shocks={"offer": Normal()}, nodes=Product(offer=GaussHermite(3)))
+    runtime_correlation = dataclasses.replace(group, correlation=None)
+
+    independent = fingerprints._semantic_fingerprint(group)
+    assert independent == fingerprints._semantic_fingerprint(group)
+    assert independent != fingerprints._semantic_fingerprint(runtime_correlation)
 
 
 def test_engine_descriptor_enums_and_solver_identity_remain_supported() -> None:
@@ -2362,3 +2383,88 @@ def test_referenced_closure_attribute_paths_is_a_read_only_mapping() -> None:
         code=_closure_reading_attribute_paths()
     )
     assert isinstance(paths, MappingProxyType)
+
+
+def test_execution_declaration_enums_have_distinct_durable_fingerprints() -> None:
+    """Original schedule and width policy remain explicit semantic declarations."""
+    period_major = ExecutionConfig(
+        invariant_block_schedule=InvariantBlockSchedule.PERIOD_MAJOR,
+        width_search=WidthSearchPolicy(kind=WidthSearch.EXHAUSTIVE),
+    )
+    block_major = dataclasses.replace(
+        period_major, invariant_block_schedule=InvariantBlockSchedule.BLOCK_MAJOR
+    )
+    bounded = dataclasses.replace(
+        period_major, width_search=WidthSearchPolicy(kind=WidthSearch.BOUNDED)
+    )
+    original = fingerprints._semantic_fingerprint(period_major)
+    assert original == fingerprints._semantic_fingerprint(period_major)
+    assert original != fingerprints._semantic_fingerprint(block_major)
+    assert original != fingerprints._semantic_fingerprint(bounded)
+
+
+def _with_output_annotation(annotation: fingerprints._Annotation):
+    function = _callable_with_params("value")
+    function.__signature__ = inspect.signature(function).replace(
+        return_annotation=annotation
+    )
+    return function
+
+
+def test_named_dag_output_annotations_preserve_names_types_and_order() -> None:
+    dag = concatenate_functions(
+        functions={"next_wealth": _solve_law},
+        targets=["next_wealth"],
+        return_type="dict",
+        enforce_signature=False,
+        set_annotations=True,
+    )
+    annotation = inspect.signature(dag).return_annotation
+    assert annotation == {"next_wealth": "int"}
+    baseline = fingerprints._semantic_fingerprint(_with_output_annotation(annotation))
+    for changed in ({"next_assets": "int"}, {"next_wealth": "float"}):
+        assert baseline != fingerprints._semantic_fingerprint(
+            _with_output_annotation(changed)
+        )
+    first = {"next_wealth": "int", "next_income": "float"}
+    second = {"next_income": "float", "next_wealth": "int"}
+    assert fingerprints._semantic_fingerprint(_with_output_annotation(first)) != (
+        fingerprints._semantic_fingerprint(_with_output_annotation(second))
+    )
+
+
+@pytest.mark.parametrize(
+    ("annotation", "reason"),
+    [
+        ({"next_wealth": object()}, "unsupported function annotation"),
+        ({0: "ContinuousState"}, "exact string keys"),
+    ],
+)
+def test_named_output_annotation_values_remain_strict(
+    *, annotation: fingerprints._Annotation, reason: str
+) -> None:
+    with pytest.raises(TypeError, match=reason):
+        fingerprints._semantic_fingerprint(_with_output_annotation(annotation))
+
+
+class _MappingProxyNominalTwin:
+    pass
+
+
+_MappingProxyNominalTwin.__module__ = "builtins"
+_MappingProxyNominalTwin.__qualname__ = "mappingproxy"
+
+
+def test_nominal_mappingproxy_class_is_not_builtin_authority() -> None:
+    with pytest.raises(TypeError, match="direct class dependency"):
+        fingerprints._semantic_fingerprint(
+            _dependency_closure(_MappingProxyNominalTwin)
+        )
+
+
+def test_original_query_node_kind_keeps_economic_status_distinct() -> None:
+    finite = fingerprints._semantic_fingerprint(QueryNodeKind.FINITE)
+    assert finite != fingerprints._semantic_fingerprint(
+        QueryNodeKind.ECONOMIC_MINUS_INF
+    )
+    assert finite != fingerprints._semantic_fingerprint(1)

@@ -14,10 +14,12 @@ from types import MappingProxyType
 
 import jax
 
+from _lcm.egm.current_iid_replay_inputs import CurrentIIDReplayInputs
 from _lcm.engine import Regime, placed_devices_for_ids
 from _lcm.execution.core_program import ReducedAxis, TiledOutputAxis
 from _lcm.execution.workspace_planning import workspace_width_candidates
 from _lcm.processes.grid_resolution import ProcessGridResolver
+from _lcm.regime_building.projected_forward import ProjectedForwardInputs
 from _lcm.simulation.chunk_inputs import (
     SimulationCallInputs,
     prepare_simulation_call_inputs,
@@ -139,6 +141,8 @@ def prepare_simulation_chunks(
     log_level: LogLevel,
     runtime_checks: bool = True,
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None = None,
+    current_iid_replay_inputs: CurrentIIDReplayInputs = MappingProxyType({}),
+    projected_forward_inputs: ProjectedForwardInputs = MappingProxyType({}),
     process_grid_resolver: ProcessGridResolver | None = None,
     max_compilation_workers: int | None = None,
     group_sizes: tuple[int, ...] | None = None,
@@ -172,7 +176,14 @@ def prepare_simulation_chunks(
         footprints=(
             retained_footprint,
             measure_buffer_footprint(
-                tree=(flat_params, initial_conditions, values, flags, ages.values)
+                tree=(
+                    flat_params,
+                    initial_conditions,
+                    values,
+                    flags,
+                    ages.values,
+                    projected_forward_inputs,
+                )
             ),
         )
     )
@@ -219,6 +230,8 @@ def prepare_simulation_chunks(
         values=values,
         flags=flags,
         policies=policies,
+        current_iid_replay_inputs=current_iid_replay_inputs,
+        projected_forward_inputs=projected_forward_inputs,
         ages=ages,
         initial_conditions=initial_conditions,
         regime_names_to_ids=regime_names_to_ids,
@@ -252,6 +265,8 @@ def _simulation_chunk_profile_key(
     values: Mapping[int, Mapping[str, jax.Array]],
     flags: Mapping[int, Mapping[str, jax.Array]],
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None,
+    current_iid_replay_inputs: CurrentIIDReplayInputs = MappingProxyType({}),
+    projected_forward_inputs: ProjectedForwardInputs = MappingProxyType({}),
     ages: TimeAxis,
     initial_conditions: Mapping[str, jax.Array],
     regime_names_to_ids: RegimeNamesToIds,
@@ -292,7 +307,7 @@ def _simulation_chunk_profile_key(
       that leaves every covered shape untouched (extremely unlikely given how
       regimes are constructed) would not be distinguished by this key.
     """
-    version = 3  # bump when any component below changes meaning
+    version = 4  # bump when any component below changes meaning
     key_version = ("chunk-profile-key", version)
     program_identity = (
         tuple(sorted(regimes)),
@@ -313,6 +328,8 @@ def _simulation_chunk_profile_key(
                 for space in call_inputs.base_state_action_spaces.values()
             )
         ),
+        _abstract_value_key(value=current_iid_replay_inputs),
+        _abstract_value_key(value=projected_forward_inputs),
         _abstract_value_key(value=values),
         _abstract_value_key(value=flags),
         _abstract_value_key(value=initial_conditions),
@@ -373,6 +390,8 @@ class _ChunkProfiler:
     resident: Mapping[jax.Device, int]
     devices: tuple[jax.Device, ...]
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None = None
+    current_iid_replay_inputs: CurrentIIDReplayInputs = MappingProxyType({})
+    projected_forward_inputs: ProjectedForwardInputs = MappingProxyType({})
     max_compilation_workers: int | None = None
     group_sizes: tuple[int, ...] | None = None
     current_iid_override_schema: CurrentIIDOverrideSchema = ()
@@ -438,6 +457,8 @@ class _ChunkProfiler:
             "values": self.values,
             "flags": self.flags,
             "policies": self.policies,
+            "current_iid_replay_inputs": self.current_iid_replay_inputs,
+            "projected_forward_inputs": self.projected_forward_inputs,
             "ages": self.ages,
             "initial_conditions": self.initial_conditions,
             "regime_names_to_ids": self.regime_names_to_ids,

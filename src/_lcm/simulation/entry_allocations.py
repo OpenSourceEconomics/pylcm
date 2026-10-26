@@ -13,7 +13,8 @@ Artifact and arbitrary lazy materializers require separate allocation profiles.
 
 import dataclasses
 import weakref
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from functools import partial
 from types import MappingProxyType
 from typing import Literal, cast
 
@@ -21,9 +22,15 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from _lcm.dtypes import canonical_float_dtype
+from _lcm.egm.current_iid_replay_inputs import CurrentIIDReplayInputs
 from _lcm.engine import Regime
 from _lcm.execution.core_program import core_program_graph
+from _lcm.grids import Grid
+from _lcm.grids.materialization import admitted_grid_extent, materialize_original_grid
 from _lcm.params.edges import EDGES, flat_namespaces
+from _lcm.processes.base import _ContinuousStochasticProcess
+from _lcm.regime_building.projected_forward import ProjectedForwardInputs
 from _lcm.simulation.entry_inputs import SimulationEntryInputs, SolutionResultBoundary
 from _lcm.simulation.host_operations import ProfiledSimulationOperations
 from _lcm.simulation.operand_placement import place_simulation_arguments
@@ -32,6 +39,7 @@ from _lcm.simulation.replay_inputs import PreparedReplayReader
 from _lcm.simulation.residency import (
     DeviceBufferFootprint,
     measure_buffer_footprint,
+    resolve_budget_devices,
     union_buffer_footprints,
 )
 from _lcm.simulation.solution_copies import copy_solution_leaf
@@ -39,13 +47,14 @@ from _lcm.typing import (
     FlatEdgeParams,
     FlatParams,
     FlatRegimeParams,
+    FootprintTree,
     InitialConditions,
     PytreeByPeriod,
     PytreeValue,
     RegimeName,
     SimulationPolicy,
 )
-from lcm.typing import BoolND, FloatND
+from lcm.typing import BoolND, Float1D, FloatND, Int1D
 
 # The replay inputs resolved from a solution, keyed by period and regime: values,
 # simulation policies, dissolution flags and replay readers, each `None` when the
@@ -56,6 +65,8 @@ type _ResolvedInputs = (
         Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None,
         Mapping[int, Mapping[RegimeName, BoolND]] | None,
         Mapping[int, Mapping[RegimeName, PreparedReplayReader]] | None,
+        CurrentIIDReplayInputs | None,
+        ProjectedForwardInputs | None,
     ]
     | tuple[()]
 )
@@ -79,6 +90,8 @@ class SimulationEntryAllocations:
         default_factory=ProfiledSimulationOperations
     )
     """Abstract signatures and executable profiles, without array owners."""
+    retained_generation_roots: Callable[[], tuple[PytreeValue, ...]] | None = None
+    """Live initial/cache/owned-view generations, including evicted result owners."""
     _stages: dict[str, PytreeValue] = dataclasses.field(
         default_factory=dict, init=False
     )
@@ -93,6 +106,20 @@ class SimulationEntryAllocations:
     """Ready private copies retained until foreign resolution commits or fails."""
     process_grid_resolver: SimulationProcessGrids = dataclasses.field(init=False)
     """Call-owned runtime support admitted before any authority or solve reads it."""
+
+    _grid_roots: list[jax.Array] = dataclasses.field(default_factory=list, init=False)
+    """Actual original declaration operands retained before any grid dispatch."""
+    _grid_bindings: dict[tuple[int, str, bool], tuple[Grid, Float1D | Int1D]] = (
+        dataclasses.field(default_factory=dict, init=False)
+    )
+    """Strong original declarations and their call-owned completed supports."""
+
+    _validation_capture_roots: list[jax.Array] = dataclasses.field(
+        default_factory=list, init=False
+    )
+    """Actual referenced callback buffers, distinct from array-free cached code."""
+    _validation_stage_roots: FootprintTree = dataclasses.field(default=(), init=False)
+    """The complete active original recipe environment before each stage."""
 
     solve_parameter_views: Mapping[RegimeName, FlatParams] = dataclasses.field(
         default_factory=lambda: MappingProxyType({}), init=False
@@ -117,14 +144,27 @@ class SimulationEntryAllocations:
                 measure_buffer_footprint(
                     tree=(
                         self.model_roots,
+                        self._retained_generation_roots(),
                         tuple(self._stages.values()),
                         tuple(self._pending),
                         self._resolved_inputs,
                         tuple(self._foreign_copies),
+                        tuple(self._grid_roots),
+                        tuple(value for _, value in self._grid_bindings.values()),
+                        tuple(self._validation_capture_roots),
+                        self._validation_stage_roots,
                         self.process_grid_resolver.array_roots,
                     )
                 ),
             )
+        )
+
+    def _retained_generation_roots(self) -> tuple[PytreeValue, ...]:
+        """Refresh root ownership before any existing admitted producer runs."""
+        return (
+            ()
+            if self.retained_generation_roots is None
+            else self.retained_generation_roots()
         )
 
     def solve_input_roots(self) -> tuple[tuple[PytreeByPeriod, ...], ...]:
@@ -139,10 +179,19 @@ class SimulationEntryAllocations:
         return (
             self.original_inputs.arrays,
             self.model_roots,
+            self._retained_generation_roots(),
             tuple(self._stages.values()),
             tuple(self._pending),
             self._resolved_inputs,
             tuple(self._foreign_copies),
+            tuple(self._grid_roots),
+            tuple(value for _, value in self._grid_bindings.values()),
+            tuple(self._validation_capture_roots),
+            tuple(
+                value
+                for value in jax.tree.leaves(self._validation_stage_roots)
+                if isinstance(value, jax.Array)
+            ),
             self.process_grid_resolver.array_roots,
         )
 
@@ -314,6 +363,230 @@ class SimulationEntryAllocations:
         self._pending.append(result)
         return result
 
+    def materialize_grid(
+        self, *, spec: Grid, placeholder: bool = False
+    ) -> Float1D | Int1D:
+        """Retain original operands before the same admitted grid factories run."""
+        from _lcm.grids.materialization import _grid_placeholder  # noqa: PLC0415
+        from _lcm.solution.generation import canonical_generation_roots  # noqa: PLC0415
+        from lcm.exceptions import ExecutionPlanningError  # noqa: PLC0415
+
+        count = admitted_grid_extent(spec=spec)
+        key = (id(spec), np.dtype(canonical_float_dtype()).str, placeholder)
+        if key in self._grid_bindings:
+            return self._grid_bindings[key][1]
+        self._grid_roots.extend(canonical_generation_roots(declarations=(spec,)))
+        if isinstance(spec, _ContinuousStochasticProcess):
+            if not self.process_grid_resolver.supports(spec):
+                raise ExecutionPlanningError(
+                    "Cold dated process has no admitted original support route."
+                )
+            if not spec.is_fully_specified:
+                result = self.produce(
+                    function=partial(_grid_placeholder, n_points=count),
+                    arguments={},
+                )
+            else:
+                result = self.process_grid_resolver(
+                    spec=spec,
+                    parameters={},
+                    required=jax.sharding.SingleDeviceSharding(self.devices[0]),
+                )
+        else:
+            result = materialize_original_grid(
+                owner=self, spec=spec, placeholder=placeholder
+            )
+        self._grid_bindings[key] = (spec, result)
+        return result
+
+    def evaluate_validation[T: PytreeValue](
+        self,
+        *,
+        function: Callable[..., T],
+        arguments: Mapping[str, PytreeValue],
+    ) -> T:
+        """Replay original pure callback stages with their real captures retained."""
+        from _lcm.egm.validation_stages import (  # noqa: PLC0415
+            ValidationCaptureHasher,
+            prepare_validation_recipe,
+            validation_identity,
+        )
+        from _lcm.simulation.eager_stages import run_eager_stage  # noqa: PLC0415
+        from _lcm.simulation.process_grids import (  # noqa: PLC0415
+            _aval_schema,
+            _read_process_operand,
+        )
+        from lcm.exceptions import ExecutionPlanningError  # noqa: PLC0415
+
+        # This is the existing exact referenced-binding walk, not a module scan.
+        recorder = ValidationCaptureHasher(
+            array_recorder=self._validation_capture_roots.append
+        )
+        recorder.visit(value=function)
+        recipe = prepare_validation_recipe(function=function, arguments=arguments)
+        environment = list(recipe.initial_values)
+        self._validation_stage_roots = tuple(environment)
+        required = jax.sharding.SingleDeviceSharding(self.devices[0])
+        try:
+            for stage, operands, outputs in recipe.stages:
+                result = run_eager_stage(
+                    function=stage,
+                    arguments={
+                        "parameters": {
+                            f"operand_{i}": _read_process_operand(
+                                operand=operand, environment=environment
+                            )
+                            for i, operand in enumerate(operands)
+                        }
+                    },
+                    static_arguments=MappingProxyType({}),
+                    operations=self.operations,
+                    devices=self.devices,
+                    required=required,
+                    budget_bytes=self.budget_bytes,
+                    live_footprint=self.snapshot,
+                    program_identity=stage.identity,
+                    layout_identity=("original_validator_eager_stage", required),
+                )
+                if len(result) != len(outputs):
+                    raise ExecutionPlanningError(
+                        "Validator stage changed its output arity."
+                    )
+                for value, variable in zip(result, outputs, strict=True):
+                    actual = jax.typeof(value)
+                    if (
+                        actual.shape,
+                        str(actual.dtype),
+                        actual.weak_type,
+                    ) != _aval_schema(variable):
+                        raise ExecutionPlanningError(
+                            "Validator stage changed original shape, dtype "
+                            "or weak type."
+                        )
+                environment.extend(result)
+                self._validation_stage_roots = tuple(environment)
+            leaves = tuple(
+                _read_process_operand(operand=operand, environment=environment)
+                for operand in recipe.output_operands
+            )
+            if any(not isinstance(value, jax.Array) for value in leaves):
+                leaves = run_eager_stage(
+                    function=validation_identity,
+                    arguments={
+                        "parameters": {
+                            f"operand_{i}": value for i, value in enumerate(leaves)
+                        }
+                    },
+                    static_arguments=MappingProxyType({}),
+                    operations=self.operations,
+                    devices=self.devices,
+                    required=required,
+                    budget_bytes=self.budget_bytes,
+                    live_footprint=self.snapshot,
+                    program_identity=validation_identity,
+                    layout_identity=("original_validator_literal_outputs", required),
+                )
+            for value, expected in zip(leaves, recipe.output_contracts, strict=True):
+                actual = jax.typeof(value)
+                if (actual.shape, str(actual.dtype), actual.weak_type) != expected:
+                    raise ExecutionPlanningError(
+                        "Validator output changed original shape, dtype or weak type."
+                    )
+            result_tree = recipe.output_tree.unflatten(leaves)
+            self._pending.extend(jax.tree.leaves(result_tree))
+            return cast("T", result_tree)
+        finally:
+            self._validation_stage_roots = ()
+
+    def produce[T: PytreeValue](
+        self,
+        *,
+        function: Callable[..., T],
+        arguments: Mapping[str, PytreeValue],
+    ) -> T:
+        """Materialize a pure array factory under the complete current inventory.
+
+        Each numerical operand is explicit. Refusing numeric captures prevents
+        the executable cache from retaining buffers outside this entry owner.
+        The existing producer path admits the actual enclosing compiler record;
+        the same entry retains the completed leaves before another factory runs.
+        """
+        from _lcm.constraints.dynamic_bound import (  # noqa: PLC0415
+            _literal_bound_isfinite,
+        )
+        from _lcm.egm.current_iid_declarations import (  # noqa: PLC0415
+            _projected_template,
+        )
+        from _lcm.egm.validation_materialization import (  # noqa: PLC0415
+            _validation_bound_disagrees,
+            _validation_grid_first,
+            _validation_grid_max,
+        )
+        from _lcm.grids.materialization import (  # noqa: PLC0415
+            _grid_concatenate,
+            _grid_index,
+            _grid_linspace,
+            _grid_log,
+            _grid_logspace,
+            _grid_placeholder,
+            _grid_set_endpoint,
+        )
+        from _lcm.simulation.memory import (  # noqa: PLC0415
+            SimulationMemory,
+            run_simulation_producer,
+        )
+        from _lcm.solution.current_iid_case_r import (  # noqa: PLC0415
+            _native_case_r_array_template,
+            _zeros_for_template,
+        )
+        from _lcm.solution.generation import canonical_generation_roots  # noqa: PLC0415
+        from lcm.exceptions import ExecutionPlanningError  # noqa: PLC0415
+
+        source = function.func if type(function) is partial else function
+        if not any(
+            source is candidate
+            for candidate in (
+                _projected_template,
+                _native_case_r_array_template,
+                _zeros_for_template,
+                _grid_linspace,
+                _grid_log,
+                _grid_logspace,
+                _grid_set_endpoint,
+                _grid_index,
+                _grid_concatenate,
+                _grid_placeholder,
+                _literal_bound_isfinite,
+                _validation_grid_max,
+                _validation_grid_first,
+                _validation_bound_disagrees,
+            )
+        ):
+            raise ExecutionPlanningError(
+                "Entry materialization accepts only original dated templates, "
+                "grids and declaration checks; user economics require their "
+                "model-owned producer route."
+            )
+        if canonical_generation_roots(declarations=(function,)):
+            raise ExecutionPlanningError(
+                "Dated materialization requires explicit numerical operands, "
+                "not captured device buffers."
+            )
+        live = self.snapshot()
+        memory = SimulationMemory(
+            budget_bytes=self.budget_bytes,
+            devices=resolve_budget_devices(execution_devices=self.devices, live=live),
+            subject_devices=(self.devices[0],),
+            operations=self.operations,
+            producers=self.operations,
+            inputs=live,
+        )
+        result = run_simulation_producer(
+            memory=memory, function=function, arguments=arguments
+        )
+        self._pending.extend(jax.tree.leaves(result))
+        return result
+
     def publish(
         self, *, stage: Literal["params", "initial"], tree: PytreeValue
     ) -> None:
@@ -371,8 +644,13 @@ class SimulationEntryAllocations:
         self._pending.clear()
         self.solution = None
         self.model_roots = ()
+        self.retained_generation_roots = None
         self._resolved_inputs = ()
         self._foreign_copies.clear()
+        self._grid_roots.clear()
+        self._grid_bindings.clear()
+        self._validation_capture_roots.clear()
+        self._validation_stage_roots = ()
         self.original_inputs = None
         self.process_grid_resolver.close()
 

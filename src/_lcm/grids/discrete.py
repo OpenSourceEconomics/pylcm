@@ -156,6 +156,11 @@ class DiscreteGrid(Grid):
         return self.__codes
 
     @property
+    def materialized_array_roots(self) -> tuple[_Nodes, ...]:
+        """Expose only already materialized dtype-specific numerical cache roots."""
+        return tuple(self.__nodes_by_dtype.values())
+
+    @property
     def ordered(self) -> bool:
         """Return whether the categories have a meaningful ordering."""
         return self.__ordered
@@ -169,6 +174,15 @@ class DiscreteGrid(Grid):
     def tolerance(self) -> float:
         """Return the absolute distance within which a float matches a node."""
         return self.__tolerance
+
+    @property
+    def materialized_values(self) -> Int1D | Float1D | None:
+        """Observe the current-precision cache without creating nodes or midpoints."""
+        dtype = np.dtype(
+            jnp.int32 if self.__holds_integers else canonical_float_dtype()
+        )
+        nodes = self.__nodes_by_dtype.get(dtype)
+        return None if nodes is None else nodes.values
 
     def to_jax(self) -> Int1D:
         """Convert the grid to a Jax array.

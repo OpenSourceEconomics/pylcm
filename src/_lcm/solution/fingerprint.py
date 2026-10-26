@@ -44,6 +44,7 @@ import lcm.exceptions as lcm_exceptions
 import lcm.koopmans_aggregation as koopmans_declarations
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.continuation import ContinuationSpec, EGMQuerySpec
+from _lcm.egm.query_data import QueryNodeKind
 from _lcm.engine import NNBEGMPolicyRead, Regime
 from _lcm.execution.value_transfer import ValueArtifactAddress
 from _lcm.grids import DiscreteGrid, Grid
@@ -70,9 +71,10 @@ from lcm.case_piece import (
     PiecewiseAffineMeta,
 )
 from lcm.decoupled import Decoupled
+from lcm.execution import InvariantBlockSchedule, WidthSearch
 from lcm.phased import Phased
 from lcm.shocks import Discrete as DiscreteShock
-from lcm.shocks import ShockGroup, ShockGroupName, _correlation_record
+from lcm.shocks import ShockGroup, ShockGroupName, _correlation_record, _Independence
 from lcm.solver_api import (
     ArtifactChannel,
     AxisRole,
@@ -131,6 +133,10 @@ _TRUSTED_DECLARATIVE_ENUM_TYPES = frozenset(
         ArtifactChannel,
         AxisRole,
         PersistencePolicy,
+        InvariantBlockSchedule,
+        WidthSearch,
+        _Independence,
+        QueryNodeKind,
         type(annotationlib.Format.VALUE),
         type(inspect.Parameter.POSITIONAL_ONLY),
     }
@@ -188,7 +194,13 @@ _TRUSTED_PYLCM_EXCEPTION_TYPES = frozenset(
 )
 _TRUSTED_DIRECT_TYPE_OBJECTS = (
     frozenset(
-        {functools.partial, inspect.Signature.empty, np.dtype, GoldenSectionResult}
+        {
+            functools.partial,
+            inspect.Signature.empty,
+            np.dtype,
+            GoldenSectionResult,
+            MappingProxyType,
+        }
     )
     | _TRUSTED_GRID_TYPE_OBJECTS
     | _TRUSTED_CONSTRAINT_TYPE_OBJECTS
@@ -743,6 +755,35 @@ _MISSING: Final = _Missing.MISSING
 type BindingRecorder = Callable[[SealedBinding], None]
 
 
+def fingerprint_model_declarations(
+    *,
+    ages: TimeAxis,
+    user_regimes: _FingerprintUserRegimes,
+    laws: _FingerprintLaws,
+    regime_names_to_ids: RegimeNamesToIds,
+    fixed_params: FlatParams,
+) -> str:
+    """Separate genuine declaration identity from call-shaped canonical programs.
+
+    Reuse the original user-declaration projection and semantic encoder. Actual
+    runtime values and schemas do not reach this declaration-only record.
+    """
+    return _semantic_fingerprint(
+        (
+            ("pylcm-model-declarations", 1),
+            tuple(ages.exact_values)
+            if coordinate_kind(ages) == "age"
+            else ("period", ages.n_periods),
+            {name: int(code) for name, code in regime_names_to_ids.items()},
+            {
+                name: _project_user_regime_declaration(regime, law=laws[name])
+                for name, regime in user_regimes.items()
+            },
+            fixed_params,
+        )
+    )
+
+
 def fingerprint_model_structure(
     *,
     ages: TimeAxis,
@@ -751,6 +792,7 @@ def fingerprint_model_structure(
     laws: _FingerprintLaws,
     regime_names_to_ids: RegimeNamesToIds,
     binding_recorder: BindingRecorder | None = None,
+    array_recorder: Callable[[Array], None] | None = None,
     shock_groups: Mapping[ShockGroupName, ShockGroup] = MappingProxyType({}),
     shock_fixed_params: UserParams = MappingProxyType({}),
 ) -> str:
@@ -873,7 +915,9 @@ def fingerprint_model_structure(
             for name, regime in regimes.items()
         },
     )
-    hasher = _SemanticHasher(binding_recorder=binding_recorder)
+    hasher = _SemanticHasher(
+        binding_recorder=binding_recorder, array_recorder=array_recorder
+    )
     hasher.visit(value=record)
     if shock_groups:
         hasher.visit(
@@ -1071,11 +1115,17 @@ def _semantic_fingerprint(value: _Reachable) -> str:
 class _SemanticHasher:
     """Length-framed serializer feeding a SHA-256 digest."""
 
-    def __init__(self, *, binding_recorder: BindingRecorder | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        binding_recorder: BindingRecorder | None = None,
+        array_recorder: Callable[[Array], None] | None = None,
+    ) -> None:
         self._digest = hashlib.sha256()
         self._active: dict[int, int] = {}
         self._active_bound_methods: dict[tuple[int, int], int] = {}
         self._binding_recorder = binding_recorder
+        self._array_recorder = array_recorder
 
     def hexdigest(self) -> str:
         return self._digest.hexdigest()
@@ -1175,6 +1225,8 @@ class _SemanticHasher:
             value=value, candidates=_NUMPY_SCALAR_TYPES
         )
         if isinstance(value, Array) or is_exact_numpy_value:
+            if isinstance(value, Array) and self._array_recorder is not None:
+                self._array_recorder(value)
             # The shape frame records the rank and shape the declaration actually
             # holds: a 0-d array is a different mathematical object from a
             # length-one vector even though their bytes agree. Memory order is
@@ -1659,6 +1711,17 @@ class _SemanticHasher:
             for argument in annotation:
                 self._visit_annotation(argument)
             self.frame(label="annotation-arguments-end")
+            return
+        if type(annotation) is dict:
+            self.frame(label="annotation-outputs-start")
+            for name, output_annotation in annotation.items():
+                if type(name) is not str:
+                    raise TypeError(
+                        "Named output annotations require exact string keys."
+                    )
+                self.frame(label="annotation-output-name", payload=name.encode())
+                self._visit_annotation(output_annotation)
+            self.frame(label="annotation-outputs-end")
             return
         if isinstance(annotation, type):
             self.frame(
@@ -2341,13 +2404,7 @@ def _unwrap_exact_beartype_wrapper(
     if capture is None:
         if not _has_beartype_written_body(function):
             return None
-        if not _is_shipped_pylcm_module_name(function.__module__):
-            return _unwrap_downstream_beartype_wrapper(function)
-        msg = (
-            "Cannot durably fingerprint an uncaptured transparent beartype wrapper "
-            f"{function.__module__}.{function.__qualname__}."
-        )
-        raise TypeError(msg)
+        return _unwrap_downstream_beartype_wrapper(function)
 
     _, captured_code, captured_wrapped = capture
     wrapped = state.get("__wrapped__")
@@ -2371,11 +2428,11 @@ def _unwrap_exact_beartype_wrapper(
 def _unwrap_downstream_beartype_wrapper(
     function: types.FunctionType,
 ) -> types.FunctionType:
-    """Return the bound callee of a beartype wrapper built outside pylcm or fail closed.
+    """Authenticate a beartype wrapper created after the import-time capture.
 
-    A package that models on pylcm may run its own beartype claw, so its model
-    functions arrive wrapped by guards pylcm never captured at import. Such a guard
-    is transparent only if beartype itself reproduces it: decorating the bound
+    Shipped modules and downstream model functions can load after the durable
+    wrapper snapshot. Such a guard is transparent only if beartype itself
+    reproduces it: decorating the bound
     callee with the wrapper's own configuration must yield the same code. A wrapper
     whose marks disagree, or whose code beartype does not regenerate, is refused
     because its body may do more than check the callee's annotations.

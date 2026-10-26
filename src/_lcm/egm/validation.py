@@ -55,18 +55,32 @@ offending piece. The rules, in the order they are checked:
 
 import functools
 import inspect
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import cast
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 from dags import concatenate_functions, get_ancestors
+from jaxtyping import Int
 
 from _lcm.constraints.bounds import lower_bound_declaration
 from _lcm.constraints.processed import ConstraintLike, normalize_constraints
+from _lcm.egm.current_iid_envelope import DatedStateUtilityObligation
+from _lcm.egm.current_iid_euler_grid import (
+    DatedEulerGridMaterializer,
+    DatedEulerGridObligation,
+    ResolvedDatedEulerGrid,
+)
 from _lcm.egm.preferences import BoundUtilityOfAction
+from _lcm.egm.validation_materialization import (
+    _validation_bound_disagrees,
+    _validation_grid_first,
+    _validation_grid_max,
+)
 from _lcm.grids import ContinuousGrid, Grid, IrregSpacedGrid
+from _lcm.materialization import DatedGenerationMaterializer
 from _lcm.post_decision_bound import _PostDecisionLowerBound
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.reachability import PhaseReachability
@@ -83,7 +97,11 @@ from _lcm.typing import (
     StateOrActionName,
 )
 from _lcm.utils.functools import array_result
-from lcm.exceptions import GridInitializationError, ModelInitializationError
+from lcm.exceptions import (
+    GridInitializationError,
+    ModelInitializationError,
+    UnsupportedOperationError,
+)
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.phased import Phased
 from lcm.regime import ActionEntry, StateEntry, StateTransitionEntry
@@ -96,6 +114,7 @@ from lcm.transition import (
     StochasticTransition,
 )
 from lcm.typing import (
+    BoolND,
     Float1D,
     FloatND,
     Int1D,
@@ -109,6 +128,11 @@ from lcm.typing import (
 # A transition declaration as the EGM checks unpack it: a `state_transitions`
 # entry, a regime's engine-view law, or one case of an age schedule.
 type _TransitionDeclaration = StateTransitionEntry | DecomposedTransition | AgeCaseLaw
+
+# This is the original backend index dtype, before the host int conversion.
+# It may be int64 under x64 and is not pylcm's canonical int32 state code.
+type _ValidationIndex = Int[jax.Array, ""]
+
 
 # Shrink threshold of the node-resolution continuity spot check. Within one
 # Euler grid cell, a function that is smooth at node resolution has
@@ -231,9 +255,20 @@ def validate_dcegm_regime(
     user_regimes: Mapping[RegimeName, UserRegime],
     laws: RegimeLaws,
     solution_reachability: PhaseReachability | None,
+    materializer: DatedGenerationMaterializer | None = None,
+    state_utility_obligation: DatedStateUtilityObligation | None = None,
+    euler_grid_obligation: DatedEulerGridObligation | None = None,
+    resolved_euler_grid: ResolvedDatedEulerGrid | None = None,
 ) -> None:
     """Run all DC-EGM contract checks for a single regime, in order."""
     solver = cast("_BoundDCEGM", user_regime.solver)
+    _require_runtime_euler_validation(
+        regime_name=regime_name,
+        user_regime=user_regime,
+        obligation=euler_grid_obligation,
+        resolved=resolved_euler_grid,
+        materializer=materializer,
+    )
 
     _fail_if_terminal(regime_name=regime_name, law=laws[regime_name])
     _fail_if_state_action_classification_invalid(
@@ -256,10 +291,16 @@ def validate_dcegm_regime(
         user_regime=user_regime,
         solver=solver,
         solver_name="DCEGM",
+        materializer=materializer,
     )
-    _fail_if_utility_depends_on_continuous_state(
-        regime_name=regime_name, functions=functions, solver=solver
-    )
+    if state_utility_obligation is None:
+        _fail_if_utility_depends_on_continuous_state(
+            regime_name=regime_name, functions=functions, solver=solver
+        )
+    else:
+        state_utility_obligation.require(
+            regime_name=regime_name, user_regime=user_regime, functions=functions
+        )
     _fail_if_resources_depend_on_continuous_action(
         regime_name=regime_name, functions=functions, solver=solver
     )
@@ -286,7 +327,12 @@ def validate_dcegm_regime(
         solver=solver,
     )
     _fail_if_grid_hygiene_violated(
-        regime_name=regime_name, user_regime=user_regime, solver=solver
+        regime_name=regime_name,
+        user_regime=user_regime,
+        solver=solver,
+        materializer=materializer,
+        euler_grid_obligation=euler_grid_obligation,
+        resolved_euler_grid=resolved_euler_grid,
     )
     if solution_reachability is not None:
         _fail_if_target_regime_incompatible(
@@ -296,6 +342,13 @@ def validate_dcegm_regime(
             solution_reachability=solution_reachability,
             solver=solver,
         )
+    _require_concrete_other_states(
+        regime_name=regime_name,
+        user_regime=user_regime,
+        obligation=euler_grid_obligation,
+    )
+    if euler_grid_obligation is not None and resolved_euler_grid is None:
+        return
     try:
         _fail_if_numeric_spot_checks_fail(
             regime_name=regime_name,
@@ -303,6 +356,7 @@ def validate_dcegm_regime(
             law=laws[regime_name],
             functions=functions,
             solver=solver,
+            materializer=materializer,
         )
         _fail_if_savings_stage_function_jumps_in_euler_state(
             regime_name=regime_name,
@@ -310,6 +364,7 @@ def validate_dcegm_regime(
             law=laws[regime_name],
             functions=functions,
             solver=solver,
+            materializer=materializer,
         )
     except GridInitializationError as error:
         msg = (
@@ -318,6 +373,48 @@ def validate_dcegm_regime(
             f"grid supplies them only at runtime: {error}"
         )
         raise ModelInitializationError(msg) from error
+
+
+def _require_runtime_euler_validation(
+    *,
+    regime_name: RegimeName,
+    user_regime: UserRegime,
+    obligation: DatedEulerGridObligation | None,
+    resolved: ResolvedDatedEulerGrid | None,
+    materializer: DatedGenerationMaterializer | None,
+) -> None:
+    """Authorize only the original unresolved grid or its actual resolved binding."""
+    if obligation is not None:
+        obligation.require(regime_name=regime_name, user_regime=user_regime)
+    if resolved is not None:
+        if (
+            obligation is None
+            or resolved.obligation is not obligation
+            or not isinstance(materializer, DatedEulerGridMaterializer)
+            or materializer.resolved is not resolved
+        ):
+            raise UnsupportedOperationError(
+                "Runtime Euler validation lacks its original owner binding."
+            )
+        resolved.require()
+
+
+def _require_concrete_other_states(
+    *,
+    regime_name: RegimeName,
+    user_regime: UserRegime,
+    obligation: DatedEulerGridObligation | None,
+) -> None:
+    """Keep unresolved non-Euler runtime grids outside this private route."""
+    if obligation is not None:
+        for state, grid in user_regime.states.items():
+            if state != obligation.state and isinstance(grid, Grid):
+                fail_if_grid_withholds_its_points(
+                    grid=grid,
+                    role=f"grid of state '{state}'",
+                    regime_name=regime_name,
+                    solver_name="DCEGM",
+                )
 
 
 def _fail_if_terminal(*, regime_name: RegimeName, law: RegimeLaw) -> None:
@@ -443,6 +540,7 @@ def fail_if_declared_lower_bound_disagrees_with_the_grid(
     user_regime: UserRegime,
     solver: _BoundDCEGM | _BoundNBEGM | _BoundEGM,
     solver_name: str,
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> None:
     """Prove every declared post-decision lower bound against the savings grid.
 
@@ -509,14 +607,38 @@ def fail_if_declared_lower_bound_disagrees_with_the_grid(
             solver_name=solver_name,
         )
         declared_start = getattr(grid, "start", None)
-        grid_low = declared_start if declared_start is not None else grid.to_jax()[0]
+        if materializer is None:
+            grid_low = (
+                declared_start if declared_start is not None else grid.to_jax()[0]
+            )
+        else:
+            grid_low = (
+                declared_start
+                if declared_start is not None
+                else materializer.produce(
+                    function=_validation_grid_first,
+                    arguments={"points": materializer.materialize_grid(spec=grid)},
+                )
+            )
         # Put the declaration through the grid's own dtype before comparing.
         # Both numbers are decimals the user wrote, but the grid holds its
         # lowest node at the active precision, so widening that node to a
         # Python float compares two representations of one decimal and refuses
         # a faithful declaration for every decimal the dtype cannot hold —
         # which at reduced precision is most of them.
-        if bool(jnp.asarray(declared_bound, dtype=grid_low.dtype) != grid_low):
+        if materializer is None:
+            disagrees = jnp.asarray(declared_bound, dtype=grid_low.dtype) != grid_low
+        else:
+            declared = materializer(
+                value=np.asarray(declared_bound),
+                dtype=np.dtype(grid_low.dtype),
+                name=f"{regime_name}.{constraint_name}.declared_lower_bound",
+            )
+            disagrees = materializer.produce(
+                function=_validation_bound_disagrees,
+                arguments={"declared": declared, "grid_low": grid_low},
+            )
+        if bool(disagrees):
             msg = (
                 f"The declaration '{constraint_name}' of regime "
                 f"'{regime_name}' states a lower bound of {declared_bound} "
@@ -938,6 +1060,9 @@ def _fail_if_grid_hygiene_violated(
     regime_name: RegimeName,
     user_regime: UserRegime,
     solver: _BoundDCEGM,
+    materializer: DatedGenerationMaterializer | None = None,
+    euler_grid_obligation: DatedEulerGridObligation | None = None,
+    resolved_euler_grid: ResolvedDatedEulerGrid | None = None,
 ) -> None:
     """Require concrete kernel grids and savings coverage of the Euler grid."""
     # Rule 1 has already established that the Euler state's grid is a
@@ -955,11 +1080,35 @@ def _fail_if_grid_hygiene_violated(
         ),
     }
     for role, grid in kernel_grids.items():
+        if (
+            euler_grid_obligation is not None
+            and role == f"grid of the Euler state '{solver.continuous_state}'"
+            and grid is euler_grid_obligation.grid
+        ):
+            continue
         fail_if_grid_withholds_its_points(
             grid=grid, role=role, regime_name=regime_name, solver_name="DCEGM"
         )
-    savings_max = float(jnp.max(solver.savings_grid.to_jax()))
-    euler_max = float(jnp.max(euler_grid.to_jax()))
+    if euler_grid_obligation is not None and resolved_euler_grid is None:
+        return
+    if materializer is None:
+        savings_max = float(jnp.max(solver.savings_grid.to_jax()))
+        euler_max = float(jnp.max(euler_grid.to_jax()))
+    else:
+        savings_max = float(
+            materializer.produce(
+                function=_validation_grid_max,
+                arguments={
+                    "points": materializer.materialize_grid(spec=solver.savings_grid)
+                },
+            )
+        )
+        euler_max = float(
+            materializer.produce(
+                function=_validation_grid_max,
+                arguments={"points": materializer.materialize_grid(spec=euler_grid)},
+            )
+        )
     if savings_max < euler_max:
         msg = (
             f"The DCEGM savings grid of regime '{regime_name}' ends at "
@@ -1017,6 +1166,7 @@ def _fail_if_numeric_spot_checks_fail(
     law: RegimeLaw,
     functions: dict[FunctionName, UserFunction],
     solver: _BoundDCEGM,
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> None:
     """Numeric spot checks on small grid samples, evaluated eagerly (no jit).
 
@@ -1037,15 +1187,34 @@ def _fail_if_numeric_spot_checks_fail(
         **_solve_grids(slot=user_regime.states),
         **_solve_grids(slot=user_regime.actions),
     }
-    euler_sample = _grid_sample(grid=grids[solver.continuous_state])
-    action_sample = _grid_sample(grid=grids[solver.continuous_action])
+    euler_sample = _grid_sample(
+        grid=grids[solver.continuous_state], materializer=materializer
+    )
+    action_sample = _grid_sample(
+        grid=grids[solver.continuous_action], materializer=materializer
+    )
     n_sample = min(euler_sample.shape[0], action_sample.shape[0])
+    euler_items = (
+        euler_sample
+        if materializer is None
+        else materializer.evaluate_validation(
+            function=_validation_unstack, arguments={"sample": euler_sample}
+        )
+    )
+    action_items = (
+        action_sample
+        if materializer is None
+        else materializer.evaluate_validation(
+            function=_validation_unstack, arguments={"sample": action_sample}
+        )
+    )
 
     resources_func = concatenate_functions(functions, targets=solver.resources)
     resources_kwargs = _fixed_kwargs(
         func=resources_func,
         grids=grids,
         varied={solver.continuous_state},
+        materializer=materializer,
     )
     if resources_kwargs is not None:
         resources_at = [
@@ -1053,8 +1222,9 @@ def _fail_if_numeric_spot_checks_fail(
                 func=resources_func,
                 fixed=resources_kwargs,
                 varied={solver.continuous_state: w},
+                materializer=materializer,
             )
-            for w in euler_sample
+            for w in euler_items
         ]
         # Asset-row mode (a savings-stage function reads the Euler state)
         # publishes the carry marginal by dividing by the resources slope
@@ -1067,8 +1237,8 @@ def _fail_if_numeric_spot_checks_fail(
         bad = [
             (float(w_lo), float(w_hi))
             for w_lo, w_hi, r_lo, r_hi in zip(
-                euler_sample[:-1],
-                euler_sample[1:],
+                euler_items[:-1],
+                euler_items[1:],
                 resources_at[:-1],
                 resources_at[1:],
                 strict=True,
@@ -1101,15 +1271,17 @@ def _fail_if_numeric_spot_checks_fail(
             func=post_func,
             grids=grids,
             varied={solver.continuous_state, solver.continuous_action},
+            materializer=materializer,
         )
         if post_kwargs is not None:
             for w, c in zip(
-                euler_sample[:n_sample], action_sample[:n_sample], strict=True
+                euler_items[:n_sample], action_items[:n_sample], strict=True
             ):
                 resources_value = _call_with_varied(
                     func=resources_func,
                     fixed=resources_kwargs,
                     varied={solver.continuous_state: w},
+                    materializer=materializer,
                 )
                 post_value = _call_with_varied(
                     func=post_func,
@@ -1118,10 +1290,22 @@ def _fail_if_numeric_spot_checks_fail(
                         solver.continuous_state: w,
                         solver.continuous_action: c,
                     },
+                    materializer=materializer,
                 )
-                expected = resources_value - c
+                expected = (
+                    resources_value - c
+                    if materializer is None
+                    else materializer.evaluate_validation(
+                        function=_validation_subtract,
+                        arguments={"left": resources_value, "right": c},
+                    )
+                )
                 if not _isclose(
-                    actual=post_value, expected=expected, rtol=rtol, atol=atol
+                    actual=post_value,
+                    expected=expected,
+                    rtol=rtol,
+                    atol=atol,
+                    materializer=materializer,
                 ):
                     msg = (
                         f"Consumption recovery fails in regime '{regime_name}': "
@@ -1144,6 +1328,7 @@ def _fail_if_numeric_spot_checks_fail(
         action_sample=action_sample,
         rtol=rtol,
         atol=atol,
+        materializer=materializer,
     )
 
 
@@ -1156,6 +1341,7 @@ def _fail_if_inverse_marginal_utility_inconsistent(
     action_sample: Float1D,
     rtol: float,
     atol: float,
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> None:
     """Check `(u')⁻¹(u'(c)) ≈ c` and strict monotonicity of `u'` on a sample.
 
@@ -1184,14 +1370,27 @@ def _fail_if_inverse_marginal_utility_inconsistent(
     # wrong at another. The contexts are index-aligned, so the j-th utility and
     # inverse contexts bind shared arguments to the same grid points.
     utility_contexts = _combo_contexts(
-        func=utility_func, grids=grids, varied={solver.continuous_action}
+        func=utility_func,
+        grids=grids,
+        varied={solver.continuous_action},
+        materializer=materializer,
     )
     inverse_contexts = _combo_contexts(
-        func=inverse_func, grids=grids, varied={"marginal_continuation"}
+        func=inverse_func,
+        grids=grids,
+        varied={"marginal_continuation"},
+        materializer=materializer,
     )
     if not utility_contexts or not inverse_contexts:
         return
 
+    action_items = (
+        action_sample
+        if materializer is None
+        else materializer.evaluate_validation(
+            function=_validation_unstack, arguments={"sample": action_sample}
+        )
+    )
     for utility_kwargs, inverse_kwargs in zip(
         utility_contexts, inverse_contexts, strict=True
     ):
@@ -1200,7 +1399,21 @@ def _fail_if_inverse_marginal_utility_inconsistent(
             action_name=solver.continuous_action,
             bound=utility_kwargs,
         )
-        marginal_utility = [jax.grad(utility_of_action)(c) for c in action_sample]
+        marginal_utility = (
+            [jax.grad(utility_of_action)(c) for c in action_sample]
+            if materializer is None
+            else [
+                materializer.evaluate_validation(
+                    function=functools.partial(
+                        _validation_marginal,
+                        utility_func=utility_func,
+                        action_name=solver.continuous_action,
+                    ),
+                    arguments={"context": utility_kwargs, "action": c},
+                )
+                for c in action_items
+            ]
+        )
 
         # Mirror the sibling resources strict-monotonicity check's tolerance:
         # its strictly-increasing violation is `r_hi <= r_lo + atol`, so the
@@ -1210,8 +1423,8 @@ def _fail_if_inverse_marginal_utility_inconsistent(
         non_decreasing = [
             (float(c_lo), float(c_hi))
             for c_lo, c_hi, mu_lo, mu_hi in zip(
-                action_sample[:-1],
-                action_sample[1:],
+                action_items[:-1],
+                action_items[1:],
                 marginal_utility[:-1],
                 marginal_utility[1:],
                 strict=True,
@@ -1228,9 +1441,22 @@ def _fail_if_inverse_marginal_utility_inconsistent(
             )
             raise ModelInitializationError(msg)
 
-        for c, mu in zip(action_sample, marginal_utility, strict=True):
-            recovered = inverse_func(**inverse_kwargs, marginal_continuation=mu)
-            if not _isclose(actual=recovered, expected=c, rtol=rtol, atol=atol):
+        for c, mu in zip(action_items, marginal_utility, strict=True):
+            recovered = (
+                inverse_func(**inverse_kwargs, marginal_continuation=mu)
+                if materializer is None
+                else materializer.evaluate_validation(
+                    function=inverse_func,
+                    arguments={**inverse_kwargs, "marginal_continuation": mu},
+                )
+            )
+            if not _isclose(
+                actual=recovered,
+                expected=c,
+                rtol=rtol,
+                atol=atol,
+                materializer=materializer,
+            ):
                 msg = (
                     f"'inverse_marginal_utility' of regime '{regime_name}' is "
                     "inconsistent with `jax.grad` of the utility DAG: the "
@@ -1248,6 +1474,7 @@ def _fail_if_savings_stage_function_jumps_in_euler_state(
     law: RegimeLaw,
     functions: dict[FunctionName, UserFunction],
     solver: _BoundDCEGM,
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> None:
     """Savings-stage reads of the Euler state must be continuous at node resolution.
 
@@ -1279,10 +1506,36 @@ def _fail_if_savings_stage_function_jumps_in_euler_state(
         **_solve_grids(slot=user_regime.states),
         **_solve_grids(slot=user_regime.actions),
     }
-    euler_points = jnp.sort(a=grids[solver.continuous_state].to_jax())
-    euler_sample = _node_resolution_sample(grid_points=euler_points)
-    savings_points = solver.savings_grid.to_jax()
-    savings_value = savings_points[savings_points.shape[0] // 2]
+    euler_points = (
+        jnp.sort(a=grids[solver.continuous_state].to_jax())
+        if materializer is None
+        else materializer.evaluate_validation(
+            function=_validation_sort,
+            arguments={
+                "points": materializer.materialize_grid(
+                    spec=grids[solver.continuous_state]
+                )
+            },
+        )
+    )
+    euler_sample = _node_resolution_sample(
+        grid_points=euler_points, materializer=materializer
+    )
+    savings_points = (
+        solver.savings_grid.to_jax()
+        if materializer is None
+        else materializer.materialize_grid(spec=solver.savings_grid)
+    )
+    savings_value = (
+        savings_points[savings_points.shape[0] // 2]
+        if materializer is None
+        else materializer.evaluate_validation(
+            function=functools.partial(
+                _validation_point, index=savings_points.shape[0] // 2
+            ),
+            arguments={"points": savings_points},
+        )
+    )
 
     functions_without_post = _without(
         functions=functions, names={solver.post_decision_function}
@@ -1296,7 +1549,9 @@ def _fail_if_savings_stage_function_jumps_in_euler_state(
             targets=target_name,
         )
         varied = {solver.continuous_state, solver.post_decision_function}
-        for context in _combo_contexts(func=law_func, grids=grids, varied=varied):
+        for context in _combo_contexts(
+            func=law_func, grids=grids, varied=varied, materializer=materializer
+        ):
             law_values = _law_values_on_sample(
                 law_func=law_func,
                 context=context,
@@ -1304,9 +1559,13 @@ def _fail_if_savings_stage_function_jumps_in_euler_state(
                 post_decision_name=solver.post_decision_function,
                 savings_value=savings_value,
                 euler_sample=euler_sample,
+                materializer=materializer,
             )
             jump_location = _find_jump_at_node_resolution(
-                grid_points=euler_points, values=law_values, atol=base_atol
+                grid_points=euler_points,
+                values=law_values,
+                atol=base_atol,
+                materializer=materializer,
             )
             if jump_location is not None:
                 consequence = (
@@ -1341,7 +1600,9 @@ def _fail_if_savings_stage_function_jumps_in_euler_state(
                 raise ModelInitializationError(msg)
 
 
-def _node_resolution_sample(*, grid_points: Float1D) -> Float1D:
+def _node_resolution_sample(
+    *, grid_points: Float1D, materializer: DatedGenerationMaterializer | None = None
+) -> Float1D:
     """Grid nodes plus two levels of cell-midpoint refinement (quarter points).
 
     Args:
@@ -1352,6 +1613,11 @@ def _node_resolution_sample(*, grid_points: Float1D) -> Float1D:
         quarter points of every cell.
 
     """
+
+    if materializer is not None:
+        return materializer.evaluate_validation(
+            function=_node_resolution_sample, arguments={"grid_points": grid_points}
+        )
     left = grid_points[:-1]
     right = grid_points[1:]
     offsets = jnp.asarray([0.0, 0.25, 0.5, 0.75])
@@ -1359,11 +1625,35 @@ def _node_resolution_sample(*, grid_points: Float1D) -> Float1D:
     return jnp.concatenate([refined, grid_points[-1:]])
 
 
+def _node_jump_mask(
+    *, grid_points: Float1D, values: FloatND | IntND, atol: float
+) -> BoolND:
+    """Original quarter-cell continuity predicate, before its host decision."""
+    flat = jnp.asarray(values).reshape(values.shape[0], -1)
+    quarter_increments = jnp.max(jnp.abs(jnp.diff(flat, axis=0)), axis=1)
+    node_values = flat[::4]
+    node_increments = jnp.max(jnp.abs(jnp.diff(node_values, axis=0)), axis=1)
+    n_cells = int(grid_points.shape[0]) - 1
+    max_quarter_per_cell = quarter_increments.reshape(n_cells, 4).max(axis=1)
+    # Edge-pad so the first and last cells compare against their available
+    # neighbors only.
+    padded = jnp.concatenate(
+        [node_increments[:1], node_increments, node_increments[-1:]]
+    )
+    neighborhood = jnp.maximum(jnp.maximum(padded[:-2], padded[1:-1]), padded[2:])
+    scale = jnp.max(jnp.abs(jnp.where(jnp.isfinite(flat), flat, 0.0)))
+    noise_floor = atol * (1.0 + scale)
+    return max_quarter_per_cell > (
+        _CONTINUITY_SHRINK_FACTOR * neighborhood + noise_floor
+    )
+
+
 def _find_jump_at_node_resolution(
     *,
     grid_points: Float1D,
     values: FloatND | IntND,
     atol: float,
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> float | None:
     """Approximate location of the first cell with a sub-node-resolution jump.
 
@@ -1383,27 +1673,38 @@ def _find_jump_at_node_resolution(
         refined increments shrink as a smooth function's would.
 
     """
-    flat = jnp.asarray(values).reshape(values.shape[0], -1)
-    quarter_increments = jnp.max(jnp.abs(jnp.diff(flat, axis=0)), axis=1)
-    node_values = flat[::4]
-    node_increments = jnp.max(jnp.abs(jnp.diff(node_values, axis=0)), axis=1)
-    n_cells = int(grid_points.shape[0]) - 1
-    max_quarter_per_cell = quarter_increments.reshape(n_cells, 4).max(axis=1)
-    # Edge-pad so the first and last cells compare against their available
-    # neighbors only.
-    padded = jnp.concatenate(
-        [node_increments[:1], node_increments, node_increments[-1:]]
+    jumps = (
+        _node_jump_mask(grid_points=grid_points, values=values, atol=atol)
+        if materializer is None
+        else materializer.evaluate_validation(
+            function=functools.partial(_node_jump_mask, atol=atol),
+            arguments={"grid_points": grid_points, "values": values},
+        )
     )
-    neighborhood = jnp.maximum(jnp.maximum(padded[:-2], padded[1:-1]), padded[2:])
-    scale = jnp.max(jnp.abs(jnp.where(jnp.isfinite(flat), flat, 0.0)))
-    noise_floor = atol * (1.0 + scale)
-    jumps = max_quarter_per_cell > (
-        _CONTINUITY_SHRINK_FACTOR * neighborhood + noise_floor
+    any_jump = (
+        jnp.any(jumps)
+        if materializer is None
+        else materializer.evaluate_validation(
+            function=_validation_any, arguments={"values": jumps}
+        )
     )
-    if not bool(jnp.any(jumps)):
+    if not bool(any_jump):
         return None
-    index = int(jnp.argmax(jumps))
-    return float(0.5 * (grid_points[index] + grid_points[index + 1]))
+    index = int(
+        jnp.argmax(jumps)
+        if materializer is None
+        else materializer.evaluate_validation(
+            function=_validation_argmax, arguments={"values": jumps}
+        )
+    )
+    return float(
+        0.5 * (grid_points[index] + grid_points[index + 1])
+        if materializer is None
+        else materializer.evaluate_validation(
+            function=functools.partial(_validation_jump_location, index=index),
+            arguments={"grid_points": grid_points},
+        )
+    )
 
 
 def _law_values_on_sample(
@@ -1414,6 +1715,7 @@ def _law_values_on_sample(
     post_decision_name: FunctionName,
     savings_value: ScalarFloat,
     euler_sample: Float1D,
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> FloatND | IntND:
     """Evaluate one savings-stage variant over the Euler sample at fixed savings.
 
@@ -1424,6 +1726,21 @@ def _law_values_on_sample(
     weight vectors) stack along the sample axis; deterministic regime
     transitions yield integer regime ids.
     """
+
+    if materializer is not None:
+        return materializer.evaluate_validation(
+            function=functools.partial(
+                _law_values_on_sample,
+                law_func=law_func,
+                euler_state_name=euler_state_name,
+                post_decision_name=post_decision_name,
+            ),
+            arguments={
+                "context": context,
+                "savings_value": savings_value,
+                "euler_sample": euler_sample,
+            },
+        )
     law_of_euler_state = functools.partial(
         _law_at_euler_state,
         law_func=law_func,
@@ -1473,6 +1790,7 @@ def _combo_contexts(
     grids: dict[StateOrActionName, Grid],
     varied: set[str],
     n_contexts: int = 3,
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> tuple[MappingProxyType[ReferenceName, ScalarFloat | ScalarInt], ...]:
     """A few fixed-input contexts for every non-varied argument of `func`.
 
@@ -1487,13 +1805,24 @@ def _combo_contexts(
         if arg_name in varied:
             continue
         if arg_name in grids:
-            samples[arg_name] = _grid_sample(grid=grids[arg_name])
+            samples[arg_name] = _grid_sample(
+                grid=grids[arg_name], materializer=materializer
+            )
         else:
             return ()
     return tuple(
         MappingProxyType(
             {
-                name: sample[min(j, sample.shape[0] - 1)]
+                name: (
+                    sample[min(j, sample.shape[0] - 1)]
+                    if materializer is None
+                    else materializer.evaluate_validation(
+                        function=functools.partial(
+                            _validation_point, index=min(j, sample.shape[0] - 1)
+                        ),
+                        arguments={"points": sample},
+                    )
+                )
                 for name, sample in samples.items()
             }
         )
@@ -1616,12 +1945,33 @@ def _dag_ancestors(
     )
 
 
-def _grid_sample(*, grid: Grid, n_points: int = 5) -> Float1D | Int1D:
+def _grid_sample(
+    *,
+    grid: Grid,
+    n_points: int = 5,
+    materializer: DatedGenerationMaterializer | None = None,
+) -> Float1D | Int1D:
     """A small, sorted, evenly indexed sample of grid points.
 
     Continuous grids yield float points; discrete grids yield their integer
     codes, so the sample dtype follows the grid kind.
     """
+
+    if materializer is not None:
+        points = materializer.materialize_grid(spec=grid)
+        indices = materializer.evaluate_validation(
+            function=functools.partial(
+                _validation_sample_indices,
+                n_grid=points.shape[0],
+                n_points=n_points,
+            ),
+            arguments={},
+        )
+        unique = _admitted_validation_unique(indices=indices, materializer=materializer)
+        return materializer.evaluate_validation(
+            function=_validation_sample_gather,
+            arguments={"points": points, "indices": unique},
+        )
     points = grid.to_jax()
     n_grid = points.shape[0]
     indices = jnp.unique(
@@ -1635,6 +1985,7 @@ def _fixed_kwargs(
     func: UserFunction,
     grids: dict[StateOrActionName, Grid],
     varied: set[str],
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> MappingProxyType[ReferenceName, ScalarFloat | ScalarInt] | None:
     """Fixed inputs (first grid point) for every non-varied argument of `func`.
 
@@ -1647,7 +1998,16 @@ def _fixed_kwargs(
         if arg_name in varied:
             continue
         if arg_name in grids:
-            fixed[arg_name] = grids[arg_name].to_jax()[0]
+            fixed[arg_name] = (
+                grids[arg_name].to_jax()[0]
+                if materializer is None
+                else materializer.evaluate_validation(
+                    function=functools.partial(_validation_point, index=0),
+                    arguments={
+                        "points": materializer.materialize_grid(spec=grids[arg_name])
+                    },
+                )
+            )
         else:
             return None
     return MappingProxyType(fixed)
@@ -1658,6 +2018,7 @@ def _call_with_varied(
     func: UserFunction,
     fixed: Mapping[ReferenceName, ScalarFloat | ScalarInt],
     varied: Mapping[ReferenceName, FloatND],
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> FloatND | IntND:
     """Call `func` with fixed kwargs plus the varied values it actually takes.
 
@@ -1665,6 +2026,12 @@ def _call_with_varied(
     filtered against the signature because a DAG target need not consume
     every sample variable (e.g. resources independent of the Euler state).
     """
+
+    if materializer is not None:
+        return materializer.evaluate_validation(
+            function=functools.partial(_call_with_varied, func=func),
+            arguments={"fixed": fixed, "varied": varied},
+        )
     arg_names = set(inspect.signature(func).parameters)
     return array_result(
         func(**fixed, **{k: v for k, v in varied.items() if k in arg_names})
@@ -1677,8 +2044,112 @@ def _isclose(
     expected: FloatND | IntND | float,
     rtol: float,
     atol: float,
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> bool:
     """Eager scalar closeness check, robust to 0-d JAX arrays."""
+
+    if materializer is not None:
+        return bool(
+            materializer.evaluate_validation(
+                function=functools.partial(_validation_isclose, rtol=rtol, atol=atol),
+                arguments={"actual": actual, "expected": expected},
+            )
+        )
     return bool(
         jnp.isclose(jnp.asarray(actual), jnp.asarray(expected), rtol=rtol, atol=atol)
     )
+
+
+def _validation_sample_indices(*, n_grid: int, n_points: int) -> Int1D:
+    """Original rounded integer sample before its data-dependent unique."""
+    return jnp.linspace(0, n_grid - 1, num=min(n_points, n_grid)).astype(jnp.int32)
+
+
+def _validation_sample_unique(*, indices: Int1D, size: int) -> Int1D:
+    """Original unique with the observed exact integer result cardinality."""
+    return jnp.unique(indices, size=size)
+
+
+def _validation_sample_gather(
+    *, points: Float1D | Int1D, indices: Int1D
+) -> Float1D | Int1D:
+    return points[indices]
+
+
+def _validation_point(
+    *, points: Float1D | Int1D, index: int
+) -> ScalarFloat | ScalarInt:
+    return points[index]
+
+
+def _validation_unstack(
+    *, sample: Float1D | Int1D
+) -> tuple[ScalarFloat | ScalarInt, ...]:
+    return tuple(sample)
+
+
+def _validation_subtract(*, left: FloatND, right: FloatND) -> FloatND:
+    return left - right
+
+
+def _validation_isclose(
+    *,
+    actual: FloatND | IntND,
+    expected: FloatND | IntND | float,
+    rtol: float,
+    atol: float,
+) -> BoolND:
+    return jnp.isclose(jnp.asarray(actual), jnp.asarray(expected), rtol=rtol, atol=atol)
+
+
+def _validation_marginal(
+    *,
+    utility_func: Callable[..., FloatND],
+    action_name: StateOrActionName,
+    context: Mapping[ReferenceName, ScalarFloat | ScalarInt],
+    action: ScalarFloat,
+) -> FloatND:
+    utility = BoundUtilityOfAction(
+        utility_func=utility_func, action_name=action_name, bound=context
+    )
+    return jax.grad(utility)(action)
+
+
+def _validation_sort(*, points: Float1D) -> Float1D:
+    return jnp.sort(a=points)
+
+
+def _validation_any(*, values: BoolND) -> BoolND:
+    return jnp.any(values)
+
+
+def _validation_argmax(*, values: BoolND) -> _ValidationIndex:
+    return jnp.argmax(values)
+
+
+def _validation_jump_location(*, grid_points: Float1D, index: int) -> FloatND:
+    return 0.5 * (grid_points[index] + grid_points[index + 1])
+
+
+def _admitted_validation_unique(
+    *, indices: Int1D, materializer: DatedGenerationMaterializer
+) -> Int1D:
+    """Run original unique with a shape read from its actual integer input."""
+    observed = tuple(int(value) for value in np.asarray(indices).tolist())
+    count = len(set(observed))
+    unique = materializer.evaluate_validation(
+        function=functools.partial(_validation_sample_unique, size=count),
+        arguments={"indices": indices},
+    )
+    unique_values = tuple(int(value) for value in np.asarray(unique).tolist())
+    if (
+        unique.shape != (count,)
+        or unique.dtype != indices.dtype
+        or len(set(unique_values)) != count
+        or set(unique_values) != set(observed)
+    ):
+        raise UnsupportedOperationError(
+            "Original validator unique output changed its observed integer "
+            "cardinality or support."
+        )
+    return unique

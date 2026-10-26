@@ -40,8 +40,9 @@ from _lcm.regime_building.Q_and_F import (
     QAndFParts,
     _CollectiveQAndF,
     _QAndF,
-    has_arrival_queries,
+    has_checked_continuations,
     has_objective_profile,
+    has_projected_queries,
     runtime_bound_specs,
 )
 from _lcm.solution.contract import ContinuationPayload, PeriodKernel, SolverBuildContext
@@ -1749,7 +1750,7 @@ def _query_action(
         name: inputs[name] for name in inspect.signature(function).parameters
     }
     continuation_valid = jnp.asarray(a=True)
-    if has_arrival_queries(function=function):
+    if has_checked_continuations(function=function):
         parts = cast(
             "Callable[..., QAndFParts]",
             cast("_QAndF | _CollectiveQAndF", function).parts,
@@ -1767,9 +1768,12 @@ def _query_action(
         raise TypeError("Canonical query feasibility must be boolean.")
     if ordinary.ndim != 0:
         raise ValueError("Canonical query feasibility must be scalar per action.")
-    valid = (~ordinary | continuation_valid) & ~jnp.any(
-        ordinary & jnp.any(jnp.isnan(q))
+    checked_valid = (
+        continuation_valid
+        if has_projected_queries(function=function)
+        else (~ordinary | continuation_valid)
     )
+    valid = checked_valid & ~jnp.any(ordinary & jnp.any(jnp.isnan(q)))
     if node.participation is None:
         return q, ordinary, valid
     operands = {**inputs, **dependencies, "q": q}

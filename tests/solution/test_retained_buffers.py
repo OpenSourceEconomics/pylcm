@@ -180,11 +180,11 @@ def test_owned_and_every_previously_consumed_view_remain_in_inventory() -> None:
     object.__setattr__(solution, "_engine_view", view)
     solution._consumed_views[("first", "params")] = cast(
         "_ResolvedSolution",
-        ({0: {"working": arrays[3]}}, {0: {"working": arrays[4]}}, {}, {}),
+        ({0: {"working": arrays[3]}}, {0: {"working": arrays[4]}}, {}, {}, {}),
     )
     solution._consumed_views[("second", "params")] = cast(
         "_ResolvedSolution",
-        ({0: {"working": arrays[5]}}, {}, {0: {"working": arrays[6]}}, {}),
+        ({0: {"working": arrays[5]}}, {}, {0: {"working": arrays[6]}}, {}, {}),
     )
     expected = (*_backing_values(solution), *arrays, flags)
     assert {id(array) for array in _buffers(solution)} == {
@@ -217,7 +217,7 @@ def test_consumed_reader_retains_snapshot_authorities_and_grid_context() -> None
     )
     solution = replace(base, replay_artifacts=ArtifactStore())
     solution._consumed_views[("consumer", "params")] = cast(
-        "_ResolvedSolution", ({}, {}, {}, {0: {"working": reader}})
+        "_ResolvedSolution", ({}, {}, {}, {0: {"working": reader}}, {})
     )
     authority = base._artifact_authority[ref]
     binding = authority_module._ARTIFACT_AUTHORITY_TEMPLATE_BINDINGS[id(authority)]

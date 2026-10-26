@@ -64,10 +64,12 @@ from _lcm.egm.preferences import Preferences
 from _lcm.egm.query_data import EGMQueryData, QueryNodeKind
 from _lcm.egm.upper_envelope.query import (
     ComparisonArithmetic,
+    EnvelopeQueryReader,
     EnvelopeWinner,
     _SavingsEnvelopeWinner,
     empty_envelope_winner,
     envelope_at_query,
+    envelope_at_query_certified,
     finish_envelope_winner,
     merge_envelope_winner,
     published_owner,
@@ -399,6 +401,7 @@ def nbegm_multi_interval_step(
     boundary_savings_targets: Float1D | None = None,
     boundary_next_liquid: Float1D | None = None,
     retain_query: Literal[False] = False,
+    query_grid: Float1D | None = None,
     continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
     | None = None,
 ) -> tuple[Float1D, Float1D, Float1D]: ...
@@ -426,9 +429,11 @@ def nbegm_multi_interval_step(
     boundary_savings_targets: Float1D | None = None,
     boundary_next_liquid: Float1D | None = None,
     retain_query: Literal[True],
+    return_owner: bool = False,
+    query_grid: Float1D | None = None,
     continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
     | None = None,
-) -> _NBEGMQueryStep: ...
+) -> _NBEGMQueryStep | _OwnedNBEGMQueryStep: ...
 
 
 @overload
@@ -453,9 +458,11 @@ def nbegm_multi_interval_step(
     boundary_savings_targets: Float1D | None = None,
     boundary_next_liquid: Float1D | None = None,
     retain_query: bool = False,
+    return_owner: bool = False,
+    query_grid: Float1D | None = None,
     continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
     | None = None,
-) -> tuple[Float1D, Float1D, Float1D] | _NBEGMQueryStep: ...
+) -> tuple[Float1D, Float1D, Float1D] | _NBEGMQueryStep | _OwnedNBEGMQueryStep: ...
 
 
 def nbegm_multi_interval_step(
@@ -479,9 +486,11 @@ def nbegm_multi_interval_step(
     boundary_savings_targets: Float1D | None = None,
     boundary_next_liquid: Float1D | None = None,
     retain_query: bool = False,
+    return_owner: bool = False,
+    query_grid: Float1D | None = None,
     continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
     | None = None,
-) -> tuple[Float1D, Float1D, Float1D] | _NBEGMQueryStep:
+) -> tuple[Float1D, Float1D, Float1D] | _NBEGMQueryStep | _OwnedNBEGMQueryStep:
     """Solve one period of a piecewise-affine, continuous-budget regime by EGM.
 
     The breakpoints partition the liquid axis into intervals on which cash-on-hand
@@ -559,10 +568,127 @@ def nbegm_multi_interval_step(
         policy, each on `liquid_grid`.
 
     """
+    return _nbegm_multi_interval_step_selected(
+        next_value=next_value,
+        next_marginal=next_marginal,
+        liquid_grid=liquid_grid,
+        next_liquid_grid=next_liquid_grid,
+        savings_grid=savings_grid,
+        discount_factor=discount_factor,
+        preferences=preferences,
+        next_liquid=next_liquid,
+        marginal_return=marginal_return,
+        coh_slopes=coh_slopes,
+        coh_intercepts=coh_intercepts,
+        breakpoints=breakpoints,
+        flat_interval_mask=flat_interval_mask,
+        arithmetic=arithmetic,
+        feasibility_partition=feasibility_partition,
+        feasible_interval_mask=feasible_interval_mask,
+        boundary_savings_targets=boundary_savings_targets,
+        boundary_next_liquid=boundary_next_liquid,
+        retain_query=retain_query,
+        return_owner=return_owner,
+        query_grid=query_grid,
+        continuation_read=continuation_read,
+        envelope_read=envelope_at_query,
+    )
+
+
+def nbegm_multi_interval_step_certified(
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+    flat_interval_mask: tuple[bool, ...] | None = None,
+    arithmetic: ComparisonArithmetic = "certified",
+    feasibility_partition: ResolvedAxisPartition | None = None,
+    feasible_interval_mask: BoolND | None = None,
+    boundary_savings_targets: Float1D | None = None,
+    boundary_next_liquid: Float1D | None = None,
+    retain_query: bool = False,
+    return_owner: bool = False,
+    query_grid: Float1D | None = None,
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+) -> tuple[Float1D, Float1D, Float1D] | _NBEGMQueryStep | _OwnedNBEGMQueryStep:
+    """Use the original continuous bank with only its certified reader in the graph."""
+    if arithmetic != "certified":
+        raise ValueError("The selected continuous step requires certified arithmetic.")
+    return _nbegm_multi_interval_step_selected(
+        next_value=next_value,
+        next_marginal=next_marginal,
+        liquid_grid=liquid_grid,
+        next_liquid_grid=next_liquid_grid,
+        savings_grid=savings_grid,
+        discount_factor=discount_factor,
+        preferences=preferences,
+        next_liquid=next_liquid,
+        marginal_return=marginal_return,
+        coh_slopes=coh_slopes,
+        coh_intercepts=coh_intercepts,
+        breakpoints=breakpoints,
+        flat_interval_mask=flat_interval_mask,
+        arithmetic=arithmetic,
+        feasibility_partition=feasibility_partition,
+        feasible_interval_mask=feasible_interval_mask,
+        boundary_savings_targets=boundary_savings_targets,
+        boundary_next_liquid=boundary_next_liquid,
+        retain_query=retain_query,
+        return_owner=return_owner,
+        query_grid=query_grid,
+        continuation_read=continuation_read,
+        envelope_read=envelope_at_query_certified,
+    )
+
+
+def _nbegm_multi_interval_step_selected(  # noqa: PLR0915 - unchanged original candidate construction/read order
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+    flat_interval_mask: tuple[bool, ...] | None = None,
+    arithmetic: ComparisonArithmetic = "certified",
+    feasibility_partition: ResolvedAxisPartition | None = None,
+    feasible_interval_mask: BoolND | None = None,
+    boundary_savings_targets: Float1D | None = None,
+    boundary_next_liquid: Float1D | None = None,
+    retain_query: bool = False,
+    return_owner: bool = False,
+    query_grid: Float1D | None = None,
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+    envelope_read: EnvelopeQueryReader,
+) -> tuple[Float1D, Float1D, Float1D] | _NBEGMQueryStep | _OwnedNBEGMQueryStep:
+    """Build the unchanged original bank and read it with selected arithmetic."""
     interval_of_grid = jnp.searchsorted(breakpoints, liquid_grid, side="right")
     coh_grid = (
         coh_slopes[interval_of_grid] * liquid_grid + coh_intercepts[interval_of_grid]
     )
+    query = liquid_grid if query_grid is None else query_grid
+    if query_grid is None:
+        coh_query = coh_grid
+    else:
+        query_interval = jnp.searchsorted(breakpoints, query, side="right")
+        coh_query = coh_slopes[query_interval] * query + coh_intercepts[query_interval]
 
     if continuation_read is None:
         value_next = _interp_continuation_value(
@@ -728,48 +854,61 @@ def nbegm_multi_interval_step(
             raise TypeError(
                 "NB original saving channels must accompany their candidates."
             )
-        value, policy, marginal, saving = envelope_at_query(
+        published = envelope_read(
             endog_grid=jnp.concatenate(endog_parts),
             policy=jnp.concatenate(policy_parts),
             value=jnp.concatenate(value_parts),
             marginal=jnp.concatenate(marginal_parts),
             segment_id=jnp.concatenate(segment_parts),
-            x_query=liquid_grid,
+            x_query=query,
             arithmetic=arithmetic,
             feasibility_partition=feasibility_partition,
             feasible_interval_mask=feasible_interval_mask,
             candidate_savings=jnp.concatenate(saving_parts),
+            return_owner=return_owner,
         )
+        value, policy, marginal, saving = published[:4]
         value, marginal, policy = _publish_no_action_carry(
             value=value,
             marginal=marginal,
             policy=policy,
-            coh=coh_grid,
+            coh=coh_query,
             lowest_savings=savings_grid[0],
         )
+        data = _make_nbegm_query_data(
+            value=value,
+            marginal=marginal,
+            policy=policy,
+            savings=saving,
+            floor_used=savings_grid[0],
+            liquid_grid=query,
+            breakpoints=breakpoints,
+            corner_continuation=jnp.broadcast_to(value_next[0], coh_slopes.shape),
+        )
+        if return_owner:
+            if len(published) != 5:  # noqa: PLR2004 - original value/policy/marginal/saving/owner ABI
+                raise TypeError("Owned NB publication lost its native winner readout.")
+            return _OwnedNBEGMQueryStep(
+                value,
+                marginal,
+                policy,
+                data,
+                published_owner(value=value, stable_index=published[4]),
+            )
         return _single_row_nbegm_query_step(
             value=value,
             marginal=marginal,
             policy=policy,
-            query_data=_make_nbegm_query_data(
-                value=value,
-                marginal=marginal,
-                policy=policy,
-                savings=saving,
-                floor_used=savings_grid[0],
-                liquid_grid=liquid_grid,
-                breakpoints=breakpoints,
-                corner_continuation=jnp.broadcast_to(value_next[0], coh_slopes.shape),
-            ),
+            query_data=data,
         )
 
-    value, policy, marginal = envelope_at_query(
+    value, policy, marginal = envelope_read(
         endog_grid=jnp.concatenate(endog_parts),
         policy=jnp.concatenate(policy_parts),
         value=jnp.concatenate(value_parts),
         marginal=jnp.concatenate(marginal_parts),
         segment_id=jnp.concatenate(segment_parts),
-        x_query=liquid_grid,
+        x_query=query,
         arithmetic=arithmetic,
         feasibility_partition=feasibility_partition,
         feasible_interval_mask=feasible_interval_mask,
@@ -778,7 +917,7 @@ def nbegm_multi_interval_step(
         value=value,
         marginal=marginal,
         policy=policy,
-        coh=coh_grid,
+        coh=coh_query,
         lowest_savings=savings_grid[0],
     )
 

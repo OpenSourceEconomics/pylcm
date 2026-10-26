@@ -1,0 +1,1024 @@
+"""Guarded BALANCED U projection for fixed conditional original candidate banks.
+
+Only the saturated-span class has fixed Hermite operands. Other U sources keep
+exact-coordinate publication. Conditional rows are temporary; the durable guard
+retains original producer operands and reconstructs ownership at consumption.
+"""
+
+import inspect
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass, fields, replace
+from types import MappingProxyType
+
+import jax
+import jax.numpy as jnp
+
+from _lcm.continuation import ContinuationPayload
+from _lcm.current_iid import AdmittedGroupParams, NodeOperands
+from _lcm.egm.asset_row import (
+    _ConstructedAssetNode,
+    _node_value_slope,
+    _publish_node_selection,
+)
+from _lcm.egm.current_iid_balanced import _ordered_points
+from _lcm.egm.current_iid_case_u import (
+    CaseUCurrentNodes,
+    CaseUPointSolver,
+    realise_case_u_nodes,
+)
+from _lcm.egm.current_iid_log_utility import LogUtilityProgram
+from _lcm.egm.current_iid_projection import refine_projected_row
+from _lcm.egm.current_iid_pullback import pullback_resource_boundary
+from _lcm.egm.current_iid_resources_proof import prove_resources_only
+from _lcm.egm.interp import materialize_hermite_shadow
+from _lcm.egm.projected_continuation import ProjectedEGMCarry, ProjectedRowRead
+from _lcm.egm.query_data import QueryNodeKind
+from _lcm.egm.step import _EGMStep
+from _lcm.egm.upper_envelope import _bracket_from_owned_row, get_upper_envelope
+from _lcm.egm.upper_envelope._exact_affine.ffi import certified_affine_compare
+from _lcm.egm.upper_envelope._exact_affine.hermite_critical import (
+    hermite_critical_bernstein_signs,
+)
+from _lcm.egm.upper_envelope.segment_envelope import OwnedEnvelope
+from _lcm.egm.validation import _dag_ancestors, _savings_stage_candidates
+from _lcm.probability import is_represented_zero
+from _lcm.solution.contract import SolverBuildContext
+from _lcm.solution.current_iid_case_r_build import _initial_resources_coefficient
+from _lcm.solution.current_iid_case_u_build import (
+    CaseUProgramFunction,
+    _bind_numeric_pieces,
+    _carry_subset,
+)
+from _lcm.solution.dcegm import EGMStepBuild, ExactEnvelope, _BoundDCEGM
+from _lcm.solution.feasibility import BoundInputStatus
+from _lcm.typing import (
+    EconFunctionArg,
+    EconFunctionKwargs,
+    FootprintTree,
+    PytreeChild,
+    PytreeValue,
+    ShapeDtypePytree,
+)
+from lcm.exceptions import UnsupportedOperationError
+from lcm.shocks import LawValue, ShockGroupName, ShockName
+from lcm.typing import (
+    BoolND,
+    Float1D,
+    FloatND,
+    IntND,
+    ReferenceName,
+    RegimeName,
+    ScalarBool,
+    ScalarFloat,
+    ScalarInt,
+)
+
+
+@dataclass(frozen=True, kw_only=True)
+class CaseUBalancedOperands:
+    """Closed numerical source inputs with immutable original name rosters."""
+
+    pool_values: tuple[EconFunctionArg, ...]
+    pool_names: tuple[ReferenceName, ...]
+    child_values: tuple[ContinuationPayload, ...]
+    child_names: tuple[RegimeName, ...]
+    group_values: tuple[tuple[LawValue | BoolND, ...], ...]
+    group_names: tuple[ShockGroupName, ...]
+    parameter_names: tuple[tuple[ReferenceName, ...], ...]
+    node_values: tuple[tuple[FloatND | tuple[IntND, ...], ...], ...]
+    node_group_names: tuple[ShockGroupName, ...]
+    node_names: tuple[tuple[str, ...], ...]
+    code_names: tuple[tuple[tuple[ShockName, ...] | None, ...], ...]
+    indices: IntND
+    savings_nodes: FloatND
+    borrowing_limit: ScalarFloat
+    floor_values: tuple[ScalarBool, ...]
+    has_floor: bool
+    child_nodes: tuple[tuple[FloatND | IntND, ...], ...]
+    lower: ScalarFloat
+    upper: ScalarFloat
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        pool: EconFunctionKwargs,
+        children: MappingProxyType[RegimeName, ContinuationPayload],
+        group_params: AdmittedGroupParams,
+        node_operands: NodeOperands,
+        indices: IntND,
+        savings_nodes: FloatND,
+        borrowing_limit: ScalarFloat,
+        floor_status: BoundInputStatus | None,
+        child_nodes: tuple[tuple[FloatND | IntND, ...], ...],
+        lower: ScalarFloat,
+        upper: ScalarFloat,
+    ) -> CaseUBalancedOperands:
+        """Preserve the original JAX mapping leaf order without storing mappings."""
+        pool_names = _guard_mapping_names(pool)
+        child_names = _guard_mapping_names(children)
+        group_names = _guard_mapping_names(group_params)
+        parameter_names = tuple(
+            _guard_mapping_names(group_params[name]) for name in group_names
+        )
+        node_groups = _guard_mapping_names(node_operands)
+        node_names = tuple(
+            _guard_mapping_names(node_operands[name]) for name in node_groups
+        )
+        values = []
+        codes = []
+        for group, names in zip(node_groups, node_names, strict=True):
+            group_values = []
+            group_codes = []
+            for name in names:
+                value = node_operands[group][name]
+                if isinstance(value, Mapping):
+                    keys = _guard_mapping_names(value)
+                    group_values.append(tuple(value[key] for key in keys))
+                    group_codes.append(keys)
+                else:
+                    group_values.append(value)
+                    group_codes.append(None)
+            values.append(tuple(group_values))
+            codes.append(tuple(group_codes))
+        return cls(
+            pool_values=tuple(pool[name] for name in pool_names),
+            pool_names=pool_names,
+            child_values=tuple(children[name] for name in child_names),
+            child_names=child_names,
+            group_values=tuple(
+                tuple(group_params[group][name] for name in names)
+                for group, names in zip(group_names, parameter_names, strict=True)
+            ),
+            group_names=group_names,
+            parameter_names=parameter_names,
+            node_values=tuple(values),
+            node_group_names=node_groups,
+            node_names=node_names,
+            code_names=tuple(codes),
+            indices=indices,
+            savings_nodes=savings_nodes,
+            borrowing_limit=borrowing_limit,
+            floor_values=() if floor_status is None else tuple(floor_status),
+            has_floor=floor_status is not None,
+            child_nodes=child_nodes,
+            lower=lower,
+            upper=upper,
+        )
+
+    @property
+    def floor_status(self) -> BoundInputStatus | None:
+        """Restore the original optional status over the stored numerical flags."""
+        expected = len(BoundInputStatus._fields) if self.has_floor else 0
+        if len(self.floor_values) != expected:
+            raise TypeError("U guard lost its original floor status layout.")
+        return (
+            tuple.__new__(BoundInputStatus, self.floor_values)
+            if self.has_floor
+            else None
+        )
+
+    @property
+    def pool(self) -> EconFunctionKwargs:
+        """Borrow the original numerical pool under its original names."""
+        return MappingProxyType(
+            dict(zip(self.pool_names, self.pool_values, strict=True))
+        )
+
+    @property
+    def children(self) -> MappingProxyType[RegimeName, ContinuationPayload]:
+        """Borrow the original child carries under their original names."""
+        return MappingProxyType(
+            dict(zip(self.child_names, self.child_values, strict=True))
+        )
+
+    @property
+    def group_params(self) -> AdmittedGroupParams:
+        """Borrow actual grouped law parameters without changing their order."""
+        return MappingProxyType(
+            {
+                group: MappingProxyType(dict(zip(names, values, strict=True)))
+                for group, names, values in zip(
+                    self.group_names,
+                    self.parameter_names,
+                    self.group_values,
+                    strict=True,
+                )
+            }
+        )
+
+    @property
+    def node_operands(self) -> NodeOperands:
+        """Borrow actual node banks and code columns from closed stored tuples."""
+        result = {}
+        for group, names, values, codes in zip(
+            self.node_group_names,
+            self.node_names,
+            self.node_values,
+            self.code_names,
+            strict=True,
+        ):
+            operands = {}
+            for name, value, keys in zip(names, values, codes, strict=True):
+                if keys is not None:
+                    if not isinstance(value, tuple):
+                        raise TypeError("U guard lost its original node code columns.")
+                    operands[name] = MappingProxyType(
+                        dict(zip(keys, value, strict=True))
+                    )
+                else:
+                    if isinstance(value, tuple):
+                        raise TypeError(
+                            "U guard lost its original numerical node bank."
+                        )
+                    operands[name] = value
+            result[group] = MappingProxyType(operands)
+        return MappingProxyType(result)
+
+
+def _guard_mapping_names[T](values: Mapping[str, T]) -> tuple[str, ...]:
+    """Follow the original registered mapping tree's exact numerical order."""
+    if type(values) is MappingProxyType:
+        return tuple(values)
+    if type(values) is dict:
+        return tuple(sorted(values))
+    raise TypeError("U guard requires its original engine mapping container.")
+
+
+@dataclass(frozen=True, kw_only=True)
+class BalancedCaseUCarry(ProjectedEGMCarry):
+    """Stored PWA economics and original source inputs for consumed ownership."""
+
+    guard: CaseUBalancedOperands
+
+    @property
+    def guard_required(self) -> bool:
+        return True
+
+    def leaves(self) -> Mapping[tuple[str, ...], FloatND | IntND | BoolND]:
+        return MappingProxyType(
+            {path: leaf for path, (_, leaf) in self._paths().items()}
+        )
+
+    def input_path(self, *, leaf_path: tuple[str, ...]) -> tuple[str | int, ...]:
+        return self._paths()[leaf_path][0]
+
+    def _paths(  # noqa: C901 - validate each actual native key kind
+        self,
+    ) -> Mapping[tuple[str, ...], tuple[tuple[str | int, ...], jax.Array]]:
+        """Resolve the actual registered tree, including immutable mappings."""
+        result = {}
+        for path, leaf in jax.tree_util.tree_flatten_with_path(self)[0]:
+            node: FootprintTree = self
+            identity: list[str] = []
+            consumer: list[str | int] = []
+            for original_key in path:
+                key = original_key
+                if isinstance(key, jax.tree_util.FlattenedIndexKey):
+                    if not isinstance(node, MappingProxyType):
+                        raise TypeError(
+                            "U guard flattened key has no immutable mapping."
+                        )
+                    key = jax.tree_util.DictKey(tuple(node)[key.key])
+                if isinstance(key, jax.tree_util.DictKey):
+                    if not isinstance(node, Mapping) or not isinstance(key.key, str):
+                        raise TypeError(
+                            "U guard requires original named mapping leaves."
+                        )
+                    identity.append(key.key)
+                    consumer.append(key.key)
+                    node = node[key.key]
+                elif isinstance(key, jax.tree_util.SequenceKey):
+                    if not isinstance(node, tuple):
+                        raise TypeError("U guard sequence lost its original tuple.")
+                    identity.append(str(key.idx))
+                    consumer.append(key.idx)
+                    node = node[key.idx]
+                elif isinstance(key, jax.tree_util.GetAttrKey):
+                    identity.append(key.name)
+                    names = getattr(node, "_fields", ())
+                    consumer.append(
+                        names.index(key.name) if isinstance(node, tuple) else key.name
+                    )
+                    node = getattr(node, key.name)
+                else:
+                    raise TypeError("U guard has an unsupported native leaf key.")
+            if node is not leaf or tuple(identity) in result:
+                raise TypeError("U guard native leaf identity is ambiguous.")
+            result[tuple(identity)] = (tuple(consumer), leaf)
+        return MappingProxyType(result)
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class SaturatedCaseUProgram:
+    """Model-owned original constructor and fixed-conditional topology proof."""
+
+    point: CaseUProgramFunction
+    utility: LogUtilityProgram
+    refine: Callable[..., OwnedEnvelope]
+
+    def solver(self, *, guard: CaseUBalancedOperands) -> CaseUPointSolver:
+        pieces = _bind_numeric_pieces(
+            original=self.point.pieces,
+            savings_nodes=guard.savings_nodes,
+            borrowing_limit=guard.borrowing_limit,
+            floor_status=guard.floor_status,
+            child_node_values=guard.child_nodes,
+        )
+        return CaseUPointSolver(
+            pieces=pieces,
+            pool=guard.pool,
+            children=_carry_subset(
+                next_regime_to_continuation=guard.children,
+                stateful_targets=frozenset(
+                    (
+                        *pieces.continuation_plan.stateful_targets,
+                        *pieces.continuation_plan.scalar_targets,
+                    )
+                ),
+            ),
+            savings_point_width=self.point.savings_point_width,
+            stochastic_node_width=self.point.stochastic_node_width,
+            envelope_cell_width=self.point.envelope_cell_width,
+        )
+
+    def nodes(self, *, guard: CaseUBalancedOperands) -> CaseUCurrentNodes:
+        return realise_case_u_nodes(
+            plan=self.point.plan,
+            liquid=guard.lower,
+            liquid_state=self.point.pieces.euler_state_name,
+            arguments=guard.pool,
+            group_params=guard.group_params,
+            node_operands=guard.node_operands,
+            indices=guard.indices,
+        )
+
+    def reference(
+        self, *, guard: CaseUBalancedOperands, query: ScalarFloat
+    ) -> ProjectedRowRead:
+        """Original integrated level/economic derivative, used only at production."""
+        result, law_valid = self.point.evaluate_with_law(
+            next_regime_to_continuation=guard.children,
+            _lcm_current_iid=guard.group_params,
+            _lcm_current_iid_nodes=guard.node_operands,
+            _lcm_current_iid_rows=guard.indices,
+            _lcm_case_u_savings_nodes=guard.savings_nodes,
+            _lcm_case_u_borrowing_limit=guard.borrowing_limit,
+            _lcm_case_u_floor_status=guard.floor_status,
+            _lcm_case_u_child_node_values=guard.child_nodes,
+            **{**guard.pool, self.point.pieces.euler_state_name: query[None]},
+        )
+        valid = result.output.valid[0] & jnp.all(law_valid)
+        for status in (*result.bound_status, *(result.query_status or ())):
+            for leaf in jax.tree.leaves(status):
+                valid &= ~jnp.any(leaf)
+        return ProjectedRowRead(
+            result.output.value[0],
+            result.output.economic_marginal[0],
+            jnp.int32(0),
+            jnp.int32(0),
+            valid,
+        )
+
+    def conditional(
+        self,
+        *,
+        guard: CaseUBalancedOperands,
+        physical: Mapping[ShockName, ScalarFloat | ScalarInt],
+        tangent: Mapping[ShockName, ScalarFloat],
+    ) -> tuple[_ConstructedAssetNode, ScalarBool]:
+        prepared = self.solver(guard=guard).prepare_node(
+            liquid=guard.lower,
+            physical=physical,
+            physical_tangent=tangent,
+            owned_refine=self.refine,
+        )
+        node = prepared[0]
+        # Structural admission excludes pre-state candidate/law ancestry. This
+        # actual rounded min therefore selects the same operand for the domain.
+        saturated = (
+            (node.resources_at_node >= node.first_endogenous_point)
+            & jnp.isfinite(node.first_endogenous_point)
+            & (node.first_endogenous_point > node.pieces.borrowing_limit)
+        )
+        return node, saturated
+
+    def resources(
+        self,
+        *,
+        guard: CaseUBalancedOperands,
+        physical: Mapping[ShockName, ScalarFloat | ScalarInt],
+        query: ScalarFloat,
+    ) -> ScalarFloat:
+        function = self.point.pieces.own_resources_func
+        values = {**guard.pool, **physical, self.point.pieces.euler_state_name: query}
+        return function(
+            **{name: values[name] for name in inspect.signature(function).parameters}
+        )
+
+    def cell(
+        self,
+        *,
+        guard: CaseUBalancedOperands,
+        left: ScalarFloat,
+        right: ScalarFloat,
+        query: ScalarFloat | None = None,
+    ) -> ScalarBool:
+        """Exclude shadow critical roots and verify original consumed ownership."""
+        nodes = self.nodes(guard=guard)
+        needed = _needed(nodes=nodes)
+
+        def one(
+            inputs: tuple[
+                Mapping[ShockName, ScalarFloat | ScalarInt],
+                Mapping[ShockName, ScalarFloat],
+                ScalarBool,
+            ],
+        ) -> ScalarBool:
+            physical, tangent, active = inputs
+
+            def check() -> ScalarBool:
+                node, saturated = self.conditional(
+                    guard=guard, physical=physical, tangent=tangent
+                )
+                row = node.owned_envelope
+                if row is None:
+                    raise TypeError(
+                        "U topology requires its original full owned envelope."
+                    )
+                low = self.resources(guard=guard, physical=physical, query=left)
+                high = self.resources(guard=guard, physical=physical, query=right)
+                scale, _, utility_valid = self.utility.coefficients(
+                    pool={**guard.pool, **physical}, dtype=left.dtype
+                )
+                supported, owner, corner = _classify(
+                    node=node, row=row, scale=scale, lower=low, upper=high
+                )
+                valid = saturated & utility_valid & supported
+                if query is not None:
+                    actual = self.solver(guard=guard).node(
+                        liquid=query, physical=physical, physical_tangent=tangent
+                    )
+                    selected = actual.output
+                    valid &= (
+                        selected.valid
+                        & (selected.native_owner == owner)
+                        & (selected.side_id == 0)
+                        & (selected.corner == corner)
+                    )
+                return valid
+
+            return jax.lax.cond(active, check, lambda: jnp.ones((), dtype=jnp.bool_))
+
+        matches = jax.lax.map(one, (nodes.physical, nodes.physical_tangent, needed))
+        return nodes.law_valid & (left < right) & jnp.all(matches)
+
+    def validate(self, *, carry: ProjectedEGMCarry, query: ScalarFloat) -> ScalarBool:
+        if not isinstance(carry, BalancedCaseUCarry):
+            raise TypeError("U source guard requires its original numeric operands.")
+        guard = carry.guard
+        active = jnp.arange(carry.grid.size) < carry.valid_length
+        exact = jnp.any(active & (carry.grid == query))
+        search = jnp.where(active, carry.grid, jnp.inf)
+        index = jnp.clip(
+            jnp.searchsorted(search, query, side="right") - 1, 0, carry.grid.size - 2
+        )
+        supported = jax.lax.cond(
+            exact,
+            lambda: jnp.ones((), dtype=jnp.bool_),
+            lambda: (
+                carry.link_valid[index]
+                & self.cell(
+                    guard=guard,
+                    left=carry.grid[index],
+                    right=carry.grid[index + 1],
+                    query=query,
+                )
+            ),
+        )
+        # Reference levels never replace the acquired PWA channels.
+        return (
+            supported
+            & self.reference(guard=guard, query=query).valid
+            & (guard.pool["period"] == self.point.period)
+        )
+
+    def publish(
+        self, *, initial: ProjectedEGMCarry, guard: CaseUBalancedOperands
+    ) -> BalancedCaseUCarry:
+        """Union actual conditional native cuts, classify, then refine economics."""
+        capacity = initial.grid.size
+        nodes = self.nodes(guard=guard)
+        needed = _needed(nodes=nodes)
+
+        def cuts(
+            inputs: tuple[
+                Mapping[ShockName, ScalarFloat | ScalarInt],
+                Mapping[ShockName, ScalarFloat],
+                ScalarBool,
+            ],
+        ) -> tuple[Float1D, ScalarBool]:
+            physical, tangent, active = inputs
+
+            def produce() -> tuple[Float1D, ScalarBool]:
+                node, saturated = self.conditional(
+                    guard=guard, physical=physical, tangent=tangent
+                )
+                row = node.owned_envelope
+                if row is None:
+                    raise TypeError("U native cut producer lost its original envelope.")
+
+                def pull(cut: ScalarFloat) -> tuple[Float1D, ScalarBool]:
+                    def resource(query: ScalarFloat) -> ScalarFloat:
+                        return self.resources(
+                            guard=guard, physical=physical, query=query
+                        )
+
+                    ge = pullback_resource_boundary(
+                        resources=resource,
+                        boundary=cut,
+                        lower=guard.lower,
+                        upper=guard.upper,
+                    )
+                    gt = pullback_resource_boundary(
+                        resources=resource,
+                        boundary=cut,
+                        lower=guard.lower,
+                        upper=guard.upper,
+                        strict=True,
+                    )
+                    points = jnp.stack(
+                        (
+                            jnp.nextafter(ge.point, guard.lower),
+                            ge.point,
+                            jnp.nextafter(gt.point, guard.lower),
+                            gt.point,
+                        )
+                    )
+                    active_cut = jnp.stack(
+                        (ge.interior, ge.interior, gt.interior, gt.interior)
+                    )
+                    return jnp.where(active_cut, points, jnp.inf), ge.valid & gt.valid
+
+                points, valid = jax.lax.map(
+                    pull,
+                    jnp.where(
+                        jnp.arange(row.grid.size) < row.n_kept, row.grid, row.grid[0]
+                    ),
+                )
+                keep = jnp.arange(row.grid.size) < row.n_kept
+                return jnp.where(keep[:, None] & saturated, points, jnp.inf).reshape(
+                    -1
+                ), jnp.all(~keep | valid)
+
+            return jax.lax.cond(
+                active,
+                produce,
+                lambda: (
+                    jnp.full(
+                        (4 * self.point.pieces.n_pad,),
+                        jnp.inf,
+                        dtype=initial.grid.dtype,
+                    ),
+                    jnp.ones((), dtype=jnp.bool_),
+                ),
+            )
+
+        extra, valid = jax.lax.map(
+            cuts, (nodes.physical, nodes.physical_tangent, needed)
+        )
+        raw = jnp.concatenate((initial.grid, extra.reshape(-1)))
+        active = jnp.concatenate(
+            (
+                jnp.arange(capacity) < initial.valid_length,
+                jnp.isfinite(extra.reshape(-1)),
+            )
+        )
+        points, length, retained = _ordered_points(
+            raw=raw, active=active, capacity=capacity
+        )
+        grid = jnp.where(jnp.arange(capacity) < length, points, initial.domain_lower)
+        values = jax.vmap(lambda query: self.reference(guard=guard, query=query))(grid)
+        kinds = jnp.where(
+            jnp.arange(capacity) < length,
+            jnp.where(
+                jnp.isneginf(values.value),
+                QueryNodeKind.ECONOMIC_MINUS_INF,
+                QueryNodeKind.FINITE,
+            ),
+            QueryNodeKind.PAD,
+        ).astype(jnp.int32)
+        row = replace(
+            initial,
+            grid=grid,
+            value=jnp.where(jnp.arange(capacity) < length, values.value, 0),
+            economic_marginal=jnp.where(
+                jnp.arange(capacity) < length, values.economic_marginal, 0
+            ),
+            owner_id=jnp.zeros_like(initial.owner_id),
+            side_id=jnp.zeros_like(initial.side_id),
+            node_kind=kinds,
+            valid_length=length,
+            valid=initial.valid
+            & retained
+            & jnp.all(valid)
+            & jnp.all((jnp.arange(capacity) >= length) | values.valid),
+        )
+        links = jax.vmap(
+            lambda left, right: self.cell(guard=guard, left=left, right=right)
+        )(grid[:-1], grid[1:])
+        links = (jnp.arange(capacity - 1) < length - 1) & links
+        components = jnp.cumsum(
+            jnp.concatenate(
+                (jnp.zeros((1,), dtype=jnp.int32), (~links).astype(jnp.int32))
+            ),
+            dtype=jnp.int32,
+        )
+        # IDs describe connected PWA regions, not a collapsed native roster.
+        # Original native ownership is reconstructed by cell() at consumption.
+        row = replace(
+            row,
+            link_valid=links,
+            owner_id=jnp.where(jnp.arange(capacity) < length, components, -1),
+        )
+
+        def checked_reference(query: ScalarFloat) -> ProjectedRowRead:
+            read = self.reference(guard=guard, query=query)
+            search = jnp.where(
+                jnp.arange(capacity) < row.valid_length, row.grid, jnp.inf
+            )
+            index = jnp.clip(
+                jnp.searchsorted(search, query, side="right") - 1, 0, capacity - 2
+            )
+            exact = jnp.any(
+                (jnp.arange(capacity) < row.valid_length) & (row.grid == query)
+            )
+            supported = jax.lax.cond(
+                exact,
+                lambda: jnp.ones((), dtype=jnp.bool_),
+                lambda: self.cell(
+                    guard=guard,
+                    left=row.grid[index],
+                    right=row.grid[index + 1],
+                    query=query,
+                ),
+            )
+            return read._replace(
+                owner_id=row.owner_id[index], valid=read.valid & supported
+            )
+
+        refined = refine_projected_row(
+            initial=row, reference=checked_reference, accuracy="balanced"
+        )
+        return BalancedCaseUCarry(
+            **{
+                field.name: getattr(refined, field.name)
+                for field in fields(ProjectedEGMCarry)
+            },
+            guard=guard,
+        )
+
+
+def _needed(*, nodes: CaseUCurrentNodes) -> BoolND:
+    live = jnp.all(~is_represented_zero(nodes.factors), axis=0)
+    needed = live
+    for column in range(nodes.factors.shape[0]):
+        others = jnp.concatenate(
+            (nodes.factors[:column], nodes.factors[column + 1 :]), axis=0
+        )
+        needed |= ~is_represented_zero(nodes.factor_tangent[column]) & jnp.all(
+            ~is_represented_zero(others), axis=0
+        )
+    return needed
+
+
+def _select(
+    *, node: _ConstructedAssetNode, row: OwnedEnvelope, resources: ScalarFloat
+) -> tuple[ScalarInt, ScalarBool, ScalarBool]:
+    bracket = _bracket_from_owned_row(refined=row, x_query=resources)
+    value, policy, corner = _publish_node_selection(
+        bracket=bracket.bracket,
+        n_pad=row.grid.size,
+        resources_at_node=resources,
+        borrowing_limit=node.pieces.borrowing_limit,
+        utility_of_action=node.utility_of_action,
+        discounted_expected_value_at_limit=node.discount_factor
+        * node.expected_values[0],
+    )
+    saving = resources - policy
+    valid = (
+        ~bracket.construction_invalid
+        & jnp.isfinite(value)
+        & jnp.isfinite(policy)
+        & (policy > 0)
+        & (saving >= node.pieces.borrowing_limit)
+        & (saving <= node.pieces.savings_nodes[-1])
+        & (corner | bracket.read_supported)
+    )
+    return jnp.where(corner, -1, bracket.owner_id), corner, valid
+
+
+def _sum_sign(
+    *, a: ScalarFloat, b: ScalarFloat, c: ScalarFloat, d: ScalarFloat
+) -> ScalarInt:
+    """Exact sign of a+b-c-d from two rational midpoint lines, without rounded sums."""
+    zero, one, half = jnp.zeros_like(a), jnp.ones_like(a), jnp.full_like(a, 0.5)
+    return certified_affine_compare(
+        a_x0=zero,
+        a_x1=one,
+        a_v0=a,
+        a_v1=b,
+        b_x0=zero,
+        b_x1=one,
+        b_v0=c,
+        b_v1=d,
+        x_query=half,
+    )
+
+
+def _classify(
+    *,
+    node: _ConstructedAssetNode,
+    row: OwnedEnvelope,
+    scale: ScalarFloat,
+    lower: ScalarFloat,
+    upper: ScalarFloat,
+) -> tuple[ScalarBool, ScalarInt, ScalarBool]:
+    search = jnp.where(jnp.arange(row.grid.size) < row.n_kept, row.grid, jnp.inf)
+    index = jnp.clip(
+        jnp.searchsorted(search, lower, side="right") - 1, 0, row.grid.size - 2
+    )
+    x0, x1 = row.grid[index], row.grid[index + 1]
+    c0, c1 = row.policy[index], row.policy[index + 1]
+    h, a, b, applicable = materialize_hermite_shadow(
+        xp_lower=x0,
+        xp_upper=x1,
+        fp_lower=row.value[index],
+        fp_upper=row.value[index + 1],
+        slope_lower=_node_value_slope(
+            policy=c0, value=row.value[index], utility_of_action=node.utility_of_action
+        ),
+        slope_upper=_node_value_slope(
+            policy=c1,
+            value=row.value[index + 1],
+            utility_of_action=node.utility_of_action,
+        ),
+    )
+    signs, status = hermite_critical_bernstein_signs(
+        x0=x0,
+        h=h,
+        v0=row.value[index],
+        v1=row.value[index + 1],
+        a=a,
+        b=b,
+        L=node.pieces.borrowing_limit,
+        A=scale,
+        lower=lower,
+        upper=upper,
+    )
+    zero = jnp.zeros_like(x0)
+    floor, ceiling = node.pieces.borrowing_limit, node.pieces.savings_nodes[-1]
+    low0, low1 = (
+        _sum_sign(a=x0, b=zero, c=c0, d=floor),
+        _sum_sign(a=x0, b=h, c=c1, d=floor),
+    )
+    high0, high1 = (
+        _sum_sign(a=x0, b=zero, c=c0, d=ceiling),
+        _sum_sign(a=x0, b=h, c=c1, d=ceiling),
+    )
+    legal = (
+        (c0 > 0)
+        & (c1 > 0)
+        & ((low0 == 0) | (low0 == 1))
+        & ((low1 == 0) | (low1 == 1))
+        & ((high0 == -1) | (high0 == 0))
+        & ((high1 == -1) | (high1 == 0))
+    )
+    left_owner, left_corner, left_valid = _select(node=node, row=row, resources=lower)
+    right_owner, right_corner, right_valid = _select(
+        node=node, row=row, resources=upper
+    )
+    root_free = (status == 0) & (jnp.all(signs > 0) | jnp.all(signs < 0))
+    geometry = (
+        (lower < upper)
+        & (lower >= x0)
+        & (upper <= x1)
+        & (index + 1 < row.n_kept)
+        & applicable
+        & row.link_valid[index]
+        & (row.owner_id[index] == row.owner_id[index + 1])
+    )
+    same = (left_owner == right_owner) & (left_corner == right_corner)
+    return (
+        geometry & legal & root_free & same & left_valid & right_valid,
+        left_owner,
+        left_corner,
+    )
+
+
+type _UGuardChild = PytreeChild | CaseUBalancedOperands | ContinuationPayload
+
+
+type _UGuardMetadata = tuple[
+    tuple[ReferenceName, ...],
+    tuple[RegimeName, ...],
+    tuple[ShockGroupName, ...],
+    tuple[tuple[ReferenceName, ...], ...],
+    tuple[ShockGroupName, ...],
+    tuple[tuple[str, ...], ...],
+    tuple[tuple[tuple[ShockName, ...] | None, ...], ...],
+    bool,
+]
+_UGUARD_METADATA_FIELDS = (
+    "pool_names",
+    "child_names",
+    "group_names",
+    "parameter_names",
+    "node_group_names",
+    "node_names",
+    "code_names",
+    "has_floor",
+)
+
+
+def _flatten_guard(
+    value: CaseUBalancedOperands,
+) -> tuple[tuple[tuple[jax.tree_util.GetAttrKey, _UGuardChild], ...], _UGuardMetadata]:
+    return tuple(
+        (jax.tree_util.GetAttrKey(field.name), getattr(value, field.name))
+        for field in fields(value)
+        if field.name not in _UGUARD_METADATA_FIELDS
+    ), (
+        value.pool_names,
+        value.child_names,
+        value.group_names,
+        value.parameter_names,
+        value.node_group_names,
+        value.node_names,
+        value.code_names,
+        value.has_floor,
+    )
+
+
+def _flatten_carry(
+    value: BalancedCaseUCarry,
+) -> tuple[tuple[tuple[jax.tree_util.GetAttrKey, _UGuardChild], ...], None]:
+    return tuple(
+        (jax.tree_util.GetAttrKey(field.name), getattr(value, field.name))
+        for field in fields(value)
+    ), None
+
+
+# keyword-only-exempt: library-callback=jax.tree_util.register_pytree_with_keys
+def _unflatten_guard(
+    metadata: _UGuardMetadata, children: Iterable[_UGuardChild]
+) -> CaseUBalancedOperands:
+    result = object.__new__(CaseUBalancedOperands)
+    for name, value in zip(_UGUARD_METADATA_FIELDS, metadata, strict=True):
+        object.__setattr__(result, name, value)
+    dynamic = (
+        field
+        for field in fields(CaseUBalancedOperands)
+        if field.name not in _UGUARD_METADATA_FIELDS
+    )
+    for field, child in zip(dynamic, children, strict=True):
+        object.__setattr__(result, field.name, child)
+    return result
+
+
+# keyword-only-exempt: library-callback=jax.tree_util.register_pytree_with_keys
+def _unflatten_carry(
+    metadata: None, children: Iterable[_UGuardChild]
+) -> BalancedCaseUCarry:
+    del metadata
+    result = object.__new__(BalancedCaseUCarry)
+    for field, child in zip(fields(BalancedCaseUCarry), children, strict=True):
+        object.__setattr__(result, field.name, child)
+    return result
+
+
+jax.tree_util.register_pytree_with_keys(
+    CaseUBalancedOperands, _flatten_guard, _unflatten_guard
+)
+jax.tree_util.register_pytree_with_keys(
+    BalancedCaseUCarry, _flatten_carry, _unflatten_carry
+)
+
+
+_CURRENT_IID_ROW_RANK = 2
+
+
+def prepare_saturated_case_u(  # noqa: C901, PLR0911, PLR0912 - exact-route capability boundaries
+    *,
+    context: SolverBuildContext,
+    solver: _BoundDCEGM,
+    build: EGMStepBuild,
+    period: int,
+    point: CaseUProgramFunction,
+    arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
+) -> SaturatedCaseUProgram | None:
+    """Keep unsupported U economics on their original exact-coordinate route.
+
+    This is a declaration/schema proof, never an inference from sampled owner
+    agreement. The query-dependent span is checked on real producing operands.
+    """
+    numerical = build.steps[period]
+    if not isinstance(numerical, _EGMStep) or not isinstance(
+        solver.envelope, ExactEnvelope
+    ):
+        return None
+    declared = arguments.get(solver.continuous_state)
+    indices = arguments.get("_lcm_current_iid_rows")
+    demands = arguments.get("_lcm_parent_demand_savings", ())
+    if (
+        not isinstance(declared, (jax.Array, jax.ShapeDtypeStruct))
+        or declared.ndim != 1
+        or not isinstance(indices, (jax.Array, jax.ShapeDtypeStruct))
+        or indices.ndim != _CURRENT_IID_ROW_RANK
+        or not isinstance(demands, tuple)
+    ):
+        return None
+    demand_width = 0
+    for demand in demands:
+        if (
+            not isinstance(demand, (jax.Array, jax.ShapeDtypeStruct))
+            or demand.ndim != 1
+        ):
+            return None
+        demand_width += demand.shape[0]
+    # Each original conditional native knot contributes >=/> pullbacks and
+    # their predecessors. This bound uses actual input widths, never capacity.
+    mandatory_bound = (
+        declared.shape[0] + demand_width + 4 * point.pieces.n_pad * indices.shape[0]
+    )
+    if solver.current_iid_projection_capacity < mandatory_bound:
+        return None
+    proof = prove_resources_only(context=context, solver=solver, plan=point.plan)
+    dependencies = dict(proof.root_dependencies)
+    # At the actual future stage savings is an independent candidate input.
+    # Utility/inverse/current roots retain their complete original ancestry.
+    stage_functions = {
+        name: function
+        for name, function in context.solve_functions.items()
+        if name not in (solver.resources, solver.post_decision_function)
+    }
+    for _, label, function in _savings_stage_candidates(
+        user_regime=context.user_regimes[context.regime_name],
+        law=context.laws[context.regime_name],
+        solver=solver,
+    ):
+        dependencies[label] = _dag_ancestors(
+            functions=stage_functions, target_func=function
+        )
+    if (
+        proof.unsupported
+        or solver.continuous_state in proof.context_inputs
+        or any(
+            solver.resources in names or solver.continuous_state in names
+            for names in dependencies.values()
+        )
+        or numerical.pieces.feasibility_func is not None
+    ):
+        return None
+    pool = {
+        name: value
+        for name, value in arguments.items()
+        if name != solver.continuous_state
+    }
+    try:
+        _, _, physical_dtypes = _initial_resources_coefficient(
+            numerical=numerical,
+            plan=point.plan,
+            actual_pool=pool,
+        )
+        abstract = {}
+        for name in inspect.signature(point.pieces.utility_func).parameters:
+            if name == point.pieces.action_name:
+                value = jax.ShapeDtypeStruct((), point.pieces.savings_nodes.dtype)
+            elif name in physical_dtypes:
+                value = jax.ShapeDtypeStruct((), physical_dtypes[name])
+            elif name in pool:
+                actual = pool[name]
+                if not isinstance(actual, (jax.Array, jax.ShapeDtypeStruct)):
+                    return None
+                value = actual
+            else:
+                return None
+            if value.shape != ():
+                return None
+            abstract[name] = value
+        utility = LogUtilityProgram.authenticate(
+            function=point.pieces.utility_func,
+            action_name=point.pieces.action_name,
+            abstract_pool=abstract,
+        )
+    except UnsupportedOperationError:
+        # Unsupported structure keeps exact U; no numerical producer ran here.
+        return None
+    return SaturatedCaseUProgram(
+        point=point,
+        utility=utility,
+        refine=get_upper_envelope(
+            solver=solver, n_refined=point.pieces.n_pad, publish_provenance=True
+        ),
+    )

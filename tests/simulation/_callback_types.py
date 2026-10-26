@@ -11,6 +11,7 @@ import _lcm.simulation.simulate as simulation
 import _lcm.solution.validate_V as validation
 import _lcm.utils.logging as lcm_logging
 import lcm.model as model_module
+from _lcm.egm.current_iid_replay_inputs import CurrentIIDReplayInputs
 from _lcm.execution.core_program import (
     CoreProgram,
     ReducedAxis,
@@ -77,6 +78,7 @@ class OperandPlacement[Operand: _OperandValue](TypedDict):
 
 
 class SimulationChunkInputs(TypedDict):
+    current_iid_replay_inputs: NotRequired[CurrentIIDReplayInputs]
     initial_states: dict[
         simulation.StateOrActionName, simulation.Float1D | simulation.IntND
     ]
@@ -118,6 +120,7 @@ class SimulationChunkInputs(TypedDict):
 
 
 class ChunkProfileInputs(TypedDict):
+    current_iid_replay_inputs: NotRequired[CurrentIIDReplayInputs]
     runtime: chunk_profiles.SimulationRuntime
     regimes: chunk_profiles.Mapping[chunk_profiles.RegimeName, chunk_profiles.Regime]
     flat_params: chunk_profiles.FlatParams
@@ -155,6 +158,7 @@ class ChunkProfileInputs(TypedDict):
 
 
 class ChunkProfileKeyInputs(TypedDict):
+    current_iid_replay_inputs: NotRequired[CurrentIIDReplayInputs]
     runtime: chunk_admission.SimulationRuntime
     regimes: chunk_admission.Mapping[chunk_admission.RegimeName, chunk_admission.Regime]
     call_inputs: chunk_admission.SimulationCallInputs
@@ -227,6 +231,7 @@ class EntryCapture(TypedDict):
 
 
 class ChunkPreparation(TypedDict):
+    current_iid_replay_inputs: NotRequired[CurrentIIDReplayInputs]
     regimes: chunk_admission.MappingProxyType[
         chunk_admission.RegimeName, chunk_admission.Regime
     ]
