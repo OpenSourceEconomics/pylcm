@@ -13,11 +13,42 @@ coefficient has room for while staying normal, the remainder onto the product â€
 which is what `scaled_weighted_terms` does and what these tests pin.
 """
 
+import jax
 import jax.numpy as jnp
+import pytest
 from numpy.testing import assert_allclose
 
 from _lcm.regime_building.zero_safe import zero_safe_average
 from tests.conftest import DECIMAL_PRECISION
+
+
+@pytest.mark.parametrize("axis", [None, 0, -1])
+@pytest.mark.parametrize("sign", [-1.0, 1.0])
+@pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
+def test_scaled_average_keeps_a_finite_mean_when_its_numerator_overflows(
+    *, axis: int | None, sign: float, enable_jit: bool
+) -> None:
+    """Large same-sign values have a finite mean, and dead infinities drop out."""
+    peak = jnp.finfo(jnp.asarray(1.0).dtype).max
+    values = jnp.asarray([sign * peak, sign * (peak / 2), -jnp.inf])
+    expected = sign * (peak * 0.75)
+    if axis is not None:
+        values = jnp.stack([values, values / 2], axis=1 if axis == 0 else 0)
+        expected = jnp.asarray([expected, expected / 2])
+    average = (
+        jax.jit(zero_safe_average, static_argnames="axis")
+        if enable_jit
+        else zero_safe_average
+    )
+
+    result = average(
+        a=values,
+        weights=jnp.asarray([1.0, 1.0, 0.0]),
+        shifts=jnp.zeros(3, dtype=jnp.int32),
+        axis=axis,
+    )
+
+    assert_allclose(result, expected, rtol=10.0**-DECIMAL_PRECISION)
 
 
 def test_zero_safe_average_prices_a_downscaled_node_against_a_near_max_value():
