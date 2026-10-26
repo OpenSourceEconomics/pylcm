@@ -2445,7 +2445,7 @@ class Model:
                 process_grid_resolver=process_grid_resolver,
                 call_id=call_id,
                 gather_checks=self._gather_checks,
-                retained_input_arrays=(self._runtime_policy_roots(),),
+                retained_input_arrays=self._retained_call_policy_arrays(),
             ),
             logger=log,
             codes=None if selection is None else selection.codes,
@@ -2524,7 +2524,7 @@ class Model:
                 persistable_artifact_refs=persistable_artifact_refs,
                 retained_input_arrays=(
                     *retained_input_arrays,
-                    self._runtime_policy_roots(),
+                    *self._retained_call_policy_arrays(),
                 ),
                 process_grid_resolver=process_grid_resolver,
                 call_id=call_id,
@@ -2611,6 +2611,12 @@ class Model:
                     regimes=regimes, supplied=supplied, param_names=param_names
                 )
             return self._shock_path_runtime_regimes[key]
+
+    def _retained_call_policy_arrays(self) -> _RetainedInputArrays:
+        """Charge additional solve owners only when distinct graph variants exist."""
+        if self._runtime_check_regimes.get(False, self._regimes) is self._regimes:
+            return ()
+        return (self._runtime_policy_roots(),)
 
     def _runtime_policy_roots(self) -> tuple[PytreeValue, ...]:
         """Return concrete model owners kept live by both call policies.

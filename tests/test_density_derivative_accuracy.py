@@ -556,10 +556,14 @@ def _policy_terminal_payoff(income: ContinuousState) -> FloatND:
     return income**2
 
 
-def _policy_model(*, factory_checks: bool = True) -> Model:
+def _policy_model(
+    *,
+    factory_checks: bool = True,
+    transition_rule: Literal["density", "midpoint"] = "density",
+) -> Model:
     process = TauchenAR1Process.on_nodes(
         nodes=np.asarray((-1.4, -0.1, 0.7, 1.2, 2.0)),
-        transition_rule="density",
+        transition_rule=transition_rule,
         rho=0.0,
         mu=0.2,
         simulate_draws="nodes",
@@ -754,3 +758,9 @@ def test_density_call_policy_roots_charge_inactive_bundle_constants() -> None:
         device: charged.get(device, 0) - original.get(device, 0)
         for device in charged.keys() | original.keys()
     } == dict(expected)
+
+
+def test_midpoint_call_policies_share_the_original_graph_inventory() -> None:
+    model = _policy_model(transition_rule="midpoint")
+    assert model._runtime_check_regimes[False] is model._regimes
+    assert model._retained_call_policy_arrays() == ()

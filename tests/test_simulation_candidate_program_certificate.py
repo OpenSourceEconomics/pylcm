@@ -246,7 +246,7 @@ _PROFILED_HELPER_MUTATIONS = {
         (
             "                retained_input_arrays=(\n"
             "                    *retained_input_arrays,\n"
-            "                    self._runtime_policy_roots(),\n"
+            "                    *self._retained_call_policy_arrays(),\n"
             "                ),"
         ),
         "                retained_input_arrays=(),",

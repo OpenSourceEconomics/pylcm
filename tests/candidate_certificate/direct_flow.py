@@ -711,7 +711,7 @@ _SOURCE_SEALS = {
     SIMULATION_SOURCE: "13057b7743dbfc13bd1b25936d26d43205ce588f6d694bc0a2b80d9f4dd6078b",
     SIMULATION_TRANSITIONS_SOURCE: "5cef83cc6d594d6d7004dee5cfc82dec5be33d669ac7779d3f9a393058e548da",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
-    MODEL_SOURCE: "54ee03b6a4d7a5fac5ee66781c5b846292a0533376fdba8ebd196936142734ef",
+    MODEL_SOURCE: "2e8e110e701d053fa333e7e213548b9d40828c05419cdb8980b5c461252ab593",
     SOLVER_API_SOURCE: "bc9e7cd94009998acfc1f11d8da823475030879790a49f8192e1260012496c96",
     BACKWARD_INDUCTION_SOURCE: "90243ee031603f3b5255eaa013b604aafb7903c410618d736dd27194873975ed",
     PERIOD_REPLAY_SOURCE: "2f0253693e474c70760a80ab6c07b5bdeb25ffa4aa77224e27ea5d15af5b1a55",
@@ -1578,7 +1578,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     MODEL_SOURCE: (
-        "bb236961857d3c24219d6d5c71ad6dec10dde53860b9c44050406166bb796219",
+        "ddcb6d02da0cc4997a39f18bf7f6d2e665d2747142f5047c46f07dc2b0e57d88",
         {
             "_validate_sharded_state_capability": "ee8b7e8a97fd413d2376a655558ea7b2a2ab61589a0ddd624ed44b69dfe5fa8d",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
@@ -1595,7 +1595,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "Model._model_fingerprint": "3b5ede2a24fdb3a9ee1993d3b0ad6a9092e75b82089d341dd7bde349ff458816",
             "Model.solve": "fd783f07d9471bb41f62348f0c274dcbd9020a360b2c147db4b126bf36a65e9f",
             "Model._solve_from_flat_params": "0bed1e0861be325bb12908d0c01c787eea77f998e5d3d59227746c8e8449e6ba",
-            "Model._solve_compiled": "2d7d1b30fba9b0314e671201209f159d0a9c9825612e02c00f20ad26f5eb5d39",
+            "Model._solve_compiled": "3b5cbe855437f4aa0abb287c1b534ff30bd94b0bbc7e06fba8e34994de2aa63e",
             "Model._consume_owned_solution": "f646cbb48cea6c33227711df6ec93e2d51fe8fca435803069575c0cb0f01da9d",
             "Model._build_external_replay_readers": "62d5d2c5bd473f779ddb81644162279e0a3ca329105b42636220a862391dc771",
             "Model._runtime_regimes_for_shape": "e5d1f73c3b8e5ed07978aac9b57b55119c6b312165162c1f99ba63fe73a32360",
