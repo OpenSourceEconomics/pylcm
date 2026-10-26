@@ -587,7 +587,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 # Source seals and corridor anchors require semantic verification of the combined
 # inventories before refresh; these inherited pins deliberately retain that gate.
 _SOURCE_SEALS = {
-    "src/_lcm/current_iid.py": "446197c595a530111419b718ed9e6f5dee5fa32136caf95979c0fcbf9f559aaf",
+    "src/_lcm/current_iid.py": "4258e81f81bce2e6df250c768c4a36bbc52323e63b6897a9f9e3a3c52dddb9ce",
     "src/_lcm/simulation/current_iid.py": "c675e9dffaa205b4049bf4c26438a70005766c368bc69a3dbb1d6e35cb66db99",
     "src/_lcm/egm/asset_row.py": "d7389b5048707dd9657638c790f9afbd8feb27893bcfd2bd6659da66199b069c",
     "src/_lcm/egm/continuation.py": "5a25a1183c81ef4c3e8e3c4aaebc6e4797ce04c9c55b88edefa7de7fc7946f9f",
@@ -827,18 +827,18 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/current_iid.py": (
-        "bc9ea3a8f0901f5b6c5ddf9aff6e6a0dca9c76ccba7f9cbb237fe0dc2a6bd268",
+        "fd8b39b95a034a0e7faa7dcb8dc649e4434c234040c94cd9d9993f688ac1d42a",
         {
             "CurrentIIDPlan.wrap": "a9fcdbcb96e54728e40fcbfad47a7d8b47804e6fc027799a4580b0210e42ac34",
             "CurrentIIDPlan.realise_nodes": "10f8f048fa4869011b54643a8b587a935d5cb357c4fec4d81fbe3b052b91cd49",
-            "CurrentIIDPlan.realise_information_nodes": "840fdd81388af6abb5bc373c1e0c36850b0ca323457c83ebfc5660af72460545",
+            "CurrentIIDPlan.realise_information_nodes": "a5a534312b1dfc8c295533986ad5be93cc248a3e4c779c5e6000f9772ad4f3c2",
             "law_parameters": "505b635e5e1b780512a6bff80897ec809f2f6134c30842985ed95bbc3fcac209",
             "law_informativeness": "ddf05d5b6c372f3eb607c047e708b1d16f6022934a5d9488e6656513ad5f4e3a",
             "CurrentIIDDrawPlan.wrap": "481df62f00544beb8a3df789a4be5d684713e4218aea5ef7bb8409339a3eab00",
             "_CurrentIIDExpectation.__call__": "a5c7ad3150940b478a373f5f6f6e8370c9a246221a90986ccd896b62b58df417",
             "_CurrentIIDDraw.__call__": "5778e92311929a7533b4f21b933a0ba754515ecf928fd27704aad842c52fd4ee",
             "_evaluate_node": "c628b5107c477ccf0dd688ec0d29b1a2f626a4a49298f9fb364a41476070958e",
-            "CurrentIIDDrawPlan.realise": "1c2c01b4f1a813501e97abd9ed98b1de5c1ff6db22be31dde6e3c7d25168cba4",
+            "CurrentIIDDrawPlan.realise": "39b31890b7521b6fd2888b0d584a7674446fb853dcca60f392e8dc1f16e34b91",
             "_draw_base_value": "4554e685f57a99188070a0050d53d1caa2b36c79d9c023ed629ea25aece79746",
             "_law_inputs": "b29f6f0fc9a9a5e0e206bad5d4888e74fdcef311ca2fe8aac47160398bde06a0",
         },

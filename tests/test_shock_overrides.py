@@ -21,7 +21,7 @@ from _lcm.shock_overrides import (
     physical_recovery_status,
     supplied_group_values,
 )
-from _lcm.shock_registry import ShockBinding
+from _lcm.shock_registry import ShockBinding, _create_group_template
 from lcm import categorical
 from lcm import shocks as sh
 from lcm.exceptions import ShockDeclarationError
@@ -36,6 +36,9 @@ class Offer:
 
 
 def _plan(*, group: sh.ShockGroup) -> CurrentIIDDrawPlan:
+    params_template, callable_parameters = _create_group_template(
+        group=group, states=frozenset(), functions={}
+    )
     return CurrentIIDDrawPlan(
         bindings={
             "risk": ShockBinding(
@@ -44,8 +47,8 @@ def _plan(*, group: sh.ShockGroup) -> CurrentIIDDrawPlan:
                 state_domains={},
                 categorical_domains={},
                 functions={},
-                params_template={},
-                callable_parameters=frozenset(),
+                params_template=params_template,
+                callable_parameters=callable_parameters,
             )
         }
     )
