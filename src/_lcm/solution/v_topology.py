@@ -26,7 +26,6 @@ from _lcm.params.edges import regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.typing import FlatParams, RegimeName, StateName
-from lcm.typing import FloatND
 
 
 @dataclass(frozen=True)
@@ -191,8 +190,3 @@ def _build_V_arr_template(*, topology: _RegimeVTopology) -> jax.ShapeDtypeStruct
         jax.dtypes.canonicalize_dtype(jnp.float64),
         sharding=topology.sharding,
     )
-
-
-def _build_zero_V_arr(*, topology: _RegimeVTopology) -> FloatND:
-    """Build the zero V-array template for a regime, on the devices it is placed on."""
-    return jax.device_put(jnp.zeros(topology.shape), topology.sharding)
