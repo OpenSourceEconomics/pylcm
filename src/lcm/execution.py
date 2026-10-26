@@ -334,6 +334,24 @@ class ExecutionConfig:
     published values and simulated panels are those of the period-major route.
     """
 
+    value_storage: Literal["device", "host"] = "device"
+    """Where a solve keeps each period's values once no period still to be solved
+    reads them.
+
+    - `"device"` (the default) keeps every solved period's values on the device
+      until the solve returns.
+    - `"host"` copies each period's values to pinned host memory while the next
+      period computes, and frees the device copy once the period reading it has
+      finished. The device then holds at most the values of three periods: the
+      one being solved, the one it reads and one whose copy is still finishing.
+      Reading a value returns a device copy, so results, reads and simulated
+      panels are those of device storage, bit for bit. The copy runs on every
+      backend, CPU included.
+
+    `"host"` does not combine with `InvariantBlockSchedule.BLOCK_MAJOR`, which
+    moves its values to the host on a route of its own.
+    """
+
     action_partitions: Mapping[RegimeName, int] = field(
         default_factory=lambda: MappingProxyType({})
     )
@@ -444,6 +462,9 @@ class ExecutionConfig:
             raise ValueError(
                 "ExecutionConfig.simulation_sharding must be legacy or subjects."
             )
+        _fail_if_value_storage_invalid(
+            value_storage=self.value_storage, schedule=self.invariant_block_schedule
+        )
         widths = _normalized_axis_widths(axis_widths=self.axis_widths)
         object.__setattr__(self, "axis_widths", MappingProxyType(widths))
         object.__setattr__(
@@ -473,6 +494,18 @@ class ExecutionConfig:
             devices = tuple(self.devices)
             _fail_if_devices_invalid(devices=devices)
             object.__setattr__(self, "devices", devices)
+
+
+def _fail_if_value_storage_invalid(
+    *, value_storage: Literal["device", "host"], schedule: InvariantBlockSchedule
+) -> None:
+    """Refuse host storage on the block-major route."""
+    if value_storage == "host" and schedule is InvariantBlockSchedule.BLOCK_MAJOR:
+        raise ValueError(
+            "ExecutionConfig.value_storage='host' does not combine with "
+            "invariant_block_schedule=BLOCK_MAJOR, which moves its values to the "
+            "host on a route of its own."
+        )
 
 
 def _fail_if_budget_invalid(

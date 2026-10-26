@@ -209,6 +209,7 @@ from _lcm.solution.feasibility import (
     validate_runtime_bound_status,
 )
 from _lcm.solution.grid_search import _GridSearchArgumentBuilder
+from _lcm.solution.host_values import copy_values_to_host, device_read_view
 from _lcm.solution.kernel_attribution import (
     log_executed_kernel,
     log_module_fanout,
@@ -739,6 +740,8 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     )
     # Every copy a period's transfer cache holds belongs to this solve alone.
     transfer_generation = uuid.uuid4().hex
+    store_on_host = resolved_execution.value_storage == "host"
+    in_flight_host_copies: tuple[FloatND, ...] = ()
     with solve_phase(name="backward_induction", logger=logger, call_id=call_id):
         # Planning and compilation leave a large, long-lived object graph behind
         # (programs, frontiers, executables). Freezing it after one collection
@@ -1329,7 +1332,15 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 # period mappings below, so readers see exactly the periods of the
                 # root-derived domain, as persisted archives do.
                 if period_solution:
-                    solution[period] = MappingProxyType(period_solution)
+                    # Host storage dispatches the copy here, after this period's
+                    # kernels and before the next period's, so it runs while the
+                    # next period computes. The device copy stays reachable only
+                    # through the rolled inputs, which release it once read.
+                    solution[period] = (
+                        copy_values_to_host(values=period_solution)
+                        if store_on_host
+                        else MappingProxyType(period_solution)
+                    )
                     # Publish each collective regime's dissolution flag D alongside
                     # V, where a reader exists. Kept as a plain per-period mapping
                     # (not rolled like `next_regime_to_V_arr`): nothing consumes a
@@ -1410,12 +1421,25 @@ def solve(  # noqa: C901, PLR0912, PLR0915
 
                 _release_rolled_continuations(period_continuations=period_continuations)
 
+                # The bound on the device is strict: before the next period is
+                # dispatched, the copy started one period earlier has finished, so
+                # its device values can go once the period reading them is done.
+                if store_on_host:
+                    jax.block_until_ready(in_flight_host_copies)
+                    in_flight_host_copies = tuple(
+                        solution.get(period, MappingProxyType({})).values()
+                    )
+
             if diagnostics_enabled or stats_enabled:
                 try:
                     _emit_post_loop_diagnostics(
                         logger=logger,
                         diagnostic_rows=diagnostic_rows,
-                        solution=MappingProxyType(solution),
+                        solution=(
+                            device_read_view(values=solution)
+                            if store_on_host
+                            else MappingProxyType(solution)
+                        ),
                         regimes=regimes,
                         flat_params=flat_params,
                         running_any_nan=running_any_nan,

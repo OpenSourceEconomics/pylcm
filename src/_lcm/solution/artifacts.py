@@ -17,6 +17,7 @@ from _lcm.params.sequence_leaf import SequenceLeaf
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.solution.contract import BackwardInductionResult
+from _lcm.solution.host_values import device_read_view, is_host_value
 from _lcm.solution.result_snapshot import own_artifact_store, own_value_store
 from _lcm.typing import (
     ArtifactPayload,
@@ -370,7 +371,15 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
         OwnedSolutionView(
             model_instance_id=model_instance_id,
             params_fingerprint=params_fingerprint,
-            values=internal_result.value_functions,
+            values=(
+                device_read_view(values=internal_result.value_functions)
+                if any(
+                    is_host_value(value)
+                    for regime_to_value in internal_result.value_functions.values()
+                    for value in regime_to_value.values()
+                )
+                else internal_result.value_functions
+            ),
             simulation_policies=(
                 declared_replay_policies
                 if retention.retains_replay

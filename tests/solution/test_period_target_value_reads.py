@@ -35,6 +35,7 @@ from lcm import (
     AgeRange,
     DeterministicTransition,
     DiscreteGrid,
+    ExecutionConfig,
     Gate,
     LinSpacedGrid,
     Model,
@@ -119,7 +120,9 @@ def _working_regime() -> UserRegime:
     )
 
 
-def _three_regime_model() -> Model:
+def _three_regime_model(
+    execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
+) -> Model:
     return Model(
         regimes={
             "a": _working_regime(),
@@ -136,6 +139,7 @@ def _three_regime_model() -> Model:
             "a": {"a": AgeRange(exclusive_stop=3), "c": 3},
             "b": {"b": AgeRange(start=1, exclusive_stop=3), "c": 3},
         },
+        execution_config=execution_config,
     )
 
 
@@ -162,7 +166,9 @@ def _same_health(health: DiscreteState) -> DiscreteState:
     return health
 
 
-def _gated_model() -> Model:
+def _gated_model(
+    execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
+) -> Model:
     terminal = UserRegime(functions={"utility": _terminal_utility}, states=_states())
     return Model(
         regimes={"src": _working_regime(), "tgt": terminal, "fb": terminal},
@@ -191,6 +197,7 @@ def _gated_model() -> Model:
                 },
             )
         },
+        execution_config=execution_config,
     )
 
 
