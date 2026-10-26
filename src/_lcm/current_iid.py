@@ -89,6 +89,19 @@ def law_parameters(
     )
 
 
+def source_law_params(
+    *, binding: ShockBinding, supplied: Mapping[ReferenceName, LawValue | BoolND]
+) -> Mapping[ReferenceName, LawValue | BoolND]:
+    """Retain the producing phase's law slots from shared group parameters."""
+    return MappingProxyType(
+        {
+            name: value
+            for name, value in supplied.items()
+            if name in binding.params_template or name == CORRELATION_SUPPORT_ARGUMENT
+        }
+    )
+
+
 class CurrentIIDDrawFrame(NamedTuple):
     """One produced realization and its explicit independent-base custody.
 
@@ -231,7 +244,7 @@ class CurrentIIDDrawPlan:
             )
             addressed_bases.update(addressed)
             resolved_bases.update(override.bases)
-            source_params[name] = MappingProxyType(dict(supplied))
+            source_params[name] = source_law_params(binding=binding, supplied=supplied)
             source_inputs[name] = MappingProxyType(dict(inputs))
             base = jnp.stack(tuple(override.bases.values()))[None]
             realised, _ = binding.group._realise(  # noqa: SLF001 - shared internal law kernel
@@ -678,7 +691,7 @@ class CurrentIIDPlan:
                     row, axis
                 ]
                 held[shock] = nodes.base_nodes[row, axis]
-            source_params[name] = supplied
+            source_params[name] = source_law_params(binding=binding, supplied=supplied)
             source_inputs[name] = inputs
             factors.extend(factor[row] for factor in group_factors)
             valid &= realised.valid & law_input_validity(binding=binding, inputs=inputs)
