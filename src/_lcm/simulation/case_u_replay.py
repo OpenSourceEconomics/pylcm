@@ -22,7 +22,7 @@ from _lcm.shock_overrides import CurrentIIDOverride
 from _lcm.simulation.case_r_replay import case_r_status
 from _lcm.solution.continuation_target import union_fixed_params, union_free_params
 from _lcm.solution.current_iid_case_u_build import _bind_numeric_pieces
-from _lcm.solution.feasibility import BoundInputStatus
+from _lcm.solution.feasibility import BoundedResult, BoundInputStatus
 from _lcm.typing import (
     ConstraintFunction,
     EconFunctionKwargs,
@@ -48,7 +48,7 @@ from lcm.typing import (
 class CaseUReplayOutput(NamedTuple):
     """Original action, same realised frame and mandatory construction summaries."""
 
-    actions: Mapping[ActionName, FloatND]
+    actions: Mapping[ActionName, FloatND | IntND]
     value: FloatND
     physical: Mapping[ShockName, FloatND | IntND]
     law_invalid: BoolND
@@ -97,7 +97,7 @@ class CaseUActionReplay:
     draw_plan: CurrentIIDDrawPlan
     feasibility: ConstraintFunction
 
-    def __call__(
+    def __call__(  # noqa: C901, PLR0912, PLR0915 - genuine source branches share one actual frame
         self,
         *,
         future: tuple[EGMCarry, ...],
@@ -114,6 +114,8 @@ class CaseUActionReplay:
         child_node_values: tuple[tuple[FloatND | IntND, ...], ...],
         child_age_values: tuple[FloatND | IntND, ...],
         nb_source_grid: FloatND | None,
+        negm_source_grid: FloatND | None = None,
+        negm_outer_nodes: FloatND | None = None,
     ) -> CaseUReplayOutput:
         declaration = self.declaration
         payload = CaseUReplayChildren(
@@ -150,17 +152,88 @@ class CaseUActionReplay:
             overrides=actual_overrides,
             override_active=active,
         )
+        if declaration.negm_point is not None:
+            if (
+                negm_source_grid is None
+                or negm_outer_nodes is None
+                or floor_status is not None
+            ):
+                raise TypeError(
+                    "Finite NEGM replay lost its original numerical operands."
+                )
+            point = declaration.negm_point.with_operands(
+                source_grid=negm_source_grid,
+                savings_nodes=savings_nodes,
+                borrowing_limit=borrowing_limit,
+                outer_nodes=negm_outer_nodes,
+            )
+            nested = point.select(
+                liquid=states[point.euler_state_name],
+                physical=frame.physical,
+                pool={**pool, **{name: states[name] for name in point.passive_names}},
+                children=payload.children,
+            )
+            original, outer_action, _outer_index = nested.output
+            invalid = ~original.valid | (period != declaration.future.period)
+            for status in (*nested.bound_status, *(nested.query_status or ())):
+                invalid |= jnp.any(jnp.stack(tuple(status)))
+            actions = {
+                point.action_name: original.policy,
+                point.outer_action: outer_action,
+            }
+            actual = {**pool, **states, **frame.physical, **actions}
+            feasible = self.feasibility(
+                **{
+                    name: actual[name]
+                    for name in inspect.signature(self.feasibility).parameters
+                }
+            )
+            return CaseUReplayOutput(
+                actions=actions,
+                value=original.value,
+                physical=dict(frame.physical),
+                law_invalid=~frame.valid,
+                invalid=invalid,
+                feasible=original.feasible & feasible,
+                native_owner=original.native_owner,
+                side_id=original.side_id,
+                corner=original.corner,
+            )
         if declaration.nbegm_point is not None:
+            from _lcm.egm.current_iid_nbegm import NBCaseURidePoint  # noqa: PLC0415
+
             if nb_source_grid is None:
                 raise TypeError("NB U replay lost its original interval support.")
             point = declaration.nbegm_point.with_savings(nodes=savings_nodes)
             point = replace(point, source_grid=nb_source_grid)
-            selected = point.node(
-                liquid=states[point.euler_state_name],
-                physical=frame.physical,
-                pool=pool,
-                children=payload.children,
-            )
+            selected_actions = {}
+            if isinstance(point, NBCaseURidePoint):
+                ride = point.select(
+                    liquid=states[point.euler_state_name],
+                    physical=frame.physical,
+                    pool={
+                        **pool,
+                        **{name: states[name] for name in point.passive_names},
+                    },
+                    children=payload.children,
+                )
+                selected = BoundedResult(
+                    output=ride.output.original,
+                    bound_status=ride.bound_status,
+                    query_status=ride.query_status,
+                    continuation_read_counts=ride.continuation_read_counts,
+                )
+                selected_actions = {
+                    name: ride.output.action_codes[index]
+                    for index, name in enumerate(point.discrete_action_names)
+                }
+            else:
+                selected = point.node(
+                    liquid=states[point.euler_state_name],
+                    physical=frame.physical,
+                    pool=pool,
+                    children=payload.children,
+                )
             invalid = ~selected.output.valid | (period != declaration.future.period)
             for status in (*selected.bound_status, *(selected.query_status or ())):
                 invalid |= jnp.any(jnp.stack(tuple(status)))
@@ -169,6 +242,7 @@ class CaseUActionReplay:
                 **states,
                 **frame.physical,
                 point.action_name: selected.output.policy,
+                **selected_actions,
             }
             feasible = self.feasibility(
                 **{
@@ -177,7 +251,7 @@ class CaseUActionReplay:
                 }
             )
             return CaseUReplayOutput(
-                actions={point.action_name: selected.output.policy},
+                actions={point.action_name: selected.output.policy, **selected_actions},
                 value=selected.output.value,
                 physical=dict(frame.physical),
                 law_invalid=~frame.valid,
@@ -292,7 +366,12 @@ def case_u_arguments(
     declaration = spec.periods[period]
     pieces = declaration.pieces
     nb = declaration.nbegm_point
-    if nb is not None:
+    nested = declaration.negm_point
+    if nested is not None:
+        savings = nested.savings_nodes
+        floor, status = nested.borrowing_limit, None
+        continuation = nested.keeper.continuation_plan
+    elif nb is not None:
         savings = nb.savings_nodes
         floor, status = nb.borrowing_limit, None
         continuation = nb.continuation_plan
@@ -338,6 +417,8 @@ def case_u_arguments(
                 read.age_values for read in continuation.child_reads.values()
             ),
             "nb_source_grid": None if nb is None else nb.source_grid,
+            "negm_source_grid": None if nested is None else nested.source_grid,
+            "negm_outer_nodes": None if nested is None else nested.outer_nodes,
         }
     )
 

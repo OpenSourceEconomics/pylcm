@@ -33,6 +33,7 @@ from typing import (
     TypeAliasType,
     TypedDict,
     cast,
+    overload,
     runtime_checkable,
 )
 
@@ -6454,7 +6455,9 @@ def _solve_ride_along_cell_step(
     feasibility_partition: ResolvedAxisPartition | None = None,
     feasible_interval_mask: BoolND | None = None,
     retain_query: bool = False,
-) -> _NBEGMStepChannels:
+    source_query: Float1D | None = None,
+    return_owner: bool = False,
+) -> _NBEGMStepChannels | _OwnedNBEGMQueryStep:
     """Run one ride-along cell's 1-D case-piece step against savings continuation.
 
     A pure-kink schedule uses the continuous multi-interval step; a schedule with a
@@ -6471,6 +6474,10 @@ def _solve_ride_along_cell_step(
         nbegm_unified_step_savings,
     )
 
+    if has_jump and (source_query is not None or return_owner):
+        raise UnsupportedOperationError(
+            "Owned NB ride point reads require the original continuous savings bank."
+        )
     if has_jump:
         if inverse_eis is not None:
             msg = (
@@ -6510,6 +6517,8 @@ def _solve_ride_along_cell_step(
         feasibility_partition=feasibility_partition,
         feasible_interval_mask=feasible_interval_mask,
         retain_query=retain_query,
+        query_grid=source_query,
+        return_owner=return_owner,
     )
 
 
@@ -8988,6 +8997,17 @@ def _nbegm_cell_publication_grid(
     )
 
 
+class _NBEGMRideSourcePoint(NamedTuple):
+    """Original point channels, including mapped branch and query axes."""
+
+    value: FloatND
+    marginal: FloatND
+    policy: FloatND
+    savings: FloatND
+    native_owner: IntND
+    action_codes: IntND
+
+
 @dataclass(frozen=True, eq=False, kw_only=True)
 class _NBEGMCellSolver:
     """The per-cell envelope solve of one period, bound to its states and params."""
@@ -9015,6 +9035,104 @@ class _NBEGMCellSolver:
 
     inverse_eis: FloatND | None
     """`1/psi` under Epstein-Zin, else `None` for the additive step."""
+
+    def construct_point(
+        self,
+        *,
+        ride_values: tuple[_RideCoordinate, ...],
+        query: Float1D,
+        cont_value: FloatND,
+        cont_marginal: FloatND,
+    ) -> _NBEGMRideSourcePoint:
+        """Read the complete original bank at points without shrinking its support.
+
+        The supplied continuation rows are the output of this period's original
+        `_NBEGMCellContinuation`, including its branch-class leading axis.
+        Branch-specific candidate construction and native selection stay in the
+        original branch solver. This first point route has no side augmentation.
+        """
+        binder = self.binder
+        statics = binder.statics
+        if (
+            statics.has_jump
+            or statics.continuation_reads_liquid
+            or self.inverse_eis is not None
+            or binder.current_predicates is not None
+            or binder.feasibility_constraints
+            or binder.n_published_boundaries
+            or binder.current_floor is not None
+        ):
+            raise UnsupportedOperationError(
+                "Owned NB ride points require continuous additive literal-floor "
+                "ordinary-child cells without extra feasibility boundaries."
+            )
+        cell = MappingProxyType(dict(zip(statics.ride_names, ride_values, strict=True)))
+        branch_solver = _NBEGMBranchSolver(
+            cell_solver=self,
+            cell=cell,
+            query_grid=self.liquid,
+            feasibility_partition=None,
+            feasible_interval_mask=None,
+            interval_continuation=None,
+        )
+        names = tuple(name for name, _codes in binder.schedule_spec.discrete_actions)
+        if names:
+            codes = jnp.stack(
+                jnp.meshgrid(
+                    *(
+                        jnp.asarray(self.kwargs[name], dtype=jnp.int32)
+                        for name in names
+                    ),
+                    indexing="ij",
+                ),
+                axis=-1,
+            ).reshape(-1, len(names))
+            inputs = _branch_inputs(
+                codes=codes,
+                cont_value=cont_value,
+                cont_marginal=cont_marginal,
+                extra_cont_value=None,
+                cliff_savings=None,
+            )
+            rows = map_over_leading_axis(
+                func=functools.partial(
+                    _solve_one_owned_branch,
+                    branch_solver=branch_solver,
+                    branch_action_names=names,
+                    query=query,
+                ),
+                xs=inputs,
+                batch_size=statics.branch_width,
+            )
+            # This is the original hard branch max, in its original mesh order.
+            # The resulting row positions select every associated channel.
+            modal = jnp.argmax(rows.value, axis=0)
+            index = jnp.arange(rows.value.shape[1])
+            return _NBEGMRideSourcePoint(
+                value=rows.value[modal, index],
+                marginal=rows.marginal[modal, index],
+                policy=rows.policy[modal, index],
+                savings=rows.savings[modal, index],
+                native_owner=rows.native_owner[modal, index],
+                action_codes=rows.action_codes[modal, index],
+            )
+        row = branch_solver.solve(
+            action_binding={},
+            branch_cont_value=cont_value,
+            branch_cont_marginal=cont_marginal,
+            branch_extra_cont_value=None,
+            branch_cliff_savings=None,
+            source_query=query,
+            return_owner=True,
+        )
+        return _NBEGMRideSourcePoint(
+            value=row.value,
+            marginal=row.marginal,
+            policy=row.policy,
+            savings=row.query_data.savings,
+            native_owner=row.owner,
+            action_codes=jnp.zeros((query.shape[0], 0), dtype=jnp.int32),
+        )
 
     def __call__(
         self,
@@ -9419,6 +9537,7 @@ class _NBEGMBranchSolver:
 
         return jax.vmap(one)(self.query_grid)
 
+    @overload
     def solve(
         self,
         *,
@@ -9427,7 +9546,34 @@ class _NBEGMBranchSolver:
         branch_cont_marginal: FloatND | None,
         branch_extra_cont_value: FloatND | None,
         branch_cliff_savings: FloatND | None,
-    ) -> _NBEGMStepChannels | BoundedResult[_NBEGMStepChannels]:
+        source_query: Float1D | None = None,
+        return_owner: Literal[False] = False,
+    ) -> _NBEGMStepChannels | BoundedResult[_NBEGMStepChannels]: ...
+
+    @overload
+    def solve(
+        self,
+        *,
+        action_binding: Mapping[str, IntND],
+        branch_cont_value: FloatND | None,
+        branch_cont_marginal: FloatND | None,
+        branch_extra_cont_value: FloatND | None,
+        branch_cliff_savings: FloatND | None,
+        source_query: Float1D,
+        return_owner: Literal[True],
+    ) -> _OwnedNBEGMQueryStep: ...
+
+    def solve(
+        self,
+        *,
+        action_binding: Mapping[str, IntND],
+        branch_cont_value: FloatND | None,
+        branch_cont_marginal: FloatND | None,
+        branch_extra_cont_value: FloatND | None,
+        branch_cliff_savings: FloatND | None,
+        source_query: Float1D | None = None,
+        return_owner: bool = False,
+    ) -> _NBEGMStepChannels | BoundedResult[_NBEGMStepChannels] | _OwnedNBEGMQueryStep:
         """Solve the cell's continuous subproblem for one discrete branch.
 
         `action_binding` binds the discrete action into cash-on-hand, and into the
@@ -9448,6 +9594,20 @@ class _NBEGMBranchSolver:
 
         cell_solver = self.cell_solver
         binder = cell_solver.binder
+        if return_owner and (
+            source_query is None
+            or binder.statics.has_jump
+            or binder.statics.continuation_reads_liquid
+            or cell_solver.inverse_eis is not None
+            or binder.current_predicates is not None
+            or binder.feasibility_constraints
+            or binder.n_published_boundaries
+            or binder.current_floor is not None
+        ):
+            raise UnsupportedOperationError(
+                "Owned NB ride points require continuous additive literal-floor "
+                "ordinary-child cells without extra feasibility boundaries."
+            )
         statics = binder.statics
         schedule_spec = binder.schedule_spec
         kwargs = cell_solver.kwargs
@@ -9565,7 +9725,7 @@ class _NBEGMBranchSolver:
             raise ValueError(
                 "a smooth NB-EGM cell cannot use an interval continuation."
             )
-        return _solve_ride_along_cell_step(
+        step = _solve_ride_along_cell_step(
             has_jump=statics.has_jump,
             jump_positions=branch_jump_positions,
             extra_savings=branch_cliff_savings,
@@ -9583,8 +9743,50 @@ class _NBEGMBranchSolver:
             arithmetic=statics.envelope_arithmetic,
             feasibility_partition=self.feasibility_partition,
             feasible_interval_mask=self.feasible_interval_mask,
-            retain_query=binder.query_model is not None,
+            retain_query=return_owner or binder.query_model is not None,
+            source_query=source_query,
+            return_owner=return_owner,
         )
+        if return_owner:
+            if not isinstance(step, _OwnedNBEGMQueryStep):
+                raise TypeError("NB ride point lost its original native owner.")
+            return step
+        if isinstance(step, _OwnedNBEGMQueryStep):
+            raise TypeError("Ordinary NB ride solve received an owned point record.")
+        return step
+
+
+# keyword-only-exempt: library-callback=_lcm.utils.dispatchers.map_over_leading_axis
+def _solve_one_owned_branch(
+    inputs: Mapping[str, FloatND | IntND],
+    *,
+    branch_solver: _NBEGMBranchSolver,
+    branch_action_names: tuple[ActionName, ...],
+    query: Float1D,
+) -> _NBEGMRideSourcePoint:
+    """Transport the original selected channels, keeping unused metadata local."""
+    row = branch_solver.solve(
+        action_binding={
+            name: inputs["codes"][position]
+            for position, name in enumerate(branch_action_names)
+        },
+        branch_cont_value=inputs["cont_value"],
+        branch_cont_marginal=inputs["cont_marginal"],
+        branch_extra_cont_value=None,
+        branch_cliff_savings=None,
+        source_query=query,
+        return_owner=True,
+    )
+    return _NBEGMRideSourcePoint(
+        value=row.value,
+        marginal=row.marginal,
+        policy=row.policy,
+        savings=row.query_data.savings,
+        native_owner=row.owner,
+        action_codes=jnp.broadcast_to(
+            inputs["codes"], (query.shape[0], len(branch_action_names))
+        ),
+    )
 
 
 # keyword-only-exempt: library-callback=_lcm.utils.dispatchers.map_over_leading_axis

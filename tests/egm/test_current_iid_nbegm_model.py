@@ -15,7 +15,7 @@ from jax import Array
 
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.current_iid_case_u_replay import CASE_U_FUTURE_REPLAY, CaseUReplayChildren
-from _lcm.egm.current_iid_nbegm import NBCaseUArguments, NBCaseUProgram
+from _lcm.egm.current_iid_nbegm import NBCaseUArguments, NBCaseUPoint, NBCaseUProgram
 from _lcm.egm.current_iid_nbegm_r import NBCaseRProgram
 from _lcm.egm.current_iid_pullback import certify_resources_map
 from _lcm.egm.preferences import _PreferencesBuilder
@@ -811,6 +811,7 @@ def test_original_nbegm_u_kink_and_corner_keep_original_candidates(
         "age": jnp.asarray(1.0),
     }
     point = kernel.point
+    assert isinstance(point, NBCaseUPoint)
     assert isinstance(point.core, _NBEGMContinuousCore)
     child = future.children["done"]
     for index, z in enumerate(shock):
@@ -1746,6 +1747,7 @@ def test_original_optional_callbacks_survive_construction_and_replace() -> None:
     kernel = scalar._regimes["child"].solution.period_kernels[1]
     assert isinstance(kernel, NativeNBCaseUPeriodKernel)
     core = kernel.point.core
+    assert isinstance(core, _NBEGMContinuousCore)
     assert core.interval_recipe is None
     assert core._evaluate_preimages is None
     recipe = _query(actions=False).model.intervals

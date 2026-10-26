@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from functools import partial
 from types import MappingProxyType
 
+import jax
 import jax.numpy as jnp
 
 from _lcm.continuation import ProjectedContinuationSpec
@@ -68,7 +69,7 @@ def _nb_projection_capacity(
     return int(liquid_support_by_date[target, period].shape[0])
 
 
-def projected_producer_declarations(  # noqa: C901, PLR0912 - original solver-specific dated shapes and profile refusal
+def projected_producer_declarations(  # noqa: C901, PLR0912, PLR0915 - original solver-specific dated shapes and profile refusal
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
     bindings: Mapping[tuple[RegimeName, Phase, ShockGroupName], ShockBinding],
@@ -86,6 +87,7 @@ def projected_producer_declarations(  # noqa: C901, PLR0912 - original solver-sp
     """
     from _lcm.solution.dcegm import _BoundDCEGM  # noqa: PLC0415
     from _lcm.solution.nbegm import _BoundNBEGM  # noqa: PLC0415
+    from _lcm.solution.negm import _BoundNEGM  # noqa: PLC0415
 
     if materializer is not None and liquid_support_by_date is None:
         raise TypeError(
@@ -96,18 +98,31 @@ def projected_producer_declarations(  # noqa: C901, PLR0912 - original solver-sp
     for target in targets:
         user_regime = user_regimes[target]
         solver = user_regime.solver
-        if not isinstance(solver, (_BoundDCEGM, _BoundNBEGM)):
+        if not isinstance(solver, (_BoundDCEGM, _BoundNBEGM, _BoundNEGM)):
             continue
+        liquid = (
+            solver.inner.continuous_state
+            if isinstance(solver, _BoundNEGM)
+            else solver.continuous_state
+        )
+        if isinstance(solver, _BoundNEGM) and materializer is not None:
+            raise UnsupportedOperationError(
+                "Cold finite NEGM U admission remains required."
+            )
         if isinstance(solver, _BoundDCEGM) and solver.accuracy == "certified":
             raise UnsupportedOperationError(
                 "Certified current-IID EGM publication requires its complete "
                 "profile implementation."
             )
-        if isinstance(solver, _BoundNBEGM):
+        if isinstance(solver, (_BoundNBEGM, _BoundNEGM)):
+            if materializer is not None and tuple(state_grids[target]) != (liquid,):
+                raise UnsupportedOperationError(
+                    "Cold passive NB projected template allocation remains required."
+                )
             if not active_periods[target]:
                 continue
             capacity = _nb_projection_capacity(
-                state_grid=state_grids[target][solver.continuous_state],
+                state_grid=state_grids[target][liquid],
                 target=target,
                 period=active_periods[target][0],
                 liquid_support_by_date=liquid_support_by_date,
@@ -117,7 +132,7 @@ def projected_producer_declarations(  # noqa: C901, PLR0912 - original solver-sp
             capacity = solver.current_iid_projection_capacity
         if liquid_support_by_date is None:
             grid = jnp.asarray(
-                state_grids[target][solver.continuous_state].to_jax(),
+                state_grids[target][liquid].to_jax(),
                 dtype=canonical_float_dtype(),
             )
             template = _projected_template(grid=grid, capacity=capacity)
@@ -148,10 +163,29 @@ def projected_producer_declarations(  # noqa: C901, PLR0912 - original solver-sp
                 for period in periods
             }
             template = templates[periods[0]]
+        passive_names = tuple(name for name in state_grids[target] if name != liquid)
+        if isinstance(solver, (_BoundNBEGM, _BoundNEGM)) and passive_names:
+            if materializer is not None:
+                raise UnsupportedOperationError(
+                    "Cold passive NB projected template allocation remains required."
+                )
+            passive_shape = tuple(
+                state_grids[target][name].to_jax().shape[0] for name in passive_names
+            )
+            templates = {
+                period: jax.tree.map(
+                    lambda leaf, shape=passive_shape: jnp.broadcast_to(
+                        leaf, (*shape, *leaf.shape)
+                    ),
+                    actual,
+                )
+                for period, actual in templates.items()
+            }
+            template = templates[periods[0]]
         declarations[target] = ProjectedContinuationSpec(
             template=template,
             producer=target,
-            liquid_state=solver.continuous_state,
+            liquid_state=liquid,
             templates_by_period=templates,
         )
     return MappingProxyType(declarations)

@@ -31,7 +31,11 @@ from lcm.typing import ActionName
 
 
 def _case_u_output_roles(
-    *, action_name: ActionName, physical_names: tuple[ShockName, ...]
+    *,
+    action_name: ActionName,
+    physical_names: tuple[ShockName, ...],
+    discrete_action_names: tuple[ActionName, ...] = (),
+    additional_continuous_action_names: tuple[ActionName, ...] = (),
 ) -> OutputRoleTree:
     """Map registered compiler descriptors without allocating prototype arrays."""
     floating = jax.ShapeDtypeStruct((), canonical_float_dtype())
@@ -40,7 +44,11 @@ def _case_u_output_roles(
     prototype = _unflatten_case_u_output(
         None,
         (
-            {action_name: floating},
+            {
+                action_name: floating,
+                **dict.fromkeys(discrete_action_names, integer),
+                **dict.fromkeys(additional_continuous_action_names, floating),
+            },
             floating,
             dict.fromkeys(physical_names, floating),
             boolean,
@@ -52,7 +60,11 @@ def _case_u_output_roles(
         ),
     )
     roles = (
-        {action_name: "action"},
+        {
+            action_name: "action",
+            **dict.fromkeys(discrete_action_names, "action"),
+            **dict.fromkeys(additional_continuous_action_names, "action"),
+        },
         "decision_value",
         dict.fromkeys(physical_names, "current_shock"),
         "current_iid_invalid",
@@ -106,6 +118,8 @@ def declare_case_u_replay_programs(*, regime: Regime) -> Regime:
             output_roles=_case_u_output_roles(
                 action_name=declaration.action_name,
                 physical_names=plan.physical_names,
+                discrete_action_names=declaration.discrete_action_names,
+                additional_continuous_action_names=declaration.additional_continuous_action_names,
             ),
             disposition=CoreExecutionDisposition.PLANNED,
         )

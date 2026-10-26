@@ -1,7 +1,7 @@
 """Unresolved direct-state envelope requirements of private owned U generations."""
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
@@ -14,6 +14,7 @@ from lcm.typing import FunctionName, ReferenceName, RegimeName, StateName, UserF
 if TYPE_CHECKING:
     from _lcm.continuation import ProjectedProducerDate
     from _lcm.current_iid import CurrentIIDPlan
+    from _lcm.egm.current_iid_negm_origin import DatedNEGMCaseUBranch
     from _lcm.solution.contract import SolverBuildContext
     from _lcm.solution.dcegm import _BoundDCEGM
     from lcm.regime import Regime as UserRegime
@@ -24,6 +25,7 @@ else:
     type CurrentIIDPlan = object
     type SolverBuildContext = object
     type _BoundDCEGM = object
+    type DatedNEGMCaseUBranch = object
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -119,6 +121,10 @@ class DatedCaseUStepAuthority:
     date: ProjectedProducerDate
     plan: CurrentIIDPlan
     state_utility_obligation: DatedStateUtilityObligation | None
+    nested_origin: DatedNEGMCaseUBranch | None = field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Exact original NEGM branch, never an ordinary-publication permission."""
 
     def require(
         self,
@@ -135,6 +141,20 @@ class DatedCaseUStepAuthority:
             is_case_u_source,
         )
 
+        if self.nested_origin is not None:
+            if (
+                self.context is not self.nested_origin.context
+                or self.solver is not self.nested_origin.solver
+                or self.date is not self.nested_origin.source.date
+                or self.plan is not self.nested_origin.source.plan
+                or self.period != self.nested_origin.source.period
+                or self.state_utility_obligation is not None
+            ):
+                raise UnsupportedOperationError(
+                    "Nested U pieces lost their original source/branch bindings."
+                )
+            self.nested_origin.require(context=context, solver=solver, period=period)
+            return
         original = self.context
         name = original.regime_name
         spec = original.projected_continuation_declarations.get(name)

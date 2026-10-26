@@ -39,6 +39,7 @@ from _lcm.egm.outer_search import AdaptiveOuterMesh
 from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
 from _lcm.engine import EGMPolicyRead, NNBEGMPolicyRead, Regime, StateActionSpace
 from _lcm.execution.core_program import (
+    ProgramScope,
     core_program_graph,
     retained_artifact_payload_type,
 )
@@ -1043,6 +1044,13 @@ def build_solution_authority(  # noqa: C901, PLR0912, PLR0915
                         spec=continuation_spec,
                         template=continuation_template,
                     )
+                    or _is_installed_negm_u_continuation(
+                        regime=regime,
+                        regime_name=regime_name,
+                        period=period,
+                        spec=continuation_spec,
+                        template=continuation_template,
+                    )
                     or durable_projected
                     else PersistencePolicy.NOT_PERSISTED
                 )
@@ -1308,12 +1316,15 @@ def _is_installed_exact_u_continuation(
         return False
     from _lcm.egm.current_iid_nbegm import (  # noqa: PLC0415 - original NB imports authority construction
         NBCaseUArguments,
+        NBCaseUPoint,
         NBCaseUProgram,
+        NBCaseURidePoint,
     )
     from _lcm.egm.projected_continuation import ProjectedEGMCarry  # noqa: PLC0415
     from _lcm.solution.current_iid_case_u_native import (  # noqa: PLC0415 - producer imports authority construction
         CaseUExactArguments,
         CaseUExactFunction,
+        CaseURideExactFunction,
         NativeCaseUPeriodKernel,
     )
     from _lcm.solution.current_iid_nbegm import (  # noqa: PLC0415 - original NB imports authority construction
@@ -1323,6 +1334,23 @@ def _is_installed_exact_u_continuation(
     kernel = regime.solution.period_kernels[period]
     if type(kernel) is NativeNBCaseUPeriodKernel:
         date = spec.date_at(period=period)
+        function = kernel.program.function
+        if type(kernel.point) is NBCaseURidePoint:
+            if (
+                type(function) is not CaseURideExactFunction
+                or function.passive_names != kernel.point.passive_names
+                or function.state_names
+                != tuple(kernel.context.state_action_space.states)
+                or kernel.point.core.statics.ride_names != kernel.point.passive_names
+                or kernel.point.core.statics.liquid_name
+                != kernel.point.euler_state_name
+            ):
+                return False
+        elif (
+            type(kernel.point) is not NBCaseUPoint
+            or type(function) is not CaseUExactFunction
+        ):
+            return False
         return (
             type(template) is ProjectedEGMCarry
             and kernel.spec is spec
@@ -1331,7 +1359,8 @@ def _is_installed_exact_u_continuation(
             and kernel.context.projected_continuation_declarations[regime_name] is spec
             and kernel.template.output.projected is template
             and date.template is template
-            and type(kernel.program.function) is CaseUExactFunction
+            and type(kernel.program.function)
+            in (CaseUExactFunction, CaseURideExactFunction)
             and type(kernel.program.function.point) is NBCaseUProgram
             and type(kernel.program.argument_builder) is CaseUExactArguments
             and type(kernel.program.argument_builder.point) is NBCaseUArguments
@@ -3172,3 +3201,103 @@ __all__ = [
     "bind_generated_solution_authority",
     "build_solution_authority",
 ]
+
+
+def _is_installed_negm_u_continuation(
+    *,
+    regime: Regime,
+    regime_name: RegimeName,
+    period: int,
+    spec: ContinuationSpec,
+    template: ArtifactPayload,
+) -> bool:
+    """Recognize only this exact installed genuine complete finite nested source."""
+    from _lcm.egm.current_iid_negm import NEGMCaseUPoint  # noqa: PLC0415
+    from _lcm.egm.current_iid_negm_program import (  # noqa: PLC0415
+        NEGMCaseUArguments,
+        NEGMCaseUProgram,
+    )
+    from _lcm.egm.projected_continuation import ProjectedEGMCarry  # noqa: PLC0415
+    from _lcm.egm.step import _EGMStep  # noqa: PLC0415
+    from _lcm.solution.current_iid_case_u_native import (  # noqa: PLC0415
+        CaseUExactArguments,
+        CaseURideExactFunction,
+    )
+    from _lcm.solution.current_iid_negm import (  # noqa: PLC0415 - producer imports authority
+        NativeNEGMCaseUPeriodKernel,
+    )
+    from _lcm.solution.dcegm import _DCEGMPeriodKernel  # noqa: PLC0415
+    from _lcm.solution.negm import _NEGMPeriodKernel  # noqa: PLC0415
+
+    kernel = regime.solution.period_kernels[period]
+    if (
+        type(kernel) is not NativeNEGMCaseUPeriodKernel
+        or type(spec) is not ProjectedContinuationSpec
+        or type(template) is not ProjectedEGMCarry
+    ):
+        return False
+    date = spec.date_at(period=period)
+    point = kernel.point
+    if (
+        type(point) is not NEGMCaseUPoint
+        or kernel.spec is not spec
+        or kernel.period != period
+        or point.period != period
+        or point.context is not kernel.context
+        or kernel.context.regime_name != regime_name
+        or kernel.context.projected_continuation_declarations[regime_name] is not spec
+        or kernel.template.output.projected is not template
+        or date.template is not template
+        or kernel.context.current_iid_plans.get(period) is not point.plan
+        or type(point.owner) is not _NEGMPeriodKernel
+        or point.owner.regime_name != regime_name
+        or date.authority.producer != regime_name
+        or date.authority.period != period
+        or date.authority.artifact_key != spec.artifact_key
+        or date.guard_program is not None
+        or point.source_grid
+        is not kernel.context.state_action_space.states[point.euler_state_name]
+        or point.outer_nodes is not point.owner.outer_grid_values
+        or point.savings_nodes is not point.keeper.savings_nodes
+        or point.borrowing_limit is not point.keeper.borrowing_limit
+        or kernel.future.source != regime_name
+        or kernel.future.period != period
+        or tuple(kernel.future.specs) != (point.target,)
+    ):
+        return False
+    for original, pieces in (
+        (point.owner.keeper_kernel, point.keeper),
+        (point.owner.adjuster_kernel, point.adjuster),
+    ):
+        if (
+            type(original) is not _DCEGMPeriodKernel
+            or type(original.demand_step) is not _EGMStep
+            or original.demand_step.pieces is not pieces
+            or pieces.continuation_plan.certainty_equivalent
+            is not kernel.context.certainty_equivalent
+            or tuple(pieces.continuation_plan.stateful_targets) != (point.target,)
+        ):
+            return False
+    for scope, program in (
+        (ProgramScope.VALUES_ONLY, kernel.program),
+        (ProgramScope.REPLAY, kernel.replay_program),
+    ):
+        function, arguments = program.function, program.argument_builder
+        if (
+            type(function) is not CaseURideExactFunction
+            or type(function.point) is not NEGMCaseUProgram
+            or type(arguments) is not CaseUExactArguments
+            or type(arguments.point) is not NEGMCaseUArguments
+            or function.point.pieces is not point
+            or arguments.point.pieces is not point
+            or function.point.plan is not point.plan
+            or function.point.period != period
+            or arguments.point.ages is not kernel.context.ages
+            or arguments.point.regime_name != regime_name
+            or function.capacity != date.authority.capacity
+            or function.passive_names != point.passive_names
+            or function.state_names != tuple(kernel.context.state_action_space.states)
+            or program.scope is not scope
+        ):
+            return False
+    return True

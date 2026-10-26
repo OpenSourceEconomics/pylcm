@@ -180,17 +180,17 @@ def _single_row_nbegm_query_step(
 
 
 class _OwnedNBEGMQueryStep(NamedTuple):
-    """Conditional query records and the separate native envelope owner."""
+    """Conditional query records and native owners with optional mapped axes."""
 
-    value: Float1D
+    value: FloatND
     """Value at each supplied liquid query."""
-    marginal: Float1D
+    marginal: FloatND
     """Native envelope marginal with respect to liquid."""
-    policy: Float1D
+    policy: FloatND
     """Consumption associated with the same winning record."""
     query_data: EGMQueryData
     """Conditional query records independent of native winner identity."""
-    owner: Int1D
+    owner: IntND
     """Existing stable native winner identity, or NO_OWNER."""
 
 
@@ -1584,6 +1584,8 @@ def nbegm_multi_interval_step_savings(
     arithmetic: ComparisonArithmetic = ...,
     feasibility_partition: ResolvedAxisPartition | None = ...,
     feasible_interval_mask: BoolND | None = ...,
+    query_grid: Float1D | None = ...,
+    return_owner: Literal[False] = ...,
     retain_query: Literal[False] = ...,
 ) -> tuple[Float1D, Float1D, Float1D]: ...
 
@@ -1604,6 +1606,8 @@ def nbegm_multi_interval_step_savings(
     arithmetic: ComparisonArithmetic = ...,
     feasibility_partition: ResolvedAxisPartition | None = ...,
     feasible_interval_mask: BoolND | None = ...,
+    query_grid: Float1D | None = ...,
+    return_owner: Literal[False] = ...,
     retain_query: Literal[True],
 ) -> _NBEGMQueryStep: ...
 
@@ -1624,11 +1628,57 @@ def nbegm_multi_interval_step_savings(
     arithmetic: ComparisonArithmetic = ...,
     feasibility_partition: ResolvedAxisPartition | None = ...,
     feasible_interval_mask: BoolND | None = ...,
+    query_grid: Float1D | None = ...,
+    return_owner: Literal[False] = ...,
     retain_query: bool = ...,
 ) -> tuple[Float1D, Float1D, Float1D] | _NBEGMQueryStep: ...
 
 
+@overload
 def nbegm_multi_interval_step_savings(
+    *,
+    cont_value: Float1D,
+    cont_marginal: Float1D,
+    liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat,
+    preferences: Preferences,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+    inverse_eis: ScalarFloat | None = ...,
+    arithmetic: ComparisonArithmetic = ...,
+    feasibility_partition: ResolvedAxisPartition | None = ...,
+    feasible_interval_mask: BoolND | None = ...,
+    query_grid: Float1D | None = ...,
+    return_owner: Literal[True],
+    retain_query: Literal[True],
+) -> _OwnedNBEGMQueryStep: ...
+
+
+@overload
+def nbegm_multi_interval_step_savings(
+    *,
+    cont_value: Float1D,
+    cont_marginal: Float1D,
+    liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat,
+    preferences: Preferences,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+    inverse_eis: ScalarFloat | None = ...,
+    arithmetic: ComparisonArithmetic = ...,
+    feasibility_partition: ResolvedAxisPartition | None = ...,
+    feasible_interval_mask: BoolND | None = ...,
+    query_grid: Float1D | None = ...,
+    return_owner: bool,
+    retain_query: bool,
+) -> tuple[Float1D, Float1D, Float1D] | _NBEGMQueryStep | _OwnedNBEGMQueryStep: ...
+
+
+def nbegm_multi_interval_step_savings(  # noqa: PLR0915 - preserve the original complete Euler and dense-corner candidate bank
     *,
     cont_value: Float1D,
     cont_marginal: Float1D,
@@ -1643,8 +1693,10 @@ def nbegm_multi_interval_step_savings(
     arithmetic: ComparisonArithmetic = "certified",
     feasibility_partition: ResolvedAxisPartition | None = None,
     feasible_interval_mask: BoolND | None = None,
+    query_grid: Float1D | None = None,
+    return_owner: bool = False,
     retain_query: bool = False,
-) -> tuple[Float1D, Float1D, Float1D] | _NBEGMQueryStep:
+) -> tuple[Float1D, Float1D, Float1D] | _NBEGMQueryStep | _OwnedNBEGMQueryStep:
     """Solve a continuous piecewise-affine regime against savings-space continuation.
 
     Same EGM geometry as `nbegm_multi_interval_step`, but the continuation is
@@ -1697,10 +1749,18 @@ def nbegm_multi_interval_step_savings(
         policy, each on `liquid_grid`.
 
     """
+    if return_owner and not retain_query:
+        raise ValueError("Native NB saving owners require retained query channels.")
     interval_of_grid = jnp.searchsorted(breakpoints, liquid_grid, side="right")
     coh_grid = (
         coh_slopes[interval_of_grid] * liquid_grid + coh_intercepts[interval_of_grid]
     )
+    query = liquid_grid if query_grid is None else query_grid
+    if query_grid is None:
+        coh_query = coh_grid
+    else:
+        query_interval = jnp.searchsorted(breakpoints, query, side="right")
+        coh_query = coh_slopes[query_interval] * query + coh_intercepts[query_interval]
 
     # The expected marginal is already in savings space (it carries `dR/ds`), so
     # the Euler inversion reads it directly — no explicit gross-return factor.
@@ -1820,39 +1880,53 @@ def nbegm_multi_interval_step_savings(
                 ),
             ]
         )
-        value, policy, marginal, saving = envelope_at_query(
+        published = envelope_at_query(
             endog_grid=jnp.concatenate(endog_parts),
             policy=jnp.concatenate(policy_parts),
             value=jnp.concatenate(value_parts),
             marginal=jnp.concatenate(marginal_parts),
             segment_id=jnp.concatenate(segment_parts),
-            x_query=liquid_grid,
+            x_query=query,
             arithmetic=arithmetic,
             feasibility_partition=feasibility_partition,
             feasible_interval_mask=feasible_interval_mask,
             candidate_savings=candidate_savings,
+            return_owner=return_owner,
         )
+        value, policy, marginal, saving = published[:4]
         value, marginal, policy = _publish_no_action_carry(
             value=value,
             marginal=marginal,
             policy=policy,
-            coh=coh_grid,
+            coh=coh_query,
             lowest_savings=savings_grid[0],
         )
-        return _single_row_nbegm_query_step(
+        data = _make_nbegm_query_data(
             value=value,
             marginal=marginal,
             policy=policy,
-            query_data=_make_nbegm_query_data(
-                value=value,
-                marginal=marginal,
-                policy=policy,
-                savings=saving,
-                floor_used=savings_grid[0],
-                liquid_grid=liquid_grid,
-                breakpoints=breakpoints,
-                corner_continuation=jnp.broadcast_to(cont_value[0], coh_slopes.shape),
-            ),
+            savings=saving,
+            floor_used=savings_grid[0],
+            liquid_grid=query,
+            breakpoints=breakpoints,
+            corner_continuation=jnp.broadcast_to(cont_value[0], coh_slopes.shape),
+        )
+        if return_owner:
+            if len(published) != len(
+                ("value", "policy", "marginal", "savings", "owner")
+            ):
+                raise TypeError(
+                    "Owned NB saving publication lost its original native owner."
+                )
+            return _OwnedNBEGMQueryStep(
+                value,
+                marginal,
+                policy,
+                data,
+                published_owner(value=value, stable_index=published[4]),
+            )
+        return _single_row_nbegm_query_step(
+            value=value, marginal=marginal, policy=policy, query_data=data
         )
 
     value, policy, marginal = envelope_at_query(
@@ -1861,7 +1935,7 @@ def nbegm_multi_interval_step_savings(
         value=jnp.concatenate(value_parts),
         marginal=jnp.concatenate(marginal_parts),
         segment_id=jnp.concatenate(segment_parts),
-        x_query=liquid_grid,
+        x_query=query,
         arithmetic=arithmetic,
         feasibility_partition=feasibility_partition,
         feasible_interval_mask=feasible_interval_mask,
@@ -1870,7 +1944,7 @@ def nbegm_multi_interval_step_savings(
         value=value,
         marginal=marginal,
         policy=policy,
-        coh=coh_grid,
+        coh=coh_query,
         lowest_savings=savings_grid[0],
     )
 

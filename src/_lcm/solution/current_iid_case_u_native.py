@@ -44,7 +44,13 @@ from _lcm.egm.current_iid_demands import (
     prepare_parent_resources_demands,
 )
 from _lcm.egm.current_iid_evaluation import CurrentResourcesEvaluation
-from _lcm.egm.current_iid_nbegm import NBCaseUArguments, NBCaseUProgram
+from _lcm.egm.current_iid_nbegm import (
+    NBCaseUArguments,
+    NBCaseUProgram,
+    NBCaseURidePoint,
+)
+from _lcm.egm.current_iid_negm import NEGMCaseUPoint
+from _lcm.egm.current_iid_negm_program import NEGMCaseUArguments, NEGMCaseUProgram
 from _lcm.egm.current_iid_resources_proof import prove_resources_only
 from _lcm.egm.projected_continuation import (
     PROJECTED_EGM_CONTINUATION,
@@ -101,6 +107,7 @@ from lcm.typing import (
     ScalarBool,
     ScalarFloat,
     ScalarInt,
+    StateName,
 )
 
 
@@ -166,7 +173,7 @@ def _admit_case_u(
 class CaseUExactOutput:
     """U-specific integrated source channels; no per-current-node policy artifact."""
 
-    value: Float1D
+    value: FloatND
     empty: BoolND
     projected: ProjectedEGMCarry
     source: CurrentResourcesEvaluation
@@ -208,7 +215,7 @@ jax.tree_util.register_pytree_with_keys(
 class CaseUExactArguments:
     """Actual point inputs plus every original incoming parent's numeric law inputs."""
 
-    point: CaseUArguments | NBCaseUArguments
+    point: CaseUArguments | NBCaseUArguments | NEGMCaseUArguments
     demands: tuple[ParentResourcesDemand, ...] = ()
     fixed_pools: tuple[EconFunctionKwargs, ...] = ()
     trace_capture_roots: tuple[jax.Array, ...] = ()
@@ -288,7 +295,7 @@ class _CaseUProjectionPublisher(Protocol):
 class CaseUExactFunction:
     """Original enclosing computation at all mandatory declared/parent coordinates."""
 
-    point: CaseUProgramFunction | NBCaseUProgram
+    point: CaseUProgramFunction | NBCaseUProgram | NEGMCaseUProgram
     capacity: int
     demands: tuple[ParentResourcesDemand, ...] = ()
     replay_source: RegimeName | None = None
@@ -468,6 +475,116 @@ class CaseUExactFunction:
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
+class CaseURideExactFunction:
+    """Original exact U publisher mapped over authentic passive-state support."""
+
+    point: NBCaseUProgram | NEGMCaseUProgram
+    capacity: int
+    passive_names: tuple[StateName, ...]
+    state_names: tuple[StateName, ...]
+    replay_source: RegimeName | None = None
+    replay_child_names: tuple[RegimeName, ...] = ()
+
+    def __call__(
+        self,
+        *,
+        _lcm_parent_demand_pools: tuple[EconFunctionKwargs, ...],
+        _lcm_parent_demand_savings: tuple[Float1D, ...],
+        next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
+        _lcm_current_iid: AdmittedGroupParams,
+        _lcm_current_iid_nodes: NodeOperands,
+        _lcm_current_iid_rows: IntND,
+        _lcm_case_u_savings_nodes: FloatND,
+        _lcm_case_u_borrowing_limit: ScalarFloat,
+        _lcm_case_u_floor_status: BoundInputStatus | None,
+        _lcm_case_u_child_node_values: tuple[tuple[FloatND | IntND, ...], ...],
+        **arguments: EconFunctionArg,
+    ) -> BoundedResult[CaseUExactOutput]:
+        if not (
+            (
+                type(self.point) is NBCaseUProgram
+                and type(self.point.pieces) is NBCaseURidePoint
+            )
+            or (
+                type(self.point) is NEGMCaseUProgram
+                and type(self.point.pieces) is NEGMCaseUPoint
+            )
+        ):
+            raise TypeError(
+                "Passive U publication lost its genuine source constructor."
+            )
+        if _lcm_parent_demand_pools or _lcm_parent_demand_savings:
+            raise UnsupportedOperationError(
+                "Passive NB projected incoming-parent closure remains required."
+            )
+        supports = {}
+        for name in self.passive_names:
+            operand = arguments[name]
+            if not isinstance(operand, jax.Array) or operand.ndim != 1:
+                raise TypeError("Passive NB publication lost its actual state support.")
+            supports[name] = operand
+        shape = tuple(supports[name].shape[0] for name in self.passive_names)
+        mesh = jnp.meshgrid(
+            *(supports[name] for name in self.passive_names), indexing="ij"
+        )
+        cells = {
+            name: values.reshape(-1)
+            for name, values in zip(self.passive_names, mesh, strict=True)
+        }
+        scalar = CaseUExactFunction(point=self.point, capacity=self.capacity)
+
+        def one(
+            cell: Mapping[StateName, ScalarFloat | ScalarInt],
+        ) -> BoundedResult[CaseUExactOutput]:
+            return scalar(
+                _lcm_parent_demand_pools=(),
+                _lcm_parent_demand_savings=(),
+                next_regime_to_continuation=next_regime_to_continuation,
+                _lcm_current_iid=_lcm_current_iid,
+                _lcm_current_iid_nodes=_lcm_current_iid_nodes,
+                _lcm_current_iid_rows=_lcm_current_iid_rows,
+                _lcm_case_u_savings_nodes=_lcm_case_u_savings_nodes,
+                _lcm_case_u_borrowing_limit=_lcm_case_u_borrowing_limit,
+                _lcm_case_u_floor_status=_lcm_case_u_floor_status,
+                _lcm_case_u_child_node_values=_lcm_case_u_child_node_values,
+                **{**arguments, **cell},
+            )
+
+        mapped = jax.tree.map(
+            lambda leaf: leaf.reshape((*shape, *leaf.shape[1:])),
+            jax.vmap(one)(cells),
+        )
+        output = mapped.output
+        active = jnp.ones(shape, dtype=jnp.bool_)
+        # Projected rows keep passive-leading layout; V keeps the real state order.
+        state_axis = self.state_names.index(self.point.pieces.euler_state_name)
+        return BoundedResult(
+            output=CaseUExactOutput(
+                value=jnp.moveaxis(output.value, -1, state_axis),
+                empty=jnp.moveaxis(output.empty, -1, state_axis),
+                projected=output.projected,
+                source=output.source,
+                current_iid_invalid=jnp.any(output.current_iid_invalid),
+                future=_case_u_future_output(
+                    source=self.replay_source,
+                    period=self.point.period,
+                    names=self.replay_child_names,
+                    children=next_regime_to_continuation,
+                ),
+            ),
+            bound_status=reduce_bound_input_status(
+                statuses=mapped.bound_status, active=active
+            ),
+            query_status=reduce_query_input_status(
+                statuses=mapped.query_status, active=active
+            ),
+            continuation_read_counts=reduce_continuation_read_counts(
+                counts=mapped.continuation_read_counts, active=active
+            ),
+        )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
 class PreparedCaseUDate:
     """Actual pre-install objects later authenticated by their installed generation."""
 
@@ -574,7 +691,7 @@ def _case_u_replay_program(
     function = original.function
     roles = original.output_roles
     if (
-        not isinstance(function, CaseUExactFunction)
+        not isinstance(function, (CaseUExactFunction, CaseURideExactFunction))
         or not isinstance(roles, BoundedResult)
         or not isinstance(roles.output, CaseUExactOutput)
     ):

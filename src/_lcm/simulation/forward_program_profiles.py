@@ -431,6 +431,8 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
                 "child_node_values",
                 "child_age_values",
                 "nb_source_grid",
+                "negm_source_grid",
+                "negm_outer_nodes",
             }
             else value
             for name, value in arguments.items()

@@ -23,7 +23,12 @@ from _lcm.egm.current_iid_case_u_replay import (
     CaseUReplayPeriod,
     CaseUReplaySpec,
 )
-from _lcm.egm.current_iid_nbegm import NBCaseUArguments, NBCaseUPoint, NBCaseUProgram
+from _lcm.egm.current_iid_nbegm import (
+    NBCaseUArguments,
+    NBCaseUPoint,
+    NBCaseUProgram,
+    NBCaseURidePoint,
+)
 from _lcm.egm.current_iid_resources_proof import prove_resources_only
 from _lcm.egm.nbegm import collect_nbegm_metadata
 from _lcm.egm.projected_continuation import (
@@ -51,6 +56,7 @@ from _lcm.solution.current_iid_case_u_native import (
     CaseUExactArguments,
     CaseUExactFunction,
     CaseUExactOutput,
+    CaseURideExactFunction,
     _case_u_replay_program,
 )
 from _lcm.solution.current_iid_dated import DatedBalancedKernels
@@ -61,6 +67,8 @@ from _lcm.solution.nbegm import (
     _build_nbegm_continuation_plan,
     _build_nbegm_single_axis_group,
     _NBEGMContinuousCore,
+    _NBEGMTiledCore,
+    _RideAlongNBEGMPeriodKernel,
     _solve_certified_continuous_budget,
 )
 from _lcm.time import TimeAxis
@@ -82,7 +90,7 @@ class NativeNBCaseUPeriodKernel:
     """Actual NB original point, integrated publication and original future graph."""
 
     context: SolverBuildContext
-    point: NBCaseUPoint
+    point: NBCaseUPoint | NBCaseURidePoint
     period: int
     spec: ProjectedContinuationSpec
     program: CoreProgram
@@ -218,10 +226,15 @@ def prepare_scalar_nbegm_u_kernels(  # noqa: C901, PLR0912, PLR0915 - bounded or
             raise UnsupportedOperationError(
                 "NB U state-dependent current law derivatives are not installed."
             )
+        ride = tuple(context.state_action_space.states) != (solver.continuous_state,)
+        if ride and materializer is not None:
+            raise UnsupportedOperationError(
+                "Cold NB ride producer admission remains required."
+            )
         resources_proof = prove_resources_only(
             context=context, solver=solver, plan=plan
         )
-        case_r = (
+        case_r = not ride and (
             not resources_proof.bypasses
             and solver.continuous_state not in resources_proof.context_inputs
         )
@@ -242,8 +255,7 @@ def prepare_scalar_nbegm_u_kernels(  # noqa: C901, PLR0912, PLR0915 - bounded or
                     "Cold original NB Case R bank admission is not installed."
                 )
         if (
-            tuple(context.state_action_space.states) != (solver.continuous_state,)
-            or context.state_action_space.discrete_actions
+            (not ride and bool(context.state_action_space.discrete_actions))
             or context.has_taste_shocks
             or context.sharded_state_names
             or context.co_map_state_names
@@ -300,135 +312,144 @@ def prepare_scalar_nbegm_u_kernels(  # noqa: C901, PLR0912, PLR0915 - bounded or
             if materializer is None
             else materializer.materialize_grid(spec=solver.savings_grid)
         )
-        core, law, checks = _build_nbegm_single_axis_group(
-            context=context,
-            solver=solver,
-            route="schedule",
-            target=target,
-            liquid_state_name=solver.continuous_state,
-            variable_names=frozenset(context.state_action_space.state_names)
-            | frozenset(context.state_action_space.continuous_actions),
-            savings_grid=nodes,
-            feasibility_constraints=(),
-            materializer=materializer,
-        )
-        if type(core) is not _NBEGMContinuousCore:
-            raise TypeError("NB U lost its original scalar schedule producer.")
-        if materializer is not None:
-            if core.schedule_spec.param_checks is not checks:
-                raise TypeError("Cold NB lost its original host validators.")
-            core = replace(
-                core, schedule_spec=replace(core.schedule_spec, param_checks=())
-            )
-        if case_r:
-            from _lcm.solution.current_iid_nbegm_r import (  # noqa: PLC0415 - exact original R bank factory
-                prepare_scalar_nbegm_r_kernel,
-            )
-
-            child_spec = ordinary_kernels[target].continuation_spec
-            if child_spec is None:
-                raise TypeError("NB R child lost its original continuation.")
-            child = child_spec.template_at(period=period + 1)
-            if (
-                not isinstance(child, EGMCarry)
-                or child.endog_grid.ndim != 1
-                or child.breakpoints is not None
-            ):
-                raise UnsupportedOperationError(
-                    "Scalar NB R requires an ordinary scalar terminal carry."
-                )
-            actual_context, kernel = prepare_scalar_nbegm_r_kernel(
+        source_call = call_contexts[name, period]
+        if source_call.state_action_space is None:
+            raise TypeError("NB U lost its original call-owned source support.")
+        if ride:
+            point, checks = _prepare_nbegm_ride_point(
                 context=context,
                 solver=solver,
-                original_core=core,
+                source_call=source_call,
+                period=period,
+                target=target,
+            )
+        else:
+            core, law, checks = _build_nbegm_single_axis_group(
+                context=context,
+                solver=solver,
+                route="schedule",
+                target=target,
+                liquid_state_name=solver.continuous_state,
+                variable_names=frozenset(context.state_action_space.state_names)
+                | frozenset(context.state_action_space.continuous_actions),
+                savings_grid=nodes,
+                feasibility_constraints=(),
+                materializer=materializer,
+            )
+            if type(core) is not _NBEGMContinuousCore:
+                raise TypeError("NB U lost its original scalar schedule producer.")
+            if materializer is not None:
+                if core.schedule_spec.param_checks is not checks:
+                    raise TypeError("Cold NB lost its original host validators.")
+                core = replace(
+                    core, schedule_spec=replace(core.schedule_spec, param_checks=())
+                )
+            if case_r:
+                from _lcm.solution.current_iid_nbegm_r import (  # noqa: PLC0415 - exact original R bank factory
+                    prepare_scalar_nbegm_r_kernel,
+                )
+
+                child_spec = ordinary_kernels[target].continuation_spec
+                if child_spec is None:
+                    raise TypeError("NB R child lost its original continuation.")
+                child = child_spec.template_at(period=period + 1)
+                if (
+                    not isinstance(child, EGMCarry)
+                    or child.endog_grid.ndim != 1
+                    or child.breakpoints is not None
+                ):
+                    raise UnsupportedOperationError(
+                        "Scalar NB R requires an ordinary scalar terminal carry."
+                    )
+                actual_context, kernel = prepare_scalar_nbegm_r_kernel(
+                    context=context,
+                    solver=solver,
+                    original_core=core,
+                    declared_law=law,
+                    continuation_plan=_build_nbegm_continuation_plan(
+                        context=context,
+                        period=period,
+                        post_decision_name=solver.post_decision_function,
+                    ),
+                    checks=checks,
+                    nodes=nodes,
+                    period=period,
+                    target=target,
+                    plan=plan,
+                    declaration=declarations[name],
+                    child_spec=child_spec,
+                    source_call=replace(
+                        call_contexts[name, period],
+                        next_regime_to_continuation=MappingProxyType({target: child}),
+                    ),
+                    fixed_flat_params=fixed_flat_params,
+                )
+                actual_contexts[name] = actual_context
+                kernels[name] = kernel
+                continue
+            physical_names = {
+                shock
+                for _name, binding, _nodes in plan.bindings
+                for shock in binding.group.shocks
+            }
+            if not physical_names.intersection(
+                inspect.signature(core.schedule_spec.utility_dag).parameters
+            ):
+                raise UnsupportedOperationError(
+                    "The original NB problem is not resources-only and its admitted "
+                    "U class requires a current utility shock."
+                )
+            if (
+                solver.continuous_state
+                in inspect.signature(core.schedule_spec.utility_dag).parameters
+            ):
+                raise UnsupportedOperationError(
+                    "Direct-liquid NB U utility envelope derivatives are not installed."
+                )
+            if core.schedule_spec.discount_factor_dag is not None:
+                raise UnsupportedOperationError(
+                    "NB U dynamic discount envelope derivatives are not installed."
+                )
+            source_grid = source_call.state_action_space.states[solver.continuous_state]
+            if source_grid.dtype != canonical_float_dtype():
+                raise TypeError("NB U requires its actual canonical source precision.")
+            point = NBCaseUPoint(
+                core=replace(
+                    core,
+                    retain_query=True,
+                    retain_policy=True,
+                    solve_budget=(
+                        _solve_certified_continuous_budget
+                        if materializer is not None
+                        else core.solve_budget
+                    ),
+                ),
                 declared_law=law,
                 continuation_plan=_build_nbegm_continuation_plan(
                     context=context,
                     period=period,
                     post_decision_name=solver.post_decision_function,
                 ),
-                checks=checks,
-                nodes=nodes,
-                period=period,
+                euler_state_name=solver.continuous_state,
+                action_name=solver.continuous_action,
                 target=target,
-                plan=plan,
-                declaration=declarations[name],
-                child_spec=child_spec,
-                source_call=replace(
-                    call_contexts[name, period],
-                    next_regime_to_continuation=MappingProxyType({target: child}),
+                savings_nodes=nodes,
+                borrowing_limit=(
+                    nodes[0]
+                    if materializer is None
+                    else materializer.evaluate_validation(
+                        function=_validation_grid_first, arguments={"points": nodes}
+                    )
                 ),
-                fixed_flat_params=fixed_flat_params,
+                source_grid=source_grid,
             )
-            actual_contexts[name] = actual_context
-            kernels[name] = kernel
-            continue
-        physical_names = {
-            shock
-            for _name, binding, _nodes in plan.bindings
-            for shock in binding.group.shocks
-        }
-        if not physical_names.intersection(
-            inspect.signature(core.schedule_spec.utility_dag).parameters
-        ):
-            raise UnsupportedOperationError(
-                "The original NB problem is not resources-only and its admitted "
-                "U class requires a current utility shock."
-            )
-        if (
-            solver.continuous_state
-            in inspect.signature(core.schedule_spec.utility_dag).parameters
-        ):
-            raise UnsupportedOperationError(
-                "Direct-liquid NB U utility envelope derivatives are not installed."
-            )
-        if core.schedule_spec.discount_factor_dag is not None:
-            raise UnsupportedOperationError(
-                "NB U dynamic discount envelope derivatives are not installed."
-            )
-        source_call = call_contexts[name, period]
-        if source_call.state_action_space is None:
-            raise TypeError("NB U lost its original call-owned source support.")
-        source_grid = source_call.state_action_space.states[solver.continuous_state]
-        if source_grid.dtype != canonical_float_dtype():
-            raise TypeError("NB U requires its actual canonical source precision.")
-        point = NBCaseUPoint(
-            core=replace(
-                core,
-                retain_query=True,
-                retain_policy=True,
-                solve_budget=(
-                    _solve_certified_continuous_budget
-                    if materializer is not None
-                    else core.solve_budget
-                ),
-            ),
-            declared_law=law,
-            continuation_plan=_build_nbegm_continuation_plan(
-                context=context,
-                period=period,
-                post_decision_name=solver.post_decision_function,
-            ),
-            euler_state_name=solver.continuous_state,
-            action_name=solver.continuous_action,
-            target=target,
-            savings_nodes=nodes,
-            borrowing_limit=(
-                nodes[0]
-                if materializer is None
-                else materializer.evaluate_validation(
-                    function=_validation_grid_first, arguments={"points": nodes}
-                )
-            ),
-            source_grid=source_grid,
-        )
         child_spec = ordinary_kernels[target].continuation_spec
         if child_spec is None:
             raise TypeError("NB U child did not publish its original continuation.")
         child = child_spec.template_at(period=period + 1)
         if (
             not isinstance(child, EGMCarry)
-            or child.endog_grid.ndim != 1
+            or (not ride and child.endog_grid.ndim != 1)
             or child.breakpoints is not None
         ):
             raise UnsupportedOperationError(
@@ -453,9 +474,17 @@ def prepare_scalar_nbegm_u_kernels(  # noqa: C901, PLR0912, PLR0915 - bounded or
                 fixed_flat_params=fixed_flat_params,
             )
         )
-        function = CaseUExactFunction(
-            point=NBCaseUProgram(pieces=point, plan=plan, period=period),
-            capacity=declarations[name].date_at(period=period).authority.capacity,
+        integrated = NBCaseUProgram(pieces=point, plan=plan, period=period)
+        capacity = declarations[name].date_at(period=period).authority.capacity
+        function = (
+            CaseURideExactFunction(
+                point=integrated,
+                capacity=capacity,
+                passive_names=point.passive_names,
+                state_names=tuple(context.state_action_space.states),
+            )
+            if isinstance(point, NBCaseURidePoint)
+            else CaseUExactFunction(point=integrated, capacity=capacity)
         )
         if materializer is not None:
             captures = guard_case_u_shape(
@@ -513,16 +542,18 @@ def prepare_scalar_nbegm_u_kernels(  # noqa: C901, PLR0912, PLR0915 - bounded or
             core_key="main",
         )
 
+        state_names = tuple(context.state_action_space.states)
+
         # keyword-only-exempt: library-callback=jax.tree_util.tree_map_with_path
         def role(
             path: tuple[jax.tree_util.KeyEntry, ...],
             leaf: jax.Array | jax.ShapeDtypeStruct,
             *,
-            state: StateName = solver.continuous_state,
+            state_names: tuple[StateName, ...] = state_names,
         ) -> StateAxesLeading:
             names = tuple(getattr(key, "name", None) for key in path)
             return StateAxesLeading(
-                state_names=(state,)
+                state_names=state_names
                 if names in (("output", "value"), ("output", "empty"))
                 else (),
                 shape=leaf.shape,
@@ -537,7 +568,10 @@ def prepare_scalar_nbegm_u_kernels(  # noqa: C901, PLR0912, PLR0915 - bounded or
             requirements=CoreExecutionRequirements(value_reads=reads),
             disposition=CoreExecutionDisposition.DENSE,
             disposition_reason=(
-                "Original scalar NB liquid-grid/current-node/asset solve with "
+                "Original NB passive-cell/discrete-branch/current-node/asset solve "
+                "with complete transient branch-specific economic CE banks."
+                if ride
+                else "Original scalar NB liquid-grid/current-node/asset solve with "
                 "a complete transient economic CE bank."
             ),
             scope=ProgramScope.VALUES_ONLY,
@@ -603,3 +637,74 @@ def prepare_scalar_nbegm_u_kernels(  # noqa: C901, PLR0912, PLR0915 - bounded or
         steps=MappingProxyType({}),
         solvers=MappingProxyType({}),
     )
+
+
+def _prepare_nbegm_ride_point(
+    *,
+    context: SolverBuildContext,
+    solver: _BoundNBEGM,
+    source_call: CoreBuildContext,
+    period: int,
+    target: RegimeName,
+) -> tuple[NBCaseURidePoint, tuple[ParamCheck, ...]]:
+    """Reuse the actual ordinary ride builder and its branch-class continuation."""
+    if source_call.state_action_space is None:
+        raise TypeError("NB ride U lost its actual resolved source support.")
+    original = solver.build_period_kernels(context=replace(context, enable_jit=False))
+    kernel = original.period_kernels[period]
+    if type(kernel) is not _RideAlongNBEGMPeriodKernel:
+        raise UnsupportedOperationError(
+            "NB passive U requires its genuine ride kernel."
+        )
+    core = kernel.core_programs()["main"].function
+    if type(core) is not _NBEGMTiledCore:
+        raise TypeError("NB ride U lost its actual numerical cell constructor.")
+    plan = context.current_iid_plans.get(period)
+    if plan is None:
+        raise TypeError("NB ride U lost its actual current-IID declaration.")
+    physical_names = {
+        shock
+        for _name, binding, _nodes in plan.bindings
+        for shock in binding.group.shocks
+    }
+    if not physical_names.intersection(
+        inspect.signature(core.schedule_spec.utility_dag).parameters
+    ):
+        raise UnsupportedOperationError(
+            "The first NB passive U class requires a current utility shock; "
+            "NB passive Case R remains required."
+        )
+    binder = core.envelope_build.bind_cell
+    if (
+        core.statics.continuation_reads_liquid
+        or core.statics.has_jump
+        or core.cliff_candidates
+        or core.statics.co_map_state_names
+        or core.continuation_plan.query_targets
+        or binder.is_epstein_zin
+        or binder.current_floor is not None
+        or binder.current_predicates is not None
+        or binder.feasibility_constraints
+        or binder.n_published_boundaries
+        or core.schedule_spec.discount_factor_dag is not None
+        or solver.continuous_state
+        in inspect.signature(core.schedule_spec.utility_dag).parameters
+    ):
+        raise UnsupportedOperationError(
+            "NB ride U requires continuous additive literal-floor ordinary-child "
+            "cells without direct-liquid utility or interval-dependent future reads."
+        )
+    return NBCaseURidePoint(
+        core=core,
+        euler_state_name=solver.continuous_state,
+        action_name=solver.continuous_action,
+        target=target,
+        savings_nodes=core.savings_grid,
+        borrowing_limit=core.savings_grid[0],
+        source_grid=source_call.state_action_space.states[solver.continuous_state],
+        passive_names=tuple(
+            name
+            for name in source_call.state_action_space.states
+            if name != solver.continuous_state
+        ),
+    ), original.param_checks

@@ -1829,6 +1829,7 @@ class _CanonicalRegimeBuilder:
         )
         from _lcm.solution.dcegm import _BoundDCEGM  # noqa: PLC0415
         from _lcm.solution.nbegm import _BoundNBEGM  # noqa: PLC0415
+        from _lcm.solution.negm import _BoundNEGM  # noqa: PLC0415
 
         if any(law.gated_edges or law.arrivals for law in self.laws.values()):
             raise UnsupportedOperationError(
@@ -1848,11 +1849,13 @@ class _CanonicalRegimeBuilder:
         liquid_support = {}
         for (name, period), call in call_contexts.items():
             solver = self.representative_user_regimes[name].solver
-            if isinstance(solver, (_BoundDCEGM, _BoundNBEGM)):
+            if isinstance(solver, (_BoundDCEGM, _BoundNBEGM, _BoundNEGM)):
                 if call.state_action_space is None:
                     raise TypeError("Call-owned producer lacks actual state support.")
                 liquid_support[name, period] = call.state_action_space.states[
-                    solver.continuous_state
+                    solver.inner.continuous_state
+                    if isinstance(solver, _BoundNEGM)
+                    else solver.continuous_state
                 ]
         declarations = projected_producer_declarations(
             user_regimes=self.representative_user_regimes,
@@ -1905,8 +1908,12 @@ class _CanonicalRegimeBuilder:
         ordinary_kernels = {}
         dc_solvers = {}
         nb_solvers = {}
+        negm_solvers = {}
         for name, phase in prepared.items():
             actual = phase.solution
+            if isinstance(actual.solver, _BoundNEGM) and not actual.zero_node:
+                negm_solvers[name] = actual.solver
+                continue
             if isinstance(actual.solver, _BoundNBEGM) and not actual.zero_node:
                 nb_solvers[name] = actual.solver
                 continue
@@ -1933,7 +1940,32 @@ class _CanonicalRegimeBuilder:
             if spec is not None:
                 for period in self.regimes_to_active_periods[name]:
                     ordinary_templates[name, period] = spec.template_at(period=period)
-        if nb_solvers:
+        if negm_solvers:
+            from _lcm.solution.current_iid_negm import (  # noqa: PLC0415 - original nested owner
+                prepare_finite_negm_u_kernels,
+            )
+
+            if (
+                nb_solvers
+                or dc_solvers
+                or state_utility_obligations
+                or euler_grid_obligations
+            ):
+                raise UnsupportedOperationError(
+                    "Finite NEGM U mixed-family dated preparation is not installed."
+                )
+            result = prepare_finite_negm_u_kernels(
+                contexts={
+                    name: phase.solution.context for name, phase in prepared.items()
+                },
+                solvers=negm_solvers,
+                declarations=declarations,
+                ordinary_kernels=ordinary_kernels,
+                call_contexts=call_contexts,
+                fixed_flat_params=fixed_flat_params,
+                materializer=materializer,
+            )
+        elif nb_solvers:
             from _lcm.solution.current_iid_nbegm import (  # noqa: PLC0415 - keep original NB factory lazy
                 prepare_scalar_nbegm_u_kernels,
             )
@@ -1970,7 +2002,7 @@ class _CanonicalRegimeBuilder:
                 materializer=materializer,
             )
         solution_builds = dict(ordinary_builds)
-        for name in (*dc_solvers, *nb_solvers):
+        for name in (*dc_solvers, *nb_solvers, *negm_solvers):
             actual = dataclass_replace(
                 prepared[name].solution, context=result.contexts[name]
             )

@@ -649,14 +649,7 @@ class DCEGM(OneMarginSolver):
         materializer: DatedGenerationMaterializer | None = None,
     ) -> SolutionKernels:
         """Assemble programs from the original prepared numerical steps."""
-        from _lcm.egm.step import _EGMStep  # noqa: PLC0415
-
         build.require_ordinary_publication()
-        query_model = context.dcegm_source_query_model or (
-            context.dcegm_query_models.get(context.regime_name)
-            if context.dcegm_query_models is not None
-            else None
-        )
         if any(plan is not None for plan in context.current_iid_plans.values()):
             from _lcm.solution.current_iid_case_r_build import (  # noqa: PLC0415
                 build_native_case_r_kernels,
@@ -668,6 +661,52 @@ class DCEGM(OneMarginSolver):
                 solver=cast("_BoundDCEGM", self),
                 build=build,
             )
+        return self._assemble_period_kernels(
+            context=context, build=build, materializer=materializer
+        )
+
+    def finish_nested_current_u_period_kernels(
+        self,
+        *,
+        context: SolverBuildContext,
+        build: EGMStepBuild,
+        authority: DatedCaseUStepAuthority,
+    ) -> SolutionKernels:
+        """Assemble original inner programs only for their exact nested owner.
+
+        Ordinary publication remains forbidden for these numerical pieces. The
+        enclosing original NEGM builder consumes this graph transiently; its
+        current-U point owns the only installed integrated publisher.
+        """
+        if authority.nested_origin is None:
+            raise TypeError("Nested U assembly requires its genuine NEGM branch.")
+        authority.require(
+            context=context, solver=cast("_BoundDCEGM", self), period=authority.period
+        )
+        authority.nested_origin.require_prepared_build(build=build)
+        if (
+            tuple(build.steps) != (authority.period,)
+            or tuple(build.native_case_u_sources) != (authority.period,)
+            or build.native_case_u_sources[authority.period] is not authority
+        ):
+            raise TypeError("Nested U assembly lost its original prepared build.")
+        return self._assemble_period_kernels(context=context, build=build)
+
+    def _assemble_period_kernels(
+        self,
+        *,
+        context: SolverBuildContext,
+        build: EGMStepBuild,
+        materializer: DatedGenerationMaterializer | None = None,
+    ) -> SolutionKernels:
+        """Construct the unchanged original graph after its owning entry check."""
+        from _lcm.egm.step import _EGMStep  # noqa: PLC0415
+
+        query_model = context.dcegm_source_query_model or (
+            context.dcegm_query_models.get(context.regime_name)
+            if context.dcegm_query_models is not None
+            else None
+        )
         steps: Mapping[int, EGMStepFunction[_DCEGMStepOutput]] = build.steps
         argument_builder = _DCEGMArgumentBuilder(
             regime_name=context.regime_name,

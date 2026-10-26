@@ -4,15 +4,20 @@ This payload contains future continuations, never current-node policy statistics
 The private scalar route reconstructs actions with the original dated node solver.
 """
 
+import math
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 import jax
 import numpy as np
 
-from _lcm.continuation import ContinuationSpec, ProjectedProducerDate
+from _lcm.continuation import (
+    ContinuationSpec,
+    EGMContinuationSpec,
+    ProjectedProducerDate,
+)
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.step_core import _EgmKernelPieces
 from _lcm.execution.core_program import ValueRead
@@ -21,13 +26,18 @@ from _lcm.simulation.value_reads import PeriodSimulationReads
 from _lcm.typing import FlatParams, PytreeChild
 from lcm.exceptions import InvalidSimulationInputError, UnsupportedOperationError
 from lcm.solver_api import ArtifactKey, ReplayMode, ReplayRouteIdentity
-from lcm.typing import EGMAccuracy, EGMReplay, RegimeName
+from lcm.typing import ActionName, EGMAccuracy, EGMReplay, RegimeName
 
 if TYPE_CHECKING:
-    from _lcm.egm.current_iid_nbegm import NBCaseUPoint
+    from _lcm.egm.continuation import _ChildRead
+    from _lcm.egm.current_iid_nbegm import NBCaseUPoint, NBCaseURidePoint
+    from _lcm.egm.current_iid_negm import NEGMCaseUPoint
 else:
     # This record is imported while the numerical engine is initialized.
+    type _ChildRead = object
     type NBCaseUPoint = object
+    type NBCaseURidePoint = object
+    type NEGMCaseUPoint = object
 
 CASE_U_FUTURE_REPLAY = ArtifactKey(
     type_id="pylcm.engine.case_u_future_replay", schema_version=1
@@ -185,45 +195,193 @@ class CaseUReplayPeriod:
     savings_point_width: int | None
     stochastic_node_width: int | None
     envelope_cell_width: int
-    nbegm_point: NBCaseUPoint | None = None
+    nbegm_point: NBCaseUPoint | NBCaseURidePoint | None = None
+    negm_point: NEGMCaseUPoint | None = field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Genuine complete finite nested constructor, separate from NB ownership."""
 
     @property
     def action_name(self) -> str:
         """Name the action from this date's original solver constructor."""
+        if self.negm_point is not None:
+            return self.negm_point.action_name
         if self.nbegm_point is not None:
             return self.nbegm_point.action_name
         if self.pieces is not None:
             return self.pieces.action_name
         raise TypeError("Case-U replay lacks its original action declaration.")
 
-    def __post_init__(self) -> None:
-        if (self.pieces is None) == (self.nbegm_point is None):
+    @property
+    def additional_continuous_action_names(self) -> tuple[ActionName, ...]:
+        """Actual jointly selected outer action, when this source is nested."""
+        return () if self.negm_point is None else (self.negm_point.outer_action,)
+
+    @property
+    def discrete_action_names(self) -> tuple[ActionName, ...]:
+        """Declare the actual ride-cell branch codes returned with consumption."""
+        if self.nbegm_point is not None:
+            from _lcm.egm.current_iid_nbegm import NBCaseURidePoint  # noqa: PLC0415
+
+            if isinstance(self.nbegm_point, NBCaseURidePoint):
+                return self.nbegm_point.discrete_action_names
+        return ()
+
+    def __post_init__(self) -> None:  # noqa: C901, PLR0912 - exact independent source constructors
+        if (
+            sum(
+                item is not None
+                for item in (self.pieces, self.nbegm_point, self.negm_point)
+            )
+            != 1
+        ):
             raise TypeError(
                 "Case-U replay requires exactly one original solver constructor."
             )
         if self.nbegm_point is not None:
-            from _lcm.egm.current_iid_nbegm import NBCaseUPoint  # noqa: PLC0415
+            from _lcm.egm.current_iid_nbegm import (  # noqa: PLC0415
+                NBCaseUPoint,
+                NBCaseURidePoint,
+            )
 
-            if type(self.nbegm_point) is not NBCaseUPoint:
+            if type(self.nbegm_point) not in (NBCaseUPoint, NBCaseURidePoint):
                 raise TypeError("Case-U replay requires its original NB point type.")
         if (
             self.date.authority.producer != self.future.source
             or self.date.authority.period != self.future.period
         ):
             raise TypeError("Case-U reconstruction lost its actual original date.")
+        if self.negm_point is not None:
+            from _lcm.egm.current_iid_negm import NEGMCaseUPoint  # noqa: PLC0415
+            from _lcm.egm.step import _EGMStep  # noqa: PLC0415
+            from _lcm.solution.dcegm import _DCEGMPeriodKernel  # noqa: PLC0415
+
+            point = self.negm_point
+            keeper, adjuster = point.owner.keeper_kernel, point.owner.adjuster_kernel
+            if (
+                type(point) is not NEGMCaseUPoint
+                or point.period != self.future.period
+                or point.context.regime_name != self.future.source
+                or point.context.current_iid_plans.get(point.period) is not point.plan
+                or tuple(self.future.specs) != (point.target,)
+                or not isinstance(keeper, _DCEGMPeriodKernel)
+                or not isinstance(adjuster, _DCEGMPeriodKernel)
+                or not isinstance(keeper.demand_step, _EGMStep)
+                or not isinstance(adjuster.demand_step, _EGMStep)
+                or point.keeper is not keeper.demand_step.pieces
+                or point.adjuster is not adjuster.demand_step.pieces
+            ):
+                raise TypeError("Case-U replay lost its genuine finite NEGM source.")
+            for original in (point.keeper, point.adjuster):
+                if (
+                    original.continuation_plan.query_targets
+                    or original.continuation_plan.scalar_targets
+                    or tuple(original.continuation_plan.stateful_targets)
+                    != (point.target,)
+                ):
+                    raise UnsupportedOperationError(
+                        "Finite NEGM reconstruction requires original "
+                        "ordinary future rows."
+                    )
+                for target, read in original.continuation_plan.child_reads.items():
+                    _require_ordinary_passive_child_rows(
+                        read=read,
+                        spec=self.future.specs[target],
+                        period=self.future.period + 1,
+                    )
+            return
         if self.nbegm_point is not None:
             plan = self.nbegm_point.continuation_plan
         elif self.pieces is not None:
             plan = self.pieces.continuation_plan
         else:
             raise TypeError("Case-U replay has no original point constructor.")
+        ride = (
+            self.nbegm_point is not None and type(self.nbegm_point) is NBCaseURidePoint
+        )
+        if ride:
+            if (
+                plan.query_targets
+                or plan.scalar_targets
+                or tuple(plan.stateful_targets) != tuple(self.future.specs)
+                or tuple(plan.child_reads) != tuple(self.future.specs)
+            ):
+                raise UnsupportedOperationError(
+                    "NB ride reconstruction requires its original ordinary target rows."
+                )
+            for target, read in plan.child_reads.items():
+                _require_ordinary_passive_child_rows(
+                    read=read,
+                    spec=self.future.specs[target],
+                    period=self.future.period + 1,
+                )
+            return
         if any(
-            read.passive_grids or read.row_values or read.projected_date is not None
+            (read.passive_grids and not ride)
+            or read.row_values
+            or read.projected_date is not None
             for read in plan.child_reads.values()
         ):
             raise UnsupportedOperationError(
                 "Case-U reconstruction still requires scalar ordinary future rows."
             )
+
+
+def _require_ordinary_passive_child_rows(
+    *, read: _ChildRead, spec: ContinuationSpec, period: int
+) -> None:
+    """Keep genuine static passive row meshes under their original carry schema.
+
+    Ordinary child reads precompute passive resource-row bindings even when
+    their resources ignore those axes. These are generation-owned grid buffers,
+    independent of projected dates and runtime stochastic node operands.
+    """
+    if not isinstance(spec, EGMContinuationSpec):
+        raise UnsupportedOperationError(
+            "Current-U reconstruction requires original ordinary child authority."
+        )
+    child = spec.template_at(period=period)
+    if any(grid.ndim != 1 or not grid.size for grid in read.passive_grids):
+        raise UnsupportedOperationError(
+            "Current-U reconstruction lost its original ordinary passive-row schema."
+        )
+    shape = tuple(grid.shape[0] for grid in read.passive_grids)
+    if (
+        not isinstance(child, EGMCarry)
+        or read.query is not None
+        or read.projected_date is not None
+        or read.query_target is not None
+        or read.query_action_names
+        or read.query_action_values
+        or read.n_outer_candidates
+        or read.discrete_state_names
+        or read.stochastic_state_names
+        or read.stochastic_node_values
+        or read.process_grid_names
+        or read.euler_draw_names
+        or read.local_draw_names
+        or read.co_map_state_names
+        or read.has_taste_shocks
+        or spec.layout.query_spec is not None
+        or spec.layout.n_stacked_candidates
+        or read.rows_share_state_grid != spec.layout.rows_share_state_grid
+        or child.breakpoints is not None
+        or child.query_data is not None
+        or read.row_arg_names != read.passive_state_names
+        or len(read.passive_state_names) != len(read.passive_grids)
+        or len(read.row_values) != len(read.passive_grids)
+        or read.row_block_shape != shape
+        or any(
+            values.shape != (math.prod(shape),) or values.dtype != grid.dtype
+            for grid, values in zip(read.passive_grids, read.row_values, strict=True)
+        )
+        or child.value.shape[:-1] != shape
+        or child.marginal_utility.shape != child.value.shape
+        or child.endog_grid.shape not in (child.value.shape, child.value.shape[-1:])
+    ):
+        raise UnsupportedOperationError(
+            "Current-U reconstruction lost its original ordinary passive-row schema."
+        )
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)

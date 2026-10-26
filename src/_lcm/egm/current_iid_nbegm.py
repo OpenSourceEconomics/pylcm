@@ -3,7 +3,7 @@
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from types import MappingProxyType
-from typing import cast
+from typing import NamedTuple, cast
 
 import jax
 import jax.numpy as jnp
@@ -25,7 +25,12 @@ from _lcm.solution.feasibility import (
     reduce_bound_input_status,
     reduce_query_input_status,
 )
-from _lcm.solution.nbegm import _NBEGMContinuousCore, _NBEGMSourcePoint
+from _lcm.solution.nbegm import (
+    _NBEGMCellContinuation,
+    _NBEGMContinuousCore,
+    _NBEGMSourcePoint,
+    _NBEGMTiledCore,
+)
 from _lcm.solution.preparation_clock import prepare_case_u_clock
 from _lcm.time import TimeAxis
 from _lcm.typing import EconFunctionArg, EconFunctionKwargs, FlatParams, PytreeValue
@@ -163,11 +168,172 @@ class NBCaseUPoint:
         return replace(self, savings_nodes=nodes, borrowing_limit=nodes[0])
 
 
+class NBRideSelectedRead(NamedTuple):
+    """Original native candidate channels and their selected discrete codes."""
+
+    original: OwnedResourcesRead
+    action_codes: IntND
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class NBCaseURidePoint:
+    """A genuine ride-cell constructor, including branch-specific future reads."""
+
+    core: _NBEGMTiledCore
+    euler_state_name: StateName
+    action_name: ActionName
+    target: RegimeName
+    savings_nodes: Float1D
+    borrowing_limit: ScalarFloat
+    source_grid: Float1D
+    passive_names: tuple[StateName, ...]
+
+    @property
+    def continuation_plan(self) -> ContinuationPlan:
+        return self.core.continuation_plan
+
+    @property
+    def discrete_action_names(self) -> tuple[ActionName, ...]:
+        return tuple(name for name, _codes in self.core.schedule_spec.discrete_actions)
+
+    def with_savings(self, *, nodes: Float1D) -> NBCaseURidePoint:
+        return replace(self, savings_nodes=nodes, borrowing_limit=nodes[0])
+
+    def node(
+        self,
+        *,
+        liquid: ScalarFloat,
+        physical: EconFunctionKwargs,
+        pool: EconFunctionKwargs,
+        children: Mapping[RegimeName, EGMCarry],
+    ) -> BoundedResult[OwnedResourcesRead]:
+        selected = self.select(
+            liquid=liquid, physical=physical, pool=pool, children=children
+        )
+        return BoundedResult(
+            output=selected.output.original,
+            bound_status=selected.bound_status,
+            query_status=selected.query_status,
+            continuation_read_counts=selected.continuation_read_counts,
+        )
+
+    def select(
+        self,
+        *,
+        liquid: ScalarFloat,
+        physical: EconFunctionKwargs,
+        pool: EconFunctionKwargs,
+        children: Mapping[RegimeName, EGMCarry],
+    ) -> BoundedResult[NBRideSelectedRead]:
+        """Read the actual cell's distinct continuation classes before hard choice."""
+        core = self.core
+        if (
+            type(core) is not _NBEGMTiledCore
+            or core.statics.co_map_state_names
+            or core.statics.continuation_reads_liquid
+            or core.statics.has_jump
+            or core.cliff_candidates
+            or core.continuation_plan.query_targets
+        ):
+            raise UnsupportedOperationError(
+                "NB current-U ride points require unsharded continuous "
+                "ordinary-child cells without interval-dependent future reads."
+            )
+        kwargs = {
+            **pool,
+            **physical,
+            self.euler_state_name: self.source_grid,
+            **{
+                name: jnp.asarray(codes, dtype=jnp.int32)
+                for name, codes in core.schedule_spec.discrete_actions
+            },
+        }
+        coordinates = []
+        for name in core.statics.ride_names:
+            coordinate = kwargs[name]
+            if not isinstance(coordinate, jax.Array) or coordinate.ndim != 0:
+                raise TypeError(
+                    "NB ride point requires actual scalar cell coordinates."
+                )
+            coordinates.append(coordinate)
+        ride_values = tuple(coordinates)
+        solver = replace(
+            core.envelope_build.bind_cell, savings_grid=self.savings_nodes
+        )(kwargs)
+        continuation = _NBEGMCellContinuation(
+            kwargs=kwargs,
+            carry=MappingProxyType(dict(children)),
+            comap_bindings=MappingProxyType({}),
+            savings_grid=self.savings_nodes,
+            continuation_plan=core.continuation_plan,
+            statics=core.statics,
+            regime_name=core.regime_name,
+            cliff_candidates=False,
+            schedule_spec=core.schedule_spec,
+        )(ride_values)
+        bound = ()
+        statuses = ()
+        counts = None
+        if isinstance(continuation, BoundedResult):
+            bound = continuation.bound_status
+            statuses = continuation.query_status or ()
+            counts = continuation.continuation_read_counts
+            continuation = continuation.output
+        if not isinstance(continuation, tuple) or len(continuation) != len(
+            ("value", "marginal")
+        ):
+            raise TypeError("NB ride point lost its original continuation pair.")
+        value, marginal = continuation
+        if not isinstance(value, jax.Array) or not isinstance(marginal, jax.Array):
+            raise TypeError("NB ride point requires its original numerical rows.")
+        selected = solver.construct_point(
+            ride_values=ride_values,
+            query=liquid[None],
+            cont_value=value,
+            cont_marginal=marginal,
+        )
+        feasible = jnp.isfinite(selected.value[0])
+        valid = (
+            (feasible | jnp.isneginf(selected.value[0]))
+            & jnp.all(jnp.isfinite(value) | jnp.isneginf(value))
+            & jnp.all(jnp.isfinite(marginal))
+            & (
+                ~feasible
+                | (
+                    jnp.isfinite(selected.policy[0])
+                    & jnp.isfinite(selected.savings[0])
+                    & jnp.isfinite(selected.marginal[0])
+                    & (selected.native_owner[0] >= 0)
+                )
+            )
+        )
+        no = jnp.asarray(a=False)
+        return BoundedResult(
+            output=NBRideSelectedRead(
+                original=OwnedResourcesRead(
+                    value=selected.value[0],
+                    marginal=jnp.where(feasible, selected.marginal[0], 0.0),
+                    policy=selected.policy[0],
+                    savings=selected.savings[0],
+                    native_owner=selected.native_owner[0],
+                    side_id=jnp.int32(0),
+                    corner=selected.savings[0] == self.savings_nodes[0],
+                    feasible=feasible,
+                    valid=valid,
+                ),
+                action_codes=selected.action_codes[0],
+            ),
+            bound_status=bound,
+            query_status=(*statuses, QueryInputStatus(no, no, ~valid)),
+            continuation_read_counts=counts,
+        )
+
+
 @dataclass(frozen=True, kw_only=True, eq=False)
 class NBCaseUArguments:
     """Original NB parameter namespaces, dated support and numerical child inputs."""
 
-    pieces: NBCaseUPoint
+    pieces: NBCaseUPoint | NBCaseURidePoint
     regime_name: RegimeName
     plan: CurrentIIDPlan
     period: int
@@ -208,6 +374,14 @@ class NBCaseUArguments:
                 self.pieces.euler_state_name: context.state_action_space.states[
                     self.pieces.euler_state_name
                 ],
+                **(
+                    {
+                        name: context.state_action_space.states[name]
+                        for name in self.pieces.passive_names
+                    }
+                    if isinstance(self.pieces, NBCaseURidePoint)
+                    else {}
+                ),
                 "next_regime_to_continuation": MappingProxyType(
                     {
                         self.pieces.target: context.next_regime_to_continuation[
@@ -261,7 +435,7 @@ class NBCaseUArguments:
 class NBCaseUProgram:
     """Integrate original NB point results, never endogenous candidate rows."""
 
-    pieces: NBCaseUPoint
+    pieces: NBCaseUPoint | NBCaseURidePoint
     plan: CurrentIIDPlan
     period: int
 
