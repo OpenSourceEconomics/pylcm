@@ -22,6 +22,38 @@ from _lcm.regime_building.zero_safe import zero_safe_average
 from tests.conftest import DECIMAL_PRECISION
 
 
+@pytest.mark.parametrize("weights", [(0.0, 1.0), (1.0, 2.0)])
+@pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
+def test_scaled_average_preserves_weight_and_value_derivatives(
+    *, weights: tuple[float, float], enable_jit: bool
+) -> None:
+    """Finite nodes retain their weight derivative even at zero probability."""
+    values = jnp.asarray([2.0, 4.0])
+    coefficients = jnp.asarray(weights)
+    shifts = jnp.zeros(2, dtype=jnp.int32)
+    weight_gradient = jax.grad(
+        lambda weight: zero_safe_average(a=values, weights=weight, shifts=shifts)
+    )
+    value_gradient = jax.grad(
+        lambda value: zero_safe_average(a=value, weights=coefficients, shifts=shifts)
+    )
+    if enable_jit:
+        weight_gradient = jax.jit(weight_gradient)
+        value_gradient = jax.jit(value_gradient)
+    total = jnp.sum(coefficients)
+    expected = jnp.sum(coefficients * values) / total
+
+    assert_allclose(
+        weight_gradient(coefficients),
+        (values - expected) / total,
+        rtol=10.0**-DECIMAL_PRECISION,
+        atol=10.0**-DECIMAL_PRECISION,
+    )
+    assert_allclose(
+        value_gradient(values), coefficients / total, rtol=10.0**-DECIMAL_PRECISION
+    )
+
+
 @pytest.mark.parametrize("axis", [None, 0, -1])
 @pytest.mark.parametrize("sign", [-1.0, 1.0])
 @pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])

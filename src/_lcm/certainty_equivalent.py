@@ -721,8 +721,8 @@ def _scaled_lottery_terms(
     value_terms = scaled_down_by_power_of_two(values=products, shift=full - on_weight)
     weight_terms = scaled_down_by_power_of_two(values=coefficients, shift=full)
 
-    value_terms = jnp.where(live, value_terms, jnp.zeros_like(value_terms))
-    weight_terms = jnp.where(live, weight_terms, jnp.zeros_like(weight_terms))
+    # Zero coefficients already annihilate their values; masking the terms
+    # again would erase a finite node's derivative with respect to its weight.
     invalid_row = jnp.any(invalid, axis=-1, keepdims=True)
     nan = jnp.asarray(jnp.nan, dtype=coefficients.dtype)
     return (
