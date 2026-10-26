@@ -122,7 +122,9 @@ def _derivative(
     operation = jax.jit(differentiate) if compiled else differentiate
     actual = operation(point)
     jax.block_until_ready(actual)
-    jax.effects_barrier()
+    # A global barrier also waits for unrelated failed checked calls.
+    if runtime_checks:
+        jax.effects_barrier()
     return actual
 
 
@@ -482,7 +484,6 @@ def test_density_factory_policy_is_static_and_separates_jit_caches(
         else:
             actual = operation(process=process, **arguments)
             jax.block_until_ready(actual)
-            jax.effects_barrier()
             assert np.isfinite(np.asarray(actual)).all()
             # Unchecked mode deliberately makes no certificate promise here.
             assert float(actual[1]) == 0.0
@@ -521,7 +522,8 @@ def test_density_unchecked_transformed_graph_has_no_certificate_callback(
     assert ("io_callback" in graph) is runtime_checks
     result = jax.jit(derivative)(jnp.asarray(case.mu))
     jax.block_until_ready(result)
-    jax.effects_barrier()
+    if runtime_checks:
+        jax.effects_barrier()
     expected = np.asarray(
         density_pairwise_derivative(
             nodes=case.nodes,
@@ -645,7 +647,8 @@ def test_density_public_call_policies_keep_separate_graphs_and_reusable_values()
             ) is checks
             actual = jax.jit(operation)(jnp.asarray(0.8))
             jax.block_until_ready(actual)
-            jax.effects_barrier()
+            if checks:
+                jax.effects_barrier()
             tolerance = 10.0**-DECIMAL_PRECISION
             np.testing.assert_allclose(actual, expected, atol=tolerance, rtol=tolerance)
     for current in values[1:]:
@@ -707,7 +710,8 @@ def test_density_conditioned_policy_preserves_categories_and_source_derivatives(
                 jnp.asarray(case.source)
             )
             jax.block_until_ready(actual)
-            jax.effects_barrier()
+            if runtime_checks:
+                jax.effects_barrier()
             expected = np.asarray(
                 density_pairwise_derivative(
                     nodes=case.nodes,
