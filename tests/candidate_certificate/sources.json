@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "bb1e0aaa06f7c86f0fff03f59a1707ca344dabc47f572dc731cf9a822d5e35bb",
+  "source_inventory_sha256": "2a15969bf1c82ae53ce8497e1995cda9f4f86296e7f46ced73b3e18d5ad12503",
   "sources": [
     {
       "path": "src/_lcm/constraints/bounds.py",
@@ -294,7 +294,7 @@
     },
     {
       "path": "src/_lcm/probability.py",
-      "sha256": "60ccd04b143c714360388fcce2730804a4ca729ea4db82e4a0100732e155e53f"
+      "sha256": "366342feaae0e8bd07e0b283e974b59682328440730e6b0539f76e412ecc70f0"
     },
     {
       "path": "src/_lcm/processes/__init__.py",
@@ -346,7 +346,7 @@
     },
     {
       "path": "src/_lcm/regime_building/zero_safe.py",
-      "sha256": "301fcd3bec1211b60872159fe585e55e9742be62a975dd76b33f6f5cb45971e5"
+      "sha256": "fccbcc3c042ddf2e3456e59e1f065d2aa9d0e2f7327686df0c4811f575e1733f"
     },
     {
       "path": "src/_lcm/shock_overrides.py",
@@ -654,7 +654,7 @@
     },
     {
       "path": "src/_lcm/transition_checks.py",
-      "sha256": "b40de931445392821449d6dd4b3a123ba0fca70268228b5581caea8a0b452c55"
+      "sha256": "265e5dd6d59ac012bd05444d48a4ef432b55f61ca33e1d21d10d551478ae6d6f"
     },
     {
       "path": "src/_lcm/utils/containers.py",

@@ -897,6 +897,31 @@ def _outer_weighted_params(*, model: Model, peak: np.floating) -> UserParams:
 
 @pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
 @pytest.mark.parametrize(("fixture_name", "dtype"), _FINITE_RANGE_PRECISIONS)
+def test_half_weighted_near_max_target_publishes_its_finite_expectation(
+    *,
+    enable_jit: bool,
+    fixture_name: str,
+    dtype: np.dtype,
+    request: pytest.FixtureRequest,
+) -> None:
+    """A half-probability near-max lottery publishes its finite expected value."""
+    request.getfixturevalue(fixture_name)
+    model = _outer_weighted_model(dtype=dtype, enable_jit=enable_jit, with_choice=False)
+    peak = np.finfo(dtype).max
+    params = _outer_weighted_params(model=model, peak=peak)
+    solution = model.solve(params=params, log_level="off")
+    # Halve first: the analytical expectation never needs an overflowing sum.
+    expected = (dtype.type(0.5) * peak) * _near_one(dtype)
+    np.testing.assert_allclose(
+        np.asarray(solution.values[0]["alive"]),
+        expected,
+        rtol=32 * np.finfo(dtype).eps,
+        atol=0.0,
+    )
+
+
+@pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
+@pytest.mark.parametrize(("fixture_name", "dtype"), _FINITE_RANGE_PRECISIONS)
 def test_certain_three_quarters_of_max_beats_a_half_weighted_near_max_target(
     *,
     enable_jit: bool,

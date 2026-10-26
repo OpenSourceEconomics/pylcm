@@ -304,3 +304,66 @@ def test_scaling_carries_the_slope_it_stands_for(*, shift: int, mode: str) -> No
     differentiate = jax.jacfwd if mode == "forward" else jax.grad
 
     np.testing.assert_allclose(float(differentiate(scale)(at)), float(2**shift))
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+@pytest.mark.parametrize("scalar_map", [False, True], ids=["array", "vmap"])
+def test_probability_predicates_preserve_ieee_classification(
+    *, compiled: bool, scalar_map: bool
+) -> None:
+    """Reachability and signs depend on represented bits, including fused consumers."""
+    dtype = _dtype()
+    uint_dtype = np.uint32 if dtype.itemsize == 4 else np.uint64
+    width = dtype.itemsize * 8
+    sign = 1 << (width - 1)
+    mantissa = 23 if dtype.itemsize == 4 else 52
+    infinity = ((1 << (width - mantissa - 1)) - 1) << mantissa
+    magnitudes = (
+        0,
+        1,
+        2,
+        1 << (mantissa // 2),
+        (1 << mantissa) - 1,
+        1 << mantissa,
+        (1 << mantissa) + 1,
+        infinity - 1,
+        infinity,
+        infinity + 1,
+        infinity + (1 << (mantissa - 1)),
+    )
+    bits = np.asarray([m | s for s in (0, sign) for m in magnitudes], dtype=uint_dtype)
+    host = bits.view(dtype)
+    values = jnp.asarray(host)
+    np.testing.assert_array_equal(np.asarray(values).view(uint_dtype), bits)
+
+    def classify(weights: FloatND) -> BoolND:
+        live = is_live(weights)
+        zero = is_represented_zero(weights)
+        negative = is_negative(weights)
+        below = is_below_smallest_normal(weights)
+        return jnp.stack(
+            (
+                live,
+                zero,
+                negative,
+                below,
+                live & jnp.isfinite(weights),
+                ~zero & ~negative & ~jnp.isnan(weights),
+            ),
+            axis=-1,
+        )
+
+    evaluate = jax.vmap(classify) if scalar_map else classify
+    evaluate = jax.jit(evaluate) if compiled else evaluate
+    expected = np.stack(
+        (
+            host > 0,
+            host == 0,
+            np.signbit(host) & (host != 0),
+            np.abs(host) < np.finfo(dtype).tiny,
+            (host > 0) & np.isfinite(host),
+            (host != 0) & ~np.signbit(host) & ~np.isnan(host),
+        ),
+        axis=-1,
+    )
+    np.testing.assert_array_equal(evaluate(values), expected)
