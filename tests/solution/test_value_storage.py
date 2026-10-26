@@ -22,7 +22,13 @@ import pytest
 from beartype.roar import BeartypeCallHintParamViolation
 
 from _lcm.solution import backward_induction
+from _lcm.utils.logging import get_logger
 from lcm import ExecutionConfig, InvariantBlockSchedule, Model
+from tests.conftest import EXACT_KERNEL_SKIP_REASON
+from tests.regime_building.test_collective_regime_simulate import (
+    _DISSOLUTION_PARAMS,
+    _make_dissolution_model,
+)
 from tests.solution._callback_types import (
     RunPeriodKernelKwargs,
     RunPeriodKernelResult,
@@ -33,6 +39,7 @@ from tests.solution.test_period_target_value_reads import (
     _RegimeId,
     _three_regime_model,
 )
+from tests.test_models import n_nbegm_toy
 
 _PARAMS = {"discount_factor": 0.95}
 
@@ -202,3 +209,87 @@ def test_host_storage_keeps_only_the_resident_window_on_the_device(
     assert not all(
         _within_window(resident=resident, period=period) for period, resident in device
     ), device
+
+
+def _nbegm_model(execution_config: ExecutionConfig) -> Model:
+    """The nested NB-EGM toy, whose simulation reads a published policy."""
+    return n_nbegm_toy.build_model(
+        variant="n_nbegm", n_periods=3, execution_config=execution_config
+    )
+
+
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
+def test_host_storage_simulates_the_device_storage_policy_panel() -> None:
+    """A panel read off host-stored policies is the device-storage panel."""
+    initial_conditions = {
+        "regime_id": jnp.array([n_nbegm_toy.RegimeId.alive] * 2),
+        "age": jnp.array([20.0, 20.0]),
+        "wealth": jnp.array([1.0, 7.5]),
+        "illiquid": jnp.array([0.0, 4.0]),
+    }
+    panels = [
+        _nbegm_model(config)
+        .simulate(
+            params=_PARAMS,
+            initial_conditions=initial_conditions,
+            seed=5,
+            log_level="off",
+        )
+        .to_dataframe()
+        for config in (ExecutionConfig(), _host())
+    ]
+
+    assert panels[0].equals(panels[1])
+
+
+def test_host_storage_keeps_dissolution_flags_in_host_memory() -> None:
+    """A collective regime's dissolution flags are stored like its values."""
+    model = _make_dissolution_model(_host())
+    assert model.ages is not None
+    result = backward_induction.solve(
+        program_fingerprint="test_value_storage",
+        flat_params=model._process_params(_DISSOLUTION_PARAMS),
+        ages=model.ages,
+        regimes=model._regimes,
+        logger=get_logger(log_level="off"),
+        enable_jit=model.enable_jit,
+        execution=model._execution,
+        retain_dissolution_flags=True,
+    )
+    flags = [
+        flag
+        for regime_to_flag in result.dissolution_flags.values()
+        for flag in regime_to_flag.values()
+    ]
+
+    assert flags
+    assert {flag.sharding.memory_kind for flag in flags} == {"pinned_host"}
+
+
+def test_host_storage_routes_dissolutions_as_device_storage_does() -> None:
+    """Flags read back from the host route the panel exactly as on the device."""
+    panels = []
+    for config in (ExecutionConfig(), _host()):
+        model = _make_dissolution_model(config)
+        initial_conditions = {
+            "wage": jnp.array([1.0, 2.0, 3.0]),
+            "age": jnp.array([0.0, 0.0, 0.0]),
+            "regime_id": jnp.array(
+                [model.regime_names_to_ids["married"]] * 3, dtype=jnp.int32
+            ),
+            "own_stakeholder": jnp.full(
+                3, model.stakeholder_names_to_ids["f"], dtype=jnp.int32
+            ),
+        }
+        solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="off")
+        panels.append(
+            model.simulate(
+                params=_DISSOLUTION_PARAMS,
+                initial_conditions=initial_conditions,
+                solution=solution,
+                seed=0,
+                log_level="off",
+            ).to_dataframe()
+        )
+
+    assert panels[0].equals(panels[1])

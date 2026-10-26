@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+import jax
 import numpy as np
 
 from _lcm.engine import Regime
@@ -17,7 +18,11 @@ from _lcm.params.sequence_leaf import SequenceLeaf
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.solution.contract import BackwardInductionResult
-from _lcm.solution.host_values import device_read_view, is_host_value
+from _lcm.solution.host_values import (
+    device_read_view,
+    is_host_value,
+    to_cpu_device,
+)
 from _lcm.solution.result_snapshot import own_artifact_store, own_value_store
 from _lcm.typing import (
     ArtifactPayload,
@@ -152,6 +157,7 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
         }
     )
 
+    flags_on_host = _holds_host_arrays(nested=internal_result.dissolution_flags)
     if retention.retains_replay:
         _add_nested_artifacts(
             target=replay,
@@ -160,7 +166,11 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
         )
         _add_nested_artifacts(
             target=replay,
-            nested=internal_result.dissolution_flags,
+            nested=(
+                _on_cpu_device(nested=internal_result.dissolution_flags)
+                if flags_on_host
+                else internal_result.dissolution_flags
+            ),
             key=DISSOLUTION_FLAG,
         )
 
@@ -373,11 +383,7 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
             params_fingerprint=params_fingerprint,
             values=(
                 device_read_view(values=internal_result.value_functions)
-                if any(
-                    is_host_value(value)
-                    for regime_to_value in internal_result.value_functions.values()
-                    for value in regime_to_value.values()
-                )
+                if _holds_host_arrays(nested=internal_result.value_functions)
                 else internal_result.value_functions
             ),
             simulation_policies=(
@@ -386,7 +392,11 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
                 else MappingProxyType({})
             ),
             dissolution_flags=(
-                internal_result.dissolution_flags
+                (
+                    device_read_view(values=internal_result.dissolution_flags)
+                    if flags_on_host
+                    else internal_result.dissolution_flags
+                )
                 if retention.retains_replay
                 else MappingProxyType({})
             ),
@@ -396,6 +406,32 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
         ),
     )
     return result
+
+
+def _holds_host_arrays(*, nested: Mapping[int, Mapping[RegimeName, jax.Array]]) -> bool:
+    """Whether a solve stored these per-period arrays in pinned host memory."""
+    return any(
+        is_host_value(array)
+        for regime_to_array in nested.values()
+        for array in regime_to_array.values()
+    )
+
+
+def _on_cpu_device(
+    *, nested: Mapping[int, Mapping[RegimeName, jax.Array]]
+) -> MappingProxyType[int, MappingProxyType[RegimeName, jax.Array]]:
+    """Place host-stored per-period arrays on the CPU device, as policies are."""
+    return MappingProxyType(
+        {
+            period: MappingProxyType(
+                {
+                    regime_name: to_cpu_device(array)
+                    for regime_name, array in regime_to_array.items()
+                }
+            )
+            for period, regime_to_array in nested.items()
+        }
+    )
 
 
 def fingerprint_flat_params(flat_params: FlatParams) -> str:

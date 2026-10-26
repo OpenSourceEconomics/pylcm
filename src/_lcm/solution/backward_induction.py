@@ -741,7 +741,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     # Every copy a period's transfer cache holds belongs to this solve alone.
     transfer_generation = uuid.uuid4().hex
     store_on_host = resolved_execution.value_storage == "host"
-    in_flight_host_copies: tuple[FloatND, ...] = ()
+    in_flight_host_copies: tuple[jax.Array, ...] = ()
     with solve_phase(name="backward_induction", logger=logger, call_id=call_id):
         # Planning and compilation leave a large, long-lived object graph behind
         # (programs, frontiers, executables). Freezing it after one collection
@@ -1348,11 +1348,16 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                     # per-period flags at each period's end, before the roll
                     # (above). The period keys match `solution`'s either way; only
                     # the arrays behind them differ.
-                    dissolution_flags[period] = (
-                        MappingProxyType(period_dissolution_flags)
-                        if publish_dissolution_flags
-                        else _NO_DISSOLUTION_FLAGS
-                    )
+                    if not publish_dissolution_flags:
+                        dissolution_flags[period] = _NO_DISSOLUTION_FLAGS
+                    elif store_on_host:
+                        dissolution_flags[period] = copy_values_to_host(
+                            values=period_dissolution_flags
+                        )
+                    else:
+                        dissolution_flags[period] = MappingProxyType(
+                            period_dissolution_flags
+                        )
                 if period_solution and (retain_replay or period_simulation_policies):
                     assert host_device is not None  # noqa: S101
                     simulation_policies[period] = MappingProxyType(
@@ -1427,7 +1432,11 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 if store_on_host:
                     jax.block_until_ready(in_flight_host_copies)
                     in_flight_host_copies = tuple(
-                        solution.get(period, MappingProxyType({})).values()
+                        array
+                        for period_mapping in (solution, dissolution_flags)
+                        for array in period_mapping.get(
+                            period, MappingProxyType({})
+                        ).values()
                     )
 
             if diagnostics_enabled or stats_enabled:

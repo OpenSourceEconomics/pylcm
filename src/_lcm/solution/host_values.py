@@ -14,6 +14,7 @@ from typing import Literal
 
 import jax
 import numpy as np
+from jax.sharding import SingleDeviceSharding
 
 from _lcm.typing import ArtifactPayload
 from lcm._solver_api.entries import _LazyEntry
@@ -23,15 +24,16 @@ from lcm.typing import FloatND, RegimeName
 # The memory kind a stored value lives in.
 HOST_MEMORY_KIND: Literal["pinned_host"] = "pinned_host"
 
-# Periods whose device copies a read-through view keeps at once: the period a
-# simulation step reads and the period its subjects land in.
-_CACHED_PERIODS = 2
+# Periods whose device copies a read-through view keeps at once: a simulation
+# step reads its own period, the one its subjects land in and, replaying a
+# same-period exit, the one after that.
+_CACHED_PERIODS = 3
 
 
 def copy_values_to_host(
-    *, values: Mapping[RegimeName, FloatND]
-) -> MappingProxyType[RegimeName, FloatND]:
-    """Start copying one period's values to pinned host memory, without waiting.
+    *, values: Mapping[RegimeName, jax.Array]
+) -> MappingProxyType[RegimeName, jax.Array]:
+    """Start copying one period's arrays to pinned host memory, without waiting.
 
     Each copy keeps its array's sharding, so every device copies its own slice,
     and runs while the device computes whatever is dispatched after it.
@@ -46,14 +48,28 @@ def copy_values_to_host(
     )
 
 
-def is_host_value(value: FloatND) -> bool:
+def is_host_value(value: jax.Array) -> bool:
     """Whether `value` is an array a solve stored in pinned host memory."""
     return value.sharding.memory_kind == HOST_MEMORY_KIND
 
 
-def to_device(value: FloatND) -> FloatND:
-    """Copy a stored value back to device memory on its own sharding."""
+def to_device(value: jax.Array) -> jax.Array:
+    """Copy a stored array back to device memory on its own sharding."""
     return jax.device_put(value, value.sharding.with_memory_kind("device"))
+
+
+def to_cpu_device(value: jax.Array) -> jax.Array:
+    """Place a stored array on the CPU device, where the solve keeps its policies.
+
+    An artifact store copies the arrays it hands out; on the CPU device that copy
+    is an ordinary computation, while on host memory it would be slow host compute
+    leaving its result in host memory.
+    """
+    # Naming the memory kind matters on a CPU backend, where the stored array's
+    # device is this same CPU device and only the memory kind differs.
+    return jax.device_put(
+        value, SingleDeviceSharding(jax.devices("cpu")[0], memory_kind="device")
+    )
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -83,14 +99,21 @@ class HostValueEntry(_LazyEntry):
 
 
 class _RecentDeviceCopies:
-    """Device copies of the stored values of the most recently read periods."""
+    """Device copies of the stored arrays of the most recently read periods."""
 
     def __init__(self) -> None:
-        self._copies: dict[int, dict[RegimeName, FloatND]] = {}
+        self._copies: dict[int, dict[RegimeName, jax.Array]] = {}
 
-    def read(self, *, period: int, regime: RegimeName, stored: FloatND) -> FloatND:
-        """Return the device copy of one stored value, copying it on first read."""
-        if period not in self._copies:
+    def read(self, *, period: int, regime: RegimeName, stored: jax.Array) -> jax.Array:
+        """Return the device copy of one stored value, copying it on first read.
+
+        The period read least recently is dropped first. A reader holds a value
+        to the same object while its period is open, so a period still in use
+        must outlive one that was merely copied earlier.
+        """
+        if period in self._copies:
+            self._copies[period] = self._copies.pop(period)
+        else:
             while len(self._copies) >= _CACHED_PERIODS:
                 del self._copies[next(iter(self._copies))]
             self._copies[period] = {}
@@ -100,21 +123,21 @@ class _RecentDeviceCopies:
         return copies[regime]
 
 
-class _DeviceReadPeriod(Mapping[RegimeName, FloatND]):
-    """One period's stored values, each handed out as a device copy."""
+class _DeviceReadPeriod(Mapping[RegimeName, jax.Array]):
+    """One period's stored arrays, each handed out as a device copy."""
 
     def __init__(
         self,
         *,
         period: int,
-        stored: Mapping[RegimeName, FloatND],
+        stored: Mapping[RegimeName, jax.Array],
         copies: _RecentDeviceCopies,
     ) -> None:
         self._period = period
         self._stored = stored
         self._copies = copies
 
-    def __getitem__(self, regime: RegimeName) -> FloatND:
+    def __getitem__(self, regime: RegimeName) -> jax.Array:
         return self._copies.read(
             period=self._period, regime=regime, stored=self._stored[regime]
         )
@@ -127,13 +150,14 @@ class _DeviceReadPeriod(Mapping[RegimeName, FloatND]):
 
 
 def device_read_view(
-    *, values: Mapping[int, Mapping[RegimeName, FloatND]]
-) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
-    """Return host-stored values as a mapping that hands out device copies.
+    *, values: Mapping[int, Mapping[RegimeName, jax.Array]]
+) -> MappingProxyType[int, MappingProxyType[RegimeName, jax.Array]]:
+    """Return host-stored arrays as a mapping that hands out device copies.
 
     A value is copied when it is first read and kept while its period is one of
-    the two most recently read, so a reader that walks the periods in order holds
-    at most two periods on the device and copies each period once per walk.
+    the three most recently read, so a reader that walks the periods in order
+    holds at most three periods on the device and copies each period once per
+    walk.
     """
     copies = _RecentDeviceCopies()
     return MappingProxyType(
