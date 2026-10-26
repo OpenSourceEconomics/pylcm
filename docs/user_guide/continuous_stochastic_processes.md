@@ -285,7 +285,9 @@ with JAX arrays at the selected precision. `nodes` is a finite strictly increasi
 one-dimensional array; the remaining inputs are scalar arrays, with positive finite
 `sigma`. The operation synchronously runs the host checker in
 `_lcm.processes.density_derivative_admission`. It changes no model or subsequent
-compiled call and raises `DensityDerivativeAccuracyError` on an uncertifiable row.
+compiled call and raises `DensityDerivativeAccuracyError` on an uncertifiable row. This
+certifies the coefficient words evaluated by this call; it does not certify the output
+of a separately compiled AD program.
 
 At that exact stored-input row it checks all local first-order unit partials in `mu`,
 `rho`, actual source and `sigma`. Define `g = sigma * partial p_i / partial theta` for
