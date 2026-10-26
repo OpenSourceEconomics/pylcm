@@ -1372,7 +1372,7 @@ def _query_cell(
         _PHYSICAL_CONTEXTS: fixed.get(_PHYSICAL_CONTEXTS, {}),
         **{name: fixed[name] for name in node.read.physical_inputs if name in fixed},
     }
-    if node.available is not None:
+    if node.available is not None or node.decision is not None:
         active = _query_availability(node=node, available=available)
 
         def admitted() -> PolicyAnswer:

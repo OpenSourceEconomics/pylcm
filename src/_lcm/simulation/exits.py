@@ -17,6 +17,7 @@ from _lcm.current_iid import (
     CurrentIIDDrawPlan,
     _draw_base_value,
     _law_inputs,
+    source_law_params,
 )
 from _lcm.execution.core_program import (
     CoreExecutionDisposition,
@@ -756,7 +757,9 @@ def _produce_observed_group(
                 physical=physical,
                 addressed_bases={},
                 held_bases={},
-                source_params={group: supplied},
+                source_params={
+                    group: source_law_params(binding=binding, supplied=supplied)
+                },
                 source_inputs={group: inputs},
                 recovery_error={},
                 valid=valid & law_input_validity(binding=binding, inputs=inputs),
