@@ -651,44 +651,52 @@ required extensions with explicit refusals. This is a source frontier, not typin
 import, native, numerical or public Model-to-forward acceptance. Those gates must pass
 before public admission.
 
-### Private installed Case-U exact-point intermediate
+### Private connected Case-U publication and replay
 
-The genuine dated builder now selects the private U branch from the complete original
-action dependency census: current physical ancestry outside resources, pre-state context
+The genuine dated builder selects the private U branch from the complete original action
+dependency census: current physical ancestry outside resources, pre-state context
 outside the resource cut, or a genuine nonlinear CE declaration. It does not classify
 arbitrary failed R admission as U. The original R admission and public non-GridSearch
 guard remain unchanged.
 
 The U branch shares the actual point assembler between original pre-install dated
-context/build/step/plan/call objects and the final installed generation. Its U-specific
-native output contains integrated source levels/economic marginals, economic emptiness,
+context/build/step/plan/call objects and the final installed generation. Its native
+output contains integrated source levels/economic marginals, economic emptiness,
 original source validity/status/read counts and the actual same-invocation law witness.
-Original per-frame selected candidate/owner/side/corner checks remain transient inside
-the original Euler/FUES point computation. No per-current-node policy/statistic bank is
-retained as guard metadata. Forward retention is explicitly UNSUPPORTED until actual U
-replay is implemented.
+Selected candidate/owner/side/corner checks remain transient inside the original
+conditional solve. Durable projection does not retain a per-current-node policy bank.
 
-This intermediate publisher closes every structural incoming scalar deterministic Euler
-parent using original next-state law, parameters, fixed operands, source date, age and
-savings/floor support. It unions those represented coordinates with the original
-declared liquid grid inside existing projection capacity. It checks that every mandatory
-coordinate survived the union. Out-of-domain demands, capacity, law/source corruption
-and missing exact support fail explicitly; no truncated prefix or uncertainty interval
-is certified.
+The exact-point publisher closes its admitted incoming scalar deterministic Euler
+parents using original next-state laws, parameters, fixed operands, source date, age and
+savings/floor support. It unions represented demands with the declared liquid grid
+inside the admitted projection capacity and checks that every mandatory coordinate
+survived. Out-of-domain demands, capacity, law/source corruption and missing exact
+support fail explicitly. Coordinate owner indices address stored exact records; they do
+not certify source-candidate topology. Unsupported links and unproved sides fail through
+the real dated reader before discount or masking. The separate saturated-span BALANCED
+publisher retains its own source proof and refinement requirements.
 
-Only exact direct evaluations are published. Coordinate owner indices address stored
-exact records; they do not certify source-candidate topology. Every link remains
-unsupported, and nonexact or unproved side reads fail through the real dated
-ProjectedChildReader before parent discount/masking, including zero discount. This is
-real private Model installation and source closure, not smooth/full-domain U acceptance
-or a sampled topology certificate. Current-shock parent demand closure, source-bound
-diagnostic slots, projected future children, passive/choice,
-moving-floor/nested/phase/query/gated/sharded families retain named required refusals in
-this first installed class.
+Candidate replay retains the required future continuations and original dated solver
+specification. At the realised physical frame it reconstructs the original alternatives
+and selects their associated action, saving and native owner before advancing the
+original transition. It does not interpolate an average policy. Default retention and
+fresh-model save/load preserve that route. Explicit grid replay remains a separate
+approximation with the declared omission and moment requirements.
 
-Constructive U source-context/selector/corner topology and refinement, complete
-economic/shape/family/multiscale/zero/streamed support, actual realized forward and
-production scheduling/admission remain REQUIRED. Cold Model allocation admission belongs
-to the existing generation materializer work; this source does not open its budget
-guards or substitute a new budget owner. Genuine Model/solve/parent source fixtures are
-held for independent review and a bounded verifier release.
+The connected private families include scalar DC/NB, NB passive cells with discrete
+branches, and finite NEGM with its original DC keeper and adjuster constructors. NEGM
+retains the actual outer target and complete inner candidate tuple; its branch authority
+cannot authorize ordinary child publication. Ordinary passive future rows keep their
+actual carry schema, numeric generation roots and original row bindings. Mapped NB
+branches return only consumed associated channels; unused query metadata stays inside
+the original branch solve. Their numeric record annotations permit the actual leading
+mapped axes.
+
+This family scope does not complete S10. Genuine nested NB, connected nonlinear CE,
+incoming ND demand closure, broader passive/choice/phase/query/gated/sharded
+intersections, cold finite-budget admission and remaining derivative controls stay
+required. Constructive U source-context/selector/corner topology and refinement,
+full-domain support, production cost and scheduling/admission also remain required.
+Exact-demand integrity and scoped Model-to-forward qualification do not establish those
+gates or open public current-IID non-GridSearch admission. Cold allocation remains owned
+by the existing generation materializer; this route cannot bypass its budget guards.
