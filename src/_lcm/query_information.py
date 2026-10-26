@@ -177,13 +177,18 @@ class InformationQueryCell:
     ) -> BoolND:
         from _lcm.policy_queries import (  # noqa: PLC0415
             _PHYSICAL_CONTEXTS,
+            _PROJECTION,
             _query_availability,
         )
 
         if node.available is None:
             return jnp.asarray(a=True)
         available = {
-            **self.projection_operands,
+            **(
+                self.projection_operands
+                if node is self.node
+                else cast("QueryArguments", fixed[_PROJECTION])
+            ),
             **source,
             "period": fixed["period"],
             "age": fixed["age"],
@@ -203,6 +208,7 @@ class InformationQueryCell:
     ) -> tuple[CurrentIIDDrawFrame, FloatND]:
         from _lcm.policy_queries import (  # noqa: PLC0415
             _PHYSICAL_CONTEXTS,
+            _PROJECTION,
             _mapped_query_states,
         )
 
@@ -244,7 +250,11 @@ class InformationQueryCell:
             )
             return _batch_metadata(frame=frame, size=1), jnp.ones((1, 1))
         available = {
-            **self.projection_operands,
+            **(
+                self.projection_operands
+                if node is self.node
+                else cast("QueryArguments", fixed[_PROJECTION])
+            ),
             **source,
             "period": fixed["period"],
             "age": fixed["age"],

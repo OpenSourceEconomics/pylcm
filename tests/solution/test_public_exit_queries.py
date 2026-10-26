@@ -1851,3 +1851,145 @@ def test_custom_outside_choice_ignores_padded_query_lanes(*, n_points: int) -> N
     np.testing.assert_array_equal(
         result.values[0]["single_f"], np.full((n_points,), 5.0)
     )
+
+
+def _ancestor_settlement(*, wealth: FloatND, ancestor_shift: FloatND) -> FloatND:
+    return wealth + ancestor_shift
+
+
+def _descendant_settlement(descendant_shift: FloatND) -> FloatND:
+    return descendant_shift
+
+
+def _ancestor_available(*, wealth: FloatND, ancestor_threshold: FloatND) -> BoolND:
+    return wealth >= ancestor_threshold
+
+
+def _information_wealth(*, wealth: FloatND, middle_draw: FloatND) -> FloatND:
+    return 10.0 + wealth + middle_draw
+
+
+def _information_benchmark(*, wealth: FloatND, leaf_draw: FloatND) -> FloatND:
+    return wealth + leaf_draw
+
+
+def _information_stay(root_draw: FloatND) -> FloatND:
+    return -100.0 + root_draw
+
+
+@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.parametrize("fixed", [False, True])
+def test_nested_information_uses_each_ancestors_settlement_operands(
+    *, fixed: bool
+) -> None:
+    """A constant descendant map cannot supply its ancestor's shift or guard."""
+    wealth = LinSpacedGrid(start=0, stop=12, n_points=13)
+    regimes = {
+        "single_f": Regime(
+            states={"wealth": LinSpacedGrid(start=0, stop=1, n_points=2)},
+            functions={"utility": _information_stay},
+            shocks=("root_noise",),
+            exits={
+                "move": Exit(
+                    targets={
+                        "self": ExitTarget(
+                            regime="couple",
+                            projection={"wealth": _ancestor_settlement},
+                        )
+                    },
+                    available=_ancestor_available,
+                    rule="unilateral",
+                )
+            },
+        ),
+        "couple": Regime(
+            states={"wealth": wealth},
+            functions={"utility": _information_wealth},
+            shocks=("middle_noise",),
+            exits={
+                "move": Exit(
+                    targets={
+                        "self": ExitTarget(
+                            regime="single_m",
+                            projection={"wealth": _descendant_settlement},
+                        )
+                    },
+                    rule="unilateral",
+                )
+            },
+        ),
+        "single_m": Regime(
+            states={"wealth": wealth},
+            functions={"utility": _information_benchmark},
+            shocks=("leaf_noise",),
+        ),
+    }
+    runtime_model = None
+    for shift, descendant, threshold in (
+        (0.25, 1.5, 0.5),
+        (0.75, 10.0, -0.5),
+    ):
+        params = {
+            "ancestor_shift": shift,
+            "descendant_shift": descendant,
+            "ancestor_threshold": threshold,
+        }
+        if runtime_model is None or fixed:
+            model = Model(
+                regimes=regimes,
+                regime_id_class=_Household,
+                n_periods=1,
+                initial_nodes=InitialNodes(by_period={0: "single_f"}),
+                edges={},
+                shocks={
+                    group: ShockGroup(
+                        shocks={name: Normal(mu=0.0, sigma=1.0)},
+                        nodes=UserNodes(
+                            nodes=np.asarray([[-1.0], [1.0]]),
+                            weights=np.asarray([0.5, 0.5]),
+                        ),
+                    )
+                    for group, name in (
+                        ("root_noise", "root_draw"),
+                        ("middle_noise", "middle_draw"),
+                        ("leaf_noise", "leaf_draw"),
+                    )
+                },
+                fixed_params=params if fixed else {},
+                enable_jit=True,
+                execution_config=ExecutionConfig(device_memory_bytes=None),
+            )
+            runtime_model = model
+        else:
+            model = runtime_model
+        kernel = model._regimes["single_f"].solution.period_kernels[0]
+        assert isinstance(kernel, _PolicyQueryKernel)
+        ancestor_key, ancestor_node = next(
+            (key, node)
+            for key, node in kernel.definitions.items()
+            if node.read.target == "couple"
+        )
+        descendant_node = next(
+            node
+            for node in kernel.definitions.values()
+            if node.read.target == "single_m"
+        )
+        assert ancestor_key in descendant_node.ancestors
+        assert ancestor_node.available is not None
+        assert ancestor_node.read.operand_paths.keys() - (
+            descendant_node.read.operand_paths.keys()
+        )
+        solution = model.solve(
+            params={} if fixed else params, log_level="off", runtime_checks=True
+        )
+        source_wealth = np.asarray([0.0, 1.0])
+        # The benchmark hides its mean-zero shock, so its value is descendant.
+        # A Participating middle policy must beat that benchmark at every hidden
+        # middle draw. It cannot exit to the benchmark on the root's behalf.
+        middle = 10.0 + source_wealth[:, None] + shift + np.asarray([-1.0, 1.0])
+        support = np.all(middle >= descendant, axis=1)
+        expected = np.where(
+            (source_wealth >= threshold) & support, middle.mean(axis=1), -100.0
+        )
+        np.testing.assert_allclose(solution.values[0]["single_f"], expected)
+        assert np.all(np.isfinite(solution.values[0]["single_f"]))
