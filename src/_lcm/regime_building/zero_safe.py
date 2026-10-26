@@ -160,12 +160,8 @@ correctly-rounded/compensated summation, which is not implemented.
 import jax
 import jax.numpy as jnp
 
-from _lcm.probability import scaled_down_by_power_of_two
-from _lcm.zero_safe import (
-    relative_scales,
-    scaled_weighted_terms,
-    zero_safe_weighted_term,
-)
+from _lcm.certainty_equivalent import _scaled_lottery_terms
+from _lcm.zero_safe import zero_safe_weighted_term
 from lcm.typing import FloatND, IntND
 
 
@@ -206,22 +202,12 @@ def zero_safe_average(
     the latter replaced it; the two agree, as their bit-for-bit equality on
     non-positive shifts implies.
 
-    The two reductions treat the scale differently:
-
-    - the **mass** lowers each weight onto the common scale before summing. A
-      live node too far below that scale to register contributes no share of a
-      total of order one, which is the right answer for a denominator;
-    - the **numerator** goes through `scaled_weighted_terms`, the engine's one
-      scaled contraction, which splits the relative scale between the
-      coefficient and the product. All of it on the coefficient would flush a
-      tiny probability before the value supplied its binades; all of it on the
-      product would overflow an ordinary coefficient meeting a value near the
-      top of the range, which no later scaling recovers.
-
-    Both read the relative scale from `relative_scales`, so numerator and mass
-    are lowered onto the same one and their ratio is the mean. The common scale
-    is the smallest shift — the largest node — so every relative scale is a
-    power of two no greater than one and the lowering cannot overflow.
+    Scaled lotteries use the certainty equivalent's `_scaled_lottery_terms`.
+    It reserves headroom for the whole numerator, not just each product, and
+    scales its denominator by the same power of two. A finite mean can then
+    remain finite even when its unnormalized numerator exceeds the format's
+    range. Splitting the scale between each coefficient and product also keeps
+    a rare node's representable contribution against a large value.
 
     Unlike `jnp.average`, only `axis=None` or a single `int` `axis` is
     supported — every call site here reduces at most one axis at a time; pass
@@ -265,19 +251,29 @@ def zero_safe_average(
         if shifts_arr is not None:
             shifts_arr = jnp.reshape(shifts_arr, new_shape)
 
-    if shifts_arr is None:
-        lowered_weights = weights_arr
-    else:
-        # `relative_scales` returns the SMALLEST shift's offset, so every entry
-        # is non-positive — which is exactly `scaled_down_by_power_of_two`'s
-        # precondition. It agrees with `jnp.ldexp` bit-for-bit on that domain and
-        # skips the general `frexp` graph, which here would run twice over the
-        # whole value surface.
-        lowered_weights = scaled_down_by_power_of_two(
-            values=weights_arr, shift=relative_scales(shifts=shifts_arr, axis=axis)
+    if shifts_arr is not None:
+        values, coefficients, scales = jnp.broadcast_arrays(
+            a_arr, weights_arr, shifts_arr
         )
+        if axis is None:
+            values, coefficients, scales = (
+                entry.reshape(-1) for entry in (values, coefficients, scales)
+            )
+        else:
+            values, coefficients, scales = (
+                jnp.moveaxis(entry, axis, -1)
+                for entry in (values, coefficients, scales)
+            )
+        terms, masses = _scaled_lottery_terms(
+            values=values, coefficients=coefficients, shifts=scales
+        )
+        total_weight = jnp.sum(masses, axis=-1)
+        _raise_if_concretely_zero(
+            total_weight=total_weight, context="zero_safe_average"
+        )
+        return jnp.sum(terms, axis=-1) / total_weight
 
-    total_weight = jnp.sum(lowered_weights, axis=axis)
+    total_weight = jnp.sum(weights_arr, axis=axis)
     _raise_if_concretely_zero(total_weight=total_weight, context="zero_safe_average")
     # The masked numerator is used unconditionally -- see the module docstring's
     # PORTABILITY section. A whole-expression branch that keeps a RAW `sum(w*a)`
@@ -293,21 +289,9 @@ def zero_safe_average(
     # extra reductions. NB the float64 bit-identity is a property of THIS single
     # vectorised reduction; the SEQUENTIAL regime-mixture fold in `Q_and_F` is a
     # different reduction order and is not made bit-portable by float64.
-    if shifts_arr is None:
-        # Weights on one scale already: whatever size the model supplied them
-        # at, and nothing upstream has accounted for a small one.
-        terms = zero_safe_weighted_term(
-            weight=weights_arr, value=a_arr, subnormal_is_accounted_for=False
-        )
-    else:
-        # Scaled weights share their contraction with every other scaled
-        # weighted sum in the engine, which is what splits the downscale
-        # between the coefficient and the product so that neither a rare node
-        # against a large value nor an ordinary node against a near-max value
-        # leaves the format on the way.
-        terms = scaled_weighted_terms(
-            coefficients=weights_arr, shifts=shifts_arr, values=a_arr, axis=axis
-        )
+    terms = zero_safe_weighted_term(
+        weight=weights_arr, value=a_arr, subnormal_is_accounted_for=False
+    )
     numerator = jnp.sum(terms, axis=axis)
     return numerator / total_weight
 
