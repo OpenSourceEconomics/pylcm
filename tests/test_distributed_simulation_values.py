@@ -7,7 +7,7 @@ Run this module alone so its four-CPU-device topology precedes JAX initializatio
 # ruff: noqa: PLC0415
 from functools import cache
 from types import MappingProxyType
-from typing import Never, cast
+from typing import Literal, Never, cast
 
 import jax
 import jax.numpy as jnp
@@ -254,6 +254,7 @@ def _build_model(
     sharded: bool,
     subject_width: int | None = None,
     budget: int | None = None,
+    value_storage: Literal["device", "host"] = "device",
 ) -> Model:
     """Build a sharded preference axis beside an unsharded terminal regime."""
     wealth = LinSpacedGrid(start=1, stop=20, n_points=6)
@@ -281,6 +282,7 @@ def _build_model(
             devices=devices,
             axis_widths={} if subject_width is None else {"subject": subject_width},
             device_memory_bytes=budget,
+            value_storage=value_storage,
         ),
         initial_nodes={0: "working"},
         edges={

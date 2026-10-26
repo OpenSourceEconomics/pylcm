@@ -12,7 +12,7 @@ CPU devices have a pinned host memory kind too, so the copy path runs here as on
 an accelerator.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import Literal, Unpack, cast
 
@@ -32,6 +32,7 @@ from _lcm.utils.logging import get_logger
 from lcm import ExecutionConfig, InvariantBlockSchedule, Model
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import ValueStore
+from lcm.typing import RegimeName
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.regime_building.test_collective_regime_simulate import (
     _DISSOLUTION_PARAMS,
@@ -43,13 +44,14 @@ from tests.solution._callback_types import (
     RunPeriodKernelKwargs,
     RunPeriodKernelResult,
 )
+from tests.solution.test_invariant_blocking import _independent_types_model
 from tests.solution.test_period_target_value_reads import (
     _gated_model,
     _GatedRegimeId,
     _RegimeId,
     _three_regime_model,
 )
-from tests.test_models import n_nbegm_toy
+from tests.test_models import independent_types, n_nbegm_toy
 
 _PARAMS = {"discount_factor": 0.95}
 
@@ -447,3 +449,99 @@ def test_a_host_storage_solve_hands_its_budget_to_the_value_store() -> None:
         entry.budget_bytes for entry in entries if isinstance(entry, HostValueEntry)
     } == {model._execution.device_memory_bytes}
     assert all(isinstance(entry, HostValueEntry) for entry in entries)
+
+
+def test_a_period_copy_is_dispatched_before_the_next_period_computes(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The copy of period p's values goes out between p's kernels and p-1's.
+
+    A copy dispatched before a kernel runs beside it; one dispatched after waits
+    for it. The order of dispatch is therefore what decides whether the copy is
+    hidden, and it is what this checks, not wall time.
+    """
+    events: list[tuple[str, int]] = []
+    run_period_kernel = backward_induction._run_period_kernel
+    copy_values_to_host = backward_induction.copy_values_to_host
+
+    def _run(**kwargs: Unpack[RunPeriodKernelKwargs]) -> RunPeriodKernelResult:
+        events.append(("kernel", kwargs["period"]))
+        return run_period_kernel(**kwargs)
+
+    def _copy(
+        *, values: Mapping[RegimeName, jax.Array]
+    ) -> MappingProxyType[RegimeName, jax.Array]:
+        events.append(("copy", len(events)))
+        return copy_values_to_host(values=values)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(backward_induction, "_run_period_kernel", _run)
+        patch.setattr(backward_induction, "copy_values_to_host", _copy)
+        _three_regime_model(_host()).solve(params=_PARAMS, log_level="off")
+
+    # Label each copy with the period of the kernels dispatched just before it.
+    order: list[tuple[str, int]] = []
+    for kind, payload in events:
+        if kind == "kernel":
+            order.append(("kernel", payload))
+        else:
+            order.append(("copy", next(p for k, p in reversed(order) if k == "kernel")))
+    copies = [index for index, (kind, _) in enumerate(order) if kind == "copy"]
+    assert copies
+    for index in copies:
+        period = order[index][1]
+        before = [p for kind, p in order[:index] if kind == "kernel"]
+        after = [p for kind, p in order[index + 1 :] if kind == "kernel"]
+        assert period in before
+        assert all(p < period for p in after), order
+        assert not after or after[0] == period - 1, order
+
+
+def _blocked(*, value_storage: Literal["device", "host"]) -> ExecutionConfig:
+    return ExecutionConfig(
+        invariant_block_widths={"pref_type": 1}, value_storage=value_storage
+    )
+
+
+def test_a_blocked_host_storage_solve_publishes_the_blocked_device_values() -> None:
+    """Assembled block values are stored and read back bit for bit."""
+    solutions = [
+        _independent_types_model(
+            execution_config=_blocked(value_storage=storage)
+        ).solve(params=independent_types.get_params(), log_level="off")
+        for storage in ("device", "host")
+    ]
+
+    for period, regime_to_value in solutions[0].values.items():
+        for regime_name, value in regime_to_value.items():
+            np.testing.assert_array_equal(
+                np.asarray(solutions[1].value(period=period, regime=regime_name)),
+                np.asarray(value),
+                strict=True,
+            )
+
+
+def test_a_blocked_host_storage_solve_simulates_the_blocked_device_panel() -> None:
+    """Simulation from host-stored block values is the device-storage panel."""
+    n_wealth = independent_types.N_WEALTH_POINTS
+    n_types = len(independent_types.TYPE_PARAMS["weight"])
+    types = np.repeat(np.arange(n_types), n_wealth)
+    initial_conditions = {
+        "regime_id": jnp.full(types.size, independent_types.RegimeId.working),
+        "age": jnp.zeros(types.size),
+        "wealth": jnp.asarray(np.tile(np.arange(n_wealth, dtype=float), n_types)),
+        "pref_type": jnp.asarray(types, dtype=jnp.int32),
+    }
+    panels = [
+        _independent_types_model(execution_config=_blocked(value_storage=storage))
+        .simulate(
+            params=independent_types.get_params(),
+            initial_conditions=initial_conditions,
+            seed=0,
+            log_level="off",
+        )
+        .to_dataframe()
+        for storage in ("device", "host")
+    ]
+
+    assert panels[0].equals(panels[1])
