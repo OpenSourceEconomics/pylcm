@@ -140,12 +140,20 @@ def _paired_max(
     values: FloatND | IntND, ids: IntND, initial: FloatND | IntND
 ) -> tuple[FloatND | IntND, IntND]:
     """Reduce `(value, id)` pairs over the last axis, without a derivative."""
-    return jax.lax.reduce(
+    lowest = (
+        -jnp.inf
+        if jnp.issubdtype(values.dtype, jnp.floating)
+        else jnp.iinfo(values.dtype).min
+    )
+    no_id = jnp.asarray(NO_ID, dtype=jnp.int32)
+    # XLA requires an identity initializer; a finite floor must compete afterward.
+    best = jax.lax.reduce(
         (values, ids),
-        (initial, jnp.asarray(NO_ID, dtype=jnp.int32)),
+        (jnp.asarray(lowest, dtype=values.dtype), no_id),
         _larger_value_then_smaller_id,
         (values.ndim - 1,),
     )
+    return _larger_value_then_smaller_id(best, (initial, no_id))
 
 
 # keyword-only-exempt: library-callback=jax.custom_jvp.defjvp

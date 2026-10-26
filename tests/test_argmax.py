@@ -9,9 +9,11 @@ from jax import Array, grad, jit, make_jaxpr, vmap
 from numpy.testing import assert_array_equal
 
 from _lcm.regime_building.argmax import (
+    NO_ID,
     _flatten_last_n_axes,
     _move_axes_to_back,
     argmax_and_max,
+    max_and_smallest_id,
 )
 from tests.solution._reduced_maximum_probe import (
     count_equalities_with_a_reduced_maximum,
@@ -350,3 +352,66 @@ def test_argmax_and_max_of_one_candidate_differentiates_like_jnp_max(
         lambda x: argmax_and_max(a=x, where=jnp.asarray(feasible), initial=initial)[1]
     )
     assert_array_equal(np.asarray(derivative(jnp.asarray(1.0))), expected)
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+@pytest.mark.parametrize("feasible", [False, True])
+@pytest.mark.parametrize("integer", [False, True], ids=["float", "int"])
+def test_singleton_action_axis_includes_finite_initial(
+    *, compiled: bool, feasible: bool, integer: bool
+) -> None:
+    """A finite floor competes with each singleton action, including masked actions."""
+    dtype = jnp.int32 if integer else None
+    a = jnp.asarray([[-8], [-2], [4]], dtype=dtype)
+    if not integer:
+        a = a.astype(jnp.asarray(0.0).dtype)
+    reduce = jitted_argmax if compiled else argmax_and_max
+    index, maximum = reduce(a=a, axis=1, where=jnp.asarray(feasible), initial=-2.0)
+    expected = [-2, -2, 4] if feasible else [-2, -2, -2]
+    assert_array_equal(maximum, expected)
+    assert_array_equal(index, [0, 0, 0])
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+@pytest.mark.parametrize("feasible", [False, True])
+def test_singleton_action_axis_has_the_maximum_derivative(
+    *, compiled: bool, feasible: bool
+) -> None:
+    """The singleton derivative is zero below the floor and splits a tie equally."""
+    derivative = grad(
+        lambda a: argmax_and_max(
+            a=a, axis=1, where=jnp.asarray(feasible), initial=-2.0
+        )[1].sum()
+    )
+    if compiled:
+        derivative = jit(derivative)
+    a = jnp.asarray([[-8.0], [-2.0], [4.0]])
+    expected = [[0.0], [0.5], [1.0]] if feasible else [[0.0], [0.0], [0.0]]
+    assert_array_equal(derivative(a), expected)
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+def test_empty_action_axis_returns_initial(*, compiled: bool) -> None:
+    """An empty action grid returns the floor and the no-action index zero."""
+    reduce = jitted_argmax if compiled else argmax_and_max
+    index, maximum = reduce(a=jnp.empty((2, 0)), axis=1, initial=-2.0)
+    assert_array_equal(index, [0, 0])
+    assert_array_equal(maximum, [-2.0, -2.0])
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+def test_singleton_pair_keeps_the_identity_of_the_winning_candidate(
+    *, compiled: bool
+) -> None:
+    """The floor has no candidate ID and loses an equal-value tie to a real ID."""
+    reduce = (
+        jit(partial(max_and_smallest_id, initial=-2.0))
+        if compiled
+        else partial(max_and_smallest_id, initial=-2.0)
+    )
+    maximum, index = reduce(
+        values=jnp.asarray([[-8.0], [-2.0], [4.0]]),
+        ids=jnp.asarray([[7], [5], [3]], dtype=jnp.int32),
+    )
+    assert_array_equal(maximum, [-2.0, -2.0, 4.0])
+    assert_array_equal(index, [NO_ID, 5, 3])

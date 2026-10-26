@@ -687,7 +687,7 @@ _SOURCE_SEALS = {
     SIMULATION_PROGRAM_TYPES_SOURCE: "43c381884a3475516bd25d1463e83a6560e0d2ba3c697a290fad1d005d8dbf30",
     SIMULATION_RUNTIME_SOURCE: "88c9757287b5c16607becef498c1cc52cbaa809bbfd0269d337811ed31d858e7",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
-    ARGMAX_SOURCE: "b508d4e10350de8b54707db238d01c7de6c73b4ca6b0176e0c6c12ec762952dc",
+    ARGMAX_SOURCE: "dd8a5143628cb46339863a07f5c129e19364f10c2c6b4cf881391d875d5c8fb0",
     COLLECTIVE_SOURCE: "4cc0683d493f597684f5801909d297145d8bade0aa752c3e35cf8af2cb55edd9",
     MAX_Q_SOURCE: "2289c6eeb60cc71bbb241681c2875ffe407c78574c44d41dffb27e65f3f4a397",
     PROCESSING_SOURCE: "06f61ff650a61e6f746af9bd7edee20bae782fa630f29cfb8f3361953c750438",
@@ -9848,12 +9848,17 @@ if jnp.issubdtype(values.dtype, jnp.floating):
     return _paired_max_with_tangent(values, ids, initial_arr)
 return _paired_max(values, ids, initial_arr)
 """
-    expected_pair_reduce = r"""return jax.lax.reduce(
+    expected_pair_reduce = r"""lowest = (
+    -jnp.inf if jnp.issubdtype(values.dtype, jnp.floating) else jnp.iinfo(values.dtype).min
+)
+no_id = jnp.asarray(NO_ID, dtype=jnp.int32)
+best = jax.lax.reduce(
     (values, ids),
-    (initial, jnp.asarray(NO_ID, dtype=jnp.int32)),
+    (jnp.asarray(lowest, dtype=values.dtype), no_id),
     _larger_value_then_smaller_id,
     (values.ndim - 1,),
 )
+return _larger_value_then_smaller_id(best, (initial, no_id))
 """
     expected_pair_jvp = r"""values, ids, initial = primals
 values = jax.lax.optimization_barrier(values)
@@ -9898,7 +9903,9 @@ return a.transpose((*front_axes, *axes))
     if not _positional_signature(
         node=pair_reduce, names=("values", "ids", "initial")
     ) or not _body_matches(node=pair_reduce, expected_source=expected_pair_reduce):
-        errors.append("argmax reducer: the paired primal is not one exact `lax.reduce`")
+        errors.append(
+            "argmax reducer: the paired primal is not an identity-initialized `lax.reduce`"
+        )
     if not _positional_signature(
         node=pair_jvp, names=("primals", "tangents")
     ) or not _body_matches(node=pair_jvp, expected_source=expected_pair_jvp):
