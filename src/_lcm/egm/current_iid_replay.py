@@ -13,12 +13,14 @@ import jax.numpy as jnp
 from _lcm.current_iid import AdmittedGroupParams, CurrentIIDDrawPlan
 from _lcm.egm.current_iid_native import BoundResourcesMap, replay_case_r_candidate
 from _lcm.egm.current_iid_resources_artifact import (
+    OriginalResourcesRow,
     ResourcesRowLeaf,
     resources_row_leaf_specs,
     resources_row_payload,
     resources_row_reads,
     restore_resources_row,
 )
+from _lcm.egm.nbegm_resources import NBEGMResourcesBank
 from _lcm.egm.preferences import BoundUtilityOfAction
 from _lcm.egm.step_core import OwnedResourcesRow
 from _lcm.execution.core_program import ValueRead
@@ -113,16 +115,16 @@ class CaseRReplayInput:
     regime: RegimeName
     period: int
     key: ArtifactKey
-    row: OwnedResourcesRow
+    row: OriginalResourcesRow
 
-    def require(self, *, spec: CaseRReplaySpec, period: int) -> OwnedResourcesRow:
+    def require(self, *, spec: CaseRReplaySpec, period: int) -> OriginalResourcesRow:
         """Refuse a foreign owner/date/key before constructing a decision."""
         if (
             self.regime != spec.regime
             or self.period != period
             or self.key != spec.artifact_key
             or period not in spec.periods
-            or type(self.row) is not OwnedResourcesRow
+            or type(self.row) not in (OwnedResourcesRow, NBEGMResourcesBank)
         ):
             raise InvalidSimulationInputError(
                 "Case-R replay artifact does not match its model-owned producer."
@@ -149,7 +151,7 @@ class CaseRReplayInput:
 
     def acquire(
         self, *, core: str, owner: PeriodSimulationReads, spec: CaseRReplaySpec
-    ) -> OwnedResourcesRow:
+    ) -> OriginalResourcesRow:
         """Authenticate before acquiring declared buffers through the period owner."""
         self.require(spec=spec, period=self.period)
         leaves = tuple(

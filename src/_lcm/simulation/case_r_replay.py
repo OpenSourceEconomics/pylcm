@@ -8,8 +8,10 @@ import jax
 import jax.numpy as jnp
 
 from _lcm.egm.current_iid_replay import CaseRReplayInput, CaseRReplayOutput
-from _lcm.egm.current_iid_resources_artifact import resources_row_payload
-from _lcm.egm.step_core import OwnedResourcesRow
+from _lcm.egm.current_iid_resources_artifact import (
+    OriginalResourcesRow,
+    resources_row_payload,
+)
 from _lcm.engine import Regime
 from _lcm.params.edges import regime_kernel_params
 from _lcm.typing import FlatParams, PytreeValue, ShapeDtypePytree
@@ -76,7 +78,7 @@ def case_r_arguments(
     *,
     regime: Regime,
     replay: CaseRReplayInput,
-    row: OwnedResourcesRow,
+    row: OriginalResourcesRow,
     states: PytreeValue | ShapeDtypePytree,
     keys: PytreeValue | ShapeDtypePytree,
     overrides: PytreeValue | ShapeDtypePytree,

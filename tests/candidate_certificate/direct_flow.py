@@ -627,7 +627,7 @@ _SOURCE_SEALS = {
     SUPPORT_TRANSITION_CHECKS_SOURCE: "b40de931445392821449d6dd4b3a123ba0fca70268228b5581caea8a0b452c55",
     SUPPORT_DIAGNOSTICS_SOURCE: "477761e6556a83fd2e271e4ab6c258cf4799d62d10d3a2d46dbf31f69b7161d8",
     SUPPORT_PRECONDITIONS_SOURCE: "5df8b182b8cb3c37f6ab76719386cc809052bcc00cda63772d698c75071f4092",
-    SUPPORT_AUTHORITY_SOURCE: "c69d0fd93b66e867e261ab6a033d435b41ed57e3df538e816339f8e664d3308d",
+    SUPPORT_AUTHORITY_SOURCE: "fb923b2739d3b7bd22808ffeaafc57a674f16ff2e3af3d815d6c56def95a6817",
     SUPPORT_FINGERPRINT_SOURCE: "11d422c2dcb94e59de7a461f8a26f74bf6d69664371f823499ddd611c5393e93",
     UNIFORM_PROCESS_GRID_SOURCE: "f03298f080dfe4bace2e3affc82e0ca8e5d7adf20fe58978433c19305667b299",
     PROCESS_GRID_RESOLUTION_SOURCE: "c9eb81f9442d7628793d6ad905b2e96e4655e9eb48bf3de32f636541b985269f",
@@ -660,7 +660,7 @@ _SOURCE_SEALS = {
     SIMULATION_POLICY_PROGRAMS_SOURCE: "da6b8e7edb7ce86b2de1c944dc806060f613dda051fa0ce69f0cec92dead709b",
     PUBLISHED_POLICY_SOURCE: "469ca23b7e32b14f816f0c4301265334ae1b857d335dc182161ec166afb711b6",
     SIMULATION_ENTRY_ALLOCATIONS_SOURCE: "41eb7238435a1c9780164197170c8de26650e1930dcc09c2e8d6454ad455fa90",
-    NBEGM_SOURCE: "f8b4b9802e1b0630623a62f98fdc25f4f63792583539037fad56be6863616abe",
+    NBEGM_SOURCE: "fe706a2dbf86d0e328fc62e6b73dc895315df76121be8278b0b2a0f99ec57298",
     CONTINUATION_ARGUMENTS_SOURCE: "2bfffbd49e5a2e267fcfdefadd21cf4249dcc6979a6ff4889098c37a06dcc0e1",
     SIMULATION_TASTE_STREAM_SOURCE: "5b875618ea92b0470d0b7cd160349450e6df124ffec390bc7c6b133e7d484da3",
     SIMULATION_MEMBERSHIP_SOURCE: "c0c92de4e55be3e7b814a67761caa75e8affe835e1887359d432341f1d85a18d",
@@ -755,7 +755,7 @@ _SOURCE_SEALS = {
     "src/_lcm/optimization/golden_section.py": "9e76572097e0281e76e59c0b7b430929cc9147754354780a6321f500bcd53f85",
     "src/_lcm/egm/upper_envelope/query.py": "ff1ca5d6f8926685d718426111ac362741c0667974020c45537df8b0f75f102d",
     "src/_lcm/utils/counts.py": "a9087a3c42d32ff0ca82cf24fda2b59ed57cb77efef94714a37a6ca7cf7a3f82",
-    "src/_lcm/egm/nbegm_step.py": "d4bf8d7c7f629699b40e0dd019adaa2b02d776ccb757eb988fcb41963487e671",
+    "src/_lcm/egm/nbegm_step.py": "a9445557dbefa7eaad15b855855cad0db9f1481d84296cf41fffa7520dac2846",
     "src/_lcm/egm/nbegm_segments.py": "658a74ca40e3da1c025c3d03e0f8bf695feb45953113521a4700f2c1d1890505",
     "src/_lcm/egm/framed_arithmetic.py": "f4b1fa68cc765fc1450222f7370256306d22b92a6488b40c3575e98f44e43877",
     "src/_lcm/egm/ez_kernel.py": "568caa5183613de012ae4c7b433b5bf058d5594ef3d5263963c25f2b7302c269",
@@ -2141,9 +2141,9 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SUPPORT_AUTHORITY_SOURCE: (
-        "731d60df45988e1eb0a6d9292b0ccb47203494cfef1a8c462a4562e73f7512db",
+        "9a63475e84926ddd2822c850f1848598cdd132aad5c037e5703ea05de0919ad8",
         {
-            "build_solution_authority": "f166b0b67c65a0cd10486e35418dfab64f5d20c19775480a0b4d214114502199",
+            "build_solution_authority": "2ea665c35a4d64a50e6e6f770c0c972b39f83c4ab7b347091de9674a2106f170",
             "_validate_model_query_spec": "63f481b0a92b03ba555d42819e74bd0392cfb53cb9edbb2fc1e89211bc6e32bf",
             "_egm_carry_artifact_layout": "f9cd96ea5b1097c6b84485477a0c9aed8164ec5bfc98f3f42ab2caff0ee8fb99",
             "_query_leaf_axis_names": "4802a4cb6701f3023e1fe6fe9d8a7253d06cfc8618a4923a4ec8870bbcfcd575",
@@ -2512,7 +2512,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     NBEGM_SOURCE: (
-        "2ba103c30812408336ea11c9ed990a4bbe3cc57919a202b40881117845d6bf7f",
+        "472abba96899c136694164028e93b3ea417ab60eca9cf5221fb192235e700156",
         {
             "NBEGM.declare_continuation_reads": "b3aea84195a77cc3f4de92e284acd79cbb0e452f0f204dcd91b2aa930b4e632c",
             "_with_ride_marginal_reads": "8fe7ef4e91312fedb70de6d7bc72cb38fd80b50798b6d6e4a4ce712a7507cf56",
@@ -2980,7 +2980,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/egm/nbegm_step.py": (
-        "b4fdcde0a4bc0b65922ff3335f2bd7ba2a5342a95f274a6b90c914aeb8898423",
+        "f8702759f29267a8da6d713e4dc26fc0f8322925fef62525ff5fc802008535d3",
         {
             "_IntervalCaseSolver.__call__": "9e8e6e6d6fcffbc0cec5c9ad8989131c66e0efd7e7e5ae8cba8e3954723fbf36",
             "_IntervalWinnerStep.__call__": "72707f2e7353bbeb5ffea6cf8c1725c775f190773d3497ee2835d3f58e4e7729",

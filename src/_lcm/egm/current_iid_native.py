@@ -32,6 +32,8 @@ from _lcm.egm.current_iid_topology import (
     pullback_native_partition,
     require_resources_topology,
 )
+from _lcm.egm.nbegm_resources import NBEGMResourcesBank
+from _lcm.egm.nbegm_resources_read import read_nbegm_resources_bank
 from _lcm.egm.preferences import BoundUtilityOfAction
 from _lcm.egm.projected_continuation import ProjectedEGMCarry
 from _lcm.egm.step_core import OwnedResourcesRow, _EgmKernelPieces, _SolveOneCombo
@@ -306,7 +308,7 @@ class NativeCaseRCore:
 
 def replay_case_r_candidate(
     *,
-    row: OwnedResourcesRow,
+    row: OwnedResourcesRow | NBEGMResourcesBank,
     liquid: ScalarFloat,
     physical: Mapping[ShockName, ScalarFloat],
     frame_valid: ScalarBool,
@@ -321,6 +323,15 @@ def replay_case_r_candidate(
     program. It does not reconstruct a whole regime or sample another draw.
     The enclosing forward graph must retain this same frame for flow/transition.
     """
+    if type(row) is NBEGMResourcesBank:
+        selected = read_nbegm_resources_bank(
+            bank=row,
+            resources=resources(liquid, physical),
+            arithmetic="certified",
+        )
+        return replace(selected, valid=selected.valid & frame_valid)
+    if type(row) is not OwnedResourcesRow:
+        raise TypeError("Case-R replay requires its original solver's resource row.")
     evaluator = CurrentResourcesEvaluator(
         row=row,
         resources=resources,

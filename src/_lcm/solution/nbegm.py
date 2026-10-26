@@ -98,12 +98,14 @@ from _lcm.egm.nbegm_probe_stages import (
 )
 from _lcm.egm.nbegm_query import NBEGMQuery
 from _lcm.egm.nbegm_query_model import NBEGMIntervalRecipe, NBEGMQueryModel
+from _lcm.egm.nbegm_resources import NBEGMResourcesBank
 from _lcm.egm.nbegm_step import (
     JumpPosition,
     _NBEGMDiscreteQueryStep,
     _NBEGMIntervalRows,
     _NBEGMQueryStep,
     _OwnedNBEGMQueryStep,
+    nbegm_continuous_resources_bank,
     nbegm_multi_interval_step,
     nbegm_multi_interval_step_certified,
     nbegm_one_asset_step,
@@ -6092,6 +6094,20 @@ class _NBEGMContinuousCore:
     )
     """Actual original step callable selected by the owning source preparation."""
 
+    _evaluate_preimages: (
+        Callable[[EconFunctionKwargs], tuple[Float1D, BoolND]] | None
+    ) = field(default=None, init=False, metadata={"fingerprint_omit_if_default": True})
+    """Exact recipe callback, selected before numerical capture without a surrogate."""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "_evaluate_preimages",
+            None
+            if self.interval_recipe is None
+            else self.interval_recipe.evaluate_preimages,
+        )
+
     def construct_point(
         self,
         *,
@@ -6111,17 +6127,16 @@ class _NBEGMContinuousCore:
         **params: ValueND,
     ) -> _NBEGMSourcePoint | BoundedResult[_NBEGMSourcePoint]:
         """Solve one period of the schedule regime on the liquid grid."""
-        schedule_spec = self.schedule_spec
-        kinds = schedule_spec.breakpoint_kinds
+        kinds = self.schedule_spec.breakpoint_kinds
         is_single_jump, is_multi_jump, is_mixed, jump_mask, flat_mask = (
             _schedule_kind_flags(kinds)
         )
         order_sensitive = len(set(kinds)) > 1
         preferences = self.build_preferences(params)
         coh_of_liquid = _BoundScalarFunction(
-            func=schedule_spec.coh_of_liquid_dag,
-            argument_name=schedule_spec.liquid_state_name,
-            bound={name: params[name] for name in schedule_spec.coh_param_names},
+            func=self.schedule_spec.coh_of_liquid_dag,
+            argument_name=self.schedule_spec.liquid_state_name,
+            bound={name: params[name] for name in self.schedule_spec.coh_param_names},
         )
 
         # Zero declared breakpoints ⇒ an empty partition: one interval covering
@@ -6129,15 +6144,15 @@ class _NBEGMContinuousCore:
         breakpoints = (
             _sorted_thresholds(
                 raw=jnp.stack(
-                    [params[name] for name in schedule_spec.threshold_param_names]
+                    [params[name] for name in self.schedule_spec.threshold_param_names]
                 ),
                 order_sensitive=order_sensitive,
             )
-            if schedule_spec.threshold_param_names
+            if self.schedule_spec.threshold_param_names
             else jnp.zeros((0,), dtype=liquid.dtype)
         )
-        if self.interval_recipe is not None:
-            cuts, _orientation = self.interval_recipe.evaluate_preimages(params)
+        if self._evaluate_preimages is not None:
+            cuts, _orientation = self._evaluate_preimages(params)
             breakpoints = _sorted_thresholds(raw=cuts, order_sensitive=order_sensitive)
         midpoints = interval_midpoints(liquid_grid=liquid, breakpoints=breakpoints)
 
@@ -6208,6 +6223,41 @@ class _NBEGMContinuousCore:
         if source_bound_status is not None:
             return BoundedResult(output=result, bound_status=(source_bound_status,))
         return result
+
+    def construct_resources_bank(
+        self,
+        *,
+        resources_support: Float1D,
+        next_liquid_grid: Float1D,
+        next_value: Float1D,
+        next_marginal: Float1D,
+        next_liquid: Float1D,
+        marginal_return: Float1D,
+        effective_savings_grid: Float1D,
+        **params: ValueND,
+    ) -> NBEGMResourcesBank:
+        """Retain the original NB bank before any resource-to-liquid inversion."""
+        if (
+            self.schedule_spec.breakpoint_kinds
+            or self.schedule_spec.threshold_param_names
+            or self.interval_recipe is not None
+            or self.feasibility_constraints
+            or self.schedule_spec.discount_factor_dag is not None
+        ):
+            raise UnsupportedOperationError(
+                "Original NB resources banks require global affine resource topology."
+            )
+        return nbegm_continuous_resources_bank(
+            next_value=next_value,
+            next_marginal=next_marginal,
+            next_liquid_grid=next_liquid_grid,
+            savings_grid=effective_savings_grid,
+            discount_factor=params["koopmans_aggregator__discount_factor"],
+            preferences=self.build_preferences(params),
+            next_liquid=next_liquid,
+            marginal_return=marginal_return,
+            resources_support=resources_support,
+        )
 
     def __call__(
         self,

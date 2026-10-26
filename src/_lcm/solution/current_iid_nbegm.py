@@ -24,6 +24,7 @@ from _lcm.egm.current_iid_case_u_replay import (
     CaseUReplaySpec,
 )
 from _lcm.egm.current_iid_nbegm import NBCaseUArguments, NBCaseUPoint, NBCaseUProgram
+from _lcm.egm.current_iid_resources_proof import prove_resources_only
 from _lcm.egm.nbegm import collect_nbegm_metadata
 from _lcm.egm.projected_continuation import (
     PROJECTED_EGM_CONTINUATION,
@@ -217,6 +218,29 @@ def prepare_scalar_nbegm_u_kernels(  # noqa: C901, PLR0912, PLR0915 - bounded or
             raise UnsupportedOperationError(
                 "NB U state-dependent current law derivatives are not installed."
             )
+        resources_proof = prove_resources_only(
+            context=context, solver=solver, plan=plan
+        )
+        case_r = (
+            not resources_proof.bypasses
+            and solver.continuous_state not in resources_proof.context_inputs
+        )
+        if case_r:
+            reasons = list(resources_proof.unsupported)
+            if solver.budget_target in resources_proof.root_dependencies["utility"]:
+                reasons.append(
+                    "resource-dependent local utility candidate representation"
+                )
+            if reasons:
+                raise UnsupportedOperationError(
+                    "Original NB Case R does not yet represent "
+                    + "; ".join(reasons)
+                    + "."
+                )
+            if materializer is not None:
+                raise UnsupportedOperationError(
+                    "Cold original NB Case R bank admission is not installed."
+                )
         if (
             tuple(context.state_action_space.states) != (solver.continuous_state,)
             or context.state_action_space.discrete_actions
@@ -296,6 +320,49 @@ def prepare_scalar_nbegm_u_kernels(  # noqa: C901, PLR0912, PLR0915 - bounded or
             core = replace(
                 core, schedule_spec=replace(core.schedule_spec, param_checks=())
             )
+        if case_r:
+            from _lcm.solution.current_iid_nbegm_r import (  # noqa: PLC0415 - exact original R bank factory
+                prepare_scalar_nbegm_r_kernel,
+            )
+
+            child_spec = ordinary_kernels[target].continuation_spec
+            if child_spec is None:
+                raise TypeError("NB R child lost its original continuation.")
+            child = child_spec.template_at(period=period + 1)
+            if (
+                not isinstance(child, EGMCarry)
+                or child.endog_grid.ndim != 1
+                or child.breakpoints is not None
+            ):
+                raise UnsupportedOperationError(
+                    "Scalar NB R requires an ordinary scalar terminal carry."
+                )
+            actual_context, kernel = prepare_scalar_nbegm_r_kernel(
+                context=context,
+                solver=solver,
+                original_core=core,
+                declared_law=law,
+                continuation_plan=_build_nbegm_continuation_plan(
+                    context=context,
+                    period=period,
+                    post_decision_name=solver.post_decision_function,
+                ),
+                checks=checks,
+                nodes=nodes,
+                period=period,
+                target=target,
+                plan=plan,
+                declaration=declarations[name],
+                child_spec=child_spec,
+                source_call=replace(
+                    call_contexts[name, period],
+                    next_regime_to_continuation=MappingProxyType({target: child}),
+                ),
+                fixed_flat_params=fixed_flat_params,
+            )
+            actual_contexts[name] = actual_context
+            kernels[name] = kernel
+            continue
         physical_names = {
             shock
             for _name, binding, _nodes in plan.bindings
@@ -305,8 +372,8 @@ def prepare_scalar_nbegm_u_kernels(  # noqa: C901, PLR0912, PLR0915 - bounded or
             inspect.signature(core.schedule_spec.utility_dag).parameters
         ):
             raise UnsupportedOperationError(
-                "The first NB U class requires a current utility shock; "
-                "NB Case R remains required."
+                "The original NB problem is not resources-only and its admitted "
+                "U class requires a current utility shock."
             )
         if (
             solver.continuous_state

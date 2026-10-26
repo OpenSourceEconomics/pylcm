@@ -1036,6 +1036,13 @@ def build_solution_authority(  # noqa: C901, PLR0912, PLR0915
                         spec=continuation_spec,
                         template=continuation_template,
                     )
+                    or _is_installed_nbegm_r_continuation(
+                        regime=regime,
+                        regime_name=regime_name,
+                        period=period,
+                        spec=continuation_spec,
+                        template=continuation_template,
+                    )
                     or durable_projected
                     else PersistencePolicy.NOT_PERSISTED
                 )
@@ -1353,6 +1360,79 @@ def _is_installed_exact_u_continuation(
         and date.authority.artifact_key == spec.artifact_key
         and date.guard_program is None
     )
+
+
+def _is_installed_nbegm_r_continuation(
+    *,
+    regime: Regime,
+    regime_name: RegimeName,
+    period: int,
+    spec: ContinuationSpec,
+    template: ArtifactPayload,
+) -> bool:
+    """Authenticate the actual NB resources producer and its original dated schema."""
+    if type(spec) is not ProjectedContinuationSpec:
+        return False
+    from _lcm.egm.current_iid_nbegm_r import NBCaseRProgram  # noqa: PLC0415
+    from _lcm.egm.projected_continuation import ProjectedEGMCarry  # noqa: PLC0415
+    from _lcm.execution.core_program import ProgramScope  # noqa: PLC0415
+    from _lcm.solution.current_iid_nbegm_r import (  # noqa: PLC0415 - producer imports authority construction
+        NativeNBCaseRPeriodKernel,
+        NBCaseRArguments,
+    )
+
+    kernel = regime.solution.period_kernels[period]
+    if (
+        type(kernel) is not NativeNBCaseRPeriodKernel
+        or type(template) is not ProjectedEGMCarry
+    ):
+        return False
+    date = spec.date_at(period=period)
+    if not (
+        kernel.spec is spec
+        and kernel.period == period
+        and kernel.context.regime_name == regime_name
+        and kernel.context.projected_continuation_declarations[regime_name] is spec
+        and kernel.projected_template is template
+        and date.template is template
+        and date.authority.producer == regime_name
+        and date.authority.period == period
+        and date.authority.artifact_key == spec.artifact_key
+        and date.guard_program is None
+        and frozenset(kernel.programs) == frozenset({"main", "replay"})
+    ):
+        return False
+    original = kernel.programs["main"].function
+    if type(original) is not NBCaseRProgram:
+        return False
+    for key, program in kernel.programs.items():
+        function, arguments = program.function, program.argument_builder
+        if not (
+            type(function) is NBCaseRProgram
+            and type(arguments) is NBCaseRArguments
+            and program.name == key
+            and program.scope
+            is (ProgramScope.REPLAY if key == "replay" else ProgramScope.VALUES_ONLY)
+            and program.replaces_program == ("main" if key == "replay" else None)
+            and function.period == arguments.period == period
+            and arguments.source == regime_name
+            and arguments.ages is kernel.context.ages
+            and function.plan is arguments.plan
+            and function.plan is kernel.context.current_iid_plans[period]
+            and function.core is original.core
+            and function.declared_law is original.declared_law
+            and function.continuation_plan is original.continuation_plan
+            and function.target == arguments.target == original.target
+            and function.action_name == original.action_name
+            and function.coefficient == original.coefficient
+            and function.euler_state_name
+            == arguments.state
+            == date.authority.liquid_state
+            and function.capacity == date.authority.capacity
+            and function.retain_resources is (key == "replay")
+        ):
+            return False
+    return True
 
 
 def _period_artifact_payload_types(

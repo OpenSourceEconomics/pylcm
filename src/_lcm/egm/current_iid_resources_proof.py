@@ -1,4 +1,4 @@
-"""Opaque-resources ancestry for the complete admitted DC action problem."""
+"""Opaque-resources ancestry for the complete admitted DC or NB action problem."""
 
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -13,6 +13,7 @@ from _lcm.egm.validation import (
 )
 from _lcm.solution.contract import SolverBuildContext
 from _lcm.solution.dcegm import _BoundDCEGM
+from _lcm.solution.nbegm import _BoundNBEGM
 from lcm.typing import ReferenceName, UserFunction
 
 
@@ -36,7 +37,10 @@ class ResourcesDependencyProof:
 
 
 def prove_resources_only(
-    *, context: SolverBuildContext, solver: _BoundDCEGM, plan: CurrentIIDPlan
+    *,
+    context: SolverBuildContext,
+    solver: _BoundDCEGM | _BoundNBEGM,
+    plan: CurrentIIDPlan,
 ) -> ResourcesDependencyProof:
     """Read canonical declarations without sampling a value, gradient or branch.
 
@@ -60,6 +64,14 @@ def prove_resources_only(
     if (
         context.dcegm_source_query_model is not None
         or (context.dcegm_query_models or {}).get(context.regime_name) is not None
+        or (
+            isinstance(solver, _BoundNBEGM)
+            and (
+                context.nbegm_source_query_model is not None
+                or (context.nbegm_query_models or {}).get(context.regime_name)
+                is not None
+            )
+        )
     ):
         unsupported.append("conditional source-query authority")
     if context.certainty_equivalent is not None and not isinstance(
@@ -69,16 +81,26 @@ def prove_resources_only(
 
     # This mapping is normalized but unprocessed: physical/code ancestry and
     # original helper/parameter names are still visible before routing prunes it.
+    resources = (
+        solver.budget_target if isinstance(solver, _BoundNBEGM) else solver.resources
+    )
     functions = MappingProxyType(
         {
             name: function
             for name, function in context.solve_functions.items()
-            if name != solver.resources
+            if name != resources
         }
     )
     roots: list[tuple[str, UserFunction]] = [
         ("utility", context.solve_functions["utility"])
     ]
+    if type(solver) is _BoundNBEGM:
+        roots.append(
+            (
+                "post-decision function",
+                context.solve_functions[solver.post_decision_function],
+            )
+        )
     if "inverse_marginal_utility" in context.solve_functions:
         roots.append(
             (
@@ -121,7 +143,7 @@ def prove_resources_only(
     internal: frozenset[ReferenceName] = frozenset(
         {
             *functions,
-            solver.resources,
+            resources,
             solver.continuous_action,
             solver.post_decision_function,
             "utility",

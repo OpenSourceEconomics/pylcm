@@ -55,6 +55,7 @@ from _lcm.egm.ez_kernel import (
     ez_period_value,
 )
 from _lcm.egm.framed_arithmetic import binade_exponent, framed_difference
+from _lcm.egm.nbegm_resources import NBEGMResourcesBank
 from _lcm.egm.nbegm_segments import (
     affords_an_action,
     mask_dead_candidates,
@@ -690,18 +691,18 @@ def _nbegm_multi_interval_step_selected(  # noqa: PLR0915 - unchanged original c
         query_interval = jnp.searchsorted(breakpoints, query, side="right")
         coh_query = coh_slopes[query_interval] * query + coh_intercepts[query_interval]
 
-    if continuation_read is None:
-        value_next = _interp_continuation_value(
-            query=next_liquid, grid=next_liquid_grid, value=next_value
-        )
-        marginal_next = jnp.interp(next_liquid, next_liquid_grid, next_marginal)
-    else:
-        value_next, marginal_next = next_value, next_marginal
-
-    consumption = preferences.inverse_marginal_utility(
-        discount_factor * marginal_return * marginal_next
+    euler = _nbegm_continuous_euler_candidates(
+        next_value=next_value,
+        next_marginal=next_marginal,
+        next_liquid_grid=next_liquid_grid,
+        savings_grid=savings_grid,
+        discount_factor=discount_factor,
+        preferences=preferences,
+        next_liquid=next_liquid,
+        marginal_return=marginal_return,
+        continuation_read=continuation_read,
     )
-    coh_endog = consumption + savings_grid
+    value_next, marginal_next, consumption, coh_endog = euler[:4]
     # An endogenous cash-on-hand beyond the grid's coh range inverts to a liquid
     # beyond the grid; the boundary segments' slopes continue the inversion there,
     # so the branch's last live link still brackets the boundary query points.
@@ -712,8 +713,8 @@ def _nbegm_multi_interval_step_selected(  # noqa: PLR0915 - unchanged original c
     # interval's at the recovered liquid (envelope theorem through the budget).
     endog_interval = jnp.searchsorted(breakpoints, liquid_endog, side="right")
     slope_endog = coh_slopes[endog_interval]
-    value_endog = preferences.utility(consumption) + discount_factor * value_next
-    marginal_endog = slope_endog * preferences.marginal_utility(consumption)
+    value_endog = euler.value
+    marginal_endog = slope_endog * euler.marginal
 
     upper_edges = jnp.concatenate([breakpoints, liquid_grid[-1:]])
     lower_edges = jnp.concatenate([liquid_grid[:1], breakpoints])
@@ -919,6 +920,140 @@ def _nbegm_multi_interval_step_selected(  # noqa: PLR0915 - unchanged original c
         policy=policy,
         coh=coh_query,
         lowest_savings=savings_grid[0],
+    )
+
+
+class _NBEGMContinuousEulerCandidates(NamedTuple):
+    """Keep the original Euler operands before any liquid-coordinate inversion."""
+
+    value_next: Float1D
+    marginal_next: Float1D
+    consumption: Float1D
+    resources: Float1D
+    value: Float1D
+    marginal: Float1D
+
+
+def _nbegm_continuous_euler_candidates(
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    next_liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]] | None,
+) -> _NBEGMContinuousEulerCandidates:
+    """Build the original continuous NB Euler path in resource coordinates."""
+    if continuation_read is None:
+        value_next = _interp_continuation_value(
+            query=next_liquid, grid=next_liquid_grid, value=next_value
+        )
+        marginal_next = jnp.interp(next_liquid, next_liquid_grid, next_marginal)
+    else:
+        value_next, marginal_next = next_value, next_marginal
+    consumption = preferences.inverse_marginal_utility(
+        discount_factor * marginal_return * marginal_next
+    )
+    coh_endog = consumption + savings_grid
+    return _NBEGMContinuousEulerCandidates(
+        value_next,
+        marginal_next,
+        consumption,
+        coh_endog,
+        preferences.utility(consumption) + discount_factor * value_next,
+        preferences.marginal_utility(consumption),
+    )
+
+
+def nbegm_continuous_resources_bank(
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    next_liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
+    resources_support: Float1D,
+) -> NBEGMResourcesBank:
+    """Retain the original Euler and endpoint candidates before liquid inversion.
+
+    The fixed resource support carries the original lower and upper saving corners.
+    This bank represents a globally affine positive resource map, with no interval,
+    feasibility-boundary, jump, or flat-budget topology.
+    """
+    euler = _nbegm_continuous_euler_candidates(
+        next_value=next_value,
+        next_marginal=next_marginal,
+        next_liquid_grid=next_liquid_grid,
+        savings_grid=savings_grid,
+        discount_factor=discount_factor,
+        preferences=preferences,
+        next_liquid=next_liquid,
+        marginal_return=marginal_return,
+        continuation_read=None,
+    )
+    degenerate = _degenerate_inversion(
+        marginal=euler.marginal_next, consumption=euler.consumption
+    )
+    endogenous = jnp.where(degenerate, jnp.nan, euler.resources)
+    interior_segment = segment_ids_from_folds(endog_grid=endogenous)
+    endog_parts = [endogenous]
+    value_parts = [jnp.where(degenerate, jnp.nan, euler.value)]
+    policy_parts = [jnp.where(degenerate, jnp.nan, euler.consumption)]
+    marginal_parts = [jnp.where(degenerate, jnp.nan, euler.marginal)]
+    segment_parts = [interior_segment]
+    saving_parts = [jnp.where(degenerate, jnp.nan, savings_grid)]
+    _append_savings_endpoint_corners(
+        endog_grid=resources_support,
+        coh=resources_support,
+        savings_grid=savings_grid,
+        continuation_at_savings=euler.value_next,
+        preferences=preferences,
+        discount_factor=discount_factor,
+        coh_slope=1.0,
+        valid=True,
+        first_segment=_next_segment_id(segment=interior_segment),
+        endog_parts=endog_parts,
+        value_parts=value_parts,
+        policy_parts=policy_parts,
+        marginal_parts=marginal_parts,
+        segment_parts=segment_parts,
+        saving_parts=saving_parts,
+    )
+    valid = (
+        jnp.all(jnp.isfinite(resources_support))
+        & jnp.all(resources_support[1:] >= resources_support[:-1])
+        & (resources_support[-1] > resources_support[0])
+        & jnp.all(jnp.isfinite(next_liquid))
+        & jnp.all(next_liquid[1:] > next_liquid[:-1])
+        & jnp.all(jnp.isfinite(next_liquid_grid))
+        & jnp.all(next_liquid_grid[1:] > next_liquid_grid[:-1])
+        & jnp.all(jnp.isfinite(savings_grid))
+        & jnp.all(savings_grid[1:] > savings_grid[:-1])
+        & jnp.all(jnp.isfinite(marginal_return) & (marginal_return > 0))
+        & jnp.all(jnp.isfinite(next_value) | jnp.isneginf(next_value))
+        & jnp.all(jnp.isfinite(next_marginal))
+        & jnp.isfinite(discount_factor)
+    )
+    candidate_value = jnp.concatenate(value_parts)
+    unsupported_economic_minus_inf = jnp.any(jnp.isneginf(candidate_value))
+    return NBEGMResourcesBank(
+        endog_grid=jnp.concatenate(endog_parts),
+        value=candidate_value,
+        policy=jnp.concatenate(policy_parts),
+        marginal=jnp.concatenate(marginal_parts),
+        savings=jnp.concatenate(saving_parts),
+        segment_id=jnp.concatenate(segment_parts),
+        resources_support=resources_support,
+        borrowing_limit=savings_grid[0],
+        upper_savings=savings_grid[-1],
+        construction_invalid=~valid | unsupported_economic_minus_inf,
+        unsupported_economic_minus_inf=unsupported_economic_minus_inf,
     )
 
 

@@ -10,6 +10,7 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, fields, replace
 from dataclasses import field as dataclass_field
 from types import MappingProxyType
+from typing import Protocol, runtime_checkable
 
 import jax
 import jax.numpy as jnp
@@ -25,6 +26,7 @@ from _lcm.current_iid import AdmittedGroupParams, NodeOperands
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.current_iid_balanced import _ordered_points
 from _lcm.egm.current_iid_case_u_balanced import (
+    BalancedCaseUCarry,
     CaseUBalancedOperands,
     SaturatedCaseUProgram,
     prepare_saturated_case_u,
@@ -273,6 +275,15 @@ class CaseUExactArguments:
         return MappingProxyType(arguments)
 
 
+@runtime_checkable
+class _CaseUProjectionPublisher(Protocol):
+    """Publish the actual source's stored guarded continuation."""
+
+    def __call__(
+        self, *, initial: ProjectedEGMCarry, guard: CaseUBalancedOperands
+    ) -> BalancedCaseUCarry: ...
+
+
 @dataclass(frozen=True, kw_only=True, eq=False)
 class CaseUExactFunction:
     """Original enclosing computation at all mandatory declared/parent coordinates."""
@@ -285,6 +296,17 @@ class CaseUExactFunction:
     balanced: SaturatedCaseUProgram | None = dataclass_field(
         default=None, metadata={"fingerprint_omit_if_default": True}
     )
+    _publish_balanced: _CaseUProjectionPublisher | None = dataclass_field(
+        default=None, init=False, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Original bound publisher selected from the retained source authority."""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "_publish_balanced",
+            None if self.balanced is None else self.balanced.publish,
+        )
 
     def __call__(
         self,
@@ -389,8 +411,8 @@ class CaseUExactFunction:
             domain_upper=upper,
             valid=valid,
         )
-        if self.balanced is not None:
-            projected = self.balanced.publish(
+        if self._publish_balanced is not None:
+            projected = self._publish_balanced(
                 initial=projected,
                 guard=CaseUBalancedOperands.create(
                     pool=MappingProxyType(

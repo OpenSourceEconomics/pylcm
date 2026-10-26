@@ -964,7 +964,7 @@ def _savings_stage_candidates(
     *,
     user_regime: UserRegime,
     law: RegimeLaw,
-    solver: _BoundDCEGM,
+    solver: _BoundDCEGM | _BoundNBEGM,
     exclude_states: frozenset[StateName] = frozenset(),
 ) -> tuple[tuple[str, str, UserFunction], ...]:
     """Enumerate every savings-stage function variant of a regime.
