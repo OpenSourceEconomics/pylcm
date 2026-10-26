@@ -8,8 +8,12 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax.dtypes import float0
+from jaxtyping import Int
 
 from lcm.typing import BoolND, FloatND, IntND
+
+# Encodings follow the float width, independently of canonical int32 action IDs.
+type _FloatBitsND = Int[jax.Array, "..."]
 
 # Identity of no element; it loses every tie against a real identity.
 NO_ID = jnp.iinfo(jnp.int32).max
@@ -233,7 +237,7 @@ def _larger_value_then_smaller_id(
     return value, jnp.where(take_right, right_id, left_id)
 
 
-def _float_order_parts(values: FloatND) -> tuple[IntND, IntND]:
+def _float_order_parts(values: FloatND) -> tuple[_FloatBitsND, _FloatBitsND]:
     """Return stored bits and an integer order key, equating signed zeros.
 
     Negative encodings reverse magnitude order. Barriers prevent the compiler
