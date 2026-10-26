@@ -725,7 +725,10 @@ def test_density_conditioned_policy_preserves_categories_and_source_derivatives(
 def test_density_call_policy_does_not_change_scientific_identity() -> None:
     checked = _policy_model(factory_checks=True)
     unchecked = _policy_model(factory_checks=False)
-    assert checked.durable_identity == unchecked.durable_identity
+    assert isinstance(checked._model_structure_fingerprint, str)
+    assert (
+        checked._model_structure_fingerprint == unchecked._model_structure_fingerprint
+    )
 
 
 def test_density_call_policy_roots_charge_inactive_bundle_constants() -> None:
