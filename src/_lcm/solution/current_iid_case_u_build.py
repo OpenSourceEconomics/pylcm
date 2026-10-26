@@ -107,6 +107,24 @@ _CASE_U_NATIVE_EXPORTS = tuple(
     for module in (exact_affine_ffi, hermite_critical)
     for export in module._ORIGINAL_NUMERICAL_EXPORTS  # noqa: SLF001
 )
+_CASE_U_PLAN_METHODS = tuple(
+    (name, method, method.__code__, raw, raw.__code__)
+    for name in ("realise_nodes", "realise_information_nodes")
+    for method in (getattr(CurrentIIDPlan, name),)
+    for raw in (_unwrap_exact_beartype_wrapper(method) or method,)
+)
+
+
+def _require_case_u_plan_methods() -> None:
+    """Keep the resolved-plan metadata role on its original numerical methods."""
+    for name, method, code, raw, raw_code in _CASE_U_PLAN_METHODS:
+        if (
+            vars(CurrentIIDPlan).get(name) is not method
+            or method.__code__ is not code
+            or (_unwrap_exact_beartype_wrapper(method) or method) is not raw
+            or raw.__code__ is not raw_code
+        ):
+            raise TypeError("Original Case-U plan method authority changed.")
 
 
 def _require_case_u_native_preflight() -> None:
@@ -229,9 +247,17 @@ def guard_case_u_shape(  # noqa: C901 - keep exact role and pretrace trust check
         )
     else:
         engine_receivers = ()
+    plan = None
+    if type(point) is CaseUProgramFunction or type(point) is NBCaseUProgram:
+        _require_case_u_plan_methods()
+        plan = point.plan
     engine_bound_methods = tuple(
         (id(_unwrap_exact_beartype_wrapper(method) or method), id(receiver))
         for receiver, method in engine_receivers
+    ) + tuple(
+        (id(raw), id(plan))
+        for _name, _method, _code, raw, _raw_code in _CASE_U_PLAN_METHODS
+        if plan is not None
     )
     if point is not None:
         _require_case_u_native_preflight()
@@ -288,7 +314,7 @@ def guard_case_u_shape(  # noqa: C901 - keep exact role and pretrace trust check
             super().visit(value=value, _ignore_beartype_guards=_ignore_beartype_guards)
 
         def _visit_dataclass(self, value: DataclassInstance) -> None:
-            if point is None or value is not point:
+            if function_depth or point is None or value is not point:
                 super()._visit_dataclass(value)
                 return
             self.frame(label="abstract-original-point")
@@ -376,7 +402,9 @@ def guard_case_u_shape(  # noqa: C901 - keep exact role and pretrace trust check
                 )
                 return
             for path in sorted(attribute_paths):
-                if point is not None and value is point and path == ("plan",):
+                if (point is not None and value is point and path == ("plan",)) or (
+                    point is not None and value is point.plan and path == ("bindings",)
+                ):
                     self._visit_original_plan(plan=point.plan)
                 elif point is not None and value is point and path == ("pieces",):
                     self.visit(value=point.pieces)

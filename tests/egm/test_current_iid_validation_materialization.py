@@ -19,7 +19,7 @@ from _lcm.execution.workspace_planning import WorkspaceBudgetError
 from _lcm.solution.generation import canonical_generation_roots
 from _lcm.typing import PytreeValue
 from lcm.exceptions import ExecutionPlanningError, ModelInitializationError
-from lcm.typing import FloatND
+from lcm.typing import BoolND, FloatND
 from tests.egm.test_current_iid_generation_materialization import _owner
 from tests.egm.test_current_iid_parent_demands import (
     _current_resources,
@@ -383,5 +383,74 @@ def test_original_real_DCEGM_validator_keeps_outcome_and_diagnostic(
         else:
             assert validate() is None
             assert validate(materializer=owner) is None
+    finally:
+        owner.close()
+
+
+def _original_isnan(*, value: FloatND) -> BoolND:
+    return jnp.isnan(value)
+
+
+@pytest.mark.parametrize("weak", [False, True])
+@pytest.mark.parametrize("value", [0.0, -0.0, np.inf, -np.inf, np.nan])
+def test_original_isnan_keeps_predicate_bytes_dtype_and_weak_type(
+    *, weak: bool, value: float
+) -> None:
+    dtype = np.dtype(canonical_float_dtype())
+    arguments = {"value": jnp.asarray(value, dtype=None if weak else dtype)}
+    expected = jnp.isnan(arguments["value"])
+    owner = _owner(roots=(*arguments.values(), expected))
+    try:
+        actual = owner.evaluate_validation(
+            function=_original_isnan, arguments=arguments
+        )
+        assert isinstance(actual, jax.Array)
+        assert actual.dtype == expected.dtype
+        assert actual.weak_type == expected.weak_type
+        assert np.asarray(actual).tobytes() == np.asarray(expected).tobytes()
+        assert bool(actual) is bool(np.isnan(value))
+    finally:
+        owner.close()
+
+
+@pytest.mark.parametrize("mutation", ["rebound", "code", "info", "nan_policy"])
+def test_original_isnan_origin_refuses_before_callback_tracing(
+    *, mutation: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jax._src import config as jax_config  # noqa: PLC0415
+
+    from _lcm.egm import validation_stages  # noqa: PLC0415
+
+    original = jnp.isnan
+    if mutation == "rebound":
+        monkeypatch.setattr(
+            jnp,
+            "isnan",
+            jax.jit(_product_for_origin_control, inline=Inline.JAX_EARLY),
+        )
+    elif mutation == "code":
+        raw = vars(original)["_fun"]
+        monkeypatch.setattr(raw, "__code__", _product_for_origin_control.__code__)
+    elif mutation == "info":
+        monkeypatch.setattr(original, "_jit_info", None)
+
+    def must_not_trace(**_: PytreeValue) -> PytreeValue:
+        raise AssertionError("Callback tracing preceded original isnan refusal.")
+
+    monkeypatch.setattr(validation_stages, "prepare_validation_recipe", must_not_trace)
+    arguments = {"value": jnp.asarray(0.5)}
+    owner = _owner(roots=tuple(arguments.values()))
+    try:
+        if mutation == "nan_policy":
+            with (
+                jax_config.error_checking_behavior_nan("raise"),
+                pytest.raises(ExecutionPlanningError, match="JAX_EARLY"),
+            ):
+                owner.evaluate_validation(function=_original_isnan, arguments=arguments)
+        else:
+            with pytest.raises(ExecutionPlanningError, match=r"JAX_EARLY|Original JIT"):
+                owner.evaluate_validation(function=_original_isnan, arguments=arguments)
+        assert not owner.operations.cache
+        assert not owner._pending
     finally:
         owner.close()

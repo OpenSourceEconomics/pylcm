@@ -292,6 +292,38 @@ def test_nbegm_argument_clock_refuses_before_retaining_unbudgeted_outputs() -> N
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_nbegm_shape_capture_keeps_original_plan_receiver_and_numeric_roots() -> None:
+    model = _model()
+    flat, generation = model._prepare_call(params=_nb_params())
+    kernel = model._regimes["child"].solution.period_kernels[1]
+    assert isinstance(kernel, NativeNBCaseUPeriodKernel)
+    function = kernel.program.function
+    assert isinstance(function, CaseUExactFunction)
+    assert isinstance(function.point, NBCaseUProgram)
+    context = CoreBuildContext(
+        state_action_space=kernel.context.state_action_space,
+        next_regime_to_V_arr={},
+        next_regime_to_continuation=kernel.future.template().children,
+        flat_params=flat,
+        period=1,
+        ages=kernel.context.ages,
+    )
+    owner = _owner(roots=generation.roots)
+    try:
+        held = guard_case_u_shape(
+            function=function,
+            context=context,
+            fixed_flat_params=MappingProxyType({}),
+            materializer=owner,
+        )
+        assert any(array is function.point.plan.indices for array in held)
+        for leaf in jax.tree.leaves(function.point.plan.node_operands):
+            assert any(array is leaf for array in held)
+    finally:
+        owner.close()
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
 def test_nbegm_shape_capture_refuses_hidden_original_utility_array() -> None:
     model = _model()
     flat, generation = model._prepare_call(params=_nb_params())

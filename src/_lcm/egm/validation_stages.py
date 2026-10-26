@@ -173,6 +173,7 @@ _PJIT_INFO_TYPE = pjit.PjitInfo
 # Single elementary primitives with only dtype/shape promotion; other EARLY APIs refuse.
 _CAPTURED_ELEMENTARY_LOG = jnp.log
 _CAPTURED_ELEMENTARY_NEXTAFTER = jnp.nextafter
+_CAPTURED_ELEMENTARY_ISNAN = jnp.isnan
 
 
 def _original_closure_value(*, function: types.FunctionType, name: str) -> _Reachable:
@@ -240,6 +241,7 @@ def _require_original_jit_policy(
             (
                 value is _CAPTURED_ELEMENTARY_LOG
                 or value is _CAPTURED_ELEMENTARY_NEXTAFTER
+                or value is _CAPTURED_ELEMENTARY_ISNAN
             )
             and _is_captured_jax_pjit(value)
             and jax_config.error_checking_behavior_nan.value == "ignore"

@@ -3697,7 +3697,7 @@ def _fail_if_budget_nonaffine_in_liquid(
     liquid_name: str,
     require_unit_slope: bool,
     regime_name: RegimeName,
-    probe_arguments: _ProbeArguments,
+    probe_arguments: "_ProbeArguments",  # noqa: UP037 - original callback annotations resolve before the later class is bound
     liquid_grid: Float1D,
     liquid_samples: Float1D,
     breakpoint_sources: tuple[_NBEGMSource, ...] = (),

@@ -4,7 +4,7 @@ import inspect
 from collections.abc import Iterator
 from dataclasses import replace
 from functools import partial
-from types import MappingProxyType
+from types import MappingProxyType, MethodType
 
 import jax
 import jax.numpy as jnp
@@ -251,14 +251,37 @@ def _consume_user_plan(*, plan: CurrentIIDPlan, value: FloatND) -> FloatND:
     return value + rule.nodes[0, 0]
 
 
+def _consume_user_point(*, point: CaseUProgramFunction, value: FloatND) -> FloatND:
+    return _consume_user_plan(plan=point.plan, value=value)
+
+
+def _consume_user_realiser(*, realiser: MethodType, value: FloatND) -> FloatND:
+    plan = realiser.__self__
+    if not isinstance(plan, CurrentIIDPlan):
+        raise TypeError("Original plan receiver changed.")
+    return _consume_user_plan(plan=plan, value=value)
+
+
 def _consume_user_pieces(*, pieces: _EgmKernelPieces, value: FloatND) -> FloatND:
     return value + pieces.savings_nodes[0]
 
 
 @pytest.mark.parametrize(
-    "alias", ["nodes", "weights", "rule", "plan", "pieces", "point_path"]
+    "alias",
+    [
+        "nodes",
+        "weights",
+        "rule",
+        "plan",
+        "pieces",
+        "point_path",
+        "whole_point",
+        "cloned_plan",
+        "plan_method",
+        "cloned_plan_method",
+    ],
 )
-def test_abstract_shape_resolved_rule_does_not_admit_callback_aliases(
+def test_abstract_shape_resolved_rule_does_not_admit_callback_aliases(  # noqa: C901 - distinguish genuine alias paths through one original owner
     *,
     shape_capture_owner: tuple[
         CoreBuildContext, SimulationEntryAllocations, CaseUProgramFunction
@@ -285,6 +308,26 @@ def test_abstract_shape_resolved_rule_does_not_admit_callback_aliases(
         def captured(*, value: FloatND) -> FloatND:
             return _consume_user_plan(plan=function.plan, value=value)
 
+    elif alias == "whole_point":
+
+        def captured(*, value: FloatND) -> FloatND:
+            return _consume_user_point(point=function, value=value)
+
+    elif alias == "cloned_plan":
+        cloned = replace(function.plan)
+
+        def captured(*, value: FloatND) -> FloatND:
+            return _consume_user_plan(plan=cloned, value=value)
+
+    elif alias in ("plan_method", "cloned_plan_method"):
+        original = function.plan if alias == "plan_method" else replace(function.plan)
+        realiser = original.realise_nodes
+        if not isinstance(realiser, MethodType):
+            raise TypeError("Original current realiser is not a bound method.")
+
+        def captured(*, value: FloatND) -> FloatND:
+            return _consume_user_realiser(realiser=realiser, value=value)
+
     elif alias == "pieces":
         pieces = function.pieces
 
@@ -302,8 +345,54 @@ def test_abstract_shape_resolved_rule_does_not_admit_callback_aliases(
         (UnsupportedOperationError, TypeError),
         match=(
             r"host-array capture|direct object dependency "
-            r".*(?:UserNodes|CurrentIIDPlan|_EgmKernelPieces);"
+            r".*(?:UserNodes|CurrentIIDPlan|_EgmKernelPieces|CaseUProgramFunction|tuple);"
         ),
+    ):
+        guard_case_u_shape(
+            function=function,
+            context=context,
+            fixed_flat_params=MappingProxyType({}),
+            materializer=owner,
+        )
+    assert not owner._pending
+
+
+class _NominalCurrentIIDPlan(CurrentIIDPlan):
+    """A structurally identical declaration has no exact engine metadata role."""
+
+
+def test_abstract_shape_plan_subclass_has_no_metadata_role(
+    shape_capture_owner: tuple[
+        CoreBuildContext, SimulationEntryAllocations, CaseUProgramFunction
+    ],
+) -> None:
+    context, owner, function = shape_capture_owner
+    nominal = _NominalCurrentIIDPlan(
+        bindings=function.plan.bindings, indices=function.plan.indices
+    )
+    with pytest.raises(TypeError, match="lost its original current plan"):
+        guard_case_u_shape(
+            function=replace(function, plan=nominal),
+            context=context,
+            fixed_flat_params=MappingProxyType({}),
+            materializer=owner,
+        )
+    assert not owner._pending
+
+
+@pytest.mark.parametrize("method", ["realise_nodes", "realise_information_nodes"])
+def test_abstract_shape_plan_method_binding_is_original(
+    *,
+    shape_capture_owner: tuple[
+        CoreBuildContext, SimulationEntryAllocations, CaseUProgramFunction
+    ],
+    monkeypatch: pytest.MonkeyPatch,
+    method: str,
+) -> None:
+    context, owner, function = shape_capture_owner
+    monkeypatch.setattr(CurrentIIDPlan, method, _unsafe_eager_capture)
+    with pytest.raises(
+        TypeError, match="Original Case-U plan method authority changed"
     ):
         guard_case_u_shape(
             function=function,

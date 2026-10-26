@@ -113,7 +113,7 @@ class CaseUBalancedOperands:
         child_nodes: tuple[tuple[FloatND | IntND, ...], ...],
         lower: ScalarFloat,
         upper: ScalarFloat,
-    ) -> CaseUBalancedOperands:
+    ) -> "CaseUBalancedOperands":  # noqa: UP037 - PEP 649 classmethod evaluated before its class is bound
         """Preserve the original JAX mapping leaf order without storing mappings."""
         pool_names = _guard_mapping_names(pool)
         child_names = _guard_mapping_names(children)
@@ -132,13 +132,13 @@ class CaseUBalancedOperands:
             group_codes = []
             for name in names:
                 value = node_operands[group][name]
-                if isinstance(value, Mapping):
+                if isinstance(value, jax.Array):
+                    group_values.append(value)
+                    group_codes.append(None)
+                else:
                     keys = _guard_mapping_names(value)
                     group_values.append(tuple(value[key] for key in keys))
                     group_codes.append(keys)
-                else:
-                    group_values.append(value)
-                    group_codes.append(None)
             values.append(tuple(group_values))
             codes.append(tuple(group_codes))
         return cls(

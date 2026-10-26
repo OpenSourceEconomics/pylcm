@@ -1,11 +1,13 @@
 """Genuine U Model publication retains PWA economics and original forward choices."""
 
 from dataclasses import replace
+from types import MappingProxyType
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.egm.current_iid_case_u_balanced import CaseUBalancedOperands
 from _lcm.egm.projected_child import ProjectedChildReader
 from _lcm.egm.projected_continuation import (
     PROJECTED_EGM_CONTINUATION,
@@ -30,6 +32,41 @@ from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION, EXACT_KERNEL_SKIP_REASON
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
+
+
+@pytest.mark.parametrize("proxied", [False, True])
+def test_balanced_operands_preserve_numeric_nodes_and_categorical_columns(
+    *, proxied: bool
+) -> None:
+    """Original registered node containers retain their leaf values and dtypes."""
+    nodes = jnp.asarray([0.25, 0.75])
+    codes = jnp.asarray([1, 3], dtype=jnp.int32)
+    columns = {"kind": codes}
+    original = {
+        "innovation": {
+            "nodes": nodes,
+            "codes": MappingProxyType(columns) if proxied else columns,
+        }
+    }
+    operands = CaseUBalancedOperands.create(
+        pool={},
+        children=MappingProxyType({}),
+        group_params={"innovation": {}},
+        node_operands=original,
+        indices=jnp.asarray([[0], [1]], dtype=jnp.int32),
+        savings_nodes=jnp.asarray([0.0, 1.0]),
+        borrowing_limit=jnp.asarray(0.0),
+        floor_status=None,
+        child_nodes=(),
+        lower=jnp.asarray(0.0),
+        upper=jnp.asarray(1.0),
+    )
+    restored = operands.node_operands["innovation"]
+    np.testing.assert_array_equal(restored["nodes"], nodes)
+    restored_codes = restored["codes"]
+    assert isinstance(restored_codes, MappingProxyType)
+    np.testing.assert_array_equal(restored_codes["kind"], codes)
+    assert restored_codes["kind"].dtype == codes.dtype
 
 
 @categorical(ordered=False)
