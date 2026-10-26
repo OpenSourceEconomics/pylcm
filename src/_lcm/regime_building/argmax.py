@@ -150,6 +150,21 @@ def _paired_max(
         else jnp.iinfo(values.dtype).min
     )
     no_id = jnp.asarray(NO_ID, dtype=jnp.int32)
+    # Float accumulators can flush subnormals inside a reduction: carry only bits.
+    if jnp.issubdtype(values.dtype, jnp.floating):
+        bits, _ = _float_order_parts(values)
+        floor_bits, _ = _float_order_parts(initial)
+        lowest_bits, _ = _float_order_parts(jnp.asarray(lowest, dtype=values.dtype))
+        best_bits, best_id = jax.lax.reduce(
+            (bits, ids),
+            (lowest_bits, no_id),
+            _larger_float_bits_then_smaller_id,
+            (values.ndim - 1,),
+        )
+        best_bits, best_id = _larger_float_bits_then_smaller_id(
+            (best_bits, best_id), (floor_bits, no_id)
+        )
+        return jax.lax.bitcast_convert_type(best_bits, values.dtype), best_id
     # XLA requires an identity initializer; a finite floor must compete afterward.
     best = jax.lax.reduce(
         (values, ids),
@@ -221,19 +236,15 @@ def _larger_value_then_smaller_id(
     left_value, left_id = left
     right_value, right_id = right
     if jnp.issubdtype(left_value.dtype, jnp.floating):
-        left_bits, left_key = _float_order_parts(left_value)
-        right_bits, right_key = _float_order_parts(right_value)
-        valid = ~jnp.isnan(left_value) & ~jnp.isnan(right_value)
-        tie = (right_key == left_key) & valid
-        take_right = ((right_key > left_key) & valid) | (tie & (right_id < left_id))
-        bits = jnp.where(take_right, right_bits, left_bits)
-        both_zero = (left_key == 0) & (right_key == 0)
-        bits = jnp.where(both_zero, left_bits & right_bits, bits)
-        value = jax.lax.bitcast_convert_type(bits, left_value.dtype)
-    else:
-        tie = right_value == left_value
-        take_right = (right_value > left_value) | (tie & (right_id < left_id))
-        value = jnp.where(take_right, right_value, left_value)
+        left_bits, _ = _float_order_parts(left_value)
+        right_bits, _ = _float_order_parts(right_value)
+        bits, winner_id = _larger_float_bits_then_smaller_id(
+            (left_bits, left_id), (right_bits, right_id)
+        )
+        return jax.lax.bitcast_convert_type(bits, left_value.dtype), winner_id
+    tie = right_value == left_value
+    take_right = (right_value > left_value) | (tie & (right_id < left_id))
+    value = jnp.where(take_right, right_value, left_value)
     return value, jnp.where(take_right, right_id, left_id)
 
 
@@ -245,10 +256,40 @@ def _float_order_parts(values: FloatND) -> tuple[_FloatBitsND, _FloatBitsND]:
     """
     integer = jnp.int32 if values.dtype == jnp.float32 else jnp.int64
     bits = jax.lax.optimization_barrier(jax.lax.bitcast_convert_type(values, integer))
-    magnitude_mask = jnp.iinfo(integer).max
-    key = bits ^ ((bits >> (values.dtype.itemsize * 8 - 1)) & magnitude_mask)
+    return bits, _float_bits_order_key(bits)
+
+
+def _float_bits_order_key(bits: _FloatBitsND) -> _FloatBitsND:
+    """Order IEEE encodings with integer operations, equating only signed zeros."""
+    magnitude_mask = jnp.iinfo(bits.dtype).max
+    key = bits ^ ((bits >> (bits.dtype.itemsize * 8 - 1)) & magnitude_mask)
     key = jnp.where((bits & magnitude_mask) == 0, jnp.zeros_like(bits), key)
-    return bits, jax.lax.optimization_barrier(key)
+    return jax.lax.optimization_barrier(key)
+
+
+# keyword-only-exempt: library-callback=jax.lax.reduce
+def _larger_float_bits_then_smaller_id(
+    left: tuple[_FloatBitsND, IntND], right: tuple[_FloatBitsND, IntND]
+) -> tuple[_FloatBitsND, IntND]:
+    """Choose stored float encodings and their IDs without a float accumulator."""
+    left_bits, left_id = left
+    right_bits, right_id = right
+    left_key = _float_bits_order_key(left_bits)
+    right_key = _float_bits_order_key(right_bits)
+    floating = jnp.float32 if left_bits.dtype == jnp.int32 else jnp.float64
+    infinity_bits = jax.lax.bitcast_convert_type(
+        jnp.asarray(jnp.inf, dtype=floating), left_bits.dtype
+    )
+    magnitude_mask = jnp.iinfo(left_bits.dtype).max
+    valid = ((left_bits & magnitude_mask) <= infinity_bits) & (
+        (right_bits & magnitude_mask) <= infinity_bits
+    )
+    tie = (right_key == left_key) & valid
+    take_right = ((right_key > left_key) & valid) | (tie & (right_id < left_id))
+    bits = jnp.where(take_right, right_bits, left_bits)
+    both_zero = (left_key == 0) & (right_key == 0)
+    bits = jnp.where(both_zero, left_bits & right_bits, bits)
+    return bits, jnp.where(take_right, right_id, left_id)
 
 
 def _move_axes_to_back(

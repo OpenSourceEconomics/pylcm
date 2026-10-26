@@ -507,6 +507,44 @@ def test_subnormal_floor_ties_preserve_values_ids_and_derivatives(
 
 
 @pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+def test_paired_subnormal_order_without_a_zero_floor(*, compiled: bool) -> None:
+    """Negative subnormals retain their order and winner when the floor is absent."""
+    dtype = np.dtype(jnp.asarray(0.0).dtype)
+    width = dtype.itemsize * 8
+    sign = 1 << (width - 1)
+    uint = np.dtype(f"uint{width}")
+    encoded = np.asarray(
+        [
+            [2, 1],
+            [1, 2],
+            [sign | 1, sign | 2],
+            [sign | 2, sign | 1],
+            [sign | 1, sign | 1],
+            [sign, sign],
+            [sign, 0],
+        ],
+        dtype=uint,
+    )
+    values = jnp.asarray(encoded.view(dtype))
+    ids = jnp.broadcast_to(jnp.asarray([7, 3], dtype=jnp.int32), values.shape)
+    reduce = partial(max_and_smallest_id, initial=-jnp.inf)
+    derivative = grad(lambda a: reduce(values=a, ids=ids)[0].sum())
+    if compiled:
+        reduce = jit(reduce)
+        derivative = jit(derivative)
+    maximum, identity = reduce(values=values, ids=ids)
+    expected_bits = np.asarray(
+        [2, 2, sign | 1, sign | 1, sign | 1, sign, 0], dtype=uint
+    )
+    assert_array_equal(np.asarray(maximum).view(uint), expected_bits)
+    assert_array_equal(identity, [7, 3, 7, 3, 3, 3, 3])
+    assert_array_equal(
+        derivative(values),
+        [[1, 0], [0, 1], [1, 0], [0, 1], [0.5, 0.5], [0.5, 0.5], [0.5, 0.5]],
+    )
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
 def test_paired_float_order_retains_nan_mask_and_infinity_conventions(
     *, compiled: bool
 ) -> None:
