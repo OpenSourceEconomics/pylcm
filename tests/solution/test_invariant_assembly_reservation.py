@@ -4,16 +4,20 @@ A regime solved one invariant code at a time writes every block into one complet
 destination, which stays live while the later block programs run. Those programs
 report only their own block's output, so the cell's internal reservation carries
 the destination: once, whatever the number of codes and width candidates. A
-one-code value is its block and needs none. The public case solves the
-independent-types model blocked on `pref_type` under a budget.
+one-code value is its block and needs none. The public cases solve models blocked
+on `pref_type` under a budget: the independent-types model, and a two-period
+model whose values dominate its memory, where a budget only the destination
+exceeds must be refused.
 """
 
 import dataclasses
 import math
 from collections.abc import Mapping
 from types import MappingProxyType
+from typing import Unpack
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
@@ -27,8 +31,28 @@ from _lcm.execution.core_program import (
 from _lcm.execution.output_layout import VALUE
 from _lcm.solution import backward_induction
 from _lcm.typing import PytreeValue, ShapeDtypePytree, StateName, ValueTemplate
-from lcm import ExecutionConfig
-from lcm.typing import ReferenceName, RegimeName
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    ExecutionConfig,
+    LinSpacedGrid,
+    Model,
+    categorical,
+    fixed_transition,
+)
+from lcm.exceptions import ExecutionPlanningError
+from lcm.regime import Regime as UserRegime
+from lcm.typing import (
+    BoolND,
+    ContinuousAction,
+    ContinuousState,
+    DiscreteState,
+    FloatND,
+    ReferenceName,
+    RegimeName,
+    ScalarInt,
+)
+from tests.solution._callback_types import MeasureVariantKwargs
 from tests.solution.test_invariant_blocking import _independent_types_model
 from tests.test_models import independent_types
 
@@ -226,3 +250,168 @@ def test_a_budgeted_blocked_solve_reserves_each_assembled_destination(
     for regime, period in blocked:
         value = values[period][regime]
         assert reserved[(regime, period)] >= value.size * value.dtype.itemsize
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _BlockedAdmission:
+    """What admission charged one blocked candidate, with and without the cell's
+    internal reservation, beside the compiler's reservation for it."""
+
+    cell: tuple[RegimeName, int]
+    resident: int
+    resident_without_internal: int
+    reservation: int
+
+
+def _record_blocked_admissions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[_BlockedAdmission]:
+    measure_variant = backward_induction._measure_variant
+    records: list[_BlockedAdmission] = []
+
+    def _measure(**kwargs: Unpack[MeasureVariantKwargs]) -> int:
+        resident = measure_variant(**kwargs)
+        candidate, triple = kwargs["candidate"], kwargs["triple"]
+        program = kwargs["resolved_programs"][candidate]
+        if program.invariant_binding is not None:
+            records.append(
+                _BlockedAdmission(
+                    cell=triple[:2],
+                    resident=resident,
+                    resident_without_internal=backward_induction._candidate_resident_bytes(
+                        compiled=kwargs["compiled"][kwargs["variant_key"]],
+                        program=program,
+                        internal_arguments=kwargs["internal_templates"][candidate],
+                        inventory=dataclasses.replace(
+                            kwargs["resident_inventory"][triple], internal_bytes=0
+                        ),
+                    ),
+                    reservation=kwargs["memory_by_lowering_key"][
+                        kwargs["variant_key"]
+                    ].reservation_bytes,
+                )
+            )
+        return resident
+
+    monkeypatch.setattr(backward_induction, "_measure_variant", _measure)
+    return records
+
+
+def test_each_blocked_candidate_is_admitted_with_its_cells_destination(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    records = _record_blocked_admissions(monkeypatch)
+    model = _independent_types_model(
+        execution_config=ExecutionConfig(
+            devices=(0,),
+            device_memory_bytes=2**30,
+            invariant_block_widths={"pref_type": 1},
+        )
+    )
+    values = model.solve(params=independent_types.get_params(), log_level="off").values
+    assert records, "the solve admitted no blocked candidate"
+    for record in records:
+        regime, period = record.cell
+        destination = values[period][regime].nbytes
+        assert record.resident - record.resident_without_internal >= destination
+
+
+# A two-period model whose 32-code values dwarf every other buffer, so admitting
+# its working period turns on whether the assembled destination is charged.
+_AGES = AgeGrid(start=0, inclusive_stop=1, step="Y")
+
+_PrefType = categorical(ordered=False)(
+    type("_PrefType", (), {"__annotations__": {f"t{i}": ScalarInt for i in range(32)}})
+)
+
+
+@categorical(ordered=False)
+class _RegimeId:
+    working: ScalarInt
+    terminal: ScalarInt
+
+
+def _utility(*, consumption: ContinuousAction, pref_type: DiscreteState) -> FloatND:
+    return jnp.log1p(consumption) + 0.01 * pref_type
+
+
+def _terminal_utility(*, wealth: ContinuousState, pref_type: DiscreteState) -> FloatND:
+    return wealth + 0.01 * pref_type
+
+
+def _next_wealth(
+    *, wealth: ContinuousState, consumption: ContinuousAction
+) -> ContinuousState:
+    return wealth - consumption
+
+
+def _affordable(*, wealth: ContinuousState, consumption: ContinuousAction) -> BoolND:
+    return consumption <= wealth
+
+
+def _value_dominated_model(*, budget: int) -> Model:
+    states = {
+        "wealth": LinSpacedGrid(start=0.0, stop=1.0, n_points=2**14),
+        "pref_type": DiscreteGrid(category_class=_PrefType),
+    }
+    return Model(
+        regimes={
+            "working": UserRegime(
+                states=states,
+                state_transitions={
+                    "wealth": _next_wealth,
+                    "pref_type": fixed_transition("pref_type"),
+                },
+                actions={"consumption": LinSpacedGrid(start=0.0, stop=0.5, n_points=2)},
+                functions={"utility": _utility},
+                constraints={"affordable": _affordable},
+            ),
+            "terminal": UserRegime(
+                states=states, functions={"utility": _terminal_utility}
+            ),
+        },
+        ages=_AGES,
+        regime_id_class=_RegimeId,
+        initial_nodes=((_AGES.exact_values[0], "working"),),
+        edges={"working": {"terminal": _AGES.exact_values[-2]}},
+        execution_config=ExecutionConfig(
+            devices=(0,),
+            device_memory_bytes=budget,
+            invariant_block_widths={"pref_type": 1},
+        ),
+    )
+
+
+def test_a_budget_only_the_assembled_destination_exceeds_is_refused(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The working period fits its budget without its destination, but not with it.
+
+    The budget covers everything admission charges the working candidates apart
+    from the cell's internal reservation, plus their compiler reservation, plus
+    half the destination: the size of the working value, taken from the solved
+    array rather than from the accounting under test.
+    """
+    records = _record_blocked_admissions(monkeypatch)
+    values = (
+        _value_dominated_model(budget=2**30)
+        .solve(params={"discount_factor": 0.9}, log_level="off")
+        .values
+    )
+    working = [record for record in records if record.cell == ("working", 0)]
+    assert working, "the solve admitted no blocked working candidate"
+    destination = values[0]["working"].nbytes
+    without_destination = [record.resident_without_internal for record in working]
+    reservation = max(record.reservation for record in working)
+    # The destination outweighs the candidates' own memory and their spread, so
+    # half of it separates fitting without the destination from fitting with it.
+    assert (
+        reservation + max(without_destination) - min(without_destination)
+        < destination // 2
+    )
+    budget = max(without_destination) + reservation + destination // 2
+    monkeypatch.undo()
+    with pytest.raises(ExecutionPlanningError, match="'working' at period 0"):
+        _value_dominated_model(budget=budget).solve(
+            params={"discount_factor": 0.9}, log_level="off"
+        )
