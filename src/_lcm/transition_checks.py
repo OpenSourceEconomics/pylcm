@@ -130,7 +130,7 @@ from _lcm.typing import (
     TransitionFunction,
     TransitionFunctionName,
 )
-from _lcm.utils.counts import add_counts, sum_counts
+from _lcm.utils.counts import COUNT_CAPACITY, add_counts, sum_counts
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.logging import raise_or_warn, validation_enabled
 from _lcm.utils.namespace import ParamsQnameDepth
@@ -717,7 +717,7 @@ def _validate_off_grid_bound_status(
     return cast("IntND", counts)
 
 
-def _off_grid_target_counts(
+def _off_grid_target_counts(  # noqa: C901 - keep admitted pruning separate from the unchanged unbudgeted route
     *,
     regime: Regime,
     phase: SolutionPhase | SimulationPhase,
@@ -832,6 +832,20 @@ def _off_grid_target_counts(
         builder=_build_off_grid_cell,
         **owned_inputs,
     )
+    consumed = _off_grid_consumed_names(func=point_call)
+    multiplicity = 1
+    if consumed is not None and all(
+        jnp.shape(axis)[0] > 0 for axis in available.values()
+    ):
+        grid_names = tuple(name for name in available if name in consumed)
+        multiplicity = min(
+            prod(
+                jnp.shape(axis)[0]
+                for name, axis in available.items()
+                if name not in consumed
+            ),
+            COUNT_CAPACITY,
+        )
     arguments = {"grid_args": available, "scalar_kwargs": scalar_kwargs}
 
     def admitted_count(block_rows: int) -> _OffGridOutput:
@@ -844,6 +858,7 @@ def _off_grid_target_counts(
                     func=point_call,
                     block_rows=block_rows,
                     largest_count=1,
+                    multiplicity=multiplicity,
                 ),
                 arguments=arguments,
                 memory=memory,
@@ -1039,6 +1054,7 @@ def _off_grid_counts_law(
     func: Callable[..., _OffGridOutput],
     block_rows: int | None = None,
     largest_count: int | None = None,
+    multiplicity: int = 1,
 ) -> _OffGridOutput:
     """Reduce saturating integer counts block by block inside one producer.
 
@@ -1091,7 +1107,9 @@ def _off_grid_counts_law(
         )
 
     if not grid_names:
-        return reduce_rows(counts=point(), n_rows=None)
+        return _repeat_off_grid_counts(
+            counts=reduce_rows(counts=point(), n_rows=None), multiplicity=multiplicity
+        )
     axes = tuple(jnp.asarray(grid_args[name]) for name in grid_names)
     split = len(axes)
     block = 1
@@ -1117,7 +1135,9 @@ def _off_grid_counts_law(
         )
 
     if not outer:
-        return count_block(jnp.int32(0))
+        return _repeat_off_grid_counts(
+            counts=count_block(jnp.int32(0)), multiplicity=multiplicity
+        )
     n_blocks = prod(outer_shape)
     if n_blocks > np.iinfo(np.int32).max:
         raise ExecutionPlanningError(
@@ -1125,14 +1145,58 @@ def _off_grid_counts_law(
             "loop can address."
         )
     shape = jax.eval_shape(count_block, jnp.int32(0))
-    return jax.lax.fori_loop(
-        jnp.int32(0),
-        jax.lax.optimization_barrier(jnp.int32(n_blocks)),
-        lambda index, total: _merge_off_grid_counts(
-            left=total, right=count_block(jnp.asarray(index, dtype=jnp.int32))
+    return _repeat_off_grid_counts(
+        counts=jax.lax.fori_loop(
+            jnp.int32(0),
+            jax.lax.optimization_barrier(jnp.int32(n_blocks)),
+            lambda index, total: _merge_off_grid_counts(
+                left=total, right=count_block(jnp.asarray(index, dtype=jnp.int32))
+            ),
+            jax.tree.map(lambda leaf: jnp.zeros(leaf.shape, dtype=leaf.dtype), shape),
         ),
-        jax.tree.map(lambda leaf: jnp.zeros(leaf.shape, dtype=leaf.dtype), shape),
+        multiplicity=multiplicity,
     )
+
+
+def _repeat_off_grid_counts(
+    *, counts: _OffGridOutput, multiplicity: int
+) -> _OffGridOutput:
+    """Restore positive repeated cells through the original saturation/status merge."""
+    if multiplicity < 1:
+        raise ValueError("Off-grid count multiplicity must be positive.")
+    result = counts
+    for bit in bin(min(multiplicity, COUNT_CAPACITY))[3:]:
+        result = _merge_off_grid_counts(left=result, right=result)
+        if bit == "1":
+            result = _merge_off_grid_counts(left=result, right=counts)
+    return result
+
+
+def _off_grid_consumed_names(
+    *, func: Callable[..., _OffGridOutput]
+) -> frozenset[ReferenceName] | None:
+    """Keep every actual cell/status dependency, or decline pruning unknown records."""
+    if type(func) is _CurrentIIDOffGridCell:
+        names = _off_grid_consumed_names(func=func.cell)
+        return (
+            None
+            if names is None
+            else names | func.plan.state_inputs | {_CURRENT_IID_ROW}
+        )
+    if type(func) is not _OffGridCell:
+        return None
+    names: set[ReferenceName] = set()
+    for reader in (
+        func.next_inputs,
+        func.weights,
+        func.feasibility,
+        func.regime_law,
+        func.reader,
+    ):
+        if type(reader) is not _NamedArgumentsCall:
+            return None
+        names.update(reader.names)
+    return frozenset(names)
 
 
 def _merge_off_grid_counts(
