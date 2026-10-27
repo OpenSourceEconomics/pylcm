@@ -238,8 +238,60 @@ solve or simulation time. The nodes remain fixed as parameters vary, and `rho=1`
 supported. Simulation defaults to the continuous AR(1) law, as for ordinary Tauchen. Set
 `simulate_draws="nodes"` to sample these physical nodes with the transition rows.
 
-This factory does not reproduce a row-normalized density-at-nodes rule. Use an explicit
-categorical transition when that discrete law is the intended model.
+Choose a different transition rule when the model specifies another discrete
+approximation:
+
+```python
+TauchenAR1Process.on_nodes(
+    nodes=jnp.array([-1.2, -0.5, 0.0, 0.5, 1.2]),
+    rho=1.0,
+    sigma=0.2,
+    transition_rule="innovation_quadrature",
+    n_quadrature=9,
+)
+```
+
+- `transition_rule="midpoint"` is the unchanged default described above.
+- `transition_rule="innovation_quadrature"` integrates standardized normal innovations
+  with Gauss-Hermite quadrature. Each innovation gives a target
+  `mu + rho * y + sigma * innovation`. The target is clipped to the state-grid
+  endpoints, then its probability is split linearly between its adjacent state nodes.
+  The default quadrature count is 9. Instead of `n_quadrature`, supply both
+  `innovation_nodes` and `innovation_weights` as one-dimensional NumPy or JAX arrays.
+  Nodes are standardized innovations, not state values. Weights are finite nonnegative
+  relative masses with positive total mass; the factory normalizes them. Zero weights
+  are allowed.
+- `transition_rule="density"` evaluates the conditional normal density at each state
+  node and normalizes the row in log space. It ignores cell widths: this is a discrete
+  probability rule, not numerical integration of the continuous normal density.
+
+Density-rule first-order derivatives use normalized scaled arithmetic. Routine process,
+solve and simulation calls do not run the expensive host accuracy certificate, at any
+`runtime_checks` setting. The usual probability, finiteness and feasibility checks still
+follow that setting. Routine density derivatives have no quantitative componentwise
+accuracy guarantee in ill-conditioned rows.
+
+A stronger accuracy certificate exists only as a test oracle, in
+`tests/test_models/density_derivative_admission.py`. It checks deliberately supplied
+rows: every local first-order partial in `mu`, `rho`, source and `sigma` (scaled by
+`sigma`, except for `rho`) must lie within `tau + tau*abs(g_true)` of the true value,
+with `tau=1e-12` at float64 and `tau=1e-5` at float32, or the row is rejected. It is not
+part of the library and is never run on a model. To exercise it with its adversarial
+tests, run:
+
+```console
+pixi run -e tests-cpu pytest tests/test_density_derivative_accuracy.py -v
+```
+
+All rules support finite unit-root or explosive persistence on these fixed nodes. They
+also support a `StateConditioned` innovation scale. Quadrature target clipping is part
+of that transition rule; it does not change the model's `off_grid` policy.
+
+The selected rule changes Bellman integration and `simulate_draws="nodes"`. It does
+**not** change `simulate_draws="continuous"`: that mode still draws a normal innovation
+and can leave the state grid. Use node draws to simulate the same finite-state lottery
+that the solver integrates. These options apply only to `on_nodes`; ordinary
+`TauchenAR1Process(...)` retains its existing midpoint rule.
 
 ### RouwenhorstAR1Process
 

@@ -17,6 +17,7 @@ import jax.numpy as jnp
 import numpy as np
 from beartype import beartype
 from jax.scipy.stats.norm import cdf
+from jaxtyping import Int
 
 from _lcm.beartype_conf import GRID_CONF
 from _lcm.dtypes import canonical_float_dtype
@@ -34,7 +35,9 @@ from _lcm.processes.base import (
 from _lcm.processes.state_conditioned import tauchen_row
 from _lcm.typing import PRNGKeyND
 from lcm.exceptions import GridInitializationError
-from lcm.typing import Float1D, FloatND, IntND, ScalarFloat, ScalarInt
+from lcm.typing import Bool1D, Float1D, FloatND, IntND, ScalarFloat, ScalarInt
+
+type TransitionRule = Literal["midpoint", "innovation_quadrature", "density"]
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -115,10 +118,24 @@ class TauchenAR1Process(_AR1Process):
         rho: float | None = None,
         sigma: float | StateConditioned | None = None,
         mu: float | None = 0.0,
+        transition_rule: TransitionRule = "midpoint",
+        n_quadrature: int | None = None,
+        innovation_nodes: UserVector | None = None,
+        innovation_weights: UserVector | None = None,
     ) -> TauchenAR1Process:
         """Bin an AR(1) law on finite increasing physical nodes.
 
-        Bin edges are adjacent midpoints, with open first and last tails.
+        The default rule integrates midpoint bins with open first and last tails.
+        ``density`` normalizes normal densities at the nodes; it ignores cell widths.
+        Density derivatives use normalized scaled arithmetic without host checks.
+        A test-suite certificate checks explicitly supplied rows;
+        routine differentiation makes no componentwise certificate promise.
+        ``innovation_quadrature`` maps standardized innovations linearly to adjacent
+        state nodes, clipping targets to the endpoints. Supply ``n_quadrature``
+        (default 9 Gauss-Hermite points), or both innovation arrays. Weights must be
+        finite, nonnegative, and have positive total mass; they are normalized.
+        Continuous simulation still draws the normal law. Node simulation samples
+        the selected transition matrix. Ordinary Tauchen construction is unchanged.
         The nodes do not depend on stationarity, so unit roots are supported.
         Unspecified law parameters are supplied at solve or simulation time.
         `nodes` is a one-dimensional NumPy or JAX array of integer or floating
@@ -129,7 +146,16 @@ class TauchenAR1Process(_AR1Process):
             argument="nodes",
             example="TauchenAR1Process.on_nodes(nodes=jnp.array([-1.0, 0.0, 1.0]))",
         )
+        quadrature_nodes, quadrature_weights = _prepare_innovation_quadrature(
+            transition_rule=transition_rule,
+            n_quadrature=n_quadrature,
+            innovation_nodes=innovation_nodes,
+            innovation_weights=innovation_weights,
+        )
         return _TauchenOnNodesProcess(
+            transition_rule=transition_rule,
+            innovation_nodes=quadrature_nodes,
+            innovation_weights=quadrature_weights,
             nodes=tuple(float(node) for node in np.asarray(nodes).tolist()),
             simulate_draws=simulate_draws,
             n_points=len(nodes),
@@ -211,13 +237,31 @@ class TauchenAR1Process(_AR1Process):
 @beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
 class _TauchenOnNodesProcess(TauchenAR1Process):
-    """Tauchen bins on a fixed physical axis independent of law parameters."""
+    """AR(1) transition rules on a fixed physical axis independent of law parameters."""
 
     nodes: tuple[float, ...]
+    transition_rule: TransitionRule = "midpoint"
+    innovation_nodes: tuple[float, ...] = ()
+    innovation_weights: tuple[float, ...] = ()
 
     _NON_PARAM_FIELDS: ClassVar[frozenset[str]] = (
-        TauchenAR1Process._NON_PARAM_FIELDS | {"nodes", "n_std"}  # noqa: SLF001
+        TauchenAR1Process._NON_PARAM_FIELDS  # noqa: SLF001
+        | {
+            "nodes",
+            "n_std",
+            "transition_rule",
+            "innovation_nodes",
+            "innovation_weights",
+        }
     )
+
+    def has_same_law_as(self, other: _ContinuousStochasticProcess) -> bool:
+        """Compare the physical law, including state-conditioned scale declarations."""
+        return isinstance(other, _TauchenOnNodesProcess) and all(
+            getattr(self, spec.name) == getattr(other, spec.name)
+            for spec in fields(self)
+            if spec.name != "simulate_draws"
+        )
 
     def __post_init__(self) -> None:
         points = np.asarray(self.nodes, dtype=canonical_float_dtype())
@@ -257,31 +301,568 @@ class _TauchenOnNodesProcess(TauchenAR1Process):
         return grid_coordinates.get_irreg_coordinate(value=value, points=self.to_jax())
 
     def compute_transition_probs(self, **kwargs: ScalarFloat | ScalarInt) -> FloatND:
-        """Integrate each conditional normal over midpoint bins and open tails."""
+        """Evaluate the selected transition row at each supplied source node."""
+        return jax.vmap(partial(self.compute_transition_row, **kwargs))(self.to_jax())
+
+    # keyword-only-exempt: library-callback=jax.vmap
+    def compute_transition_row(
+        self,
+        from_value: ScalarFloat,
+        *,
+        rho: ScalarFloat | ScalarInt,
+        sigma: ScalarFloat | ScalarInt,
+        mu: ScalarFloat | ScalarInt,
+    ) -> Float1D:
+        """Return destination probabilities at an actual physical source value."""
         nodes = self.compute_gridpoints()
-        return jax.vmap(
-            partial(
-                _tauchen_on_nodes_row,
-                nodes=nodes,
-                rho=kwargs["rho"],
-                sigma=kwargs["sigma"],
-                mu=kwargs["mu"],
-            ),
-            in_axes=0,
-        )(nodes)
+        if self.transition_rule == "midpoint":
+            return tauchen_row(
+                nodes=nodes, from_value=from_value, rho=rho, sigma=sigma, mu=mu
+            )
+        if self.transition_rule == "density":
+            return _normal_density_row(
+                (
+                    nodes,
+                    jnp.asarray(mu, dtype=nodes.dtype),
+                    jnp.asarray(rho, dtype=nodes.dtype),
+                    jnp.asarray(from_value, dtype=nodes.dtype),
+                    jnp.asarray(sigma, dtype=nodes.dtype),
+                )
+            )
+        mean = mu + sealed(rho * from_value)
+        innovations = jnp.asarray(self.innovation_nodes, dtype=nodes.dtype)
+        weights = jnp.asarray(self.innovation_weights, dtype=nodes.dtype)
+        targets = jnp.clip(mean + sigma * innovations, nodes[0], nodes[-1])
+        lower = jnp.clip(
+            jnp.searchsorted(nodes, targets, side="right") - 1, 0, len(nodes) - 2
+        )
+        left, right = nodes[lower], nodes[lower + 1]
+        # Finite endpoints need not have a finite difference. Scale the operands
+        # before subtraction, but retain the resolution of small/adjacent cells.
+        wide = (
+            (left < 0)
+            & (right > 0)
+            & (
+                jnp.maximum(jnp.abs(left), jnp.abs(right))
+                > jnp.finfo(nodes.dtype).max / 2
+            )
+        )
+        scale = jnp.where(wide, 0.5, 1.0)
+        upper_share = (targets * scale - left * scale) / (right * scale - left * scale)
+        row = jnp.zeros_like(nodes).at[lower].add(weights * (1 - upper_share))
+        return row.at[lower + 1].add(weights * upper_share)
 
 
-# keyword-only-exempt: library-callback=jax.vmap
-def _tauchen_on_nodes_row(
-    from_value: ScalarFloat,
+def _rounded_sum_with_error(
+    *, left: FloatND, right: FloatND
+) -> tuple[FloatND, FloatND]:
+    """Two-sum with explicit rounding boundaries, also under XLA reassociation."""
+    total = sealed(left + right)
+    right_part = sealed(total - left)
+    left_error = sealed(left - sealed(total - right_part))
+    right_error = sealed(right - right_part)
+    return total, sealed(left_error + right_error)
+
+
+type _ScaledFloat = tuple[FloatND, IntND]
+# A normalized mantissa and an unrestricted binary exponent.
+
+
+def _scaled_float(value: FloatND) -> _ScaledFloat:
+    """Decompose stored finite bits without flushing subnormal inputs.
+
+    Arithmetic acts only on normal mantissas. In particular, a product's low
+    word need not be representable in the physical units of the state axis.
+    """
+    info = jnp.finfo(value.dtype)
+    integer = jnp.dtype(f"uint{info.bits}")
+    bits = jax.lax.bitcast_convert_type(value, integer)
+    fraction = bits & integer.type(2**info.nmant - 1)
+    exponent = (bits >> info.nmant) & integer.type(
+        2 ** (info.bits - info.nmant - 1) - 1
+    )
+    negative = (bits >> (info.bits - 1)) != 0
+    normal = 0.5 + fraction.astype(value.dtype) * 2.0 ** -(info.nmant + 1)
+    subnormal, subnormal_exponent = jnp.frexp(fraction.astype(value.dtype))
+    mantissa = jnp.where(exponent != 0, normal, subnormal)
+    power = jnp.where(
+        exponent != 0,
+        exponent.astype(jnp.int32) - (info.maxexp - 2),
+        subnormal_exponent + info.minexp - info.nmant,
+    )
+    mantissa = jnp.where(negative, -mantissa, mantissa)
+    return mantissa, jnp.where(mantissa != 0, power, -100_000)
+
+
+def _normalize_scaled(*, mantissa: FloatND, exponent: IntND) -> _ScaledFloat:
+    """Normalize arithmetic on ordinary-sized mantissas, keeping true zeros."""
+    normalized, shift = jnp.frexp(mantissa)
+    return normalized, jnp.where(normalized != 0, exponent + shift, -100_000)
+
+
+def _scaled_two_sum(
+    *, left: _ScaledFloat, right: _ScaledFloat
+) -> tuple[_ScaledFloat, _ScaledFloat]:
+    """Return exact high/low words without scaling a small term out of range.
+
+    Disjoint significands are already an expansion and stay separate. When
+    they overlap, aligning by at most one precision plus two bits keeps every
+    TwoSum intermediate normal; the returned words are normalized separately.
+    """
+    left_m, left_e = left
+    right_m, right_e = right
+    left_is_larger = left_e >= right_e
+    high_m = jnp.where(left_is_larger, left_m, right_m)
+    high_e = jnp.maximum(left_e, right_e)
+    low_m = jnp.where(left_is_larger, right_m, left_m)
+    low_e = jnp.minimum(left_e, right_e)
+    limit = jnp.finfo(high_m.dtype).nmant + 3
+    distance = high_e - low_e
+    power = -jnp.minimum(distance, limit)
+    info = jnp.finfo(high_m.dtype)
+    integer = jnp.dtype(f"int{info.bits}")
+    factor = jax.lax.bitcast_convert_type(
+        (power.astype(integer) + info.maxexp - 1) << info.nmant, high_m.dtype
+    )
+    total, error = _rounded_sum_with_error(left=high_m, right=sealed(low_m * factor))
+    total_m, total_e = _normalize_scaled(mantissa=total, exponent=high_e)
+    error_m, error_e = _normalize_scaled(mantissa=error, exponent=high_e)
+    separated = distance > limit
+    return (
+        (jnp.where(separated, high_m, total_m), jnp.where(separated, high_e, total_e)),
+        (jnp.where(separated, low_m, error_m), jnp.where(separated, low_e, error_e)),
+    )
+
+
+def _scaled_sum(terms: tuple[_ScaledFloat, ...]) -> _ScaledFloat:
+    """Grow an exact, fixed-length nonoverlapping floating expansion.
+
+    Each insertion retains every TwoSum residual. Only after all cancellation
+    do we round to its largest nonzero word. Its sign is the sign of the exact
+    sum; the omitted nonoverlapping tail is below working relative precision.
+    The number of terms is bounded by the affine formula, independent of grid
+    size and exponent range. No integer accumulator or arbitrary precision is
+    used in production.
+    """
+    expansion: tuple[_ScaledFloat, ...] = (terms[0],)
+    for term in terms[1:]:
+        carry = term
+        residuals: tuple[_ScaledFloat, ...] = ()
+        for component in expansion:
+            carry, error = _scaled_two_sum(left=carry, right=component)
+            residuals = (*residuals, error)
+        expansion = (*residuals, carry)
+    largest = expansion[0]
+    for mantissa, exponent in expansion[1:]:
+        largest = (
+            jnp.where(mantissa != 0, mantissa, largest[0]),
+            jnp.where(mantissa != 0, exponent, largest[1]),
+        )
+    return largest
+
+
+def _scaled_product_words(
+    *, left: FloatND, right: FloatND
+) -> tuple[_ScaledFloat, _ScaledFloat]:
+    """Retain the product residual on normalized mantissas (Dekker).
+
+    All splitting and error products stay normal even when the physical
+    product or its low word would overflow or underflow. Rounding barriers
+    prevent contraction/reassociation from deleting the error word.
+    """
+    left_m, left_e = _scaled_float(left)
+    right_m, right_e = _scaled_float(right)
+    factor = 2.0 ** ((jnp.finfo(left.dtype).nmant + 2) // 2) + 1.0
+    left_split = sealed(left_m * factor)
+    left_high = sealed(left_split - sealed(left_split - left_m))
+    left_low = sealed(left_m - left_high)
+    right_split = sealed(right_m * factor)
+    right_high = sealed(right_split - sealed(right_split - right_m))
+    right_low = sealed(right_m - right_high)
+    product = sealed(left_m * right_m)
+    error = sealed(sealed(left_high * right_high) - product)
+    error = sealed(error + sealed(left_high * right_low))
+    error = sealed(error + sealed(left_low * right_high))
+    error = sealed(error + sealed(left_low * right_low))
+    return (
+        _normalize_scaled(mantissa=product, exponent=left_e + right_e),
+        _normalize_scaled(mantissa=error, exponent=left_e + right_e),
+    )
+
+
+def _scaled_to_float(value: _ScaledFloat) -> FloatND:
+    """Round only the final result, including subnormals, from its IEEE bits.
+
+    Integer round-to-nearest/even avoids an intermediate subnormal float being
+    flushed before its last power-of-two scaling on an accelerator.
+    """
+    mantissa, exponent = value
+    info = jnp.finfo(mantissa.dtype)
+    integer = jnp.dtype(f"uint{info.bits}")
+    bits = jax.lax.bitcast_convert_type(mantissa, integer)
+    sign = bits & integer.type(1 << (info.bits - 1))
+    fraction = bits & integer.type(2**info.nmant - 1)
+    significand = fraction | integer.type(1 << info.nmant)
+    shift = jnp.clip(info.minexp + 1 - exponent, 1, info.nmant + 1).astype(integer)
+    truncated = significand >> shift
+    mask = (integer.type(1) << shift) - integer.type(1)
+    lost = significand & mask
+    halfway = integer.type(1) << (shift - integer.type(1))
+    rounded = truncated + (
+        (lost > halfway) | ((lost == halfway) & ((truncated & 1) != 0))
+    ).astype(integer)
+    normal = (
+        (
+            jnp.clip(exponent, info.minexp + 1, info.maxexp).astype(integer)
+            + integer.type(info.maxexp - 2)
+        )
+        << info.nmant
+    ) | fraction
+    magnitude = jnp.where(exponent <= info.minexp, rounded, normal)
+    infinity = integer.type((2 ** (info.bits - info.nmant - 1) - 1) << info.nmant)
+    magnitude = jnp.where(exponent > info.maxexp, infinity, magnitude)
+    magnitude = jnp.where(
+        (exponent < info.minexp - info.nmant) | (mantissa == 0),
+        integer.type(0),
+        magnitude,
+    )
+    return jax.lax.bitcast_convert_type(sign | magnitude, mantissa.dtype)
+
+
+def _scaled_density_ratio_words(
+    *, left: _ScaledFloat, right: _ScaledFloat, sigma: _ScaledFloat, factor: float
+) -> _ScaledFloat:
+    """Retain a coefficient in scaled form until its directional product."""
+    left_m, left_e = left
+    right_m, right_e = right
+    sigma_m, sigma_e = sigma
+    return _normalize_scaled(
+        mantissa=factor * left_m * right_m / sigma_m**2,
+        exponent=left_e + right_e - 2 * sigma_e,
+    )
+
+
+def _scaled_linear_product(*, coefficient: _ScaledFloat, tangent: FloatND) -> FloatND:
+    """Multiply a tangent by finite power-of-two factors before any overflow.
+
+    A partial derivative may exceed maxfloat while its directional product is
+    finite, or its tangent is zero. Never mint that infinite coefficient.
+    Each step is linear in the tangent and uses a finite normal multiplier,
+    so reverse transposition also keeps zero cotangents zero. Six steps cover
+    the exponent range of gap*source/sigma**2 for either supported IEEE format.
+    """
+    mantissa, exponent = coefficient
+    info = jnp.finfo(mantissa.dtype)
+    integer = jnp.dtype(f"int{info.bits}")
+    growing = exponent > 0
+    multiplier = jnp.where(growing, 2 * mantissa, mantissa)
+    remaining = jnp.where(mantissa != 0, exponent - growing.astype(exponent.dtype), 0)
+    result = multiplier * tangent
+    for _ in range(6):
+        shift = jnp.clip(remaining, info.minexp, info.maxexp - 1)
+        factor = jax.lax.bitcast_convert_type(
+            (shift.astype(integer) + info.maxexp - 1) << info.nmant, mantissa.dtype
+        )
+        result = result * factor
+        remaining = remaining - shift
+    return result
+
+
+def _density_contrasts_and_gap(
+    operands: tuple[Float1D, FloatND, FloatND, FloatND, FloatND],
+) -> tuple[Float1D, _ScaledFloat, _ScaledFloat, Int[jax.Array, ""]]:
+    """Center on the exact nearest node and retain the complete affine residual."""
+    nodes, location, rho, source, sigma = operands
+    product_high, product_low = _scaled_product_words(left=rho, right=source)
+    mean_terms = (_scaled_float(location), product_high, product_low)
+    negative_mean_terms = tuple((-m, e) for m, e in mean_terms)
+    node_m, node_e = _scaled_float(nodes)
+    offsets = _scaled_sum(((node_m, node_e), *negative_mean_terms))
+    # Stored subnormal nodes can compare as zero in accelerator arithmetic.
+    # Compare normal expansion signs, and keep the selected identity as an index.
+    above = offsets[0] >= 0
+    first_above = jnp.where(jnp.any(above), jnp.argmax(above), len(nodes) - 1)
+    upper = jnp.clip(first_above, 1, len(nodes) - 1)
+    lower = upper - 1
+    low_m, low_e = _scaled_float(nodes[lower])
+    high_m, high_e = _scaled_float(nodes[upper])
+    midpoint_residual = _scaled_sum(
+        ((low_m, low_e - 1), (high_m, high_e - 1), *negative_mean_terms)
+    )
+    center_index = jnp.where(midpoint_residual[0] < 0, upper, lower)
+    center = nodes[center_index]
+    center_m, center_e = _scaled_float(center)
+    half_gap = _scaled_sum(((node_m, node_e - 1), (-center_m, center_e - 1)))
+    residual = _scaled_sum(
+        ((node_m, node_e - 1), (center_m, center_e - 1), *negative_mean_terms)
+    )
+    contrast_words = _scaled_density_ratio_words(
+        left=half_gap, right=residual, sigma=_scaled_float(sigma), factor=-2.0
+    )
+    is_reference = jnp.arange(len(nodes)) == center_index
+    contrast_words = (
+        jnp.where(is_reference, 0.0, contrast_words[0]),
+        contrast_words[1],
+    )
+    contrasts = _scaled_to_float(contrast_words)
+    return contrasts, half_gap, contrast_words, center_index
+
+
+type _ScaledPair = tuple[_ScaledFloat, _ScaledFloat]
+
+
+def _scaled_multiply(*, left: _ScaledFloat, right: _ScaledFloat) -> _ScaledFloat:
+    """Multiply normal mantissas without materializing physical operands."""
+    return _normalize_scaled(
+        mantissa=sealed(left[0] * right[0]), exponent=left[1] + right[1]
+    )
+
+
+def _scaled_exp(
+    logarithm: Float1D,
+) -> tuple[_ScaledFloat, tuple[Float1D, IntND, Float1D, Bool1D]]:
+    """Keep recoverable normal-tail weights below physical exp underflow.
+
+    The exponent floor is below any recoverable first derivative: finite IEEE
+    operands give score exponents below 8*maxexp; even a maxfloat direction
+    cannot rescue a weight below 16*maxexp. The reduction uses split ln(2),
+    so its rounding error scales with the small residual, not the log weight.
+    """
+    info = jnp.finfo(logarithm.dtype)
+    floor = -16 * info.maxexp
+    active = jnp.isfinite(logarithm) & (logarithm >= floor * np.log(2.0))
+    value = jnp.where(active, logarithm, 0.0)
+    power = jnp.floor(value / np.log(2.0)).astype(jnp.int32)
+    if logarithm.dtype == jnp.float64:
+        high, low = 0.6931471803691238, 1.9082149292705877e-10
+    else:
+        high, low = 0.693359375, -0.00021219444005469058
+    residual = sealed(sealed(value - sealed(power * high)) - sealed(power * low))
+    selected_exp = jax.lax.exp(residual, accuracy=jax.lax.Tolerance(ulps=2))
+    mantissa, exponent = _normalize_scaled(mantissa=selected_exp, exponent=power)
+    weights = jnp.where(active, mantissa, 0.0), jnp.where(active, exponent, -100_000)
+    return weights, (residual, power, selected_exp, active)
+
+
+def _scaled_accumulate(*, total: _ScaledPair, term: _ScaledFloat) -> _ScaledPair:
+    """Compensated twofold sum in exponent-separated physical units.
+
+    This is a bounded floating reduction, not an exact arbitrary-grid sum.
+    It retains the leading rounding residual; its standard accumulation error
+    is O(n*u**2*sum(abs(terms))), plus input formation and final rounding.
+    """
+    high, error = _scaled_two_sum(left=total[0], right=term)
+    low = _scaled_sum((total[1], error))
+    return _scaled_two_sum(left=high, right=low)
+
+
+# keyword-only-exempt: library-callback=jax.lax.scan
+def _scaled_scan_step(
+    carry: _ScaledPair, term: _ScaledFloat
+) -> tuple[_ScaledPair, _ScaledPair]:
+    updated = _scaled_accumulate(total=carry, term=term)
+    return updated, updated
+
+
+def _scaled_other_sums(values: _ScaledFloat) -> _ScaledPair:
+    """Pool every element except its own using linear-work prefix/suffix scans.
+
+    Exclusion is structural: the almost-unit component never computes 1-p or
+    subtracts its own dominant score from a rounded pooled moment.
+    """
+    zero = (jnp.zeros_like(values[0][0]), jnp.asarray(-100_000, dtype=jnp.int32))
+    _, prefix = jax.lax.scan(_scaled_scan_step, (zero, zero), values)
+    _, suffix = jax.lax.scan(_scaled_scan_step, (zero, zero), values, reverse=True)
+
+    def exclusive(*, values: _ScaledPair, reverse: bool) -> _ScaledPair:
+        def shift(word: _ScaledFloat) -> _ScaledFloat:
+            mantissa, exponent = word
+            zeros = jnp.zeros_like(mantissa[:1])
+            powers = jnp.full_like(exponent[:1], -100_000)
+            if reverse:
+                return jnp.concatenate((mantissa[1:], zeros)), jnp.concatenate(
+                    (exponent[1:], powers)
+                )
+            return jnp.concatenate((zeros, mantissa[:-1])), jnp.concatenate(
+                (powers, exponent[:-1])
+            )
+
+        return shift(values[0]), shift(values[1])
+
+    left = exclusive(values=prefix, reverse=False)
+    right = exclusive(values=suffix, reverse=True)
+    result = _scaled_accumulate(total=left, term=right[0])
+    return _scaled_accumulate(total=result, term=right[1])
+
+
+def _normalized_density_slope(
     *,
-    nodes: Float1D,
-    rho: ScalarFloat | ScalarInt,
-    sigma: ScalarFloat | ScalarInt,
-    mu: ScalarFloat | ScalarInt,
+    weights: _ScaledFloat,
+    total: _ScaledFloat,
+    other_weights: _ScaledPair,
+    scores: _ScaledFloat,
+) -> _ScaledFloat:
+    """Form the normalized Jacobian column before its physical-range boundary.
+
+    For w_i=exp(l_i), Z=sum(w), relative score d_i, the exact identity is
+    dp_i = w_i/Z**2 * [sum(j!=i,w_j)*d_i - sum(j!=i,w_j*d_j)].
+    Every product and sum stays scaled until that final coefficient. In
+    particular, w_i*d_i can be finite when d_i overflows or w_i underflows.
+    """
+    weighted = _scaled_multiply(left=weights, right=scores)
+    other_scores = _scaled_other_sums(weighted)
+    first = _scaled_multiply(left=other_weights[0], right=scores)
+    second = _scaled_multiply(left=other_weights[1], right=scores)
+    centered = _scaled_sum(
+        (
+            first,
+            second,
+            (-other_scores[0][0], other_scores[0][1]),
+            (-other_scores[1][0], other_scores[1][1]),
+        )
+    )
+    numerator = _scaled_multiply(left=weights, right=centered)
+    return _normalize_scaled(
+        mantissa=numerator[0] / total[0] ** 2,
+        exponent=numerator[1] - 2 * total[1],
+    )
+
+
+def _normal_density_row_impl(
+    operands: tuple[Float1D, FloatND, FloatND, FloatND, FloatND],
 ) -> Float1D:
-    """Bind the physical source value for a vmapped direct-CDF row."""
-    return tauchen_row(nodes=nodes, from_value=from_value, rho=rho, sigma=sigma, mu=mu)
+    """Evaluate the preserved represented-input density row."""
+    return jax.nn.softmax(_density_contrasts_and_gap(operands)[0])
+
+
+def _density_derivative_data(
+    operands: tuple[Float1D, FloatND, FloatND, FloatND, FloatND],
+) -> tuple[
+    Float1D, FloatND, IntND, Int[jax.Array, ""], tuple[Float1D, IntND, Float1D, Bool1D]
+]:
+    """Form normalized coefficient words and their certification operands."""
+    nodes, _location, rho, source, sigma = operands
+    contrasts, half_gap, contrast_words, reference = _density_contrasts_and_gap(
+        operands
+    )
+    weights, exp_metadata = _scaled_exp(contrasts)
+    other_weights = _scaled_other_sums(weights)
+    total = _scaled_sum((weights, *other_weights))
+    scale = _scaled_float(sigma)
+    unit = _scaled_float(jnp.ones_like(nodes))
+    location_score = _scaled_density_ratio_words(
+        left=half_gap, right=unit, sigma=scale, factor=2.0
+    )
+    contrast_m, contrast_e = contrast_words
+    sigma_score = _normalize_scaled(
+        mantissa=-2 * contrast_m / scale[0], exponent=contrast_e - scale[1]
+    )
+    location_slope = _normalized_density_slope(
+        weights=weights, total=total, other_weights=other_weights, scores=location_score
+    )
+    sigma_slope = _normalized_density_slope(
+        weights=weights, total=total, other_weights=other_weights, scores=sigma_score
+    )
+    rho_slope = _scaled_multiply(left=location_slope, right=_scaled_float(source))
+    source_slope = _scaled_multiply(left=location_slope, right=_scaled_float(rho))
+    mantissas = jnp.stack(
+        (location_slope[0], rho_slope[0], source_slope[0], sigma_slope[0])
+    )
+    exponents = jnp.stack(
+        (location_slope[1], rho_slope[1], source_slope[1], sigma_slope[1])
+    )
+    return contrasts, mantissas, exponents, reference, exp_metadata
+
+
+# keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
+def _normal_density_row_jvp(
+    primals: tuple[tuple[Float1D, FloatND, FloatND, FloatND, FloatND]],
+    tangents: tuple[tuple[Float1D, FloatND, FloatND, FloatND, FloatND]],
+) -> tuple[Float1D, Float1D]:
+    """Normalize scaled score moments before materializing row sensitivities.
+
+    Nodes are fixed constructor data; the actual-source path remains active.
+    Coefficients depend only on primals. The final finite-factor operations
+    are linear in tangents and therefore preserve reverse transposition.
+    """
+    (operands,), (dots,) = primals, tangents
+    _nodes_dot, location_dot, rho_dot, source_dot, sigma_dot = dots
+    contrasts, mantissas, exponents, _reference, _metadata = _density_derivative_data(
+        operands
+    )
+    location_slope = mantissas[0], exponents[0]
+    rho_slope = mantissas[1], exponents[1]
+    source_slope = mantissas[2], exponents[2]
+    sigma_slope = mantissas[3], exponents[3]
+    tangent = (
+        _scaled_linear_product(coefficient=location_slope, tangent=location_dot)
+        + _scaled_linear_product(coefficient=rho_slope, tangent=rho_dot)
+        + _scaled_linear_product(coefficient=source_slope, tangent=source_dot)
+        + _scaled_linear_product(coefficient=sigma_slope, tangent=sigma_dot)
+    )
+    return jax.nn.softmax(contrasts), tangent
+
+
+_normal_density_row = jax.custom_jvp(_normal_density_row_impl)
+_normal_density_row.defjvp(_normal_density_row_jvp)
+
+
+def _prepare_innovation_quadrature(
+    *,
+    transition_rule: TransitionRule,
+    n_quadrature: int | None,
+    innovation_nodes: UserVector | None,
+    innovation_weights: UserVector | None,
+) -> tuple[tuple[float, ...], tuple[float, ...]]:
+    """Validate the rule's inputs and freeze a standardized innovation measure."""
+    supplied = innovation_nodes is not None or innovation_weights is not None
+    if transition_rule != "innovation_quadrature":
+        if n_quadrature is not None or supplied:
+            raise GridInitializationError(
+                "Quadrature inputs require innovation_quadrature."
+            )
+        return (), ()
+    if supplied:
+        if (
+            innovation_nodes is None
+            or innovation_weights is None
+            or n_quadrature is not None
+        ):
+            raise GridInitializationError(
+                "Supply both innovation arrays, or n_quadrature."
+            )
+        for name, value in (
+            ("innovation_nodes", innovation_nodes),
+            ("innovation_weights", innovation_weights),
+        ):
+            fail_if_not_a_numeric_vector(
+                value=value, argument=name, example=f"{name}=jnp.array([0.0])"
+            )
+        points = np.asarray(innovation_nodes, dtype=canonical_float_dtype())
+        weights = np.asarray(innovation_weights, dtype=canonical_float_dtype())
+    else:
+        count = 9 if n_quadrature is None else n_quadrature
+        if isinstance(count, bool) or count < 1:
+            raise GridInitializationError("n_quadrature must be a positive integer.")
+        points, weights = np.polynomial.hermite_e.hermegauss(count)
+        points = points.astype(canonical_float_dtype())
+        weights = weights.astype(canonical_float_dtype())
+    if (
+        not len(points)
+        or points.shape != weights.shape
+        or not np.isfinite(points).all()
+        or not np.isfinite(weights).all()
+        or not np.all(weights >= 0)
+        or not np.any(weights > 0)
+    ):
+        raise GridInitializationError(
+            "Innovation nodes and nonnegative weights must be finite, nonempty, "
+            "equal-length vectors with positive total mass."
+        )
+    # Scaling first avoids overflow when finite relative weights have a large total.
+    weights = weights / weights.max()
+    weights = weights / weights.sum()
+    return tuple(float(x) for x in points), tuple(float(x) for x in weights)
 
 
 @beartype(conf=GRID_CONF)

@@ -127,7 +127,7 @@ from _lcm.params.regime_template import (
 )
 from _lcm.post_decision_bound import PostDecisionBoundSpec
 from _lcm.processes import _ContinuousStochasticProcess, _IIDProcess
-from _lcm.processes.ar1 import TauchenAR1Process
+from _lcm.processes.ar1 import TauchenAR1Process, _TauchenOnNodesProcess
 from _lcm.processes.iid import NormalIIDProcess
 from _lcm.processes.state_conditioned import (
     Family,
@@ -9780,6 +9780,10 @@ def _get_conditioned_weights_func(
     @with_signature(args=args, return_annotation="FloatND", enforce=False)
     def weights_func_conditioned(*a: FloatND, **kwargs: FloatND) -> Float1D:  # noqa: ARG001
         sigma = gather_sigma(sigma_by_code=sigma_by_code, code=kwargs[sc.on])
+        if isinstance(grid, _TauchenOnNodesProcess):
+            return grid.compute_transition_row(
+                kwargs[name], rho=fixed["rho"], sigma=sigma, mu=mu_fixed
+            )
         return conditioned_row(
             family=family,
             nodes=nodes,
