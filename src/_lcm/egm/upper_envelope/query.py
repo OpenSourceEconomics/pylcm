@@ -27,7 +27,7 @@ is cheaper, but it carries no exact ownership guarantee.
 
 import functools
 from collections.abc import Callable
-from typing import Literal, NamedTuple, cast, overload
+from typing import Literal, NamedTuple, Protocol, cast, overload, runtime_checkable
 
 import jax
 import jax.numpy as jnp
@@ -691,6 +691,128 @@ def _segment_links_from_candidates(
     return links, (endog_grid, value, policy, marginal)
 
 
+@runtime_checkable
+class EnvelopeQueryReader(Protocol):
+    """The original query read ABI, including associated savings and owner."""
+
+    @overload
+    def __call__(
+        self,
+        *,
+        endog_grid: Float1D,
+        policy: Float1D,
+        value: Float1D,
+        marginal: Float1D,
+        segment_id: Float1D,
+        stable_index: IntND | None = ...,
+        x_query: FloatND,
+        segment_block_size: int = ...,
+        arithmetic: ComparisonArithmetic = ...,
+        feasibility_partition: ResolvedAxisPartition | None = ...,
+        feasible_interval_mask: BoolND | None = ...,
+        return_owner: Literal[False] = ...,
+        candidate_savings: None = ...,
+    ) -> tuple[FloatND, FloatND, FloatND]: ...
+
+    @overload
+    def __call__(
+        self,
+        *,
+        endog_grid: Float1D,
+        policy: Float1D,
+        value: Float1D,
+        marginal: Float1D,
+        segment_id: Float1D,
+        stable_index: IntND | None = ...,
+        x_query: FloatND,
+        segment_block_size: int = ...,
+        arithmetic: ComparisonArithmetic = ...,
+        feasibility_partition: ResolvedAxisPartition | None = ...,
+        feasible_interval_mask: BoolND | None = ...,
+        return_owner: Literal[True],
+        candidate_savings: None = ...,
+    ) -> tuple[FloatND, FloatND, FloatND, IntND]: ...
+
+    @overload
+    def __call__(
+        self,
+        *,
+        endog_grid: Float1D,
+        policy: Float1D,
+        value: Float1D,
+        marginal: Float1D,
+        segment_id: Float1D,
+        stable_index: IntND | None = ...,
+        x_query: FloatND,
+        segment_block_size: int = ...,
+        arithmetic: ComparisonArithmetic = ...,
+        feasibility_partition: ResolvedAxisPartition | None = ...,
+        feasible_interval_mask: BoolND | None = ...,
+        return_owner: bool,
+        candidate_savings: None = ...,
+    ) -> tuple[FloatND, FloatND, FloatND] | tuple[FloatND, FloatND, FloatND, IntND]: ...
+
+    @overload
+    def __call__(
+        self,
+        *,
+        endog_grid: Float1D,
+        policy: Float1D,
+        value: Float1D,
+        marginal: Float1D,
+        segment_id: Float1D,
+        stable_index: IntND | None = ...,
+        x_query: FloatND,
+        segment_block_size: int = ...,
+        arithmetic: ComparisonArithmetic = ...,
+        feasibility_partition: ResolvedAxisPartition | None = ...,
+        feasible_interval_mask: BoolND | None = ...,
+        return_owner: Literal[False] = ...,
+        candidate_savings: Float1D,
+    ) -> tuple[FloatND, FloatND, FloatND, FloatND]: ...
+
+    @overload
+    def __call__(
+        self,
+        *,
+        endog_grid: Float1D,
+        policy: Float1D,
+        value: Float1D,
+        marginal: Float1D,
+        segment_id: Float1D,
+        stable_index: IntND | None = ...,
+        x_query: FloatND,
+        segment_block_size: int = ...,
+        arithmetic: ComparisonArithmetic = ...,
+        feasibility_partition: ResolvedAxisPartition | None = ...,
+        feasible_interval_mask: BoolND | None = ...,
+        return_owner: Literal[True],
+        candidate_savings: Float1D,
+    ) -> tuple[FloatND, FloatND, FloatND, FloatND, IntND]: ...
+
+    @overload
+    def __call__(
+        self,
+        *,
+        endog_grid: Float1D,
+        policy: Float1D,
+        value: Float1D,
+        marginal: Float1D,
+        segment_id: Float1D,
+        stable_index: IntND | None = ...,
+        x_query: FloatND,
+        segment_block_size: int = ...,
+        arithmetic: ComparisonArithmetic = ...,
+        feasibility_partition: ResolvedAxisPartition | None = ...,
+        feasible_interval_mask: BoolND | None = ...,
+        return_owner: bool = ...,
+        candidate_savings: Float1D,
+    ) -> (
+        tuple[FloatND, FloatND, FloatND, FloatND]
+        | tuple[FloatND, FloatND, FloatND, FloatND, IntND]
+    ): ...
+
+
 @overload
 def envelope_at_query(
     *,
@@ -898,87 +1020,183 @@ def envelope_at_query(
         registered. Reverse mode over a scalar objective therefore needs
         `arithmetic="ordinary"`, or `jax.jacfwd` in place of `jax.grad`.
     """
-    savings_endpoints = _savings_link_endpoints(
-        candidate_savings=candidate_savings, endog_grid=endog_grid
-    )
-    links, candidate_row = _segment_links_from_candidates(
+    return _envelope_at_query_selected(
         endog_grid=endog_grid,
         policy=policy,
         value=value,
         marginal=marginal,
         segment_id=segment_id,
         stable_index=stable_index,
+        x_query=x_query,
+        segment_block_size=segment_block_size,
+        arithmetic=arithmetic,
         feasibility_partition=feasibility_partition,
         feasible_interval_mask=feasible_interval_mask,
+        return_owner=return_owner,
+        candidate_savings=candidate_savings,
+        reducer=_reduce_envelope_exact
+        if arithmetic == "certified"
+        else _reduce_envelope_ordinary,
     )
-    endog_grid, value, policy, marginal = candidate_row
 
-    query = jnp.asarray(x_query)
-    n_segment = links.left_grid.shape[0]
-    if arithmetic == "certified":
-        # The exact kernel owns the whole segment reduction. A block size is now
-        # a partition request with no numerical effect: the native operation
-        # streams the same stored segments and returns one winner/status per
-        # query, so dense and blocked calls are identical by construction.
-        reduction = _envelope_exact(
-            links=links, query=query, savings_endpoints=savings_endpoints
-        )
-        published = _mask_infeasible_queries(
-            published=reduction.published,
-            query=query,
-            partition=feasibility_partition,
-            feasible_interval_mask=feasible_interval_mask,
-        )
-    else:
-        reduction = _envelope_blocked_ordinary(
-            links=links,
-            query=query,
-            block_size=_ordinary_block_size(
-                requested=segment_block_size, n_segment=n_segment
-            ),
-            savings_endpoints=savings_endpoints,
-        )
-        row: tuple[Float1D, ...] = (endog_grid, value, policy, marginal)
-        if candidate_savings is not None:
-            row = (
-                *row,
-                jnp.where(jnp.isfinite(endog_grid), candidate_savings, jnp.nan),
-            )
-        unreadable = _subnormal_operand_present(
-            row=row, query=query
-        ) | _derived_subnormal_possible(
-            links=links,
-            query=query,
-            associated_channels=()
-            if savings_endpoints is None
-            else (savings_endpoints,),
-        )
-        if isinstance(reduction, _SavingsEnvelopeReduction):
-            unreadable = unreadable | ~jnp.isfinite(reduction.savings)
-        readable_value, readable_policy, readable_marginal = (
-            jnp.where(unreadable, jnp.nan, channel) for channel in reduction.published
-        )
-        published = _mask_infeasible_queries(
-            published=(readable_value, readable_policy, readable_marginal),
-            query=query,
-            partition=feasibility_partition,
-            feasible_interval_mask=feasible_interval_mask,
-        )
-    if isinstance(reduction, _SavingsEnvelopeReduction):
-        savings = jnp.where(jnp.isfinite(published[0]), reduction.savings, jnp.nan)
-        if arithmetic == "ordinary":
-            savings = jnp.where(unreadable, jnp.nan, savings)
-        if not return_owner:
-            return (*published, savings)
-        return (
-            *published,
-            savings,
-            published_owner(value=published[0], stable_index=reduction.owner),
-        )
-    if not return_owner:
-        return published
-    owner = cast("IntND", reduction.owner)
-    return (*published, published_owner(value=published[0], stable_index=owner))
+
+@overload
+def envelope_at_query_certified(
+    *,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    marginal: Float1D,
+    segment_id: Float1D,
+    stable_index: IntND | None = ...,
+    x_query: FloatND,
+    segment_block_size: int = ...,
+    arithmetic: ComparisonArithmetic = ...,
+    feasibility_partition: ResolvedAxisPartition | None = ...,
+    feasible_interval_mask: BoolND | None = ...,
+    return_owner: Literal[False] = ...,
+    candidate_savings: None = ...,
+) -> tuple[FloatND, FloatND, FloatND]: ...
+
+
+@overload
+def envelope_at_query_certified(
+    *,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    marginal: Float1D,
+    segment_id: Float1D,
+    stable_index: IntND | None = ...,
+    x_query: FloatND,
+    segment_block_size: int = ...,
+    arithmetic: ComparisonArithmetic = ...,
+    feasibility_partition: ResolvedAxisPartition | None = ...,
+    feasible_interval_mask: BoolND | None = ...,
+    return_owner: Literal[True],
+    candidate_savings: None = ...,
+) -> tuple[FloatND, FloatND, FloatND, IntND]: ...
+
+
+@overload
+def envelope_at_query_certified(
+    *,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    marginal: Float1D,
+    segment_id: Float1D,
+    stable_index: IntND | None = ...,
+    x_query: FloatND,
+    segment_block_size: int = ...,
+    arithmetic: ComparisonArithmetic = ...,
+    feasibility_partition: ResolvedAxisPartition | None = ...,
+    feasible_interval_mask: BoolND | None = ...,
+    return_owner: bool,
+    candidate_savings: None = ...,
+) -> tuple[FloatND, FloatND, FloatND] | tuple[FloatND, FloatND, FloatND, IntND]: ...
+
+
+@overload
+def envelope_at_query_certified(
+    *,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    marginal: Float1D,
+    segment_id: Float1D,
+    stable_index: IntND | None = ...,
+    x_query: FloatND,
+    segment_block_size: int = ...,
+    arithmetic: ComparisonArithmetic = ...,
+    feasibility_partition: ResolvedAxisPartition | None = ...,
+    feasible_interval_mask: BoolND | None = ...,
+    return_owner: Literal[False] = ...,
+    candidate_savings: Float1D,
+) -> tuple[FloatND, FloatND, FloatND, FloatND]: ...
+
+
+@overload
+def envelope_at_query_certified(
+    *,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    marginal: Float1D,
+    segment_id: Float1D,
+    stable_index: IntND | None = ...,
+    x_query: FloatND,
+    segment_block_size: int = ...,
+    arithmetic: ComparisonArithmetic = ...,
+    feasibility_partition: ResolvedAxisPartition | None = ...,
+    feasible_interval_mask: BoolND | None = ...,
+    return_owner: Literal[True],
+    candidate_savings: Float1D,
+) -> tuple[FloatND, FloatND, FloatND, FloatND, IntND]: ...
+
+
+@overload
+def envelope_at_query_certified(
+    *,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    marginal: Float1D,
+    segment_id: Float1D,
+    stable_index: IntND | None = ...,
+    x_query: FloatND,
+    segment_block_size: int = ...,
+    arithmetic: ComparisonArithmetic = ...,
+    feasibility_partition: ResolvedAxisPartition | None = ...,
+    feasible_interval_mask: BoolND | None = ...,
+    return_owner: bool = ...,
+    candidate_savings: Float1D,
+) -> (
+    tuple[FloatND, FloatND, FloatND, FloatND]
+    | tuple[FloatND, FloatND, FloatND, FloatND, IntND]
+): ...
+
+
+def envelope_at_query_certified(
+    *,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    marginal: Float1D,
+    segment_id: Float1D,
+    stable_index: IntND | None = None,
+    x_query: FloatND,
+    segment_block_size: int = 0,
+    arithmetic: ComparisonArithmetic = "certified",
+    feasibility_partition: ResolvedAxisPartition | None = None,
+    feasible_interval_mask: BoolND | None = None,
+    return_owner: bool = False,
+    candidate_savings: Float1D | None = None,
+) -> (
+    tuple[FloatND, FloatND, FloatND]
+    | tuple[FloatND, FloatND, FloatND, IntND]
+    | tuple[FloatND, FloatND, FloatND, FloatND]
+    | tuple[FloatND, FloatND, FloatND, FloatND, IntND]
+):
+    """Read the original certified envelope through its selected numerical graph."""
+    if arithmetic != "certified":
+        raise ValueError("This selected reader requires certified arithmetic.")
+    return _envelope_at_query_selected(
+        endog_grid=endog_grid,
+        policy=policy,
+        value=value,
+        marginal=marginal,
+        segment_id=segment_id,
+        stable_index=stable_index,
+        x_query=x_query,
+        segment_block_size=segment_block_size,
+        arithmetic=arithmetic,
+        feasibility_partition=feasibility_partition,
+        feasible_interval_mask=feasible_interval_mask,
+        return_owner=return_owner,
+        candidate_savings=candidate_savings,
+        reducer=_reduce_envelope_exact,
+    )
 
 
 def published_owner(*, value: FloatND, stable_index: IntND) -> IntND:
@@ -1731,6 +1949,186 @@ class _SavingsEnvelopeReduction(NamedTuple):
     published: tuple[FloatND, FloatND, FloatND]
     owner: IntND
     savings: FloatND
+
+
+@runtime_checkable
+class _EnvelopeReducer(Protocol):
+    """The selected original numerical reduction and its readability status."""
+
+    def __call__(
+        self,
+        *,
+        links: _SegmentLinks,
+        query: FloatND,
+        savings_endpoints: tuple[Float1D, Float1D] | None,
+        candidate_row: tuple[Float1D, Float1D, Float1D, Float1D],
+        candidate_savings: Float1D | None,
+        n_segment: int,
+        segment_block_size: int,
+        feasibility_partition: ResolvedAxisPartition | None,
+        feasible_interval_mask: BoolND | None,
+    ) -> tuple[
+        _EnvelopeReduction | _SavingsEnvelopeReduction,
+        tuple[FloatND, FloatND, FloatND],
+        BoolND | None,
+    ]: ...
+
+
+def _envelope_at_query_selected(
+    *,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    marginal: Float1D,
+    segment_id: Float1D,
+    stable_index: IntND | None = None,
+    x_query: FloatND,
+    segment_block_size: int = 0,
+    arithmetic: ComparisonArithmetic = "certified",
+    feasibility_partition: ResolvedAxisPartition | None = None,
+    feasible_interval_mask: BoolND | None = None,
+    return_owner: bool = False,
+    candidate_savings: Float1D | None = None,
+    reducer: _EnvelopeReducer,
+) -> (
+    tuple[FloatND, FloatND, FloatND]
+    | tuple[FloatND, FloatND, FloatND, IntND]
+    | tuple[FloatND, FloatND, FloatND, FloatND]
+    | tuple[FloatND, FloatND, FloatND, FloatND, IntND]
+):
+    """Use the original preparation/publication around its selected reducer."""
+    savings_endpoints = _savings_link_endpoints(
+        candidate_savings=candidate_savings, endog_grid=endog_grid
+    )
+    links, candidate_row = _segment_links_from_candidates(
+        endog_grid=endog_grid,
+        policy=policy,
+        value=value,
+        marginal=marginal,
+        segment_id=segment_id,
+        stable_index=stable_index,
+        feasibility_partition=feasibility_partition,
+        feasible_interval_mask=feasible_interval_mask,
+    )
+    endog_grid, value, policy, marginal = candidate_row
+
+    query = jnp.asarray(x_query)
+    n_segment = links.left_grid.shape[0]
+    reduction, published, unreadable = reducer(
+        links=links,
+        query=query,
+        savings_endpoints=savings_endpoints,
+        candidate_savings=candidate_savings,
+        n_segment=n_segment,
+        segment_block_size=segment_block_size,
+        feasibility_partition=feasibility_partition,
+        feasible_interval_mask=feasible_interval_mask,
+        candidate_row=(endog_grid, value, policy, marginal),
+    )
+    if isinstance(reduction, _SavingsEnvelopeReduction):
+        savings = jnp.where(jnp.isfinite(published[0]), reduction.savings, jnp.nan)
+        if arithmetic == "ordinary":
+            if unreadable is None:
+                raise TypeError("Ordinary query lost its original readability status.")
+            savings = jnp.where(unreadable, jnp.nan, savings)
+        if not return_owner:
+            return (*published, savings)
+        return (
+            *published,
+            savings,
+            published_owner(value=published[0], stable_index=reduction.owner),
+        )
+    if not return_owner:
+        return published
+    owner = cast("IntND", reduction.owner)
+    return (*published, published_owner(value=published[0], stable_index=owner))
+
+
+def _reduce_envelope_exact(
+    *,
+    links: _SegmentLinks,
+    query: FloatND,
+    savings_endpoints: tuple[Float1D, Float1D] | None,
+    candidate_row: tuple[Float1D, Float1D, Float1D, Float1D],
+    candidate_savings: Float1D | None,
+    n_segment: int,
+    segment_block_size: int,
+    feasibility_partition: ResolvedAxisPartition | None,
+    feasible_interval_mask: BoolND | None,
+) -> tuple[
+    _EnvelopeReduction | _SavingsEnvelopeReduction,
+    tuple[FloatND, FloatND, FloatND],
+    BoolND | None,
+]:
+    """Run the original exact branch without an ordinary-backend dependency."""
+    del candidate_row, candidate_savings, n_segment, segment_block_size
+    # The exact kernel owns the whole segment reduction. A block size is now
+    # a partition request with no numerical effect: the native operation
+    # streams the same stored segments and returns one winner/status per
+    # query, so dense and blocked calls are identical by construction.
+    reduction = _envelope_exact(
+        links=links, query=query, savings_endpoints=savings_endpoints
+    )
+    published = _mask_infeasible_queries(
+        published=reduction.published,
+        query=query,
+        partition=feasibility_partition,
+        feasible_interval_mask=feasible_interval_mask,
+    )
+    return reduction, published, None
+
+
+def _reduce_envelope_ordinary(
+    *,
+    links: _SegmentLinks,
+    query: FloatND,
+    savings_endpoints: tuple[Float1D, Float1D] | None,
+    candidate_row: tuple[Float1D, Float1D, Float1D, Float1D],
+    candidate_savings: Float1D | None,
+    n_segment: int,
+    segment_block_size: int,
+    feasibility_partition: ResolvedAxisPartition | None,
+    feasible_interval_mask: BoolND | None,
+) -> tuple[
+    _EnvelopeReduction | _SavingsEnvelopeReduction,
+    tuple[FloatND, FloatND, FloatND],
+    BoolND | None,
+]:
+    """Run the original ordinary read, including its original backend probe."""
+    endog_grid, value, policy, marginal = candidate_row
+    reduction = _envelope_blocked_ordinary(
+        links=links,
+        query=query,
+        block_size=_ordinary_block_size(
+            requested=segment_block_size, n_segment=n_segment
+        ),
+        savings_endpoints=savings_endpoints,
+    )
+    row: tuple[Float1D, ...] = (endog_grid, value, policy, marginal)
+    if candidate_savings is not None:
+        row = (
+            *row,
+            jnp.where(jnp.isfinite(endog_grid), candidate_savings, jnp.nan),
+        )
+    unreadable = _subnormal_operand_present(
+        row=row, query=query
+    ) | _derived_subnormal_possible(
+        links=links,
+        query=query,
+        associated_channels=() if savings_endpoints is None else (savings_endpoints,),
+    )
+    if isinstance(reduction, _SavingsEnvelopeReduction):
+        unreadable = unreadable | ~jnp.isfinite(reduction.savings)
+    readable_value, readable_policy, readable_marginal = (
+        jnp.where(unreadable, jnp.nan, channel) for channel in reduction.published
+    )
+    published = _mask_infeasible_queries(
+        published=(readable_value, readable_policy, readable_marginal),
+        query=query,
+        partition=feasibility_partition,
+        feasible_interval_mask=feasible_interval_mask,
+    )
+    return reduction, published, unreadable
 
 
 def _envelope_exact(

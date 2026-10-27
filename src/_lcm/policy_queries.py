@@ -40,8 +40,9 @@ from _lcm.regime_building.Q_and_F import (
     QAndFParts,
     _CollectiveQAndF,
     _QAndF,
-    has_arrival_queries,
+    has_checked_continuations,
     has_objective_profile,
+    has_projected_queries,
     runtime_bound_specs,
 )
 from _lcm.solution.contract import ContinuationPayload, PeriodKernel, SolverBuildContext
@@ -743,7 +744,6 @@ def build_policy_query_kernel(
         from _lcm.query_information import (  # noqa: PLC0415 - keep information policy beside query core
             has_information,
             support_shape,
-            support_size,
         )
 
         information = has_information(node=node, definitions=definitions, period=period)
@@ -778,13 +778,7 @@ def build_policy_query_kernel(
                 ),
                 StateAxesLeading(
                     state_names=(),
-                    shape=(
-                        chunk_size,
-                        *information_shape,
-                        support_size(node=node, period=period),
-                    )
-                    if information
-                    else (chunk_size,),
+                    shape=(chunk_size,),
                     dtype=jnp.int32,
                 ),
                 StateAxesLeading(
@@ -1309,7 +1303,16 @@ class _QueryCore:
                     {name: answer[:3] for name, answer in dependencies.items()},
                 ),
             )
-            return cast("PolicyAnswer", (*answer[:3], jnp.all(answer[3])))
+            # Information consumers select their own actions; only values travel.
+            return cast(
+                "PolicyAnswer",
+                (
+                    answer[0],
+                    jnp.full(live.shape, -1, dtype=jnp.int32),
+                    answer[2],
+                    jnp.all(answer[3]),
+                ),
+            )
         cell = functools.partial(
             _query_cell,
             node=self.node,
@@ -1749,7 +1752,7 @@ def _query_action(
         name: inputs[name] for name in inspect.signature(function).parameters
     }
     continuation_valid = jnp.asarray(a=True)
-    if has_arrival_queries(function=function):
+    if has_checked_continuations(function=function):
         parts = cast(
             "Callable[..., QAndFParts]",
             cast("_QAndF | _CollectiveQAndF", function).parts,
@@ -1767,9 +1770,12 @@ def _query_action(
         raise TypeError("Canonical query feasibility must be boolean.")
     if ordinary.ndim != 0:
         raise ValueError("Canonical query feasibility must be scalar per action.")
-    valid = (~ordinary | continuation_valid) & ~jnp.any(
-        ordinary & jnp.any(jnp.isnan(q))
+    checked_valid = (
+        continuation_valid
+        if has_projected_queries(function=function)
+        else (~ordinary | continuation_valid)
     )
+    valid = checked_valid & ~jnp.any(ordinary & jnp.any(jnp.isnan(q)))
     if node.participation is None:
         return q, ordinary, valid
     operands = {**inputs, **dependencies, "q": q}

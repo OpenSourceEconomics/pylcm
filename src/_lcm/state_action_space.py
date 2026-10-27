@@ -6,6 +6,7 @@ parameters fix, and fails closed when a declared state has no entry.
 """
 
 from types import MappingProxyType
+from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 
@@ -14,12 +15,19 @@ from _lcm.grids import Grid, IrregSpacedGrid
 from _lcm.typing import StateName, StateOrActionName
 from lcm.typing import FloatND, IntND
 
+if TYPE_CHECKING:
+    from _lcm.materialization import DatedGenerationMaterializer
+else:
+    # The owner protocol imports engine state/action declarations while initializing.
+    type DatedGenerationMaterializer = object
+
 
 def create_state_action_space(
     *,
     variables: Variables,
     grids: MappingProxyType[StateOrActionName, Grid],
     states: dict[StateName, FloatND | IntND] | None = None,
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> StateActionSpace:
     """Create a state-action-space.
 
@@ -40,7 +48,10 @@ def create_state_action_space(
     """
     if states is None:
         _states = {
-            sn: _grid_to_jax_or_placeholder(grids[sn]) for sn in variables.state_names
+            sn: _grid_to_jax_or_placeholder(grids[sn])
+            if materializer is None
+            else materializer.materialize_grid(spec=grids[sn], placeholder=True)
+            for sn in variables.state_names
         }
     else:
         _validate_all_states_present(
@@ -49,10 +60,15 @@ def create_state_action_space(
         )
         _states = states
     discrete_actions = {
-        name: grids[name].to_jax() for name in variables.discrete_action_names
+        name: grids[name].to_jax()
+        if materializer is None
+        else materializer.materialize_grid(spec=grids[name])
+        for name in variables.discrete_action_names
     }
     continuous_actions = {
         name: _grid_to_jax_or_placeholder(grids[name])
+        if materializer is None
+        else materializer.materialize_grid(spec=grids[name], placeholder=True)
         for name in variables.continuous_action_names
     }
 

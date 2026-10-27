@@ -282,6 +282,65 @@ def _split_axis_widths(
     )
 
 
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class ExecutionHardware:
+    """Actual device selection and budget facts before model-name validation."""
+
+    config: ExecutionConfig
+    device_ids: tuple[int, ...]
+    device_memory_bytes: int | None
+    requested_device_memory_bytes: int | None
+    budget_source: Literal["explicit", "device", "none"]
+    device_pool_limit_bytes: MappingProxyType[int, int | None]
+
+
+def resolve_execution_hardware(
+    *,
+    config: ExecutionConfig,
+    visible_device_ids: tuple[int, ...],
+    device_pool_limit_bytes: Mapping[int, int | None],
+) -> ExecutionHardware:
+    """Apply the original selection/pool/headroom rule without model-name inputs."""
+    device_ids = visible_device_ids if config.devices is None else config.devices
+    for device_id in device_ids:
+        if device_id not in visible_device_ids:
+            msg = (
+                f"ExecutionConfig.devices: device id {device_id} is not visible; "
+                f"visible ids are {visible_device_ids!r}."
+            )
+            raise ExecutionPlanningError(msg)
+    selected_ids = tuple(sorted(device_ids))
+    selected_limits = (
+        MappingProxyType({})
+        if config.device_memory_bytes is None
+        else MappingProxyType(
+            {
+                device_id: device_pool_limit_bytes.get(device_id)
+                for device_id in selected_ids
+            }
+        )
+    )
+    requested_bytes, budget_source = _requested_budget(
+        requested=config.device_memory_bytes, pool_limits=selected_limits
+    )
+    if budget_source == "device":
+        _fail_if_the_pool_grows_in_regions()
+    if requested_bytes is None:
+        selected_limits = MappingProxyType({})
+    return ExecutionHardware(
+        config=config,
+        device_ids=selected_ids,
+        device_memory_bytes=_effective_device_memory_bytes(
+            requested_bytes=requested_bytes,
+            headroom_fraction=config.device_memory_headroom_fraction,
+            pool_limits=selected_limits,
+        ),
+        requested_device_memory_bytes=requested_bytes,
+        budget_source=budget_source,
+        device_pool_limit_bytes=selected_limits,
+    )
+
+
 def resolve_execution_config(
     *,
     config: ExecutionConfig,
@@ -289,6 +348,7 @@ def resolve_execution_config(
     state_names: frozenset[StateName],
     regime_names: frozenset[RegimeName] = frozenset(),
     device_pool_limit_bytes: Mapping[int, int | None] = MappingProxyType({}),
+    hardware: ExecutionHardware | None = None,
 ) -> ResolvedExecution:
     """Check a configuration against the model and freeze it.
 
@@ -330,32 +390,20 @@ def resolve_execution_config(
     _fail_if_a_width_names_an_unknown_regime(
         widths_by_regime=widths_by_regime, regime_names=regime_names
     )
-    device_ids = visible_device_ids if config.devices is None else config.devices
-    for device_id in device_ids:
-        if device_id not in visible_device_ids:
-            msg = (
-                f"ExecutionConfig.devices: device id {device_id} is not visible; "
-                f"visible ids are {visible_device_ids!r}."
-            )
-            raise ExecutionPlanningError(msg)
-    selected_ids = tuple(sorted(device_ids))
-    selected_limits = (
-        MappingProxyType({})
-        if config.device_memory_bytes is None
-        else MappingProxyType(
-            {
-                device_id: device_pool_limit_bytes.get(device_id)
-                for device_id in selected_ids
-            }
+    if hardware is None:
+        hardware = resolve_execution_hardware(
+            config=config,
+            visible_device_ids=visible_device_ids,
+            device_pool_limit_bytes=device_pool_limit_bytes,
         )
-    )
-    requested_bytes, budget_source = _requested_budget(
-        requested=config.device_memory_bytes, pool_limits=selected_limits
-    )
-    if budget_source == "device":
-        _fail_if_the_pool_grows_in_regions()
-    if requested_bytes is None:
-        selected_limits = MappingProxyType({})
+    elif hardware.config is not config:
+        raise ExecutionPlanningError(
+            "Constructor hardware belongs to another configuration."
+        )
+    selected_ids = hardware.device_ids
+    selected_limits = hardware.device_pool_limit_bytes
+    requested_bytes = hardware.requested_device_memory_bytes
+    budget_source = hardware.budget_source
     resolved = ResolvedExecution(
         device_ids=selected_ids,
         sharded_states=frozenset(config.sharded_states),
@@ -363,11 +411,7 @@ def resolve_execution_config(
         axis_widths_by_regime=widths_by_regime,
         axis_width_ceilings=MappingProxyType(dict(config.axis_width_ceilings)),
         covered_axes=frozenset(config.covered_axes),
-        device_memory_bytes=_effective_device_memory_bytes(
-            requested_bytes=requested_bytes,
-            headroom_fraction=config.device_memory_headroom_fraction,
-            pool_limits=selected_limits,
-        ),
+        device_memory_bytes=hardware.device_memory_bytes,
         requested_device_memory_bytes=requested_bytes,
         budget_source=budget_source,
         device_memory_headroom_fraction=config.device_memory_headroom_fraction,

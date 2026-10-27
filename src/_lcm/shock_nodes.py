@@ -16,9 +16,11 @@ from types import MappingProxyType
 import jax.numpy as jnp
 import numpy as np
 import scipy
+from jax.dtypes import canonicalize_dtype
 from scipy.special import ndtr, ndtri
 from scipy.stats import qmc
 
+from _lcm.dtypes import CanonicalArrayWriter, canonical_float_dtype
 from lcm.exceptions import ShockDeclarationError
 from lcm.grids import DiscreteGrid
 from lcm.shocks import (
@@ -93,6 +95,7 @@ def resolve_nodes(
     group_name: ShockGroupName,
     age: Fraction,
     coordinate_kind: str,
+    array_writer: CanonicalArrayWriter | None = None,
 ) -> NodeSet:
     continuous = tuple(
         name for name, law in group.shocks.items() if not isinstance(law, Discrete)
@@ -152,12 +155,38 @@ def resolve_nodes(
         raise ShockDeclarationError("Unsupported or missing node rule.")
     conditioning = math.fsum(abs(float(x)) for x in weights)
     _validate_weights(weights=weights, signed=group.signed)
-    _validate_weights(weights=np.asarray(jnp.asarray(weights)), signed=group.signed)
+    rounded_weights = (
+        jnp.asarray(weights)
+        if array_writer is None
+        else array_writer(
+            value=weights,
+            dtype=np.dtype(canonicalize_dtype(weights.dtype)),
+            name=f"{group_name}:validation_weights",
+        )
+    )
+    _validate_weights(weights=np.asarray(rounded_weights), signed=group.signed)
+    del rounded_weights
     points, weights, codes = _enumerate_categories(
         group=group, points=points, weights=weights, continuous=continuous
     )
-    active_nodes = jnp.asarray(points, dtype=jnp.result_type(0.0))
-    active_weights = jnp.asarray(weights, dtype=jnp.result_type(0.0))
+    active_nodes = (
+        jnp.asarray(points, dtype=jnp.result_type(0.0))
+        if array_writer is None
+        else array_writer(
+            value=points,
+            dtype=np.dtype(canonical_float_dtype()),
+            name=f"{group_name}:base_nodes",
+        )
+    )
+    active_weights = (
+        jnp.asarray(weights, dtype=jnp.result_type(0.0))
+        if array_writer is None
+        else array_writer(
+            value=weights,
+            dtype=np.dtype(canonical_float_dtype()),
+            name=f"{group_name}:weights",
+        )
+    )
     identity = _fingerprint(
         (
             "shock-node-rule",
@@ -187,7 +216,15 @@ def resolve_nodes(
         weights=active_weights,
         discrete_codes=MappingProxyType(
             {
-                name: jnp.asarray(values, dtype=jnp.int32)
+                name: (
+                    jnp.asarray(values, dtype=jnp.int32)
+                    if array_writer is None
+                    else array_writer(
+                        value=values,
+                        dtype=np.dtype(np.int32),
+                        name=f"{group_name}:codes:{name}",
+                    )
+                )
                 for name, values in codes.items()
             }
         ),

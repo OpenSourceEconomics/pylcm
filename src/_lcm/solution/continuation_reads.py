@@ -11,6 +11,7 @@ from collections.abc import Iterable, Mapping
 from types import MappingProxyType
 
 from _lcm.continuation import ContinuationSpec
+from _lcm.egm.projected_continuation import ProjectedEGMCarry
 from _lcm.execution.core_program import CoreProgram, ValueRead
 from _lcm.execution.value_transfer import (
     ValueArtifactAddress,
@@ -40,6 +41,23 @@ def continuation_leaf_reads(
     its builder puts it in. Naming `query_data` as one argument declares every
     nested query leaf with its relative field path.
     """
+    native_paths: Mapping[tuple[str, ...], tuple[str | int, ...]] | None = None
+    if isinstance(template, ProjectedEGMCarry) and template.guard_required:
+        from _lcm.egm.current_iid_balanced import (  # noqa: PLC0415
+            BalancedProjectedEGMCarry,
+        )
+        from _lcm.egm.current_iid_case_u_balanced import (  # noqa: PLC0415
+            BalancedCaseUCarry,
+        )
+
+        if not isinstance(template, (BalancedProjectedEGMCarry, BalancedCaseUCarry)):
+            raise TypeError(
+                "Guarded continuation has no installed numeric guard schema."
+            )
+        native_paths = {
+            path: template.input_path(leaf_path=path) for path in template.leaves()
+        }
+
     reads: list[ValueRead] = []
     if argument_by_leaf is not None and any(
         leaf_path[:1] == ("query_data",)
@@ -50,7 +68,8 @@ def continuation_leaf_reads(
         raise TypeError("Query leaf is missing its declared read argument.")
     for leaf_path in template.leaves():
         argument = None if argument_by_leaf is None else argument_by_leaf.get(leaf_path)
-        source_path = () if argument else (target, *leaf_path)
+        native_path = leaf_path if native_paths is None else native_paths[leaf_path]
+        source_path = () if argument else (target, *native_path)
         if (
             argument_by_leaf is not None
             and argument is None

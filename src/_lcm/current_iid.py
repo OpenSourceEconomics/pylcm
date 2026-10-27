@@ -15,9 +15,10 @@ from typing import Literal, NamedTuple, Self, cast
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 from dags import with_signature
 
-from _lcm.dtypes import canonical_float_dtype
+from _lcm.dtypes import CanonicalArrayWriter, canonical_float_dtype
 from _lcm.probability import is_represented_zero
 from _lcm.processes.base import standard_normal
 from _lcm.shock_overrides import (
@@ -449,6 +450,7 @@ class CurrentIIDPlan:
         bindings: Mapping[ShockGroupName, ShockBinding],
         age: Fraction | int,
         coordinate_kind: Literal["age", "period"],
+        array_writer: CanonicalArrayWriter | None = None,
     ) -> Self | None:
         """Resolve the declared rules at one exact computational age."""
         if not bindings:
@@ -458,7 +460,10 @@ class CurrentIIDPlan:
                 name,
                 binding,
                 binding.group.resolve_nodes(
-                    group_name=name, age=age, coordinate_kind=coordinate_kind
+                    group_name=name,
+                    age=age,
+                    coordinate_kind=coordinate_kind,
+                    array_writer=array_writer,
                 ),
             )
             for name, binding in sorted(bindings.items())
@@ -467,11 +472,28 @@ class CurrentIIDPlan:
             nodes.admit(reader=ShockReader.DECISION)
         return cls(
             bindings=resolved,
-            indices=jnp.asarray(
-                tuple(
-                    product(*(range(nodes.weights.size) for _, _, nodes in resolved))
-                ),
-                dtype=jnp.int32,
+            indices=(
+                jnp.asarray(
+                    tuple(
+                        product(
+                            *(range(nodes.weights.size) for _, _, nodes in resolved)
+                        )
+                    ),
+                    dtype=jnp.int32,
+                )
+                if array_writer is None
+                else array_writer(
+                    value=np.asarray(
+                        tuple(
+                            product(
+                                *(range(nodes.weights.size) for _, _, nodes in resolved)
+                            )
+                        ),
+                        dtype=np.int32,
+                    ),
+                    dtype=np.dtype(np.int32),
+                    name="current_iid:cartesian_indices",
+                )
             ),
         )
 

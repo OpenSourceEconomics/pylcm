@@ -26,4 +26,6 @@ EXACT_AFFINE_HANDLER_SYMBOLS = (
     "ExactAffineHandoverF64",
     "ExactCellHullF32",
     "ExactCellHullF64",
+    "ExactHermiteCriticalBernsteinF32",
+    "ExactHermiteCriticalBernsteinF64",
 )
