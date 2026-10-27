@@ -197,6 +197,17 @@ It does not require a nontrivial discrete choice: it is also the supported route
 for a smooth liquid problem whose genuine resources node, passive states, or stochastic
 processes make plain `EGM` ineligible.
 
+The initial public named-current-IID route supports scalar problems where current
+shocks enter the action problem through resources. It uses `ExactEnvelope`,
+`accuracy="balanced"`, candidate replay, unbudgeted execution and ordinary scalar,
+action-free terminal regimes. Construct `Model`, obtain its parameter template and
+pass actual parameters to `solve` and `simulate`. Default retention supports physical
+candidate replay and replay of a saved solution through an equivalent fresh Model.
+Missing projected support raises explicitly. Policy lookup, state-grid inspection
+and initial-state bounds are not available on this prepared public route. See the
+[current-IID contract](../development/iid-exits-redesign.md#public-scalar-case-r-lifecycle)
+for its acceptance boundary.
+
 The supported typed envelope configurations are `ExactEnvelope`, `FUESEnvelope`,
 `RFCEnvelope`, `LTMEnvelope`, and `MSSEnvelope`. String selectors are not part of the
 public API. Exact-envelope node cells are tiled through the model's

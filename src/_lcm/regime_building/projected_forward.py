@@ -47,6 +47,10 @@ class ProjectedForwardRead:
     @staticmethod
     def can_read(*, spec: ProjectedContinuationSpec, period: int) -> bool:
         """Keep other producer families on their existing construction route."""
+        from _lcm.egm.current_iid_balanced import (  # noqa: PLC0415 - installed producer metadata
+            BalancedProjectedEGMCarry,
+            BalancedResourcesProgram,
+        )
         from _lcm.egm.current_iid_case_u_balanced import (  # noqa: PLC0415 - installed producer metadata
             BalancedCaseUCarry,
             SaturatedCaseUProgram,
@@ -54,12 +58,19 @@ class ProjectedForwardRead:
 
         date = spec.date_at(period=period)
         return (
-            type(date.template) is BalancedCaseUCarry
-            and type(date.guard_program) is SaturatedCaseUProgram
-        ) or (
-            type(date.template) is ProjectedEGMCarry
-            and date.template.grid.ndim == _ONE_PASSIVE_ROW_RANK
-            and date.guard_program is None
+            (
+                type(date.template) is BalancedCaseUCarry
+                and type(date.guard_program) is SaturatedCaseUProgram
+            )
+            or (
+                type(date.template) is BalancedProjectedEGMCarry
+                and type(date.guard_program) is BalancedResourcesProgram
+            )
+            or (
+                type(date.template) is ProjectedEGMCarry
+                and date.template.grid.ndim == _ONE_PASSIVE_ROW_RANK
+                and date.guard_program is None
+            )
         )
 
     @classmethod
@@ -72,6 +83,10 @@ class ProjectedForwardRead:
         passive_names: tuple[StateName, ...] = (),
         passive_grids: tuple[Float1D, ...] = (),
     ) -> ProjectedForwardRead:
+        from _lcm.egm.current_iid_balanced import (  # noqa: PLC0415 - retain original Case-R producer guard
+            BalancedProjectedEGMCarry,
+            BalancedResourcesProgram,
+        )
         from _lcm.egm.current_iid_case_u_balanced import (  # noqa: PLC0415
             BalancedCaseUCarry,
             SaturatedCaseUProgram,
@@ -79,8 +94,12 @@ class ProjectedForwardRead:
 
         date = spec.date_at(period=period)
         template = date.template
-        balanced = isinstance(template, BalancedCaseUCarry) and isinstance(
-            date.guard_program, SaturatedCaseUProgram
+        balanced = (
+            isinstance(template, BalancedCaseUCarry)
+            and isinstance(date.guard_program, SaturatedCaseUProgram)
+        ) or (
+            type(template) is BalancedProjectedEGMCarry
+            and type(date.guard_program) is BalancedResourcesProgram
         )
         exact_passive = (
             type(template) is ProjectedEGMCarry
@@ -89,7 +108,8 @@ class ProjectedForwardRead:
         )
         if not balanced and not exact_passive:
             raise UnsupportedOperationError(
-                "Ordinary projected forward requires its admitted saturated-U child."
+                "Ordinary projected forward requires its admitted saturated-U "
+                "or resources-R child."
             )
         if balanced and (passive_names or passive_grids):
             raise UnsupportedOperationError(
@@ -166,6 +186,9 @@ class ProjectedForwardRead:
         arguments: Mapping[QualifiedName, QAndFArg],
         passive: tuple[ScalarFloat, ...] = (),
     ) -> tuple[ScalarFloat, BoolND]:
+        from _lcm.egm.current_iid_balanced import (  # noqa: PLC0415 - preserve original guarded Case-R payload
+            BalancedProjectedEGMCarry,
+        )
         from _lcm.egm.current_iid_case_u_balanced import (  # noqa: PLC0415 - preserve scalar source binding
             BalancedCaseUCarry,
         )
@@ -178,9 +201,9 @@ class ProjectedForwardRead:
             jax.tree.structure(self.date.template),
             tuple(arguments[name] for name in self.native_arguments),
         )
-        if not isinstance(carry, BalancedCaseUCarry) and not (
-            self.passive_names and type(carry) is ProjectedEGMCarry
-        ):
+        if not isinstance(
+            carry, BalancedCaseUCarry | BalancedProjectedEGMCarry
+        ) and not (self.passive_names and type(carry) is ProjectedEGMCarry):
             raise TypeError("Projected forward received a foreign numerical tree.")
         require_projected_carry(
             date=self.date,
