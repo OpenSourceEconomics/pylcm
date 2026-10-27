@@ -1868,7 +1868,7 @@
    "shard": {
     "leg": "fp64-linux",
     "index": 1,
-    "count": 4,
+    "count": 5,
     "assignment": "weighted-lpt"
    },
    "deselect": [
@@ -2051,7 +2051,7 @@
    "shard": {
     "leg": "fp64-linux",
     "index": 2,
-    "count": 4,
+    "count": 5,
     "assignment": "weighted-lpt"
    },
    "deselect": [
@@ -2334,7 +2334,7 @@
    "shard": {
     "leg": "fp64-linux",
     "index": 3,
-    "count": 4,
+    "count": 5,
     "assignment": "weighted-lpt"
    },
    "deselect": [
@@ -2517,7 +2517,7 @@
    "shard": {
     "leg": "fp64-linux",
     "index": 4,
-    "count": 4,
+    "count": 5,
     "assignment": "weighted-lpt"
    },
    "deselect": [
@@ -2699,8 +2699,8 @@
    "selection": "not slow and not manual",
    "shard": {
     "leg": "fp64-linux",
-    "index": 4,
-    "count": 4,
+    "index": 5,
+    "count": 5,
     "assignment": "weighted-lpt"
    },
    "deselect": [
