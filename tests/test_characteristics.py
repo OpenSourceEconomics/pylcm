@@ -847,3 +847,21 @@ def test_characteristics_reject_duplicate_float_rows():
         characteristics(
             category_class=_Two, by_category={"a": {"wage": 0.5}, "b": {"wage": 0.5}}
         )
+
+
+def test_category_with_tie_only_floats_break_names_the_float_columns():
+    """A tie that only float properties break says that no query can resolve it."""
+    columns = characteristics(
+        category_class=_Two,
+        by_category={"a": {"hours": 0, "wage": 0.0}, "b": {"hours": 0, "wage": 0.8}},
+    )
+    with pytest.raises(
+        CategoricalDefinitionError, match=r"\['wage'\] are float properties"
+    ):
+        category_with(columns, hours=0)
+
+
+def test_category_with_tie_other_columns_break_asks_for_more_characteristics():
+    """A tie that an unqueried integer or bool column breaks asks for more of them."""
+    with pytest.raises(CategoricalDefinitionError, match="Pass more characteristics"):
+        category_with(STATUS, has_job=False)

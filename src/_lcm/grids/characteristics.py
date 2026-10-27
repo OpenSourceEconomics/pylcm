@@ -291,16 +291,34 @@ def _get_identifying_names(
             f"category_with takes only bool or signed-integer columns; "
             f"float or other unsupported columns were given: {unsupported}."
         )
+    ties = _get_ties(columns=columns, names=names)
+    if ties:
+        details = "; ".join(f"codes {codes}" for codes in ties)
+        queryable = tuple(
+            name for name in columns if columns[name].dtype.kind in {"b", "i"}
+        )
+        if _get_ties(columns=columns, names=queryable):
+            floats = [name for name in columns if name not in queryable]
+            advice = (
+                f"The remaining columns {floats} are float properties and cannot "
+                f"identify a category; add an integer or bool characteristic, or use "
+                f"the class constant."
+            )
+        else:
+            advice = "Pass more characteristics, or use the class constant."
+        raise CategoricalDefinitionError(
+            f"The characteristics {list(names)} do not tell all categories apart: "
+            f"{details} share them. {advice}"
+        )
+    return names
+
+
+def _get_ties(
+    *, columns: Mapping[str, np.ndarray], names: tuple[str, ...]
+) -> list[list[int]]:
+    """Return the groups of codes that share their values in all `names` columns."""
     groups: dict[tuple[CharacteristicValue, ...], list[int]] = {}
     rows = zip(*(np.asarray(columns[name]).tolist() for name in names), strict=True)
     for code, row in enumerate(rows):
         groups.setdefault(row, []).append(code)
-    ties = [codes for codes in groups.values() if len(codes) > 1]
-    if ties:
-        details = "; ".join(f"codes {codes}" for codes in ties)
-        raise CategoricalDefinitionError(
-            f"The characteristics {list(names)} do not tell all categories apart: "
-            f"{details} share them. Pass more characteristics, or use the class "
-            f"constant."
-        )
-    return names
+    return [codes for codes in groups.values() if len(codes) > 1]
