@@ -189,7 +189,7 @@ class _RetainedBuffers:
             if generation is not None:
                 if type(generation) is not CanonicalModelGeneration:
                     raise _unsupported(generation)
-                self.collect(generation.roots)
+                self.collect(generation.live_roots())
             for name in (
                 "values",
                 "simulation_policies",

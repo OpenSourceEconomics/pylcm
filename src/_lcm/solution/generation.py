@@ -179,6 +179,24 @@ class CanonicalModelGeneration:
     _authority: list[SolutionAuthority] = field(default_factory=list, repr=False)
     _authority_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
+    def live_roots(self) -> tuple[PytreeValue, ...]:
+        """Borrow original roots and already-published authority template storage."""
+        from _lcm.solution.retained_buffers import (  # noqa: PLC0415 - ownership imports this generation record
+            retained_artifact_authority_buffers,
+        )
+
+        # Completed authorities are append-only. Do not take the authority lock:
+        # its producer may observe live roots while already holding that lock.
+        authorities = tuple(self._authority)
+        return (
+            *self.roots,
+            *(
+                retained_artifact_authority_buffers(authority=artifact)
+                for authority in authorities
+                for artifact in authority.artifacts.values()
+            ),
+        )
+
     def solver_preparation(
         self, *, regime_name: RegimeName, period: int
     ) -> GenerationSolverPreparation:
@@ -289,4 +307,5 @@ class CanonicalGenerationCache:
     def roots(self) -> tuple[PytreeValue, ...]:
         """Return actual owners, leaving alias deduplication to buffer accounting."""
         with self._lock:
-            return tuple(generation.roots for generation in tuple(self._live.values()))
+            generations = tuple(self._live.values())
+        return tuple(generation.live_roots() for generation in generations)

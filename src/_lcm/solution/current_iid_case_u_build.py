@@ -730,11 +730,11 @@ class OwnedCaseUProgram:
 
     @property
     def roots(self) -> tuple[jax.Array, ...]:
-        """Actual immutable code/grid owners, retained through profile and dispatch."""
+        """Actual code/grid and live generation owners through profile and dispatch."""
         self.preparation.validate_owner()
         return canonical_generation_roots(
             declarations=(
-                self.preparation.generation.roots,
+                self.preparation.generation.live_roots(),
                 self.preparation.code_roots,
                 self.program,
             )
