@@ -1392,3 +1392,31 @@ def _limit_slope(*, slope: FloatND, secant: FloatND) -> FloatND:
     same_sign = slope * secant > 0.0
     limited = jnp.sign(secant) * jnp.minimum(jnp.abs(slope), 3.0 * jnp.abs(secant))
     return jnp.where(same_sign, limited, 0.0)
+
+
+def materialize_hermite_shadow(
+    *,
+    xp_lower: FloatND,
+    xp_upper: FloatND,
+    fp_lower: FloatND,
+    fp_upper: FloatND,
+    slope_lower: FloatND,
+    slope_upper: FloatND,
+) -> tuple[FloatND, FloatND, FloatND, BoolND]:
+    """Expose actual canonical h/a/b for an unclamped topology locator.
+
+    The original interpolant remains the score authority. These operands use
+    its exact width, safe-width and limiter operations, without fitting a new
+    polynomial or changing the order of the original reader's operations.
+    """
+    width = xp_upper - xp_lower
+    safe_width = jnp.where(width == 0.0, 1.0, width)
+    a, b, applicable = _hermite_coefficients(
+        bracket_width=width,
+        safe_width=safe_width,
+        fp_lower=fp_lower,
+        fp_upper=fp_upper,
+        slope_lower=slope_lower,
+        slope_upper=slope_upper,
+    )
+    return width, a, b, applicable

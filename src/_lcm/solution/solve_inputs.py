@@ -18,6 +18,7 @@ from _lcm.execution.scheduler import BufferRegistry, replace_leaf_by_identity
 from _lcm.execution.value_transfer import ValueArtifactAddress, ValueArtifactKind
 from _lcm.solution.contract import ContinuationPayload
 from _lcm.typing import RegimeName, ValueTemplate
+from lcm._solver_api.replay import ContinuationLeaf
 from lcm.solver_api import ArtifactKey, ContinuationReader
 from lcm.typing import FloatND
 
@@ -63,7 +64,7 @@ class SolveInputMappings[Value: ValueTemplate]:
 
 def locate_artifact[Value: ValueTemplate](
     *, inputs: SolveInputMappings[Value], artifact: ValueArtifactAddress
-) -> Value | jax.Array | None:
+) -> Value | jax.Array | jax.ShapeDtypeStruct | None:
     """Return the array an artifact key names in the mappings, or `None`.
 
     The rolling mappings answer with whatever the current period holds. The
@@ -130,8 +131,11 @@ def substitute_artifact(
                 }
             ),
         )
-    if not isinstance(new, jax.Array):
-        msg = f"Continuation leaf {artifact!r} has no concrete template leaf."
+    if not isinstance(old, jax.Array):
+        msg = f"Continuation leaf {artifact!r} has no concrete runtime leaf."
+        raise TypeError(msg)
+    if not isinstance(new, (jax.Array, jax.ShapeDtypeStruct)):
+        msg = f"Continuation leaf {artifact!r} has no original template leaf."
         raise TypeError(msg)
     return dataclasses.replace(
         inputs,
@@ -202,9 +206,13 @@ def _register_known(
     *,
     registry: BufferRegistry,
     ledger: PlannedInputLiveness,
-    array: jax.Array,
+    array: ContinuationLeaf,
     artifact: ValueArtifactAddress,
 ) -> None:
-    """Register one array under one key when the ledger plans that key."""
-    if ledger.is_known(artifact=artifact) and not array.is_deleted():
+    """Register actual arrays only when the ledger plans their artifact key."""
+    if not ledger.is_known(artifact=artifact):
+        return
+    if not isinstance(array, jax.Array):
+        raise TypeError("Runtime continuation storage requires actual arrays.")
+    if not array.is_deleted():
         registry.register(array=array, artifact=artifact)

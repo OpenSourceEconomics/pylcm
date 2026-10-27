@@ -78,7 +78,7 @@ def select_refine_envelope_exact(
         or bindings.get("refine_envelope_exact") != 5
         or bindings.get("overload") != 1
         or checker._relevant_imports(tree=tree, names={"overload"})
-        != ["from typing import NamedTuple, overload"]
+        != ["from typing import TYPE_CHECKING, NamedTuple, cast, overload"]
         or [checker._ast_key(node) for node in functions[:4]]
         != [checker._ast_key(node) for node in expected]
         or functions[-1].decorator_list

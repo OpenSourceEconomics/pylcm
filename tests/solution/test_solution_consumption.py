@@ -108,7 +108,7 @@ def test_declared_authority_is_built_once_per_model(
     whose grids agree, whatever the other parameters are."""
     model, params, _initial_conditions = _small_grid_search_inputs()
     builds = _Counter(model_authority_module.build_solution_authority)
-    monkeypatch.setattr(model_module, "build_solution_authority", builds)
+    monkeypatch.setattr(model_authority_module, "build_solution_authority", builds)
     structure_walks = _Counter(fingerprint_module.fingerprint_model_structure)
     monkeypatch.setattr(model_module, "fingerprint_model_structure", structure_walks)
 

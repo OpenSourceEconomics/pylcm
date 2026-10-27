@@ -33,6 +33,7 @@ from typing import (
     TypeAliasType,
     TypedDict,
     cast,
+    overload,
     runtime_checkable,
 )
 
@@ -71,17 +72,46 @@ from _lcm.egm.continuation_grids import (
 from _lcm.egm.dcegm_query import DCEGMQuery
 from _lcm.egm.declared_law import build_declared_liquid_law
 from _lcm.egm.nbegm import NBEGMRegistry
+from _lcm.egm.nbegm_breakpoints import (
+    interval_midpoints,
+    interval_segment_coefficients,
+)
 from _lcm.egm.nbegm_constraint_boundaries import (
     NBEGMFeasibilityBoundaryProgram,
     feasibility_axis_boundaries,
 )
+from _lcm.egm.nbegm_probe_stages import (
+    evaluate_probe_stage,
+    probe_between,
+    probe_clamped_breakpoints,
+    probe_distinct,
+    probe_greater,
+    probe_grid_scalar,
+    probe_int_fill,
+    probe_midpoint,
+    probe_nextafter,
+    probe_points,
+    probe_raw_breakpoints,
+    probe_scalar,
+    probe_selected_threshold,
+    probe_sorted,
+    probe_unstack,
+)
 from _lcm.egm.nbegm_query import NBEGMQuery
 from _lcm.egm.nbegm_query_model import NBEGMIntervalRecipe, NBEGMQueryModel
+from _lcm.egm.nbegm_resources import NBEGMResourcesBank
 from _lcm.egm.nbegm_step import (
     JumpPosition,
     _NBEGMDiscreteQueryStep,
     _NBEGMIntervalRows,
     _NBEGMQueryStep,
+    _OwnedNBEGMQueryStep,
+    nbegm_continuous_resources_bank,
+    nbegm_multi_interval_step,
+    nbegm_multi_interval_step_certified,
+    nbegm_one_asset_step,
+    nbegm_recurring_jump_step,
+    nbegm_unified_step,
 )
 from _lcm.egm.nested_floor import (
     NESTED_FLOOR_INPUT,
@@ -117,6 +147,7 @@ from _lcm.execution.reductions import (
 )
 from _lcm.grids import ContinuousGrid, DiscreteGrid
 from _lcm.grids.base import Grid
+from _lcm.materialization import DatedGenerationMaterializer
 from _lcm.params.edges import EDGES, flat_namespaces, regime_kernel_params
 from _lcm.params.mapping_leaf import MappingLeaf, UserMappingLeaf
 from _lcm.post_decision_bound import PostDecisionBoundSpec, grid_origin_bound_spec
@@ -208,7 +239,11 @@ from _lcm.utils.functools import array_result, is_user_function
 from lcm._solver_api.capabilities import SolverExecutionCapabilities
 from lcm.case_piece import CaseBoundary, EqualityOwner, PiecewiseAffineMeta
 from lcm.collective import CollectiveUtility
-from lcm.exceptions import RegimeInitializationError
+from lcm.exceptions import (
+    ExecutionPlanningError,
+    RegimeInitializationError,
+    UnsupportedOperationError,
+)
 from lcm.fixed_forms import cash_on_hand_with_subsidy
 from lcm.phased import Phased
 from lcm.solver_api import (
@@ -732,6 +767,7 @@ class NBEGM(OneMarginSolver):
             user_regime=user_regime,
             solver=bound,
             solver_name="NBEGM",
+            materializer=context.materializer,
         )
         _validate_nbegm_case_piece_declarations(context=context, solver=self)
 
@@ -2236,10 +2272,18 @@ class _RideAlongArgumentBuilder:
         slice or replicated, pass through; without a distributed ride state the
         filtered carry is returned as is.
         """
-        carry = _carry_subset(
+        selected = _carry_subset(
             next_regime_to_continuation=next_regime_to_continuation,
             stateful_targets=self.stateful_targets,
         )
+        ordinary: dict[RegimeName, EGMCarry] = {}
+        for name, payload in selected.items():
+            if not isinstance(payload, EGMCarry):
+                raise UnsupportedOperationError(
+                    "NB ride-along projected child readers are not installed."
+                )
+            ordinary[name] = payload
+        carry = MappingProxyType(ordinary)
         co_map_sharding = self._co_map_sharding(states=states)
         if co_map_sharding is None:
             return carry
@@ -2678,6 +2722,10 @@ def _validate_nbegm_case_piece_declarations(
     bound = cast("_BoundNBEGM", solver)
     functions = context.solve_functions
     registry = collect_nbegm_metadata(functions=functions)
+    if context.materializer is not None and registry.piece_sets:
+        raise UnsupportedOperationError(
+            "Cold NB case-piece smoothness probes require original admission."
+        )
     discrete_actions = frozenset(
         name
         for name, grid in user_regime.actions.items()
@@ -3596,6 +3644,11 @@ def _liquid_affinity_samples(
 ) -> Float1D:
     """Return broad liquid-grid nodes and cell interiors for affinity checks."""
     grid = context.grids[liquid_state_name].to_jax()
+    return _liquid_affinity_grid_samples(grid=grid)
+
+
+def _liquid_affinity_grid_samples(*, grid: Float1D) -> Float1D:
+    """Return the original separately evaluated grid/midpoint affinity samples."""
     midpoints = 0.5 * (grid[:-1] + grid[1:])
     return jnp.sort(a=jnp.concatenate([grid, midpoints]))
 
@@ -3609,9 +3662,21 @@ def _budget_affinity_check(
     probe_failure: Literal["reject", "assume_declared"],
     probe_schedule: Literal["first_solve", "every_solve", "never"] = "every_solve",
     breakpoint_sources: tuple[_NBEGMSource, ...] = (),
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> ParamCheck:
     """Configure the shared all-branch, resolved-interval affinity preflight."""
-    liquid_grid = context.grids[liquid_state_name].to_jax()
+    liquid_grid = (
+        context.grids[liquid_state_name].to_jax()
+        if materializer is None
+        else materializer.materialize_grid(spec=context.grids[liquid_state_name])
+    )
+    liquid_samples = (
+        _liquid_affinity_samples(context=context, liquid_state_name=liquid_state_name)
+        if materializer is None
+        else materializer.evaluate_validation(
+            function=_liquid_affinity_grid_samples, arguments={"grid": liquid_grid}
+        )
+    )
     return _deferred_probe(
         probe=_fail_if_budget_nonaffine_in_liquid,
         regime_name=context.regime_name,
@@ -3620,9 +3685,7 @@ def _budget_affinity_check(
         coh_dag=coh_dag,
         liquid_name=liquid_state_name,
         liquid_grid=liquid_grid,
-        liquid_samples=_liquid_affinity_samples(
-            context=context, liquid_state_name=liquid_state_name
-        ),
+        liquid_samples=liquid_samples,
         breakpoint_sources=breakpoint_sources,
         require_unit_slope=require_unit_slope,
         probe_failure=probe_failure,
@@ -3635,12 +3698,13 @@ def _fail_if_budget_nonaffine_in_liquid(
     liquid_name: str,
     require_unit_slope: bool,
     regime_name: RegimeName,
-    probe_arguments: _ProbeArguments,
+    probe_arguments: "_ProbeArguments",  # noqa: UP037 - original callback annotations resolve before the later class is bound
     liquid_grid: Float1D,
     liquid_samples: Float1D,
     breakpoint_sources: tuple[_NBEGMSource, ...] = (),
     probe_failure: Literal["reject", "assume_declared"] = "reject",
     derivative_programs: MappingProxyType[int, _BudgetProbeProgram] | None = None,
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> None:
     """Reject budgets violating affinity or required slope on any live interval.
 
@@ -3677,6 +3741,7 @@ def _fail_if_budget_nonaffine_in_liquid(
             arg_names=arg_names, int_arg_values=probe_arguments.int_arg_values
         ),
         derivative_programs=derivative_programs,
+        materializer=materializer,
     )
     unprobeable = functools.partial(
         _fail_unprobeable,
@@ -3686,10 +3751,15 @@ def _fail_if_budget_nonaffine_in_liquid(
     )
 
     try:
-        second_derivatives = _evaluate_on_first_workable_fill(
-            functools.partial(_second_liquid_derivative_magnitudes, probe=probe)
+        second_derivatives = _evaluate_probe_fill_rungs(
+            evaluate=functools.partial(
+                _second_liquid_derivative_magnitudes, probe=probe
+            ),
+            materializer=materializer,
         )
-    except Exception as probe_error:  # noqa: BLE001
+    except Exception as probe_error:
+        if materializer is not None and isinstance(probe_error, ExecutionPlanningError):
+            raise
         unprobeable(probe_error=probe_error)
         worst_second = None
     else:
@@ -3707,10 +3777,15 @@ def _fail_if_budget_nonaffine_in_liquid(
     slopes: tuple[float, ...] | None = None
     if require_unit_slope:
         try:
-            slopes = _evaluate_on_first_workable_fill(
-                functools.partial(_liquid_slopes, probe=probe)
+            slopes = _evaluate_probe_fill_rungs(
+                evaluate=functools.partial(_liquid_slopes, probe=probe),
+                materializer=materializer,
             )
-        except Exception as probe_error:  # noqa: BLE001
+        except Exception as probe_error:
+            if materializer is not None and isinstance(
+                probe_error, ExecutionPlanningError
+            ):
+                raise
             unprobeable(probe_error=probe_error)
     offending = (
         next(
@@ -3986,9 +4061,11 @@ class _ProbeArguments:
         array_floats: bool = False,
         array_rank: int = 1,
         leaf_rank: int = 1,
+        materializer: DatedGenerationMaterializer | None = None,
     ) -> ParamsLeaf:
         """Build one argument at the given fill level and rung."""
-        return _probe_fill(
+        function = functools.partial(
+            _probe_fill,
             name=name,
             fill=fill,
             int_arg_names=self.int_arg_names,
@@ -3996,10 +4073,14 @@ class _ProbeArguments:
             array_arg_ranks=self.array_arg_ranks,
             bool_arg_names=self.bool_arg_names,
             mapping_leaf_arg_names=self.mapping_leaf_arg_names,
-            param_values=self.param_values,
             array_floats=array_floats,
             array_rank=array_rank,
             leaf_rank=leaf_rank,
+        )
+        return evaluate_probe_stage(
+            function=function,
+            arguments={"param_values": self.param_values},
+            materializer=materializer,
         )
 
 
@@ -4024,16 +4105,29 @@ class _ProbeFillRung:
     int_overrides: MappingProxyType[str, int]
     """Integer-coded arguments pinned to one grid code each."""
 
-    def argument(self, *, name: str, probe_arguments: _ProbeArguments) -> ParamsLeaf:
+    def argument(
+        self,
+        *,
+        name: str,
+        probe_arguments: _ProbeArguments,
+        materializer: DatedGenerationMaterializer | None = None,
+    ) -> ParamsLeaf:
         """Build one argument of the probed function at this rung."""
         if name in self.int_overrides:
-            return jnp.asarray(self.int_overrides[name], dtype=jnp.int32)
+            return evaluate_probe_stage(
+                function=functools.partial(
+                    probe_int_fill, value=self.int_overrides[name]
+                ),
+                arguments={},
+                materializer=materializer,
+            )
         return probe_arguments.fill(
             name=name,
             fill=self.fill,
             array_floats=self.array_floats,
             array_rank=self.array_rank,
             leaf_rank=self.leaf_rank,
+            materializer=materializer,
         )
 
 
@@ -4100,6 +4194,8 @@ class _LiquidAffinityProbe:
     """The one-at-a-time integer-code overrides every fill is swept over."""
     derivative_programs: MappingProxyType[int, _BudgetProbeProgram] | None = None
     """Model-owned derivatives with current filled arguments supplied dynamically."""
+    materializer: DatedGenerationMaterializer | None = None
+    """Call-local validation owner, never retained by a source core or check."""
 
     def budget_of_liquid(self, *, rung: _ProbeFillRung) -> _FilledScalarFunction:
         """The budget as a scalar function of the liquid state at one rung."""
@@ -4128,25 +4224,46 @@ class _LiquidAffinityProbe:
             if name is not None
         )
         cell = {
-            name: rung.argument(name=name, probe_arguments=self.probe_arguments)
+            name: rung.argument(
+                name=name,
+                probe_arguments=self.probe_arguments,
+                materializer=self.materializer,
+            )
             for name in cell_names
         }
-        threshold_value = _indexed_threshold_value(
-            table=rung.argument(
-                name=source.threshold_param_name,
-                probe_arguments=self.probe_arguments,
-            ),
-            subkey=source.threshold_subkey,
-            index_state=source.threshold_index_state,
-            static_index=source.threshold_static_index,
-            cell=cell,
+        table = rung.argument(
+            name=source.threshold_param_name,
+            probe_arguments=self.probe_arguments,
+            materializer=self.materializer,
         )
-        threshold = jnp.asarray(threshold_value, dtype=self.dtype).reshape(())
+        threshold_value = evaluate_probe_stage(
+            function=functools.partial(
+                _indexed_threshold_value,
+                subkey=source.threshold_subkey,
+                index_state=source.threshold_index_state,
+                static_index=source.threshold_static_index,
+            ),
+            arguments={"table": table, "cell": cell},
+            materializer=self.materializer,
+        )
+        threshold = evaluate_probe_stage(
+            function=functools.partial(probe_scalar, dtype=self.dtype),
+            arguments={"value": threshold_value},
+            materializer=self.materializer,
+        )
         if source.derived_of_liquid_dag is None:
-            return jnp.where(
-                source.equality_owner == "above",
-                threshold,
-                jnp.nextafter(threshold, jnp.asarray(jnp.inf, dtype=self.dtype)),
+            return evaluate_probe_stage(
+                function=functools.partial(
+                    probe_selected_threshold,
+                    equality_above=source.equality_owner == "above",
+                    dtype=self.dtype,
+                ),
+                arguments={"threshold": threshold},
+                materializer=self.materializer,
+            )
+        if self.materializer is not None:
+            raise UnsupportedOperationError(
+                "Cold NB derived-schedule validation is not installed."
             )
 
         dag = source.derived_of_liquid_dag
@@ -4164,45 +4281,115 @@ class _LiquidAffinityProbe:
 
     def strict_interval_samples(self, *, rung: _ProbeFillRung) -> tuple[FloatND, ...]:
         """One representable strict interior per live resolved interval."""
-        from _lcm.egm.nbegm_breakpoints import (  # noqa: PLC0415
-            clamp_breakpoints_to_grid,
-        )
-
         dtype = self.dtype
-        raw = (
-            jnp.stack(
-                [
+        raw = evaluate_probe_stage(
+            function=functools.partial(probe_raw_breakpoints, dtype=dtype),
+            arguments={
+                "values": tuple(
                     self.resolved_breakpoint(source=source, rung=rung)
                     for source in self.breakpoint_sources
-                ]
+                )
+            },
+            materializer=self.materializer,
+        )
+        # The original raw stage already owns the explicit-dtype empty vector.
+        # With no declared boundaries, clamping cannot change any element; keep
+        # domain endpoint reads and every strict-interior check below unchanged.
+        clamped = (
+            evaluate_probe_stage(
+                function=functools.partial(probe_clamped_breakpoints, dtype=dtype),
+                arguments={"raw": raw, "liquid_grid": self.liquid_grid},
+                materializer=self.materializer,
             )
             if self.breakpoint_sources
-            else jnp.zeros((0,), dtype=dtype)
+            else raw
         )
-        clamped = clamp_breakpoints_to_grid(
-            breakpoints=jnp.asarray(raw, dtype=dtype),
-            liquid_grid=jnp.asarray(self.liquid_grid, dtype=dtype),
+        domain_start = evaluate_probe_stage(
+            function=functools.partial(probe_grid_scalar, index=0, dtype=dtype),
+            arguments={"grid": self.liquid_grid},
+            materializer=self.materializer,
         )
-        domain_start = jnp.asarray(self.liquid_grid[0], dtype=dtype).reshape(())
-        domain_stop = jnp.asarray(self.liquid_grid[-1], dtype=dtype).reshape(())
+        domain_stop = evaluate_probe_stage(
+            function=functools.partial(probe_grid_scalar, index=-1, dtype=dtype),
+            arguments={"grid": self.liquid_grid},
+            materializer=self.materializer,
+        )
 
         internal: list[FloatND] = []
-        for raw_boundary in jnp.sort(a=clamped):
-            boundary = jnp.asarray(raw_boundary, dtype=dtype).reshape(())
-            if bool((boundary > domain_start) & (boundary < domain_stop)) and (
-                not internal or bool(boundary != internal[-1])
+        sorted_values = evaluate_probe_stage(
+            function=probe_sorted,
+            arguments={"values": clamped},
+            materializer=self.materializer,
+        )
+        boundaries = (
+            evaluate_probe_stage(
+                function=probe_unstack,
+                arguments={"values": sorted_values},
+                materializer=self.materializer,
+            )
+            if sorted_values.shape[0]
+            else ()
+        )
+        for raw_boundary in boundaries:
+            boundary = evaluate_probe_stage(
+                function=functools.partial(probe_scalar, dtype=dtype),
+                arguments={"value": raw_boundary},
+                materializer=self.materializer,
+            )
+            if bool(
+                evaluate_probe_stage(
+                    function=probe_between,
+                    arguments={
+                        "value": boundary,
+                        "lower": domain_start,
+                        "upper": domain_stop,
+                    },
+                    materializer=self.materializer,
+                )
+            ) and (
+                not internal
+                or bool(
+                    evaluate_probe_stage(
+                        function=probe_distinct,
+                        arguments={"value": boundary, "previous": internal[-1]},
+                        materializer=self.materializer,
+                    )
+                )
             ):
                 internal.append(boundary)
 
         edges = (domain_start, *internal, domain_stop)
         representatives: list[FloatND] = []
         for lower, upper in itertools.pairwise(edges):
-            if not bool(upper > lower):
+            if not bool(
+                evaluate_probe_stage(
+                    function=probe_greater,
+                    arguments={"upper": upper, "lower": lower},
+                    materializer=self.materializer,
+                )
+            ):
                 continue
-            midpoint = 0.5 * lower + 0.5 * upper
-            if not bool((midpoint > lower) & (midpoint < upper)):
-                midpoint = jnp.nextafter(lower, upper)
-            if not bool((midpoint > lower) & (midpoint < upper)):
+            midpoint = evaluate_probe_stage(
+                function=probe_midpoint,
+                arguments={"lower": lower, "upper": upper},
+                materializer=self.materializer,
+            )
+            inside = functools.partial(
+                evaluate_probe_stage,
+                function=probe_between,
+                materializer=self.materializer,
+            )
+            if not bool(
+                inside(arguments={"value": midpoint, "lower": lower, "upper": upper})
+            ):
+                midpoint = evaluate_probe_stage(
+                    function=probe_nextafter,
+                    arguments={"lower": lower, "upper": upper},
+                    materializer=self.materializer,
+                )
+            if not bool(
+                inside(arguments={"value": midpoint, "lower": lower, "upper": upper})
+            ):
                 msg = (
                     "resolved economic interval has positive width but no "
                     "representable strict interior in the active float dtype: "
@@ -4216,19 +4403,16 @@ class _LiquidAffinityProbe:
         self, *, interval_samples: tuple[FloatND, ...], with_grid_samples: bool
     ) -> FloatND:
         """Stack one rung's probe points onto a single batched axis."""
-        dtype = self.dtype
-        parts = []
-        if with_grid_samples:
-            parts.append(jnp.asarray(self.liquid_samples, dtype=dtype).reshape(-1))
-        if interval_samples:
-            parts.append(
-                jnp.stack(
-                    [jnp.asarray(s, dtype=dtype).reshape(()) for s in interval_samples]
-                )
-            )
-        if not parts:
-            return jnp.zeros((0,), dtype=dtype)
-        return jnp.concatenate(parts)
+        return evaluate_probe_stage(
+            function=functools.partial(
+                probe_points, with_grid_samples=with_grid_samples, dtype=self.dtype
+            ),
+            arguments={
+                "liquid_samples": self.liquid_samples,
+                "interval_samples": interval_samples,
+            },
+            materializer=self.materializer,
+        )
 
     def liquid_derivative(
         self, *, order: int, points: FloatND, rung: _ProbeFillRung
@@ -4241,14 +4425,25 @@ class _LiquidAffinityProbe:
         """
         if self.derivative_programs is not None:
             arguments = {
-                name: rung.argument(name=name, probe_arguments=self.probe_arguments)
+                name: rung.argument(
+                    name=name,
+                    probe_arguments=self.probe_arguments,
+                    materializer=self.materializer,
+                )
                 for name in self.arg_names
                 if name != self.liquid_name
             }
-            return _evaluate_liquid_probe_program(
-                program=self.derivative_programs[order],
-                points=points,
-                arguments=arguments,
+            return evaluate_probe_stage(
+                function=functools.partial(
+                    _evaluate_liquid_probe_program,
+                    program=self.derivative_programs[order],
+                ),
+                arguments={"points": points, "arguments": arguments},
+                materializer=self.materializer,
+            )
+        if self.materializer is not None:
+            raise UnsupportedOperationError(
+                "Owned NB probes require the original prepared derivative programs."
             )
         derivative: Callable[[FloatND], FloatND] = self.budget_of_liquid(rung=rung)
         for _ in range(order):
@@ -4499,10 +4694,18 @@ def _make_liquid_probe_program[T: ArrayTree](
     *, func: Callable[..., T], liquid_name: str, order: int, scalar: bool
 ) -> Callable[[FloatND, EconFunctionKwargs], T]:
     """Construct a derivative program closing over model structure only."""
-    derivative = _DynamicLiquidProbe(func=func, liquid_name=liquid_name, scalar=scalar)
-    for _ in range(order):
-        derivative = jax.grad(derivative) if scalar else jax.jacfwd(derivative)
-    return jax.jit(jax.vmap(derivative, in_axes=(0, None)))
+
+    # Build transforms inside the JIT so its model closure has no JAX sentinels.
+    # keyword-only-exempt: library-callback=jax.jit
+    def evaluate(points: FloatND, arguments: EconFunctionKwargs) -> T:
+        derivative = _DynamicLiquidProbe(
+            func=func, liquid_name=liquid_name, scalar=scalar
+        )
+        for _ in range(order):
+            derivative = jax.grad(derivative) if scalar else jax.jacfwd(derivative)
+        return cast("T", jax.vmap(derivative, in_axes=(0, None))(points, arguments))
+
+    return jax.jit(evaluate)
 
 
 @dataclass(frozen=True, eq=False, kw_only=True)
@@ -4579,16 +4782,33 @@ class _DeferredProbe:
 
     def __call__(self, *, flat_params: FlatParams) -> None:
         """Evaluate the probe on this draw when the schedule asks for it."""
+        self.evaluate(flat_params=flat_params, materializer=None)
+
+    def evaluate(
+        self,
+        *,
+        flat_params: FlatParams,
+        materializer: DatedGenerationMaterializer | None,
+    ) -> None:
+        """Keep the same schedule/check identity with an optional call-local owner."""
         if self.probe_schedule == "never" or (
             self.probe_schedule == "first_solve" and self.checked
         ):
             return
+        if (
+            materializer is not None
+            and self.probe is not _fail_if_budget_nonaffine_in_liquid
+        ):
+            raise UnsupportedOperationError(
+                "Owned NB validation requires the original scalar affinity probe."
+            )
         self.probe(
             regime_name=self.regime_name,
             probe_arguments=self.probe_arguments.with_params(
                 flat_params=flat_params, regime_name=self.regime_name
             ),
             **self.bound,
+            **({} if materializer is None else {"materializer": materializer}),
         )
         self.checked = True
 
@@ -4735,6 +4955,15 @@ _PROBE_FILL_RUNGS: tuple[tuple[bool, int, int], ...] = (
 
 
 def _evaluate_on_first_workable_fill[T](evaluate: Callable[..., T]) -> T:
+    """Evaluate the original unbudgeted fill ladder with its existing API."""
+    return _evaluate_probe_fill_rungs(evaluate=evaluate, materializer=None)
+
+
+def _evaluate_probe_fill_rungs[T](
+    *,
+    evaluate: Callable[..., T],
+    materializer: DatedGenerationMaterializer | None = None,
+) -> T:
     """Evaluate a probe on the first fill shape its DAG accepts.
 
     An array-typed parameter's *axis count* is not declared anywhere — the
@@ -4762,7 +4991,11 @@ def _evaluate_on_first_workable_fill[T](evaluate: Callable[..., T]) -> T:
                 array_rank=array_rank,
                 leaf_rank=leaf_rank,
             )
-        except Exception as rung_error:  # noqa: BLE001
+        except Exception as rung_error:
+            if materializer is not None and isinstance(
+                rung_error, ExecutionPlanningError
+            ):
+                raise
             errors.append(rung_error)
     raise errors[0]
 
@@ -5322,6 +5555,7 @@ def _collect_nbegm_schedule_spec(
     consumption_action_name: ActionName,
     probe_failure: Literal["reject", "assume_declared"] = "reject",
     probe_schedule: Literal["first_solve", "every_solve", "never"] = "every_solve",
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> _NBEGMScheduleSpec:
     """Collect a regime's piecewise-affine schedules into one breakpoint partition.
 
@@ -5457,6 +5691,7 @@ def _collect_nbegm_schedule_spec(
         ),
         probe_failure=probe_failure,
         probe_schedule=probe_schedule,
+        materializer=materializer,
     )
     return _NBEGMScheduleSpec(
         param_checks=(affinity_check,),
@@ -5641,9 +5876,11 @@ def _solve_cliffed_budget(
     boundary_next_liquid: Float1D | None = None,
     arithmetic: ComparisonArithmetic = "certified",
     retain_query: bool = False,
+    return_owner: bool = False,
+    source_query: Float1D | None = None,
     continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
     | None = None,
-) -> _NBEGMStepChannels:
+) -> _NBEGMStepChannels | _OwnedNBEGMQueryStep:
     """Solve one period of a cliffed single-liquid budget, dispatching on kind.
 
     Reads the continuation jump-aware at every jump (no bridging), so the solve
@@ -5653,14 +5890,11 @@ def _solve_cliffed_budget(
     Returns this period's value, marginal value of liquid, and consumption policy
     on `liquid`.
     """
-    from _lcm.egm.nbegm_step import (  # noqa: PLC0415
-        nbegm_multi_interval_step,
-        nbegm_one_asset_step,
-        nbegm_recurring_jump_step,
-        nbegm_unified_step,
-    )
-
     if is_single_jump:
+        if return_owner:
+            raise UnsupportedOperationError(
+                "NB source-point native owners require a continuous schedule."
+            )
         # A single jump in cash-on-hand is the binary case the case-piece step solves
         # exactly, including its recurring jumped continuation: each interval's
         # affine segment has slope 1, so its intercept is the additive cash-on-hand
@@ -5684,6 +5918,10 @@ def _solve_cliffed_budget(
             continuation_read=continuation_read,
         )
     if is_multi_jump:
+        if return_owner:
+            raise UnsupportedOperationError(
+                "NB source-point native owners require a continuous schedule."
+            )
         # N cliffs: each affine segment has slope 1, so its intercept is the additive
         # cash-on-hand level on that side, and the recurring step resolves every jump
         # (boundary-targeting + jump-aware continuation).
@@ -5705,6 +5943,10 @@ def _solve_cliffed_budget(
             continuation_read=continuation_read,
         )
     if is_mixed:
+        if return_owner:
+            raise UnsupportedOperationError(
+                "NB source-point native owners require a continuous schedule."
+            )
         # Jumps and kinks together: the unified step solves each continuous case by
         # coh inversion and masks across the jumps. The jump_mask is aligned with the
         # sorted breakpoints (the schedule declares its thresholds ascending).
@@ -5742,12 +5984,84 @@ def _solve_cliffed_budget(
         flat_interval_mask=flat_mask,
         arithmetic=arithmetic,
         retain_query=retain_query,
+        return_owner=return_owner,
+        query_grid=source_query,
         continuation_read=continuation_read,
         feasibility_partition=feasibility_partition,
         feasible_interval_mask=feasible_interval_mask,
         boundary_savings_targets=boundary_savings_targets,
         boundary_next_liquid=boundary_next_liquid,
     )
+
+
+def _solve_certified_continuous_budget(
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    liquid: Float1D,
+    next_liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: FloatND,
+    preferences: Preferences,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+    is_single_jump: bool,
+    is_multi_jump: bool,
+    is_mixed: bool,
+    jump_mask: tuple[bool, ...],
+    flat_mask: tuple[bool, ...] | None,
+    feasibility_partition: ResolvedAxisPartition | None = None,
+    feasible_interval_mask: BoolND | None = None,
+    boundary_savings_targets: Float1D | None = None,
+    boundary_next_liquid: Float1D | None = None,
+    arithmetic: ComparisonArithmetic = "certified",
+    retain_query: bool = False,
+    return_owner: bool = False,
+    source_query: Float1D | None = None,
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+) -> _NBEGMStepChannels | _OwnedNBEGMQueryStep:
+    """Bind the original continuous certified bank before callback capture."""
+    if is_single_jump or is_multi_jump or is_mixed or (arithmetic != "certified"):
+        raise UnsupportedOperationError(
+            "Selected NB source requires continuous certified arithmetic."
+        )
+    del jump_mask
+    return nbegm_multi_interval_step_certified(
+        next_value=next_value,
+        next_marginal=next_marginal,
+        liquid_grid=liquid,
+        next_liquid_grid=next_liquid_grid,
+        savings_grid=savings_grid,
+        discount_factor=discount_factor,
+        preferences=preferences,
+        next_liquid=next_liquid,
+        marginal_return=marginal_return,
+        coh_slopes=coh_slopes,
+        coh_intercepts=coh_intercepts,
+        breakpoints=breakpoints,
+        flat_interval_mask=flat_mask,
+        arithmetic=arithmetic,
+        retain_query=retain_query,
+        return_owner=return_owner,
+        query_grid=source_query,
+        continuation_read=continuation_read,
+        feasibility_partition=feasibility_partition,
+        feasible_interval_mask=feasible_interval_mask,
+        boundary_savings_targets=boundary_savings_targets,
+        boundary_next_liquid=boundary_next_liquid,
+    )
+
+
+class _NBEGMSourcePoint(NamedTuple):
+    """Original source result beside its separate native envelope owner."""
+
+    value: FloatND
+    carry: EGMCarry
+    native_owner: IntND | None
 
 
 @dataclass(frozen=True, eq=False, kw_only=True)
@@ -5780,12 +6094,37 @@ class _NBEGMContinuousCore:
     )
     """Keep independently declared conditional original-saving rows."""
 
+    retain_policy: bool = field(
+        default=False, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Keep the original selected consumption for current-shock reconstruction."""
+
     interval_recipe: NBEGMIntervalRecipe | None = field(
         default=None, metadata={"fingerprint_omit_if_default": True}
     )
     """Canonical physical selection cuts for this target-period source recipe."""
 
-    def __call__(
+    solve_budget: Callable[..., _NBEGMStepChannels | _OwnedNBEGMQueryStep] = field(
+        default=_solve_cliffed_budget,
+        metadata={"fingerprint_omit_if_default": True},
+    )
+    """Actual original step callable selected by the owning source preparation."""
+
+    _evaluate_preimages: (
+        Callable[[EconFunctionKwargs], tuple[Float1D, BoolND]] | None
+    ) = field(default=None, init=False, metadata={"fingerprint_omit_if_default": True})
+    """Exact recipe callback, selected before numerical capture without a surrogate."""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "_evaluate_preimages",
+            None
+            if self.interval_recipe is None
+            else self.interval_recipe.evaluate_preimages,
+        )
+
+    def construct_point(
         self,
         *,
         liquid: Float1D,
@@ -5800,25 +6139,20 @@ class _NBEGMContinuousCore:
         source_bound_status: BoundInputStatus | None = None,
         continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
         | None = None,
+        source_query: Float1D | None = None,
         **params: ValueND,
-    ) -> _RawNBEGMOutput:
+    ) -> _NBEGMSourcePoint | BoundedResult[_NBEGMSourcePoint]:
         """Solve one period of the schedule regime on the liquid grid."""
-        from _lcm.egm.nbegm_breakpoints import (  # noqa: PLC0415
-            interval_midpoints,
-            interval_segment_coefficients,
-        )
-
-        schedule_spec = self.schedule_spec
-        kinds = schedule_spec.breakpoint_kinds
+        kinds = self.schedule_spec.breakpoint_kinds
         is_single_jump, is_multi_jump, is_mixed, jump_mask, flat_mask = (
             _schedule_kind_flags(kinds)
         )
         order_sensitive = len(set(kinds)) > 1
         preferences = self.build_preferences(params)
         coh_of_liquid = _BoundScalarFunction(
-            func=schedule_spec.coh_of_liquid_dag,
-            argument_name=schedule_spec.liquid_state_name,
-            bound={name: params[name] for name in schedule_spec.coh_param_names},
+            func=self.schedule_spec.coh_of_liquid_dag,
+            argument_name=self.schedule_spec.liquid_state_name,
+            bound={name: params[name] for name in self.schedule_spec.coh_param_names},
         )
 
         # Zero declared breakpoints ⇒ an empty partition: one interval covering
@@ -5826,15 +6160,15 @@ class _NBEGMContinuousCore:
         breakpoints = (
             _sorted_thresholds(
                 raw=jnp.stack(
-                    [params[name] for name in schedule_spec.threshold_param_names]
+                    [params[name] for name in self.schedule_spec.threshold_param_names]
                 ),
                 order_sensitive=order_sensitive,
             )
-            if schedule_spec.threshold_param_names
-            else jnp.zeros((0,), dtype=canonical_float_dtype())
+            if self.schedule_spec.threshold_param_names
+            else jnp.zeros((0,), dtype=liquid.dtype)
         )
-        if self.interval_recipe is not None:
-            cuts, _orientation = self.interval_recipe.evaluate_preimages(params)
+        if self._evaluate_preimages is not None:
+            cuts, _orientation = self._evaluate_preimages(params)
             breakpoints = _sorted_thresholds(raw=cuts, order_sensitive=order_sensitive)
         midpoints = interval_midpoints(liquid_grid=liquid, breakpoints=breakpoints)
 
@@ -5853,7 +6187,7 @@ class _NBEGMContinuousCore:
             schedule=coh_of_liquid,
             interval_midpoints=midpoints,
         )
-        step = _solve_cliffed_budget(
+        step = self.solve_budget(
             next_value=next_value,
             next_marginal=next_marginal,
             liquid=query_liquid,
@@ -5877,12 +6211,16 @@ class _NBEGMContinuousCore:
             boundary_next_liquid=boundary_next_liquid,
             arithmetic=self.envelope_arithmetic,
             retain_query=self.retain_query,
+            return_owner=self.retain_policy,
+            source_query=source_query,
             continuation_read=continuation_read,
         )
-        value, marginal, _policy = step[:3]
-        value_at_liquid = value[unsort][: liquid.shape[0]]
+        value, marginal, policy = step[:3]
+        value_at_liquid = (
+            value[unsort][: liquid.shape[0]] if source_query is None else value
+        )
         carry = EGMCarry(
-            endog_grid=query_liquid,
+            endog_grid=query_liquid if source_query is None else source_query,
             value=value,
             breakpoints=(
                 feasibility.carry_boundary_values
@@ -5890,16 +6228,92 @@ class _NBEGMContinuousCore:
                 else None
             ),
             marginal_utility=marginal,
+            policy=policy if self.retain_policy else None,
             taste_shock_scale=jnp.asarray(0.0, dtype=value.dtype),
             query_data=_required_nbegm_query_data(step=step)
             if self.retain_query
             else None,
         )
+        owner = step.owner if isinstance(step, _OwnedNBEGMQueryStep) else None
+        result = _NBEGMSourcePoint(value_at_liquid, carry, owner)
         if source_bound_status is not None:
-            return BoundedResult(
-                output=(value_at_liquid, carry), bound_status=(source_bound_status,)
+            return BoundedResult(output=result, bound_status=(source_bound_status,))
+        return result
+
+    def construct_resources_bank(
+        self,
+        *,
+        resources_support: Float1D,
+        next_liquid_grid: Float1D,
+        next_value: Float1D,
+        next_marginal: Float1D,
+        next_liquid: Float1D,
+        marginal_return: Float1D,
+        effective_savings_grid: Float1D,
+        **params: ValueND,
+    ) -> NBEGMResourcesBank:
+        """Retain the original NB bank before any resource-to-liquid inversion."""
+        if (
+            self.schedule_spec.breakpoint_kinds
+            or self.schedule_spec.threshold_param_names
+            or self.interval_recipe is not None
+            or self.feasibility_constraints
+            or self.schedule_spec.discount_factor_dag is not None
+        ):
+            raise UnsupportedOperationError(
+                "Original NB resources banks require global affine resource topology."
             )
-        return value_at_liquid, carry
+        return nbegm_continuous_resources_bank(
+            next_value=next_value,
+            next_marginal=next_marginal,
+            next_liquid_grid=next_liquid_grid,
+            savings_grid=effective_savings_grid,
+            discount_factor=params["koopmans_aggregator__discount_factor"],
+            preferences=self.build_preferences(params),
+            next_liquid=next_liquid,
+            marginal_return=marginal_return,
+            resources_support=resources_support,
+        )
+
+    def __call__(
+        self,
+        *,
+        liquid: Float1D,
+        next_liquid_grid: Float1D,
+        next_value: Float1D,
+        next_marginal: Float1D,
+        next_liquid: Float1D,
+        marginal_return: Float1D,
+        effective_savings_grid: Float1D,
+        boundary_savings_targets: Float1D,
+        boundary_next_liquid: Float1D,
+        source_bound_status: BoundInputStatus | None = None,
+        continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+        | None = None,
+        **params: ValueND,
+    ) -> _RawNBEGMOutput:
+        result = self.construct_point(
+            liquid=liquid,
+            next_liquid_grid=next_liquid_grid,
+            next_value=next_value,
+            next_marginal=next_marginal,
+            next_liquid=next_liquid,
+            marginal_return=marginal_return,
+            effective_savings_grid=effective_savings_grid,
+            boundary_savings_targets=boundary_savings_targets,
+            boundary_next_liquid=boundary_next_liquid,
+            source_bound_status=source_bound_status,
+            continuation_read=continuation_read,
+            **params,
+        )
+        if isinstance(result, BoundedResult):
+            return BoundedResult(
+                output=(result.output.value, result.output.carry),
+                bound_status=result.bound_status,
+                query_status=result.query_status,
+                continuation_read_counts=result.continuation_read_counts,
+            )
+        return result.value, result.carry
 
 
 def _build_nbegm_continuous_core(
@@ -5910,6 +6324,7 @@ def _build_nbegm_continuous_core(
     schedule_spec: _NBEGMScheduleSpec,
     feasibility_constraints: tuple[_NBEGMFeasibilityConstraint, ...] = (),
     envelope_arithmetic: ComparisonArithmetic = "certified",
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> _NBEGMContinuousCore:
     """Build the jittable continuous-schedule EGM core for one continuation target.
 
@@ -5923,15 +6338,25 @@ def _build_nbegm_continuous_core(
         newton_action_ceiling,
     )
 
+    action_upper = (
+        newton_action_ceiling(savings_grid)
+        if materializer is None
+        else materializer.evaluate_validation(
+            function=newton_action_ceiling, arguments={"scale_grid": savings_grid}
+        )
+    )
     return _NBEGMContinuousCore(
         savings_grid=savings_grid,
         build_preferences=get_preferences_builder(
             functions=functions,
             action_name=consumption_action,
             action_lower=NEWTON_ACTION_FLOOR,
-            action_upper=newton_action_ceiling(savings_grid),
+            action_upper=action_upper,
         ),
-        schedule_spec=schedule_spec,
+        # Host preconditions remain on the separately returned original checks
+        # tuple. They are not called by this numerical core and must not become
+        # abstract numerical callback dependencies merely through the spec.
+        schedule_spec=replace(schedule_spec, param_checks=()),
         feasibility_constraints=feasibility_constraints,
         envelope_arithmetic=envelope_arithmetic,
     )
@@ -6048,7 +6473,9 @@ def _solve_ride_along_cell_step(
     feasibility_partition: ResolvedAxisPartition | None = None,
     feasible_interval_mask: BoolND | None = None,
     retain_query: bool = False,
-) -> _NBEGMStepChannels:
+    source_query: Float1D | None = None,
+    return_owner: bool = False,
+) -> _NBEGMStepChannels | _OwnedNBEGMQueryStep:
     """Run one ride-along cell's 1-D case-piece step against savings continuation.
 
     A pure-kink schedule uses the continuous multi-interval step; a schedule with a
@@ -6065,6 +6492,10 @@ def _solve_ride_along_cell_step(
         nbegm_unified_step_savings,
     )
 
+    if has_jump and (source_query is not None or return_owner):
+        raise UnsupportedOperationError(
+            "Owned NB ride point reads require the original continuous savings bank."
+        )
     if has_jump:
         if inverse_eis is not None:
             msg = (
@@ -6104,6 +6535,8 @@ def _solve_ride_along_cell_step(
         feasibility_partition=feasibility_partition,
         feasible_interval_mask=feasible_interval_mask,
         retain_query=retain_query,
+        query_grid=source_query,
+        return_owner=return_owner,
     )
 
 
@@ -8582,6 +9015,17 @@ def _nbegm_cell_publication_grid(
     )
 
 
+class _NBEGMRideSourcePoint(NamedTuple):
+    """Original point channels, including mapped branch and query axes."""
+
+    value: FloatND
+    marginal: FloatND
+    policy: FloatND
+    savings: FloatND
+    native_owner: IntND
+    action_codes: IntND
+
+
 @dataclass(frozen=True, eq=False, kw_only=True)
 class _NBEGMCellSolver:
     """The per-cell envelope solve of one period, bound to its states and params."""
@@ -8609,6 +9053,153 @@ class _NBEGMCellSolver:
 
     inverse_eis: FloatND | None
     """`1/psi` under Epstein-Zin, else `None` for the additive step."""
+
+    def construct_owned_query_row(
+        self,
+        *,
+        ride_values: tuple[_RideCoordinate, ...],
+        query: Float1D,
+        cont_value: FloatND,
+        cont_marginal: FloatND,
+    ) -> _OwnedNBEGMQueryStep:
+        """Keep the original continuous branch's full query and native-owner data.
+
+        Candidate geometry stays on the original liquid support. The separate
+        query operand supplies publication coordinates, including an exact
+        requested node; it never replaces that geometry.
+        """
+        binder = self.binder
+        statics = binder.statics
+        if (
+            binder.schedule_spec.discrete_actions
+            or statics.has_jump
+            or statics.continuation_reads_liquid
+            or self.inverse_eis is not None
+            or binder.current_predicates is not None
+            or binder.feasibility_constraints
+            or binder.n_published_boundaries
+            or binder.current_floor is not None
+        ):
+            raise UnsupportedOperationError(
+                "Owned nested NB rows require original continuous additive "
+                "literal-floor ordinary-child cells."
+            )
+        branch = _NBEGMBranchSolver(
+            cell_solver=self,
+            cell=MappingProxyType(
+                dict(zip(statics.ride_names, ride_values, strict=True))
+            ),
+            query_grid=self.liquid,
+            feasibility_partition=None,
+            feasible_interval_mask=None,
+            interval_continuation=None,
+        )
+        return branch.solve(
+            action_binding={},
+            branch_cont_value=cont_value,
+            branch_cont_marginal=cont_marginal,
+            branch_extra_cont_value=None,
+            branch_cliff_savings=None,
+            source_query=query,
+            return_owner=True,
+        )
+
+    def construct_point(
+        self,
+        *,
+        ride_values: tuple[_RideCoordinate, ...],
+        query: Float1D,
+        cont_value: FloatND,
+        cont_marginal: FloatND,
+    ) -> _NBEGMRideSourcePoint:
+        """Read the complete original bank at points without shrinking its support.
+
+        The supplied continuation rows are the output of this period's original
+        `_NBEGMCellContinuation`, including its branch-class leading axis.
+        Branch-specific candidate construction and native selection stay in the
+        original branch solver. This first point route has no side augmentation.
+        """
+        binder = self.binder
+        statics = binder.statics
+        if (
+            statics.has_jump
+            or statics.continuation_reads_liquid
+            or binder.current_predicates is not None
+            or binder.feasibility_constraints
+            or binder.n_published_boundaries
+            or binder.current_floor is not None
+        ):
+            raise UnsupportedOperationError(
+                "Owned NB ride points require continuous literal-floor "
+                "ordinary-child cells without extra feasibility boundaries."
+            )
+        cell = MappingProxyType(dict(zip(statics.ride_names, ride_values, strict=True)))
+        branch_solver = _NBEGMBranchSolver(
+            cell_solver=self,
+            cell=cell,
+            query_grid=self.liquid,
+            feasibility_partition=None,
+            feasible_interval_mask=None,
+            interval_continuation=None,
+        )
+        names = tuple(name for name, _codes in binder.schedule_spec.discrete_actions)
+        if names:
+            codes = jnp.stack(
+                jnp.meshgrid(
+                    *(
+                        jnp.asarray(self.kwargs[name], dtype=jnp.int32)
+                        for name in names
+                    ),
+                    indexing="ij",
+                ),
+                axis=-1,
+            ).reshape(-1, len(names))
+            inputs = _branch_inputs(
+                codes=codes,
+                cont_value=cont_value,
+                cont_marginal=cont_marginal,
+                extra_cont_value=None,
+                cliff_savings=None,
+            )
+            rows = map_over_leading_axis(
+                func=functools.partial(
+                    _solve_one_owned_branch,
+                    branch_solver=branch_solver,
+                    branch_action_names=names,
+                    query=query,
+                ),
+                xs=inputs,
+                batch_size=statics.branch_width,
+            )
+            # This is the original hard branch max, in its original mesh order.
+            # The resulting row positions select every associated channel.
+            modal = jnp.argmax(rows.value, axis=0)
+            index = jnp.arange(rows.value.shape[1])
+            return _NBEGMRideSourcePoint(
+                value=rows.value[modal, index],
+                marginal=rows.marginal[modal, index],
+                policy=rows.policy[modal, index],
+                savings=rows.savings[modal, index],
+                native_owner=rows.native_owner[modal, index],
+                action_codes=rows.action_codes[modal, index],
+            )
+        row = branch_solver.solve(
+            action_binding={},
+            branch_cont_value=cont_value,
+            branch_cont_marginal=cont_marginal,
+            branch_extra_cont_value=None,
+            branch_cliff_savings=None,
+            source_query=query,
+            return_owner=True,
+        )
+        return _NBEGMRideSourcePoint(
+            value=row.value,
+            marginal=row.marginal,
+            policy=row.policy,
+            savings=row.query_data.savings,
+            native_owner=row.owner,
+            action_codes=jnp.zeros((query.shape[0], 0), dtype=jnp.int32),
+        )
 
     def __call__(
         self,
@@ -9013,6 +9604,7 @@ class _NBEGMBranchSolver:
 
         return jax.vmap(one)(self.query_grid)
 
+    @overload
     def solve(
         self,
         *,
@@ -9021,7 +9613,34 @@ class _NBEGMBranchSolver:
         branch_cont_marginal: FloatND | None,
         branch_extra_cont_value: FloatND | None,
         branch_cliff_savings: FloatND | None,
-    ) -> _NBEGMStepChannels | BoundedResult[_NBEGMStepChannels]:
+        source_query: Float1D | None = None,
+        return_owner: Literal[False] = False,
+    ) -> _NBEGMStepChannels | BoundedResult[_NBEGMStepChannels]: ...
+
+    @overload
+    def solve(
+        self,
+        *,
+        action_binding: Mapping[str, IntND],
+        branch_cont_value: FloatND | None,
+        branch_cont_marginal: FloatND | None,
+        branch_extra_cont_value: FloatND | None,
+        branch_cliff_savings: FloatND | None,
+        source_query: Float1D,
+        return_owner: Literal[True],
+    ) -> _OwnedNBEGMQueryStep: ...
+
+    def solve(
+        self,
+        *,
+        action_binding: Mapping[str, IntND],
+        branch_cont_value: FloatND | None,
+        branch_cont_marginal: FloatND | None,
+        branch_extra_cont_value: FloatND | None,
+        branch_cliff_savings: FloatND | None,
+        source_query: Float1D | None = None,
+        return_owner: bool = False,
+    ) -> _NBEGMStepChannels | BoundedResult[_NBEGMStepChannels] | _OwnedNBEGMQueryStep:
         """Solve the cell's continuous subproblem for one discrete branch.
 
         `action_binding` binds the discrete action into cash-on-hand, and into the
@@ -9042,6 +9661,19 @@ class _NBEGMBranchSolver:
 
         cell_solver = self.cell_solver
         binder = cell_solver.binder
+        if return_owner and (
+            source_query is None
+            or binder.statics.has_jump
+            or binder.statics.continuation_reads_liquid
+            or binder.current_predicates is not None
+            or binder.feasibility_constraints
+            or binder.n_published_boundaries
+            or binder.current_floor is not None
+        ):
+            raise UnsupportedOperationError(
+                "Owned NB ride points require continuous literal-floor "
+                "ordinary-child cells without extra feasibility boundaries."
+            )
         statics = binder.statics
         schedule_spec = binder.schedule_spec
         kwargs = cell_solver.kwargs
@@ -9159,7 +9791,7 @@ class _NBEGMBranchSolver:
             raise ValueError(
                 "a smooth NB-EGM cell cannot use an interval continuation."
             )
-        return _solve_ride_along_cell_step(
+        step = _solve_ride_along_cell_step(
             has_jump=statics.has_jump,
             jump_positions=branch_jump_positions,
             extra_savings=branch_cliff_savings,
@@ -9177,8 +9809,50 @@ class _NBEGMBranchSolver:
             arithmetic=statics.envelope_arithmetic,
             feasibility_partition=self.feasibility_partition,
             feasible_interval_mask=self.feasible_interval_mask,
-            retain_query=binder.query_model is not None,
+            retain_query=return_owner or binder.query_model is not None,
+            source_query=source_query,
+            return_owner=return_owner,
         )
+        if return_owner:
+            if not isinstance(step, _OwnedNBEGMQueryStep):
+                raise TypeError("NB ride point lost its original native owner.")
+            return step
+        if isinstance(step, _OwnedNBEGMQueryStep):
+            raise TypeError("Ordinary NB ride solve received an owned point record.")
+        return step
+
+
+# keyword-only-exempt: library-callback=_lcm.utils.dispatchers.map_over_leading_axis
+def _solve_one_owned_branch(
+    inputs: Mapping[str, FloatND | IntND],
+    *,
+    branch_solver: _NBEGMBranchSolver,
+    branch_action_names: tuple[ActionName, ...],
+    query: Float1D,
+) -> _NBEGMRideSourcePoint:
+    """Transport the original selected channels, keeping unused metadata local."""
+    row = branch_solver.solve(
+        action_binding={
+            name: inputs["codes"][position]
+            for position, name in enumerate(branch_action_names)
+        },
+        branch_cont_value=inputs["cont_value"],
+        branch_cont_marginal=inputs["cont_marginal"],
+        branch_extra_cont_value=None,
+        branch_cliff_savings=None,
+        source_query=query,
+        return_owner=True,
+    )
+    return _NBEGMRideSourcePoint(
+        value=row.value,
+        marginal=row.marginal,
+        policy=row.policy,
+        savings=row.query_data.savings,
+        native_owner=row.owner,
+        action_codes=jnp.broadcast_to(
+            inputs["codes"], (query.shape[0], len(branch_action_names))
+        ),
+    )
 
 
 # keyword-only-exempt: library-callback=_lcm.utils.dispatchers.map_over_leading_axis
@@ -9874,6 +10548,7 @@ def _build_nbegm_single_axis_group(
     variable_names: frozenset[StateOrActionName],
     savings_grid: Float1D,
     feasibility_constraints: tuple[_NBEGMFeasibilityConstraint, ...],
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> tuple[
     _NBEGMSingleAxisCore,
     Callable[..., tuple[Float1D, Float1D]],
@@ -9921,6 +10596,7 @@ def _build_nbegm_single_axis_group(
             consumption_action_name=solver.continuous_action,
             probe_failure=solver.probe_failure,
             probe_schedule=solver.probe_schedule,
+            materializer=materializer,
         )
         core = _build_nbegm_continuous_core(
             savings_grid=savings_grid,
@@ -9929,6 +10605,7 @@ def _build_nbegm_single_axis_group(
             schedule_spec=spec,
             feasibility_constraints=resolved_feasibility_constraints,
             envelope_arithmetic=solver.envelope_arithmetic,
+            materializer=materializer,
         )
         checks = spec.param_checks
     elif route == "discrete":
@@ -10737,9 +11414,13 @@ def _required_nbegm_query_step(*, step: _NBEGMMappedStepChannels) -> _NBEGMQuery
     return step
 
 
-def _required_nbegm_query_data(*, step: _NBEGMStepChannels) -> EGMQueryData:
+def _required_nbegm_query_data(
+    *, step: _NBEGMStepChannels | _OwnedNBEGMQueryStep
+) -> EGMQueryData:
     """Read associated records from the actual retained producer variant."""
-    return _required_nbegm_query_step(step=step).query_data
+    if not isinstance(step, (_NBEGMQueryStep, _OwnedNBEGMQueryStep)):
+        raise TypeError("A retained NB step must publish original query records.")
+    return step.query_data
 
 
 def _required_nbegm_discrete_step(

@@ -107,6 +107,9 @@ type StateOrActionName = str
 type ProcessName = str
 type FunctionName = str
 type ParameterName = str
+type EGMReplay = Literal["candidate", "grid"]
+type EGMAccuracy = Literal["balanced", "certified"]
+
 type MarginRoleName = str
 type ReferenceName = (
     StateName | ActionName | FunctionName | ParameterName | MarginRoleName

@@ -23,6 +23,7 @@ from beartype import beartype
 from jaxtyping import Num
 
 from _lcm.beartype_conf import SHOCK_CONF
+from _lcm.dtypes import CanonicalArrayWriter
 from _lcm.grids.categorical import DataclassInstance
 from _lcm.probability import is_represented_zero
 from _lcm.processes.base import StateConditioned, sealed
@@ -602,6 +603,7 @@ class ShockGroup:
         group_name: ShockGroupName,
         age: Fraction | int,
         coordinate_kind: str = "age",
+        array_writer: CanonicalArrayWriter | None = None,
     ) -> NodeSet:
         """Resolve a rule for an exact age or an explicitly labelled period."""
         from _lcm.shock_nodes import (  # noqa: PLC0415 - rules import declarations
@@ -617,6 +619,7 @@ class ShockGroup:
             group_name=group_name,
             age=Fraction(age),
             coordinate_kind=coordinate_kind,
+            array_writer=array_writer,
         )
 
     def transform(

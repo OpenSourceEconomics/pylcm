@@ -510,9 +510,9 @@ def plan_period_waves(
 
 
 def replace_leaf_by_identity[Tree](
-    *, tree: Tree, old: jax.Array, new: jax.Array
+    *, tree: Tree, old: jax.Array, new: jax.Array | jax.ShapeDtypeStruct
 ) -> Tree:
-    """Return `tree` with the leaf that is `old` replaced by `new`.
+    """Replace an original runtime array with an array or abstract placeholder.
 
     Identity, not equality, selects the leaf, so an equal-valued neighbour is
     untouched. The tree's structure is preserved, which keeps every compiled

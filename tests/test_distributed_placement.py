@@ -115,6 +115,9 @@ class _ResolveArguments(TypedDict, closed=True):
     regimes: MappingProxyType[backward_induction.RegimeName, backward_induction.Regime]
     program_fingerprint: str
     flat_params: backward_induction.FlatParams
+    solve_parameter_views: NotRequired[
+        Mapping[backward_induction.RegimeName, backward_induction.FlatParams]
+    ]
     ages: backward_induction.TimeAxis
     next_regime_to_V_arr: MappingProxyType[
         backward_induction.RegimeName, backward_induction.FloatND
@@ -130,7 +133,6 @@ class _ResolveArguments(TypedDict, closed=True):
     enable_jit: bool
     continuous_sharded_state: NotRequired[backward_induction.StateName | None]
     donate_buffers: NotRequired[bool]
-    retain_all_artifacts: bool
     persistable_artifact_refs: frozenset[backward_induction.ArtifactRef]
     process_grid_resolver: NotRequired[backward_induction.ProcessGridResolver | None]
     structural_blueprints: NotRequired[
