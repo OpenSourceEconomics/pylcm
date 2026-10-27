@@ -299,6 +299,8 @@ def test_internal_reservation_uses_producer_identity_and_candidate_maximum() -> 
     actual = backward_induction._internal_reservations_by_cell(
         programs={narrow: program, wide: program, duplicate: program},
         templates=templates,
+        value_templates={},
+        value_axis_names={},
     )
     assert actual == {("acting", 0): (8 + 4) * 4}
     assert footprint.concrete_device_bytes(tree=tuple(templates.values())) == {}
