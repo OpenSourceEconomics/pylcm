@@ -28,6 +28,7 @@ type CharacteristicValue = int | bool | float
 
 _INT32_MIN = int(np.iinfo(np.int32).min)
 _INT32_MAX = int(np.iinfo(np.int32).max)
+_FLOAT32_MAX = float(np.finfo(np.float32).max)
 
 
 @beartype(conf=CATEGORICAL_CONF)
@@ -60,7 +61,8 @@ def characteristics(
             describes.
         by_category: Mapping of every category name, in declaration order, to its
             characteristics. Every category sets the same characteristics,
-            in any order, each to a Python `int`, `bool` or finite `float`.
+            in any order, each to a Python `int`, `bool` or `float`; a float
+            is finite and within the float32 range.
             Each characteristic has one type throughout the table, and no two
             categories set all characteristics to the same values.
 
@@ -74,7 +76,8 @@ def characteristics(
         CategoricalDefinitionError: If the table does not describe exactly the
             categories of `category_class` in order, the categories set
             different characteristics, a value is not a Python `int`, `bool` or
-            finite `float`, an integer leaves the allowed int32 range, a
+            `float`, a float is not finite or leaves the float32 range, an
+            integer leaves the allowed int32 range, a
             characteristic mixes types, or two categories share all characteristics.
 
     """
@@ -252,9 +255,11 @@ def _check_column(*, name: str, values: Mapping[str, CharacteristicValue]) -> li
         return [f"Characteristic `{name}` mixes {types} values."]
     if type(next(iter(values.values()))) is float:
         return [
-            f"`{case}.{name}` is {value!r}; float characteristics must be finite."
+            f"`{case}.{name}` is {value!r}; float characteristics must be finite "
+            f"and within the float32 range, magnitude at most {_FLOAT32_MAX:g}, so "
+            f"they stay finite at either precision."
             for case, value in values.items()
-            if not np.isfinite(value)
+            if not abs(value) <= _FLOAT32_MAX
         ]
     return [
         (

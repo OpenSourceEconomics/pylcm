@@ -865,3 +865,12 @@ def test_category_with_tie_other_columns_break_asks_for_more_characteristics():
     """A tie that an unqueried integer or bool column breaks asks for more of them."""
     with pytest.raises(CategoricalDefinitionError, match="Pass more characteristics"):
         category_with(STATUS, has_job=False)
+
+
+@pytest.mark.parametrize("value", [1e39, -1e39])
+def test_characteristics_reject_float_properties_float32_cannot_hold(*, value):
+    """A float property must stay finite at either precision the table is read at."""
+    with pytest.raises(CategoricalDefinitionError, match="float32"):
+        characteristics(
+            category_class=_Two, by_category={"a": {"wage": 0.5}, "b": {"wage": value}}
+        )
