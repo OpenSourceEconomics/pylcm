@@ -256,18 +256,21 @@ def test_canonical_group_mapping_leaf_schema_is_not_an_object_scalar() -> None:
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
-def test_private_model_solve_owned_forward_and_restore_use_same_generation(
+def test_public_model_solve_owned_forward_and_restore_use_same_generation(
     *,
     tmp_path: Path,
 ) -> None:
-    """The actual public solve/forward bodies consume the private real Model."""
+    """A warmed public facade restores genuine call-owned execution and replay."""
     params = _params()
-    model = Model._from_call_owned_params(declarations=_declarations(), params=params)
+    model = _public_model_from_declarations(declarations=_declarations())
     result = model.solve(params=params, log_level="warning")
     view = result._engine_view
     assert isinstance(view, OwnedSolutionView)
     assert view.generation is not None
-    assert view.generation.execution._regimes is model._regimes
+    acquired = view.generation
+    assert acquired.execution is not model
+    assert model._generation_cache._cached[acquired.key] is acquired
+    assert model._generation_cache.roots()
     frame = model.simulate(
         params=params,
         solution=result,
@@ -281,16 +284,19 @@ def test_private_model_solve_owned_forward_and_restore_use_same_generation(
     )
     assert not frame.to_dataframe().empty
     restored = cloudpickle.loads(cloudpickle.dumps(model))
+    assert isinstance(restored, Model)
+    assert restored._is_prepared_dated
+    assert restored._generation_cache.roots() == ()
     state = restored.__getstate__()
     assert "_generation_cache" not in state
     assert "_declared_authority_lock" not in state
-    assert state["_initial_generation_key"] == model._initial_generation_key
+    assert "_regimes" not in state
     # Persisted replay must cross the actual descriptor/native preflight.
     path = tmp_path / "call-owned-solution.lcm"
     result.save(path=path)
     foreign = load_solution(path=path)
     assert foreign._engine_view is None
-    restored.simulate(
+    replay = restored.simulate(
         params=params,
         solution=foreign,
         seed=19,
@@ -300,6 +306,15 @@ def test_private_model_solve_owned_forward_and_restore_use_same_generation(
             "age": np.array([0]),
             "wealth": np.array([4.0]),
         },
+    )
+    restored_generation = restored._generation_cache._cached[acquired.key]
+    assert restored_generation.key == acquired.key
+    assert restored_generation is not acquired
+    assert restored_generation.execution is not restored
+    state = restored.__getstate__()
+    assert state["_initial_generation_key"] == model._initial_generation_key
+    pd.testing.assert_frame_equal(
+        replay.to_dataframe(), frame.to_dataframe(), check_exact=True
     )
 
 
