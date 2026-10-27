@@ -22,6 +22,7 @@ from _lcm.simulation.value_reads import PeriodSimulationReads
 from _lcm.solution import fingerprint as fingerprint_module
 from _lcm.solution import period_replay as period_replay_module
 from _lcm.solution.fingerprint import fingerprint_solution_support
+from _lcm.solution.model_authority import SolutionAuthority, build_solution_authority
 from _lcm.typing import ArtifactPayload
 from _lcm.utils.logging import LogLevel, get_logger, validation_enabled
 from lcm import (
@@ -113,6 +114,20 @@ from tests.conformance_solver import (
 )
 from tests.conformance_solver.solver import _PeriodKernel as ReferencePeriodKernel
 from tests.conftest import DECIMAL_PRECISION
+
+
+def _cached_authority_slot(
+    *, model: Model, fingerprint: str
+) -> list[SolutionAuthority]:
+    """Poison the real generation authority, preserving the original attack."""
+    flat_params = model._process_params(_PARAMS)
+    assert (
+        fingerprint_solution_support(regimes=model._regimes, flat_params=flat_params)
+        == fingerprint
+    )
+    generation = model._acquire_generation(flat_params=flat_params)
+    generation.declared_authority(flat_params=flat_params, process_grid_resolver=None)
+    return generation._authority
 
 
 class _SelectProgramsArguments(TypedDict, closed=True):
@@ -290,7 +305,9 @@ class _CachedAuthorityMutatingLazyEntry(solver_api_module._LazyEntry):
     ) -> ArtifactPayload:
         """Corrupt a cached nested authority wrapper after preflight copied it."""
         self.materialization_count += 1
-        authority = self._model._declared_authority_cache[self._fingerprint]
+        authority = _cached_authority_slot(
+            model=self._model, fingerprint=self._fingerprint
+        )[0]
         object.__setattr__(
             authority.artifacts[self._ref],
             "payload_runtime_type",
@@ -1475,12 +1492,12 @@ def test_lazy_value_cannot_mutate_cached_model_authority_used_for_replay() -> No
         regimes=model._regimes, flat_params=flat_params
     )
     assert model.ages is not None
-    cached_authority = model_module.build_solution_authority(
+    cached_authority = build_solution_authority(
         regimes=model._regimes,
         flat_params=flat_params,
         ages=model.ages,
     )
-    model._declared_authority_cache[fingerprint] = cached_authority
+    _cached_authority_slot(model=model, fingerprint=fingerprint)[:] = [cached_authority]
     policy_ref = next(ref for ref in solution.replay_artifacts if ref.key == POLICY_KEY)
     value_entries: dict[tuple[int, str], FloatND | solver_api_module._LazyEntry] = {
         (period, regime_name): value
@@ -1533,7 +1550,7 @@ def test_mutated_cached_authority_is_normalized_before_forward_simulation(
         regimes=model._regimes, flat_params=flat_params
     )
     assert model.ages is not None
-    cached_authority = model_module.build_solution_authority(
+    cached_authority = build_solution_authority(
         regimes=model._regimes,
         flat_params=flat_params,
         ages=model.ages,
@@ -1546,7 +1563,7 @@ def test_mutated_cached_authority_is_normalized_before_forward_simulation(
         "channel",
         "replay",
     )
-    model._declared_authority_cache[fingerprint] = cached_authority
+    _cached_authority_slot(model=model, fingerprint=fingerprint)[:] = [cached_authority]
 
     def fail_if_forward_simulation_starts[Ignored](**_kwargs: Ignored) -> None:
         raise AssertionError("forward simulation started")
@@ -1620,12 +1637,12 @@ def test_hostile_cached_value_shape_is_rejected_before_materialization() -> None
         regimes=model._regimes, flat_params=flat_params
     )
     assert model.ages is not None
-    cached = model_module.build_solution_authority(
+    cached = build_solution_authority(
         regimes=model._regimes,
         flat_params=flat_params,
         ages=model.ages,
     )
-    model._declared_authority_cache[fingerprint] = cached
+    _cached_authority_slot(model=model, fingerprint=fingerprint)[:] = [cached]
     authority_coordinate = next(iter(cached.values))
     value_descriptor = cached.values[authority_coordinate]
     object.__setattr__(
@@ -1677,12 +1694,12 @@ def test_type_different_descriptor_axis_is_rejected_before_forward_simulation(
         regimes=model._regimes, flat_params=flat_params
     )
     assert model.ages is not None
-    cached = model_module.build_solution_authority(
+    cached = build_solution_authority(
         regimes=model._regimes,
         flat_params=flat_params,
         ages=model.ages,
     )
-    model._declared_authority_cache[fingerprint] = cached
+    _cached_authority_slot(model=model, fingerprint=fingerprint)[:] = [cached]
     ref = next(ref for ref in cached.artifacts if ref.key == POLICY_KEY)
     source_artifact = cached.artifacts[ref]
     coordinates = tuple(range(source_artifact.axes[0].length))
@@ -1713,13 +1730,17 @@ def test_type_different_descriptor_axis_is_rejected_before_forward_simulation(
             *cached.artifact_descriptors[ref].named_axes[1:],
         ),
     )
-    model._declared_authority_cache[fingerprint] = dataclasses.replace(
-        cached,
-        artifacts=MappingProxyType(dict(cached.artifacts) | {ref: expected_artifact}),
-        artifact_descriptors=MappingProxyType(
-            dict(cached.artifact_descriptors) | {ref: expected_public_descriptor}
-        ),
-    )
+    _cached_authority_slot(model=model, fingerprint=fingerprint)[:] = [
+        dataclasses.replace(
+            cached,
+            artifacts=MappingProxyType(
+                dict(cached.artifacts) | {ref: expected_artifact}
+            ),
+            artifact_descriptors=MappingProxyType(
+                dict(cached.artifact_descriptors) | {ref: expected_public_descriptor}
+            ),
+        )
+    ]
 
     supplied_descriptor = dataclasses.replace(
         expected_public_descriptor,

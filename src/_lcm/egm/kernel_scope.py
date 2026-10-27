@@ -14,6 +14,8 @@ from types import MappingProxyType
 
 from _lcm.constraints.bounds import matches_installed_literal_bound
 from _lcm.constraints.processed import ProcessedConstraintsMapping
+from _lcm.continuation import ProjectedContinuationSpec, ProjectedProducerDate
+from _lcm.egm.current_iid_envelope import DatedCaseUStepAuthority
 from _lcm.egm.preferences import concatenate_regime_function
 from _lcm.egm.regime_introspection import (
     _get_child_discrete_actions,
@@ -63,6 +65,11 @@ def _find_unsupported_feature(
     own_discrete_action_names: tuple[ActionName, ...],
     asset_row_mode: bool,
     post_inversion_predicate_names: frozenset[FunctionName] = frozenset(),
+    projected_specs: Mapping[
+        RegimeName, ProjectedContinuationSpec | ProjectedProducerDate
+    ] = MappingProxyType({}),
+    case_u_source: DatedCaseUStepAuthority | None = None,
+    source_periods: tuple[int, ...] = (),
 ) -> str | None:
     """Return a message naming the first feature outside the kernel's scope.
 
@@ -71,6 +78,7 @@ def _find_unsupported_feature(
     message: str | None = None
     for target in stateful_targets:
         message = _find_unsupported_target_feature(
+            projected_spec=projected_specs.get(target),
             target=target,
             user_regimes=user_regimes,
             laws=laws,
@@ -94,6 +102,9 @@ def _find_unsupported_feature(
 
     if message is None:
         message = _find_unsupported_function_args(
+            case_u_source=case_u_source,
+            source_periods=source_periods,
+            regime_name=regime_name,
             solver=solver,
             functions=functions,
             constraints=constraints,
@@ -130,6 +141,7 @@ def _find_unsupported_target_feature(
     euler_state_name: StateName,
     own_passive_state_names: tuple[StateName, ...],
     allowed_param_names: frozenset[QualifiedName],
+    projected_spec: ProjectedContinuationSpec | ProjectedProducerDate | None = None,
 ) -> str | None:
     """Return a message naming the first unsupported feature of one target.
 
@@ -167,9 +179,19 @@ def _find_unsupported_target_feature(
                 "(both regimes must carry the same process state)."
             )
     child_state_name = _get_child_state_name(user_regime=user_regimes[target])
-    _resources, resources_arg_names = _get_child_resources(
-        regime_name=target, user_regime=user_regimes[target], law=laws[target]
-    )
+    if projected_spec is None:
+        _resources, resources_arg_names = _get_child_resources(
+            regime_name=target, user_regime=user_regimes[target], law=laws[target]
+        )
+    else:
+        if (
+            projected_spec.producer != target
+            or projected_spec.liquid_state != child_state_name
+        ):
+            return "the projected child's actual producer/liquid declaration disagrees."
+        # Its actual reader consumes pre-shock liquid directly; it never
+        # applies the child's already-integrated current resources map again.
+        resources_arg_names = frozenset({child_state_name})
     child_action_names, _ = _get_child_discrete_actions(
         user_regime=user_regimes[target]
     )
@@ -311,6 +333,7 @@ def _find_unsupported_terminal_continuous_state(
 
 def _find_unsupported_function_args(
     *,
+    regime_name: RegimeName,
     solver: _BoundDCEGM,
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
@@ -324,6 +347,8 @@ def _find_unsupported_function_args(
     own_discrete_action_names: tuple[ActionName, ...],
     asset_row_mode: bool,
     post_inversion_predicate_names: frozenset[FunctionName] = frozenset(),
+    case_u_source: DatedCaseUStepAuthority | None = None,
+    source_periods: tuple[int, ...] = (),
 ) -> str | None:
     """Return a message naming the first function with out-of-scope arguments."""
     # Combo inputs are bound per (discrete state, passive node, discrete
@@ -341,12 +366,25 @@ def _find_unsupported_function_args(
         {solver.continuous_state} if asset_row_mode else set()
     )
     allowed_params = flat_param_names | {"age", "period"}
+    utility_inputs = (
+        frozenset()
+        if case_u_source is None
+        else case_u_source.utility_inputs(
+            regime_name=regime_name,
+            solver=solver,
+            functions=functions,
+            periods=source_periods,
+        )
+    )
     utility_func = concatenate_regime_function(functions=functions, target="utility")
     arg_requirements: list[tuple[str, frozenset[str], set[str]]] = [
         (
             "the utility function",
             frozenset(get_union_of_args([utility_func])),
-            {solver.continuous_action} | allowed_combo_inputs | allowed_params,
+            {solver.continuous_action}
+            | allowed_combo_inputs
+            | allowed_params
+            | utility_inputs,
         ),
         (
             "the regime transition probability function",

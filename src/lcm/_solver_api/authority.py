@@ -1630,6 +1630,7 @@ def _validate_cached_artifact_template(  # noqa: C901, PLR0912
     payload_runtime_type: ArtifactRuntimeType,
     containers: Mapping[TreePath, ArtifactRuntimeType],
     leaves: Mapping[TreePath, LeafAuthority],
+    array_copier: _ArrayCopier | None = None,
 ) -> tuple[
     jax.tree_util.PyTreeDef,
     tuple[TreePath, ...],
@@ -1709,6 +1710,7 @@ def _validate_cached_artifact_template(  # noqa: C901, PLR0912
             _copy_artifact_array_leaf(
                 leaf=leaf,
                 label=f"Artifact cached leaf {path!r}",
+                array_copier=array_copier,
             )
         )
     owned_leaves = tuple(canonical_leaves)
@@ -1722,6 +1724,7 @@ def _rebuild_cached_artifact_template(
     payload_runtime_type: ArtifactRuntimeType,
     containers: Mapping[TreePath, ArtifactRuntimeType],
     leaves: Mapping[TreePath, LeafAuthority],
+    array_copier: _ArrayCopier | None = None,
 ) -> _CanonicalArtifactTemplate:
     """Rebuild a detached template solely from its cached declaration."""
     owned_tree, paths, canonical_leaves, plan = _validate_cached_artifact_template(
@@ -1730,6 +1733,7 @@ def _rebuild_cached_artifact_template(
         payload_runtime_type=payload_runtime_type,
         containers=containers,
         leaves=leaves,
+        array_copier=array_copier,
     )
     canonical = _reconstruct_artifact_from_plan(plan=plan, leaves=canonical_leaves)
     return _CanonicalArtifactTemplate(
@@ -1826,6 +1830,7 @@ def _snapshot_artifact_template_once(
     *,
     template: ArtifactPayload,
     payload_runtime_type: ArtifactRuntimeType,
+    array_copier: _ArrayCopier | None = None,
 ) -> tuple[_CanonicalArtifactTemplate, MappingProxyType[TreePath, ArtifactRuntimeType]]:
     """Observe an engine template once and derive its owned numerical layout."""
     if not _payload_has_runtime_type(
@@ -1855,11 +1860,16 @@ def _snapshot_artifact_template_once(
             or any(type(leaf) is allowed for allowed in (bool, int, float))
         ):
             raise TypeError(f"Artifact template leaf {normalized!r} is not numerical.")
+        if array_copier is not None and not isinstance(leaf, jax.Array):
+            raise ExecutionPlanningError(
+                "Budgeted native artifact templates require original admitted "
+                "JAX leaves; host uploads need their own producer admission."
+            )
         source_shape = tuple(getattr(leaf, "shape", ()))
         source_dtype = (
             np.dtype(leaf.dtype) if hasattr(leaf, "dtype") else np.asarray(leaf).dtype
         )
-        canonical = jax.numpy.asarray(leaf)
+        canonical = leaf if array_copier is not None else jax.numpy.asarray(leaf)
         if (
             tuple(canonical.shape) != source_shape
             or np.dtype(canonical.dtype) != source_dtype
@@ -1871,6 +1881,7 @@ def _snapshot_artifact_template_once(
             _copy_artifact_array_leaf(
                 leaf=canonical,
                 label=f"Artifact template leaf {normalized!r}",
+                array_copier=array_copier,
             )
         )
     plan = _compile_artifact_construction_plan(
@@ -1990,6 +2001,7 @@ def _artifact_authority_from_template_snapshot(
     consumer_route: ReplayRouteIdentity | None = None,
     applicable: bool = True,
     required: bool = False,
+    array_copier: _ArrayCopier | None = None,
 ) -> ArtifactAuthority:
     """Build a trusted authority from an already observed template declaration."""
     containers = dict(container_runtime_types)
@@ -2029,6 +2041,7 @@ def _artifact_authority_from_template_snapshot(
             payload_runtime_type=payload_runtime_type,
             containers=containers,
             leaves=copied_leaves,
+            array_copier=array_copier,
         )
         template = canonical_snapshot.payload
         public_template_leaves = canonical_snapshot.leaves
@@ -2038,6 +2051,7 @@ def _artifact_authority_from_template_snapshot(
             payload_runtime_type=payload_runtime_type,
             containers=containers,
             leaves=copied_leaves,
+            array_copier=array_copier,
         )
 
     authority = object.__new__(ArtifactAuthority)

@@ -679,6 +679,7 @@ def test_uniform_process_sources_have_literal_inventory_obligations() -> None:
     """Include the producer, resolver and every support interpretation consumer."""
     assert isinstance(_parse("src/_lcm/processes/grid_resolution.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/simulation/process_grids.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/eager_stages.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/solution/fingerprint.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/solution/model_authority.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/solution/preconditions.py"), ast.Module)

@@ -28,7 +28,6 @@ from jax.extend.core import (
 from jax.typing import DTypeLike
 
 from _lcm.dtypes import canonical_float_dtype
-from _lcm.execution.workspace_planning import plan_workspace
 from _lcm.processes.ar1 import (
     RouwenhorstAR1Process,
     TauchenAR1Process,
@@ -42,20 +41,17 @@ from _lcm.processes.iid import (
     NormalMixtureIIDProcess,
     UniformIIDProcess,
 )
+from _lcm.simulation.eager_stages import run_eager_stage
 from _lcm.simulation.host_operations import (
     ProfiledSimulationOperations,
     StaticArgument,
-    _operation_memory,
-    _OperationCompiler,
 )
 from _lcm.simulation.operand_placement import place_simulation_arguments
 from _lcm.simulation.residency import (
     DeviceBufferFootprint,
     measure_buffer_footprint,
-    resident_bytes_by_device,
     union_buffer_footprints,
 )
-from _lcm.solution.backward_induction import _lowering_key
 from _lcm.typing import HostArray
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import (
@@ -480,23 +476,6 @@ class SimulationProcessGrids:
         weak_type: bool = False,
         process_stage: bool = False,
     ) -> ValueND:
-        execution_devices = tuple(
-            device for device in self.devices if device in required.device_set
-        )
-        current = self.snapshot()
-        budget_devices = tuple(dict.fromkeys((*self.devices, *current.spans)))
-        placed = place_simulation_arguments(
-            arguments={"parameters": parameters},
-            subject_arg_names=(),
-            value_reads=(),
-            devices=execution_devices,
-            budget_bytes=self.budget_bytes,
-            live_footprint=current,
-            budget_devices=budget_devices,
-        )
-        argument_buffers = measure_buffer_footprint(tree=placed)
-        live = union_buffer_footprints(footprints=(self.snapshot(), argument_buffers))
-        abstract = jax.tree.map(_abstract_grid_parameter, dict(placed))
         static: MappingProxyType[ReferenceName, StaticArgument] = MappingProxyType(
             {"n_points": n_points}
         )
@@ -515,32 +494,17 @@ class SimulationProcessGrids:
         elif stage in {"multiply", "subtract", "add", "normal"}:
             function = _compute_normal_stage
             static = MappingProxyType({"n_points": n_points, "stage": stage})
-        compiler_key = _lowering_key(
-            program_identity=function,
-            arguments=abstract,
-            specialization_key=tuple(static.items()),
-            layout_key=("uniform_process_grid", required),
-        )
-        external = resident_bytes_by_device(
-            live=live, arguments=argument_buffers, devices=execution_devices
-        )
-        plan = plan_workspace(
-            axes=(),
-            compile_candidate=_OperationCompiler(
-                owner=self.operations,
-                key=compiler_key,
-                function=function,
-                arguments=abstract,
-                static_arguments=static,
-                output_sharding=required,
-            ),
+        return run_eager_stage(
+            function=function,
+            arguments={"parameters": parameters},
+            static_arguments=static,
+            operations=self.operations,
+            devices=self.devices,
+            required=required,
             budget_bytes=self.budget_bytes,
-            resident_bytes=max(external.values()),
-            memory_for=_operation_memory,
-        )
-        return cast(
-            "ValueND",
-            plan.compiled.executable(**placed).block_until_ready(),
+            live_footprint=self.snapshot,
+            program_identity=function,
+            layout_identity=("uniform_process_grid", required),
         )
 
     def snapshot(self) -> DeviceBufferFootprint:

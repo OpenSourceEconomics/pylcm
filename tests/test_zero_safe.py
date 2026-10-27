@@ -50,16 +50,92 @@ def _scaled_mean_reference(
     return float(mean), weight_slopes, tuple(float(p / mass) for p in probabilities)
 
 
+def _get_tiny_level_derivative_specimen(
+    *, case: str
+) -> tuple[
+    tuple[float, ...],
+    tuple[float, ...],
+    tuple[int, ...],
+    tuple[float, ...],
+    tuple[float, ...],
+]:
+    """Construct normal live values and exact normalized derivative references."""
+    dtype = np.dtype(jnp.asarray(1.0).dtype)
+    tiny = float(np.finfo(dtype).tiny)
+    level = float(np.ldexp(dtype.type(tiny), np.finfo(dtype).nmant - 2))
+    upper = float(np.nextafter(dtype.type(level), dtype.type(np.inf)))
+    values, coefficients, shifts = (level, upper), (tiny, tiny), (0, 0)
+    if case in {"unequal", "permuted"}:
+        coefficients = (tiny, 2 * tiny)
+    if case == "negative":
+        values = (-level, -upper)
+    elif case == "permuted":
+        values, coefficients = values[::-1], coefficients[::-1]
+    elif case == "shifted":
+        shifts = (7, 7)
+    elif case == "dead_finite":
+        values, coefficients, shifts = (
+            (*values, 0.0),
+            (*coefficients, 0.0),
+            (*shifts, 0),
+        )
+    # Only finite values enter the independent rational oracle. The null-event
+    # nonfinite coefficient partial follows the kernel's explicit zero convention.
+    _, expected_coefficients, expected_values = _scaled_mean_reference(
+        values=values, weights=coefficients, shifts=shifts
+    )
+    if case == "dead_nonfinite":
+        values, coefficients, shifts = (
+            (*values, -np.inf),
+            (*coefficients, 0.0),
+            (*shifts, 0),
+        )
+        expected_coefficients = (*expected_coefficients, 0.0)
+        expected_values = (*expected_values, 0.0)
+    return values, coefficients, shifts, expected_coefficients, expected_values
+
+
 @pytest.mark.parametrize("mode", ["eager", "jit", "vmap"])
 @pytest.mark.parametrize(
     "case",
-    ["zero", "positive", "negative", "opposite", "dominant", "permuted", "shifted"],
+    [
+        "zero",
+        "positive",
+        "negative",
+        "opposite",
+        "dominant",
+        "permuted",
+        "shifted",
+        "midpoint",
+        "unequal",
+        "adjacent_negative",
+        "adjacent_permuted",
+        "half_scale",
+        "sixteenth_scale",
+        "equivalent_pairs",
+        "common_shift",
+        "three_nodes",
+        "five_nodes",
+        "tiny_coefficient_adjacent",
+        "tiny_coefficient_unequal",
+        "tiny_coefficient_cancelled",
+        "tiny_coefficient_multinode",
+        "tiny_coefficient_rare_large",
+    ],
 )
 def test_scaled_mean_normalizes_finite_slopes_before_tangent_arithmetic(
     *, mode: str, case: str
 ) -> None:
     """Finite normalized derivatives survive extreme levels and opposite-sign gaps."""
-    peak = float(jnp.finfo(jnp.asarray(1.0).dtype).max)
+    dtype = np.dtype(jnp.asarray(1.0).dtype)
+    peak = float(np.finfo(dtype).max)
+    lower = float(np.nextafter(dtype.type(peak), dtype.type(0)))
+    third = float(np.nextafter(dtype.type(lower), dtype.type(0)))
+    tiny = float(np.finfo(dtype).tiny)
+    tiny_level = 1.0
+    tiny_upper = float(np.nextafter(dtype.type(tiny_level), dtype.type(np.inf)))
+    tiny_third = float(np.nextafter(dtype.type(tiny_upper), dtype.type(np.inf)))
+    rare_shift = int(2 * np.finfo(dtype).maxexp + 2)
     specimens = {
         "zero": ((peak, peak / 2), (1.0, 0.0), (0, 0)),
         "positive": ((peak, peak / 2), (1.0, 0.5), (0, 0)),
@@ -68,9 +144,44 @@ def test_scaled_mean_normalizes_finite_slopes_before_tangent_arithmetic(
         "dominant": ((peak, -peak), (3.0, 1.0), (0, 0)),
         "permuted": ((peak / 2, peak), (0.0, 1.0), (0, 0)),
         "shifted": ((peak, peak / 2), (1.0, 0.0), (7, 7)),
+        "midpoint": ((peak, lower), (1.0, 1.0), (1, 1)),
+        "unequal": ((peak, lower), (1.0, 3.0), (2, 2)),
+        "adjacent_negative": ((-peak, -lower), (1.0, 1.0), (1, 1)),
+        "adjacent_permuted": ((lower, peak), (3.0, 1.0), (2, 2)),
+        "half_scale": ((peak / 2, lower / 2), (1.0, 1.0), (1, 1)),
+        "sixteenth_scale": ((peak / 16, lower / 16), (1.0, 3.0), (2, 2)),
+        "equivalent_pairs": ((peak, lower), (2.0, 2.0), (2, 2)),
+        "common_shift": ((peak, lower), (1.0, 3.0), (9, 9)),
+        "three_nodes": ((peak, lower, third), (1.0, 3.0, 2.0), (1, 1, 1)),
+        "tiny_coefficient_adjacent": ((tiny_level, tiny_upper), (tiny, tiny), (0, 0)),
+        "tiny_coefficient_unequal": (
+            (tiny_level, tiny_upper),
+            (tiny, 2 * tiny),
+            (0, 0),
+        ),
+        "tiny_coefficient_cancelled": (
+            (tiny_level, tiny_upper, tiny_third),
+            (tiny, 2 * tiny, tiny),
+            (0, 0, 0),
+        ),
+        "tiny_coefficient_multinode": (
+            (tiny_level, tiny_upper, tiny_third),
+            (tiny, 2 * tiny, 3 * tiny),
+            (0, 0, 0),
+        ),
+        "tiny_coefficient_rare_large": (
+            (tiny_level, tiny_upper, peak),
+            (tiny, tiny, tiny),
+            (0, 0, rare_shift),
+        ),
+        "five_nodes": (
+            (peak, lower, third, lower, peak),
+            (1.0, 3.0, 2.0, 4.0, 2.0),
+            (1, 1, 1, 1, 1),
+        ),
     }
     values, weights, shifts = specimens[case]
-    _, expected_weights, expected_values = _scaled_mean_reference(
+    expected_mean, expected_weights, expected_values = _scaled_mean_reference(
         values=values, weights=weights, shifts=shifts
     )
     scales = jnp.asarray(shifts, dtype=jnp.int32)
@@ -92,6 +203,14 @@ def test_scaled_mean_normalizes_finite_slopes_before_tangent_arithmetic(
 
     evaluate = derivatives
     value_array, weight_array = jnp.asarray(values), jnp.asarray(weights)
+    assert np.isfinite(np.asarray(value_array)).all()
+    assert not np.array_equal(value_array[0], value_array[1])
+    assert_allclose(
+        zero_safe_average(a=value_array, weights=weight_array, shifts=scales),
+        expected_mean,
+        rtol=10.0**-DECIMAL_PRECISION,
+        atol=0,
+    )
     if mode == "jit":
         evaluate = jax.jit(evaluate)
     elif mode == "vmap":
@@ -102,7 +221,8 @@ def test_scaled_mean_normalizes_finite_slopes_before_tangent_arithmetic(
         values=value_array, coefficients=weight_array
     )
     expected_weight_array = np.asarray(expected_weights)
-    expected_value_array = np.asarray(expected_values)
+    # The exact probability can lie below the active format's range.
+    expected_value_array = np.asarray(expected_values, dtype=value_array.dtype)
     if mode == "vmap":
         expected_weight_array = np.stack([expected_weight_array] * 2)
         expected_value_array = np.stack([expected_value_array] * 2)
@@ -114,6 +234,70 @@ def test_scaled_mean_normalizes_finite_slopes_before_tangent_arithmetic(
             atol=10.0**-DECIMAL_PRECISION,
         )
     assert_allclose(actual_values, expected_value_array, rtol=10.0**-DECIMAL_PRECISION)
+
+
+@pytest.mark.parametrize("mode", ["eager", "jit", "vmap"])
+@pytest.mark.parametrize(
+    "case",
+    [
+        "equal",
+        "unequal",
+        "negative",
+        "permuted",
+        "shifted",
+        "dead_finite",
+        "dead_nonfinite",
+    ],
+)
+def test_scaled_mean_retains_partials_below_its_numerator_range(
+    *, mode: str, case: str
+) -> None:
+    """Local finite partials retain value spacing despite a tiny raw numerator."""
+    values, coefficients, shifts, expected_coefficients, expected_values = (
+        _get_tiny_level_derivative_specimen(case=case)
+    )
+    dtype = np.dtype(jnp.asarray(1.0).dtype)
+    scales = jnp.asarray(shifts, dtype=jnp.int32)
+
+    def derivatives(
+        *, values: FloatND, coefficients: FloatND
+    ) -> tuple[FloatND, FloatND, FloatND]:
+        def average(weight: FloatND) -> FloatND:
+            return zero_safe_average(a=values, weights=weight, shifts=scales)
+
+        def value_average(value: FloatND) -> FloatND:
+            return zero_safe_average(a=value, weights=coefficients, shifts=scales)
+
+        return (
+            jax.grad(average)(coefficients),
+            jax.jacfwd(average)(coefficients),
+            jax.grad(value_average)(values),
+        )
+
+    value_array, coefficient_array = jnp.asarray(values), jnp.asarray(coefficients)
+    assert np.isfinite(np.asarray(value_array[:2])).all()
+    assert not np.array_equal(value_array[0], value_array[1])
+    evaluate = derivatives
+    expected_coefficient_array = np.asarray(expected_coefficients, dtype=dtype)
+    expected_value_array = np.asarray(expected_values, dtype=dtype)
+    if mode == "jit":
+        evaluate = jax.jit(evaluate)
+    elif mode == "vmap":
+        evaluate = jax.jit(jax.vmap(evaluate))
+        value_array = jnp.stack([value_array, value_array])
+        coefficient_array = jnp.stack([coefficient_array, coefficient_array])
+        expected_coefficient_array = np.stack([expected_coefficient_array] * 2)
+        expected_value_array = np.stack([expected_value_array] * 2)
+    reverse, forward, value_partials = evaluate(
+        values=value_array, coefficients=coefficient_array
+    )
+    for actual in (reverse, forward):
+        assert_allclose(
+            actual, expected_coefficient_array, rtol=10.0**-DECIMAL_PRECISION, atol=0
+        )
+    assert_allclose(
+        value_partials, expected_value_array, rtol=10.0**-DECIMAL_PRECISION, atol=0
+    )
 
 
 @pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])

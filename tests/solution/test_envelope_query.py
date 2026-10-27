@@ -7,13 +7,16 @@ branch, and a non-bridging branch the inference backends get wrong.
 """
 
 from fractions import Fraction
+from typing import TypedDict
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from _lcm.egm.framed_arithmetic import framed_difference
+from _lcm.egm.upper_envelope import query as query_backend
 from _lcm.egm.upper_envelope.query import envelope_at_query
+from lcm.typing import Float1D, FloatND
 from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED
 from tests.solution._envelope_oracle import exact_envelope
 
@@ -33,6 +36,43 @@ _NEEDS_X64 = pytest.mark.skipif(
 )
 _JNP_DTYPES = [jnp.float32, pytest.param(jnp.float64, marks=_NEEDS_X64)]
 _NP_DTYPES = [np.float32, pytest.param(np.float64, marks=_NEEDS_X64)]
+
+
+class _AssociatedQueryArguments(TypedDict):
+    endog_grid: Float1D
+    value: Float1D
+    policy: Float1D
+    marginal: Float1D
+    segment_id: Float1D
+    candidate_savings: Float1D
+    x_query: FloatND
+
+
+def test_selected_certified_backend_preserves_associated_owner_and_invalidity() -> None:
+    """The selected reader keeps the original crossing and saving/owner tuple."""
+    arguments: _AssociatedQueryArguments = {
+        "endog_grid": jnp.asarray([0.0, 2.0, 0.0, 2.0]),
+        "value": jnp.asarray([0.0, 2.0, 1.0, 1.0]),
+        "policy": jnp.asarray([0.25, 0.75, 0.5, 0.5]),
+        "marginal": jnp.asarray([1.0, 1.0, 0.5, 0.5]),
+        "segment_id": jnp.asarray([0.0, 0.0, 1.0, 1.0]),
+        "candidate_savings": jnp.asarray([0.125, 0.875, 0.25, 0.75]),
+        "x_query": jnp.asarray([0.25, 1.0, 1.75, jnp.nan]),
+    }
+    original = envelope_at_query(**arguments, return_owner=True)
+    selected = query_backend.envelope_at_query_certified(**arguments, return_owner=True)
+    for actual, expected in zip(selected, original, strict=True):
+        np.testing.assert_array_equal(actual, expected)
+        assert actual.dtype == expected.dtype
+        assert actual.weak_type == expected.weak_type
+    np.testing.assert_array_equal(selected[0][:3], [1.0, 1.0, 1.75])
+    np.testing.assert_array_equal(selected[1][:3], [0.5, 0.5, 0.6875])
+    np.testing.assert_array_equal(selected[3][:3], [0.3125, 0.5, 0.78125])
+    assert int(selected[4][-1]) == -1
+    for channel in selected[:4]:
+        assert np.isnan(np.asarray(channel)[-1])
+    with pytest.raises(ValueError, match="certified arithmetic"):
+        query_backend.envelope_at_query_certified(**arguments, arithmetic="ordinary")
 
 
 def _marginal(*, endog_grid, value, segment_id):

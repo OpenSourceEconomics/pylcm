@@ -8,6 +8,7 @@
 
 #include "exact_affine_core.h"
 #include "exact_cell_hull_core.h"
+#include "exact_hermite_critical_core.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/ffi.h"
 
@@ -652,3 +653,123 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Ret<ffi::Buffer<ffi::F64>>()
         .Ret<ffi::Buffer<ffi::S32>>()
         .Ret<ffi::Buffer<ffi::S32>>());
+
+namespace {
+template <typename T, ffi::DataType DType>
+ffi::Error HermiteCriticalImpl(
+    ffi::Buffer<DType> x0,
+    ffi::Buffer<DType> h,
+    ffi::Buffer<DType> v0,
+    ffi::Buffer<DType> v1,
+    ffi::Buffer<DType> a,
+    ffi::Buffer<DType> b,
+    ffi::Buffer<DType> lower_limit,
+    ffi::Buffer<DType> log_scale,
+    ffi::Buffer<DType> lower,
+    ffi::Buffer<DType> upper,
+    ffi::ResultBuffer<ffi::S32> signs,
+    ffi::ResultBuffer<ffi::S32> status,
+    ffi::ResultBuffer<ffi::U32> workspace) {
+  constexpr size_t N = core::CriticalTraits<T>::kLimbs;
+  const size_t n = x0.element_count();
+  const size_t sizes[] = {
+      h.element_count(),
+      v0.element_count(),
+      v1.element_count(),
+      a.element_count(),
+      b.element_count(),
+      lower_limit.element_count(),
+      log_scale.element_count(),
+      lower.element_count(),
+      upper.element_count(),
+      (*status).element_count(),
+  };
+  for (size_t size : sizes) {
+    if (size != n) return ffi::Error::InvalidArgument(
+        "Hermite critical operands and status must match");
+  }
+  if (n > SIZE_MAX / (2 * N) || (*signs).element_count() != n * 4 ||
+      (*workspace).element_count() != n * (2 * N)) {
+    return ffi::Error::InvalidArgument("Hermite critical result workspace mismatch");
+  }
+  for (size_t i = 0; i < n; ++i) {
+    (*status).typed_data()[i] = core::HermiteCriticalBernstein(
+        x0.typed_data()[i], h.typed_data()[i], v0.typed_data()[i], v1.typed_data()[i],
+        a.typed_data()[i], b.typed_data()[i], lower_limit.typed_data()[i],
+        log_scale.typed_data()[i], lower.typed_data()[i], upper.typed_data()[i],
+        (*workspace).typed_data() + i * (2 * N), (*signs).typed_data() + i * 4);
+  }
+  return ffi::Error::Success();
+}
+
+ffi::Error HermiteCriticalF32Impl(
+    ffi::Buffer<ffi::F32> x0,
+    ffi::Buffer<ffi::F32> h,
+    ffi::Buffer<ffi::F32> v0,
+    ffi::Buffer<ffi::F32> v1,
+    ffi::Buffer<ffi::F32> a,
+    ffi::Buffer<ffi::F32> b,
+    ffi::Buffer<ffi::F32> lower_limit,
+    ffi::Buffer<ffi::F32> log_scale,
+    ffi::Buffer<ffi::F32> lower,
+    ffi::Buffer<ffi::F32> upper,
+    ffi::ResultBuffer<ffi::S32> signs,
+    ffi::ResultBuffer<ffi::S32> status,
+    ffi::ResultBuffer<ffi::U32> workspace) {
+  return HermiteCriticalImpl<float, ffi::F32>(
+      x0, h, v0, v1, a, b, lower_limit, log_scale, lower, upper, signs, status, workspace);
+}
+
+ffi::Error HermiteCriticalF64Impl(
+    ffi::Buffer<ffi::F64> x0,
+    ffi::Buffer<ffi::F64> h,
+    ffi::Buffer<ffi::F64> v0,
+    ffi::Buffer<ffi::F64> v1,
+    ffi::Buffer<ffi::F64> a,
+    ffi::Buffer<ffi::F64> b,
+    ffi::Buffer<ffi::F64> lower_limit,
+    ffi::Buffer<ffi::F64> log_scale,
+    ffi::Buffer<ffi::F64> lower,
+    ffi::Buffer<ffi::F64> upper,
+    ffi::ResultBuffer<ffi::S32> signs,
+    ffi::ResultBuffer<ffi::S32> status,
+    ffi::ResultBuffer<ffi::U32> workspace) {
+  return HermiteCriticalImpl<double, ffi::F64>(
+      x0, h, v0, v1, a, b, lower_limit, log_scale, lower, upper, signs, status, workspace);
+}
+
+}  // namespace
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(
+    ExactHermiteCriticalBernsteinF32, HermiteCriticalF32Impl,
+    ffi::Ffi::Bind()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Ret<ffi::Buffer<ffi::S32>>()
+        .Ret<ffi::Buffer<ffi::S32>>()
+        .Ret<ffi::Buffer<ffi::U32>>());
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(
+    ExactHermiteCriticalBernsteinF64, HermiteCriticalF64Impl,
+    ffi::Ffi::Bind()
+        .Arg<ffi::Buffer<ffi::F64>>()
+        .Arg<ffi::Buffer<ffi::F64>>()
+        .Arg<ffi::Buffer<ffi::F64>>()
+        .Arg<ffi::Buffer<ffi::F64>>()
+        .Arg<ffi::Buffer<ffi::F64>>()
+        .Arg<ffi::Buffer<ffi::F64>>()
+        .Arg<ffi::Buffer<ffi::F64>>()
+        .Arg<ffi::Buffer<ffi::F64>>()
+        .Arg<ffi::Buffer<ffi::F64>>()
+        .Arg<ffi::Buffer<ffi::F64>>()
+        .Ret<ffi::Buffer<ffi::S32>>()
+        .Ret<ffi::Buffer<ffi::S32>>()
+        .Ret<ffi::Buffer<ffi::U32>>());

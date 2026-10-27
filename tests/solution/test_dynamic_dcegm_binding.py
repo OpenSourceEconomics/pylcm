@@ -14,6 +14,7 @@ from dags import concatenate_functions
 from _lcm import continuation, model_processing
 from _lcm.constraints.dynamic_bound import validate_declared_bounds
 from _lcm.engine import Regime as EngineRegime
+from _lcm.materialization import DatedGenerationMaterializer
 from _lcm.post_decision_bound import PostDecisionBoundSpec
 from _lcm.regime_building import processing
 from _lcm.regime_building.age_normalization import (
@@ -244,6 +245,7 @@ def _capture_processor(
         laws: RegimeLaws,
         ages: TimeAxis,
         active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
+        materializer: DatedGenerationMaterializer | None = None,
     ) -> None:
         validation_error = None
         try:
@@ -252,6 +254,7 @@ def _capture_processor(
                 laws=laws,
                 ages=ages,
                 active_periods_by_regime=active_periods_by_regime,
+                materializer=materializer,
             )
         except ModelInitializationError as error:
             validation_error = error
@@ -268,6 +271,7 @@ def _capture_processor(
                 law=laws["saving"],
                 ages=ages,
                 periods=active_periods_by_regime["saving"],
+                materializer=materializer,
             )
             assert len(installed) == 1
             assert installed[0].kind == "dag"

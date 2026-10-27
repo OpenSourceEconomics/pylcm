@@ -15,7 +15,11 @@ import jax.numpy as jnp
 from beartype import beartype
 
 from _lcm.beartype_conf import PARAMS_CONF, REGIME_CONF
-from _lcm.power_mean import weighted_power_mean
+from _lcm.power_mean import (
+    _anchored_power_mean,
+    _PowerMeanContext,
+    weighted_power_mean,
+)
 from _lcm.probability import (
     _unbiased_exponent,
     binades_above_smallest_normal,
@@ -555,12 +559,29 @@ class PowerMean(QuasiArithmeticMean):
         nothing is understated.
         """
         return _states_no_derivative(
-            weighted_power_mean(
-                values=values,
-                weights=coefficients,
-                exponent=1.0 - params["risk_aversion"],
-                shifts=shifts,
-            )
+            self._scaled_context(
+                values=values, coefficients=coefficients, shifts=shifts, params=params
+            ).value
+        )
+
+    def _scaled_context(
+        self,
+        *,
+        values: FloatND,
+        coefficients: FloatND,
+        shifts: IntND,
+        params: Mapping[str, FloatND],
+    ) -> _PowerMeanContext:
+        """Expose original anchored operands to the explicit economic reader.
+
+        This is private context, not a derivative of aggregate_scaled. Its
+        caller retains the actual exact declaration and owns transient storage.
+        """
+        return _anchored_power_mean(
+            values=values,
+            weights=coefficients,
+            exponent=1.0 - params["risk_aversion"],
+            shifts=shifts,
         )
 
 
@@ -631,6 +652,16 @@ def aggregates_nonlinearly(certainty_equivalent: CertaintyEquivalent | None) -> 
 def _scaled_lottery_terms(
     *, values: FloatND, coefficients: FloatND, shifts: IntND
 ) -> tuple[FloatND, FloatND]:
+    """Return value and weight terms carrying one common binary scale."""
+    terms, masses, _ = _scaled_lottery_terms_with_scale(
+        values=values, coefficients=coefficients, shifts=shifts
+    )
+    return terms, masses
+
+
+def _scaled_lottery_terms_with_scale(
+    *, values: FloatND, coefficients: FloatND, shifts: IntND
+) -> tuple[FloatND, FloatND, IntND]:
     """Return a lottery's value terms and weight terms on one shared scale.
 
     A node's contribution to a mean is `c * 2**-s * v`, and the order those
@@ -677,7 +708,8 @@ def _scaled_lottery_terms(
 
     Returns:
         Tuple of the value terms and the weight terms, both over the last axis
-        and both carrying the row's shared scale.
+        and both carrying the row's shared scale, followed by that binary exponent. This
+        exponent multiplies the unscaled terms; subtract it to recover their scale.
 
     """
     coefficients = jnp.asarray(coefficients)
@@ -731,4 +763,5 @@ def _scaled_lottery_terms(
     return (
         jnp.where(invalid_row, nan, value_terms),
         jnp.where(invalid_row, nan, weight_terms),
+        common - headroom,
     )
