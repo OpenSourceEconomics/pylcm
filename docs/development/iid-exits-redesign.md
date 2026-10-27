@@ -702,6 +702,11 @@ mode for this correction. Its original primal and non-unit-risk derivative remai
 unchanged. A nonzero coefficient outside the retained normal finite range refuses this
 scoped derivative class; rare-event cases with a finite final direction remain required.
 
+The shared signed-log materializer uses IEEE downscaling for negative binary exponents
+and checks overflow before packing positive exponents. Its floating decomposition and
+zero/invalid conventions remain unchanged. Boundary-value encoding checks do not
+establish full finite-final scaled arithmetic, cancellation or additional AD support.
+
 Native first-order parameter directions follow the represented winning affine segment,
 including its moving endpoints. The model controls retain the separate continuous
 optimum reference and check the original represented derivative. The native kernel's
