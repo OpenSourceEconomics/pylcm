@@ -1,17 +1,20 @@
 """Finite original NEGM choices are selected before current-shock expectation."""
 
 import math
-from dataclasses import replace
+from dataclasses import fields, replace
+from pathlib import Path
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.current_iid_case_u_replay import CASE_U_FUTURE_REPLAY, CaseUReplayChildren
 from _lcm.egm.projected_continuation import (
     PROJECTED_EGM_CONTINUATION,
     ProjectedEGMCarry,
 )
+from _lcm.solution.artifacts import OwnedSolutionView
 from lcm import ExecutionConfig, InitialNodes, IrregSpacedGrid, Model, Regime
 from lcm.consumption_savings_regime import (
     LiquidMargin,
@@ -21,11 +24,15 @@ from lcm.consumption_savings_regime import (
     outer_unchanged,
 )
 from lcm.model import _ModelConstructorInputs
+from lcm.persistence import load_solution
 from lcm.shocks import PhysicalValues, ShockGroup, Uniform, UserNodes
 from lcm.solver_api import ArtifactRef, ResultRetention
 from lcm.solvers import DCEGM, NEGM, ExactEnvelope
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, UserParams
 from tests.conftest import DECIMAL_PRECISION, EXACT_KERNEL_SKIP_REASON
+from tests.egm.test_current_iid_call_owned_generation import (
+    _public_model_from_declarations,
+)
 from tests.egm.test_current_iid_case_u_owned_core import _actual_declarations
 from tests.simulation.test_case_u_reconstruction import _ReplayRegime
 
@@ -174,16 +181,26 @@ def _oracle(*, wealth: float, housing: float, shock: float) -> tuple[float, ...]
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
-def test_original_negm_u_selects_complete_outer_choice_before_expectation() -> None:
+def test_public_negm_u_selects_complete_outer_choice_before_expectation() -> None:
     """Different shocks choose keeper and adjuster before values are averaged."""
-    model = Model._from_call_owned_params(
-        declarations=_declarations(), params=_params()
+    declarations = _declarations()
+    model = Model(
+        **{
+            field.name: getattr(declarations, field.name)
+            for field in fields(declarations)
+            if field.init
+        }
     )
     solution = model.solve(
         params=_params(),
         log_level="off",
         retention=ResultRetention.ALL_PERSISTABLE_ARTIFACTS,
     )
+    view = solution._engine_view
+    assert isinstance(view, OwnedSolutionView)
+    generation = view.generation
+    assert generation is not None
+    assert generation.execution is not model
     reference = np.mean(
         [_oracle(wealth=2.0, housing=1.0, shock=z)[:2] for z in (0.0, 3.0)], axis=0
     )
@@ -206,7 +223,7 @@ def test_original_negm_u_selects_complete_outer_choice_before_expectation() -> N
     ]
     assert isinstance(future, CaseUReplayChildren)
     assert future.child_names == ("done",)
-    physical = np.asarray([0.0, 2.0, 3.0])
+    physical = np.asarray([0.0, 2.0, 3.0], dtype=canonical_float_dtype())
     result = model.simulate(
         params=_params(),
         solution=solution,
@@ -241,7 +258,7 @@ def test_original_negm_u_selects_complete_outer_choice_before_expectation() -> N
     )
     assert float(actual.actions["investment"][2]) not in (-2.0, 0.0, 2.0)
     assert float(actual.actions["consumption"][1]) not in (0.1, 5.0)
-    _assert_original_nested_tuple(model=model, future=future)
+    _assert_original_nested_tuple(model=generation.execution, future=future)
 
 
 def _assert_original_nested_tuple(  # noqa: PLR0915 - one genuine tuple and owner boundary
@@ -593,3 +610,81 @@ def test_original_negm_u_ordinary_passive_child_rows_keep_generation_custody() -
                 spec=spec,
                 period=2,
             )
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_public_negm_u_default_archive_replays_original_physics(
+    *, tmp_path: Path
+) -> None:
+    """Default retention delivers original nested physical replay to a fresh Model."""
+    from pandas.testing import assert_frame_equal  # noqa: PLC0415
+
+    declarations = _declarations()
+    params = _params()
+    model = _public_model_from_declarations(declarations=declarations)
+    solution = model.solve(params=params, log_level="off")
+    view = solution._engine_view
+    assert isinstance(view, OwnedSolutionView)
+    generation = view.generation
+    assert generation is not None
+    assert generation.execution is not model
+    assert model._generation_cache._cached[generation.key] is generation
+    future = solution.replay_artifacts[
+        ArtifactRef(period=1, regime="child", key=CASE_U_FUTURE_REPLAY)
+    ]
+    assert isinstance(future, CaseUReplayChildren)
+    assert future.child_names == ("done",)
+    physical = np.asarray([0.0, 2.0, 3.0], dtype=canonical_float_dtype())
+    initial_conditions = {
+        "wealth": jnp.full((3,), 2.0),
+        "housing": jnp.ones((3,)),
+        "age": jnp.ones((3,)),
+        "regime_id": jnp.full((3,), model.regime_names_to_ids["child"], jnp.int32),
+        "eps": PhysicalValues(values=physical),
+    }
+    result = model.simulate(
+        params=params,
+        solution=solution,
+        log_level="off",
+        seed=31,
+        initial_conditions=initial_conditions,
+    )
+    row = result.raw_results["child"][1]
+    expected = np.asarray([_oracle(wealth=2.0, housing=1.0, shock=z) for z in physical])
+    np.testing.assert_array_almost_equal(
+        row.actions["consumption"], expected[:, 2], decimal=DECIMAL_PRECISION
+    )
+    np.testing.assert_array_almost_equal(
+        row.actions["investment"], expected[:, 4], decimal=DECIMAL_PRECISION
+    )
+    np.testing.assert_array_almost_equal(
+        result.raw_results["done"][2].states["wealth"],
+        expected[:, 3],
+        decimal=DECIMAL_PRECISION,
+    )
+    np.testing.assert_array_almost_equal(
+        result.raw_results["done"][2].states["housing"],
+        expected[:, 5],
+        decimal=DECIMAL_PRECISION,
+    )
+    np.testing.assert_array_equal(row.shocks["eps"], physical)
+    assert float(row.actions["investment"][2]) not in (-2.0, 0.0, 2.0)
+    assert float(row.actions["consumption"][1]) not in (0.1, 5.0)
+    path = tmp_path / "public-negm-default.lcm"
+    solution.save(path=path)
+    loaded = load_solution(path=path)
+    assert loaded._engine_view is None
+    fresh = _public_model_from_declarations(declarations=declarations)
+    replay = fresh.simulate(
+        params=params,
+        solution=loaded,
+        log_level="off",
+        seed=31,
+        initial_conditions=initial_conditions,
+    )
+    fresh_generation = fresh._generation_cache._cached[generation.key]
+    assert fresh_generation.key == generation.key
+    assert fresh_generation is not generation
+    assert fresh_generation.execution is not fresh
+    assert fresh_generation.execution is not generation.execution
+    assert_frame_equal(replay.to_dataframe(), result.to_dataframe(), check_exact=True)

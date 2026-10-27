@@ -103,9 +103,10 @@ Refuse publication without a suitable declared projection grid.
 
 Case R requires a dependency proof, treating resources as an opaque leaf, over the
 complete action problem, including constraints, bounds, laws, aggregation and
-parameters. A failed proof selects Case U; it does not grant a resources-only
-assumption. Case U builds candidate rows transiently and evaluates them at common
-pre-shock coordinates before any average. Plain EGM continues to reject shocks.
+parameters. A failed proof routes to Case U admission, whose own solver prerequisites
+still apply; it does not grant a resources-only assumption. Case U builds candidate rows
+transiently and evaluates them at common pre-shock coordinates before any average. Plain
+EGM continues to reject shocks.
 
 Use a piecewise-affine value representation between smooth neighboring projected nodes.
 At served kinks and jumps, preserve the owning-side value, policy and economic marginal,
@@ -527,6 +528,67 @@ gates, independent branch review with fixes, and a review-ready PR. Broad certif
 campaigns remain in CI or offline; optional certification does not block balanced
 semantic closure.
 
+### Finite S10 acceptance workloads
+
+The adopted direction is recorded in
+`sciebo:pro-audits/pylcm-pr621-s10/bundle-round0/reply/pylcm-s10-direction-review-round0/`.
+Its `workload-matrix.json` binds the behavior IDs below; the direction verdict does not
+qualify their unfinished implementation. Compatible behaviors share fixtures and
+receipts, rather than forming a Cartesian product of solver features.
+
+| IDs    | Required behavior                                                                                                                                                                  |
+| ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| P1, P2 | Scalar DC resources-only publication and genuine non-resource current-shock reconstruction.                                                                                        |
+| P3, P4 | Original NB resources-only bank, and NB-U with a liquid state, a passive state and genuine discrete branches.                                                                      |
+| P5, P6 | Finite NEGM and NNBEGM keeper/adjuster selection, each with resources-only and genuine U variants.                                                                                 |
+| C1, C2 | Positive nonlinear CE transport through eligible NB and finite NNBEGM routes, retaining typed statistics and economic directions.                                                  |
+| D1–D6  | Compatible incoming GridSearch W-only, plain EGM without its own current shock, DC-to-passive-NB, original NB, NEGM inner-DC and NNBEGM inner-NB readers.                          |
+| C3     | A U source reading a projected U descendant, retaining both producing dates through physical replay and archive acquisition.                                                       |
+| C4, C5 | Law/weight/resource directions including a derivative-active null event; the existing signed-linear boundary and its prohibited consumers.                                         |
+| C6     | Explicit balanced grid replay against default original-candidate replay, with separate policy/Q/moment diagnostics and certified-plus-grid refusal.                                |
+| Q1     | A GridSearch exit source querying an off-grid scalar DC target with no exits; the mover executes that same target policy, takes no second exit and makes one scheduled transition. |
+| L1     | Shared generation reuse, support specialization, single-flight cleanup, retained evicted results, finite-budget production and fresh archive authority.                            |
+
+Q1 selects the exit adapter as the minimal generic requirement. Target Participating
+equals Raw because that target has no exits. The adapter remains unfinished until its
+actual EGM target read is served; current GridSearch query admission is not evidence of
+that support. Add an arrival variant only for a distinct named timing or custody
+consumer. Bind faithful EKL's actual solver, dates, mapped states, shared-offer
+addresses, lagged-marital context and retained leaves separately; this generic row does
+not assert that EKL has an EGM target.
+
+Before accepting a row, freeze its real public declarations, parameters and support,
+producer/consumer dates, required coordinates and native leaf roster, finite capacities
+and owned budget, precision/backend/device/JIT, independent reference, sampled
+population, common base draws and predetermined scales in its `S10-WORKLOADS.json`
+record. Unbound fields and refused required reads remain open. Use the original solver
+factories and existing generation/materializer; do not substitute a DC-shaped owner for
+an NB or nested producer. Lazy authority roots and receiving archive copies belong to
+the same admission and retained-residency contract.
+
+The balanced budgets above apply separately to represented value, economic marginal,
+associated policy and named moments. Check original nodes, required incoming
+coordinates, sampled off-node shocks, served sides and relevant corners, with
+invalid/capacity/read corruption controls. Assess grid replay against original-candidate
+reconstruction separately from actions absent from both banks. The latter candidate-set
+error may stay explicitly unknown under `report_unknown`; continuous-global-optimum or
+whole-domain refinement proofs are not balanced completion gates. Required sampled
+represented-channel checks and original discrete ownership/ties remain binding.
+
+Close the existing call owner, authentic family preparations and required incoming and
+dated replay/archive reads, then attach source-bound sampled receipts and an
+attributable representative production reconstruction capture. Measure cold acquisition,
+compilation, synchronized warm execution, required reads, physical replay, foreign
+acquisition and retained memory separately. A baseline that refuses a new capability
+supplies no speedup ratio. Fixture walltimes do not supply production costs. Broad
+certificate qualification runs at closure or in CI, not after each small edit. Another
+general direction audit requires a concrete new architectural ambiguity.
+
+Independent S11 row-address/draw/override preparation may proceed. Integrated S11
+acceptance still waits for S1/S5 and S10's generation, reads, reconstruction, ownership
+and archive contracts. S12 retirement waits for every preceding stage and replacement
+consumer; independent preparation does not close either gate.
+
 ### Private balanced Case-R implementation frontier
 
 The private connected BALANCED slice authenticates the full unbound scalar utility
@@ -701,7 +763,7 @@ constructor declarations and actual parameters through the shared declaration
 preparation and post-program installer. It normalizes parameters before dated
 finalization, resolves the original support algorithm, and gives producer-date
 declarations the actual runtime liquid nodes. It creates real programs before exposing
-the Model. The supported public scalar route is described below.
+the Model. The supported public routes are described below.
 
 One immutable generation keeps those real execution programs, their source seal,
 declaration identity and lazily derived authority together. The cache walks actual
@@ -808,16 +870,17 @@ before replay, and a finite budget still refuses those unprofiled copies. The pu
 source variant remains subject to its original Model-to-forward check; this scoped
 connection does not complete cold admission.
 
-This family scope does not complete S10. Broader nested NB and nonlinear-CE
-intersections, broader incoming ND families and passive/choice/phase/query/gated/sharded
-intersections, remaining cold finite-budget admission and derivative/archive controls
-stay required. Correct U source-context/selector/corner outputs, sampled refinement,
-complete declared-workload support and scheduling/admission also remain required.
-Production cost needs a representative capture before any performance claim; universal
-full-domain topology and certified refinement remain separate capabilities. Exact-demand
-integrity and scoped Model-to-forward qualification do not establish those gates or
-extend public admission beyond the scalar route below. Cold allocation remains owned by
-the existing generation materializer; this route cannot bypass its budget guards.
+This family scope does not complete the finite S10 workloads above. Their nested NB,
+nonlinear-CE, incoming-reader, passive/choice, query, cold-admission, derivative and
+archive behaviors remain required. Further phase, gate, tiled, sharded or device
+variants require a named distinct consumer. Correct U source-context/selector/corner
+outputs, sampled representation checks, complete adopted-workload coverage and
+scheduling/admission remain binding. Production cost needs a representative capture
+before any performance claim; universal full-domain topology and certified refinement
+remain separate capabilities. Exact-demand integrity and scoped Model-to-forward
+qualification do not establish those gates or extend public admission beyond the
+explicit routes below. Cold allocation remains owned by the existing generation
+materializer; this route cannot bypass its budget guards.
 
 ### Public scalar Case-R lifecycle
 
@@ -856,11 +919,28 @@ The represented bank reads value and economic marginal from their associated aff
 endpoints. At an off-Euler query those channels can differ from the continuous optimum,
 even when the selected physical action agrees with it. The native tuple reference is
 therefore grid-conditional; analytical action checks do not establish continuous
-value/marginal accuracy. Sampled refinement remains required.
+value/marginal accuracy. Sampled represented-channel checks remain required;
+candidate-set error stays unknown until separately assessed.
 
 This public slice does not complete S10. Other producer families, remaining cold
-workloads and budgeted foreign archives, sampled refinement and the production
+workloads and budgeted foreign archives, sampled accuracy and the production
 reconstruction-cost receipt remain open. Prepared public Models explicitly refuse policy
 lookup, state-grid inspection and initial-state bounds until those helpers have a
 supported execution-selection contract. Whole-domain topology and broad certificate
 campaigns remain separate from the sampled balanced acceptance gate.
+
+### Public finite NEGM Case-U lifecycle
+
+The unbudgeted public NEGM route retains the original keeper and finite adjuster
+selection with its genuine DCEGM inner pieces. Its original factory admits one source
+date and an ordinary action-free terminal future with the matching liquid/durable
+geometry. Original family, date, finite-search, law, corner and ownership checks remain
+mandatory; public metadata preparation does not replace them.
+
+Each physical shock selects the complete original outer/inner candidate tuple before
+expectation. The selected consumption, investment, liquid and durable landing states
+retain their original association. Default retention supports solution save/load and
+physical replay through a fresh public Model with independently reconstructed execution
+and authority. This scoped U lifecycle does not admit cold finite-budget nested
+production, establish resources-only R reuse or close the incoming-reader and nonlinear
+nested workloads in the finite S10 matrix.

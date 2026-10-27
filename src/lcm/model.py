@@ -1358,28 +1358,34 @@ class Model:
         prepared: _ModelDeclarationPreparation,
         materializer: SimulationEntryAllocations | None = None,
     ) -> None:
-        """Retain the supported scalar declaration until actual parameters arrive."""
+        """Retain supported dated declarations until actual parameters arrive."""
         from _lcm.solution.dcegm import (  # noqa: PLC0415 - avoid solver import cycles
             _BoundDCEGM,
         )
         from _lcm.solution.nbegm import _BoundNBEGM  # noqa: PLC0415
+        from _lcm.solution.negm import _BoundNEGM  # noqa: PLC0415
 
         if (
             self._composite_states
             or not prepared.prepared_structure.current_iid_bindings
         ):
             raise UnsupportedOperationError(
-                "Public call-owned construction requires scalar "
-                "current-IID DCEGM or NBEGM declarations."
+                "Public call-owned construction requires "
+                "current-IID DCEGM, NBEGM or NEGM declarations."
             )
         representatives = prepared.prepared_structure.representative_user_regimes
+        has_nested_source = any(
+            type(regime.solver) is _BoundNEGM
+            for name, regime in representatives.items()
+            if not prepared.prepared_structure.laws[name].terminal
+        )
         for name, regime in representatives.items():
             law = prepared.prepared_structure.laws[name]
             if law.terminal:
                 if (
                     type(regime.solver) is not GridSearch
                     or regime.actions
-                    or len(regime.states) != 1
+                    or (not has_nested_source and len(regime.states) != 1)
                     or not all(
                         isinstance(grid, ContinuousGrid)
                         for grid in regime.states.values()
@@ -1387,10 +1393,14 @@ class Model:
                 ):
                     raise UnsupportedOperationError(
                         f"Public call-owned terminal {name!r} requires its "
-                        "ordinary scalar action-free publisher."
+                        "ordinary action-free continuous publisher."
                     )
                 continue
             solver = regime.solver
+            if type(solver) is _BoundNEGM:
+                # The original nested factory owns source/future geometry and
+                # finite-search admission with actual call-owned parameters.
+                continue
             if (
                 (type(solver) is not _BoundDCEGM and type(solver) is not _BoundNBEGM)
                 or tuple(regime.states) != (solver.continuous_state,)
@@ -1404,7 +1414,8 @@ class Model:
             ):
                 raise UnsupportedOperationError(
                     f"Public call-owned source {name!r} requires original "
-                    "one-state one-action DCEGM or NBEGM declarations."
+                    "one-state one-action DCEGM or NBEGM declarations, "
+                    "or original NEGM factory admission."
                 )
         self._dated_parameters = self._prepare_dated_metadata(
             prepared=prepared, materializer=materializer

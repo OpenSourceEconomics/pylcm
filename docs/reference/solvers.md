@@ -290,6 +290,13 @@ inner DCEGM solve, but a taste-shocked discrete choice must be the outermost agg
 `max_outer logsumexp_discrete` is not `logsumexp_discrete max_outer`. Use `GridSearch`,
 or remove the taste shocks when the NEGM structure is required.
 
+The unbudgeted public named-current-IID Case-U route uses the original keeper and finite
+adjuster candidates with one source date and an ordinary action-free terminal future.
+Physical replay reconstructs the same selected inner and outer policy, including after
+default-retention save/load through a fresh Model. Original factory prerequisites still
+bind; cold nested admission and resources-only reuse remain separate delivery work.
+See the [current-IID contract](../development/iid-exits-redesign.md#public-finite-negm-case-u-lifecycle).
+
 (api-nbegm)=
 ### `NBEGM`
 
@@ -315,7 +322,7 @@ Represented value and economic marginal are associated finite-bank reads; agreem
 of the physical action with a continuous reference does not establish their continuous
 accuracy. See the
 [current-IID contract](../development/iid-exits-redesign.md#public-scalar-nb-case-u-lifecycle)
-for the sampled-refinement boundary.
+for sampled balanced checks and the candidate-omission boundary.
 
 With `envelope_arithmetic="certified"`, candidate ownership is ordered from the stored
 floating-point operands using fixed-width integer arithmetic. Exact affine value comes
