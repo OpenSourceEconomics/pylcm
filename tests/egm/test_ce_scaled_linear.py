@@ -11,6 +11,7 @@ import pytest
 from _lcm.egm.ce_scaled_linear import (
     _coefficient_parts,
     join_ce_direction,
+    join_represented_ce_direction,
     scale_ce_direction,
 )
 from lcm.typing import FloatND, ScalarFloat
@@ -210,3 +211,86 @@ def test_ce_scaled_join_zero_coefficient_base_transpose_preserves_tiny_bits() ->
         np.testing.assert_almost_equal(
             jax.grad(evaluate)(jnp.ones_like(tiny)), 1.0, decimal=DECIMAL_PRECISION
         )
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "ordinary",
+        "tiny_base",
+        "tiny_input",
+        "tiny_coefficient",
+        "underflow",
+        "overflow",
+        "invalid",
+    ],
+)
+def test_represented_ce_coefficient_keeps_ordinary_and_exceptional_directions(
+    *, kind: str
+) -> None:
+    dtype = jnp.asarray(0.0).dtype
+    info = np.finfo(dtype)
+    cases = {
+        "ordinary": (1.0, 2.0**-70, 0.5),
+        "tiny_base": (2.0, float(info.tiny) / 4.0, 0.0),
+        "tiny_input": (8.0, 0.0, float(info.smallest_subnormal)),
+        "tiny_coefficient": (float(info.tiny) / 4.0, 0.0, 4.0),
+        "underflow": (0.125, 0.0, float(info.smallest_subnormal)),
+        "overflow": (8.0, 0.0, float(info.max)),
+        "invalid": (-1.0, 0.0, 1.0),
+    }
+    coefficient, original, operand = cases[kind]
+    factor = jnp.asarray(coefficient, dtype=dtype)
+    base = jnp.asarray(original, dtype=dtype)
+    direction = jnp.asarray(operand, dtype=dtype)
+
+    # keyword-only-exempt: library-callback=jax.linear_transpose
+    def apply(original: ScalarFloat, operand: ScalarFloat) -> ScalarFloat:
+        return join_represented_ce_direction(
+            coefficient=factor,
+            sign=jnp.ones_like(factor),
+            base=original,
+            direction=operand,
+        )
+
+    with localcontext() as context:
+        context.prec = 160
+        expected_decimal = Decimal(original) + Decimal(coefficient) * Decimal(operand)
+        expected = float(expected_decimal)
+    for evaluate in (apply, jax.jit(apply)):
+        actual = evaluate(base, direction)
+        if kind in ("underflow", "overflow", "invalid"):
+            assert not bool(jnp.isfinite(actual))
+            continue
+        assert bool(jnp.isfinite(actual))
+        if kind == "tiny_base":
+            assert np.asarray(actual).tobytes() == np.asarray(base).tobytes()
+        elif kind == "tiny_input":
+            with localcontext() as context:
+                context.prec = 160
+                assert abs(Decimal(float(actual)) - expected_decimal) <= Decimal(
+                    float(info.smallest_subnormal)
+                )
+        else:
+            np.testing.assert_allclose(
+                float(actual) / expected,
+                1.0,
+                rtol=0,
+                atol=max(1e-4, 8 * math.sqrt(info.eps)),
+            )
+        base_ct, direction_ct = jax.linear_transpose(evaluate, base, direction)(
+            jnp.ones_like(base)
+        )
+        assert float(base_ct) == 1.0
+        if kind == "tiny_coefficient":
+            np.testing.assert_allclose(
+                float(direction_ct) / coefficient,
+                1.0,
+                rtol=0,
+                atol=max(1e-4, 8 * math.sqrt(info.eps)),
+            )
+        else:
+            np.testing.assert_allclose(
+                float(direction_ct), coefficient, rtol=64 * info.eps, atol=0
+            )

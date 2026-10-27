@@ -62,13 +62,13 @@ type ExitFramePayload = tuple[
     Mapping[str, BoolND],
 ]
 type OriginalExitOutput = tuple[
-    tuple[FloatND, IntND, BoolND, BoolND],
+    tuple[FloatND, IntND, BoolND, BoolND, IntND],
     ExitFramePayload,
     Mapping[str, Mapping[str, FloatND | IntND]],
     Mapping[str, FloatND],
 ]
 type ParticipatingExitOutput = tuple[
-    tuple[FloatND, IntND, BoolND, BoolND], ExitFramePayload
+    tuple[FloatND, IntND, BoolND, BoolND, IntND], ExitFramePayload
 ]
 
 
@@ -187,7 +187,13 @@ def install_exit_simulation_queries(
     full_queries = {}
     arrivals: dict[tuple[str, int], dict[str, ArrivalEntryPlan]] = {}
     for source, context in contexts.items():
+        acting = canonical_regimes[source].simulation.programs.decision
         for source_period, plans in context.arrival_queries.items():
+            # A query-only price can need a future arrival without any subject
+            # taking that edge. Incoming Participating actors still own decision
+            # programs, even when they have no original Full policy.
+            if source_period not in acting:
+                continue
             for target in plans:
                 period = source_period + 1
                 declaration = context.laws[source].arrivals[target]
@@ -928,7 +934,13 @@ def exit_policy_program(
             if name in root.read.policy_information
         },
     )
-    answer_roles = ("decision_value", "action_index", "support", "integrity")
+    answer_roles = (
+        "decision_value",
+        "action_index",
+        "support",
+        "integrity",
+        "landing_count",
+    )
     targets = {
         query for members in root.exit_targets.values() for query in members.values()
     }

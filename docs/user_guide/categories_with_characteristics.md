@@ -56,6 +56,8 @@ The check raises when the table and the class disagree:
 - every category sets the same characteristics, in any order;
 - each column contains only Python `bool`, only Python `int`, or only finite Python
   `float` values; write `0.0` rather than `0` in a float column;
+- float characteristics lie within the float32 range, so they stay finite whether x64 is
+  enabled or not;
 - integer characteristics fit int32 and differ from the int32 minimum, which marks a
   missing category;
 - no two categories share all characteristics.

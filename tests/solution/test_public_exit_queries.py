@@ -569,11 +569,13 @@ def test_scalar_query_prices_hidden_frame_without_hindsight(*, observed: bool) -
             },
             overrides={"offer": PhysicalValues(values=jnp.asarray(code, jnp.int32))},
         )
-        value, action, support, valid = jax.jit(scalar)(
+        value, action, support, valid, landings = jax.jit(scalar)(
             states={"wealth": jnp.asarray(0.0)},
             arguments=arguments,
             frame=frame,
         )
+        assert landings.dtype == jnp.int32
+        np.testing.assert_array_equal(landings, np.zeros(landings.shape, np.int32))
         np.testing.assert_allclose(
             value, (0.5 if code == 0 else 1.75) if observed else 0.75
         )
@@ -744,9 +746,11 @@ def test_hidden_target_taste_is_priced_at_logsum_then_drawn_when_acting() -> Non
     )
     key = jax.random.key(3)
     arguments[root] = {**arguments[root], "taste_shock_key": key}
-    value, action, support, valid = jax.jit(scalar)(
+    value, action, support, valid, landings = jax.jit(scalar)(
         states={"wealth": jnp.asarray(0.0)}, arguments=arguments
     )
+    assert landings.dtype == jnp.int32
+    np.testing.assert_array_equal(landings, np.zeros(landings.shape, np.int32))
     expected = jnp.argmax(
         jnp.asarray([0.0, jnp.log(3.0)]) + jax.random.gumbel(key, (2,))
     )
@@ -832,9 +836,11 @@ def test_source_full_taste_preserves_dissolution_fallback(*, fallback: bool) -> 
             **arguments,
             kernel.root: {**arguments[kernel.root], "taste_shock_key": key},
         }
-        value, action, support, valid = jax.jit(scalar)(
+        value, action, support, valid, landings = jax.jit(scalar)(
             states={"wealth": jnp.asarray(0.0)}, arguments=call_arguments
         )
+        assert landings.dtype == jnp.int32
+        np.testing.assert_array_equal(landings, np.zeros(landings.shape, np.int32))
         # Reserve exit tasteID2 even when its escape is economically inadmissible.
         # The surviving discrete stay optimizes consumption to global stayID3.
         roster = jnp.asarray(
@@ -1331,10 +1337,12 @@ def test_strict_custom_tie_has_empty_participating_policy_and_full_exit() -> Non
             ),
             fixed_flat_params=kernel.fixed_flat_params,
         )
-        value, action, support, valid = jax.jit(scalar)(
+        value, action, support, valid, landings = jax.jit(scalar)(
             states={"wealth": jnp.asarray(0.0)},
             arguments=arguments,
         )
+        assert landings.dtype == jnp.int32
+        np.testing.assert_array_equal(landings, np.zeros(landings.shape, np.int32))
         assert int(action) == expected_id
         assert bool(support) == expected_support
         assert bool(valid)
@@ -1790,13 +1798,15 @@ def test_source_taste_competes_with_an_eligible_consent_formation() -> None:
             jnp.argmax(jnp.asarray([0.0, 2.0, 3.0]) + jax.random.gumbel(key, (3,)))
         )
         literal_routes.add(selected == 2)
-        value, action, support, valid = jax.jit(scalar)(
+        value, action, support, valid, landings = jax.jit(scalar)(
             states={"wealth": jnp.asarray(0.0)},
             arguments={
                 **arguments,
                 kernel.root: {**arguments[kernel.root], "taste_shock_key": key},
             },
         )
+        assert landings.dtype == jnp.int32
+        np.testing.assert_array_equal(landings, np.zeros(landings.shape, np.int32))
         assert int(action) == (1, 3, 4)[selected]
         np.testing.assert_allclose(value, (0.0, 2.0, 3.0)[selected])
         assert bool(support)

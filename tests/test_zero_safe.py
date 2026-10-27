@@ -8,9 +8,10 @@ real numbers but not as floating-point intermediates: forming
 exists to avoid, and a coefficient of order one meeting a value near the top of
 the range overflows to infinity, which no later scaling recovers.
 
-The downscale is therefore split — as much of it onto the coefficient as the
-coefficient has room for while staying normal, the remainder onto the product —
-which is what `scaled_weighted_terms` does and what these tests pin.
+Each node is therefore formed from normal significands and its exponent is
+applied only relative to the largest term of its sum, so a node is lost only
+when it is immaterial against that term. These tests pin that at both ends of
+the range, against exact rational references.
 """
 
 from fractions import Fraction
@@ -23,7 +24,7 @@ from numpy.testing import assert_allclose
 
 from _lcm.certainty_equivalent import _scaled_lottery_terms_with_scale
 from _lcm.regime_building.zero_safe import zero_safe_average
-from lcm.typing import FloatND
+from lcm.typing import FloatND, IntND
 from tests.conftest import DECIMAL_PRECISION
 
 
@@ -622,3 +623,113 @@ def test_zero_safe_average_prices_a_downscaled_node_along_a_reduced_axis():
         jnp.asarray([largest / 2, largest / 8]),
         rtol=10.0**-DECIMAL_PRECISION,
     )
+
+
+def _get_floor_level_lotteries() -> tuple[
+    tuple[tuple[float, float], tuple[float, float], tuple[int, int]], ...
+]:
+    """Construct two-node lotteries whose values sit at the bottom of the normal range.
+
+    Every value, every live coefficient and every mean is normal, and no lottery
+    cancels. The coefficients are unequal ordinary weights, probability rows,
+    equivalent scaled encodings and coefficients near the smallest normal, each
+    with its sign, permutation and common-shift variants.
+    """
+    tiny = float(np.finfo(jnp.asarray(1.0).dtype).tiny)
+    value_pairs = (
+        (1.5 * tiny, 1.5 * tiny),
+        (1.75 * tiny, 1.75 * tiny),
+        (2 * tiny, 1.5 * tiny),
+    )
+    weightings = (
+        ((1.0, 0.5), (0, 0)),
+        ((1.0, 0.25), (0, 0)),
+        ((0.75, 0.25), (0, 0)),
+        ((0.75, 0.5), (0, 1)),
+        ((1.0, 1.0), (0, 1)),
+        ((2 * tiny, tiny), (0, 0)),
+        ((4 * tiny, tiny), (0, 0)),
+        ((4 * tiny, 4 * tiny), (1, 2)),
+    )
+    lotteries = []
+    for values in value_pairs:
+        for coefficients, shifts in weightings:
+            lotteries.extend(
+                [
+                    (values, coefficients, shifts),
+                    ((-values[0], -values[1]), coefficients, shifts),
+                    (values[::-1], coefficients[::-1], shifts[::-1]),
+                    (values, coefficients, (shifts[0] + 7, shifts[1] + 7)),
+                    (values, coefficients, (shifts[0] - 7, shifts[1] - 7)),
+                ]
+            )
+    return tuple(lotteries)
+
+
+@pytest.mark.parametrize("quantity", ["mean", "value_partials", "weight_partials"])
+@pytest.mark.parametrize("mode", ["eager", "jit", "vmap"])
+def test_scaled_mean_keeps_floor_level_nodes_against_unequal_weights(
+    *, mode: str, quantity: str
+) -> None:
+    """A normal mean of floor-level values keeps every node's weighted contribution."""
+    lotteries = _get_floor_level_lotteries()
+    values = jnp.asarray([lottery[0] for lottery in lotteries])
+    coefficients = jnp.asarray([lottery[1] for lottery in lotteries])
+    shifts = jnp.asarray([lottery[2] for lottery in lotteries], dtype=jnp.int32)
+
+    def mean_and_partials(
+        *, values: FloatND, coefficients: FloatND, shifts: IntND
+    ) -> tuple[FloatND, FloatND, FloatND]:
+        def value_average(value: FloatND) -> FloatND:
+            return zero_safe_average(
+                a=value, weights=coefficients, shifts=shifts, axis=-1
+            )
+
+        def weight_average(weight: FloatND) -> FloatND:
+            return zero_safe_average(a=values, weights=weight, shifts=shifts, axis=-1)
+
+        if values.ndim == 1:
+            return (
+                value_average(values),
+                jax.jacfwd(value_average)(values),
+                jax.grad(weight_average)(coefficients),
+            )
+        # Rows are independent lotteries, so each row's partials are the
+        # diagonal blocks of the batched Jacobian.
+        return (
+            value_average(values),
+            jnp.einsum("iij->ij", jax.jacfwd(value_average)(values)),
+            jnp.einsum("iij->ij", jax.jacfwd(weight_average)(coefficients)),
+        )
+
+    evaluate = mean_and_partials
+    if mode == "jit":
+        evaluate = jax.jit(evaluate)
+    elif mode == "vmap":
+        evaluate = jax.jit(jax.vmap(evaluate))
+    results = evaluate(values=values, coefficients=coefficients, shifts=shifts)
+    index = ("mean", "value_partials", "weight_partials").index(quantity)
+    actual = np.asarray(results[index])
+
+    tolerance = Fraction(10) ** -DECIMAL_PRECISION
+    # A partial below the normal range is not representable on a flushing
+    # backend, so it may come back as zero; every other quantity is relative.
+    tiny = Fraction(float(np.finfo(actual.dtype).tiny))
+    worst = Fraction()
+    for row, (v, c, s) in zip(actual, lotteries, strict=True):
+        mean, weight_partials, value_partials = _scaled_mean_reference(
+            values=tuple(float(x) for x in np.asarray(v, dtype=actual.dtype)),
+            weights=tuple(float(x) for x in np.asarray(c, dtype=actual.dtype)),
+            shifts=s,
+        )
+        expected = {
+            "mean": (mean,),
+            "value_partials": value_partials,
+            "weight_partials": weight_partials,
+        }[quantity]
+        for observed, exact in zip(np.atleast_1d(row), expected, strict=True):
+            error = abs(Fraction(float(observed)) - Fraction(exact))
+            if abs(Fraction(exact)) < tiny:
+                error = max(error - tiny, Fraction())
+            worst = max(worst, error / abs(Fraction(exact)) if exact else error)
+    assert worst <= tolerance

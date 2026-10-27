@@ -20,8 +20,9 @@ an outcome grid and its transition mechanism.
 - `characteristics(category_class=Category, by_category=...)` checks a table of every
   category's Python `int`, `bool` or finite `float` characteristics, keyed by category
   name in declaration order. Columns use one scalar type; integer values fit int32 above
-  its minimum. Rows set the same characteristics and remain distinct. The returned
-  arrays are read-only and indexed by code, with bool, int32 or float64 dtype.
+  its minimum, and float values fit float32. Rows set the same characteristics and
+  remain distinct. The returned arrays are read-only and indexed by code, with bool,
+  int32 or float64 dtype.
 - `category_with(columns, **characteristics)` returns the int32 code of the category
   with the given characteristics, or the int32 minimum where none has them. The given
   identifying columns must tell all categories apart and have bool or signed-integer

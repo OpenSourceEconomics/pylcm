@@ -12,6 +12,7 @@ from _lcm.egm.projected_continuation import ProjectedChildAuthority
 from _lcm.post_decision_bound import PostDecisionBoundSpec
 from _lcm.typing import (
     DataclassInstance,
+    LandingCheck,
     PytreeChild,
     PytreeValue,
     QAndFArg,
@@ -685,7 +686,7 @@ class FeasibilityKernelOutput(KernelOutput):
     """Mandatory child summaries in independently declared target/period slots."""
     landing_totals: IntND | None = None
     """Reached landing totals retained until mandatory integrity is accepted."""
-    landing_checks: tuple[tuple[str, str], ...] = ()
+    landing_checks: tuple[LandingCheck, ...] = ()
     """Canonical qualified landing checks corresponding to the totals."""
     continuation_read_counts: ContinuationReadCounts | None = None
     """Optional paired-read population, materialized independently of feasibility."""

@@ -42,6 +42,7 @@ from _lcm.simulation.subject_groups import SubjectRows
 from _lcm.simulation.taste_stream import prepare_decision_taste_keys
 from _lcm.simulation.unit_executor import SimulationUnitExecutor
 from _lcm.simulation.value_reads import PeriodSimulationReads
+from _lcm.solution.landing_counts import fail_on_query_landings
 from _lcm.time import TimeAxis
 from _lcm.typing import (
     ArrayTree,
@@ -53,6 +54,7 @@ from _lcm.typing import (
     RegimeNamesToIds,
     StatesPerRegime,
 )
+from _lcm.utils.counts import sum_counts
 from lcm.exceptions import (
     ExecutionPlanningError,
     NoFeasibleActionError,
@@ -64,7 +66,7 @@ from lcm.typing import BoolND, FloatND, IntND, RegimeName
 if TYPE_CHECKING:
     from _lcm.policy_queries import PolicyAnswer, ScalarPolicyQueries
 else:
-    type PolicyAnswer = tuple[FloatND, IntND, BoolND, BoolND]
+    type PolicyAnswer = tuple[FloatND, IntND, BoolND, BoolND, IntND]
     # Query construction imports the engine, which imports forward program types.
     type ScalarPolicyQueries = object
 
@@ -238,6 +240,7 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
         frame = CurrentIIDDrawFrame(*frame_payload)
         originals[name] = (answer, frame)
         _check_answer(
+            queries=plan.full,
             answer=answer,
             frame=frame,
             holders=holders,
@@ -323,7 +326,9 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
             "OriginalExitOutput", output
         )
         frame = CurrentIIDDrawFrame(*frame_payload)
-        _check_answer(answer=answer, frame=frame, holders=holders, memory=memory)
+        _check_answer(
+            queries=queries, answer=answer, frame=frame, holders=holders, memory=memory
+        )
         edge = f"{name}:{source}"
         arrival_frames[edge], arrival_pending[edge] = frame, holders
         next_code = (
@@ -522,6 +527,7 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
         answer, frame_payload = cast("ParticipatingExitOutput", output)
         frame = CurrentIIDDrawFrame(*frame_payload)
         _check_answer(
+            queries=queries,
             answer=answer,
             frame=frame,
             holders=holders,
@@ -742,6 +748,11 @@ def _answer_status(
     return jnp.any(holders & ~(valid & law_valid)), jnp.any(holders & ~support)
 
 
+def _query_reached_landing_totals(*, counts: IntND, holders: BoolND) -> IntND:
+    """Count only actual actor rows; numerical integrity is checked separately."""
+    return sum_counts(counts=jnp.where(holders[..., None], counts, 0), axis=0)
+
+
 def _moving_actor_rows(
     *, moved: BoolND, regime_ids: IntND, regime_id: IntND | int
 ) -> BoolND:
@@ -751,6 +762,7 @@ def _moving_actor_rows(
 
 def _check_answer(
     *,
+    queries: ScalarPolicyQueries,
     answer: PolicyAnswer,
     frame: CurrentIIDDrawFrame,
     holders: BoolND,
@@ -773,6 +785,15 @@ def _check_answer(
     if bool(empty):
         raise NoFeasibleActionError(
             "The final current-period policy has no feasible action."
+        )
+    if queries.landing_checks:
+        totals = run_simulation_operation(
+            memory=memory,
+            function=_query_reached_landing_totals,
+            arguments={"counts": answer[4], "holders": holders},
+        )
+        fail_on_query_landings(
+            totals=totals, checks=queries.landing_checks, phase="simulate"
         )
 
 

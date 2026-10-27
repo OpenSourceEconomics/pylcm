@@ -559,6 +559,9 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
             ),
         }
         arguments = decision_arguments(
+            active_subjects=jax.ShapeDtypeStruct(
+                (n_subjects,), jnp.bool_, sharding=subject
+            ),
             current_iid=current_iid_arguments(
                 regime=regime,
                 flat_params=_shared_tree(tree=flat_params, devices=devices),
