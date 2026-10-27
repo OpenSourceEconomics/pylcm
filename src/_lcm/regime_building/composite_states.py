@@ -97,6 +97,9 @@ class CompositeLowering:
     member_labels: tuple[tuple[str, ...], ...]
     """Category labels of every member, in code order."""
 
+    member_grids: Mapping[RegimeName, Mapping[StateName, DiscreteGrid]]
+    """Original member grids of every carrier regime."""
+
     @property
     def labels(self) -> tuple[str, ...]:
         """Category labels of the composite codes, in code order."""
@@ -194,6 +197,20 @@ def lower_composite_states(
         encoding=encoding,
         carriers=carriers,
         member_labels=tuple(tuple(grid.categories) for grid in member_grids),
+        member_grids=MappingProxyType(
+            {
+                regime_name: MappingProxyType(
+                    {
+                        member: grid
+                        for member in members
+                        if isinstance(
+                            grid := regimes[regime_name].states[member], DiscreteGrid
+                        )
+                    }
+                )
+                for regime_name in carriers
+            }
+        ),
     )
     grid = DiscreteGrid(_category_class(name=name, n_codes=len(codes)))
     period_masks = _period_masks(

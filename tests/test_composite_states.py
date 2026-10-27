@@ -32,7 +32,11 @@ from lcm import (
     categorical,
     fixed_transition,
 )
-from lcm.exceptions import InvalidInitialConditionsError, ModelInitializationError
+from lcm.exceptions import (
+    InvalidInitialConditionsError,
+    InvalidSimulationInputError,
+    ModelInitializationError,
+)
 from lcm.regime import ConstraintEntry, StateTransitionEntry
 from lcm.typing import (
     BoolND,
@@ -580,3 +584,44 @@ def test_labelled_start_with_nonzero_member_label_decodes_to_its_code() -> None:
     )
     first = panel[panel["period"] == 0].sort_values("subject_id")
     assert first[list(_MEMBERS)].to_numpy().tolist() == [[1, 0, 0], [0, 0, 0]]
+
+
+@pytest.mark.parametrize("round_trip", [False, True])
+def test_initial_state_grids_expand_composite_members(*, round_trip: bool) -> None:
+    """Initial-condition introspection exposes member grids, never generated codes."""
+    model = _composite()
+    if not round_trip:
+        for declaration in model._composite_states.values():
+            for regime_name in ("alive", "retired"):
+                originals = declaration.member_grids[regime_name]
+                exposed = model.initial_state_grids(regime_name=regime_name)
+                for member in _MEMBERS:
+                    assert exposed[member] is originals[member]
+    if round_trip:
+        model = cloudpickle.loads(cloudpickle.dumps(model))
+    grids = model.initial_state_grids(regime_name="alive")
+    assert set(grids) == {*_MEMBERS, "offer", "wealth"}
+    assert set(model.initial_state_names(regime_name="alive")) == set(grids)
+    for member in _MEMBERS:
+        grid = grids[member]
+        assert isinstance(grid, DiscreteGrid)
+        assert grid.categories == ("zero", "one", "two")
+        assert grid.codes == (0, 1, 2)
+    assert grids["wealth"] is model.user_regimes["alive"].states["wealth"]
+    assert set(model.initial_state_grids(regime_name="retired")) == set(_MEMBERS)
+    assert not model.initial_state_grids(regime_name="dead")
+    with pytest.raises(TypeError):
+        grids["invented"] = grids["wealth"]  # ty: ignore[invalid-assignment]
+    with pytest.raises(InvalidSimulationInputError, match="Unknown regime"):
+        model.initial_state_grids(regime_name="absent")
+
+
+@pytest.mark.parametrize("member", _MEMBERS)
+def test_initial_state_bounds_refuse_a_composite_member_as_discrete(
+    member: StateName,
+) -> None:
+    """A composite member is a discrete initial state without continuous bounds."""
+    with pytest.raises(InvalidSimulationInputError, match="is discrete"):
+        _composite().initial_state_bounds(
+            params=_PARAMS, regime_name="alive", state_name=member
+        )

@@ -4322,7 +4322,10 @@ class Model:
                 process is given either by its physical shocks, as
                 `initial_state_names` lists them, or by its complete set of
                 internal coordinates, as `state_names` lists them, whose nodes
-                `state_grid` returns; one process cannot mix the two.
+                `state_grid` returns; one process cannot mix the two. A
+                composite state is given by its generated code under the name
+                `state_names` lists, not by the members `initial_state_names`
+                lists.
             action_grids: Optional replacement grids for some actions, e.g. a
                 single code of a discrete action to obtain the conditional argmax
                 and value of that branch. Values must lie on the declared grid; a
@@ -4762,11 +4765,36 @@ class Model:
             call_roots=(states, space.states, grids, outputs),
         )
 
+    def initial_state_grids(
+        self, *, regime_name: RegimeName
+    ) -> MappingProxyType[StateName, StateEntry]:
+        """Return immutable public state declarations for initial-condition recipes.
+
+        Composite states expose their original member grids instead of the
+        generated code grid. Other declarations retain their finalized user
+        form, including `Phased` and joint-normal coordinates. This is not
+        a mapping of value-array axes: use `state_names` and `state_grid` for
+        those, and `initial_state_names` for physical per-subject names.
+        """
+        regime = self.user_regimes.get(regime_name)
+        if regime is None:
+            raise InvalidSimulationInputError(
+                f"Unknown regime {regime_name!r}; known: {tuple(self.user_regimes)}."
+            )
+        grids = dict(regime.states)
+        for name, lowering in self._composite_states.items():
+            if name not in grids:
+                continue
+            grids.pop(name)
+            grids.update(lowering.member_grids[regime_name])
+        return MappingProxyType(grids)
+
     def initial_state_names(self, *, regime_name: RegimeName) -> tuple[StateName, ...]:
         """Return physical per-subject state names for initial observations.
 
         Includes folded and carried states. Joint-normal coordinates are replaced
-        by their declared physical names; value-array axes remain `state_names`.
+        by their declared physical names and composite codes by their members;
+        value-array axes remain `state_names`.
         """
         regime = self._regimes.get(regime_name)
         if regime is None:
@@ -4774,6 +4802,10 @@ class Model:
                 f"Unknown regime {regime_name!r}; known: {tuple(self._regimes)}."
             )
         names = dict.fromkeys(regime.simulation.state_names)
+        for name, lowering in self._composite_states.items():
+            if name in names:
+                names.pop(name)
+                names.update(dict.fromkeys(lowering.members))
         for group, process in joint_normal_declarations(
             regime.simulation.grids
         ).items():
@@ -4830,8 +4862,9 @@ class Model:
                 )
                 row = np.asarray(bounds)[process.states.index(state_name)]
                 return float(row[0]), float(row[1])
-        grid = regime.simulation.grids[state_name]
-        if isinstance(grid, DiscreteGrid):
+        # Composite members have no engine grid of their own and are discrete.
+        grid = regime.simulation.grids.get(state_name)
+        if grid is None or isinstance(grid, DiscreteGrid):
             raise InvalidSimulationInputError(
                 f"State {state_name!r} is discrete; continuous bounds do not apply."
             )
