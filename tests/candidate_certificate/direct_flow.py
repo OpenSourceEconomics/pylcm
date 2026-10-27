@@ -758,7 +758,7 @@ _SOURCE_SEALS = {
     "src/_lcm/egm/nbegm_step.py": "4f090c19c2bda06f9c9fc6211fc827bf5de374dd8a6b48e4f6d2ddfbe9dfab35",
     "src/_lcm/egm/nbegm_segments.py": "658a74ca40e3da1c025c3d03e0f8bf695feb45953113521a4700f2c1d1890505",
     "src/_lcm/egm/framed_arithmetic.py": "f4b1fa68cc765fc1450222f7370256306d22b92a6488b40c3575e98f44e43877",
-    "src/_lcm/egm/ez_kernel.py": "568caa5183613de012ae4c7b433b5bf058d5594ef3d5263963c25f2b7302c269",
+    "src/_lcm/egm/ez_kernel.py": "aef102b6dbc73efae7e103e34597948e8e354f3195a33383973bfbd0da112a72",
     "src/_lcm/power_mean.py": "086086b45dc8663ee56c32a77ccc361a7a5e688ce24985f8434585164f34313b",
     "src/_lcm/simulation/random_address.py": "17f60140770dbd144c57cfd3daccb76a88196acd9e681f2abff8c2eefb37a913",
     "src/lcm/shocks.py": "9a8c5a9d198cff657958d4c516626dd9d44612b7b808182e7498085d27247176",
@@ -2955,7 +2955,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         {},
     ),
     "src/_lcm/egm/ez_kernel.py": (
-        "13b3e1de73ce17cb921a590ed62198b4f97b10cd87579d9bc861fecbe0cb7d15",
+        "56dadb97c4fbf48c2dd1def35ed0a104250ed1f0e6fa8bf0856260a12da6e426",
         {
             "ez_consumption_from_euler": "085242c1acc653e5624001827643fa5acf67f0624be144d50acafb2b0328899e",
             "ez_marginal_of_resource": "3eb273105d066cafbb7a1be233af83065c6a42aea37ca60ad3d8572651b3b6cf",

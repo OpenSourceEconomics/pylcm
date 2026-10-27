@@ -695,6 +695,19 @@ branches return only consumed associated channels; unused query metadata stays i
 the original branch solve. Their numeric record annotations permit the actual leading
 mapped axes.
 
+The NB recursion now retains the missing exponent direction at unit risk aversion:
+`dCE/dp = CE * Var(log(value)) / 2` for power exponent `p = 1 - risk_aversion`. The
+continuation kernel reuses the scaled pair variance and supports first-order reverse
+mode for this correction. Its original primal and non-unit-risk derivative remain
+unchanged. A nonzero coefficient outside the retained normal finite range refuses this
+scoped derivative class; rare-event cases with a finite final direction remain required.
+
+Native first-order parameter directions follow the represented winning affine segment,
+including its moving endpoints. The model controls retain the separate continuous
+optimum reference and check the original represented derivative. The native kernel's
+forward-only AD contract remains unchanged. Default-retention archive replay also
+reacquires the original model authority before reading recursive child carries.
+
 An ordinary scalar DC parent can now consume the admitted NB passive child's exact
 liquid demands. The producer inserts each demand into every actual passive row; the
 consumer uses the original passive landing law and stencil on the stored values and
