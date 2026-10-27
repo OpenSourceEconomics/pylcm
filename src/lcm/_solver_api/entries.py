@@ -8,6 +8,7 @@ import jax
 import numpy as np
 import numpy.typing as npt
 
+from _lcm.dtypes import CanonicalArrayWriter
 from lcm._solver_api.authority import (
     ArtifactAuthority,
     _ArrayCopier,
@@ -21,6 +22,7 @@ from lcm._solver_api.identity import (
     ArtifactPayload,
     LoadState,
 )
+from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import FloatND
 
 # One numerical solution value: a device or host array, a NumPy scalar, or a real
@@ -82,8 +84,14 @@ class _LazyEntry(ABC):
         self,
         *,
         template_snapshot: _CanonicalArtifactTemplate,
+        array_writer: CanonicalArrayWriter | None = None,
+        array_copier: _ArrayCopier | None = None,
     ) -> ArtifactPayload:
         """Fallback for lazy implementations that only consume a template object."""
+        if array_writer is not None or array_copier is not None:
+            raise ExecutionPlanningError(
+                "This lazy entry has no owned artifact materialization route."
+            )
         if type(template_snapshot) is not _CanonicalArtifactTemplate:
             raise TypeError("Lazy materialization requires an exact template snapshot.")
         template = _reconstruct_artifact_from_template_snapshot(
@@ -98,14 +106,36 @@ def _materialize_entry(
     entry: _LazyEntry | ArtifactPayload,
     template: ArtifactPayload | None = None,
     template_snapshot: _CanonicalArtifactTemplate | None = None,
+    array_writer: CanonicalArrayWriter | None = None,
+    array_copier: _ArrayCopier | None = None,
 ) -> ArtifactPayload:
     """Materialize an internal lazy entry while leaving eager objects untouched."""
+    if array_writer is not None and array_copier is None:
+        raise ExecutionPlanningError(
+            "Owned artifact uploads require their admitted detached-copy owner."
+        )
     if isinstance(entry, _LazyEntry):
         if template is not None and template_snapshot is not None:
             raise TypeError("Supply a template or a template snapshot, not both.")
         if template_snapshot is not None:
+            if array_writer is None and array_copier is None:
+                return entry.materialize_from_template_snapshot(
+                    template_snapshot=template_snapshot
+                )
+            from _lcm.persistence.solution import _LazyHdf5Entry  # noqa: PLC0415
+
+            if type(entry) not in {_CanonicalArtifactEntry, _LazyHdf5Entry}:
+                raise ExecutionPlanningError(
+                    "Owned artifact loading requires an exact built-in entry."
+                )
             return entry.materialize_from_template_snapshot(
-                template_snapshot=template_snapshot
+                template_snapshot=template_snapshot,
+                array_writer=array_writer,
+                array_copier=array_copier,
+            )
+        if array_writer is not None or array_copier is not None:
+            raise ExecutionPlanningError(
+                "Owned artifact loading requires its original template snapshot."
             )
         return entry.materialize(template=template)
     return entry
@@ -127,8 +157,11 @@ class _CanonicalArtifactEntry(_LazyEntry):
         self,
         *,
         template_snapshot: _CanonicalArtifactTemplate,
+        array_writer: CanonicalArrayWriter | None = None,
+        array_copier: _ArrayCopier | None = None,
     ) -> ArtifactPayload:
         """Copy private buffers and reconstruct without a plugin callback."""
+        del array_writer  # Source leaves are already validated JAX arrays.
         if type(template_snapshot) is not _CanonicalArtifactTemplate:
             raise TypeError("Owned artifact reconstruction requires an exact snapshot.")
         if template_snapshot.leaf_paths != self.plan_snapshot.leaf_paths:
@@ -149,6 +182,7 @@ class _CanonicalArtifactEntry(_LazyEntry):
                 _copy_artifact_array_leaf(
                     leaf=leaf,
                     label=f"Owned artifact leaf {index}",
+                    array_copier=array_copier,
                 )
             )
         return _reconstruct_artifact_from_template_snapshot(
@@ -167,11 +201,17 @@ class _CanonicalArtifactEntry(_LazyEntry):
         self,
         *,
         template_snapshot: _CanonicalArtifactTemplate,
+        array_writer: CanonicalArrayWriter | None = None,
+        array_copier: _ArrayCopier | None = None,
     ) -> ArtifactPayload:
         """Return a fresh graph through the current model-authoritative plan."""
         if type(template_snapshot) is not _CanonicalArtifactTemplate:
             raise TypeError("Owned artifact reconstruction requires an exact snapshot.")
-        return self._fresh(template_snapshot=template_snapshot)
+        return self._fresh(
+            template_snapshot=template_snapshot,
+            array_writer=array_writer,
+            array_copier=array_copier,
+        )
 
 
 def _canonical_artifact_entry_from_authority(
@@ -179,6 +219,8 @@ def _canonical_artifact_entry_from_authority(
     payload: ArtifactPayload,
     authority: ArtifactAuthority,
     borrow: bool = False,
+    array_writer: CanonicalArrayWriter | None = None,
+    array_copier: _ArrayCopier | None = None,
 ) -> _CanonicalArtifactEntry:
     """Detach one eager artifact before any other result callback may run.
 
@@ -189,8 +231,12 @@ def _canonical_artifact_entry_from_authority(
         payload=payload,
         authority=authority,
         borrow=borrow,
+        array_writer=array_writer,
+        array_copier=array_copier,
     )
-    plan_snapshot = _artifact_authority_template_snapshot(authority)
+    plan_snapshot = _artifact_authority_template_snapshot(
+        authority, array_copier=array_copier
+    )
     if plan_snapshot is None:
         raise TypeError("Model authority supplies no artifact reconstruction plan.")
     private_leaves = (
@@ -200,6 +246,7 @@ def _canonical_artifact_entry_from_authority(
             _copy_artifact_array_leaf(
                 leaf=leaf,
                 label=f"Owned artifact private leaf {index}",
+                array_copier=array_copier,
             )
             for index, leaf in enumerate(canonical.leaves)
         )

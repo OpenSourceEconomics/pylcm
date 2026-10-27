@@ -21,6 +21,7 @@ import jax
 import numpy as np
 from beartype import beartype
 
+from _lcm.dtypes import CanonicalArrayWriter
 from lcm._solver_api.beartype_conf import SOLVER_API_CONF
 from lcm._solver_api.contract import (
     _artifact_static_metadata_field_names,
@@ -470,8 +471,11 @@ def _bind_artifact_authority_template(
         _ARTIFACT_AUTHORITY_TEMPLATE_BINDINGS[identity] = binding
 
 
+# keyword-only-exempt: primary-argument=authority
 def _artifact_authority_template_snapshot(
     authority: ArtifactAuthority,
+    *,
+    array_copier: _ArrayCopier | None = None,
 ) -> _CanonicalArtifactTemplate | None:
     """Return a detached declaration from one identity-bound private snapshot."""
     if type(authority) is not ArtifactAuthority:
@@ -533,6 +537,7 @@ def _artifact_authority_template_snapshot(
         payload_runtime_type=payload_runtime_type,
         containers=containers,
         leaves=leaves,
+        array_copier=array_copier,
     )
 
 
@@ -2190,20 +2195,31 @@ def _canonicalize_declared_template(
 
 
 def _canonicalize_artifact_payload_snapshot(  # noqa: C901
-    *, payload: ArtifactPayload, authority: ArtifactAuthority, borrow: bool = False
+    *,
+    payload: ArtifactPayload,
+    authority: ArtifactAuthority,
+    borrow: bool = False,
+    array_writer: CanonicalArrayWriter | None = None,
+    array_copier: _ArrayCopier | None = None,
 ) -> _CanonicalArtifactPayload:
     """Canonicalize one payload once and retain the exact validated leaves.
 
     The leaves are copied into private buffers unless `borrow` is set, which an
     engine caller uses for buffers it allocated itself and nobody else holds.
     """
+    if array_writer is not None and array_copier is None:
+        raise ExecutionPlanningError(
+            "Owned artifact uploads require their admitted detached-copy owner."
+        )
     expected_type = authority.payload_runtime_type
     if not _payload_has_runtime_type(payload=payload, expected=expected_type):
         raise TypeError(
             f"payload type is {type(payload).__name__!r}; expected exact "
             f"{expected_type.__name__!r}"
         )
-    template_snapshot = _artifact_authority_template_snapshot(authority)
+    template_snapshot = _artifact_authority_template_snapshot(
+        authority, array_copier=array_copier
+    )
     if template_snapshot is None:
         raise TypeError("model authority supplies no canonical PyTree template")
 
@@ -2218,6 +2234,7 @@ def _canonicalize_artifact_payload_snapshot(  # noqa: C901
         payload_runtime_type=authority.payload_runtime_type,
         containers=authority.container_runtime_types,
         leaves=authority.leaves,
+        array_copier=array_copier,
     )
     supplied_leaves = _artifact_leaf_values_from_plan(
         payload=payload,
@@ -2259,7 +2276,21 @@ def _canonicalize_artifact_payload_snapshot(  # noqa: C901
             getattr(template, "dtype", None)
         ) != np.dtype(leaf_authority.dtype):
             raise TypeError("model authority template differs from leaf authority")
-        canonical_leaf = jax.numpy.asarray(array)
+        if (
+            array_copier is not None
+            and array_writer is None
+            and not isinstance(array, jax.Array)
+        ):
+            raise ExecutionPlanningError(
+                "Owned artifact host leaves require their admitted upload writer."
+            )
+        canonical_leaf = (
+            jax.numpy.asarray(array)
+            if array_writer is None or isinstance(array, jax.Array)
+            else array_writer(
+                value=array, dtype=np.dtype(array.dtype), name=f"artifact:{path!r}"
+            )
+        )
         if tuple(canonical_leaf.shape) != leaf_authority.shape or np.dtype(
             canonical_leaf.dtype
         ) != np.dtype(leaf_authority.dtype):
@@ -2272,6 +2303,7 @@ def _canonicalize_artifact_payload_snapshot(  # noqa: C901
             else _copy_artifact_array_leaf(
                 leaf=canonical_leaf,
                 label=f"Artifact payload leaf {path!r}",
+                array_copier=array_copier,
             )
         )
 
@@ -2299,10 +2331,16 @@ def _canonicalize_artifact_payload_snapshot(  # noqa: C901
 
 
 def _canonicalize_artifact_payload(
-    *, payload: ArtifactPayload, authority: ArtifactAuthority
+    *,
+    payload: ArtifactPayload,
+    authority: ArtifactAuthority,
+    array_writer: CanonicalArrayWriter | None = None,
+    array_copier: _ArrayCopier | None = None,
 ) -> ArtifactPayload:
     """Copy one payload into its model-built exact PyTree and leaf representation."""
     return _canonicalize_artifact_payload_snapshot(
         payload=payload,
         authority=authority,
+        array_writer=array_writer,
+        array_copier=array_copier,
     ).payload

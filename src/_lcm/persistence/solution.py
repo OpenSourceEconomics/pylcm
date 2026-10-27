@@ -322,6 +322,8 @@ class _LazyHdf5Entry(_LazyEntry):
         self,
         *,
         template_snapshot: _CanonicalArtifactTemplate,
+        array_writer: CanonicalArrayWriter | None = None,
+        array_copier: _ArrayCopier | None = None,
     ) -> ArtifactPayload:
         """Load a PyTree directly from its model-authoritative cached declaration."""
         if type(template_snapshot) is not _CanonicalArtifactTemplate:
@@ -329,6 +331,8 @@ class _LazyHdf5Entry(_LazyEntry):
         return self._materialize(
             template=None,
             template_snapshot=template_snapshot,
+            array_writer=array_writer,
+            array_copier=array_copier,
         )
 
     def _materialize(  # noqa: C901
@@ -345,11 +349,15 @@ class _LazyHdf5Entry(_LazyEntry):
         lock across callbacks, never a cache peek/publication lock, so concurrent
         entries cannot invert observation locks. Dependencies remain call-local.
         """
-        if (
-            array_writer is not None or array_copier is not None
-        ) and self.payload_kind != "array":
+        if self.payload_kind != "array" and (
+            (
+                (array_writer is not None or array_copier is not None)
+                and template_snapshot is None
+            )
+            or ((array_writer is None) != (array_copier is None))
+        ):
             raise TypeError(
-                "Admitted native materialization only supports value arrays."
+                "Owned PyTree loading requires the original snapshot and paired owners."
             )
         if template is not None and template_snapshot is not None:
             raise TypeError("Supply a template or a template snapshot, not both.")
@@ -442,6 +450,7 @@ class _LazyHdf5Entry(_LazyEntry):
             _copy_artifact_array_leaf(
                 leaf=leaf,
                 label=f"{self.label} leaf {index}",
+                array_copier=array_copier,
             )
             for index, leaf in enumerate(cached.leaves)
         )

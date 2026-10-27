@@ -16,6 +16,7 @@ import pytest
 
 import lcm.model as model_module
 from _lcm.continuation import ProjectedContinuationSpec
+from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.current_iid_balanced import (
     BalancedProjectedEGMCarry,
     BalancedResourcesProgram,
@@ -46,7 +47,7 @@ from lcm.exceptions import (
 from lcm.model import _ModelConstructorInputs
 from lcm.persistence import load_solution
 from lcm.shocks import Normal, ShockGroup, UserNodes
-from lcm.solver_api import ArtifactRef, PersistencePolicy
+from lcm.solver_api import ArtifactRef, PersistencePolicy, ResultRetention
 from lcm.solvers import DCEGM, ExactEnvelope
 from lcm.typing import ContinuousState, FloatND, UserParams
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
@@ -788,3 +789,87 @@ def test_public_prepared_bad_params_and_capacity_refuse_before_factories(
             )
         )
     assert calls == []
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_public_budgeted_case_r_archive_receiver_preserves_original_delivery(
+    *, tmp_path: Path
+) -> None:
+    """A fresh budgeted public receiver owns the original default Case-R archive."""
+    declarations = _declarations()
+    params = _params()
+    producer = _public_model_from_declarations(declarations=declarations)
+    result = producer.solve(
+        params=params, log_level="warning", max_compilation_workers=1
+    )
+    assert result.metadata.retention is ResultRetention.VALUES_AND_REPLAY
+    view = result._engine_view
+    assert isinstance(view, OwnedSolutionView)
+    producing_generation = view.generation
+    assert producing_generation is not None
+    child_value = np.asarray(view.values[1]["child"])
+    wealth = np.asarray([1.0, 12.5], dtype=child_value.dtype)
+    expected = np.log(wealth / 2.0) + np.log((wealth + 1.0) / 2.0)
+    tolerance = 64 * np.finfo(child_value.dtype).eps
+    np.testing.assert_allclose(child_value, expected, rtol=tolerance, atol=tolerance)
+    initial_conditions = {
+        "regime_id": np.array([0]),
+        "age": np.array([0]),
+        "wealth": np.asarray([4.0], dtype=canonical_float_dtype()),
+    }
+    frame = producer.simulate(
+        params=params,
+        solution=result,
+        seed=19,
+        log_level="warning",
+        initial_conditions=initial_conditions,
+    )
+    parent_actions = np.asarray([0.25, 2.0], dtype=canonical_float_dtype())
+    child_landings = 2.0 * (4.0 - parent_actions) + 0.5
+    grid_scores = (
+        np.log(parent_actions)
+        + np.log(child_landings / 2.0)
+        + np.log((child_landings + 1.0) / 2.0)
+    )
+    winner = int(np.argmax(grid_scores))
+    assert grid_scores[winner] > grid_scores[1 - winner]
+    np.testing.assert_array_equal(
+        frame.raw_results["parent"][0].actions["consumption"],
+        parent_actions[winner : winner + 1],
+    )
+    np.testing.assert_array_equal(
+        frame.raw_results["child"][1].states["wealth"],
+        child_landings[winner : winner + 1],
+    )
+    expected_frame = frame.to_dataframe()
+    assert not expected_frame.empty
+    path = tmp_path / "budgeted-case-r-delivery.lcm"
+    result.save(path=path)
+    loaded = load_solution(path=path)
+    assert loaded._engine_view is None
+    receiver = _public_model_from_declarations(
+        declarations=replace(
+            declarations,
+            execution_config=ExecutionConfig(device_memory_bytes=1 << 28),
+        )
+    )
+    replay = receiver.simulate(
+        params=params,
+        solution=loaded,
+        seed=19,
+        log_level="warning",
+        initial_conditions=initial_conditions,
+    )
+    pd.testing.assert_frame_equal(
+        replay.to_dataframe(), expected_frame, check_exact=True
+    )
+    (receiving_generation,) = tuple(receiver._generation_cache._cached.values())
+    assert receiving_generation is not producing_generation
+    assert receiving_generation.key == producing_generation.key
+    assert receiving_generation.execution is not receiver
+    actual = receiving_generation.solver_preparation(regime_name="child", period=1)
+    actual.validate_owner()
+    reader = receiving_generation.execution._regimes[
+        "parent"
+    ].simulation.projected_forward_readers_by_period[0]["child"]
+    assert reader.date is actual.declarations["child"].date_at(period=1)

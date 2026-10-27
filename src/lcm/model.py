@@ -313,6 +313,7 @@ from _lcm.solution.model_authority import (
     bind_declared_solution_authority,
     bind_generated_solution_authority,
     snapshot_solution_authority,
+    supports_owned_case_r_artifacts,
 )
 from _lcm.solution.model_seal import BindingRecorder, SealedBindings
 from _lcm.solution.native_values import NativeValueMaterializer
@@ -692,6 +693,7 @@ def _materialize_artifact_projection(
     authority: SolutionAuthority,
     required_only: bool = False,
     array_copier: _ArrayCopier | None = None,
+    array_writer: SimulationEntryAllocations | None = None,
 ) -> MappingProxyType[int, MappingProxyType[RegimeName, ArtifactPayload]]:
     """Materialize one consumed replay projection into an immutable snapshot."""
     projected: dict[int, dict[RegimeName, ArtifactPayload]] = {}
@@ -709,8 +711,11 @@ def _materialize_artifact_projection(
             materialized = store._materialize_from_template_snapshot(  # noqa: SLF001
                 ref,
                 template_snapshot=snapshot_artifact_template_declaration(
-                    artifact_authority
+                    artifact_authority,
+                    array_copier=array_copier,
                 ),
+                array_writer=array_writer,
+                array_copier=array_copier,
             )
             if key == SIMULATION_POLICY:
                 payload_defect = _built_in_policy_payload_defect(
@@ -725,23 +730,14 @@ def _materialize_artifact_projection(
             canonical = _canonicalize_artifact_payload(
                 payload=materialized,
                 authority=artifact_authority,
+                array_writer=array_writer,
+                array_copier=array_copier,
             )
         except (TypeError, ValueError) as error:
             raise InvalidSimulationInputError(
                 f"Artifact {ref!r} mismatched_payload: cannot be canonicalized: {error}"
             ) from error
         projected.setdefault(ref.period, {})[ref.regime] = canonical
-        if array_copier is not None:
-            label = f"artifact {ref.period}/{ref.regime}/{ref.key.type_id}"
-
-            projected[ref.period][ref.regime] = jax.tree.map(
-                lambda leaf, label=label: (
-                    array_copier(leaf=leaf, label=label)
-                    if isinstance(leaf, jax.Array)
-                    else leaf
-                ),
-                canonical,
-            )
     return MappingProxyType(
         {
             period: MappingProxyType(regime_to_payload)
@@ -2997,6 +2993,7 @@ class Model:
         *,
         flat_params: FlatParams,
         process_grid_resolver: ProcessGridResolver | None = None,
+        validation_materializer: SimulationEntryAllocations | None = None,
     ) -> SolutionAuthority:
         """Return the model-owned solution authority for these parameters.
 
@@ -3008,9 +3005,14 @@ class Model:
         return self._acquire_generation(
             flat_params=flat_params,
             process_grid_resolver=process_grid_resolver,
+            array_writer=validation_materializer,
         ).declared_authority(
             flat_params=flat_params,
             process_grid_resolver=process_grid_resolver,
+            materializer=validation_materializer,
+            array_copier=None
+            if validation_materializer is None
+            else validation_materializer.copy_solution_leaf,
         )
 
     def _params_fingerprint(self, *, flat_params: FlatParams) -> str:
@@ -3528,6 +3530,7 @@ class Model:
             retention=retention,
             process_grid_resolver=process_grid_resolver,
             call_id=call_id,
+            validation_materializer=validation_materializer,
         )
         if self._solves_block_major:
             retained = self._component_schedule(
@@ -3595,6 +3598,7 @@ class Model:
         retention: ResultRetention,
         process_grid_resolver: ProcessGridResolver | None,
         call_id: CallId | None,
+        validation_materializer: SimulationEntryAllocations | None = None,
     ) -> _SolutionPreparation:
         """Resolve the authority and identities one solve's result is bound to."""
         with solve_phase(name="authority_fingerprint", logger=log, call_id=call_id):
@@ -3607,7 +3611,12 @@ class Model:
                 raise RuntimeError("Solution preparation received different programs.")
             generation.execution._check_identity_runtime()  # noqa: SLF001 - canonical generation owns this private lifecycle handoff
             declared_authority = generation.declared_authority(
-                flat_params=flat_params, process_grid_resolver=process_grid_resolver
+                flat_params=flat_params,
+                process_grid_resolver=process_grid_resolver,
+                materializer=validation_materializer,
+                array_copier=None
+                if validation_materializer is None
+                else validation_materializer.copy_solution_leaf,
             )
             retain_all_persistable = (
                 retention is ResultRetention.ALL_PERSISTABLE_ARTIFACTS
@@ -4015,6 +4024,7 @@ class Model:
                 flat_params=flat_params,
                 expected_fingerprint=expected_fingerprint,
                 process_grid_resolver=process_grid_resolver,
+                validation_materializer=entry_allocations,
             )
         else:
             try:
@@ -4028,6 +4038,7 @@ class Model:
                         array_copier=entry_allocations.copy_solution_leaf,
                     ),
                     process_grid_resolver=process_grid_resolver,
+                    validation_materializer=entry_allocations,
                 )
                 entry_allocations.update_solution(
                     solution=solution,
@@ -4096,6 +4107,7 @@ class Model:
         array_copier: _ArrayCopier | None = None,
         native_values: NativeValueMaterializer | None = None,
         process_grid_resolver: ProcessGridResolver | None = None,
+        validation_materializer: SimulationEntryAllocations | None = None,
     ) -> _ResolvedSolution:
         """Copy and validate a result from elsewhere against model authority."""
         if array_copier is not None:
@@ -4107,6 +4119,8 @@ class Model:
                         key != DISSOLUTION_FLAG
                         for key in regime.solution.artifact_authorities
                     )
+                ) and not supports_owned_case_r_artifacts(
+                    regime=regime, regime_name=regime_name
                 ):
                     raise ExecutionPlanningError(
                         f"Budgeted foreign solution for regime {regime_name!r} "
@@ -4127,12 +4141,14 @@ class Model:
             array_copier=array_copier,
             native_values=native_values,
             process_grid_resolver=process_grid_resolver,
+            validation_materializer=validation_materializer,
         )
         policies, dissolution_flags = self._check_solution_result_artifacts(
             solution=solution,
             authority=authority,
             values=values,
             array_copier=array_copier,
+            validation_materializer=validation_materializer,
         )
 
         replay_store = solution.replay_artifacts
@@ -4142,11 +4158,17 @@ class Model:
         ) -> ArtifactPayload:
             materialized = replay_store._materialize_from_template_snapshot(  # noqa: SLF001
                 ref,
-                template_snapshot=snapshot_artifact_template_declaration(authority),
+                template_snapshot=snapshot_artifact_template_declaration(
+                    authority, array_copier=array_copier
+                ),
+                array_writer=validation_materializer,
+                array_copier=array_copier,
             )
             return _canonicalize_artifact_payload(
                 payload=materialized,
                 authority=authority,
+                array_writer=validation_materializer,
+                array_copier=array_copier,
             )
 
         external_readers = self._build_external_replay_readers(
@@ -4163,10 +4185,16 @@ class Model:
             dissolution_flags,
             external_readers,
             self._build_current_iid_replay_inputs(
-                authority=authority, replay_payload=validated_payload
+                authority=authority,
+                replay_payload=validated_payload,
+                array_writer=validation_materializer,
+                array_copier=array_copier,
             ),
             self._build_projected_forward_inputs(
-                solution=solution, authority=authority
+                solution=solution,
+                authority=authority,
+                array_writer=validation_materializer,
+                array_copier=array_copier,
             ),
         )
 
@@ -4180,6 +4208,7 @@ class Model:
         array_copier: _ArrayCopier | None = None,
         native_values: NativeValueMaterializer | None = None,
         process_grid_resolver: ProcessGridResolver | None = None,
+        validation_materializer: SimulationEntryAllocations | None = None,
     ) -> tuple[
         SolutionAuthority,
         PeriodToRegimeToVArr,
@@ -4194,7 +4223,9 @@ class Model:
             ),
         )
         declared_authority = self._declared_solution_authority(
-            flat_params=flat_params, process_grid_resolver=process_grid_resolver
+            flat_params=flat_params,
+            process_grid_resolver=process_grid_resolver,
+            validation_materializer=validation_materializer,
         )
         try:
             authority = snapshot_solution_authority(
@@ -4203,7 +4234,9 @@ class Model:
                     artifact_descriptors=metadata.artifact_descriptors,
                     regimes=self._regimes,
                     flat_params=flat_params,
-                )
+                    array_copier=array_copier,
+                ),
+                array_copier=array_copier,
             )
         except (BeartypeCallHintViolation, TypeError, ValueError) as error:
             raise InvalidSimulationInputError(
@@ -4272,18 +4305,26 @@ class Model:
                 retained_continuations=snapshot_artifact_store(
                     store=solution.retained_continuations,
                     authorities=authority.artifacts,
+                    array_writer=validation_materializer,
+                    array_copier=array_copier,
                 ),
                 replay_artifacts=snapshot_artifact_store(
                     store=solution.replay_artifacts,
                     authorities=authority.artifacts,
+                    array_writer=validation_materializer,
+                    array_copier=array_copier,
                 ),
                 auxiliary_artifacts=snapshot_artifact_store(
                     store=solution.auxiliary_artifacts,
                     authorities=authority.artifacts,
+                    array_writer=validation_materializer,
+                    array_copier=array_copier,
                 ),
                 diagnostics=snapshot_artifact_store(
                     store=solution.diagnostics,
                     authorities=authority.artifacts,
+                    array_writer=validation_materializer,
+                    array_copier=array_copier,
                 ),
                 omissions=solution.omissions,
             )
@@ -4780,6 +4821,7 @@ class Model:
         authority: SolutionAuthority,
         values: PeriodToRegimeToVArr,
         array_copier: _ArrayCopier | None = None,
+        validation_materializer: SimulationEntryAllocations | None = None,
     ) -> tuple[
         PeriodToRegimeToSimulationPolicy,
         PeriodToRegimeToDissolutionFlags,
@@ -4789,6 +4831,8 @@ class Model:
             store=solution.replay_artifacts,
             key=SIMULATION_POLICY,
             authority=authority,
+            array_writer=validation_materializer,
+            array_copier=array_copier,
         )
         dissolution_flags = _materialize_artifact_projection(
             store=solution.replay_artifacts,
@@ -4796,6 +4840,7 @@ class Model:
             authority=authority,
             required_only=True,
             array_copier=array_copier,
+            array_writer=validation_materializer,
         )
         self._check_solution_result_replay_policies(
             solution=solution,
@@ -4814,7 +4859,12 @@ class Model:
         )
 
     def _build_projected_forward_inputs(
-        self, *, solution: _SolutionResultBoundary, authority: SolutionAuthority
+        self,
+        *,
+        solution: _SolutionResultBoundary,
+        authority: SolutionAuthority,
+        array_writer: SimulationEntryAllocations | None = None,
+        array_copier: _ArrayCopier | None = None,
     ) -> ProjectedForwardInputs:
         """Authenticate demanded actual stored carries before any forward profile."""
         from _lcm.continuation import ProjectedContinuationSpec  # noqa: PLC0415
@@ -4874,11 +4924,17 @@ class Model:
                     payload = store._materialize_from_template_snapshot(  # noqa: SLF001
                         ref,
                         template_snapshot=snapshot_artifact_template_declaration(
-                            declared
+                            declared,
+                            array_copier=array_copier,
                         ),
+                        array_writer=array_writer,
+                        array_copier=array_copier,
                     )
                     payload = _canonicalize_artifact_payload(
-                        payload=payload, authority=declared
+                        payload=payload,
+                        authority=declared,
+                        array_writer=array_writer,
+                        array_copier=array_copier,
                     )
                     if not isinstance(payload, ProjectedEGMCarry):
                         raise InvalidSimulationInputError(
@@ -4898,7 +4954,12 @@ class Model:
         )
 
     def _build_current_iid_replay_inputs(
-        self, *, authority: SolutionAuthority, replay_payload: _ReplayPayloadSource
+        self,
+        *,
+        authority: SolutionAuthority,
+        replay_payload: _ReplayPayloadSource,
+        array_writer: SimulationEntryAllocations | None = None,
+        array_copier: _ArrayCopier | None = None,
     ) -> CurrentIIDReplayInputs:
         """Resolve original row artifacts after model/parameter authentication."""
         from _lcm.egm.current_iid_resources_artifact import (  # noqa: PLC0415
@@ -4939,6 +5000,8 @@ class Model:
                 payload = _canonicalize_artifact_payload(
                     payload=replay_payload(ref=ref, authority=declared),
                     authority=declared,
+                    array_writer=array_writer,
+                    array_copier=array_copier,
                 )
                 if type(payload) is not tuple:
                     raise InvalidSimulationInputError(
@@ -5747,6 +5810,7 @@ class Model:
                     retention=ResultRetention.VALUES_AND_REPLAY,
                     process_grid_resolver=process_grid_resolver,
                     call_id=call_id,
+                    validation_materializer=entry_allocations,
                 )
                 component_values = SolvingComponentValues(
                     schedule=self._component_schedule(

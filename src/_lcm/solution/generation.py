@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 import jax
 
 from _lcm.grids import DiscreteGrid
+from _lcm.materialization import DatedGenerationMaterializer
 from _lcm.params.edges import flat_namespaces
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.solution.fingerprint import (
@@ -21,7 +22,7 @@ from _lcm.solution.fingerprint import (
     _semantic_fingerprint,
 )
 from _lcm.typing import FlatParams, PytreeValue
-from lcm._solver_api.authority import ArtifactAuthority
+from lcm._solver_api.authority import ArtifactAuthority, _ArrayCopier
 from lcm.exceptions import UnsupportedOperationError
 from lcm.typing import RegimeName
 
@@ -249,6 +250,8 @@ class CanonicalModelGeneration:
         *,
         flat_params: FlatParams,
         process_grid_resolver: ProcessGridResolver | None,
+        materializer: DatedGenerationMaterializer | None = None,
+        array_copier: _ArrayCopier | None = None,
     ) -> SolutionAuthority:
         """Derive authority at its original validation frontier, single-flight."""
         from _lcm.solution.model_authority import (  # noqa: PLC0415 - authority imports artifacts
@@ -263,6 +266,8 @@ class CanonicalModelGeneration:
                         flat_params=flat_params,
                         ages=self.execution._time,  # noqa: SLF001 - canonical generation owns this private lifecycle handoff
                         process_grid_resolver=process_grid_resolver,
+                        materializer=materializer,
+                        array_copier=array_copier,
                     )
                 )
             return self._authority[0]

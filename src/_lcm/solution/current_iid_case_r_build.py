@@ -572,6 +572,9 @@ def build_native_case_r_kernels(
                         template=selection_template,
                         applicable=True,
                         required=False,
+                        array_copier=None
+                        if materializer is None
+                        else materializer.copy_solution_leaf,
                     ),
                 }
                 if retain_node_selection
@@ -592,6 +595,9 @@ def build_native_case_r_kernels(
                 consumer_route=CASE_R_REPLAY_IDENTITY,
                 applicable=True,
                 required=True,
+                array_copier=None
+                if materializer is None
+                else materializer.copy_solution_leaf,
             ),
         },
     )

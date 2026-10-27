@@ -254,12 +254,49 @@ class _RetainedBuffers:
     def collect_reader(self, value: _RetainedValue) -> None:
         """Read built-in future carries and prepared roots without building readers."""
         # Model imports the ownership boundary before simulation readers are complete.
+        from _lcm.egm.current_iid_balanced import (  # noqa: PLC0415
+            BalancedProjectedEGMCarry,
+            BalancedResourcesGuard,
+            ResourcesRegionCatalog,
+        )
         from _lcm.egm.current_iid_case_u_replay import (  # noqa: PLC0415
             CaseUReplayChildren,
             CaseUReplayInput,
         )
+        from _lcm.egm.current_iid_replay import CaseRReplayInput  # noqa: PLC0415
+        from _lcm.egm.step_core import OwnedResourcesRow  # noqa: PLC0415
+        from _lcm.egm.upper_envelope.segment_envelope import (  # noqa: PLC0415
+            OwnedEnvelope,
+        )
         from _lcm.simulation.replay_inputs import PreparedReplayReader  # noqa: PLC0415
+        from _lcm.solution.feasibility import (  # noqa: PLC0415
+            BoundInputStatus,
+            ContinuationReadCounts,
+            QueryInputStatus,
+        )
 
+        if type(value) is CaseRReplayInput:
+            self.collect(value.row)
+            return
+        if type(value) in (
+            OwnedResourcesRow,
+            OwnedEnvelope,
+            BoundInputStatus,
+            QueryInputStatus,
+            ContinuationReadCounts,
+        ):
+            for child in tuple.__iter__(cast("tuple[_RetainedValue, ...]", value)):
+                self.collect(child)
+            return
+        for record_type in (
+            BalancedProjectedEGMCarry,
+            BalancedResourcesGuard,
+            ResourcesRegionCatalog,
+        ):
+            if type(value) is record_type:
+                for descriptor in fields(record_type):
+                    self.collect(object.__getattribute__(value, descriptor.name))
+                return
         if type(value) is CaseUReplayInput:
             self.collect(value.payload)
             return

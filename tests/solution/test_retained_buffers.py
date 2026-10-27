@@ -426,3 +426,136 @@ def test_owned_case_u_children_are_inventoried_without_readers(
     )
     with pytest.raises(ExecutionPlanningError, match="unsupported retained"):
         _buffers(solution)
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+@pytest.mark.parametrize("unknown_child", [False, True])
+def test_consumed_case_r_and_guarded_forward_records_are_callback_free(
+    *, monkeypatch: pytest.MonkeyPatch, unknown_child: bool
+) -> None:
+    """Known records expose original storage without PyTree/public reader callbacks."""
+    from _lcm.egm.current_iid_balanced import (  # noqa: PLC0415
+        BalancedProjectedEGMCarry,
+        BalancedResourcesGuard,
+        ResourcesRegionCatalog,
+    )
+    from _lcm.egm.current_iid_replay import CaseRReplayInput  # noqa: PLC0415
+    from _lcm.egm.current_iid_resources_artifact import (  # noqa: PLC0415
+        resources_row_payload,
+    )
+    from _lcm.egm.step_core import OwnedResourcesRow  # noqa: PLC0415
+    from _lcm.egm.upper_envelope.segment_envelope import (  # noqa: PLC0415
+        OwnedEnvelope,
+    )
+    from _lcm.solution.current_iid_case_r import (  # noqa: PLC0415
+        CASE_R_RESOURCES_REPLAY,
+    )
+    from _lcm.solution.feasibility import (  # noqa: PLC0415
+        BoundInputStatus,
+        ContinuationReadCounts,
+        QueryInputStatus,
+    )
+
+    grid = jnp.asarray([1.0, 2.0, 3.0], dtype=jnp.float32)
+    scalar = jnp.asarray(1.0, dtype=jnp.float32)
+    indices = jnp.asarray([0, 1, 2], dtype=jnp.int32)
+    count = jnp.asarray(3, dtype=jnp.int32)
+    valid = jnp.ones((), dtype=jnp.bool_)
+    links = jnp.asarray([True, True])
+    flags = jnp.asarray([True, True, True])
+    row = OwnedResourcesRow(
+        envelope=OwnedEnvelope(
+            grid=grid,
+            policy=grid,
+            value=grid,
+            n_kept=count,
+            savings=grid,
+            owner_id=indices,
+            side_id=indices,
+            link_valid=links,
+            source_left_index=indices,
+            source_right_index=indices,
+        ),
+        marginal=grid,
+        node_kind=indices,
+        borrowing_limit=scalar,
+        upper_savings=scalar,
+        expected_floor_value=scalar,
+        discount_factor=scalar,
+        discounted_floor_value=scalar,
+        resources_domain=grid[:2],
+        construction_invalid=valid,
+        floor_status=BoundInputStatus(valid, valid),
+        child_status=(QueryInputStatus(valid, valid, valid),),
+        continuation_read_counts=ContinuationReadCounts(count, count),
+    )
+    guard = BalancedResourcesGuard(
+        row_payload=resources_row_payload(row=row),
+        row_layout=(True, 1, True),
+        pool_values=(jnp.asarray(7.0, dtype=jnp.float32),),
+        pool_names=("discount",),
+        physical_values=(jnp.asarray([9.0], dtype=jnp.float32),),
+        physical_names=("offer",),
+        factors=jnp.asarray([0.5], dtype=jnp.float32),
+        law_valid=valid,
+        resources_slope=scalar,
+        catalog=ResourcesRegionCatalog(
+            points=grid,
+            length=count,
+            smooth=links,
+            piece=indices,
+            branch=indices,
+            reason=indices,
+            valid=valid,
+            exact_owner=indices,
+            exact_side=indices,
+            exact_corner=flags,
+            exact_feasible=flags,
+            exact_piece=indices,
+            exact_row_legal=flags,
+        ),
+    )
+    carry = BalancedProjectedEGMCarry(
+        grid=grid,
+        value=grid,
+        economic_marginal=grid,
+        owner_id=indices,
+        side_id=indices,
+        node_kind=indices,
+        link_valid=links,
+        valid_length=count,
+        domain_lower=scalar,
+        domain_upper=scalar,
+        valid=valid,
+        guard=guard,
+    )
+    replay = CaseRReplayInput(
+        regime="child", period=1, key=CASE_R_RESOURCES_REPLAY, row=row
+    )
+    solution = _make_values_only_solution(value=[1.0], dtype="float32")
+    solution._consumed_views[("case-r", "params")] = cast(
+        "_ResolvedSolution",
+        ({}, {}, {}, {}, {1: {"child": replay}}, {1: {"child": carry}}),
+    )
+    expected = (*_backing_values(solution), *jax.tree.leaves((row, carry)))
+    if unknown_child:
+        object.__setattr__(guard, "pool_values", (object(),))
+
+    def forbidden[Ignored](*_args: Ignored, **_kwargs: Ignored) -> Never:
+        raise AssertionError("Retained census called a PyTree or public reader")
+
+    monkeypatch.setattr(jax.tree, "leaves", forbidden)
+    monkeypatch.setattr(jax.tree_util, "tree_flatten", forbidden)
+    monkeypatch.setattr(jax.tree_util, "tree_flatten_with_path", forbidden)
+    monkeypatch.setattr(ArtifactStore, "__getitem__", forbidden)
+    monkeypatch.setattr(ArtifactStore, "materialize", forbidden)
+    monkeypatch.setattr(BalancedProjectedEGMCarry, "leaves", forbidden)
+    with pytest.raises(AssertionError, match="Retained census"):
+        jax.tree.leaves(())
+    if unknown_child:
+        with pytest.raises(ExecutionPlanningError, match="unsupported retained"):
+            _buffers(solution)
+    else:
+        assert {id(array) for array in _buffers(solution)} == {
+            id(array) for array in expected
+        }

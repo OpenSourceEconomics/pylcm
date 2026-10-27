@@ -46,6 +46,7 @@ from _lcm.execution.core_program import (
 )
 from _lcm.execution.output_layout import StateAxesLeading
 from _lcm.grids.discrete import DiscreteGrid
+from _lcm.materialization import DatedGenerationMaterializer
 from _lcm.params.edges import regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.age_normalization import resolve_periodized_nodes
@@ -81,6 +82,7 @@ from _lcm.typing import (
 )
 from lcm._solver_api.authority import _ArrayCopier
 from lcm._solver_api.identity import ArtifactRuntimeType
+from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import (
     DISSOLUTION_FLAG,
     SIMULATION_POLICY,
@@ -170,7 +172,10 @@ class SolutionAuthority:
         return tuple(ref for ref in self.replay if ref.key == key)
 
 
-def snapshot_solution_authority(authority: SolutionAuthority) -> SolutionAuthority:
+# keyword-only-exempt: primary-argument=authority
+def snapshot_solution_authority(
+    authority: SolutionAuthority, *, array_copier: _ArrayCopier | None = None
+) -> SolutionAuthority:
     """Detach every authority wrapper reused after a lazy value callback."""
     if type(authority) is not SolutionAuthority:
         raise TypeError("Solution authority must be exact SolutionAuthority.")
@@ -190,7 +195,9 @@ def snapshot_solution_authority(authority: SolutionAuthority) -> SolutionAuthori
         snapshot_artifact_ref(ref): _snapshot_replay_cell_descriptor(descriptor)
         for ref, descriptor in authority.replay.items()
     }
-    artifacts = snapshot_artifact_authorities(authority.artifacts)
+    artifacts = snapshot_artifact_authorities(
+        authority.artifacts, array_copier=array_copier
+    )
     artifact_descriptors = MappingProxyType(
         {
             snapshot_artifact_ref(ref): snapshot_artifact_descriptor(descriptor)
@@ -714,6 +721,8 @@ def build_solution_authority(  # noqa: C901, PLR0912, PLR0915
     flat_params: FlatParams,
     ages: TimeAxis,
     process_grid_resolver: ProcessGridResolver | None = None,
+    materializer: DatedGenerationMaterializer | None = None,
+    array_copier: _ArrayCopier | None = None,
 ) -> SolutionAuthority:
     """Derive active value and replay descriptions solely from the model.
 
@@ -721,6 +730,12 @@ def build_solution_authority(  # noqa: C901, PLR0912, PLR0915
     state-action spaces here therefore gives the same exact axis lengths as the period
     kernels without consulting any returned value or replay payload.
     """
+    if materializer is None and array_copier is not None:
+        raise ExecutionPlanningError(
+            "Authority copies require the original template producer owner."
+        )
+    if materializer is not None and array_copier is None:
+        array_copier = materializer.copy_solution_leaf
     canonical_float = str(np.dtype(canonical_float_dtype()))
     topology = _get_regime_V_shapes_and_shardings(
         regimes=regimes,
@@ -779,6 +794,7 @@ def build_solution_authority(  # noqa: C901, PLR0912, PLR0915
                         authority=custom_authority,
                         regime=regime,
                         state_action_space=state_action_space,
+                        array_copier=array_copier,
                     )
                     for key, custom_authority in (
                         regime.solution.artifact_authorities.items()
@@ -790,6 +806,8 @@ def build_solution_authority(  # noqa: C901, PLR0912, PLR0915
                 period=period,
                 continuation_spec=regime.solution.continuation_spec,
                 custom_authorities=custom_authorities,
+                materializer=materializer,
+                array_copier=array_copier,
             )
             _validate_artifact_producer_types(
                 regime_name=regime_name,
@@ -849,6 +867,7 @@ def build_solution_authority(  # noqa: C901, PLR0912, PLR0915
                     policy_read=policy_read,
                     policy_shape=policy_shape,
                     expected_replay_capability=expected_capability,
+                    materializer=materializer,
                 )
                 if policy_template is None:
                     policy_snapshot = None
@@ -858,6 +877,7 @@ def build_solution_authority(  # noqa: C901, PLR0912, PLR0915
                         _snapshot_artifact_template_once(
                             template=policy_template,
                             payload_runtime_type=policy_type,
+                            array_copier=array_copier,
                         )
                     )
                 policy_layout = _policy_artifact_layout(
@@ -879,11 +899,13 @@ def build_solution_authority(  # noqa: C901, PLR0912, PLR0915
                     consumer_route=route_identity,
                     applicable=policy_applicable,
                     required=policy_required,
+                    array_copier=array_copier,
                 )
                 artifacts[policy_ref] = _bind_model_owned_artifact_facts(
                     authority=policy_authority,
                     regime=regime,
                     state_action_space=state_action_space,
+                    array_copier=array_copier,
                 )
             elif (
                 dormant_policy_type := producer_payload_types.get(SIMULATION_POLICY)
@@ -911,11 +933,13 @@ def build_solution_authority(  # noqa: C901, PLR0912, PLR0915
                     consumer_route=None,
                     applicable=False,
                     required=False,
+                    array_copier=array_copier,
                 )
                 artifacts[policy_ref] = _bind_model_owned_artifact_facts(
                     authority=dormant_authority,
                     regime=regime,
                     state_action_space=state_action_space,
+                    array_copier=array_copier,
                 )
             flag_ref = ArtifactRef(
                 period=period,
@@ -956,7 +980,14 @@ def build_solution_authority(  # noqa: C901, PLR0912, PLR0915
                     channel=ArtifactChannel.REPLAY,
                     persistence=PersistencePolicy.MODEL_VERIFIABLE,
                     payload_runtime_type=Array,
-                    template=jnp.zeros(flag_shape, dtype=bool),
+                    template=(
+                        jnp.zeros(flag_shape, dtype=bool)
+                        if materializer is None
+                        else _materialize_authority_zeros(
+                            schema=jax.ShapeDtypeStruct(flag_shape, bool),
+                            materializer=materializer,
+                        )
+                    ),
                     leaf_axis_names=MappingProxyType({(): flag_axis_names}),
                     axes=flag_axes,
                     state_roles=tuple(
@@ -967,11 +998,13 @@ def build_solution_authority(  # noqa: C901, PLR0912, PLR0915
                     consumer_route=_DISSOLUTION_ROUTE,
                     applicable=True,
                     required=coordinate in required_dissolution_cells,
+                    array_copier=array_copier,
                 )
                 artifacts[flag_ref] = _bind_model_owned_artifact_facts(
                     authority=flag_authority,
                     regime=regime,
                     state_action_space=state_action_space,
+                    array_copier=array_copier,
                 )
 
             for key, custom_authority in custom_authorities.items():
@@ -1066,6 +1099,7 @@ def build_solution_authority(  # noqa: C901, PLR0912, PLR0915
                     _snapshot_artifact_template_once(
                         template=continuation_template,
                         payload_runtime_type=type(continuation_template),
+                        array_copier=array_copier,
                     )
                 )
                 continuation_layout = (
@@ -1112,12 +1146,14 @@ def build_solution_authority(  # noqa: C901, PLR0912, PLR0915
                     ),
                     applicable=True,
                     required=True,
+                    array_copier=array_copier,
                 )
                 artifacts[continuation_ref] = (
                     _bind_model_owned_artifact_facts(
                         authority=continuation_authority,
                         regime=regime,
                         state_action_space=state_action_space,
+                        array_copier=array_copier,
                     )
                     if continuation_layout is not None
                     else continuation_authority
@@ -1153,6 +1189,8 @@ def _validate_custom_continuation_authorities(
     period: int,
     continuation_spec: ContinuationSpec | None,
     custom_authorities: MappingProxyType[ArtifactKey, ArtifactAuthority],
+    materializer: DatedGenerationMaterializer | None = None,
+    array_copier: _ArrayCopier | None = None,
 ) -> None:
     """Require a custom continuation authority to agree with its producer spec.
 
@@ -1218,6 +1256,8 @@ def _validate_custom_continuation_authorities(
         _canonicalize_artifact_payload(
             payload=continuation_spec.template,
             authority=authority,
+            array_writer=materializer,
+            array_copier=array_copier,
         )
     except (TypeError, ValueError) as error:
         raise TypeError(
@@ -1309,6 +1349,31 @@ def _validate_required_external_producers(
             "An external replay route has no CoreProgram producer for required "
             f"artifacts {tuple(sorted(missing))!r}."
         )
+
+
+def supports_owned_case_r_artifacts(*, regime: Regime, regime_name: RegimeName) -> bool:
+    """Recognize only the original guarded-R row and dated continuation producer."""
+    spec = regime.solution.continuation_spec
+    replay = regime.simulation.case_r_replay_spec
+    if (
+        type(spec) is not ProjectedContinuationSpec
+        or replay is None
+        or regime.simulation.replay_route.policy_applicable
+        or regime.simulation.external_replay_route is not None
+        or set(regime.solution.artifact_authorities) != {replay.artifact_key}
+        or set(replay.periods) != set(regime.active_periods)
+    ):
+        return False
+    return all(
+        _is_installed_balanced_r_continuation(
+            regime=regime,
+            regime_name=regime_name,
+            period=period,
+            spec=spec,
+            template=spec.template_at(period=period),
+        )
+        for period in regime.active_periods
+    )
 
 
 def _is_installed_balanced_r_continuation(
@@ -2603,9 +2668,12 @@ def _bind_model_owned_artifact_facts(  # noqa: C901
     authority: ArtifactAuthority,
     regime: Regime,
     state_action_space: StateActionSpace,
+    array_copier: _ArrayCopier | None = None,
 ) -> ArtifactAuthority:
     """Replace declared state/action coordinates with canonical model values."""
-    template_snapshot = _artifact_authority_template_snapshot(authority)
+    template_snapshot = _artifact_authority_template_snapshot(
+        authority, array_copier=array_copier
+    )
     if authority.descriptor.channel is ArtifactChannel.DIAGNOSTIC:
         raise TypeError(
             "Custom DIAGNOSTIC authorities are unsupported because KernelOutput "
@@ -2680,6 +2748,7 @@ def _bind_model_owned_artifact_facts(  # noqa: C901
         consumer_route=authority.consumer_route,
         applicable=authority.applicable,
         required=authority.required,
+        array_copier=array_copier,
     )
 
 
@@ -2828,6 +2897,7 @@ def bind_declared_solution_authority(
     artifact_descriptors: Mapping[ArtifactRef, ArtifactDescriptor],
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
+    array_copier: _ArrayCopier | None = None,
 ) -> SolutionAuthority:
     """Bind everything a result declares about its own solve into model authority.
 
@@ -2839,6 +2909,13 @@ def bind_declared_solution_authority(
     checks; the consumer then compares every descriptor against the bound
     authority.
     """
+    if array_copier is not None and (
+        any(_is_applicable_nested_policy(item) for item in authority.replay.values())
+        or any(ref.key == SOLVER_DIAGNOSTICS for ref in artifact_descriptors)
+    ):
+        raise ExecutionPlanningError(
+            "Budgeted adaptive/diagnostics templates require producer admission."
+        )
     bound = _AuthorityBinding(
         authority=bind_declared_adaptive_authority(
             authority=authority,
@@ -3116,17 +3193,38 @@ def _policy_shape_and_node_count(
     return (*policy_read.row_axis_lengths_by_period[period], node_count), node_count
 
 
+def _materialize_authority_zeros(
+    *, schema: jax.ShapeDtypeStruct, materializer: DatedGenerationMaterializer
+) -> jax.Array:
+    """Admit the original zero-template factory from its exact metadata schema."""
+    from _lcm.solution.current_iid_case_r import _zeros_for_template  # noqa: PLC0415
+
+    return cast(
+        "jax.Array",
+        materializer.produce(
+            function=functools.partial(_zeros_for_template, schema=schema), arguments={}
+        ),
+    )
+
+
 def _policy_persistence_and_template(
     *,
     policy_read: EGMPolicyRead | NNBEGMPolicyRead | None,
     policy_shape: tuple[int, ...] | None,
     expected_replay_capability: OuterReplayCapability | None,
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> tuple[PersistencePolicy, EGMSimPolicy | NNBEGMSimPolicy | None]:
     """Return the route's persistence policy and model-built PyTree template."""
     if isinstance(policy_read, EGMPolicyRead):
         if policy_shape is None:
             raise TypeError("An EGM replay route has no model-owned policy shape.")
-        row = jnp.zeros(policy_shape, dtype=policy_read.float_dtype)
+        if materializer is None:
+            row = jnp.zeros(policy_shape, dtype=policy_read.float_dtype)
+        else:
+            row = _materialize_authority_zeros(
+                schema=jax.ShapeDtypeStruct(policy_shape, policy_read.float_dtype),
+                materializer=materializer,
+            )
         return PersistencePolicy.MODEL_VERIFIABLE, EGMSimPolicy(
             endog_grid=row,
             policy=row,
@@ -3135,6 +3233,11 @@ def _policy_persistence_and_template(
             row_discrete_state_names=policy_read.row_discrete_state_names,
             row_passive_state_names=policy_read.row_passive_state_names,
             row_discrete_action_names=policy_read.row_discrete_action_names,
+        )
+
+    if materializer is not None and isinstance(policy_read, NNBEGMPolicyRead):
+        raise ExecutionPlanningError(
+            "Budgeted nested policy authority requires producer admission."
         )
 
     if isinstance(policy_read, NNBEGMPolicyRead):

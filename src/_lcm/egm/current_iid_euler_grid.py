@@ -129,6 +129,12 @@ class DatedEulerGridMaterializer:
             return self.owner(value=value, dtype=dtype, name=name)
         return jnp.asarray(value, dtype=dtype)
 
+    def copy_solution_leaf(self, *, leaf: jax.Array, label: str) -> jax.Array:
+        """Delegate independent copies to the same genuine entry owner."""
+        if self.owner is not None:
+            return self.owner.copy_solution_leaf(leaf=leaf, label=label)
+        return jnp.array(leaf, copy=True)
+
     def materialize_grid(
         self, *, spec: Grid, placeholder: bool = False
     ) -> Float1D | Int1D:

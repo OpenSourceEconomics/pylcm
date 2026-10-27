@@ -11,6 +11,7 @@ from typing import (
 import jax
 from beartype import beartype
 
+from _lcm.dtypes import CanonicalArrayWriter
 from lcm._solver_api.authority import _ArrayCopier, _CanonicalArtifactTemplate
 from lcm._solver_api.beartype_conf import SOLVER_API_CONF
 from lcm._solver_api.contract import (
@@ -490,10 +491,14 @@ class ArtifactStore(Mapping[ArtifactRef, ArtifactPayload]):
         ref: ArtifactRef,
         *,
         template_snapshot: _CanonicalArtifactTemplate | None,
+        array_writer: CanonicalArrayWriter | None = None,
+        array_copier: _ArrayCopier | None = None,
     ) -> ArtifactPayload:
         """Load one entry through an engine-owned cached PyTree declaration."""
         ref = _require_exact_artifact_ref(ref)
         return _materialize_entry(
             entry=self._entries[ref],
             template_snapshot=template_snapshot,
+            array_writer=array_writer,
+            array_copier=array_copier,
         )
