@@ -158,6 +158,15 @@ the first-order rule remains unsupported. This kernel transpose does not add rev
 mode to the forward-only native exact-affine reader. The owned primitive's original
 state, bindings and execution registrations are part of semantic capture authority.
 
+The private balanced CE direction also checks conditioning before publishing validity.
+Keep an uncancelled magnitude envelope `S` from the original child, weight and exponent
+contributions, including absolute inner mass before opposing signed reductions. Refuse
+when `64 * eps * S` exceeds `max(1e-4, 8 * sqrt(eps)) * max(1, abs(direction))` in the
+profile's final units. Empty directions and ordinary finite cancellation remain
+supported. This is a conditioning diagnostic backed by sampled independent economic
+references, not a certified transcendental error bound or universal exact accumulator.
+Existing probability, input, span and final-status checks still apply.
+
 Refinement bisects failed smooth cells and inserts known transformed breakpoints.
 Compare the coarse representation with quarter, midpoint and three-quarter queries from
 the solver's candidate construction, exact endpoints and adjacent representable points

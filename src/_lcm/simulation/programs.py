@@ -1370,7 +1370,12 @@ class _SubjectTiled:
             )
             full = jax.lax.map(tile, head)
             parts.append(
-                jax.tree.map(lambda leaf: leaf.reshape(-1, *leaf.shape[2:]), full)
+                jax.tree.map(
+                    lambda leaf: leaf.reshape(
+                        leaf.shape[0] * leaf.shape[1], *leaf.shape[2:]
+                    ),
+                    full,
+                )
             )
         if n_rest:
             rest = jax.tree.map(
