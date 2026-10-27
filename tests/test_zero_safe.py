@@ -72,6 +72,9 @@ def _scaled_mean_reference(
         "three_nodes",
         "five_nodes",
         "tiny_coefficient_adjacent",
+        "tiny_coefficient_unequal",
+        "tiny_coefficient_cancelled",
+        "tiny_coefficient_multinode",
         "tiny_coefficient_rare_large",
     ],
 )
@@ -86,6 +89,7 @@ def test_scaled_mean_normalizes_finite_slopes_before_tangent_arithmetic(
     tiny = float(np.finfo(dtype).tiny)
     tiny_level = 1.0
     tiny_upper = float(np.nextafter(dtype.type(tiny_level), dtype.type(np.inf)))
+    tiny_third = float(np.nextafter(dtype.type(tiny_upper), dtype.type(np.inf)))
     rare_shift = int(2 * np.finfo(dtype).maxexp + 2)
     specimens = {
         "zero": ((peak, peak / 2), (1.0, 0.0), (0, 0)),
@@ -105,6 +109,21 @@ def test_scaled_mean_normalizes_finite_slopes_before_tangent_arithmetic(
         "common_shift": ((peak, lower), (1.0, 3.0), (9, 9)),
         "three_nodes": ((peak, lower, third), (1.0, 3.0, 2.0), (1, 1, 1)),
         "tiny_coefficient_adjacent": ((tiny_level, tiny_upper), (tiny, tiny), (0, 0)),
+        "tiny_coefficient_unequal": (
+            (tiny_level, tiny_upper),
+            (tiny, 2 * tiny),
+            (0, 0),
+        ),
+        "tiny_coefficient_cancelled": (
+            (tiny_level, tiny_upper, tiny_third),
+            (tiny, 2 * tiny, tiny),
+            (0, 0, 0),
+        ),
+        "tiny_coefficient_multinode": (
+            (tiny_level, tiny_upper, tiny_third),
+            (tiny, 2 * tiny, 3 * tiny),
+            (0, 0, 0),
+        ),
         "tiny_coefficient_rare_large": (
             (tiny_level, tiny_upper, peak),
             (tiny, tiny, tiny),
@@ -157,7 +176,8 @@ def test_scaled_mean_normalizes_finite_slopes_before_tangent_arithmetic(
         values=value_array, coefficients=weight_array
     )
     expected_weight_array = np.asarray(expected_weights)
-    expected_value_array = np.asarray(expected_values)
+    # The exact probability can lie below the active format's range.
+    expected_value_array = np.asarray(expected_values, dtype=value_array.dtype)
     if mode == "vmap":
         expected_weight_array = np.stack([expected_weight_array] * 2)
         expected_value_array = np.stack([expected_value_array] * 2)

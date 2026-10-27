@@ -375,7 +375,9 @@ def _scaled_mean_jvp(
         gap_exponent = _unbiased_exponent(unit_gap)
         centered_values = _rescale_mean_operand(values=unit_gap, shift=-gap_exponent)
         centered_exponent = value_exponent + gap_exponent
-        centered_shifts = shifts - centered_exponent
+        # Keep the centered sum on normal coefficient mantissas, including
+        # when every raw coefficient is close to the smallest normal value.
+        centered_shifts = shifts - coefficient_exponent - centered_exponent
         # A zero gap contributes nothing and must not select a scale for the
         # nonzero residual terms. The helper's mass terms are not used here.
         unused_shift = jnp.max(centered_shifts, axis=-1, keepdims=True)
@@ -383,7 +385,9 @@ def _scaled_mean_jvp(
             is_represented_zero(centered_values), unused_shift, centered_shifts
         )
         residual_terms, _, residual_scale = _scaled_lottery_terms_with_scale(
-            values=centered_values, coefficients=coefficients, shifts=centered_shifts
+            values=centered_values,
+            coefficients=unit_coefficients,
+            shifts=centered_shifts,
         )
         residual = jnp.sum(residual_terms, axis=-1, keepdims=True) / unit_mass
         residual_shift = -residual_scale - common - mass_exponent
