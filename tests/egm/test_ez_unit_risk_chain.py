@@ -56,7 +56,7 @@ def test_original_ez_power_mean_primal_and_nonunit_tangent(*, exponent: float) -
         np.testing.assert_array_equal(after, before)
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu"), precisions="both")
+@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
 def test_original_ez_unit_risk_has_analytic_forward_and_reverse_direction() -> None:
     values = jnp.asarray([3.0, 5.0])
     weights = jnp.asarray([0.25, 0.75])
@@ -155,7 +155,7 @@ def test_original_ez_split_and_joint_lotteries_keep_total_unit_risk_variance() -
         )
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu"), precisions="both")
+@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
 @pytest.mark.parametrize(
     "kind", ["zero_mass", "negative_weight", "nonpositive_payoff", "tiny_coefficient"]
 )

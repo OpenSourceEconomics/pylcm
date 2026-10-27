@@ -575,7 +575,7 @@ def test_nbegm_each_draw_uses_live_owner_and_revalidates_changed_budget(
         )
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu"), precisions="both")
+@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
 @pytest.mark.parametrize("device_memory_bytes", [None, 1 << 28])
 def test_nbegm_u_model_integrates_and_reconstructs_original_candidates(
     *, device_memory_bytes: int | None
