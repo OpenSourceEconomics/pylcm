@@ -197,7 +197,7 @@ def get_upper_envelope(
     if isinstance(solver.envelope, ExactEnvelope):
         backend = functools.partial(
             _exact_backend,
-            envelope=solver.envelope,
+            max_runs=solver.envelope.max_runs,
             n_refined=n_refined,
             publish_provenance=publish_provenance,
         )
@@ -309,7 +309,7 @@ def get_bracket_finder(
     if isinstance(solver.envelope, ExactEnvelope):
         return functools.partial(
             _exact_bracket_finder,
-            envelope=solver.envelope,
+            max_runs=solver.envelope.max_runs,
             n_refined=n_refined,
             publish_provenance=publish_provenance,
         )
@@ -356,7 +356,7 @@ def _exact_backend(
     marginal_utility: Float1D,
     savings: Float1D,
     cell_width: int = 1,
-    envelope: ExactEnvelope,
+    max_runs: int,
     n_refined: int,
     publish_provenance: bool = False,
     _binding_source_count: int | None = None,
@@ -383,7 +383,7 @@ def _exact_backend(
                 policy=policy,
                 value=value,
                 n_refined=n_refined,
-                max_runs=envelope.max_runs,
+                max_runs=max_runs,
                 cell_width=cell_width,
                 savings=savings,
                 _binding_source_count=_binding_source_count,
@@ -394,7 +394,7 @@ def _exact_backend(
             policy=policy,
             value=value,
             n_refined=n_refined,
-            max_runs=envelope.max_runs,
+            max_runs=max_runs,
             cell_width=cell_width,
             _binding_source_count=_binding_source_count,
             _binding_queries=_binding_queries,
@@ -404,7 +404,7 @@ def _exact_backend(
         policy=policy,
         value=value,
         n_refined=n_refined,
-        max_runs=envelope.max_runs,
+        max_runs=max_runs,
         cell_width=cell_width,
         savings=savings if publish_provenance else None,
     )
@@ -648,7 +648,7 @@ def _exact_bracket_finder(
     savings: Float1D,
     cell_width: int = 1,
     x_query: ScalarFloat,
-    envelope: ExactEnvelope,
+    max_runs: int,
     n_refined: int,
     publish_provenance: bool = False,
 ) -> QueryBracket | OwnedQueryBracket:
@@ -663,7 +663,7 @@ def _exact_bracket_finder(
         policy=policy,
         value=value,
         n_refined=n_refined,
-        max_runs=envelope.max_runs,
+        max_runs=max_runs,
         cell_width=cell_width,
         savings=savings if publish_provenance else None,
     )

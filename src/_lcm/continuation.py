@@ -17,9 +17,22 @@ from dags import get_ancestors
 
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.carry import EGMCarry
+from _lcm.egm.projected_continuation import (
+    PROJECTED_EGM_CONTINUATION,
+    ProjectedChildAuthority,
+    ProjectedEGMCarry,
+    ProjectedGuardProgram,
+)
 from _lcm.post_decision_bound import PostDecisionBoundSpec
 from lcm.solver_api import EGM_CONTINUATION, ArtifactKey, ContinuationArtifact
-from lcm.typing import ActionName, FunctionName, ReferenceName, StateName, UserFunction
+from lcm.typing import (
+    ActionName,
+    FunctionName,
+    ReferenceName,
+    RegimeName,
+    StateName,
+    UserFunction,
+)
 
 if TYPE_CHECKING:
     from _lcm.execution.value_transfer import ValueArtifactAddress
@@ -513,6 +526,133 @@ class ContinuationSpec:
     ) -> Mapping[ValueArtifactAddress, ValueArtifactAddress]:
         """Declare transported leaves that retain another stored artifact's buffer."""
         return MappingProxyType({})
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class ProjectedProducerDate:
+    """One immutable producer-date authority, numeric schema and guard program."""
+
+    authority: ProjectedChildAuthority
+    template: ProjectedEGMCarry
+    guard_program: ProjectedGuardProgram | None = None
+
+    def __post_init__(self) -> None:
+        if self.template.artifact_key != self.authority.artifact_key:
+            raise TypeError("Projected date has a different artifact identity.")
+        if self.template.grid.shape[-1] != self.authority.capacity:
+            raise TypeError("Projected date capacity differs from its numeric schema.")
+        if self.template.guard_required != (self.guard_program is not None):
+            raise TypeError("Projected date guard program and numeric schema disagree.")
+
+    @property
+    def producer(self) -> RegimeName:
+        """Delegate producer identity to the single dated authority."""
+        return self.authority.producer
+
+    @property
+    def liquid_state(self) -> StateName:
+        """Delegate coordinate identity to the single dated authority."""
+        return self.authority.liquid_state
+
+
+@dataclass(frozen=True, kw_only=True)
+class ProjectedContinuationSpec(ContinuationSpec):
+    """Date-owned pre-shock schema with an explicit liquid marginal.
+
+    The template grants neither smooth links nor whole-domain coverage. Actual
+    reads require exact records or supported links; general publication retains
+    its independent complete-topology admission requirement.
+    """
+
+    template: ProjectedEGMCarry
+    """Actual numeric producer schema, without current-node or action axes."""
+    producer: RegimeName
+    """Regime owning every producer-date template in this declaration."""
+    liquid_state: StateName
+    """Actual pre-shock liquid coordinate, distinct from endogenous resources."""
+    artifact_key: ArtifactKey = PROJECTED_EGM_CONTINUATION
+    """Identity under which parents acquire the projected numerical leaves."""
+
+    dates_by_period: Mapping[int, ProjectedProducerDate] = dataclass_field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    """Canonical date objects shared by prepared reads and final programs."""
+
+    guard_programs: Mapping[int, ProjectedGuardProgram] = dataclass_field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    """Compatibility view of the original dated guard program references."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self.artifact_key != PROJECTED_EGM_CONTINUATION:
+            raise TypeError("A projected continuation requires its own artifact key.")
+        if not self.templates_by_period:
+            raise ValueError("Projected continuations require exact producer dates.")
+        if not self.guard_programs.keys() <= self.templates_by_period.keys():
+            raise TypeError("Balanced guard program has no actual producing date.")
+        dates = dict(self.dates_by_period)
+        if not dates:
+            dates = {
+                period: ProjectedProducerDate(
+                    authority=ProjectedChildAuthority(
+                        producer=self.producer,
+                        period=period,
+                        liquid_state=self.liquid_state,
+                        capacity=template.grid.shape[-1],
+                        artifact_key=self.artifact_key,
+                    ),
+                    template=template,
+                    guard_program=self.guard_programs.get(period),
+                )
+                for period, template in self.templates_by_period.items()
+                if isinstance(template, ProjectedEGMCarry)
+            }
+        if dates.keys() != self.templates_by_period.keys():
+            raise TypeError("Projected date bindings differ from the declared dates.")
+        for period, date in dates.items():
+            authority = date.authority
+            if (
+                authority.producer != self.producer
+                or authority.period != period
+                or authority.liquid_state != self.liquid_state
+                or authority.artifact_key != self.artifact_key
+            ):
+                raise TypeError("Projected date differs from its aggregate identity.")
+            if date.template is not self.templates_by_period[
+                period
+            ] or date.guard_program is not self.guard_programs.get(period):
+                raise TypeError("Projected compatibility views borrowed another date.")
+        if not any(date.template is self.template for date in dates.values()):
+            raise TypeError(
+                "Projected aggregate template has no actual producing date."
+            )
+        object.__setattr__(self, "dates_by_period", MappingProxyType(dates))
+        object.__setattr__(
+            self,
+            "guard_programs",
+            MappingProxyType(
+                {
+                    period: date.guard_program
+                    for period, date in dates.items()
+                    if date.guard_program is not None
+                }
+            ),
+        )
+
+    def date_at(self, *, period: int) -> ProjectedProducerDate:
+        """Return the actual immutable binding, without reconstructing authority."""
+        if period not in self.dates_by_period:
+            raise ValueError(f"No projected producer is declared at period {period}.")
+        return self.dates_by_period[period]
+
+    def template_at(self, *, period: int) -> ProjectedEGMCarry:
+        """Return the canonical date's original numerical schema."""
+        return self.date_at(period=period).template
+
+    def authority_at(self, *, period: int) -> ProjectedChildAuthority:
+        """Return the canonical date's original authority."""
+        return self.date_at(period=period).authority
 
 
 @dataclass(frozen=True, kw_only=True)

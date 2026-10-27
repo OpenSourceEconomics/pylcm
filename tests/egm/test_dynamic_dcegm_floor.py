@@ -162,8 +162,13 @@ def _analytic_compute_node(
     dtype: np.dtype,
     stochastic_node_width: int | None,
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
+    economic_continuation: Callable[
+        [ScalarFloat], feasibility.BoundedResult[tuple[ScalarFloat, ScalarFloat]]
+    ]
+    | None = None,
 ) -> Callable[[ScalarFloat], tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]]:
     """Return the exact Euler candidate for terminal log(3 a + 4)."""
+    assert economic_continuation is None
     del pieces, discount_factor, utility_of_action, next_regime_to_continuation
     del dtype, stochastic_node_width, resolved_process_grids
     wealth = cast("ScalarFloat", combo_pool.get("wealth", jnp.asarray(0.0)))

@@ -94,6 +94,18 @@ jax.tree_util.register_pytree_node(ReplayPayload, _flatten_payload, _unflatten_p
 
 def declare_finite_replay_programs(regime: Regime) -> Regime:
     """Select finite replay as the decision only where model authority admits it."""
+    if regime.simulation.uses_case_u_reconstruction:
+        from _lcm.simulation.case_u_programs import (  # noqa: PLC0415
+            declare_case_u_replay_programs,
+        )
+
+        return declare_case_u_replay_programs(regime=regime)
+    if regime.simulation.case_r_replay_spec is not None:
+        from _lcm.simulation.case_r_programs import (  # noqa: PLC0415
+            declare_case_r_replay_programs,
+        )
+
+        return declare_case_r_replay_programs(regime=regime)
     if regime.simulation.replay_route.consumer_route != "nnbegm_finite":
         return regime
     read = cast("NNBEGMPolicyRead", regime.simulation.egm_policy_read)

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Literal, cast, no_type_check, overload
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 from dags import concatenate_functions, get_annotations
 from numpy.typing import DTypeLike
 
@@ -38,10 +39,12 @@ from lcm.typing import (
 )
 
 if TYPE_CHECKING:
+    from _lcm.materialization import DatedGenerationMaterializer
     from lcm.regime import Regime as UserRegime
 else:
     # Regime imports constraint normalization, so the claw needs a runtime fallback.
     type UserRegime = object
+    type DatedGenerationMaterializer = object
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -168,6 +171,11 @@ def _bound_surface(
     return roles, surface.right
 
 
+def _literal_bound_isfinite(*, value: jax.Array) -> jax.Array:
+    """Original finite predicate, separated from its admitted scalar upload."""
+    return jnp.isfinite(value)
+
+
 def validate_declared_bounds(
     *,
     user_regime: UserRegime,
@@ -175,6 +183,7 @@ def validate_declared_bounds(
     law: RegimeLaw,
     ages: TimeAxis,
     periods: tuple[int, ...],
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> tuple[PostDecisionBoundSpec, ...]:
     """Validate both floor spellings at every active temporal/phase resolution."""
     normalized = normalize_constraints(
@@ -206,9 +215,20 @@ def validate_declared_bounds(
         roles, right = recognized
         post = roles[3]
         if isinstance(right, Const):
-            if not bool(
-                jnp.isfinite(jnp.asarray(right.value, dtype=canonical_float_dtype()))
-            ):
+            if materializer is None:
+                finite = jnp.isfinite(
+                    jnp.asarray(right.value, dtype=canonical_float_dtype())
+                )
+            else:
+                literal = materializer(
+                    value=np.asarray(right.value),
+                    dtype=np.dtype(canonical_float_dtype()),
+                    name=f"{regime_name}.{name}.literal_bound",
+                )
+                finite = materializer.produce(
+                    function=_literal_bound_isfinite, arguments={"value": literal}
+                )
+            if not bool(finite):
                 raise ModelInitializationError(
                     f"Borrowing bound '{name}' in regime '{regime_name}' must "
                     f"be finite in the canonical float dtype."

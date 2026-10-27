@@ -25,7 +25,7 @@ qualified name.
 
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import cast
+from typing import Protocol, cast, runtime_checkable
 
 import jax.numpy as jnp
 import numpy as np
@@ -34,7 +34,6 @@ from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qnam
 from jax import Array
 
 from _lcm.dtypes import CanonicalArrayWriter, safe_to_float_dtype, safe_to_int_dtype
-from _lcm.engine import Regime
 from _lcm.params.edges import EDGES, user_path
 from _lcm.params.mapping_leaf import LeafEntry, MappingLeaf, UserMappingLeaf
 from _lcm.params.sequence_leaf import SequenceLeaf, UserSequenceLeaf
@@ -47,6 +46,7 @@ from _lcm.typing import (
     ParamsTemplate,
     QualifiedName,
     RegimeName,
+    RegimeParamsTemplate,
     RegimeParamsTemplateNode,
 )
 from _lcm.utils.containers import ensure_containers_are_immutable
@@ -564,9 +564,23 @@ def find_param_candidates(
     return tuple(candidates)
 
 
+@runtime_checkable
+class ParameterTemplateSource(Protocol):
+    """Metadata read by template validation; no compiled phase is required."""
+
+    @property
+    def active_periods(self) -> tuple[int, ...]: ...
+
+    @property
+    def regime_params_template(self) -> RegimeParamsTemplate: ...
+
+    @property
+    def edge_params_template(self) -> EdgeParamsTemplate: ...
+
+
 def create_params_template(  # noqa: C901, PLR0912 - validate ordinary and exit namespaces
     *,
-    regimes: MappingProxyType[RegimeName, Regime],
+    regimes: Mapping[RegimeName, ParameterTemplateSource],
     query_periods_by_phase: Mapping[
         str, Mapping[RegimeName, tuple[int, ...]]
     ] = MappingProxyType({}),
@@ -682,7 +696,7 @@ def create_params_template(  # noqa: C901, PLR0912 - validate ordinary and exit 
 
 
 def _edge_arg_names(
-    regimes: Mapping[RegimeName, Regime],
+    regimes: Mapping[RegimeName, ParameterTemplateSource],
 ) -> frozenset[ParameterName]:
     """Return the argument names every source's edge slots read."""
     return frozenset(
@@ -693,7 +707,7 @@ def _edge_arg_names(
 
 
 def _edges_branch(
-    regimes: Mapping[RegimeName, Regime],
+    regimes: Mapping[RegimeName, ParameterTemplateSource],
 ) -> MappingProxyType[str, MappingProxyType[RegimeName, EdgeParamsTemplate]]:
     """Return the template's `edges` branch, or nothing when no source has a slot."""
     sources = {

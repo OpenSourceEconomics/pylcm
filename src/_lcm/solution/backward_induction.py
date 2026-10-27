@@ -468,10 +468,10 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             boundary instead of retaining one device-sized artifact per period.
         retain_all_artifacts: Whether independently persistable continuation and
             auxiliary outputs may be retained.
-        persistable_artifact_refs: Exact model-authoritative artifact addresses
-            selected by ``ALL_PERSISTABLE_ARTIFACTS``. Only these addresses are
-            dispatched and copied for that mode; ordinary replay retention keeps
-            its separate in-memory behavior, including ``NOT_PERSISTED`` routes.
+        persistable_artifact_refs: Exact model-authoritative durable addresses
+            selected by retention and actual forward continuation demands. Only
+            these addresses are dispatched and copied; ordinary replay retention
+            keeps its separate in-memory ``NOT_PERSISTED`` routes.
         retained_input_arrays: Caller's already materialized inputs kept alive
             beside this solve, including automatic simulation's original and
             normalized initial conditions. These enter fixed residency by actual
@@ -559,7 +559,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 if period_capture is None
                 else period_capture.request.periods,
                 retain_replay=retain_replay,
-                retain_all_artifacts=retain_all_artifacts,
                 persistable_artifact_refs=persistable_artifact_refs,
                 max_compilation_workers=max_compilation_workers,
                 logger=logger,
@@ -1015,21 +1014,20 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                         )
                         if result.continuation is not None:
                             period_continuations[regime_name] = result.continuation
-                        if retain_all_artifacts:
-                            period_retained_continuations.update(
-                                {
-                                    (regime_name, key): payload
-                                    for key, payload in (
-                                        result.continuation_artifacts.items()
-                                    )
-                                    if ArtifactRef(
-                                        period=period,
-                                        regime=regime_name,
-                                        key=key,
-                                    )
-                                    in persistable_artifact_refs
-                                }
-                            )
+                        period_retained_continuations.update(
+                            {
+                                (regime_name, key): payload
+                                for key, payload in (
+                                    result.continuation_artifacts.items()
+                                )
+                                if ArtifactRef(
+                                    period=period,
+                                    regime=regime_name,
+                                    key=key,
+                                )
+                                in persistable_artifact_refs
+                            }
+                        )
                         # A policy is kept only where the regime's declared
                         # simulation route reads it; replay authority travels
                         # with its policy.
@@ -1371,7 +1369,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                             )
                         }
                     )
-                if retain_all_artifacts:
+                if period_retained_continuations:
                     assert host_device is not None  # noqa: S101
                     for (
                         regime_name,
@@ -1380,6 +1378,8 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                         retained_continuations[
                             ArtifactRef(period=period, regime=regime_name, key=key)
                         ] = jax.block_until_ready(jax.device_put(payload, host_device))
+                if retain_all_artifacts:
+                    assert host_device is not None  # noqa: S101
                     for (
                         regime_name,
                         key,
@@ -2814,7 +2814,9 @@ def _donation_ownership_refusal(
 ) -> str | None:
     """Explain an actual input's ownership conflict without consuming the input."""
     array = locate_artifact(inputs=inputs, artifact=artifact)
-    if array is None or array is locate_artifact(inputs=templates, artifact=artifact):
+    if not isinstance(array, jax.Array) or array is locate_artifact(
+        inputs=templates, artifact=artifact
+    ):
         return f"{artifact!r} is not a solve input of its own"
     if registry.is_not_produced(array=array):
         return f"{artifact!r} has a buffer no compiled executable produced"
@@ -2828,7 +2830,6 @@ def _build_planned_input_liveness(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     program_metadata: Mapping[_CoreTriple, _ProgramExecutionMetadata],
-    retain_all_artifacts: bool,
     persistable_artifact_refs: frozenset[ArtifactRef],
 ) -> PlannedInputLiveness[_InputDispatch, ValueArtifactAddress]:
     """Build one exact-dispatch ledger without authorizing physical release.
@@ -2869,7 +2870,6 @@ def _build_planned_input_liveness(
 
     retained = _retained_solution_artifacts(
         regimes=regimes,
-        retain_all_artifacts=retain_all_artifacts,
         persistable_artifact_refs=persistable_artifact_refs,
     )
     known = {
@@ -2927,7 +2927,8 @@ def _release_closed_period_inputs(
     located: dict[Hashable, jax.Array] = {}
     for artifact in tuple(candidates):
         array = locate_artifact(inputs=inputs, artifact=artifact)
-        if array is None:
+        if not isinstance(array, jax.Array):
+            # Abstract schema descriptors never identify a retireable buffer.
             del candidates[artifact]
             continue
         if array is locate_artifact(inputs=templates, artifact=artifact):
@@ -3038,7 +3039,9 @@ def _locate_donated_input(
 ) -> _DonatedInput:
     """Find one donated array and refuse a buffer the solve does not own."""
     array = locate_artifact(inputs=inputs, artifact=artifact)
-    if array is None or array is locate_artifact(inputs=templates, artifact=artifact):
+    if not isinstance(array, jax.Array) or array is locate_artifact(
+        inputs=templates, artifact=artifact
+    ):
         msg = (
             f"Dispatch {(unit.period, unit.regime)!r} was lowered to donate "
             f"{argument!r}, but {artifact!r} is not a solve input of its own."
@@ -3218,7 +3221,6 @@ def _unique_value_artifacts(
 def _retained_solution_artifacts(
     *,
     regimes: Mapping[RegimeName, Regime],
-    retain_all_artifacts: bool,
     persistable_artifact_refs: frozenset[ArtifactRef],
 ) -> tuple[ValueArtifactAddress, ...]:
     """Pin every artifact the selected retention keeps in the public result.
@@ -3244,8 +3246,6 @@ def _retained_solution_artifacts(
         for regime_name, regime in regimes.items()
         for period in regime.active_periods
     )
-    if not retain_all_artifacts:
-        return values
     return values + _retained_continuation_leaves(
         regimes=regimes, persistable_artifact_refs=persistable_artifact_refs
     )
@@ -3422,6 +3422,8 @@ def _regime_retains_replay(*, regime: Regime, retain_replay: bool) -> bool:
     return retain_replay and (
         regime.simulation.egm_policy_read is not None
         or regime.simulation.external_replay_route is not None
+        or regime.simulation.case_r_replay_spec is not None
+        or regime.simulation.uses_case_u_reconstruction
     )
 
 
@@ -4258,7 +4260,6 @@ def _prepare_solve_programs(
     enable_jit: bool,
     execution: ResolvedExecution,
     retain_replay: bool,
-    retain_all_artifacts: bool,
     persistable_artifact_refs: frozenset[ArtifactRef],
     logger: logging.Logger,
     process_grid_resolver: ProcessGridResolver | None = None,
@@ -4327,7 +4328,6 @@ def _prepare_solve_programs(
             enable_jit=enable_jit,
             continuous_sharded_state=execution.continuous_sharded_state,
             donate_buffers=execution.donate_buffers,
-            retain_all_artifacts=retain_all_artifacts,
             persistable_artifact_refs=persistable_artifact_refs,
             process_grid_resolver=process_grid_resolver,
             structural_blueprints=structural_blueprints,
@@ -4389,7 +4389,6 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     enable_jit: bool,
     execution: ResolvedExecution,
     retain_replay: bool,
-    retain_all_artifacts: bool,
     persistable_artifact_refs: frozenset[ArtifactRef],
     max_compilation_workers: int | None,
     logger: logging.Logger,
@@ -4437,10 +4436,8 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         retain_replay: Whether the solve retains replay artifacts; with the
             regime's declared replay route it selects which scoped programs of
             each kernel's graph are dispatched.
-        retain_all_artifacts: Whether the result keeps every persistable
-            continuation payload, which the ledger retains and never donates.
-        persistable_artifact_refs: Exact model-authoritative addresses whose
-            replay programs are selected for persistence-oriented retention.
+        persistable_artifact_refs: Exact durable addresses selected by retention
+            and actual forward demands; the ledger pins their continuation leaves.
         max_compilation_workers: Maximum threads for parallel compilation.
             Defaults to `os.cpu_count()`.
         logger: Logger for compilation progress.
@@ -4487,7 +4484,6 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         enable_jit=enable_jit,
         execution=execution,
         retain_replay=retain_replay,
-        retain_all_artifacts=retain_all_artifacts,
         persistable_artifact_refs=persistable_artifact_refs,
         logger=logger,
         process_grid_resolver=process_grid_resolver,
@@ -6507,7 +6503,6 @@ def _resolve_output_layouts_and_lowering_keys(
     enable_jit: bool,
     continuous_sharded_state: StateName | None = None,
     donate_buffers: bool = True,
-    retain_all_artifacts: bool,
     persistable_artifact_refs: frozenset[ArtifactRef],
     process_grid_resolver: ProcessGridResolver | None = None,
     structural_blueprints: StructuralBlueprintCache[_StructuralBlueprint] | None = None,
@@ -6633,7 +6628,6 @@ def _resolve_output_layouts_and_lowering_keys(
         program_fingerprint=program_fingerprint,
         enable_jit=enable_jit,
         donate_buffers=donate_buffers,
-        retain_all_artifacts=retain_all_artifacts,
         persistable_artifact_refs=persistable_artifact_refs,
     )
 
@@ -6881,7 +6875,6 @@ def _bind_structural_blueprint(
     program_fingerprint: str,
     enable_jit: bool,
     donate_buffers: bool,
-    retain_all_artifacts: bool,
     persistable_artifact_refs: frozenset[ArtifactRef],
 ) -> tuple[
     dict[_CoreTriple, ResolvedOutputLayout],
@@ -6913,7 +6906,6 @@ def _bind_structural_blueprint(
     input_liveness = _build_planned_input_liveness(
         regimes=regimes,
         program_metadata=representative_metadata,
-        retain_all_artifacts=retain_all_artifacts,
         persistable_artifact_refs=persistable_artifact_refs,
     )
     n_periods = _model_n_periods(regimes=regimes)

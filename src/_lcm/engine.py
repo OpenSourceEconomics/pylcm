@@ -14,7 +14,7 @@ import dataclasses
 from collections.abc import Callable, Hashable, Iterator, Mapping
 from math import prod as math_prod
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Literal, Protocol, cast, runtime_checkable
 
 import jax
 from jax import Array
@@ -22,6 +22,7 @@ from jax import Array
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.continuation import ContinuationPayload, ContinuationSpec, EGMQuerySpec
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
+from _lcm.egm.projected_continuation import ProjectedChildAuthority
 from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
 from _lcm.execution.execution_plan import visible_devices
 from _lcm.execution.placement import ACTION_PARTITION_AXIS
@@ -77,7 +78,10 @@ from lcm.typing import (
 )
 
 if TYPE_CHECKING:
+    import _lcm.regime_building.projected_forward
     from _lcm.current_iid import CurrentIIDDrawPlan, CurrentIIDPlan
+    from _lcm.egm.current_iid_case_u_replay import CaseUReplaySpec
+    from _lcm.egm.current_iid_replay import CaseRReplaySpec
     from _lcm.regime_building.gated_edges import ResolvedGatedEdge
     from _lcm.simulation.exits import ExitSimulationPlan
     from _lcm.solution.contract import PeriodKernel
@@ -88,6 +92,9 @@ if TYPE_CHECKING:
     # (see the runtime alias below).
     type PeriodKernelsMapping = Mapping[int, PeriodKernel]
 else:
+    # These replay declarations import engine while their numerical modules load.
+    type CaseRReplaySpec = object
+    type CaseUReplaySpec = object
     # Current-IID declarations reach the solver facade while it imports engine.
     type CurrentIIDPlan = object
     type CurrentIIDDrawPlan = object
@@ -431,9 +438,16 @@ class SolutionPhase:
     """Per-period capabilities of installed target-specific model-bound readers."""
 
     query_input_authorities: (
-        Mapping[int, tuple[tuple[RegimeName, int, PostDecisionBoundSpec], ...]] | None
+        Mapping[
+            int,
+            tuple[
+                tuple[RegimeName, int, PostDecisionBoundSpec | ProjectedChildAuthority],
+                ...,
+            ],
+        ]
+        | None
     ) = dataclasses.field(default=None, metadata={"fingerprint_omit_if_default": True})
-    """Canonical child regime, target period and bound for each private query slot."""
+    """Canonical child/date and bound or projected authority for each query slot."""
 
     has_compiled_constraint_boundaries: bool = False
     """Whether the solve route compiles any constraint boundary into its kernel."""
@@ -505,6 +519,12 @@ class SolutionPhase:
 
     continuation_spec: ContinuationSpec | None = None
     """Template and identity of the continuation this regime's kernels publish."""
+
+    case_r_replay_spec: CaseRReplaySpec | None = None
+    """Model-owned dated action-valued reader of the original resources row."""
+
+    case_u_replay_spec: CaseUReplaySpec | None = None
+    """Original dated U constructor and retained ordinary future authority."""
 
     external_replay_route: ExecutableReplayRoute | None = None
     """Plugin-owned replay implementation, or ``None`` for a built-in adapter."""
@@ -650,48 +670,12 @@ class SolutionPhase:
         regime_params: FlatRegimeParams,
         process_grid_resolver: ProcessGridResolver,
     ) -> Mapping[StateName, FloatND]:
-        """Resolve only process producers covered by the explicit admission owner."""
-        required: jax.sharding.Sharding | None = None
-        all_params = {**self.resolved_fixed_params, **regime_params}
-        resolved: dict[StateName, FloatND] = {}
-        for name, spec in self.grids.items():
-            if (
-                name not in self._base_state_action_space.states
-                or not isinstance(spec, _ContinuousStochasticProcess)
-                or not spec.params_to_pass_at_runtime
-                or not process_grid_resolver.supports(spec)
-                or any(
-                    f"{name}__{param}" not in all_params
-                    for param in spec.params_to_pass_at_runtime
-                )
-            ):
-                continue
-            if required is None:
-                devices = self.placed_devices()
-                plan = _build_regime_sharding(
-                    grids=self.grids,
-                    sharded_state_names=self.sharded_state_names,
-                    devices=devices,
-                    action_partitions=self.action_partitions,
-                )
-                required = (
-                    jax.sharding.SingleDeviceSharding(devices[0])
-                    if plan is None
-                    else jax.sharding.NamedSharding(
-                        plan.mesh, jax.sharding.PartitionSpec()
-                    )
-                )
-            resolved[name] = process_grid_resolver(
-                spec=spec,
-                required=required,
-                parameters={
-                    param: cast(
-                        "ScalarFloat | ScalarInt", all_params[f"{name}__{param}"]
-                    )
-                    for param in spec.params_to_pass_at_runtime
-                },
-            )
-        return MappingProxyType(resolved)
+        """Use the shared genuine phase-support resolver."""
+        return resolve_phase_process_grids(
+            phase=self,
+            regime_params=regime_params,
+            process_grid_resolver=process_grid_resolver,
+        )
 
     def state_action_space(
         self,
@@ -699,97 +683,208 @@ class SolutionPhase:
         regime_params: FlatRegimeParams,
         process_grid_resolver: ProcessGridResolver | None = None,
     ) -> StateActionSpace:
-        """Return the state-action space with runtime grids filled in.
+        """Use the shared genuine phase-support resolver."""
+        return phase_state_action_space(
+            phase=self,
+            regime_params=regime_params,
+            process_grid_resolver=process_grid_resolver,
+        )
 
-        For IrregSpacedGrid (state or continuous action) with runtime-supplied
-        points, the grid points come from params as `{name}__points`. For
-        `_ContinuousStochasticProcess` with runtime-supplied params, the grid
-        points are computed from process params in the params dict or
-        `resolved_fixed_params`.
 
-        Args:
-            regime_params: Flat regime parameters supplied at runtime.
+@runtime_checkable
+class PhaseSupport(Protocol):
+    """Real declared support/placement operands, independent of solver programs."""
 
-        Returns:
-            Completed state-action space.
+    @property
+    def grids(self) -> MappingProxyType[StateOrActionName, Grid]:
+        """Read the original immutable grid declarations."""
+        ...
 
-        """
-        all_params = {**self.resolved_fixed_params, **regime_params}
-        state_replacements: dict[str, ContinuousState | DiscreteState] = (
-            {}
-            if process_grid_resolver is None
-            else dict(
-                self.resolve_process_grids(
-                    regime_params=regime_params,
-                    process_grid_resolver=process_grid_resolver,
-                )
+    @property
+    def _base_state_action_space(self) -> StateActionSpace:
+        """Read the original immutable state-action support."""
+        ...
+
+    @property
+    def resolved_fixed_params(self) -> FlatRegimeParams:
+        """Read the resolved fixed parameter namespace."""
+        ...
+
+    @property
+    def sharded_state_names(self) -> frozenset[StateName]:
+        """Read the original sharded state declaration."""
+        ...
+
+    @property
+    def action_partitions(self) -> int:
+        """Read the original action partition count."""
+        ...
+
+    def placed_devices(self) -> tuple[jax.Device, ...]:
+        """Return the declaration's actual admitted placement."""
+        ...
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class PreparedPhaseSupport:
+    """The same support declaration used before a solution phase has programs."""
+
+    grids: MappingProxyType[StateOrActionName, Grid]
+    _base_state_action_space: StateActionSpace
+    resolved_fixed_params: FlatRegimeParams
+    sharded_state_names: frozenset[StateName]
+    action_partitions: int
+    submesh_device_ids: tuple[int, ...]
+
+    def placed_devices(self) -> tuple[jax.Device, ...]:
+        """Use the original canonical placement resolver."""
+        return placed_devices_for_ids(submesh_device_ids=self.submesh_device_ids)
+
+
+def resolve_phase_process_grids(
+    *,
+    phase: PhaseSupport,
+    regime_params: FlatRegimeParams,
+    process_grid_resolver: ProcessGridResolver,
+) -> Mapping[StateName, FloatND]:
+    """Resolve only process producers covered by the explicit admission owner."""
+    required: jax.sharding.Sharding | None = None
+    all_params = {**phase.resolved_fixed_params, **regime_params}
+    resolved: dict[StateName, FloatND] = {}
+    for name, spec in phase.grids.items():
+        if (
+            name not in phase._base_state_action_space.states  # noqa: SLF001 - shared phase-support data contract
+            or not isinstance(spec, _ContinuousStochasticProcess)
+            or not spec.params_to_pass_at_runtime
+            or not process_grid_resolver.supports(spec)
+            or any(
+                f"{name}__{param}" not in all_params
+                for param in spec.params_to_pass_at_runtime
+            )
+        ):
+            continue
+        if required is None:
+            devices = phase.placed_devices()
+            plan = _build_regime_sharding(
+                grids=phase.grids,
+                sharded_state_names=phase.sharded_state_names,
+                devices=devices,
+                action_partitions=phase.action_partitions,
+            )
+            required = (
+                jax.sharding.SingleDeviceSharding(devices[0])
+                if plan is None
+                else jax.sharding.NamedSharding(plan.mesh, jax.sharding.PartitionSpec())
+            )
+        resolved[name] = process_grid_resolver(
+            spec=spec,
+            required=required,
+            parameters={
+                param: cast("ScalarFloat | ScalarInt", all_params[f"{name}__{param}"])
+                for param in spec.params_to_pass_at_runtime
+            },
+        )
+    return MappingProxyType(resolved)
+
+
+def phase_state_action_space(
+    *,
+    phase: PhaseSupport,
+    regime_params: FlatRegimeParams,
+    process_grid_resolver: ProcessGridResolver | None = None,
+) -> StateActionSpace:
+    """Return the state-action space with runtime grids filled in.
+
+    For IrregSpacedGrid (state or continuous action) with runtime-supplied
+    points, the grid points come from params as `{name}__points`. For
+    `_ContinuousStochasticProcess` with runtime-supplied params, the grid
+    points are computed from process params in the params dict or
+    `resolved_fixed_params`.
+
+    Args:
+        regime_params: Flat regime parameters supplied at runtime.
+
+    Returns:
+        Completed state-action space.
+
+    """
+    all_params = {**phase.resolved_fixed_params, **regime_params}
+    state_replacements: dict[str, ContinuousState | DiscreteState] = (
+        {}
+        if process_grid_resolver is None
+        else dict(
+            resolve_phase_process_grids(
+                phase=phase,
+                regime_params=regime_params,
+                process_grid_resolver=process_grid_resolver,
             )
         )
-        action_replacements: dict[str, ContinuousAction] = {}
-        for name, spec in self.grids.items():
-            in_states = name in self._base_state_action_space.states
-            in_continuous_actions = (
-                name in self._base_state_action_space.continuous_actions
-            )
-            if not (in_states or in_continuous_actions):
+    )
+    action_replacements: dict[str, ContinuousAction] = {}
+    for name, spec in phase.grids.items():
+        in_states = name in phase._base_state_action_space.states  # noqa: SLF001 - shared phase-support data contract
+        in_continuous_actions = (
+            name in phase._base_state_action_space.continuous_actions  # noqa: SLF001 - shared phase-support data contract
+        )
+        if not (in_states or in_continuous_actions):
+            continue
+        if isinstance(spec, IrregSpacedGrid) and spec.pass_points_at_runtime:
+            points_key = f"{name}__points"
+            if points_key not in all_params:
                 continue
-            if isinstance(spec, IrregSpacedGrid) and spec.pass_points_at_runtime:
-                points_key = f"{name}__points"
-                if points_key not in all_params:
-                    continue
-                # Runtime grid-point params are flat JAX arrays — never a
-                # `MappingLeaf` / `SequenceLeaf` — so narrow via `cast`.
-                points = cast("Array", all_params[points_key])
-                if in_states:
-                    state_replacements[name] = points
-                else:
-                    action_replacements[name] = points
-            # `_ContinuousStochasticProcess` is state-only by construction (intrinsic
-            # transitions, forbidden as actions per AGENTS.md). The
-            # `in_states` gate makes that invariant explicit — a
-            # `_ContinuousStochasticProcess` reaching the action branch would be a model
-            # bug, not something this method should silently substitute.
-            elif (
-                in_states
-                and isinstance(spec, _ContinuousStochasticProcess)
-                and spec.params_to_pass_at_runtime
-                and name not in state_replacements
-            ):
-                all_present = all(
-                    f"{name}__{p}" in all_params for p in spec.params_to_pass_at_runtime
+            # Runtime grid-point params are flat JAX arrays — never a
+            # `MappingLeaf` / `SequenceLeaf` — so narrow via `cast`.
+            points = cast("Array", all_params[points_key])
+            if in_states:
+                state_replacements[name] = points
+            else:
+                action_replacements[name] = points
+        # `_ContinuousStochasticProcess` is state-only by construction (intrinsic
+        # transitions, forbidden as actions per AGENTS.md). The
+        # `in_states` gate makes that invariant explicit — a
+        # `_ContinuousStochasticProcess` reaching the action branch would be a model
+        # bug, not something this method should silently substitute.
+        elif (
+            in_states
+            and isinstance(spec, _ContinuousStochasticProcess)
+            and spec.params_to_pass_at_runtime
+            and name not in state_replacements
+        ):
+            all_present = all(
+                f"{name}__{p}" in all_params for p in spec.params_to_pass_at_runtime
+            )
+            if not all_present:
+                continue
+            process_kw: dict[str, ScalarFloat | ScalarInt] = dict(spec.params)
+            for p in spec.params_to_pass_at_runtime:
+                # Runtime process-grid params are flat JAX scalars — never
+                # a `MappingLeaf` / `SequenceLeaf` — so narrow via `cast`.
+                process_kw[p] = cast(
+                    "ScalarFloat | ScalarInt", all_params[f"{name}__{p}"]
                 )
-                if not all_present:
-                    continue
-                process_kw: dict[str, ScalarFloat | ScalarInt] = dict(spec.params)
-                for p in spec.params_to_pass_at_runtime:
-                    # Runtime process-grid params are flat JAX scalars — never
-                    # a `MappingLeaf` / `SequenceLeaf` — so narrow via `cast`.
-                    process_kw[p] = cast(
-                        "ScalarFloat | ScalarInt", all_params[f"{name}__{p}"]
-                    )
-                state_replacements[name] = spec.compute_gridpoints(**process_kw)
+            state_replacements[name] = spec.compute_gridpoints(**process_kw)
 
-        new_states = (
-            dict(self._base_state_action_space.states) | state_replacements
-            if state_replacements
-            else dict(self._base_state_action_space.states)
-        )
-        new_continuous_actions = (
-            dict(self._base_state_action_space.continuous_actions) | action_replacements
-            if action_replacements
-            else dict(self._base_state_action_space.continuous_actions)
-        )
-        distributed_states = _distribute_states_to_devices(
-            states=MappingProxyType(new_states),
-            grids=self.grids,
-            sharded_state_names=self.sharded_state_names,
-            devices=self.placed_devices(),
-            action_partitions=self.action_partitions,
-        )
-        return self._base_state_action_space.replace(
-            states=distributed_states,
-            continuous_actions=MappingProxyType(new_continuous_actions),
-        )
+    new_states = (
+        dict(phase._base_state_action_space.states) | state_replacements  # noqa: SLF001 - shared phase-support data contract
+        if state_replacements
+        else dict(phase._base_state_action_space.states)  # noqa: SLF001 - shared phase-support data contract
+    )
+    new_continuous_actions = (
+        dict(phase._base_state_action_space.continuous_actions) | action_replacements  # noqa: SLF001 - shared phase-support data contract
+        if action_replacements
+        else dict(phase._base_state_action_space.continuous_actions)  # noqa: SLF001 - shared phase-support data contract
+    )
+    distributed_states = _distribute_states_to_devices(
+        states=MappingProxyType(new_states),
+        grids=phase.grids,
+        sharded_state_names=phase.sharded_state_names,
+        devices=phase.placed_devices(),
+        action_partitions=phase.action_partitions,
+    )
+    return phase._base_state_action_space.replace(  # noqa: SLF001 - shared phase-support data contract
+        states=distributed_states,
+        continuous_actions=MappingProxyType(new_continuous_actions),
+    )
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -1144,6 +1239,14 @@ class SimulationPhase:
     choice rather than a regime-builder one.
     """
 
+    projected_forward_readers_by_period: Mapping[
+        int,
+        Mapping[
+            RegimeName, "_lcm.regime_building.projected_forward.ProjectedForwardRead"  # noqa: UP037 - precise lazy class avoids the engine import cycle
+        ],
+    ] = dataclasses.field(default_factory=lambda: MappingProxyType({}))
+    """Actual dated readers shared by forward programs and receiving ownership."""
+
     edge_reference_regimes_by_period: MappingProxyType[int, tuple[RegimeName, ...]] = (
         MappingProxyType({})
     )
@@ -1202,12 +1305,26 @@ class SimulationPhase:
     `None` keeps the grid-argmax decision path for the continuous action.
     """
 
+    case_r_replay_spec: CaseRReplaySpec | None = None
+    """Internal original-row action family, separate from plugin readers."""
+
+    case_u_replay_spec: CaseUReplaySpec | None = None
+    """Internal original-node construction over retained dated future inputs."""
+
     external_replay_route: ExecutableReplayRoute | None = None
     """Plugin route used in place of the engine's built-in replay adapters."""
 
     replay_unsupported: bool = False
     """Whether the solver declared its decision unreplayable, so the regime
     declares the unsupported route and simulation refuses it."""
+
+    @property
+    def uses_case_u_reconstruction(self) -> bool:
+        """Whether the declared U route consumes its original future replay bank."""
+        return (
+            self.case_u_replay_spec is not None
+            and self.case_u_replay_spec.reconstructs_candidates
+        )
 
     @property
     def replay_route(self) -> ReplayRoute:
@@ -1217,6 +1334,10 @@ class SimulationPhase:
         replay payload declares the grid-recomputation route, so simulation
         and the pre-simulation payload check never test for a missing read.
         """
+        if self.case_r_replay_spec is not None:
+            return self.case_r_replay_spec
+        if self.case_u_replay_spec is not None:
+            return self.case_u_replay_spec
         if self.external_replay_route is not None:
             return self.external_replay_route
         if self.replay_unsupported:

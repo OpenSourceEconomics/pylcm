@@ -29,6 +29,7 @@ import pandas as pd
 from dags.tree import qname_from_tree_path
 from jax import Array
 
+from _lcm.materialization import DatedGenerationMaterializer
 from _lcm.params.edges import EDGES
 from _lcm.params.processing import (
     cast_params_to_canonical_dtypes,
@@ -49,7 +50,7 @@ from _lcm.typing import (
 )
 from _lcm.utils.functools import is_user_function
 from _lcm.utils.namespace import flatten_regime_namespace
-from lcm.exceptions import InvalidNameError
+from lcm.exceptions import ExecutionPlanningError, InvalidNameError
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.regime import StateTransitionEntry
@@ -102,6 +103,7 @@ def prune_fixed_regime_support(
     user_regimes: Mapping[RegimeName, UserRegime],
     laws: RegimeLaws,
     fixed_params: UserParams,
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> FixedRegimeSupport:
     """Remove exactly zero cells whose entire dependency graph is fixed.
 
@@ -119,7 +121,11 @@ def prune_fixed_regime_support(
     ] = {}
     for name, regime in user_regimes.items():
         transition, removed, law_keys = _prune_regime_transition(
-            regime_name=name, regime=regime, law=laws[name], fixed_flat=fixed_flat
+            regime_name=name,
+            regime=regime,
+            law=laws[name],
+            fixed_flat=fixed_flat,
+            materializer=materializer,
         )
         consumed.update(law_keys)
         removed_in_both = removed["solve"] & removed["simulate"]
@@ -131,6 +137,7 @@ def prune_fixed_regime_support(
             fixed_flat=fixed_flat,
             consumed=consumed,
             reads=reads,
+            materializer=materializer,
         )
         state_transitions = {
             state: _trim_state_law(
@@ -142,6 +149,7 @@ def prune_fixed_regime_support(
                 fixed_flat=fixed_flat,
                 consumed=consumed,
                 reads=reads,
+                materializer=materializer,
             )
             for state, law in regime.state_transitions.items()
         }
@@ -185,6 +193,7 @@ def _prune_regime_transition(
     regime: UserRegime,
     law: RegimeLaw,
     fixed_flat: Mapping[QualifiedName, UserParamsLeaf],
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> tuple[RegimeTransitionLaw, MappingProxyType[Side, frozenset[str]], frozenset[str]]:
     """Remove zero cells, keeping a joint-lottery edge in both phases or neither.
 
@@ -206,6 +215,7 @@ def _prune_regime_transition(
             fixed_flat=fixed_flat,
             consumed=consumed,
             protected=protected,
+            materializer=materializer,
         )
         removed: MappingProxyType[Side, frozenset[str]] = MappingProxyType(
             {
@@ -271,6 +281,7 @@ def _trim_joint_transitions(
     fixed_flat: Mapping[QualifiedName, UserParamsLeaf],
     consumed: set[str],
     reads: dict[RegimeName, set[str]],
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> MappingProxyType[RegimeName, Mapping[str, _JointDeclaration]]:
     """Omit joint kernels toward targets removed in both phases at every age."""
     node_names = frozenset(
@@ -301,6 +312,7 @@ def _trim_joint_transitions(
                             ancestors=(),
                             non_params=node_names,
                             reads=reads.setdefault(target, set()),
+                            materializer=materializer,
                         )
                     )
     return MappingProxyType(
@@ -320,6 +332,7 @@ def _prune_law(
     fixed_flat: Mapping[QualifiedName, UserParamsLeaf],
     consumed: set[str],
     protected: frozenset[str],
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> RegimeTransitionLaw:
     if isinstance(law, ByAge):
         return law.with_mapped_laws(
@@ -330,6 +343,7 @@ def _prune_law(
                 fixed_flat=fixed_flat,
                 consumed=consumed,
                 protected=protected,
+                materializer=materializer,
             )
         )
     if law is None:
@@ -341,6 +355,7 @@ def _prune_law(
         fixed_flat=fixed_flat,
         consumed=consumed,
         protected=protected,
+        materializer=materializer,
     )
 
 
@@ -352,6 +367,7 @@ def _prune_case(
     fixed_flat: Mapping[QualifiedName, UserParamsLeaf],
     consumed: set[str],
     protected: frozenset[str],
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> AgeCaseLaw:
     if isinstance(law, Phased):
         return Phased(
@@ -363,6 +379,7 @@ def _prune_case(
                 fixed_flat=fixed_flat,
                 consumed=consumed,
                 protected=protected,
+                materializer=materializer,
             ),
             simulate=_prune_phase(
                 law=law.simulate,
@@ -372,6 +389,7 @@ def _prune_case(
                 fixed_flat=fixed_flat,
                 consumed=consumed,
                 protected=protected,
+                materializer=materializer,
             ),
         )
     if not isinstance(law, Mapping):
@@ -386,6 +404,7 @@ def _prune_case(
         fixed_flat=fixed_flat,
         consumed=consumed,
         protected=protected,
+        materializer=materializer,
     )
     simulate = _prune_cells(
         law=law,
@@ -395,6 +414,7 @@ def _prune_case(
         fixed_flat=fixed_flat,
         consumed=consumed,
         protected=protected,
+        materializer=materializer,
     )
     return (
         solve if set(solve) == set(simulate) else Phased(solve=solve, simulate=simulate)
@@ -410,6 +430,7 @@ def _prune_phase(
     fixed_flat: Mapping[QualifiedName, UserParamsLeaf],
     consumed: set[str],
     protected: frozenset[str],
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> PhaseTransitionLaw:
     if not isinstance(law, Mapping):
         return law
@@ -421,6 +442,7 @@ def _prune_phase(
         fixed_flat=fixed_flat,
         consumed=consumed,
         protected=protected,
+        materializer=materializer,
     )
 
 
@@ -433,6 +455,7 @@ def _prune_cells(
     fixed_flat: Mapping[QualifiedName, UserParamsLeaf],
     consumed: set[str],
     protected: frozenset[str],
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> Mapping[RegimeName, TargetLawCell]:
     retained: dict[RegimeName, TargetLawCell] = {}
     removed_keys: set[str] = set()
@@ -445,6 +468,7 @@ def _prune_cells(
                 regime=regime,
                 fixed_flat=fixed_flat,
                 ancestors=(),
+                materializer=materializer,
             )
             if isinstance(cell, StochasticTransition) and target not in protected
             else None
@@ -482,6 +506,7 @@ def _evaluate_fixed_function(
     regime: UserRegime,
     fixed_flat: Mapping[QualifiedName, UserParamsLeaf],
     ancestors: tuple[str, ...],
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> tuple[_FixedValue, frozenset[str]] | None:
     """Evaluate a complete fixed DAG, or retain an unresolved conditional edge."""
     arguments: dict[ReferenceName, _FixedValue] = {}
@@ -501,14 +526,21 @@ def _evaluate_fixed_function(
             regime=regime,
             fixed_flat=fixed_flat,
             ancestors=ancestors,
+            materializer=materializer,
         )
         if evaluated is None:
             return None
         arguments[arg_name], argument_keys = evaluated
         keys.update(argument_keys)
     try:
-        value = func(**arguments)
-    except Exception:  # noqa: BLE001 -- failure proves no structural zero
+        value = (
+            func(**arguments)
+            if materializer is None
+            else materializer.evaluate_validation(function=func, arguments=arguments)
+        )
+    except Exception as error:
+        if materializer is not None and isinstance(error, ExecutionPlanningError):
+            raise
         # The ordinary compilation/evaluation route owns errors in a user law.
         # Failed evaluation proves no structural zero.
         return None
@@ -526,6 +558,7 @@ def _resolve_fixed_argument(
     regime: UserRegime,
     fixed_flat: Mapping[QualifiedName, UserParamsLeaf],
     ancestors: tuple[str, ...],
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> tuple[_FixedValue, frozenset[str]] | None:
     """Resolve one argument through its helper DAG or a fixed parameter leaf.
 
@@ -547,6 +580,7 @@ def _resolve_fixed_argument(
             regime=regime,
             fixed_flat=fixed_flat,
             ancestors=(*ancestors, arg_name),
+            materializer=materializer,
         )
     qname = qname_from_tree_path((*path, arg_name))
     candidates = find_param_candidates(qname=qname, params_flat=fixed_flat)
@@ -563,7 +597,10 @@ def _resolve_fixed_argument(
     if isinstance(fixed_flat[key], pd.Series | TimeVarying):
         return None
     return _canonicalize_fixed_leaf(
-        regime_name=regime_name, qname=qname, value=fixed_flat[key]
+        regime_name=regime_name,
+        qname=qname,
+        value=fixed_flat[key],
+        materializer=materializer,
     ), frozenset((key,))
 
 
@@ -579,14 +616,19 @@ def _is_runtime_argument(*, arg_name: ReferenceName, regime: UserRegime) -> bool
 
 
 def _canonicalize_fixed_leaf(
-    *, regime_name: RegimeName, qname: QualifiedName, value: UserParamsLeaf
+    *,
+    regime_name: RegimeName,
+    qname: QualifiedName,
+    value: UserParamsLeaf,
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> ParamsLeaf:
     """Apply the parameter dtype boundary before executing a fixed callable."""
     canonical = cast_params_to_canonical_dtypes(
         cast(
             "FlatParams",
             MappingProxyType({regime_name: MappingProxyType({qname: value})}),
-        )
+        ),
+        array_writer=materializer,
     )
     # The cast input holds one regime level only, so no edge level comes back.
     return cast("FlatRegimeParams", canonical[regime_name])[qname]
@@ -617,6 +659,7 @@ def _trim_state_law(
     fixed_flat: Mapping[QualifiedName, UserParamsLeaf],
     consumed: set[str],
     reads: dict[RegimeName, set[str]],
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> StateTransitionEntry:
     """Omit explicit laws toward targets removed from the relevant phase."""
     if isinstance(law, Phased):
@@ -631,6 +674,7 @@ def _trim_state_law(
                 fixed_flat=fixed_flat,
                 consumed=consumed,
                 reads=reads,
+                materializer=materializer,
             )
         return Phased(
             solve=_trim_state_side(law=law.solve, removed=removed["solve"]),
@@ -647,6 +691,7 @@ def _trim_state_law(
             fixed_flat=fixed_flat,
             consumed=consumed,
             reads=reads,
+            materializer=materializer,
         )
     solve = _trim_state_side(law=law, removed=removed["solve"])
     simulate = _trim_state_side(law=law, removed=removed["simulate"])
@@ -679,6 +724,7 @@ def _record_removed_state_keys(
     fixed_flat: Mapping[QualifiedName, UserParamsLeaf],
     consumed: set[str],
     reads: dict[RegimeName, set[str]],
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> None:
     """Keep fixed keys and reads of handoff cells omitted with their zero edges."""
     if not isinstance(law, Mapping):
@@ -695,6 +741,7 @@ def _record_removed_state_keys(
                     fixed_flat=fixed_flat,
                     ancestors=(),
                     reads=reads.setdefault(target, set()),
+                    materializer=materializer,
                 )
             )
 
@@ -709,6 +756,7 @@ def _get_declared_fixed_keys(
     ancestors: tuple[str, ...],
     non_params: frozenset[str] = frozenset(),
     reads: set[str],
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> frozenset[str]:
     """Resolve supplied fixed leaves without evaluating an omitted handoff law.
 
@@ -735,6 +783,7 @@ def _get_declared_fixed_keys(
                     ancestors=(*ancestors, arg_name),
                     non_params=non_params,
                     reads=reads,
+                    materializer=materializer,
                 )
             )
         elif helper is None:
@@ -748,7 +797,10 @@ def _get_declared_fixed_keys(
             for candidate in candidates:
                 if not isinstance(fixed_flat[candidate], pd.Series):
                     _canonicalize_fixed_leaf(
-                        regime_name=path[0], qname=qname, value=fixed_flat[candidate]
+                        regime_name=path[0],
+                        qname=qname,
+                        value=fixed_flat[candidate],
+                        materializer=materializer,
                     )
             result.update(candidates)
     return frozenset(result)

@@ -161,7 +161,10 @@ import jax
 import jax.numpy as jnp
 from jax.custom_derivatives import SymbolicZero
 
-from _lcm.certainty_equivalent import _scaled_lottery_terms
+from _lcm.certainty_equivalent import (
+    _scaled_lottery_terms,
+    _scaled_lottery_terms_with_scale,
+)
 from _lcm.probability import (
     _IntegerTangent,
     _unbiased_exponent,
@@ -349,26 +352,89 @@ def _scaled_mean_jvp(
     mass_exponent = _unbiased_exponent(mass)
     unit_mass = _rescale_mean_operand(values=mass, shift=-mass_exponent)
 
-    mean_column = mean[..., None]
-    safe_values = jnp.where(
-        is_represented_zero(coefficients) & ~jnp.isfinite(values), mean_column, values
-    )
-    value_exponent = _unbiased_exponent(
-        jnp.maximum(jnp.abs(safe_values), jnp.abs(mean_column))
-    )
-    unit_gap = _rescale_mean_operand(
-        values=safe_values, shift=-value_exponent
-    ) - _rescale_mean_operand(values=mean_column, shift=-value_exponent)
-    coefficient_slopes = _rescale_mean_operand(
-        values=unit_gap / unit_mass,
-        shift=value_exponent - shifts - common - mass_exponent,
-    )
     value_slopes = _rescale_mean_operand(
         values=unit_coefficients / unit_mass,
         shift=weight_exponent - common - mass_exponent,
     )
     tangent = jnp.zeros_like(mean)
     if not isinstance(coefficients_dot, SymbolicZero):
+        mean_column = mean[..., None]
+        finite_support = live & jnp.isfinite(values)
+        lower = jnp.min(
+            jnp.where(finite_support, values, jnp.inf), axis=-1, keepdims=True
+        )
+        upper = jnp.max(
+            jnp.where(finite_support, values, -jnp.inf), axis=-1, keepdims=True
+        )
+        # A finite mean's anchor stays inside its live support even when an
+        # intermediate underflow moved the published level outside that hull.
+        anchor = jnp.where(
+            jnp.isfinite(mean_column), jnp.clip(mean_column, lower, upper), mean_column
+        )
+        safe_values = jnp.where(
+            is_represented_zero(coefficients) & ~jnp.isfinite(values), anchor, values
+        )
+        value_exponent = _unbiased_exponent(
+            jnp.maximum(jnp.abs(safe_values), jnp.abs(anchor))
+        )
+        unit_gap = _rescale_mean_operand(
+            values=safe_values, shift=-value_exponent
+        ) - _rescale_mean_operand(values=anchor, shift=-value_exponent)
+        # Retain the mean's rounding residual on the centered value scale. A
+        # rounded level alone discards the sub-ULP difference needed by a slope.
+        gap_exponent = _unbiased_exponent(unit_gap)
+        centered_values = _rescale_mean_operand(values=unit_gap, shift=-gap_exponent)
+        centered_exponent = value_exponent + gap_exponent
+        # Keep the centered sum on normal coefficient mantissas, including
+        # when every raw coefficient is close to the smallest normal value.
+        centered_shifts = shifts - coefficient_exponent - centered_exponent
+        # A zero gap contributes nothing and must not select a scale for the
+        # nonzero residual terms. The helper's mass terms are not used here.
+        unused_shift = jnp.max(centered_shifts, axis=-1, keepdims=True)
+        centered_shifts = jnp.where(
+            is_represented_zero(centered_values), unused_shift, centered_shifts
+        )
+        residual_terms, _, residual_scale = _scaled_lottery_terms_with_scale(
+            values=centered_values,
+            coefficients=unit_coefficients,
+            shifts=centered_shifts,
+        )
+        residual = jnp.sum(residual_terms, axis=-1, keepdims=True) / unit_mass
+        residual_shift = -residual_scale - common - mass_exponent
+        # Subtract the two centered quantities on each entry's own scale; this
+        # also permits a residual too small to materialize before normalization.
+        absent_exponent = jnp.iinfo(jnp.int32).min // 2
+        subtraction_exponent = jnp.maximum(
+            jnp.where(
+                is_represented_zero(unit_gap), absent_exponent, centered_exponent
+            ),
+            jnp.where(
+                is_represented_zero(residual),
+                absent_exponent,
+                _unbiased_exponent(residual) + residual_shift,
+            ),
+        )
+        subtraction_exponent = jnp.where(
+            is_represented_zero(unit_gap) & is_represented_zero(residual),
+            0,
+            subtraction_exponent,
+        )
+        corrected_gap = _rescale_mean_operand(
+            values=unit_gap, shift=value_exponent - subtraction_exponent
+        ) - _rescale_mean_operand(
+            values=residual, shift=residual_shift - subtraction_exponent
+        )
+        coefficient_slopes = _rescale_mean_operand(
+            values=corrected_gap / unit_mass,
+            shift=subtraction_exponent - shifts - common - mass_exponent,
+        )
+        # A null event carrying a nonfinite value has no finite weight
+        # derivative; keep its zero stand-in convention after centering.
+        coefficient_slopes = jnp.where(
+            is_represented_zero(coefficients) & ~jnp.isfinite(values),
+            jnp.zeros_like(coefficient_slopes),
+            coefficient_slopes,
+        )
         tangent = tangent + jnp.sum(coefficient_slopes * coefficients_dot, axis=-1)
     if not isinstance(values_dot, SymbolicZero):
         tangent = tangent + jnp.sum(value_slopes * values_dot, axis=-1)

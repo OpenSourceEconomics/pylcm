@@ -10,10 +10,10 @@ nothing about asset-row mode, the multi-target machinery itself, or the kernel
 orchestration that maps it over the discrete-combo product.
 """
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import cast
+from typing import NamedTuple, cast
 
 import jax
 import jax.numpy as jnp
@@ -35,6 +35,7 @@ from _lcm.egm.preferences import (
     BoundUtilityOfAction,
     get_numeric_inverse_marginal_utility,
 )
+from _lcm.egm.projected_continuation import ProjectedEGMCarry
 from _lcm.egm.query_data import EGMQueryData, QueryNodeKind
 from _lcm.egm.upper_envelope import OwnedQueryBracket
 from _lcm.egm.upper_envelope.fues import QueryBracket
@@ -57,6 +58,7 @@ from _lcm.typing import (
     ActionName,
     EconFunctionArg,
     EconFunctionKwargs,
+    PytreeChild,
     RegimeName,
     StateName,
 )
@@ -77,6 +79,7 @@ from lcm.typing import (
 # Refined-row fields every envelope backend returns, ahead of the optional
 # read-support verdict.
 _REFINED_ROW_FIELDS: int = 4
+_MIN_RESOURCES_DOMAIN_POINTS: int = 2
 
 type _ComboRows = tuple[Float1D, Float1D, Float1D, Float1D, Float1D, ScalarBool]
 type _NodeOutput = tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]
@@ -253,7 +256,9 @@ def _get_solve_one_combo(
     pieces: _EgmKernelPieces,
     pool: EconFunctionKwargs,
     state_grid: Float1D,
-    next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
+    next_regime_to_continuation: MappingProxyType[
+        RegimeName, EGMCarry | ProjectedEGMCarry
+    ],
     euler_point_width: int | None,
     savings_point_width: int | None,
     stochastic_node_width: int | None,
@@ -286,6 +291,64 @@ def _get_solve_one_combo(
     )
 
 
+type _OwnedResourcesChild = (
+    PytreeChild
+    | OwnedEnvelope
+    | BoundInputStatus
+    | tuple[QueryInputStatus, ...]
+    | ContinuationReadCounts
+)
+
+
+class OwnedResourcesRow(NamedTuple):
+    """Transient canonical source row with original owners and mandatory integrity."""
+
+    envelope: OwnedEnvelope
+    marginal: Float1D
+    node_kind: IntND
+    borrowing_limit: ScalarFloat
+    upper_savings: ScalarFloat
+    expected_floor_value: ScalarFloat
+    discount_factor: ScalarFloat
+    discounted_floor_value: ScalarFloat
+    resources_domain: Float1D
+    construction_invalid: ScalarBool
+    floor_status: BoundInputStatus | None
+    child_status: tuple[QueryInputStatus, ...] | None
+    continuation_read_counts: ContinuationReadCounts | None
+
+    def __reduce__(
+        self,
+    ) -> tuple[
+        Callable[[None, Iterable[_OwnedResourcesChild]], OwnedResourcesRow],
+        tuple[None, tuple[_OwnedResourcesChild, ...]],
+    ]:
+        """Retain the fixed keyed schema through original-buffer reconstruction."""
+        return _unflatten_owned_resources_row, (None, tuple(self))
+
+
+@dataclass(frozen=True, kw_only=True)
+class _ConstructedCombo:
+    """Invocation-local producer state, consumed before numerical publication."""
+
+    pieces: _EgmKernelPieces
+    combo_pool: EconFunctionKwargs
+    discount_factor: ScalarFloat
+    utility_of_action: BoundUtilityOfAction
+    expected_values: FloatND
+    publish_resources: FloatND
+    candidate_dead: Bool1D
+    refined: (
+        tuple[Float1D, Float1D, Float1D, ScalarInt]
+        | tuple[Float1D, Float1D, Float1D, ScalarInt, ScalarBool]
+        | OwnedEnvelope
+        | _NegmBindingEnvelope
+    )
+    binding_query: BoolND | None
+    child_status: tuple[QueryInputStatus, ...] | None
+    read_counts: ContinuationReadCounts | None
+
+
 @dataclass(frozen=True, kw_only=True, eq=False)
 class _SolveOneCombo:
     """The single-post-state EGM step for one kernel invocation, per combo.
@@ -303,7 +366,9 @@ class _SolveOneCombo:
     state_grid: Float1D
     """The regime's exogenous Euler-state grid."""
 
-    next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry]
+    next_regime_to_continuation: MappingProxyType[
+        RegimeName, EGMCarry | ProjectedEGMCarry
+    ]
     """The next period's EGM carries."""
 
     savings_point_width: int | None
@@ -334,123 +399,20 @@ class _SolveOneCombo:
             and exact node feasibility, with integrity carried as bounded auxiliary.
 
         """
-        pieces = self.pieces
+        constructed = self._construct(combo_values=combo_values)
         dtype = self.state_grid.dtype
-        combo_pool = {
-            **self.pool,
-            **dict(zip(pieces.combo_names, combo_values, strict=True)),
-        }
-        pieces = bind_cell_floor(pieces=pieces, pool=combo_pool)
-        # Validation pins the default Bellman aggregator, whose single
-        # non-(utility, CE) parameter is the discount factor.
-        (discount_factor_arg,) = tuple(pieces.build_W_kwargs(combo_pool).values())
-        discount_factor = cast("ScalarFloat", discount_factor_arg)
-        utility_of_action = BoundUtilityOfAction(
-            utility_func=pieces.utility_func,
-            action_name=pieces.action_name,
-            bound=combo_pool,
-        )
-        compute_node = _get_compute_node(
-            pieces=pieces,
-            combo_pool=combo_pool,
-            discount_factor=discount_factor,
-            utility_of_action=utility_of_action,
-            next_regime_to_continuation=self.next_regime_to_continuation,
-            dtype=dtype,
-            stochastic_node_width=self.stochastic_node_width,
-            resolved_process_grids=self.resolved_process_grids,
-        )
-        child_status = None
+        pieces = constructed.pieces
+        combo_pool = constructed.combo_pool
+        discount_factor = constructed.discount_factor
+        utility_of_action = constructed.utility_of_action
+        expected_values = constructed.expected_values
+        publish_resources = constructed.publish_resources
+        candidate_dead = constructed.candidate_dead
+        refined = constructed.refined
+        binding_query = constructed.binding_query
+        child_status = constructed.child_status
+        read_counts = constructed.read_counts
         conditional = pieces.query_spec is not None or pieces.check_query_construction
-        if conditional:
-            candidates, child_status, read_counts = _compute_nodes_after_first(
-                first=compute_node(pieces.savings_nodes[0]),
-                compute_node=compute_node,
-                savings_nodes=pieces.savings_nodes,
-                savings_point_width=self.savings_point_width,
-            )
-        else:
-            candidates, child_status, read_counts = (
-                _legacy_candidates_with_child_status(
-                    pieces=pieces,
-                    compute_node=compute_node,
-                    savings_point_width=self.savings_point_width,
-                )
-            )
-        actions, endog_grid, values, expected_values = candidates
-        own_resources_of_state = ResourcesOfState(
-            resources_func=pieces.own_resources_func,
-            euler_state_name=pieces.euler_state_name,
-            bound=combo_pool,
-        )
-        publish_resources = jax.vmap(own_resources_of_state)(self.state_grid)
-
-        constrained_actions, constrained_values = _compute_constrained_candidates(
-            first_endogenous_point=endog_grid[0],
-            publish_resources=publish_resources,
-            borrowing_limit=pieces.borrowing_limit,
-            n_constrained=pieces.n_constrained,
-            constrained_ratio=pieces.constrained_ratio,
-            utility_of_action=utility_of_action,
-            discounted_expected_value_at_limit=discount_factor * expected_values[0],
-        )
-
-        (
-            candidate_grid,
-            candidate_policy,
-            candidate_value,
-            candidate_savings,
-            candidate_dead,
-        ) = _assemble_combo_candidates(
-            pieces=pieces,
-            constrained_actions=constrained_actions,
-            constrained_values=constrained_values,
-            endog_grid=endog_grid,
-            actions=actions,
-            values=values,
-        )
-        candidate_marginal = _candidate_supgradient(
-            policy=candidate_policy,
-            dead=candidate_dead,
-            utility_of_action=utility_of_action,
-        )
-        # No explicit `segment_id` is passed: the candidate chain is a single
-        # connected branch (the constrained segment joins the unconstrained Euler
-        # branch continuously at the borrowing limit). Within-period discrete
-        # choices are maximized across combos in the V array, not stacked here, so
-        # `refine` never sees two unrelated branches that could be bridged. A
-        # future-kink-induced fold is data-emergent (the inverted endogenous grid
-        # decreases) rather than known a priori, so it is the backend's geometry —
-        # not an explicit label — that resolves it. Explicit topology is the
-        # oracle/test path (LTM/MSS/query accept `segment_id`); production has none
-        # to emit.
-        # A backend that cannot certify off-grid read support returns the
-        # four-element row and the read is treated as supported; only a backend
-        # that computes the flag can withhold it.
-        binding_request = (
-            {
-                "_binding_source_count": pieces.n_constrained + 1,
-                "_binding_queries": publish_resources,
-            }
-            if pieces._negm_current_publication  # noqa: SLF001
-            else {}
-        )
-        refined = pieces.refine(
-            cell_width=self.envelope_cell_width,
-            endog_grid=jnp.where(candidate_dead, jnp.nan, candidate_grid),
-            policy=jnp.where(candidate_dead, jnp.nan, candidate_policy),
-            value=jnp.where(candidate_dead, jnp.nan, candidate_value),
-            marginal_utility=candidate_marginal,
-            savings=jnp.where(candidate_dead, jnp.nan, candidate_savings),
-            **binding_request,
-        )
-        binding_query = (
-            refined.binding_query
-            if isinstance(refined, _NegmBindingEnvelope | _OwnedNegmBindingEnvelope)
-            else None
-        )
-        if isinstance(refined, _OwnedNegmBindingEnvelope):
-            refined = refined.owned
         refined_grid, refined_policy, refined_value, n_kept, read_supported = (
             _refined_rows(
                 refined=refined,
@@ -574,6 +536,213 @@ class _SolveOneCombo:
             continuation_read_counts=reduce_continuation_read_counts(
                 counts=read_counts, active=feasible
             ),
+        )
+
+    def owned_resources_row(
+        self,
+        *,
+        combo_values: tuple[ScalarInt | ScalarFloat, ...],
+        resources_domain: Float1D,
+        refine: Callable[..., OwnedEnvelope],
+    ) -> OwnedResourcesRow:
+        """Construct one canonical transient row on its whole resources domain.
+
+        The caller supplies the same common finite resources domain for every
+        current draw that reuses this row. Original child expectation, Euler
+        inversion, constrained candidates and envelope selection run once here.
+        No query authority is manufactured and no current node bank is returned.
+        """
+        row = self._construct(
+            combo_values=combo_values,
+            resources_domain=resources_domain,
+            owned_refine=refine,
+        )
+        if not isinstance(row.refined, OwnedEnvelope):
+            raise TypeError("A projected source requires its native owned envelope.")
+        marginal = jax.vmap(jax.grad(row.utility_of_action))(
+            jnp.where(jnp.isnan(row.refined.policy), 1.0, row.refined.policy)
+        )
+        marginal = jnp.where(jnp.isnan(row.refined.policy), jnp.nan, marginal)
+        marginal = jnp.where(jnp.isneginf(row.refined.value), 0.0, marginal)
+        invalid, kinds = _source_construction_status(
+            refined=row.refined,
+            marginal_row=marginal,
+            expected_at_floor=row.expected_values[0],
+        )
+        domain_invalid = (
+            resources_domain.size < _MIN_RESOURCES_DOMAIN_POINTS
+            or resources_domain.ndim != 1
+        )
+        invalid = (
+            invalid
+            | domain_invalid
+            | jnp.any(~jnp.isfinite(resources_domain))
+            | jnp.any(resources_domain[1:] <= resources_domain[:-1])
+        )
+        return OwnedResourcesRow(
+            envelope=row.refined,
+            marginal=marginal,
+            node_kind=kinds,
+            borrowing_limit=row.pieces.borrowing_limit,
+            upper_savings=row.pieces.savings_nodes[-1],
+            expected_floor_value=row.expected_values[0],
+            discount_factor=row.discount_factor,
+            discounted_floor_value=row.discount_factor * row.expected_values[0],
+            resources_domain=resources_domain,
+            construction_invalid=invalid,
+            floor_status=row.pieces.floor_status,
+            child_status=row.child_status,
+            continuation_read_counts=row.read_counts,
+        )
+
+    def _construct(
+        self,
+        *,
+        combo_values: tuple[ScalarInt | ScalarFloat, ...],
+        resources_domain: Float1D | None = None,
+        owned_refine: Callable[..., OwnedEnvelope] | None = None,
+    ) -> _ConstructedCombo:
+        """Run the shared candidate producer before publication chooses coordinates."""
+        pieces = self.pieces
+        dtype = self.state_grid.dtype
+        combo_pool = {
+            **self.pool,
+            **dict(zip(pieces.combo_names, combo_values, strict=True)),
+        }
+        pieces = bind_cell_floor(pieces=pieces, pool=combo_pool)
+        # Validation pins the default Bellman aggregator, whose single
+        # non-(utility, CE) parameter is the discount factor.
+        (discount_factor_arg,) = tuple(pieces.build_W_kwargs(combo_pool).values())
+        discount_factor = cast("ScalarFloat", discount_factor_arg)
+        utility_of_action = BoundUtilityOfAction(
+            utility_func=pieces.utility_func,
+            action_name=pieces.action_name,
+            bound=combo_pool,
+        )
+        compute_node = _get_compute_node(
+            pieces=pieces,
+            combo_pool=combo_pool,
+            discount_factor=discount_factor,
+            utility_of_action=utility_of_action,
+            next_regime_to_continuation=self.next_regime_to_continuation,
+            dtype=dtype,
+            stochastic_node_width=self.stochastic_node_width,
+            resolved_process_grids=self.resolved_process_grids,
+        )
+        child_status = None
+        conditional = (
+            pieces.query_spec is not None
+            or pieces.check_query_construction
+            or owned_refine is not None
+        )
+        if conditional:
+            candidates, child_status, read_counts = _compute_nodes_after_first(
+                first=compute_node(pieces.savings_nodes[0]),
+                compute_node=compute_node,
+                savings_nodes=pieces.savings_nodes,
+                savings_point_width=self.savings_point_width,
+            )
+        else:
+            candidates, child_status, read_counts = (
+                _legacy_candidates_with_child_status(
+                    pieces=pieces,
+                    compute_node=compute_node,
+                    savings_point_width=self.savings_point_width,
+                )
+            )
+        actions, endog_grid, values, expected_values = candidates
+        own_resources_of_state = ResourcesOfState(
+            resources_func=pieces.own_resources_func,
+            euler_state_name=pieces.euler_state_name,
+            bound=combo_pool,
+        )
+        publish_resources = (
+            jax.vmap(own_resources_of_state)(self.state_grid)
+            if resources_domain is None
+            else resources_domain
+        )
+
+        constrained_actions, constrained_values = _compute_constrained_candidates(
+            first_endogenous_point=endog_grid[0],
+            publish_resources=(
+                publish_resources if resources_domain is None else resources_domain
+            ),
+            borrowing_limit=pieces.borrowing_limit,
+            n_constrained=pieces.n_constrained,
+            constrained_ratio=pieces.constrained_ratio,
+            utility_of_action=utility_of_action,
+            discounted_expected_value_at_limit=discount_factor * expected_values[0],
+        )
+
+        (
+            candidate_grid,
+            candidate_policy,
+            candidate_value,
+            candidate_savings,
+            candidate_dead,
+        ) = _assemble_combo_candidates(
+            pieces=pieces,
+            constrained_actions=constrained_actions,
+            constrained_values=constrained_values,
+            endog_grid=endog_grid,
+            actions=actions,
+            values=values,
+        )
+        candidate_marginal = _candidate_supgradient(
+            policy=candidate_policy,
+            dead=candidate_dead,
+            utility_of_action=utility_of_action,
+        )
+        # No explicit `segment_id` is passed: the candidate chain is a single
+        # connected branch (the constrained segment joins the unconstrained Euler
+        # branch continuously at the borrowing limit). Within-period discrete
+        # choices are maximized across combos in the V array, not stacked here, so
+        # `refine` never sees two unrelated branches that could be bridged. A
+        # future-kink-induced fold is data-emergent (the inverted endogenous grid
+        # decreases) rather than known a priori, so it is the backend's geometry —
+        # not an explicit label — that resolves it. Explicit topology is the
+        # oracle/test path (LTM/MSS/query accept `segment_id`); production has none
+        # to emit.
+        # A backend that cannot certify off-grid read support returns the
+        # four-element row and the read is treated as supported; only a backend
+        # that computes the flag can withhold it.
+        binding_request = (
+            {
+                "_binding_source_count": pieces.n_constrained + 1,
+                "_binding_queries": publish_resources,
+            }
+            if pieces._negm_current_publication  # noqa: SLF001
+            else {}
+        )
+        refine = pieces.refine if owned_refine is None else owned_refine
+        refined = refine(
+            cell_width=self.envelope_cell_width,
+            endog_grid=jnp.where(candidate_dead, jnp.nan, candidate_grid),
+            policy=jnp.where(candidate_dead, jnp.nan, candidate_policy),
+            value=jnp.where(candidate_dead, jnp.nan, candidate_value),
+            marginal_utility=candidate_marginal,
+            savings=jnp.where(candidate_dead, jnp.nan, candidate_savings),
+            **binding_request,
+        )
+        binding_query = (
+            refined.binding_query
+            if isinstance(refined, _NegmBindingEnvelope | _OwnedNegmBindingEnvelope)
+            else None
+        )
+        if isinstance(refined, _OwnedNegmBindingEnvelope):
+            refined = refined.owned
+        return _ConstructedCombo(
+            pieces=pieces,
+            combo_pool=combo_pool,
+            discount_factor=discount_factor,
+            utility_of_action=utility_of_action,
+            expected_values=expected_values,
+            publish_resources=publish_resources,
+            candidate_dead=candidate_dead,
+            refined=refined,
+            binding_query=binding_query,
+            child_status=child_status,
+            read_counts=read_counts,
         )
 
 
@@ -968,20 +1137,30 @@ def _get_compute_node(
     combo_pool: EconFunctionKwargs,
     discount_factor: ScalarFloat,
     utility_of_action: Callable[[ScalarFloat], ScalarFloat],
-    next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
+    next_regime_to_continuation: MappingProxyType[
+        RegimeName, EGMCarry | ProjectedEGMCarry
+    ],
     dtype: np.dtype,
     stochastic_node_width: int | None,
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
+    economic_continuation: Callable[
+        [ScalarFloat], BoundedResult[tuple[ScalarFloat, ScalarFloat]]
+    ]
+    | None = None,
 ) -> Callable[[ScalarFloat], _NodeOutput | BoundedResult[_NodeOutput]]:
     """Build the per-savings-node Euler inversion for one discrete combo."""
-    continuation = bind_continuation(
-        plan=pieces.continuation_plan,
-        combo_pool=combo_pool,
-        next_regime_to_continuation=next_regime_to_continuation,
-        dtype=dtype,
-        stochastic_node_width=stochastic_node_width,
-        resolved_process_grids=resolved_process_grids,
-        collect_continuation_read_counts=pieces.collect_continuation_read_counts,
+    continuation = (
+        economic_continuation
+        if economic_continuation is not None
+        else bind_continuation(
+            plan=pieces.continuation_plan,
+            combo_pool=combo_pool,
+            next_regime_to_continuation=next_regime_to_continuation,
+            dtype=dtype,
+            stochastic_node_width=stochastic_node_width,
+            resolved_process_grids=resolved_process_grids,
+            collect_continuation_read_counts=pieces.collect_continuation_read_counts,
+        )
     )
 
     analytic_inverse = pieces.inverse_marginal_utility_func
@@ -1308,3 +1487,41 @@ def _publish_V_and_carry_rows(
     # parent a wrong-but-finite slope past the NaN diagnostics.
     marginal_row = jnp.where(overflowed, jnp.nan, marginal_utility).astype(dtype)
     return V_row, value_row, marginal_row
+
+
+def _flatten_owned_resources_row(
+    record: OwnedResourcesRow,
+) -> tuple[tuple[_OwnedResourcesChild, ...], None]:
+    return tuple(record), None
+
+
+def _flatten_owned_resources_row_with_keys(
+    record: OwnedResourcesRow,
+) -> tuple[tuple[tuple[jax.tree_util.GetAttrKey, _OwnedResourcesChild], ...], None]:
+    return tuple(
+        (jax.tree_util.GetAttrKey(name), leaf)
+        for name, leaf in zip(OwnedResourcesRow._fields, record, strict=True)
+    ), None
+
+
+# keyword-only-exempt: library-callback=jax.tree_util.register_pytree_with_keys
+def _unflatten_owned_resources_row(
+    metadata: None,
+    children: Iterable[_OwnedResourcesChild],
+) -> OwnedResourcesRow:
+    """Restore native numeric, abstract or role leaves under the fixed schema."""
+    del metadata
+    leaves = tuple(children)
+    if len(leaves) != len(OwnedResourcesRow._fields):
+        raise TypeError(
+            "Native OwnedResourcesRow reconstruction requires its exact fields."
+        )
+    return cast("OwnedResourcesRow", tuple.__new__(OwnedResourcesRow, leaves))
+
+
+jax.tree_util.register_pytree_with_keys(
+    OwnedResourcesRow,
+    _flatten_owned_resources_row_with_keys,
+    _unflatten_owned_resources_row,
+    _flatten_owned_resources_row,
+)

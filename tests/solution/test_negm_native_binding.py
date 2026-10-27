@@ -233,7 +233,7 @@ def test_exact_backend_uses_saving_sources_without_owned_emission() -> None:
         value=jnp.asarray([2.0, 0.0, 0.0, 2.0]),
         marginal_utility=jnp.ones(4),
         savings=jnp.asarray([0.25, 0.25, 1.0, 2.0]),
-        envelope=ExactEnvelope(),
+        max_runs=ExactEnvelope().max_runs,
         n_refined=16,
         publish_provenance=False,
         _binding_source_count=2,
