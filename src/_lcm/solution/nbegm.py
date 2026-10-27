@@ -4292,10 +4292,17 @@ class _LiquidAffinityProbe:
             },
             materializer=self.materializer,
         )
-        clamped = evaluate_probe_stage(
-            function=functools.partial(probe_clamped_breakpoints, dtype=dtype),
-            arguments={"raw": raw, "liquid_grid": self.liquid_grid},
-            materializer=self.materializer,
+        # The original raw stage already owns the explicit-dtype empty vector.
+        # With no declared boundaries, clamping cannot change any element; keep
+        # domain endpoint reads and every strict-interior check below unchanged.
+        clamped = (
+            evaluate_probe_stage(
+                function=functools.partial(probe_clamped_breakpoints, dtype=dtype),
+                arguments={"raw": raw, "liquid_grid": self.liquid_grid},
+                materializer=self.materializer,
+            )
+            if self.breakpoint_sources
+            else raw
         )
         domain_start = evaluate_probe_stage(
             function=functools.partial(probe_grid_scalar, index=0, dtype=dtype),
@@ -6338,7 +6345,10 @@ def _build_nbegm_continuous_core(
             action_lower=NEWTON_ACTION_FLOOR,
             action_upper=action_upper,
         ),
-        schedule_spec=schedule_spec,
+        # Host preconditions remain on the separately returned original checks
+        # tuple. They are not called by this numerical core and must not become
+        # abstract numerical callback dependencies merely through the spec.
+        schedule_spec=replace(schedule_spec, param_checks=()),
         feasibility_constraints=feasibility_constraints,
         envelope_arithmetic=envelope_arithmetic,
     )
@@ -9056,14 +9066,13 @@ class _NBEGMCellSolver:
         if (
             statics.has_jump
             or statics.continuation_reads_liquid
-            or self.inverse_eis is not None
             or binder.current_predicates is not None
             or binder.feasibility_constraints
             or binder.n_published_boundaries
             or binder.current_floor is not None
         ):
             raise UnsupportedOperationError(
-                "Owned NB ride points require continuous additive literal-floor "
+                "Owned NB ride points require continuous literal-floor "
                 "ordinary-child cells without extra feasibility boundaries."
             )
         cell = MappingProxyType(dict(zip(statics.ride_names, ride_values, strict=True)))
@@ -9598,14 +9607,13 @@ class _NBEGMBranchSolver:
             source_query is None
             or binder.statics.has_jump
             or binder.statics.continuation_reads_liquid
-            or cell_solver.inverse_eis is not None
             or binder.current_predicates is not None
             or binder.feasibility_constraints
             or binder.n_published_boundaries
             or binder.current_floor is not None
         ):
             raise UnsupportedOperationError(
-                "Owned NB ride points require continuous additive literal-floor "
+                "Owned NB ride points require continuous literal-floor "
                 "ordinary-child cells without extra feasibility boundaries."
             )
         statics = binder.statics

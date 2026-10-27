@@ -1,13 +1,14 @@
 """Original scalar NB candidate construction for realised current shocks."""
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import NamedTuple, cast
 
 import jax
 import jax.numpy as jnp
 
+from _lcm.certainty_equivalent import PowerMean
 from _lcm.continuation import ContinuationPayload
 from _lcm.current_iid import AdmittedGroupParams, CurrentIIDPlan, NodeOperands
 from _lcm.egm.carry import EGMCarry
@@ -33,7 +34,13 @@ from _lcm.solution.nbegm import (
 )
 from _lcm.solution.preparation_clock import prepare_case_u_clock
 from _lcm.time import TimeAxis
-from _lcm.typing import EconFunctionArg, EconFunctionKwargs, FlatParams, PytreeValue
+from _lcm.typing import (
+    EconFunction,
+    EconFunctionArg,
+    EconFunctionKwargs,
+    FlatParams,
+    PytreeValue,
+)
 from _lcm.zero_safe import factored_weighted_term
 from lcm.exceptions import UnsupportedOperationError
 from lcm.typing import (
@@ -182,11 +189,42 @@ class NBCaseURidePoint:
     core: _NBEGMTiledCore
     euler_state_name: StateName
     action_name: ActionName
-    target: RegimeName
     savings_nodes: Float1D
     borrowing_limit: ScalarFloat
     source_grid: Float1D
     passive_names: tuple[StateName, ...]
+    certainty_equivalent: PowerMean | None = field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Actual recursive declaration; absent on the original additive route."""
+    koopmans_aggregator: EconFunction | None = field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Actual processed recursive aggregator from the owning Model context."""
+
+    def __post_init__(self) -> None:
+        recursive = self.core.envelope_build.bind_cell.is_epstein_zin
+        if recursive:
+            if (
+                type(self.certainty_equivalent) is not PowerMean
+                or self.koopmans_aggregator is None
+                or self.continuation_plan.risk_aversion_param_name
+                != self.certainty_equivalent.flat_param_names["risk_aversion"]
+            ):
+                raise TypeError(
+                    "NB recursive point lost its declared transform/aggregator."
+                )
+        elif (
+            self.certainty_equivalent is not None
+            or self.koopmans_aggregator is not None
+        ):
+            raise TypeError("Additive NB point cannot borrow recursive declarations.")
+
+    @property
+    def targets(self) -> tuple[RegimeName, ...]:
+        """Read the original joint-lottery roster from the actual continuation plan."""
+        plan = self.continuation_plan
+        return (*plan.stateful_targets, *plan.scalar_targets)
 
     @property
     def continuation_plan(self) -> ContinuationPlan:
@@ -239,6 +277,8 @@ class NBCaseURidePoint:
                 "NB current-U ride points require unsharded continuous "
                 "ordinary-child cells without interval-dependent future reads."
             )
+        if tuple(children) != self.targets:
+            raise TypeError("NB ride point changed its original future target roster.")
         kwargs = {
             **pool,
             **physical,
@@ -384,9 +424,12 @@ class NBCaseUArguments:
                 ),
                 "next_regime_to_continuation": MappingProxyType(
                     {
-                        self.pieces.target: context.next_regime_to_continuation[
-                            self.pieces.target
-                        ]
+                        target: context.next_regime_to_continuation[target]
+                        for target in (
+                            self.pieces.targets
+                            if isinstance(self.pieces, NBCaseURidePoint)
+                            else (self.pieces.target,)
+                        )
                     }
                 ),
                 "_lcm_current_iid": {
@@ -468,10 +511,16 @@ class NBCaseUProgram:
         grid = arguments[point.euler_state_name]
         if not isinstance(grid, jax.Array) or grid.ndim != 1:
             raise TypeError("NB U requires its actual scalar source support.")
-        child = next_regime_to_continuation[point.target]
-        if not isinstance(child, EGMCarry):
-            raise TypeError("NB U requires its original ordinary child carry.")
-        children = MappingProxyType({point.target: child})
+        targets = (
+            point.targets if isinstance(point, NBCaseURidePoint) else (point.target,)
+        )
+        child_rows: dict[RegimeName, EGMCarry] = {}
+        for target in targets:
+            child = next_regime_to_continuation[target]
+            if not isinstance(child, EGMCarry):
+                raise TypeError("NB U requires its original ordinary child carry.")
+            child_rows[target] = child
+        children = MappingProxyType(child_rows)
         pool = {
             name: value
             for name, value in arguments.items()

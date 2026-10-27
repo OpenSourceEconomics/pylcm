@@ -9,7 +9,7 @@ from types import MappingProxyType
 import jax
 import jax.numpy as jnp
 
-from _lcm.certainty_equivalent import aggregates_nonlinearly
+from _lcm.certainty_equivalent import PowerMean, aggregates_nonlinearly
 from _lcm.continuation import (
     ContinuationPayload,
     ProjectedContinuationSpec,
@@ -74,6 +74,7 @@ from _lcm.solution.nbegm import (
 from _lcm.time import TimeAxis
 from _lcm.typing import FlatParams, PytreeValue
 from lcm.exceptions import UnsupportedOperationError
+from lcm.koopmans_aggregation import CESAggregator
 from lcm.solver_api import ArtifactChannel, DeclaredReplay, PersistencePolicy
 from lcm.typing import (
     FloatND,
@@ -99,6 +100,31 @@ class NativeNBCaseUPeriodKernel:
     future: CaseUReplayFutureDate
     param_checks: tuple[ParamCheck, ...]
     """Identical original host validators, separate from the numerical callback."""
+
+    def __post_init__(self) -> None:
+        if isinstance(self.point, NBCaseURidePoint) and (
+            self.point.certainty_equivalent is not None
+        ):
+            function = self.program.function
+            if (
+                type(self.point) is not NBCaseURidePoint
+                or type(function) is not CaseURideExactFunction
+                or type(function.point) is not NBCaseUProgram
+                or function.point.pieces is not self.point
+                or self.point.certainty_equivalent
+                is not self.context.certainty_equivalent
+                or self.point.koopmans_aggregator
+                is not self.context.koopmans_aggregator
+                or type(
+                    self.context.user_regimes[
+                        self.context.regime_name
+                    ].get_koopmans_aggregator(phase="solve")
+                )
+                is not CESAggregator
+            ):
+                raise TypeError(
+                    "NB recursive kernel changed its Model-owned declarations."
+                )
 
     def core_programs(self) -> Mapping[str, CoreProgram]:
         return MappingProxyType({"main": self.program, "replay": self.replay_program})
@@ -208,10 +234,25 @@ def prepare_scalar_nbegm_u_kernels(  # noqa: C901, PLR0912, PLR0915 - bounded or
             )
         period = periods[0]
         targets = context.solution_reachability.targets(period=period, source=name)
+        ride = tuple(context.state_action_space.states) != (solver.continuous_state,)
+        recursive = aggregates_nonlinearly(context.certainty_equivalent)
+        if recursive and (
+            not ride
+            or type(context.certainty_equivalent) is not PowerMean
+            or type(context.user_regimes[name].get_koopmans_aggregator(phase="solve"))
+            is not CESAggregator
+            or context.koopmans_aggregator is None
+        ):
+            raise UnsupportedOperationError(
+                "Recursive NB U requires its original ride PowerMean/CES declarations."
+            )
         if (
-            len(targets) != 1
-            or targets[0] not in ordinary_kernels
-            or not context.laws[targets[0]].terminal
+            not targets
+            or (not recursive and len(targets) != 1)
+            or any(
+                target not in ordinary_kernels or not context.laws[target].terminal
+                for target in targets
+            )
         ):
             raise UnsupportedOperationError(
                 "Scalar NB U requires one original ordinary terminal child."
@@ -226,7 +267,6 @@ def prepare_scalar_nbegm_u_kernels(  # noqa: C901, PLR0912, PLR0915 - bounded or
             raise UnsupportedOperationError(
                 "NB U state-dependent current law derivatives are not installed."
             )
-        ride = tuple(context.state_action_space.states) != (solver.continuous_state,)
         if ride and materializer is not None:
             raise UnsupportedOperationError(
                 "Cold NB ride producer admission remains required."
@@ -261,7 +301,6 @@ def prepare_scalar_nbegm_u_kernels(  # noqa: C901, PLR0912, PLR0915 - bounded or
             or context.co_map_state_names
             or context.action_partitions != 1
             or context.phase_variation_paths
-            or aggregates_nonlinearly(context.certainty_equivalent)
             or context.arrival_queries
             or context.laws[name].gated_edges
             or context.laws[name].arrivals
@@ -321,7 +360,7 @@ def prepare_scalar_nbegm_u_kernels(  # noqa: C901, PLR0912, PLR0915 - bounded or
                 solver=solver,
                 source_call=source_call,
                 period=period,
-                target=target,
+                recursive=recursive,
             )
         else:
             core, law, checks = _build_nbegm_single_axis_group(
@@ -338,12 +377,6 @@ def prepare_scalar_nbegm_u_kernels(  # noqa: C901, PLR0912, PLR0915 - bounded or
             )
             if type(core) is not _NBEGMContinuousCore:
                 raise TypeError("NB U lost its original scalar schedule producer.")
-            if materializer is not None:
-                if core.schedule_spec.param_checks is not checks:
-                    raise TypeError("Cold NB lost its original host validators.")
-                core = replace(
-                    core, schedule_spec=replace(core.schedule_spec, param_checks=())
-                )
             if case_r:
                 from _lcm.solution.current_iid_nbegm_r import (  # noqa: PLC0415 - exact original R bank factory
                     prepare_scalar_nbegm_r_kernel,
@@ -443,25 +476,28 @@ def prepare_scalar_nbegm_u_kernels(  # noqa: C901, PLR0912, PLR0915 - bounded or
                 ),
                 source_grid=source_grid,
             )
-        child_spec = ordinary_kernels[target].continuation_spec
-        if child_spec is None:
-            raise TypeError("NB U child did not publish its original continuation.")
-        child = child_spec.template_at(period=period + 1)
-        if (
-            not isinstance(child, EGMCarry)
-            or (not ride and child.endog_grid.ndim != 1)
-            or child.breakpoints is not None
-        ):
-            raise UnsupportedOperationError(
-                "Scalar NB U requires an ordinary scalar terminal carry "
-                "without breakpoints."
-            )
-        future = CaseUReplayFutureDate(
-            source=name, period=period, specs={target: child_spec}
-        )
+        child_specs = {}
+        children = {}
+        for target in targets:
+            child_spec = ordinary_kernels[target].continuation_spec
+            if child_spec is None:
+                raise TypeError("NB U child did not publish its original continuation.")
+            child = child_spec.template_at(period=period + 1)
+            if (
+                not isinstance(child, EGMCarry)
+                or (not ride and child.endog_grid.ndim != 1)
+                or child.breakpoints is not None
+            ):
+                raise UnsupportedOperationError(
+                    "Scalar NB U requires an ordinary scalar terminal carry "
+                    "without breakpoints."
+                )
+            child_specs[target] = child_spec
+            children[target] = child
+        future = CaseUReplayFutureDate(source=name, period=period, specs=child_specs)
         call = replace(
             call_contexts[name, period],
-            next_regime_to_continuation=MappingProxyType({target: child}),
+            next_regime_to_continuation=MappingProxyType(children),
         )
         arguments = CaseUExactArguments(
             point=NBCaseUArguments(
@@ -533,13 +569,17 @@ def prepare_scalar_nbegm_u_kernels(  # noqa: C901, PLR0912, PLR0915 - bounded or
         context = replace(
             context, projected_continuation_declarations={**declarations, name: spec}
         )
-        reads = continuation_leaf_reads(
-            template=child,
-            artifact_key=child.artifact_key,
-            target=target,
-            source_regime=name,
-            source_period=period,
-            core_key="main",
+        reads = tuple(
+            read
+            for target, child in children.items()
+            for read in continuation_leaf_reads(
+                template=child,
+                artifact_key=child.artifact_key,
+                target=target,
+                source_regime=name,
+                source_period=period,
+                core_key="main",
+            )
         )
 
         state_names = tuple(context.state_action_space.states)
@@ -645,7 +685,7 @@ def _prepare_nbegm_ride_point(
     solver: _BoundNBEGM,
     source_call: CoreBuildContext,
     period: int,
-    target: RegimeName,
+    recursive: bool = False,
 ) -> tuple[NBCaseURidePoint, tuple[ParamCheck, ...]]:
     """Reuse the actual ordinary ride builder and its branch-class continuation."""
     if source_call.state_action_space is None:
@@ -675,13 +715,17 @@ def _prepare_nbegm_ride_point(
             "NB passive Case R remains required."
         )
     binder = core.envelope_build.bind_cell
+    declared_ce = context.certainty_equivalent
+    if recursive and type(declared_ce) is not PowerMean:
+        raise TypeError("NB recursive point requires its actual PowerMean declaration.")
     if (
         core.statics.continuation_reads_liquid
         or core.statics.has_jump
         or core.cliff_candidates
         or core.statics.co_map_state_names
         or core.continuation_plan.query_targets
-        or binder.is_epstein_zin
+        or core.continuation_plan.scalar_targets
+        or binder.is_epstein_zin != recursive
         or binder.current_floor is not None
         or binder.current_predicates is not None
         or binder.feasibility_constraints
@@ -698,7 +742,6 @@ def _prepare_nbegm_ride_point(
         core=core,
         euler_state_name=solver.continuous_state,
         action_name=solver.continuous_action,
-        target=target,
         savings_nodes=core.savings_grid,
         borrowing_limit=core.savings_grid[0],
         source_grid=source_call.state_action_space.states[solver.continuous_state],
@@ -707,4 +750,8 @@ def _prepare_nbegm_ride_point(
             for name in source_call.state_action_space.states
             if name != solver.continuous_state
         ),
+        certainty_equivalent=(
+            declared_ce if isinstance(declared_ce, PowerMean) and recursive else None
+        ),
+        koopmans_aggregator=(context.koopmans_aggregator if recursive else None),
     ), original.param_checks

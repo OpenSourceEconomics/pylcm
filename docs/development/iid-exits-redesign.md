@@ -684,7 +684,10 @@ fresh-model save/load preserve that route. Explicit grid replay remains a separa
 approximation with the declared omission and moment requirements.
 
 The connected private families include scalar DC/NB, NB passive cells with discrete
-branches, and finite NEGM with its original DC keeper and adjuster constructors. NEGM
+branches, NB ride with the original PowerMean/CES recursion, and finite NEGM with its
+original DC keeper and adjuster constructors. The recursive NB slice retains the
+original joint ordinary-terminal target roster, stable CE channels and actual
+transform/aggregator identities. The DCEGM nonlinear-CE refusal remains in place. NEGM
 retains the actual outer target and complete inner candidate tuple; its branch authority
 cannot authorize ordinary child publication. Ordinary passive future rows keep their
 actual carry schema, numeric generation roots and original row bindings. Mapped NB
@@ -692,11 +695,12 @@ branches return only consumed associated channels; unused query metadata stays i
 the original branch solve. Their numeric record annotations permit the actual leading
 mapped axes.
 
-This family scope does not complete S10. Genuine nested NB, connected nonlinear CE,
-incoming ND demand closure, broader passive/choice/phase/query/gated/sharded
-intersections, cold finite-budget admission and remaining derivative controls stay
-required. Constructive U source-context/selector/corner topology and refinement,
-full-domain support, production cost and scheduling/admission also remain required.
-Exact-demand integrity and scoped Model-to-forward qualification do not establish those
-gates or open public current-IID non-GridSearch admission. Cold allocation remains owned
-by the existing generation materializer; this route cannot bypass its budget guards.
+This family scope does not complete S10. Genuine nested NB, broader nonlinear-CE
+intersections, incoming ND demand closure, broader
+passive/choice/phase/query/gated/sharded intersections, cold finite-budget admission and
+remaining derivative/archive controls stay required. Constructive U
+source-context/selector/corner topology and refinement, full-domain support, production
+cost and scheduling/admission also remain required. Exact-demand integrity and scoped
+Model-to-forward qualification do not establish those gates or open public current-IID
+non-GridSearch admission. Cold allocation remains owned by the existing generation
+materializer; this route cannot bypass its budget guards.
