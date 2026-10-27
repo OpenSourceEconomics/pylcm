@@ -359,17 +359,27 @@ def _scaled_mean_jvp(
     tangent = jnp.zeros_like(mean)
     if not isinstance(coefficients_dot, SymbolicZero):
         mean_column = mean[..., None]
+        finite_support = live & jnp.isfinite(values)
+        lower = jnp.min(
+            jnp.where(finite_support, values, jnp.inf), axis=-1, keepdims=True
+        )
+        upper = jnp.max(
+            jnp.where(finite_support, values, -jnp.inf), axis=-1, keepdims=True
+        )
+        # A finite mean's anchor stays inside its live support even when an
+        # intermediate underflow moved the published level outside that hull.
+        anchor = jnp.where(
+            jnp.isfinite(mean_column), jnp.clip(mean_column, lower, upper), mean_column
+        )
         safe_values = jnp.where(
-            is_represented_zero(coefficients) & ~jnp.isfinite(values),
-            mean_column,
-            values,
+            is_represented_zero(coefficients) & ~jnp.isfinite(values), anchor, values
         )
         value_exponent = _unbiased_exponent(
-            jnp.maximum(jnp.abs(safe_values), jnp.abs(mean_column))
+            jnp.maximum(jnp.abs(safe_values), jnp.abs(anchor))
         )
         unit_gap = _rescale_mean_operand(
             values=safe_values, shift=-value_exponent
-        ) - _rescale_mean_operand(values=mean_column, shift=-value_exponent)
+        ) - _rescale_mean_operand(values=anchor, shift=-value_exponent)
         # Retain the mean's rounding residual on the centered value scale. A
         # rounded level alone discards the sub-ULP difference needed by a slope.
         gap_exponent = _unbiased_exponent(unit_gap)
@@ -417,6 +427,13 @@ def _scaled_mean_jvp(
         coefficient_slopes = _rescale_mean_operand(
             values=corrected_gap / unit_mass,
             shift=subtraction_exponent - shifts - common - mass_exponent,
+        )
+        # A null event carrying a nonfinite value has no finite weight
+        # derivative; keep its zero stand-in convention after centering.
+        coefficient_slopes = jnp.where(
+            is_represented_zero(coefficients) & ~jnp.isfinite(values),
+            jnp.zeros_like(coefficient_slopes),
+            coefficient_slopes,
         )
         tangent = tangent + jnp.sum(coefficient_slopes * coefficients_dot, axis=-1)
     if not isinstance(values_dot, SymbolicZero):
