@@ -50,6 +50,7 @@ from _lcm.typing import (
     FloatND,
     RegimeName,
     ShardingTree,
+    ValueTemplate,
 )
 from lcm.solver_api import ArtifactKey
 
@@ -100,8 +101,13 @@ class PeriodKernelContext(TypedDict):
 class PeriodCompileInputs(PeriodKernelContext):
     """The inputs one regime-period's cores are lowered against."""
 
-    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND]
-    """Next period's value array per regime."""
+    next_regime_to_V_arr: MappingProxyType[RegimeName, ValueTemplate]
+    """Next period's value array per regime.
+
+    The solve hands only computed arrays. A replay keeps every regime's entry in
+    its place and holds the template of each regime it has no value for, which
+    `_run_period_kernel` leaves out of the dispatch.
+    """
 
 
 class PeriodKernelKwargs(PeriodCompileInputs):
@@ -309,17 +315,35 @@ def describe_sharding(*, sharding: jax.sharding.Sharding) -> ShardingDescriptor:
 
 
 def describe_array_leaves(
-    *, tree: PeriodKernelKwargs
+    *,
+    tree: PeriodKernelKwargs,
+    next_value_templates: Mapping[RegimeName, ValueTemplate] = MappingProxyType({}),
 ) -> tuple[LeafLayoutDescriptor, ...]:
     """Describe every `jax.Array` leaf of a pytree, in leaf order.
 
     Non-array leaves — a logger, a frozen set of artifact keys, a Python int —
     carry no placement and are skipped; the tree path keeps each descriptor
     addressable when the tree is rebuilt.
+
+    A capture passes `next_value_templates` to describe every regime's
+    next-period value. A regime the solve holds no value for is described by its
+    template, as the committed array on the template's sharding that replay
+    rebuilds it as.
     """
+    flattened = (
+        {
+            **tree,
+            "next_regime_to_V_arr": padded_next_values(
+                next_regime_to_V_arr=tree["next_regime_to_V_arr"],
+                templates=next_value_templates,
+            ),
+        }
+        if next_value_templates
+        else tree
+    )
     described: list[LeafLayoutDescriptor] = []
-    for path, leaf in jax.tree_util.tree_flatten_with_path(tree)[0]:
-        if not isinstance(leaf, jax.Array):
+    for path, leaf in jax.tree_util.tree_flatten_with_path(flattened)[0]:
+        if not isinstance(leaf, jax.Array | jax.ShapeDtypeStruct):
             continue
         described.append(
             LeafLayoutDescriptor(
@@ -327,11 +351,44 @@ def describe_array_leaves(
                 shape=tuple(int(size) for size in leaf.shape),
                 dtype=str(leaf.dtype),
                 weak_type=bool(leaf.weak_type),
-                committed=bool(leaf.committed),
+                committed=isinstance(leaf, jax.ShapeDtypeStruct)
+                or bool(leaf.committed),
                 sharding=describe_sharding(sharding=leaf.sharding),
             )
         )
     return tuple(described)
+
+
+def computed_next_values(
+    *, next_regime_to_V_arr: Mapping[RegimeName, ValueTemplate]
+) -> MappingProxyType[RegimeName, FloatND]:
+    """Return the next-period values that are arrays, leaving out any template."""
+    return MappingProxyType(
+        {
+            name: value
+            for name, value in next_regime_to_V_arr.items()
+            if isinstance(value, jax.Array)
+        }
+    )
+
+
+def padded_next_values(
+    *,
+    next_regime_to_V_arr: Mapping[RegimeName, ValueTemplate],
+    templates: Mapping[RegimeName, ValueTemplate],
+) -> MappingProxyType[RegimeName, ValueTemplate]:
+    """Return every template regime's next-period value, or its template if none.
+
+    The solve holds values only for the regimes solved at the next period, but a
+    capture records every regime's. A template stands in for the rest, so the
+    padding never occupies the device.
+    """
+    return MappingProxyType(
+        {
+            name: next_regime_to_V_arr.get(name, template)
+            for name, template in templates.items()
+        }
+    )
 
 
 def describe_core(*, name: str, core: PlannedCore) -> CoreLayoutDescriptor | None:
@@ -374,6 +431,7 @@ def capture_kernel_inputs(
     period: int,
     kernel_kwargs: PeriodKernelKwargs,
     compiled_cores: Mapping[str, PlannedCore],
+    next_value_templates: Mapping[RegimeName, ValueTemplate],
 ) -> None:
     """Write this regime-period's kernel inputs if it is the selected target.
 
@@ -382,6 +440,10 @@ def capture_kernel_inputs(
     tile widths are portable static choices, however, and are captured exactly so
     replay never runs the workspace planner again. Their placement is captured as
     descriptors, so a replay can reinstate the layout without carrying a buffer.
+
+    The inputs hold only the next-period values the solve has computed. The
+    value templates' shapes and dtypes are captured beside them, and replay
+    fills every other regime's value with zeros of that shape and dtype.
     """
     if capture_target != (regime_name, period):
         return
@@ -394,6 +456,11 @@ def capture_kernel_inputs(
             "regime": regime,
             "period": period,
             "kernel_kwargs": kernel_kwargs,
+            # A pickled array keeps no sharding, so a template keeps none either.
+            "next_value_templates": {
+                name: jax.ShapeDtypeStruct(template.shape, template.dtype)
+                for name, template in next_value_templates.items()
+            },
             "core_tile_widths": {
                 core_name: dict(core.tile_widths)
                 for core_name, core in compiled_cores.items()
@@ -403,6 +470,7 @@ def capture_kernel_inputs(
                 period=period,
                 kernel_kwargs=kernel_kwargs,
                 compiled_cores=compiled_cores,
+                next_value_templates=next_value_templates,
             ),
         },
     )
@@ -414,11 +482,14 @@ def _period_layouts(
     period: int,
     kernel_kwargs: PeriodKernelKwargs,
     compiled_cores: Mapping[str, PlannedCore],
+    next_value_templates: Mapping[RegimeName, ValueTemplate],
 ) -> PeriodLayouts:
     """Collect the layout descriptors of one regime-period."""
     kernel = regime.solution.period_kernels[period]
     kernel_type = type(kernel)
-    leaves = describe_array_leaves(tree=kernel_kwargs)
+    leaves = describe_array_leaves(
+        tree=kernel_kwargs, next_value_templates=next_value_templates
+    )
     cores = {
         core_name: describe_core(name=core_name, core=core)
         for core_name, core in compiled_cores.items()

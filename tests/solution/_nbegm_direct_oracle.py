@@ -71,6 +71,7 @@ from _lcm.solution.nbegm import (
 )
 from _lcm.solution.negm import _with_outer_post_decision
 from _lcm.solution.nnbegm import _NNBEGMPeriodKernel
+from _lcm.solution.period_capture import computed_next_values
 from _lcm.solution.period_replay import _load_capture_payload
 from _lcm.time import TimeAxis
 from _lcm.typing import ArgumentTree, EconFunctionArg, FlatParams, ReferenceName
@@ -222,7 +223,9 @@ def ride_along_kernel(
     kernel = regime.solution.period_kernels[period]
     return kernel, {
         "state_action_space": kernel_kwargs["state_action_space"],
-        "next_regime_to_V_arr": kernel_kwargs["next_regime_to_V_arr"],
+        "next_regime_to_V_arr": computed_next_values(
+            next_regime_to_V_arr=kernel_kwargs["next_regime_to_V_arr"]
+        ),
         "next_regime_to_continuation": kernel_kwargs["next_regime_to_continuation"],
         "flat_params": kernel_kwargs["flat_params"],
         "period": period,
