@@ -318,7 +318,7 @@ from _lcm.typing import (
 from _lcm.utils.containers import ensure_containers_are_immutable
 from _lcm.utils.dispatchers import simulation_spacemap, vmap_1d
 from _lcm.utils.error_messages import format_messages
-from _lcm.utils.functools import get_union_of_args, is_user_function
+from _lcm.utils.functools import get_union_of_args, is_user_function, publish_signature
 from _lcm.utils.namespace import flatten_regime_namespace, unflatten_regime_namespace
 from _lcm.variables import (
     from_regime,
@@ -11480,19 +11480,86 @@ def _build_pointwise_Q_and_F_per_period(
             bounded = has_action_integrity(function=Q_and_F)
             actual = BoundedQAndF(function=Q_and_F) if bounded else Q_and_F
             func = jax.jit(actual) if enable_jit else actual
+            mapped = simulation_spacemap(
+                func=func,
+                action_names=(),
+                bound_summary=False,
+                state_names=tuple(
+                    name for name in subject_mapped_names if name in declared
+                ),
+            )
             built[q_id] = cast(
                 "QAndFFunction[PytreeValue]",
-                simulation_spacemap(
-                    func=func,
-                    action_names=(),
-                    bound_summary=bounded,
-                    state_names=tuple(
-                        name for name in subject_mapped_names if name in declared
-                    ),
-                ),
+                _SubjectPointwiseQAndF(function=mapped) if bounded else mapped,
             )
         result[period] = built[q_id]
     return MappingProxyType(result)
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _SubjectPointwiseQAndF:
+    """Summarize actual-action integrity over its source subject holders."""
+
+    function: Callable[..., PytreeValue]
+
+    def __post_init__(self) -> None:
+        from _lcm.simulation.program_arguments import (  # noqa: PLC0415 - forward operand namespace
+            ACTIVE_SUBJECTS_ARGUMENT,
+        )
+
+        signature = inspect.signature(self.function)
+        publish_signature(
+            target=self,
+            signature=signature.replace(
+                parameters=(
+                    *signature.parameters.values(),
+                    inspect.Parameter(
+                        ACTIVE_SUBJECTS_ARGUMENT,
+                        inspect.Parameter.KEYWORD_ONLY,
+                        default=None,
+                    ),
+                )
+            ),
+        )
+
+    def __call__(self, **kwargs: PytreeValue) -> PytreeValue:
+        from _lcm.simulation.program_arguments import (  # noqa: PLC0415 - forward operand namespace
+            ACTIVE_SUBJECTS_ARGUMENT,
+        )
+        from _lcm.solution.feasibility import (  # noqa: PLC0415 - pointwise status owner
+            BoundedResult,
+            reduce_bound_input_status,
+            reduce_continuation_read_counts,
+            reduce_query_input_status,
+        )
+
+        active = cast("BoolND | None", kwargs.pop(ACTIVE_SUBJECTS_ARGUMENT, None))
+        result = self.function(**kwargs)
+        if type(result) is not BoundedResult:
+            raise TypeError("Pointwise integrity requires its original bounded result.")
+        records = (*result.bound_status, *(result.query_status or ()))
+        if not records:
+            raise TypeError("Pointwise integrity requires declared status records.")
+        shape = records[0].nonfinite_floor.shape
+        if active is None:
+            active = jnp.ones(shape, dtype=jnp.bool_)
+        else:
+            if active.ndim != 1 or active.dtype != jnp.bool_:
+                raise TypeError("Pointwise activity must be a Boolean row mask.")
+            if not shape:
+                active = jnp.any(active)
+        return dataclass_replace(
+            result,
+            bound_status=reduce_bound_input_status(
+                statuses=result.bound_status, active=active
+            ),
+            query_status=reduce_query_input_status(
+                statuses=result.query_status, active=active
+            ),
+            continuation_read_counts=reduce_continuation_read_counts(
+                counts=result.continuation_read_counts, active=active
+            ),
+        )
 
 
 def _build_nnbegm_outer_target_functions(

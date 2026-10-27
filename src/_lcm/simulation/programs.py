@@ -71,6 +71,7 @@ from _lcm.simulation.gated_routing import (
     simulation_gate_fold,
     simulation_gate_route_delta,
 )
+from _lcm.simulation.program_arguments import ACTIVE_SUBJECTS_ARGUMENT
 from _lcm.simulation.program_types import (
     ACTION_INDEX,
     ACTION_PARTS_ROLES,
@@ -102,7 +103,11 @@ from _lcm.solution.action_streaming import build_streaming_max_Q_over_a
 from _lcm.solution.backward_induction import FoldAge
 from _lcm.solution.continuation_reads import rekeyed_value_reads
 from _lcm.solution.contract import SolverBuildContext
-from _lcm.solution.feasibility import BoundedResult
+from _lcm.solution.feasibility import (
+    BoundedResult,
+    reduce_bound_input_status,
+    reduce_query_input_status,
+)
 from _lcm.solution.grid_search import (
     ACTION_PRODUCT_AXIS,
     _edge_reference_regimes_for_targets,
@@ -235,6 +240,14 @@ def build_simulation_programs(
     lookup_subject_arg_names = tuple(space.states)
     for period in decision if context.stakeholders is None else ():
         kernel = Q_and_F_functions[period]
+        declared_lookup_subject_names = (
+            *lookup_subject_arg_names,
+            *(
+                (ACTIVE_SUBJECTS_ARGUMENT,)
+                if has_action_integrity(function=kernel)
+                else ()
+            ),
+        )
         group = id(kernel)
         if group not in action_value_bodies:
             body, action_value_roles[group] = _lookup_body_and_roles(
@@ -246,7 +259,7 @@ def build_simulation_programs(
                 func=_decision_with_action_parts(
                     Q_and_F=kernel, action_names=space.action_names, body=body
                 ),
-                subject_arg_names=lookup_subject_arg_names,
+                subject_arg_names=declared_lookup_subject_names,
                 n_bound_records=len(runtime_bound_specs(function=kernel)),
                 n_query_records=int(has_projected_queries(function=kernel)),
             )
@@ -255,7 +268,7 @@ def build_simulation_programs(
             function=action_value_bodies[group],
             argument_builder=_ArgumentsBoundAtDispatch(
                 program_name=DECISION_PROGRAM,
-                subject_arg_names=lookup_subject_arg_names,
+                subject_arg_names=declared_lookup_subject_names,
             ),
             requirements=dataclasses.replace(
                 decision[period].requirements, reduced_axes=()
@@ -342,6 +355,14 @@ def _decision_programs(
     decision_bodies: dict[int, Callable[..., PytreeValue]] = {}
     decision: dict[int, CoreProgram] = {}
     for period in active_periods:
+        subject_arg_names = (
+            *_decision_subject_arg_names(context=context),
+            *(
+                (ACTIVE_SUBJECTS_ARGUMENT,)
+                if has_action_integrity(function=Q_and_F_functions[period])
+                else ()
+            ),
+        )
         group = id(Q_and_F_functions[period])
         if group not in decision_bodies:
             decision_bodies[group] = _decision_body(
@@ -350,14 +371,14 @@ def _decision_programs(
                 context=context,
                 streams_actions=streams_actions,
                 action_width_keyword=action_width_keyword,
-                subject_arg_names=_decision_subject_arg_names(context=context),
+                subject_arg_names=subject_arg_names,
             )
         decision[period] = CoreProgram(
             name=DECISION_PROGRAM,
             function=decision_bodies[group],
             argument_builder=_ArgumentsBoundAtDispatch(
                 program_name=DECISION_PROGRAM,
-                subject_arg_names=_decision_subject_arg_names(context=context),
+                subject_arg_names=subject_arg_names,
             ),
             requirements=CoreExecutionRequirements(
                 reduced_axes=(
@@ -1316,16 +1337,35 @@ class _SubjectTiled:
     @property
     def subject_shard_arg_names(self) -> tuple[str, ...]:
         """Declare independent ordinary rows beside explicitly declared scalar roles."""
+        if self.subject_arg_names == (ACTIVE_SUBJECTS_ARGUMENT,):
+            return ()
         return self.subject_arg_names
 
     def __call__(self, **kwargs: PytreeValue) -> PytreeValue:
         """Return the body's output for every subject, evaluated in tiles."""
         width = cast("int", kwargs.pop(SUBJECT_WIDTH_KEYWORD))
+        active = cast("BoolND | None", kwargs.pop(ACTIVE_SUBJECTS_ARGUMENT, None))
+        if active is not None and (active.ndim != 1 or active.dtype != jnp.bool_):
+            raise TypeError("Subject activity must be a Boolean row mask.")
         accepted = inspect.signature(self.func).parameters
-        if not self.subject_arg_names:
+        subject_arg_names = tuple(
+            name for name in self.subject_arg_names if name != ACTIVE_SUBJECTS_ARGUMENT
+        )
+        if not subject_arg_names:
             result = self.func(
                 **{name: value for name, value in kwargs.items() if name in accepted}
             )
+            if active is not None and (self.n_bound_records or self.n_query_records):
+                bounded = cast("BoundedResult[PytreeValue]", result)
+                result = dataclasses.replace(
+                    bounded,
+                    bound_status=reduce_bound_input_status(
+                        statuses=bounded.bound_status, active=jnp.any(active)
+                    ),
+                    query_status=reduce_query_input_status(
+                        statuses=bounded.query_status, active=jnp.any(active)
+                    ),
+                )
             return (
                 _flatten_subject_integrity(
                     result=cast("BoundedResult[PytreeValue]", result),
@@ -1335,7 +1375,7 @@ class _SubjectTiled:
                 if self.n_bound_records or self.n_query_records
                 else result
             )
-        tiles = {name: kwargs.pop(name) for name in self.subject_arg_names}
+        tiles = {name: kwargs.pop(name) for name in subject_arg_names}
         shared = {name: value for name, value in kwargs.items() if name in accepted}
         if self.n_bound_records or self.n_query_records:
             result = map_over_leading_axis(
@@ -1343,6 +1383,7 @@ class _SubjectTiled:
                 xs=tiles,
                 batch_size=width,
                 bound_summary=True,
+                active=active,
             )
             return _flatten_subject_integrity(
                 result=cast("BoundedResult[PytreeValue]", result),

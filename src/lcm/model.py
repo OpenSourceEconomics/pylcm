@@ -6189,6 +6189,7 @@ class Model:
                         period=period,
                         n_subjects=n_rows,
                         arguments=decision_arguments(
+                            active_subjects=np.ones(n_rows, dtype=np.bool_),
                             states=space.states,
                             discrete_actions={
                                 n: grids[n] for n in space.discrete_actions
