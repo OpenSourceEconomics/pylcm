@@ -258,6 +258,7 @@ from _lcm.typing import (
     FlatParams,
     FootprintTree,
     HostArray,
+    LandingCheck,
     ParamsLeaf,
     PRNGKeyND,
     PytreeByPeriod,
@@ -1684,9 +1685,9 @@ def _run_period_kernel(
 def _accumulate_landing_totals(
     *,
     landing_totals: IntND | None,
-    landing_checks: tuple[tuple[str, str], ...],
+    landing_checks: tuple[LandingCheck, ...],
     output: FeasibilityKernelOutput,
-) -> tuple[IntND, tuple[tuple[str, str], ...]]:
+) -> tuple[IntND, tuple[LandingCheck, ...]]:
     """Retain the first landing bank, then add identically qualified blocks."""
     if landing_totals is None:
         landing_totals = cast("IntND", output.landing_totals)
@@ -1797,7 +1798,7 @@ def _run_dispatch_unit(
     query_status_initialized = False
     n_query_slots = len((regime.solution.query_input_authorities or {}).get(period, ()))
     landing_totals: IntND | None = None
-    landing_checks: tuple[tuple[str, str], ...] = ()
+    landing_checks: tuple[LandingCheck, ...] = ()
     for name in bound:
         binding = cast("InvariantBinding", graph[name].invariant_binding)
         output = run_kernel(

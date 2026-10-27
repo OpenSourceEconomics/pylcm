@@ -378,6 +378,7 @@ def test_arrival_consumer_uses_boolean_rule_and_source_owned_answer_shape() -> N
             jnp.asarray(-1, jnp.int32),
             jnp.where(accept, target[2], outside[2]),
             target[3] & outside[3],
+            jnp.zeros((0,), dtype=jnp.int32),
         )
 
     node = QueryNode(
@@ -397,12 +398,14 @@ def test_arrival_consumer_uses_boolean_rule_and_source_owned_answer_shape() -> N
                 jnp.asarray(0, jnp.int32),
                 jnp.asarray(a=True),
                 jnp.asarray(a=True),
+                jnp.zeros((0,), dtype=jnp.int32),
             ),
             "outside": (
                 jnp.asarray(-2.0),
                 jnp.asarray(0, jnp.int32),
                 jnp.asarray(a=True),
                 jnp.asarray(a=True),
+                jnp.zeros((0,), dtype=jnp.int32),
             ),
         },
         node=node,
@@ -742,7 +745,7 @@ def test_failed_query_reader_keeps_inputs_uncommitted_and_drains(
             if failure == "exception":
                 raise RuntimeError("seeded query reader failure")
             answer = root(**kwargs)
-            return (*answer[:3], jnp.zeros_like(answer[3]))
+            return (*answer[:3], jnp.zeros_like(answer[3]), answer[4])
 
         def publish(**kwargs):
             del kwargs
@@ -1498,6 +1501,7 @@ def test_information_native_output_omits_hidden_policy_axes(
                     expected[1][index],
                     expected[2][index],
                     jnp.all(expected[3]),
+                    queries._query_landing_totals(counts=expected[4][index]),
                 )
             },
         )
@@ -1551,20 +1555,28 @@ def test_information_mesh_neutral_branch_keeps_axes_and_runtime_guard(
             dependencies={},
         )
         for name, leaf in zip(
-            ("value", "action", "support", "valid"), answer, strict=True
+            ("value", "action", "support", "valid", "landing_count"),
+            answer,
+            strict=True,
         ):
             manual = getattr(jax.typeof(leaf), "manual_axis_type", None)
             assert manual is not None
             assert manual.varying <= frozenset({"X"}), (name, manual.varying)
             if name == "value":
                 assert manual.varying == frozenset({"X"})
-        return answer[0][None], answer[1][None], answer[2][None], answer[3][None]
+        return (
+            answer[0][None],
+            answer[1][None],
+            answer[2][None],
+            answer[3][None],
+            answer[4][None],
+        )
 
     mapped = jax.shard_map(
         local,
         mesh=mesh,
         in_specs=({"wealth": jax.P("X"), "live": jax.P("X")},),
-        out_specs=(jax.P("X"),) * 4,
+        out_specs=(jax.P("X"),) * 5,
         check_vma=True,
     )
     inputs = {
@@ -1588,12 +1600,14 @@ def test_information_mesh_neutral_branch_keeps_axes_and_runtime_guard(
         (2, *dimensions, 2),
         (2, *dimensions),
         (2, *dimensions),
+        (2, *dimensions, 0),
     )
     assert tuple(leaf.dtype for leaf in answer) == (
         jnp.asarray(0.0).dtype,
         jnp.int32,
         jnp.bool_,
         jnp.bool_,
+        jnp.int32,
     )
     assert all(leaf.sharding.spec == jax.P("X") for leaf in answer)
     np.testing.assert_array_equal(answer[0][1], np.full(dimensions, 2.0))

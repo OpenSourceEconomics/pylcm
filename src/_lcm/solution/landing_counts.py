@@ -20,7 +20,7 @@ import dataclasses
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import ClassVar, cast
+from typing import ClassVar, Literal, cast
 
 import jax
 import jax.numpy as jnp
@@ -45,9 +45,11 @@ from _lcm.solution.feasibility import (
 from _lcm.typing import (
     ActionName,
     ArrayTree,
+    LandingCheck,
     MaxQOverAFunction,
     QAndFArg,
     QAndFFunction,
+    QueryLandingCheck,
     RegimeName,
     StateName,
 )
@@ -57,7 +59,40 @@ from _lcm.utils.functools import allow_args, allow_only_kwargs
 from lcm.exceptions import OffGridStateError
 from lcm.typing import BoolND, FloatND, IntND
 
-type LandingCheck = tuple[RegimeName, StateName]
+
+def query_landing_check(
+    *, check: LandingCheck, source: RegimeName, period: int
+) -> QueryLandingCheck:
+    """Bind local checks once while retaining actual nested producer identities."""
+    match check:
+        case (target, state):
+            return source, period, target, state
+        case (nested_source, nested_period, target, state):
+            return nested_source, nested_period, target, state
+    raise TypeError("A reached landing lost its source/target identity.")
+
+
+def fail_on_query_landings(
+    *,
+    totals: IntND,
+    checks: tuple[QueryLandingCheck, ...],
+    phase: Literal["solve", "simulate"],
+) -> None:
+    """Check each typed query's reached landings with its actual producer/date."""
+    for (source, period, target, state), count in zip(
+        checks, jax.device_get(totals), strict=True
+    ):
+        if int(count):
+            raise OffGridStateError(
+                off_grid_message(
+                    count=int(count),
+                    regime=source,
+                    target=target,
+                    period=period,
+                    state=state,
+                    phase=phase,
+                )
+            )
 
 
 def landing_checks_of(Q_and_F: QAndFFunction) -> tuple[LandingCheck, ...]:
@@ -249,14 +284,17 @@ def fail_on_reached_landings(
             point of, a grid declaring `off_grid="raise"`.
 
     """
-    for (target, state), count in zip(checks, jax.device_get(totals), strict=True):
+    for check, count in zip(checks, jax.device_get(totals), strict=True):
+        source, source_period, target, state = query_landing_check(
+            check=check, source=regime_name, period=period
+        )
         if int(count):
             raise OffGridStateError(
                 off_grid_message(
                     count=int(count),
-                    regime=regime_name,
+                    regime=source,
                     target=target,
-                    period=period,
+                    period=source_period,
                     state=state,
                     phase="solve",
                 )

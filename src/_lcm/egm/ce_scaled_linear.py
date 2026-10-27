@@ -7,7 +7,7 @@ nonfinite operands/results refuse. This does not accumulate opposing scales.
 """
 
 from collections.abc import Sequence
-from typing import cast
+from typing import Literal, cast
 
 import jax
 import jax.numpy as jnp
@@ -26,13 +26,17 @@ from _lcm.egm.current_iid_power_math import (
 from _lcm.probability import (
     _significand_in_unit_range,
     _unbiased_exponent,
+    is_below_smallest_normal,
+    is_negative,
     is_represented_zero,
+    log_of_nonnegative,
     scaled_by_power_of_two,
     scaled_down_by_power_of_two,
 )
 from lcm.typing import BoolND, FloatND, IntND
 
 type _LinearPrimal = FloatND | Float[TypedNdArray, "..."] | ad.UndefinedPrimal
+type _CoefficientFormat = Literal["log", "represented"]
 
 
 def _select_payload(*, predicate: BoolND, left: FloatND, right: FloatND) -> FloatND:
@@ -73,6 +77,21 @@ def join_ce_direction(
     # The primitive's abstract rule checks equal float32/64 arrays and returns
     # exactly that numerical shape/dtype; it cannot produce another tree/type.
     return cast("FloatND", _scaled_ce_p.bind(logarithm, polarity, original, operand))
+
+
+def join_represented_ce_direction(
+    *, coefficient: FloatND, sign: FloatND, base: FloatND, direction: FloatND
+) -> FloatND:
+    """Join an ordinary caller's actual coefficient without a logarithmic roundtrip."""
+    factor, polarity, original, operand = jnp.broadcast_arrays(
+        coefficient, sign, base, direction
+    )
+    return cast(
+        "FloatND",
+        _scaled_ce_p.bind(
+            factor, polarity, original, operand, coefficient_format="represented"
+        ),
+    )
 
 
 def _coefficient_parts(*, logabs: FloatND) -> tuple[FloatND, IntND, BoolND]:
@@ -135,8 +154,19 @@ def _valid_coefficient(*, logabs: FloatND, sign: FloatND) -> BoolND:
 
 # keyword-only-exempt: library-callback=jax.core.Primitive.def_impl
 def _linear_join(
-    logabs: FloatND, sign: FloatND, base: FloatND, direction: FloatND
+    logabs: FloatND,
+    sign: FloatND,
+    base: FloatND,
+    direction: FloatND,
+    *,
+    coefficient_format: _CoefficientFormat = "log",
 ) -> FloatND:
+    if coefficient_format == "represented":
+        return _represented_join(
+            coefficient=logabs, sign=sign, base=base, direction=direction
+        )
+    if coefficient_format != "log":
+        raise TypeError("CE transport requires a declared coefficient format.")
     scaled = _transport(logabs=logabs, sign=sign, direction=direction)
     original, correction = _signed(value=base), _signed(value=scaled)
     joined = _materialize(
@@ -147,6 +177,24 @@ def _linear_join(
             ),
             axis=0,
         )
+    )
+    # Add the actual represented operands before their rounded logs collide.
+    ordinary = base + scaled
+    normal_operands = ~is_below_smallest_normal(base) & ~is_below_smallest_normal(
+        scaled
+    )
+    exact_zero = is_represented_zero(ordinary) & (base == -scaled)
+    ordinary_retained = _finite_bits(ordinary) & (
+        ~is_below_smallest_normal(ordinary) | exact_zero
+    )
+    joined = _select_payload(
+        predicate=normal_operands & _finite_bits(joined),
+        left=_select_payload(
+            predicate=ordinary_retained,
+            left=ordinary,
+            right=jnp.full_like(ordinary, jnp.nan),
+        ),
+        right=joined,
     )
     result = _select_payload(
         predicate=is_represented_zero(base),
@@ -164,13 +212,101 @@ def _linear_join(
     )
 
 
+def _represented_join(
+    *, coefficient: FloatND, sign: FloatND, base: FloatND, direction: FloatND
+) -> FloatND:
+    """Use ordinary retained products and sums, preserving exceptional transport."""
+    zero = jnp.zeros_like(direction)
+    info = jnp.finfo(coefficient.dtype)
+    coefficient_zero = is_represented_zero(coefficient)
+    direction_zero = is_represented_zero(direction)
+    valid_coefficient = _finite_bits(coefficient) & (
+        ((sign == 1.0) & ~is_negative(coefficient) & ~coefficient_zero)
+        | ((sign == 0.0) & coefficient_zero)
+    )
+    product_zero = (
+        valid_coefficient
+        & _finite_bits(direction)
+        & (coefficient_zero | direction_zero)
+    )
+    product_exponent = _unbiased_exponent(coefficient) + _unbiased_exponent(direction)
+    # Bound multiplication before selecting its operands, including under vmap.
+    direct_product = (
+        valid_coefficient
+        & (sign == 1.0)
+        & ~is_below_smallest_normal(coefficient)
+        & _finite_bits(direction)
+        & ~is_below_smallest_normal(direction)
+        & ~direction_zero
+        & (product_exponent >= info.minexp)
+        & (product_exponent < info.maxexp - 1)
+    )
+    ordinary_product = jnp.where(direct_product, coefficient, 1.0) * _select_payload(
+        predicate=direct_product, left=direction, right=zero
+    )
+    keep_product = (
+        direct_product
+        & _finite_bits(ordinary_product)
+        & ~is_below_smallest_normal(ordinary_product)
+        & ~is_represented_zero(ordinary_product)
+    )
+    use_product = keep_product | product_zero
+    exceptional_product = _transport(
+        logabs=log_of_nonnegative(jnp.where(use_product, 1.0, coefficient)),
+        sign=jnp.where(use_product, 1.0, sign),
+        direction=_select_payload(predicate=use_product, left=zero, right=direction),
+    )
+    scaled = _select_payload(
+        predicate=use_product,
+        left=_select_payload(predicate=product_zero, left=zero, right=ordinary_product),
+        right=exceptional_product,
+    )
+    base_zero = is_represented_zero(base)
+    scaled_zero = is_represented_zero(scaled)
+    addable = (
+        _finite_bits(base)
+        & _finite_bits(scaled)
+        & (~is_below_smallest_normal(base) | base_zero)
+        & (~is_below_smallest_normal(scaled) | scaled_zero)
+        & (
+            base_zero
+            | scaled_zero
+            | (is_negative(base) != is_negative(scaled))
+            | (
+                jnp.maximum(_unbiased_exponent(base), _unbiased_exponent(scaled))
+                <= info.maxexp - 2
+            )
+        )
+    )
+    ordinary = _select_payload(predicate=addable, left=base, right=zero) + (
+        _select_payload(predicate=addable, left=scaled, right=zero)
+    )
+    exact_zero = is_represented_zero(ordinary) & (base == -scaled)
+    use_ordinary = (
+        addable
+        & _finite_bits(ordinary)
+        & (~is_below_smallest_normal(ordinary) | exact_zero)
+    )
+    exceptional = _linear_join(
+        jnp.zeros_like(coefficient),
+        jnp.ones_like(sign),
+        _select_payload(predicate=use_ordinary, left=zero, right=base),
+        _select_payload(predicate=use_ordinary, left=zero, right=scaled),
+    )
+    return _select_payload(predicate=use_ordinary, left=ordinary, right=exceptional)
+
+
 # keyword-only-exempt: library-callback=jax.core.Primitive.def_abstract_eval
 def _abstract(
     logabs: AbstractValue,
     sign: AbstractValue,
     base: AbstractValue,
     direction: AbstractValue,
+    *,
+    coefficient_format: _CoefficientFormat = "log",
 ) -> ShapedArray:
+    if coefficient_format not in ("log", "represented"):
+        raise TypeError("CE transport requires a declared coefficient format.")
     if not isinstance(logabs, ShapedArray) or not isinstance(sign, ShapedArray):
         raise TypeError("CE transport requires shaped coefficient metadata.")
     if not isinstance(direction, ShapedArray):
@@ -196,22 +332,33 @@ def _jvp(
     tangents: tuple[
         FloatND | ad.Zero, FloatND | ad.Zero, FloatND | ad.Zero, FloatND | ad.Zero
     ],
+    *,
+    coefficient_format: _CoefficientFormat = "log",
 ) -> tuple[FloatND, FloatND | ad.Zero]:
     logabs, sign, base, direction = primals
     log_dot, sign_dot, base_dot, direction_dot = tangents
     if not isinstance(log_dot, ad.Zero) or not isinstance(sign_dot, ad.Zero):
         raise NotImplementedError("CE transport supports first-order residuals only.")
-    primal = join_ce_direction(logabs=logabs, sign=sign, base=base, direction=direction)
+    primal = cast(
+        "FloatND",
+        _scaled_ce_p.bind(
+            logabs, sign, base, direction, coefficient_format=coefficient_format
+        ),
+    )
     tangent = (
         ad.Zero(jax.typeof(primal).to_tangent_aval())
         if isinstance(direction_dot, ad.Zero) and isinstance(base_dot, ad.Zero)
-        else join_ce_direction(
-            logabs=logabs,
-            sign=sign,
-            base=jnp.zeros_like(base) if isinstance(base_dot, ad.Zero) else base_dot,
-            direction=jnp.zeros_like(direction)
-            if isinstance(direction_dot, ad.Zero)
-            else direction_dot,
+        else cast(
+            "FloatND",
+            _scaled_ce_p.bind(
+                logabs,
+                sign,
+                jnp.zeros_like(base) if isinstance(base_dot, ad.Zero) else base_dot,
+                jnp.zeros_like(direction)
+                if isinstance(direction_dot, ad.Zero)
+                else direction_dot,
+                coefficient_format=coefficient_format,
+            ),
         )
     )
     return primal, tangent
@@ -220,13 +367,20 @@ def _jvp(
 # keyword-only-exempt: library-callback=jax.interpreters.ad.primitive_transposes
 def _transpose(
     cotangent: FloatND | ad.Zero,
-    logabs: FloatND | ad.UndefinedPrimal,
-    sign: FloatND | ad.UndefinedPrimal,
+    logabs: _LinearPrimal,
+    sign: _LinearPrimal,
     base: _LinearPrimal,
     direction: _LinearPrimal,
+    *,
+    coefficient_format: _CoefficientFormat = "log",
 ) -> tuple[None, None, FloatND | ad.Zero | None, FloatND | ad.Zero | None]:
     if isinstance(logabs, ad.UndefinedPrimal) or isinstance(sign, ad.UndefinedPrimal):
         raise NotImplementedError("CE transport transposes only its linear direction.")
+    logabs = jnp.asarray(logabs)
+    sign = jnp.asarray(sign)
+    coefficient_log = (
+        log_of_nonnegative(logabs) if coefficient_format == "represented" else logabs
+    )
     if isinstance(cotangent, ad.Zero):
         return (
             None,
@@ -240,14 +394,23 @@ def _transpose(
         None,
         None,
         _select_payload(
-            predicate=_valid_coefficient(logabs=logabs, sign=sign)
+            predicate=_valid_coefficient(logabs=coefficient_log, sign=sign)
             & jnp.isfinite(cotangent),
             left=cotangent,
             right=jnp.full_like(cotangent, jnp.nan),
         )
         if isinstance(base, ad.UndefinedPrimal)
         else None,
-        scale_ce_direction(logabs=logabs, sign=sign, direction=cotangent)
+        cast(
+            "FloatND",
+            _scaled_ce_p.bind(
+                logabs,
+                sign,
+                jnp.zeros_like(cotangent),
+                cotangent,
+                coefficient_format=coefficient_format,
+            ),
+        )
         if isinstance(direction, ad.UndefinedPrimal)
         else None,
     )
@@ -255,7 +418,10 @@ def _transpose(
 
 # keyword-only-exempt: library-callback=jax.interpreters.batching.primitive_batchers
 def _batch(
-    arguments: Sequence[FloatND], dimensions: Sequence[int | None]
+    arguments: Sequence[FloatND],
+    dimensions: Sequence[int | None],
+    *,
+    coefficient_format: _CoefficientFormat = "log",
 ) -> tuple[FloatND, int | None]:
     sizes = {
         argument.shape[dimension]
@@ -263,11 +429,9 @@ def _batch(
         if dimension is not None
     }
     if not sizes:
-        return join_ce_direction(
-            logabs=arguments[0],
-            sign=arguments[1],
-            base=arguments[2],
-            direction=arguments[3],
+        return cast(
+            "FloatND",
+            _scaled_ce_p.bind(*arguments, coefficient_format=coefficient_format),
         ), None
     if len(sizes) != 1:
         raise TypeError("CE transport requires one consistent mapped axis.")
@@ -276,8 +440,8 @@ def _batch(
         batching.bdim_at_front(argument, dimension, size)
         for argument, dimension in zip(arguments, dimensions, strict=True)
     ]
-    return join_ce_direction(
-        logabs=moved[0], sign=moved[1], base=moved[2], direction=moved[3]
+    return cast(
+        "FloatND", _scaled_ce_p.bind(*moved, coefficient_format=coefficient_format)
     ), 0
 
 
