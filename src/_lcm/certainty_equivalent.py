@@ -27,6 +27,7 @@ from _lcm.probability import (
     is_negative,
     is_represented_zero,
     rescaled_lottery_weights,
+    scaled_by_power_of_two,
     scaled_down_by_power_of_two,
 )
 from _lcm.utils.functools import get_union_of_args
@@ -649,10 +650,26 @@ def aggregates_nonlinearly(certainty_equivalent: CertaintyEquivalent | None) -> 
     )
 
 
+def _center_lottery_shifts(*, coefficients: FloatND, shifts: IntND) -> IntND:
+    """Remove a common weight gauge before coefficient exponent arithmetic.
+
+    Only live finite coefficients select the gauge. Relative shift spans and
+    subsequent exponent arithmetic must fit int32; private arbitrary endpoint
+    spans are not an admitted scaled-measure representation.
+    """
+    coefficients = jnp.asarray(coefficients)
+    shifts = jnp.broadcast_to(jnp.asarray(shifts), coefficients.shape)
+    live = is_live(coefficients) & jnp.isfinite(coefficients)
+    fallback = jnp.max(shifts, axis=-1, keepdims=True)
+    reference = jnp.min(jnp.where(live, shifts, fallback), axis=-1, keepdims=True)
+    return shifts - reference
+
+
 def _scaled_lottery_terms(
     *, values: FloatND, coefficients: FloatND, shifts: IntND
 ) -> tuple[FloatND, FloatND]:
     """Return value and weight terms carrying one common binary scale."""
+    shifts = _center_lottery_shifts(coefficients=coefficients, shifts=shifts)
     terms, masses, _ = _scaled_lottery_terms_with_scale(
         values=values, coefficients=coefficients, shifts=shifts
     )
@@ -684,12 +701,18 @@ def _scaled_lottery_terms_with_scale(
     ever materialized, and a rare node earns its place in the mean exactly when
     its value is large enough to offset its probability.
 
-    Both returned terms carry the same shift, so the scale cancels in their
-    ratio and the caller divides them directly. The shift is the smallest the
-    row carries, per lottery rather than per batch, so the likeliest node's
-    weight lands at its own magnitude and no unrelated lottery beside it can
-    move it. A dead node takes no part in that choice: an unreachable node
-    carrying a large shift would otherwise push every live weight down with it.
+    Normalize each positive finite coefficient into a normal significand
+    before any product; its exact binary exponent moves into its shift. This
+    also prevents tiny coefficients from erasing a normal normalized mean.
+    Both returned terms carry the same shift, so their scale cancels in the
+    ratio. The common shift is selected from those normalized encodings, per
+    lottery rather than per batch. No unrelated lottery or dead node selects it.
+
+    This physical-scale helper requires all relative shift and derived exponent
+    arithmetic, including the returned exponent, to fit int32. Mean-only callers
+    remove a common input gauge first; the direct centered-residual caller uses
+    bounded IEEE-exponent-derived shifts. This is not an arbitrary private-int32
+    endpoint-span interface, and no live exponent is silently saturated.
 
     Headroom bounds each actual scaled contribution, as well as the weight
     total. An extremely rare large value must not force an unrelated normal
@@ -720,6 +743,18 @@ def _scaled_lottery_terms_with_scale(
     invalid = is_negative(coefficients) | (
         ~jnp.isfinite(coefficients) & ~is_represented_zero(coefficients)
     )
+    # Normalize each coefficient before multiplying by a small value. Its
+    # exact power of two moves into the accompanying shift, not into a float
+    # product that may underflow even when the normalized mean is normal.
+    coefficient_exponent = jnp.where(live, _unbiased_exponent(coefficients), 0)
+    normalization = -coefficient_exponent
+    coefficients = scaled_down_by_power_of_two(
+        values=coefficients, shift=jnp.minimum(normalization, 0)
+    )
+    coefficients = scaled_by_power_of_two(
+        values=coefficients, shift=jnp.maximum(normalization, 0)
+    )
+    shifts = shifts - coefficient_exponent
     unusable = jnp.max(shifts, axis=-1, keepdims=True)
     common = jnp.min(jnp.where(live, shifts, unusable), axis=-1, keepdims=True)
     scale = (common - shifts).astype(jnp.int32)
