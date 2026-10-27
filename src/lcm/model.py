@@ -4322,7 +4322,10 @@ class Model:
                 process is given either by its physical shocks, as
                 `initial_state_names` lists them, or by its complete set of
                 internal coordinates, as `state_names` lists them, whose nodes
-                `state_grid` returns; one process cannot mix the two.
+                `state_grid` returns; one process cannot mix the two. A
+                composite state is given by its generated code under the name
+                `state_names` lists, not by the members `initial_state_names`
+                lists.
             action_grids: Optional replacement grids for some actions, e.g. a
                 single code of a discrete action to obtain the conditional argmax
                 and value of that branch. Values must lie on the declared grid; a
