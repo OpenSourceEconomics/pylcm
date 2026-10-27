@@ -71,8 +71,8 @@ def _scaled_mean_reference(
         "common_shift",
         "three_nodes",
         "five_nodes",
-        "tiny_adjacent",
-        "tiny_adjacent_rare_large",
+        "tiny_coefficient_adjacent",
+        "tiny_coefficient_rare_large",
     ],
 )
 def test_scaled_mean_normalizes_finite_slopes_before_tangent_arithmetic(
@@ -84,7 +84,7 @@ def test_scaled_mean_normalizes_finite_slopes_before_tangent_arithmetic(
     lower = float(np.nextafter(dtype.type(peak), dtype.type(0)))
     third = float(np.nextafter(dtype.type(lower), dtype.type(0)))
     tiny = float(np.finfo(dtype).tiny)
-    tiny_level = tiny * 2.0 ** (np.finfo(dtype).nmant - 2)
+    tiny_level = 1.0
     tiny_upper = float(np.nextafter(dtype.type(tiny_level), dtype.type(np.inf)))
     rare_shift = int(2 * np.finfo(dtype).maxexp + 2)
     specimens = {
@@ -104,8 +104,8 @@ def test_scaled_mean_normalizes_finite_slopes_before_tangent_arithmetic(
         "equivalent_pairs": ((peak, lower), (2.0, 2.0), (2, 2)),
         "common_shift": ((peak, lower), (1.0, 3.0), (9, 9)),
         "three_nodes": ((peak, lower, third), (1.0, 3.0, 2.0), (1, 1, 1)),
-        "tiny_adjacent": ((tiny_level, tiny_upper), (tiny, tiny), (0, 0)),
-        "tiny_adjacent_rare_large": (
+        "tiny_coefficient_adjacent": ((tiny_level, tiny_upper), (tiny, tiny), (0, 0)),
+        "tiny_coefficient_rare_large": (
             (tiny_level, tiny_upper, peak),
             (tiny, tiny, tiny),
             (0, 0, rare_shift),
@@ -117,7 +117,7 @@ def test_scaled_mean_normalizes_finite_slopes_before_tangent_arithmetic(
         ),
     }
     values, weights, shifts = specimens[case]
-    _, expected_weights, expected_values = _scaled_mean_reference(
+    expected_mean, expected_weights, expected_values = _scaled_mean_reference(
         values=values, weights=weights, shifts=shifts
     )
     scales = jnp.asarray(shifts, dtype=jnp.int32)
@@ -139,6 +139,14 @@ def test_scaled_mean_normalizes_finite_slopes_before_tangent_arithmetic(
 
     evaluate = derivatives
     value_array, weight_array = jnp.asarray(values), jnp.asarray(weights)
+    assert np.isfinite(np.asarray(value_array)).all()
+    assert not np.array_equal(value_array[0], value_array[1])
+    assert_allclose(
+        zero_safe_average(a=value_array, weights=weight_array, shifts=scales),
+        expected_mean,
+        rtol=10.0**-DECIMAL_PRECISION,
+        atol=0,
+    )
     if mode == "jit":
         evaluate = jax.jit(evaluate)
     elif mode == "vmap":
