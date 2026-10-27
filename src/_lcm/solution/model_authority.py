@@ -7,6 +7,7 @@ labelled-result preflight has one immutable source for shapes, dtypes, routes, a
 applicability.
 """
 
+import functools
 import itertools
 import math
 from collections.abc import Hashable, Mapping
@@ -1044,6 +1045,13 @@ def build_solution_authority(  # noqa: C901, PLR0912, PLR0915
                         spec=continuation_spec,
                         template=continuation_template,
                     )
+                    or _is_installed_balanced_r_continuation(
+                        regime=regime,
+                        regime_name=regime_name,
+                        period=period,
+                        spec=continuation_spec,
+                        template=continuation_template,
+                    )
                     or _is_installed_negm_u_continuation(
                         regime=regime,
                         regime_name=regime_name,
@@ -1301,6 +1309,88 @@ def _validate_required_external_producers(
             "An external replay route has no CoreProgram producer for required "
             f"artifacts {tuple(sorted(missing))!r}."
         )
+
+
+def _is_installed_balanced_r_continuation(
+    *,
+    regime: Regime,
+    regime_name: RegimeName,
+    period: int,
+    spec: ContinuationSpec,
+    template: ArtifactPayload,
+) -> bool:
+    """Recognize the installed guarded-R producer, not a matching payload class."""
+    from _lcm.egm.current_iid_balanced import (  # noqa: PLC0415 - producer imports authority construction
+        BalancedProjectedEGMCarry,
+        BalancedResourcesProgram,
+    )
+    from _lcm.egm.projected_child import (  # noqa: PLC0415 - reuse original producer schema check
+        require_projected_carry,
+    )
+    from _lcm.solution.current_iid_case_r import (  # noqa: PLC0415 - producer imports authority construction
+        CaseRArguments,
+        CaseRProgramFunction,
+        NativeCaseRPeriodKernel,
+    )
+
+    kernel = regime.solution.period_kernels[period]
+    if (
+        type(spec) is not ProjectedContinuationSpec
+        or type(template) is not BalancedProjectedEGMCarry
+        or type(kernel) is not NativeCaseRPeriodKernel
+        or kernel.spec is not spec
+        or kernel.period != period
+        or kernel.regime_name != regime_name
+        or not {"main", "replay"} <= kernel.programs.keys()
+    ):
+        return False
+    date = spec.date_at(period=period)
+    replay = regime.simulation.case_r_replay_spec
+    if (
+        date.template is not template
+        or type(date.guard_program) is not BalancedResourcesProgram
+        or date.authority.producer != regime_name
+        or date.authority.period != period
+        or kernel.query_input_authorities[-1][2] is not date.authority
+        or replay is None
+        or replay is not regime.solution.case_r_replay_spec
+        or replay.regime != regime_name
+        or period not in replay.periods
+    ):
+        return False
+    original = replay.periods[period]
+    core = None
+    for name, retain in (("main", False), ("replay", True)):
+        program = kernel.programs[name]
+        function = program.function
+        while isinstance(function, functools.partial):
+            if function.args:
+                return False
+            function = function.func
+        arguments = program.argument_builder
+        if (
+            type(function) is not CaseRProgramFunction
+            or type(arguments) is not CaseRArguments
+            or function.retain_resources is not retain
+            or (core is not None and function.core is not core)
+        ):
+            return False
+        core = function.core
+        if (
+            core.balanced is not date.guard_program
+            or arguments.plan is not core.plan
+            or arguments.base.regime_name != regime_name
+            or core.pieces.euler_state_name != spec.liquid_state
+            or original.resources is not core.pieces.own_resources_func
+            or original.utility is not core.pieces.utility_func
+            or original.coefficient != core.coefficient
+            or original.owner_capacity != core.owner_capacity
+        ):
+            return False
+    # The original replay contract validates the acquired row's tree and leaf
+    # descriptors at restoration/use; no second schema encoder is needed here.
+    require_projected_carry(date=date, target=regime_name, carry=template)
+    return True
 
 
 def _is_installed_exact_u_continuation(

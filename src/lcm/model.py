@@ -145,6 +145,7 @@ from _lcm.regime_building.broadcast import (
     split_transition_only_folds,
     validate_model_slots,
 )
+from _lcm.regime_building.collective import build_role_vocabulary
 from _lcm.regime_building.composite_states import (
     CompositeLowering,
     lower_composite_initial_conditions,
@@ -286,10 +287,12 @@ from _lcm.solution.feasibility import consume_runtime_bound_outputs
 from _lcm.solution.fingerprint import (
     SolutionParamProjection,
     _semantic_fingerprint,
+    _SemanticHasher,
     fingerprint_model,
     fingerprint_model_declarations,
     fingerprint_model_programs,
     fingerprint_model_structure,
+    fingerprint_prepared_solution_support,
     fingerprint_solution_support,
     project_solution_params,
     solution_param_projection,
@@ -395,6 +398,7 @@ from lcm.exceptions import (
     InvalidSimulationInputError,
     InvalidValueFunctionError,
     ModelInitializationError,
+    ModelSealError,
     NoFeasibleActionError,
     UnsupportedOperationError,
 )
@@ -544,6 +548,7 @@ class _PickledModel(TypedDict):
     _dated_parameters: NotRequired[PreparedDatedParameters | None]
     _dated_generation: NotRequired[PreparedDatedGeneration | None]
     _initial_generation_key: NotRequired[str | None]
+    _prepared_declaration_seal: NotRequired[str]
     """The attributes a pickled `Model` carries.
 
     `__setstate__` rebuilds everything else: the per-process state, the published
@@ -586,7 +591,7 @@ class _PickledModel(TypedDict):
     _param_name_candidates: NotRequired[
         MappingProxyType[RegimeName, MappingProxyType[ReferenceName, str]]
     ]
-    _regimes: MappingProxyType[RegimeName, Regime]
+    _regimes: NotRequired[MappingProxyType[RegimeName, Regime]]
     stakeholder_names_to_ids: MappingProxyType[str, int]
     enable_jit: bool
     simulation_output_dtypes: MappingProxyType[str, pd.CategoricalDtype]
@@ -1004,8 +1009,9 @@ _VALUES_RETAINED_ON_THE_HOST = BackwardInductionResult(
 class Model:
     """A model which is created from a regime.
 
-    Upon initialization, internal regimes will be created which contain all
-    the functions needed to solve and simulate the model.
+    Parameter-independent programs are installed at construction. Supported scalar
+    current-IID declarations retain real metadata until solve or simulation supplies
+    the parameters needed to acquire an installed execution.
 
     """
 
@@ -1113,6 +1119,9 @@ class Model:
     _declaration_fingerprint: str
     _sealed_numeric_roots: tuple[jax.Array, ...]
     """Actual device arrays consumed by the existing durable semantic walk."""
+
+    _prepared_declaration_seal: str | None
+    """Runtime-only declaration custody before a genuine execution is installed."""
 
     _simulate_runtime_regimes: dict[
         tuple[str, int], MappingProxyType[RegimeName, Regime]
@@ -1283,10 +1292,37 @@ class Model:
             edges=edges,
             composite_states=composite_states,
         )
-        prepared = self._constructor_inputs.prepare(model=self)
+        dated = bool(shocks) and any(
+            (
+                bool(regime.shocks.solve or regime.shocks.simulate)
+                if isinstance(regime.shocks, Phased)
+                else bool(regime.shocks)
+            )
+            and type(regime.solver) is not GridSearch
+            for regime in regimes.values()
+        )
+        hardware = None
+        if dated:
+            hardware = resolve_execution_hardware(
+                config=execution_config,
+                visible_device_ids=visible_device_ids(),
+                device_pool_limit_bytes=visible_device_pool_limits(),
+            )
+            if hardware.device_memory_bytes is not None:
+                raise UnsupportedOperationError(
+                    "Public call-owned current-IID construction requires an "
+                    "unbudgeted execution; finite-budget producer admission "
+                    "remains required."
+                )
+        prepared = self._constructor_inputs.prepare(
+            model=self, dated=dated, hardware=hardware
+        )
         self._dated_parameters = None
         self._dated_generation = None
         self._declaration_preparation = prepared
+        if dated:
+            self._prepare_public_dated_declaration(prepared=prepared)
+            return
         built_regimes, template = build_regimes_and_template(
             ages=self._time,
             user_regimes=self.user_regimes,
@@ -1301,6 +1337,119 @@ class Model:
         self._install_programs(
             regimes=built_regimes, template=template, prepared=prepared
         )
+
+    @property
+    def _is_prepared_dated(self) -> bool:
+        """Whether this object has genuine metadata but no installed programs."""
+        return self._dated_parameters is not None and self._dated_generation is None
+
+    def _prepare_public_dated_declaration(
+        self, *, prepared: _ModelDeclarationPreparation
+    ) -> None:
+        """Retain the supported scalar declaration until actual parameters arrive."""
+        from _lcm.solution.dcegm import (  # noqa: PLC0415 - avoid solver import cycles
+            _BoundDCEGM,
+        )
+
+        if (
+            self._execution.device_memory_bytes is not None
+            or self._composite_states
+            or not prepared.prepared_structure.current_iid_bindings
+        ):
+            raise UnsupportedOperationError(
+                "Public call-owned construction requires unbudgeted scalar "
+                "current-IID DCEGM declarations."
+            )
+        representatives = prepared.prepared_structure.representative_user_regimes
+        for name, regime in representatives.items():
+            law = prepared.prepared_structure.laws[name]
+            if law.terminal:
+                if (
+                    type(regime.solver) is not GridSearch
+                    or regime.actions
+                    or len(regime.states) != 1
+                    or not all(
+                        isinstance(grid, ContinuousGrid)
+                        for grid in regime.states.values()
+                    )
+                ):
+                    raise UnsupportedOperationError(
+                        f"Public call-owned terminal {name!r} requires its "
+                        "ordinary scalar action-free publisher."
+                    )
+                continue
+            solver = regime.solver
+            if (
+                type(solver) is not _BoundDCEGM
+                or tuple(regime.states) != (solver.continuous_state,)
+                or tuple(regime.actions) != (solver.continuous_action,)
+                or not isinstance(
+                    regime.states[solver.continuous_state], ContinuousGrid
+                )
+                or not isinstance(
+                    regime.actions[solver.continuous_action], ContinuousGrid
+                )
+            ):
+                raise UnsupportedOperationError(
+                    f"Public call-owned source {name!r} requires original "
+                    "one-state one-action DCEGM declarations."
+                )
+        self._dated_parameters = self._prepare_dated_metadata(prepared=prepared)
+        self._params_template = self._dated_parameters.fixed.remaining_template
+        self.enable_jit = prepared.enable_jit
+        self.stakeholder_names_to_ids = build_role_vocabulary(
+            {name: regime.stakeholders for name, regime in representatives.items()}
+        )
+        self.simulation_output_dtypes = _get_output_dtypes(
+            user_regimes=self.user_regimes,
+            shocks=self.shocks,
+            regime_names_to_ids=self.regime_names_to_ids,
+        )
+        recorder = BindingRecorder()
+        numeric_roots: list[jax.Array] = []
+        self._prepared_declaration_seal = self._fingerprint_constructor_inputs(
+            recorder=recorder, numeric_roots=numeric_roots
+        )
+        self._sealed_bindings = recorder.sealed()
+        self._sealed_numeric_roots = tuple(numeric_roots)
+        self._declaration_fingerprint = self._fingerprint_declarations()
+
+    def _fingerprint_constructor_inputs(
+        self,
+        *,
+        recorder: BindingRecorder | None = None,
+        numeric_roots: list[jax.Array] | None = None,
+    ) -> str:
+        """Seal retained init fields without treating them as compiled programs."""
+        declarations = self._constructor_inputs
+        if declarations is None:
+            raise TypeError("Prepared declarations lost their original constructor.")
+        declarations.check_retained(dated=True)
+        hasher = _SemanticHasher(
+            binding_recorder=recorder,
+            array_recorder=None if numeric_roots is None else numeric_roots.append,
+        )
+        hasher.visit(
+            value=tuple(
+                (
+                    item.name,
+                    get_category_codes(declarations.regime_id_class)
+                    if item.name == "regime_id_class"
+                    else getattr(declarations, item.name),
+                )
+                for item in dataclasses.fields(declarations)
+                if item.init
+            )
+        )
+        return hasher.hexdigest()
+
+    def _fail_if_prepared_helper(self, *, operation: str) -> None:
+        """Refuse helpers that have no selected call-owned execution."""
+        if self._is_prepared_dated:
+            raise UnsupportedOperationError(
+                f"Call-owned {operation} requires an acquired execution; "
+                "this helper is not yet admitted for prepared public Models."
+            )
 
     def _prepare_declarations(  # noqa: PLR0915
         self,
@@ -1383,6 +1532,7 @@ class Model:
         self.description = description
         self.durable_identity = durable_identity
         self._identity_process_id = os.getpid()
+        self._prepared_declaration_seal = None
         self.ages = ages
         self._time = ModelTime.from_inputs(ages=ages, n_periods=n_periods)
         if materializer is not None and ages is None:
@@ -1954,6 +2104,7 @@ class Model:
                     "pylcm-ephemeral-declarations:" + self._solution_model_instance_id
                 ).encode()
             ).hexdigest()
+        metadata = self._dated_parameters
         return fingerprint_model_declarations(
             ages=self._time,
             user_regimes=self.user_regimes,
@@ -1961,6 +2112,13 @@ class Model:
             regime_names_to_ids=self.regime_names_to_ids,
             fixed_params=MappingProxyType(
                 {
+                    name: regime_kernel_params(
+                        metadata.fixed.granular, regime_name=name
+                    )
+                    for name in self.user_regimes
+                }
+                if metadata is not None and self._dated_generation is None
+                else {
                     name: regime.resolved_fixed_params
                     for name, regime in self._regimes.items()
                 }
@@ -1974,9 +2132,9 @@ class Model:
         params: UserParams,
         declarations: _ModelConstructorInputs,
     ) -> Model:
-        """Private staging entry to the same real declaration/program lifecycle.
+        """Immediately finalize real declarations with supplied call parameters.
 
-        Public admission is unchanged. No Model escapes until actual canonical
+        No Model escapes this private adapter until actual canonical
         parameters, support, dated programs and the common installation seal exist.
         """
         model = cls.__new__(cls)
@@ -2012,29 +2170,13 @@ class Model:
                 array_writer=materializer,
                 metadata=model._dated_parameters.builder.parameter_metadata(),  # noqa: SLF001 - canonical generation owns this private lifecycle handoff
             )
-            support = prepare_dated_call_support(
-                prepared=model._dated_parameters,  # noqa: SLF001 - actual canonical generation handoff
+            model._finalize_dated_programs(  # noqa: SLF001 - actual canonical generation handoff
+                prepared=prepared,
                 flat_params=flat_params,
+                array_writer=materializer,
                 process_grid_resolver=(
                     None if materializer is None else materializer.process_grid_resolver
                 ),
-            )
-            model._retain_prepared_generation_roots(  # noqa: SLF001 - retain actual call-owned support before dated factories
-                array_writer=materializer, trees=(support,)
-            )
-            model._dated_generation = build_private_dated_balanced_regimes(  # noqa: SLF001 - actual canonical generation handoff
-                prepared=model._dated_parameters,  # noqa: SLF001 - actual canonical generation handoff
-                call_contexts=support.contexts,
-                materializer=materializer,
-            )
-            model._retain_prepared_generation_roots(  # noqa: SLF001 - retain genuine completed programs/templates before installation
-                array_writer=materializer,
-                trees=(model._dated_generation,),  # noqa: SLF001 - actual canonical Model generation owns this handoff
-            )
-            model._install_programs(  # noqa: SLF001 - actual fresh Model installation
-                regimes=model._dated_generation.regimes,  # noqa: SLF001 - actual canonical generation handoff
-                template=model._dated_generation.params_template,  # noqa: SLF001 - actual canonical generation handoff
-                prepared=prepared,
             )
             model._validate_canonical_params(  # noqa: SLF001 - canonical generation owns this private lifecycle handoff
                 flat_params=flat_params, array_writer=materializer, runtime_checks=True
@@ -2053,6 +2195,40 @@ class Model:
         finally:
             if materializer is not None:
                 materializer.close()
+
+    def _finalize_dated_programs(
+        self,
+        *,
+        prepared: _ModelDeclarationPreparation,
+        flat_params: FlatParams,
+        array_writer: SimulationEntryAllocations | None,
+        process_grid_resolver: ProcessGridResolver | None,
+    ) -> None:
+        """Install real dated programs while retaining each completed producer."""
+        metadata = self._dated_parameters
+        if metadata is None:
+            raise TypeError("Dated finalization requires prepared parameter metadata.")
+        support = prepare_dated_call_support(
+            prepared=metadata,
+            flat_params=flat_params,
+            process_grid_resolver=process_grid_resolver,
+        )
+        self._retain_prepared_generation_roots(
+            array_writer=array_writer, trees=(support,)
+        )
+        self._dated_generation = build_private_dated_balanced_regimes(
+            prepared=metadata,
+            call_contexts=support.contexts,
+            materializer=array_writer,
+        )
+        self._retain_prepared_generation_roots(
+            array_writer=array_writer, trees=(self._dated_generation,)
+        )
+        self._install_programs(
+            regimes=self._dated_generation.regimes,
+            template=self._dated_generation.params_template,
+            prepared=prepared,
+        )
 
     def _prepare_dated_metadata(
         self,
@@ -2238,14 +2414,16 @@ class Model:
                 self._time.values,  # noqa: PD011 - TimeAxis numeric values
                 self.regime_names_to_ids,
                 self.fixed_params,
-                self._regimes,
+                self._declaration_preparation
+                if self._is_prepared_dated
+                else self._regimes,
                 self._dated_parameters,
                 self._dated_generation,
                 self._sealed_numeric_roots,
             )
         )
 
-    def _acquire_generation(
+    def _acquire_generation(  # noqa: C901 - one single-flight owner for prepared and installed executions
         self,
         *,
         flat_params: FlatParams,
@@ -2255,11 +2433,23 @@ class Model:
         """Acquire programs, authority and seal together under one cold-build lock."""
         self._check_identity_runtime()
         schema = canonical_parameter_schema(flat_params=flat_params)
-        support = fingerprint_solution_support(
-            regimes=self._regimes,
-            flat_params=flat_params,
-            process_grid_resolver=process_grid_resolver,
-        )
+        if self._is_prepared_dated:
+            if self._dated_parameters is None:
+                raise TypeError("Prepared Model lost its dated parameter metadata.")
+            resolved = prepare_dated_call_support(
+                prepared=self._dated_parameters,
+                flat_params=flat_params,
+                process_grid_resolver=process_grid_resolver,
+            )
+            support = fingerprint_prepared_solution_support(
+                support=resolved.support, flat_params=flat_params
+            )
+        else:
+            support = fingerprint_solution_support(
+                regimes=self._regimes,
+                flat_params=flat_params,
+                process_grid_resolver=process_grid_resolver,
+            )
         key = _semantic_fingerprint(
             (
                 "pylcm-canonical-generation-v1",
@@ -2278,9 +2468,8 @@ class Model:
             # before any cold constructor or support factory can read callbacks.
             self._check_identity_runtime()
             execution = self
-            if (
-                self._dated_parameters is not None
-                and self._initial_generation_key != key
+            if self._dated_parameters is not None and (
+                self._is_prepared_dated or self._initial_generation_key != key
             ):
                 if (
                     self._execution.device_memory_bytes is not None
@@ -2318,30 +2507,25 @@ class Model:
                     array_writer=array_writer,
                     trees=(prepared, execution._dated_parameters),  # noqa: SLF001 - actual canonical Model generation owns this handoff
                 )
-                call = prepare_dated_call_support(
-                    prepared=execution._dated_parameters,  # noqa: SLF001 - canonical generation owns this private lifecycle handoff
-                    flat_params=flat_params,
-                    process_grid_resolver=process_grid_resolver,
-                )
-                execution._retain_prepared_generation_roots(  # noqa: SLF001 - actual call-owned support must precede the next producer
-                    array_writer=array_writer, trees=(call,)
-                )
-                execution._dated_generation = build_private_dated_balanced_regimes(  # noqa: SLF001 - actual canonical generation handoff
-                    prepared=execution._dated_parameters,  # noqa: SLF001 - actual canonical generation handoff
-                    call_contexts=call.contexts,
-                    materializer=array_writer,
-                )
-                execution._retain_prepared_generation_roots(  # noqa: SLF001 - actual canonical Model generation owns this handoff
-                    array_writer=array_writer,
-                    trees=(call, execution._dated_generation),  # noqa: SLF001 - actual canonical Model generation owns this handoff
-                )
-                execution._install_programs(  # noqa: SLF001 - canonical generation owns this private lifecycle handoff
-                    regimes=execution._dated_generation.regimes,  # noqa: SLF001 - actual canonical generation handoff
-                    template=execution._dated_generation.params_template,  # noqa: SLF001 - actual canonical generation handoff
+                execution._finalize_dated_programs(  # noqa: SLF001 - canonical generation owns this private lifecycle handoff
                     prepared=prepared,
+                    flat_params=flat_params,
+                    array_writer=array_writer,
+                    process_grid_resolver=process_grid_resolver,
                 )
                 execution._generation_cache = self._generation_cache  # noqa: SLF001 - canonical generation owns this private lifecycle handoff
                 execution._initial_generation_key = key  # noqa: SLF001 - canonical generation owns this private lifecycle handoff
+                if self._is_prepared_dated and (
+                    fingerprint_solution_support(
+                        regimes=execution._regimes,  # noqa: SLF001 - compare genuine installed support before publication
+                        flat_params=flat_params,
+                        process_grid_resolver=process_grid_resolver,
+                    )
+                    != support
+                ):
+                    raise RuntimeError(
+                        "Prepared and installed generation support disagree."
+                    )
             if execution._declaration_fingerprint != self._declaration_fingerprint:  # noqa: SLF001 - actual canonical generation handoff
                 raise RuntimeError("Call-owned generation changed its declarations.")
             generation = CanonicalModelGeneration(
@@ -2558,6 +2742,20 @@ class Model:
                 "Build a new model and solve it there."
             )
         self._sealed_bindings.fail_if_moved()
+        if self._is_prepared_dated:
+            try:
+                unchanged = (
+                    self._fingerprint_constructor_inputs()
+                    == self._prepared_declaration_seal
+                )
+            except (TypeError, ValueError) as error:
+                raise ModelSealError(
+                    "Prepared Model declaration semantics changed before execution."
+                ) from error
+            if not unchanged:
+                raise ModelSealError(
+                    "Prepared Model declaration semantics changed before execution."
+                )
 
     def _fail_if_ephemeral_operation(self, *, operation: str) -> None:
         """Require durable identity for public period archives."""
@@ -2591,6 +2789,8 @@ class Model:
         them. The attributes an archive may lack are written only when the model
         holds them.
         """
+        if self._is_prepared_dated:
+            self._check_identity_runtime()
         state = _PickledModel(
             description=self.description,
             ages=self.ages,
@@ -2615,11 +2815,16 @@ class Model:
             _shock_registry=self._shock_registry,
             _params_template=self._params_template,
             _param_name_candidates=self._param_name_candidates,
-            _regimes=self._regimes,
             stakeholder_names_to_ids=self.stakeholder_names_to_ids,
             enable_jit=self.enable_jit,
             simulation_output_dtypes=self.simulation_output_dtypes,
         )
+        if not self._is_prepared_dated:
+            state["_regimes"] = self._regimes
+        else:
+            if self._prepared_declaration_seal is None:
+                raise TypeError("Prepared Model lost its declaration seal.")
+            state["_prepared_declaration_seal"] = self._prepared_declaration_seal
         state["_constructor_inputs"] = self._constructor_inputs
         state["_declaration_preparation"] = self._declaration_preparation
         state["_dated_parameters"] = self._dated_parameters
@@ -2636,13 +2841,51 @@ class Model:
             state["_model_structure_fingerprint"] = self._model_structure_fingerprint
         return state
 
-    def __setstate__(self, state: _PickledModel) -> None:
+    def __setstate__(self, state: _PickledModel) -> None:  # noqa: C901, PLR0915 - restore genuine prepared or installed lifecycle state
         """Restore transient state and reseal the model in this process.
 
         Durable models retain their saved structure digest and result compatibility.
         Ephemeral models receive a fresh identity for results made in this process.
         Resealing records the bindings read by this process's copies of the callables.
         """
+        if (
+            state.get("_dated_parameters") is not None
+            and state.get("_dated_generation") is None
+        ):
+            declarations = state.get("_constructor_inputs")
+            if declarations is None:
+                raise ModelInitializationError(
+                    "A prepared Model archive requires original declarations."
+                )
+            hardware = resolve_execution_hardware(
+                config=declarations.execution_config,
+                visible_device_ids=visible_device_ids(),
+                device_pool_limit_bytes=visible_device_pool_limits(),
+            )
+            if hardware.device_memory_bytes is not None:
+                raise UnsupportedOperationError(
+                    "Restoring a prepared public Model requires unbudgeted execution."
+                )
+            # Container witnesses are process-local identities. Rebind them to
+            # the restored true init fields, then verify their complete saved
+            # semantics before any declaration or metadata factory can run.
+            declarations = dataclasses.replace(declarations)
+            self._constructor_inputs = declarations
+            expected_seal = state.get("_prepared_declaration_seal")
+            if (
+                expected_seal is None
+                or self._fingerprint_constructor_inputs() != expected_seal
+            ):
+                raise ModelSealError(
+                    "Prepared Model archive declaration semantics changed."
+                )
+            prepared = declarations.prepare(model=self, dated=True, hardware=hardware)
+            self._dated_generation = None
+            self._declaration_preparation = prepared
+            if self.durable_identity and "_solution_model_instance_id" in state:
+                self._solution_model_instance_id = state["_solution_model_instance_id"]
+            self._prepare_public_dated_declaration(prepared=prepared)
+            return
         self.__dict__.update(state)
         self._shock_registry = state.get("_shock_registry") or create_shock_registry(
             shocks={},
@@ -2688,6 +2931,7 @@ class Model:
         self._declaration_preparation = state.get("_declaration_preparation")
         self._constructor_inputs = state.get("_constructor_inputs")
         self._identity_process_id = os.getpid()
+        self._prepared_declaration_seal = None
         self._simulate_runtime_regimes = {}
         self._shock_path_runtime_regimes = {}
         self._simulate_entry_operations = ProfiledSimulationOperations()
@@ -5222,7 +5466,9 @@ class Model:
         call_id = new_call_id()
         with solve_phase(name="public_simulate", logger=log, call_id=call_id):
             with solve_phase(name="params_validation", logger=log, call_id=call_id):
-                self._fail_if_simulation_is_unsupported()
+                prepared_dated = self._is_prepared_dated
+                if not prepared_dated:
+                    self._fail_if_simulation_is_unsupported()
                 # A block-major result, or an automatic block-major solve, is
                 # read one code at a time; every other solution is read whole.
                 retained_components = self._owned_component_values(solution=solution)
@@ -5244,6 +5490,8 @@ class Model:
                     use_categorical_codes=use_categorical_codes,
                 )
                 self = generation.execution  # noqa: PLW0642 - bind the remaining call to its acquired real programs
+                if prepared_dated:
+                    self._fail_if_simulation_is_unsupported()
                 process_grid_resolver = (
                     None
                     if entry_allocations is None
@@ -5894,6 +6142,7 @@ class Model:
 
         """
         self._check_identity_runtime()
+        self._fail_if_prepared_helper(operation="policy lookup")
         regime = self._regimes.get(regime_name)
         if regime is None:
             msg = f"Unknown regime {regime_name!r}; known: {tuple(self._regimes)}."
@@ -6326,6 +6575,14 @@ class Model:
         by their declared physical names and composite codes by their members;
         value-array axes remain `state_names`.
         """
+        if self._is_prepared_dated:
+            declaration = self.user_regimes.get(regime_name)
+            if declaration is None:
+                raise InvalidSimulationInputError(
+                    f"Unknown regime {regime_name!r}; "
+                    f"known: {tuple(self.user_regimes)}."
+                )
+            return tuple(declaration.states)
         regime = self._regimes.get(regime_name)
         if regime is None:
             raise InvalidSimulationInputError(
@@ -6359,6 +6616,7 @@ class Model:
         Joint intervals are marginal extents of the transformed product support,
         not Cartesian joint grids or truncation bounds for continuous draws.
         """
+        self._fail_if_prepared_helper(operation="initial state bounds")
         names = self.initial_state_names(regime_name=regime_name)
         regime = self._regimes[regime_name]
         if state_name not in names:
@@ -6417,6 +6675,17 @@ class Model:
         `solution.values[period][regime_name]` has one axis per state, in this
         order; `state_grid` gives each axis's node values.
         """
+        if self._is_prepared_dated:
+            metadata = self._dated_parameters
+            if metadata is None:
+                raise TypeError("Prepared Model lost its parameter metadata.")
+            space = metadata.builder.state_action_spaces.get(regime_name)
+            if space is None:
+                raise InvalidSimulationInputError(
+                    f"Unknown regime {regime_name!r}; "
+                    f"known: {tuple(self.user_regimes)}."
+                )
+            return tuple(space.states)
         regime = self._regimes.get(regime_name)
         if regime is None:
             msg = f"Unknown regime {regime_name!r}; known: {tuple(self._regimes)}."
@@ -6444,6 +6713,7 @@ class Model:
         value-only node is valid even when it is never physically visited.
         `state_names` gives the order of the state axes.
         """
+        self._fail_if_prepared_helper(operation="state grid")
         regime = self._regimes.get(regime_name)
         if regime is None:
             msg = f"Unknown regime {regime_name!r}; known: {tuple(self._regimes)}."

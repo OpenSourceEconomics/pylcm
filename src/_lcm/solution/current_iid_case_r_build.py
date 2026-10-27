@@ -580,7 +580,13 @@ def build_native_case_r_kernels(
             CASE_R_RESOURCES_REPLAY: _authority_from_template(
                 key=CASE_R_RESOURCES_REPLAY,
                 channel=ArtifactChannel.REPLAY,
-                persistence=PersistencePolicy.NOT_PERSISTED,
+                # The balanced dated producer owns the original row schema and
+                # its CaseRReplaySpec. Exact-partition prototypes stay private.
+                persistence=(
+                    PersistencePolicy.NOT_PERSISTED
+                    if retain_node_selection
+                    else PersistencePolicy.MODEL_VERIFIABLE
+                ),
                 payload_runtime_type=tuple,
                 template=resources_row_payload(row=replay_template),
                 consumer_route=CASE_R_REPLAY_IDENTITY,
