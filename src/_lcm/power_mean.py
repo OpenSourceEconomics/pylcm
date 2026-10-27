@@ -22,7 +22,10 @@ from typing import NamedTuple
 import jax
 import jax.numpy as jnp
 
-from _lcm.egm.ce_scaled_linear import join_ce_direction, scale_ce_direction
+from _lcm.egm.ce_scaled_linear import (
+    join_represented_ce_direction,
+    scale_ce_direction,
+)
 from _lcm.probability import (
     is_live,
     is_negative,
@@ -393,8 +396,8 @@ def _anchor_jvp(
     value = _anchor_with_tangent(payoff, deviation)
     sign = jnp.ones_like(value)
     base = scale_ce_direction(logabs=deviation, sign=sign, direction=payoff_dot)
-    direction = join_ce_direction(
-        logabs=log_of_nonnegative(value),
+    direction = join_represented_ce_direction(
+        coefficient=value,
         sign=sign,
         base=base,
         direction=deviation_dot,

@@ -22,6 +22,7 @@ from _lcm.egm.current_iid_power_math import (
     _SignedLog,
     _sum_signed,
 )
+from _lcm.power_mean import _PowerMeanContext
 from _lcm.probability import (
     is_below_smallest_normal,
     is_represented_zero,
@@ -77,6 +78,47 @@ def _direction_supported(*, direction: FloatND, log_magnitude: FloatND) -> Scala
     budget = jnp.maximum(1e-4, 8.0 * jnp.sqrt(eps))
     allowance = jnp.log(budget) + jnp.log(jnp.maximum(1.0, jnp.abs(direction)))
     return jnp.all(log_magnitude + jnp.log(64.0 * eps) <= allowance)
+
+
+def _law_log_uncertainty(
+    *,
+    bank: PowerMeanNodeBank,
+    context: _PowerMeanContext,
+    log_v: FloatND,
+    u: FloatND,
+    log_c: FloatND,
+    log_dw: FloatND,
+) -> _SignedLog:
+    """Retain own and normalized-mean sensitivity before payoff logs lose contrast."""
+    integer = jnp.uint32 if bank.values.dtype == jnp.float32 else jnp.uint64
+    different_payoffs = jnp.any(
+        bank.needed
+        & (
+            jax.lax.bitcast_convert_type(bank.values, integer)
+            != jax.lax.bitcast_convert_type(context.anchor_payoff, integer)
+        )
+    )
+    active = (
+        different_payoffs
+        & bank.needed
+        & (~is_represented_zero(bank.differentiated_coefficients))
+    )
+    log_payoff_scale = jnp.log1p(
+        2.0 * jnp.max(jnp.where(bank.needed, jnp.abs(log_v), 0.0))
+    )
+    return _SignedLog(
+        jnp.where(
+            active,
+            log_c
+            + log_dw
+            - context.log_mass
+            + jnp.maximum(0.0, u - context.log_moment)
+            + jnp.log(jnp.asarray(2.0, dtype=bank.values.dtype))
+            + log_payoff_scale,
+            -jnp.inf,
+        ),
+        active.astype(bank.values.dtype),
+    )
 
 
 def _bank_input_valid(*, bank: PowerMeanNodeBank) -> ScalarBool:
@@ -340,6 +382,14 @@ def reduce_power_mean_economic(
                     parts=(
                         source_terms,
                         weight_magnitudes,
+                        _law_log_uncertainty(
+                            bank=bank,
+                            context=context,
+                            log_v=log_v,
+                            u=u,
+                            log_c=log_c,
+                            log_dw=log_dw,
+                        ),
                         _SignedLog(log_exponent_magnitude, jnp.ones_like(p)),
                     )
                 )

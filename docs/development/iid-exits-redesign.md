@@ -158,6 +158,13 @@ the first-order rule remains unsupported. This kernel transpose does not add rev
 mode to the forward-only native exact-affine reader. The owned primitive's original
 state, bindings and execution registrations are part of semantic capture authority.
 
+The shared anchor product rule retains `exp(d) * Da + CE * Dd`, including at equal
+payoffs. Its second term uses the actual represented CE coefficient for safe ordinary
+products and sums, with the same owned first-order transpose. Tiny or unretained
+products and sums retain exceptional scaled transport. The default logarithmic primitive
+keeps its strict span refusal; ordinary anchor directions do not inherit that refusal
+merely because one immaterial term is much smaller than the other.
+
 The private balanced CE direction also checks conditioning before publishing validity.
 Keep an uncancelled magnitude envelope `S` from the original child, weight and exponent
 contributions, including absolute inner mass before opposing signed reductions. Refuse
@@ -166,6 +173,16 @@ profile's final units. Empty directions and ordinary finite cancellation remain
 supported. This is a conditioning diagnostic backed by sampled independent economic
 references, not a certified transcendental error bound or universal exact accumulator.
 Existing probability, input, span and final-status checks still apply.
+
+The law envelope also retains uncertainty from original payoffs whose separate logs can
+lose their contrast. With `L = max_needed(abs(log(value)))` and
+`r_i = exp(p * d_i - log_moment)`, it includes
+`2 * CE / Z * sum(abs(Dw_i) * max(1, r_i)) * (1 + 2 * L)` before the same `64 * eps`
+floor. Each differentiated factor retains its own binary scale. This component is empty
+for zero law directions or bit-identical needed payoffs, including derivative-only null
+events. High-scale unresolved law directions may refuse; ordinary finite and
+exact-equality controls must remain usable. This is a conservative admission diagnostic,
+not a sharp error bound for library logarithms.
 
 Refinement bisects failed smooth cells and inserts known transformed breakpoints.
 Compare the coarse representation with quarter, midpoint and three-quarter queries from

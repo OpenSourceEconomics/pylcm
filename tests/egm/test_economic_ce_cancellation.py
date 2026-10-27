@@ -1,5 +1,6 @@
 """Economic derivative cancellation is checked before publishing a valid CE read."""
 
+from decimal import Decimal, localcontext
 from fractions import Fraction
 
 import jax
@@ -183,3 +184,159 @@ def test_child_and_weight_opposition_cannot_hide_inner_uncertainty(
     if bool(valid):
         assert abs(float(value) - 2.0) <= 1e-4
         assert abs(float(source) - reference) <= 1e-4 * max(1.0, abs(reference))
+
+
+def _evaluate_law_direction(
+    values: FloatND,
+) -> tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarBool]:
+    """Differentiate only the original lottery weights at arithmetic exponent one."""
+    zeros = jnp.zeros_like(values)
+    bank = PowerMeanNodeBank(
+        values=values,
+        economic=zeros,
+        savings_coordinates=zeros,
+        source_coordinates=zeros,
+        coefficients=jnp.full_like(values, 0.5),
+        shifts=jnp.zeros(2, dtype=jnp.int32),
+        differentiated_coefficients=jnp.asarray([[1.0, -1.0]], dtype=values.dtype),
+        differentiated_shifts=jnp.zeros((1, 2), dtype=jnp.int32),
+        needed=jnp.ones(2, dtype=jnp.bool_),
+        valid=jnp.ones((), dtype=jnp.bool_),
+    )
+    return reduce_power_mean_economic(
+        declared=PowerMean(),
+        params={"risk_aversion": jnp.asarray(0.0, dtype=values.dtype)},
+        parameter_direction={"risk_aversion": jnp.asarray(0.0, dtype=values.dtype)},
+        bank=bank,
+    )
+
+
+@pytest.mark.parametrize("compiled", [False, True])
+@pytest.mark.parametrize("lottery", ["close_large", "ordinary", "equal"])
+def test_original_payoff_law_contrast_is_accurate_or_refused(
+    *, compiled: bool, lottery: str
+) -> None:
+    """Accepted law derivatives retain the contrast in the original payoffs."""
+    dtype = jnp.asarray(0.0).dtype
+    power = 53 if dtype == jnp.float64 else 24
+    if lottery == "close_large":
+        pair = [2.0**power, 2.0**power - 1.0]
+    elif lottery == "ordinary":
+        pair = [4.0, 3.0]
+    else:
+        pair = [4.0, 4.0]
+    operands = np.asarray(pair, dtype=dtype)
+    reference = Fraction(float(operands[0])) - Fraction(float(operands[1]))
+    assert reference == (0 if lottery == "equal" else 1)
+    values = jnp.asarray(operands)
+    assert np.asarray(values).tobytes() == operands.tobytes()
+    evaluate = jax.jit(_evaluate_law_direction) if compiled else _evaluate_law_direction
+    value, saving, source, valid = jax.device_get(evaluate(values))
+    if lottery != "close_large":
+        assert bool(valid), "Ordinary and equal lotteries must remain supported."
+    if bool(valid):
+        budget = max(1e-4, 8.0 * np.sqrt(np.finfo(operands.dtype).eps))
+        expected_value = float(
+            (Fraction(float(operands[0])) + Fraction(float(operands[1]))) / 2
+        )
+        assert abs(float(value) - expected_value) <= budget * max(1.0, expected_value)
+        assert abs(float(saving)) <= budget
+        assert abs(float(source) - float(reference)) <= budget * max(
+            1.0, abs(float(reference))
+        )
+
+
+def _evaluate_law_power_direction(
+    *, values: FloatND, exponent: ScalarFloat
+) -> tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarBool]:
+    """Read the actual bank with only its represented probability-law direction."""
+    zeros = jnp.zeros_like(values)
+    bank = PowerMeanNodeBank(
+        values=values,
+        economic=zeros,
+        savings_coordinates=zeros,
+        source_coordinates=zeros,
+        coefficients=jnp.full_like(values, 0.5),
+        shifts=jnp.zeros(2, dtype=jnp.int32),
+        differentiated_coefficients=jnp.asarray([[1.0, -1.0]], dtype=values.dtype),
+        differentiated_shifts=jnp.zeros((1, 2), dtype=jnp.int32),
+        needed=jnp.ones(2, dtype=jnp.bool_),
+        valid=jnp.ones((), dtype=jnp.bool_),
+    )
+    return reduce_power_mean_economic(
+        declared=PowerMean(),
+        params={"risk_aversion": 1.0 - exponent},
+        parameter_direction={"risk_aversion": jnp.asarray(0.0, dtype=values.dtype)},
+        bank=bank,
+    )
+
+
+def _original_payoff_law_reference(
+    *, first: float, second: float, exponent: float
+) -> float:
+    """Return the defining normalized-law direction from original binary payoffs."""
+    if exponent == 1.0:
+        return float(Fraction(first) - Fraction(second))
+    if exponent != 0.0:
+        raise ValueError("The reference requires the geometric or arithmetic mean.")
+    with localcontext() as context:
+        context.prec = 100
+        logs = (Decimal(first).ln(), Decimal(second).ln())
+        value = ((logs[0] + logs[1]) / 2).exp()
+        return float(value * (logs[0] - logs[1]))
+
+
+@pytest.mark.parametrize("compiled", [False, True])
+@pytest.mark.parametrize("scale", [0.5, 1.0, 2.0])
+@pytest.mark.parametrize("mutation", ["original", "reverse", "equality"])
+@pytest.mark.parametrize("power", [None, 40, 45, 53])
+@pytest.mark.parametrize("exponent", [0.0, 1.0])
+def test_law_contrast_mutations_use_original_payoff_economics(
+    *,
+    compiled: bool,
+    scale: float,
+    mutation: str,
+    power: int | None,
+    exponent: float,
+) -> None:
+    """Ordinary/equal laws stay usable; material unresolved contrasts refuse."""
+    dtype = jnp.asarray(0.0).dtype
+    ordinary = power is None
+    if ordinary:
+        operands = np.asarray([4.0, 3.0], dtype=dtype)
+    else:
+        actual_power = (
+            power if dtype == jnp.float64 else {40: 12, 45: 18, 53: 24}[power]
+        )
+        anchor = np.asarray(2.0**actual_power, dtype=dtype)
+        previous = np.nextafter(anchor, np.asarray(-np.inf, dtype=dtype))
+        operands = np.asarray([anchor, previous], dtype=dtype)
+        assert operands[0] > operands[1] > 0.0
+    operands *= scale
+    if mutation == "reverse":
+        operands = operands[::-1].copy()
+    elif mutation == "equality":
+        operands[1] = operands[0]
+    assert np.isfinite(operands).all()
+    assert np.all(operands > 0.0)
+    values = jnp.asarray(operands)
+    assert np.asarray(values).tobytes() == operands.tobytes()
+    reference = _original_payoff_law_reference(
+        first=float(operands[0]), second=float(operands[1]), exponent=exponent
+    )
+    evaluate = (
+        jax.jit(_evaluate_law_power_direction)
+        if compiled
+        else _evaluate_law_power_direction
+    )
+    _, saving, source, valid = jax.device_get(
+        evaluate(values=values, exponent=jnp.asarray(exponent, dtype=dtype))
+    )
+    if ordinary or mutation == "equality":
+        assert bool(valid), "Ordinary and exact-equality laws must remain supported."
+    if bool(valid):
+        budget = max(1e-4, 8.0 * np.sqrt(np.finfo(dtype).eps))
+        assert np.isfinite(float(saving))
+        assert np.isfinite(float(source))
+        assert abs(float(saving)) <= budget
+        assert abs(float(source) - reference) <= budget * max(1.0, abs(reference))

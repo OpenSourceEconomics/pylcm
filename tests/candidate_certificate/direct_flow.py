@@ -759,7 +759,7 @@ _SOURCE_SEALS = {
     "src/_lcm/egm/nbegm_segments.py": "658a74ca40e3da1c025c3d03e0f8bf695feb45953113521a4700f2c1d1890505",
     "src/_lcm/egm/framed_arithmetic.py": "f4b1fa68cc765fc1450222f7370256306d22b92a6488b40c3575e98f44e43877",
     "src/_lcm/egm/ez_kernel.py": "aef102b6dbc73efae7e103e34597948e8e354f3195a33383973bfbd0da112a72",
-    "src/_lcm/power_mean.py": "c0b24238e05961324ed478f4a68ffe438566b35c886bd437d4c1d7fa45ad1f01",
+    "src/_lcm/power_mean.py": "cc82199d42488b7619917fcfb3d8112c7c76d99253ca8812cb41b2a79b5e3e59",
     "src/_lcm/simulation/random_address.py": "17f60140770dbd144c57cfd3daccb76a88196acd9e681f2abff8c2eefb37a913",
     "src/lcm/shocks.py": "9a8c5a9d198cff657958d4c516626dd9d44612b7b808182e7498085d27247176",
     "src/_lcm/shock_overrides.py": "89d13b523a6d0270e144ea60077c5e5f7e306a1b9da7878a9a9b565f920f6808",
@@ -3055,7 +3055,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/power_mean.py": (
-        "29d4c667396424a9609e8f5a9f97537d1bfe630cca3f4a612f69c76266766837",
+        "754874381d6e85669a5dbc30a450b1f987c53292c0b98ed083bae0e939204089",
         {
             "_applied_to_anchor": "51174b5a83bfd9f26290c8bf863f1930fd9232838c7c8c02c13c3a8dc54d999b",
             "_anchor_primal": "8f15f6000318be7e71bad6cac00992842d90e9ba4ec9a35c0d4ce85fff67955a",
