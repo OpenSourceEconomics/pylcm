@@ -60,6 +60,11 @@ from lcm.typing import (
     ValueND,
 )
 
+type QueryLandingCheck = tuple[RegimeName, int, RegimeName, StateName]
+# Actual source/date/target/state of a nested reached landing.
+type LandingCheck = tuple[RegimeName, StateName] | QueryLandingCheck
+# Local checks inherit their kernel date; nested queries retain their own.
+
 # A `__`-joined path through the params or function namespace, such as
 # `"utility__risk_aversion"`. Flat params are keyed by these names, while a
 # `ParameterName` names one parameter on its own.

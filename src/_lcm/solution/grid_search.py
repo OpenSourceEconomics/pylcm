@@ -102,6 +102,7 @@ from _lcm.transition_plans import SupportOrigin
 from _lcm.typing import (
     FlatParams,
     FlatRegimeParams,
+    LandingCheck,
     PytreeValue,
     QAndFArg,
     QAndFFunction,
@@ -1126,7 +1127,7 @@ class _GridSearchPeriodKernel:
     """Whether the native output must include current-law validity."""
     _core_programs: Mapping[str, CoreProgram]
     """The immutable GridSearch program graph: `main`, or one program per code."""
-    landing_checks: tuple[tuple[RegimeName, StateName], ...] = field(
+    landing_checks: tuple[LandingCheck, ...] = field(
         default=(), metadata={"fingerprint_omit_if_default": True}
     )
     """The `(target, state)` raise-rule landings the program counts, in order.
