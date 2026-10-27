@@ -946,6 +946,23 @@ def _get_child_carry_reader(
             raise ModelInitializationError(
                 "Projected child stochastic-node and nonlinear reads are not installed."
             )
+        if read.passive_state_names:
+            if (
+                len(read.passive_state_names) != 1
+                or read.discrete_state_names
+                or read.euler_draw_names
+                or read.has_taste_shocks
+            ):
+                raise UnsupportedOperationError(
+                    "Projected passive reads require one deterministic state axis."
+                )
+            return _ProjectedPassiveCarryReader(
+                read=read,
+                carry=carry,
+                combo_pool=combo_pool,
+                post_decision_name=post_decision_name,
+                collect_read_counts=collect_continuation_read_counts,
+            )
         return ProjectedChildReader.bind_date(
             date=read.projected_date,
             target=read.projected_date.authority.producer,
@@ -1021,6 +1038,44 @@ def _resolve_child_node_operands(
         weights = read.weights_func(**combo_pool)
         weight_vecs = tuple(weights[key] for key in read.weight_keys)
     return stochastic_node_values, weight_vecs
+
+
+@dataclass(frozen=True, kw_only=True)
+class _ProjectedPassiveCarryReader:
+    """Bind the original parent state laws to an exact passive U artifact."""
+
+    read: _ChildRead
+    carry: ProjectedEGMCarry
+    combo_pool: EconFunctionKwargs
+    post_decision_name: FunctionName
+    collect_read_counts: bool = False
+
+    def __call__(self, savings: ScalarFloat) -> _ChildCarryResult:
+        from _lcm.egm.projected_passive import ProjectedPassiveReader  # noqa: PLC0415
+
+        read = self.read
+        if read.projected_date is None or len(read.passive_state_names) != 1:
+            raise TypeError("Passive projected input lost its actual dated read.")
+        next_states = read.next_state_func(
+            **self.combo_pool, **{self.post_decision_name: savings}
+        )
+        liquid = _ChildEulerState(
+            next_state_func=read.euler_state_func,
+            combo_pool=self.combo_pool,
+            post_decision_name=self.post_decision_name,
+            next_state_key=read.next_state_key,
+        )
+        return ProjectedPassiveReader(
+            date=read.projected_date,
+            target=read.projected_date.producer,
+            grid=read.passive_grids[0],
+        ).read(
+            carry=self.carry,
+            coordinate=liquid(savings),
+            jacobian=jax.grad(liquid)(savings),
+            passive=next_states[f"next_{read.passive_state_names[0]}"],
+            collect_read_counts=self.collect_read_counts,
+        )
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -3161,7 +3216,7 @@ def _child_resources_coordinate(
         return _get_child_resources(
             regime_name=target, user_regime=user_regime, law=law
         )
-    if discrete_state_names or passive_state_names or euler_draw_names:
+    if discrete_state_names or len(passive_state_names) > 1 or euler_draw_names:
         raise ModelInitializationError(
             "Projected child carried/stochastic row selection is not installed."
         )
@@ -3376,7 +3431,7 @@ def _build_child_reads(
         # folds its outer axis before publishing (the nested N-NB-EGM upper
         # envelope) carries no candidate axis, and broadcasting queries over a
         # phantom axis would desync rows and queries in the read.
-        n_outer_candidates = layout.n_stacked_candidates
+        n_outer_candidates = 0 if projected is not None else layout.n_stacked_candidates
         if query is not None:
             n_outer_candidates = query.model.authority.outer_capacity
             if action_names != query.model.authority.action_names:

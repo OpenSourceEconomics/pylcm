@@ -23,6 +23,7 @@ from _lcm.egm.current_iid_case_u_replay import (
     CaseUReplayPeriod,
     CaseUReplaySpec,
 )
+from _lcm.egm.current_iid_demands import ParentResourcesDemand
 from _lcm.egm.current_iid_nbegm import (
     NBCaseUArguments,
     NBCaseUPoint,
@@ -46,6 +47,7 @@ from _lcm.execution.core_program import (
 from _lcm.execution.output_layout import StateAxesLeading
 from _lcm.materialization import DatedGenerationMaterializer
 from _lcm.solution.continuation_reads import continuation_leaf_reads
+from _lcm.solution.continuation_target import union_fixed_params
 from _lcm.solution.contract import ParamCheck, SolutionKernels, SolverBuildContext
 from _lcm.solution.current_iid_case_u_build import (
     guard_case_u_shape,
@@ -212,6 +214,9 @@ def prepare_scalar_nbegm_u_kernels(  # noqa: C901, PLR0912, PLR0915 - bounded or
     call_contexts: Mapping[tuple[RegimeName, int], CoreBuildContext],
     fixed_flat_params: FlatParams,
     materializer: DatedGenerationMaterializer | None,
+    parent_demands: Mapping[
+        tuple[RegimeName, int], tuple[ParentResourcesDemand, ...]
+    ] = MappingProxyType({}),
 ) -> DatedBalancedKernels:
     """Build only original terminal-to-scalar-NB sources before Model installation."""
     if set(declarations) != set(solvers):
@@ -499,7 +504,17 @@ def prepare_scalar_nbegm_u_kernels(  # noqa: C901, PLR0912, PLR0915 - bounded or
             call_contexts[name, period],
             next_regime_to_continuation=MappingProxyType(children),
         )
+        demands = parent_demands.get((name, period), ())
         arguments = CaseUExactArguments(
+            demands=demands,
+            fixed_pools=tuple(
+                union_fixed_params(
+                    fixed_flat_params=fixed_flat_params,
+                    regime_name=demand.source,
+                    transition_target_names=demand.transition_targets,
+                )
+                for demand in demands
+            ),
             point=NBCaseUArguments(
                 pieces=point,
                 regime_name=name,
@@ -508,7 +523,7 @@ def prepare_scalar_nbegm_u_kernels(  # noqa: C901, PLR0912, PLR0915 - bounded or
                 ages=context.ages,
                 transition_target_names=tuple(context.transitions),
                 fixed_flat_params=fixed_flat_params,
-            )
+            ),
         )
         integrated = NBCaseUProgram(pieces=point, plan=plan, period=period)
         capacity = declarations[name].date_at(period=period).authority.capacity
@@ -518,9 +533,12 @@ def prepare_scalar_nbegm_u_kernels(  # noqa: C901, PLR0912, PLR0915 - bounded or
                 capacity=capacity,
                 passive_names=point.passive_names,
                 state_names=tuple(context.state_action_space.states),
+                demands=demands,
             )
             if isinstance(point, NBCaseURidePoint)
-            else CaseUExactFunction(point=integrated, capacity=capacity)
+            else CaseUExactFunction(
+                point=integrated, capacity=capacity, demands=demands
+            )
         )
         if materializer is not None:
             captures = guard_case_u_shape(
@@ -556,16 +574,29 @@ def prepare_scalar_nbegm_u_kernels(  # noqa: C901, PLR0912, PLR0915 - bounded or
             template.output, CaseUExactOutput
         ):
             raise TypeError("NB U shape preparation lost its original native schema.")
-        date = replace(
-            declarations[name].date_at(period=period),
-            template=template.output.projected,
-        )
-        spec = replace(
-            declarations[name],
-            template=date.template,
-            templates_by_period={period: date.template},
-            dates_by_period={period: date},
-        )
+        if demands:
+            date = declarations[name].date_at(period=period)
+            original = date.template
+            actual = template.output.projected
+            if jax.tree.structure(original) != jax.tree.structure(actual) or tuple(
+                (leaf.shape, leaf.dtype) for leaf in jax.tree.leaves(original)
+            ) != tuple((leaf.shape, leaf.dtype) for leaf in jax.tree.leaves(actual)):
+                raise TypeError("ND parent closure changed its frozen producer schema.")
+            template = replace(
+                template, output=replace(template.output, projected=original)
+            )
+            spec = declarations[name]
+        else:
+            date = replace(
+                declarations[name].date_at(period=period),
+                template=template.output.projected,
+            )
+            spec = replace(
+                declarations[name],
+                template=date.template,
+                templates_by_period={period: date.template},
+                dates_by_period={period: date},
+            )
         context = replace(
             context, projected_continuation_declarations={**declarations, name: spec}
         )

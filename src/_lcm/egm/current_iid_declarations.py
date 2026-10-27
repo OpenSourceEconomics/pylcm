@@ -77,6 +77,7 @@ def projected_producer_declarations(  # noqa: C901, PLR0912, PLR0915 - original 
     active_periods: Mapping[RegimeName, tuple[int, ...]],
     liquid_support_by_date: Mapping[tuple[RegimeName, int], Float1D] | None = None,
     materializer: DatedGenerationMaterializer | None = None,
+    extra_capacity_by_target: Mapping[RegimeName, int] = MappingProxyType({}),
 ) -> Mapping[RegimeName, ProjectedContinuationSpec]:
     """Declare the actual target schema before any parent's core is constructed.
 
@@ -130,6 +131,12 @@ def projected_producer_declarations(  # noqa: C901, PLR0912, PLR0915 - original 
             )
         else:
             capacity = solver.current_iid_projection_capacity
+        extra = extra_capacity_by_target.get(target, 0)
+        if type(extra) is not int or extra < 0:
+            raise TypeError(
+                "Parent projection capacity requires an actual width bound."
+            )
+        capacity += extra
         if liquid_support_by_date is None:
             grid = jnp.asarray(
                 state_grids[target][liquid].to_jax(),

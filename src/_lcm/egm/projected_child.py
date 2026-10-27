@@ -118,7 +118,11 @@ class ProjectedChildReader:
 
 
 def require_projected_carry(
-    *, date: ProjectedProducerDate, target: RegimeName, carry: ProjectedEGMCarry
+    *,
+    date: ProjectedProducerDate,
+    target: RegimeName,
+    carry: ProjectedEGMCarry,
+    passive_shape: tuple[int, ...] = (),
 ) -> ProjectedChildAuthority:
     """Authenticate the actual dated numerical schema for a coordinate reader."""
     authority = date.authority
@@ -127,7 +131,7 @@ def require_projected_carry(
     template = date.template
     if not isinstance(template, ProjectedEGMCarry):
         raise TypeError("Projected child requires its actual typed template.")
-    if carry.grid.ndim != 1:
+    if carry.grid.shape[:-1] != passive_shape:
         raise UnsupportedOperationError(
             "Projected child passive/stochastic row selection is not installed."
         )

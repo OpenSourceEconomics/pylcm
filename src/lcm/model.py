@@ -4583,6 +4583,9 @@ class Model:
                             date=reader.date,
                             target=reader.target,
                             carry=result[ref.period][ref.regime],
+                            passive_shape=tuple(
+                                grid.shape[0] for grid in reader.passive_grids
+                            ),
                         )
                         continue
                     payload = store._materialize_from_template_snapshot(  # noqa: SLF001
@@ -4599,7 +4602,12 @@ class Model:
                             "Projected forward has a foreign retained payload."
                         )
                     require_projected_carry(
-                        date=reader.date, target=reader.target, carry=payload
+                        date=reader.date,
+                        target=reader.target,
+                        carry=payload,
+                        passive_shape=tuple(
+                            grid.shape[0] for grid in reader.passive_grids
+                        ),
                     )
                     result.setdefault(ref.period, {})[ref.regime] = payload
         return MappingProxyType(

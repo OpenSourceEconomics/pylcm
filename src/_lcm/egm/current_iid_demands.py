@@ -60,7 +60,7 @@ class ParentResourcesDemand:
             or read.stochastic_state_names
             or read.local_draw_names
             or read.euler_draw_names
-            or read.passive_state_names
+            or len(read.passive_state_names) > 1
             or read.discrete_state_names
             or self.pieces.lower_func is not None
             or self.pieces._prepared_nested_floor is not None  # noqa: SLF001

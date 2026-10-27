@@ -695,12 +695,18 @@ branches return only consumed associated channels; unused query metadata stays i
 the original branch solve. Their numeric record annotations permit the actual leading
 mapped axes.
 
+An ordinary scalar DC parent can now consume the admitted NB passive child's exact
+liquid demands. The producer inserts each demand into every actual passive row; the
+consumer uses the original passive landing law and stencil on the stored values and
+economic marginals. Physical replay retains that same row schema and checks every source
+row, including rows with zero stencil weight. This connected unbudgeted ND slice does
+not admit arbitrary incoming families or replace the passive axes by a flat liquid row.
+
 This family scope does not complete S10. Genuine nested NB, broader nonlinear-CE
-intersections, incoming ND demand closure, broader
-passive/choice/phase/query/gated/sharded intersections, cold finite-budget admission and
-remaining derivative/archive controls stay required. Constructive U
-source-context/selector/corner topology and refinement, full-domain support, production
-cost and scheduling/admission also remain required. Exact-demand integrity and scoped
-Model-to-forward qualification do not establish those gates or open public current-IID
-non-GridSearch admission. Cold allocation remains owned by the existing generation
-materializer; this route cannot bypass its budget guards.
+intersections, broader incoming ND families and passive/choice/phase/query/gated/sharded
+intersections, cold finite-budget admission and remaining derivative/archive controls
+stay required. Constructive U source-context/selector/corner topology and refinement,
+full-domain support, production cost and scheduling/admission also remain required.
+Exact-demand integrity and scoped Model-to-forward qualification do not establish those
+gates or open public current-IID non-GridSearch admission. Cold allocation remains owned
+by the existing generation materializer; this route cannot bypass its budget guards.

@@ -21,7 +21,7 @@ from jax._src import config as jax_config
 from jax._src import pjit, traceback_util
 from jax._src.api import Inline
 from jax._src.core import JaxprEqnContext
-from jax._src.lax.lax import unstack_p
+from jax._src.lax.lax import stack_p, unstack_p
 from jax._src.mesh import AbstractMesh
 from jax._src.named_sharding import UnspecifiedValue
 from jax.extend.core import (
@@ -105,6 +105,7 @@ _PRIMITIVE_ARITIES: Mapping[Primitive, int | None] = MappingProxyType(
         primitive_objects.broadcast_in_dim_p: 1,
         primitive_objects.reshape_p: 1,
         primitive_objects.squeeze_p: 1,
+        stack_p: None,
         unstack_p: 1,
         primitive_objects.slice_p: 1,
         primitive_objects.dynamic_slice_p: None,

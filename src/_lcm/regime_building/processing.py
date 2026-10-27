@@ -1857,6 +1857,21 @@ class _CanonicalRegimeBuilder:
                     if isinstance(solver, _BoundNEGM)
                     else solver.continuous_state
                 ]
+        from _lcm.solution.current_iid_nd_parents import (  # noqa: PLC0415 - preserve original declaration import order
+            nd_parent_capacity_bounds,
+        )
+
+        extra_capacity = nd_parent_capacity_bounds(
+            user_regimes=self.representative_user_regimes,
+            call_contexts=call_contexts,
+            reachability=self.reachability.solution,
+            materializer=materializer,
+            projected_targets=frozenset(
+                owner
+                for owner, phase, _ in self.current_iid_bindings
+                if phase == "solve"
+            ),
+        )
         declarations = projected_producer_declarations(
             user_regimes=self.representative_user_regimes,
             bindings=self.current_iid_bindings,
@@ -1864,6 +1879,7 @@ class _CanonicalRegimeBuilder:
             active_periods=self.regimes_to_active_periods,
             liquid_support_by_date=liquid_support,
             materializer=materializer,
+            extra_capacity_by_target=extra_capacity,
         )
         if not declarations:
             raise UnsupportedOperationError(
@@ -1970,21 +1986,39 @@ class _CanonicalRegimeBuilder:
                 prepare_scalar_nbegm_u_kernels,
             )
 
-            if dc_solvers or state_utility_obligations or euler_grid_obligations:
+            if state_utility_obligations or euler_grid_obligations:
                 raise UnsupportedOperationError(
                     "Scalar NB U mixed-family dated preparation is not installed."
                 )
-            result = prepare_scalar_nbegm_u_kernels(
-                contexts={
-                    name: phase.solution.context for name, phase in prepared.items()
-                },
-                solvers=nb_solvers,
-                declarations=declarations,
-                ordinary_kernels=ordinary_kernels,
-                call_contexts=call_contexts,
-                fixed_flat_params=fixed_flat_params,
-                materializer=materializer,
-            )
+            if dc_solvers:
+                from _lcm.solution.current_iid_nd_parents import (  # noqa: PLC0415 - preserve original declaration import order
+                    prepare_nb_parent_kernels,
+                )
+
+                result = prepare_nb_parent_kernels(
+                    contexts={
+                        name: phase.solution.context for name, phase in prepared.items()
+                    },
+                    nb_solvers=nb_solvers,
+                    parents=dc_solvers,
+                    declarations=declarations,
+                    ordinary_kernels=ordinary_kernels,
+                    call_contexts=call_contexts,
+                    fixed_flat_params=fixed_flat_params,
+                    materializer=materializer,
+                )
+            else:
+                result = prepare_scalar_nbegm_u_kernels(
+                    contexts={
+                        name: phase.solution.context for name, phase in prepared.items()
+                    },
+                    solvers=nb_solvers,
+                    declarations=declarations,
+                    ordinary_kernels=ordinary_kernels,
+                    call_contexts=call_contexts,
+                    fixed_flat_params=fixed_flat_params,
+                    materializer=materializer,
+                )
         else:
             result = prepare_dated_balanced_kernels(
                 contexts={
@@ -11135,6 +11169,20 @@ def _build_Q_and_F_per_period(
                     spec=projected_declarations[target],
                     target=target,
                     period=landing_period,
+                    passive_names=tuple(
+                        name
+                        for name in continuation_info(representative_period)[
+                            target
+                        ].continuous_states
+                        if name != projected_declarations[target].liquid_state
+                    ),
+                    passive_grids=tuple(
+                        grid.to_jax()
+                        for name, grid in continuation_info(representative_period)[
+                            target
+                        ].continuous_states.items()
+                        if name != projected_declarations[target].liquid_state
+                    ),
                 )
                 for target in targets
                 if target in projected_declarations

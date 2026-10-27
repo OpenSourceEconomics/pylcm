@@ -11,6 +11,7 @@ import pytest
 from jax._src.api import Inline
 
 from _lcm.dtypes import canonical_float_dtype
+from _lcm.egm.nbegm_probe_stages import probe_points
 from _lcm.egm.validation import (
     _admitted_validation_unique,
     validate_dcegm_regime,
@@ -31,6 +32,70 @@ from tests.egm.test_current_iid_parent_demands import (
 from tests.solution.test_post_decision_lower_bound import _model as _bounded_model
 
 pytestmark = pytest.mark.coverage(backends=("cpu",), precisions="both")
+
+
+@pytest.mark.parametrize("with_grid_samples", [False, True])
+@pytest.mark.parametrize("intervals", [(0.375,), (0.375, 0.625, 1.125)])
+def test_original_probe_stack_keeps_admitted_bytes_and_primitive(
+    *, with_grid_samples: bool, intervals: tuple[float, ...]
+) -> None:
+    """Original singleton and wider stacks retain their actual stage boundary."""
+    from jax._src.lax.lax import stack_p  # noqa: PLC0415
+
+    from _lcm.egm.validation_stages import (  # noqa: PLC0415
+        prepare_validation_recipe,
+    )
+
+    dtype = canonical_float_dtype()
+    liquid_samples = jnp.asarray([0.25, 0.75], dtype=dtype)
+    interval_samples = tuple(jnp.asarray(value, dtype=dtype) for value in intervals)
+    arguments = {
+        "liquid_samples": liquid_samples,
+        "interval_samples": interval_samples,
+    }
+    function = partial(probe_points, with_grid_samples=with_grid_samples, dtype=dtype)
+    expected = function(
+        liquid_samples=liquid_samples, interval_samples=interval_samples
+    )
+    recipe = prepare_validation_recipe(function=function, arguments=arguments)
+    stacks = [
+        stage
+        for stage, _operands, _outputs in recipe.stages
+        if stage.primitive is stack_p
+    ]
+    assert len(stacks) == 1
+    assert stacks[0].parameters["axis"] == 0
+    owner = _owner(roots=(*jax.tree.leaves(arguments), expected))
+    try:
+        actual = owner.evaluate_validation(function=function, arguments=arguments)
+        assert isinstance(actual, jax.Array)
+        assert actual.dtype == expected.dtype
+        assert actual.shape == expected.shape
+        assert actual.weak_type == expected.weak_type
+        assert np.asarray(actual).tobytes() == np.asarray(expected).tobytes()
+    finally:
+        owner.close()
+
+
+def test_validator_stack_name_cannot_authorize_a_foreign_primitive() -> None:
+    """A same-name primitive cannot enter the admitted original recipe."""
+    from jax._src.lax.lax import stack_p  # noqa: PLC0415
+    from jax.extend.core import Primitive  # noqa: PLC0415
+
+    from _lcm.egm.validation_stages import _stage  # noqa: PLC0415
+
+    function = partial(
+        probe_points, with_grid_samples=False, dtype=canonical_float_dtype()
+    )
+    graph = jax.make_jaxpr(function)(
+        liquid_samples=jnp.asarray([0.25, 0.75]),
+        interval_samples=(jnp.asarray(0.375),),
+    )
+    equation = next(
+        equation for equation in graph.eqns if equation.primitive is stack_p
+    )
+    with pytest.raises(ExecutionPlanningError, match="unsupported eager primitive"):
+        _stage(equation=equation.replace(primitive=Primitive("stack")))
 
 
 @pytest.mark.parametrize(

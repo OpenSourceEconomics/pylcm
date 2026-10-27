@@ -482,6 +482,7 @@ class CaseURideExactFunction:
     capacity: int
     passive_names: tuple[StateName, ...]
     state_names: tuple[StateName, ...]
+    demands: tuple[ParentResourcesDemand, ...] = ()
     replay_source: RegimeName | None = None
     replay_child_names: tuple[RegimeName, ...] = ()
 
@@ -513,10 +514,6 @@ class CaseURideExactFunction:
             raise TypeError(
                 "Passive U publication lost its genuine source constructor."
             )
-        if _lcm_parent_demand_pools or _lcm_parent_demand_savings:
-            raise UnsupportedOperationError(
-                "Passive NB projected incoming-parent closure remains required."
-            )
         supports = {}
         for name in self.passive_names:
             operand = arguments[name]
@@ -531,14 +528,16 @@ class CaseURideExactFunction:
             name: values.reshape(-1)
             for name, values in zip(self.passive_names, mesh, strict=True)
         }
-        scalar = CaseUExactFunction(point=self.point, capacity=self.capacity)
+        scalar = CaseUExactFunction(
+            point=self.point, capacity=self.capacity, demands=self.demands
+        )
 
         def one(
             cell: Mapping[StateName, ScalarFloat | ScalarInt],
         ) -> BoundedResult[CaseUExactOutput]:
             return scalar(
-                _lcm_parent_demand_pools=(),
-                _lcm_parent_demand_savings=(),
+                _lcm_parent_demand_pools=_lcm_parent_demand_pools,
+                _lcm_parent_demand_savings=_lcm_parent_demand_savings,
                 next_regime_to_continuation=next_regime_to_continuation,
                 _lcm_current_iid=_lcm_current_iid,
                 _lcm_current_iid_nodes=_lcm_current_iid_nodes,

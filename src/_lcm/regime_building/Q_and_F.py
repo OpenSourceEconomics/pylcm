@@ -3409,7 +3409,12 @@ class _ComputeCE:
                 ]
                 next_V_at_stochastic_states_arr, projected_valid = (
                     continuation.projected_reader.read(
-                        coordinate=coordinate, arguments=extra_kw
+                        coordinate=coordinate,
+                        arguments=extra_kw,
+                        passive=tuple(
+                            next_states[f"next_{name}"]
+                            for name in continuation.projected_reader.passive_names
+                        ),
                     )
                 )
                 # Source/guard integrity is not an economic zero-probability mask.
@@ -4184,12 +4189,16 @@ def _build_target_continuation(  # noqa: C901, PLR0915 - keep original dense met
     """
     if projected_reader is not None:
         liquid = projected_reader.date.authority.liquid_state
+        state_names = (liquid, *projected_reader.passive_names)
         if (
-            tuple(v_interpolation_info.state_names) != (liquid,)
-            or set(bundle) != {f"next_{liquid}"}
-            or transition_plans[target_regime_name].is_lottery(f"next_{liquid}")
-            or transition_plans[target_regime_name].has_interpolation_basis(
-                f"next_{liquid}"
+            set(v_interpolation_info.state_names) != set(state_names)
+            or set(bundle) != {f"next_{name}" for name in state_names}
+            or any(
+                transition_plans[target_regime_name].is_lottery(f"next_{name}")
+                or transition_plans[target_regime_name].has_interpolation_basis(
+                    f"next_{name}"
+                )
+                for name in state_names
             )
             or co_map_state_names
             or n_stakeholders is not None

@@ -1120,6 +1120,9 @@ def _fail_if_grid_hygiene_violated(
         raise ModelInitializationError(msg)
 
 
+_CURRENT_U_PASSIVE_STATE_COUNT = 2
+
+
 def _fail_if_target_regime_incompatible(
     *,
     regime_name: RegimeName,
@@ -1133,9 +1136,28 @@ def _fail_if_target_regime_incompatible(
     Terminal targets are always allowed, and brute-force regimes may target
     DC-EGM regimes (they only consume the target's value-function array).
     """
+    from _lcm.solution.nbegm import (  # noqa: PLC0415 - finalized family is read after solver modules initialize
+        _BoundNBEGM,
+    )
+
     for target_name in solution_reachability.union_targets(source=regime_name):
         target = user_regimes[target_name]
         if laws[target_name].terminal:
+            continue
+        if (
+            type(target.solver) is _BoundNBEGM
+            and target.shocks
+            and target.solver.continuous_state == solver.continuous_state
+            and len(target.states) == _CURRENT_U_PASSIVE_STATE_COUNT
+            and solver.continuous_state in target.states
+            and set(
+                _continuous_non_process_names(grids=_solve_grids(slot=target.states))
+            )
+            == set(target.states)
+        ):
+            # The private dated path must still authenticate/install this
+            # actual current-U producer and close every incoming exact demand.
+            # An ordinary NB value-only carry remains incompatible here.
             continue
         if not isinstance(target.solver, DCEGM):
             msg = (

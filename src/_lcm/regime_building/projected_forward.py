@@ -16,7 +16,17 @@ from _lcm.solution.feasibility import QueryInputStatus, validate_query_input_sta
 from _lcm.typing import QAndFArg, QualifiedName
 from lcm.exceptions import ExecutionPlanningError, UnsupportedOperationError
 from lcm.solver_api import ArtifactRef
-from lcm.typing import BoolND, FloatND, IntND, RegimeName, ScalarFloat
+from lcm.typing import (
+    BoolND,
+    Float1D,
+    FloatND,
+    IntND,
+    RegimeName,
+    ScalarFloat,
+    StateName,
+)
+
+_ONE_PASSIVE_ROW_RANK = 2
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -29,6 +39,8 @@ class ProjectedForwardRead:
     """Original child regime whose retained artifact supplies every leaf."""
     argument_by_leaf: Mapping[tuple[str, ...], QualifiedName]
     """Canonical stored leaf address to the matching flat numerical argument."""
+    passive_names: tuple[StateName, ...] = ()
+    passive_grids: tuple[Float1D, ...] = ()
     native_arguments: tuple[QualifiedName, ...]
     """Argument order matching the original registered native leaf order."""
 
@@ -44,11 +56,21 @@ class ProjectedForwardRead:
         return (
             type(date.template) is BalancedCaseUCarry
             and type(date.guard_program) is SaturatedCaseUProgram
+        ) or (
+            type(date.template) is ProjectedEGMCarry
+            and date.template.grid.ndim == _ONE_PASSIVE_ROW_RANK
+            and date.guard_program is None
         )
 
     @classmethod
     def create(
-        cls, *, spec: ProjectedContinuationSpec, target: RegimeName, period: int
+        cls,
+        *,
+        spec: ProjectedContinuationSpec,
+        target: RegimeName,
+        period: int,
+        passive_names: tuple[StateName, ...] = (),
+        passive_grids: tuple[Float1D, ...] = (),
     ) -> ProjectedForwardRead:
         from _lcm.egm.current_iid_case_u_balanced import (  # noqa: PLC0415
             BalancedCaseUCarry,
@@ -57,13 +79,28 @@ class ProjectedForwardRead:
 
         date = spec.date_at(period=period)
         template = date.template
-        if not isinstance(template, BalancedCaseUCarry) or not isinstance(
+        balanced = isinstance(template, BalancedCaseUCarry) and isinstance(
             date.guard_program, SaturatedCaseUProgram
-        ):
+        )
+        exact_passive = (
+            type(template) is ProjectedEGMCarry
+            and date.guard_program is None
+            and len(passive_names) == len(passive_grids) == 1
+        )
+        if not balanced and not exact_passive:
             raise UnsupportedOperationError(
                 "Ordinary projected forward requires its admitted saturated-U child."
             )
-        require_projected_carry(date=date, target=target, carry=template)
+        if balanced and (passive_names or passive_grids):
+            raise UnsupportedOperationError(
+                "Balanced passive forward remains required."
+            )
+        require_projected_carry(
+            date=date,
+            target=target,
+            carry=template,
+            passive_shape=tuple(grid.shape[0] for grid in passive_grids),
+        )
         # BalancedCaseUCarry._paths follows the genuine registered tree in its
         # original flatten order, including actual nested guard leaves.
         paths = tuple(template.leaves())
@@ -83,6 +120,8 @@ class ProjectedForwardRead:
             target=target,
             argument_by_leaf=MappingProxyType(arguments),
             native_arguments=tuple(arguments.values()),
+            passive_names=passive_names,
+            passive_grids=passive_grids,
         )
 
     def reads(
@@ -103,7 +142,12 @@ class ProjectedForwardRead:
     def operands(
         self, *, carry: ProjectedEGMCarry
     ) -> Mapping[QualifiedName, FloatND | IntND | BoolND]:
-        require_projected_carry(date=self.date, target=self.target, carry=carry)
+        require_projected_carry(
+            date=self.date,
+            target=self.target,
+            carry=carry,
+            passive_shape=tuple(grid.shape[0] for grid in self.passive_grids),
+        )
         leaves = carry.leaves()
         result = {}
         for path, argument in self.argument_by_leaf.items():
@@ -116,9 +160,13 @@ class ProjectedForwardRead:
         return MappingProxyType(result)
 
     def read(
-        self, *, coordinate: ScalarFloat, arguments: Mapping[QualifiedName, QAndFArg]
+        self,
+        *,
+        coordinate: ScalarFloat,
+        arguments: Mapping[QualifiedName, QAndFArg],
+        passive: tuple[ScalarFloat, ...] = (),
     ) -> tuple[ScalarFloat, BoolND]:
-        from _lcm.egm.current_iid_case_u_balanced import (  # noqa: PLC0415 - avoid numerical declaration import cycles
+        from _lcm.egm.current_iid_case_u_balanced import (  # noqa: PLC0415 - preserve scalar source binding
             BalancedCaseUCarry,
         )
 
@@ -130,9 +178,38 @@ class ProjectedForwardRead:
             jax.tree.structure(self.date.template),
             tuple(arguments[name] for name in self.native_arguments),
         )
-        if not isinstance(carry, BalancedCaseUCarry):
+        if not isinstance(carry, BalancedCaseUCarry) and not (
+            self.passive_names and type(carry) is ProjectedEGMCarry
+        ):
             raise TypeError("Projected forward received a foreign numerical tree.")
-        require_projected_carry(date=self.date, target=self.target, carry=carry)
+        require_projected_carry(
+            date=self.date,
+            target=self.target,
+            carry=carry,
+            passive_shape=tuple(grid.shape[0] for grid in self.passive_grids),
+        )
+        if self.passive_names:
+            from _lcm.egm.projected_passive import (  # noqa: PLC0415 - preserve original declaration import order
+                ProjectedPassiveReader,
+            )
+
+            if len(passive) != len(self.passive_grids) or len(passive) != 1:
+                raise TypeError("Projected forward lost its actual passive landing.")
+            result = ProjectedPassiveReader(
+                date=self.date, target=self.target, grid=self.passive_grids[0]
+            ).read(
+                carry=carry,
+                coordinate=coordinate,
+                jacobian=jnp.ones_like(coordinate),
+                passive=passive[0],
+            )
+            valid = jnp.ones((), dtype=jnp.bool_)
+            for status in result.query_status or ():
+                for flag in status:
+                    valid &= ~jnp.any(flag)
+            return result.output[0], valid
+        if passive:
+            raise TypeError("Scalar projected forward received foreign passive axes.")
         result = read_projected_coordinate(
             authority=self.date.authority,
             carry=carry,
