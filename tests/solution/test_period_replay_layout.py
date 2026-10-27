@@ -100,8 +100,8 @@ def _stdout(*, body: str, tmp_path: Path) -> str:
 def test_every_captured_array_leaf_round_trips_to_its_recorded_descriptor(tmp_path):
     """Restoring a capture's layout reproduces the descriptor of every array leaf."""
     body = """
-    with payload_path.open("rb") as stream:
-        payload = cloudpickle.load(stream)
+    # The loader fills in the next-period values the capture holds as templates.
+    payload = period_replay._load_capture_payload(directory=directory)
     layouts = payload[period_capture.LAYOUTS_KEY]
     restored = period_replay._restore_recorded_layout(
         kernel_kwargs=payload["kernel_kwargs"],
