@@ -687,7 +687,7 @@ _SOURCE_SEALS = {
     SIMULATION_PROGRAM_TYPES_SOURCE: "43c381884a3475516bd25d1463e83a6560e0d2ba3c697a290fad1d005d8dbf30",
     SIMULATION_RUNTIME_SOURCE: "88c9757287b5c16607becef498c1cc52cbaa809bbfd0269d337811ed31d858e7",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
-    ARGMAX_SOURCE: "b508d4e10350de8b54707db238d01c7de6c73b4ca6b0176e0c6c12ec762952dc",
+    ARGMAX_SOURCE: "9717f9c2ef6a6999e278455e62cf0bfda87fe8b4fdd68b8c113851223437ce18",
     COLLECTIVE_SOURCE: "4cc0683d493f597684f5801909d297145d8bade0aa752c3e35cf8af2cb55edd9",
     MAX_Q_SOURCE: "56aa3e57f88f082d549dd8c38301030a572f45ead0d8c64ef2ef0ac3b0c04779",
     PROCESSING_SOURCE: "4ed59fa12e4b07839e0973c9b4e67f6aa172cc1a434db67f440266ed7156af83",
@@ -9816,6 +9816,11 @@ def _argmax_reducer_errors(tree: ast.Module) -> list[str]:
         pair_order = _definition(tree=tree, name="_larger_value_then_smaller_id")
         pair_reduce = _definition(tree=tree, name="_paired_max")
         pair_jvp = _definition(tree=tree, name="_paired_max_jvp")
+        float_order_parts = _definition(tree=tree, name="_float_order_parts")
+        float_bits_key = _definition(tree=tree, name="_float_bits_order_key")
+        float_bits_order = _definition(
+            tree=tree, name="_larger_float_bits_then_smaller_id"
+        )
     except ValueError as error:
         return [f"argmax reducer: {error}"]
 
@@ -9865,35 +9870,95 @@ if jnp.issubdtype(values.dtype, jnp.floating):
     return _paired_max_with_tangent(values, ids, initial_arr)
 return _paired_max(values, ids, initial_arr)
 """
-    expected_pair_reduce = r"""return jax.lax.reduce(
+    expected_pair_reduce = r"""lowest = (
+    -jnp.inf
+    if jnp.issubdtype(values.dtype, jnp.floating)
+    else jnp.iinfo(values.dtype).min
+)
+no_id = jnp.asarray(NO_ID, dtype=jnp.int32)
+if jnp.issubdtype(values.dtype, jnp.floating):
+    bits, _ = _float_order_parts(values)
+    floor_bits, _ = _float_order_parts(initial)
+    lowest_bits, _ = _float_order_parts(jnp.asarray(lowest, dtype=values.dtype))
+    best_bits, best_id = jax.lax.reduce(
+        (bits, ids),
+        (lowest_bits, no_id),
+        _larger_float_bits_then_smaller_id,
+        (values.ndim - 1,),
+    )
+    best_bits, best_id = _larger_float_bits_then_smaller_id(
+        (best_bits, best_id), (floor_bits, no_id)
+    )
+    return jax.lax.bitcast_convert_type(best_bits, values.dtype), best_id
+best = jax.lax.reduce(
     (values, ids),
-    (initial, jnp.asarray(NO_ID, dtype=jnp.int32)),
+    (jnp.asarray(lowest, dtype=values.dtype), no_id),
     _larger_value_then_smaller_id,
     (values.ndim - 1,),
 )
+return _larger_value_then_smaller_id(best, (initial, no_id))
 """
     expected_pair_jvp = r"""values, ids, initial = primals
 values = jax.lax.optimization_barrier(values)
 values_dot, _, initial_dot = tangents
 best, best_id = _paired_max(values, ids, initial)
-attains = (values == best[..., jnp.newaxis]).astype(values.dtype)
+_, value_keys = _float_order_parts(values)
+_, best_keys = _float_order_parts(best)
+_, initial_key = _float_order_parts(initial)
+attains = (
+    (value_keys == best_keys[..., jnp.newaxis]) & ~jnp.isnan(values)
+).astype(values.dtype)
 count = jnp.sum(attains, axis=-1)
 elements_dot = jnp.sum(values_dot * attains, axis=-1) / jnp.maximum(count, 1)
 initial_dot = jnp.broadcast_to(initial_dot, best.shape)
 best_dot = jnp.where(
     count > 0,
-    jnp.where(initial == best, (elements_dot + initial_dot) / 2, elements_dot),
+    jnp.where(initial_key == best_keys, (elements_dot + initial_dot) / 2, elements_dot),
     initial_dot,
 )
 return (best, best_id), (best_dot, np.zeros(best_id.shape, dtype=float0))
 """
     expected_pair_order = r"""left_value, left_id = left
 right_value, right_id = right
+if jnp.issubdtype(left_value.dtype, jnp.floating):
+    left_bits, _ = _float_order_parts(left_value)
+    right_bits, _ = _float_order_parts(right_value)
+    bits, winner_id = _larger_float_bits_then_smaller_id(
+        (left_bits, left_id), (right_bits, right_id)
+    )
+    return jax.lax.bitcast_convert_type(bits, left_value.dtype), winner_id
 tie = right_value == left_value
 take_right = (right_value > left_value) | (tie & (right_id < left_id))
 value = jnp.where(take_right, right_value, left_value)
-value = jnp.where(tie & (left_value == 0), left_value + right_value, value)
 return value, jnp.where(take_right, right_id, left_id)
+"""
+    expected_float_parts = r"""integer = jnp.int32 if values.dtype == jnp.float32 else jnp.int64
+bits = jax.lax.optimization_barrier(jax.lax.bitcast_convert_type(values, integer))
+return bits, _float_bits_order_key(bits)
+"""
+    expected_float_bits_key = r"""magnitude_mask = jnp.iinfo(bits.dtype).max
+key = bits ^ ((bits >> (bits.dtype.itemsize * 8 - 1)) & magnitude_mask)
+key = jnp.where((bits & magnitude_mask) == 0, jnp.zeros_like(bits), key)
+return jax.lax.optimization_barrier(key)
+"""
+    expected_float_bits_order = r"""left_bits, left_id = left
+right_bits, right_id = right
+left_key = _float_bits_order_key(left_bits)
+right_key = _float_bits_order_key(right_bits)
+floating = jnp.float32 if left_bits.dtype == jnp.int32 else jnp.float64
+infinity_bits = jax.lax.bitcast_convert_type(
+    jnp.asarray(jnp.inf, dtype=floating), left_bits.dtype
+)
+magnitude_mask = jnp.iinfo(left_bits.dtype).max
+valid = ((left_bits & magnitude_mask) <= infinity_bits) & (
+    (right_bits & magnitude_mask) <= infinity_bits
+)
+tie = (right_key == left_key) & valid
+take_right = ((right_key > left_key) & valid) | (tie & (right_id < left_id))
+bits = jnp.where(take_right, right_bits, left_bits)
+both_zero = (left_key == 0) & (right_key == 0)
+bits = jnp.where(both_zero, left_bits & right_bits, bits)
+return bits, jnp.where(take_right, right_id, left_id)
 """
     expected_move = r"""front_axes = sorted(set(range(a.ndim)) - set(axes))
 return a.transpose((*front_axes, *axes))
@@ -9915,7 +9980,9 @@ return a.transpose((*front_axes, *axes))
     if not _positional_signature(
         node=pair_reduce, names=("values", "ids", "initial")
     ) or not _body_matches(node=pair_reduce, expected_source=expected_pair_reduce):
-        errors.append("argmax reducer: the paired primal is not one exact `lax.reduce`")
+        errors.append(
+            "argmax reducer: the paired primal is not an identity-initialized `lax.reduce`"
+        )
     if not _positional_signature(
         node=pair_jvp, names=("primals", "tangents")
     ) or not _body_matches(node=pair_jvp, expected_source=expected_pair_jvp):
@@ -9955,6 +10022,24 @@ return a.transpose((*front_axes, *axes))
         errors.append(
             "argmax reducer: the (value, id) maximum is not one exact paired reduction"
         )
+    if (
+        float_order_parts.decorator_list
+        or not _positional_signature(node=float_order_parts, names=("values",))
+        or not _body_matches(
+            node=float_order_parts, expected_source=expected_float_parts
+        )
+    ):
+        errors.append("argmax reducer: protected stored-float ordering changed")
+    for helper, names, expected in (
+        (float_bits_key, ("bits",), expected_float_bits_key),
+        (float_bits_order, ("left", "right"), expected_float_bits_order),
+    ):
+        if (
+            helper.decorator_list
+            or not _positional_signature(node=helper, names=names)
+            or not _body_matches(node=helper, expected_source=expected)
+        ):
+            errors.append("argmax reducer: encoded float reduction changed")
     if not _body_matches(node=pair_order, expected_source=expected_pair_order):
         errors.append(
             "argmax reducer: the (value, id) order is not larger value, then smaller id"
@@ -9989,6 +10074,9 @@ return a.transpose((*front_axes, *axes))
             "_larger_value_then_smaller_id",
             "_paired_max",
             "_paired_max_jvp",
+            "_float_order_parts",
+            "_float_bits_order_key",
+            "_larger_float_bits_then_smaller_id",
             "_move_axes_to_back",
             "_flatten_last_n_axes",
         }

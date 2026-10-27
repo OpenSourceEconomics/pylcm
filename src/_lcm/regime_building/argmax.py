@@ -8,8 +8,12 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax.dtypes import float0
+from jaxtyping import Int
 
 from lcm.typing import BoolND, FloatND, IntND
+
+# Encodings follow the float width, independently of canonical int32 action IDs.
+type _FloatBitsND = Int[jax.Array, "..."]
 
 # Identity of no element; it loses every tie against a real identity.
 NO_ID = jnp.iinfo(jnp.int32).max
@@ -140,12 +144,35 @@ def _paired_max(
     values: FloatND | IntND, ids: IntND, initial: FloatND | IntND
 ) -> tuple[FloatND | IntND, IntND]:
     """Reduce `(value, id)` pairs over the last axis, without a derivative."""
-    return jax.lax.reduce(
+    lowest = (
+        -jnp.inf
+        if jnp.issubdtype(values.dtype, jnp.floating)
+        else jnp.iinfo(values.dtype).min
+    )
+    no_id = jnp.asarray(NO_ID, dtype=jnp.int32)
+    # Float accumulators can flush subnormals inside a reduction: carry only bits.
+    if jnp.issubdtype(values.dtype, jnp.floating):
+        bits, _ = _float_order_parts(values)
+        floor_bits, _ = _float_order_parts(initial)
+        lowest_bits, _ = _float_order_parts(jnp.asarray(lowest, dtype=values.dtype))
+        best_bits, best_id = jax.lax.reduce(
+            (bits, ids),
+            (lowest_bits, no_id),
+            _larger_float_bits_then_smaller_id,
+            (values.ndim - 1,),
+        )
+        best_bits, best_id = _larger_float_bits_then_smaller_id(
+            (best_bits, best_id), (floor_bits, no_id)
+        )
+        return jax.lax.bitcast_convert_type(best_bits, values.dtype), best_id
+    # XLA requires an identity initializer; a finite floor must compete afterward.
+    best = jax.lax.reduce(
         (values, ids),
-        (initial, jnp.asarray(NO_ID, dtype=jnp.int32)),
+        (jnp.asarray(lowest, dtype=values.dtype), no_id),
         _larger_value_then_smaller_id,
         (values.ndim - 1,),
     )
+    return _larger_value_then_smaller_id(best, (initial, no_id))
 
 
 # keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
@@ -168,13 +195,20 @@ def _paired_max_jvp(
     values = jax.lax.optimization_barrier(values)
     values_dot, _, initial_dot = tangents
     best, best_id = _paired_max(values, ids, initial)
-    attains = (values == best[..., jnp.newaxis]).astype(values.dtype)
+    _, value_keys = _float_order_parts(values)
+    _, best_keys = _float_order_parts(best)
+    _, initial_key = _float_order_parts(initial)
+    attains = ((value_keys == best_keys[..., jnp.newaxis]) & ~jnp.isnan(values)).astype(
+        values.dtype
+    )
     count = jnp.sum(attains, axis=-1)
     elements_dot = jnp.sum(values_dot * attains, axis=-1) / jnp.maximum(count, 1)
     initial_dot = jnp.broadcast_to(initial_dot, best.shape)
     best_dot = jnp.where(
         count > 0,
-        jnp.where(initial == best, (elements_dot + initial_dot) / 2, elements_dot),
+        jnp.where(
+            initial_key == best_keys, (elements_dot + initial_dot) / 2, elements_dot
+        ),
         initial_dot,
     )
     return (best, best_id), (best_dot, np.zeros(best_id.shape, dtype=float0))
@@ -201,11 +235,61 @@ def _larger_value_then_smaller_id(
     """
     left_value, left_id = left
     right_value, right_id = right
+    if jnp.issubdtype(left_value.dtype, jnp.floating):
+        left_bits, _ = _float_order_parts(left_value)
+        right_bits, _ = _float_order_parts(right_value)
+        bits, winner_id = _larger_float_bits_then_smaller_id(
+            (left_bits, left_id), (right_bits, right_id)
+        )
+        return jax.lax.bitcast_convert_type(bits, left_value.dtype), winner_id
     tie = right_value == left_value
     take_right = (right_value > left_value) | (tie & (right_id < left_id))
     value = jnp.where(take_right, right_value, left_value)
-    value = jnp.where(tie & (left_value == 0), left_value + right_value, value)
     return value, jnp.where(take_right, right_id, left_id)
+
+
+def _float_order_parts(values: FloatND) -> tuple[_FloatBitsND, _FloatBitsND]:
+    """Return stored bits and an integer order key, equating signed zeros.
+
+    Negative encodings reverse magnitude order. Barriers prevent the compiler
+    from replacing this stored-value order with flushing float comparisons.
+    """
+    integer = jnp.int32 if values.dtype == jnp.float32 else jnp.int64
+    bits = jax.lax.optimization_barrier(jax.lax.bitcast_convert_type(values, integer))
+    return bits, _float_bits_order_key(bits)
+
+
+def _float_bits_order_key(bits: _FloatBitsND) -> _FloatBitsND:
+    """Order IEEE encodings with integer operations, equating only signed zeros."""
+    magnitude_mask = jnp.iinfo(bits.dtype).max
+    key = bits ^ ((bits >> (bits.dtype.itemsize * 8 - 1)) & magnitude_mask)
+    key = jnp.where((bits & magnitude_mask) == 0, jnp.zeros_like(bits), key)
+    return jax.lax.optimization_barrier(key)
+
+
+# keyword-only-exempt: library-callback=jax.lax.reduce
+def _larger_float_bits_then_smaller_id(
+    left: tuple[_FloatBitsND, IntND], right: tuple[_FloatBitsND, IntND]
+) -> tuple[_FloatBitsND, IntND]:
+    """Choose stored float encodings and their IDs without a float accumulator."""
+    left_bits, left_id = left
+    right_bits, right_id = right
+    left_key = _float_bits_order_key(left_bits)
+    right_key = _float_bits_order_key(right_bits)
+    floating = jnp.float32 if left_bits.dtype == jnp.int32 else jnp.float64
+    infinity_bits = jax.lax.bitcast_convert_type(
+        jnp.asarray(jnp.inf, dtype=floating), left_bits.dtype
+    )
+    magnitude_mask = jnp.iinfo(left_bits.dtype).max
+    valid = ((left_bits & magnitude_mask) <= infinity_bits) & (
+        (right_bits & magnitude_mask) <= infinity_bits
+    )
+    tie = (right_key == left_key) & valid
+    take_right = ((right_key > left_key) & valid) | (tie & (right_id < left_id))
+    bits = jnp.where(take_right, right_bits, left_bits)
+    both_zero = (left_key == 0) & (right_key == 0)
+    bits = jnp.where(both_zero, left_bits & right_bits, bits)
+    return bits, jnp.where(take_right, right_id, left_id)
 
 
 def _move_axes_to_back(
