@@ -24,10 +24,11 @@ from lcm.exceptions import CategoricalDefinitionError
 from lcm.typing import IntND, ValueND
 
 # The value of one characteristic of one category, as written in the table.
-type CharacteristicValue = int | bool
+type CharacteristicValue = int | bool | float
 
 _INT32_MIN = int(np.iinfo(np.int32).min)
 _INT32_MAX = int(np.iinfo(np.int32).max)
+_FLOAT32_MAX = float(np.finfo(np.float32).max)
 
 
 @beartype(conf=CATEGORICAL_CONF)
@@ -60,20 +61,24 @@ def characteristics(
             describes.
         by_category: Mapping of every category name, in declaration order, to its
             characteristics. Every category sets the same characteristics,
-            in any order, each to an `int` or a `bool`, and no two categories
-            set all of them to the same values.
+            in any order, each to a Python `int`, `bool` or `float`; a float
+            is finite and within the float32 range.
+            Each characteristic has one type throughout the table, and no two
+            categories set all characteristics to the same values.
 
     Returns:
         A read-only mapping from each characteristic, in the first row's order,
         to a read-only 1-d array indexed by category code: `bool` for bool
-        characteristics, `int32` otherwise.
+        characteristics, `int32` for integer characteristics, and `float64`
+        for float characteristics.
 
     Raises:
         CategoricalDefinitionError: If the table does not describe exactly the
             categories of `category_class` in order, the categories set
-            different characteristics, a value is no `int` or `bool` or leaves
-            the int32 range, a characteristic mixes `bool` and `int`, or two
-            categories share all characteristics.
+            different characteristics, a value is not a Python `int`, `bool` or
+            `float`, a float is not finite or leaves the float32 range, an
+            integer leaves the allowed int32 range, a
+            characteristic mixes types, or two categories share all characteristics.
 
     """
     class_errors = validate_category_class(category_class)
@@ -94,6 +99,8 @@ def characteristics(
     for name in names:
         values = [row[name] for row in by_category.values()]
         dtype = bool if isinstance(values[0], bool) else np.int32
+        if isinstance(values[0], float):
+            dtype = np.float64
         column = np.asarray(values, dtype=dtype)
         column.flags.writeable = False
         columns[name] = column
@@ -108,7 +115,9 @@ def category_with(
 
     The given characteristics must tell all categories apart; this is checked
     from `columns` before any value is read, so it holds for every value and
-    raises at trace time. Values are Python ints or bools, or bool or
+    raises at trace time. Queried columns must have bool or signed-integer
+    dtype; float properties can be read by code but cannot be queried.
+    Values are Python ints or bools, or bool or
     signed-integer arrays, traced or not, and broadcast against each other.
 
     Example:
@@ -125,8 +134,9 @@ def category_with(
 
     Raises:
         CategoricalDefinitionError: If no characteristic is given, one is not a
-            column, two categories share the given characteristics, or a value
-            is an array of neither bool nor signed-integer dtype.
+            column, a queried column is neither bool nor signed-integer, two
+            categories share the given characteristics, or a query value is
+            neither a Python int/bool nor a bool/signed-integer array.
 
     """
     names = _get_identifying_names(columns=columns, given=tuple(query))
@@ -231,14 +241,26 @@ def _check_rows(
 def _check_column(*, name: str, values: Mapping[str, CharacteristicValue]) -> list[str]:
     """Return the problems of one characteristic's values."""
     error_messages = [
-        f"`{case}.{name}` is {value!r}; characteristics take an int or a bool."
+        f"`{case}.{name}` is {value!r}; characteristics take a Python int, bool "
+        "or finite float."
         for case, value in values.items()
-        if type(value) not in {int, bool}
+        if type(value) not in {int, bool, float}
     ]
     if error_messages:
         return error_messages
     if len({type(value) for value in values.values()}) > 1:
-        return [f"Characteristic `{name}` mixes bool and int values."]
+        types = ", ".join(
+            dict.fromkeys(type(value).__name__ for value in values.values())
+        )
+        return [f"Characteristic `{name}` mixes {types} values."]
+    if type(next(iter(values.values()))) is float:
+        return [
+            f"`{case}.{name}` is {value!r}; float characteristics must be finite "
+            f"and within the float32 range, magnitude at most {_FLOAT32_MAX:g}, so "
+            f"they stay finite at either precision."
+            for case, value in values.items()
+            if not abs(value) <= _FLOAT32_MAX
+        ]
     return [
         (
             f"`{case}.{name}` is {value}, the missing-category code, which no "
@@ -268,16 +290,40 @@ def _get_identifying_names(
             f"columns are {list(columns)}."
         )
     names = tuple(name for name in columns if name in given)
+    unsupported = [name for name in names if columns[name].dtype.kind not in {"b", "i"}]
+    if unsupported:
+        raise CategoricalDefinitionError(
+            f"category_with takes only bool or signed-integer columns; "
+            f"float or other unsupported columns were given: {unsupported}."
+        )
+    ties = _get_ties(columns=columns, names=names)
+    if ties:
+        details = "; ".join(f"codes {codes}" for codes in ties)
+        queryable = tuple(
+            name for name in columns if columns[name].dtype.kind in {"b", "i"}
+        )
+        if _get_ties(columns=columns, names=queryable):
+            floats = [name for name in columns if name not in queryable]
+            advice = (
+                f"The remaining columns {floats} are float properties and cannot "
+                f"identify a category; add an integer or bool characteristic, or use "
+                f"the class constant."
+            )
+        else:
+            advice = "Pass more characteristics, or use the class constant."
+        raise CategoricalDefinitionError(
+            f"The characteristics {list(names)} do not tell all categories apart: "
+            f"{details} share them. {advice}"
+        )
+    return names
+
+
+def _get_ties(
+    *, columns: Mapping[str, np.ndarray], names: tuple[str, ...]
+) -> list[list[int]]:
+    """Return the groups of codes that share their values in all `names` columns."""
     groups: dict[tuple[CharacteristicValue, ...], list[int]] = {}
     rows = zip(*(np.asarray(columns[name]).tolist() for name in names), strict=True)
     for code, row in enumerate(rows):
         groups.setdefault(row, []).append(code)
-    ties = [codes for codes in groups.values() if len(codes) > 1]
-    if ties:
-        details = "; ".join(f"codes {codes}" for codes in ties)
-        raise CategoricalDefinitionError(
-            f"The characteristics {list(names)} do not tell all categories apart: "
-            f"{details} share them. Pass more characteristics, or use the class "
-            f"constant."
-        )
-    return names
+    return [codes for codes in groups.values() if len(codes) > 1]

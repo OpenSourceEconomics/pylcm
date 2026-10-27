@@ -18,13 +18,16 @@ an outcome grid and its transition mechanism.
 - `DiscreteGrid(category_class=Category)` turns that category class into a state or
   action grid.
 - `characteristics(category_class=Category, by_category=...)` checks a table of every
-  category's `int` or `bool` characteristics (above the int32 minimum), keyed by
-  category name in declaration order, with the same characteristics in any order per row
-  and unique per category, and returns read-only arrays indexed by code.
+  category's Python `int`, `bool` or finite `float` characteristics, keyed by category
+  name in declaration order. Columns use one scalar type; integer values fit int32 above
+  its minimum, and float values fit float32. Rows set the same characteristics and
+  remain distinct. The returned arrays are read-only and indexed by code, with bool,
+  int32 or float64 dtype.
 - `category_with(columns, **characteristics)` returns the int32 code of the category
   with the given characteristics, or the int32 minimum where none has them. The given
-  characteristics must tell all categories apart, and array values must be bool or
-  signed integers. See
+  identifying columns must tell all categories apart and have bool or signed-integer
+  dtype. Float properties cannot be queried. Query values are Python ints/bools or bool
+  and signed-integer arrays. See
   [Categories with characteristics](../user_guide/categories_with_characteristics.md).
 
 The explicit `ordered` flag matters: interpolation and comparison may use ordering only
