@@ -162,6 +162,7 @@ import jax.numpy as jnp
 from jax.custom_derivatives import SymbolicZero
 
 from _lcm.certainty_equivalent import (
+    _center_lottery_shifts,
     _scaled_lottery_terms,
     _scaled_lottery_terms_with_scale,
 )
@@ -331,6 +332,9 @@ def _scaled_mean_jvp(
     """
     values, coefficients, shifts = primals
     values_dot, coefficients_dot, _ = tangents
+    # A common exponent offset cancels in a normalized mean and its partials.
+    # Remove it before subtracting floating coefficient exponents.
+    shifts = _center_lottery_shifts(coefficients=coefficients, shifts=shifts)
     mean = _scaled_mean_with_tangent(values, coefficients, shifts)
 
     coefficient_exponent = _unbiased_exponent(coefficients)
