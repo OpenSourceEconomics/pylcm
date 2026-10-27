@@ -32,7 +32,6 @@ from _lcm.processes.base import (
     sealed,
     standard_normal,
 )
-from _lcm.processes.density_derivative_admission import _checked_density_coefficients
 from _lcm.processes.state_conditioned import tauchen_row
 from _lcm.typing import PRNGKeyND
 from lcm.exceptions import GridInitializationError
@@ -129,7 +128,7 @@ class TauchenAR1Process(_AR1Process):
         The default rule integrates midpoint bins with open first and last tails.
         ``density`` normalizes normal densities at the nodes; it ignores cell widths.
         Density derivatives use normalized scaled arithmetic without host checks.
-        A private developer/test certificate checks explicitly supplied rows;
+        A test-suite certificate checks explicitly supplied rows;
         routine differentiation makes no componentwise certificate promise.
         ``innovation_quadrature`` maps standardized innovations linearly to adjacent
         state nodes, clipping targets to the endpoints. Supply ``n_quadrature``
@@ -775,22 +774,6 @@ def _density_derivative_data(
         (location_slope[1], rho_slope[1], source_slope[1], sigma_slope[1])
     )
     return contrasts, mantissas, exponents, reference, exp_metadata
-
-
-def _certify_density_derivative_row(
-    operands: tuple[Float1D, FloatND, FloatND, FloatND, FloatND],
-) -> None:
-    """Synchronously certify all local unit partials at one exact physical row.
-
-    This host validation operation is separate from JAX differentiation. It does
-    not attach an effect, result token or validation policy to the process.
-    """
-    _contrasts, mantissas, exponents, reference, exp_metadata = (
-        _density_derivative_data(operands)
-    )
-    _checked_density_coefficients(
-        *operands, reference, *exp_metadata, mantissas, exponents
-    )
 
 
 # keyword-only-exempt: library-callback=jax.custom_jvp.defjvp

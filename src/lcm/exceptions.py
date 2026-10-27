@@ -220,13 +220,3 @@ class UnrepresentableOuterCandidateError(PyLCMError):
     candidate is dropped from that subject's choice set rather than published,
     and this reports how many were dropped.
     """
-
-
-class DensityDerivativeAccuracyError(PyLCMError, ArithmeticError):
-    """Raised when the explicit density-derivative certificate rejects a row.
-
-    Only a deliberate call to the developer/test certificate raises this error.
-    Solve, simulation and routine JAX differentiation never run the certificate,
-    so a differentiated density row outside the accuracy budget is returned
-    without an error.
-    """
