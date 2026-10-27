@@ -64,6 +64,7 @@ from _lcm.egm.outer_replay_capability import (
     resolve_outer_replay_capability,
 )
 from _lcm.egm.outer_search import AdaptiveOuterMesh, FiniteOuterGrid, OuterSearch
+from _lcm.egm.projected_continuation import ProjectedChildAuthority
 from _lcm.egm.published_policy import (
     EGMSimPolicy,
     NBEGMGridPolicy,
@@ -520,7 +521,11 @@ class NNBEGM(TwoMarginSolver):
             int, Mapping[RegimeName, ContinuationCapabilities]
         ] = {}
         query_input_authorities: dict[
-            int, tuple[tuple[RegimeName, int, PostDecisionBoundSpec], ...]
+            int,
+            tuple[
+                tuple[RegimeName, int, PostDecisionBoundSpec | ProjectedChildAuthority],
+                ...,
+            ],
         ] = {}
         reader_periods: set[int] = set()
         keeper_continuation_spec = None
@@ -2284,7 +2289,12 @@ def _merge_nnbegm_reader_contracts(
     periods: tuple[int, ...],
     seen_periods: set[int],
     capabilities: dict[int, Mapping[RegimeName, ContinuationCapabilities]],
-    authorities: dict[int, tuple[tuple[RegimeName, int, PostDecisionBoundSpec], ...]],
+    authorities: dict[
+        int,
+        tuple[
+            tuple[RegimeName, int, PostDecisionBoundSpec | ProjectedChildAuthority], ...
+        ],
+    ],
 ) -> None:
     """Forward matching actual inner readers across disjoint source-period groups."""
     if (

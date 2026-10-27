@@ -15,7 +15,11 @@ import jax.numpy as jnp
 from beartype import beartype
 
 from _lcm.beartype_conf import PARAMS_CONF, REGIME_CONF
-from _lcm.power_mean import weighted_power_mean
+from _lcm.power_mean import (
+    _anchored_power_mean,
+    _PowerMeanContext,
+    weighted_power_mean,
+)
 from _lcm.probability import (
     _unbiased_exponent,
     binades_above_smallest_normal,
@@ -555,12 +559,29 @@ class PowerMean(QuasiArithmeticMean):
         nothing is understated.
         """
         return _states_no_derivative(
-            weighted_power_mean(
-                values=values,
-                weights=coefficients,
-                exponent=1.0 - params["risk_aversion"],
-                shifts=shifts,
-            )
+            self._scaled_context(
+                values=values, coefficients=coefficients, shifts=shifts, params=params
+            ).value
+        )
+
+    def _scaled_context(
+        self,
+        *,
+        values: FloatND,
+        coefficients: FloatND,
+        shifts: IntND,
+        params: Mapping[str, FloatND],
+    ) -> _PowerMeanContext:
+        """Expose original anchored operands to the explicit economic reader.
+
+        This is private context, not a derivative of aggregate_scaled. Its
+        caller retains the actual exact declaration and owns transient storage.
+        """
+        return _anchored_power_mean(
+            values=values,
+            weights=coefficients,
+            exponent=1.0 - params["risk_aversion"],
+            shifts=shifts,
         )
 
 

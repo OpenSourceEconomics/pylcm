@@ -8,6 +8,7 @@ from typing import (
     runtime_checkable,
 )
 
+import jax
 import numpy as np
 import numpy.typing as npt
 from jaxtyping import Float
@@ -35,6 +36,8 @@ from lcm.typing import (
     StateName,
     ValueND,
 )
+
+type ContinuationLeaf = FloatND | IntND | BoolND | jax.ShapeDtypeStruct
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -347,8 +350,12 @@ class ContinuationReader(Protocol):
         """Return the marginal of the continuation in `state` at `query`."""
         ...
 
-    def leaves(self) -> Mapping[tuple[str, ...], FloatND | IntND | BoolND]:
-        """Return every published array by its pytree path, by identity.
+    def leaves(self) -> Mapping[tuple[str, ...], ContinuationLeaf]:
+        """Return original arrays, or ShapeDtypeStruct leaves for abstract templates.
+
+        Concrete payload/storage and receiving buffer registries require actual
+        arrays. Abstract leaves describe build-time schemas without allocating
+        or granting authority to register a runtime buffer.
 
         The engine addresses a payload's buffers through the objects this
         returns: it registers them with the buffer registry, locates a released

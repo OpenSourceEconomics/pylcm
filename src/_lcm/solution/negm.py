@@ -38,6 +38,7 @@ from _lcm.constraints.routes import (
 )
 from _lcm.continuation import EGMContinuationLayout, EGMContinuationSpec
 from _lcm.egm.carry import EGMCarry, egm_carry_role_tree, stack_egm_carries
+from _lcm.egm.current_iid_negm_origin import DatedNEGMCaseUSource
 from _lcm.egm.dcegm_query_model import DCEGMQueryModel
 from _lcm.egm.nested_floor import (
     NESTED_FLOOR_INPUT,
@@ -436,7 +437,12 @@ class NEGM(TwoMarginSolver):
             ),
         )
 
-    def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
+    def build_period_kernels(
+        self,
+        *,
+        context: SolverBuildContext,
+        case_u_source: DatedNEGMCaseUSource | None = None,
+    ) -> SolutionKernels:
         """Build one NEGM period adapter per period, wrapping the inner kernels.
 
         The model-stage and build-stage validation hooks guarantee the outer
@@ -449,6 +455,8 @@ class NEGM(TwoMarginSolver):
         per-node candidates and collapses the outer axis by `max`.
         """
         bound_self = cast("_BoundNEGM", self)
+        if case_u_source is not None:
+            case_u_source.require(context=context, solver=bound_self)
         query_model = (context.dcegm_query_models or {}).get(context.regime_name)
         if query_model is not None and query_model.authority.finite_outer is None:
             raise TypeError("Finite NEGM requires its canonical outer query authority.")
@@ -488,8 +496,14 @@ class NEGM(TwoMarginSolver):
         inner_with_child_transport = replace(
             bound_self.inner, _retain_child_feasibility=True
         )
-        adjuster_kernels = inner_with_child_transport.build_period_kernels(
-            context=adjuster_context
+        adjuster_kernels = (
+            inner_with_child_transport.build_period_kernels(context=adjuster_context)
+            if case_u_source is None
+            else case_u_source.build_inner(
+                context=adjuster_context,
+                solver=inner_with_child_transport,
+                keeper=False,
+            )
         )
         # The keeper is a normal passive DC-EGM: the outer post-decision is held
         # at its no-adjustment level (`s_t^post-dec = keep(<durable>_t)`), so the
@@ -583,8 +597,14 @@ class NEGM(TwoMarginSolver):
                         periods=group_periods or (template_period,),
                     ),
                 )
-            group_keeper_kernels = inner_with_child_transport.build_period_kernels(
-                context=keeper_context
+            group_keeper_kernels = (
+                inner_with_child_transport.build_period_kernels(context=keeper_context)
+                if case_u_source is None
+                else case_u_source.build_inner(
+                    context=keeper_context,
+                    solver=inner_with_child_transport,
+                    keeper=True,
+                )
             )
             keeper_param_checks += group_keeper_kernels.param_checks
             keeper_continuation_template = (
@@ -1712,7 +1732,7 @@ def _outer_sweep_program(
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
-class _NodeSolver:
+class _NodeSolver[Output]:
     """Solve the inner adjuster at one outer node.
 
     Every input is an explicit field, so the adjuster core stays reachable only
@@ -1721,7 +1741,7 @@ class _NodeSolver:
     instances compare by identity (`eq=False`).
     """
 
-    inner_core: Callable[..., tuple[FloatND, EGMCarry]]
+    inner_core: Callable[..., Output]
     """The adjuster program, called with the outer post-decision bound in."""
 
     outer_post_decision: FunctionName
@@ -1730,7 +1750,7 @@ class _NodeSolver:
     adjuster_arguments: Mapping[ReferenceName, PytreeValue]
     """Immutable mapping of the adjuster's own argument tree."""
 
-    def __call__(self, node: ScalarFloat) -> tuple[FloatND, EGMCarry]:
+    def __call__(self, node: ScalarFloat) -> Output:
         """Return the adjuster's value and carry at `node`."""
         return self.inner_core(
             **{**self.adjuster_arguments, self.outer_post_decision: node}

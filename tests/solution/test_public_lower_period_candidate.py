@@ -50,6 +50,7 @@ class _ContextResolver(Protocol):
         regimes: MappingProxyType[engine.RegimeName, engine.Regime],
         program_fingerprint: str,
         flat_params: engine.FlatParams,
+        solve_parameter_views: Mapping[engine.RegimeName, engine.FlatParams] = ...,
         ages: engine.TimeAxis,
         next_regime_to_V_arr: MappingProxyType[engine.RegimeName, engine.FloatND],
         next_regime_to_continuation: MappingProxyType[
@@ -61,7 +62,6 @@ class _ContextResolver(Protocol):
         enable_jit: bool,
         continuous_sharded_state: engine.StateName | None = ...,
         donate_buffers: bool = ...,
-        retain_all_artifacts: bool,
         persistable_artifact_refs: frozenset[engine.ArtifactRef],
         process_grid_resolver: engine.ProcessGridResolver | None = ...,
         structural_blueprints: engine.StructuralBlueprintCache[

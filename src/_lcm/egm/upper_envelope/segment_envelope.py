@@ -45,8 +45,8 @@ offending cell instead of publishing a guess.
 """
 
 import functools
-from collections.abc import Callable
-from typing import NamedTuple, overload
+from collections.abc import Callable, Iterable
+from typing import TYPE_CHECKING, NamedTuple, cast, overload
 
 import jax
 import jax.numpy as jnp
@@ -64,6 +64,12 @@ from lcm.typing import (
     ScalarBool,
     ScalarInt,
 )
+
+if TYPE_CHECKING:
+    from _lcm.typing import PytreeChild
+else:
+    # The internal type vocabulary imports EGM carries and their owned rows.
+    type PytreeChild = object
 
 # Static capacity for the number of x-monotone runs a candidate chain may fold
 # into. One discrete action can fold arbitrarily often, so this is a validated
@@ -91,6 +97,15 @@ class OwnedEnvelope(NamedTuple):
     link_valid: BoolND
     source_left_index: Int1D
     source_right_index: Int1D
+
+    def __reduce__(
+        self,
+    ) -> tuple[
+        Callable[[None, Iterable[PytreeChild]], OwnedEnvelope],
+        tuple[None, tuple[PytreeChild, ...]],
+    ]:
+        """Retain original candidate buffers through native artifact restoration."""
+        return _unflatten_owned_envelope, (None, tuple(self))
 
 
 class _NegmBindingEnvelope(NamedTuple):
@@ -962,3 +977,39 @@ def _link_channels(
         jnp.where(readable, read_value, jnp.asarray(jnp.nan, value.dtype)),
         jnp.where(readable, read_policy, jnp.asarray(jnp.nan, policy.dtype)),
     )
+
+
+def _flatten_owned_envelope(
+    record: OwnedEnvelope,
+) -> tuple[tuple[PytreeChild, ...], None]:
+    return tuple(record), None
+
+
+def _flatten_owned_envelope_with_keys(
+    record: OwnedEnvelope,
+) -> tuple[tuple[tuple[jax.tree_util.GetAttrKey, PytreeChild], ...], None]:
+    return tuple(
+        (jax.tree_util.GetAttrKey(name), leaf)
+        for name, leaf in zip(OwnedEnvelope._fields, record, strict=True)
+    ), None
+
+
+# keyword-only-exempt: library-callback=jax.tree_util.register_pytree_with_keys
+def _unflatten_owned_envelope(
+    metadata: None,
+    children: Iterable[PytreeChild],
+) -> OwnedEnvelope:
+    """Restore the unchanged candidate schema for abstract and role contexts."""
+    del metadata
+    leaves = tuple(children)
+    if len(leaves) != len(OwnedEnvelope._fields):
+        raise TypeError("Owned envelope reconstruction requires its exact fields.")
+    return cast("OwnedEnvelope", tuple.__new__(OwnedEnvelope, leaves))
+
+
+jax.tree_util.register_pytree_with_keys(
+    OwnedEnvelope,
+    _flatten_owned_envelope_with_keys,
+    _unflatten_owned_envelope,
+    _flatten_owned_envelope,
+)

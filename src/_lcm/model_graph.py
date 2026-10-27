@@ -11,6 +11,7 @@ import jax.numpy as jnp
 
 from _lcm.exits import ExitFunctionDemand, exit_functions, exits_for_phase
 from _lcm.gated_edge import GatedEdge, gated_edge_from_gate
+from _lcm.materialization import DatedGenerationMaterializer
 from _lcm.reachability import ModelReachability, PhaseReachability
 from _lcm.regime_building.fixed_regime_support import prune_fixed_regime_support
 from _lcm.regime_building.schedules import (
@@ -43,6 +44,7 @@ from _lcm.user_regime_validation import (
 from lcm.arrivals import ArrivalDecision
 from lcm.collective import Gate
 from lcm.exceptions import (
+    ExecutionPlanningError,
     InvalidRegimeTransitionProbabilitiesError,
     ModelInitializationError,
     RegimeInitializationError,
@@ -232,6 +234,7 @@ def prepare_graph(
     ages: TimeAxis,
     initial_nodes: frozenset[tuple[UserAge, RegimeName]],
     fixed_params: UserParams,
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> GraphPreparation:
     """Bind laws, prove fixed zeros, and close physical and value demand."""
     bound, cells_without_edges = bind_graph_support(laws=laws, edges=edges, ages=ages)
@@ -240,7 +243,10 @@ def prepare_graph(
     )
     source_ages = {"solution": edges.solve, "simulation": edges.simulate}
     fixed_support = prune_fixed_regime_support(
-        user_regimes=regimes, laws=bound, fixed_params=fixed_params
+        user_regimes=regimes,
+        laws=bound,
+        fixed_params=fixed_params,
+        materializer=materializer,
     )
     after = resolve_regime_schedules(
         laws=fixed_support.laws,
@@ -248,7 +254,10 @@ def prepare_graph(
         source_ages_by_phase=source_ages,
     )
     policy_reads, exit_targets = _exit_policy_demand(
-        regimes=fixed_support.user_regimes, schedules=after, ages=ages
+        regimes=fixed_support.user_regimes,
+        schedules=after,
+        ages=ages,
+        materializer=materializer,
     )
     schedules = resolve_demand(
         policy_reads_by_phase=policy_reads,
@@ -267,6 +276,7 @@ def prepare_graph(
         demanded=schedules,
         available=after,
         ages=ages,
+        materializer=materializer,
     )
     return GraphPreparation(
         regimes=fixed_support.user_regimes,
@@ -287,6 +297,7 @@ def _exit_policy_demand(  # noqa: C901 - phase-specific typed reads and actual a
     regimes: Mapping[RegimeName, Regime],
     schedules: RegimeSchedules,
     ages: TimeAxis,
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> tuple[
     Mapping[
         str, Mapping[tuple[int, RegimeName, str], tuple[tuple[RegimeName, str], ...]]
@@ -312,6 +323,7 @@ def _exit_policy_demand(  # noqa: C901 - phase-specific typed reads and actual a
                             predicate=declaration.available,
                             period=period,
                             ages=ages,
+                            materializer=materializer,
                         ):
                             continue
                         if kind == "Participating" and (
@@ -348,6 +360,7 @@ def demanded_exit_function_paths(
     regimes: Mapping[RegimeName, Regime],
     schedules: RegimeSchedules,
     ages: TimeAxis,
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> ExitFunctionDemand:
     """Keep callback namespaces only where an actual typed policy reads them."""
     result = {name: {} for name in regimes}
@@ -378,7 +391,10 @@ def demanded_exit_function_paths(
                     ):
                         continue
                     inactive = _exit_is_statically_unavailable(
-                        predicate=declaration.available, period=period, ages=ages
+                        predicate=declaration.available,
+                        period=period,
+                        ages=ages,
+                        materializer=materializer,
                     )
                     paths.update(
                         path
@@ -399,6 +415,7 @@ def _validate_exit_availability(
     demanded: RegimeSchedules,
     available: RegimeSchedules,
     ages: TimeAxis,
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> None:
     """Check query contexts against available problems before demand prunes them."""
     for source, regime in regimes.items():
@@ -427,6 +444,7 @@ def _validate_exit_availability(
                                 predicate=declaration.available,
                                 period=period,
                                 ages=ages,
+                                materializer=materializer,
                             ):
                                 continue
                             raise RegimeInitializationError(
@@ -436,7 +454,11 @@ def _validate_exit_availability(
 
 
 def _exit_is_statically_unavailable(
-    *, predicate: UserFunction | None, period: int, ages: TimeAxis
+    *,
+    predicate: UserFunction | None,
+    period: int,
+    ages: TimeAxis,
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> bool:
     """Prove false only over the complete singleton time-input domain.
 
@@ -448,6 +470,11 @@ def _exit_is_statically_unavailable(
     names = set(inspect.signature(predicate).parameters)
     if names - {"period", "age"}:
         return False
+    if materializer is not None:
+        raise ExecutionPlanningError(
+            "Cold declaration time-only exit availability requires admitted "
+            "clock operands and predicate stages."
+        )
     inputs = {
         "period": jnp.asarray(period, dtype=jnp.int32),
         "age": ages.values[period],

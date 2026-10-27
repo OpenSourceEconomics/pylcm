@@ -734,7 +734,7 @@ def load_solution_archive(  # noqa: C901, PLR0912, PLR0915
                 f"Persisted artifact {ref!r} has no matching persistable descriptor."
             )
         if not _retention_keeps_present_artifact(
-            retention=metadata.retention,
+            metadata=metadata,
             descriptor=descriptor,
         ):
             raise SolutionIntegrityError(
@@ -822,7 +822,7 @@ def load_solution_archive(  # noqa: C901, PLR0912, PLR0915
                 ref=ref,
                 reason=reason,
                 descriptor=descriptor,
-                retention=metadata.retention,
+                metadata=metadata,
             )
         omission_entries[ref] = reason
     descriptor_refs = set(metadata.artifact_descriptors)
@@ -1031,7 +1031,7 @@ def _prepare_solution_for_save(  # noqa: C901, PLR0912, PLR0915
                 ref=ref,
                 descriptor=descriptor,
                 authority=authority,
-                retention=metadata.retention,
+                metadata=metadata,
             )
             if descriptor.persistence is PersistencePolicy.NOT_PERSISTED:
                 omission_entries[ref] = OmissionReason.NOT_PERSISTED
@@ -1089,7 +1089,7 @@ def _prepare_solution_for_save(  # noqa: C901, PLR0912, PLR0915
             reason=omission_entries[ref],
             descriptor=descriptors[ref],
             authority=authorities[ref],
-            retention=metadata.retention,
+            metadata=metadata,
         )
 
     return _SaveSnapshot(
@@ -1139,7 +1139,7 @@ def _prepare_persisted_artifacts(  # noqa: C901, PLR0912
             ref=ref,
             reason=reason,
             descriptor=descriptor,
-            retention=metadata.retention,
+            metadata=metadata,
         )
         omission_entries[ref] = reason
 
@@ -1173,7 +1173,7 @@ def _prepare_persisted_artifacts(  # noqa: C901, PLR0912
                     "model-verifiable."
                 )
             if not _retention_keeps_present_artifact(
-                retention=metadata.retention,
+                metadata=metadata,
                 descriptor=descriptor,
             ):
                 raise IncompatibleSolutionError(
@@ -1454,11 +1454,11 @@ def _validate_omission_semantics(
     reason: OmissionReason,
     descriptor: ArtifactDescriptor,
     authority: ArtifactAuthority,
-    retention: ResultRetention,
+    metadata: SolutionMetadata,
 ) -> None:
     """Require an omission reason to agree with authority and retention."""
     selected = _retention_selects_artifact(
-        retention=retention,
+        metadata=metadata,
         descriptor=descriptor,
     )
     if not authority.applicable:
@@ -1485,7 +1485,7 @@ def _validate_present_artifact_semantics(
     ref: ArtifactRef,
     descriptor: ArtifactDescriptor,
     authority: ArtifactAuthority,
-    retention: ResultRetention,
+    metadata: SolutionMetadata,
 ) -> None:
     """Require a present artifact to be both applicable and selected."""
     if not authority.applicable:
@@ -1493,7 +1493,7 @@ def _validate_present_artifact_semantics(
             f"Artifact {ref!r} is present although it is not applicable."
         )
     if not _retention_keeps_present_artifact(
-        retention=retention,
+        metadata=metadata,
         descriptor=descriptor,
     ):
         raise IncompatibleSolutionError(
@@ -1502,33 +1502,37 @@ def _validate_present_artifact_semantics(
 
 
 def _retention_keeps_present_artifact(
-    *, retention: ResultRetention, descriptor: ArtifactDescriptor
+    *, metadata: SolutionMetadata, descriptor: ArtifactDescriptor
 ) -> bool:
-    """Return whether one payload belongs in an in-memory retention ledger.
-
-    Diagnostics follow the solve's log level rather than its retention, so a
-    present diagnostics payload belongs under every retention.
-    """
-    return (
-        descriptor.channel is ArtifactChannel.DIAGNOSTIC
-        or (
-            retention is ResultRetention.VALUES_AND_REPLAY
-            and descriptor.channel is ArtifactChannel.REPLAY
+    """Keep selected payloads; diagnostics follow their original log-level policy."""
+    return descriptor.channel is ArtifactChannel.DIAGNOSTIC or (
+        (
+            metadata.retention is not ResultRetention.ALL_PERSISTABLE_ARTIFACTS
+            or descriptor.persistence is PersistencePolicy.MODEL_VERIFIABLE
         )
-        or (
-            retention is ResultRetention.ALL_PERSISTABLE_ARTIFACTS
-            and descriptor.persistence is PersistencePolicy.MODEL_VERIFIABLE
-        )
+        and _retention_selects_artifact(metadata=metadata, descriptor=descriptor)
     )
 
 
 def _retention_selects_artifact(
-    *, retention: ResultRetention, descriptor: ArtifactDescriptor
+    *, metadata: SolutionMetadata, descriptor: ArtifactDescriptor
 ) -> bool:
-    """Return whether one descriptor's channel is selected for retention."""
-    return retention is ResultRetention.ALL_PERSISTABLE_ARTIFACTS or (
-        retention is ResultRetention.VALUES_AND_REPLAY
-        and descriptor.channel is ArtifactChannel.REPLAY
+    """Select channels and required continuations of the actual recorded routes."""
+    return metadata.retention is ResultRetention.ALL_PERSISTABLE_ARTIFACTS or (
+        metadata.retention is ResultRetention.VALUES_AND_REPLAY
+        and (
+            descriptor.channel is ArtifactChannel.REPLAY
+            or (
+                descriptor.channel is ArtifactChannel.CONTINUATION
+                and descriptor.persistence is PersistencePolicy.MODEL_VERIFIABLE
+                and descriptor.required
+                and any(
+                    route in descriptor.required_for
+                    for route in metadata.replay_routes.values()
+                    if route is not None
+                )
+            )
+        )
     )
 
 
@@ -2611,11 +2615,11 @@ def _validate_persisted_omission_semantics(
     ref: ArtifactRef,
     reason: OmissionReason,
     descriptor: ArtifactDescriptor,
-    retention: ResultRetention,
+    metadata: SolutionMetadata,
 ) -> None:
     """Check omission facts that are decidable from descriptive metadata alone."""
     selected = _retention_selects_artifact(
-        retention=retention,
+        metadata=metadata,
         descriptor=descriptor,
     )
     if not selected and reason not in {

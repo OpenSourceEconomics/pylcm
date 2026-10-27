@@ -51,6 +51,24 @@ def _declared_arrival_origins(
     return MappingProxyType(origins)
 
 
+def _declared_projected_addresses(
+    *, queries: ScalarPolicyQueries
+) -> frozenset[ValueArtifactAddress]:
+    """Separate genuine projected dates from arrival-only transport aliases."""
+    from _lcm.regime_building.Q_and_F import projected_forward_readers  # noqa: PLC0415
+
+    return frozenset(
+        read.target
+        for node in queries.definitions.values()
+        if (function := node.context.Q_and_F_functions.get(node.read.period))
+        is not None
+        for reader in projected_forward_readers(function=function).values()
+        for read in reader.reads(
+            source=node.read.target, period=node.read.period, core="projected_query"
+        )
+    )
+
+
 def _original_value(
     *,
     address: ValueArtifactAddress,
@@ -74,9 +92,17 @@ def arrival_replay_value_reads(
 ) -> tuple[ValueRead, ...]:
     """Declare absolute original dates instead of requiring persisted solve carries."""
     aliases = _declared_arrival_origins(queries=queries)
+    projected = _declared_projected_addresses(queries=queries)
+    if projected & aliases.keys():
+        raise ExecutionPlanningError(
+            "A projected source cannot be an arrival transport alias."
+        )
     reads = []
     for read in queries.value_reads(core_key=core_key):
-        if read.target.kind is not ValueArtifactKind.CONTINUATION_LEAF:
+        if (
+            read.target.kind is not ValueArtifactKind.CONTINUATION_LEAF
+            or read.target in projected
+        ):
             reads.append(read)
             continue
         original = _original_value(address=read.target, aliases=aliases)
@@ -110,6 +136,12 @@ def arrival_replay_context(
     if not addressed:
         return context
     aliases = _declared_arrival_origins(queries=queries)
+    projected = _declared_projected_addresses(queries=queries)
+    if addressed & projected:
+        raise ExecutionPlanningError(
+            "Projected exit/arrival queries require their separately acquired "
+            "continuation context."
+        )
     operands = {}
     for alias in addressed:
         original = _original_value(address=alias, aliases=aliases)

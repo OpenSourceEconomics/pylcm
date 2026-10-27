@@ -12,18 +12,29 @@ import numpy as np
 from dags.tree import qname_from_tree_path
 
 from _lcm.dtypes import canonical_float_dtype
+from _lcm.egm.current_iid_case_u_replay import CaseUReplayInput
+from _lcm.egm.current_iid_replay import CaseRReplayInput
+from _lcm.egm.current_iid_replay_inputs import (
+    CurrentIIDReplayInput,
+    CurrentIIDReplayInputs,
+)
 from _lcm.egm.published_policy import NNBEGMSimPolicy
 from _lcm.engine import Regime, StateActionSpace
 from _lcm.execution.core_program import CoreProgram
 from _lcm.execution.workspace_planning import CompilerMemoryReservation
 from _lcm.grids import DiscreteGrid
 from _lcm.params.edges import regime_kernel_params
+from _lcm.regime_building.projected_forward import (
+    ProjectedForwardInputs,
+    projected_forward_operands,
+)
 from _lcm.regime_building.Q_and_F import (
     EDGE_REF_PARAMS_ARG,
     EDGE_REF_V_ARG,
     SAME_PERIOD_PARAMS_ARG,
     SAME_PERIOD_V_ARG,
 )
+from _lcm.simulation.chunk_profile_inventory import abstract_tree
 from _lcm.simulation.current_iid_overrides import (
     CurrentIIDOverrideSchema,
     current_iid_override_prototype,
@@ -115,6 +126,8 @@ def profile_forward_programs(
     ordinary_key: jax.ShapeDtypeStruct,
     taste_key: jax.ShapeDtypeStruct | None,
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None = None,
+    current_iid_replay_inputs: CurrentIIDReplayInputs = MappingProxyType({}),
+    projected_forward_inputs: ProjectedForwardInputs = MappingProxyType({}),
 ) -> Mapping[tuple[int, str, str], ForwardProgramProfile]:
     """Prepare canonical entry descriptors for focused core-level profiling.
 
@@ -155,6 +168,10 @@ def profile_forward_programs(
                 ordinary_key=ordinary_key,
                 taste_key=taste_key,
                 policy=(policies or {}).get(period, {}).get(name),
+                projected_forward_inputs=projected_forward_inputs,
+                current_iid_replay_input=current_iid_replay_inputs.get(period, {}).get(
+                    name
+                ),
             )
             profiles.update(
                 {(period, name, family): profile for family, profile in unit.items()}
@@ -181,6 +198,8 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
     ordinary_key: jax.ShapeDtypeStruct,
     taste_key: jax.ShapeDtypeStruct | None,
     policy: SimulationPolicy | None = None,
+    current_iid_replay_input: CurrentIIDReplayInput | None = None,
+    projected_forward_inputs: ProjectedForwardInputs = MappingProxyType({}),
     wave: CompilationWave | None = None,
     current_iid_override_schema: CurrentIIDOverrideSchema = (),
     prepared_decision: PreparedDecisionProfile | None = None,
@@ -364,6 +383,133 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
             arguments=MappingProxyType(decoder_arguments),
         )
         actions = decoded.executable.out_info
+    elif regime.simulation.uses_case_u_reconstruction:
+        from _lcm.simulation.case_u_replay import (  # noqa: PLC0415
+            case_u_arguments,
+            case_u_profile_output,
+        )
+
+        plan = regime.simulation.current_iid_draw_plan
+        if not isinstance(current_iid_replay_input, CaseUReplayInput) or plan is None:
+            raise ExecutionPlanningError(
+                "Case-U profiles require their actual addressed future payload."
+            )
+        arguments = case_u_arguments(
+            regime=regime,
+            replay=current_iid_replay_input,
+            future=current_iid_replay_input.payload,
+            states=states,
+            keys={
+                shock: jax.ShapeDtypeStruct(
+                    (n_subjects, *scalar_draw_axis(dtype=ordinary_key.dtype)),
+                    ordinary_key.dtype,
+                    sharding=subject,
+                )
+                for shock in plan.physical_names
+            },
+            overrides=current_iid_override_prototype(
+                schema=current_iid_override_schema,
+                names=plan.physical_names,
+                n_subjects=n_subjects,
+                sharding=subject,
+            ),
+            flat_params=flat_params,
+            period=period,
+            period_value=period_value,
+            age=age,
+        )
+        arguments = {
+            name: abstract_tree(tree=value, sharding=shared)
+            if name
+            in {
+                "future",
+                "params",
+                "group_params",
+                "savings_nodes",
+                "borrowing_limit",
+                "floor_status",
+                "child_node_values",
+                "child_age_values",
+                "nb_source_grid",
+                "negm_source_grid",
+                "negm_outer_nodes",
+            }
+            else value
+            for name, value in arguments.items()
+        }
+        prepared = _prepare_program(
+            runtime=runtime,
+            program=regime.simulation.programs.forward_decision[period],
+            arguments=arguments,
+            period=period,
+            n_subjects=n_subjects,
+            widths=widths,
+            family="decision",
+            regime_name=name,
+            profiles=profiles,
+            wave=wave,
+            feeds_forward=True,
+        )
+        decision = case_u_profile_output(output=prepared)
+        actions = decision.actions
+        current_shocks = decision.physical
+    elif regime.simulation.case_r_replay_spec is not None:
+        from _lcm.simulation.case_r_replay import (  # noqa: PLC0415
+            case_r_arguments,
+            case_r_profile_output,
+        )
+
+        plan = regime.simulation.current_iid_draw_plan
+        if not isinstance(current_iid_replay_input, CaseRReplayInput) or plan is None:
+            raise ExecutionPlanningError(
+                "Case-R profiles require the actual addressed resources payload."
+            )
+        arguments = case_r_arguments(
+            regime=regime,
+            replay=current_iid_replay_input,
+            row=current_iid_replay_input.row,
+            states=states,
+            keys={
+                shock: jax.ShapeDtypeStruct(
+                    (n_subjects, *scalar_draw_axis(dtype=ordinary_key.dtype)),
+                    ordinary_key.dtype,
+                    sharding=subject,
+                )
+                for shock in plan.physical_names
+            },
+            overrides=current_iid_override_prototype(
+                schema=current_iid_override_schema,
+                names=plan.physical_names,
+                n_subjects=n_subjects,
+                sharding=subject,
+            ),
+            flat_params=flat_params,
+            period=period,
+            period_value=period_value,
+            age=age,
+        )
+        arguments = {
+            name: abstract_tree(tree=value, sharding=shared)
+            if name in {"row", "params", "group_params"}
+            else value
+            for name, value in arguments.items()
+        }
+        prepared = _prepare_program(
+            runtime=runtime,
+            program=regime.simulation.programs.forward_decision[period],
+            arguments=arguments,
+            period=period,
+            n_subjects=n_subjects,
+            widths=widths,
+            family="decision",
+            regime_name=name,
+            profiles=profiles,
+            wave=wave,
+            feeds_forward=True,
+        )
+        decision = case_r_profile_output(output=prepared)
+        actions = decision.actions
+        current_shocks = decision.physical
     elif regime.simulation.replay_route.consumer_route == "nnbegm_finite":
         actions, _, _ = cast(
             "_FiniteDecisionOutput",
@@ -397,8 +543,21 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
                     leaf=cast("jax.Array | jax.ShapeDtypeStruct", leaf),
                 )
                 for target, leaf in next_values.items()
+                if target
+                not in regime.simulation.projected_forward_readers_by_period.get(
+                    period, {}
+                )
             }
         )
+        references = {
+            **references,
+            **projected_forward_operands(
+                readers=regime.simulation.projected_forward_readers_by_period.get(
+                    period, {}
+                ),
+                inputs=projected_forward_inputs,
+            ),
+        }
         arguments = decision_arguments(
             current_iid=current_iid_arguments(
                 regime=regime,

@@ -2,6 +2,7 @@
 
 import functools
 import math
+from collections.abc import Callable
 
 import jax
 import jax.numpy as jnp
@@ -18,11 +19,12 @@ from _lcm.egm.finite_negm_query import (
     _validate_finite_outer_rows,
 )
 from _lcm.egm.nbegm_query import NBEGMQuery, _read_nb_compact_corner_rows
-from _lcm.egm.preferences import concatenate_regime_function
+from _lcm.egm.nbegm_query_model import NBEGMIntervalRecipe
+from _lcm.egm.preferences import Preferences, concatenate_regime_function
 from _lcm.egm.query_data import EGMQueryData, select_query_data
 from _lcm.grids.discrete import read_at_codes
 from _lcm.solution.feasibility import ContinuationReadCounts
-from _lcm.typing import EconFunctionKwargs
+from _lcm.typing import EconFunction, EconFunctionKwargs, QualifiedName
 from _lcm.utils.counts import sum_counts
 from _lcm.zero_safe import zero_safe_weighted_term
 from lcm.typing import (
@@ -34,6 +36,7 @@ from lcm.typing import (
     ScalarBool,
     ScalarFloat,
     ScalarInt,
+    StateName,
 )
 
 
@@ -292,32 +295,74 @@ def _read_finite_nb_corners(
     euler_gradient: ScalarFloat,
 ) -> _FiniteCornerRead:
     """Keep the NB held continuation at each passive node until the outer fold."""
+    return _read_finite_nb_owned_corners(
+        recipe=query.model.intervals,
+        passive_names=query.model.passive_state_names,
+        resources_function=query.resources,
+        build_preferences=query.build_preferences,
+        read_discount_factor=query.read_discount_factor,
+        liquid_state=query.model.authority.bound.liquid_state,
+        inverse_eis_name=query.model.inverse_eis_name,
+        data=data,
+        pool=pool,
+        passive_grids=passive_grids,
+        resources=resources,
+        floor=floor,
+        eligible=eligible,
+        euler_gradient=euler_gradient,
+    )
+
+
+def _read_finite_nb_owned_corners(
+    *,
+    recipe: NBEGMIntervalRecipe,
+    passive_names: tuple[StateName, ...],
+    resources_function: EconFunction,
+    build_preferences: Callable[[EconFunctionKwargs], Preferences],
+    read_discount_factor: Callable[[EconFunctionKwargs], ScalarFloat],
+    liquid_state: StateName,
+    inverse_eis_name: QualifiedName | None,
+    data: EGMQueryData,
+    pool: EconFunctionKwargs,
+    passive_grids: tuple[Float1D, ...],
+    resources: ScalarFloat,
+    floor: ScalarFloat,
+    eligible: BoolND,
+    euler_gradient: ScalarFloat,
+) -> _FiniteCornerRead:
+    """Apply the original corner economics to an authenticated native NB owner.
+
+    The canonical query wrapper above keeps its original authority. A genuine
+    nested owner can supply its actual declaration recipe and original economic
+    callbacks without fabricating a canonical query from numeric row contents.
+    """
     held, supported, economic, invalid, invalid_preimages = (
         _read_nb_compact_corner_rows(
-            recipe=query.model.intervals,
+            recipe=recipe,
             data=data,
             pool=pool,
-            passive_names=query.model.passive_state_names,
+            passive_names=passive_names,
             passive_grids=passive_grids,
         )
     )
     continuation = jnp.where(economic, -jnp.inf, held)
-    preferences = query.build_preferences(pool)
-    beta = query.read_discount_factor(pool)
+    preferences = build_preferences(pool)
+    beta = read_discount_factor(pool)
     consumption = jnp.where(eligible, resources - floor, 1.0)
-    liquid_state = query.model.authority.bound.liquid_state
 
     def resources_at(liquid: ScalarFloat) -> ScalarFloat:
-        return _evaluate(function=query.resources, pool={**pool, liquid_state: liquid})
+        return _evaluate(
+            function=resources_function, pool={**pool, liquid_state: liquid}
+        )
 
     resource_slope = jax.grad(resources_at)(pool[liquid_state])
-    if query.model.inverse_eis_name is None:
+    if inverse_eis_name is None:
         value = preferences.utility(consumption) + zero_safe_weighted_term(
             weight=beta, value=continuation, subnormal_is_accounted_for=True
         )
         native_marginal = preferences.marginal_utility(consumption) * resource_slope
     else:
-        elasticity = pool[query.model.inverse_eis_name]
+        elasticity = pool[inverse_eis_name]
         if not isinstance(elasticity, jax.Array | float):
             raise TypeError("NB inverse elasticity must be a numeric leaf.")
         inverse_eis = 1.0 / elasticity
@@ -338,7 +383,7 @@ def _read_finite_nb_corners(
             )
             * resource_slope
         )
-    economic_value = jnp.isneginf(value) & (query.model.inverse_eis_name is None)
+    economic_value = jnp.isneginf(value) & (inverse_eis_name is None)
     marginal = jnp.broadcast_to(
         jnp.where(economic_value, 0.0, native_marginal * euler_gradient), value.shape
     )
