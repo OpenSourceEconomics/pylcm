@@ -106,6 +106,7 @@ type PeriodReplayScope = Literal["logical", "layout", "resource"]
 # kwargs carry that are not pytrees themselves.
 type _KernelKwargsLeaf = (
     ValueND
+    | jax.ShapeDtypeStruct
     | StateActionSpace
     | TimeAxis
     | logging.Logger
@@ -133,6 +134,9 @@ class PeriodCapturePayload(TypedDict):
 
     layouts: NotRequired[PeriodLayouts]
     """The device layout the period ran on, when the capture recorded one."""
+
+    next_value_templates: NotRequired[Mapping[RegimeName, jax.ShapeDtypeStruct]]
+    """Each regime's value shape and dtype, when the inputs hold only computed ones."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -279,6 +283,25 @@ def _load_capture_payload(*, directory: Path) -> PeriodCapturePayload:
     loaded["core_tile_widths"] = _normalize_core_tile_widths(
         raw=payload["core_tile_widths"]
     )
+    if "next_value_templates" in payload:
+        # The capture held only the values the solve had computed. Every other
+        # regime keeps its place as a template on the default device, where
+        # every unpickled array lands; no program reads it, and nothing is
+        # allocated for it.
+        kernel_kwargs = payload["kernel_kwargs"].copy()
+        held = kernel_kwargs["next_regime_to_V_arr"]
+        default = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+        kernel_kwargs["next_regime_to_V_arr"] = MappingProxyType(
+            {
+                name: held[name]
+                if name in held
+                else jax.ShapeDtypeStruct(
+                    template.shape, template.dtype, sharding=default
+                )
+                for name, template in payload["next_value_templates"].items()
+            }
+        )
+        loaded["kernel_kwargs"] = kernel_kwargs
     return loaded
 
 
@@ -901,10 +924,22 @@ def _restore_recorded_layout(
     for path, leaf in flat:
         key = jax.tree_util.keystr(path)
         descriptor = by_path.get(key)
-        if descriptor is None or not isinstance(leaf, jax.Array):
+        if descriptor is None or not isinstance(leaf, jax.Array | jax.ShapeDtypeStruct):
             restored.append(leaf)
             continue
-        if descriptor.committed:
+        if isinstance(leaf, jax.ShapeDtypeStruct):
+            # A value the capture held no array for moves as its template.
+            placed = jax.ShapeDtypeStruct(
+                leaf.shape,
+                leaf.dtype,
+                sharding=rebuild_sharding(
+                    descriptor=descriptor.sharding,
+                    device_by_recorded_id=device_by_recorded_id,
+                )
+                if descriptor.committed
+                else leaf.sharding,
+            )
+        elif descriptor.committed:
             placed = jax.device_put(
                 leaf,
                 rebuild_sharding(

@@ -25,9 +25,13 @@ from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.execution.output_layout import PlannedCore
 from _lcm.execution.workspace_planning import compiler_memory_reservation
 from _lcm.persistence.period import read_period_archive, write_period_archive
-from _lcm.solution.period_capture import PeriodKernelKwargs, _period_layouts
+from _lcm.solution.period_capture import (
+    PeriodKernelKwargs,
+    _period_layouts,
+    padded_next_values,
+)
 from _lcm.time import age_at
-from _lcm.typing import DataclassInstance, JSONValue
+from _lcm.typing import DataclassInstance, JSONValue, RegimeName, ValueTemplate
 from _lcm.utils.logging import get_run_policy
 from lcm.period_capture import PeriodCapture, PeriodCaptureRecord
 
@@ -195,8 +199,14 @@ def capture_public_entry(
     kernel_kwargs: PeriodKernelKwargs,
     compiled_cores: Mapping[str, PlannedCore],
     admission: Mapping[str, Mapping[str, int | None]],
+    next_value_templates: Mapping[RegimeName, ValueTemplate],
 ) -> CapturedEntry | None:
-    """Commit numerical entry inputs before the selected adapter is dispatched."""
+    """Commit numerical entry inputs before the selected adapter is dispatched.
+
+    The entry records every regime's next-period value. A regime the solve holds
+    no value for is written as zeros made on the host, laid out like its
+    template, so the padding never occupies the device.
+    """
     if (
         context is None
         or (kernel_kwargs["regime_name"], period) not in context.request.periods
@@ -220,6 +230,7 @@ def capture_public_entry(
         period=period,
         kernel_kwargs=kernel_kwargs,
         compiled_cores=compiled_cores,
+        next_value_templates=next_value_templates,
     )
     call_policy = get_run_policy(kernel_kwargs["logger"])
     metadata = {
@@ -239,10 +250,21 @@ def capture_public_entry(
             "runtime_checks": call_policy["runtime_checks"],
         },
     }
+    next_values = padded_next_values(
+        next_regime_to_V_arr=kernel_kwargs["next_regime_to_V_arr"],
+        templates=next_value_templates,
+    )
     arrays = {
-        f"{channel}/{name}": np.asarray(array)
-        for channel in ("next_regime_to_V_arr", "period_solution")
-        for name, array in kernel_kwargs[channel].items()
+        **{
+            f"next_regime_to_V_arr/{name}": np.asarray(value)
+            if isinstance(value, jax.Array)
+            else np.zeros(value.shape, dtype=value.dtype)
+            for name, value in next_values.items()
+        },
+        **{
+            f"period_solution/{name}": np.asarray(array)
+            for name, array in kernel_kwargs["period_solution"].items()
+        },
     }
     directory = context.request.directory / f"{metadata['regime']}@{period}"
     directory.parent.mkdir(parents=True, exist_ok=True)
