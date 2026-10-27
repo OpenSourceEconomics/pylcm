@@ -13,7 +13,7 @@ import pathlib
 import sys
 import types
 import typing
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sized
 from enum import Enum, auto
 from fractions import Fraction
 from types import MappingProxyType
@@ -507,15 +507,46 @@ def fingerprint_solution_support(
     yield the same declared authority, so a model caches one authority per digest
     rather than deriving it again per solve.
     """
+    return _fingerprint_resolved_solution_support(
+        support={
+            name: _grid_support(
+                regime=regime,
+                regime_params=regime_kernel_params(flat_params, regime_name=name),
+                process_grid_resolver=process_grid_resolver,
+            )
+            for name, regime in regimes.items()
+        },
+        flat_params=flat_params,
+    )
+
+
+def fingerprint_prepared_solution_support(
+    *,
+    support: Mapping[RegimeName, Mapping[str, _Reachable]],
+    flat_params: FlatParams,
+) -> str:
+    """Use the installed support record before genuine dated programs exist."""
+    return _fingerprint_resolved_solution_support(
+        support={
+            name: {
+                key: record[key]
+                for key in ("states", "discrete_actions", "continuous_actions")
+            }
+            for name, record in support.items()
+        },
+        flat_params=flat_params,
+    )
+
+
+def _fingerprint_resolved_solution_support(
+    *, support: Mapping[RegimeName, _Reachable], flat_params: FlatParams
+) -> str:
+    """Hash original base coordinates and parameter schemas in one shared format."""
     record = (
         ("pylcm-solution-support", 1),
         {
             name: (
-                _grid_support(
-                    regime=regime,
-                    regime_params=regime_kernel_params(flat_params, regime_name=name),
-                    process_grid_resolver=process_grid_resolver,
-                ),
+                coordinates,
                 {
                     param_name: _param_shape_signature(value)
                     for param_name, value in regime_kernel_params(
@@ -523,7 +554,7 @@ def fingerprint_solution_support(
                     ).items()
                 },
             )
-            for name, regime in regimes.items()
+            for name, coordinates in support.items()
         },
     )
     return _semantic_fingerprint(record)
@@ -2618,7 +2649,10 @@ class _SemanticHasher:
             # An optional field left at its default hashes like its absence, so
             # declarations that never use it keep their durable fingerprint.
             if declaration.metadata.get("fingerprint_omit_if_default") and (
-                getattr(value, declaration.name) is declaration.default
+                _matches_semantic_default(
+                    value=getattr(value, declaration.name),
+                    default=declaration.default,
+                )
             ):
                 continue
             self.frame(label="field", payload=declaration.name.encode())
@@ -2702,7 +2736,10 @@ class _SemanticHasher:
         if dataclasses.is_dataclass(value) and not isinstance(value, type):
             for declaration in dataclasses.fields(cast("DataclassInstance", value)):
                 if declaration.metadata.get("fingerprint_omit_if_default") and (
-                    getattr(value, declaration.name) is declaration.default
+                    _matches_semantic_default(
+                        value=getattr(value, declaration.name),
+                        default=declaration.default,
+                    )
                 ):
                     continue
                 self.frame(label="solver-field", payload=declaration.name.encode())
@@ -2978,6 +3015,21 @@ def _unwrap_downstream_beartype_wrapper(
         )
         raise TypeError(msg)
     return wrapped
+
+
+def _matches_semantic_default(*, value: _Reachable, default: _Reachable) -> bool:
+    """Keep restored built-in defaults stable without invoking user equality."""
+    if value is default:
+        return True
+    if type(value) is not type(default):
+        return False
+    if _has_exact_type(value=default, candidates=(str, int)):
+        return cast("str | int", value) == default
+    if _has_exact_type(value=default, candidates=(tuple, frozenset, MappingProxyType)):
+        original = cast("Sized", default)
+        restored = cast("Sized", value)
+        return len(original) == 0 and len(restored) == 0
+    return False
 
 
 def _is_solver_instance(value: _Reachable) -> TypeIs[_SolverInstance]:

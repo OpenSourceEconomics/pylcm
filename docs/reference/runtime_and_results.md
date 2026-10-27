@@ -646,10 +646,8 @@ or a DataFrame with a `regime_name` column.
 `progress` adds timing, and `debug` adds value statistics. `runtime_checks=True`
 independently enables numerical probability, NaN and existing feasibility/replay checks
 and raises on failure at every verbosity. `runtime_checks=False` explicitly skips those
-checks, including during automatic solving. Expensive density derivative accuracy
-certification is a separate private `_lcm` developer/test tool for deliberately supplied
-finite rows, not a public model-validation API. Neither runtime-check setting attaches
-its host certificate to differentiated solve or simulation graphs. Construction,
+checks, including during automatic solving. Density derivative accuracy certification
+exists only as a test oracle; neither runtime-check setting runs it. Construction,
 parameter schema, initial-condition structure and solution-identity validation always
 run. Infinity-only value diagnostics remain warnings; an application requiring all
 stored values finite must retain that stronger invariant.

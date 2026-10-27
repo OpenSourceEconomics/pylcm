@@ -172,12 +172,12 @@ def test_the_expectation_drops_a_zero_weight_node_rather_than_multiplying_it() -
     np.testing.assert_allclose(np.asarray(got), np.asarray(1.0))
 
 
-def test_a_negative_weight_is_not_laundered_into_a_zero_contribution() -> None:
+def test_a_negative_weight_poisons_the_row() -> None:
     """A weight below zero is a malformed transition, not an impossible node.
 
-    Values `[1, 2]` at weights `[1, -1/2]` give `(1 - 1) / (1/2) = 0`. Dropping
-    the negative node instead would give `1`, a value that looks like the answer
-    to a well-posed question, so the malformed weight has to carry through.
+    Dropping the negative node from values `[1, 2]` at weights `[1, -1/2]` would
+    give `1`, and carrying it through would give `0`; both look like the answer
+    to a well-posed question. The row is poison instead.
     """
     got = zero_safe_average(
         a=jnp.asarray([1.0, 2.0]),
@@ -185,7 +185,7 @@ def test_a_negative_weight_is_not_laundered_into_a_zero_contribution() -> None:
         shifts=jnp.zeros(2, dtype=jnp.int32),
     )
 
-    np.testing.assert_allclose(np.asarray(got), np.asarray(0.0), atol=1e-6)
+    assert bool(jnp.isnan(jnp.asarray(got)))
 
 
 def test_a_nan_weight_stays_poison() -> None:
