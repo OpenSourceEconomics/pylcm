@@ -44,7 +44,8 @@ def _sum_signed(*, terms: _SignedLog, axis: int | None = None) -> _SignedLog:
     # A same-sign inner sum may lose a small constituent before an outer sum
     # opposes its aggregate. Refuse wide span before ANY aggregation, so a
     # later merge cannot borrow a false equal-scale cancellation certificate.
-    # Complete multi-scale accumulation remains required for this frontier.
+    # shortcut: wide spans refuse; add multi-scale accumulation only when
+    # required workloads need them.
     cancellation_unresolved = (peak - low) > jnp.finfo(
         terms.logabs.dtype
     ).nmant * jnp.log(2.0)

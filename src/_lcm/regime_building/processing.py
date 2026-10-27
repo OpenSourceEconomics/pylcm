@@ -318,7 +318,7 @@ from _lcm.typing import (
 from _lcm.utils.containers import ensure_containers_are_immutable
 from _lcm.utils.dispatchers import simulation_spacemap, vmap_1d
 from _lcm.utils.error_messages import format_messages
-from _lcm.utils.functools import get_union_of_args, is_user_function
+from _lcm.utils.functools import get_union_of_args, is_user_function, publish_signature
 from _lcm.utils.namespace import flatten_regime_namespace, unflatten_regime_namespace
 from _lcm.variables import (
     from_regime,
@@ -1589,6 +1589,9 @@ class _CanonicalRegimeBuilder:
         )
 
         solution = prepare_solution(
+            query_periods=self.query_periods_by_phase.get("solution", {}).get(
+                regime_name, ()
+            ),
             projected_continuation_declarations=projected_declarations,
             current_iid_bindings=MappingProxyType(
                 {
@@ -5194,6 +5197,7 @@ class _PreparedSolutionPhase:
     phase_reachability: PhaseReachability
     post_decision_bounds: tuple[PostDecisionBoundSpec, ...]
     query_model: ScalarEGMQueryModel | DCEGMQueryModel | NBEGMQueryModel | None
+    query_Q_and_F_functions: MappingProxyType[int, QAndFFunction]
     regime_name: RegimeName
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]]
     routing: _ConstraintRoutingResult
@@ -5275,6 +5279,7 @@ def _solver_with_query_authority(
 
 def _build_solution_phase(
     *,
+    query_periods: tuple[int, ...] = (),
     current_iid_bindings: Mapping[ShockGroupName, ShockBinding] = MappingProxyType({}),
     projected_continuation_declarations: Mapping[
         RegimeName, ProjectedContinuationSpec
@@ -5333,6 +5338,7 @@ def _build_solution_phase(
     """Prepare and finish the canonical phase through the ordinary build route."""
     return _finish_solution_phase(
         prepared=_prepare_solution_phase(
+            query_periods=query_periods,
             current_iid_bindings=current_iid_bindings,
             projected_continuation_declarations=projected_continuation_declarations,
             spec=spec,
@@ -5387,6 +5393,7 @@ def _build_solution_phase(
 
 def _prepare_solution_phase(
     *,
+    query_periods: tuple[int, ...] = (),
     current_iid_bindings: Mapping[ShockGroupName, ShockBinding] = MappingProxyType({}),
     projected_continuation_declarations: Mapping[
         RegimeName, ProjectedContinuationSpec
@@ -5493,6 +5500,7 @@ def _prepare_solution_phase(
                 f"with {', '.join(unsupported)}."
             )
     return _prepare_numerical_solution_phase(
+        query_periods=query_periods,
         current_iid_bindings=current_iid_bindings,
         projected_continuation_declarations=projected_continuation_declarations,
         spec=spec,
@@ -5546,6 +5554,7 @@ def _prepare_solution_phase(
 
 def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
     *,
+    query_periods: tuple[int, ...] = (),
     array_writer: CanonicalArrayWriter | None = None,
     current_iid_bindings: Mapping[ShockGroupName, ShockBinding] = MappingProxyType({}),
     projected_continuation_declarations: Mapping[
@@ -5737,6 +5746,7 @@ def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
     # Set by whichever branch below builds the decision kernels, to the key
     # their periods were grouped by; `None` where one closure serves every period.
     decision_group_key: _PeriodGroupKey | None = None
+    query_Q_and_F_functions: MappingProxyType[int, QAndFFunction] = MappingProxyType({})
     zero_node = _is_zero_node_regime(
         law=laws[regime_name],
         regime_name=regime_name,
@@ -5839,7 +5849,8 @@ def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
             )
             for state in co_map_state_names
         )
-        grouped_Q_and_F = _build_Q_and_F_per_period(
+        decision_Q_and_F = functools.partial(
+            _build_Q_and_F_per_period,
             bound_specs=tuple(
                 bound for bound in post_decision_bounds if bound.kind == "dag"
             ),
@@ -5867,7 +5878,17 @@ def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
             gated_continuations=gated_continuations,
             count_raise_landings=counts_raise_landings,
         )
+        grouped_Q_and_F = decision_Q_and_F()
         Q_and_F_functions = grouped_Q_and_F.by_period
+        # Queries receive parent coordinates outside the source's own preflight.
+        # Their counters must not change the ordinary solver's Q/F contract.
+        query_Q_and_F_functions = (
+            decision_Q_and_F(
+                active_periods=query_periods, count_raise_landings=True
+            ).by_period
+            if query_periods
+            else MappingProxyType({})
+        )
         decision_group_key = grouped_Q_and_F.group_key
         if stakeholders is not None:
             # The NaN-diagnostics intermediates mirror
@@ -6001,6 +6022,7 @@ def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
         phase_reachability=phase_reachability,
         post_decision_bounds=post_decision_bounds,
         query_model=query_model,
+        query_Q_and_F_functions=query_Q_and_F_functions,
         regime_name=regime_name,
         regimes_to_active_periods=regimes_to_active_periods,
         routing=routing,
@@ -6231,7 +6253,16 @@ def _finish_solution_phase(
             period_kernels=period_kernels,
             continuation_spec=continuation_spec,
         ),
-        context=context,
+        context=(
+            dataclass_replace(
+                context,
+                Q_and_F_functions=MappingProxyType(
+                    {**context.Q_and_F_functions, **prepared.query_Q_and_F_functions}
+                ),
+            )
+            if prepared.query_Q_and_F_functions
+            else context
+        ),
     )
 
 
@@ -7157,6 +7188,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     type_local_Q_and_F_functions: MappingProxyType[int, QAndFFunction] = (
         MappingProxyType({})
     )
+    query_Q_and_F_functions: MappingProxyType[int, QAndFFunction] = MappingProxyType({})
     if not law.terminal and not context_periods:
         # Neither an occupied/acting period nor a query demands this nonterminal.
         # Subject programs remain restricted to simulated_periods below.
@@ -7311,6 +7343,16 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
             gated_continuations=gated_continuations,
         )
         Q_and_F_functions = decision_Q_and_F().by_period
+        # Typed queries may receive parent coordinates outside this source's
+        # stored grid. Keep their original landing counters separate from the
+        # ordinary simulation reducers, whose Q/F output remains a pair.
+        query_Q_and_F_functions = (
+            decision_Q_and_F(
+                active_periods=query_periods, count_raise_landings=True
+            ).by_period
+            if query_periods
+            else MappingProxyType({})
+        )
         if any(
             projected_forward_readers(function=f) for f in Q_and_F_functions.values()
         ) and (
@@ -7729,7 +7771,19 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         external_replay_route=external_replay_route,
         replay_unsupported=replay_unsupported,
     )
-    return _SimulationBuild(phase=phase, context=simulation_context)
+    return _SimulationBuild(
+        phase=phase,
+        context=(
+            dataclass_replace(
+                simulation_context,
+                Q_and_F_functions=MappingProxyType(
+                    {**Q_and_F_functions, **query_Q_and_F_functions}
+                ),
+            )
+            if query_Q_and_F_functions
+            else simulation_context
+        ),
+    )
 
 
 # Upper envelopes whose published row carries every switch a read crosses.
@@ -10296,27 +10350,11 @@ def _get_simple_transition_discrete_grid(
     (fixed state), not a DiscreteGrid, or the state is not present in the
     source regime.
 
-    A `Phased` entry is unwrapped before the test. Both variants share one source
-    grid, so the only question is whether either of them is a broadcast law — one
-    written without naming targets, which is the shape that can silently clip
-    categories. The grid is returned if either variant is such a law, and `None`
-    only if both handle their targets explicitly. Left wrapped, a `Phased` is not
-    itself a Mapping, so a pair of per-target dicts would be read as one broadcast
-    law.
+    `raw` is one phase's variant: the caller unwraps a `Phased` entry, which is not
+    itself a Mapping and would otherwise read a pair of per-target dicts as one
+    broadcast law.
 
     """
-    if isinstance(raw, Phased):
-        variants = [
-            variant
-            for variant in (raw.solve, raw.simulate)
-            if _get_simple_transition_discrete_grid(
-                user_regime=user_regime, state_name=state_name, raw=variant
-            )
-            is not None
-        ]
-        if not variants:
-            return None
-        raw = variants[0]
     # Per-target dicts handle category differences explicitly
     if isinstance(raw, Mapping) and not isinstance(raw, StochasticTransition):
         return None
@@ -11443,19 +11481,86 @@ def _build_pointwise_Q_and_F_per_period(
             bounded = has_action_integrity(function=Q_and_F)
             actual = BoundedQAndF(function=Q_and_F) if bounded else Q_and_F
             func = jax.jit(actual) if enable_jit else actual
+            mapped = simulation_spacemap(
+                func=func,
+                action_names=(),
+                bound_summary=False,
+                state_names=tuple(
+                    name for name in subject_mapped_names if name in declared
+                ),
+            )
             built[q_id] = cast(
                 "QAndFFunction[PytreeValue]",
-                simulation_spacemap(
-                    func=func,
-                    action_names=(),
-                    bound_summary=bounded,
-                    state_names=tuple(
-                        name for name in subject_mapped_names if name in declared
-                    ),
-                ),
+                _SubjectPointwiseQAndF(function=mapped) if bounded else mapped,
             )
         result[period] = built[q_id]
     return MappingProxyType(result)
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _SubjectPointwiseQAndF:
+    """Summarize actual-action integrity over its source subject holders."""
+
+    function: Callable[..., PytreeValue]
+
+    def __post_init__(self) -> None:
+        from _lcm.simulation.program_arguments import (  # noqa: PLC0415 - forward operand namespace
+            ACTIVE_SUBJECTS_ARGUMENT,
+        )
+
+        signature = inspect.signature(self.function)
+        publish_signature(
+            target=self,
+            signature=signature.replace(
+                parameters=(
+                    *signature.parameters.values(),
+                    inspect.Parameter(
+                        ACTIVE_SUBJECTS_ARGUMENT,
+                        inspect.Parameter.KEYWORD_ONLY,
+                        default=None,
+                    ),
+                )
+            ),
+        )
+
+    def __call__(self, **kwargs: PytreeValue) -> PytreeValue:
+        from _lcm.simulation.program_arguments import (  # noqa: PLC0415 - forward operand namespace
+            ACTIVE_SUBJECTS_ARGUMENT,
+        )
+        from _lcm.solution.feasibility import (  # noqa: PLC0415 - pointwise status owner
+            BoundedResult,
+            reduce_bound_input_status,
+            reduce_continuation_read_counts,
+            reduce_query_input_status,
+        )
+
+        active = cast("BoolND | None", kwargs.pop(ACTIVE_SUBJECTS_ARGUMENT, None))
+        result = self.function(**kwargs)
+        if type(result) is not BoundedResult:
+            raise TypeError("Pointwise integrity requires its original bounded result.")
+        records = (*result.bound_status, *(result.query_status or ()))
+        if not records:
+            raise TypeError("Pointwise integrity requires declared status records.")
+        shape = records[0].nonfinite_floor.shape
+        if active is None:
+            active = jnp.ones(shape, dtype=jnp.bool_)
+        else:
+            if active.ndim != 1 or active.dtype != jnp.bool_:
+                raise TypeError("Pointwise activity must be a Boolean row mask.")
+            if not shape:
+                active = jnp.any(active)
+        return dataclass_replace(
+            result,
+            bound_status=reduce_bound_input_status(
+                statuses=result.bound_status, active=active
+            ),
+            query_status=reduce_query_input_status(
+                statuses=result.query_status, active=active
+            ),
+            continuation_read_counts=reduce_continuation_read_counts(
+                counts=result.continuation_read_counts, active=active
+            ),
+        )
 
 
 def _build_nnbegm_outer_target_functions(

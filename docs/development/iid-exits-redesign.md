@@ -79,6 +79,22 @@ renormalizing the supplied probabilities.
 
 ## EGM publication and refinement
 
+The discovery reviews in `sciebo:pro-audits/pylcm-pr621-grid_search/`,
+`sciebo:pro-audits/pylcm-pr621-egm/` and `sciebo:pro-audits/pylcm-pr621-ce/` support a
+sampled balanced acceptance contract. Keep the numerical budgets below and the economic
+invariants above. Whole-domain topology proofs, exhaustive feature intersections,
+arbitrary-finite exact accumulation, whole-Model reverse and higher-order AD are
+separate capabilities, not routine balanced release prerequisites. Certification remains
+optional and must fail closed whenever it is actually claimed. Source seals and broad
+certificate populations run offline or in CI; they do not replace independent economic
+checks.
+
+A public balanced route must name its supported workload and serve every required
+continuation, parent, replay and archive read within it. A refused required read is a
+delivery gap. Private staged examples and exact samples do not establish public
+admission or complete S10. Production cost requires a matched captured regime-period and
+replay slice; fixture durations alone do not establish a speedup.
+
 The projection grid is the declared exogenous pre-shock liquid-state grid, resolved at
 the exact age for each passive-state row. Its domain is the closed declared interval.
 The projected carry rejects queries outside that domain; resources-row replay keeps its
@@ -92,22 +108,23 @@ assumption. Case U builds candidate rows transiently and evaluates them at commo
 pre-shock coordinates before any average. Plain EGM continues to reject shocks.
 
 Use a piecewise-affine value representation between smooth neighboring projected nodes.
-Preserve each transformed kink and each side of a jump as explicit records. Their
-ownership follows the source candidate's one-sided ownership and stable id. Do not
-interpolate across an unrepresented discontinuity: refine or refuse that cell. Pull back
-all boundaries with their owning sides; nonmonotone resource maps require all preimages.
-Certified boundary inversion requires supported exact topology or a refusal; balanced
-numerical inversion records bracket uncertainty. Preserve exact-node queries before
-applying interpolation.
+At served kinks and jumps, preserve the owning-side value, policy and economic marginal,
+through side records or original candidate replay. Ownership follows the source
+candidate's one-sided ownership and stable id. Do not interpolate across an
+unrepresented discontinuity: refine or refuse that cell. Pull back all boundaries with
+their owning sides; nonmonotone resource maps require all preimages. Certified boundary
+inversion requires supported exact topology or a refusal; balanced numerical inversion
+records bracket uncertainty. Preserve exact-node queries before applying interpolation.
 
 Coverage may be local during private staged implementation. An explicit finite-demand
 bank may retain exact declared and demanded coordinates while unproved open intervals
 remain holes. Every required coordinate must be finite, inside the declared closed
 domain and exactly retained after capacity admission. A nonexact query through a hole
 fails before discounting or economic masking. Intact exact samples do not establish
-whole-domain topology, smooth support or projection/refinement acceptance. Keep the
-full-domain completion requirement separate from sample integrity. A private fixture
-bank does not install arbitrary production parent-demand preparation or forward replay.
+whole-domain topology or smooth support. Keep complete declared-workload coverage
+separate from sample integrity; an optional whole-domain certificate outside that
+workload is not a balanced prerequisite. A private fixture bank does not install
+arbitrary production parent-demand preparation or forward replay.
 
 Exact-demand selection evidence retains the actual live-node owner, side and corner
 tuple in original quadrature order, bound to its coordinate and original producing
@@ -141,13 +158,43 @@ the first-order rule remains unsupported. This kernel transpose does not add rev
 mode to the forward-only native exact-affine reader. The owned primitive's original
 state, bindings and execution registrations are part of semantic capture authority.
 
+The shared anchor product rule retains `exp(d) * Da + CE * Dd`, including at equal
+payoffs. Its second term uses the actual represented CE coefficient for safe ordinary
+products and sums, with the same owned first-order transpose. Tiny or unretained
+products and sums retain exceptional scaled transport. The default logarithmic primitive
+keeps its strict span refusal; ordinary anchor directions do not inherit that refusal
+merely because one immaterial term is much smaller than the other.
+
+The private balanced CE direction also checks conditioning before publishing validity.
+Keep an uncancelled magnitude envelope `S` from the original child, weight and exponent
+contributions, including absolute inner mass before opposing signed reductions. Refuse
+when `64 * eps * S` exceeds `max(1e-4, 8 * sqrt(eps)) * max(1, abs(direction))` in the
+profile's final units. Empty directions and ordinary finite cancellation remain
+supported. This is a conditioning diagnostic backed by sampled independent economic
+references, not a certified transcendental error bound or universal exact accumulator.
+Existing probability, input, span and final-status checks still apply.
+
+The law envelope also retains uncertainty from original payoffs whose separate logs can
+lose their contrast. With `L = max_needed(abs(log(value)))` and
+`r_i = exp(p * d_i - log_moment)`, it includes
+`2 * CE / Z * sum(abs(Dw_i) * max(1, r_i)) * (1 + 2 * L)` before the same `64 * eps`
+floor. Each differentiated factor retains its own binary scale. This component is empty
+for zero law directions or bit-identical needed payoffs, including derivative-only null
+events. Its positive sum is bounded by the largest active term times the active count;
+the combined contribution and uncertainty envelopes are bounded by twice their maximum.
+An empty uncertainty envelope preserves the original contribution envelope exactly.
+These positive bounds do not enter the signed numerical reductions or their span gates.
+High-scale unresolved law directions may refuse; ordinary finite and exact-equality
+controls must remain usable. This is a conservative admission diagnostic, not a sharp
+error bound for library logarithms.
+
 Refinement bisects failed smooth cells and inserts known transformed breakpoints.
 Compare the coarse representation with quarter, midpoint and three-quarter queries from
 the solver's candidate construction, exact endpoints and adjacent representable points
-at boundaries, then repeat with the refined representation. Stop only when every channel
-meets its own budget and topology is represented; exhausted capacity, unresolved
-ownership or an unbounded domain fails loudly. Refining a savings grid and refining this
-projection are distinct operations.
+at boundaries, then repeat with the refined representation. Report acceptance for that
+declared sample when every channel meets its budget and known discontinuities are not
+bridged. Required reads with exhausted capacity or unresolved ownership fail loudly.
+Refining a savings grid and refining this projection are distinct operations.
 
 Define normalized discrepancy as `abs(actual - reference) / max(scale, abs(reference))`.
 Use unit scale for fixture value/marginal, action-domain span for policy, and a declared
@@ -164,12 +211,14 @@ budgets are:
 Here `eps` belongs to the active floating dtype. These are refinement and fixture
 acceptance budgets, not a universal theorem about arbitrary economic models. Moments
 must identify the population, common base draws and normalization. A discrete owner,
-participation decision, kink side or exit id has no tolerance. Candidate omission for
-`replay="grid"` must satisfy the policy and moment budgets separately from projection
-error; simulation Q regret is not stored-value error. Sampled refinement validates its
-declared query population. A uniform domain bound additionally requires an analytic
-interval bound, a justified curvature or Lipschitz bound, or exhaustive piecewise-affine
-verification. Diagnostics distinguish sampled validation from uniform bounds.
+participation decision, kink side or exit id has no tolerance. Assess candidate omission
+for `replay="grid"` separately from projection error against the declared policy and
+moment budgets. If that assessment is unavailable, report omission error as unknown; do
+not claim an unrestricted optimum. Simulation Q regret is not stored-value error.
+Sampled refinement validates its declared query population. A uniform domain bound
+additionally requires an analytic interval bound, a justified curvature or Lipschitz
+bound, or exhaustive piecewise-affine verification. Diagnostics distinguish sampled
+validation from uniform bounds.
 
 The private scalar DC Case-U route declares its immutable choice on the solver:
 `DCEGM(..., replay="candidate", accuracy="balanced")` retains original candidate
@@ -212,10 +261,11 @@ consumption; exact finite-demand checks do not grant a uniform bound.
 
 Measure quadrature, projection and candidate omission separately. The certified profile
 does not combine them into a single tolerance or use a projection tolerance to excuse a
-changed structural decision. Both profiles require public-API oracle comparisons on
-eager/JIT, relevant vmap, dense/streamed/partitioned, supported precision, sharded and
-AOT routes. Unsupported native hardware remains an open acceptance gate; source
-inspection is not an execution receipt.
+changed structural decision. Public-API oracle comparisons cover the relevant supported
+execution routes of each declared workload, including its precision and device. A route
+claimed as supported needs execution evidence; source inspection is not an execution
+receipt. A full Cartesian product of optional solver, topology and transformation
+features is not a balanced acceptance campaign.
 
 Signed quadrature is linear-only. Propagate its provenance into stored channels and
 reject every nonlinear downstream reader, including CE, Euler inversion, constraints,
@@ -472,8 +522,10 @@ retires legacy topology only after all prior stages are green.
 
 Each receipt records source identity and dirty diff, exact command, environment,
 precision/backend, owner, exit code and raw log/XML paths. New RNG fixtures are new
-files beside frozen evidence. Completion requires the full suite, certificate and
-resource gates, independent branch review with fixes, and a review-ready PR.
+files beside frozen evidence. Completion requires the applicable CI suite and resource
+gates, independent branch review with fixes, and a review-ready PR. Broad certificate
+campaigns remain in CI or offline; optional certification does not block balanced
+semantic closure.
 
 ### Private balanced Case-R implementation frontier
 
@@ -534,9 +586,10 @@ genuine parent builder. The private dated path below installs these declarations
 automatically for its admitted source classes. The shared-declaration identity check
 remains mandatory and broad public admission stays closed. The BALANCED graph does not
 publish the exact-demand replay selection bank as a forward artifact. Action-valued
-forward reconstruction, full-domain topology and one-sided support, passive/choice axes,
-CE, law-weight derivatives, other EGM families, Case U and certified uniform
-qualification remain required acceptance gates.
+forward reconstruction, owning-side outputs on served reads, passive/choice axes, CE,
+law-weight derivatives, other EGM families and Case U remain required economic
+capabilities. Complete declared-workload coverage remains required; certified uniform
+qualification is separate.
 
 ### Private Case-U stable PowerMean economic frontier
 
@@ -571,8 +624,10 @@ nonfinite final channels. It also refuses every reduction whose logarithmic spre
 exceeds the dtype mantissa width, including same-sign inner reductions: a lost small
 constituent could later be the residual after another channel opposes that aggregate.
 Refusal occurs before aggregation, so nested reductions cannot hide the lost scale. A
-complete multi-scale signed accumulator remains required; this refusal does not waive
-finite-final derivative cases, rare-event arithmetic or the zero-payoff family.
+complete multi-scale signed accumulator is deferred unless a required application needs
+that refused class. Ordinary finite economic directions must remain accurate and usable;
+high-condition cases may explicitly refuse. Finite-final derivative cases, rare-event
+arithmetic and the zero-payoff family need their own declared domains and evidence.
 
 The complete transient bank has an immutable layout bound by identity to the actual
 point owner, original plan/read objects and exact CE declaration. Its joint event length
@@ -584,8 +639,9 @@ temporaries, outputs and resident child roots through its genuine compiler reser
 and existing solve budget. Point-only numerical qualification does not grant that
 production admission. Automatic model scheduling, the real enclosing
 materializer/admission, required streamed equivalent-family implementation and all
-remaining economic, shape, topology, parent/native and realized-forward cases stay
-required. The broad public current-IID non-GridSearch guard remains closed.
+remaining economic, shape, served-side, parent/native and realized-forward cases stay
+required for the declared workload. A uniform topology proof is separate. The broad
+public current-IID non-GridSearch guard remains closed.
 
 ### Private genuinely owned Case-U enclosing program frontier
 
@@ -756,8 +812,10 @@ connection does not complete cold admission.
 This family scope does not complete S10. Broader nested NB and nonlinear-CE
 intersections, broader incoming ND families and passive/choice/phase/query/gated/sharded
 intersections, remaining cold finite-budget admission and derivative/archive controls
-stay required. Constructive U source-context/selector/corner topology and refinement,
-full-domain support, production cost and scheduling/admission also remain required.
-Exact-demand integrity and scoped Model-to-forward qualification do not establish those
-gates or open public current-IID non-GridSearch admission. Cold allocation remains owned
-by the existing generation materializer; this route cannot bypass its budget guards.
+stay required. Correct U source-context/selector/corner outputs, sampled refinement,
+complete declared-workload support and scheduling/admission also remain required.
+Production cost needs a representative capture before any performance claim; universal
+full-domain topology and certified refinement remain separate capabilities. Exact-demand
+integrity and scoped Model-to-forward qualification do not establish those gates or open
+public current-IID non-GridSearch admission. Cold allocation remains owned by the
+existing generation materializer; this route cannot bypass its budget guards.

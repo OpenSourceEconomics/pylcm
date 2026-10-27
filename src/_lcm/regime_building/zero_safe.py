@@ -163,7 +163,7 @@ from jax.custom_derivatives import SymbolicZero
 
 from _lcm.certainty_equivalent import (
     _center_lottery_shifts,
-    _scaled_lottery_terms,
+    _scaled_lottery_mean,
     _scaled_lottery_terms_with_scale,
 )
 from _lcm.probability import (
@@ -215,12 +215,13 @@ def zero_safe_average(
     the latter replaced it; the two agree, as their bit-for-bit equality on
     non-positive shifts implies.
 
-    Scaled lotteries use the certainty equivalent's `_scaled_lottery_terms`.
-    It reserves headroom for the whole numerator, not just each product, and
-    scales its denominator by the same power of two. A finite mean can then
-    remain finite even when its unnormalized numerator exceeds the format's
-    range. Splitting the scale between each coefficient and product also keeps
-    a rare node's representable contribution against a large value.
+    Scaled lotteries use the certainty equivalent's `_scaled_lottery_mean`.
+    It forms every weighted value from normal significands and places the
+    numerator and the mass on their own binary scales. A finite mean then
+    remains finite when its unnormalized numerator exceeds the format's range,
+    a rare node keeps its contribution against a large value, and a node near
+    the bottom of the normal range keeps its contribution against a small
+    coefficient.
 
     Unlike `jnp.average`, only `axis=None` or a single `int` `axis` is
     supported — every call site here reduces at most one axis at a time; pass
@@ -307,12 +308,11 @@ def _scaled_mean_primal(
     values: FloatND, coefficients: FloatND, shifts: IntND
 ) -> FloatND:
     """Reduce one normalized lottery without exposing independent AD cotangents."""
-    terms, masses = _scaled_lottery_terms(
+    mean, total_weight = _scaled_lottery_mean(
         values=values, coefficients=coefficients, shifts=shifts
     )
-    total_weight = jnp.sum(masses, axis=-1)
     _raise_if_concretely_zero(total_weight=total_weight, context="zero_safe_average")
-    return jnp.sum(terms, axis=-1) / total_weight
+    return mean
 
 
 # keyword-only-exempt: library-callback=jax.custom_jvp.defjvp

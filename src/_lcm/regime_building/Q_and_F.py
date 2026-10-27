@@ -15,7 +15,7 @@ import inspect
 import operator
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from types import MappingProxyType
+from types import FunctionType, MappingProxyType
 from typing import NamedTuple, cast, no_type_check
 
 import jax
@@ -71,6 +71,7 @@ from _lcm.typing import (
     EconFunction,
     EconFunctionArg,
     EconFunctionsMapping,
+    LandingCheck,
     NextStateSolutionFunction,
     ParamsLeaf,
     PytreeValue,
@@ -182,10 +183,6 @@ class _BoundUtilitiesAndF:
             bound_status=tuple(statuses),
         )
 
-
-# One raw landing a solve kernel counts: the regime whose grid is read, and the
-# state whose `off_grid="raise"` grid the landing is checked against.
-type LandingCheck = tuple[RegimeName, StateName]
 
 # What the continuation aggregator returns at a cell: `CE` and the active
 # regimes' transition probabilities, then the landing counts when it counts any.
@@ -401,6 +398,19 @@ def _evaluated_utilities_and_F(
     if type(function) is not _BoundUtilitiesAndF:
         raise TypeError("Bound-aware action evaluation requires canonical bound specs.")
     return cast("_BoundUtilitiesAndF", function).evaluated(**states_actions_params)
+
+
+def _evaluated_action_utilities_and_F(
+    *, function: Callable[..., UtilitiesAndF], states_actions_params: QAndFKwargs
+) -> EvaluatedUtilitiesAndF:
+    """Evaluate the admitted ordinary DAG or original bound flow exactly once."""
+    if type(function) is FunctionType:
+        return EvaluatedUtilitiesAndF(
+            utilities_and_F=function(**states_actions_params), bound_status=()
+        )
+    return _evaluated_utilities_and_F(
+        function=function, states_actions_params=states_actions_params
+    )
 
 
 def _terminal_parts(*, utilities_and_F: UtilitiesAndF, collective: bool) -> QAndFParts:
@@ -984,7 +994,7 @@ class _QAndF:
         **states_actions_params: QAndFArg,
     ) -> EvaluatedQAndF:
         """Evaluate canonical flow once and keep its integrity through continuation."""
-        flow = _evaluated_utilities_and_F(
+        flow = _evaluated_action_utilities_and_F(
             function=self.U_and_F, states_actions_params=states_actions_params
         )
         parts, landings = self._parts_from_utilities(
@@ -1255,7 +1265,7 @@ class _TerminalQAndF:
         **states_actions_params: QAndFArg,
     ) -> EvaluatedQAndF:
         """Return terminal parts and mandatory flags from the same actual flow pass."""
-        flow = _evaluated_utilities_and_F(
+        flow = _evaluated_action_utilities_and_F(
             function=self.U_and_F, states_actions_params=states_actions_params
         )
         return EvaluatedQAndF(
@@ -1407,7 +1417,7 @@ class _TerminalCollectiveQAndF:
         **states_actions_params: QAndFArg,
     ) -> EvaluatedQAndF:
         """Keep shared bound integrity independently of household value predicates."""
-        flow = _evaluated_utilities_and_F(
+        flow = _evaluated_action_utilities_and_F(
             function=self.utilities_and_F, states_actions_params=states_actions_params
         )
         return EvaluatedQAndF(
@@ -2199,7 +2209,7 @@ class _CollectiveQAndF:
         **states_actions_params: QAndFArg,
     ) -> EvaluatedQAndF:
         """Preserve actual floor integrity through household continuation and F."""
-        flow = _evaluated_utilities_and_F(
+        flow = _evaluated_action_utilities_and_F(
             function=self.utilities_and_F, states_actions_params=states_actions_params
         )
         parts, landings = self._parts_from_utilities(
@@ -3217,12 +3227,17 @@ class _ComputeCE:
     ] = field(default=(), metadata={"fingerprint_omit_if_default": True})
     """Per gated stateless target with counted fallbacks, those fallbacks' checks."""
     arrival_scalar_readers: Mapping[
-        RegimeName, Callable[..., tuple[FloatND, BoolND]]
+        RegimeName,
+        Callable[..., tuple[FloatND, BoolND] | tuple[tuple[FloatND, BoolND], IntND]],
     ] = field(
         default_factory=lambda: MappingProxyType({}),
         metadata={"fingerprint_omit_if_default": True},
     )
     """Boolean arrival readers for actual stateless target landings."""
+    arrival_scalar_landing_checks: tuple[
+        tuple[RegimeName, tuple[LandingCheck, ...]], ...
+    ] = field(default=(), metadata={"fingerprint_omit_if_default": True})
+    """Actual nested query identities in the scalar arrival count order."""
     arrival_scalar_arg_names: Mapping[RegimeName, tuple[str, ...]] = field(
         default_factory=lambda: MappingProxyType({}),
         metadata={"fingerprint_omit_if_default": True},
@@ -3245,7 +3260,10 @@ class _ComputeCE:
         return (
             *(
                 check
-                for _, checks in self.gated_scalar_landing_checks
+                for _, checks in (
+                    *self.gated_scalar_landing_checks,
+                    *self.arrival_scalar_landing_checks,
+                )
                 for check in checks
             ),
             *(
@@ -3460,9 +3478,15 @@ class _ComputeCE:
 
                     landing_counts.append(
                         _live_landing_counts(
-                            node_counts=node_counts,
+                            node_counts=node_counts.reshape((-1, node_counts.shape[-1]))
+                            if continuation.arrival_query
+                            else node_counts,
                             target_probability=active_regime_probs[target_regime_name],
-                            node_weights=continuation.node_weights_at(
+                            node_weights=(
+                                joint_next_stochastic_states_weights.reshape(-1),
+                            )
+                            if continuation.arrival_query
+                            else continuation.node_weights_at(
                                 marginals=target_marginals[target_regime_name],
                                 next_states=next_states,
                             ),
@@ -3639,14 +3663,21 @@ class _ComputeCE:
             states_actions_params=states_actions_params,
         )
         valid = jnp.asarray(a=True)
+        counted = dict(self.arrival_scalar_landing_checks)
         for target, reader in self.arrival_scalar_readers.items():
-            value, target_valid = reader(
+            result = reader(
                 next_V_arr=next_regime_to_V_arr[target],
                 **{
                     name: states_actions_params[name]
                     for name in self.arrival_scalar_arg_names[target]
                 },
             )
+            if counted.get(target):
+                result, target_counts = result
+                counts.append(
+                    jnp.where(is_live(active_regime_probs[target]), target_counts, 0)
+                )
+            value, target_valid = result
             values[target] = value
             valid &= ~is_live(active_regime_probs[target]) | target_valid
         return values, counts, valid
