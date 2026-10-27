@@ -189,6 +189,7 @@ def own_artifact_store(
     *,
     entries: Mapping[ArtifactRef, ArtifactPayload],
     authorities: _AuthoritiesInput,
+    array_copier: _ArrayCopier | None = None,
 ) -> _ArtifactStoreBoundary:
     """Build a store around buffers the engine's own solve allocated.
 
@@ -206,6 +207,7 @@ def own_artifact_store(
                 payload=payload,
                 authority=authority,
                 borrow=True,
+                array_copier=array_copier,
             )
         )
     return ArtifactStore(owned)

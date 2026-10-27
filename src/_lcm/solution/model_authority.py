@@ -2822,6 +2822,7 @@ def bind_generated_solution_authority(
     internal_result: BackwardInductionResult,
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
+    array_copier: _ArrayCopier | None = None,
 ) -> SolutionAuthority:
     """Bind the outer nodes an adaptive solve settled on into the solve's authority.
 
@@ -2834,6 +2835,10 @@ def bind_generated_solution_authority(
     presents them to its consumer through that descriptor, see
     `bind_declared_adaptive_authority`.
     """
+    if array_copier is not None and internal_result.generated_replay_authorities:
+        raise ExecutionPlanningError(
+            "Budgeted adaptive replay templates require producer admission."
+        )
     bound = _AuthorityBinding(authority=authority)
     for (
         period,
@@ -2887,6 +2892,7 @@ def bind_generated_solution_authority(
                     key=SOLVER_DIAGNOSTICS,
                 ),
                 template=diagnostics,
+                array_copier=array_copier,
             )
     return bound.authority_with_bindings()
 
@@ -3124,7 +3130,11 @@ class _AuthorityBinding:
         self.bound_refs.add(ref)
 
     def bind_diagnostics(
-        self, *, ref: ArtifactRef, template: SolverDiagnostics
+        self,
+        *,
+        ref: ArtifactRef,
+        template: SolverDiagnostics,
+        array_copier: _ArrayCopier | None = None,
     ) -> None:
         """Describe one retained diagnostics payload from the payload itself.
 
@@ -3144,6 +3154,7 @@ class _AuthorityBinding:
             template=template,
             applicable=True,
             required=False,
+            array_copier=array_copier,
         )
         self.artifacts[ref] = authority
         self.artifact_descriptors[ref] = authority.descriptor

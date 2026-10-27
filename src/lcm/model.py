@@ -2376,7 +2376,7 @@ class Model:
         array_writer: SimulationEntryAllocations | None,
         trees: tuple[PytreeValue, ...],
     ) -> None:
-        """Keep completed actual preparation owners beside subsequent producers."""
+        """Keep completed preparation and solve outputs beside later producers."""
         if array_writer is not None:
             array_writer.model_roots = (
                 *array_writer.model_roots,
@@ -3544,6 +3544,7 @@ class Model:
                 validation_materializer=validation_materializer,
             ).run()
             return self._finish_solution(
+                validation_materializer=validation_materializer,
                 preparation=preparation,
                 internal_result=_VALUES_RETAINED_ON_THE_HOST,
                 flat_params=flat_params,
@@ -3573,6 +3574,7 @@ class Model:
             period_capture=period_capture,
         )
         return self._finish_solution(
+            validation_materializer=validation_materializer,
             preparation=preparation,
             internal_result=internal_result,
             flat_params=flat_params,
@@ -3651,11 +3653,21 @@ class Model:
         call_id: CallId | None,
         process_grid_resolver: ProcessGridResolver | None = None,
         component_values: RetainedComponentValues | None = None,
+        validation_materializer: SimulationEntryAllocations | None = None,
     ) -> SolutionResult:
         """Assemble the public result of one solve's engine outputs."""
         with solve_phase(name="result_assembly", logger=log, call_id=call_id):
+            self._retain_prepared_generation_roots(
+                array_writer=validation_materializer, trees=(internal_result,)
+            )
+            array_copier = (
+                None
+                if validation_materializer is None
+                else validation_materializer.copy_solution_leaf
+            )
             authority = bind_generated_solution_authority(
                 authority=preparation.declared_authority,
+                array_copier=array_copier,
                 internal_result=internal_result,
                 regimes=self._regimes,
                 flat_params=flat_params,
@@ -3671,6 +3683,7 @@ class Model:
                 model_fingerprint=preparation.model_fingerprint,
                 durable_identity=self.durable_identity,
                 authority=authority,
+                array_copier=array_copier,
                 generation=preparation.generation,
                 component_values=component_values,
                 flat_params=flat_params,
@@ -6037,6 +6050,7 @@ class Model:
                     call_id=call_id,
                     component_values=component_values.retained,
                     process_grid_resolver=process_grid_resolver,
+                    validation_materializer=entry_allocations,
                 )
             with solve_phase(name="result_finalization", logger=log, call_id=call_id):
                 if entry_allocations is not None:

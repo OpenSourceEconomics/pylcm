@@ -1,5 +1,6 @@
 """Real private Model construction/solve and original native-bank admission."""
 
+import logging
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, replace
 from functools import partial
@@ -10,17 +11,26 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+import lcm.model as model_module
 from _lcm.continuation import ProjectedContinuationSpec
 from _lcm.execution.workspace_planning import (
     CompilerMemoryReservation,
     WorkspaceBudgetError,
 )
+from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.simulation.entry_allocations import SimulationEntryAllocations
 from _lcm.simulation.host_operations import (
     ProfiledSimulationOperations,
     _operation_key,
 )
+from _lcm.simulation.residency import (
+    DeviceBufferFootprint,
+    measure_buffer_footprint,
+    union_buffer_footprints,
+)
 from _lcm.solution.artifacts import OwnedSolutionView
+from _lcm.solution.block_major import RetainedComponentValues
+from _lcm.solution.contract import BackwardInductionResult
 from _lcm.solution.current_iid_case_r import (
     CASE_R_NODE_SELECTION,
     CASE_R_RESOURCES_REPLAY,
@@ -30,10 +40,13 @@ from _lcm.solution.current_iid_case_r import (
     _zeros_for_template,
 )
 from _lcm.solution.feasibility import BoundedResult
-from _lcm.typing import PytreeValue, ShapeDtypePytree
+from _lcm.solution.generation import canonical_generation_roots
+from _lcm.solution.solve_phase_records import CallId
+from _lcm.typing import FlatParams, PytreeValue, ShapeDtypePytree
 from lcm import ExecutionConfig, InitialNodes, Model
+from lcm._solver_api import authority as authority_module
 from lcm.shocks import PhysicalValues
-from lcm.solver_api import ArtifactRef
+from lcm.solver_api import ArtifactRef, SolutionResult
 from lcm.typing import ReferenceName
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.egm.test_current_iid_call_owned_generation import (
@@ -327,3 +340,125 @@ def test_balanced_r_retains_required_row_without_optional_selection_bank() -> No
     assert replay.output_roles.output[5] is None
     assert kernels.artifact_authorities[CASE_R_RESOURCES_REPLAY].required
     assert CASE_R_NODE_SELECTION not in kernels.artifact_authorities
+
+
+def test_public_budgeted_r_charges_actual_outputs_before_result_assembly(  # noqa: PLR0915 - keep the genuine solve and original copy observers together
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Actual compiled outputs are live before the original assembly can copy."""
+    owners: list[SimulationEntryAllocations] = []
+    finished: list[BackwardInductionResult] = []
+    prepared_roots: dict[int, DeviceBufferFootprint] = {}
+    assembly: list[tuple[SimulationEntryAllocations, DeviceBufferFootprint]] = []
+    assembly_copies: list[bool] = []
+    original_leaf_copy = authority_module._copy_artifact_array_leaf
+    original_copy = SimulationEntryAllocations.copy_solution_leaf
+    original_finish = Model._finish_solution
+
+    # keyword-only-exempt: library-callback=copy_solution_leaf
+    def observe_copy(
+        self: SimulationEntryAllocations, *, leaf: jax.Array, label: str
+    ) -> jax.Array:
+        if id(self) not in prepared_roots:
+            prepared_roots[id(self)] = measure_buffer_footprint(tree=self.model_roots)
+        result = original_copy(self, leaf=leaf, label=label)
+        owners.append(self)
+        return result
+
+    def require_covered(
+        *, expected: DeviceBufferFootprint, observed: DeviceBufferFootprint
+    ) -> None:
+        assert (
+            union_buffer_footprints(footprints=(observed, expected)).spans
+            == observed.spans
+        ), "Postsolve output storage is not charged"
+
+    def observe_leaf_copy(
+        *,
+        leaf: jax.Array,
+        label: str,
+        array_copier: authority_module._ArrayCopier | None = None,
+    ) -> jax.Array:
+        if assembly:
+            owner, required = assembly[-1]
+            live = owner.snapshot()
+            require_covered(expected=prepared_roots[id(owner)], observed=live)
+            require_covered(expected=required, observed=live)
+            assert array_copier == owner.copy_solution_leaf
+            assembly_copies.append(True)
+        return original_leaf_copy(leaf=leaf, label=label, array_copier=array_copier)
+
+    # keyword-only-exempt: library-callback=Model._finish_solution
+    def observe_finish(
+        self: Model,
+        *,
+        preparation: model_module._SolutionPreparation,
+        internal_result: BackwardInductionResult,
+        flat_params: FlatParams,
+        log: logging.Logger,
+        call_id: CallId | None,
+        process_grid_resolver: ProcessGridResolver | None = None,
+        component_values: RetainedComponentValues | None = None,
+        validation_materializer: SimulationEntryAllocations | None = None,
+    ) -> SolutionResult:
+        assert owners  # The original admitted copier actually completed in this run.
+        owner = owners[-1]
+        assert owner.original_inputs is not None
+        assert owner.budget_bytes == 1 << 28
+        assert preparation.generation.execution is self
+        outputs = canonical_generation_roots(declarations=(internal_result,))
+        assert outputs
+        required = measure_buffer_footprint(tree=outputs)
+        model_roots = prepared_roots[id(owner)]
+        assert model_roots.spans
+        # Prove the very same detector rejects actual nonempty output storage.
+        with pytest.raises(AssertionError, match="Postsolve output storage"):
+            require_covered(
+                expected=required, observed=measure_buffer_footprint(tree=())
+            )
+        # These are real newly produced buffers, not aliases of prepared grids.
+        assert (
+            union_buffer_footprints(footprints=(model_roots, required)).spans
+            != model_roots.spans
+        )
+        finished.append(internal_result)
+        assembly.append((owner, required))
+        try:
+            return original_finish(
+                self,
+                preparation=preparation,
+                internal_result=internal_result,
+                flat_params=flat_params,
+                log=log,
+                call_id=call_id,
+                process_grid_resolver=process_grid_resolver,
+                component_values=component_values,
+                validation_materializer=validation_materializer,
+            )
+        finally:
+            assembly.pop()
+
+    monkeypatch.setattr(SimulationEntryAllocations, "copy_solution_leaf", observe_copy)
+    monkeypatch.setattr(Model, "_finish_solution", observe_finish)
+    monkeypatch.setattr(
+        authority_module, "_copy_artifact_array_leaf", observe_leaf_copy
+    )
+    model = _public_model_from_declarations(
+        declarations=replace(
+            _declarations(),
+            execution_config=ExecutionConfig(device_memory_bytes=1 << 28),
+        )
+    )
+    result = model.solve(
+        params=_params(), log_level="warning", max_compilation_workers=1
+    )
+    assert len(finished) == 1
+    assert assembly_copies
+    view = result._engine_view
+    assert isinstance(view, OwnedSolutionView)
+    assert view.values[1]["child"] is finished[0].value_functions[1]["child"]
+    child_value = np.asarray(view.values[1]["child"])
+    wealth = np.asarray([1.0, 12.5], dtype=child_value.dtype)
+    expected = np.log(wealth / 2.0) + np.log((wealth + 1.0) / 2.0)
+    tolerance = 64 * np.finfo(child_value.dtype).eps
+    np.testing.assert_allclose(child_value, expected, rtol=tolerance, atol=tolerance)

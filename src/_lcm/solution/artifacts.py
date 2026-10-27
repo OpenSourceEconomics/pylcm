@@ -29,6 +29,7 @@ from _lcm.typing import (
     PeriodToRegimeToVArr,
     RegimeName,
 )
+from lcm._solver_api.authority import _ArrayCopier
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import (
     DISSOLUTION_FLAG,
@@ -193,6 +194,7 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
     generation: CanonicalModelGeneration | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
     component_values: RetainedComponentValues | None = None,
+    array_copier: _ArrayCopier | None = None,
 ) -> SolutionResult:
     """Label existing engine outputs without changing their numerical meaning.
 
@@ -366,14 +368,17 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
         retained_continuations=own_artifact_store(
             entries=retained_continuations,
             authorities=authority.artifacts,
+            array_copier=array_copier,
         ),
         replay_artifacts=own_artifact_store(
             entries=replay,
             authorities=authority.artifacts,
+            array_copier=array_copier,
         ),
         auxiliary_artifacts=own_artifact_store(
             entries=auxiliary,
             authorities=authority.artifacts,
+            array_copier=array_copier,
         ),
         metadata=SolutionMetadata(
             retention=retention,
@@ -445,6 +450,7 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
         diagnostics=own_artifact_store(
             entries=diagnostics,
             authorities=authority.artifacts,
+            array_copier=array_copier,
         ),
     )
     object.__setattr__(
