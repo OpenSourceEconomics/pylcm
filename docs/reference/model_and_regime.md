@@ -116,9 +116,7 @@ codes. Ordinary grids, `Phased` declarations, and named joint-normal coordinate
 declarations keep their existing finalized form. `initial_state_names(regime_name=...)`
 gives physical per-subject names, expanding both composite members and joint-normal
 coordinates. These differ from `state_names` / `state_grid`, which describe value-array
-axes. A composite model restored from an archive without original grid metadata must be
-rebuilt before using `initial_state_grids`; its existing simulation behavior remains
-available.
+axes.
 
 `model._regimes` is private canonical engine state.
 

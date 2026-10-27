@@ -331,6 +331,14 @@ class NEGMCaseUPoint:
         side = selection.right
         ordinary, corner = side.ordinary, side.corner
         use_corner = side.use_corner[0]
+        # A dead right-extension germ orders ties; it does not erase the
+        # selected native bank's economic marginal at a closed node. The
+        # ordinary profile already applies the strict-above clamp convention.
+        marginal = jnp.where(
+            jnp.isnan(value),
+            jnp.nan,
+            jnp.where(use_corner, corner.marginal[0], ordinary.marginal[0]),
+        )
         supported = jnp.where(use_corner, corner.supported[0], ordinary.supported[0])
         saving = jnp.where(use_corner, corner.savings[0], ordinary.savings[0])
         cash = jnp.stack(

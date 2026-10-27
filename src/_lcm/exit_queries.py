@@ -183,7 +183,7 @@ class _ExitReducer:
         """Route weak dissolution or strict consent, preserving common tuple/ID."""
         stay = cast("PolicyAnswer", operands["answer"])
         payoffs, availability, valid = self._payoffs(operands=operands)
-        result = (*stay[:3], stay[3] & valid)
+        result = (*stay[:3], stay[3] & valid, stay[4])
         custom = tuple(self.rules.values())
         if custom:
             return self._custom(
@@ -218,6 +218,7 @@ class _ExitReducer:
                 jnp.where(move, self.n_actions + offset, result[1]).astype(jnp.int32),
                 result[2] | move,
                 result[3] & valid,
+                stay[4],
             )
         return result
 
@@ -314,6 +315,7 @@ class _ExitReducer:
             jnp.where(supported, identifiers[chosen], -1).astype(jnp.int32),
             supported,
             valid & jnp.isfinite(scale) & (scale > 0) & ~jnp.isnan(value),
+            cast("PolicyAnswer", operands["answer"])[4],
         )
 
     def _custom(
@@ -408,6 +410,7 @@ class _ExitReducer:
             jnp.where(support, safe_id, -1),
             support,
             valid & admitted,
+            cast("PolicyAnswer", operands["answer"])[4],
         )
 
 
