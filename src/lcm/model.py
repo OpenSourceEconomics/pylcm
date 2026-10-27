@@ -4867,8 +4867,9 @@ class Model:
                 )
                 row = np.asarray(bounds)[process.states.index(state_name)]
                 return float(row[0]), float(row[1])
-        grid = regime.simulation.grids[state_name]
-        if isinstance(grid, DiscreteGrid):
+        # Composite members have no engine grid of their own and are discrete.
+        grid = regime.simulation.grids.get(state_name)
+        if grid is None or isinstance(grid, DiscreteGrid):
             raise InvalidSimulationInputError(
                 f"State {state_name!r} is discrete; continuous bounds do not apply."
             )

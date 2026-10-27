@@ -640,3 +640,14 @@ def test_composite_archive_without_member_grids_keeps_simulation() -> None:
         _panel(model=restored, composite=True),
         _panel(model=_composite(), composite=True),
     )
+
+
+@pytest.mark.parametrize("member", _MEMBERS)
+def test_initial_state_bounds_refuse_a_composite_member_as_discrete(
+    member: StateName,
+) -> None:
+    """A composite member is a discrete initial state without continuous bounds."""
+    with pytest.raises(InvalidSimulationInputError, match="is discrete"):
+        _composite().initial_state_bounds(
+            params=_PARAMS, regime_name="alive", state_name=member
+        )
