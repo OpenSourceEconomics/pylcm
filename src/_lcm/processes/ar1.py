@@ -37,6 +37,8 @@ from _lcm.typing import PRNGKeyND
 from lcm.exceptions import GridInitializationError
 from lcm.typing import Bool1D, Float1D, FloatND, IntND, ScalarFloat, ScalarInt
 
+type TransitionRule = Literal["midpoint", "innovation_quadrature", "density"]
+
 
 @dataclass(frozen=True, kw_only=True)
 class _AR1Process(_ContinuousStochasticProcess):
@@ -116,9 +118,7 @@ class TauchenAR1Process(_AR1Process):
         rho: float | None = None,
         sigma: float | StateConditioned | None = None,
         mu: float | None = 0.0,
-        transition_rule: Literal[
-            "midpoint", "innovation_quadrature", "density"
-        ] = "midpoint",
+        transition_rule: TransitionRule = "midpoint",
         n_quadrature: int | None = None,
         innovation_nodes: UserVector | None = None,
         innovation_weights: UserVector | None = None,
@@ -240,9 +240,7 @@ class _TauchenOnNodesProcess(TauchenAR1Process):
     """AR(1) transition rules on a fixed physical axis independent of law parameters."""
 
     nodes: tuple[float, ...]
-    transition_rule: Literal["midpoint", "innovation_quadrature", "density"] = (
-        "midpoint"
-    )
+    transition_rule: TransitionRule = "midpoint"
     innovation_nodes: tuple[float, ...] = ()
     innovation_weights: tuple[float, ...] = ()
 
@@ -811,14 +809,12 @@ _normal_density_row.defjvp(_normal_density_row_jvp)
 
 def _prepare_innovation_quadrature(
     *,
-    transition_rule: Literal["midpoint", "innovation_quadrature", "density"],
+    transition_rule: TransitionRule,
     n_quadrature: int | None,
     innovation_nodes: UserVector | None,
     innovation_weights: UserVector | None,
 ) -> tuple[tuple[float, ...], tuple[float, ...]]:
-    """Validate the rule and freeze a standardized innovation probability measure."""
-    if transition_rule not in {"midpoint", "innovation_quadrature", "density"}:
-        raise GridInitializationError("Unknown on_nodes transition_rule.")
+    """Validate the rule's inputs and freeze a standardized innovation measure."""
     supplied = innovation_nodes is not None or innovation_weights is not None
     if transition_rule != "innovation_quadrature":
         if n_quadrature is not None or supplied:
