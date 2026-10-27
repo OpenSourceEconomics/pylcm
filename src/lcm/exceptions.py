@@ -223,10 +223,10 @@ class UnrepresentableOuterCandidateError(PyLCMError):
 
 
 class DensityDerivativeAccuracyError(PyLCMError, ArithmeticError):
-    """Raised when a density transition sensitivity cannot meet its accuracy budget.
+    """Raised when the explicit density-derivative certificate rejects a row.
 
-    Density-rule derivatives use dimensionless absolute and relative tolerances.
-    An unresolved component rejects the differentiated row instead of returning
-    a sensitivity outside that budget. Under JIT the runtime callback reports
-    this error when the differentiated result is synchronized.
+    Only a deliberate call to the developer/test certificate raises this error.
+    Solve, simulation and routine JAX differentiation never run the certificate,
+    so a differentiated density row outside the accuracy budget is returned
+    without an error.
     """
