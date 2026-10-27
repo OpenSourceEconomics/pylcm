@@ -631,6 +631,16 @@ def aggregates_nonlinearly(certainty_equivalent: CertaintyEquivalent | None) -> 
 def _scaled_lottery_terms(
     *, values: FloatND, coefficients: FloatND, shifts: IntND
 ) -> tuple[FloatND, FloatND]:
+    """Return value and weight terms carrying one common binary scale."""
+    terms, masses, _ = _scaled_lottery_terms_with_scale(
+        values=values, coefficients=coefficients, shifts=shifts
+    )
+    return terms, masses
+
+
+def _scaled_lottery_terms_with_scale(
+    *, values: FloatND, coefficients: FloatND, shifts: IntND
+) -> tuple[FloatND, FloatND, IntND]:
     """Return a lottery's value terms and weight terms on one shared scale.
 
     A node's contribution to a mean is `c * 2**-s * v`, and the order those
@@ -677,7 +687,8 @@ def _scaled_lottery_terms(
 
     Returns:
         Tuple of the value terms and the weight terms, both over the last axis
-        and both carrying the row's shared scale.
+        and both carrying the row's shared scale, followed by that binary exponent. This
+        exponent multiplies the unscaled terms; subtract it to recover their scale.
 
     """
     coefficients = jnp.asarray(coefficients)
@@ -731,4 +742,5 @@ def _scaled_lottery_terms(
     return (
         jnp.where(invalid_row, nan, value_terms),
         jnp.where(invalid_row, nan, weight_terms),
+        common - headroom,
     )

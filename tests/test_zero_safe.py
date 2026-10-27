@@ -53,13 +53,40 @@ def _scaled_mean_reference(
 @pytest.mark.parametrize("mode", ["eager", "jit", "vmap"])
 @pytest.mark.parametrize(
     "case",
-    ["zero", "positive", "negative", "opposite", "dominant", "permuted", "shifted"],
+    [
+        "zero",
+        "positive",
+        "negative",
+        "opposite",
+        "dominant",
+        "permuted",
+        "shifted",
+        "midpoint",
+        "unequal",
+        "adjacent_negative",
+        "adjacent_permuted",
+        "half_scale",
+        "sixteenth_scale",
+        "equivalent_pairs",
+        "common_shift",
+        "three_nodes",
+        "five_nodes",
+        "tiny_adjacent",
+        "tiny_adjacent_rare_large",
+    ],
 )
 def test_scaled_mean_normalizes_finite_slopes_before_tangent_arithmetic(
     *, mode: str, case: str
 ) -> None:
     """Finite normalized derivatives survive extreme levels and opposite-sign gaps."""
-    peak = float(jnp.finfo(jnp.asarray(1.0).dtype).max)
+    dtype = np.dtype(jnp.asarray(1.0).dtype)
+    peak = float(np.finfo(dtype).max)
+    lower = float(np.nextafter(dtype.type(peak), dtype.type(0)))
+    third = float(np.nextafter(dtype.type(lower), dtype.type(0)))
+    tiny = float(np.finfo(dtype).tiny)
+    tiny_level = tiny * 2.0 ** (np.finfo(dtype).nmant - 2)
+    tiny_upper = float(np.nextafter(dtype.type(tiny_level), dtype.type(np.inf)))
+    rare_shift = int(2 * np.finfo(dtype).maxexp + 2)
     specimens = {
         "zero": ((peak, peak / 2), (1.0, 0.0), (0, 0)),
         "positive": ((peak, peak / 2), (1.0, 0.5), (0, 0)),
@@ -68,6 +95,26 @@ def test_scaled_mean_normalizes_finite_slopes_before_tangent_arithmetic(
         "dominant": ((peak, -peak), (3.0, 1.0), (0, 0)),
         "permuted": ((peak / 2, peak), (0.0, 1.0), (0, 0)),
         "shifted": ((peak, peak / 2), (1.0, 0.0), (7, 7)),
+        "midpoint": ((peak, lower), (1.0, 1.0), (1, 1)),
+        "unequal": ((peak, lower), (1.0, 3.0), (2, 2)),
+        "adjacent_negative": ((-peak, -lower), (1.0, 1.0), (1, 1)),
+        "adjacent_permuted": ((lower, peak), (3.0, 1.0), (2, 2)),
+        "half_scale": ((peak / 2, lower / 2), (1.0, 1.0), (1, 1)),
+        "sixteenth_scale": ((peak / 16, lower / 16), (1.0, 3.0), (2, 2)),
+        "equivalent_pairs": ((peak, lower), (2.0, 2.0), (2, 2)),
+        "common_shift": ((peak, lower), (1.0, 3.0), (9, 9)),
+        "three_nodes": ((peak, lower, third), (1.0, 3.0, 2.0), (1, 1, 1)),
+        "tiny_adjacent": ((tiny_level, tiny_upper), (tiny, tiny), (0, 0)),
+        "tiny_adjacent_rare_large": (
+            (tiny_level, tiny_upper, peak),
+            (tiny, tiny, tiny),
+            (0, 0, rare_shift),
+        ),
+        "five_nodes": (
+            (peak, lower, third, lower, peak),
+            (1.0, 3.0, 2.0, 4.0, 2.0),
+            (1, 1, 1, 1, 1),
+        ),
     }
     values, weights, shifts = specimens[case]
     _, expected_weights, expected_values = _scaled_mean_reference(
