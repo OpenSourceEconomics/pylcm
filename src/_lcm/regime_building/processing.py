@@ -10292,27 +10292,11 @@ def _get_simple_transition_discrete_grid(
     (fixed state), not a DiscreteGrid, or the state is not present in the
     source regime.
 
-    A `Phased` entry is unwrapped before the test. Both variants share one source
-    grid, so the only question is whether either of them is a broadcast law — one
-    written without naming targets, which is the shape that can silently clip
-    categories. The grid is returned if either variant is such a law, and `None`
-    only if both handle their targets explicitly. Left wrapped, a `Phased` is not
-    itself a Mapping, so a pair of per-target dicts would be read as one broadcast
-    law.
+    `raw` is one phase's variant: the caller unwraps a `Phased` entry, which is not
+    itself a Mapping and would otherwise read a pair of per-target dicts as one
+    broadcast law.
 
     """
-    if isinstance(raw, Phased):
-        variants = [
-            variant
-            for variant in (raw.solve, raw.simulate)
-            if _get_simple_transition_discrete_grid(
-                user_regime=user_regime, state_name=state_name, raw=variant
-            )
-            is not None
-        ]
-        if not variants:
-            return None
-        raw = variants[0]
     # Per-target dicts handle category differences explicitly
     if isinstance(raw, Mapping) and not isinstance(raw, StochasticTransition):
         return None
