@@ -5,15 +5,17 @@ import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from types import MappingProxyType, NoneType
-from typing import TypedDict, TypeGuard, get_args
+from typing import TypedDict, TypeGuard, cast, get_args
 
 import jax
 import numpy as np
 from jax._src.lax.lax import _convert_element_type
 
 from _lcm.engine import Regime, placed_devices_for_ids
+from _lcm.execution.core_program import core_program_graph
 from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.execution.output_layout import PlannedCore
+from _lcm.execution.value_transfer import ValueInputChannel
 from _lcm.execution.workspace_planning import compiler_memory_reservation
 from _lcm.persistence.period import read_period_archive
 from _lcm.solution.backward_induction import (
@@ -49,8 +51,12 @@ from lcm.period_capture import CapturedPeriodReplay
 class _HostKernelKwargs(PeriodKernelContext):
     """Period kernel arguments whose value arrays are still host NumPy arrays."""
 
-    next_regime_to_V_arr: MappingProxyType[RegimeName, HostArray]
-    """Next period's persisted value array per regime."""
+    next_regime_to_V_arr: MappingProxyType[RegimeName, HostArray | jax.ShapeDtypeStruct]
+    """Next period's persisted value array per regime the period reads.
+
+    Every other regime keeps its place as its template, so it never reaches the
+    device.
+    """
 
     logger: logging.Logger
     """Logger the adapter reports through."""
@@ -312,6 +318,7 @@ def _restore_public_inputs(
         values[channel][regime_name] = array
     if set(values["next_regime_to_V_arr"]) != set(regimes):
         raise ValueError("Captured continuation value coordinates are incomplete.")
+    read = _next_values_read(regime=regimes[name], period=period)
     return {
         "regime_name": name,
         "period": period,
@@ -323,7 +330,15 @@ def _restore_public_inputs(
         # MappingProxyType's pytree children retain insertion order. The archive
         # sorts JSON keys, so reconstruct the production topology's order here.
         "next_regime_to_V_arr": MappingProxyType(
-            {key: values["next_regime_to_V_arr"][key] for key in topology}
+            {
+                key: values["next_regime_to_V_arr"][key]
+                if key in read
+                else jax.ShapeDtypeStruct(
+                    values["next_regime_to_V_arr"][key].shape,
+                    values["next_regime_to_V_arr"][key].dtype,
+                )
+                for key in topology
+            }
         ),
         "next_regime_to_continuation": MappingProxyType({}),
         "next_edge_to_V_arr": MappingProxyType({}),
@@ -335,6 +350,21 @@ def _restore_public_inputs(
         "retain_replay": retain_replay,
         "selected_artifact_keys": frozenset(),
     }
+
+
+def _next_values_read(*, regime: Regime, period: int) -> frozenset[RegimeName]:
+    """Name the regimes whose next-period value one period's programs read."""
+    graph = core_program_graph(kernel=regime.solution.period_kernels[period])
+    return frozenset(
+        cast("RegimeName", read.source.path[0])
+        for program in graph.values()
+        for read in program.requirements.value_reads
+        if read.source.channel
+        in (
+            ValueInputChannel.NEXT_REGIME_VALUE,
+            ValueInputChannel.EDGE_REFERENCE_VALUE,
+        )
+    )
 
 
 def _restore_array_leaves(
@@ -350,7 +380,7 @@ def _restore_array_leaves(
     for path, leaf in flat:
         value = leaf
         descriptor = descriptors.get(jax.tree_util.keystr(path))
-        if isinstance(value, np.ndarray):
+        if isinstance(value, np.ndarray | jax.ShapeDtypeStruct):
             # Persisted V arrays are committed in production. Fresh parameter
             # leaves are already JAX arrays and may legitimately be uncommitted.
             if (
@@ -362,12 +392,20 @@ def _restore_array_leaves(
                 raise ValueError(
                     "Captured value layout is incompatible with its payload."
                 )
-            value = jax.device_put(
-                value,
-                rebuild_sharding(
-                    descriptor=descriptor.sharding,
-                    device_by_recorded_id=device_by_recorded_id,
-                ),
+            sharding = rebuild_sharding(
+                descriptor=descriptor.sharding,
+                device_by_recorded_id=device_by_recorded_id,
+            )
+            # A value the period does not read moves as its template.
+            value = (
+                jax.ShapeDtypeStruct(
+                    value.shape,
+                    value.dtype,
+                    sharding=sharding,
+                    weak_type=descriptor.weak_type,
+                )
+                if isinstance(value, jax.ShapeDtypeStruct)
+                else jax.device_put(value, sharding)
             )
         if (
             isinstance(value, jax.Array)
