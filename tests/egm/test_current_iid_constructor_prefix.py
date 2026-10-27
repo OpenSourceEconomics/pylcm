@@ -41,6 +41,121 @@ pytestmark = pytest.mark.coverage(backends=("cpu",), precisions="both")
 _GLOBAL_ONLY_ROOT: FloatND | None = None
 
 
+def _original_log1p_declaration(*, value: FloatND) -> FloatND:
+    return jnp.log1p(value)
+
+
+def _passive_callback_must_not_execute(*, _value: FloatND) -> Never:
+    raise AssertionError("Passive declaration custody invoked its callback.")
+
+
+@pytest.mark.parametrize("weak", [False, True])
+def test_passive_original_jit_keeps_roots_and_original_numeric_boundary(
+    *, weak: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Inventory canonical callbacks without tracing or executing declarations."""
+    from _lcm.egm import validation_stages  # noqa: PLC0415
+
+    value = jnp.asarray(0.25) if weak else jnp.asarray([0.25])
+    expected = _original_log1p_declaration(value=value)
+    expected_bytes = np.asarray(expected).tobytes()
+    root = jnp.ones((17,))
+    monkeypatch.setattr(sys.modules[__name__], "_GLOBAL_ONLY_ROOT", root)
+    config = ExecutionConfig(device_memory_bytes=1 << 24)
+    hardware = resolve_execution_hardware(
+        config=config,
+        visible_device_ids=(jax.devices("cpu")[0].id,),
+        device_pool_limit_bytes={},
+    )
+
+    def must_not_trace_or_build(*_args: PytreeValue, **_kwargs: PytreeValue) -> Never:
+        raise AssertionError("Passive declaration custody traced or built values.")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(jax, "make_jaxpr", must_not_trace_or_build)
+        patch.setattr(
+            validation_stages, "prepare_validation_recipe", must_not_trace_or_build
+        )
+        patch.setattr(np, "asarray", must_not_trace_or_build)
+        owner = open_declaration_allocations(
+            hardware=hardware,
+            declarations=(
+                _original_log1p_declaration,
+                _global_only_callback,
+                _passive_callback_must_not_execute,
+            ),
+        )
+    assert owner is not None
+    try:
+        assert owner.original_inputs is not None
+        assert any(array is root for array in owner.original_inputs.arrays)
+        roots: list[jax.Array] = []
+        _DeclarationRootObserver(array_recorder=roots.append).visit(
+            value=(_original_log1p_declaration, _global_only_callback)
+        )
+        assert any(array is root for array in roots)
+        actual = _original_log1p_declaration(value=value)
+        assert actual.dtype == expected.dtype
+        assert actual.weak_type == expected.weak_type
+        assert np.asarray(actual).tobytes() == expected_bytes
+    finally:
+        owner.close()
+
+
+@pytest.mark.parametrize("mutation", ["fun", "info", "code", "rebound", "forged"])
+def test_passive_jit_original_origin_refuses_changed_or_foreign_callback(
+    *, mutation: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Passive census keeps exact native authority, not arbitrary EARLY trust."""
+    import inspect  # noqa: PLC0415
+    from types import FunctionType  # noqa: PLC0415
+
+    from jax._src.api import Inline  # noqa: PLC0415
+
+    original = jnp.log1p
+    raw = vars(original)["_fun"]
+    assert isinstance(raw, FunctionType)
+    if mutation == "fun":
+        monkeypatch.setattr(original, "_fun", _global_only_callback)
+    elif mutation == "info":
+        monkeypatch.setattr(original, "_jit_info", None)
+    elif mutation == "code":
+        replacement_raw = inspect.unwrap(_passive_callback_must_not_execute)
+        assert isinstance(replacement_raw, FunctionType)
+        monkeypatch.setattr(raw, "__code__", replacement_raw.__code__)
+    else:
+        replacement = jax.jit(_global_only_callback, inline=Inline.JAX_EARLY)
+        if mutation == "forged":
+            monkeypatch.setattr(replacement, "__module__", original.__module__)
+            monkeypatch.setattr(replacement, "__qualname__", original.__qualname__)
+        monkeypatch.setattr(jnp, "log1p", replacement)
+    with pytest.raises(ExecutionPlanningError, match=r"JAX_EARLY|Original JIT"):
+        _DeclarationRootObserver().visit(value=_original_log1p_declaration)
+
+
+def test_passive_canonical_jit_does_not_admit_executable_validator_early_stage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The unchanged canonical callback still has its executable-stage refusal."""
+    from _lcm.egm import validation_stages  # noqa: PLC0415
+
+    def must_not_trace(**_: PytreeValue) -> Never:
+        raise AssertionError("Canonical EARLY validator traced before refusal.")
+
+    monkeypatch.setattr(validation_stages, "prepare_validation_recipe", must_not_trace)
+    value = jnp.asarray(0.25)
+    owner = _owner(roots=(value,))
+    try:
+        with pytest.raises(ExecutionPlanningError, match="JAX_EARLY"):
+            owner.evaluate_validation(
+                function=_original_log1p_declaration, arguments={"value": value}
+            )
+        assert not owner.operations.cache
+        assert not owner._pending
+    finally:
+        owner.close()
+
+
 def _global_only_callback(*, value: FloatND) -> FloatND:
     if _GLOBAL_ONLY_ROOT is None:
         raise ValueError("The original callback buffer is not bound.")

@@ -6,7 +6,10 @@ from dataclasses import fields, is_dataclass
 import jax
 import numpy as np
 
-from _lcm.egm.validation_stages import ValidationCaptureHasher
+from _lcm.egm.validation_stages import (
+    ValidationCaptureHasher,
+    _require_original_jit_policy,
+)
 from _lcm.engine import placed_devices_for_ids
 from _lcm.execution.execution_plan import ExecutionHardware
 from _lcm.grids import DiscreteGrid
@@ -14,7 +17,11 @@ from _lcm.simulation.entry_allocations import SimulationEntryAllocations
 from _lcm.simulation.entry_inputs import SimulationEntryInputs
 from _lcm.simulation.host_operations import ProfiledSimulationOperations
 from _lcm.simulation.residency import require_transfer_headroom
-from _lcm.solution.fingerprint import _Reachable
+from _lcm.solution.fingerprint import (
+    _is_captured_jax_pjit,
+    _Reachable,
+    _SemanticHasher,
+)
 from _lcm.typing import DataclassInstance, ScalarInt
 from lcm.ages import AgeGrid
 from lcm.shocks import Discrete as DiscreteShock
@@ -43,6 +50,14 @@ class _DeclarationRootObserver(ValidationCaptureHasher):
         if type(value) is DiscreteShock:
             self.visit(value=value.categories)
             self.visit(value=value.probs)
+            return
+        if _is_captured_jax_pjit(value):
+            # Passive custody seals the original callback without tracing it;
+            # its eager dispatch boundary is left intact for actual execution.
+            _require_original_jit_policy(value=value, preserve_eager_boundary=False)
+            _SemanticHasher.visit(
+                self, value=value, _ignore_beartype_guards=_ignore_beartype_guards
+            )
             return
         super().visit(value=value, _ignore_beartype_guards=_ignore_beartype_guards)
 
