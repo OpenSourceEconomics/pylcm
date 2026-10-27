@@ -356,6 +356,7 @@ STRUCTURAL_BLUEPRINTS_SOURCE = "src/_lcm/solution/structural_blueprints.py"
 _ACTION_GRID_SOURCES = (ACTION_GRID_SOURCE,)
 
 _UNIFORM_PROCESS_SOURCES = (
+    "src/_lcm/simulation/eager_stages.py",
     PROCESS_GRID_RESOLUTION_SOURCE,
     UNIFORM_PROCESS_GRID_SOURCE,
     SUPPORT_FINGERPRINT_SOURCE,
@@ -587,6 +588,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 # Source seals and corridor anchors require semantic verification of the combined
 # inventories before refresh; these inherited pins deliberately retain that gate.
 _SOURCE_SEALS = {
+    "src/_lcm/simulation/eager_stages.py": "d0a52778e4966ecf9bbac4ecaee87f85f49df0aeb4bf7c390f8599bf7d97efa8",
     "src/_lcm/current_iid.py": "ac4125498751dd102b5d6cddc1dc102c13030e589a64eb88b166eab3e71770d1",
     "src/_lcm/simulation/current_iid.py": "c675e9dffaa205b4049bf4c26438a70005766c368bc69a3dbb1d6e35cb66db99",
     "src/_lcm/egm/asset_row.py": "7a130991643a90a86349f7fd6b221950fb046489bf205677f3869a8607c260da",
@@ -2104,11 +2106,20 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_validate_callable_borrowing_solver": "b3bd802d5fa0734d179f33569f4af8503726570e80c7b3c965fa4e104aec6044",
         },
     ),
+    "src/_lcm/simulation/eager_stages.py": (
+        "d4ab23671c44c85c1a367e02c547259599f7b8a946183bc6169ca1d86f80778f",
+        {
+            "_abstract_stage_operand": "25a8cdec68bfaa93e8b9260c5f4d5a63671069f06726ada770eb0274978446bd",
+            "run_eager_stage": "5c76a3887978ea959365beafdb8d8e78dde07bdc364826765e0677df3c18b548",
+        },
+    ),
     ENGINE_SOURCE: (
         "0e08b01fcf618042c8b116f2236073cc44ac7e0b6b0ecaac31db8d6022a4aac2",
         {
             "SolutionPhase.resolve_process_grids": "433e871004a339428068e27d0e414e035eb8d1789fd73dc8b9cd85328362a045",
             "SolutionPhase.state_action_space": "c54e576769c9c3addaf2dc961cf604747d2fb3d6b29b5b3ec9a80c3b4f3a692e",
+            "resolve_phase_process_grids": "ef605a0ec86dc094d2613c8e3e6e27c3dd8ee91d21618f37386a24e7acc3339e",
+            "phase_state_action_space": "f27fbdd014df4497ca6531fa57d55fcfb77c995069815d63f47613833c70f126",
         },
     ),
     SIMULATION_COMPILE_SOURCE: (
@@ -12086,9 +12097,15 @@ _S02_HELPER_MUTATIONS = {
 # Runtime tests establish numerical support, budget refusal and ownership lifetimes.
 _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = _contracts(
     {
+        "src/_lcm/simulation/eager_stages.py": (
+            "_abstract_stage_operand",
+            "run_eager_stage",
+        ),
         "src/_lcm/engine.py": (
             "SolutionPhase.resolve_process_grids",
             "SolutionPhase.state_action_space",
+            "resolve_phase_process_grids",
+            "phase_state_action_space",
         ),
         "src/_lcm/simulation/chunk_admission.py": (
             "_ChunkProfiler.profile_widths",
@@ -12628,15 +12645,15 @@ def _uniform_process_errors(*, tree: ast.Module, source: SourcePath) -> list[str
 _UNIFORM_PROCESS_MUTATIONS = {
     "uniform_grid:replicated_layout_omitted": (
         ENGINE_SOURCE,
-        "SolutionPhase.resolve_process_grids",
+        "resolve_phase_process_grids",
         "expression",
         "jax.sharding.NamedSharding(plan.mesh, jax.sharding.PartitionSpec())",
         "jax.sharding.SingleDeviceSharding(devices[0])",
         1,
     ),
     "uniform_grid:producer_output_layout_omitted": (
-        UNIFORM_PROCESS_GRID_SOURCE,
-        "SimulationProcessGrids._produce",
+        "src/_lcm/simulation/eager_stages.py",
+        "run_eager_stage",
         "keyword",
         "output_sharding",
         "None",
@@ -12644,7 +12661,7 @@ _UNIFORM_PROCESS_MUTATIONS = {
     ),
     "uniform_grid:selected_device_ignored": (
         ENGINE_SOURCE,
-        "SolutionPhase.resolve_process_grids",
+        "resolve_phase_process_grids",
         "expression",
         "jax.sharding.SingleDeviceSharding(devices[0])",
         "jax.sharding.SingleDeviceSharding(jax.devices()[0])",
@@ -12667,11 +12684,11 @@ _UNIFORM_PROCESS_MUTATIONS = {
         1,
     ),
     "uniform_grid:foreign_owner_budget_omitted": (
-        UNIFORM_PROCESS_GRID_SOURCE,
-        "SimulationProcessGrids._produce",
+        "src/_lcm/simulation/eager_stages.py",
+        "run_eager_stage",
         "expression",
-        "tuple(dict.fromkeys((*self.devices, *current.spans)))",
-        "self.devices",
+        "tuple(dict.fromkeys((*devices, *current.spans)))",
+        "devices",
         1,
     ),
     "uniform_grid:resolver_result_rank_changed": (
@@ -12747,43 +12764,43 @@ _UNIFORM_PROCESS_MUTATIONS = {
         1,
     ),
     "uniform_grid:dispatch_before_admission": (
-        UNIFORM_PROCESS_GRID_SOURCE,
-        "SimulationProcessGrids._produce",
+        "src/_lcm/simulation/eager_stages.py",
+        "run_eager_stage",
         "before_assignment",
         "plan",
-        "_compute_uniform_grid(parameters=placed['parameters'], n_points=n_points)",
+        "function(**placed, **static_arguments)",
         1,
     ),
     "uniform_grid:external_residency_ignored": (
-        UNIFORM_PROCESS_GRID_SOURCE,
-        "SimulationProcessGrids._produce",
+        "src/_lcm/simulation/eager_stages.py",
+        "run_eager_stage",
         "expression",
         "max(external.values())",
         "0",
         1,
     ),
     "uniform_grid:peak_admission_ignored": (
-        UNIFORM_PROCESS_GRID_SOURCE,
-        "SimulationProcessGrids._produce",
+        "src/_lcm/simulation/eager_stages.py",
+        "run_eager_stage",
         "keyword",
         "budget_bytes",
         "None",
         2,
     ),
     "uniform_grid:shared_cache_keeps_operands": (
-        UNIFORM_PROCESS_GRID_SOURCE,
-        "SimulationProcessGrids._produce",
+        "src/_lcm/simulation/eager_stages.py",
+        "run_eager_stage",
         "expression",
         "abstract",
         "placed",
         2,
     ),
     "uniform_grid:readiness_omitted": (
-        UNIFORM_PROCESS_GRID_SOURCE,
-        "SimulationProcessGrids._produce",
+        "src/_lcm/simulation/eager_stages.py",
+        "run_eager_stage",
         "expression",
-        "plan.compiled.executable(**placed).block_until_ready()",
-        "plan.compiled.executable(**placed)",
+        "jax.block_until_ready(result)",
+        "result",
         1,
     ),
     "uniform_grid:caller_residency_omitted": (
@@ -12868,7 +12885,7 @@ _UNIFORM_PROCESS_MUTATIONS = {
     ),
     "uniform_grid:engine_scope_broadened": (
         ENGINE_SOURCE,
-        "SolutionPhase.resolve_process_grids",
+        "resolve_phase_process_grids",
         "expression",
         "process_grid_resolver.supports(spec)",
         "True",
@@ -12876,7 +12893,7 @@ _UNIFORM_PROCESS_MUTATIONS = {
     ),
     "uniform_grid:engine_recomputes_admitted_support": (
         ENGINE_SOURCE,
-        "SolutionPhase.state_action_space",
+        "phase_state_action_space",
         "expression",
         "name not in state_replacements",
         "True",
