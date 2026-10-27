@@ -1,6 +1,7 @@
 """Original EZ primal and independently derived first-order unit-risk chain."""
 
 import math
+from decimal import Decimal, localcontext
 
 import jax
 import jax.numpy as jnp
@@ -158,7 +159,7 @@ def test_original_ez_split_and_joint_lotteries_keep_total_unit_risk_variance() -
 @pytest.mark.parametrize(
     "kind", ["zero_mass", "negative_weight", "nonpositive_payoff", "tiny_coefficient"]
 )
-def test_original_ez_unit_risk_invalid_or_unretained_direction_refuses(
+def test_original_ez_unit_risk_invalid_refuses_and_tiny_direction_is_retained(
     *, kind: str
 ) -> None:
     values = jnp.asarray([3.0, 5.0])
@@ -182,7 +183,23 @@ def test_original_ez_unit_risk_invalid_or_unretained_direction_refuses(
 
     exponent = jnp.asarray(0.0)
     _, direction = jax.jvp(evaluate, (exponent,), (jnp.ones_like(exponent),))
-    assert not bool(jnp.isfinite(direction))
+    if kind != "tiny_coefficient":
+        assert not bool(jnp.isfinite(direction))
+    else:
+        # Actual original CE scale, independent two-payoff variance. Decimal
+        # preserves the subnormal final instead of an absolute test at zero.
+        original = weighted_power_mean(
+            values=values,
+            weights=weights,
+            exponent=exponent,
+            shifts=jnp.zeros_like(values, dtype=jnp.int32),
+        )
+        with localcontext() as context:
+            context.prec = 160
+            expected = Decimal(float(original)) * Decimal(2).ln() ** 2 / 8
+            ratio = float(Decimal(float(direction)) / expected)
+        np.testing.assert_almost_equal(ratio, 1.0, decimal=DECIMAL_PRECISION)
+        assert float(direction) != 0.0
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")

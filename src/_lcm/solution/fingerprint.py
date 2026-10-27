@@ -28,10 +28,15 @@ import numpy as np
 from beartype import BeartypeConf
 from beartype import beartype as _beartype_decorator
 from jax import Array
+from jax._src import core as jax_core
+from jax._src.interpreters import ad as jax_ad
+from jax._src.interpreters import batching as jax_batching
+from jax._src.interpreters import mlir as jax_mlir
 
 import _lcm.additive_shock_transition as additive_shock_declarations
 import _lcm.certainty_equivalent as certainty_equivalent_declarations
 import _lcm.constraints.ir as constraint_ir
+import _lcm.egm.ce_scaled_linear as ce_scaled_declarations
 import _lcm.egm.interp as interp_declarations
 import _lcm.grids as grid_declarations
 import _lcm.optimization.golden_section as golden_section_declarations
@@ -1136,6 +1141,326 @@ def _semantic_fingerprint(value: _Reachable) -> str:
     return hasher.hexdigest()
 
 
+@dataclasses.dataclass(frozen=True)
+class _CEScaledFunction:
+    """Original callable metadata outside its ordinary attribute dictionary."""
+
+    code: types.CodeType
+    state: MappingProxyType[str, _Reachable]
+    defaults: tuple[_Reachable, ...] | None
+    kwdefaults: MappingProxyType[str, _Reachable]
+    annotations: MappingProxyType[str, _Annotation]
+    annotate: _Reachable
+
+
+@dataclasses.dataclass(frozen=True)
+class _CEScaledReference:
+    """One consumed native binding path, including its actual module owner."""
+
+    function: types.FunctionType
+    name: str
+    path: tuple[str, ...]
+    chain: tuple[_Reachable, ...]
+    descriptors: tuple[_Reachable, ...]
+
+
+@dataclasses.dataclass(frozen=True)
+class _CEScaledPrimitiveSeal:
+    """The actual registrations of the sole private CE linear primitive."""
+
+    primitive: jax_core.Primitive
+    instance: MappingProxyType[str, _Reachable]
+    classes: tuple[tuple[type[_Reachable], MappingProxyType[str, _Reachable]], ...]
+    mros: tuple[tuple[type[_Reachable], ...], ...]
+    functions: MappingProxyType[types.FunctionType, _CEScaledFunction]
+    rules: tuple[types.FunctionType, ...]
+    wrappers: tuple[types.FunctionType, ...]
+    cells: tuple[
+        tuple[types.FunctionType, tuple[tuple[types.CellType, _Reachable], ...]], ...
+    ]
+    exports: MappingProxyType[str, types.FunctionType]
+    lowering: jax_mlir.LoweringRuleEntry
+    tables: tuple[_Reachable, ...]
+    references: tuple[_CEScaledReference, ...]
+    native_functions: tuple[types.FunctionType, ...]
+
+
+def _ce_python_functions(
+    values: Iterable[_Reachable],
+) -> tuple[types.FunctionType, ...]:
+    functions = []
+    for value in values:
+        if not isinstance(value, types.FunctionType):
+            raise TypeError("The original CE registration is not Python-defined.")
+        functions.append(value)
+    return tuple(functions)
+
+
+def _capture_ce_scaled_primitive() -> _CEScaledPrimitiveSeal:
+    primitive = ce_scaled_declarations._scaled_ce_p  # noqa: SLF001 - authenticate the sole module-owned primitive
+    exports = {
+        name: getattr(ce_scaled_declarations, name)
+        for name in ("_linear_join", "_abstract", "_jvp", "_transpose", "_batch")
+    }
+    rules = _ce_python_functions(exports.values())
+    raw_rules = tuple(_unwrap_exact_beartype_wrapper(rule) or rule for rule in rules)
+    lowering = jax_mlir._lowerings[primitive]  # noqa: SLF001 - inspect the actual lowering registration
+    wrappers = _ce_python_functions(
+        (
+            primitive.abstract_eval,
+            jax_batching.fancy_primitive_batchers[primitive],
+            lowering.rule,
+        )
+    )
+    classes = tuple(
+        dict.fromkeys(
+            parent
+            for cls in (
+                jax_core.Primitive,
+                jax_core.ShapedArray,
+                jax_ad.Zero,
+                jax_ad.UndefinedPrimal,
+                type(lowering),
+            )
+            for parent in cls.__mro__
+        )
+    )
+    native_functions = _ce_python_functions((jax_batching.bdim_at_front, jax.typeof))
+    methods = tuple(
+        member
+        for cls in classes
+        for value in vars(cls).values()
+        for member in (
+            (value.__func__,)
+            if isinstance(value, classmethod | staticmethod)
+            else (value.fget, value.fset, value.fdel)
+            if isinstance(value, property)
+            else (value,)
+        )
+        if isinstance(member, types.FunctionType)
+    )
+    references = []
+    resolver = _SemanticHasher()
+    for function in (*raw_rules, *wrappers, *native_functions):
+        for name, paths in _referenced_global_attribute_paths(
+            code=function.__code__, ignore_beartype_guards=function in raw_rules
+        ).items():
+            if name not in function.__globals__:
+                continue
+            for path in sorted(paths):
+                chain = [function.__globals__[name]]
+                descriptors = []
+                for attribute in path:
+                    descriptors.append(inspect.getattr_static(chain[-1], attribute))
+                    chain.append(
+                        resolver._resolve_referenced_attribute(  # noqa: SLF001 - reuse this module's static binding resolver
+                            value=chain[-1], attribute=attribute, path=path
+                        )
+                    )
+                # Engine arithmetic still takes the ordinary complete walk.
+                # Only native metadata paths and generated dispatch bindings
+                # receive this exact import-time origin seal.
+                if function in raw_rules and not any(
+                    chain[-1] is value for value in (*classes, *native_functions)
+                ):
+                    continue
+                references.append(
+                    _CEScaledReference(
+                        function=function,
+                        name=name,
+                        path=path,
+                        chain=tuple(chain),
+                        descriptors=tuple(descriptors),
+                    )
+                )
+    functions = _ce_python_functions(
+        (
+            *rules,
+            *raw_rules,
+            *wrappers,
+            *native_functions,
+            *methods,
+            *(
+                reference.chain[-1]
+                for reference in references
+                if isinstance(reference.chain[-1], types.FunctionType)
+            ),
+        )
+    )
+    return _CEScaledPrimitiveSeal(
+        primitive=primitive,
+        instance=MappingProxyType(dict(vars(primitive))),
+        classes=tuple((cls, MappingProxyType(dict(vars(cls)))) for cls in classes),
+        mros=tuple(cls.__mro__ for cls in classes),
+        functions=MappingProxyType(
+            {
+                function: _CEScaledFunction(
+                    code=function.__code__,
+                    state=MappingProxyType(dict(vars(function))),
+                    defaults=function.__defaults__,
+                    kwdefaults=MappingProxyType(dict(function.__kwdefaults__ or {})),
+                    annotations=MappingProxyType(dict(function.__annotations__)),
+                    annotate=function.__annotate__,
+                )
+                for function in functions
+            }
+        ),
+        rules=(*rules, *raw_rules),
+        wrappers=wrappers,
+        cells=tuple(
+            (
+                function,
+                tuple(
+                    (cell, cell.cell_contents) for cell in (function.__closure__ or ())
+                ),
+            )
+            for function in wrappers
+        ),
+        exports=MappingProxyType(exports),
+        lowering=lowering,
+        tables=(
+            jax_ad.primitive_jvps,
+            jax_ad.primitive_transposes,
+            jax_ad.primitive_linearizations,
+            jax_batching.fancy_primitive_batchers,
+            jax_mlir._lowerings,  # noqa: SLF001 - inspect the actual lowering registration
+            jax_mlir._platform_specific_lowerings,  # noqa: SLF001 - reject platform registration overrides
+            jax_mlir._uncacheable_primitives,  # noqa: SLF001 - seal original lowering policy
+            jax_ad.linearize_on_zero_tangents,
+        ),
+        references=tuple(references),
+        native_functions=native_functions,
+    )
+
+
+def _require_ce_scaled_primitive() -> None:  # noqa: C901, PLR0912 - validate the complete fixed registration
+    seal = _CE_SCALED_SEAL
+    primitive = seal.primitive
+    if (
+        ce_scaled_declarations._scaled_ce_p is not primitive  # noqa: SLF001 - authenticate the sole module-owned primitive
+        or type(primitive) is not jax_core.Primitive
+        or set(vars(primitive)) != set(seal.instance)
+        or any(
+            vars(primitive)[name] is not value for name, value in seal.instance.items()
+        )
+        or any(
+            getattr(ce_scaled_declarations, name) is not rule
+            for name, rule in seal.exports.items()
+        )
+    ):
+        raise TypeError("Original CE primitive identity or instance state changed.")
+    for (cls, state), mro in zip(seal.classes, seal.mros, strict=True):
+        if (
+            cls.__mro__ is not mro
+            or set(vars(cls)) != set(state)
+            or any(vars(cls)[name] is not value for name, value in state.items())
+        ):
+            raise TypeError("Original CE primitive native class state changed.")
+    for function, original in seal.functions.items():
+        state = original.state
+        if (
+            function.__code__ is not original.code
+            or set(vars(function)) != set(state)
+            or any(vars(function)[name] is not value for name, value in state.items())
+            or function.__defaults__ is not original.defaults
+            or set(function.__kwdefaults__ or {}) != set(original.kwdefaults)
+            or any(
+                (function.__kwdefaults__ or {})[name] is not value
+                for name, value in original.kwdefaults.items()
+            )
+            or set(function.__annotations__) != set(original.annotations)
+            or any(
+                function.__annotations__[name] is not value
+                for name, value in original.annotations.items()
+            )
+            or function.__annotate__ is not original.annotate
+        ):
+            raise TypeError("Original CE primitive callable code or metadata changed.")
+    for function, cells in seal.cells:
+        actual = function.__closure__ or ()
+        try:
+            changed = len(actual) != len(cells) or any(
+                cell is not original or cell.cell_contents is not value
+                for cell, (original, value) in zip(actual, cells, strict=True)
+            )
+        except ValueError:
+            changed = True
+        if changed:
+            raise TypeError("Original CE primitive generated wrapper closure changed.")
+    resolver = _SemanticHasher()
+    for reference in seal.references:
+        current = reference.function.__globals__.get(reference.name, _MISSING)
+        if current is not reference.chain[0]:
+            raise TypeError("Original CE primitive native binding changed.")
+        for attribute, receiver, original, descriptor in zip(
+            reference.path,
+            reference.chain[:-1],
+            reference.chain[1:],
+            reference.descriptors,
+            strict=True,
+        ):
+            if (
+                current is not receiver
+                or inspect.getattr_static(current, attribute) is not descriptor
+            ):
+                raise TypeError(
+                    "Original CE primitive native binding changed: descriptor origin."
+                )
+            current = resolver._resolve_referenced_attribute(  # noqa: SLF001 - reuse this module's static binding resolver
+                value=current, attribute=attribute, path=reference.path
+            )
+            # An original builtin descriptor binds a fresh wrapper on lookup.
+            # Its fixed receiver/descriptor, not that wrapper, owns the method.
+            fresh_builtin = (
+                type(descriptor) is types.MethodDescriptorType
+                and _has_exact_type(value=receiver, candidates=_BUILTIN_TYPE_OBJECTS)
+                and isinstance(original, types.BuiltinMethodType)
+                and isinstance(current, types.BuiltinMethodType)
+                and original.__self__ is receiver
+                and current.__self__ is receiver
+            )
+            if current is not original and not fresh_builtin:
+                raise TypeError("Original CE primitive native binding changed.")
+    current_tables = (
+        jax_ad.primitive_jvps,
+        jax_ad.primitive_transposes,
+        jax_ad.primitive_linearizations,
+        jax_batching.fancy_primitive_batchers,
+        jax_mlir._lowerings,  # noqa: SLF001 - inspect the actual lowering registration
+        jax_mlir._platform_specific_lowerings,  # noqa: SLF001 - reject platform registration overrides
+        jax_mlir._uncacheable_primitives,  # noqa: SLF001 - seal original lowering policy
+        jax_ad.linearize_on_zero_tangents,
+    )
+    if (
+        any(
+            actual is not original
+            for actual, original in zip(current_tables, seal.tables, strict=True)
+        )
+        or jax_ad.primitive_jvps.get(primitive) is not seal.exports["_jvp"]
+        or jax_ad.primitive_transposes.get(primitive) is not seal.exports["_transpose"]
+        or jax_batching.fancy_primitive_batchers.get(primitive) is not seal.wrappers[1]
+        or jax_mlir._lowerings.get(primitive) is not seal.lowering  # noqa: SLF001 - inspect the actual lowering registration
+        or seal.lowering.rule is not seal.wrappers[2]
+        or seal.lowering.inline is not True
+        or primitive in jax_ad.primitive_linearizations
+        or primitive in jax_ad.linearize_on_zero_tangents
+        or primitive in jax_mlir._uncacheable_primitives  # noqa: SLF001 - seal original lowering policy
+        or any(
+            primitive in rules
+            for rules in jax_mlir._platform_specific_lowerings.values()  # noqa: SLF001 - reject platform registration overrides
+        )
+    ):
+        raise TypeError("Original CE primitive execution registration changed.")
+
+
+def _is_ce_scaled_primitive_reference(value: _Reachable) -> bool:
+    primitive = _CE_SCALED_SEAL.primitive
+    return value is primitive or (
+        type(value) is type(primitive)
+        and vars(value).get("name") == _CE_SCALED_SEAL.instance["name"]
+    )
+
+
 class _SemanticHasher:
     """Length-framed serializer feeding a SHA-256 digest."""
 
@@ -1304,6 +1629,8 @@ class _SemanticHasher:
         # class attribute through which it was reached.
         self._active[identity] = len(self._active)
         try:
+            if self._visit_ce_scaled_primitive(value):
+                return
             if isinstance(value, types.ModuleType):
                 msg = (
                     "Cannot durably fingerprint direct module dependency "
@@ -1499,6 +1826,131 @@ class _SemanticHasher:
         self.visit(value=constants)
         self.visit(value=code.co_names)
         self.frame(label="code-end")
+
+    def _visit_ce_scaled_primitive(self, value: _Reachable) -> bool:
+        seal = _CE_SCALED_SEAL
+        if not _is_ce_scaled_primitive_reference(value):
+            return False
+        if value is not seal.primitive:
+            raise TypeError("A same-named CE primitive is not the original producer.")
+        _require_ce_scaled_primitive()
+        self.frame(label="owned-ce-scaled-primitive-start")
+        self.visit(value=(_native_numeric_versions(), _PYTHON_IMPLEMENTATION_SEAL))
+        self.visit(value=(seal.primitive.name, seal.lowering.inline))
+        for cls, state in seal.classes:
+            self.frame(
+                label="ce-native-class",
+                payload=f"{cls.__module__}.{cls.__qualname__}".encode(),
+            )
+            self.visit(value=tuple(sorted(state)))
+        # Class methods are native metadata implementations, not user callbacks.
+        # Their exact origin/code/state is checked above and their package is
+        # version-sealed, as for the existing canonical numeric callable route.
+        for function in seal.functions:
+            if function not in seal.rules and function not in seal.wrappers:
+                self.frame(
+                    label="ce-native-code",
+                    payload=f"{function.__module__}.{function.__qualname__}".encode(),
+                )
+                self.visit(value=function.__code__)
+        for rule in seal.rules:
+            self.visit(value=rule)
+        for wrapper, cells in seal.cells:
+            self.frame(label="ce-generated-wrapper-start")
+            self._visit_signature(function=wrapper)
+            self.visit(value=wrapper.__defaults__)
+            self.visit(value=wrapper.__kwdefaults__)
+            self.visit(value=wrapper.__code__)
+            for name, (cell, member) in zip(
+                wrapper.__code__.co_freevars, cells, strict=True
+            ):
+                self.frame(label="ce-generated-cell", payload=name.encode())
+                self._record_binding(owner=wrapper, name=name, value=member, cell=cell)
+                self.visit(value=member)
+            self.frame(label="ce-generated-wrapper-end")
+        for reference in seal.references:
+            self.frame(
+                label="ce-native-binding-path",
+                payload=(
+                    f"{reference.function.__module__}."
+                    f"{reference.function.__qualname__}:"
+                    + ".".join((reference.name, *reference.path))
+                ).encode(),
+            )
+            self._record_binding(
+                owner=reference.function,
+                name=reference.name,
+                value=reference.chain[0],
+                namespace=reference.function.__globals__,
+            )
+        self.frame(label="owned-ce-scaled-primitive-end")
+        return True
+
+    def _visit_ce_scaled_rule(  # noqa: C901 - original rule and precise native metadata paths
+        self, *, function: types.FunctionType, ignore_beartype_guards: bool
+    ) -> None:
+        """Walk the exact registered engine rule without broad metadata trust."""
+        _require_ce_scaled_primitive()
+        wrapped = _unwrap_exact_beartype_wrapper(function)
+        if wrapped is not None:
+            self.frame(label="ce-rule-beartype-start")
+            self._visit_signature(function=function)
+            self.visit(value=wrapped, _ignore_beartype_guards=True)
+            self.frame(label="ce-rule-beartype-end")
+            return
+        if function.__closure__:
+            raise TypeError("An original CE rule unexpectedly captures closure state.")
+        self.frame(
+            label="ce-rule-start",
+            payload=f"{function.__module__}.{function.__qualname__}".encode(),
+        )
+        self._visit_native_python_function_seal(function)
+        self._visit_function_annotations(function.__annotations__)
+        references = _referenced_global_attribute_paths(
+            code=function.__code__, ignore_beartype_guards=ignore_beartype_guards
+        )
+        for name in sorted(references):
+            if name not in function.__globals__:
+                continue
+            member = function.__globals__[name]
+            if member is _BEARTYPE_CLAW_STATE:
+                self.frame(label="transparent-beartype-claw-state")
+                continue
+            self._record_binding(
+                owner=function, name=name, value=member, namespace=function.__globals__
+            )
+            for path in sorted(references[name]):
+                current = member
+                for attribute in path:
+                    current = self._resolve_referenced_attribute(
+                        value=current, attribute=attribute, path=path
+                    )
+                self.frame(
+                    label="ce-rule-binding", payload=".".join((name, *path)).encode()
+                )
+                native_reference = next(
+                    (
+                        reference
+                        for reference in _CE_SCALED_SEAL.references
+                        if reference.function is function
+                        and reference.name == name
+                        and reference.path == path
+                    ),
+                    None,
+                )
+                if native_reference is not None and isinstance(current, type):
+                    self.frame(
+                        label="ce-native-metadata-class",
+                        payload=f"{current.__module__}.{current.__qualname__}".encode(),
+                    )
+                    self.visit(value=_native_numeric_versions())
+                elif native_reference is not None:
+                    if not isinstance(current, types.FunctionType):
+                        raise TypeError("Original CE native metadata callable changed.")
+                    self._visit_native_python_function_seal(current)
+                else:
+                    self._visit_terminal_reference(current)
+        self.frame(label="ce-rule-end")
 
     def _visit_type(self, value: type[_Reachable]) -> None:
         self.frame(
@@ -1822,6 +2274,11 @@ class _SemanticHasher:
     def _visit_function(  # noqa: C901, PLR0912, PLR0915
         self, *, function: types.FunctionType, ignore_beartype_guards: bool = False
     ) -> None:
+        if function in _CE_SCALED_SEAL.rules:
+            self._visit_ce_scaled_rule(
+                function=function, ignore_beartype_guards=ignore_beartype_guards
+            )
+            return
         wrapped = _unwrap_exact_beartype_wrapper(function)
         if wrapped is not None:
             self.frame(
@@ -2002,6 +2459,9 @@ class _SemanticHasher:
         value: _Reachable,
     ) -> None:
         """Hash one consumed reference or reject mutable protocol dispatch."""
+        if _is_ce_scaled_primitive_reference(value):
+            self.visit(value=value)
+            return
         if inspect.ismethod(value):
             self._visit_referenced_bound_method(value)
             return
@@ -2019,6 +2479,11 @@ class _SemanticHasher:
 
     def _visit_referenced_bound_method(self, method: types.MethodType) -> None:
         """Hash a method and exactly the receiver attributes its code reads."""
+        if _is_ce_scaled_primitive_reference(method.__self__):
+            if method.__func__ is not _CE_SCALED_SEAL.classes[0][1]["bind"]:
+                raise TypeError("Only the original CE primitive bind is represented.")
+            self.visit(value=method.__self__)
+            return
         raw_function = method.__func__
         if not isinstance(raw_function, types.FunctionType):
             callable_type = (
@@ -3251,6 +3716,9 @@ def _semantic_sort_key(value: _Reachable) -> tuple[str, str]:
         # unsupported user key without feeding its repr into the fingerprint.
         digest = type_name
     return type_name, digest
+
+
+_CE_SCALED_SEAL = _capture_ce_scaled_primitive()
 
 
 __all__ = [

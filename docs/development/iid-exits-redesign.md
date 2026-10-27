@@ -126,6 +126,21 @@ weight can have a nonzero derivative, so differentiate weights before dropping z
 nodes. Nonlinear CE channels use their own stable typed sufficient statistic and full
 chain rule.
 
+The private unit-risk CE direction rule keeps the original power-mean primal and
+ordinary coefficient path. When its nonnegative exponent coefficient is outside the
+ordinary normal range, first-order transport carries binary scale separately and uses an
+explicit transpose. Forward and transpose each meet the same independent numerical
+reference; they need not be bit-identical across compiler paths. The transport fixtures
+compare normal results after normalization, and subnormal products within one final
+subnormal ULP of the represented binary-coefficient product. This bound allows
+significand-product rounding followed by final scaling; it is not a bound on arbitrary
+exponential/logarithm approximation or the economic model. True zero is allowed;
+nonfinite base or direction operands, an unretained nonzero final underflow and
+unresolved signed-scale cancellation refuse. Coefficient-residual differentiation beyond
+the first-order rule remains unsupported. This kernel transpose does not add reverse
+mode to the forward-only native exact-affine reader. The owned primitive's original
+state, bindings and execution registrations are part of semantic capture authority.
+
 Refinement bisects failed smooth cells and inserts known transformed breakpoints.
 Compare the coarse representation with quarter, midpoint and three-quarter queries from
 the solver's candidate construction, exact endpoints and adjacent representable points

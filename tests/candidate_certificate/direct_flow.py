@@ -628,7 +628,7 @@ _SOURCE_SEALS = {
     SUPPORT_DIAGNOSTICS_SOURCE: "477761e6556a83fd2e271e4ab6c258cf4799d62d10d3a2d46dbf31f69b7161d8",
     SUPPORT_PRECONDITIONS_SOURCE: "5df8b182b8cb3c37f6ab76719386cc809052bcc00cda63772d698c75071f4092",
     SUPPORT_AUTHORITY_SOURCE: "7675e55fe50c19512e5cb5f63340765a5c9ce7776c4d5c7e2bbb8220d229ab5f",
-    SUPPORT_FINGERPRINT_SOURCE: "8c82bee1a4f0b7375e5580702c08dceea5e2802936a76ba7b379c9ca6a075bff",
+    SUPPORT_FINGERPRINT_SOURCE: "af0d3e1f87a747b480401220ac7a6da0afa26f60113b094836e438157752f17e",
     UNIFORM_PROCESS_GRID_SOURCE: "f03298f080dfe4bace2e3affc82e0ca8e5d7adf20fe58978433c19305667b299",
     PROCESS_GRID_RESOLUTION_SOURCE: "c9eb81f9442d7628793d6ad905b2e96e4655e9eb48bf3de32f636541b985269f",
     NATIVE_VALUES_SOURCE: "4e7302d6cacb53a20f6a0a08e7f57d6e074dedddd8f6a95944a9ed1ed4df7bda",
@@ -2128,7 +2128,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SUPPORT_FINGERPRINT_SOURCE: (
-        "d685889048cfb82cd67096c739a75901c40ba8d4681657ece9a750fdd7cad104",
+        "ae25fe7069e232ab2068d43145296e24f50eeebc48823d7bd0c9ad3fbb747512",
         {
             "fingerprint_solution_support": "db6206fa4209d1d6892566377c6c62c6bed1aa28f23ce49d85fb3455f978d19f",
             "fingerprint_model": "04c8f2960e52d4144353b1e3b962edbc17b00eb05fc68a3207cf4826acbbda51",
@@ -2137,7 +2137,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_query_semantic_descriptor": "602544e2ed8bb315d1bd8a9425e486338810ba663c55197bebcfbe1e9eccac0d",
             "_project_user_regime_declaration": "a2b9cf5ca24d3082e5d5f333acb93fa6679ae026185b8f30f7bb1a1d8f83038b",
             "_semantic_fingerprint": "75f98beb48082f6fda273258837d03a38221af56812f8d621163ebfdfdda893b",
-            "_SemanticHasher.visit": "6e37a6ba03d335635a810f65b99d61374fe501bf5f7992fccb7c7cfc258cae32",
+            "_SemanticHasher.visit": "eafce96fac57920b50fc278c6972607d1e829919f077de1acd7ab9ae47808f63",
         },
     ),
     SUPPORT_AUTHORITY_SOURCE: (

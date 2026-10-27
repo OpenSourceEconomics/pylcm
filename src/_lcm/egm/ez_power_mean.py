@@ -2,13 +2,14 @@
 
 The correction reuses the existing scaled pair variance. Tangents enter only
 through ordinary multiplication, so first-order reverse mode can transpose it.
-A nonzero coefficient that cannot be retained as a normal finite number refuses
-this bounded AD class; complete scaled-linear finite-final support is required.
+Exceptional coefficient scales use a private first-order linear transport;
+unresolved multi-scale cancellation remains a separate required frontier.
 """
 
 import jax
 import jax.numpy as jnp
 
+from _lcm.egm.ce_scaled_linear import join_ce_direction
 from _lcm.egm.current_iid_power_math import _materialize, _SignedLog
 from _lcm.egm.current_iid_power_mean import _unit_risk_exponent
 from _lcm.power_mean import _anchored_power_mean, weighted_power_mean
@@ -38,9 +39,9 @@ def _original_mean(
     )
 
 
-def _unit_exponent_coefficient(
+def _unit_exponent_data(
     *, values: FloatND, weights: FloatND, exponent: ScalarFloat, shifts: IntND
-) -> FloatND:
+) -> tuple[FloatND, FloatND, FloatND]:
     """Compute C*Var(log V)/2 as a primal-only, transposable tangent slope."""
     context = _anchored_power_mean(
         values=values, weights=weights, exponent=exponent, shifts=shifts
@@ -69,7 +70,7 @@ def _unit_exponent_coefficient(
         log_mass: ScalarFloat,
         value: ScalarFloat,
         valid: ScalarBool,
-    ) -> ScalarFloat:
+    ) -> tuple[ScalarFloat, ScalarFloat, ScalarFloat]:
         scaled = _unit_risk_exponent(
             d=d,
             log_w=weights_log,
@@ -99,13 +100,17 @@ def _unit_exponent_coefficient(
             & (coefficient > 0.0)
             & ~is_below_smallest_normal(coefficient)
         )
-        return jnp.where(
-            valid & zero,
-            jnp.zeros_like(value),
-            jnp.where(valid & normal & retained, coefficient, jnp.nan),
+        return (
+            jnp.where(
+                valid & zero,
+                jnp.zeros_like(value),
+                jnp.where(valid & normal & retained, coefficient, jnp.nan),
+            ),
+            jnp.where(valid, scaled.logabs, jnp.nan),
+            jnp.where(valid, scaled.sign, jnp.nan),
         )
 
-    coefficients = jax.vmap(row)(
+    coefficients, logabs, sign = jax.vmap(row)(
         centered.reshape((-1, width)),
         log_w.reshape((-1, width)),
         positive.reshape((-1, width)),
@@ -113,7 +118,11 @@ def _unit_exponent_coefficient(
         jnp.broadcast_to(context.value, row_shape).reshape(-1),
         needed_valid.reshape(-1),
     )
-    return coefficients.reshape(row_shape)
+    return (
+        coefficients.reshape(row_shape),
+        logabs.reshape(row_shape),
+        sign.reshape(row_shape),
+    )
 
 
 # keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
@@ -124,14 +133,24 @@ def _mean_jvp(
     value, original_direction = jax.jvp(_original_mean, primals, tangents)
     values, weights, exponent, shifts = primals
     _values_dot, _weights_dot, exponent_dot, _shifts_dot = tangents
-    coefficient = jax.lax.cond(
+    coefficient, logabs, sign = jax.lax.cond(
         exponent == 0.0,
-        lambda: _unit_exponent_coefficient(
+        lambda: _unit_exponent_data(
             values=values, weights=weights, exponent=exponent, shifts=shifts
         ),
-        lambda: jnp.zeros_like(value),
+        lambda: (jnp.zeros_like(value), jnp.zeros_like(value), jnp.zeros_like(value)),
     )
-    return value, original_direction + coefficient * exponent_dot
+    ordinary = jnp.isfinite(coefficient)
+    exceptional = join_ce_direction(
+        logabs=jnp.where(ordinary, 0.0, logabs),
+        sign=jnp.where(ordinary, 1.0, sign),
+        base=jnp.where(ordinary, 0.0, original_direction),
+        direction=jnp.where(ordinary, 0.0, exponent_dot),
+    )
+    ordinary_coefficient = jnp.where(ordinary, coefficient, 0.0)
+    return value, jnp.where(
+        ordinary, original_direction + ordinary_coefficient * exponent_dot, exceptional
+    )
 
 
 # Construct by call: beartype's method-only import hook must retain defjvp.
