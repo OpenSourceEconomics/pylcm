@@ -65,6 +65,7 @@ from lcm.solver_api import (
     SolverIdentity,
 )
 from lcm.solvers import (
+    DCEGM,
     SolutionKernels,
     Solver,
     SolverBuildContext,
@@ -2570,3 +2571,95 @@ def test_original_query_node_kind_keeps_economic_status_distinct() -> None:
         QueryNodeKind.ECONOMIC_MINUS_INF
     )
     assert finite != fingerprints._semantic_fingerprint(1)
+
+
+def test_grid_default_string_identity_is_not_semantics() -> None:
+    original = grid_declarations.IrregSpacedGrid(points=np.array([1.0, 2.0]))
+    restored_string = (" " + original.off_grid)[1:]
+    assert type(restored_string) is type(original.off_grid)
+    assert restored_string == original.off_grid
+    assert restored_string is not original.off_grid
+    restored = dataclasses.replace(original, off_grid=restored_string)
+    assert fingerprints._semantic_fingerprint(original) == (
+        fingerprints._semantic_fingerprint(restored)
+    )
+    changed = dataclasses.replace(original, off_grid="clip_lookup")
+    assert fingerprints._semantic_fingerprint(original) != (
+        fingerprints._semantic_fingerprint(changed)
+    )
+
+
+def test_solver_scalar_default_identity_is_not_semantics() -> None:
+    original = DCEGM(
+        savings_grid=grid_declarations.IrregSpacedGrid(points=np.array([1.0, 2.0]))
+    )
+    capacity = int(str(original.current_iid_projection_capacity))
+    replay = (" " + original.replay)[1:]
+    accuracy = (" " + original.accuracy)[1:]
+    assert capacity == original.current_iid_projection_capacity
+    assert capacity is not original.current_iid_projection_capacity
+    assert replay == original.replay
+    assert replay is not original.replay
+    assert accuracy == original.accuracy
+    assert accuracy is not original.accuracy
+    restored = dataclasses.replace(
+        original,
+        current_iid_projection_capacity=capacity,
+        replay=replay,
+        accuracy=accuracy,
+    )
+    assert fingerprints._semantic_fingerprint(original) == (
+        fingerprints._semantic_fingerprint(restored)
+    )
+    changed = dataclasses.replace(original, current_iid_projection_capacity=4097)
+    assert fingerprints._semantic_fingerprint(original) != (
+        fingerprints._semantic_fingerprint(changed)
+    )
+
+
+@dataclass(frozen=True)
+class _DefaultOmissionValue:
+    value: fingerprints._Reachable = dataclasses.field(
+        default=4096, metadata={"fingerprint_omit_if_default": True}
+    )
+
+
+def test_default_omission_preserves_types_nondefaults_and_arrays() -> None:
+    original = fingerprints._semantic_fingerprint(_DefaultOmissionValue())
+    assert original == fingerprints._semantic_fingerprint(
+        _DefaultOmissionValue(value=int("4096"))
+    )
+    for value in (4097, 4096.0, "4096", True, np.array([4096, 4096])):
+        assert original != fingerprints._semantic_fingerprint(
+            _DefaultOmissionValue(value=value)
+        )
+
+
+@dataclass(frozen=True)
+class _EmptyOmissionDefaults:
+    mapping: Mapping[str, int] = dataclasses.field(
+        default=MappingProxyType({}), metadata={"fingerprint_omit_if_default": True}
+    )
+    sequence: tuple[int, ...] = dataclasses.field(
+        default=(), metadata={"fingerprint_omit_if_default": True}
+    )
+    frozen: frozenset[int] = dataclasses.field(
+        default=frozenset(), metadata={"fingerprint_omit_if_default": True}
+    )
+
+
+def test_exact_empty_default_containers_keep_semantic_fingerprints() -> None:
+    original = _EmptyOmissionDefaults()
+    restored = _EmptyOmissionDefaults(
+        mapping=MappingProxyType({}), sequence=(), frozen=frozenset()
+    )
+    assert original.mapping is not restored.mapping
+    baseline = fingerprints._semantic_fingerprint(original)
+    assert baseline == fingerprints._semantic_fingerprint(restored)
+    for changed in (
+        dataclasses.replace(original, mapping=MappingProxyType({"x": 1})),
+        dataclasses.replace(original, sequence=(1,)),
+        dataclasses.replace(original, frozen=frozenset({1})),
+        dataclasses.replace(original, mapping={}),
+    ):
+        assert baseline != fingerprints._semantic_fingerprint(changed)

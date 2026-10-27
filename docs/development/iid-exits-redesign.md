@@ -701,7 +701,7 @@ constructor declarations and actual parameters through the shared declaration
 preparation and post-program installer. It normalizes parameters before dated
 finalization, resolves the original support algorithm, and gives producer-date
 declarations the actual runtime liquid nodes. It creates real programs before exposing
-the Model; the public constructor retains its current-IID refusal.
+the Model. The supported public scalar route is described below.
 
 One immutable generation keeps those real execution programs, their source seal,
 declaration identity and lazily derived authority together. The cache walks actual
@@ -718,17 +718,16 @@ Initial private construction and cold specialization with a device-memory budget
 a genuine admission owner before dated bank/template materialization. Separate
 simulation support, gated/arrival composition, other admitted solver families,
 helper/query paths and unsupported consumed array/grouped proof classes remain required
-extensions with explicit refusals. This is a source frontier, not typing, import,
-native, numerical or public Model-to-forward acceptance. Those gates must pass before
-public admission.
+extensions with explicit refusals. Private source support alone does not establish
+native numerical or public Model-to-forward acceptance for those extensions.
 
 ### Private connected Case-U publication and replay
 
 The genuine dated builder selects the private U branch from the complete original action
 dependency census: current physical ancestry outside resources, pre-state context
 outside the resource cut, or a genuine nonlinear CE declaration. It does not classify
-arbitrary failed R admission as U. The original R admission and public non-GridSearch
-guard remain unchanged.
+arbitrary failed R admission as U. The original R admission remains binding; public
+entry is limited to the scalar route described below.
 
 The U branch shares the actual point assembler between original pre-install dated
 context/build/step/plan/call objects and the final installed generation. Its native
@@ -816,6 +815,31 @@ stay required. Correct U source-context/selector/corner outputs, sampled refinem
 complete declared-workload support and scheduling/admission also remain required.
 Production cost needs a representative capture before any performance claim; universal
 full-domain topology and certified refinement remain separate capabilities. Exact-demand
-integrity and scoped Model-to-forward qualification do not establish those gates or open
-public current-IID non-GridSearch admission. Cold allocation remains owned by the
-existing generation materializer; this route cannot bypass its budget guards.
+integrity and scoped Model-to-forward qualification do not establish those gates or
+extend public admission beyond the scalar route below. Cold allocation remains owned by
+the existing generation materializer; this route cannot bypass its budget guards.
+
+### Public scalar Case-R lifecycle
+
+Public `Model` construction retains genuine parameter metadata for the supported
+unbudgeted scalar DCEGM declarations. `get_params_template()` uses the existing
+canonical namespaces. A call with actual parameters acquires a genuine installed
+execution. Calls with the same parameter schema and grid support reuse it; changed
+support acquires a separate generation. Retained results keep their producing generation
+alive.
+
+The admitted workload uses `ExactEnvelope`, balanced accuracy, candidate replay, one
+continuous state/action per source and ordinary scalar action-free terminal regimes. A
+parent reads its Case-R child's original guarded projected continuation through the
+native leaf roster. Default retention and archives preserve that continuation and the
+original resources row required by physical candidate replay. A fresh public Model
+reconstructs its own execution before reading the archive. Producer/date/schema, law,
+clock, domain, hole and source-validity checks remain mandatory. Unsupported projected
+reads retain their explicit refusal.
+
+This public slice does not complete S10. Other producer families, public finite-budget
+declaration admission, remaining required workloads and the production reconstruction
+cost receipt remain open. Prepared public Models explicitly refuse policy lookup,
+state-grid inspection and initial-state bounds until those helpers have a supported
+execution-selection contract. Whole-domain topology and broad certificate campaigns
+remain separate from the sampled balanced acceptance gate.

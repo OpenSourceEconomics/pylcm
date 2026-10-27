@@ -1921,6 +1921,14 @@ def test_tauchen_on_nodes_refuses_invalid_quadrature_count(count: int) -> None:
         )
 
 
+def test_tauchen_on_nodes_refuses_an_unknown_transition_rule() -> None:
+    with pytest.raises(GridInitializationError, match="transition_rule"):
+        TauchenAR1Process.on_nodes(
+            nodes=np.array([-1.0, 1.0]),
+            transition_rule="trapezoid",  # ty: ignore[invalid-argument-type]
+        )
+
+
 @pytest.mark.parametrize("rule", ["midpoint", "density"])
 def test_tauchen_on_nodes_refuses_unused_quadrature_inputs(
     rule: Literal["midpoint", "density"],

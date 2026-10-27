@@ -91,11 +91,9 @@ process parameter. All rules accept `StateConditioned` scales. Continuous simula
 retains the normal law; node simulation uses the selected matrix.
 
 Density-rule differentiation uses normalized scaled arithmetic without a host
-certificate. A private `_lcm` developer/test checker can certify deliberately supplied
-rows against a dimensionless absolute-plus-relative budget (`1e-12` at float64, `1e-5`
-at float32), or raise `DensityDerivativeAccuracyError`. It adds no check to solve,
-simulation or routine AD and is not a public model-validation API. See the
-[finite-row guarantee and developer invocation](../user_guide/continuous_stochastic_processes.md).
+certificate. A componentwise accuracy certificate exists only as a test oracle and adds
+no check to solve, simulation or routine AD. See
+[density derivatives](../user_guide/continuous_stochastic_processes.md).
 
 A process owns its transition mechanism. Adding a second law under `state_transitions`
 is an ambiguous declaration and is rejected.
