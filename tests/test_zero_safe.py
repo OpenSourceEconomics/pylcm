@@ -21,6 +21,7 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose
 
+from _lcm.certainty_equivalent import _scaled_lottery_terms_with_scale
 from _lcm.regime_building.zero_safe import zero_safe_average
 from lcm.typing import FloatND
 from tests.conftest import DECIMAL_PRECISION
@@ -297,6 +298,164 @@ def test_scaled_mean_retains_partials_below_its_numerator_range(
         )
     assert_allclose(
         value_partials, expected_value_array, rtol=10.0**-DECIMAL_PRECISION, atol=0
+    )
+
+
+@pytest.mark.parametrize("mode", ["eager", "jit", "vmap"])
+@pytest.mark.parametrize("coefficient_factor", [0.5, 1.0, 2.0, 1048576.0])
+@pytest.mark.parametrize(
+    "case",
+    [
+        "equal",
+        "unequal",
+        "negative",
+        "permuted",
+        "shifted",
+        "dead_finite",
+        "dead_nonfinite",
+    ],
+)
+def test_scaled_mean_preserves_small_values_and_partials(
+    *, mode: str, coefficient_factor: float, case: str
+) -> None:
+    """Coefficient magnitude cannot erase a normal normalized mean."""
+    values, coefficients, shifts, _, _ = _get_tiny_level_derivative_specimen(case=case)
+    coefficients = tuple(c * coefficient_factor for c in coefficients)
+    finite_nodes = tuple(i for i, value in enumerate(values) if np.isfinite(value))
+    expected_mean, expected_coefficients, expected_values = _scaled_mean_reference(
+        values=tuple(values[i] for i in finite_nodes),
+        weights=tuple(coefficients[i] for i in finite_nodes),
+        shifts=tuple(shifts[i] for i in finite_nodes),
+    )
+    if case == "dead_nonfinite":
+        expected_coefficients = (*expected_coefficients, 0.0)
+        expected_values = (*expected_values, 0.0)
+    dtype = np.dtype(jnp.asarray(1.0).dtype)
+    scales = jnp.asarray(shifts, dtype=jnp.int32)
+
+    def mean_and_derivatives(
+        *, values: FloatND, coefficients: FloatND
+    ) -> tuple[FloatND, FloatND, FloatND, FloatND]:
+        def average(weight: FloatND) -> FloatND:
+            return zero_safe_average(a=values, weights=weight, shifts=scales)
+
+        def value_average(value: FloatND) -> FloatND:
+            return zero_safe_average(a=value, weights=coefficients, shifts=scales)
+
+        return (
+            average(coefficients),
+            jax.grad(average)(coefficients),
+            jax.jacfwd(average)(coefficients),
+            jax.grad(value_average)(values),
+        )
+
+    operands = {
+        "values": jnp.asarray(values),
+        "coefficients": jnp.asarray(coefficients),
+    }
+    expected = (
+        np.asarray(expected_mean, dtype=dtype),
+        np.asarray(expected_coefficients, dtype=dtype),
+        np.asarray(expected_coefficients, dtype=dtype),
+        np.asarray(expected_values, dtype=dtype),
+    )
+    assert abs(expected_mean) >= np.finfo(dtype).tiny
+    evaluate = mean_and_derivatives
+    if mode == "jit":
+        evaluate = jax.jit(evaluate)
+    elif mode == "vmap":
+        evaluate = jax.jit(jax.vmap(evaluate))
+        operands = {name: jnp.stack([value, value]) for name, value in operands.items()}
+        expected = tuple(np.stack([value, value]) for value in expected)
+    for actual, reference in zip(evaluate(**operands), expected, strict=True):
+        assert_allclose(actual, reference, rtol=10.0**-DECIMAL_PRECISION, atol=0)
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+@pytest.mark.parametrize("common_shift", [-(2**31), 2**31 - 1])
+def test_small_scaled_mean_ignores_common_shift_gauge(
+    *, enable_jit: bool, common_shift: int
+) -> None:
+    """Common endpoint offsets cancel before coefficient exponent arithmetic."""
+    values, coefficients, _, _, _ = _get_tiny_level_derivative_specimen(case="unequal")
+    expected, slopes, _ = _scaled_mean_reference(
+        values=values, weights=coefficients, shifts=(0, 0)
+    )
+    shifts = jnp.full(2, common_shift, dtype=jnp.int32)
+    value_array = jnp.asarray(values)
+
+    def average(weight: FloatND) -> FloatND:
+        return zero_safe_average(a=value_array, weights=weight, shifts=shifts)
+
+    evaluate = jax.value_and_grad(average)
+    if enable_jit:
+        evaluate = jax.jit(evaluate)
+    mean, actual_slopes = evaluate(jnp.asarray(coefficients))
+    assert_allclose(mean, expected, rtol=10.0**-DECIMAL_PRECISION, atol=0)
+    assert_allclose(actual_slopes, slopes, rtol=10.0**-DECIMAL_PRECISION, atol=0)
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+@pytest.mark.parametrize("dead_shift", [-(2**31), 2**31 - 1])
+def test_zero_weight_extreme_shift_keeps_a_zero_finite_right_partial(
+    *, enable_jit: bool, dead_shift: int
+) -> None:
+    """A finite null node equal to the mean has exactly zero weight slope."""
+    dtype = jnp.asarray(1.0).dtype
+    tiny = jnp.finfo(dtype).tiny
+    level = jnp.asarray(tiny * 2.0 ** (jnp.finfo(dtype).nmant - 2), dtype=dtype)
+    values = jnp.full(3, level)
+    shifts = jnp.asarray([0, 0, dead_shift], dtype=jnp.int32)
+
+    def average(weight: FloatND) -> FloatND:
+        return zero_safe_average(a=values, weights=weight, shifts=shifts)
+
+    evaluate = jax.value_and_grad(average)
+    if enable_jit:
+        evaluate = jax.jit(evaluate)
+    mean, slopes = evaluate(jnp.asarray([tiny, tiny, 0.0], dtype=dtype))
+    assert_allclose(mean, level, rtol=10.0**-DECIMAL_PRECISION, atol=0)
+    assert_allclose(slopes, np.zeros(3), rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+@pytest.mark.parametrize("coefficient_factor", [0.5, 1.0, 2.0, 1048576.0])
+def test_normalized_lottery_terms_keep_the_physical_returned_scale(
+    *, enable_jit: bool, coefficient_factor: float
+) -> None:
+    """The helper scale reconstructs the original represented-input measure."""
+
+    values, coefficients, _, _, _ = _get_tiny_level_derivative_specimen(case="unequal")
+    coefficients = tuple(c * coefficient_factor for c in coefficients)
+    shifts = (0, 3)
+    evaluate = _scaled_lottery_terms_with_scale
+    if enable_jit:
+        evaluate = jax.jit(evaluate)
+    terms, masses, common_scale = evaluate(
+        values=jnp.asarray(values),
+        coefficients=jnp.asarray(coefficients),
+        shifts=jnp.asarray(shifts, dtype=jnp.int32),
+    )
+    scale = int(np.asarray(common_scale).item())
+    expected_masses = tuple(
+        Fraction(c) * Fraction(2) ** (scale - shift)
+        for c, shift in zip(coefficients, shifts, strict=True)
+    )
+    expected_terms = tuple(
+        mass * Fraction(v) for mass, v in zip(expected_masses, values, strict=True)
+    )
+    dtype = np.dtype(jnp.asarray(1.0).dtype)
+    assert_allclose(
+        masses,
+        np.asarray(tuple(map(float, expected_masses)), dtype=dtype),
+        rtol=10.0**-DECIMAL_PRECISION,
+        atol=0,
+    )
+    assert_allclose(
+        terms,
+        np.asarray(tuple(map(float, expected_terms)), dtype=dtype),
+        rtol=10.0**-DECIMAL_PRECISION,
+        atol=0,
     )
 
 
