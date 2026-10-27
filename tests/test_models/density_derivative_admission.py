@@ -1,20 +1,21 @@
-"""Certify normalized normal-density derivatives using bounded IEEE enclosures."""
+"""Certify normalized normal-density derivatives using bounded IEEE enclosures.
+
+This is a test oracle. Solve, simulation and routine JAX differentiation never
+run it; it checks only rows a test hands to `certify_density_derivative_row`.
+"""
 
 import math
 from itertools import accumulate
 
 import numpy as np
-from jax import Array
 from jaxtyping import Bool, Float, Int
 
-from lcm.exceptions import DensityDerivativeAccuracyError
+from _lcm.processes.ar1 import _density_derivative_data
+from lcm.typing import Float1D, FloatND
 
 type _HostFloat = Float[np.ndarray, "..."]
 type _HostInt = Int[np.ndarray, "..."]
 type _HostBool = Bool[np.ndarray, "..."]
-type _CallbackFloat = _HostFloat | Float[Array, "..."]
-type _CallbackInt = _HostInt | Int[Array, "..."]
-type _CallbackBool = _HostBool | Bool[Array, "..."]
 
 # Fixed-size words retain physical exponents without physical underflow.
 type _Word = tuple[float, int]
@@ -26,6 +27,39 @@ _NORMAL_MANTISSA_MIN = 0.5
 _WORD_EXPONENT_LIMIT = -_ZERO[1]
 _SELECTED_EXP_MIN = 0.25
 _SELECTED_EXP_MAX = 4.0
+
+
+class DensityDerivativeAccuracyError(ArithmeticError):
+    """Raised when the certificate cannot place a row within its accuracy budget."""
+
+
+def certify_density_derivative_row(
+    operands: tuple[Float1D, FloatND, FloatND, FloatND, FloatND],
+) -> None:
+    """Certify all local unit partials of one `(nodes, mu, rho, source, sigma)` row.
+
+    Raises `DensityDerivativeAccuracyError` when any component of the scaled
+    coefficient words cannot be certified against the dimensionless budget.
+    """
+    _contrasts, mantissas, exponents, reference, exp_metadata = (
+        _density_derivative_data(operands)
+    )
+    nodes, location, rho, source, sigma = operands
+    residuals, powers, selected_exp, active = exp_metadata
+    _certify_density_coefficients(
+        nodes=np.asarray(nodes),
+        location=np.asarray(location),
+        rho=np.asarray(rho),
+        source=np.asarray(source),
+        sigma=np.asarray(sigma),
+        reference=np.asarray(reference),
+        residuals=np.asarray(residuals),
+        powers=np.asarray(powers),
+        selected_exp=np.asarray(selected_exp),
+        active=np.asarray(active),
+        coefficient_mantissas=np.asarray(mantissas),
+        coefficient_exponents=np.asarray(exponents),
+    )
 
 
 def _normal(*, value: float, exponent: int = 0) -> _Word:
@@ -371,7 +405,7 @@ def _fail_if_invalid_density_arrays(
     coefficient_mantissas: _HostFloat,
     coefficient_exponents: _HostInt,
 ) -> None:
-    """Require the callback shapes and IEEE formats used by the bound."""
+    """Require the array shapes and IEEE formats used by the bound."""
     if nodes.dtype not in (np.dtype("float32"), np.dtype("float64")):
         raise DensityDerivativeAccuracyError(
             "density derivative admission requires binary32 or binary64"
@@ -453,7 +487,7 @@ def _certify_density_coefficients(
 ) -> tuple[_HostFloat, _HostInt]:
     """Return only coefficients whose represented-input law is certified.
 
-    The host callback uses fixed-size IEEE words, not arbitrary precision.
+    The host check uses fixed-size IEEE words, not arbitrary precision.
     It certifies coefficients, never numerical tangent values. Unresolved
     cancellation raises before opaque words enter the linear tangent map.
     """
@@ -597,35 +631,3 @@ def _certify_density_coefficients(
                     f"destination node {index}."
                 )
     return coefficient_mantissas, coefficient_exponents
-
-
-# keyword-only-exempt: library-callback=jax.experimental.io_callback
-def _checked_density_coefficients(
-    nodes: _CallbackFloat,
-    location: _CallbackFloat,
-    rho: _CallbackFloat,
-    source: _CallbackFloat,
-    sigma: _CallbackFloat,
-    reference: _CallbackInt,
-    residuals: _CallbackFloat,
-    powers: _CallbackInt,
-    selected_exp: _CallbackFloat,
-    active: _CallbackBool,
-    coefficient_mantissas: _CallbackFloat,
-    coefficient_exponents: _CallbackInt,
-) -> tuple[_HostFloat, _HostInt]:
-    """Resolve host callback array objects before checked NumPy arithmetic."""
-    return _certify_density_coefficients(
-        nodes=np.asarray(nodes),
-        location=np.asarray(location),
-        rho=np.asarray(rho),
-        source=np.asarray(source),
-        sigma=np.asarray(sigma),
-        reference=np.asarray(reference),
-        residuals=np.asarray(residuals),
-        powers=np.asarray(powers),
-        selected_exp=np.asarray(selected_exp),
-        active=np.asarray(active),
-        coefficient_mantissas=np.asarray(coefficient_mantissas),
-        coefficient_exponents=np.asarray(coefficient_exponents),
-    )
