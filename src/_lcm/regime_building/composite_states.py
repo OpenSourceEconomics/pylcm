@@ -97,8 +97,8 @@ class CompositeLowering:
     member_labels: tuple[tuple[str, ...], ...]
     """Category labels of every member, in code order."""
 
-    member_grids: Mapping[RegimeName, Mapping[StateName, DiscreteGrid]] | None = None
-    """Original member grids, absent in archives predating grid introspection."""
+    member_grids: Mapping[RegimeName, Mapping[StateName, DiscreteGrid]]
+    """Original member grids of every carrier regime."""
 
     @property
     def labels(self) -> tuple[str, ...]:
