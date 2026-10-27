@@ -890,13 +890,20 @@ class _BoundNEGM(NEGM):
 def _with_declared_keeper_reads(
     *, kernel: PeriodKernel, context: SolverBuildContext, period: int
 ) -> PeriodKernel:
-    """Return one NEGM period's adapter rebuilt around a declaring keeper."""
+    """Return one NEGM period's adapter rebuilt around a declaring keeper.
+
+    The adjuster is rebuilt the same way, so the outer sweep, whose arguments
+    are the adjuster's, receives only the carries of the period's targets.
+    """
     if not isinstance(kernel, _NEGMPeriodKernel):
         return kernel
     return replace(
         kernel,
         keeper_kernel=dcegm_kernel_with_declared_reads(
             kernel=kernel.keeper_kernel, context=context, period=period
+        ),
+        adjuster_kernel=dcegm_kernel_with_declared_reads(
+            kernel=kernel.adjuster_kernel, context=context, period=period
         ),
     )
 

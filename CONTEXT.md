@@ -39,6 +39,16 @@ A transition from a source regime to a target regime, declared with the model's
 edges.
 _Avoid_: arc, link, regime transition (that is the probability of taking an edge)
 
+**Period target**:
+A regime that a source regime may enter at the next period along an edge that
+period's graph retains. It is a one-step property of a source and a period.
+_Avoid_: reachable regime, reachable target
+
+**Reachable regime**:
+A regime some subject can be in at a given period, given the regimes the subjects
+start in; the forward closure of period targets from the starting regimes.
+_Avoid_: period target, active regime (an active regime need not be reachable)
+
 **Regime-transition law**:
 The law that decides which of a source regime's outgoing edges a subject takes,
 together with any gates, gate references and route fallbacks declared with it. It

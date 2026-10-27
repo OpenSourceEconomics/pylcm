@@ -23,6 +23,7 @@ from _lcm.solution.feasibility import (
     FeasibilityKernelOutput,
     validate_query_input_status,
 )
+from _lcm.solution.period_capture import computed_next_values
 from _lcm.solution.period_replay import _load_capture_payload
 from _lcm.typing import FlatRegimeParams
 from lcm import (
@@ -77,7 +78,9 @@ def _capture_with_checks_off(
     assert isinstance(kernel, _DCEGMPeriodKernel | _EGMPeriodKernel)
     return kernel, {
         "state_action_space": inputs["state_action_space"],
-        "next_regime_to_V_arr": inputs["next_regime_to_V_arr"],
+        "next_regime_to_V_arr": computed_next_values(
+            next_regime_to_V_arr=inputs["next_regime_to_V_arr"]
+        ),
         "next_regime_to_continuation": inputs["next_regime_to_continuation"],
         "flat_params": inputs["flat_params"],
         "period": inputs["period"],

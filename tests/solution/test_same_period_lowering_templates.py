@@ -102,6 +102,7 @@ def test_program_builder_templates_the_same_period_slot_with_the_reference_V() -
     """
     builder = _GridSearchArgumentBuilder(
         regime_name="couple",
+        target_regimes=("single",),
         same_period_ref_regimes=("single",),
         edge_target_regimes=("single",),
     )

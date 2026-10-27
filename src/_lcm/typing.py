@@ -109,6 +109,10 @@ type EconFunctionArg = (
 # The arguments of a user economic function, keyed by the names they reference.
 type EconFunctionKwargs = Mapping[ReferenceName, EconFunctionArg]
 
+# A value array, or its abstract description: shape, dtype and sharding without data.
+# Programs are lowered against the abstract form and called with the concrete one.
+type ValueTemplate = FloatND | jax.ShapeDtypeStruct
+
 # One argument of a generated `QAndFFunction` or `MaxQOverAFunction`: an argument
 # of a user function, or a per-regime mapping of value arrays or of flat params.
 type QAndFArg = (

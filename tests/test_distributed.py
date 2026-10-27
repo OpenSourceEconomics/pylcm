@@ -47,7 +47,7 @@ from _lcm.grids.discrete import DiscreteGrid
 from _lcm.params.edges import regime_kernel_params
 from _lcm.solution import backward_induction
 from _lcm.solution.v_topology import (
-    _build_zero_V_arr,
+    _build_V_arr_template,
     _get_regime_V_shapes_and_shardings,
 )
 from _lcm.typing import ArgumentTree
@@ -600,8 +600,14 @@ def _compiled_solve_kernel_hlo(
     topology = _get_regime_V_shapes_and_shardings(
         regimes=regimes, flat_params=flat_params
     )
+    templates = {
+        name: _build_V_arr_template(topology=topo) for name, topo in topology.items()
+    }
     next_regime_to_V_arr = MappingProxyType(
-        {name: _build_zero_V_arr(topology=topo) for name, topo in topology.items()}
+        {
+            name: jnp.zeros(t.shape, dtype=t.dtype, device=t.sharding)
+            for name, t in templates.items()
+        }
     )
     regime = regimes[regime_name]
     period_kernel = regime.solution.period_kernels[period]

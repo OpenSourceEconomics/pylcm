@@ -219,6 +219,7 @@ from _lcm.solution.period_capture import (
     PeriodCaptureTarget,
     PeriodKernelKwargs,
     capture_kernel_inputs,
+    computed_next_values,
     resolve_capture_target,
 )
 from _lcm.solution.public_period_capture import (
@@ -242,7 +243,7 @@ from _lcm.solution.structural_blueprints import (
 )
 from _lcm.solution.undeclared_reads import undeclared_read_pins
 from _lcm.solution.v_topology import (
-    _build_zero_V_arr,
+    _build_V_arr_template,
     _get_regime_V_shapes_and_shardings,
     _RegimeVTopology,
     placed_V_sharding,
@@ -267,6 +268,7 @@ from _lcm.typing import (
     SimulationPolicy,
     StateName,
     ValueND,
+    ValueTemplate,
 )
 from _lcm.utils.counts import add_counts
 from _lcm.utils.logging import (
@@ -524,7 +526,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         )
 
     with solve_phase(name="continuation_templates", logger=logger, call_id=call_id):
-        next_regime_to_V_arr, next_regime_to_continuation, next_edge_to_V_arr = (
+        V_templates, next_regime_to_continuation, edge_templates = (
             _build_continuation_templates(
                 regimes=regimes,
                 flat_params=flat_params,
@@ -540,9 +542,9 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         program_fingerprint=program_fingerprint,
         flat_params=flat_params,
         ages=ages,
-        next_regime_to_V_arr=next_regime_to_V_arr,
+        next_regime_to_V_arr=V_templates,
         next_regime_to_continuation=next_regime_to_continuation,
-        next_edge_to_V_arr=next_edge_to_V_arr,
+        next_edge_to_V_arr=edge_templates,
         enable_jit=enable_jit,
         execution=resolved_execution,
         capture_periods=()
@@ -582,16 +584,20 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     # of a compilation key — so the loop commits to the one they were keyed by
     # rather than building a second.
     input_liveness = compiled_programs.input_liveness
-    input_templates = SolveInputMappings(
-        next_regime_to_V_arr=next_regime_to_V_arr,
+    input_templates: SolveInputMappings[ValueTemplate] = SolveInputMappings(
+        next_regime_to_V_arr=V_templates,
         next_regime_to_continuation=next_regime_to_continuation,
-        next_edge_to_V_arr=next_edge_to_V_arr,
+        next_edge_to_V_arr=edge_templates,
     )
+    # The rolling V and gated-edge mappings hold only values the solve has
+    # computed; before the last period there are none.
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND] = MappingProxyType({})
+    next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND] = MappingProxyType({})
     buffer_registry = BufferRegistry()
-    # The templates live for the whole solve and stand in the mappings wherever
-    # a key's buffer has gone — a period that rolls one forward unchanged, a
-    # released key, a donated one. Declaring them here makes that a property of
-    # the buffer rather than of each release decision.
+    # The continuation templates live for the whole solve and stand in the carry
+    # mapping wherever a key's buffer has gone — a period that rolls one forward
+    # unchanged, a released key, a donated one. Declaring them here makes that a
+    # property of the buffer rather than of each release decision.
     buffer_registry.declare_not_produced(
         tree=(
             flat_params,
@@ -875,6 +881,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                             capture_target=capture_target,
                             run_kernel=functools.partial(
                                 _run_period_kernel,
+                                V_templates=input_templates.next_regime_to_V_arr,
                                 period_capture=period_capture,
                                 captured_admission=compiled_programs.capture_admission.get(
                                     (regime_name, period), MappingProxyType({})
@@ -1223,13 +1230,13 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                     period_dissolution_flags=period_dissolution_flags,
                     base_state_action_spaces=base_state_action_spaces,
                     flat_params=flat_params,
-                    next_edge_to_V_arr=next_edge_to_V_arr,
+                    edge_templates=input_templates.next_edge_to_V_arr,
                 )
                 # The fold is a dispatch unit in its own right, and it passes a great
-                # deal through: an edge it does not fold keeps its previous Wbar, and
-                # the sharding match a folded one ends in returns its argument whenever
-                # the shardings already agree. Its grids and params need no mention —
-                # those are declared for the whole solve before the first dispatch.
+                # deal through: the sharding match a folded edge ends in returns its
+                # argument whenever the shardings already agree. Its grids and params
+                # need no mention — those are declared for the whole solve before the
+                # first dispatch.
                 buffer_registry.declare_passed_through(
                     inputs=(
                         next_edge_to_V_arr,
@@ -1279,7 +1286,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                         regimes=regimes,
                         period_solution=period_solution,
                         period_continuations=period_continuations,
-                        next_regime_to_V_arr=next_regime_to_V_arr,
+                        V_templates=input_templates.next_regime_to_V_arr,
                         next_regime_to_continuation=next_regime_to_continuation,
                     )
                 )
@@ -1477,7 +1484,7 @@ def _run_period_kernel(
     state_action_space: StateActionSpace,
     flat_params: FlatParams,
     ages: TimeAxis,
-    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+    next_regime_to_V_arr: MappingProxyType[RegimeName, ValueTemplate],
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
     logger: logging.Logger,
     next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
@@ -1486,6 +1493,7 @@ def _run_period_kernel(
     selected_artifact_keys: frozenset[ArtifactKey],
     period_capture: CaptureContext | None = None,
     captured_admission: Mapping[str, Mapping[str, int | None]] = MappingProxyType({}),
+    V_templates: Mapping[RegimeName, ValueTemplate] = MappingProxyType({}),
 ) -> KernelOutput:
     """Invoke one regime's period adapter for one period.
 
@@ -1504,6 +1512,12 @@ def _run_period_kernel(
     regime name, which the grid-search kernel substitutes for the raw target V in
     `next_regime_to_V_arr`. Every other regime's adapter is called with the
     unchanged uniform signature.
+
+    A capture records the next-period values of every regime in `V_templates`'s
+    order. A regime the rolling mapping does not hold is recorded from its
+    template and never placed on the device; no program reads it. A replay
+    hands such a regime's template in its place, and the adapter is dispatched
+    without it.
 
     `period`/`age` are passed as JAX arrays (not Python scalars) so a shared
     `jax.jit` function is traced once with abstract shapes, not recompiled
@@ -1542,6 +1556,7 @@ def _run_period_kernel(
         kernel_kwargs=kernel_kwargs,
         compiled_cores=compiled_cores,
         admission=captured_admission,
+        next_value_templates=V_templates,
     )
     capture_kernel_inputs(
         capture_target=capture_target,
@@ -1550,6 +1565,7 @@ def _run_period_kernel(
         period=period,
         compiled_cores=compiled_cores,
         kernel_kwargs=kernel_kwargs,
+        next_value_templates=V_templates,
     )
 
     # AGE-SPECIALIZED STATES: tabulate period-t's value function on period-t's grid
@@ -1592,7 +1608,9 @@ def _run_period_kernel(
         logger=logger,
     )
 
-    same_period_kwargs: dict[ReferenceName, MappingProxyType[RegimeName, FloatND]] = {}
+    same_period_kwargs: dict[
+        ReferenceName, MappingProxyType[RegimeName, ValueTemplate]
+    ] = {}
     if regime.same_period_ref_regimes:
         same_period_kwargs["same_period_regime_to_V_arr"] = MappingProxyType(
             {
@@ -1611,7 +1629,9 @@ def _run_period_kernel(
     output = period_kernel(
         compiled_cores=compiled_cores,
         state_action_space=state_action_space,
-        next_regime_to_V_arr=next_regime_to_V_arr,
+        next_regime_to_V_arr=computed_next_values(
+            next_regime_to_V_arr=next_regime_to_V_arr
+        ),
         next_regime_to_continuation=next_regime_to_continuation,
         flat_params=flat_params,
         period=period,
@@ -1676,7 +1696,7 @@ def _query_block_status(
 
 def _run_dispatch_unit(
     *,
-    value_template: FloatND,
+    value_template: ValueTemplate,
     regime: Regime,
     regime_name: RegimeName,
     period: int,
@@ -1992,7 +2012,7 @@ def _roll_continuation_inputs(
     regimes: MappingProxyType[RegimeName, Regime],
     period_solution: dict[RegimeName, FloatND],
     period_continuations: dict[RegimeName, ContinuationPayload],
-    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+    V_templates: MappingProxyType[RegimeName, ValueTemplate],
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
 ) -> tuple[
     MappingProxyType[RegimeName, FloatND],
@@ -2000,15 +2020,17 @@ def _roll_continuation_inputs(
 ]:
     """Roll the per-period continuation mappings forward by one period.
 
-    Both mappings keep their full template key sets — V for every regime,
-    carries for every carry-producing regime — and update only the entries
-    solved this period, so the pytree structure stays JIT-stable.
+    The V mapping holds exactly the regimes solved this period: a period
+    program reads only its period targets, which are active, and so solved, at
+    the next period. A regime inactive this period drops out, and nothing keeps
+    its earlier value alive for the roll.
 
-    The `.get(..., prior)` fallback is for regimes *inactive* this period: they
-    keep the prior period's entry. It relies on the invariant that every
-    continuation-publishing regime publishes on each of its active periods — the
-    solve loop enforces this before rolling, so an active publisher can never
-    fall through to the stale prior carry here.
+    The carry mapping keeps its full template key set — a carry for every
+    carry-producing regime — and updates only the entries solved this period.
+    A regime *inactive* this period keeps the prior period's entry. That relies
+    on the invariant that every continuation-publishing regime publishes on
+    each of its active periods — the solve loop enforces this before rolling,
+    so an active publisher can never fall through to the stale prior carry.
 
     Returns:
         Tuple of the rolled V mapping and the rolled carry mapping.
@@ -2018,11 +2040,10 @@ def _roll_continuation_inputs(
         {
             regime_name: _match_leaf_template_sharding(
                 leaf=period_solution[regime_name],
-                template_leaf=next_regime_to_V_arr[regime_name],
+                template_leaf=V_templates[regime_name],
             )
-            if regime_name in period_solution
-            else next_regime_to_V_arr[regime_name]
             for regime_name in regimes
+            if regime_name in period_solution
         }
     )
     rolled_continuation = MappingProxyType(
@@ -2055,16 +2076,16 @@ def _roll_gated_edges(
     period_dissolution_flags: dict[RegimeName, BoolND],
     base_state_action_spaces: dict[RegimeName, StateActionSpace],
     flat_params: FlatParams,
-    next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
+    edge_templates: MappingProxyType[_EdgeKey, ValueTemplate],
 ) -> MappingProxyType[_EdgeKey, FloatND]:
-    """Fold every gated edge whose target was solved this period; roll the rest.
+    """Fold every gated edge whose target was solved this period.
 
     For each declared edge whose target regime (and
     every reference regime it reads) was solved in the period just completed,
     evaluate its `Wbar` producer on the still-live period-`t` arrays and
-    store it; edges whose target is inactive this period keep their previous
-    `Wbar` (the roll semantics of `next_regime_to_V_arr`). Keeps the full key
-    set so the pytree structure stays JIT-stable.
+    store it. The returned mapping holds exactly those edges: a source at
+    `t - 1` reads the `Wbar` of its period targets only, and each of those is
+    folded here, so an edge this period does not fold drops out.
 
     Which of the two an edge gets is `edge_may_fold_at_period`'s answer, the
     same one forward simulation consults. The fold at period `t` is read by
@@ -2080,9 +2101,7 @@ def _roll_gated_edges(
     bounds move with age, so reading the representative axis instead passes
     every shape check and folds the value at the wrong coordinates.
     """
-    if not next_edge_to_V_arr:
-        return next_edge_to_V_arr
-    rolled: dict[_EdgeKey, FloatND] = dict(next_edge_to_V_arr)
+    rolled: dict[_EdgeKey, FloatND] = {}
     for source_name, target_name in _folded_edge_keys_at_period(
         regimes=regimes,
         period=period,
@@ -2116,7 +2135,7 @@ def _roll_gated_edges(
         )
         rolled[(source_name, target_name)] = _match_leaf_template_sharding(
             leaf=wbar,
-            template_leaf=next_edge_to_V_arr[(source_name, target_name)],
+            template_leaf=edge_templates[(source_name, target_name)],
         )
     return MappingProxyType(rolled)
 
@@ -2294,7 +2313,7 @@ def _publish_kernel_value(
     *,
     value: FloatND,
     compiled_cores: Mapping[str, PlannedCore],
-    assembled_template: FloatND | None = None,
+    assembled_template: ValueTemplate | None = None,
 ) -> FloatND:
     """Publish a period value after asserting its planned placement.
 
@@ -2336,7 +2355,7 @@ def _publish_kernel_value(
     return value
 
 
-def _assert_assembled_value_layout(*, value: FloatND, template: FloatND) -> None:
+def _assert_assembled_value_layout(*, value: FloatND, template: ValueTemplate) -> None:
     """Assert that a value assembled from blocks has its template's layout."""
     if (value.shape, value.dtype) != (
         template.shape,
@@ -2352,7 +2371,9 @@ def _assert_assembled_value_layout(*, value: FloatND, template: FloatND) -> None
         raise AssertionError(msg)
 
 
-def _match_leaf_template_sharding(*, leaf: ValueND, template_leaf: ValueND) -> ValueND:
+def _match_leaf_template_sharding(
+    *, leaf: ValueND, template_leaf: ValueND | jax.ShapeDtypeStruct
+) -> ValueND:
     """Place one solved array on its template's device sharding (no-op on match).
 
     Applied where a solved value array is published and where the continuation
@@ -2397,20 +2418,22 @@ def _build_continuation_templates(
     device_ids: tuple[int, ...] = (),
     process_grid_resolver: ProcessGridResolver | None = None,
 ) -> tuple[
-    MappingProxyType[RegimeName, FloatND],
+    MappingProxyType[RegimeName, jax.ShapeDtypeStruct],
     MappingProxyType[RegimeName, ContinuationPayload],
-    MappingProxyType[_EdgeKey, FloatND],
+    MappingProxyType[_EdgeKey, jax.ShapeDtypeStruct],
 ]:
     """Build the period-invariant continuation-input templates.
 
     All mappings keep the same pytree structure (keys and shapes) across all
-    periods, avoiding JIT re-compilation from pytree mismatches:
+    periods, avoiding JIT re-compilation from pytree mismatches. The V and
+    gated-edge templates occupy no device memory: programs are lowered against
+    them but never called with them.
 
-    - the V template holds a zero array per regime, shaped (and sharded) like
-      the regime's V array;
+    - the V template holds an abstract array per regime, shaped (and sharded)
+      like the regime's V array;
     - the continuation template holds entries only for continuation-publishing
       regimes, in the key order reused every period;
-    - the gated-edge template holds a zero `Wbar` per declared edge,
+    - the gated-edge template holds an abstract `Wbar` per declared edge,
       shaped like the target regime's V state grid plus the source regime's
       stakeholder axis (a singleton source: the target grid alone). Empty for
       models without gated edges, so the default path only gains an empty third
@@ -2424,7 +2447,7 @@ def _build_continuation_templates(
     )
     next_regime_to_V_arr = MappingProxyType(
         {
-            regime_name: _build_zero_V_arr(topology=topology)
+            regime_name: _build_V_arr_template(topology=topology)
             for regime_name, topology in regime_V_topology.items()
         }
     )
@@ -2437,7 +2460,7 @@ def _build_continuation_templates(
     )
     next_edge_to_V_arr = MappingProxyType(
         {
-            (source_name, target_name): _build_zero_V_arr(topology=topology)
+            (source_name, target_name): _build_V_arr_template(topology=topology)
             for source_name, target_name, topology in _iter_edge_topologies(
                 regimes=regimes,
                 flat_params=flat_params,
@@ -2453,14 +2476,17 @@ def _edge_kwargs(
     *,
     regime: Regime,
     regime_name: RegimeName,
-    next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
-) -> MappingProxyType[ReferenceName, MappingProxyType[RegimeName, FloatND]]:
+    next_edge_to_V_arr: MappingProxyType[_EdgeKey, ValueTemplate],
+) -> MappingProxyType[ReferenceName, MappingProxyType[RegimeName, ValueTemplate]]:
     """Build a source kernel's gated-edge `Wbar` argument, keyed by target.
 
     The kernel substitutes each entry for the raw target V in
-    `next_regime_to_V_arr`. Lowering and execution both go through this one
-    function, so the pytree the kernel is compiled against is the pytree it is
-    called with. Empty for a regime declaring no gated edge.
+    `next_regime_to_V_arr`. Lowering passes the solve-lifetime templates, so
+    every declared edge is present there; execution passes the rolling mapping,
+    which holds only the edges folded in the period just completed. A program
+    reads the entries of its period targets alone, and each of those is folded,
+    so both see the same entries for those targets. Empty for a regime
+    declaring no gated edge.
     """
     if not regime.gated_edges:
         return MappingProxyType({})
@@ -2470,6 +2496,7 @@ def _edge_kwargs(
                 {
                     target_name: next_edge_to_V_arr[(regime_name, target_name)]
                     for target_name in regime.gated_edges
+                    if (regime_name, target_name) in next_edge_to_V_arr
                 }
             )
         }
@@ -2644,8 +2671,8 @@ def _select_runtime_donation_cores(
     *,
     compiled_programs: _CompiledPrograms,
     unit: DispatchUnit,
-    inputs: SolveInputMappings,
-    templates: SolveInputMappings,
+    inputs: SolveInputMappings[FloatND],
+    templates: SolveInputMappings[ValueTemplate],
     registry: BufferRegistry,
     logger: logging.Logger,
 ) -> tuple[
@@ -2685,8 +2712,8 @@ def _select_runtime_donation_cores(
 def _donation_ownership_refusal(
     *,
     artifact: ValueArtifactAddress,
-    inputs: SolveInputMappings,
-    templates: SolveInputMappings,
+    inputs: SolveInputMappings[FloatND],
+    templates: SolveInputMappings[ValueTemplate],
     registry: BufferRegistry,
 ) -> str | None:
     """Explain an actual input's ownership conflict without consuming the input."""
@@ -2767,8 +2794,8 @@ def _release_closed_period_inputs(
     ledger: PlannedInputLiveness[_InputDispatch, ValueArtifactAddress],
     registry: BufferRegistry,
     candidates: dict[ValueArtifactAddress, _InputDispatch],
-    inputs: SolveInputMappings,
-    templates: SolveInputMappings,
+    inputs: SolveInputMappings[FloatND],
+    templates: SolveInputMappings[ValueTemplate],
     pending_outputs: Sequence[ValueND],
     logger: logging.Logger,
     release_enabled: bool,
@@ -2864,8 +2891,8 @@ def _donated_input_arrays(
     *,
     donations: Mapping[_CoreTriple, tuple[ResolvedDonation, ...]],
     unit: DispatchUnit,
-    inputs: SolveInputMappings,
-    templates: SolveInputMappings,
+    inputs: SolveInputMappings[FloatND],
+    templates: SolveInputMappings[ValueTemplate],
     registry: BufferRegistry,
 ) -> tuple[_DonatedInput, ...]:
     """Locate every array this unit's executables donate and check its aliases.
@@ -2909,8 +2936,8 @@ def _locate_donated_input(
     artifact: ValueArtifactAddress,
     argument: str,
     unit: DispatchUnit,
-    inputs: SolveInputMappings,
-    templates: SolveInputMappings,
+    inputs: SolveInputMappings[FloatND],
+    templates: SolveInputMappings[ValueTemplate],
     registry: BufferRegistry,
 ) -> _DonatedInput:
     """Find one donated array and refuse a buffer the solve does not own."""
@@ -2943,8 +2970,8 @@ def _retire_donated_inputs(
     *,
     donated_inputs: tuple[_DonatedInput, ...],
     dispatch: _InputDispatch,
-    inputs: SolveInputMappings,
-    templates: SolveInputMappings,
+    inputs: SolveInputMappings[FloatND],
+    templates: SolveInputMappings[ValueTemplate],
     pending_outputs: tuple[tuple[ValueND, ...], _DispatchOutputs],
     registry: BufferRegistry,
     logger: logging.Logger,
@@ -3301,7 +3328,7 @@ def _resident_bytes_by_triple(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     ledger: PlannedInputLiveness,
-    templates: SolveInputMappings,
+    templates: SolveInputMappings[ValueTemplate],
     program_metadata: Mapping[_CoreTriple, _ProgramExecutionMetadata],
     device_ids: tuple[int, ...],
 ) -> MappingProxyType[_CoreTriple, int]:
@@ -3322,7 +3349,7 @@ def _resident_inventory_by_triple(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     ledger: PlannedInputLiveness,
-    templates: SolveInputMappings,
+    templates: SolveInputMappings[ValueTemplate],
     program_metadata: Mapping[_CoreTriple, _ProgramExecutionMetadata],
     device_ids: tuple[int, ...],
     fixed_bytes: MappingProxyType[int, int] = MappingProxyType({}),
@@ -3547,8 +3574,10 @@ def _internal_reservations_by_cell(
     *,
     programs: Mapping[_CoreCandidate, ResolvedCoreProgram],
     templates: Mapping[_CoreCandidate, Mapping[ReferenceName, ShapeDtypePytree]],
+    value_templates: Mapping[RegimeName, ValueTemplate],
+    value_axis_names: Mapping[RegimeName, tuple[StateName, ...]],
 ) -> MappingProxyType[tuple[RegimeName, int], int]:
-    """Reserve future producer subtrees across all cores of their runtime cell.
+    """Reserve runtime-owned arrays across all cores of their cell.
 
     These are not allocations owned by abstract templates. The existing producer
     validator establishes width-invariant subtrees; taking the maximum across
@@ -3556,11 +3585,23 @@ def _internal_reservations_by_cell(
     is extended. A known abstract output sharding supplies its per-device payload;
     otherwise the full logical payload is reserved on every cell device. Neither
     fallback placement nor alias overlap is claimed to be exact allocator storage.
+
+    A value assembled from two or more invariant blocks also holds its complete
+    destination while later block cores run. Those cores report only one block's
+    output, so charge that destination once per cell, independent of code count
+    and width candidates. A one-code value is returned directly and needs none.
     """
     by_cell: dict[tuple[RegimeName, int], dict[tuple[str, str], int]] = {}
+    assembly_bytes: dict[tuple[RegimeName, int], int] = {}
     for candidate, program in programs.items():
         cell = candidate[0][:2]
         sizes = by_cell.setdefault(cell, {})
+        if (binding := program.invariant_binding) is not None:
+            value_template = value_templates[cell[0]]
+            axis = value_axis_names[cell[0]].index(binding.state_name)
+            if value_template.shape[axis] > 1:
+                size = per_device_footprint(array=value_template).bytes_per_device
+                assembly_bytes[cell] = max(assembly_bytes.get(cell, 0), size)
         for name, reference in program.requirements.internal_inputs.items():
             size = sum(
                 _internal_leaf_bytes(leaf=leaf)
@@ -3570,7 +3611,10 @@ def _internal_reservations_by_cell(
             key = (reference.producer, reference.label)
             sizes[key] = max(sizes.get(key, 0), size)
     return MappingProxyType(
-        {cell: sum(sizes.values()) for cell, sizes in by_cell.items()}
+        {
+            cell: sum(sizes.values()) + assembly_bytes.get(cell, 0)
+            for cell, sizes in by_cell.items()
+        }
     )
 
 
@@ -3614,7 +3658,7 @@ def _fold_output_artifacts(
 
 
 def _artifact_footprints(
-    *, ledger: PlannedInputLiveness, templates: SolveInputMappings
+    *, ledger: PlannedInputLiveness, templates: SolveInputMappings[ValueTemplate]
 ) -> dict[ValueArtifactAddress, ArtifactFootprint]:
     """Size every planned artifact the solve-lifetime templates address."""
     footprints: dict[ValueArtifactAddress, ArtifactFootprint] = {}
@@ -3918,9 +3962,9 @@ def _prepare_solve_programs(
     program_fingerprint: str,
     flat_params: FlatParams,
     ages: TimeAxis,
-    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+    next_regime_to_V_arr: MappingProxyType[RegimeName, ValueTemplate],
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
-    next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
+    next_edge_to_V_arr: MappingProxyType[_EdgeKey, ValueTemplate],
     enable_jit: bool,
     execution: ResolvedExecution,
     retain_replay: bool,
@@ -4047,9 +4091,9 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     program_fingerprint: str,
     flat_params: FlatParams,
     ages: TimeAxis,
-    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+    next_regime_to_V_arr: MappingProxyType[RegimeName, ValueTemplate],
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
-    next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
+    next_edge_to_V_arr: MappingProxyType[_EdgeKey, ValueTemplate],
     enable_jit: bool,
     execution: ResolvedExecution,
     retain_replay: bool,
@@ -4278,6 +4322,8 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
             internal_bytes = _internal_reservations_by_cell(
                 programs=resolved_programs,
                 templates=internal_templates,
+                value_templates=next_regime_to_V_arr,
+                value_axis_names=_value_axis_names(regimes=regimes),
             )
             resident_inventory = MappingProxyType(
                 {
@@ -6151,9 +6197,9 @@ def _resolve_output_layouts_and_lowering_keys(
     program_fingerprint: str,
     flat_params: FlatParams,
     ages: TimeAxis,
-    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+    next_regime_to_V_arr: MappingProxyType[RegimeName, ValueTemplate],
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
-    next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
+    next_edge_to_V_arr: MappingProxyType[_EdgeKey, ValueTemplate],
     budget_bytes: int | None,
     execution_widths: ResolvedExecution,
     enable_jit: bool,
@@ -6322,9 +6368,9 @@ def _build_structural_blueprint(
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
     ages: TimeAxis,
-    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+    next_regime_to_V_arr: MappingProxyType[RegimeName, ValueTemplate],
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
-    next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
+    next_edge_to_V_arr: MappingProxyType[_EdgeKey, ValueTemplate],
     budget_bytes: int | None,
     execution_widths: ResolvedExecution,
     continuous_sharded_state: StateName | None,
@@ -6623,9 +6669,9 @@ def _structural_key(
     program_fingerprint: str,
     flat_params: FlatParams,
     ages: TimeAxis,
-    next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+    next_regime_to_V_arr: Mapping[RegimeName, ValueTemplate],
     next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
-    next_edge_to_V_arr: Mapping[_EdgeKey, FloatND],
+    next_edge_to_V_arr: Mapping[_EdgeKey, ValueTemplate],
     base_state_action_spaces: Mapping[RegimeName, StateActionSpace],
     execution: ResolvedExecution,
     budgeted: bool,
@@ -6944,7 +6990,7 @@ def _resolve_program_for_execution(
     *,
     program: MaterializedCoreProgram,
     tile_widths: Mapping[str, int],
-    source_value_template: FloatND,
+    source_value_template: ValueTemplate,
     source: _CoreTriple,
     require_full_next_value: bool = False,
     input_transfer_plan: tuple[ResolvedValueTransfer, ...] | None = None,
@@ -6973,7 +7019,7 @@ def _resolve_program_for_execution(
 def _prepare_abstract_program(
     *,
     program: MaterializedCoreProgram,
-    source_value_template: FloatND,
+    source_value_template: ValueTemplate,
     source: _CoreTriple,
     require_full_next_value: bool = False,
     value_axis_names: Mapping[RegimeName, tuple[StateName, ...]] = MappingProxyType({}),
@@ -7020,7 +7066,7 @@ def _prepare_abstract_program(
 def _resolve_value_input_transfer_plan(
     *,
     program: MaterializedCoreProgram,
-    source_value_template: FloatND,
+    source_value_template: ValueTemplate,
     source: _CoreTriple,
     require_full_next_value: bool = False,
     value_axis_names: Mapping[RegimeName, tuple[StateName, ...]] = MappingProxyType({}),

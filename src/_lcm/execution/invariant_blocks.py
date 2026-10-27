@@ -21,6 +21,7 @@ import functools
 from types import MappingProxyType
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 
 from _lcm.execution.core_program import InvariantBinding
@@ -32,7 +33,7 @@ from _lcm.execution.value_transfer import (
     ValueViewDescriptor,
     ValueViewLeaf,
 )
-from _lcm.typing import StateName
+from _lcm.typing import StateName, ValueTemplate
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import FloatND
 
@@ -75,9 +76,7 @@ def block_state_action_space[SpaceT](
     )
 
 
-def block_value_template(
-    *, template: FloatND | jax.ShapeDtypeStruct, axis: int
-) -> jax.ShapeDtypeStruct:
+def block_value_template(*, template: ValueTemplate, axis: int) -> jax.ShapeDtypeStruct:
     """Describe one block of a regime value: the bound axis at length one."""
     shape = tuple(int(size) for size in template.shape)
     return jax.ShapeDtypeStruct(
@@ -152,15 +151,15 @@ def write_block(
     block: FloatND,
     binding: InvariantBinding,
     axis: int,
-    template: FloatND,
+    template: ValueTemplate,
 ) -> FloatND:
     """Place one block's output into the regime's complete value.
 
-    The first block written goes into a device copy of `template`, the regime's
-    value template, which `device_put` makes without compiling a program; every
-    later block overwrites its own position in that buffer, which is donated, so
-    the complete value is never held twice. Every position is written, so
-    nothing of the template survives.
+    The first block written goes into a fresh zero buffer of `template`'s shape,
+    dtype and placement, filled on the device; every later block overwrites its
+    own position in that buffer, which is donated, so the complete value is never
+    held twice. Every position is written, so nothing of the fresh buffer's
+    contents survives.
     """
     actual = block.sharding
     expected = template.sharding
@@ -182,7 +181,7 @@ def write_block(
         )
     return _write_block(
         value=(
-            jax.device_put(template, template.sharding, may_alias=False)
+            jnp.zeros(template.shape, dtype=template.dtype, device=template.sharding)
             if value is None
             else value
         ),
