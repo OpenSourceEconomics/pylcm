@@ -116,6 +116,10 @@ class NEGMCaseUPoint:
     def passive_names(self) -> tuple[StateName, ...]:
         return (self.outer_state,)
 
+    @property
+    def transition_target_names(self) -> tuple[RegimeName, ...]:
+        return self.owner.transition_target_names
+
     def with_operands(
         self,
         *,

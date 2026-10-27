@@ -695,6 +695,15 @@ branches return only consumed associated channels; unused query metadata stays i
 the original branch solve. Their numeric record annotations permit the actual leading
 mapped axes.
 
+The finite additive NNBEGM source constructs its original keeper and every declared
+outer alternative over the full original NB geometry before current-shock integration. A
+fixed-capacity query insertion retains the complete bank, budget-run topology and
+separate native winner. The selected record supplies its associated value, policy,
+saving and economic marginal. Value germs still order ties; the closed upper node keeps
+its economic marginal even when its right-extension germ is dead. This slice uses
+ordinary terminal children, a literal floor and a common positive affine resource
+Jacobian.
+
 The NB recursion now retains the missing exponent direction at unit risk aversion:
 `dCE/dp = CE * Var(log(value)) / 2` for power exponent `p = 1 - risk_aversion`. The
 continuation kernel reuses the scaled pair variance and supports first-order reverse
@@ -729,7 +738,7 @@ before replay, and a finite budget still refuses those unprofiled copies. The pu
 source variant remains subject to its original Model-to-forward check; this scoped
 connection does not complete cold admission.
 
-This family scope does not complete S10. Genuine nested NB, broader nonlinear-CE
+This family scope does not complete S10. Broader nested NB and nonlinear-CE
 intersections, broader incoming ND families and passive/choice/phase/query/gated/sharded
 intersections, remaining cold finite-budget admission and derivative/archive controls
 stay required. Constructive U source-context/selector/corner topology and refinement,

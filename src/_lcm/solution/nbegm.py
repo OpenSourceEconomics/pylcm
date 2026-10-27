@@ -9054,6 +9054,56 @@ class _NBEGMCellSolver:
     inverse_eis: FloatND | None
     """`1/psi` under Epstein-Zin, else `None` for the additive step."""
 
+    def construct_owned_query_row(
+        self,
+        *,
+        ride_values: tuple[_RideCoordinate, ...],
+        query: Float1D,
+        cont_value: FloatND,
+        cont_marginal: FloatND,
+    ) -> _OwnedNBEGMQueryStep:
+        """Keep the original continuous branch's full query and native-owner data.
+
+        Candidate geometry stays on the original liquid support. The separate
+        query operand supplies publication coordinates, including an exact
+        requested node; it never replaces that geometry.
+        """
+        binder = self.binder
+        statics = binder.statics
+        if (
+            binder.schedule_spec.discrete_actions
+            or statics.has_jump
+            or statics.continuation_reads_liquid
+            or self.inverse_eis is not None
+            or binder.current_predicates is not None
+            or binder.feasibility_constraints
+            or binder.n_published_boundaries
+            or binder.current_floor is not None
+        ):
+            raise UnsupportedOperationError(
+                "Owned nested NB rows require original continuous additive "
+                "literal-floor ordinary-child cells."
+            )
+        branch = _NBEGMBranchSolver(
+            cell_solver=self,
+            cell=MappingProxyType(
+                dict(zip(statics.ride_names, ride_values, strict=True))
+            ),
+            query_grid=self.liquid,
+            feasibility_partition=None,
+            feasible_interval_mask=None,
+            interval_continuation=None,
+        )
+        return branch.solve(
+            action_binding={},
+            branch_cont_value=cont_value,
+            branch_cont_marginal=cont_marginal,
+            branch_extra_cont_value=None,
+            branch_cliff_savings=None,
+            source_query=query,
+            return_owner=True,
+        )
+
     def construct_point(
         self,
         *,

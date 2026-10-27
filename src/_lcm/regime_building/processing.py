@@ -1830,6 +1830,7 @@ class _CanonicalRegimeBuilder:
         from _lcm.solution.dcegm import _BoundDCEGM  # noqa: PLC0415
         from _lcm.solution.nbegm import _BoundNBEGM  # noqa: PLC0415
         from _lcm.solution.negm import _BoundNEGM  # noqa: PLC0415
+        from _lcm.solution.nnbegm import _BoundNNBEGM  # noqa: PLC0415
 
         if any(law.gated_edges or law.arrivals for law in self.laws.values()):
             raise UnsupportedOperationError(
@@ -1849,12 +1850,12 @@ class _CanonicalRegimeBuilder:
         liquid_support = {}
         for (name, period), call in call_contexts.items():
             solver = self.representative_user_regimes[name].solver
-            if isinstance(solver, (_BoundDCEGM, _BoundNBEGM, _BoundNEGM)):
+            if isinstance(solver, (_BoundDCEGM, _BoundNBEGM, _BoundNEGM, _BoundNNBEGM)):
                 if call.state_action_space is None:
                     raise TypeError("Call-owned producer lacks actual state support.")
                 liquid_support[name, period] = call.state_action_space.states[
                     solver.inner.continuous_state
-                    if isinstance(solver, _BoundNEGM)
+                    if isinstance(solver, (_BoundNEGM, _BoundNNBEGM))
                     else solver.continuous_state
                 ]
         from _lcm.solution.current_iid_nd_parents import (  # noqa: PLC0415 - preserve original declaration import order
@@ -1927,7 +1928,10 @@ class _CanonicalRegimeBuilder:
         negm_solvers = {}
         for name, phase in prepared.items():
             actual = phase.solution
-            if isinstance(actual.solver, _BoundNEGM) and not actual.zero_node:
+            if (
+                isinstance(actual.solver, (_BoundNEGM, _BoundNNBEGM))
+                and not actual.zero_node
+            ):
                 negm_solvers[name] = actual.solver
                 continue
             if isinstance(actual.solver, _BoundNBEGM) and not actual.zero_node:
@@ -7398,7 +7402,12 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         user_regime=user_regime,
         law=law,
     )
-    if bound_nnbegm is not None and phase_invariant and not has_taste_shocks:
+    if (
+        bound_nnbegm is not None
+        and phase_invariant
+        and not has_taste_shocks
+        and case_u_replay_spec is None
+    ):
         replay_actions = frozenset(
             (bound_nnbegm.inner.continuous_action, bound_nnbegm.outer_action)
         )

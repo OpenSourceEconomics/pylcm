@@ -25,6 +25,7 @@ from _lcm.egm.current_iid_case_u_replay import (
 from _lcm.egm.current_iid_negm import NEGMCaseUPoint
 from _lcm.egm.current_iid_negm_origin import DatedNEGMCaseUSource
 from _lcm.egm.current_iid_negm_program import NEGMCaseUArguments, NEGMCaseUProgram
+from _lcm.egm.current_iid_nnbegm import NNBEGMCaseUPoint
 from _lcm.egm.outer_inversion import certify_declared_outer_inverse
 from _lcm.egm.preferences import concatenate_regime_function
 from _lcm.egm.projected_continuation import PROJECTED_EGM_CONTINUATION
@@ -68,6 +69,7 @@ from _lcm.solution.negm import (
     _NEGMPeriodKernel,
     _with_no_adjustment_outer_function,
 )
+from _lcm.solution.nnbegm import _BoundNNBEGM
 from _lcm.time import TimeAxis
 from _lcm.typing import EconFunctionsMapping, FlatParams, PytreeValue
 from lcm.exceptions import UnsupportedOperationError
@@ -79,7 +81,7 @@ from lcm.typing import FloatND, RegimeName, StateName
 class PreparedNEGMCaseUPoint:
     """The genuine original source pieces and their original host checks."""
 
-    point: NEGMCaseUPoint
+    point: NEGMCaseUPoint | NNBEGMCaseUPoint
     """Actual complete keeper and finite-outer native row selection."""
     param_checks: tuple[ParamCheck, ...]
     """Original inner checks followed by matching resource structure checks."""
@@ -333,7 +335,7 @@ class NativeNEGMCaseUPeriodKernel:
 
     context: SolverBuildContext
     """Installed full original dated source context."""
-    point: NEGMCaseUPoint
+    point: NEGMCaseUPoint | NNBEGMCaseUPoint
     """Genuine complete keeper/outer numerical constructor."""
     period: int
     """Original source date."""
@@ -427,10 +429,10 @@ class NativeNEGMCaseUPeriodKernel:
         )
 
 
-def prepare_finite_negm_u_kernels(  # noqa: C901 - original date, child, source and publication ownership
+def prepare_finite_negm_u_kernels(  # noqa: C901, PLR0915 - genuine family, date, child and publication ownership
     *,
     contexts: Mapping[RegimeName, SolverBuildContext],
-    solvers: Mapping[RegimeName, _BoundNEGM],
+    solvers: Mapping[RegimeName, _BoundNEGM | _BoundNNBEGM],
     declarations: Mapping[RegimeName, ProjectedContinuationSpec],
     ordinary_kernels: Mapping[RegimeName, SolutionKernels],
     call_contexts: Mapping[tuple[RegimeName, int], CoreBuildContext],
@@ -476,13 +478,26 @@ def prepare_finite_negm_u_kernels(  # noqa: C901 - original date, child, source 
             call_contexts[name, period],
             next_regime_to_continuation=MappingProxyType({target: child}),
         )
-        prepared = prepare_original_negm_u_point(
-            context=context,
-            solver=solver,
-            call=call,
-            fixed_flat_params=fixed_flat_params,
-            period=period,
-        )
+        if isinstance(solver, _BoundNNBEGM):
+            from _lcm.solution.current_iid_nnbegm import (  # noqa: PLC0415
+                prepare_original_nnbegm_u_point,
+            )
+
+            prepared = prepare_original_nnbegm_u_point(
+                context=context,
+                solver=solver,
+                call=call,
+                fixed_flat_params=fixed_flat_params,
+                period=period,
+            )
+        else:
+            prepared = prepare_original_negm_u_point(
+                context=context,
+                solver=solver,
+                call=call,
+                fixed_flat_params=fixed_flat_params,
+                period=period,
+            )
         point = prepared.point
         if point.target != target:
             raise TypeError("Finite NEGM U lost its original nested future target.")

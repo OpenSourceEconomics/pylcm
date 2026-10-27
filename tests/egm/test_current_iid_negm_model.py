@@ -253,6 +253,7 @@ def _assert_original_nested_tuple(  # noqa: PLR0915 - one genuine tuple and owne
 
     import jax  # noqa: PLC0415
 
+    from _lcm.egm.current_iid_negm import NEGMCaseUPoint  # noqa: PLC0415
     from _lcm.egm.current_iid_negm_program import NEGMCaseUArguments  # noqa: PLC0415
     from _lcm.egm.current_iid_resource_query import (  # noqa: PLC0415
         read_resources_candidate,
@@ -278,6 +279,7 @@ def _assert_original_nested_tuple(  # noqa: PLR0915 - one genuine tuple and owne
     kernel = regime.solution.period_kernels[1]
     assert isinstance(kernel, NativeNEGMCaseUPeriodKernel)
     point = kernel.point
+    assert isinstance(point, NEGMCaseUPoint)
     assert point.context is kernel.context
     assert point.plan is kernel.context.current_iid_plans[1]
     assert isinstance(point.owner.keeper_kernel, _DCEGMPeriodKernel)

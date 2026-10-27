@@ -3203,7 +3203,7 @@ __all__ = [
 ]
 
 
-def _is_installed_negm_u_continuation(
+def _is_installed_negm_u_continuation(  # noqa: PLR0911 - separate exact DC and NB original owner checks
     *,
     regime: Regime,
     regime_name: RegimeName,
@@ -3217,6 +3217,7 @@ def _is_installed_negm_u_continuation(
         NEGMCaseUArguments,
         NEGMCaseUProgram,
     )
+    from _lcm.egm.current_iid_nnbegm import NNBEGMCaseUPoint  # noqa: PLC0415
     from _lcm.egm.projected_continuation import ProjectedEGMCarry  # noqa: PLC0415
     from _lcm.egm.step import _EGMStep  # noqa: PLC0415
     from _lcm.solution.current_iid_case_u_native import (  # noqa: PLC0415
@@ -3228,6 +3229,7 @@ def _is_installed_negm_u_continuation(
     )
     from _lcm.solution.dcegm import _DCEGMPeriodKernel  # noqa: PLC0415
     from _lcm.solution.negm import _NEGMPeriodKernel  # noqa: PLC0415
+    from _lcm.solution.nnbegm import _FiniteNNBEGMPeriodKernel  # noqa: PLC0415
 
     kernel = regime.solution.period_kernels[period]
     if (
@@ -3239,7 +3241,7 @@ def _is_installed_negm_u_continuation(
     date = spec.date_at(period=period)
     point = kernel.point
     if (
-        type(point) is not NEGMCaseUPoint
+        type(point) not in (NEGMCaseUPoint, NNBEGMCaseUPoint)
         or kernel.spec is not spec
         or kernel.period != period
         or point.period != period
@@ -3249,7 +3251,13 @@ def _is_installed_negm_u_continuation(
         or kernel.template.output.projected is not template
         or date.template is not template
         or kernel.context.current_iid_plans.get(period) is not point.plan
-        or type(point.owner) is not _NEGMPeriodKernel
+        or (
+            type(point) is NEGMCaseUPoint and type(point.owner) is not _NEGMPeriodKernel
+        )
+        or (
+            type(point) is NNBEGMCaseUPoint
+            and type(point.owner) is not _FiniteNNBEGMPeriodKernel
+        )
         or point.owner.regime_name != regime_name
         or date.authority.producer != regime_name
         or date.authority.period != period
@@ -3269,14 +3277,34 @@ def _is_installed_negm_u_continuation(
         (point.owner.keeper_kernel, point.keeper),
         (point.owner.adjuster_kernel, point.adjuster),
     ):
-        if (
+        if type(point) is NNBEGMCaseUPoint:
+            from _lcm.egm.current_iid_nnbegm import NNBEGMInnerSource  # noqa: PLC0415
+            from _lcm.solution.nbegm import (  # noqa: PLC0415
+                _NBEGMTiledCore,
+                _RideAlongNBEGMPeriodKernel,
+            )
+
+            if (
+                type(pieces) is not NNBEGMInnerSource
+                or type(original) is not _RideAlongNBEGMPeriodKernel
+                or pieces.kernel is not original
+                or type(pieces.core) is not _NBEGMTiledCore
+                or original.core_programs()["main"].function is not pieces.core
+                or pieces.core.continuation_plan is not pieces.continuation_plan
+                or not pieces.has_original_linear_plan(context=kernel.context)
+            ):
+                return False
+        elif (
             type(original) is not _DCEGMPeriodKernel
             or type(original.demand_step) is not _EGMStep
             or original.demand_step.pieces is not pieces
-            or pieces.continuation_plan.certainty_equivalent
-            is not kernel.context.certainty_equivalent
-            or tuple(pieces.continuation_plan.stateful_targets) != (point.target,)
         ):
+            return False
+        if (
+            type(point) is NEGMCaseUPoint
+            and pieces.continuation_plan.certainty_equivalent
+            is not kernel.context.certainty_equivalent
+        ) or tuple(pieces.continuation_plan.stateful_targets) != (point.target,):
             return False
     for scope, program in (
         (ProgramScope.VALUES_ONLY, kernel.program),

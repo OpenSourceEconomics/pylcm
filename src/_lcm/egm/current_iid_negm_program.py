@@ -12,6 +12,7 @@ from _lcm.current_iid import AdmittedGroupParams, CurrentIIDPlan, NodeOperands
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.current_iid_evaluation import CurrentResourcesEvaluation
 from _lcm.egm.current_iid_negm import NEGMCaseUPoint
+from _lcm.egm.current_iid_nnbegm import NNBEGMCaseUPoint
 from _lcm.execution.core_program import CoreBuildContext
 from _lcm.materialization import DatedGenerationMaterializer
 from _lcm.probability import is_represented_zero
@@ -43,7 +44,7 @@ from lcm.typing import (
 class NEGMCaseUArguments:
     """Borrow actual source grids, original future and admitted current law data."""
 
-    pieces: NEGMCaseUPoint
+    pieces: NEGMCaseUPoint | NNBEGMCaseUPoint
     """The genuine original nested source, including its unchanged future plans."""
     regime_name: RegimeName
     """Original source parameter namespace."""
@@ -71,7 +72,7 @@ class NEGMCaseUArguments:
         if space is None or self.ages is not point.context.ages:
             raise TypeError("Finite NEGM U requires its actual call-owned source.")
         fixed = self.fixed_flat_params
-        targets = point.owner.transition_target_names
+        targets = point.transition_target_names
         return MappingProxyType(
             {
                 **space.states,
@@ -110,7 +111,7 @@ class NEGMCaseUArguments:
 class NEGMCaseUProgram:
     """Current-node expectation of genuine complete nested original solutions."""
 
-    pieces: NEGMCaseUPoint
+    pieces: NEGMCaseUPoint | NNBEGMCaseUPoint
     """Exact genuine original keeper, adjuster and outer-choice constructor."""
     plan: CurrentIIDPlan
     """The same complete original law as the dated source point."""

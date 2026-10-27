@@ -32,12 +32,14 @@ if TYPE_CHECKING:
     from _lcm.egm.continuation import _ChildRead
     from _lcm.egm.current_iid_nbegm import NBCaseUPoint, NBCaseURidePoint
     from _lcm.egm.current_iid_negm import NEGMCaseUPoint
+    from _lcm.egm.current_iid_nnbegm import NNBEGMCaseUPoint
 else:
     # This record is imported while the numerical engine is initialized.
     type _ChildRead = object
     type NBCaseUPoint = object
     type NBCaseURidePoint = object
     type NEGMCaseUPoint = object
+    type NNBEGMCaseUPoint = object
 
 CASE_U_FUTURE_REPLAY = ArtifactKey(
     type_id="pylcm.engine.case_u_future_replay", schema_version=1
@@ -196,7 +198,7 @@ class CaseUReplayPeriod:
     stochastic_node_width: int | None
     envelope_cell_width: int
     nbegm_point: NBCaseUPoint | NBCaseURidePoint | None = None
-    negm_point: NEGMCaseUPoint | None = field(
+    negm_point: NEGMCaseUPoint | NNBEGMCaseUPoint | None = field(
         default=None, metadata={"fingerprint_omit_if_default": True}
     )
     """Genuine complete finite nested constructor, separate from NB ownership."""
@@ -253,11 +255,49 @@ class CaseUReplayPeriod:
             raise TypeError("Case-U reconstruction lost its actual original date.")
         if self.negm_point is not None:
             from _lcm.egm.current_iid_negm import NEGMCaseUPoint  # noqa: PLC0415
+            from _lcm.egm.current_iid_nnbegm import NNBEGMCaseUPoint  # noqa: PLC0415
             from _lcm.egm.step import _EGMStep  # noqa: PLC0415
             from _lcm.solution.dcegm import _DCEGMPeriodKernel  # noqa: PLC0415
 
             point = self.negm_point
             keeper, adjuster = point.owner.keeper_kernel, point.owner.adjuster_kernel
+            if type(point) is NNBEGMCaseUPoint:
+                from _lcm.solution.nnbegm import (  # noqa: PLC0415
+                    _FiniteNNBEGMPeriodKernel,
+                )
+
+                if (
+                    type(point.owner) is not _FiniteNNBEGMPeriodKernel
+                    or point.period != self.future.period
+                    or point.context.regime_name != self.future.source
+                    or point.context.current_iid_plans.get(point.period)
+                    is not point.plan
+                    or tuple(self.future.specs) != (point.target,)
+                    or point.keeper.kernel is not keeper
+                    or point.adjuster.kernel is not adjuster
+                ):
+                    raise TypeError(
+                        "Case-U replay lost its genuine finite NNBEGM source."
+                    )
+                for original in (point.keeper, point.adjuster):
+                    original.__post_init__()
+                    plan = original.continuation_plan
+                    if (
+                        plan.query_targets
+                        or plan.scalar_targets
+                        or tuple(plan.stateful_targets) != (point.target,)
+                    ):
+                        raise UnsupportedOperationError(
+                            "Finite NNBEGM reconstruction requires original "
+                            "ordinary rows."
+                        )
+                    for target, read in plan.child_reads.items():
+                        _require_ordinary_passive_child_rows(
+                            read=read,
+                            spec=self.future.specs[target],
+                            period=self.future.period + 1,
+                        )
+                return
             if (
                 type(point) is not NEGMCaseUPoint
                 or point.period != self.future.period

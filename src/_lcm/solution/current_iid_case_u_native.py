@@ -51,6 +51,7 @@ from _lcm.egm.current_iid_nbegm import (
 )
 from _lcm.egm.current_iid_negm import NEGMCaseUPoint
 from _lcm.egm.current_iid_negm_program import NEGMCaseUArguments, NEGMCaseUProgram
+from _lcm.egm.current_iid_nnbegm import NNBEGMCaseUPoint
 from _lcm.egm.current_iid_resources_proof import prove_resources_only
 from _lcm.egm.projected_continuation import (
     PROJECTED_EGM_CONTINUATION,
@@ -508,7 +509,7 @@ class CaseURideExactFunction:
             )
             or (
                 type(self.point) is NEGMCaseUProgram
-                and type(self.point.pieces) is NEGMCaseUPoint
+                and type(self.point.pieces) in (NEGMCaseUPoint, NNBEGMCaseUPoint)
             )
         ):
             raise TypeError(

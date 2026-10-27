@@ -89,6 +89,7 @@ def projected_producer_declarations(  # noqa: C901, PLR0912, PLR0915 - original 
     from _lcm.solution.dcegm import _BoundDCEGM  # noqa: PLC0415
     from _lcm.solution.nbegm import _BoundNBEGM  # noqa: PLC0415
     from _lcm.solution.negm import _BoundNEGM  # noqa: PLC0415
+    from _lcm.solution.nnbegm import _BoundNNBEGM  # noqa: PLC0415
 
     if materializer is not None and liquid_support_by_date is None:
         raise TypeError(
@@ -99,14 +100,14 @@ def projected_producer_declarations(  # noqa: C901, PLR0912, PLR0915 - original 
     for target in targets:
         user_regime = user_regimes[target]
         solver = user_regime.solver
-        if not isinstance(solver, (_BoundDCEGM, _BoundNBEGM, _BoundNEGM)):
+        if not isinstance(solver, (_BoundDCEGM, _BoundNBEGM, _BoundNEGM, _BoundNNBEGM)):
             continue
         liquid = (
             solver.inner.continuous_state
-            if isinstance(solver, _BoundNEGM)
+            if isinstance(solver, (_BoundNEGM, _BoundNNBEGM))
             else solver.continuous_state
         )
-        if isinstance(solver, _BoundNEGM) and materializer is not None:
+        if isinstance(solver, (_BoundNEGM, _BoundNNBEGM)) and materializer is not None:
             raise UnsupportedOperationError(
                 "Cold finite NEGM U admission remains required."
             )
@@ -115,7 +116,7 @@ def projected_producer_declarations(  # noqa: C901, PLR0912, PLR0915 - original 
                 "Certified current-IID EGM publication requires its complete "
                 "profile implementation."
             )
-        if isinstance(solver, (_BoundNBEGM, _BoundNEGM)):
+        if isinstance(solver, (_BoundNBEGM, _BoundNEGM, _BoundNNBEGM)):
             if materializer is not None and tuple(state_grids[target]) != (liquid,):
                 raise UnsupportedOperationError(
                     "Cold passive NB projected template allocation remains required."
@@ -171,7 +172,10 @@ def projected_producer_declarations(  # noqa: C901, PLR0912, PLR0915 - original 
             }
             template = templates[periods[0]]
         passive_names = tuple(name for name in state_grids[target] if name != liquid)
-        if isinstance(solver, (_BoundNBEGM, _BoundNEGM)) and passive_names:
+        if (
+            isinstance(solver, (_BoundNBEGM, _BoundNEGM, _BoundNNBEGM))
+            and passive_names
+        ):
             if materializer is not None:
                 raise UnsupportedOperationError(
                     "Cold passive NB projected template allocation remains required."
