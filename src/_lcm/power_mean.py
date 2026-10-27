@@ -19,8 +19,10 @@ which `test_CESAggregator_equals_the_general_power_mean` pins.
 
 from typing import NamedTuple
 
+import jax
 import jax.numpy as jnp
 
+from _lcm.egm.ce_scaled_linear import join_ce_direction, scale_ce_direction
 from _lcm.probability import (
     is_live,
     is_negative,
@@ -234,12 +236,6 @@ def _anchored_power_mean(
     # a lottery whose answer is ordinary. The rescaling above is what makes it
     # hold: no live weight is subnormal by the time any node anchors.
     anchorable = live & jnp.isfinite(log_v)
-    anchor_high = jnp.max(jnp.where(anchorable, log_v, -jnp.inf), axis=-1)
-    anchor_low = jnp.min(jnp.where(anchorable, log_v, jnp.inf), axis=-1)
-    anchor = jnp.where(exponent >= 0.0, anchor_high, anchor_low)
-    # With no anchorable node the reductions sit at their sentinels; any
-    # finite anchor will do, and zero keeps `centered` well defined.
-    anchor = jnp.where(jnp.isfinite(anchor), anchor, 0.0)
     # The anchor's own payoff, kept as the number it already is rather than
     # recovered from its logarithm. The mean is `payoff * exp(deviation)`, and a
     # lottery paying one amount at every node has a deviation of exactly zero,
@@ -259,6 +255,9 @@ def _anchored_power_mean(
         jnp.argmax(jnp.where(anchorable, log_v, -jnp.inf), axis=-1),
         jnp.argmin(jnp.where(anchorable, log_v, jnp.inf), axis=-1),
     )
+    # Log and payoff must have the same selected derivative at tied extrema.
+    anchor = jnp.take_along_axis(log_v, anchor_index[..., None], axis=-1)[..., 0]
+    anchor = jnp.where(jnp.any(anchorable, axis=-1), anchor, 0.0)
     anchor_payoff = jnp.take_along_axis(
         jnp.broadcast_to(values, log_v.shape), anchor_index[..., None], axis=-1
     )[..., 0]
@@ -365,6 +364,12 @@ def _anchored_power_mean(
 
 
 def _applied_to_anchor(*, payoff: FloatND, deviation: FloatND) -> FloatND:
+    """Apply the deviation with exact primal identity and its product derivative."""
+    return _anchor_with_tangent(payoff, deviation)
+
+
+# keyword-only-exempt: library-callback=jax.custom_jvp
+def _anchor_primal(payoff: FloatND, deviation: FloatND) -> FloatND:
     """Return `payoff * exp(deviation)`, without touching an untouched payoff.
 
     A deviation of exactly zero is the riskless lottery: the answer *is* the
@@ -376,6 +381,30 @@ def _applied_to_anchor(*, payoff: FloatND, deviation: FloatND) -> FloatND:
     representation, which is exact at every magnitude the format holds.
     """
     return jnp.where(deviation == 0.0, payoff, payoff * jnp.exp(deviation))
+
+
+# keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
+def _anchor_jvp(
+    primals: tuple[FloatND, FloatND], tangents: tuple[FloatND, FloatND]
+) -> tuple[FloatND, FloatND]:
+    """Transport both product slopes without flushing a tiny incoming direction."""
+    payoff, deviation = primals
+    payoff_dot, deviation_dot = tangents
+    value = _anchor_with_tangent(payoff, deviation)
+    sign = jnp.ones_like(value)
+    base = scale_ce_direction(logabs=deviation, sign=sign, direction=payoff_dot)
+    direction = join_ce_direction(
+        logabs=log_of_nonnegative(value),
+        sign=sign,
+        base=base,
+        direction=deviation_dot,
+    )
+    return value, direction
+
+
+# Construct by call so the method-only import hook retains the JVP registration.
+_anchor_with_tangent = jax.custom_jvp(_anchor_primal)
+_anchor_with_tangent.defjvp(_anchor_jvp)
 
 
 def _log_sum(log_terms: FloatND) -> FloatND:
@@ -501,16 +530,6 @@ def weighted_power_mean_of_pair(
 
     first_anchorable = first_live & jnp.isfinite(log_first)
     second_anchorable = second_live & jnp.isfinite(log_second)
-    anchor_high = jnp.maximum(
-        jnp.where(first_anchorable, log_first, -jnp.inf),
-        jnp.where(second_anchorable, log_second, -jnp.inf),
-    )
-    anchor_low = jnp.minimum(
-        jnp.where(first_anchorable, log_first, jnp.inf),
-        jnp.where(second_anchorable, log_second, jnp.inf),
-    )
-    anchor = jnp.where(exponent >= 0.0, anchor_high, anchor_low)
-    anchor = jnp.where(jnp.isfinite(anchor), anchor, 0.0)
     # The anchor's own payoff, kept rather than recovered from its logarithm —
     # see `weighted_power_mean`. A pair paying one amount on both sides has a
     # deviation of exactly zero and so returns that amount bit for bit.
@@ -522,6 +541,11 @@ def weighted_power_mean_of_pair(
         exponent >= 0.0,
         first_anchorable & (~second_anchorable | (log_first >= log_second)),
         first_anchorable & (~second_anchorable | (log_first <= log_second)),
+    )
+    anchor = jnp.where(
+        first_anchorable | second_anchorable,
+        jnp.where(anchor_is_first, log_first, log_second),
+        0.0,
     )
     anchor_payoff = jnp.where(
         first_anchorable | second_anchorable,

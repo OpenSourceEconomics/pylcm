@@ -26,6 +26,7 @@ from _lcm.egm.current_iid_power_math import (
 from _lcm.probability import (
     _significand_in_unit_range,
     _unbiased_exponent,
+    is_below_smallest_normal,
     is_represented_zero,
     scaled_by_power_of_two,
     scaled_down_by_power_of_two,
@@ -148,6 +149,24 @@ def _linear_join(
             axis=0,
         )
     )
+    # Add the actual represented operands before their rounded logs collide.
+    ordinary = base + scaled
+    normal_operands = ~is_below_smallest_normal(base) & ~is_below_smallest_normal(
+        scaled
+    )
+    exact_zero = is_represented_zero(ordinary) & (base == -scaled)
+    ordinary_retained = _finite_bits(ordinary) & (
+        ~is_below_smallest_normal(ordinary) | exact_zero
+    )
+    joined = _select_payload(
+        predicate=normal_operands & _finite_bits(joined),
+        left=_select_payload(
+            predicate=ordinary_retained,
+            left=ordinary,
+            right=jnp.full_like(ordinary, jnp.nan),
+        ),
+        right=joined,
+    )
     result = _select_payload(
         predicate=is_represented_zero(base),
         left=scaled,
@@ -220,13 +239,15 @@ def _jvp(
 # keyword-only-exempt: library-callback=jax.interpreters.ad.primitive_transposes
 def _transpose(
     cotangent: FloatND | ad.Zero,
-    logabs: FloatND | ad.UndefinedPrimal,
-    sign: FloatND | ad.UndefinedPrimal,
+    logabs: _LinearPrimal,
+    sign: _LinearPrimal,
     base: _LinearPrimal,
     direction: _LinearPrimal,
 ) -> tuple[None, None, FloatND | ad.Zero | None, FloatND | ad.Zero | None]:
     if isinstance(logabs, ad.UndefinedPrimal) or isinstance(sign, ad.UndefinedPrimal):
         raise NotImplementedError("CE transport transposes only its linear direction.")
+    logabs = jnp.asarray(logabs)
+    sign = jnp.asarray(sign)
     if isinstance(cotangent, ad.Zero):
         return (
             None,

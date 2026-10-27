@@ -61,6 +61,24 @@ def _choose(
     )
 
 
+def _log_magnitude(*, terms: _SignedLog) -> FloatND:
+    """Keep uncancelled magnitudes before a signed statistic is compressed."""
+    return _sum_signed(terms=_SignedLog(terms.logabs, jnp.abs(terms.sign))).logabs
+
+
+def _direction_supported(*, direction: FloatND, log_magnitude: FloatND) -> ScalarBool:
+    """Apply the balanced economic-marginal profile allowance in final units.
+
+    This is a conservative conditioning diagnostic, not a certified bound on
+    library transcendental error. The 64*eps evaluation floor and the balanced
+    marginal allowance match current_iid_projection's existing budgets.
+    """
+    eps = jnp.finfo(direction.dtype).eps
+    budget = jnp.maximum(1e-4, 8.0 * jnp.sqrt(eps))
+    allowance = jnp.log(budget) + jnp.log(jnp.maximum(1.0, jnp.abs(direction)))
+    return jnp.all(log_magnitude + jnp.log(64.0 * eps) <= allowance)
+
+
 def _bank_input_valid(*, bank: PowerMeanNodeBank) -> ScalarBool:
     positive = ~is_represented_zero(bank.coefficients)
     normal = ~is_below_smallest_normal(bank.coefficients)
@@ -175,6 +193,12 @@ def reduce_power_mean_economic(
             log_w + q.logabs - log_z, positive.astype(values.dtype) * q.sign
         )
     )
+    # E|q| survives an inner cancellation in Eq, including a rounded zero.
+    log_mean_abs_q = _log_magnitude(
+        terms=_SignedLog(
+            log_w + q.logabs - log_z, positive.astype(values.dtype) * q.sign
+        )
+    )
     dw = _signed(value=bank.differentiated_coefficients)
     log_dw = dw.logabs - bank.differentiated_shifts * ln_two
     near_weight = _join(
@@ -197,6 +221,16 @@ def reduce_power_mean_economic(
     )
     weight_terms = _choose(
         predicate=context.near_geometric, left=near_weight, right=far_weight
+    )
+    weight_magnitudes = _choose(
+        predicate=context.near_geometric,
+        left=_join(
+            parts=(
+                _SignedLog(log_c + log_dw + q.logabs - log_t, dw.sign * q.sign),
+                _SignedLog(log_c + log_dw + log_mean_abs_q - log_t, -dw.sign),
+            )
+        ),
+        right=far_weight,
     )
 
     signed_dp = _signed(value=dp)
@@ -266,10 +300,50 @@ def reduce_power_mean_economic(
             right=_sum_signed(terms=far_exponent),
         ),
     )
+    near_exponent_magnitudes = _join(
+        parts=(
+            _SignedLog(
+                near_exponent.logabs[: values.shape[0]],
+                near_exponent.sign[: values.shape[0]],
+            ),
+            _SignedLog(
+                log_c + signed_dp.logabs + 2.0 * log_mean_abs_q + phi.logabs,
+                signed_dp.sign * phi.sign,
+            ),
+        )
+    )
+    log_exponent_magnitude = jnp.where(
+        p == 0.0,
+        unit_exponent.logabs,
+        jnp.where(
+            context.near_geometric,
+            _log_magnitude(terms=near_exponent_magnitudes),
+            _log_magnitude(terms=far_exponent),
+        ),
+    )
     saving = _materialize(value=_sum_signed(terms=savings_terms))
     source = _materialize(
         value=_sum_signed(terms=_join(parts=(source_terms, weight_terms, exponent)))
     )
-    valid &= jnp.isfinite(context.value) & (context.value > 0.0)
-    valid &= jnp.isfinite(saving) & jnp.isfinite(source)
+    valid &= (
+        jnp.isfinite(context.value)
+        & (context.value > 0.0)
+        & jnp.isfinite(saving)
+        & jnp.isfinite(source)
+        & _direction_supported(
+            direction=saving, log_magnitude=_log_magnitude(terms=savings_terms)
+        )
+        & _direction_supported(
+            direction=source,
+            log_magnitude=_log_magnitude(
+                terms=_join(
+                    parts=(
+                        source_terms,
+                        weight_magnitudes,
+                        _SignedLog(log_exponent_magnitude, jnp.ones_like(p)),
+                    )
+                )
+            ),
+        )
+    )
     return context.value, saving, source, valid

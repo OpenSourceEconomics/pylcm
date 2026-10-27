@@ -62,13 +62,13 @@ type ExitFramePayload = tuple[
     Mapping[str, BoolND],
 ]
 type OriginalExitOutput = tuple[
-    tuple[FloatND, IntND, BoolND, BoolND],
+    tuple[FloatND, IntND, BoolND, BoolND, IntND],
     ExitFramePayload,
     Mapping[str, Mapping[str, FloatND | IntND]],
     Mapping[str, FloatND],
 ]
 type ParticipatingExitOutput = tuple[
-    tuple[FloatND, IntND, BoolND, BoolND], ExitFramePayload
+    tuple[FloatND, IntND, BoolND, BoolND, IntND], ExitFramePayload
 ]
 
 
@@ -934,7 +934,13 @@ def exit_policy_program(
             if name in root.read.policy_information
         },
     )
-    answer_roles = ("decision_value", "action_index", "support", "integrity")
+    answer_roles = (
+        "decision_value",
+        "action_index",
+        "support",
+        "integrity",
+        "landing_count",
+    )
     targets = {
         query for members in root.exit_targets.values() for query in members.values()
     }

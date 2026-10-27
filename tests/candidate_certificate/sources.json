@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "c43a28228e65553d51113b76cf1f0470fa7d9644145a12df9f9d84a33968153a",
+  "source_inventory_sha256": "f9159c5b6283a47f0121babfe8158aebef77656f195f65bdfc5d675e46c160f2",
   "sources": [
     {
       "path": "src/_lcm/constraints/bounds.py",
@@ -290,7 +290,7 @@
     },
     {
       "path": "src/_lcm/power_mean.py",
-      "sha256": "086086b45dc8663ee56c32a77ccc361a7a5e688ce24985f8434585164f34313b"
+      "sha256": "c0b24238e05961324ed478f4a68ffe438566b35c886bd437d4c1d7fa45ad1f01"
     },
     {
       "path": "src/_lcm/probability.py",
@@ -318,7 +318,7 @@
     },
     {
       "path": "src/_lcm/regime_building/Q_and_F.py",
-      "sha256": "abbd44dc27d2ff9c33155955d9b2ae2e3c9ab570a7e17deae988ec16d8eefddd"
+      "sha256": "e8ac8633003f71a567be1633a178a90664e335fcec46e65ec37e998194722532"
     },
     {
       "path": "src/_lcm/regime_building/age_normalization.py",
@@ -342,7 +342,7 @@
     },
     {
       "path": "src/_lcm/regime_building/processing.py",
-      "sha256": "f569f2c28eb698c1f49a487aab6da866fd50a304e0daceb4cb60247ebf62ef36"
+      "sha256": "ca7bbc66a7bf2762702252667abba3f3f5231b41052ff2ab5927d213bb321d9a"
     },
     {
       "path": "src/_lcm/regime_building/zero_safe.py",
@@ -546,7 +546,7 @@
     },
     {
       "path": "src/_lcm/solution/backward_induction.py",
-      "sha256": "7d7dba2464de59900681ddea4a242c6c3845b02f78e81640be05289aa7a7f2ce"
+      "sha256": "2cfa5d843cf1e06564dfd79446d937b80d1cb30ce9d5337f71dab9cf157ab742"
     },
     {
       "path": "src/_lcm/solution/collective_action_reduction.py",
@@ -578,7 +578,7 @@
     },
     {
       "path": "src/_lcm/solution/feasibility.py",
-      "sha256": "f5f9a69286184b79e9f64f3dbe17087091ec03c2a7ae6d1d9a0b9a26fe13ddc7"
+      "sha256": "3fb856da87c0965a36209ebda2446bbd823ea3a1b42ed61f79e6433b92efe24f"
     },
     {
       "path": "src/_lcm/solution/fingerprint.py",
@@ -586,7 +586,7 @@
     },
     {
       "path": "src/_lcm/solution/grid_search.py",
-      "sha256": "ac3fdd78fa66b76d35baf64bc83213c2a1e4669507af24ab8a32ba8a5b5a2215"
+      "sha256": "8540136c11a5a1d630bcdab092a52a771164b94cd3b6c2a5a97ae60f934b1340"
     },
     {
       "path": "src/_lcm/solution/kernel_output.py",
@@ -594,7 +594,7 @@
     },
     {
       "path": "src/_lcm/solution/landing_counts.py",
-      "sha256": "e8eebe529c899d8e503fb3bc9ab2f1043a19016c381c40f828c140d3e356f6aa"
+      "sha256": "ac2f58e204659a210bc0f4dcb851cb8487aa538ac1b03d6d5a532be7b95aa70d"
     },
     {
       "path": "src/_lcm/solution/logsumexp_action_reduction.py",
