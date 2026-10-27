@@ -47,22 +47,27 @@ jobs:
             python-version: '3.14'
             leg: fp64-linux
             shard: 1
-            shards: 4
+            shards: 5
           - os: ubuntu-latest
             python-version: '3.14'
             leg: fp64-linux
             shard: 2
-            shards: 4
+            shards: 5
           - os: ubuntu-latest
             python-version: '3.14'
             leg: fp64-linux
             shard: 3
-            shards: 4
+            shards: 5
           - os: ubuntu-latest
             python-version: '3.14'
             leg: fp64-linux
             shard: 4
-            shards: 4
+            shards: 5
+          - os: ubuntu-latest
+            python-version: '3.14'
+            leg: fp64-linux
+            shard: 5
+            shards: 5
           - os: macos-latest
             python-version: '3.14'
             leg: fp64-macos

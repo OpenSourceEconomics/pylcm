@@ -34,7 +34,6 @@ from types import MappingProxyType, TracebackType
 from typing import Self, cast
 
 import jax
-import jax.numpy as jnp
 import numpy as np
 from jax._src import config as jax_config
 from jax._src import core as jax_core
@@ -223,6 +222,7 @@ from _lcm.solution.period_capture import (
     PeriodCaptureTarget,
     PeriodKernelKwargs,
     capture_kernel_inputs,
+    computed_next_values,
     resolve_capture_target,
 )
 from _lcm.solution.public_period_capture import (
@@ -1519,7 +1519,7 @@ def _run_period_kernel(
     state_action_space: StateActionSpace,
     flat_params: FlatParams,
     ages: TimeAxis,
-    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+    next_regime_to_V_arr: MappingProxyType[RegimeName, ValueTemplate],
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
     logger: logging.Logger,
     next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
@@ -1528,7 +1528,7 @@ def _run_period_kernel(
     selected_artifact_keys: frozenset[ArtifactKey],
     period_capture: CaptureContext | None = None,
     captured_admission: Mapping[str, Mapping[str, int | None]] = MappingProxyType({}),
-    V_templates: Mapping[RegimeName, ValueTemplate] = (MappingProxyType({})),
+    V_templates: Mapping[RegimeName, ValueTemplate] = MappingProxyType({}),
 ) -> KernelOutput:
     """Invoke one regime's period adapter for one period.
 
@@ -1549,8 +1549,10 @@ def _run_period_kernel(
     unchanged uniform signature.
 
     A capture records the next-period values of every regime in `V_templates`'s
-    order. A regime the rolling mapping does not hold is recorded as zeros laid
-    out like its template; no program reads it.
+    order. A regime the rolling mapping does not hold is recorded from its
+    template and never placed on the device; no program reads it. A replay
+    hands such a regime's template in its place, and the adapter is dispatched
+    without it.
 
     `period`/`age` are passed as JAX arrays (not Python scalars) so a shared
     `jax.jit` function is traced once with abstract shapes, not recompiled
@@ -1574,13 +1576,7 @@ def _run_period_kernel(
         "state_action_space": state_action_space,
         "flat_params": flat_params,
         "ages": ages,
-        "next_regime_to_V_arr": (
-            next_regime_to_V_arr
-            if period_capture is None and capture_target is None
-            else _captured_next_values(
-                next_regime_to_V_arr=next_regime_to_V_arr, V_templates=V_templates
-            )
-        ),
+        "next_regime_to_V_arr": next_regime_to_V_arr,
         "next_regime_to_continuation": next_regime_to_continuation,
         "logger": logger,
         "next_edge_to_V_arr": next_edge_to_V_arr,
@@ -1595,6 +1591,7 @@ def _run_period_kernel(
         kernel_kwargs=kernel_kwargs,
         compiled_cores=compiled_cores,
         admission=captured_admission,
+        next_value_templates=V_templates,
     )
     capture_kernel_inputs(
         capture_target=capture_target,
@@ -1603,6 +1600,7 @@ def _run_period_kernel(
         period=period,
         compiled_cores=compiled_cores,
         kernel_kwargs=kernel_kwargs,
+        next_value_templates=V_templates,
     )
 
     # AGE-SPECIALIZED STATES: tabulate period-t's value function on period-t's grid
@@ -1666,7 +1664,9 @@ def _run_period_kernel(
     output = period_kernel(
         compiled_cores=compiled_cores,
         state_action_space=state_action_space,
-        next_regime_to_V_arr=next_regime_to_V_arr,
+        next_regime_to_V_arr=computed_next_values(
+            next_regime_to_V_arr=next_regime_to_V_arr
+        ),
         next_regime_to_continuation=next_regime_to_continuation,
         flat_params=flat_params,
         period=period,
@@ -1679,26 +1679,6 @@ def _run_period_kernel(
         seconds = time.perf_counter() - started
         complete_public_capture(entry=entry, value=output.value, seconds=seconds)
     return output
-
-
-def _captured_next_values(
-    *,
-    next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-    V_templates: Mapping[RegimeName, ValueTemplate],
-) -> MappingProxyType[RegimeName, FloatND]:
-    """Return every template regime's next-period value, zeros where none is held."""
-    if not V_templates:
-        return MappingProxyType(dict(next_regime_to_V_arr))
-    return MappingProxyType(
-        {
-            name: next_regime_to_V_arr[name]
-            if name in next_regime_to_V_arr
-            else jnp.zeros(
-                template.shape, dtype=template.dtype, device=template.sharding
-            )
-            for name, template in V_templates.items()
-        }
-    )
 
 
 def _accumulate_landing_totals(
@@ -3677,8 +3657,10 @@ def _internal_reservations_by_cell(
     *,
     programs: Mapping[_CoreCandidate, ResolvedCoreProgram],
     templates: Mapping[_CoreCandidate, Mapping[ReferenceName, ShapeDtypePytree]],
+    value_templates: Mapping[RegimeName, ValueTemplate],
+    value_axis_names: Mapping[RegimeName, tuple[StateName, ...]],
 ) -> MappingProxyType[tuple[RegimeName, int], int]:
-    """Reserve future producer subtrees across all cores of their runtime cell.
+    """Reserve runtime-owned arrays across all cores of their cell.
 
     These are not allocations owned by abstract templates. The existing producer
     validator establishes width-invariant subtrees; taking the maximum across
@@ -3686,8 +3668,14 @@ def _internal_reservations_by_cell(
     is extended. A known abstract output sharding supplies its per-device payload;
     otherwise the full logical payload is reserved on every cell device. Neither
     fallback placement nor alias overlap is claimed to be exact allocator storage.
+
+    A value assembled from two or more invariant blocks also holds its complete
+    destination while later block cores run. Those cores report only one block's
+    output, so charge that destination once per cell, independent of code count
+    and width candidates. A one-code value is returned directly and needs none.
     """
     by_cell: dict[tuple[RegimeName, int], dict[Hashable, int]] = {}
+    assembly_bytes: dict[tuple[RegimeName, int], int] = {}
     host_templates: dict[tuple[RegimeName, int, str], ShapeDtypePytree] = {}
     native_by_cell: dict[tuple[RegimeName, int], dict[str, ResolvedCoreProgram]] = {}
     for candidate, program in programs.items():
@@ -3703,6 +3691,14 @@ def _internal_reservations_by_cell(
             raise ExecutionPlanningError(
                 "Native candidates disagree on their internal schedule."
             )
+        if (binding := program.invariant_binding) is not None and (
+            value_templates[cell[0]].shape[
+                value_axis_names[cell[0]].index(binding.state_name)
+            ]
+            > 1
+        ):
+            size = per_device_footprint(array=value_templates[cell[0]]).bytes_per_device
+            assembly_bytes[cell] = max(assembly_bytes.get(cell, 0), size)
         for name, reference in program.requirements.internal_inputs.items():
             size = sum(
                 _internal_leaf_bytes(leaf=leaf)
@@ -3747,7 +3743,10 @@ def _internal_reservations_by_cell(
         }
         by_cell[cell] = {**host_sizes, ("closed_schedule_peak",): peak}
     return MappingProxyType(
-        {cell: sum(sizes.values()) for cell, sizes in by_cell.items()}
+        {
+            cell: sum(sizes.values()) + assembly_bytes.get(cell, 0)
+            for cell, sizes in by_cell.items()
+        }
     )
 
 
@@ -4621,6 +4620,8 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
             internal_bytes = _internal_reservations_by_cell(
                 programs=resolved_programs,
                 templates=internal_templates,
+                value_templates=next_regime_to_V_arr,
+                value_axis_names=_value_axis_names(regimes=regimes),
             )
             resident_inventory = MappingProxyType(
                 {
