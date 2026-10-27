@@ -4322,7 +4322,10 @@ class Model:
                 process is given either by its physical shocks, as
                 `initial_state_names` lists them, or by its complete set of
                 internal coordinates, as `state_names` lists them, whose nodes
-                `state_grid` returns; one process cannot mix the two.
+                `state_grid` returns; one process cannot mix the two. A
+                composite state is given by its generated code under the name
+                `state_names` lists, not by the members `initial_state_names`
+                lists.
             action_grids: Optional replacement grids for some actions, e.g. a
                 single code of a discrete action to obtain the conditional argmax
                 and value of that branch. Values must lie on the declared grid; a
@@ -4772,9 +4775,6 @@ class Model:
         form, including `Phased` and joint-normal coordinates. This is not
         a mapping of value-array axes: use `state_names` and `state_grid` for
         those, and `initial_state_names` for physical per-subject names.
-
-        A composite model restored from an archive without original member-grid
-        metadata must be rebuilt to use this inspection method.
         """
         regime = self.user_regimes.get(regime_name)
         if regime is None:
@@ -4785,11 +4785,6 @@ class Model:
         for name, lowering in self._composite_states.items():
             if name not in grids:
                 continue
-            if not lowering.member_grids:
-                raise InvalidSimulationInputError(
-                    "Composite member-grid metadata is unavailable in this "
-                    "archive; rebuild the model to inspect initial-state grids."
-                )
             grids.pop(name)
             grids.update(lowering.member_grids[regime_name])
         return MappingProxyType(grids)
@@ -4867,8 +4862,9 @@ class Model:
                 )
                 row = np.asarray(bounds)[process.states.index(state_name)]
                 return float(row[0]), float(row[1])
-        grid = regime.simulation.grids[state_name]
-        if isinstance(grid, DiscreteGrid):
+        # Composite members have no engine grid of their own and are discrete.
+        grid = regime.simulation.grids.get(state_name)
+        if grid is None or isinstance(grid, DiscreteGrid):
             raise InvalidSimulationInputError(
                 f"State {state_name!r} is discrete; continuous bounds do not apply."
             )
