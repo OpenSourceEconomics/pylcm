@@ -4775,9 +4775,6 @@ class Model:
         form, including `Phased` and joint-normal coordinates. This is not
         a mapping of value-array axes: use `state_names` and `state_grid` for
         those, and `initial_state_names` for physical per-subject names.
-
-        A composite model restored from an archive without original member-grid
-        metadata must be rebuilt to use this inspection method.
         """
         regime = self.user_regimes.get(regime_name)
         if regime is None:
@@ -4788,11 +4785,6 @@ class Model:
         for name, lowering in self._composite_states.items():
             if name not in grids:
                 continue
-            if not lowering.member_grids:
-                raise InvalidSimulationInputError(
-                    "Composite member-grid metadata is unavailable in this "
-                    "archive; rebuild the model to inspect initial-state grids."
-                )
             grids.pop(name)
             grids.update(lowering.member_grids[regime_name])
         return MappingProxyType(grids)
