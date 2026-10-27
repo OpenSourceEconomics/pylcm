@@ -183,7 +183,6 @@ def _build_model(*, variant: str) -> Model:
         "new_illiquid": _new_illiquid,
         "resources": _resources,
         "liquid_savings": _liquid_savings,
-        "credited": _credited,
     }
     solver = _build_solver(variant=variant)
     # Built per branch rather than through a shared class and margin mapping:

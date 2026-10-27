@@ -389,6 +389,36 @@ def test_fixed_component_lowering_covers_declarations_and_terminal(
         ].states.keys()
 
 
+@pytest.mark.parametrize("helper_name", ["unused", "kind_health"])
+def test_fixed_component_lowering_keeps_unread_user_helper_validation(
+    *, helper_name: str
+) -> None:
+    """Generated reconstruction does not exempt a terminal's declared helpers."""
+    with pytest.raises(
+        RegimeInitializationError, match=rf"dead.*unread.*{helper_name}"
+    ):
+        Model(
+            regimes={
+                "alive": Regime(
+                    states={"kind_health": DiscreteGrid(_KindHealth)},
+                    state_transitions={
+                        "kind_health": StochasticTransition(
+                            func=_next_kind_health, fixed_component=(0, 0, 1, 1)
+                        )
+                    },
+                    functions={"utility": _code_utility},
+                ),
+                "dead": Regime(
+                    functions={"utility": lambda: 0.0, helper_name: lambda: 1.0}
+                ),
+            },
+            ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+            regime_id_class=_RegimeId,
+            initial_nodes={0: "alive"},
+            edges={"alive": {"dead": 0}},
+        )
+
+
 @pytest.mark.parametrize("inactive", [None, np.nan, "irrelevant"])
 @pytest.mark.parametrize("reverse", [False, True])
 def test_fixed_component_initial_labels_are_scoped_to_the_initial_regime(

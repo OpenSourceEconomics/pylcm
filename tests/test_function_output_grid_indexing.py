@@ -343,6 +343,7 @@ def test_phased_function_in_functions_does_not_crash_validation():
             "per_type_scale": _per_type_scale_takes_pref_type,
             "scaled": Phased(solve=_scale_solve, simulate=_scale_simulate),
         },
+        output_only_functions=("scaled",),
         states={"pref_type": DiscreteGrid(category_class=PrefType)},
         state_transitions={"pref_type": fixed_transition("pref_type")},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},

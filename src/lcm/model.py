@@ -9,6 +9,7 @@ import threading
 import uuid
 from collections import OrderedDict
 from collections.abc import Callable, Iterator, Mapping
+from difflib import SequenceMatcher
 from pathlib import Path
 from types import MappingProxyType
 from typing import (
@@ -403,6 +404,7 @@ from lcm.typing import (
     IntND,
     Phase,
     PRNGKey,
+    ReferenceName,
     UserFacingParamsTemplate,
     UserFunction,
     UserInitialConditions,
@@ -412,6 +414,8 @@ from lcm.typing import (
     ValueND,
     _UserFacingTemplateNode,
 )
+
+_PARAM_NAME_SIMILARITY_THRESHOLD = 0.8
 
 if TYPE_CHECKING:
     type _SolutionResultBoundary = SolutionResult
@@ -504,6 +508,9 @@ class _PickledModel(TypedDict):
     reachability: ModelReachability
     _graph: ModelGraph
     _params_template: ParamsTemplate
+    _param_name_candidates: NotRequired[
+        MappingProxyType[RegimeName, MappingProxyType[ReferenceName, str]]
+    ]
     _regimes: MappingProxyType[RegimeName, Regime]
     stakeholder_names_to_ids: MappingProxyType[str, int]
     enable_jit: bool
@@ -752,6 +759,11 @@ class Model:
     _params_template: ParamsTemplate
     """Template for the model parameters."""
 
+    _param_name_candidates: MappingProxyType[
+        RegimeName, MappingProxyType[ReferenceName, str]
+    ]
+    """Declared names and their categories, retained before variable pruning."""
+
     _transition_only_shock_names: frozenset[str]
     """Folded IID shocks no regime reads within its period.
 
@@ -819,6 +831,7 @@ class Model:
         ),
         functions: Mapping[FunctionName, FunctionEntry] = MappingProxyType({}),
         constraints: Mapping[FunctionName, ConstraintEntry] = MappingProxyType({}),
+        output_only_functions: tuple[FunctionName, ...] = (),
         states: Mapping[StateName, StateEntry] = MappingProxyType({}),
         state_transitions: Mapping[StateName, StateTransitionEntry] = MappingProxyType(
             {}
@@ -874,6 +887,9 @@ class Model:
                 or regime level, never both; a regime-level `None` masks the
                 model entry).
             constraints: Model-level constraints; same merge rule.
+            output_only_functions: Functions retained solely for simulation
+                reporting, in every regime that defines the name. Declare a
+                name on the model or on its regime, never both.
             states: Model-level states; same merge rule. Broadcast states are
                 pruned per regime by DAG reachability (see
                 `pruned_variables`). Only states declared here may be named in
@@ -922,6 +938,7 @@ class Model:
                     derived_categoricals=derived_categoricals,
                     functions=functions,
                     constraints=constraints,
+                    output_only_functions=output_only_functions,
                     states=states,
                     state_transitions=state_transitions,
                     actions=actions,
@@ -1034,7 +1051,10 @@ class Model:
             user_regimes=regimes,
             laws=laws,
             model_slots=model_slots,
+            output_only_functions=output_only_functions,
         )
+        declared_function_regimes = merged_regimes
+        self._param_name_candidates = _get_param_name_candidates(merged_regimes)
         validate_time_declarations(regimes=merged_regimes, laws=laws, ages=self._time)
         validate_regimes(regimes=merged_regimes, laws=laws)
         # What each regime declares before demand prunes any: a declared law
@@ -1170,6 +1190,16 @@ class Model:
             targets_by_phase=schedules.targets_by_phase,
             visited_periods_by_regime=schedules.visited_periods_by_regime,
             removed_edge_reads=prepared_graph.removed_edge_reads,
+            declared_function_regimes=declared_function_regimes,
+            generated_function_names={
+                regime_name: frozenset(
+                    name
+                    for name, split in self._fixed_component_splits.items()
+                    if regime_name in split.grids
+                )
+                for regime_name in self.user_regimes
+            },
+            declared_transitions=self._declared_transitions,
         )
         # A validated category class lists its codes 0, 1, ... in field order.
         self.regime_names_to_ids = get_category_codes(regime_id_class)
@@ -1490,6 +1520,7 @@ class Model:
             reachability=self.reachability,
             _graph=self._graph,
             _params_template=self._params_template,
+            _param_name_candidates=self._param_name_candidates,
             _regimes=self._regimes,
             stakeholder_names_to_ids=self.stakeholder_names_to_ids,
             enable_jit=self.enable_jit,
@@ -1514,6 +1545,9 @@ class Model:
         Resealing records the bindings read by this process's copies of the callables.
         """
         self.__dict__.update(state)
+        self._param_name_candidates = state.get(
+            "_param_name_candidates", _get_param_name_candidates(self.user_regimes)
+        )
         self._transition_only_shock_names = state.get(
             "_transition_only_shock_names", frozenset()
         )
@@ -1655,13 +1689,31 @@ class Model:
         caller may fill in.
 
         """
-        return {
+        template = {
             regime_name: {
                 name: {arg: _readable_template(node) for arg, node in branch.items()}
                 for name, branch in regime_template.items()
             }
             for regime_name, regime_template in self._params_template.items()
         }
+        finalized_candidates = _get_param_name_candidates(self.user_regimes)
+        for regime_name, regime in self.user_regimes.items():
+            for name, branch in template[regime_name].items():
+                state = regime.states.get(name)
+                is_imputation = isinstance(state, Phased) and callable(state.solve)
+                if is_imputation or name not in {
+                    *regime.states,
+                    *regime.actions,
+                    "taste_shocks",
+                }:
+                    _note_near_miss_params(
+                        template=branch,
+                        candidates=(
+                            self._param_name_candidates[regime_name]
+                            | finalized_candidates[regime_name]
+                        ),
+                    )
+        return template
 
     @beartype(conf=PARAMS_CONF)
     def _compile_period_cores(
@@ -5500,6 +5552,64 @@ def _readable_template(node: RegimeParamsTemplateNode) -> _UserFacingTemplateNod
     if isinstance(node, str):
         return node
     return {key: _readable_template(inner) for key, inner in node.items()}
+
+
+def _note_near_miss_params(
+    *,
+    template: dict[str, _UserFacingTemplateNode],
+    candidates: Mapping[ReferenceName, str],
+) -> None:
+    """Note arguments close to a regime's vocabulary in the display template."""
+    for arg_name, node in template.items():
+        if isinstance(node, dict):
+            _note_near_miss_params(template=node, candidates=candidates)
+            continue
+        closest = max(
+            candidates,
+            key=lambda name: SequenceMatcher(None, arg_name, name).ratio(),
+            default=None,
+        )
+        if (
+            closest is not None
+            and SequenceMatcher(None, arg_name, closest).ratio()
+            >= _PARAM_NAME_SIMILARITY_THRESHOLD
+        ):
+            template[arg_name] = (
+                f"{node}  [close to {candidates[closest]} {closest!r}; typo?]"
+            )
+
+
+def _get_param_name_candidates(
+    regimes: Mapping[RegimeName, UserRegime],
+) -> MappingProxyType[RegimeName, MappingProxyType[ReferenceName, str]]:
+    """Keep each regime's declared state, action and callable names for typo notes."""
+    return MappingProxyType(
+        {
+            regime_name: MappingProxyType(
+                {
+                    **{
+                        name: "state"
+                        for name, state in regime.states.items()
+                        if state is not None
+                    },
+                    **{
+                        name: "action"
+                        for name, action in regime.actions.items()
+                        if action is not None
+                    },
+                    **{
+                        name: "function"
+                        for name, func in {
+                            **regime.decomposed_functions,
+                            **regime.decomposed_constraints,
+                        }.items()
+                        if func is not None
+                    },
+                }
+            )
+            for regime_name, regime in regimes.items()
+        }
+    )
 
 
 def _validate_sharded_state_capability(

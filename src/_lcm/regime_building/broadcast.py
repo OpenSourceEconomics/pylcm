@@ -63,9 +63,14 @@ from _lcm.typing import (
     StateOrActionName,
 )
 from _lcm.utils.error_messages import format_messages
+from lcm.branch_aggregation import UniformObservedFixedCost
 from lcm.collective import CollectiveUtility
-from lcm.consumption_savings_regime import NetOfAdjustmentCost
-from lcm.exceptions import ModelInitializationError
+from lcm.consumption_savings_regime import (
+    NestedConsumptionSavingsRegime,
+    NetOfAdjustmentCost,
+    _EGMFamilyRegime,
+)
+from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.phased import Phased
 from lcm.regime import (
     ActionEntry,
@@ -75,6 +80,7 @@ from lcm.regime import (
     StateTransitionEntry,
 )
 from lcm.regime import Regime as UserRegime
+from lcm.solvers import OneMarginSolver, TwoMarginSolver
 from lcm.transition import (
     AgeSpecializedFunction,
     JointTransition,
@@ -108,6 +114,7 @@ def merge_model_slots(
     user_regimes: Mapping[RegimeName, UserRegime],
     laws: RegimeLaws,
     model_slots: ModelSlots,
+    output_only_functions: tuple[FunctionName, ...] = (),
 ) -> tuple[
     MappingProxyType[RegimeName, UserRegime],
     MappingProxyType[RegimeName, frozenset[StateOrActionName]],
@@ -120,6 +127,7 @@ def merge_model_slots(
         laws: Each regime's law, which says whether it is terminal.
         model_slots: Mapping of slot names (`functions`, `constraints`,
             `states`, `state_transitions`, `actions`) to model-level entries.
+        output_only_functions: Reporting targets declared at model level.
 
     Returns:
         Tuple of the merged regimes and, per regime, the names of broadcast
@@ -133,6 +141,7 @@ def merge_model_slots(
     errors: list[str] = []
     merged_regimes: dict[RegimeName, UserRegime] = {}
     broadcast_variables: dict[RegimeName, frozenset[StateOrActionName]] = {}
+    resolved_outputs: set[FunctionName] = set()
 
     for regime_name, user_regime in user_regimes.items():
         household = _names_the_household_writes(user_regime=user_regime)
@@ -207,6 +216,26 @@ def merge_model_slots(
             )
         )
         if not errors:
+            defined = set(functions) | set(constraints)
+            duplicate = set(output_only_functions) & set(
+                user_regime.output_only_functions
+            )
+            if duplicate:
+                raise ModelInitializationError(
+                    f"Ambiguous output_only_functions {sorted(duplicate)} in regime "
+                    f"'{regime_name}': declared at model level and regime level. "
+                    "Remove one."
+                )
+            missing = set(user_regime.output_only_functions) - defined
+            if missing:
+                raise RegimeInitializationError(
+                    f"Regime '{regime_name}' does not define output_only_functions "
+                    f"{sorted(missing)}."
+                )
+            broadcast_outputs = tuple(
+                name for name in output_only_functions if name in defined
+            )
+            resolved_outputs.update(broadcast_outputs)
             # A joint process may arrive from the model level, so the engine
             # form is taken after the merge.
             merged = user_regime.replace(
@@ -215,6 +244,10 @@ def merge_model_slots(
                 states=states,
                 state_transitions=state_transitions,
                 actions=actions,
+                output_only_functions=(
+                    *user_regime.output_only_functions,
+                    *broadcast_outputs,
+                ),
             ).lower_joint_normal_processes()
             merged_regimes[regime_name] = merged
             broadcast_variables[regime_name] = frozenset(
@@ -227,6 +260,12 @@ def merge_model_slots(
 
     if errors:
         raise ModelInitializationError(format_messages(errors))
+    missing_outputs = set(output_only_functions) - resolved_outputs
+    if missing_outputs:
+        raise ModelInitializationError(
+            f"Model output_only_functions {sorted(missing_outputs)} are not defined "
+            "by any regime."
+        )
 
     return MappingProxyType(merged_regimes), MappingProxyType(broadcast_variables)
 
@@ -705,6 +744,21 @@ def root_functions(
     )
 
 
+def engine_function_names(regime: UserRegime) -> frozenset[FunctionName]:
+    """Name the DAG targets the regime's solver consumes directly."""
+    if not isinstance(regime.solver, OneMarginSolver | TwoMarginSolver):
+        return frozenset()
+    names = {"inverse_marginal_utility"}
+    if isinstance(regime, _EGMFamilyRegime):
+        names |= {regime.liquid.resources_name, regime.liquid.post_decision_state}
+    if isinstance(regime, NestedConsumptionSavingsRegime):
+        outer = regime.outer_continuous
+        names |= {outer.post_decision_state, outer.no_adjustment}
+        if isinstance(outer.adjustment_cost, UniformObservedFixedCost):
+            names.add(outer.adjustment_cost.scale_function)
+    return frozenset(names & regime.decomposed_functions.keys())
+
+
 def _valuation_roots(
     *,
     regime: UserRegime,
@@ -730,6 +784,11 @@ def _valuation_roots(
     roots |= {
         f"__derived_categorical__{name}": functions[name]
         for name in regime.derived_categoricals
+        if name in functions
+    }
+    roots |= {
+        f"__output_only__{name}": functions[name]
+        for name in regime.output_only_functions
         if name in functions
     }
     roots |= {

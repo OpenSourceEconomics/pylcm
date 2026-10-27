@@ -895,12 +895,17 @@ def test_certainty_equivalent_name_collision_with_function_is_rejected():
     def certainty_equivalent(wealth: ContinuousState) -> FloatND:
         return wealth
 
+    def utility(
+        *, consumption: ContinuousAction, certainty_equivalent: FloatND
+    ) -> FloatND:
+        return _utility_alive(consumption) + 0.0 * certainty_equivalent
+
     with pytest.raises(InvalidNameError, match="certainty_equivalent"):
         _make_model(
             alive_kwargs={
                 "certainty_equivalent": PowerMean(),
                 "functions": {
-                    "utility": _utility_alive,
+                    "utility": utility,
                     "certainty_equivalent": certainty_equivalent,
                 },
             },

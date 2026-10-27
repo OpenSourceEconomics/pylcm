@@ -1089,6 +1089,25 @@ def test_regime_description_is_not_mathematical_identity() -> None:
     )
 
 
+def test_empty_reporting_preserves_the_legacy_regime_declaration() -> None:
+    """Adding an empty reporting slot leaves feature-free declarations alone."""
+    declaration = fingerprints._project_user_regime_declaration(
+        UserRegime(functions={"utility": _terminal_utility}), law=_NON_TERMINAL_LAW
+    )
+    assert "output_only_functions" not in declaration["fields"]
+
+
+def test_populated_reporting_declaration_changes_durable_identity() -> None:
+    """A retained reporting function remains part of the declared identity."""
+    regime = UserRegime(functions={"utility": _terminal_utility, "report": _solve_law})
+    reported = dataclasses.replace(regime, output_only_functions=("report",))
+    assert fingerprints._semantic_fingerprint(
+        fingerprints._project_user_regime_declaration(regime, law=_NON_TERMINAL_LAW)
+    ) != fingerprints._semantic_fingerprint(
+        fingerprints._project_user_regime_declaration(reported, law=_NON_TERMINAL_LAW)
+    )
+
+
 def test_callable_signature_type_alias_metadata_is_supported() -> None:
     transition = _IdentityTransition(
         state_name="wealth",

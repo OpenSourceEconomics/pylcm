@@ -105,6 +105,37 @@ absent from a non-terminal regime as readily as from a terminal one, and the pla
 moves the values that cross between the two placements. Only a state every regime prunes
 is an error, because then no axis is left to spread.
 
+## Output-only functions
+
+Every registered function must be read by another model computation, read by the engine
+in a solver role, or declared for reporting:
+
+```python
+working = Regime(
+    functions={"utility": utility, "gross_income": gross_income},
+    output_only_functions=("gross_income",),
+    # States, actions and transitions as required by the model.
+)
+```
+
+Use `output_only_functions=("gross_income",)` on `Model` instead when the same
+declaration should apply to every regime that defines that function. Declare each name
+at exactly one level. A name declared at both levels, a regime-level name missing from
+that regime, or a model-level name missing from every regime raises at model build. A
+function the model already reads needs no declaration; declaring it as output-only
+raises too.
+
+An unread registration raises `RegimeInitializationError` identifying its regime and
+function. Remove dead registrations. When sharing a function dictionary across regimes,
+pick the entries each regime reads instead of registering unused helpers.
+
+Output-only functions may have runtime parameters: supply them through `params` just
+like any other function's arguments. Omitting a required value raises
+`Missing required parameter(s)` at solve. After simulation,
+`result.to_dataframe(additional_targets=["gross_income"])` selects the report.
+`additional_targets` also accepts functions the model reads, without declaring them as
+output-only, and `"all"` selects all available targets.
+
 ## Regime ID Classes
 
 The `regime_id_class` maps regime names to integer indices. Use the `@categorical`

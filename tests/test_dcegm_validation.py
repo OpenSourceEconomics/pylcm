@@ -694,7 +694,11 @@ def test_coarse_transition_reaching_brute_regime_raises():
 def test_solver_configuration_does_not_change_reachability() -> None:
     """Grid search and DC-EGM expose equal lifecycle graphs and graph hashes."""
     dcegm_model = _build_model(regime=VALID)
-    grid_search_model = _build_model(regime=VALID.replace(solver=GridSearch()))
+    grid_search_model = _build_model(
+        regime=_without_function(
+            regime=VALID.replace(solver=GridSearch()), name="inverse_marginal_utility"
+        )
+    )
 
     assert dcegm_model.reachability == grid_search_model.reachability
     assert hash(dcegm_model.reachability) == hash(grid_search_model.reachability)
@@ -767,6 +771,7 @@ def test_brute_force_inverse_marginal_utility_keeps_its_params():
             **dict(retirement_only.retirement.functions),
             "inverse_marginal_utility": _ordinary_inverse_marginal_utility,
         },
+        output_only_functions=("inverse_marginal_utility",),
     )
     model = _build_model(regime=regime)
 

@@ -24,6 +24,7 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     ScalarInt,
+    UserFunction,
 )
 
 _WEALTH_GRID = LinSpacedGrid(start=0.1, stop=4.0, n_points=8)
@@ -83,6 +84,10 @@ def consumption_cap(
     return consumption <= 0.2 * wealth
 
 
+def _inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
+    return 1.0 / marginal_continuation
+
+
 def _model(
     *,
     constraint=None,
@@ -90,6 +95,7 @@ def _model(
     discrete_state: bool = False,
     terminal_action: bool = False,
     resources_func=None,
+    inverse_marginal_utility: UserFunction | None = None,
 ) -> Model:
     states = {"wealth": _WEALTH_GRID}
     state_transitions = {"wealth": {"done": next_wealth}}
@@ -114,6 +120,11 @@ def _model(
             "utility": utility,
             "savings": post_decision,
             **({"resources": resources_func} if resources_func else {}),
+            **(
+                {"inverse_marginal_utility": inverse_marginal_utility}
+                if inverse_marginal_utility
+                else {}
+            ),
         },
         solver=EGM(
             savings_grid=_SAVINGS_GRID,
@@ -138,6 +149,18 @@ def _model(
         regime_id_class=RegimeId,
         initial_nodes={0: "saving"},
     )
+
+
+def test_egm_keeps_analytic_inverse() -> None:
+    """An analytic Euler inverse survives model finalization."""
+    model = _model(inverse_marginal_utility=_inverse_marginal_utility)
+    assert "inverse_marginal_utility" in model.user_regimes["saving"].functions
+
+
+def test_egm_reads_analytic_inverse_without_an_output_declaration() -> None:
+    """An analytic Euler inverse is consumed by the engine directly."""
+    model = _model(inverse_marginal_utility=_inverse_marginal_utility)
+    assert model.user_regimes["saving"].output_only_functions == ()
 
 
 def test_egm_rejects_a_continuous_constraint_during_model_construction() -> None:

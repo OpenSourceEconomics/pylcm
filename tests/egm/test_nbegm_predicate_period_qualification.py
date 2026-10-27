@@ -280,7 +280,7 @@ def _model(
                     "jump" if later_jump and age > 40.0 else "continuous_kink"
                 ),
             ),
-            "eligible_stock": _eligible_stock,
+            **({"eligible_stock": _eligible_stock} if predicate else {}),
         },
         constraints={
             "borrowing": post_decision_lower_bound(

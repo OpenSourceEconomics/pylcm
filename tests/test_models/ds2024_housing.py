@@ -421,7 +421,6 @@ def build_model(
                 "utility": utility,
                 "new_housing": new_housing,
                 "housing_cost": housing_cost,
-                "keep_housing": keep_housing,
                 "serviced_housing": serviced_housing,
                 "income_value": income_value,
             },

@@ -145,7 +145,6 @@ def test_nnbegm_regime_declaring_taste_shocks_is_rejected():
             "new_illiquid": n_nbegm_toy.new_illiquid,
             "resources": n_nbegm_toy.resources,
             "liquid_savings": n_nbegm_toy.liquid_savings,
-            "credited": n_nbegm_toy.credited,
             "labor_income": labor_income,
         },
         solver=n_nbegm_toy.build_solver(variant="n_nbegm"),

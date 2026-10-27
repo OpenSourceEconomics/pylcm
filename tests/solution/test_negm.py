@@ -207,7 +207,14 @@ def test_negm_configuration_does_not_change_reachability() -> None:
     grid_search_model = Model(
         edges=edges,
         regimes={
-            "alive": alive.replace(solver=GridSearch()),
+            "alive": alive.replace(
+                solver=GridSearch(),
+                functions={
+                    name: func
+                    for name, func in alive.functions.items()
+                    if name != "inverse_marginal_utility"
+                },
+            ),
             "dead": negm_kinked_toy.build_dead_regime(),
         },
         regime_id_class=negm_kinked_toy.RegimeId,

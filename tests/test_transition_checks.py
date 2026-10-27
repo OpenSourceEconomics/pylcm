@@ -5,6 +5,7 @@ transitions, the process-time AST subscript-order check, and the way the
 Enabled runtime checks raise independently of console verbosity.
 """
 
+import inspect
 import logging
 import math
 from collections.abc import Callable, Mapping
@@ -643,7 +644,15 @@ def _model_with_function_reading_health_probs(
             "wealth": _next_wealth,
             "health": Phased(solve=law, simulate=law) if phased else law,
         },
-        functions={"utility": _utility_alive, "effort": _effort, "income": _income},
+        functions={
+            "utility": _utility_alive,
+            "effort": _effort,
+            **(
+                {"income": _income}
+                if "income" in inspect.signature(next_health_func).parameters
+                else {}
+            ),
+        },
         derived_categoricals={"effort": DiscreteGrid(category_class=_Effort)},
         constraints={"budget": _budget},
     )

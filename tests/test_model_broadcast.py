@@ -34,7 +34,7 @@ from lcm.exceptions import ExecutionPlanningError, ModelInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.regime import RegimeReplacement
 from lcm.transition import AgeSpecializedFunction
-from lcm.typing import FloatND, RegimeName, ScalarInt
+from lcm.typing import FloatND, FunctionName, RegimeName, ScalarInt
 
 
 @categorical(ordered=False)
@@ -235,7 +235,7 @@ def test_model_functions_broadcast_to_every_regime() -> None:
     def _bonus(wealth: float) -> FloatND:
         return jnp.asarray(wealth * 0.01)
 
-    model = _build_model(functions={"bonus": _bonus})
+    model = _build_model(functions={"bonus": _bonus}, output_only_functions=("bonus",))
     assert all("bonus" in regime.functions for regime in model.user_regimes.values())
 
 
@@ -284,6 +284,7 @@ def test_none_masks_the_model_entry() -> None:
             "dead": UserRegime(functions={"utility": lambda: 0.0}),
         },
         functions={"bonus": _bonus},
+        output_only_functions=("bonus",),
     )
     assert "bonus" in model.user_regimes["work"].functions
     assert "bonus" not in model.user_regimes["retired"].functions
@@ -513,3 +514,4 @@ def test_model_broadcast_solves_and_simulates() -> None:
 class _BroadcastModelKwargs(ModelSlots, total=False):
     regimes: Mapping[RegimeName, UserRegime]
     execution_config: ExecutionConfig
+    output_only_functions: tuple[FunctionName, ...]

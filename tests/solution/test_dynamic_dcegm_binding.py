@@ -173,12 +173,16 @@ def _make_model(
             "utility": _utility,
             "resources": _resources,
             "savings": _savings,
-            "floor_helper": (
-                AgeSpecializedFunction(
-                    build=_specialized_floor, signature=_age_signature
-                )
-                if specialized
-                else _floor_helper
+            **(
+                {
+                    "floor_helper": AgeSpecializedFunction(
+                        build=_specialized_floor, signature=_age_signature
+                    )
+                    if specialized
+                    else _floor_helper
+                }
+                if dynamic
+                else {}
             ),
         },
         constraints={

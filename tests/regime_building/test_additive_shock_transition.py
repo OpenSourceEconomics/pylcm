@@ -112,9 +112,9 @@ def _cost(
 
 
 def _cost_reading_wealth(
-    *, next_xi: ContinuousState, wealth: ContinuousState
+    *, next_xi: ContinuousState, wealth: ContinuousState, is_poor: BoolND
 ) -> FloatND:
-    return 0.01 * wealth * jnp.exp(0.5 * next_xi)
+    return jnp.where(is_poor, 0.01, 0.02) * wealth * jnp.exp(0.5 * next_xi)
 
 
 def _negative_cost(cost: FloatND) -> FloatND:
