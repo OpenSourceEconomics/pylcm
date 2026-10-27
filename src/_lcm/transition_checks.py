@@ -806,10 +806,8 @@ def _off_grid_target_counts(
     if memory is None:
         owner = None if summary is None else summary.producers
         n_rows = prod(jnp.shape(axis)[0] for axis in available.values())
-        # A single block runs op by op and compiles nothing; it stays uncompiled
-        # because `is_live`, compiled for the CPU backend, reads a subnormal mass
-        # as dead. A count over several blocks compiles its loop on every eager
-        # call, so with a model-owned owner it is compiled once and kept.
+        # A single block runs op by op. A count over several blocks compiles its
+        # loop on every eager call, so a model-owned owner caches the compilation.
         if owner is not None and n_rows > _OFF_GRID_BLOCK_ROWS:
             count = owner.built(
                 builder=_build_unbudgeted_off_grid_count,
