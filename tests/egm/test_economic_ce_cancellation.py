@@ -14,6 +14,7 @@ from _lcm.egm.current_iid_power_mean import (
     PowerMeanNodeBank,
     reduce_power_mean_economic,
 )
+from _lcm.probability import log_of_nonnegative
 from lcm.typing import FloatND, ScalarBool, ScalarFloat
 
 pytestmark = pytest.mark.coverage(backends=("cpu",), precisions="both")
@@ -340,3 +341,63 @@ def test_law_contrast_mutations_use_original_payoff_economics(
         assert np.isfinite(float(source))
         assert abs(float(saving)) <= budget
         assert abs(float(source) - reference) <= budget * max(1.0, abs(reference))
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="64")
+@pytest.mark.parametrize("compiled", [False, True])
+@pytest.mark.parametrize("mutation", ["original", "reverse", "equality"])
+def test_tiny_law_uncertainty_preserves_ordinary_economic_support(
+    *, compiled: bool, mutation: str
+) -> None:
+    """A tiny law contribution does not invalidate an ordinary unit direction."""
+    dtype = jnp.asarray(0.0).dtype
+    anchor = np.asarray(8.0, dtype=dtype)
+    previous = np.nextafter(anchor, np.asarray(-np.inf, dtype=dtype))
+    operands = np.asarray([anchor, previous], dtype=dtype)
+    if mutation == "reverse":
+        operands = operands[::-1].copy()
+    elif mutation == "equality":
+        operands[1] = operands[0]
+    economic = np.ones(2, dtype=dtype)
+    weights = np.asarray([2.0**-70, -(2.0**-70)], dtype=dtype)
+    reference_value = (Fraction(float(operands[0])) + Fraction(float(operands[1]))) / 2
+    reference_source = (
+        Fraction(float(economic[0])) + Fraction(float(economic[1]))
+    ) / 2 + sum(
+        (
+            Fraction(float(weight)) * Fraction(float(payoff))
+            for weight, payoff in zip(weights, operands, strict=True)
+        ),
+        Fraction(0),
+    )
+    values = jnp.asarray(operands)
+    assert np.asarray(values).tobytes() == operands.tobytes()
+    represented_logs = jax.device_get(log_of_nonnegative(values))
+    print(  # noqa: T201 - Record actual production-log collision operands for attribution.
+        "ordinary-law-payoffs",
+        operands,
+        "production-logs",
+        represented_logs,
+        flush=True,
+    )
+    assert represented_logs[0].tobytes() == represented_logs[1].tobytes(), (
+        "The bounded witness requires a production-log collision.",
+        represented_logs,
+    )
+    evaluate = jax.jit(_evaluate_channels) if compiled else _evaluate_channels
+    value, saving, source, valid = jax.device_get(
+        evaluate(
+            values=values,
+            economic=jnp.asarray(economic),
+            weight_direction=jnp.asarray(weights),
+        )
+    )
+    assert bool(valid), "Ordinary finite directions must remain supported."
+    budget = max(1e-4, 8.0 * np.sqrt(np.finfo(dtype).eps))
+    assert abs(float(value) - float(reference_value)) <= budget * max(
+        1.0, abs(float(reference_value))
+    )
+    assert abs(float(saving) - 1.0) <= budget
+    assert abs(float(source) - float(reference_source)) <= budget * max(
+        1.0, abs(float(reference_source))
+    )

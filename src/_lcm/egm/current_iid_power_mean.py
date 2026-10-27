@@ -88,7 +88,7 @@ def _law_log_uncertainty(
     u: FloatND,
     log_c: FloatND,
     log_dw: FloatND,
-) -> _SignedLog:
+) -> ScalarFloat:
     """Retain own and normalized-mean sensitivity before payoff logs lose contrast."""
     integer = jnp.uint32 if bank.values.dtype == jnp.float32 else jnp.uint64
     different_payoffs = jnp.any(
@@ -106,18 +106,36 @@ def _law_log_uncertainty(
     log_payoff_scale = jnp.log1p(
         2.0 * jnp.max(jnp.where(bank.needed, jnp.abs(log_v), 0.0))
     )
-    return _SignedLog(
+    log_uncertainty = jnp.where(
+        active,
+        log_c
+        + log_dw
+        - context.log_mass
+        + jnp.maximum(0.0, u - context.log_moment)
+        + jnp.log(jnp.asarray(2.0, dtype=bank.values.dtype))
+        + log_payoff_scale,
+        -jnp.inf,
+    )
+    # Positive bounds cannot cancel, so max*count safely retains wide spans.
+    count = jnp.sum(active)
+    return jnp.max(log_uncertainty) + jnp.log(
+        jnp.maximum(count, 1).astype(bank.values.dtype)
+    )
+
+
+def _join_uncertainty_bound(
+    *, log_magnitude: FloatND, log_uncertainty: ScalarFloat
+) -> FloatND:
+    """Bound independent positive envelopes without signed-scale aggregation."""
+    return jnp.where(
+        log_uncertainty == -jnp.inf,
+        log_magnitude,
         jnp.where(
-            active,
-            log_c
-            + log_dw
-            - context.log_mass
-            + jnp.maximum(0.0, u - context.log_moment)
-            + jnp.log(jnp.asarray(2.0, dtype=bank.values.dtype))
-            + log_payoff_scale,
-            -jnp.inf,
+            log_magnitude == -jnp.inf,
+            log_uncertainty,
+            jnp.maximum(log_magnitude, log_uncertainty)
+            + jnp.log(jnp.asarray(2.0, dtype=log_magnitude.dtype)),
         ),
-        active.astype(bank.values.dtype),
     )
 
 
@@ -377,22 +395,24 @@ def reduce_power_mean_economic(
         )
         & _direction_supported(
             direction=source,
-            log_magnitude=_log_magnitude(
-                terms=_join(
-                    parts=(
-                        source_terms,
-                        weight_magnitudes,
-                        _law_log_uncertainty(
-                            bank=bank,
-                            context=context,
-                            log_v=log_v,
-                            u=u,
-                            log_c=log_c,
-                            log_dw=log_dw,
-                        ),
-                        _SignedLog(log_exponent_magnitude, jnp.ones_like(p)),
+            log_magnitude=_join_uncertainty_bound(
+                log_magnitude=_log_magnitude(
+                    terms=_join(
+                        parts=(
+                            source_terms,
+                            weight_magnitudes,
+                            _SignedLog(log_exponent_magnitude, jnp.ones_like(p)),
+                        )
                     )
-                )
+                ),
+                log_uncertainty=_law_log_uncertainty(
+                    bank=bank,
+                    context=context,
+                    log_v=log_v,
+                    u=u,
+                    log_c=log_c,
+                    log_dw=log_dw,
+                ),
             ),
         )
     )

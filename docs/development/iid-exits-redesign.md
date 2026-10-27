@@ -180,9 +180,13 @@ lose their contrast. With `L = max_needed(abs(log(value)))` and
 `2 * CE / Z * sum(abs(Dw_i) * max(1, r_i)) * (1 + 2 * L)` before the same `64 * eps`
 floor. Each differentiated factor retains its own binary scale. This component is empty
 for zero law directions or bit-identical needed payoffs, including derivative-only null
-events. High-scale unresolved law directions may refuse; ordinary finite and
-exact-equality controls must remain usable. This is a conservative admission diagnostic,
-not a sharp error bound for library logarithms.
+events. Its positive sum is bounded by the largest active term times the active count;
+the combined contribution and uncertainty envelopes are bounded by twice their maximum.
+An empty uncertainty envelope preserves the original contribution envelope exactly.
+These positive bounds do not enter the signed numerical reductions or their span gates.
+High-scale unresolved law directions may refuse; ordinary finite and exact-equality
+controls must remain usable. This is a conservative admission diagnostic, not a sharp
+error bound for library logarithms.
 
 Refinement bisects failed smooth cells and inserts known transformed breakpoints.
 Compare the coarse representation with quarter, midpoint and three-quarter queries from
