@@ -1,9 +1,10 @@
 """Held genuine Model-generation frontiers, not successful row substitutes."""
 
+import inspect
 import sys
-from dataclasses import replace
+from dataclasses import fields, replace
 from pathlib import Path
-from types import MappingProxyType
+from types import FunctionType, MappingProxyType
 from typing import Never
 
 import cloudpickle
@@ -15,9 +16,16 @@ import pytest
 
 import lcm.model as model_module
 from _lcm.continuation import ProjectedContinuationSpec
+from _lcm.egm.current_iid_balanced import (
+    BalancedProjectedEGMCarry,
+    BalancedResourcesProgram,
+)
+from _lcm.egm.projected_continuation import PROJECTED_EGM_CONTINUATION
 from _lcm.params.mapping_leaf import MappingLeaf, UserMappingLeaf
 from _lcm.solution.artifacts import OwnedSolutionView
+from _lcm.solution.current_iid_case_r import CASE_R_RESOURCES_REPLAY
 from _lcm.solution.generation import canonical_parameter_schema
+from _lcm.solution.model_authority import _is_installed_balanced_r_continuation
 from _lcm.typing import FlatParams
 from lcm import (
     AgeGrid,
@@ -29,10 +37,11 @@ from lcm import (
     Model,
     Regime,
 )
-from lcm.exceptions import ModelSealError, UnsupportedOperationError
+from lcm.exceptions import InvalidParamsError, ModelSealError, UnsupportedOperationError
 from lcm.model import _ModelConstructorInputs
 from lcm.persistence import load_solution
 from lcm.shocks import Normal, ShockGroup, UserNodes
+from lcm.solver_api import ArtifactRef, PersistencePolicy
 from lcm.solvers import DCEGM, ExactEnvelope
 from lcm.typing import ContinuousState, FloatND, UserParams
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
@@ -247,18 +256,21 @@ def test_canonical_group_mapping_leaf_schema_is_not_an_object_scalar() -> None:
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
-def test_private_model_solve_owned_forward_and_restore_use_same_generation(
+def test_public_model_solve_owned_forward_and_restore_use_same_generation(
     *,
     tmp_path: Path,
 ) -> None:
-    """The actual public solve/forward bodies consume the private real Model."""
+    """A warmed public facade restores genuine call-owned execution and replay."""
     params = _params()
-    model = Model._from_call_owned_params(declarations=_declarations(), params=params)
+    model = _public_model_from_declarations(declarations=_declarations())
     result = model.solve(params=params, log_level="warning")
     view = result._engine_view
     assert isinstance(view, OwnedSolutionView)
     assert view.generation is not None
-    assert view.generation.execution._regimes is model._regimes
+    acquired = view.generation
+    assert acquired.execution is not model
+    assert model._generation_cache._cached[acquired.key] is acquired
+    assert model._generation_cache.roots()
     frame = model.simulate(
         params=params,
         solution=result,
@@ -272,16 +284,19 @@ def test_private_model_solve_owned_forward_and_restore_use_same_generation(
     )
     assert not frame.to_dataframe().empty
     restored = cloudpickle.loads(cloudpickle.dumps(model))
+    assert isinstance(restored, Model)
+    assert restored._is_prepared_dated
+    assert restored._generation_cache.roots() == ()
     state = restored.__getstate__()
     assert "_generation_cache" not in state
     assert "_declared_authority_lock" not in state
-    assert state["_initial_generation_key"] == model._initial_generation_key
+    assert "_regimes" not in state
     # Persisted replay must cross the actual descriptor/native preflight.
     path = tmp_path / "call-owned-solution.lcm"
     result.save(path=path)
     foreign = load_solution(path=path)
     assert foreign._engine_view is None
-    restored.simulate(
+    replay = restored.simulate(
         params=params,
         solution=foreign,
         seed=19,
@@ -291,6 +306,15 @@ def test_private_model_solve_owned_forward_and_restore_use_same_generation(
             "age": np.array([0]),
             "wealth": np.array([4.0]),
         },
+    )
+    restored_generation = restored._generation_cache._cached[acquired.key]
+    assert restored_generation.key == acquired.key
+    assert restored_generation is not acquired
+    assert restored_generation.execution is not restored
+    state = restored.__getstate__()
+    assert state["_initial_generation_key"] == model._initial_generation_key
+    pd.testing.assert_frame_equal(
+        replay.to_dataframe(), frame.to_dataframe(), check_exact=True
     )
 
 
@@ -415,3 +439,340 @@ def test_private_dated_retained_series_refuses_before_declaration_preparation(
     declarations = replace(_declarations(), fixed_params={"discount_factor": leaf})
     with pytest.raises(UnsupportedOperationError, match="retained pandas Series"):
         Model._from_call_owned_params(declarations=declarations, params=_params())
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_public_model_current_iid_balanced_solve_replay_and_archive(  # noqa: PLR0915 - complete public lifecycle and associated physical oracle
+    *, tmp_path: Path
+) -> None:
+    """Public construction retains the same original economics through fresh replay."""
+    declarations = _declarations()
+    constructor_inputs = {
+        field.name: getattr(declarations, field.name)
+        for field in fields(declarations)
+        if field.init
+    }
+    params = _params()
+    model = Model(**constructor_inputs)
+    template = model.get_params_template()
+    child_template = template["parent"]["child"]
+    assert isinstance(child_template, dict)
+    assert "slope" in child_template["next_wealth"]
+    assert "discount_factor" in template["parent"]["koopmans_aggregator"]
+    result = model.solve(params=params, log_level="warning", max_compilation_workers=1)
+    view = result._engine_view
+    assert isinstance(view, OwnedSolutionView)
+    generation = view.generation
+    assert generation is not None
+    prepared = generation.solver_preparation(regime_name="child", period=1)
+    prepared.validate_owner()
+    assert prepared.generation is generation
+    assert prepared.step is prepared.build.steps[1]
+    assert prepared.plan is prepared.context.current_iid_plans[1]
+    assert (
+        prepared.installed_kernel
+        is generation.execution._regimes["child"].solution.period_kernels[1]
+    )
+    spec = generation.execution._regimes["child"].solution.continuation_spec
+    assert isinstance(spec, ProjectedContinuationSpec)
+    assert spec.date_at(period=1) is spec.dates_by_period[1]
+    assert spec.date_at(period=1).authority.period == 1
+    date = spec.date_at(period=1)
+    assert type(date.template) is BalancedProjectedEGMCarry
+    assert type(date.guard_program) is BalancedResourcesProgram
+    child_regime = generation.execution._regimes["child"]
+    assert _is_installed_balanced_r_continuation(
+        regime=child_regime,
+        regime_name="child",
+        period=1,
+        spec=spec,
+        template=date.template,
+    )
+    assert not _is_installed_balanced_r_continuation(
+        regime=child_regime,
+        regime_name="child",
+        period=1,
+        spec=replace(spec),
+        template=date.template,
+    )
+    reader = generation.execution._regimes[
+        "parent"
+    ].simulation.projected_forward_readers_by_period[0]["child"]
+    assert reader.date is date
+    retained = result.retained_continuations[
+        ArtifactRef(period=1, regime="child", key=PROJECTED_EGM_CONTINUATION)
+    ]
+    assert isinstance(retained, BalancedProjectedEGMCarry)
+    operands = reader.operands(carry=retained)
+    assert tuple(operands) == reader.native_arguments
+    for leaf_path, name in reader.argument_by_leaf.items():
+        assert operands[name] is retained.leaves()[leaf_path]
+    with pytest.raises(TypeError, match="target differs"):
+        replace(reader, target="done").operands(carry=retained)
+    child_value = np.asarray(view.values[1]["child"])
+    wealth = np.asarray([1.0, 12.5], dtype=child_value.dtype)
+    # Each quadrature outcome's original log/log optimum lies on the saving grid.
+    expected = np.log(wealth / 2.0) + np.log((wealth + 1.0) / 2.0)
+    tolerance = 64 * np.finfo(child_value.dtype).eps
+    np.testing.assert_allclose(child_value, expected, rtol=tolerance, atol=tolerance)
+    assert np.isfinite(np.asarray(view.values[0]["parent"])).all()
+    ref = ArtifactRef(period=1, regime="child", key=CASE_R_RESOURCES_REPLAY)
+    projected_ref = ArtifactRef(
+        period=1, regime="child", key=PROJECTED_EGM_CONTINUATION
+    )
+    assert (
+        result.metadata.artifact_descriptors[projected_ref].persistence
+        is PersistencePolicy.MODEL_VERIFIABLE
+    )
+    assert (
+        result.metadata.artifact_descriptors[ref].persistence
+        is PersistencePolicy.MODEL_VERIFIABLE
+    )
+    assert result.metadata.artifact_descriptors[projected_ref].required_for
+    assert result.metadata.artifact_descriptors[ref].required_for
+    payload = result.replay_artifacts[ref]
+    assert type(payload) is tuple
+    assert payload
+    assert all(isinstance(leaf, jax.Array) for leaf in payload)
+    initial_conditions = {
+        "regime_id": np.array([0]),
+        "age": np.array([0]),
+        "wealth": np.array([4.0]),
+    }
+    frame = model.simulate(
+        params=params,
+        solution=result,
+        seed=19,
+        log_level="warning",
+        initial_conditions=initial_conditions,
+    )
+    # The original declared grid choices have a strict independent log/log
+    # ranking. This checks their associated physical action and landing, not
+    # equality of the projected PWA value to an analytic value interpolant.
+    parent_actions = np.asarray([0.25, 2.0])
+    child_landings = 2.0 * (4.0 - parent_actions) + 0.5
+    grid_scores = (
+        np.log(parent_actions)
+        + np.log(child_landings / 2.0)
+        + np.log((child_landings + 1.0) / 2.0)
+    )
+    winner = int(np.argmax(grid_scores))
+    assert grid_scores[winner] > grid_scores[1 - winner]
+    np.testing.assert_array_equal(
+        frame.raw_results["parent"][0].actions["consumption"],
+        parent_actions[winner : winner + 1],
+    )
+    np.testing.assert_array_equal(
+        frame.raw_results["child"][1].states["wealth"],
+        child_landings[winner : winner + 1],
+    )
+    expected_frame = frame.to_dataframe()
+    assert not expected_frame.empty
+    path = tmp_path / "public-balanced-current-iid.lcm"
+    result.save(path=path)
+    loaded = load_solution(path=path)
+    assert loaded._engine_view is None
+    fresh = Model(**constructor_inputs)
+    replay = fresh.simulate(
+        params=params,
+        solution=loaded,
+        seed=19,
+        log_level="warning",
+        initial_conditions=initial_conditions,
+    )
+    pd.testing.assert_frame_equal(
+        replay.to_dataframe(), expected_frame, check_exact=True
+    )
+
+
+def _public_model_from_declarations(*, declarations: _ModelConstructorInputs) -> Model:
+    """Pass actual constructor fields through the ordinary public entry point."""
+    return Model(
+        **{
+            field.name: getattr(declarations, field.name)
+            for field in fields(declarations)
+            if field.init
+        }
+    )
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_public_prepared_generations_reuse_schema_and_retain_real_support() -> None:
+    """Call parameters choose real support while old held owners survive eviction."""
+    model = _public_model_from_declarations(
+        declarations=_declarations(runtime_child_grid=True)
+    )
+    assert model.state_names(regime_name="child") == ("wealth",)
+    assert model.initial_state_names(regime_name="child") == ("wealth",)
+    first_params = _params(child_points=np.array([1.0, 12.5]))
+    _, first = model._prepare_call(params=first_params)
+    _, same = model._prepare_call(
+        params=_params(
+            discount=0.95, parent_slope=3.0, child_points=np.array([1.0, 12.5])
+        )
+    )
+    assert same is first
+    first.solver_preparation(regime_name="child", period=1).validate_owner()
+    model._generation_cache.capacity = 1
+    _, second = model._prepare_call(
+        params=_params(child_points=np.array([1.25, 12.75]))
+    )
+    assert second is not first
+    assert second.execution._regimes is not first.execution._regimes
+    for generation, endpoint in ((first, 1.0), (second, 1.25)):
+        spec = generation.execution._regimes["child"].solution.continuation_spec
+        assert isinstance(spec, ProjectedContinuationSpec)
+        assert float(spec.date_at(period=1).template.domain_lower) == endpoint
+        generation.solver_preparation(regime_name="child", period=1).validate_owner()
+    _, reacquired = model._prepare_call(params=first_params)
+    assert reacquired is first
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_public_prepared_pickle_rebuilds_actual_declarations() -> None:
+    """A restored prepared Model derives its own programs from actual parameters."""
+    model = _public_model_from_declarations(declarations=_declarations())
+    restored = cloudpickle.loads(cloudpickle.dumps(model))
+    assert isinstance(restored, Model)
+    assert restored.get_params_template() == model.get_params_template()
+    _, generation = restored._prepare_call(params=_params())
+    actual = generation.solver_preparation(regime_name="child", period=1)
+    actual.validate_owner()
+    assert actual.context.regime_name == "child"
+    assert actual.plan is actual.context.current_iid_plans[1]
+    with pytest.raises(UnsupportedOperationError, match="state grid"):
+        restored.state_grid(
+            params=_params(), regime_name="child", state_name="wealth", period=1
+        )
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_public_prepared_pickle_keeps_saved_semantics_before_factories(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regenerated identity witnesses cannot bless changed restored declarations."""
+    model = _public_model_from_declarations(declarations=_declarations())
+    state = model.__getstate__()
+    declarations = cloudpickle.loads(cloudpickle.dumps(state["_constructor_inputs"]))
+    assert isinstance(declarations, _ModelConstructorInputs)
+    saved_seal = state["_prepared_declaration_seal"]
+    state["_constructor_inputs"] = replace(
+        declarations, fixed_params={"discount_factor": 0.95}
+    )
+    calls: list[bool] = []
+
+    def observe(
+        *args: object,  # noqa: PAN001 - refusal sentinel never reads operands
+        **kwargs: object,  # noqa: PAN001 - refusal sentinel never reads operands
+    ) -> Never:
+        del args, kwargs
+        calls.append(True)
+        raise AssertionError(
+            "Changed restored semantics reached a declaration factory."
+        )
+
+    monkeypatch.setattr(_ModelConstructorInputs, "prepare", observe)
+    restored = Model.__new__(Model)
+    with pytest.raises(ModelSealError, match="archive declaration semantics changed"):
+        restored.__setstate__(state)
+    assert state["_prepared_declaration_seal"] == saved_seal
+    assert calls == []
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+@pytest.mark.parametrize("mutation", ["global", "code", "defaults"])
+def test_public_prepared_callback_mutation_refuses_before_support(
+    *, mutation: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Raw callback code and globals cannot change before first-call preparation."""
+    original = _declarations()
+    regimes = dict(original.regimes)
+    regimes["child"] = replace(
+        regimes["child"],
+        functions={
+            **regimes["child"].functions,
+            "resources": _resources_with_custody_global,
+        },
+    )
+    monkeypatch.setattr(sys.modules[__name__], "_CUSTODY_RESOURCE_OFFSET", 0.0)
+    model = _public_model_from_declarations(
+        declarations=replace(original, regimes=regimes)
+    )
+    calls: list[bool] = []
+
+    def observe(
+        *args: object,  # noqa: PAN001 - refusal sentinel never reads operands
+        **kwargs: object,  # noqa: PAN001 - refusal sentinel never reads operands
+    ) -> Never:
+        del args, kwargs
+        calls.append(True)
+        raise AssertionError("A mutated declaration reached its support factory.")
+
+    monkeypatch.setattr(model_module, "prepare_dated_call_support", observe)
+    if mutation == "global":
+        monkeypatch.setattr(sys.modules[__name__], "_CUSTODY_RESOURCE_OFFSET", 0.125)
+    else:
+
+        def different_resources(*, wealth: ContinuousState, eps: FloatND) -> FloatND:
+            return wealth + eps + 0.25
+
+        raw = inspect.unwrap(_resources_with_custody_global)
+        assert isinstance(raw, FunctionType)
+        if mutation == "defaults":
+            monkeypatch.setattr(raw, "__kwdefaults__", {"eps": 0.0})
+        else:
+            replacement = inspect.unwrap(different_resources)
+            assert isinstance(replacement, FunctionType)
+            assert raw.__code__.co_freevars == replacement.__code__.co_freevars
+            monkeypatch.setattr(raw, "__code__", replacement.__code__)
+    with pytest.raises(ModelSealError):
+        model._prepare_call(params=_params())
+    assert calls == []
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_public_prepared_numeric_mutation_refuses_before_support() -> None:
+    """The normalized fixed operand does not replace custody of its raw source."""
+    discount = np.asarray(1.0)
+    model = _public_model_from_declarations(
+        declarations=replace(
+            _declarations(), fixed_params={"discount_factor": discount}
+        )
+    )
+    params = dict(_params())
+    del params["discount_factor"]
+    discount[...] = 0.95
+    with pytest.raises(RuntimeError, match="constructor numeric contents"):
+        model._prepare_call(params=params)
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_public_prepared_bad_params_and_budget_refuse_before_factories(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Missing real operands cannot publish a generation or enter dated factories."""
+    model = _public_model_from_declarations(declarations=_declarations())
+    calls: list[bool] = []
+
+    def observe(
+        *args: object,  # noqa: PAN001 - refusal sentinel never reads operands
+        **kwargs: object,  # noqa: PAN001 - refusal sentinel never reads operands
+    ) -> Never:
+        del args, kwargs
+        calls.append(True)
+        raise AssertionError("A refused call reached a dated factory.")
+
+    monkeypatch.setattr(model_module, "prepare_dated_call_support", observe)
+    monkeypatch.setattr(model_module, "prepare_dated_parameters", observe)
+    assert model._generation_cache.roots() == ()
+    with pytest.raises(InvalidParamsError):
+        model._prepare_call(params={})
+    assert model._generation_cache.roots() == ()
+    with pytest.raises(UnsupportedOperationError, match="unbudgeted execution"):
+        _public_model_from_declarations(
+            declarations=replace(
+                _declarations(),
+                execution_config=ExecutionConfig(device_memory_bytes=1 << 28),
+            )
+        )
+    assert calls == []
