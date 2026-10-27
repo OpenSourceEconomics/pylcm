@@ -159,13 +159,22 @@ correctly-rounded/compensated summation, which is not implemented.
 
 import jax
 import jax.numpy as jnp
+from jax.custom_derivatives import SymbolicZero
 
-from _lcm.probability import scaled_down_by_power_of_two
-from _lcm.zero_safe import (
-    relative_scales,
-    scaled_weighted_terms,
-    zero_safe_weighted_term,
+from _lcm.certainty_equivalent import (
+    _center_lottery_shifts,
+    _scaled_lottery_mean,
+    _scaled_lottery_terms_with_scale,
 )
+from _lcm.probability import (
+    _IntegerTangent,
+    _unbiased_exponent,
+    is_live,
+    is_represented_zero,
+    scaled_by_power_of_two,
+    scaled_down_by_power_of_two,
+)
+from _lcm.zero_safe import zero_safe_weighted_term
 from lcm.typing import FloatND, IntND
 
 
@@ -206,22 +215,13 @@ def zero_safe_average(
     the latter replaced it; the two agree, as their bit-for-bit equality on
     non-positive shifts implies.
 
-    The two reductions treat the scale differently:
-
-    - the **mass** lowers each weight onto the common scale before summing. A
-      live node too far below that scale to register contributes no share of a
-      total of order one, which is the right answer for a denominator;
-    - the **numerator** goes through `scaled_weighted_terms`, the engine's one
-      scaled contraction, which splits the relative scale between the
-      coefficient and the product. All of it on the coefficient would flush a
-      tiny probability before the value supplied its binades; all of it on the
-      product would overflow an ordinary coefficient meeting a value near the
-      top of the range, which no later scaling recovers.
-
-    Both read the relative scale from `relative_scales`, so numerator and mass
-    are lowered onto the same one and their ratio is the mean. The common scale
-    is the smallest shift — the largest node — so every relative scale is a
-    power of two no greater than one and the lowering cannot overflow.
+    Scaled lotteries use the certainty equivalent's `_scaled_lottery_mean`.
+    It forms every weighted value from normal significands and places the
+    numerator and the mass on their own binary scales. A finite mean then
+    remains finite when its unnormalized numerator exceeds the format's range,
+    a rare node keeps its contribution against a large value, and a node near
+    the bottom of the normal range keeps its contribution against a small
+    coefficient.
 
     Unlike `jnp.average`, only `axis=None` or a single `int` `axis` is
     supported — every call site here reduces at most one axis at a time; pass
@@ -265,19 +265,22 @@ def zero_safe_average(
         if shifts_arr is not None:
             shifts_arr = jnp.reshape(shifts_arr, new_shape)
 
-    if shifts_arr is None:
-        lowered_weights = weights_arr
-    else:
-        # `relative_scales` returns the SMALLEST shift's offset, so every entry
-        # is non-positive — which is exactly `scaled_down_by_power_of_two`'s
-        # precondition. It agrees with `jnp.ldexp` bit-for-bit on that domain and
-        # skips the general `frexp` graph, which here would run twice over the
-        # whole value surface.
-        lowered_weights = scaled_down_by_power_of_two(
-            values=weights_arr, shift=relative_scales(shifts=shifts_arr, axis=axis)
+    if shifts_arr is not None:
+        values, coefficients, scales = jnp.broadcast_arrays(
+            a_arr, weights_arr, shifts_arr
         )
+        if axis is None:
+            values, coefficients, scales = (
+                entry.reshape(-1) for entry in (values, coefficients, scales)
+            )
+        else:
+            values, coefficients, scales = (
+                jnp.moveaxis(entry, axis, -1)
+                for entry in (values, coefficients, scales)
+            )
+        return _scaled_mean_with_tangent(values, coefficients, scales)
 
-    total_weight = jnp.sum(lowered_weights, axis=axis)
+    total_weight = jnp.sum(weights_arr, axis=axis)
     _raise_if_concretely_zero(total_weight=total_weight, context="zero_safe_average")
     # The masked numerator is used unconditionally -- see the module docstring's
     # PORTABILITY section. A whole-expression branch that keeps a RAW `sum(w*a)`
@@ -293,23 +296,163 @@ def zero_safe_average(
     # extra reductions. NB the float64 bit-identity is a property of THIS single
     # vectorised reduction; the SEQUENTIAL regime-mixture fold in `Q_and_F` is a
     # different reduction order and is not made bit-portable by float64.
-    if shifts_arr is None:
-        # Weights on one scale already: whatever size the model supplied them
-        # at, and nothing upstream has accounted for a small one.
-        terms = zero_safe_weighted_term(
-            weight=weights_arr, value=a_arr, subnormal_is_accounted_for=False
-        )
-    else:
-        # Scaled weights share their contraction with every other scaled
-        # weighted sum in the engine, which is what splits the downscale
-        # between the coefficient and the product so that neither a rare node
-        # against a large value nor an ordinary node against a near-max value
-        # leaves the format on the way.
-        terms = scaled_weighted_terms(
-            coefficients=weights_arr, shifts=shifts_arr, values=a_arr, axis=axis
-        )
+    terms = zero_safe_weighted_term(
+        weight=weights_arr, value=a_arr, subnormal_is_accounted_for=False
+    )
     numerator = jnp.sum(terms, axis=axis)
     return numerator / total_weight
+
+
+# keyword-only-exempt: library-callback=jax.custom_jvp
+def _scaled_mean_primal(
+    values: FloatND, coefficients: FloatND, shifts: IntND
+) -> FloatND:
+    """Reduce one normalized lottery without exposing independent AD cotangents."""
+    mean, total_weight = _scaled_lottery_mean(
+        values=values, coefficients=coefficients, shifts=shifts
+    )
+    _raise_if_concretely_zero(total_weight=total_weight, context="zero_safe_average")
+    return mean
+
+
+# keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
+def _scaled_mean_jvp(
+    primals: tuple[FloatND, FloatND, IntND],
+    tangents: tuple[
+        FloatND | SymbolicZero,
+        FloatND | SymbolicZero,
+        _IntegerTangent | SymbolicZero,
+    ],
+) -> tuple[FloatND, FloatND]:
+    """Form normalized slopes before the linear, transposable tangent sum.
+
+    An unperturbed channel contributes nothing, even if its partial derivative
+    is outside the dtype. Explicit directions through out-of-format partials
+    retain ordinary active-dtype tangent arithmetic, including zero times infinity.
+    """
+    values, coefficients, shifts = primals
+    values_dot, coefficients_dot, _ = tangents
+    # A common exponent offset cancels in a normalized mean and its partials.
+    # Remove it before subtracting floating coefficient exponents.
+    shifts = _center_lottery_shifts(coefficients=coefficients, shifts=shifts)
+    mean = _scaled_mean_with_tangent(values, coefficients, shifts)
+
+    coefficient_exponent = _unbiased_exponent(coefficients)
+    live = is_live(coefficients) & jnp.isfinite(coefficients)
+    weight_exponent = coefficient_exponent - shifts
+    common = jnp.max(
+        jnp.where(live, weight_exponent, jnp.iinfo(jnp.int32).min // 2),
+        axis=-1,
+        keepdims=True,
+    )
+    unit_coefficients = _rescale_mean_operand(
+        values=coefficients, shift=-coefficient_exponent
+    )
+    mass = jnp.sum(
+        _rescale_mean_operand(values=unit_coefficients, shift=weight_exponent - common),
+        axis=-1,
+        keepdims=True,
+    )
+    mass_exponent = _unbiased_exponent(mass)
+    unit_mass = _rescale_mean_operand(values=mass, shift=-mass_exponent)
+
+    value_slopes = _rescale_mean_operand(
+        values=unit_coefficients / unit_mass,
+        shift=weight_exponent - common - mass_exponent,
+    )
+    tangent = jnp.zeros_like(mean)
+    if not isinstance(coefficients_dot, SymbolicZero):
+        mean_column = mean[..., None]
+        finite_support = live & jnp.isfinite(values)
+        lower = jnp.min(
+            jnp.where(finite_support, values, jnp.inf), axis=-1, keepdims=True
+        )
+        upper = jnp.max(
+            jnp.where(finite_support, values, -jnp.inf), axis=-1, keepdims=True
+        )
+        # A finite mean's anchor stays inside its live support even when an
+        # intermediate underflow moved the published level outside that hull.
+        anchor = jnp.where(
+            jnp.isfinite(mean_column), jnp.clip(mean_column, lower, upper), mean_column
+        )
+        safe_values = jnp.where(
+            is_represented_zero(coefficients) & ~jnp.isfinite(values), anchor, values
+        )
+        value_exponent = _unbiased_exponent(
+            jnp.maximum(jnp.abs(safe_values), jnp.abs(anchor))
+        )
+        unit_gap = _rescale_mean_operand(
+            values=safe_values, shift=-value_exponent
+        ) - _rescale_mean_operand(values=anchor, shift=-value_exponent)
+        # Retain the mean's rounding residual on the centered value scale. A
+        # rounded level alone discards the sub-ULP difference needed by a slope.
+        gap_exponent = _unbiased_exponent(unit_gap)
+        centered_values = _rescale_mean_operand(values=unit_gap, shift=-gap_exponent)
+        centered_exponent = value_exponent + gap_exponent
+        # Keep the centered sum on normal coefficient mantissas, including
+        # when every raw coefficient is close to the smallest normal value.
+        centered_shifts = shifts - coefficient_exponent - centered_exponent
+        # A zero gap contributes nothing and must not select a scale for the
+        # nonzero residual terms. The helper's mass terms are not used here.
+        unused_shift = jnp.max(centered_shifts, axis=-1, keepdims=True)
+        centered_shifts = jnp.where(
+            is_represented_zero(centered_values), unused_shift, centered_shifts
+        )
+        residual_terms, _, residual_scale = _scaled_lottery_terms_with_scale(
+            values=centered_values,
+            coefficients=unit_coefficients,
+            shifts=centered_shifts,
+        )
+        residual = jnp.sum(residual_terms, axis=-1, keepdims=True) / unit_mass
+        residual_shift = -residual_scale - common - mass_exponent
+        # Subtract the two centered quantities on each entry's own scale; this
+        # also permits a residual too small to materialize before normalization.
+        absent_exponent = jnp.iinfo(jnp.int32).min // 2
+        subtraction_exponent = jnp.maximum(
+            jnp.where(
+                is_represented_zero(unit_gap), absent_exponent, centered_exponent
+            ),
+            jnp.where(
+                is_represented_zero(residual),
+                absent_exponent,
+                _unbiased_exponent(residual) + residual_shift,
+            ),
+        )
+        subtraction_exponent = jnp.where(
+            is_represented_zero(unit_gap) & is_represented_zero(residual),
+            0,
+            subtraction_exponent,
+        )
+        corrected_gap = _rescale_mean_operand(
+            values=unit_gap, shift=value_exponent - subtraction_exponent
+        ) - _rescale_mean_operand(
+            values=residual, shift=residual_shift - subtraction_exponent
+        )
+        coefficient_slopes = _rescale_mean_operand(
+            values=corrected_gap / unit_mass,
+            shift=subtraction_exponent - shifts - common - mass_exponent,
+        )
+        # A null event carrying a nonfinite value has no finite weight
+        # derivative; keep its zero stand-in convention after centering.
+        coefficient_slopes = jnp.where(
+            is_represented_zero(coefficients) & ~jnp.isfinite(values),
+            jnp.zeros_like(coefficient_slopes),
+            coefficient_slopes,
+        )
+        tangent = tangent + jnp.sum(coefficient_slopes * coefficients_dot, axis=-1)
+    if not isinstance(values_dot, SymbolicZero):
+        tangent = tangent + jnp.sum(value_slopes * values_dot, axis=-1)
+    return mean, tangent
+
+
+def _rescale_mean_operand(*, values: FloatND, shift: IntND) -> FloatND:
+    """Apply an integer power of two without a subnormal scaling operand."""
+    lowered = scaled_down_by_power_of_two(values=values, shift=jnp.minimum(shift, 0))
+    return scaled_by_power_of_two(values=lowered, shift=jnp.maximum(shift, 0))
+
+
+_scaled_mean_with_tangent = jax.custom_jvp(_scaled_mean_primal)
+_scaled_mean_with_tangent.defjvp(_scaled_mean_jvp, symbolic_zeros=True)
 
 
 def _raise_if_concretely_zero(*, total_weight: FloatND, context: str) -> None:
