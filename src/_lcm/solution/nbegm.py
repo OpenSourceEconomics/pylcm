@@ -4694,10 +4694,18 @@ def _make_liquid_probe_program[T: ArrayTree](
     *, func: Callable[..., T], liquid_name: str, order: int, scalar: bool
 ) -> Callable[[FloatND, EconFunctionKwargs], T]:
     """Construct a derivative program closing over model structure only."""
-    derivative = _DynamicLiquidProbe(func=func, liquid_name=liquid_name, scalar=scalar)
-    for _ in range(order):
-        derivative = jax.grad(derivative) if scalar else jax.jacfwd(derivative)
-    return jax.jit(jax.vmap(derivative, in_axes=(0, None)))
+
+    # Build transforms inside the JIT so its model closure has no JAX sentinels.
+    # keyword-only-exempt: library-callback=jax.jit
+    def evaluate(points: FloatND, arguments: EconFunctionKwargs) -> T:
+        derivative = _DynamicLiquidProbe(
+            func=func, liquid_name=liquid_name, scalar=scalar
+        )
+        for _ in range(order):
+            derivative = jax.grad(derivative) if scalar else jax.jacfwd(derivative)
+        return cast("T", jax.vmap(derivative, in_axes=(0, None))(points, arguments))
+
+    return jax.jit(evaluate)
 
 
 @dataclass(frozen=True, eq=False, kw_only=True)

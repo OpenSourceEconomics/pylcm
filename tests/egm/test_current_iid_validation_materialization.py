@@ -519,3 +519,48 @@ def test_original_isnan_origin_refuses_before_callback_tracing(
         assert not owner._pending
     finally:
         owner.close()
+
+
+def _curved_probe_budget(*, wealth: FloatND, coefficient: FloatND) -> FloatND:
+    return wealth + coefficient * wealth**3
+
+
+def _vector_probe_law(*, wealth: FloatND, coefficient: FloatND) -> FloatND:
+    return jnp.stack((wealth, coefficient * wealth**3))
+
+
+@pytest.mark.parametrize("scalar", [False, True])
+@pytest.mark.parametrize("order", [1, 2])
+def test_original_liquid_probe_transform_bytes_under_admission(
+    *, scalar: bool, order: int
+) -> None:
+    """Inspect model inputs while retaining the original transformed arithmetic."""
+    from _lcm.solution.nbegm import (  # noqa: PLC0415
+        _DynamicLiquidProbe,
+        _evaluate_liquid_probe_program,
+        _make_liquid_probe_program,
+    )
+
+    function = _curved_probe_budget if scalar else _vector_probe_law
+    points = jnp.asarray([0.375, 0.625, 1.125], dtype=canonical_float_dtype())
+    arguments = {"coefficient": jnp.asarray(0.75, dtype=points.dtype)}
+    derivative = _DynamicLiquidProbe(func=function, liquid_name="wealth", scalar=scalar)
+    for _ in range(order):
+        derivative = jax.grad(derivative) if scalar else jax.jacfwd(derivative)
+    expected = jax.jit(jax.vmap(derivative, in_axes=(0, None)))(points, arguments)
+    program = _make_liquid_probe_program(
+        func=function, liquid_name="wealth", order=order, scalar=scalar
+    )
+    owner = _owner(roots=(points, *arguments.values(), expected))
+    try:
+        actual = owner.evaluate_validation(
+            function=partial(_evaluate_liquid_probe_program, program=program),
+            arguments={"points": points, "arguments": arguments},
+        )
+        assert isinstance(actual, jax.Array)
+        assert actual.shape == expected.shape
+        assert actual.dtype == expected.dtype
+        assert actual.weak_type == expected.weak_type
+        assert np.asarray(actual).tobytes() == np.asarray(expected).tobytes()
+    finally:
+        owner.close()

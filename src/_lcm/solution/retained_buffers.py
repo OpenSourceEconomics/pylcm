@@ -252,10 +252,20 @@ class _RetainedBuffers:
             self.collect(snapshot.leaves)
 
     def collect_reader(self, value: _RetainedValue) -> None:
-        """Read prepared snapshot/context roots without building the route's reader."""
+        """Read built-in future carries and prepared roots without building readers."""
         # Model imports the ownership boundary before simulation readers are complete.
+        from _lcm.egm.current_iid_case_u_replay import (  # noqa: PLC0415
+            CaseUReplayChildren,
+            CaseUReplayInput,
+        )
         from _lcm.simulation.replay_inputs import PreparedReplayReader  # noqa: PLC0415
 
+        if type(value) is CaseUReplayInput:
+            self.collect(value.payload)
+            return
+        if type(value) is CaseUReplayChildren:
+            self.collect(value.child_values)
+            return
         if type(value) is not PreparedReplayReader:
             raise _unsupported(value)
         self.collect(value.snapshot.artifacts)

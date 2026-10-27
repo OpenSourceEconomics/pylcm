@@ -293,7 +293,7 @@ def test_nbegm_argument_clock_refuses_before_retaining_unbudgeted_outputs() -> N
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
 def test_nbegm_shape_capture_keeps_original_plan_receiver_and_numeric_roots() -> None:
-    model = _model()
+    model = _model(device_memory_bytes=256 * 1024 * 1024)
     flat, generation = model._prepare_call(params=_nb_params())
     kernel = model._regimes["child"].solution.period_kernels[1]
     assert isinstance(kernel, NativeNBCaseUPeriodKernel)
@@ -697,10 +697,14 @@ def test_nbegm_u_model_integrates_and_reconstructs_original_candidates(
             }
         ),
     )
-    with pytest.raises(
-        ExecutionPlanningError,
-        match=r"^Case-U original candidate replay has unresolved row integrity\.$",
-    ):
+    # A detached result needs authority/payload copies before candidate replay.
+    expected_refusal = (
+        r"^Budgeted foreign solution for regime 'child' requires unprofiled "
+        r"artifact authority or payload copies;"
+        if device_memory_bytes is not None
+        else r"^Case-U original candidate replay has unresolved row integrity\.$"
+    )
+    with pytest.raises(ExecutionPlanningError, match=expected_refusal):
         model.simulate(
             params=_nb_params(),
             solution=corrupted,

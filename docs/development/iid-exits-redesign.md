@@ -643,13 +643,13 @@ builders through generation.solver_preparation; no archive or arbitrary token su
 those owners. Serialization preserves the actual initial program metadata and resets
 derived caches and locks.
 
-Initial private construction and cold specialization with a device-memory budget refuse
-before dated bank/template materialization until that allocation has a genuine admission
-owner. Separate simulation support, gated/arrival composition, other admitted solver
-families, helper/query paths and unsupported consumed array/grouped proof classes remain
-required extensions with explicit refusals. This is a source frontier, not typing,
-import, native, numerical or public Model-to-forward acceptance. Those gates must pass
-before public admission.
+Initial private construction and cold specialization with a device-memory budget require
+a genuine admission owner before dated bank/template materialization. Separate
+simulation support, gated/arrival composition, other admitted solver families,
+helper/query paths and unsupported consumed array/grouped proof classes remain required
+extensions with explicit refusals. This is a source frontier, not typing, import,
+native, numerical or public Model-to-forward acceptance. Those gates must pass before
+public admission.
 
 ### Private connected Case-U publication and replay
 
@@ -702,9 +702,18 @@ economic marginals. Physical replay retains that same row schema and checks ever
 row, including rows with zero stencil weight. This connected unbudgeted ND slice does
 not admit arbitrary incoming families or replace the passive axes by a flat liquid row.
 
+The scalar NB finite-budget path retains the original probe arithmetic while building
+JAX derivative transforms inside the enclosing JIT. Its owned-result solve and physical
+replay now connect through an exact census of built-in future-child and consumed-input
+records. Shared buffers are charged by their actual identity; foreign record subclasses
+remain refused. A detached foreign solution can require authority or payload copies
+before replay, and a finite budget still refuses those unprofiled copies. The public
+source variant remains subject to its original Model-to-forward check; this scoped
+connection does not complete cold admission.
+
 This family scope does not complete S10. Genuine nested NB, broader nonlinear-CE
 intersections, broader incoming ND families and passive/choice/phase/query/gated/sharded
-intersections, cold finite-budget admission and remaining derivative/archive controls
+intersections, remaining cold finite-budget admission and derivative/archive controls
 stay required. Constructive U source-context/selector/corner topology and refinement,
 full-domain support, production cost and scheduling/admission also remain required.
 Exact-demand integrity and scoped Model-to-forward qualification do not establish those
