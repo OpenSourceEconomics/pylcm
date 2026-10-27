@@ -1308,21 +1308,30 @@ class Model:
                 visible_device_ids=visible_device_ids(),
                 device_pool_limit_bytes=visible_device_pool_limits(),
             )
-            if hardware.device_memory_bytes is not None:
-                raise UnsupportedOperationError(
-                    "Public call-owned current-IID construction requires an "
-                    "unbudgeted execution; finite-budget producer admission "
-                    "remains required."
-                )
-        prepared = self._constructor_inputs.prepare(
-            model=self, dated=dated, hardware=hardware
+        materializer = (
+            None
+            if hardware is None
+            else open_declaration_allocations(
+                hardware=hardware,
+                declarations=self._constructor_inputs._input_bindings,  # noqa: SLF001 - actual retained constructor roots
+                regime_id_class=regime_id_class,
+            )
         )
-        self._dated_parameters = None
-        self._dated_generation = None
-        self._declaration_preparation = prepared
-        if dated:
-            self._prepare_public_dated_declaration(prepared=prepared)
-            return
+        try:
+            prepared = self._constructor_inputs.prepare(
+                model=self, dated=dated, materializer=materializer, hardware=hardware
+            )
+            self._dated_parameters = None
+            self._dated_generation = None
+            self._declaration_preparation = prepared
+            if dated:
+                self._prepare_public_dated_declaration(
+                    prepared=prepared, materializer=materializer
+                )
+                return
+        finally:
+            if materializer is not None:
+                materializer.close()
         built_regimes, template = build_regimes_and_template(
             ages=self._time,
             user_regimes=self.user_regimes,
@@ -1344,21 +1353,24 @@ class Model:
         return self._dated_parameters is not None and self._dated_generation is None
 
     def _prepare_public_dated_declaration(
-        self, *, prepared: _ModelDeclarationPreparation
+        self,
+        *,
+        prepared: _ModelDeclarationPreparation,
+        materializer: SimulationEntryAllocations | None = None,
     ) -> None:
         """Retain the supported scalar declaration until actual parameters arrive."""
         from _lcm.solution.dcegm import (  # noqa: PLC0415 - avoid solver import cycles
             _BoundDCEGM,
         )
+        from _lcm.solution.nbegm import _BoundNBEGM  # noqa: PLC0415
 
         if (
-            self._execution.device_memory_bytes is not None
-            or self._composite_states
+            self._composite_states
             or not prepared.prepared_structure.current_iid_bindings
         ):
             raise UnsupportedOperationError(
-                "Public call-owned construction requires unbudgeted scalar "
-                "current-IID DCEGM declarations."
+                "Public call-owned construction requires scalar "
+                "current-IID DCEGM or NBEGM declarations."
             )
         representatives = prepared.prepared_structure.representative_user_regimes
         for name, regime in representatives.items():
@@ -1380,7 +1392,7 @@ class Model:
                 continue
             solver = regime.solver
             if (
-                type(solver) is not _BoundDCEGM
+                (type(solver) is not _BoundDCEGM and type(solver) is not _BoundNBEGM)
                 or tuple(regime.states) != (solver.continuous_state,)
                 or tuple(regime.actions) != (solver.continuous_action,)
                 or not isinstance(
@@ -1392,9 +1404,14 @@ class Model:
             ):
                 raise UnsupportedOperationError(
                     f"Public call-owned source {name!r} requires original "
-                    "one-state one-action DCEGM declarations."
+                    "one-state one-action DCEGM or NBEGM declarations."
                 )
-        self._dated_parameters = self._prepare_dated_metadata(prepared=prepared)
+        self._dated_parameters = self._prepare_dated_metadata(
+            prepared=prepared, materializer=materializer
+        )
+        self._retain_prepared_generation_roots(
+            array_writer=materializer, trees=(prepared, self._dated_parameters)
+        )
         self._params_template = self._dated_parameters.fixed.remaining_template
         self.enable_jit = prepared.enable_jit
         self.stakeholder_names_to_ids = build_role_vocabulary(
@@ -2862,10 +2879,6 @@ class Model:
                 visible_device_ids=visible_device_ids(),
                 device_pool_limit_bytes=visible_device_pool_limits(),
             )
-            if hardware.device_memory_bytes is not None:
-                raise UnsupportedOperationError(
-                    "Restoring a prepared public Model requires unbudgeted execution."
-                )
             # Container witnesses are process-local identities. Rebind them to
             # the restored true init fields, then verify their complete saved
             # semantics before any declaration or metadata factory can run.
@@ -2879,12 +2892,27 @@ class Model:
                 raise ModelSealError(
                     "Prepared Model archive declaration semantics changed."
                 )
-            prepared = declarations.prepare(model=self, dated=True, hardware=hardware)
-            self._dated_generation = None
-            self._declaration_preparation = prepared
-            if self.durable_identity and "_solution_model_instance_id" in state:
-                self._solution_model_instance_id = state["_solution_model_instance_id"]
-            self._prepare_public_dated_declaration(prepared=prepared)
+            materializer = open_declaration_allocations(
+                hardware=hardware,
+                declarations=declarations._input_bindings,  # noqa: SLF001 - actual restored constructor roots
+                regime_id_class=declarations.regime_id_class,
+            )
+            try:
+                prepared = declarations.prepare(
+                    model=self, dated=True, materializer=materializer, hardware=hardware
+                )
+                self._dated_generation = None
+                self._declaration_preparation = prepared
+                if self.durable_identity and "_solution_model_instance_id" in state:
+                    self._solution_model_instance_id = state[
+                        "_solution_model_instance_id"
+                    ]
+                self._prepare_public_dated_declaration(
+                    prepared=prepared, materializer=materializer
+                )
+            finally:
+                if materializer is not None:
+                    materializer.close()
             return
         self.__dict__.update(state)
         self._shock_registry = state.get("_shock_registry") or create_shock_registry(

@@ -37,7 +37,12 @@ from lcm import (
     Model,
     Regime,
 )
-from lcm.exceptions import InvalidParamsError, ModelSealError, UnsupportedOperationError
+from lcm.exceptions import (
+    ExecutionPlanningError,
+    InvalidParamsError,
+    ModelSealError,
+    UnsupportedOperationError,
+)
 from lcm.model import _ModelConstructorInputs
 from lcm.persistence import load_solution
 from lcm.shocks import Normal, ShockGroup, UserNodes
@@ -629,9 +634,16 @@ def test_public_prepared_generations_reuse_schema_and_retain_real_support() -> N
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
-def test_public_prepared_pickle_rebuilds_actual_declarations() -> None:
+@pytest.mark.parametrize("budgeted", [False, True])
+def test_public_prepared_pickle_rebuilds_actual_declarations(*, budgeted: bool) -> None:
     """A restored prepared Model derives its own programs from actual parameters."""
-    model = _public_model_from_declarations(declarations=_declarations())
+    declarations = _declarations()
+    if budgeted:
+        declarations = replace(
+            declarations,
+            execution_config=ExecutionConfig(device_memory_bytes=1 << 28),
+        )
+    model = _public_model_from_declarations(declarations=declarations)
     restored = cloudpickle.loads(cloudpickle.dumps(model))
     assert isinstance(restored, Model)
     assert restored.get_params_template() == model.get_params_template()
@@ -747,7 +759,7 @@ def test_public_prepared_numeric_mutation_refuses_before_support() -> None:
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
-def test_public_prepared_bad_params_and_budget_refuse_before_factories(
+def test_public_prepared_bad_params_and_capacity_refuse_before_factories(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Missing real operands cannot publish a generation or enter dated factories."""
@@ -768,11 +780,11 @@ def test_public_prepared_bad_params_and_budget_refuse_before_factories(
     with pytest.raises(InvalidParamsError):
         model._prepare_call(params={})
     assert model._generation_cache.roots() == ()
-    with pytest.raises(UnsupportedOperationError, match="unbudgeted execution"):
+    with pytest.raises(ExecutionPlanningError, match="budget before allocation"):
         _public_model_from_declarations(
             declarations=replace(
                 _declarations(),
-                execution_config=ExecutionConfig(device_memory_bytes=1 << 28),
+                execution_config=ExecutionConfig(device_memory_bytes=1),
             )
         )
     assert calls == []

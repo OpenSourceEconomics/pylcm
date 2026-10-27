@@ -821,12 +821,11 @@ the existing generation materializer; this route cannot bypass its budget guards
 
 ### Public scalar Case-R lifecycle
 
-Public `Model` construction retains genuine parameter metadata for the supported
-unbudgeted scalar DCEGM declarations. `get_params_template()` uses the existing
-canonical namespaces. A call with actual parameters acquires a genuine installed
-execution. Calls with the same parameter schema and grid support reuse it; changed
-support acquires a separate generation. Retained results keep their producing generation
-alive.
+Public `Model` construction retains genuine parameter metadata for the supported scalar
+DCEGM declarations. `get_params_template()` uses the existing canonical namespaces. A
+call with actual parameters acquires a genuine installed execution. Calls with the same
+parameter schema and grid support reuse it; changed support acquires a separate
+generation. Retained results keep their producing generation alive.
 
 The admitted workload uses `ExactEnvelope`, balanced accuracy, candidate replay, one
 continuous state/action per source and ordinary scalar action-free terminal regimes. A
@@ -837,9 +836,31 @@ reconstructs its own execution before reading the archive. Producer/date/schema,
 clock, domain, hole and source-validity checks remain mandatory. Unsupported projected
 reads retain their explicit refusal.
 
-This public slice does not complete S10. Other producer families, public finite-budget
-declaration admission, remaining required workloads and the production reconstruction
-cost receipt remain open. Prepared public Models explicitly refuse policy lookup,
-state-grid inspection and initial-state bounds until those helpers have a supported
-execution-selection contract. Whole-domain topology and broad certificate campaigns
-remain separate from the sampled balanced acceptance gate.
+Finite-budget declaration preparation and prepared-Model restoration use the existing
+allocation owner before the original producers run. Completed metadata remains owned by
+the Model; actual calls charge it together with retained generations. The original cold
+route still requires its supported age clock, default single device, compiled scalar
+producers and supplied `UserNodes`. This connection supports budgeted solve and
+generation retention. Budgeted foreign archives still refuse unprofiled authority or
+replay-payload copies; the archive lifecycle above uses unbudgeted execution.
+
+### Public scalar NB Case-U lifecycle
+
+The unbudgeted scalar NBEGM route uses the same public declaration coordinator and the
+original conditional candidate bank. Its workload has one continuous state/action and an
+ordinary scalar action-free terminal target. Actual physical shocks reconstruct the
+original candidate tuple, including its native owner, policy and saving. Default
+retention supports save/load and replay through an equivalent fresh public Model.
+
+The represented bank reads value and economic marginal from their associated affine
+endpoints. At an off-Euler query those channels can differ from the continuous optimum,
+even when the selected physical action agrees with it. The native tuple reference is
+therefore grid-conditional; analytical action checks do not establish continuous
+value/marginal accuracy. Sampled refinement remains required.
+
+This public slice does not complete S10. Other producer families, remaining cold
+workloads and budgeted foreign archives, sampled refinement and the production
+reconstruction-cost receipt remain open. Prepared public Models explicitly refuse policy
+lookup, state-grid inspection and initial-state bounds until those helpers have a
+supported execution-selection contract. Whole-domain topology and broad certificate
+campaigns remain separate from the sampled balanced acceptance gate.

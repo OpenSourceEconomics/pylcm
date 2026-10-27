@@ -199,14 +199,20 @@ processes make plain `EGM` ineligible.
 
 The initial public named-current-IID route supports scalar problems where current
 shocks enter the action problem through resources. It uses `ExactEnvelope`,
-`accuracy="balanced"`, candidate replay, unbudgeted execution and ordinary scalar,
+`accuracy="balanced"`, candidate replay and ordinary scalar,
 action-free terminal regimes. Construct `Model`, obtain its parameter template and
-pass actual parameters to `solve` and `simulate`. Default retention supports physical
-candidate replay and replay of a saved solution through an equivalent fresh Model.
+pass actual parameters to `solve` and `simulate`. With unbudgeted execution, default
+retention supports physical candidate replay and replay of a saved solution through
+an equivalent fresh Model.
 Missing projected support raises explicitly. Policy lookup, state-grid inspection
 and initial-state bounds are not available on this prepared public route. See the
 [current-IID contract](../development/iid-exits-redesign.md#public-scalar-case-r-lifecycle)
 for its acceptance boundary.
+
+The supported cold scalar route also admits declaration preparation and solve under
+an explicit memory budget, using the existing allocation owner before producers run.
+Its original clock, device, JIT and supplied-node restrictions apply. Budgeted foreign
+archive replay still refuses unprofiled authority or payload copies.
 
 The supported typed envelope configurations are `ExactEnvelope`, `FUESEnvelope`,
 `RFCEnvelope`, `LTMEnvelope`, and `MSSEnvelope`. String selectors are not part of the
@@ -300,6 +306,16 @@ NBEGM(
 finite-grid read. `probe_failure="assume_declared"` turns an unexecutable structural
 probe into an author assertion and warning; it does not relax the mathematical
 prerequisite.
+
+The public scalar named-current-IID Case-U route retains the original conditional
+candidate bank, with one continuous state/action and an ordinary scalar action-free
+terminal target. With unbudgeted execution, default retention supports physical
+reconstruction and replay of a saved solution through an equivalent fresh Model.
+Represented value and economic marginal are associated finite-bank reads; agreement
+of the physical action with a continuous reference does not establish their continuous
+accuracy. See the
+[current-IID contract](../development/iid-exits-redesign.md#public-scalar-nb-case-u-lifecycle)
+for the sampled-refinement boundary.
 
 With `envelope_arithmetic="certified"`, candidate ownership is ordered from the stored
 floating-point operands using fixed-width integer arithmetic. Exact affine value comes

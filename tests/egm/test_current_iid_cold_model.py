@@ -36,7 +36,11 @@ from lcm.shocks import PhysicalValues
 from lcm.solver_api import ArtifactRef
 from lcm.typing import ReferenceName
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
-from tests.egm.test_current_iid_call_owned_generation import _declarations, _params
+from tests.egm.test_current_iid_call_owned_generation import (
+    _declarations,
+    _params,
+    _public_model_from_declarations,
+)
 
 pytestmark = [
     pytest.mark.coverage(backends=("cpu",), precisions="both"),
@@ -44,8 +48,8 @@ pytestmark = [
 ]
 
 
-def test_budgeted_private_model_solves_real_r_and_keeps_evicted_generation() -> None:
-    """No factory/validator/solver replacement: consume the real owned R program."""
+def test_budgeted_public_model_solves_real_r_and_keeps_evicted_generation() -> None:
+    """Public budgeted solves retain the producing row through generation eviction."""
     declarations = replace(
         _declarations(runtime_child_grid=True),
         execution_config=ExecutionConfig(
@@ -53,13 +57,13 @@ def test_budgeted_private_model_solves_real_r_and_keeps_evicted_generation() -> 
         ),
     )
     params = _params(child_points=np.array([1.0, 12.5]))
-    model = Model._from_call_owned_params(declarations=declarations, params=params)
+    model = _public_model_from_declarations(declarations=declarations)
     result = model.solve(params=params, log_level="warning", max_compilation_workers=1)
     view = result._engine_view
     assert isinstance(view, OwnedSolutionView)
     first = view.generation
     assert first is not None
-    assert first.execution is model
+    assert first.execution is not model
     child_value = np.asarray(view.values[1]["child"])
     wealth = np.array([1.0, 12.5], dtype=child_value.dtype)
     # Both eps outcomes' exact log/log optima occur in the declared saving grid.

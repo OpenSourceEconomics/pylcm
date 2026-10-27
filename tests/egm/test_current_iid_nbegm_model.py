@@ -2,17 +2,20 @@
 
 import math
 from collections.abc import Callable, Mapping
-from dataclasses import replace
+from dataclasses import fields, replace
 from functools import partial
+from pathlib import Path
 from types import MappingProxyType, MethodType
 from typing import cast
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import pytest
 from jax import Array
 
+from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.current_iid_case_u_replay import CASE_U_FUTURE_REPLAY, CaseUReplayChildren
 from _lcm.egm.current_iid_nbegm import NBCaseUArguments, NBCaseUPoint, NBCaseUProgram
@@ -26,6 +29,7 @@ from _lcm.egm.projected_continuation import (
 from _lcm.egm.upper_envelope.certified_sign import backend_flushes_subnormals
 from _lcm.execution.core_program import CoreBuildContext
 from _lcm.simulation.entry_allocations import SimulationEntryAllocations
+from _lcm.solution.artifacts import OwnedSolutionView
 from _lcm.solution.continuation_target import union_fixed_params, union_free_params
 from _lcm.solution.current_iid_case_r_build import _PositionalResources
 from _lcm.solution.current_iid_case_u_build import guard_case_u_shape
@@ -65,6 +69,7 @@ from lcm.exceptions import (
     UnsupportedOperationError,
 )
 from lcm.model import _ModelConstructorInputs
+from lcm.persistence import load_solution
 from lcm.shocks import Discrete, PhysicalValues, ShockGroup, Uniform, UserNodes
 from lcm.solver_api import EGM_CONTINUATION, ArtifactRef, ArtifactStore, ResultRetention
 from lcm.solvers import DCEGM, NBEGM
@@ -1782,3 +1787,152 @@ def test_original_optional_callbacks_survive_construction_and_replace() -> None:
     assert replace(function, balanced=None)._publish_balanced is None
     with pytest.raises(ValueError, match="init=False"):
         replace(function, _publish_balanced=publisher)
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_public_nbegm_u_model_lifecycle(  # noqa: PLR0915 - complete original public solve, native tuple, physical and archive scenario
+    *, tmp_path: Path
+) -> None:
+    """Public construction serves the same original scalar NB problem and replay."""
+    declarations = _nb_declarations()
+    constructor_inputs = {
+        field.name: getattr(declarations, field.name)
+        for field in fields(declarations)
+        if field.init
+    }
+    params = _nb_params()
+    model = Model(**constructor_inputs)
+    solution = model.solve(params=params, log_level="off")
+    view = solution._engine_view
+    assert isinstance(view, OwnedSolutionView)
+    generation = view.generation
+    assert generation is not None
+    execution = generation.execution
+    actual = execution._regimes["child"].solution.period_kernels[1]
+    assert isinstance(actual, NativeNBCaseUPeriodKernel)
+    states = [0.5, 1.5, 3.0]
+    reference = np.asarray(
+        [
+            np.mean(
+                [_oracle(wealth=wealth, shock=shock)[:2] for shock in (0.0, 1.0)],
+                axis=0,
+            )
+            for wealth in states
+        ]
+    )
+    np.testing.assert_array_almost_equal(
+        solution.values[1]["child"], reference[:, 0], decimal=DECIMAL_PRECISION
+    )
+    future = solution.replay_artifacts[
+        ArtifactRef(period=1, regime="child", key=CASE_U_FUTURE_REPLAY)
+    ]
+    assert isinstance(future, CaseUReplayChildren)
+    wealth = np.asarray([0.5, 1.5, 3.0, 1.5], dtype=canonical_float_dtype())
+    physical = np.asarray([1.0, 0.0, 1.0, 0.5], dtype=canonical_float_dtype())
+    initial_conditions = {
+        "wealth": jnp.asarray(wealth),
+        "age": jnp.ones((4,)),
+        "regime_id": jnp.full(
+            (4,), model.regime_names_to_ids["child"], dtype=jnp.int32
+        ),
+        "eps": PhysicalValues(values=physical),
+    }
+    result = model.simulate(
+        params=params,
+        solution=solution,
+        initial_conditions=initial_conditions,
+        log_level="off",
+        seed=17,
+    )
+    row = result.raw_results["child"][1]
+    expected = np.asarray(
+        [_oracle(wealth=w, shock=z)[2] for w, z in zip(wealth, physical, strict=True)]
+    )
+    np.testing.assert_array_almost_equal(
+        row.actions["consumption"], expected, decimal=DECIMAL_PRECISION
+    )
+    np.testing.assert_array_almost_equal(
+        result.raw_results["done"][2].states["wealth"],
+        wealth - expected,
+        decimal=DECIMAL_PRECISION,
+    )
+    np.testing.assert_array_equal(row.shocks["eps"], physical)
+    flat, reused = model._prepare_call(params=params)
+    assert reused is generation
+    arguments = actual.program.argument_builder
+    assert isinstance(arguments, CaseUExactArguments)
+    assert isinstance(arguments.point, NBCaseUArguments)
+    pool = {
+        **union_fixed_params(
+            fixed_flat_params=arguments.point.fixed_flat_params,
+            regime_name="child",
+            transition_target_names=("done",),
+        ),
+        **union_free_params(
+            flat_params=flat, regime_name="child", transition_target_names=("done",)
+        ),
+        "period": jnp.int32(1),
+        "age": jnp.asarray(1.0),
+    }
+    native_reference = np.asarray(
+        [
+            _oracle(wealth=float(w), shock=float(z))[:2]
+            for w, z in zip(wealth, physical, strict=True)
+        ]
+    )
+    # The last physical frame is off the original Euler nodes. The finite
+    # bank reads V and economic M on the same affine link; it does not
+    # reevaluate the continuous optimum at the interpolated policy.
+    np.testing.assert_array_equal([wealth[-1], physical[-1]], [1.5, 0.5])
+    endpoint_savings = np.asarray([0.5, 0.75])
+    endpoint_consumption = 1.5 * endpoint_savings
+    endpoint_value = 1.5 * np.log(endpoint_consumption) + np.log(endpoint_savings)
+    endpoint_marginal = 1 / endpoint_savings
+    endpoints = np.stack((endpoint_value, endpoint_marginal), axis=1)
+    # Euler resources are 5/4 and 15/8; wealth 3/2 is at fraction 2/5.
+    native_reference[-1] = (3 / 5) * endpoints[0] + (2 / 5) * endpoints[1]
+    for index in range(4):
+        original = actual.point.node(
+            liquid=jnp.asarray(wealth[index]),
+            physical={"eps": jnp.asarray(physical[index])},
+            pool=pool,
+            children=future.children,
+        )
+        assert bool(original.output.valid & original.output.feasible)
+        assert int(original.output.native_owner) >= 0
+        np.testing.assert_array_almost_equal(
+            (original.output.value, original.output.marginal),
+            native_reference[index],
+            decimal=DECIMAL_PRECISION,
+            err_msg=(
+                f"Represented native frame {index}: "
+                f"wealth={wealth[index]}, eps={physical[index]}"
+            ),
+        )
+        np.testing.assert_array_almost_equal(
+            original.output.policy,
+            row.actions["consumption"][index],
+            decimal=DECIMAL_PRECISION,
+        )
+        np.testing.assert_array_almost_equal(
+            original.output.savings,
+            wealth[index] - row.actions["consumption"][index],
+            decimal=DECIMAL_PRECISION,
+            err_msg=f"Associated native saving at frame {index}",
+        )
+    assert float(row.actions["consumption"][1]) not in (0.1, 4.0)
+    path = tmp_path / "public-scalar-nbegm.lcm"
+    solution.save(path=path)
+    loaded = load_solution(path=path)
+    assert loaded._engine_view is None
+    fresh = Model(**constructor_inputs)
+    replay = fresh.simulate(
+        params=params,
+        solution=loaded,
+        initial_conditions=initial_conditions,
+        log_level="off",
+        seed=17,
+    )
+    pd.testing.assert_frame_equal(
+        replay.to_dataframe(), result.to_dataframe(), check_exact=True
+    )
