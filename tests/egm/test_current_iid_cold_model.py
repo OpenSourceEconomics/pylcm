@@ -9,6 +9,7 @@ from types import MappingProxyType
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import pytest
 
 import lcm.model as model_module
@@ -102,6 +103,44 @@ def test_budgeted_public_model_solves_real_r_and_keeps_evicted_generation() -> N
     assert view.generation is first
     _, reacquired = model._prepare_call(params=params)
     assert reacquired is first
+
+
+def test_public_case_r_replays_from_a_result_whose_generation_was_evicted() -> None:
+    """A held result keeps its producing generation for physical replay."""
+    params = _params(child_points=np.array([1.0, 12.5]))
+    model = _public_model_from_declarations(
+        declarations=_declarations(runtime_child_grid=True)
+    )
+    result = model.solve(params=params, log_level="warning", max_compilation_workers=1)
+    initial_conditions = {
+        "regime_id": np.array([0]),
+        "age": np.array([0]),
+        "wealth": np.array([4.0]),
+    }
+    before = model.simulate(
+        params=params,
+        solution=result,
+        seed=19,
+        log_level="warning",
+        initial_conditions=initial_conditions,
+    ).to_dataframe()
+    view = result._engine_view
+    assert isinstance(view, OwnedSolutionView)
+    first = view.generation
+    model._generation_cache.capacity = 1
+    _, second = model._prepare_call(
+        params=_params(child_points=np.array([1.25, 12.75]))
+    )
+    assert second is not first
+    after = model.simulate(
+        params=params,
+        solution=result,
+        seed=19,
+        log_level="warning",
+        initial_conditions=initial_conditions,
+    ).to_dataframe()
+    assert view.generation is first
+    pd.testing.assert_frame_equal(after, before, check_exact=True)
 
 
 @dataclass(frozen=True, kw_only=True)
