@@ -1377,12 +1377,13 @@ def supports_owned_case_r_artifacts(*, regime: Regime, regime_name: RegimeName) 
 
 
 def supports_owned_negm_u_artifacts(*, regime: Regime, regime_name: RegimeName) -> bool:
-    """Require the exact installed NEGM source and its original future artifact."""
+    """Require an exact installed nested source and its original future artifact."""
     from _lcm.egm.current_iid_case_u_replay import (  # noqa: PLC0415
         CASE_U_FUTURE_REPLAY,
         CASE_U_REPLAY_IDENTITY,
     )
     from _lcm.egm.current_iid_negm import NEGMCaseUPoint  # noqa: PLC0415
+    from _lcm.egm.current_iid_nnbegm import NNBEGMCaseUPoint  # noqa: PLC0415
     from _lcm.solution.current_iid_negm import (  # noqa: PLC0415 - producer imports authority
         NativeNEGMCaseUPeriodKernel,
     )
@@ -1415,7 +1416,10 @@ def supports_owned_negm_u_artifacts(*, regime: Regime, regime_name: RegimeName) 
         declaration = replay.periods[period]
         if (
             type(kernel) is not NativeNEGMCaseUPeriodKernel
-            or type(kernel.point) is not NEGMCaseUPoint
+            or (
+                type(kernel.point) is not NEGMCaseUPoint
+                and type(kernel.point) is not NNBEGMCaseUPoint
+            )
             or declaration.negm_point is not kernel.point
             or declaration.date is not spec.date_at(period=period)
             or declaration.future is not kernel.future

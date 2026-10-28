@@ -2290,6 +2290,7 @@ class Model:
         )
         from _lcm.solution.nbegm import _BoundNBEGM  # noqa: PLC0415
         from _lcm.solution.negm import _BoundNEGM  # noqa: PLC0415
+        from _lcm.solution.nnbegm import _BoundNNBEGM  # noqa: PLC0415
 
         if (
             self.ages is None
@@ -2317,7 +2318,7 @@ class Model:
         )
         structure = prepared.prepared_structure
         nested_sources = any(
-            type(regime.solver) is _BoundNEGM
+            type(regime.solver) is _BoundNEGM or type(regime.solver) is _BoundNNBEGM
             for regime in structure.representative_user_regimes.values()
         )
         for name, regime in structure.representative_user_regimes.items():
@@ -2352,7 +2353,7 @@ class Model:
                     )
                 continue
             solver = regime.solver
-            if type(solver) is _BoundNEGM:
+            if type(solver) is _BoundNEGM or type(solver) is _BoundNNBEGM:
                 # Its original dated factory owns inner/outer scope and floor admission.
                 continue
             if (

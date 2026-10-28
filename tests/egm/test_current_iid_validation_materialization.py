@@ -34,6 +34,79 @@ from tests.solution.test_post_decision_lower_bound import _model as _bounded_mod
 pytestmark = pytest.mark.coverage(backends=("cpu",), precisions="both")
 
 
+def _original_minimum(*, values: FloatND) -> FloatND:
+    return jnp.min(values)
+
+
+def test_original_minimum_keeps_admitted_bytes_and_primitive() -> None:
+    """The NN domain reduction retains the original eager primitive boundary."""
+    from jax.extend.core import primitives as primitive_objects  # noqa: PLC0415
+
+    from _lcm.egm.validation_stages import prepare_validation_recipe  # noqa: PLC0415
+    from _lcm.solution.nnbegm import _nnbegm_outer_domain_flags  # noqa: PLC0415
+
+    dtype = canonical_float_dtype()
+    values = jnp.asarray([0.75, -0.0, 0.25], dtype=dtype)
+    arguments = {"values": values}
+    expected = _original_minimum(values=values)
+    recipe = prepare_validation_recipe(function=_original_minimum, arguments=arguments)
+    assert tuple(stage.primitive for stage, _operands, _outputs in recipe.stages) == (
+        primitive_objects.reduce_min_p,
+    )
+    owner = _owner(roots=(values, expected))
+    try:
+        actual = owner.evaluate_validation(
+            function=_original_minimum, arguments=arguments
+        )
+        assert isinstance(actual, jax.Array)
+        assert actual.dtype == expected.dtype
+        assert actual.shape == expected.shape
+        assert actual.weak_type == expected.weak_type
+        assert np.asarray(actual).tobytes() == np.asarray(expected).tobytes()
+        assert any(
+            root is actual for root in jax.tree.leaves(owner.solve_input_roots())
+        )
+        domain_arguments = {
+            "nodes": values,
+            "low": jnp.asarray(0.0, dtype=dtype),
+            "high": jnp.asarray(1.0, dtype=dtype),
+        }
+        expected_flags = _nnbegm_outer_domain_flags(**domain_arguments)
+        actual_flags = owner.evaluate_validation(
+            function=_nnbegm_outer_domain_flags, arguments=domain_arguments
+        )
+        for actual_flag, expected_flag in zip(
+            actual_flags, expected_flags, strict=True
+        ):
+            assert actual_flag.dtype == expected_flag.dtype
+            assert actual_flag.shape == expected_flag.shape
+            assert actual_flag.weak_type == expected_flag.weak_type
+            assert (
+                np.asarray(actual_flag).tobytes() == np.asarray(expected_flag).tobytes()
+            )
+    finally:
+        owner.close()
+
+
+def test_validator_minimum_name_cannot_authorize_a_foreign_primitive() -> None:
+    """The admitted minimum identity does not grant a same-name primitive access."""
+    from jax.extend.core import Primitive  # noqa: PLC0415
+    from jax.extend.core import primitives as primitive_objects  # noqa: PLC0415
+
+    from _lcm.egm.validation_stages import _stage  # noqa: PLC0415
+
+    graph = jax.make_jaxpr(_original_minimum)(
+        values=jnp.asarray([0.75, -0.0, 0.25], dtype=canonical_float_dtype())
+    )
+    equation = next(
+        equation
+        for equation in graph.eqns
+        if equation.primitive is primitive_objects.reduce_min_p
+    )
+    with pytest.raises(ExecutionPlanningError, match="unsupported eager primitive"):
+        _stage(equation=equation.replace(primitive=Primitive("reduce_min")))
+
+
 @pytest.mark.parametrize("with_grid_samples", [False, True])
 @pytest.mark.parametrize("intervals", [(0.375,), (0.375, 0.625, 1.125)])
 def test_original_probe_stack_keeps_admitted_bytes_and_primitive(

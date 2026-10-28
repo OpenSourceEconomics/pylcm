@@ -585,7 +585,7 @@ def process_regimes(
     )
 
 
-def prepare_regime_builder(
+def prepare_regime_builder(  # noqa: PLR0915 - existing original solver validation boundary
     *,
     user_regimes: Mapping[RegimeName, FinalizedUserRegime],
     ages: TimeAxis,
@@ -664,17 +664,27 @@ def prepare_regime_builder(
             from _lcm.solution.dcegm import ExactEnvelope, _BoundDCEGM  # noqa: PLC0415
             from _lcm.solution.nbegm import _BoundNBEGM  # noqa: PLC0415
             from _lcm.solution.negm import _BoundNEGM  # noqa: PLC0415
+            from _lcm.solution.nnbegm import _BoundNNBEGM  # noqa: PLC0415
 
-            if type(user_regime.solver) not in (
-                GridSearch,
-                _BoundDCEGM,
-                _BoundNBEGM,
-                _BoundNEGM,
-            ) or (
-                type(user_regime.solver) is _BoundNEGM
-                and (
-                    type(user_regime.solver.inner) is not _BoundDCEGM
-                    or type(user_regime.solver.inner.envelope) is not ExactEnvelope
+            if (
+                type(user_regime.solver)
+                not in (
+                    GridSearch,
+                    _BoundDCEGM,
+                    _BoundNBEGM,
+                    _BoundNEGM,
+                    _BoundNNBEGM,
+                )
+                or (
+                    type(user_regime.solver) is _BoundNEGM
+                    and (
+                        type(user_regime.solver.inner) is not _BoundDCEGM
+                        or type(user_regime.solver.inner.envelope) is not ExactEnvelope
+                    )
+                )
+                or (
+                    type(user_regime.solver) is _BoundNNBEGM
+                    and type(user_regime.solver.inner) is not _BoundNBEGM
                 )
             ):
                 # A subclass may override the hook with unprofiled allocations.

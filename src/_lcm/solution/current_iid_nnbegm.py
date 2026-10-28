@@ -12,14 +12,20 @@ from dags import concatenate_functions
 from _lcm.certainty_equivalent import aggregates_nonlinearly
 from _lcm.current_iid import CurrentIIDPlan
 from _lcm.egm.branch_aggregation import DeterministicOuterMaximum
-from _lcm.egm.current_iid_nnbegm import NNBEGMCaseUPoint, NNBEGMInnerSource
+from _lcm.egm.current_iid_nnbegm import (
+    NNBEGMCaseUPoint,
+    NNBEGMInnerSource,
+    require_original_nnbegm_case_u_methods,
+)
 from _lcm.egm.current_iid_pullback import certify_resources_map
 from _lcm.egm.nbegm_query_model import NBEGMIntervalRecipe
 from _lcm.egm.outer_inversion import certify_declared_outer_inverse
 from _lcm.egm.outer_search import FiniteOuterGrid
 from _lcm.egm.preferences import concatenate_regime_function
 from _lcm.egm.validation import _dag_ancestors
+from _lcm.egm.validation_materialization import _validation_grid_first
 from _lcm.execution.core_program import CoreBuildContext
+from _lcm.materialization import DatedGenerationMaterializer
 from _lcm.regime_building.age_normalization import resolve_periodized_nodes
 from _lcm.solution.continuation_target import union_fixed_params, union_free_params
 from _lcm.solution.contract import SolverBuildContext
@@ -27,7 +33,8 @@ from _lcm.solution.current_iid_case_r_build import (
     _PositionalResources,
     _ResourcesStructureCheck,
 )
-from _lcm.solution.current_iid_negm import PreparedNEGMCaseUPoint
+from _lcm.solution.current_iid_case_u_build import guard_case_u_shape
+from _lcm.solution.current_iid_negm import PreparedNEGMCaseUPoint, _negm_grid_last
 from _lcm.solution.nbegm import (
     _NBEGMQueryIntervalEvaluators,
     _NBEGMTiledCore,
@@ -35,18 +42,20 @@ from _lcm.solution.nbegm import (
 )
 from _lcm.solution.negm import _with_no_adjustment_outer_function
 from _lcm.solution.nnbegm import _BoundNNBEGM, _FiniteNNBEGMPeriodKernel
+from _lcm.solution.preparation_clock import prepare_case_u_clock
 from _lcm.typing import EconFunctionsMapping, FlatParams, PytreeValue
 from lcm.exceptions import UnsupportedOperationError
 from lcm.shocks import Discrete
 
 
-def prepare_original_nnbegm_u_point(
+def prepare_original_nnbegm_u_point(  # noqa: C901, PLR0915 - keep genuine original owner stages together
     *,
     context: SolverBuildContext,
     solver: _BoundNNBEGM,
     call: CoreBuildContext,
     fixed_flat_params: FlatParams,
     period: int,
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> PreparedNEGMCaseUPoint:
     """Keep the original nested builder, both actual NB cores and host checks."""
     plan = context.current_iid_plans.get(period)
@@ -67,8 +76,12 @@ def prepare_original_nnbegm_u_point(
         raise UnsupportedOperationError(
             "NNBEGM U requires its original finite deterministic outer sweep."
         )
+    if materializer is not None:
+        require_original_nnbegm_case_u_methods()
     solver.validate_build(context=context)
-    built = solver.build_period_kernels(context=replace(context, enable_jit=False))
+    built = solver.build_period_kernels(
+        context=replace(context, enable_jit=False), materializer=materializer
+    )
     owner = built.period_kernels[period]
     if type(owner) is not _FiniteNNBEGMPeriodKernel:
         raise TypeError("NNBEGM U lost its genuine finite nested owner.")
@@ -101,7 +114,16 @@ def prepare_original_nnbegm_u_point(
             NNBEGMInnerSource(
                 kernel=kernel,
                 core=core,
-                borrowing_limit=core.envelope_build.bind_cell.savings_grid[0],
+                borrowing_limit=(
+                    core.envelope_build.bind_cell.savings_grid[0]
+                    if materializer is None
+                    else materializer.evaluate_validation(
+                        function=_validation_grid_first,
+                        arguments={
+                            "points": core.envelope_build.bind_cell.savings_grid
+                        },
+                    )
+                ),
                 recipe=NBEGMIntervalRecipe(
                     source_identity=core.schedule_spec.sources,
                     input_names=inputs,
@@ -118,6 +140,31 @@ def prepare_original_nnbegm_u_point(
     source_grid = space.states[solver.inner.continuous_state]
     outer_grid = space.states[solver.outer_state]
     targets = tuple(context.transitions)
+    first = (
+        {name: values[0] for name, values in space.states.items()}
+        if materializer is None
+        else {
+            name: materializer.evaluate_validation(
+                function=_validation_grid_first, arguments={"points": values}
+            )
+            for name, values in space.states.items()
+        }
+    )
+    first_outer = (
+        owner.outer_grid_values[0]
+        if materializer is None
+        else materializer.evaluate_validation(
+            function=_validation_grid_first,
+            arguments={"points": owner.outer_grid_values},
+        )
+    )
+    clock = (
+        {"period": jnp.int32(period), "age": context.ages.values[period]}
+        if materializer is None
+        else prepare_case_u_clock(
+            period=period, ages=context.ages, materializer=materializer
+        )
+    )
     actual_pool: dict[str, PytreeValue] = {
         **union_fixed_params(
             fixed_flat_params=fixed_flat_params,
@@ -129,12 +176,11 @@ def prepare_original_nnbegm_u_point(
             regime_name=context.regime_name,
             transition_target_names=targets,
         ),
-        **{name: values[0] for name, values in space.states.items()},
-        solver.outer_post_decision: owner.outer_grid_values[0],
-        solver.outer_action: outer_grid[0],
-        solver.inner.continuous_action: source_grid[0],
-        "period": jnp.int32(period),
-        "age": context.ages.values[period],
+        **first,
+        solver.outer_post_decision: first_outer,
+        solver.outer_action: first[solver.outer_state],
+        solver.inner.continuous_action: first[solver.inner.continuous_state],
+        **clock,
     }
     physical_dtypes = {
         name: jnp.dtype(jnp.int32) if isinstance(law, Discrete) else source_grid.dtype
@@ -145,6 +191,13 @@ def prepare_original_nnbegm_u_point(
     coefficients = []
     for inner in (keeper, adjuster):
         original = inner.core.schedule_spec.coh_of_liquid_dag
+        if materializer is not None:
+            guard_case_u_shape(
+                function=original,
+                context=call,
+                fixed_flat_params=fixed_flat_params,
+                materializer=materializer,
+            )
         names = tuple(inspect.signature(original).parameters)
         function = _PositionalResources(function=original, names=names)
         arguments = tuple(
@@ -198,6 +251,13 @@ def prepare_original_nnbegm_u_point(
         enforce_signature=False,
         set_annotations=True,
     )
+    if materializer is not None:
+        guard_case_u_shape(
+            function=outer_function,
+            context=call,
+            fixed_flat_params=fixed_flat_params,
+            materializer=materializer,
+        )
     names = tuple(inspect.signature(outer_function).parameters)
     inverse = certify_declared_outer_inverse(
         func=outer_function,
@@ -210,7 +270,16 @@ def prepare_original_nnbegm_u_point(
         ),
         outer_action_name=solver.outer_action,
         outer_post_decision_name=solver.outer_post_decision,
-        outer_state_domain=(float(outer_grid[0]), float(outer_grid[-1])),
+        outer_state_domain=(float(outer_grid[0]), float(outer_grid[-1]))
+        if materializer is None
+        else (
+            float(first[solver.outer_state]),
+            float(
+                materializer.evaluate_validation(
+                    function=_negm_grid_last, arguments={"points": outer_grid}
+                )
+            ),
+        ),
         regime_name=context.regime_name,
     )
     return PreparedNEGMCaseUPoint(

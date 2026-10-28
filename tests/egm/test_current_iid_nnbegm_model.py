@@ -428,8 +428,9 @@ def _assert_original_nnbegm_banks(  # noqa: PLR0915 - original bank/tuple and cu
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
+@pytest.mark.parametrize("budget", [None, 1 << 28], ids=["unbudgeted", "budgeted"])
 def test_public_nnbegm_u_default_archive_replays_original_physics(  # noqa: PLR0915 - one genuine default archive and physical lifecycle
-    *, tmp_path: Path
+    *, tmp_path: Path, budget: int | None
 ) -> None:
     """Default retention delivers original nested NB physics to a fresh Model."""
     from pandas.testing import assert_frame_equal  # noqa: PLC0415
@@ -455,7 +456,11 @@ def test_public_nnbegm_u_default_archive_replays_original_physics(  # noqa: PLR0
     assert isinstance(child.solver, NNBEGM)
     assert isinstance(child.solver.inner, NBEGM)
     declarations = replace(
-        declarations, regimes={**declarations.regimes, "child": child}
+        declarations,
+        regimes={**declarations.regimes, "child": child},
+        execution_config=replace(
+            declarations.execution_config, device_memory_bytes=budget
+        ),
     )
     params = _params()
     model = _public_model_from_declarations(declarations=declarations)
@@ -537,3 +542,345 @@ def test_public_nnbegm_u_default_archive_replays_original_physics(  # noqa: PLR0
     assert fresh_generation.execution is not fresh
     assert fresh_generation.execution is not generation.execution
     assert_frame_equal(replay.to_dataframe(), result.to_dataframe(), check_exact=True)
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_nnbegm_shape_capture_keeps_both_banks_and_refuses_changed_engine(  # noqa: PLR0915 - one real prepared source with independent before-effect detectors
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Original arrays stay owned; changed methods, getters and init cannot run."""
+    from types import MappingProxyType  # noqa: PLC0415
+
+    import jax  # noqa: PLC0415
+
+    from _lcm.egm.current_iid_negm_program import NEGMCaseUArguments  # noqa: PLC0415
+    from _lcm.egm.current_iid_nnbegm import (  # noqa: PLC0415
+        NNBEGMCaseUPoint,
+        NNBEGMInnerSource,
+    )
+    from _lcm.execution.core_program import CoreBuildContext  # noqa: PLC0415
+    from _lcm.solution.current_iid_case_u_build import (  # noqa: PLC0415
+        guard_case_u_shape,
+    )
+    from _lcm.solution.current_iid_case_u_native import (  # noqa: PLC0415
+        CaseUExactArguments,
+    )
+    from _lcm.solution.current_iid_negm import (  # noqa: PLC0415
+        NativeNEGMCaseUPeriodKernel,
+    )
+    from _lcm.solution.nbegm import _NBEGMCellContinuation  # noqa: PLC0415
+    from _lcm.typing import PytreeValue  # noqa: PLC0415
+    from lcm.exceptions import ExecutionPlanningError  # noqa: PLC0415
+    from tests.egm.test_current_iid_call_owned_generation import (  # noqa: PLC0415
+        _public_model_from_declarations,
+    )
+    from tests.egm.test_current_iid_generation_materialization import (  # noqa: PLC0415
+        _owner,
+    )
+
+    declarations = _declarations()
+    original = declarations.regimes["child"]
+    assert isinstance(original, NestedConsumptionSavingsRegime)
+    assert isinstance(original.solver, NEGM)
+    child = replace(
+        original,
+        solver=NNBEGM(
+            inner=NBEGM(
+                savings_grid=original.solver.inner.savings_grid, jump_read="bridged"
+            ),
+            outer_search=FiniteOuterGrid(grid=original.solver.outer_grid),
+        ),
+    )
+    declarations = replace(
+        declarations,
+        regimes={**declarations.regimes, "child": child},
+        execution_config=replace(
+            declarations.execution_config, device_memory_bytes=1 << 28
+        ),
+    )
+    model = _public_model_from_declarations(declarations=declarations)
+    flat, generation = model._prepare_call(params=_params())
+    kernel = generation.execution._regimes["child"].solution.period_kernels[1]
+    assert isinstance(kernel, NativeNEGMCaseUPeriodKernel)
+    point = kernel.point
+    assert isinstance(point, NNBEGMCaseUPoint)
+    context = CoreBuildContext(
+        state_action_space=kernel.context.state_action_space,
+        next_regime_to_V_arr={},
+        next_regime_to_continuation=kernel.future.template().children,
+        flat_params=flat,
+        period=1,
+        ages=kernel.context.ages,
+    )
+    owner = _owner(roots=generation.live_roots())
+    owner.budget_bytes = 1 << 28
+    try:
+        held = guard_case_u_shape(
+            function=kernel.program.function,
+            context=context,
+            fixed_flat_params=MappingProxyType({}),
+            materializer=owner,
+        )
+        for original_array in (
+            point.plan.indices,
+            point.source_grid,
+            point.outer_nodes,
+            point.keeper.core.envelope_build.bind_cell.action_upper,
+            point.adjuster.core.envelope_build.bind_cell.action_upper,
+            point.keeper.savings_nodes,
+            point.adjuster.savings_nodes,
+        ):
+            assert any(value is original_array for value in held)
+            assert any(
+                value is original_array
+                for value in jax.tree.leaves(owner.solve_input_roots())
+            )
+        clock_owner = _owner(roots=generation.live_roots())
+        clock_owner.budget_bytes = 0
+        try:
+            arguments = kernel.program.argument_builder
+            assert isinstance(arguments, CaseUExactArguments)
+            assert isinstance(arguments.point, NEGMCaseUArguments)
+            with pytest.raises(ExecutionPlanningError):
+                arguments.point.prepare(context=context, materializer=clock_owner)
+            assert not clock_owner._pending
+        finally:
+            clock_owner.close()
+        effects: list[bool] = []
+
+        def changed_point(self: NNBEGMCaseUPoint) -> None:
+            assert self is point
+            effects.append(True)
+            raise AssertionError("Changed NN point ran")
+
+        with pytest.raises(AssertionError, match="Changed NN point ran"):
+            changed_point(point)
+        effects.clear()
+        with monkeypatch.context() as patch:
+            patch.setattr(NNBEGMCaseUPoint, "__post_init__", changed_point)
+            with pytest.raises(
+                TypeError, match="Original NNBEGM shape method authority"
+            ):
+                guard_case_u_shape(
+                    function=kernel.program.function,
+                    context=context,
+                    fixed_flat_params=MappingProxyType({}),
+                    materializer=owner,
+                )
+            assert not effects
+
+        def changed_getter(self: NNBEGMInnerSource) -> None:
+            assert self is point.keeper
+            effects.append(True)
+            raise AssertionError("Changed NN getter ran")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(NNBEGMInnerSource, "savings_nodes", property(changed_getter))
+            with pytest.raises(AssertionError, match="Changed NN getter ran"):
+                _ = point.keeper.savings_nodes
+            effects.clear()
+            with pytest.raises(
+                TypeError, match="Original NNBEGM shape property authority"
+            ):
+                guard_case_u_shape(
+                    function=kernel.program.function,
+                    context=context,
+                    fixed_flat_params=MappingProxyType({}),
+                    materializer=owner,
+                )
+            assert not effects
+
+        from _lcm.solution import nbegm as original_nb_module  # noqa: PLC0415
+
+        class ChangedCellSolver:
+            def __init__(self, **kwargs: PytreeValue) -> None:
+                del kwargs
+                effects.append(True)
+                raise AssertionError("Changed NN constructor class ran")
+
+        original_class = original_nb_module._NBEGMCellSolver
+        ChangedCellSolver.__module__ = original_class.__module__
+        ChangedCellSolver.__qualname__ = original_class.__qualname__
+        with monkeypatch.context() as patch:
+            patch.setattr(original_nb_module, "_NBEGMCellSolver", ChangedCellSolver)
+            assert vars(original_nb_module)["_NBEGMCellSolver"] is ChangedCellSolver
+            with pytest.raises(
+                AssertionError, match="Changed NN constructor class ran"
+            ):
+                ChangedCellSolver()
+            effects.clear()
+            with pytest.raises(
+                TypeError, match="Original NNBEGM constructor class binding"
+            ):
+                guard_case_u_shape(
+                    function=kernel.program.function,
+                    context=context,
+                    fixed_flat_params=MappingProxyType({}),
+                    materializer=owner,
+                )
+            assert not effects
+
+        def changed_init(self: _NBEGMCellContinuation, **kwargs: PytreeValue) -> None:
+            del self, kwargs
+            effects.append(True)
+            raise AssertionError("Changed NN constructor ran")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(_NBEGMCellContinuation, "__init__", changed_init)
+            with pytest.raises(AssertionError, match="Changed NN constructor ran"):
+                _NBEGMCellContinuation(
+                    kwargs={"wealth": point.source_grid},
+                    carry=MappingProxyType(dict(kernel.future.template().children)),
+                    comap_bindings=MappingProxyType({}),
+                    savings_grid=point.savings_nodes,
+                    continuation_plan=point.keeper.core.continuation_plan,
+                    statics=point.keeper.core.statics,
+                    regime_name="child",
+                    cliff_candidates=False,
+                    schedule_spec=point.keeper.core.schedule_spec,
+                )
+            effects.clear()
+            with pytest.raises(
+                TypeError, match="Original NNBEGM shape method authority"
+            ):
+                guard_case_u_shape(
+                    function=kernel.program.function,
+                    context=context,
+                    fixed_flat_params=MappingProxyType({}),
+                    materializer=owner,
+                )
+            assert not effects
+    finally:
+        owner.close()
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+@pytest.mark.parametrize("branch", ["keeper", "adjuster", "plan-alias"])
+def test_nnbegm_shape_capture_refuses_nested_host_or_plan_alias(*, branch: str) -> None:
+    """Neither genuine tiled branch can hide host data in a numerical callback."""
+    from types import MappingProxyType  # noqa: PLC0415
+
+    from _lcm.egm.current_iid_nnbegm import NNBEGMCaseUPoint  # noqa: PLC0415
+    from _lcm.execution.core_program import CoreBuildContext  # noqa: PLC0415
+    from _lcm.solution.current_iid_case_u_build import (  # noqa: PLC0415
+        guard_case_u_shape,
+    )
+    from _lcm.solution.current_iid_case_u_native import (  # noqa: PLC0415
+        CaseURideExactFunction,
+    )
+    from _lcm.solution.current_iid_negm import (  # noqa: PLC0415
+        NativeNEGMCaseUPeriodKernel,
+    )
+    from lcm.typing import FloatND  # noqa: PLC0415
+    from tests.egm.test_current_iid_call_owned_generation import (  # noqa: PLC0415
+        _public_model_from_declarations,
+    )
+    from tests.egm.test_current_iid_case_u_constructor_admission import (  # noqa: PLC0415
+        _consume_user_plan,
+    )
+    from tests.egm.test_current_iid_generation_materialization import (  # noqa: PLC0415
+        _owner,
+    )
+
+    declarations = _declarations()
+    original = declarations.regimes["child"]
+    assert isinstance(original, NestedConsumptionSavingsRegime)
+    assert isinstance(original.solver, NEGM)
+    child = replace(
+        original,
+        solver=NNBEGM(
+            inner=NBEGM(
+                savings_grid=original.solver.inner.savings_grid, jump_read="bridged"
+            ),
+            outer_search=FiniteOuterGrid(grid=original.solver.outer_grid),
+        ),
+    )
+    declarations = replace(
+        declarations,
+        regimes={**declarations.regimes, "child": child},
+        execution_config=replace(
+            declarations.execution_config, device_memory_bytes=1 << 28
+        ),
+    )
+    model = _public_model_from_declarations(declarations=declarations)
+    flat, generation = model._prepare_call(params=_params())
+    kernel = generation.execution._regimes["child"].solution.period_kernels[1]
+    assert isinstance(kernel, NativeNEGMCaseUPeriodKernel)
+    point = kernel.point
+    assert isinstance(point, NNBEGMCaseUPoint)
+    hidden = np.asarray([2.0])
+    original_plan = point.plan
+
+    def host_capture(*, consumption: FloatND, eps: FloatND) -> FloatND:
+        return (1 + eps) * jnp.log(consumption) + hidden[0]
+
+    def plan_capture(*, consumption: FloatND, eps: FloatND) -> FloatND:
+        return _consume_user_plan(
+            plan=original_plan, value=(1 + eps) * jnp.log(consumption)
+        )
+
+    inner = point.adjuster if branch == "adjuster" else point.keeper
+    spec = replace(
+        inner.core.schedule_spec,
+        utility_dag=plan_capture if branch == "plan-alias" else host_capture,
+    )
+    core = replace(
+        inner.core,
+        schedule_spec=spec,
+        envelope_build=replace(
+            inner.core.envelope_build,
+            bind_cell=replace(inner.core.envelope_build.bind_cell, schedule_spec=spec),
+        ),
+    )
+    changed_kernel = replace(
+        inner.kernel,
+        _core_programs=MappingProxyType(
+            {
+                **inner.kernel._core_programs,
+                "main": replace(inner.kernel._core_programs["main"], function=core),
+            }
+        ),
+    )
+    inner = replace(inner, core=core, kernel=changed_kernel)
+    changed_owner = replace(
+        point.owner,
+        keeper_kernel=point.owner.keeper_kernel
+        if branch == "adjuster"
+        else changed_kernel,
+        adjuster_kernel=changed_kernel
+        if branch == "adjuster"
+        else point.owner.adjuster_kernel,
+    )
+    point = replace(
+        point,
+        owner=changed_owner,
+        keeper=point.keeper if branch == "adjuster" else inner,
+        adjuster=inner if branch == "adjuster" else point.adjuster,
+    )
+    function = kernel.program.function
+    assert isinstance(function, CaseURideExactFunction)
+    function = replace(function, point=replace(function.point, pieces=point))
+    context = CoreBuildContext(
+        state_action_space=kernel.context.state_action_space,
+        next_regime_to_V_arr={},
+        next_regime_to_continuation=kernel.future.template().children,
+        flat_params=flat,
+        period=1,
+        ages=kernel.context.ages,
+    )
+    owner = _owner(roots=generation.live_roots())
+    owner.budget_bytes = 1 << 28
+    try:
+        with pytest.raises(
+            (UnsupportedOperationError, TypeError),
+            match=r"host-array capture|direct object dependency .*CurrentIIDPlan",
+        ):
+            guard_case_u_shape(
+                function=function,
+                context=context,
+                fixed_flat_params=MappingProxyType({}),
+                materializer=owner,
+            )
+        assert not owner._pending
+    finally:
+        owner.close()

@@ -2,6 +2,7 @@
 
 import functools
 import inspect
+import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from fractions import Fraction
@@ -13,6 +14,10 @@ import jax.numpy as jnp
 
 from _lcm.certainty_equivalent import LinearExpectation
 from _lcm.current_iid import CurrentIIDPlan
+from _lcm.egm import continuation as _nn_continuation
+from _lcm.egm import nbegm_breakpoints as _nn_breakpoints
+from _lcm.egm import nbegm_step as _nn_step
+from _lcm.egm import preferences as _nn_preferences
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.current_iid_balanced import _ordered_points
 from _lcm.egm.current_iid_resource_query import OwnedResourcesRead
@@ -30,6 +35,7 @@ from _lcm.egm.nbegm_step import _OwnedNBEGMQueryStep
 from _lcm.egm.outer_inversion import DeclaredOuterInverse, invert_declared_outer_target
 from _lcm.egm.preferences import Preferences, preferences_from_utility
 from _lcm.egm.query_data import QueryNodeKind
+from _lcm.solution import nbegm as _nn_inner_module
 from _lcm.solution.contract import SolverBuildContext
 from _lcm.solution.feasibility import (
     BoundedResult,
@@ -40,7 +46,10 @@ from _lcm.solution.feasibility import (
 )
 from _lcm.solution.nbegm import (
     _BoundScalarFunction,
+    _NBEGMBranchSolver,
+    _NBEGMCellBinder,
     _NBEGMCellContinuation,
+    _NBEGMCellSolver,
     _NBEGMQueryIntervalEvaluators,
     _NBEGMTiledCore,
     _RideAlongNBEGMPeriodKernel,
@@ -694,3 +703,175 @@ class NNBEGMCaseUPoint:
             query_status=(*(statuses or ()), QueryInputStatus(no, no, ~valid)),
             continuation_read_counts=counts,
         )
+
+
+_ORIGINAL_NNBEGM_CLASSES = (
+    NNBEGMCaseUPoint,
+    NNBEGMInnerSource,
+    _NBEGMCellBinder,
+    _NBEGMCellContinuation,
+    _NBEGMCellSolver,
+    _NBEGMBranchSolver,
+    _BoundScalarFunction,
+    _NBEGMQueryIntervalEvaluators,
+)
+_ORIGINAL_NNBEGM_METHODS = tuple(
+    (owner, name, method, method.__code__, raw, raw.__code__)
+    for owner in _ORIGINAL_NNBEGM_CLASSES
+    for name, method in vars(owner).items()
+    if inspect.isfunction(method)
+    and (
+        name == "__init__"
+        or name not in {"__repr__", "__eq__", "__hash__", "__setattr__", "__delattr__"}
+    )
+    for raw in (inspect.unwrap(method),)
+) + tuple(
+    (owner, name, method, method.__code__, raw, raw.__code__)
+    for owner, name in ((_RideAlongNBEGMPeriodKernel, "core_programs"),)
+    for method in (vars(owner)[name],)
+    for raw in (inspect.unwrap(method),)
+)
+_ORIGINAL_NNBEGM_PROPERTIES = tuple(
+    (owner, name, descriptor, getter, getter.__code__, raw, raw.__code__)
+    for owner in _ORIGINAL_NNBEGM_CLASSES
+    for name, descriptor in vars(owner).items()
+    if isinstance(descriptor, property)
+    for getter in (descriptor.fget,)
+    if getter is not None
+    for raw in (inspect.unwrap(getter),)
+)
+
+
+_ORIGINAL_NNBEGM_NEW = tuple(
+    (owner, inspect.getattr_static(owner, "__new__"))
+    for owner in _ORIGINAL_NNBEGM_CLASSES
+)
+_ORIGINAL_NNBEGM_IMPORTS = tuple(
+    (
+        module,
+        sys.modules[module.__name__],
+        name,
+        function,
+        function.__code__,
+        raw,
+        raw.__code__,
+    )
+    for module, names in (
+        (_nn_continuation, ("bind_continuation",)),
+        (
+            _nn_breakpoints,
+            (
+                "interval_midpoints",
+                "interval_segment_coefficients",
+                "clamp_breakpoints_to_grid",
+                "linear_asset_selection_preimage",
+            ),
+        ),
+        (
+            _nn_step,
+            (
+                "nbegm_per_interval_continuation_step_savings",
+                "nbegm_multi_interval_step_savings",
+                "nbegm_unified_step_savings",
+            ),
+        ),
+        (_nn_preferences, ("preferences_from_utility",)),
+    )
+    for name in names
+    for function in (vars(module)[name],)
+    for raw in (inspect.unwrap(function),)
+)
+
+
+_ORIGINAL_NNBEGM_HELPERS = tuple(
+    (_nn_inner_module, name, function, function.__code__, raw, raw.__code__)
+    for name in (
+        "_solve_ride_along_cell_step",
+        "_nbegm_cell_breakpoints",
+        "_cell_breakpoint",
+    )
+    for function in (vars(_nn_inner_module)[name],)
+    for raw in (inspect.unwrap(function),)
+)
+
+
+_ORIGINAL_NNBEGM_CLASS_BINDINGS = tuple(
+    (module, name, owner)
+    for module in (sys.modules[__name__], _nn_inner_module)
+    for name, owner in vars(module).items()
+    if any(owner is original[0] for original in _ORIGINAL_NNBEGM_METHODS)
+)
+
+
+def require_original_nnbegm_case_u_methods() -> None:  # noqa: C901 - keep the bounded original origin checks together
+    """Authenticate original engine constructors before any owned preparation."""
+    from _lcm.solution import nnbegm as nn_owner_module  # noqa: PLC0415
+    from _lcm.solution.fingerprint import (  # noqa: PLC0415
+        _unwrap_exact_beartype_wrapper,
+    )
+    from _lcm.solution.nnbegm import _FiniteNNBEGMPeriodKernel  # noqa: PLC0415
+
+    if (
+        sys.modules.get(nn_owner_module.__name__) is not nn_owner_module
+        or nn_owner_module._ORIGINAL_FINITE_NNBEGM_PERIOD_KERNEL  # noqa: SLF001
+        is not _FiniteNNBEGMPeriodKernel
+    ):
+        raise TypeError("Original NNBEGM finite owner authority changed.")
+    for module, name, original_class in _ORIGINAL_NNBEGM_CLASS_BINDINGS:
+        if (
+            sys.modules.get(module.__name__) is not module
+            or vars(module).get(name) is not original_class
+        ):
+            raise TypeError("Original NNBEGM constructor class binding changed.")
+    for owner, original_new in _ORIGINAL_NNBEGM_NEW:
+        if (
+            inspect.getattr_static(owner, "__new__") is not original_new
+            or original_new is not object.__new__
+        ):
+            raise TypeError("Original NNBEGM constructor authority changed.")
+    for (
+        module,
+        original_module,
+        name,
+        original,
+        code,
+        raw,
+        raw_code,
+    ) in _ORIGINAL_NNBEGM_IMPORTS:
+        if (
+            sys.modules.get(module.__name__) is not original_module
+            or module is not original_module
+            or vars(module).get(name) is not original
+            or original.__code__ is not code
+            or (_unwrap_exact_beartype_wrapper(original) or original) is not raw
+            or raw.__code__ is not raw_code
+        ):
+            raise TypeError("Original NNBEGM imported numerical binding changed.")
+    for owner, name, method, code, raw, raw_code in (
+        *_ORIGINAL_NNBEGM_METHODS,
+        *_ORIGINAL_NNBEGM_HELPERS,
+    ):
+        if (
+            vars(owner).get(name) is not method
+            or method.__code__ is not code
+            or (_unwrap_exact_beartype_wrapper(method) or method) is not raw
+            or raw.__code__ is not raw_code
+        ):
+            raise TypeError("Original NNBEGM shape method authority changed.")
+    for (
+        owner,
+        name,
+        descriptor,
+        getter,
+        code,
+        raw,
+        raw_code,
+    ) in _ORIGINAL_NNBEGM_PROPERTIES:
+        if (
+            vars(owner).get(name) is not descriptor
+            or descriptor.fget is not getter
+            or getter.__code__ is not code
+            or (_unwrap_exact_beartype_wrapper(getter) or getter) is not raw
+            or raw.__code__ is not raw_code
+        ):
+            raise TypeError("Original NNBEGM shape property authority changed.")

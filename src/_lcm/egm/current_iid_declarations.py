@@ -109,15 +109,18 @@ def projected_producer_declarations(  # noqa: C901, PLR0912, PLR0915 - original 
         if (
             isinstance(solver, (_BoundNEGM, _BoundNNBEGM))
             and materializer is not None
-            and (
-                type(solver) is not _BoundNEGM
-                or type(solver.inner) is not _BoundDCEGM
-                or type(solver.inner.envelope) is not ExactEnvelope
+            and not (
+                (
+                    type(solver) is _BoundNEGM
+                    and type(solver.inner) is _BoundDCEGM
+                    and type(solver.inner.envelope) is ExactEnvelope
+                )
+                or (type(solver) is _BoundNNBEGM and type(solver.inner) is _BoundNBEGM)
             )
         ):
             raise UnsupportedOperationError(
-                "Cold nested declarations require the original NEGM source "
-                "with its exact DC inner."
+                "Cold nested declarations require original NEGM/DC "
+                "or finite NNBEGM/NB sources."
             )
         liquid = (
             solver.inner.continuous_state
@@ -160,7 +163,7 @@ def projected_producer_declarations(  # noqa: C901, PLR0912, PLR0915 - original 
         if isinstance(solver, (_BoundNBEGM, _BoundNEGM, _BoundNNBEGM)):
             if (
                 materializer is not None
-                and type(solver) is not _BoundNEGM
+                and type(solver) not in (_BoundNEGM, _BoundNNBEGM)
                 and tuple(state_grids[target]) != (liquid,)
             ):
                 raise UnsupportedOperationError(
@@ -236,7 +239,7 @@ def projected_producer_declarations(  # noqa: C901, PLR0912, PLR0915 - original 
                     for period, actual in templates.items()
                 }
             else:
-                if type(solver) is not _BoundNEGM:
+                if type(solver) not in (_BoundNEGM, _BoundNNBEGM):
                     raise UnsupportedOperationError(
                         "Cold passive NB projected template allocation "
                         "remains required."

@@ -7,6 +7,7 @@ owner and complete compiler/resident budget admission are separate prerequisites
 """
 
 import dis
+import inspect
 import types
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, fields, replace
@@ -198,7 +199,7 @@ def _case_u_original_roots(**operands: jax.Array) -> tuple[jax.Array, ...]:
     return tuple(operands[f"operand_{index}"] for index in range(len(operands)))
 
 
-def guard_case_u_shape(  # noqa: C901, PLR0912 - keep exact roles and pretrace checks together
+def guard_case_u_shape(  # noqa: C901, PLR0912, PLR0915 - keep exact roles and pretrace checks together
     *,
     function: Callable[..., PytreeValue],
     context: CoreBuildContext,
@@ -219,6 +220,15 @@ def guard_case_u_shape(  # noqa: C901, PLR0912 - keep exact roles and pretrace c
         _ORIGINAL_NEGM_CASE_U_PROGRAM_METHODS,
         NEGMCaseUProgram,
     )
+    from _lcm.egm.current_iid_nnbegm import (  # noqa: PLC0415
+        _ORIGINAL_NNBEGM_HELPERS,
+        _ORIGINAL_NNBEGM_IMPORTS,
+        _ORIGINAL_NNBEGM_METHODS,
+        _ORIGINAL_NNBEGM_PROPERTIES,
+        NNBEGMCaseUPoint,
+        NNBEGMInnerSource,
+        require_original_nnbegm_case_u_methods,
+    )
     from _lcm.egm.validation_stages import ValidationCaptureHasher  # noqa: PLC0415
     from _lcm.solution.current_iid_case_u_native import (  # noqa: PLC0415
         _ORIGINAL_CASE_U_PUBLISHER_METHODS,
@@ -226,8 +236,14 @@ def guard_case_u_shape(  # noqa: C901, PLR0912 - keep exact roles and pretrace c
         CaseURideExactFunction,
     )
     from _lcm.solution.dcegm import _DCEGMPeriodKernel  # noqa: PLC0415
-    from _lcm.solution.nbegm import _NBEGMContinuousCore  # noqa: PLC0415
+    from _lcm.solution.nbegm import (  # noqa: PLC0415
+        _NBEGMContinuousCore,
+        _NBEGMQueryIntervalEvaluators,
+        _NBEGMTiledCore,
+        _RideAlongNBEGMPeriodKernel,
+    )
     from _lcm.solution.negm import _NEGMPeriodKernel  # noqa: PLC0415
+    from _lcm.solution.nnbegm import _FiniteNNBEGMPeriodKernel  # noqa: PLC0415
 
     point = (
         function
@@ -249,10 +265,43 @@ def guard_case_u_shape(  # noqa: C901, PLR0912 - keep exact roles and pretrace c
             "Case-U shape preparation requires its existing original clock array."
         )
     nested = point.pieces if type(point) is NEGMCaseUProgram else None
-    if nested is not None and type(nested) is not NEGMCaseUPoint:
+    if nested is not None and type(nested) not in (NEGMCaseUPoint, NNBEGMCaseUPoint):
         raise UnsupportedOperationError(
-            "Cold nested shape capture requires its genuine NEGM DC inner point."
+            "Cold nested shape capture requires its genuine NEGM/DC or NNBEGM/NB point."
         )
+    nn_nested = type(nested) is NNBEGMCaseUPoint
+    nn_inners = (
+        (nested.keeper, nested.adjuster) if type(nested) is NNBEGMCaseUPoint else ()
+    )
+    nn_evaluators: list[_NBEGMQueryIntervalEvaluators] = []
+    for inner in nn_inners:
+        callback = inner.recipe.evaluate_preimages
+        if (
+            not isinstance(callback, types.MethodType)
+            or type(callback.__self__) is not _NBEGMQueryIntervalEvaluators
+        ):
+            raise TypeError("Original NNBEGM query evaluator authority changed.")
+        nn_evaluators.append(callback.__self__)
+    nested_methods = (
+        tuple(
+            original[1:]
+            for original in _ORIGINAL_NNBEGM_METHODS
+            if original[0] is NNBEGMCaseUPoint
+        )
+        if nn_nested
+        else _ORIGINAL_NEGM_CASE_U_METHODS
+    )
+    nested_properties = (
+        tuple(
+            original[1:]
+            for original in _ORIGINAL_NNBEGM_PROPERTIES
+            if original[0] is NNBEGMCaseUPoint
+        )
+        if nn_nested
+        else _ORIGINAL_NEGM_CASE_U_PROPERTIES
+    )
+    if nn_nested:
+        require_original_nnbegm_case_u_methods()
     if nested is not None:
         for owner, name, method, code, raw, raw_code in (
             *_ORIGINAL_CASE_U_PUBLISHER_METHODS,
@@ -270,9 +319,9 @@ def guard_case_u_shape(  # noqa: C901, PLR0912 - keep exact roles and pretrace c
                 raise TypeError(
                     "Original NEGM publisher/program method authority changed."
                 )
-        for name, method, code, raw, raw_code in _ORIGINAL_NEGM_CASE_U_METHODS:
+        for name, method, code, raw, raw_code in nested_methods:
             if (
-                vars(NEGMCaseUPoint).get(name) is not method
+                vars(type(nested)).get(name) is not method
                 or method.__code__ is not code
                 or (_unwrap_exact_beartype_wrapper(method) or method) is not raw
                 or raw.__code__ is not raw_code
@@ -285,9 +334,9 @@ def guard_case_u_shape(  # noqa: C901, PLR0912 - keep exact roles and pretrace c
             code,
             raw,
             raw_code,
-        ) in _ORIGINAL_NEGM_CASE_U_PROPERTIES:
+        ) in nested_properties:
             if (
-                vars(NEGMCaseUPoint).get(name) is not descriptor
+                vars(type(nested)).get(name) is not descriptor
                 or descriptor.fget is not getter
                 or getter.__code__ is not code
                 or (_unwrap_exact_beartype_wrapper(getter) or getter) is not raw
@@ -307,7 +356,10 @@ def guard_case_u_shape(  # noqa: C901, PLR0912 - keep exact roles and pretrace c
             (point.pieces.core, _NBEGMContinuousCore.construct_point),
             (function, CaseUExactFunction.__call__),
         )
-    elif type(point) is NEGMCaseUProgram and type(nested) is NEGMCaseUPoint:
+    elif type(point) is NEGMCaseUProgram and type(nested) in (
+        NEGMCaseUPoint,
+        NNBEGMCaseUPoint,
+    ):
         engine_receivers = (
             (point, NEGMCaseUProgram.evaluate_with_law),
             (
@@ -316,8 +368,29 @@ def guard_case_u_shape(  # noqa: C901, PLR0912 - keep exact roles and pretrace c
                 if type(function) is CaseUExactFunction
                 else CaseURideExactFunction.__call__,
             ),
-            *((nested, original[1]) for original in _ORIGINAL_NEGM_CASE_U_METHODS),
-            *((nested, original[2]) for original in _ORIGINAL_NEGM_CASE_U_PROPERTIES),
+            *((nested, original[1]) for original in nested_methods),
+            *((nested, original[2]) for original in nested_properties),
+            *(
+                (receiver, original[2])
+                for receiver in nn_inners
+                for original in _ORIGINAL_NNBEGM_METHODS
+                if original[0] is NNBEGMInnerSource
+            ),
+            *(
+                (receiver, original[3])
+                for receiver in nn_inners
+                for original in _ORIGINAL_NNBEGM_PROPERTIES
+                if original[0] is NNBEGMInnerSource
+            ),
+            *(
+                (receiver, original[2])
+                for receiver in (
+                    *tuple(inner.core.envelope_build.bind_cell for inner in nn_inners),
+                    *nn_evaluators,
+                )
+                for original in _ORIGINAL_NNBEGM_METHODS
+                if original[0] is type(receiver)
+            ),
         )
     else:
         engine_receivers = ()
@@ -340,6 +413,7 @@ def guard_case_u_shape(  # noqa: C901, PLR0912 - keep exact roles and pretrace c
     if point is not None:
         _require_case_u_native_preflight()
     function_depth = 0
+    function_frames: list[types.FunctionType] = []
     roots = list(
         canonical_generation_roots(
             declarations=(context, fixed_flat_params, ages.values)
@@ -379,7 +453,48 @@ def guard_case_u_shape(  # noqa: C901, PLR0912 - keep exact roles and pretrace c
                     "original producer admission before tracing."
                 )
             if isinstance(value, types.FunctionType):
-                _refuse_case_u_local_imports(code=value.__code__)
+                original_import_method = (
+                    nn_nested
+                    and any(
+                        value is original[4]
+                        and value.__code__ is original[5]
+                        and (original[0].__name__, original[1])
+                        in {
+                            (NNBEGMCaseUPoint.__name__, "__post_init__"),
+                            ("_NBEGMCellContinuation", "_cell_rows_for_pool"),
+                            ("_NBEGMBranchSolver", "solve"),
+                            (
+                                _ORIGINAL_NNBEGM_HELPERS[0][0].__name__,
+                                "_solve_ride_along_cell_step",
+                            ),
+                            (
+                                _ORIGINAL_NNBEGM_HELPERS[0][0].__name__,
+                                "_nbegm_cell_breakpoints",
+                            ),
+                            (
+                                _ORIGINAL_NNBEGM_HELPERS[0][0].__name__,
+                                "_cell_breakpoint",
+                            ),
+                        }
+                        for original in (
+                            *_ORIGINAL_NNBEGM_METHODS,
+                            *_ORIGINAL_NNBEGM_HELPERS,
+                        )
+                    )
+                    and all(
+                        any(
+                            frame is candidate
+                            for original in (
+                                *_ORIGINAL_NNBEGM_METHODS,
+                                *_ORIGINAL_NNBEGM_HELPERS,
+                            )
+                            for candidate in (original[2], original[4])
+                        )
+                        for frame in function_frames
+                    )
+                )
+                if not original_import_method:
+                    _refuse_case_u_local_imports(code=value.__code__)
             # Fingerprinting a host factory's version does not admit its allocation.
             if _native_numeric_callable_kind(value) in {
                 "numpy-ufunc",
@@ -391,7 +506,22 @@ def guard_case_u_shape(  # noqa: C901, PLR0912 - keep exact roles and pretrace c
                 )
             super().visit(value=value, _ignore_beartype_guards=_ignore_beartype_guards)
 
-        def _visit_dataclass(self, value: DataclassInstance) -> None:
+        def _visit_dataclass(self, value: DataclassInstance) -> None:  # noqa: C901, PLR0912 - original persistent numerical records and closed metadata roles
+            if not function_depth and nn_nested:
+                for inner in nn_inners:
+                    if value is inner:
+                        self._visit_nn_inner_identity(inner=inner)
+                        for declaration in fields(inner):
+                            if declaration.name != "kernel":
+                                self.visit(value=getattr(inner, declaration.name))
+                        self._visit_referenced_bound_method(inner.__post_init__)
+                        return
+                    if value is inner.core:
+                        # NN reads this original numerical record; it does not call
+                        # the standalone tiled publisher or compiled CorePrograms.
+                        for declaration in fields(inner.core):
+                            self.visit(value=getattr(inner.core, declaration.name))
+                        return
             if not function_depth and nested is not None and value is nested:
                 self._visit_nested_identity()
                 for declaration in fields(nested):
@@ -431,9 +561,20 @@ def guard_case_u_shape(  # noqa: C901, PLR0912 - keep exact roles and pretrace c
                 )
 
         def _visit_nested_reference(self, *, path: tuple[str, ...]) -> None:
-            if type(nested) is not NEGMCaseUPoint:
+            if not isinstance(nested, (NEGMCaseUPoint, NNBEGMCaseUPoint)):
                 raise TypeError("Nested receiver role lost its exact source point.")
-            if path in {
+            if (
+                nn_nested
+                and path
+                in {
+                    ("owner", "liquid_state_name"),
+                    ("owner", "inner_action"),
+                    ("owner", "outer_action"),
+                    ("owner", "outer_grid_values", "shape"),
+                    ("context",),
+                    ("context", "transitions"),
+                }
+            ) or path in {
                 ("owner",),
                 ("owner", "regime_name"),
                 ("owner", "keeper_kernel"),
@@ -445,14 +586,23 @@ def guard_case_u_shape(  # noqa: C901, PLR0912 - keep exact roles and pretrace c
                 ("context", "certainty_equivalent"),
             }:
                 self._visit_nested_identity()
-            elif path in {("keeper",), ("adjuster",)}:
-                self.visit(value=getattr(nested, path[0]))
+            elif path[:1] in {("keeper",), ("adjuster",)}:
+                if len(path) == 1:
+                    self.visit(value=getattr(nested, path[0]))
+                elif nn_nested:
+                    self._visit_nn_inner_reference(
+                        inner=getattr(nested, path[0]), path=path[1:]
+                    )
+                else:
+                    super()._visit_object_reference(
+                        value=nested, attribute_paths=frozenset({path})
+                    )
             elif path == ("plan",):
                 self._visit_original_plan(plan=nested.plan)
             elif len(path) == 1 and any(
-                path[0] == original[0] for original in _ORIGINAL_NEGM_CASE_U_PROPERTIES
+                path[0] == original[0] for original in nested_properties
             ):
-                for original in _ORIGINAL_NEGM_CASE_U_PROPERTIES:
+                for original in nested_properties:
                     if original[0] == path[0]:
                         self._visit_referenced_bound_method(
                             types.MethodType(original[2], nested)
@@ -462,7 +612,82 @@ def guard_case_u_shape(  # noqa: C901, PLR0912 - keep exact roles and pretrace c
                     value=nested, attribute_paths=frozenset({path})
                 )
 
+        def _visit_nn_inner_identity(self, *, inner: NNBEGMInnerSource) -> None:
+            if (
+                type(inner) is not NNBEGMInnerSource
+                or type(inner.core) is not _NBEGMTiledCore
+                or type(inner.kernel) is not _RideAlongNBEGMPeriodKernel
+                or inner.kernel.core_programs()["main"].function is not inner.core
+            ):
+                raise TypeError("NNBEGM capture lost its genuine original inner core.")
+            self.frame(label="abstract-original-nn-inner-owner")
+
+        def _visit_nn_inner_reference(  # noqa: C901 - original inner receiver paths stay together
+            self, *, inner: NNBEGMInnerSource, path: tuple[str, ...]
+        ) -> None:
+            self._visit_nn_inner_identity(inner=inner)
+            if path in {("kernel",), ("kernel", "core_programs")}:
+                self.frame(label="original-nn-inner-graph-identity")
+            elif path == ("core",):
+                self.visit(value=inner.core)
+            elif path == ("core", "envelope_build", "bind_cell"):
+                self.visit(value=inner.core.envelope_build.bind_cell)
+            elif path == ("core", "continuation_plan"):
+                self.visit(value=inner.core.continuation_plan)
+            elif path == ("core", "schedule_spec", "sources"):
+                self.visit(value=inner.core.schedule_spec.sources)
+            elif path == ("recipe", "source_identity"):
+                self.visit(value=inner.recipe.source_identity)
+            elif path[:1] == ("continuation_plan",) and len(path) > 1:
+                self._visit_nn_inner_reference(inner=inner, path=("continuation_plan",))
+                super()._visit_object_reference(
+                    value=inner.core.continuation_plan,
+                    attribute_paths=frozenset({path[1:]}),
+                )
+            elif len(path) == 1 and any(
+                original[0] is NNBEGMInnerSource and original[1] == path[0]
+                for original in _ORIGINAL_NNBEGM_PROPERTIES
+            ):
+                for original in _ORIGINAL_NNBEGM_PROPERTIES:
+                    if original[0] is NNBEGMInnerSource and original[1] == path[0]:
+                        self._visit_referenced_bound_method(
+                            types.MethodType(original[3], inner)
+                        )
+            else:
+                super()._visit_object_reference(
+                    value=inner, attribute_paths=frozenset({path})
+                )
+
         def _visit_nested_identity(self) -> None:
+            if type(nested) is NNBEGMCaseUPoint:
+                if (
+                    type(nested.owner) is not _FiniteNNBEGMPeriodKernel
+                    or nested.owner.regime_name != nested.context.regime_name
+                    or nested.context.current_iid_plans.get(nested.period)
+                    is not nested.plan
+                    or nested.owner.keeper_kernel is not nested.keeper.kernel
+                    or nested.owner.adjuster_kernel is not nested.adjuster.kernel
+                ):
+                    raise TypeError(
+                        "NNBEGM capture lost its genuine original owner/plan."
+                    )
+                for inner in nn_inners:
+                    self._visit_nn_inner_identity(inner=inner)
+                self.visit(
+                    value=(
+                        nested.context.regime_name,
+                        tuple(nested.context.transitions),
+                        nested.context.certainty_equivalent,
+                        nested.owner.regime_name,
+                        nested.owner.outer_post_decision,
+                        nested.owner.liquid_state_name,
+                        nested.owner.inner_action,
+                        nested.owner.outer_action,
+                    )
+                )
+                self.visit(value=nested.owner.outer_grid_values)
+                self._visit_original_plan(plan=nested.plan)
+                return
             if type(nested) is not NEGMCaseUPoint:
                 raise TypeError("Nested shape capture lost its exact source point.")
             # Read original identity checks without executing a callback before
@@ -548,19 +773,39 @@ def guard_case_u_shape(  # noqa: C901, PLR0912 - keep exact roles and pretrace c
         ) -> None:
             nonlocal function_depth
             function_depth += 1
+            function_frames.append(function)
             try:
                 super()._visit_function(
                     function=function, ignore_beartype_guards=ignore_beartype_guards
                 )
             finally:
+                function_frames.pop()
                 function_depth -= 1
 
-        def _visit_object_reference(
+        def _visit_object_reference(  # noqa: C901, PLR0912 - exact original engine receiver boundary
             self,
             *,
             value: _Reachable,
             attribute_paths: frozenset[tuple[str, ...]],
         ) -> None:
+            if (
+                nn_nested
+                and value is object
+                and attribute_paths == frozenset({("__setattr__",)})
+                and any(
+                    original[1] == "__init__"
+                    and function_frames
+                    and function_frames[-1] is original[4]
+                    for original in _ORIGINAL_NNBEGM_METHODS
+                )
+            ):
+                if (
+                    inspect.getattr_static(object, "__setattr__")
+                    is not object.__setattr__
+                ):
+                    raise TypeError("Original frozen dataclass setter changed.")
+                self.frame(label="original-frozen-dataclass-object-setattr")
+                return
             if function_depth or not any(
                 identity in self._active_bound_methods
                 for identity in engine_bound_methods
@@ -571,7 +816,19 @@ def guard_case_u_shape(  # noqa: C901, PLR0912 - keep exact roles and pretrace c
                 )
                 return
             for path in sorted(attribute_paths):
-                if nested is not None and value is function and path[:1] == ("point",):
+                if type(value) is NNBEGMInnerSource and any(
+                    value is inner for inner in nn_inners
+                ):
+                    self._visit_nn_inner_reference(inner=value, path=path)
+                elif (
+                    type(value) is _NBEGMQueryIntervalEvaluators
+                    and any(value is evaluator for evaluator in nn_evaluators)
+                    and path == ("sources",)
+                ):
+                    self.visit(value=value.sources)
+                elif (
+                    nested is not None and value is function and path[:1] == ("point",)
+                ):
                     if path == ("point",):
                         self.visit(value=point)
                     else:
@@ -600,7 +857,30 @@ def guard_case_u_shape(  # noqa: C901, PLR0912 - keep exact roles and pretrace c
                         value=value, attribute_paths=frozenset({path})
                     )
 
-    CaptureGuard(array_recorder=roots.append).visit(value=function)
+    recorder = CaptureGuard(array_recorder=roots.append)
+    if nn_nested:
+        for owner, name, _method, _code, raw, _raw_code in _ORIGINAL_NNBEGM_METHODS:
+            if name == "__init__" or (owner.__name__, name) in {
+                ("_NBEGMCellBinder", "__call__"),
+                ("_NBEGMCellContinuation", "__post_init__"),
+                ("_NBEGMCellContinuation", "__call__"),
+                ("_NBEGMCellContinuation", "_cell_rows_for_pool"),
+                ("_NBEGMCellSolver", "construct_owned_query_row"),
+                ("_NBEGMBranchSolver", "solve"),
+                ("_BoundScalarFunction", "__call__"),
+            }:
+                recorder.visit(value=raw, _ignore_beartype_guards=True)
+        for (
+            _module,
+            _original_module,
+            _name,
+            original,
+            _code,
+            _raw,
+            _raw_code,
+        ) in _ORIGINAL_NNBEGM_IMPORTS:
+            recorder.visit(value=original)
+    recorder.visit(value=function)
     # The existing validator identity recipe has no primitive/output allocation;
     # it publishes ALL original roots before any clock upload or possible copy.
     held = materializer.evaluate_validation(

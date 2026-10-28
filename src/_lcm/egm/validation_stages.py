@@ -114,6 +114,7 @@ _PRIMITIVE_ARITIES: Mapping[Primitive, int | None] = MappingProxyType(
         primitive_objects.scatter_add_p: 3,
         primitive_objects.concatenate_p: None,
         primitive_objects.reduce_max_p: 1,
+        primitive_objects.reduce_min_p: 1,
         primitive_objects.reduce_sum_p: 1,
         primitive_objects.reduce_or_p: 1,
         primitive_objects.is_finite_p: 1,

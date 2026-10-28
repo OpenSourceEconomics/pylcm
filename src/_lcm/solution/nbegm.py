@@ -807,7 +807,12 @@ class NBEGM(OneMarginSolver):
             ),
         )
 
-    def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
+    def build_period_kernels(
+        self,
+        *,
+        context: SolverBuildContext,
+        materializer: DatedGenerationMaterializer | None = None,
+    ) -> SolutionKernels:
         """Build one case-piece EGM period adapter per active period."""
         from _lcm.egm.nbegm import collect_nbegm_metadata  # noqa: PLC0415
 
@@ -822,7 +827,11 @@ class NBEGM(OneMarginSolver):
             context=context,
             solver_path=("nbegm",),
         )
-        savings_grid = self.savings_grid.to_jax()
+        savings_grid = (
+            self.savings_grid.to_jax()
+            if materializer is None
+            else materializer.materialize_grid(spec=self.savings_grid)
+        )
 
         functions = context.solve_functions
         registry = collect_nbegm_metadata(functions=functions)
@@ -876,6 +885,7 @@ class NBEGM(OneMarginSolver):
                 consumption_action_name=bound.continuous_action,
                 probe_failure=self.probe_failure,
                 probe_schedule=self.probe_schedule,
+                materializer=materializer,
             )
             if is_schedule
             else None
@@ -890,8 +900,13 @@ class NBEGM(OneMarginSolver):
                 savings_grid=savings_grid,
                 schedule_spec=schedule_spec,
                 feasibility_constraints=feasibility_constraints,
+                materializer=materializer,
             )
 
+        if materializer is not None:
+            raise UnsupportedOperationError(
+                "Owned nested NB requires its original ride-along schedule."
+            )
         return self._build_single_liquid_kernels(
             context=context,
             representative_context=representative_context,
@@ -1286,13 +1301,14 @@ class NBEGM(OneMarginSolver):
         liquid_state_name = cast("_BoundNBEGM", self).continuous_state
         return any(name != liquid_state_name for name in space.state_names)
 
-    def _build_ride_along_kernels(
+    def _build_ride_along_kernels(  # noqa: PLR0915 - original ride constructor and transient admission
         self,
         *,
         context: SolverBuildContext,
         savings_grid: Float1D,
         schedule_spec: _NBEGMScheduleSpec,
         feasibility_constraints: tuple[_NBEGMFeasibilityConstraint, ...] = (),
+        materializer: DatedGenerationMaterializer | None = None,
     ) -> SolutionKernels:
         """Build the case-piece kernels for a regime carrying a ride-along co-state.
 
@@ -1309,14 +1325,30 @@ class NBEGM(OneMarginSolver):
 
         bound = cast("_BoundNBEGM", self)
 
-        liquid_grid = context.grids[schedule_spec.liquid_state_name].to_jax()
+        liquid_grid = (
+            context.grids[schedule_spec.liquid_state_name].to_jax()
+            if materializer is None
+            else materializer.materialize_grid(
+                spec=context.grids[schedule_spec.liquid_state_name]
+            )
+        )
         ride_shape = tuple(
-            int(context.grids[name].to_jax().shape[0])
+            int(
+                (
+                    context.grids[name].to_jax()
+                    if materializer is None
+                    else materializer.materialize_grid(spec=context.grids[name])
+                ).shape[0]
+            )
             for name in schedule_spec.ride_along_state_names
         )
         query_model = context.nbegm_source_query_model or (
             context.nbegm_query_models or {}
         ).get(context.regime_name)
+        if materializer is not None and query_model is not None:
+            raise UnsupportedOperationError(
+                "Owned nested NB requires original query-free rows."
+            )
         query_template = (
             None
             if query_model is None
@@ -1447,6 +1479,7 @@ class NBEGM(OneMarginSolver):
                 consumption_action_name=bound.continuous_action,
                 probe_failure=self.probe_failure,
                 probe_schedule=self.probe_schedule,
+                materializer=materializer,
             )
             group_constraints = tuple(
                 replace(
@@ -1490,6 +1523,7 @@ class NBEGM(OneMarginSolver):
                     envelope_arithmetic=self.envelope_arithmetic,
                     publish_jump_topology=self.jump_read == "one_sided",
                     co_map_state_names=resolved.co_map_state_names,
+                    materializer=materializer,
                 )
                 # The Epstein-Zin kernels cover smooth and pure-kink budgets;
                 # the unified jump-and-kink candidate step is additive. Reject
@@ -1536,8 +1570,11 @@ class NBEGM(OneMarginSolver):
                 )
                 envelope_build = _build_nbegm_envelope_core(
                     savings_grid=savings_grid,
-                    schedule_spec=group_spec,
+                    schedule_spec=group_spec
+                    if materializer is None
+                    else replace(group_spec, param_checks=()),
                     statics=statics,
+                    materializer=materializer,
                     is_epstein_zin=_aggregates_nonlinearly(
                         context.certainty_equivalent
                     ),
@@ -1558,7 +1595,9 @@ class NBEGM(OneMarginSolver):
                     statics=statics,
                     regime_name=context.regime_name,
                     cliff_candidates=cliff_candidates,
-                    schedule_spec=group_spec,
+                    schedule_spec=group_spec
+                    if materializer is None
+                    else replace(group_spec, param_checks=()),
                     envelope_build=envelope_build,
                     state_action_space=resolved.state_action_space,
                     argument_builder=_RideAlongArgumentBuilder(
@@ -1574,6 +1613,7 @@ class NBEGM(OneMarginSolver):
                     ),
                     enable_jit=context.enable_jit,
                     query_template=query_template,
+                    materializer=materializer,
                 )
                 statics_by_key[key] = statics
                 cliff_candidates_by_key[key] = cliff_candidates
@@ -1612,6 +1652,7 @@ class NBEGM(OneMarginSolver):
                 if query_template is not None
                 else _shard_ride_carry_template(
                     template=_build_ride_along_carry_template(
+                        materializer=materializer,
                         liquid_grid=liquid_grid,
                         ride_shape=ride_shape,
                         n_breakpoints=n_carry_breakpoints,
@@ -6541,7 +6582,9 @@ def _solve_ride_along_cell_step(
 
 
 def _ride_along_jump_config(
+    *,
     kinds: tuple[str, ...],
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> tuple[BoolND, int, bool, tuple[int, ...], bool]:
     """Derive the merged partition's jump statics from the declared breakpoint kinds.
 
@@ -6564,7 +6607,14 @@ def _ride_along_jump_config(
     dynamic_jumps = 0 < n_jumps < len(kinds)
     return (
         # dtype pinned so the zero-breakpoint (empty) case stays boolean.
-        jnp.asarray(jump_flags, dtype=bool),
+        (
+            jnp.asarray(jump_flags, dtype=bool)
+            if materializer is None
+            else materializer.evaluate_validation(
+                function=functools.partial(jnp.asarray, jump_flags, dtype=bool),
+                arguments={},
+            )
+        ),
         n_jumps,
         n_jumps > 0,
         static_jump_positions,
@@ -6765,6 +6815,7 @@ def _nbegm_ride_along_statics(
     stochastic_node_width: int | None = None,
     publish_jump_topology: bool = True,
     co_map_state_names: tuple[StateName, ...] = (),
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> _NBEGMRideAlongStatics:
     """Derive the static config of the ride-along tile-local core.
 
@@ -6784,7 +6835,7 @@ def _nbegm_ride_along_statics(
         )
         raise RegimeInitializationError(msg)
     jump_flags_arr, n_jumps, has_jump, static_jump_positions, dynamic_jumps = (
-        _ride_along_jump_config(kinds)
+        _ride_along_jump_config(kinds=kinds, materializer=materializer)
     )
 
     liquid_name = schedule_spec.liquid_state_name
@@ -7394,6 +7445,7 @@ def _ride_along_core_programs(
     argument_builder: _RideAlongArgumentBuilder,
     enable_jit: bool,
     query_template: EGMCarry | None = None,
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> MappingProxyType[str, CoreProgram]:
     """Declare the ride-along kernel's `main` and `replay` programs.
 
@@ -7407,7 +7459,13 @@ def _ride_along_core_programs(
         name for name in statics.ride_names if name not in statics.co_map_state_names
     )
     n_cells = math.prod(
-        int(jnp.asarray(state_action_space.states[name]).shape[0])
+        int(
+            (
+                jnp.asarray(state_action_space.states[name])
+                if materializer is None
+                else state_action_space.states[name]
+            ).shape[0]
+        )
         for name in inner_names
     )
     interval_axes = (
@@ -8885,6 +8943,7 @@ def _build_nbegm_envelope_core(
     query_model: NBEGMQueryModel | None = None,
     current_floor: _NBEGMFloor | None = None,
     current_predicates: tuple[Callable[..., BoolND], ...] | None = None,
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> _NBEGMEnvelopeBuild:
     """Build the EGM/envelope half of the ride-along solve.
 
@@ -8909,8 +8968,23 @@ def _build_nbegm_envelope_core(
     # closed form to invert and its root is always bracketed numerically. The
     # clamped near-zero-marginal corner whose root exceeds the bracket lands far to
     # the right and is discarded by the upper envelope.
-    action_upper = newton_action_ceiling(savings_grid)
-    action_lower = jnp.asarray(NEWTON_ACTION_FLOOR, dtype=action_upper.dtype)
+    action_upper = (
+        newton_action_ceiling(savings_grid)
+        if materializer is None
+        else materializer.evaluate_validation(
+            function=newton_action_ceiling, arguments={"scale_grid": savings_grid}
+        )
+    )
+    action_lower = (
+        jnp.asarray(NEWTON_ACTION_FLOOR, dtype=action_upper.dtype)
+        if materializer is None
+        else materializer.evaluate_validation(
+            function=functools.partial(
+                jnp.asarray, NEWTON_ACTION_FLOOR, dtype=action_upper.dtype
+            ),
+            arguments={},
+        )
+    )
 
     n_feasibility_boundaries = sum(
         len(constraint.program.surfaces) for constraint in feasibility_constraints
@@ -10836,6 +10910,7 @@ def _build_ride_along_carry_template(
     ride_shape: tuple[int, ...],
     n_breakpoints: int,
     carry_policy: bool,
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> EGMCarry:
     """Build the all-finite case-piece carry template with ride-along axes leading.
 
@@ -10855,6 +10930,16 @@ def _build_ride_along_carry_template(
     # against this template) would have a different pytree than the runtime
     # carry. The NNBEGM collapse strips its own runtime leaf, so its
     # outer continuation stays policy-free against its own template.
+    if materializer is not None:
+        return materializer.evaluate_validation(
+            function=functools.partial(
+                _build_ride_along_carry_template,
+                ride_shape=ride_shape,
+                n_breakpoints=n_breakpoints,
+                carry_policy=carry_policy,
+            ),
+            arguments={"liquid_grid": liquid_grid},
+        )
     row = jnp.concatenate(
         [liquid_grid, jnp.repeat(liquid_grid[-1:], 2 * n_breakpoints)]
     )

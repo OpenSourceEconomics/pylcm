@@ -517,11 +517,12 @@ def prepare_finite_negm_u_kernels(  # noqa: C901, PLR0912, PLR0915 - genuine fam
         )
 
         if type(materializer) is not SimulationEntryAllocations or any(
-            type(solver) is not _BoundNEGM for solver in solvers.values()
+            type(solver) is not _BoundNEGM and type(solver) is not _BoundNNBEGM
+            for solver in solvers.values()
         ):
             raise UnsupportedOperationError(
-                "Cold finite NEGM U requires its original entry owner "
-                "and genuine DC inner family."
+                "Cold finite nested U requires its original entry owner "
+                "and genuine DC or NB inner family."
             )
     if set(declarations) != set(solvers):
         raise UnsupportedOperationError(
@@ -568,6 +569,7 @@ def prepare_finite_negm_u_kernels(  # noqa: C901, PLR0912, PLR0915 - genuine fam
                 call=call,
                 fixed_flat_params=fixed_flat_params,
                 period=period,
+                materializer=materializer,
             )
         else:
             prepared = prepare_original_negm_u_point(
