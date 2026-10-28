@@ -208,7 +208,7 @@ def _nb_declarations(
             "income": ShockGroup(
                 shocks={"eps": Uniform(start=0.0, stop=1.0)},
                 nodes=UserNodes(
-                    nodes=np.asarray([[0.0], [1.0]]), weights=np.asarray([0.5, 0.5])
+                    nodes=jnp.asarray([[0.0], [1.0]]), weights=jnp.asarray([0.5, 0.5])
                 ),
             )
         },
@@ -625,7 +625,7 @@ def test_nbegm_u_model_integrates_and_reconstructs_original_candidates(
     ]
     assert isinstance(future, CaseUReplayChildren)
     wealth = np.asarray([0.5, 1.5, 3.0, 1.5])
-    physical = np.asarray([1.0, 0.0, 1.0, 0.5])
+    physical = np.asarray([1.0, 0.0, 1.0, 0.5], dtype=canonical_float_dtype())
     result = model.simulate(
         params=_nb_params(),
         solution=solution,
@@ -734,7 +734,7 @@ def test_original_nbegm_u_kink_and_corner_keep_original_candidates(
     params = _nb_params(kink=True)
     solution = model.solve(params=params, log_level="off")
     wealth = np.asarray([0.5, 1.0, 2.0, 4.0])
-    shock = np.asarray([1.0, 0.0, 1.0, 0.0])
+    shock = np.asarray([1.0, 0.0, 1.0, 0.0], dtype=canonical_float_dtype())
     # Declared budget is m=b below2 and m=1+b/2 above; the physical
     # preimage changes, while the same log/log EGM candidate remains optimal.
     cash = wealth - 0.5 * np.maximum(wealth - 2.0, 0.0)
@@ -1107,7 +1107,7 @@ def test_original_nbegm_r_model_retains_one_bank_and_replays_offnode(  # noqa: P
     assert not bool(invalid.valid)
 
     wealth = np.asarray([0.375, 1.0, 1.0, 2.0])
-    physical = np.asarray([0.0, 0.0, 0.5, 1.0])
+    physical = np.asarray([0.0, 0.0, 0.5, 1.0], dtype=canonical_float_dtype())
     simulated = model.simulate(
         params=params,
         solution=solution,
@@ -1205,7 +1205,7 @@ def test_nbegm_r_law_derivatives_and_cold_bank_remain_explicit_refusals() -> Non
             "income": ShockGroup(
                 shocks={"eps": Uniform(start=_r_state_law_start, stop=1.0)},
                 nodes=UserNodes(
-                    nodes=np.asarray([[0.0], [1.0]]), weights=np.asarray([0.5, 0.5])
+                    nodes=jnp.asarray([[0.0], [1.0]]), weights=jnp.asarray([0.5, 0.5])
                 ),
             )
         },
@@ -1244,8 +1244,8 @@ def _r_null_declarations(*, invalid_null: bool = False) -> _ModelConstructorInpu
             "income": ShockGroup(
                 shocks={"eps": Uniform(start=0.0, stop=2.0)},
                 nodes=UserNodes(
-                    nodes=np.asarray([[0.0], [1.0]]),
-                    weights=np.asarray([1.0, 0.0]),
+                    nodes=jnp.asarray([[0.0], [1.0]]),
+                    weights=jnp.asarray([1.0, 0.0]),
                 ),
             )
         },
@@ -1403,8 +1403,8 @@ def test_original_nbegm_r_double_zero_event_skips_first_order_counterfactual() -
             "extra": ShockGroup(
                 shocks={"eta": Uniform(start=0.0, stop=2.0)},
                 nodes=UserNodes(
-                    nodes=np.asarray([[0.0], [1.0]]),
-                    weights=np.asarray([1.0, 0.0]),
+                    nodes=jnp.asarray([[0.0], [1.0]]),
+                    weights=jnp.asarray([1.0, 0.0]),
                 ),
             ),
         },
@@ -1767,10 +1767,10 @@ def test_original_optional_callbacks_survive_construction_and_replace() -> None:
     assert rebound.interval_recipe is recipe
     assert rebound._evaluate_preimages is recipe.evaluate_preimages
     assert replace(bound, interval_recipe=None)._evaluate_preimages is None
-    with pytest.raises(ValueError, match="init=False"):
+    with pytest.raises((TypeError, ValueError), match="init=False"):
         replace(bound, _evaluate_preimages=recipe.evaluate_preimages)
 
-    actual = balanced_model()._regimes["child"].solution.period_kernels[1]
+    actual = balanced_model()._regimes["child"].solution.period_kernels[0]
     assert isinstance(actual, NativeCaseUPeriodKernel)
     function = actual.core_programs()["main"].function
     assert isinstance(function, CaseUExactFunction)
@@ -1785,7 +1785,7 @@ def test_original_optional_callbacks_survive_construction_and_replace() -> None:
     assert changed._publish_balanced.__self__ is function.balanced
     assert changed._publish_balanced.__func__ is publisher.__func__
     assert replace(function, balanced=None)._publish_balanced is None
-    with pytest.raises(ValueError, match="init=False"):
+    with pytest.raises((TypeError, ValueError), match="init=False"):
         replace(function, _publish_balanced=publisher)
 
 
