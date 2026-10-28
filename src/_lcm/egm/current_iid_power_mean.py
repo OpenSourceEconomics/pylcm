@@ -162,6 +162,7 @@ def _bank_input_valid(*, bank: PowerMeanNodeBank) -> ScalarBool:
 
 def _unit_risk_exponent(
     *,
+    values: FloatND,
     d: FloatND,
     log_w: FloatND,
     positive: BoolND,
@@ -174,6 +175,8 @@ def _unit_risk_exponent(
     Var(ell)=sum_{i<j} wi*wj*(ell_i-ell_j)^2/Z^2. A rounded centroid can
     give the dominant node a false squared residual larger than a rare term.
     Pair differences avoid that subtraction. Only a transient row is retained.
+    A representable pair ratio gives each difference as one rounded log; two
+    rounded logs of extreme values would carry ulp(|log v|) into it.
     """
     signed_dp = _signed(value=dp)
     ln_two = jnp.log(jnp.asarray(2.0, dtype=d.dtype))
@@ -184,7 +187,11 @@ def _unit_risk_exponent(
 
     # keyword-only-exempt: library-callback=jax.lax.scan
     def fold(state: _SignedLog, index: IntND) -> tuple[_SignedLog, None]:
-        difference = _signed(value=d[index] - d)
+        ratio = values[index] / values
+        exact = jnp.isfinite(ratio) & ~is_below_smallest_normal(ratio)
+        difference = _signed(
+            value=jnp.where(exact, jnp.log(jnp.where(exact, ratio, 1.0)), d[index] - d)
+        )
         active = positive[index] & positive & (indices > index)
         row = _SignedLog(
             log_c
@@ -341,6 +348,7 @@ def reduce_power_mean_economic(
     unit_exponent = jax.lax.cond(
         (p == 0.0) & ~is_represented_zero(dp),
         lambda: _unit_risk_exponent(
+            values=values,
             d=d,
             log_w=log_w,
             positive=positive,

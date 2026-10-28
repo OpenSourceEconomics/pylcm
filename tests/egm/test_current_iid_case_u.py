@@ -52,7 +52,7 @@ from lcm.typing import (
     ScalarInt,
     TransitionFunctionName,
 )
-from tests.conftest import DECIMAL_PRECISION, EXACT_KERNEL_SKIP_REASON
+from tests.conftest import DECIMAL_PRECISION, EXACT_KERNEL_SKIP_REASON, X64_ENABLED
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
@@ -1040,6 +1040,7 @@ def test_stable_power_mean_invalid_derivative_only_node_is_not_discarded() -> No
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="64")
+@pytest.mark.skipif(not X64_ENABLED, reason="1e100 and 1e-310 are float64 operands")
 def test_stable_power_mean_rare_variance_keeps_final_ce_scale() -> None:
     """A subnormal event still has an ordinary scaled economic contribution."""
     values = jnp.asarray([1e100, 4e100])

@@ -488,7 +488,8 @@ def _log_row(*, gap: float) -> tuple[CurrentResourcesEvaluator, ScalarFloat]:
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
-@pytest.mark.parametrize("gap", [0.0, 0.001])
+# A binary gap keeps the tangent representable: a rounded decimal moves it off center.
+@pytest.mark.parametrize("gap", [0.0, 2.0**-10])
 def test_hidden_corner_island_and_tangent_remain_explicit_holes(gap: float) -> None:
     """Critical exclusion detects contacts missed by ordinary refinement probes."""
     evaluator, center = _log_row(gap=gap)
