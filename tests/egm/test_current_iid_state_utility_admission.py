@@ -35,6 +35,11 @@ def _state_utility(
 
 
 def test_public_dcegm_retains_its_original_state_utility_refusal() -> None:
+    """Without a current shock the public constructor keeps the envelope refusal.
+
+    A shocked public DCEGM is dated, and its direct-state utility becomes an
+    obligation that preparation resolves or refuses.
+    """
     declarations = _actual_declarations()
     child = declarations.regimes["child"]
     assert isinstance(child, ConsumptionSavingsRegime)
@@ -44,14 +49,15 @@ def test_public_dcegm_retains_its_original_state_utility_refusal() -> None:
                 **declarations.regimes,
                 "child": replace(
                     child,
-                    functions={**child.functions, "utility": _utility_u},
+                    functions={**child.functions, "utility": _state_utility},
+                    shocks=(),
                 ),
             },
             ages=declarations.ages,
             initial_nodes=declarations.initial_nodes,
             edges=declarations.edges,
             regime_id_class=declarations.regime_id_class,
-            shocks=declarations.shocks,
+            shocks={},
         )
 
 

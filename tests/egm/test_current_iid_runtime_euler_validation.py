@@ -168,18 +168,22 @@ def test_actual_call_context_cannot_substitute_invalid_euler_nodes(
 
 
 def test_ordinary_model_retains_runtime_euler_grid_refusal() -> None:
-    """Only the actual retained private constructor can defer this contract."""
+    """Only a retained dated constructor can defer this contract.
+
+    A model without a current shock is not dated, so its constructor refuses.
+    """
     declarations = _declarations(runtime_child_grid=True)
+    child = declarations.regimes["child"]
     with pytest.raises(
         ModelInitializationError, match="supplies its points only at runtime"
     ):
         Model(
-            regimes=declarations.regimes,
+            regimes={**declarations.regimes, "child": replace(child, shocks=())},
             ages=declarations.ages,
             initial_nodes=declarations.initial_nodes,
             edges=declarations.edges,
             regime_id_class=declarations.regime_id_class,
-            shocks=declarations.shocks,
+            shocks={},
         )
 
 
