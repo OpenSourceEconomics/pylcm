@@ -122,7 +122,7 @@ def _ordinary_model(*, fixed_params: UserParams, terminal_start: bool = False) -
             post_decision_state="savings",
         ),
         solver=DCEGM(
-            savings_grid=IrregSpacedGrid(points=np.array([0.25, 0.5, 1.5])),
+            savings_grid=IrregSpacedGrid(points=np.array([0.25, 0.5, 4.0])),
             envelope=ExactEnvelope(),
         ),
     )
