@@ -1437,7 +1437,9 @@ def test_budgeted_public_solve_admits_every_off_grid_count(
         arguments: Mapping[str, EconFunctionArg | EconFunctionKwargs],
         memory: SimulationMemory,
     ) -> IntND:
-        admitted.append(function.keywords["grid_names"])
+        # The regime-probability law shares this admission; record the counts.
+        if function.func is transition_checks._off_grid_counts_law:
+            admitted.append(function.keywords["grid_names"])
         return cast(
             "IntND", admit(function=function, arguments=arguments, memory=memory)
         )
@@ -1561,10 +1563,12 @@ def test_budgeted_off_grid_count_narrows_its_block_until_admitted(
         arguments: Mapping[str, EconFunctionArg | EconFunctionKwargs],
         memory: SimulationMemory,
     ) -> IntND:
-        rows = function.keywords["block_rows"]
-        tried.append(rows)
-        if rows > 2 * transition_checks._OFF_GRID_BLOCK_ROWS:
-            raise ExecutionPlanningError("compiler reservation exceeds the budget")
+        # The regime-probability law shares this admission; only counts are blocked.
+        if function.func is transition_checks._off_grid_counts_law:
+            rows = function.keywords["block_rows"]
+            tried.append(rows)
+            if rows > 2 * transition_checks._OFF_GRID_BLOCK_ROWS:
+                raise ExecutionPlanningError("compiler reservation exceeds the budget")
         return cast(
             "IntND", admit(function=function, arguments=arguments, memory=memory)
         )
