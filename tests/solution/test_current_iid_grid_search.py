@@ -1257,10 +1257,13 @@ def test_new_iid_refuses_uncomposed_native_families(family: str) -> None:
     if family == "dcegm":
         base = dcegm_paper_twin.get_model(solver="dcegm")
         regime_id_class = dcegm_paper_twin.TwinRegimeId
+        # A dated DC-EGM source is call-owned, refused at its declaration shape.
+        message = r"requires original one-state one-action DCEGM"
     else:
         base = test_decoupled._model()
         regime_id_class = test_decoupled.RegimeId
-    with pytest.raises(UnsupportedOperationError, match=r"Current IID"):
+        message = r"Current IID"
+    with pytest.raises(UnsupportedOperationError, match=message):
         Model(
             regimes={
                 name: regime.replace(shocks=("innovation",))

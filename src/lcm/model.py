@@ -7416,8 +7416,12 @@ class Model:
                     },
                 ),
             )
-            if array_writer is not None and any(
-                self.shocks[name].correlation is None for name in group_flat_params
+            if (
+                array_writer is not None
+                and metadata is not None
+                and any(
+                    self.shocks[name].correlation is None for name in group_flat_params
+                )
             ):
                 raise UnsupportedOperationError(
                     "Cold dated runtime correlation requires admission of the "

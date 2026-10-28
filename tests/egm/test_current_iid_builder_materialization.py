@@ -28,6 +28,7 @@ from _lcm.grids import (
 from _lcm.processes.iid import NormalIIDProcess, UniformIIDProcess
 from _lcm.solution.dcegm import _BoundDCEGM
 from _lcm.solution.generation import canonical_generation_roots
+from lcm import Model
 from lcm.exceptions import (
     ExecutionPlanningError,
     GridInitializationError,
@@ -145,7 +146,12 @@ def test_original_value_grid_cache_roots_are_charged_before_code_upload() -> Non
         owner.close()
 
 
-def test_shared_fixed_normalizer_preserves_labelled_temporal_inputs() -> None:
+def test_shared_fixed_normalizer_preserves_labelled_temporal_inputs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The GridSearch source is outside cold dated admission, which its own tests
+    # cover; only the shared fixed normalizer under a materializer is checked here.
+    monkeypatch.setattr(Model, "_require_cold_dated_route", lambda *_a, **_k: None)
     series = pd.Series(
         [2.0, 90.0, 1.0, 91.0],
         index=pd.Index([41, 99, 40, 99], name="age"),
@@ -165,10 +171,9 @@ def test_shared_fixed_normalizer_preserves_labelled_temporal_inputs() -> None:
         for expected, value in zip(expected_leaves, actual_leaves, strict=True):
             assert value.dtype == expected.dtype
             assert np.asarray(value).tobytes() == np.asarray(expected).tobytes()
-        assert any(
-            np.array_equal(np.asarray(value), np.array([1.0, 2.0]))
-            for value in actual_leaves
-        )
+        # Labels align by age (40, 41), not by their order in the series.
+        wage = np.asarray(actual.fixed.granular["work"]["utility__wage"])
+        np.testing.assert_array_equal(wage[:2], [1.0, 2.0])
         # The normalization does not reorder, rewrite or consume caller labels.
         pd.testing.assert_series_equal(
             series,
