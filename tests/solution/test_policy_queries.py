@@ -1294,7 +1294,7 @@ def test_unavailable_benchmark_guards_domain_poison_and_its_derivative() -> None
                 "period": jnp.int32(0),
                 "age": jnp.int32(0),
                 "action": context.state_action_space.actions["action"],
-                "next_regime_to_V_arr": {},
+                "next_regime_to_V_arr": MappingProxyType({}),
             }
         )
         return jnp.sum(jnp.where(answer[2][:, None], answer[0], 0.0))

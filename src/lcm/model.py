@@ -1295,7 +1295,7 @@ class Model:
                 if isinstance(regime.shocks, Phased)
                 else bool(regime.shocks)
             )
-            and type(regime.solver) is not GridSearch
+            and not isinstance(regime.solver, GridSearch)
             for regime in regimes.values()
         )
         hardware = None
