@@ -22,6 +22,7 @@ from _lcm.egm.current_iid_balanced import (
     BalancedProjectedEGMCarry,
     BalancedResourcesProgram,
 )
+from _lcm.egm.current_iid_projection import _read_projected
 from _lcm.egm.projected_continuation import PROJECTED_EGM_CONTINUATION
 from _lcm.params.mapping_leaf import MappingLeaf, UserMappingLeaf
 from _lcm.solution.artifacts import OwnedSolutionView
@@ -627,6 +628,37 @@ def _public_model_from_declarations(*, declarations: _ModelConstructorInputs) ->
             if field.init
         }
     )
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_public_case_r_row_matches_the_literal_economics_off_the_child_grid() -> None:
+    """Integrated W and economic M at off-grid wealth match the closed form.
+
+    At w in {1.5, 2.5, 3.5} both conditional log/log optima (w/2 and (w+1)/2)
+    lie on the declared saving grid, so the grid-conditional solution is
+    W = log(w/2) + log((w+1)/2) and M = 1/w + 1/(w+1), independent of the
+    production selection. The child grid is {1, 12.5}.
+    """
+    result = _public_model_from_declarations(declarations=_declarations()).solve(
+        params=_params(), log_level="warning", max_compilation_workers=1
+    )
+    carry = result.retained_continuations[
+        ArtifactRef(period=1, regime="child", key=PROJECTED_EGM_CONTINUATION)
+    ]
+    assert isinstance(carry, BalancedProjectedEGMCarry)
+    dtype = carry.grid.dtype
+    eps = float(jnp.finfo(dtype).eps)
+    for wealth in (1.5, 2.5, 3.5):
+        read = _read_projected(carry=carry, query=jnp.asarray(wealth, dtype=dtype))
+        assert bool(read.valid)
+        value = np.log(wealth / 2.0) + np.log((wealth + 1.0) / 2.0)
+        marginal = 1.0 / wealth + 1.0 / (wealth + 1.0)
+        assert abs(float(read.value) - value) / max(1.0, abs(value)) <= max(
+            1e-6, 64 * eps
+        )
+        assert abs(float(read.economic_marginal) - marginal) / max(
+            1.0, marginal
+        ) <= max(1e-4, 8 * np.sqrt(eps))
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
