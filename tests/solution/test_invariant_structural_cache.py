@@ -28,12 +28,13 @@ import numpy as np
 import pytest
 
 from _lcm.execution.workspace_planning import CompilerMemoryReservation
+from _lcm.regime_building.processing import RegimeParameterMetadata
 from _lcm.simulation.entry_allocations import SimulationEntryAllocations
 from _lcm.solution import backward_induction as bi
 from _lcm.typing import ArgumentTree, FlatParams
 from lcm import ExecutionConfig, Model
 from lcm.solver_api import SolutionResult
-from lcm.typing import UserParams
+from lcm.typing import RegimeName, UserParams
 from tests.execution.test_compiler_allocation_reservation import synthetic_memory
 from tests.solution._candidate_census import _CompilationKwargs
 from tests.solution.test_invariant_blocking import _workload
@@ -55,9 +56,10 @@ type _PlanSummary = tuple[
 ]
 
 
-class _ProcessKwargs(TypedDict):
+class _CanonicalizeKwargs(TypedDict):
     array_writer: NotRequired[SimulationEntryAllocations | None]
-    runtime_checks: NotRequired[bool]
+    metadata: NotRequired[Mapping[RegimeName, RegimeParameterMetadata] | None]
+    use_categorical_codes: NotRequired[bool]
 
 
 def _config(*, blocked: bool, budget: int | None = 2**30) -> ExecutionConfig:
@@ -302,7 +304,7 @@ def _respecify_processed_params(
     dtype; with `committed`, every array leaf is committed to the first device.
     Leaves shared between slots stay shared.
     """
-    process = model._process_params
+    process = model._canonicalize_params
 
     def respecify(leaf: ArgumentTree) -> jax.Array:
         assert isinstance(leaf, jax.Array)
@@ -312,7 +314,9 @@ def _respecify_processed_params(
             leaf = jax.device_put(leaf, jax.devices()[0])
         return leaf
 
-    def processed(params: UserParams, **kwargs: Unpack[_ProcessKwargs]) -> FlatParams:
+    def processed(
+        params: UserParams, **kwargs: Unpack[_CanonicalizeKwargs]
+    ) -> FlatParams:
         flat_params = process(params, **kwargs)
         memo: dict[int, jax.Array] = {}
         respecified = MappingProxyType(
@@ -331,7 +335,7 @@ def _respecify_processed_params(
         assert any(leaf.committed for leaf in leaves) is committed
         return respecified
 
-    monkeypatch.setattr(model, "_process_params", processed)
+    monkeypatch.setattr(model, "_canonicalize_params", processed)
 
 
 @pytest.mark.parametrize("blocked", [False, True])
