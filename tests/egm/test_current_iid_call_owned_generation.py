@@ -26,7 +26,11 @@ from _lcm.egm.current_iid_projection import _read_projected
 from _lcm.egm.projected_continuation import PROJECTED_EGM_CONTINUATION
 from _lcm.params.mapping_leaf import MappingLeaf, UserMappingLeaf
 from _lcm.solution.artifacts import OwnedSolutionView
-from _lcm.solution.current_iid_case_r import CASE_R_RESOURCES_REPLAY
+from _lcm.solution.current_iid_case_r import (
+    CASE_R_RESOURCES_REPLAY,
+    NativeCaseRPeriodKernel,
+)
+from _lcm.solution.current_iid_case_u_native import NativeCaseUPeriodKernel
 from _lcm.solution.generation import canonical_parameter_schema
 from _lcm.solution.model_authority import _is_installed_balanced_r_continuation
 from _lcm.typing import FlatParams
@@ -54,8 +58,8 @@ from lcm.persistence import load_solution
 from lcm.shocks import Normal, ShockGroup, UserNodes
 from lcm.solver_api import ArtifactRef, PersistencePolicy, ResultRetention
 from lcm.solvers import DCEGM, ExactEnvelope
-from lcm.typing import ContinuousState, FloatND, UserParams
-from tests.conftest import EXACT_KERNEL_SKIP_REASON
+from lcm.typing import ContinuousAction, ContinuousState, FloatND, UserParams
+from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED
 from tests.egm.test_current_iid_parent_demands import (
     _current_resources,
     _identity,
@@ -190,6 +194,85 @@ def _params(
         "parent": {"next_wealth": {"slope": parent_slope}},
         "child": child,
     }
+
+
+_SLOW_X64_U = pytest.mark.skipif(
+    X64_ENABLED,
+    reason=(
+        "At fp64 the balanced U refinement takes hours at the default projection "
+        "capacity; tracked as S10 P2 performance."
+    ),
+)
+
+
+def _utility_reading_eps(*, consumption: ContinuousAction, eps: FloatND) -> FloatND:
+    return jnp.log(consumption) + 0.125 * eps
+
+
+def _law_reading_eps(
+    *, savings: FloatND, slope: FloatND, eps: FloatND
+) -> ContinuousState:
+    return slope * savings + 0.125 * eps
+
+
+def _bonus(*, eps: FloatND) -> FloatND:
+    return 0.125 * eps
+
+
+def _utility_reading_bonus(*, consumption: ContinuousAction, bonus: FloatND) -> FloatND:
+    return jnp.log(consumption) + bonus
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+@pytest.mark.parametrize(
+    ("channel", "expected"),
+    [
+        ("resources", NativeCaseRPeriodKernel),
+        *(
+            pytest.param(channel, NativeCaseUPeriodKernel, marks=_SLOW_X64_U)
+            for channel in ("utility", "helper", "law")
+        ),
+    ],
+)
+def test_case_r_requires_the_shock_to_reach_every_root_only_through_resources(
+    *, channel: str, expected: type[NativeCaseRPeriodKernel | NativeCaseUPeriodKernel]
+) -> None:
+    """A shock read outside `resources` anywhere in the graph leaves Case R."""
+    declarations = _declarations()
+    child = declarations.regimes["child"]
+    if channel == "utility":
+        child = replace(
+            child, functions={**child.functions, "utility": _utility_reading_eps}
+        )
+    elif channel == "helper":
+        child = replace(
+            child,
+            functions={
+                **child.functions,
+                "bonus": _bonus,
+                "utility": _utility_reading_bonus,
+            },
+        )
+    elif channel == "law":
+        child = replace(child, state_transitions={"wealth": {"done": _law_reading_eps}})
+    declarations = replace(
+        declarations, regimes={**declarations.regimes, "child": child}
+    )
+    model = Model(
+        **{
+            field.name: getattr(declarations, field.name)
+            for field in fields(declarations)
+            if field.init
+        }
+    )
+    result = model.solve(
+        params=_params(), log_level="warning", max_compilation_workers=1
+    )
+    view = result._engine_view
+    assert isinstance(view, OwnedSolutionView)
+    assert view.generation is not None
+    kernel = view.generation.execution._regimes["child"].solution.period_kernels[1]
+    assert type(kernel) is expected
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
