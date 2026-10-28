@@ -13,8 +13,10 @@ from _lcm.current_iid import (
     CURRENT_IID_OVERRIDES_ARGUMENT,
 )
 from _lcm.engine import Regime, StateActionSpace
+from _lcm.execution.core_program import CoreProgram
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.shock_overrides import CurrentIIDOverride
+from _lcm.simulation.operand_placement import SubjectArgumentNames
 from _lcm.typing import PRNGKeyND, PytreeValue, QualifiedName, ShapeDtypePytree
 from lcm.typing import (
     BoolND,
@@ -27,6 +29,15 @@ from lcm.typing import (
 )
 
 ACTIVE_SUBJECTS_ARGUMENT = "_lcm_active_subjects"
+
+
+def declares_active_subjects(*, program: CoreProgram) -> bool:
+    """Whether a decision program declares the active-subject mask operand."""
+    builder = program.argument_builder
+    return (
+        isinstance(builder, SubjectArgumentNames)
+        and ACTIVE_SUBJECTS_ARGUMENT in builder.subject_arg_names
+    )
 
 
 def decision_arguments(

@@ -33,7 +33,6 @@ from _lcm.regime_building.Q_and_F import (
     EDGE_REF_V_ARG,
     SAME_PERIOD_PARAMS_ARG,
     SAME_PERIOD_V_ARG,
-    has_action_integrity,
 )
 from _lcm.simulation.chunk_profile_inventory import abstract_tree
 from _lcm.simulation.current_iid_overrides import (
@@ -45,6 +44,7 @@ from _lcm.simulation.policy_programs import ReplayPayload
 from _lcm.simulation.program_arguments import (
     current_iid_arguments,
     decision_arguments,
+    declares_active_subjects,
     gate_fold_arguments,
     policy_prepare_arguments,
     policy_rank_arguments,
@@ -560,11 +560,12 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
             ),
         }
         arguments = decision_arguments(
-            # Dispatch supplies the mask exactly when the program declares it.
             active_subjects=jax.ShapeDtypeStruct(
                 (n_subjects,), jnp.bool_, sharding=subject
             )
-            if has_action_integrity(function=regime.simulation.Q_and_F[period])
+            if declares_active_subjects(
+                program=regime.simulation.programs.forward_decision[period]
+            )
             else None,
             current_iid=current_iid_arguments(
                 regime=regime,

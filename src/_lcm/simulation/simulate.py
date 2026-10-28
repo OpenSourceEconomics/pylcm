@@ -64,7 +64,6 @@ from _lcm.regime_building.Q_and_F import (
     EDGE_REF_V_ARG,
     SAME_PERIOD_PARAMS_ARG,
     SAME_PERIOD_V_ARG,
-    has_action_integrity,
 )
 from _lcm.simulation import chunk_operations, population_operations
 from _lcm.simulation.additional_targets import _compute_targets
@@ -135,6 +134,7 @@ from _lcm.simulation.program_arguments import (
     ACTIVE_SUBJECTS_ARGUMENT,
     current_iid_arguments,
     decision_arguments,
+    declares_active_subjects,
     gate_fold_arguments,
     gate_route_arguments,
     policy_prepare_arguments,
@@ -2300,8 +2300,9 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                     subject_arg_names=("in_regime", "genuine"),
                     subject_outputs=True,
                 )
-                # The decision program declares the mask under this predicate.
-                if has_action_integrity(function=regime.simulation.Q_and_F[period])
+                if declares_active_subjects(
+                    program=regime.simulation.programs.forward_decision[period]
+                )
                 else None
             )
             decision_outputs = execute_simulation_program(
