@@ -227,8 +227,7 @@ _UNRELATED_DEVICE_BANK: jax.Array | None = None
 
 
 def _function_with_referenced_device_bias(*, value: FloatND) -> FloatND:
-    assert _REFERENCED_DEVICE_BIAS is not None
-    return value + _REFERENCED_DEVICE_BIAS
+    return value + _REFERENCED_DEVICE_BIAS  # ty: ignore[unsupported-operator] - the test binds the array before the visit
 
 
 def test_semantic_array_observer_keeps_digest_and_exact_referenced_roots(
