@@ -593,7 +593,11 @@ def validate_query_input_status(
                 raise InvalidValueFunctionError(
                     "Invalid projected continuation or unsupported pre-shock "
                     f"domain in regime '{target}', period {period}, "
-                    f"liquid state '{bound.liquid_state}'."
+                    f"liquid state '{bound.liquid_state}'. One cause is a "
+                    "producer row that cannot meet its value and marginal "
+                    f"budgets within its projection capacity of {bound.capacity} "
+                    "records; raise `current_iid_projection_capacity` on the "
+                    f"solver of regime '{bound.producer}' if so."
                 )
             declarations = ", ".join(bound.declaration_names)
             raise InvalidValueFunctionError(

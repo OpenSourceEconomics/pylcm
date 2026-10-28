@@ -720,7 +720,10 @@ def test_public_case_r_refuses_an_exhausted_projection_capacity() -> None:
     )
     with pytest.raises(
         InvalidValueFunctionError,
-        match=r"Invalid projected continuation .* regime 'child', period 1",
+        match=(
+            r"Invalid projected continuation .* regime 'child', period 1.*"
+            r"projection capacity of \d+ records.*current_iid_projection_capacity"
+        ),
     ):
         model.solve(params=_params(), log_level="warning", max_compilation_workers=1)
 
