@@ -31,6 +31,7 @@ from lcm.exceptions import (
     ModelInitializationError,
     UnsupportedOperationError,
 )
+from lcm.model import _ModelConstructorInputs
 from lcm.typing import FloatND, ScalarInt
 from tests.egm.test_current_iid_call_owned_generation import _declarations, _params
 from tests.egm.test_current_iid_generation_materialization import _owner
@@ -131,6 +132,13 @@ def test_passive_jit_original_origin_refuses_changed_or_foreign_callback(
         monkeypatch.setattr(jnp, "log1p", replacement)
     with pytest.raises(ExecutionPlanningError, match=r"JAX_EARLY|Original JIT"):
         _DeclarationRootObserver().visit(value=_original_log1p_declaration)
+
+
+def _bare_model(declarations: _ModelConstructorInputs) -> Model:
+    """Return an unbuilt Model that retains `declarations` as its constructor."""
+    model = Model.__new__(Model)
+    model._constructor_inputs = declarations
+    return model
 
 
 def test_passive_canonical_jit_does_not_admit_executable_validator_early_stage(
@@ -409,7 +417,7 @@ def test_cold_metadata_uses_actual_prefix_owner_and_declared_support() -> None:
         regime_id_class=declarations.regime_id_class,
     )
     assert entry is not None
-    model = Model.__new__(Model)
+    model = _bare_model(declarations)
     try:
         prepared = declarations.prepare(
             model=model, dated=True, materializer=entry, hardware=hardware
@@ -435,7 +443,7 @@ def test_unsupported_cold_metadata_refuses_before_builder_without_changing_ordin
 ) -> None:
     """A real eager declaration keeps its ordinary builder/error boundary."""
     declarations = replace(_declarations(), enable_jit=False)
-    model = Model.__new__(Model)
+    model = _bare_model(declarations)
     prepared = declarations.prepare(model=model, dated=True)
     owner = _owner()
 
@@ -463,14 +471,15 @@ def test_cold_period_clock_refuses_before_its_lazy_original_factory(
         raise AssertionError("Original period coordinate producer was invoked.")
 
     monkeypatch.setattr(ModelTime, "values", property(unadmitted_coordinate_factory))
+    horizonless = replace(declarations, n_periods=0)
     try:
         with pytest.raises(ModelInitializationError, match="positive integer"):
-            replace(declarations, n_periods=0).prepare(
-                model=Model.__new__(Model), dated=True, materializer=owner
+            horizonless.prepare(
+                model=_bare_model(horizonless), dated=True, materializer=owner
             )
         with pytest.raises(UnsupportedOperationError, match="period clocks"):
             declarations.prepare(
-                model=Model.__new__(Model), dated=True, materializer=owner
+                model=_bare_model(declarations), dated=True, materializer=owner
             )
     finally:
         owner.close()
