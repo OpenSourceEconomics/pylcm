@@ -291,9 +291,7 @@ class NativeCaseRCore:
                 law_valid=law_valid,
             )
         )(liquid_grid)
-        # The projected carry keeps its own validity, which every projected read
-        # enforces; a carry no parent reads cannot fail this date's solve.
-        valid = jnp.all(node_values.valid)
+        valid = projected.valid & jnp.all(node_values.valid)
         return NativeCaseROutput(
             value=node_values.value,
             projected=projected,

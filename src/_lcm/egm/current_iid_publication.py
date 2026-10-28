@@ -349,7 +349,7 @@ def publish_balanced_resources(
     refined = refine_projected_row(
         initial=initial, reference=checked_reference, accuracy="balanced"
     )
-    refined = replace(refined, valid=refined.valid & jnp.any(refined.link_valid))
+    # Exact-only carries stay valid: every interior read requires its own link.
     return BalancedProjectedEGMCarry(
         **{
             field.name: getattr(refined, field.name)
