@@ -3,7 +3,7 @@
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import cast
+from typing import ClassVar, cast
 
 import jax
 import jax.numpy as jnp
@@ -53,6 +53,11 @@ class _Call:
 @dataclass(frozen=True, kw_only=True, eq=False)
 class _RecordingRuntime(SimulationRuntime):
     calls: list[_Call] = field(default_factory=list)
+    # A simulate call builds its own runtime; keep each one it constructs.
+    instances: ClassVar[list[_RecordingRuntime]] = []
+
+    def __post_init__(self) -> None:
+        _RecordingRuntime.instances.append(self)
 
     def dispatch(
         self,
@@ -119,6 +124,7 @@ def produced_case(request: pytest.FixtureRequest) -> _ProducedCase:
     solution = model.solve(params=params, log_level="off")
     policy = solution.replay_artifacts.project(SIMULATION_POLICY)[0]["alive"]
     assert isinstance(policy, NNBEGMSimPolicy)
+    _RecordingRuntime.instances.clear()
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(simulation_compile, "SimulationRuntime", _RecordingRuntime)
         model.simulate(
@@ -133,10 +139,9 @@ def produced_case(request: pytest.FixtureRequest) -> _ProducedCase:
             log_level="off",
             seed=17,
         )
-    runtime = model._runtime_regimes_for_shape(compile_batch_size=1)[
-        "alive"
-    ].simulation.programs.executor
-    assert isinstance(runtime, _RecordingRuntime)
+    (runtime,) = [
+        instance for instance in _RecordingRuntime.instances if instance.calls
+    ]
     assert [call.program.name for call in runtime.calls] == [
         POLICY_PREPARE,
         POLICY_RANK,
