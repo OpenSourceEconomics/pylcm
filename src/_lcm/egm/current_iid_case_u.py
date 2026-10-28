@@ -278,9 +278,11 @@ class CaseUPointSolver:
             utility_of_action=construct.utility_of_action,
             discounted_expected_value_at_limit=discount * construct.expected_values[0],
         )
-        # Saving is the original publication's m-c, held fixed only in the
-        # economic envelope derivative, never through candidate construction.
-        saving = construct.resources_at_node - policy
+        # Saving is the original selected saving (the closed-form floor at a
+        # corner), held fixed only in the economic envelope derivative, never
+        # through candidate construction. Rebuilding it as m-c would lose the
+        # exact savings node a rounded endogenous point m=a+c came from.
+        saving = jnp.where(corner, construct.pieces.borrowing_limit, bracket.savings)
         floating = {name: physical[name] for name in physical_tangent}
 
         # keyword-only-exempt: library-callback=jax.jvp

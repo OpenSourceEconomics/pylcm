@@ -7,6 +7,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.current_iid_case_u_balanced import CaseUBalancedOperands
 from _lcm.egm.projected_child import ProjectedChildReader
 from _lcm.egm.projected_continuation import (
@@ -24,6 +25,7 @@ from lcm import (
     Regime,
     categorical,
 )
+from lcm.exceptions import ModelInitializationError
 from lcm.model import _ModelConstructorInputs
 from lcm.shocks import PhysicalValues, ShockGroup, Uniform, UserNodes
 from lcm.solver_api import ArtifactRef, ResultRetention, SolutionResult
@@ -244,7 +246,9 @@ def test_genuine_u_model_publishes_nonexact_pwa_and_reconstructs_original_policy
     reader = ProjectedChildReader.bind_date(
         date=prepared.date, target="child", carry=carry, next_liquid=_coordinate
     )
-    index = int(jnp.argmax(carry.link_valid))
+    # The publisher's one-ULP breakpoint links have no interior; probe the widest.
+    widths = jnp.where(carry.link_valid, jnp.diff(carry.grid), -jnp.inf)
+    index = int(jnp.argmax(widths))
     query = (carry.grid[index] + carry.grid[index + 1]) / 2
     assert not bool(jnp.any(carry.grid[: int(carry.valid_length)] == query))
     selected = program.solver(guard=carry.guard).node(
@@ -282,7 +286,9 @@ def test_genuine_u_model_publishes_nonexact_pwa_and_reconstructs_original_policy
             "regime_id": jnp.full(
                 (3,), model.regime_names_to_ids["child"], dtype=jnp.int32
             ),
-            "eps": PhysicalValues(values=np.array([0.0, 0.5, 1.0])),
+            "eps": PhysicalValues(
+                values=np.array([0.0, 0.5, 1.0], dtype=canonical_float_dtype())
+            ),
         },
         solution=solution,
         seed=19,
@@ -296,12 +302,19 @@ def test_genuine_u_model_publishes_nonexact_pwa_and_reconstructs_original_policy
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
-@pytest.mark.parametrize("alias", [False, True])
-def test_small_capacity_or_resources_alias_keeps_original_exact_u(
-    *, alias: bool
-) -> None:
-    """A real future-law resources alias must not gain fixed-bank authority."""
-    model = _model(capacity=256 if alias else 8, alias=alias)
+def test_resources_alias_in_the_euler_transition_is_refused() -> None:
+    """A real future-law resources alias never reaches fixed-bank authority."""
+    with pytest.raises(
+        ModelInitializationError,
+        match=r"forbidden direct dependencies: \['resources'\]",
+    ):
+        _model(alias=True)
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_small_capacity_keeps_original_exact_u() -> None:
+    """A capacity too small for the balanced bank keeps the exact-only U."""
+    model = _model(capacity=8)
     _, generation = model._prepare_call(params={"discount_factor": 1.0})
     prepared = acquire_installed_case_u_date(
         generation=generation, regime_name="child", period=0

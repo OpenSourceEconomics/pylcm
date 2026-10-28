@@ -705,7 +705,7 @@ def _select(
         discounted_expected_value_at_limit=node.discount_factor
         * node.expected_values[0],
     )
-    saving = resources - policy
+    saving = jnp.where(corner, node.pieces.borrowing_limit, bracket.savings)
     valid = (
         ~bracket.construction_invalid
         & jnp.isfinite(value)
