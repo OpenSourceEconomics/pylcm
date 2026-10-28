@@ -88,6 +88,7 @@ from _lcm.egm.nbegm_probe_stages import (
     probe_greater,
     probe_grid_scalar,
     probe_int_fill,
+    probe_law_samples,
     probe_midpoint,
     probe_nextafter,
     probe_points,
@@ -4839,6 +4840,8 @@ class _DeferredProbe:
         if (
             materializer is not None
             and self.probe is not _fail_if_budget_nonaffine_in_liquid
+            and self.probe
+            is not _fail_if_liquid_reading_next_state_varies_within_interval
         ):
             raise UnsupportedOperationError(
                 "Owned NB validation requires the original scalar affinity probe."
@@ -5346,6 +5349,7 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(
     probe_arguments: _ProbeArguments,
     probe_failure: Literal["reject", "assume_declared"] = "reject",
     derivative_programs: Mapping[_ContinuationLaw, _LawProbeProgram] | None = None,
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> None:
     """Reject a carried-state law that varies smoothly in the liquid state.
 
@@ -5385,6 +5389,7 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(
             probe_arguments=probe_arguments,
             probe_failure=probe_failure,
             derivative_programs=derivative_programs,
+            materializer=materializer,
         )
         if worst is not None and worst > tol:
             msg = (
@@ -5409,6 +5414,7 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(
         probe_arguments=probe_arguments,
         probe_failure=probe_failure,
         derivative_programs=derivative_programs,
+        materializer=materializer,
     )
     if worst is not None and worst > tol:
         msg = (
@@ -5432,6 +5438,7 @@ def _max_abs_first_liquid_derivative(
     probe_arguments: _ProbeArguments,
     probe_failure: Literal["reject", "assume_declared"],
     derivative_programs: Mapping[_ContinuationLaw, _LawProbeProgram] | None = None,
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> float | None:
     """Largest absolute liquid derivative of `func` over the probe's fills.
 
@@ -5445,8 +5452,8 @@ def _max_abs_first_liquid_derivative(
         return None
 
     try:
-        return _evaluate_on_first_workable_fill(
-            functools.partial(
+        return _evaluate_probe_fill_rungs(
+            evaluate=functools.partial(
                 _worst_liquid_jacobian,
                 positional=_PositionalCall(func=func, arg_names=arg_names),
                 arg_names=arg_names,
@@ -5457,9 +5464,13 @@ def _max_abs_first_liquid_derivative(
                     if derivative_programs is not None
                     else None
                 ),
-            )
+                materializer=materializer,
+            ),
+            materializer=materializer,
         )
     except Exception as probe_error:
+        if materializer is not None and isinstance(probe_error, ExecutionPlanningError):
+            raise
         msg = (
             f"NBEGM could not verify that a liquid-reading law in regime "
             f"{regime_name!r} is piecewise-constant in the liquid state "
@@ -5514,10 +5525,19 @@ def _worst_liquid_jacobian(
     liquid_pos: int,
     probe_arguments: _ProbeArguments,
     program: _LawProbeProgram | None = None,
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> float:
     """Largest absolute liquid-Jacobian entry over one fill rung's assignments."""
+    if materializer is not None and program is None:
+        raise UnsupportedOperationError(
+            "Owned NB probes require the original prepared derivative programs."
+        )
     worst = 0.0
-    samples = jnp.asarray(_LIQUID_PROBE_POINTS)
+    samples = evaluate_probe_stage(
+        function=functools.partial(probe_law_samples, values=_LIQUID_PROBE_POINTS),
+        arguments={},
+        materializer=materializer,
+    )
     sweeps = tuple(
         _int_code_sweeps(
             arg_names=arg_names,
@@ -5533,24 +5553,34 @@ def _worst_liquid_jacobian(
                     array_floats=array_floats,
                     array_rank=array_rank,
                     leaf_rank=leaf_rank,
+                    materializer=materializer,
                 )
                 if name not in overrides
-                else jnp.asarray(overrides[name], dtype=jnp.int32)
+                else evaluate_probe_stage(
+                    function=functools.partial(probe_int_fill, value=overrides[name]),
+                    arguments={},
+                    materializer=materializer,
+                )
                 for name, fill in zip(arg_names, fills, strict=True)
             ]
             # Every argument but the liquid one is constant for this rung,
             # so all probe points go through one compiled, vectorized call.
             jac = (
-                _evaluate_liquid_probe_program(
-                    program=program,
-                    points=samples,
+                evaluate_probe_stage(
+                    function=functools.partial(
+                        _evaluate_liquid_probe_program, program=program
+                    ),
                     arguments={
-                        name: arg
-                        for position, (name, arg) in enumerate(
-                            zip(arg_names, args, strict=True)
-                        )
-                        if position != liquid_pos
+                        "points": samples,
+                        "arguments": {
+                            name: arg
+                            for position, (name, arg) in enumerate(
+                                zip(arg_names, args, strict=True)
+                            )
+                            if position != liquid_pos
+                        },
                     },
+                    materializer=materializer,
                 )
                 if program is not None
                 else jax.jit(
@@ -5569,7 +5599,13 @@ def _worst_liquid_jacobian(
             worst = max(
                 [
                     worst,
-                    *(float(jnp.max(jnp.abs(leaf))) for leaf in leaves),
+                    *(
+                        float(jnp.max(jnp.abs(leaf)))
+                        if materializer is None
+                        # Owned leaves are read on the host; |.| and max are exact.
+                        else max(abs(v) for v in jax.device_get(leaf).ravel().tolist())
+                        for leaf in leaves
+                    ),
                 ]
             )
     return worst
@@ -8918,6 +8954,98 @@ def _split_cliff_columns(
     )
 
 
+@dataclass(frozen=True, eq=False, kw_only=True)
+class _NBEGMCellBinder:
+    """Bind one period's states and params into the per-cell envelope solve.
+
+    Calling it with the period's `kwargs` returns the bound cell solver, which
+    takes `ride_values` (every ride state's coordinate, co-mapped states first),
+    `cont_value`, `cont_marginal`, and optionally `cliff_savings` for one cell —
+    or an interval continuation reader — and returns that cell's packaged
+    result rows.
+    """
+
+    savings_grid: Float1D
+    """Exogenous post-decision savings grid the cells solve on."""
+
+    schedule_spec: _NBEGMScheduleSpec
+    """The composed budget, utility, discount factor, and discrete actions."""
+
+    statics: _NBEGMRideAlongStatics
+    """Build-time statics of the ride-along solve."""
+
+    is_epstein_zin: bool
+    """Whether the step inverts the recursive Euler equation."""
+
+    feasibility_constraints: tuple[_NBEGMFeasibilityConstraint, ...]
+    """Declared feasibility boundaries resolved per cell."""
+
+    action_lower: ScalarFloat
+    """Lower bracket of the numerical Euler inversion."""
+
+    action_upper: ScalarFloat
+    """Initial upper bracket of the numerical Euler inversion."""
+
+    utility_arg_names: frozenset[ReferenceName]
+    """The utility DAG's parameter names; an action binds only if named here."""
+
+    n_published_boundaries: int
+    """Jump preimages plus feasibility boundaries each carry row publishes."""
+
+    schedule_kinds: tuple[str, ...]
+    """Every declared breakpoint's kind, in source order."""
+
+    current_floor: _NBEGMFloor | None = field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+    """One canonical per-cell evaluator, shared by continuation and branch solves."""
+
+    query_model: NBEGMQueryModel | None = field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Independent target authority requiring every conditional native tuple."""
+
+    current_predicates: tuple[Callable[..., BoolND], ...] | None = field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Canonical nonbudget current-state predicates for feature counts and max."""
+
+    def __call__(self, kwargs: EconFunctionKwargs) -> _NBEGMCellSolver:
+        """Bind one period's inputs into the per-cell solve."""
+        dtype = canonical_float_dtype()
+        return _NBEGMCellSolver(
+            binder=self,
+            kwargs=kwargs,
+            dtype=dtype,
+            liquid=jnp.asarray(kwargs[self.statics.liquid_name], dtype=dtype),
+            coh_params={
+                name: kwargs[name] for name in self.schedule_spec.coh_param_names
+            },
+            utility_params={
+                name: kwargs[name] for name in self.statics.utility_param_names
+            },
+            discount_params={
+                name: kwargs[name] for name in self.statics.discount_param_names
+            },
+            # Epstein-Zin: the aggregator curvature is `rho = 1/psi` where `psi` is
+            # the Koopmans aggregator's `intertemporal_elasticity_of_substitution`.
+            # The step reads the continuation pair as `(nu, dnu/ds)` and inverts
+            # the recursive Euler equation; `None` keeps the additive
+            # expected-utility step.
+            inverse_eis=(
+                1.0
+                / cast(
+                    "ScalarFloat",
+                    kwargs[
+                        "koopmans_aggregator__intertemporal_elasticity_of_substitution"
+                    ],
+                )
+                if self.is_epstein_zin
+                else None
+            ),
+        )
+
+
 @dataclass(frozen=True, kw_only=True)
 class _NBEGMEnvelopeBuild:
     """The envelope half of a ride-along solve, as a per-cell binder."""
@@ -9530,98 +9658,6 @@ def _finish_nbegm_cell_publication(
             continuation_read_counts=query_summary.continuation_read_counts,
         )
     return ordinary
-
-
-@dataclass(frozen=True, eq=False, kw_only=True)
-class _NBEGMCellBinder:
-    """Bind one period's states and params into the per-cell envelope solve.
-
-    Calling it with the period's `kwargs` returns the bound cell solver, which
-    takes `ride_values` (every ride state's coordinate, co-mapped states first),
-    `cont_value`, `cont_marginal`, and optionally `cliff_savings` for one cell —
-    or an interval continuation reader — and returns that cell's packaged
-    result rows.
-    """
-
-    savings_grid: Float1D
-    """Exogenous post-decision savings grid the cells solve on."""
-
-    schedule_spec: _NBEGMScheduleSpec
-    """The composed budget, utility, discount factor, and discrete actions."""
-
-    statics: _NBEGMRideAlongStatics
-    """Build-time statics of the ride-along solve."""
-
-    is_epstein_zin: bool
-    """Whether the step inverts the recursive Euler equation."""
-
-    feasibility_constraints: tuple[_NBEGMFeasibilityConstraint, ...]
-    """Declared feasibility boundaries resolved per cell."""
-
-    action_lower: ScalarFloat
-    """Lower bracket of the numerical Euler inversion."""
-
-    action_upper: ScalarFloat
-    """Initial upper bracket of the numerical Euler inversion."""
-
-    utility_arg_names: frozenset[ReferenceName]
-    """The utility DAG's parameter names; an action binds only if named here."""
-
-    n_published_boundaries: int
-    """Jump preimages plus feasibility boundaries each carry row publishes."""
-
-    schedule_kinds: tuple[str, ...]
-    """Every declared breakpoint's kind, in source order."""
-
-    current_floor: _NBEGMFloor | None = field(
-        default=None, metadata={"fingerprint_omit_if_default": True}
-    )
-    """One canonical per-cell evaluator, shared by continuation and branch solves."""
-
-    query_model: NBEGMQueryModel | None = field(
-        default=None, metadata={"fingerprint_omit_if_default": True}
-    )
-    """Independent target authority requiring every conditional native tuple."""
-
-    current_predicates: tuple[Callable[..., BoolND], ...] | None = field(
-        default=None, metadata={"fingerprint_omit_if_default": True}
-    )
-    """Canonical nonbudget current-state predicates for feature counts and max."""
-
-    def __call__(self, kwargs: EconFunctionKwargs) -> _NBEGMCellSolver:
-        """Bind one period's inputs into the per-cell solve."""
-        dtype = canonical_float_dtype()
-        return _NBEGMCellSolver(
-            binder=self,
-            kwargs=kwargs,
-            dtype=dtype,
-            liquid=jnp.asarray(kwargs[self.statics.liquid_name], dtype=dtype),
-            coh_params={
-                name: kwargs[name] for name in self.schedule_spec.coh_param_names
-            },
-            utility_params={
-                name: kwargs[name] for name in self.statics.utility_param_names
-            },
-            discount_params={
-                name: kwargs[name] for name in self.statics.discount_param_names
-            },
-            # Epstein-Zin: the aggregator curvature is `rho = 1/psi` where `psi` is
-            # the Koopmans aggregator's `intertemporal_elasticity_of_substitution`.
-            # The step reads the continuation pair as `(nu, dnu/ds)` and inverts
-            # the recursive Euler equation; `None` keeps the additive
-            # expected-utility step.
-            inverse_eis=(
-                1.0
-                / cast(
-                    "ScalarFloat",
-                    kwargs[
-                        "koopmans_aggregator__intertemporal_elasticity_of_substitution"
-                    ],
-                )
-                if self.is_epstein_zin
-                else None
-            ),
-        )
 
 
 @dataclass(frozen=True, eq=False, kw_only=True)

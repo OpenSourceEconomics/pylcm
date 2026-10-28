@@ -27,6 +27,7 @@ from _lcm.current_iid import (
     CurrentIIDPlan,
     NodeOperands,
 )
+from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.current_iid_case_u import CaseUPointSolver, realise_case_u_nodes
 from _lcm.egm.current_iid_evaluation import (
@@ -39,6 +40,11 @@ from _lcm.egm.step_core import _EgmKernelPieces
 from _lcm.egm.upper_envelope import get_bracket_finder
 from _lcm.egm.upper_envelope._exact_affine import ffi as exact_affine_ffi
 from _lcm.egm.upper_envelope._exact_affine import hermite_critical
+from _lcm.egm.upper_envelope.certified_sign import backend_flushes_subnormals
+from _lcm.egm.upper_envelope.query import (
+    _derived_subnormal_possible,
+    _subnormal_operand_present,
+)
 from _lcm.execution.core_program import (
     CoreBuildContext,
     CoreExecutionDisposition,
@@ -102,6 +108,17 @@ from lcm.typing import (
 )
 
 CASE_U_ECONOMIC_CORE = "case_u_economic"
+_JAX_CONFIG_READ = type(jax.config).read
+_ORIGINAL_CANONICAL_FLOAT_DTYPE = inspect.unwrap(canonical_float_dtype)
+# The original envelope's memoised backend probe measures the compiled backend,
+# never captured data; a callback reaching the same probe stays refused.
+_ORIGINAL_BACKEND_SUBNORMAL_PROBE_CALLERS = tuple(
+    inspect.unwrap(caller)
+    for caller in (
+        _subnormal_operand_present,
+        _derived_subnormal_possible,
+    )
+)
 
 _CASE_U_NATIVE_EXPORTS = tuple(
     (module, *export)
@@ -207,6 +224,7 @@ def guard_case_u_shape(  # noqa: C901, PLR0912, PLR0915 - keep exact roles and p
     materializer: DatedGenerationMaterializer,
 ) -> tuple[jax.Array, ...]:
     """Retain original inputs/captures and refuse unsafe callbacks before trace."""
+    from _lcm.egm import current_iid_nnbegm as nnbegm_module  # noqa: PLC0415
     from _lcm.egm.current_iid_nbegm import (  # noqa: PLC0415 - exact original scalar NB callbacks
         NBCaseUPoint,
         NBCaseUProgram,
@@ -419,6 +437,25 @@ def guard_case_u_shape(  # noqa: C901, PLR0912, PLR0915 - keep exact roles and p
             declarations=(context, fixed_flat_params, ages.values)
         )
     )
+
+    # NNBEGMInnerSource.__post_init__ checks its recipe evaluators by code identity.
+    nn_recipe_evaluators = tuple(
+        vars(nnbegm_module)[name]
+        for name in (
+            "_ORIGINAL_PREIMAGES",
+            "_ORIGINAL_SIDES",
+            "_ORIGINAL_RAW_PREIMAGES",
+            "_ORIGINAL_RAW_SIDES",
+        )
+    )
+
+    def in_original_inner_post_init() -> bool:
+        return bool(function_frames) and any(
+            original[0] is NNBEGMInnerSource
+            and original[1] == "__post_init__"
+            and any(function_frames[-1] is method for method in original[2::2])
+            for original in _ORIGINAL_NNBEGM_METHODS
+        )
 
     class CaptureGuard(ValidationCaptureHasher):
         # Abstract enclosing-kernel tracing preserves no separate eager stages.
@@ -782,6 +819,46 @@ def guard_case_u_shape(  # noqa: C901, PLR0912, PLR0915 - keep exact roles and p
                 function_frames.pop()
                 function_depth -= 1
 
+        def _visit_direct_global_reference(self, value: _Reachable) -> None:
+            if (
+                value is backend_flushes_subnormals
+                and function_frames
+                and any(
+                    inspect.unwrap(function_frames[-1]) is caller
+                    for caller in _ORIGINAL_BACKEND_SUBNORMAL_PROBE_CALLERS
+                )
+            ):
+                self.frame(label="original-backend-subnormal-probe")
+                return
+            if (
+                nn_nested
+                and isinstance(value, types.CodeType)
+                and in_original_inner_post_init()
+                and any(
+                    value is evaluator.__code__ for evaluator in nn_recipe_evaluators
+                )
+            ):
+                self.frame(
+                    label="original-nn-recipe-code-identity",
+                    payload=value.co_qualname.encode(),
+                )
+                return
+            super()._visit_direct_global_reference(value)
+
+        def _visit_referenced_bound_method(self, method: types.MethodType) -> None:
+            if (
+                nn_nested
+                and method.__self__ is jax.config
+                and method.__func__ is _JAX_CONFIG_READ
+                and function_frames
+                and function_frames[-1] is _ORIGINAL_CANONICAL_FLOAT_DTYPE
+            ):
+                # The original active-precision read; JAX's config holds no
+                # captured data.
+                self.frame(label="original-canonical-float-dtype-config-read")
+                return
+            super()._visit_referenced_bound_method(method)
+
         def _visit_object_reference(  # noqa: C901, PLR0912 - exact original engine receiver boundary
             self,
             *,
@@ -806,6 +883,23 @@ def guard_case_u_shape(  # noqa: C901, PLR0912, PLR0915 - keep exact roles and p
                     raise TypeError("Original frozen dataclass setter changed.")
                 self.frame(label="original-frozen-dataclass-object-setattr")
                 return
+            if (
+                nn_nested
+                and ("__code__",) in attribute_paths
+                and attribute_paths <= {(), ("__code__",)}
+                and isinstance(value, types.FunctionType)
+                and in_original_inner_post_init()
+                and any(value is evaluator for evaluator in nn_recipe_evaluators)
+            ):
+                # The original inner owner's code-identity check of its recipe
+                # evaluators; the evaluators themselves are hashed as the recipe.
+                self.frame(
+                    label="original-nn-recipe-code-identity",
+                    payload=value.__qualname__.encode(),
+                )
+                attribute_paths = attribute_paths - {("__code__",)}
+                if not attribute_paths:
+                    return
             if function_depth or not any(
                 identity in self._active_bound_methods
                 for identity in engine_bound_methods

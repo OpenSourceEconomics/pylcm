@@ -7,6 +7,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.current_iid_case_u_replay import CASE_U_FUTURE_REPLAY, CaseUReplayChildren
 from _lcm.egm.current_iid_nnbegm import _ORIGINAL_NNBEGM_METHODS
 from _lcm.egm.projected_continuation import (
@@ -69,7 +70,7 @@ def test_original_nnbegm_u_selects_inner_nb_before_outer_choice() -> None:
     np.testing.assert_almost_equal(
         stored.economic_marginal[1, slots[0]], reference[1], decimal=DECIMAL_PRECISION
     )
-    physical = np.asarray([0.0, 2.0, 3.0])
+    physical = np.asarray([0.0, 2.0, 3.0], dtype=canonical_float_dtype())
     result = model.simulate(
         params=_params(),
         solution=solution,
@@ -436,7 +437,6 @@ def test_public_nnbegm_u_default_archive_replays_original_physics(  # noqa: PLR0
     """Default retention delivers original nested NB physics to a fresh Model."""
     from pandas.testing import assert_frame_equal  # noqa: PLC0415
 
-    from _lcm.dtypes import canonical_float_dtype  # noqa: PLC0415
     from _lcm.solution.artifacts import OwnedSolutionView  # noqa: PLC0415
     from lcm.persistence import load_solution  # noqa: PLC0415
     from tests.egm.test_current_iid_call_owned_generation import (  # noqa: PLC0415
@@ -642,8 +642,11 @@ def test_nnbegm_shape_capture_keeps_both_banks_and_refuses_changed_engine(  # no
             arguments = kernel.program.argument_builder
             assert isinstance(arguments, CaseUExactArguments)
             assert isinstance(arguments.point, NEGMCaseUArguments)
+            # The budgeted cold build already admitted this clock; refuse a fresh one.
+            assert arguments.point.clock_values is not None
+            unadmitted = replace(arguments.point, clock_values=None)
             with pytest.raises(ExecutionPlanningError):
-                arguments.point.prepare(context=context, materializer=clock_owner)
+                unadmitted.prepare(context=context, materializer=clock_owner)
             assert not clock_owner._pending
         finally:
             clock_owner.close()
