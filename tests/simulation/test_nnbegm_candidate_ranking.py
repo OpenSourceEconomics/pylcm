@@ -627,6 +627,7 @@ def test_candidate_ranking_is_invariant_to_subject_batching(
     wealth = np.array([1.0467, 0.83, 1.37, 2.21, 3.42, 4.73, 7.11])
     illiquid = np.array([2.04, 1.31, 2.63, 3.79, 5.27, 7.41, 10.13])
     monkeypatch.setattr(simulation_compile, "SimulationRuntime", _RecordingRuntime)
+    monkeypatch.setattr(_RecordingRuntime, "instances", [])
     width_models = {
         width: toy.build_model(
             variant="n_nbegm",
@@ -653,6 +654,8 @@ def test_candidate_ranking_is_invariant_to_subject_batching(
         }
         observations = {}
         for width, width_model in width_models.items():
+            for instance in _RecordingRuntime.instances:
+                instance.calls.clear()
             result = width_model.simulate(
                 params=_PARAMS,
                 solution=solutions[width],
@@ -665,10 +668,9 @@ def test_candidate_ranking_is_invariant_to_subject_batching(
                 .query("regime_name == 'alive' and period == 0")
                 .sort_index()
             )
-            runtime = width_model._runtime_regimes_for_shape(compile_batch_size=width)[
-                "alive"
-            ].simulation.programs.executor
-            assert isinstance(runtime, _RecordingRuntime)
+            (runtime,) = (
+                instance for instance in _RecordingRuntime.instances if instance.calls
+            )
             bank, owners = _recorded_bank_and_owners(runtime)
             observations[width] = (frame, bank, owners)
         whole, whole_bank, whole_owners = observations[7]

@@ -55,7 +55,9 @@ def test_case_u_future_tuple_keeps_original_carries_and_closed_snapshot() -> Non
     paths = jax.tree_util.tree_flatten_with_path(payload)[0]
     assert len(reads) == len(paths)
     for read, (path, leaf), wanted in zip(reads, paths, original, strict=True):
-        assert read.source.path[0] == "child_values"
+        # Reads address the numeric child tuple operand, not its field name.
+        _field, child, attribute = path
+        assert read.source.path == (child.idx, attribute.name)
         assert read.target.leaf_path == tuple(
             f"{type(step).__name__}:{step}" for step in path
         )

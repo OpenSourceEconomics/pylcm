@@ -246,6 +246,7 @@ def _use_actual_u_template_owner(
         call: CoreBuildContext,
         fixed_flat_params: FlatParams,
         demands: tuple[ParentResourcesDemand, ...] = (),
+        previous: PreparedCaseUDate | None = None,
         materializer: DatedGenerationMaterializer | None = None,
     ) -> PreparedCaseUDate:
         assert materializer is None
@@ -258,6 +259,7 @@ def _use_actual_u_template_owner(
             call=call,
             fixed_flat_params=fixed_flat_params,
             demands=demands,
+            previous=previous,
             materializer=owner,
         )
         completed.append(result)
