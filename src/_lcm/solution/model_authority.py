@@ -1376,6 +1376,54 @@ def supports_owned_case_r_artifacts(*, regime: Regime, regime_name: RegimeName) 
     )
 
 
+def supports_owned_negm_u_artifacts(*, regime: Regime, regime_name: RegimeName) -> bool:
+    """Require the exact installed NEGM source and its original future artifact."""
+    from _lcm.egm.current_iid_case_u_replay import (  # noqa: PLC0415
+        CASE_U_FUTURE_REPLAY,
+        CASE_U_REPLAY_IDENTITY,
+    )
+    from _lcm.egm.current_iid_negm import NEGMCaseUPoint  # noqa: PLC0415
+    from _lcm.solution.current_iid_negm import (  # noqa: PLC0415 - producer imports authority
+        NativeNEGMCaseUPeriodKernel,
+    )
+
+    spec = regime.solution.continuation_spec
+    replay = regime.simulation.case_u_replay_spec
+    if (
+        type(spec) is not ProjectedContinuationSpec
+        or replay is None
+        or replay is not regime.solution.case_u_replay_spec
+        or replay.regime != regime_name
+        or replay.artifact_key != CASE_U_FUTURE_REPLAY
+        or replay.identity != CASE_U_REPLAY_IDENTITY
+        or regime.simulation.replay_route.policy_applicable
+        or regime.simulation.external_replay_route is not None
+        or set(regime.solution.artifact_authorities) != {CASE_U_FUTURE_REPLAY}
+        or set(replay.periods) != set(regime.active_periods)
+    ):
+        return False
+    for period in regime.active_periods:
+        if not _is_installed_negm_u_continuation(
+            regime=regime,
+            regime_name=regime_name,
+            period=period,
+            spec=spec,
+            template=spec.template_at(period=period),
+        ):
+            return False
+        kernel = regime.solution.period_kernels[period]
+        declaration = replay.periods[period]
+        if (
+            type(kernel) is not NativeNEGMCaseUPeriodKernel
+            or type(kernel.point) is not NEGMCaseUPoint
+            or declaration.negm_point is not kernel.point
+            or declaration.date is not spec.date_at(period=period)
+            or declaration.future is not kernel.future
+        ):
+            return False
+    return True
+
+
 def _is_installed_balanced_r_continuation(
     *,
     regime: Regime,

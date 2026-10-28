@@ -671,6 +671,7 @@ class DCEGM(OneMarginSolver):
         context: SolverBuildContext,
         build: EGMStepBuild,
         authority: DatedCaseUStepAuthority,
+        materializer: DatedGenerationMaterializer | None = None,
     ) -> SolutionKernels:
         """Assemble original inner programs only for their exact nested owner.
 
@@ -690,7 +691,9 @@ class DCEGM(OneMarginSolver):
             or build.native_case_u_sources[authority.period] is not authority
         ):
             raise TypeError("Nested U assembly lost its original prepared build.")
-        return self._assemble_period_kernels(context=context, build=build)
+        return self._assemble_period_kernels(
+            context=context, build=build, materializer=materializer
+        )
 
     def _assemble_period_kernels(
         self,

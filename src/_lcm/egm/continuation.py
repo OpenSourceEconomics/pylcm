@@ -21,6 +21,7 @@ from typing import Literal, cast
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 from dags import concatenate_functions, with_signature
 from jax.typing import DTypeLike
 
@@ -3258,6 +3259,8 @@ def _build_child_reads(
         Immutable mapping of carry-target names to their read statics.
 
     """
+    from _lcm.solution.grid_search import GridSearch  # noqa: PLC0415
+
     functions_without_post = MappingProxyType(
         {name: func for name, func in functions.items() if name != post_decision_name}
     )
@@ -3304,11 +3307,21 @@ def _build_child_reads(
             )
             if is_stochastic
         )
+        ordinary_passive_terminal = (
+            type(target_regime.solver) is GridSearch
+            and laws[target].terminal
+            and not target_regime.actions
+            and not discrete_state_names
+            and query is None
+            and projected is None
+        )
         if materializer is not None and (
             stochastic_state_names
-            or _get_passive_state_names(
-                v_interpolation_info=target_info,
-                euler_state_name=euler_state_name,
+            or (
+                _get_passive_state_names(
+                    v_interpolation_info=target_info, euler_state_name=euler_state_name
+                )
+                and not ordinary_passive_terminal
             )
             or (
                 projected is None
@@ -3377,9 +3390,19 @@ def _build_child_reads(
             euler_state_name=euler_state_name,
         )
         passive_grids = tuple(
-            jnp.asarray(
-                target_info.continuous_states[name].to_jax(),
-                dtype=canonical_float_dtype(),
+            (
+                jnp.asarray(
+                    target_info.continuous_states[name].to_jax(),
+                    dtype=canonical_float_dtype(),
+                )
+                if materializer is None
+                else materializer(
+                    value=materializer.materialize_grid(
+                        spec=target_info.continuous_states[name]
+                    ),
+                    dtype=np.dtype(canonical_float_dtype()),
+                    name=f"egm_child.{target}.{name}",
+                )
             )
             for name in passive_state_names
         )
@@ -3418,8 +3441,13 @@ def _build_child_reads(
         resources_param_names = resources_arg_names - child_binding_names
         row_grids = passive_grids + action_values
         if row_grids:
-            row_mesh = jnp.meshgrid(*row_grids, indexing="ij")
-            row_values = tuple(mesh.ravel() for mesh in row_mesh)
+            row_values = (
+                tuple(mesh.ravel() for mesh in jnp.meshgrid(*row_grids, indexing="ij"))
+                if materializer is None
+                else materializer.evaluate_validation(
+                    function=_child_row_values, arguments={"grids": row_grids}
+                )
+            )
             row_block_shape = tuple(int(grid.shape[0]) for grid in row_grids)
         else:
             row_values = ()
@@ -3492,6 +3520,11 @@ def _build_child_reads(
             n_outer_candidates=n_outer_candidates,
         )
     return MappingProxyType(reads)
+
+
+def _child_row_values(*, grids: tuple[FloatND, ...]) -> tuple[FloatND, ...]:
+    """Original passive-row mesh and flattening, with explicit admitted grids."""
+    return tuple(mesh.ravel() for mesh in jnp.meshgrid(*grids, indexing="ij"))
 
 
 def _build_feature_child_query(

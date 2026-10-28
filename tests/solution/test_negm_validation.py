@@ -693,3 +693,50 @@ def test_runtime_outer_search_grid_is_refused_during_negm_validation() -> None:
 
     with pytest.raises(ModelInitializationError, match=r"outer search grid.*runtime"):
         _validate(_VALID.replace(solver=solver))
+
+
+def _additive_sample_utility(
+    *, consumption_part: FloatND, durable_part: FloatND
+) -> FloatND:
+    return consumption_part + durable_part
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_owned_negm_validator_preserves_original_additive_and_cross_term_checks() -> (
+    None
+):
+    """The actual owner retains the original additive identity and rejection."""
+    from _lcm.egm.negm_validation import validate_negm_regime  # noqa: PLC0415
+    from tests.egm.test_current_iid_generation_materialization import (  # noqa: PLC0415
+        _owner,
+    )
+
+    additive = _VALID.replace(
+        functions={
+            **dict(_VALID.functions),
+            "consumption_part": _consumption_part,
+            "durable_part": _durable_part,
+            "utility": _additive_sample_utility,
+        },
+    )
+    coupled = additive.replace(
+        functions={**dict(additive.functions), "utility": _multiplicative_utility}
+    )
+    owner = _owner()
+    owner.budget_bytes = 1 << 28
+    try:
+        validate_negm_regime(
+            regime_name="alive",
+            user_regime=additive,
+            law=_NON_TERMINAL_LAW,
+            materializer=owner,
+        )
+        with pytest.raises(ModelInitializationError, match="not additively separable"):
+            validate_negm_regime(
+                regime_name="alive",
+                user_regime=coupled,
+                law=_NON_TERMINAL_LAW,
+                materializer=owner,
+            )
+    finally:
+        owner.close()

@@ -314,6 +314,7 @@ from _lcm.solution.model_authority import (
     bind_generated_solution_authority,
     snapshot_solution_authority,
     supports_owned_case_r_artifacts,
+    supports_owned_negm_u_artifacts,
 )
 from _lcm.solution.model_seal import BindingRecorder, SealedBindings
 from _lcm.solution.native_values import NativeValueMaterializer
@@ -2287,6 +2288,7 @@ class Model:
             _BoundDCEGM,
         )
         from _lcm.solution.nbegm import _BoundNBEGM  # noqa: PLC0415
+        from _lcm.solution.negm import _BoundNEGM  # noqa: PLC0415
 
         if (
             self.ages is None
@@ -2313,6 +2315,10 @@ class Model:
             PiecewiseLogSpacedGrid,
         )
         structure = prepared.prepared_structure
+        nested_sources = any(
+            type(regime.solver) is _BoundNEGM
+            for regime in structure.representative_user_regimes.values()
+        )
         for name, regime in structure.representative_user_regimes.items():
             law = structure.laws[name]
             if (
@@ -2337,7 +2343,7 @@ class Model:
                 if (
                     type(regime.solver) is not GridSearch
                     or regime.actions
-                    or len(regime.states) > 1
+                    or (len(regime.states) > 1 and not nested_sources)
                 ):
                     raise UnsupportedOperationError(
                         f"Cold ordinary child {name!r} requires its original "
@@ -2345,6 +2351,9 @@ class Model:
                     )
                 continue
             solver = regime.solver
+            if type(solver) is _BoundNEGM:
+                # Its original dated factory owns inner/outer scope and floor admission.
+                continue
             if (
                 not isinstance(solver, (_BoundDCEGM, _BoundNBEGM))
                 or type(solver) not in (_BoundDCEGM, _BoundNBEGM)
@@ -4132,8 +4141,13 @@ class Model:
                         key != DISSOLUTION_FLAG
                         for key in regime.solution.artifact_authorities
                     )
-                ) and not supports_owned_case_r_artifacts(
-                    regime=regime, regime_name=regime_name
+                ) and not (
+                    supports_owned_case_r_artifacts(
+                        regime=regime, regime_name=regime_name
+                    )
+                    or supports_owned_negm_u_artifacts(
+                        regime=regime, regime_name=regime_name
+                    )
                 ):
                     raise ExecutionPlanningError(
                         f"Budgeted foreign solution for regime {regime_name!r} "
@@ -4990,6 +5004,8 @@ class Model:
                             period=period,
                             authority=authority,
                             replay_payload=replay_payload,
+                            array_writer=array_writer,
+                            array_copier=array_copier,
                         )
                     )
                 continue
@@ -5042,6 +5058,8 @@ class Model:
         period: int,
         authority: SolutionAuthority,
         replay_payload: _ReplayPayloadSource,
+        array_writer: SimulationEntryAllocations | None = None,
+        array_copier: _ArrayCopier | None = None,
     ) -> CaseUReplayInput:
         """Authenticate the real dated future bundle before any forward profile."""
         u_spec = self._regimes[regime_name].simulation.case_u_replay_spec
@@ -5064,7 +5082,12 @@ class Model:
             raise InvalidSimulationInputError(
                 "Case-U reconstruction needs its retained future artifact."
             ) from error
-        payload = _canonicalize_artifact_payload(payload=raw, authority=declared)
+        payload = _canonicalize_artifact_payload(
+            payload=raw,
+            authority=declared,
+            array_writer=array_writer,
+            array_copier=array_copier,
+        )
         if not isinstance(payload, CaseUReplayChildren):
             raise InvalidSimulationInputError(
                 "Case-U reconstruction has a foreign future payload."

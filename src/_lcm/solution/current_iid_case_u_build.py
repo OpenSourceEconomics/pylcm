@@ -198,7 +198,7 @@ def _case_u_original_roots(**operands: jax.Array) -> tuple[jax.Array, ...]:
     return tuple(operands[f"operand_{index}"] for index in range(len(operands)))
 
 
-def guard_case_u_shape(  # noqa: C901 - keep exact role and pretrace trust checks together
+def guard_case_u_shape(  # noqa: C901, PLR0912 - keep exact roles and pretrace checks together
     *,
     function: Callable[..., PytreeValue],
     context: CoreBuildContext,
@@ -210,17 +210,33 @@ def guard_case_u_shape(  # noqa: C901 - keep exact role and pretrace trust check
         NBCaseUPoint,
         NBCaseUProgram,
     )
+    from _lcm.egm.current_iid_negm import (  # noqa: PLC0415
+        _ORIGINAL_NEGM_CASE_U_METHODS,
+        _ORIGINAL_NEGM_CASE_U_PROPERTIES,
+        NEGMCaseUPoint,
+    )
+    from _lcm.egm.current_iid_negm_program import (  # noqa: PLC0415
+        _ORIGINAL_NEGM_CASE_U_PROGRAM_METHODS,
+        NEGMCaseUProgram,
+    )
     from _lcm.egm.validation_stages import ValidationCaptureHasher  # noqa: PLC0415
     from _lcm.solution.current_iid_case_u_native import (  # noqa: PLC0415
+        _ORIGINAL_CASE_U_PUBLISHER_METHODS,
         CaseUExactFunction,
+        CaseURideExactFunction,
     )
+    from _lcm.solution.dcegm import _DCEGMPeriodKernel  # noqa: PLC0415
     from _lcm.solution.nbegm import _NBEGMContinuousCore  # noqa: PLC0415
+    from _lcm.solution.negm import _NEGMPeriodKernel  # noqa: PLC0415
 
     point = (
         function
         if type(function) is CaseUProgramFunction
         else function.point
-        if type(function) is CaseUExactFunction
+        if (
+            type(function) is CaseUExactFunction
+            or type(function) is CaseURideExactFunction
+        )
         else None
     )
 
@@ -232,6 +248,52 @@ def guard_case_u_shape(  # noqa: C901 - keep exact role and pretrace trust check
         raise UnsupportedOperationError(
             "Case-U shape preparation requires its existing original clock array."
         )
+    nested = point.pieces if type(point) is NEGMCaseUProgram else None
+    if nested is not None and type(nested) is not NEGMCaseUPoint:
+        raise UnsupportedOperationError(
+            "Cold nested shape capture requires its genuine NEGM DC inner point."
+        )
+    if nested is not None:
+        for owner, name, method, code, raw, raw_code in (
+            *_ORIGINAL_CASE_U_PUBLISHER_METHODS,
+            *(
+                (NEGMCaseUProgram, *original)
+                for original in _ORIGINAL_NEGM_CASE_U_PROGRAM_METHODS
+            ),
+        ):
+            if (
+                vars(owner).get(name) is not method
+                or method.__code__ is not code
+                or (_unwrap_exact_beartype_wrapper(method) or method) is not raw
+                or raw.__code__ is not raw_code
+            ):
+                raise TypeError(
+                    "Original NEGM publisher/program method authority changed."
+                )
+        for name, method, code, raw, raw_code in _ORIGINAL_NEGM_CASE_U_METHODS:
+            if (
+                vars(NEGMCaseUPoint).get(name) is not method
+                or method.__code__ is not code
+                or (_unwrap_exact_beartype_wrapper(method) or method) is not raw
+                or raw.__code__ is not raw_code
+            ):
+                raise TypeError("Original NEGM shape method authority changed.")
+        for (
+            name,
+            descriptor,
+            getter,
+            code,
+            raw,
+            raw_code,
+        ) in _ORIGINAL_NEGM_CASE_U_PROPERTIES:
+            if (
+                vars(NEGMCaseUPoint).get(name) is not descriptor
+                or descriptor.fget is not getter
+                or getter.__code__ is not code
+                or (_unwrap_exact_beartype_wrapper(getter) or getter) is not raw
+                or raw.__code__ is not raw_code
+            ):
+                raise TypeError("Original NEGM shape property authority changed.")
     if type(point) is CaseUProgramFunction:
         engine_receivers = (
             (point, CaseUProgramFunction.__call__),
@@ -245,10 +307,26 @@ def guard_case_u_shape(  # noqa: C901 - keep exact role and pretrace trust check
             (point.pieces.core, _NBEGMContinuousCore.construct_point),
             (function, CaseUExactFunction.__call__),
         )
+    elif type(point) is NEGMCaseUProgram and type(nested) is NEGMCaseUPoint:
+        engine_receivers = (
+            (point, NEGMCaseUProgram.evaluate_with_law),
+            (
+                function,
+                CaseUExactFunction.__call__
+                if type(function) is CaseUExactFunction
+                else CaseURideExactFunction.__call__,
+            ),
+            *((nested, original[1]) for original in _ORIGINAL_NEGM_CASE_U_METHODS),
+            *((nested, original[2]) for original in _ORIGINAL_NEGM_CASE_U_PROPERTIES),
+        )
     else:
         engine_receivers = ()
     plan = None
-    if type(point) is CaseUProgramFunction or type(point) is NBCaseUProgram:
+    if (
+        type(point) is CaseUProgramFunction
+        or type(point) is NBCaseUProgram
+        or type(point) is NEGMCaseUProgram
+    ):
         _require_case_u_plan_methods()
         plan = point.plan
     engine_bound_methods = tuple(
@@ -314,6 +392,15 @@ def guard_case_u_shape(  # noqa: C901 - keep exact role and pretrace trust check
             super().visit(value=value, _ignore_beartype_guards=_ignore_beartype_guards)
 
         def _visit_dataclass(self, value: DataclassInstance) -> None:
+            if not function_depth and nested is not None and value is nested:
+                self._visit_nested_identity()
+                for declaration in fields(nested):
+                    if declaration.name in {"owner", "context", "plan"}:
+                        continue
+                    self.frame(label="nested-field", payload=declaration.name.encode())
+                    self.visit(value=getattr(nested, declaration.name))
+                self._visit_referenced_bound_method(nested.__post_init__)
+                return
             if function_depth or point is None or value is not point:
                 super()._visit_dataclass(value)
                 return
@@ -324,10 +411,92 @@ def guard_case_u_shape(  # noqa: C901 - keep exact role and pretrace trust check
                     self._visit_original_plan(plan=point.plan)
                 else:
                     self.visit(value=getattr(point, declaration.name))
-            if type(point) is NBCaseUProgram:
+            if type(point) in (NBCaseUProgram, NEGMCaseUProgram):
                 self._visit_referenced_bound_method(point.evaluate_with_law)
             elif type(point) is CaseUProgramFunction:
                 self._visit_referenced_bound_method(point.__call__)
+
+        def _visit_program_reference(self, *, path: tuple[str, ...]) -> None:
+            if type(point) is not NEGMCaseUProgram:
+                raise TypeError("Nested program role lost its exact source program.")
+            if path == ("pieces",):
+                self.visit(value=point.pieces)
+            elif path[:1] == ("pieces",):
+                self._visit_nested_reference(path=path[1:])
+            elif path == ("plan",):
+                self._visit_original_plan(plan=point.plan)
+            else:
+                super()._visit_object_reference(
+                    value=point, attribute_paths=frozenset({path})
+                )
+
+        def _visit_nested_reference(self, *, path: tuple[str, ...]) -> None:
+            if type(nested) is not NEGMCaseUPoint:
+                raise TypeError("Nested receiver role lost its exact source point.")
+            if path in {
+                ("owner",),
+                ("owner", "regime_name"),
+                ("owner", "keeper_kernel"),
+                ("owner", "adjuster_kernel"),
+                ("owner", "outer_post_decision"),
+                ("owner", "transition_target_names"),
+                ("context", "regime_name"),
+                ("context", "current_iid_plans", "get"),
+                ("context", "certainty_equivalent"),
+            }:
+                self._visit_nested_identity()
+            elif path in {("keeper",), ("adjuster",)}:
+                self.visit(value=getattr(nested, path[0]))
+            elif path == ("plan",):
+                self._visit_original_plan(plan=nested.plan)
+            elif len(path) == 1 and any(
+                path[0] == original[0] for original in _ORIGINAL_NEGM_CASE_U_PROPERTIES
+            ):
+                for original in _ORIGINAL_NEGM_CASE_U_PROPERTIES:
+                    if original[0] == path[0]:
+                        self._visit_referenced_bound_method(
+                            types.MethodType(original[2], nested)
+                        )
+            else:
+                super()._visit_object_reference(
+                    value=nested, attribute_paths=frozenset({path})
+                )
+
+        def _visit_nested_identity(self) -> None:
+            if type(nested) is not NEGMCaseUPoint:
+                raise TypeError("Nested shape capture lost its exact source point.")
+            # Read original identity checks without executing a callback before
+            # admission. The sealed with_operands method repeats full validation.
+            if (
+                type(nested.owner) is not _NEGMPeriodKernel
+                or nested.owner.regime_name != nested.context.regime_name
+                or nested.context.current_iid_plans.get(nested.period)
+                is not nested.plan
+            ):
+                raise TypeError("Nested shape capture lost its original owner/plan.")
+            for kernel, pieces in (
+                (nested.owner.keeper_kernel, nested.keeper),
+                (nested.owner.adjuster_kernel, nested.adjuster),
+            ):
+                if (
+                    type(kernel) is not _DCEGMPeriodKernel
+                    or type(kernel.demand_step) is not _EGMStep
+                    or kernel.demand_step.pieces is not pieces
+                    or pieces.continuation_plan.certainty_equivalent
+                    is not nested.context.certainty_equivalent
+                ):
+                    raise TypeError("Nested shape capture lost original inner pieces.")
+            self.frame(label="abstract-original-nested-owner")
+            self.visit(
+                value=(
+                    nested.context.regime_name,
+                    nested.context.certainty_equivalent,
+                    nested.owner.regime_name,
+                    nested.owner.outer_post_decision,
+                    nested.owner.transition_target_names,
+                )
+            )
+            self._visit_original_plan(plan=nested.plan)
 
         def _visit_original_plan(self, *, plan: CurrentIIDPlan) -> None:
             if type(plan) is not CurrentIIDPlan:
@@ -402,14 +571,26 @@ def guard_case_u_shape(  # noqa: C901 - keep exact role and pretrace trust check
                 )
                 return
             for path in sorted(attribute_paths):
-                if (point is not None and value is point and path == ("plan",)) or (
+                if nested is not None and value is function and path[:1] == ("point",):
+                    if path == ("point",):
+                        self.visit(value=point)
+                    else:
+                        self._visit_program_reference(path=path[1:])
+                elif nested is not None and value is point:
+                    self._visit_program_reference(path=path)
+                elif nested is not None and value is nested:
+                    self._visit_nested_reference(path=path)
+                elif (point is not None and value is point and path == ("plan",)) or (
                     point is not None and value is point.plan and path == ("bindings",)
                 ):
                     self._visit_original_plan(plan=point.plan)
                 elif point is not None and value is point and path == ("pieces",):
                     self.visit(value=point.pieces)
                 elif (
-                    type(function) is CaseUExactFunction
+                    (
+                        type(function) is CaseUExactFunction
+                        or type(function) is CaseURideExactFunction
+                    )
                     and value is function
                     and path == ("demands",)
                 ):

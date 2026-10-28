@@ -84,6 +84,7 @@ from _lcm.solution.feasibility import (
     reduce_continuation_read_counts,
     reduce_query_input_status,
 )
+from _lcm.solution.fingerprint import _unwrap_exact_beartype_wrapper
 from _lcm.solution.generation import CanonicalModelGeneration
 from _lcm.solution.model_authority import _authority_from_template
 from _lcm.time import TimeAxis
@@ -1176,3 +1177,15 @@ def acquire_installed_case_u_date(
     ):
         raise TypeError("Installed Case-U substituted its actual dated preparation.")
     return prepared
+
+
+_ORIGINAL_CASE_U_PUBLISHER_METHODS = tuple(
+    (owner, name, method, method.__code__, raw, raw.__code__)
+    for owner, names in (
+        (CaseUExactFunction, ("__post_init__", "__call__")),
+        (CaseURideExactFunction, ("__call__",)),
+    )
+    for name in names
+    for method in (getattr(owner, name),)
+    for raw in (_unwrap_exact_beartype_wrapper(method) or method,)
+)

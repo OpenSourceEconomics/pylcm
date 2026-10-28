@@ -1705,6 +1705,32 @@ def test_original_cond_operand_omission_has_closed_native_metadata() -> None:
     )
 
 
+@pytest.mark.parametrize("name", ["map", "leaves"])
+def test_jax_tree_functions_have_identity_and_code_sealed_native_metadata(
+    *, name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    genuine = getattr(jax.tree, name)
+    assert isinstance(genuine, FunctionType)
+    assert fingerprints._native_numeric_callable_kind(genuine) == "jax-function"
+    baseline = fingerprints._semantic_fingerprint(genuine)
+    assert baseline == fingerprints._semantic_fingerprint(genuine)
+
+    nominal = FunctionType(genuine.__code__, genuine.__globals__)
+    nominal.__module__ = genuine.__module__
+    nominal.__name__ = genuine.__name__
+    nominal.__qualname__ = genuine.__qualname__
+    with monkeypatch.context() as binding_patch:
+        binding_patch.setattr(jax.tree, name, nominal)
+        assert fingerprints._native_numeric_callable_kind(nominal) is None
+
+    with monkeypatch.context() as code_patch:
+        code_patch.setattr(
+            genuine, "__code__", genuine.__code__.replace(co_name="changed_tree_code")
+        )
+        assert fingerprints._native_numeric_callable_kind(genuine) is None
+    assert baseline == fingerprints._semantic_fingerprint(genuine)
+
+
 @pytest.mark.parametrize(
     "scalar_type",
     [

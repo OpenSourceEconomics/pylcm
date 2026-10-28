@@ -5,6 +5,7 @@ from collections.abc import Iterator
 from dataclasses import replace
 from functools import partial
 from types import MappingProxyType, MethodType
+from typing import Literal
 
 import jax
 import jax.numpy as jnp
@@ -249,6 +250,55 @@ def _consume_user_plan(*, plan: CurrentIIDPlan, value: FloatND) -> FloatND:
     if not isinstance(rule, UserNodes):
         raise TypeError("Original user rule changed.")
     return value + rule.nodes[0, 0]
+
+
+@pytest.mark.parametrize("capture", ["device", "host", "plan"])
+def test_abstract_shape_tree_mapping_preserves_callback_capture_rules(
+    *,
+    shape_capture_owner: tuple[
+        CoreBuildContext, SimulationEntryAllocations, CaseUProgramFunction
+    ],
+    capture: Literal["device", "host", "plan"],
+) -> None:
+    context, owner, function = shape_capture_owner
+    if capture == "plan":
+        plan = function.plan
+
+        def mapper(value: FloatND) -> FloatND:
+            return _consume_user_plan(plan=plan, value=value)
+
+    else:
+        offset = jnp.asarray([2.0]) if capture == "device" else np.asarray([2.0])
+
+        def mapper(value: FloatND) -> FloatND:
+            return value + offset[0]
+
+    def captured(*, value: FloatND) -> FloatND:
+        return jax.tree.leaves(jax.tree.map(mapper, (value,)))[0]
+
+    if capture == "device":
+        held = guard_case_u_shape(
+            function=captured,
+            context=context,
+            fixed_flat_params=MappingProxyType({}),
+            materializer=owner,
+        )
+        assert any(array is offset for array in held)
+        assert any(
+            array is offset for array in jax.tree.leaves(owner.solve_input_roots())
+        )
+    else:
+        with pytest.raises(
+            (UnsupportedOperationError, TypeError),
+            match=r"host-array capture|direct object dependency",
+        ):
+            guard_case_u_shape(
+                function=captured,
+                context=context,
+                fixed_flat_params=MappingProxyType({}),
+                materializer=owner,
+            )
+        assert not owner._pending
 
 
 def _consume_user_point(*, point: CaseUProgramFunction, value: FloatND) -> FloatND:

@@ -613,13 +613,20 @@ def test_original_negm_u_ordinary_passive_child_rows_keep_generation_custody() -
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
+@pytest.mark.parametrize("budget", [None, 1 << 28], ids=["unbudgeted", "budgeted"])
 def test_public_negm_u_default_archive_replays_original_physics(
-    *, tmp_path: Path
+    *, tmp_path: Path, budget: int | None
 ) -> None:
     """Default retention delivers original nested physical replay to a fresh Model."""
     from pandas.testing import assert_frame_equal  # noqa: PLC0415
 
     declarations = _declarations()
+    declarations = replace(
+        declarations,
+        execution_config=replace(
+            declarations.execution_config, device_memory_bytes=budget
+        ),
+    )
     params = _params()
     model = _public_model_from_declarations(declarations=declarations)
     solution = model.solve(params=params, log_level="off")
@@ -688,3 +695,272 @@ def test_public_negm_u_default_archive_replays_original_physics(
     assert fresh_generation.execution is not fresh
     assert fresh_generation.execution is not generation.execution
     assert_frame_equal(replay.to_dataframe(), result.to_dataframe(), check_exact=True)
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_negm_shape_capture_keeps_original_branches_and_refuses_rebound_method(  # noqa: PLR0915 - one genuine prepared source for both before-effect sentinels
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Original full nested inputs survive; changed structural code never runs."""
+    from types import MappingProxyType  # noqa: PLC0415
+
+    import jax  # noqa: PLC0415
+
+    from _lcm.egm.current_iid_negm import NEGMCaseUPoint  # noqa: PLC0415
+    from _lcm.egm.current_iid_negm_program import (  # noqa: PLC0415
+        NEGMCaseUArguments,
+        NEGMCaseUProgram,
+    )
+    from _lcm.execution.core_program import CoreBuildContext  # noqa: PLC0415
+    from _lcm.solution.current_iid_case_u_build import (  # noqa: PLC0415
+        guard_case_u_shape,
+    )
+    from _lcm.solution.current_iid_case_u_native import (  # noqa: PLC0415
+        CaseUExactArguments,
+        CaseUExactFunction,
+        CaseURideExactFunction,
+    )
+    from _lcm.solution.current_iid_negm import (  # noqa: PLC0415
+        NativeNEGMCaseUPeriodKernel,
+    )
+    from lcm.exceptions import ExecutionPlanningError  # noqa: PLC0415
+    from tests.egm.test_current_iid_generation_materialization import (  # noqa: PLC0415
+        _owner,
+    )
+
+    model = _public_model_from_declarations(declarations=_declarations())
+    flat, generation = model._prepare_call(params=_params())
+    kernel = generation.execution._regimes["child"].solution.period_kernels[1]
+    assert isinstance(kernel, NativeNEGMCaseUPeriodKernel)
+    assert isinstance(kernel.point, NEGMCaseUPoint)
+    context = CoreBuildContext(
+        state_action_space=kernel.context.state_action_space,
+        next_regime_to_V_arr={},
+        next_regime_to_continuation=kernel.future.template().children,
+        flat_params=flat,
+        period=1,
+        ages=kernel.context.ages,
+    )
+    owner = _owner(roots=generation.live_roots())
+    owner.budget_bytes = 1 << 28
+    try:
+        held = guard_case_u_shape(
+            function=kernel.program.function,
+            context=context,
+            fixed_flat_params=MappingProxyType({}),
+            materializer=owner,
+        )
+        function = kernel.program.function
+        assert isinstance(function, CaseURideExactFunction)
+        assert isinstance(function.point, NEGMCaseUProgram)
+        scalar = CaseUExactFunction(
+            point=function.point, capacity=function.capacity, demands=function.demands
+        )
+        scalar_held = guard_case_u_shape(
+            function=scalar,
+            context=context,
+            fixed_flat_params=MappingProxyType({}),
+            materializer=owner,
+        )
+        for original in (
+            kernel.point.plan.indices,
+            kernel.point.keeper.savings_nodes,
+            kernel.point.adjuster.savings_nodes,
+            *jax.tree.leaves(kernel.point.plan.node_operands),
+        ):
+            assert any(value is original for value in held)
+            assert any(value is original for value in scalar_held)
+        arguments = kernel.program.argument_builder
+        assert isinstance(arguments, CaseUExactArguments)
+        assert isinstance(arguments.point, NEGMCaseUArguments)
+        clock_owner = _owner(roots=generation.live_roots())
+        clock_owner.budget_bytes = 0
+        try:
+            with pytest.raises(ExecutionPlanningError):
+                arguments.point.prepare(context=context, materializer=clock_owner)
+            assert not clock_owner._pending
+        finally:
+            clock_owner.close()
+        effects: list[bool] = []
+
+        def changed(self: NEGMCaseUPoint) -> None:
+            assert self is kernel.point
+            effects.append(True)
+            raise AssertionError("Changed nested structure ran")
+
+        with pytest.raises(AssertionError, match="Changed nested structure ran"):
+            changed(kernel.point)
+        assert effects == [True]
+        effects.clear()
+        with monkeypatch.context() as method_patch:
+            method_patch.setattr(NEGMCaseUPoint, "__post_init__", changed)
+            with pytest.raises(TypeError, match="Original NEGM shape method authority"):
+                guard_case_u_shape(
+                    function=kernel.program.function,
+                    context=context,
+                    fixed_flat_params=MappingProxyType({}),
+                    materializer=owner,
+                )
+            assert not effects
+
+        for method_owner, method_name, receiver in (
+            (CaseURideExactFunction, "__call__", function),
+            (CaseUExactFunction, "__call__", scalar),
+            (CaseUExactFunction, "__post_init__", scalar),
+            (NEGMCaseUProgram, "evaluate_with_law", function.point),
+            (NEGMCaseUProgram, "__post_init__", function.point),
+        ):
+
+            def changed_engine(
+                self: CaseUExactFunction | CaseURideExactFunction | NEGMCaseUProgram,
+            ) -> None:
+                del self
+                effects.append(True)
+                raise AssertionError("Changed publisher/program method ran")
+
+            with pytest.raises(
+                AssertionError, match="Changed publisher/program method ran"
+            ):
+                changed_engine(receiver)
+            assert effects == [True]
+            effects.clear()
+            with monkeypatch.context() as engine_patch:
+                engine_patch.setattr(method_owner, method_name, changed_engine)
+                with pytest.raises(
+                    TypeError, match="Original NEGM publisher/program method authority"
+                ):
+                    guard_case_u_shape(
+                        function=function,
+                        context=context,
+                        fixed_flat_params=MappingProxyType({}),
+                        materializer=owner,
+                    )
+                assert not effects
+
+        def changed_target(self: NEGMCaseUPoint) -> str:
+            assert self is kernel.point
+            effects.append(True)
+            raise AssertionError("Changed nested getter ran")
+
+        with monkeypatch.context() as property_patch:
+            property_patch.setattr(NEGMCaseUPoint, "target", property(changed_target))
+            with pytest.raises(AssertionError, match="Changed nested getter ran"):
+                _ = kernel.point.target
+            assert effects == [True]
+            effects.clear()
+            with pytest.raises(
+                TypeError, match="Original NEGM shape property authority"
+            ):
+                guard_case_u_shape(
+                    function=kernel.program.function,
+                    context=context,
+                    fixed_flat_params=MappingProxyType({}),
+                    materializer=owner,
+                )
+            assert not effects
+    finally:
+        owner.close()
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+@pytest.mark.parametrize("branch", ["keeper", "adjuster", "plan-alias"])
+def test_negm_shape_capture_refuses_nested_callback_host_or_plan_alias(
+    *, branch: str
+) -> None:
+    """An original metadata role cannot hide either branch's callback captures."""
+    from types import MappingProxyType  # noqa: PLC0415
+
+    from _lcm.egm.current_iid_negm import NEGMCaseUPoint  # noqa: PLC0415
+    from _lcm.egm.step import _EGMStep  # noqa: PLC0415
+    from _lcm.execution.core_program import CoreBuildContext  # noqa: PLC0415
+    from _lcm.solution.current_iid_case_u_build import (  # noqa: PLC0415
+        guard_case_u_shape,
+    )
+    from _lcm.solution.current_iid_case_u_native import (  # noqa: PLC0415
+        CaseURideExactFunction,
+    )
+    from _lcm.solution.current_iid_negm import (  # noqa: PLC0415
+        NativeNEGMCaseUPeriodKernel,
+    )
+    from _lcm.solution.dcegm import _DCEGMPeriodKernel  # noqa: PLC0415
+    from lcm.exceptions import UnsupportedOperationError  # noqa: PLC0415
+    from tests.egm.test_current_iid_case_u_constructor_admission import (  # noqa: PLC0415
+        _consume_user_plan,
+    )
+    from tests.egm.test_current_iid_generation_materialization import (  # noqa: PLC0415
+        _owner,
+    )
+
+    model = _public_model_from_declarations(declarations=_declarations())
+    flat, generation = model._prepare_call(params=_params())
+    kernel = generation.execution._regimes["child"].solution.period_kernels[1]
+    assert isinstance(kernel, NativeNEGMCaseUPeriodKernel)
+    point = kernel.point
+    assert isinstance(point, NEGMCaseUPoint)
+    hidden = np.asarray([2.0])
+    original_plan = point.plan
+
+    def host_capture(*, consumption: FloatND, eps: FloatND) -> FloatND:
+        return (1 + eps) * jnp.log(consumption) + hidden[0]
+
+    def plan_capture(*, consumption: FloatND, eps: FloatND) -> FloatND:
+        return _consume_user_plan(
+            plan=original_plan, value=(1 + eps) * jnp.log(consumption)
+        )
+
+    original = (
+        point.owner.adjuster_kernel
+        if branch == "adjuster"
+        else point.owner.keeper_kernel
+    )
+    assert isinstance(original, _DCEGMPeriodKernel)
+    assert isinstance(original.demand_step, _EGMStep)
+    pieces = replace(
+        original.demand_step.pieces,
+        utility_func=plan_capture if branch == "plan-alias" else host_capture,
+    )
+    changed_inner = replace(
+        original, demand_step=replace(original.demand_step, pieces=pieces)
+    )
+    changed_owner = replace(
+        point.owner,
+        adjuster_kernel=changed_inner
+        if branch == "adjuster"
+        else point.owner.adjuster_kernel,
+        keeper_kernel=point.owner.keeper_kernel
+        if branch == "adjuster"
+        else changed_inner,
+    )
+    point = replace(
+        point,
+        owner=changed_owner,
+        adjuster=pieces if branch == "adjuster" else point.adjuster,
+        keeper=point.keeper if branch == "adjuster" else pieces,
+    )
+    function = kernel.program.function
+    assert isinstance(function, CaseURideExactFunction)
+    function = replace(function, point=replace(function.point, pieces=point))
+    context = CoreBuildContext(
+        state_action_space=kernel.context.state_action_space,
+        next_regime_to_V_arr={},
+        next_regime_to_continuation=kernel.future.template().children,
+        flat_params=flat,
+        period=1,
+        ages=kernel.context.ages,
+    )
+    owner = _owner(roots=generation.live_roots())
+    owner.budget_bytes = 1 << 28
+    try:
+        with pytest.raises(
+            (UnsupportedOperationError, TypeError),
+            match=r"host-array capture|direct object dependency .*CurrentIIDPlan",
+        ):
+            guard_case_u_shape(
+                function=function,
+                context=context,
+                fixed_flat_params=MappingProxyType({}),
+                materializer=owner,
+            )
+        assert not owner._pending
+    finally:
+        owner.close()

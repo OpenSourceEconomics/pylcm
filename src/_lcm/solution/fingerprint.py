@@ -269,11 +269,15 @@ _JAX_PUBLIC_NUMERIC_MODULES = (
         jsp,
     ),
 )
-_JAX_PUBLIC_NUMERIC_VALUES = tuple(
-    value
-    for module in _JAX_PUBLIC_NUMERIC_MODULES
-    for name, value in vars(module).items()
-    if not name.startswith("_")
+_JAX_PUBLIC_NUMERIC_VALUES = (
+    *(
+        value
+        for module in _JAX_PUBLIC_NUMERIC_MODULES
+        for name, value in vars(module).items()
+        if not name.startswith("_")
+    ),
+    jax.tree.map,
+    jax.tree.leaves,
 )
 _JAX_NUMPY_UFUNCS = tuple(
     value for value in _JAX_PUBLIC_NUMERIC_VALUES if type(value) is _JAX_UFUNC_TYPE

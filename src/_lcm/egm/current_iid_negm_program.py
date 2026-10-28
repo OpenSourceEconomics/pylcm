@@ -1,6 +1,6 @@
 """Integrate complete original finite NEGM choices after current information."""
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 
@@ -25,10 +25,11 @@ from _lcm.solution.feasibility import (
     reduce_continuation_read_counts,
     reduce_query_input_status,
 )
+from _lcm.solution.fingerprint import _unwrap_exact_beartype_wrapper
+from _lcm.solution.preparation_clock import prepare_case_u_clock
 from _lcm.time import TimeAxis
 from _lcm.typing import EconFunctionArg, FlatParams, PytreeValue
 from _lcm.zero_safe import factored_weighted_term
-from lcm.exceptions import UnsupportedOperationError
 from lcm.typing import (
     BoolND,
     Float1D,
@@ -37,6 +38,7 @@ from lcm.typing import (
     ReferenceName,
     RegimeName,
     ScalarFloat,
+    ScalarInt,
 )
 
 
@@ -52,18 +54,44 @@ class NEGMCaseUArguments:
     """Original model clock object."""
     fixed_flat_params: FlatParams
     """Actual fixed parameters; numerical arrays remain explicit program inputs."""
+    clock_values: Mapping[ReferenceName, ScalarFloat | ScalarInt] | None = None
+    """Actual admitted clock operands borrowed by later program argument calls."""
 
     def prepare(
         self, *, context: CoreBuildContext, materializer: DatedGenerationMaterializer
     ) -> Mapping[ReferenceName, PytreeValue]:
-        """Refuse the unimplemented cold producer before any array preparation."""
-        del context, materializer
-        raise UnsupportedOperationError(
-            "Cold finite NEGM U admission remains required."
+        """Borrow original operands and admit the original separate clock stages."""
+        return self._arguments(
+            context=context,
+            clock=lambda: (
+                prepare_case_u_clock(
+                    period=self.pieces.period, ages=self.ages, materializer=materializer
+                )
+                if self.clock_values is None
+                else self.clock_values
+            ),
         )
 
     def __call__(
         self, context: CoreBuildContext
+    ) -> Mapping[ReferenceName, PytreeValue]:
+        return self._arguments(
+            context=context,
+            clock=lambda: (
+                {
+                    "period": jnp.int32(self.pieces.period),
+                    "age": self.ages.values[self.pieces.period],
+                }
+                if self.clock_values is None
+                else self.clock_values
+            ),
+        )
+
+    def _arguments(
+        self,
+        *,
+        context: CoreBuildContext,
+        clock: Callable[[], Mapping[ReferenceName, PytreeValue]],
     ) -> Mapping[ReferenceName, PytreeValue]:
         point = self.pieces
         if context.period != point.period or context.ages is not self.ages:
@@ -101,8 +129,7 @@ class NEGMCaseUArguments:
                     regime_name=self.regime_name,
                     transition_target_names=targets,
                 ),
-                "period": jnp.int32(point.period),
-                "age": self.ages.values[point.period],
+                **clock(),
             }
         )
 
@@ -225,3 +252,11 @@ class NEGMCaseUProgram:
             ), law_valid
 
         return jax.vmap(integrate)(grid)
+
+
+_ORIGINAL_NEGM_CASE_U_PROGRAM_METHODS = tuple(
+    (name, method, method.__code__, raw, raw.__code__)
+    for name in ("__post_init__", "evaluate_with_law")
+    for method in (getattr(NEGMCaseUProgram, name),)
+    for raw in (_unwrap_exact_beartype_wrapper(method) or method,)
+)

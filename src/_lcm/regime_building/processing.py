@@ -661,10 +661,22 @@ def prepare_regime_builder(
             solver=user_regime.solver, regime_name=regime_name
         )
         if materializer is not None:
-            from _lcm.solution.dcegm import _BoundDCEGM  # noqa: PLC0415
+            from _lcm.solution.dcegm import ExactEnvelope, _BoundDCEGM  # noqa: PLC0415
             from _lcm.solution.nbegm import _BoundNBEGM  # noqa: PLC0415
+            from _lcm.solution.negm import _BoundNEGM  # noqa: PLC0415
 
-            if type(user_regime.solver) not in (GridSearch, _BoundDCEGM, _BoundNBEGM):
+            if type(user_regime.solver) not in (
+                GridSearch,
+                _BoundDCEGM,
+                _BoundNBEGM,
+                _BoundNEGM,
+            ) or (
+                type(user_regime.solver) is _BoundNEGM
+                and (
+                    type(user_regime.solver.inner) is not _BoundDCEGM
+                    or type(user_regime.solver.inner.envelope) is not ExactEnvelope
+                )
+            ):
                 # A subclass may override the hook with unprofiled allocations.
                 raise UnsupportedOperationError(
                     f"Cold dated builder for '{regime_name}' requires an admitted "
@@ -1851,11 +1863,13 @@ class _CanonicalRegimeBuilder:
             materializer=materializer,
         )
         liquid_support = {}
+        state_support = {}
         for (name, period), call in call_contexts.items():
             solver = self.representative_user_regimes[name].solver
             if isinstance(solver, (_BoundDCEGM, _BoundNBEGM, _BoundNEGM, _BoundNNBEGM)):
                 if call.state_action_space is None:
                     raise TypeError("Call-owned producer lacks actual state support.")
+                state_support[name, period] = call.state_action_space.states
                 liquid_support[name, period] = call.state_action_space.states[
                     solver.inner.continuous_state
                     if isinstance(solver, (_BoundNEGM, _BoundNNBEGM))
@@ -1883,6 +1897,7 @@ class _CanonicalRegimeBuilder:
             active_periods=self.regimes_to_active_periods,
             liquid_support_by_date=liquid_support,
             materializer=materializer,
+            state_support_by_date=state_support,
             extra_capacity_by_target=extra_capacity,
         )
         if not declarations:

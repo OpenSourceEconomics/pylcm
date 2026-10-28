@@ -1,6 +1,7 @@
 """Original finite NEGM candidate construction under an actual current frame."""
 
 import functools
+import inspect
 import operator
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
@@ -484,3 +485,50 @@ class NEGMCaseUPoint:
             for leaf in jax.tree.leaves(status):
                 valid &= ~jnp.any(leaf)
         return profile, valid
+
+
+# These methods define the exact owner/context metadata read by abstract capture.
+_ORIGINAL_NEGM_CASE_U_METHODS = tuple(
+    (
+        name,
+        method,
+        method.__code__,
+        inspect.unwrap(method),
+        inspect.unwrap(method).__code__,
+    )
+    for name in (
+        "__post_init__",
+        "with_operands",
+        "select",
+        "construct",
+        "_construct_inner",
+        "_construct_adjuster",
+        "read_constructed",
+        "_profile",
+    )
+    for method in (getattr(NEGMCaseUPoint, name),)
+)
+
+
+# Getter reads are part of the same exact receiver contract, without invocation.
+_ORIGINAL_NEGM_CASE_U_PROPERTIES = tuple(
+    (
+        name,
+        descriptor,
+        getter,
+        getter.__code__,
+        inspect.unwrap(getter),
+        inspect.unwrap(getter).__code__,
+    )
+    for name in (
+        "euler_state_name",
+        "action_name",
+        "target",
+        "passive_names",
+        "transition_target_names",
+    )
+    for descriptor in (inspect.getattr_static(NEGMCaseUPoint, name),)
+    if type(descriptor) is property
+    for getter in (descriptor.fget,)
+    if getter is not None
+)

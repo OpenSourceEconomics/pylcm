@@ -62,6 +62,7 @@ from _lcm.execution.core_program import (
 from _lcm.execution.output_layout import VALUE, OutputRoleTree, StateAxesLeading
 from _lcm.execution.reductions import HARD_MAX_WITH_CARRY_REDUCTION
 from _lcm.grids import ContinuousGrid
+from _lcm.materialization import DatedGenerationMaterializer
 from _lcm.params.edges import regime_kernel_params
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.solution.continuation_reads import rekeyed_value_reads
@@ -82,6 +83,7 @@ from _lcm.solution.contract import (
 )
 from _lcm.solution.dcegm import (
     DCEGM,
+    ExactEnvelope,
     _BoundDCEGM,
     _combination_inputs,
     _consume_bounded_dcegm_output,
@@ -115,7 +117,11 @@ from _lcm.typing import (
     ShapeDtypePytree,
 )
 from lcm._solver_api.capabilities import SolverExecutionCapabilities
-from lcm.exceptions import InvalidParamsError, RegimeInitializationError
+from lcm.exceptions import (
+    InvalidParamsError,
+    RegimeInitializationError,
+    UnsupportedOperationError,
+)
 from lcm.solver_api import (
     EGM_CONTINUATION,
     EGM_ENDOGENOUS_COORDINATE,
@@ -291,10 +297,18 @@ class NEGM(TwoMarginSolver):
         """Validate the user-level nested-EGM contract for this regime."""
         from _lcm.egm.negm_validation import validate_negm_regime  # noqa: PLC0415
 
+        if context.materializer is not None and (
+            type(self.inner) is not _BoundDCEGM
+            or type(self.inner.envelope) is not ExactEnvelope
+        ):
+            raise UnsupportedOperationError(
+                "Owned NEGM validation requires its original exact DC inner."
+            )
         validate_negm_regime(
             regime_name=context.regime_name,
             user_regime=context.user_regimes[context.regime_name],
             law=context.laws[context.regime_name],
+            materializer=context.materializer,
         )
 
     def validate_build(self, *, context: SolverBuildContext) -> None:
@@ -442,6 +456,7 @@ class NEGM(TwoMarginSolver):
         *,
         context: SolverBuildContext,
         case_u_source: DatedNEGMCaseUSource | None = None,
+        materializer: DatedGenerationMaterializer | None = None,
     ) -> SolutionKernels:
         """Build one NEGM period adapter per period, wrapping the inner kernels.
 
@@ -455,6 +470,15 @@ class NEGM(TwoMarginSolver):
         per-node candidates and collapses the outer axis by `max`.
         """
         bound_self = cast("_BoundNEGM", self)
+        if materializer is not None and (
+            case_u_source is None
+            or type(self.inner) is not _BoundDCEGM
+            or type(self.inner.envelope) is not ExactEnvelope
+        ):
+            raise UnsupportedOperationError(
+                "Owned NEGM preparation requires its genuine dated U source "
+                "and original exact DC inner."
+            )
         if case_u_source is not None:
             case_u_source.require(context=context, solver=bound_self)
         query_model = (context.dcegm_query_models or {}).get(context.regime_name)
@@ -499,10 +523,19 @@ class NEGM(TwoMarginSolver):
         adjuster_kernels = (
             inner_with_child_transport.build_period_kernels(context=adjuster_context)
             if case_u_source is None
-            else case_u_source.build_inner(
-                context=adjuster_context,
-                solver=inner_with_child_transport,
-                keeper=False,
+            else (
+                case_u_source.build_inner(
+                    context=adjuster_context,
+                    solver=inner_with_child_transport,
+                    keeper=False,
+                )
+                if materializer is None
+                else case_u_source.build_inner(
+                    context=adjuster_context,
+                    solver=inner_with_child_transport,
+                    keeper=False,
+                    materializer=materializer,
+                )
             )
         )
         # The keeper is a normal passive DC-EGM: the outer post-decision is held
@@ -524,7 +557,11 @@ class NEGM(TwoMarginSolver):
             resolve_periodized_nodes,
         )
 
-        outer_grid_values = bound_self.outer_grid.to_jax()
+        outer_grid_values = (
+            bound_self.outer_grid.to_jax()
+            if materializer is None
+            else materializer.materialize_grid(spec=bound_self.outer_grid)
+        )
         durable_state = bound_self.outer_state
         own_v_info = context.regime_to_v_interpolation_info[context.regime_name]
         discrete_state_names = tuple(
@@ -600,10 +637,19 @@ class NEGM(TwoMarginSolver):
             group_keeper_kernels = (
                 inner_with_child_transport.build_period_kernels(context=keeper_context)
                 if case_u_source is None
-                else case_u_source.build_inner(
-                    context=keeper_context,
-                    solver=inner_with_child_transport,
-                    keeper=True,
+                else (
+                    case_u_source.build_inner(
+                        context=keeper_context,
+                        solver=inner_with_child_transport,
+                        keeper=True,
+                    )
+                    if materializer is None
+                    else case_u_source.build_inner(
+                        context=keeper_context,
+                        solver=inner_with_child_transport,
+                        keeper=True,
+                        materializer=materializer,
+                    )
                 )
             )
             keeper_param_checks += group_keeper_kernels.param_checks
@@ -628,7 +674,11 @@ class NEGM(TwoMarginSolver):
                 )
                 coh_shift_by_period[period] = group_coh_shift_func
         assert keeper_continuation_template is not None  # noqa: S101
-        representative_durable_values = context.grids[durable_state].to_jax()
+        representative_durable_values = (
+            context.grids[durable_state].to_jax()
+            if materializer is None
+            else materializer.materialize_grid(spec=context.grids[durable_state])
+        )
         carry_row_state_names = discrete_state_names + passive_state_names
         period_kernels = MappingProxyType(
             {
@@ -662,9 +712,24 @@ class NEGM(TwoMarginSolver):
                 for period, adjuster_kernel in adjuster_kernels.period_kernels.items()
             }
         )
-        stacked_template = _stack_carry_template(
-            template=keeper_continuation_template,
-            n_candidates=outer_grid_values.shape[0] + 1,
+        stacked_template = (
+            _stack_carry_template(
+                template=keeper_continuation_template,
+                n_candidates=outer_grid_values.shape[0] + 1,
+            )
+            if materializer is None
+            else _stack_owned_carry_template(
+                template=keeper_continuation_template,
+                n_candidates=outer_grid_values.shape[0] + 1,
+                materializer=materializer,
+            )
+        )
+        layout = (
+            self.egm_continuation_layout
+            if materializer is None
+            else EGMContinuationLayout(
+                n_stacked_candidates=int(outer_grid_values.shape[0]) + 1
+            )
         )
         # `_stack_carry_template` passes `None` through, and the keeper template
         # was established as present above, so the stacked template is too.
@@ -694,11 +759,9 @@ class NEGM(TwoMarginSolver):
             continuation_spec=EGMContinuationSpec(
                 template=stacked_template,
                 layout=(
-                    self.egm_continuation_layout
+                    layout
                     if query_model is None
-                    else replace(
-                        self.egm_continuation_layout, query_spec=query_model.authority
-                    )
+                    else replace(layout, query_spec=query_model.authority)
                 ),
             ),
             # Both inner margins are solved by the inner solver, so both sets of
@@ -1802,6 +1865,38 @@ def _stack_carry_template(
             taste_shock_scale=leaves[("taste_shock_scale",)],
         )
     return stack_egm_carries(candidates=(template,) * n_candidates)
+
+
+def _stack_owned_carry_template(
+    *,
+    template: EGMCarry,
+    n_candidates: int,
+    materializer: DatedGenerationMaterializer,
+) -> EGMCarry:
+    """Reconstruct ordinary carry metadata outside admitted leaf broadcasts."""
+    if (
+        type(template) is not EGMCarry
+        or template.query_data_for_transport() is not None
+    ):
+        raise UnsupportedOperationError(
+            "Owned NEGM carry stacking requires its original query-free template."
+        )
+    leaves = template.leaves()
+    stacked = {
+        name: materializer.evaluate_validation(
+            function=functools.partial(
+                _broadcast_over_candidates, n_candidates=n_candidates
+            ),
+            arguments={"arr": leaves[(name,)]},
+        )
+        for name in ("endog_grid", "value", "marginal_utility")
+    }
+    return EGMCarry(
+        endog_grid=stacked["endog_grid"],
+        value=stacked["value"],
+        marginal_utility=stacked["marginal_utility"],
+        taste_shock_scale=leaves[("taste_shock_scale",)],
+    )
 
 
 def _broadcast_over_candidates(*, arr: FloatND, n_candidates: int) -> FloatND:

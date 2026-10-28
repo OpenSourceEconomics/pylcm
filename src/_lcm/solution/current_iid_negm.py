@@ -32,6 +32,7 @@ from _lcm.egm.projected_continuation import PROJECTED_EGM_CONTINUATION
 from _lcm.egm.step import _EGMStep
 from _lcm.egm.upper_envelope import get_upper_envelope
 from _lcm.egm.validation import _dag_ancestors, savings_stage_reads_euler_state
+from _lcm.egm.validation_materialization import _validation_grid_first
 from _lcm.engine import StateActionSpace
 from _lcm.execution.core_program import (
     CoreBuildContext,
@@ -51,6 +52,7 @@ from _lcm.solution.current_iid_case_r_build import (
     _ResourcesStructureCheck,
 )
 from _lcm.solution.current_iid_case_u_build import (
+    guard_case_u_shape,
     materialize_case_u_schema,
     trace_case_u_shape,
 )
@@ -70,11 +72,19 @@ from _lcm.solution.negm import (
     _with_no_adjustment_outer_function,
 )
 from _lcm.solution.nnbegm import _BoundNNBEGM
+from _lcm.solution.preparation_clock import prepare_case_u_clock
 from _lcm.time import TimeAxis
 from _lcm.typing import EconFunctionsMapping, FlatParams, PytreeValue
 from lcm.exceptions import UnsupportedOperationError
 from lcm.solver_api import ArtifactChannel, DeclaredReplay, PersistencePolicy
-from lcm.typing import FloatND, RegimeName, StateName
+from lcm.typing import (
+    FloatND,
+    ReferenceName,
+    RegimeName,
+    ScalarFloat,
+    ScalarInt,
+    StateName,
+)
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -96,6 +106,7 @@ def prepare_original_negm_u_point(
     call: CoreBuildContext,
     fixed_flat_params: FlatParams,
     period: int,
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> PreparedNEGMCaseUPoint:
     """Prepare original NEGM math while the enclosing source owns current draws.
 
@@ -126,7 +137,9 @@ def prepare_original_negm_u_point(
         plan=plan,
     )
     solver.validate_build(context=context)
-    built = solver.build_period_kernels(context=context, case_u_source=source)
+    built = solver.build_period_kernels(
+        context=context, case_u_source=source, materializer=materializer
+    )
     owner = built.period_kernels[period]
     if not isinstance(owner, _NEGMPeriodKernel):
         raise TypeError("Finite NEGM U lost its genuine original nested owner.")
@@ -143,6 +156,31 @@ def prepare_original_negm_u_point(
     targets = tuple(context.transitions)
     source_grid = space.states[solver.inner.continuous_state]
     outer_grid = space.states[solver.outer_state]
+    clock = (
+        {"period": jnp.int32(period), "age": context.ages.values[period]}
+        if materializer is None
+        else prepare_case_u_clock(
+            period=period, ages=context.ages, materializer=materializer
+        )
+    )
+    first = (
+        {name: values[0] for name, values in space.states.items()}
+        if materializer is None
+        else {
+            name: materializer.evaluate_validation(
+                function=_validation_grid_first, arguments={"points": values}
+            )
+            for name, values in space.states.items()
+        }
+    )
+    first_outer = (
+        owner.outer_grid_values[0]
+        if materializer is None
+        else materializer.evaluate_validation(
+            function=_validation_grid_first,
+            arguments={"points": owner.outer_grid_values},
+        )
+    )
     actual_pool: dict[str, PytreeValue] = {
         **union_fixed_params(
             fixed_flat_params=fixed_flat_params,
@@ -154,13 +192,23 @@ def prepare_original_negm_u_point(
             regime_name=context.regime_name,
             transition_target_names=targets,
         ),
-        **{name: values[0] for name, values in space.states.items()},
-        solver.outer_post_decision: owner.outer_grid_values[0],
-        solver.outer_action: outer_grid[0],
-        solver.inner.continuous_action: source_grid[0],
-        "period": jnp.int32(period),
-        "age": context.ages.values[period],
+        **first,
+        solver.outer_post_decision: first_outer,
+        solver.outer_action: first[solver.outer_state],
+        solver.inner.continuous_action: first[solver.inner.continuous_state],
+        **clock,
     }
+    if materializer is not None:
+        for original in (
+            keeper.pieces.own_resources_func,
+            adjuster.pieces.own_resources_func,
+        ):
+            guard_case_u_shape(
+                function=original,
+                context=call,
+                fixed_flat_params=fixed_flat_params,
+                materializer=materializer,
+            )
     keeper_coefficient, keeper_function, keeper_dtypes = _initial_resources_coefficient(
         numerical=keeper, plan=plan, actual_pool=actual_pool
     )
@@ -195,6 +243,13 @@ def prepare_original_negm_u_point(
         enforce_signature=False,
         set_annotations=True,
     )
+    if materializer is not None:
+        guard_case_u_shape(
+            function=outer_function,
+            context=call,
+            fixed_flat_params=fixed_flat_params,
+            materializer=materializer,
+        )
     names = tuple(inspect.signature(outer_function).parameters)
     inverse = certify_declared_outer_inverse(
         func=outer_function,
@@ -207,7 +262,18 @@ def prepare_original_negm_u_point(
         ),
         outer_action_name=solver.outer_action,
         outer_post_decision_name=solver.outer_post_decision,
-        outer_state_domain=(float(outer_grid[0]), float(outer_grid[-1])),
+        outer_state_domain=(
+            (float(outer_grid[0]), float(outer_grid[-1]))
+            if materializer is None
+            else (
+                float(first[solver.outer_state]),
+                float(
+                    materializer.evaluate_validation(
+                        function=_negm_grid_last, arguments={"points": outer_grid}
+                    )
+                ),
+            )
+        ),
         regime_name=context.regime_name,
     )
     point = NEGMCaseUPoint(
@@ -262,6 +328,11 @@ def prepare_original_negm_u_point(
         ),
         state_names=tuple(space.states),
     )
+
+
+def _negm_grid_last(*, points: FloatND) -> ScalarFloat:
+    """Original outer-domain high-node extraction before its host float read."""
+    return points[-1]
 
 
 def _admit_finite_negm_u(
@@ -429,7 +500,7 @@ class NativeNEGMCaseUPeriodKernel:
         )
 
 
-def prepare_finite_negm_u_kernels(  # noqa: C901, PLR0915 - genuine family, date, child and publication ownership
+def prepare_finite_negm_u_kernels(  # noqa: C901, PLR0912, PLR0915 - genuine family, date, child and entry ownership
     *,
     contexts: Mapping[RegimeName, SolverBuildContext],
     solvers: Mapping[RegimeName, _BoundNEGM | _BoundNNBEGM],
@@ -441,9 +512,17 @@ def prepare_finite_negm_u_kernels(  # noqa: C901, PLR0915 - genuine family, date
 ) -> DatedBalancedKernels:
     """Install the genuine finite original nested source and its physical replay."""
     if materializer is not None:
-        raise UnsupportedOperationError(
-            "Cold finite NEGM U source/terminal admission remains required."
+        from _lcm.simulation.entry_allocations import (  # noqa: PLC0415 - actual entry owner
+            SimulationEntryAllocations,
         )
+
+        if type(materializer) is not SimulationEntryAllocations or any(
+            type(solver) is not _BoundNEGM for solver in solvers.values()
+        ):
+            raise UnsupportedOperationError(
+                "Cold finite NEGM U requires its original entry owner "
+                "and genuine DC inner family."
+            )
     if set(declarations) != set(solvers):
         raise UnsupportedOperationError(
             "Finite NEGM U mixed-family dated source preparation is not installed."
@@ -497,6 +576,7 @@ def prepare_finite_negm_u_kernels(  # noqa: C901, PLR0915 - genuine family, date
                 call=call,
                 fixed_flat_params=fixed_flat_params,
                 period=period,
+                materializer=materializer,
             )
         point = prepared.point
         if point.target != target:
@@ -518,9 +598,37 @@ def prepare_finite_negm_u_kernels(  # noqa: C901, PLR0915 - genuine family, date
             passive_names=point.passive_names,
             state_names=prepared.state_names,
         )
+        if materializer is not None:
+            captures = guard_case_u_shape(
+                function=function,
+                context=call,
+                fixed_flat_params=fixed_flat_params,
+                materializer=materializer,
+            )
+            arguments = replace(arguments, trace_capture_roots=captures)
+        actual_arguments = (
+            arguments(call)
+            if materializer is None
+            else arguments.prepare(context=call, materializer=materializer)
+        )
+        if materializer is not None:
+            clock_values: dict[ReferenceName, ScalarFloat | ScalarInt] = {}
+            for clock_name in ("period", "age"):
+                value = actual_arguments[clock_name]
+                if not isinstance(value, jax.Array) or value.ndim != 0:
+                    raise TypeError(
+                        "Cold NEGM lost its original admitted scalar clock."
+                    )
+                clock_values[clock_name] = value
+            arguments = replace(
+                arguments,
+                point=replace(
+                    arguments.point, clock_values=MappingProxyType(clock_values)
+                ),
+            )
         template = materialize_case_u_schema(
-            schema=trace_case_u_shape(function=function, arguments=arguments(call)),
-            materializer=None,
+            schema=trace_case_u_shape(function=function, arguments=actual_arguments),
+            materializer=materializer,
         )
         if not isinstance(template, BoundedResult) or not isinstance(
             template.output, CaseUExactOutput
@@ -632,6 +740,9 @@ def prepare_finite_negm_u_kernels(  # noqa: C901, PLR0915 - genuine family, date
                     consumer_route=CASE_U_REPLAY_IDENTITY,
                     applicable=True,
                     required=True,
+                    array_copier=None
+                    if materializer is None
+                    else materializer.copy_solution_leaf,
                 )
             },
         )

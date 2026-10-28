@@ -4,6 +4,7 @@ from dataclasses import dataclass, field, fields
 from types import FunctionType
 from typing import TYPE_CHECKING, cast
 
+from _lcm.materialization import DatedGenerationMaterializer
 from _lcm.typing import EconFunctionsMapping
 from lcm.exceptions import UnsupportedOperationError
 
@@ -58,7 +59,12 @@ class DatedNEGMCaseUSource:
             )
 
     def build_inner(
-        self, *, context: SolverBuildContext, solver: _BoundDCEGM, keeper: bool
+        self,
+        *,
+        context: SolverBuildContext,
+        solver: _BoundDCEGM,
+        keeper: bool,
+        materializer: DatedGenerationMaterializer | None = None,
     ) -> SolutionKernels:
         """Prepare the actual branch at its original NEGM construction site."""
         from _lcm.egm.current_iid_envelope import (  # noqa: PLC0415
@@ -78,13 +84,20 @@ class DatedNEGMCaseUSource:
             nested_origin=branch,
         )
         build = solver.prepare_period_steps(
-            context=context, periods=(self.period,), case_u_source=authority
+            context=context,
+            periods=(self.period,),
+            case_u_source=authority,
+            materializer=materializer,
         )
         # Bind the exact result of the original preparer, once, before any
         # assembler may consume it. The frozen branch retains references only.
         object.__setattr__(branch, "_prepared_build", build)
+        if materializer is None:
+            return solver.finish_nested_current_u_period_kernels(
+                context=context, build=build, authority=authority
+            )
         return solver.finish_nested_current_u_period_kernels(
-            context=context, build=build, authority=authority
+            context=context, build=build, authority=authority, materializer=materializer
         )
 
 

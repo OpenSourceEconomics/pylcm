@@ -17,7 +17,7 @@ from _lcm.shock_registry import ShockBinding
 from lcm.exceptions import UnsupportedOperationError
 from lcm.regime import Regime as UserRegime
 from lcm.shocks import ShockGroupName
-from lcm.typing import Float1D, Phase, RegimeName, StateName
+from lcm.typing import Float1D, FloatND, IntND, Phase, RegimeName, StateName
 
 
 def _projected_template(*, grid: Float1D, capacity: int) -> ProjectedEGMCarry:
@@ -77,6 +77,10 @@ def projected_producer_declarations(  # noqa: C901, PLR0912, PLR0915 - original 
     active_periods: Mapping[RegimeName, tuple[int, ...]],
     liquid_support_by_date: Mapping[tuple[RegimeName, int], Float1D] | None = None,
     materializer: DatedGenerationMaterializer | None = None,
+    state_support_by_date: Mapping[
+        tuple[RegimeName, int], Mapping[StateName, FloatND | IntND]
+    ]
+    | None = None,
     extra_capacity_by_target: Mapping[RegimeName, int] = MappingProxyType({}),
 ) -> Mapping[RegimeName, ProjectedContinuationSpec]:
     """Declare the actual target schema before any parent's core is constructed.
@@ -86,7 +90,7 @@ def projected_producer_declarations(  # noqa: C901, PLR0912, PLR0915 - original 
     exist; no provisional DCEGMQuery or borrowing authority is constructed.
     Numerical template placeholders provide shapes, not coverage evidence.
     """
-    from _lcm.solution.dcegm import _BoundDCEGM  # noqa: PLC0415
+    from _lcm.solution.dcegm import ExactEnvelope, _BoundDCEGM  # noqa: PLC0415
     from _lcm.solution.nbegm import _BoundNBEGM  # noqa: PLC0415
     from _lcm.solution.negm import _BoundNEGM  # noqa: PLC0415
     from _lcm.solution.nnbegm import _BoundNNBEGM  # noqa: PLC0415
@@ -102,22 +106,63 @@ def projected_producer_declarations(  # noqa: C901, PLR0912, PLR0915 - original 
         solver = user_regime.solver
         if not isinstance(solver, (_BoundDCEGM, _BoundNBEGM, _BoundNEGM, _BoundNNBEGM)):
             continue
+        if (
+            isinstance(solver, (_BoundNEGM, _BoundNNBEGM))
+            and materializer is not None
+            and (
+                type(solver) is not _BoundNEGM
+                or type(solver.inner) is not _BoundDCEGM
+                or type(solver.inner.envelope) is not ExactEnvelope
+            )
+        ):
+            raise UnsupportedOperationError(
+                "Cold nested declarations require the original NEGM source "
+                "with its exact DC inner."
+            )
         liquid = (
             solver.inner.continuous_state
             if isinstance(solver, (_BoundNEGM, _BoundNNBEGM))
             else solver.continuous_state
         )
+        passive_shapes = {}
         if isinstance(solver, (_BoundNEGM, _BoundNNBEGM)) and materializer is not None:
-            raise UnsupportedOperationError(
-                "Cold finite NEGM U admission remains required."
-            )
+            if set(state_grids[target]) != {liquid, solver.outer_state}:
+                raise UnsupportedOperationError(
+                    "Cold nested declarations require original liquid/durable support."
+                )
+            if state_support_by_date is None or liquid_support_by_date is None:
+                raise TypeError("NEGM projection requires actual dated state support.")
+            for period in active_periods[target]:
+                support = state_support_by_date.get((target, period))
+                if (
+                    support is None
+                    or set(support) != set(state_grids[target])
+                    or support[liquid]
+                    is not liquid_support_by_date.get((target, period))
+                    or any(
+                        not isinstance(values, jax.Array) or values.ndim != 1
+                        for values in support.values()
+                    )
+                ):
+                    raise TypeError(
+                        "NEGM projection lost its actual dated state support."
+                    )
+                passive_shapes[period] = tuple(
+                    int(support[name].shape[0])
+                    for name in state_grids[target]
+                    if name != liquid
+                )
         if isinstance(solver, _BoundDCEGM) and solver.accuracy == "certified":
             raise UnsupportedOperationError(
                 "Certified current-IID EGM publication requires its complete "
                 "profile implementation."
             )
         if isinstance(solver, (_BoundNBEGM, _BoundNEGM, _BoundNNBEGM)):
-            if materializer is not None and tuple(state_grids[target]) != (liquid,):
+            if (
+                materializer is not None
+                and type(solver) is not _BoundNEGM
+                and tuple(state_grids[target]) != (liquid,)
+            ):
                 raise UnsupportedOperationError(
                     "Cold passive NB projected template allocation remains required."
                 )
@@ -176,22 +221,34 @@ def projected_producer_declarations(  # noqa: C901, PLR0912, PLR0915 - original 
             isinstance(solver, (_BoundNBEGM, _BoundNEGM, _BoundNNBEGM))
             and passive_names
         ):
-            if materializer is not None:
-                raise UnsupportedOperationError(
-                    "Cold passive NB projected template allocation remains required."
+            if materializer is None:
+                passive_shape = tuple(
+                    state_grids[target][name].to_jax().shape[0]
+                    for name in passive_names
                 )
-            passive_shape = tuple(
-                state_grids[target][name].to_jax().shape[0] for name in passive_names
-            )
-            templates = {
-                period: jax.tree.map(
-                    lambda leaf, shape=passive_shape: jnp.broadcast_to(
-                        leaf, (*shape, *leaf.shape)
-                    ),
-                    actual,
-                )
-                for period, actual in templates.items()
-            }
+                templates = {
+                    period: jax.tree.map(
+                        lambda leaf, shape=passive_shape: jnp.broadcast_to(
+                            leaf, (*shape, *leaf.shape)
+                        ),
+                        actual,
+                    )
+                    for period, actual in templates.items()
+                }
+            else:
+                if type(solver) is not _BoundNEGM:
+                    raise UnsupportedOperationError(
+                        "Cold passive NB projected template allocation "
+                        "remains required."
+                    )
+                templates = {
+                    period: _broadcast_projected_template(
+                        template=actual,
+                        passive_shape=passive_shapes[period],
+                        materializer=materializer,
+                    )
+                    for period, actual in templates.items()
+                }
             template = templates[periods[0]]
         declarations[target] = ProjectedContinuationSpec(
             template=template,
@@ -200,3 +257,19 @@ def projected_producer_declarations(  # noqa: C901, PLR0912, PLR0915 - original 
             templates_by_period=templates,
         )
     return MappingProxyType(declarations)
+
+
+def _broadcast_projected_template(
+    *,
+    template: ProjectedEGMCarry,
+    passive_shape: tuple[int, ...],
+    materializer: DatedGenerationMaterializer,
+) -> ProjectedEGMCarry:
+    """Walk original metadata before admitting each exact numerical leaf lift."""
+    return jax.tree.map(
+        lambda leaf: materializer.evaluate_validation(
+            function=partial(jnp.broadcast_to, shape=(*passive_shape, *leaf.shape)),
+            arguments={"array": leaf},
+        ),
+        template,
+    )

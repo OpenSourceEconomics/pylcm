@@ -247,3 +247,72 @@ def test_semantic_array_observer_keeps_digest_and_exact_referenced_roots(
     )
     assert any(root is referenced for root in roots)
     assert all(root is not unrelated for root in roots)
+
+
+def test_owned_negm_declaration_keeps_actual_passive_template_and_support() -> None:
+    """The original passive lift borrows the same genuine dated support arrays."""
+    from _lcm.egm.current_iid_declarations import (  # noqa: PLC0415
+        projected_producer_declarations,
+    )
+    from _lcm.egm.validation import _solve_grids  # noqa: PLC0415
+    from tests.egm.test_current_iid_negm_model import _declarations  # noqa: PLC0415
+
+    source = _declarations().regimes["child"]
+    grids = _solve_grids(slot=source.states)
+    assert set(grids) == set(source.states)
+    binding = _binding(points=(0.0, 1.0), weights=(0.5, 0.5))
+    owner = _owner()
+    owner.budget_bytes = 1 << 28
+    try:
+        support = MappingProxyType(
+            {name: owner.materialize_grid(spec=grid) for name, grid in grids.items()}
+        )
+        expected = projected_producer_declarations(
+            user_regimes={"child": source},
+            bindings={("child", "solve", "income"): binding},
+            state_grids={"child": grids},
+            active_periods={"child": (1,)},
+            liquid_support_by_date={("child", 1): support["wealth"]},
+        )["child"]
+        actual = projected_producer_declarations(
+            user_regimes={"child": source},
+            bindings={("child", "solve", "income"): binding},
+            state_grids={"child": grids},
+            active_periods={"child": (1,)},
+            liquid_support_by_date={("child", 1): support["wealth"]},
+            state_support_by_date={("child", 1): support},
+            materializer=owner,
+        )["child"]
+        assert actual.producer == expected.producer == "child"
+        assert actual.liquid_state == expected.liquid_state == "wealth"
+        assert actual.template is actual.template_at(period=1)
+        for original, observed in zip(
+            jax.tree.leaves(expected.template),
+            jax.tree.leaves(actual.template),
+            strict=True,
+        ):
+            assert (observed.shape, observed.dtype) == (original.shape, original.dtype)
+            assert np.asarray(observed).tobytes() == np.asarray(original).tobytes()
+        held = jax.tree.leaves(owner.solve_input_roots())
+        assert all(
+            any(leaf is root for root in held)
+            for leaf in jax.tree.leaves(actual.template)
+        )
+        refused = _owner(roots=(support,))
+        refused.budget_bytes = 0
+        try:
+            with pytest.raises(TypeError, match="actual dated state support"):
+                projected_producer_declarations(
+                    user_regimes={"child": source},
+                    bindings={("child", "solve", "income"): binding},
+                    state_grids={"child": grids},
+                    active_periods={"child": (1,)},
+                    liquid_support_by_date={("child", 1): support["wealth"]},
+                    materializer=refused,
+                )
+            assert not refused._pending
+            assert not refused.operations.cache
+        finally:
+            refused.close()
+    finally:
+        owner.close()
