@@ -17,8 +17,6 @@ from _lcm.egm.current_iid_power_mean import (
 from _lcm.probability import log_of_nonnegative
 from lcm.typing import FloatND, ScalarBool, ScalarFloat
 
-pytestmark = pytest.mark.coverage(backends=("cpu",), precisions="both")
-
 
 def _evaluate(
     economic: FloatND,
@@ -59,6 +57,7 @@ def _check_economic_result(
         assert abs(float(source) - reference) <= 1e-4 * max(1.0, abs(reference))
 
 
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
 @pytest.mark.parametrize("compiled", [False, True])
 def test_material_economic_log_collision_is_accurate_or_refused(
     *, compiled: bool
@@ -72,6 +71,7 @@ def test_material_economic_log_collision_is_accurate_or_refused(
     _check_economic_result(operands=operands, compiled=compiled, ordinary=False)
 
 
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
 @pytest.mark.parametrize("compiled", [False, True])
 @pytest.mark.parametrize("scale", [0.5, 1.0, 2.0])
 @pytest.mark.parametrize("mutation", ["original", "reverse", "equality"])
@@ -93,6 +93,7 @@ def test_economic_cancellation_preserves_scale_order_and_ordinary_support(
     _check_economic_result(operands=operands, compiled=compiled, ordinary=ordinary)
 
 
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
 @pytest.mark.parametrize("compiled", [False, True])
 def test_finite_ce_join_retains_the_original_opposing_operands(
     *, compiled: bool
@@ -138,6 +139,7 @@ def _evaluate_channels(
     )
 
 
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
 @pytest.mark.parametrize("compiled", [False, True])
 @pytest.mark.parametrize("empty", [False, True])
 def test_empty_and_same_sign_large_directions_remain_supported(
@@ -157,6 +159,7 @@ def test_empty_and_same_sign_large_directions_remain_supported(
     np.testing.assert_allclose((saving, source), magnitude, rtol=1e-4, atol=1e-4)
 
 
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
 @pytest.mark.parametrize("compiled", [False, True])
 @pytest.mark.parametrize("ordinary", [False, True])
 def test_child_and_weight_opposition_cannot_hide_inner_uncertainty(
@@ -212,6 +215,7 @@ def _evaluate_law_direction(
     )
 
 
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
 @pytest.mark.parametrize("compiled", [False, True])
 @pytest.mark.parametrize("lottery", ["close_large", "ordinary", "equal"])
 def test_original_payoff_law_contrast_is_accurate_or_refused(
@@ -287,6 +291,7 @@ def _original_payoff_law_reference(
         return float(value * (logs[0] - logs[1]))
 
 
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
 @pytest.mark.parametrize("compiled", [False, True])
 @pytest.mark.parametrize("scale", [0.5, 1.0, 2.0])
 @pytest.mark.parametrize("mutation", ["original", "reverse", "equality"])
