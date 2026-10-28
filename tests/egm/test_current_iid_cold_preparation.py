@@ -4,6 +4,7 @@ import jax
 import numpy as np
 import pytest
 
+from _lcm.egm.current_iid_envelope import DatedCaseUStepAuthority
 from _lcm.egm.step import _EGMStep
 from _lcm.execution.core_program import CoreBuildContext
 from _lcm.solution.current_iid_case_r import (
@@ -35,13 +36,28 @@ def test_actual_dated_steps_admit_original_carry_without_changing_bits() -> None
     model = _model_u()
     _, generation = model._prepare_call(params=_params())
     original = generation.solver_preparation(regime_name="child", period=1)
+    assert original.plan is not None
+    prepared = model._declaration_preparation
+    assert prepared is not None
+    # A U source's pieces exist only under its original source-date authority.
+    authority = DatedCaseUStepAuthority(
+        context=original.context,
+        solver=original.solver,
+        period=1,
+        date=original.declarations["child"].date_at(period=1),
+        plan=original.plan,
+        state_utility_obligation=prepared.state_utility_obligations.get("child"),
+    )
     expected = original.solver.prepare_period_steps(
-        context=original.context, periods=(1,)
+        context=original.context, periods=(1,), case_u_source=authority
     )
     owner = _owner(roots=generation.roots)
     try:
         admitted = original.solver.prepare_period_steps(
-            context=original.context, periods=(1,), materializer=owner
+            context=original.context,
+            periods=(1,),
+            materializer=owner,
+            case_u_source=authority,
         )
         assert admitted.step_group_keys == expected.step_group_keys
         assert (
