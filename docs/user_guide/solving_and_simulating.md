@@ -469,7 +469,10 @@ refused, so the row carries the best admissible baseline instead. That baseline 
 chosen by the canonical Q, not by the action grid alone — the grid-argmax pair and every
 published replay branch are scored, the higher score is emitted, and the grid pair takes
 an exact tie. Inference must refuse whenever any entry is `True`. Discrete variables are
-pandas Categorical with string labels.
+pandas Categorical with string labels. In an EGM-family regime, `value` is the solved
+value representation read at the subject's realized resources, not the utility plus
+continuation along the replayed path; on a coarse savings grid the two can differ
+slightly in either direction.
 
 A model with a collective regime publishes two further things. An `own_stakeholder`
 column names the role each row occupies — in every regime, not only the collective ones,
