@@ -79,6 +79,10 @@ _OVERRIDE_CORRIDOR_SOURCES = (
     "src/_lcm/shock_overrides.py",
     "src/_lcm/simulation/current_iid_overrides.py",
 )
+_ENGINE_REDESIGN_CORRIDOR_SOURCES = (
+    "src/_lcm/simulation/eager_stages.py",
+    "src/lcm/typing.py",
+)
 
 
 def test_normal_controls_preserve_all_historical_populations() -> None:
@@ -127,8 +131,11 @@ def test_normal_controls_preserve_all_historical_populations() -> None:
     # Accepted S1 adds this one destination-address control to the old roster.
     added_rng_controls = {"simulation_taste_stream:destination_name_ignored"}
     assert added_rng_controls <= historical
-    assert len(historical) == 614
-    historical_before_s1 = historical - added_rng_controls
+    # The engine redesign adds this one canonical-writer dtype control.
+    added_engine_controls = {"candidate_materialization:array_writer_dtype_widened"}
+    assert added_engine_controls <= historical
+    assert len(historical) == 615
+    historical_before_s1 = historical - added_rng_controls - added_engine_controls
     assert len(historical_before_s1) == 613
     assert len(historical_before_s1 - added_initial_controls) == 601
     assert (
@@ -136,13 +143,14 @@ def test_normal_controls_preserve_all_historical_populations() -> None:
         == 599
     )
     assert "src/_lcm/solution/feasibility.py" in direct_flow._CERTIFIED_CORRIDOR_SOURCES
-    assert len(direct_flow._CERTIFIED_CORRIDOR_SOURCES) == 177
+    assert len(direct_flow._CERTIFIED_CORRIDOR_SOURCES) == 179
     added_corridor_sources = (
         set(_S1_CORRIDOR_SOURCES)
         | set(_CURRENT_IID_CORRIDOR_SOURCES)
         | set(_OVERRIDE_CORRIDOR_SOURCES)
+        | set(_ENGINE_REDESIGN_CORRIDOR_SOURCES)
     )
-    assert len(added_corridor_sources) == 6
+    assert len(added_corridor_sources) == 8
     assert added_corridor_sources <= set(direct_flow._CERTIFIED_CORRIDOR_SOURCES)
     assert added_corridor_sources.isdisjoint(_NESTED_CORRIDOR_SOURCES)
     assert len(set(_NESTED_CORRIDOR_SOURCES)) == 53

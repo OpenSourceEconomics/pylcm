@@ -248,10 +248,37 @@ def assert_the_shared_continuation_builder_reads_its_own_pool(
 
     The weight pool may overlay the target lotteries' original probability laws
     when restoring their reduction layout. Every other law retains its phase pool.
+    The projected-forward return refuses every lottery and basis target before
+    it reads, so it has no layout to overlay and both roles read the phase pool.
     """
     builder = qdefs["_build_target_continuation"]
-    next_calls = call_named(node=builder, name="get_next_state_function_for_solution")
-    weight_calls = call_named(node=builder, name="get_next_stochastic_weights_function")
+    (projected,) = (
+        statement
+        for statement in builder.body
+        if isinstance(statement, ast.If)
+        and ast.unparse(statement.test) == "projected_reader is not None"
+    )
+    for name in (
+        "get_next_state_function_for_solution",
+        "get_next_stochastic_weights_function",
+    ):
+        (call,) = call_named(node=projected, name=name)
+        assert_name(node=keyword_map(call)["functions"], expected="functions")
+    projected_calls = {id(call) for call in ast.walk(projected)}
+    next_calls = [
+        call
+        for call in call_named(
+            node=builder, name="get_next_state_function_for_solution"
+        )
+        if id(call) not in projected_calls
+    ]
+    weight_calls = [
+        call
+        for call in call_named(
+            node=builder, name="get_next_stochastic_weights_function"
+        )
+        if id(call) not in projected_calls
+    ]
     assert len(next_calls) == len(weight_calls) == 1
     assert_name(node=keyword_map(next_calls[0])["functions"], expected="functions")
     assert_name(

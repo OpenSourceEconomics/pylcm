@@ -11,7 +11,11 @@ from _lcm.egm.step import _EGMStep
 from _lcm.execution.core_program import CoreBuildContext
 from _lcm.materialization import DatedGenerationMaterializer
 from _lcm.reachability import PhaseReachability
-from _lcm.solution.contract import SolutionKernels, SolverBuildContext
+from _lcm.solution.contract import (
+    SolutionKernels,
+    SolverBuildContext,
+    UserRegimesMapping,
+)
 from _lcm.solution.current_iid_dated import DatedBalancedKernels
 from _lcm.solution.current_iid_query_exclusions import (
     require_transition_only_projected_reads,
@@ -20,7 +24,6 @@ from _lcm.solution.dcegm import EGMStepBuild, _BoundDCEGM
 from _lcm.solution.nbegm import _BoundNBEGM
 from _lcm.typing import FlatParams
 from lcm.exceptions import UnsupportedOperationError
-from lcm.regime import Regime as UserRegime
 from lcm.typing import RegimeName
 
 _ONE_PASSIVE_STATE_COUNT = 2
@@ -28,7 +31,7 @@ _ONE_PASSIVE_STATE_COUNT = 2
 
 def nd_parent_capacity_bounds(
     *,
-    user_regimes: Mapping[RegimeName, UserRegime],
+    user_regimes: UserRegimesMapping,
     call_contexts: Mapping[tuple[RegimeName, int], CoreBuildContext],
     reachability: PhaseReachability,
     materializer: DatedGenerationMaterializer | None,

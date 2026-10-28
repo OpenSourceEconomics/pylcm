@@ -3978,8 +3978,12 @@ class Model:
         flat_params: FlatParams,
         entry_allocations: SimulationEntryAllocations | None = None,
         process_grid_resolver: ProcessGridResolver | None = None,
+        generation: CanonicalModelGeneration | None = None,
     ) -> _ResolvedSolution:
         """Resolve one labelled result into engine replay inputs.
+
+        A call that already acquired its generation passes it, so the call's
+        support is fingerprinted once.
 
         A result this instance built in this process is consumed by reference:
         the engine reads the buffers its solve allocated, after checking that
@@ -4006,10 +4010,14 @@ class Model:
                 "An ephemeral solution belongs to its originating model and runtime."
             )
         expected_fingerprint = self._params_fingerprint(flat_params=flat_params)
-        selected_generation = self._acquire_generation(
-            flat_params=flat_params,
-            array_writer=entry_allocations,
-            process_grid_resolver=process_grid_resolver,
+        selected_generation = (
+            self._acquire_generation(
+                flat_params=flat_params,
+                array_writer=entry_allocations,
+                process_grid_resolver=process_grid_resolver,
+            )
+            if generation is None
+            else generation
         )
         memo_key = (
             _semantic_fingerprint(
@@ -5689,6 +5697,7 @@ class Model:
                         flat_params=flat_params,
                         entry_allocations=entry_allocations,
                         process_grid_resolver=process_grid_resolver,
+                        generation=generation,
                     )
             else:
                 period_to_regime_to_V_arr = None
@@ -5921,6 +5930,7 @@ class Model:
                         flat_params=flat_params,
                         entry_allocations=entry_allocations,
                         process_grid_resolver=process_grid_resolver,
+                        generation=generation,
                     )
             with solve_phase(name="solution_handover", logger=log, call_id=call_id):
                 if (

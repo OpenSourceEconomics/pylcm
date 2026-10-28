@@ -1744,7 +1744,7 @@
   "tests/solution/test_retained_buffers.py::test_archive_observation_never_opens_or_decodes_the_archive",
   "tests/solution/test_retained_buffers.py::test_invalid_archive_cache_is_refused_without_materialization",
   "tests/solution/test_retained_buffers.py::test_loaded_pytree_cache_includes_its_template_without_callbacks",
-  "tests/solution/test_ride_partition_routing.py::test_all_four_production_sites_call_the_shared_dispatcher",
+  "tests/solution/test_ride_partition_routing.py::test_all_five_production_sites_call_the_shared_dispatcher",
   "tests/solution/test_solution_consumption.py::test_restored_solution_replays_like_the_owned_one",
   "tests/solution/test_solution_consumption.py::test_second_simulate_on_a_restored_solution_is_a_lookup",
   "tests/solution/test_solution_persistence.py::test_archive_written_under_solver_api_version_one_is_rejected",

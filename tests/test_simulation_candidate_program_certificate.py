@@ -842,6 +842,7 @@ _COMBINED_INPUT_MUTATIONS = {
         (
             "entry_allocations=entry_allocations,\n"
             "                        process_grid_resolver=process_grid_resolver,\n"
+            "                        generation=generation,\n"
             "                    )\n"
             "            else:\n"
             "                period_to_regime_to_V_arr = None"
@@ -849,6 +850,7 @@ _COMBINED_INPUT_MUTATIONS = {
         (
             "entry_allocations=None,\n"
             "                        process_grid_resolver=process_grid_resolver,\n"
+            "                        generation=generation,\n"
             "                    )\n"
             "            else:\n"
             "                period_to_regime_to_V_arr = None"
@@ -859,6 +861,7 @@ _COMBINED_INPUT_MUTATIONS = {
         (
             "entry_allocations=entry_allocations,\n"
             "                        process_grid_resolver=process_grid_resolver,\n"
+            "                        generation=generation,\n"
             "                    )\n"
             '            with solve_phase(name="solution_handover", logger=log, '
             "call_id=call_id):\n"
@@ -868,6 +871,7 @@ _COMBINED_INPUT_MUTATIONS = {
         (
             "entry_allocations=None,\n"
             "                        process_grid_resolver=process_grid_resolver,\n"
+            "                        generation=generation,\n"
             "                    )\n"
             '            with solve_phase(name="solution_handover", logger=log, '
             "call_id=call_id):\n"

@@ -1277,27 +1277,27 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
     original_names = {
         name for name in names if not name.startswith("simulation_adapter:")
     }
-    assert len(original_names) == 391
+    assert len(original_names) == 392
     assert (
         hashlib.sha256(("\n".join(sorted(original_names)) + "\n").encode()).hexdigest()
-        == "e98342d0cc2f4c7f98d4b3140dc437e1262eed7065612bc965fbf3edfb3a3180"
+        == "89663220cf8da4b5bf9d74510749d2cb0353078da23131e0e8a70e9cd45fcacb"
     )
     historical_names = {
         name
         for name in names
         if not name.startswith("simulation_adapter:initial_physical_")
     }
-    assert len(historical_names) == 409
+    assert len(historical_names) == 410
     assert (
         hashlib.sha256(
             ("\n".join(sorted(historical_names)) + "\n").encode()
         ).hexdigest()
-        == "3c5fdaf1c4a0eb22ad92ac592d4ca84cef0c97a4b94bc525a7f8592d886880a7"
+        == "0a861eb7ca01cb47fa9d2e5b4b8ead7935f40349678139b9608687f211aa6603"
     )
-    assert len(names) == 421
+    assert len(names) == 422
     assert (
         hashlib.sha256(("\n".join(sorted(names)) + "\n").encode()).hexdigest()
-        == "f58754206b785f05a7dff36c690946024effc931c888c72383fc0bd98be060cd"
+        == "e679f793253493d8b2353546edd92c9a927dff19ea2a5814bb5a68b3733ff346"
     )
 
 

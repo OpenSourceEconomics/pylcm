@@ -203,8 +203,6 @@ def _validate_state_utility_sources(
     declarations: Mapping[RegimeName, ProjectedContinuationSpec],
 ) -> None:
     """Refuse undischargable source dates before any original Euler factory runs."""
-    from _lcm.regime_building.phases import _resolve_solve_functions  # noqa: PLC0415
-
     for name, obligation in obligations.items():
         if name not in contexts or name not in solvers or name not in declarations:
             raise UnsupportedOperationError(
@@ -217,7 +215,7 @@ def _validate_state_utility_sources(
         obligation.require(
             regime_name=name,
             user_regime=context.user_regimes[name],
-            functions=_resolve_solve_functions(user_regime=context.user_regimes[name]),
+            functions=context.solve_functions,
             periods=periods,
         )
         if set(declarations[name].dates_by_period) != set(periods):
