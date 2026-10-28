@@ -11,7 +11,6 @@ from typing import (
 import jax
 from beartype import beartype
 
-from _lcm.dtypes import CanonicalArrayWriter
 from lcm._solver_api.authority import _ArrayCopier, _CanonicalArtifactTemplate
 from lcm._solver_api.beartype_conf import SOLVER_API_CONF
 from lcm._solver_api.contract import (
@@ -33,7 +32,7 @@ from lcm._solver_api.identity import (
     LoadState,
 )
 from lcm.exceptions import ExecutionPlanningError
-from lcm.typing import FloatND, RegimeName
+from lcm.typing import CanonicalArrayWriter, FloatND, RegimeName
 
 # The exact address of one value-store entry.
 type _ValueCoordinate = tuple[int, RegimeName]

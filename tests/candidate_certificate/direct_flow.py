@@ -274,6 +274,7 @@ VARIABLES_SOURCE = "src/_lcm/variables.py"
 PARAMS_REGIME_TEMPLATE_SOURCE = "src/_lcm/params/regime_template.py"
 PARAMS_PROCESSING_SOURCE = "src/_lcm/params/processing.py"
 DTYPES_SOURCE = "src/_lcm/dtypes.py"
+LCM_TYPING_SOURCE = "src/lcm/typing.py"
 NAMESPACE_SOURCE = "src/_lcm/utils/namespace.py"
 PANDAS_UTILS_SOURCE = "src/_lcm/pandas_utils.py"
 MODEL_PROCESSING_SOURCE = "src/_lcm/model_processing.py"
@@ -565,6 +566,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
     PARAMS_REGIME_TEMPLATE_SOURCE,
     PARAMS_PROCESSING_SOURCE,
     DTYPES_SOURCE,
+    LCM_TYPING_SOURCE,
     NAMESPACE_SOURCE,
     PANDAS_UTILS_SOURCE,
     MODEL_PROCESSING_SOURCE,
@@ -657,9 +659,9 @@ _SOURCE_SEALS = {
     COMBINED_RESULT_SNAPSHOT_SOURCE: "7f80572d1135587912fccef482ce9aae26770bffa881b2bb63c99accbeefd0d9",
     COMBINED_VALIDATE_V_SOURCE: "70609bbd14dba6eeccf204a8f112c78cbd85799efbd007ecb880157259ecd2f3",
     COMBINED_LOGGING_SOURCE: "95f189e5713c7e97516b69e8298a79eea24f2baca9f7b55b62b56b81a1163023",
-    COMBINED_AUTHORITY_SOURCE: "3f97e6c2e00581986e5548857d8338bc1f8565c05cb08e9e1df46caff639c924",
-    COMBINED_ENTRIES_SOURCE: "3aa60855f416fe54b4a5b504cafcf67652ff82f450b370ff1f3e940de8b3474d",
-    COMBINED_STORES_SOURCE: "04d8a78da737422ebd9400945a91fcfd603050f36874010431b61aea6cac666c",
+    COMBINED_AUTHORITY_SOURCE: "a98061fe4f30d97362d9668dc7461e8023052a46fad7513d3751637d7981d120",
+    COMBINED_ENTRIES_SOURCE: "0c27d42858dde4a34b5e82a3622dee9c7b240c0c9c3284a2ba4a898bbf9a6510",
+    COMBINED_STORES_SOURCE: "032482548248851cc53c7105a107bd9bde3aa110e1ca4e44f1d32460e7d47630",
     SIMULATION_POLICY_PROGRAMS_SOURCE: "da6b8e7edb7ce86b2de1c944dc806060f613dda051fa0ce69f0cec92dead709b",
     PUBLISHED_POLICY_SOURCE: "469ca23b7e32b14f816f0c4301265334ae1b857d335dc182161ec166afb711b6",
     SIMULATION_ENTRY_ALLOCATIONS_SOURCE: "41eb7238435a1c9780164197170c8de26650e1930dcc09c2e8d6454ad455fa90",
@@ -739,7 +741,8 @@ _SOURCE_SEALS = {
     VARIABLES_SOURCE: "8445fd5d92144d013955027460ee204debfdcedf8bb5ef5d10092538cd18de8c",
     PARAMS_REGIME_TEMPLATE_SOURCE: "4b459d9eac328fd274ec8a7c6f21bae36233acceecd5a6fe32cc3e92f5e21b67",
     PARAMS_PROCESSING_SOURCE: "cd703789b7defbf24801e2450efc536600351b905d5b2a211c3a634bbc3cb4c9",
-    DTYPES_SOURCE: "1d38a54667166599fd692f8c58b37741f355753138d234b650c54384321bcbb2",
+    DTYPES_SOURCE: "fc6694d64abf7d7a18b565d85986c71f71f376b020291fb9b82ce250fc264d26",
+    LCM_TYPING_SOURCE: "23ea630cff08b58db30b95fdef72d4b961dcddb431ee5b2459826307fd655737",
     NAMESPACE_SOURCE: "9a33080663f01a6d65501663e8436b132176be51c8223c28b2e749d8dbf8b570",
     PANDAS_UTILS_SOURCE: "5410dc75ce909a4a1899bf87793addc1eda4bb46b5370d8d43a87c50f2043e62",
     MODEL_PROCESSING_SOURCE: "9a7ddc527fb531fb8840305f0f922ae05f1e294e37e91f70968b91c7b71cda64",
@@ -769,9 +772,9 @@ _SOURCE_SEALS = {
     "src/_lcm/simulation/current_iid_overrides.py": "c5b8d450cdad4980a694df285502b70cf1238762440f1302d664b2e84d964ced",
 }
 
-EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 421
+EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 422
 EXPECTED_DIRECT_FLOW_MUTATION_NAMES_SHA256 = (
-    "f58754206b785f05a7dff36c690946024effc931c888c72383fc0bd98be060cd"
+    "e679f793253493d8b2353546edd92c9a927dff19ea2a5814bb5a68b3733ff346"
 )
 EXPECTED_SUPPLEMENTAL_MUTATION_COUNT = 97
 EXPECTED_SUPPLEMENTAL_MUTATION_NAMES_SHA256 = (
@@ -1069,10 +1072,15 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_scatter_series": "ccb844566097dc7bb6412b0f81b2e28d60b84b960bb73ee8be3f9acdb6681bcc",
         },
     ),
-    DTYPES_SOURCE: (
-        "7bd5f48b5f03c10ce966764c1a47c51f07ec287894bf7058f5bfdfde7a134382",
+    LCM_TYPING_SOURCE: (
+        "40fbc826679d8f83a911d8101edb51927d4eff3f2d8ddbb07682d5b42802c8e0",
         {
-            "CanonicalArrayWriter.__call__": "909bf3b8d82f3612f5246d4c2a152acd55505894f856567f0b1bcbaa343a390b",
+            "CanonicalArrayWriter.__call__": "640b0dac3e722ee0e7b2a9c62216bf746d2f5b3ad3d83ea95e4a7982313241d5",
+        },
+    ),
+    DTYPES_SOURCE: (
+        "17d71edcd836eead7b3b72f717137062a52ba8dac5e4ebda6bf3b1343d8c7c1f",
+        {
             "canonical_float_dtype": "ff7daf524547e5f62b1d854c3a2a606c3b5903f3a436eb4e8a087a0fda2ca3fe",
             "safe_to_int_dtype": "49f5760ac936afd767c31f97f9641d04143c81d7064c0fde6012849f22d0f023",
             "safe_to_float_dtype": "da9d8dfc4260639fcd6308babe91146a0b174ddbae228821d2332c8db193f32a",
@@ -1911,14 +1919,14 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     COMBINED_AUTHORITY_SOURCE: (
-        "60c00ba394d9b8b4533cb98e26a165569e2cfe04667e91e19a60dd5b65f27ab8",
+        "3407db3573ba51aa758a6f713b144381d92ead96eb569238be8665a13b0fc895",
         {
             "_ArrayCopier.__call__": "d708cfc14d20e8e157d30abe2336b3faa117b225f4ed3b10840d4dfbd4fa4c36",
             "_copy_artifact_array_leaf": "fe5b9e45c06ac59059a010fd680ac193e87e12aa3c5e38e980d84063d139bc07",
         },
     ),
     COMBINED_ENTRIES_SOURCE: (
-        "49b9380d305f56a70b67afbb02ae7e30a6899a2dc5d1543991f1baecf595ccc2",
+        "9acebfbfa938048b8e2bd7401ede89bb7c0f165882a86d268d0ca8a1118e045a",
         {
             "_ValueMaterializer.__call__": "5a9d22497c8d3cf499823257fa231a4fa17dbfc70eee3b00f24b5ae1689f1215",
             "_copy_solution_value": "2c10ae621eb19cb4fab9fc9dd5d96160f4c4dd91919de2b2e46bf784a3e7689a",
@@ -1928,7 +1936,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     COMBINED_STORES_SOURCE: (
-        "337c450f79dd42df2f87fde3180ee55a416fe20121f5fae1716c2f1dac229f2d",
+        "689f6378c196b769452c4aca5a92f4cac9a63fb56bbb6a23092a1335d569be88",
         {
             "_admit_value_entry": "0b273e3cafc4337d7404e7c434158b643e5ffec6fddfddf24cf900a52584b04d",
             "ValueStore.__post_init__": "4f81b32757d589ced2e605619de79013a2d9450f319e7adf77094e898b8fe7bb",
@@ -7283,8 +7291,8 @@ _SIMULATION_ADAPTER_CONTRACTS = _contracts(
             "array_from_series",
             "_scatter_series",
         ),
+        LCM_TYPING_SOURCE: ("CanonicalArrayWriter.__call__",),
         DTYPES_SOURCE: (
-            "CanonicalArrayWriter.__call__",
             "canonical_float_dtype",
             "safe_to_int_dtype",
             "safe_to_float_dtype",
@@ -14599,6 +14607,7 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         encoding="utf-8"
     )
     dtypes_source = (root / DTYPES_SOURCE).read_text(encoding="utf-8")
+    lcm_typing_source = (root / LCM_TYPING_SOURCE).read_text(encoding="utf-8")
     namespace_source = (root / NAMESPACE_SOURCE).read_text(encoding="utf-8")
     pandas_utils_source = (root / PANDAS_UTILS_SOURCE).read_text(encoding="utf-8")
     model_processing_source = (root / MODEL_PROCESSING_SOURCE).read_text(
@@ -17355,6 +17364,15 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
                 label="runtime action points changed during canonical cast",
             ),
         },
+        "candidate_materialization:array_writer_dtype_widened": {
+            "path": LCM_TYPING_SOURCE,
+            "source": replace_once(
+                source=lcm_typing_source,
+                old="        self, *, value: np.ndarray | Array, dtype: np.dtype, name: str\n",
+                new="        self, *, value: np.ndarray | Array, dtype: object, name: str\n",
+                label="array writer accepts an uncanonical destination dtype",
+            ),
+        },
         "candidate_materialization:negate_series_runtime_points": {
             "path": PANDAS_UTILS_SOURCE,
             "source": replace_once(
@@ -17494,6 +17512,7 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         PARAMS_REGIME_TEMPLATE_SOURCE: params_regime_template_source,
         PARAMS_PROCESSING_SOURCE: params_processing_source,
         DTYPES_SOURCE: dtypes_source,
+        LCM_TYPING_SOURCE: lcm_typing_source,
         NAMESPACE_SOURCE: namespace_source,
         PANDAS_UTILS_SOURCE: pandas_utils_source,
         MODEL_PROCESSING_SOURCE: model_processing_source,

@@ -8,7 +8,6 @@ import jax
 import numpy as np
 import numpy.typing as npt
 
-from _lcm.dtypes import CanonicalArrayWriter
 from lcm._solver_api.authority import (
     ArtifactAuthority,
     _ArrayCopier,
@@ -23,7 +22,7 @@ from lcm._solver_api.identity import (
     LoadState,
 )
 from lcm.exceptions import ExecutionPlanningError
-from lcm.typing import FloatND
+from lcm.typing import CanonicalArrayWriter, FloatND
 
 # One numerical solution value: a device or host array, a NumPy scalar, or a real
 # Python number.

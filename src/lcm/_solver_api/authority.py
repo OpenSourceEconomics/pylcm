@@ -21,7 +21,6 @@ import jax
 import numpy as np
 from beartype import beartype
 
-from _lcm.dtypes import CanonicalArrayWriter
 from lcm._solver_api.beartype_conf import SOLVER_API_CONF
 from lcm._solver_api.contract import (
     _artifact_static_metadata_field_names,
@@ -55,6 +54,7 @@ from lcm._solver_api.identity import (
     _LeafAuthoritiesBoundary,
 )
 from lcm.exceptions import ExecutionPlanningError
+from lcm.typing import CanonicalArrayWriter
 
 # One node of a callback-free construction plan.
 type _ConstructionPlan = (

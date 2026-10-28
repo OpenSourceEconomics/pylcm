@@ -169,6 +169,11 @@ class GenerationSolverPreparation:
         )
 
 
+type _GenerationState = tuple[
+    str, str, Model, tuple[PytreeValue, ...], list[SolutionAuthority]
+]
+
+
 @dataclass(frozen=True, kw_only=True, eq=False, weakref_slot=True, slots=True)
 class CanonicalModelGeneration:
     """The same genuine execution Model owns programs, seal and authority."""
@@ -179,6 +184,26 @@ class CanonicalModelGeneration:
     roots: tuple[PytreeValue, ...]
     _authority: list[SolutionAuthority] = field(default_factory=list, repr=False)
     _authority_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+
+    def __getstate__(self) -> _GenerationState:
+        """Pickle every field but the lock, which belongs to one process."""
+        return (
+            self.key,
+            self.declaration_fingerprint,
+            self.execution,
+            self.roots,
+            self._authority,
+        )
+
+    def __setstate__(self, state: _GenerationState) -> None:
+        """Restore the fields and give the restored generation its own lock."""
+        key, declaration_fingerprint, execution, roots, authority = state
+        object.__setattr__(self, "key", key)
+        object.__setattr__(self, "declaration_fingerprint", declaration_fingerprint)
+        object.__setattr__(self, "execution", execution)
+        object.__setattr__(self, "roots", roots)
+        object.__setattr__(self, "_authority", authority)
+        object.__setattr__(self, "_authority_lock", threading.Lock())
 
     def live_roots(self) -> tuple[PytreeValue, ...]:
         """Borrow original roots and already-published authority template storage."""

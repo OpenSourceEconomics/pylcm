@@ -10,7 +10,7 @@ live in `_lcm.typing`.
 
 from collections.abc import Callable, Mapping
 from fractions import Fraction
-from typing import TYPE_CHECKING, Literal, TypeAliasType
+from typing import TYPE_CHECKING, Literal, Protocol, TypeAliasType, runtime_checkable
 
 import numpy as np
 import pandas as pd
@@ -36,6 +36,18 @@ type AgeLabel = int | float | Fraction | np.integer | np.floating
 type TimeLabel = PeriodLabel | AgeLabel
 
 from lcm.params import TimeVarying, UserMappingLeaf, UserSequenceLeaf  # noqa: E402
+
+
+@runtime_checkable
+class CanonicalArrayWriter(Protocol):
+    """Allocate an already validated numeric leaf at an explicit destination."""
+
+    def __call__(
+        self, *, value: np.ndarray | Array, dtype: np.dtype, name: str
+    ) -> Array:
+        """Write one canonical leaf without changing its preceding validation."""
+        ...
+
 
 if TYPE_CHECKING:
     from _lcm.typing import (
