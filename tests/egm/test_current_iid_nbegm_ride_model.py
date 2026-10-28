@@ -144,8 +144,8 @@ def _model(*, tie: bool = False) -> Model:
                 "income": ShockGroup(
                     shocks={"eps": Uniform(start=0.0, stop=1.0)},
                     nodes=UserNodes(
-                        nodes=np.asarray([[0.0], [1.0]]),
-                        weights=np.asarray([0.5, 0.5]),
+                        nodes=jnp.asarray([[0.0], [1.0]]),
+                        weights=jnp.asarray([0.5, 0.5]),
                     ),
                 )
             },
@@ -295,7 +295,7 @@ def test_nbegm_ride_u_exact_branch_tie_keeps_original_first_action() -> None:
             "q": jnp.asarray([0.0, 1.0]),
             "age": jnp.ones((2,)),
             "regime_id": jnp.full((2,), model.regime_names_to_ids["child"], jnp.int32),
-            "eps": PhysicalValues(values=np.asarray([0.0, 1.0])),
+            "eps": PhysicalValues(values=jnp.asarray([0.0, 1.0])),
         },
         seed=17,
         log_level="off",

@@ -287,7 +287,7 @@ def test_u_corrupt_future_economic_marginal_cannot_replay_an_action() -> None:
             params=_params(),
             initial_conditions={
                 **_initial(model=model),
-                "eps": PhysicalValues(values=np.asarray([0.0, 0.0, 1.0, 0.5])),
+                "eps": PhysicalValues(values=jnp.asarray([0.0, 0.0, 1.0, 0.5])),
             },
             solution=invalid_solution,
             log_level="off",
@@ -333,7 +333,7 @@ def test_actual_u_forward_subphase_admits_complete_program_or_refuses_budget(
     values = MappingProxyType(numeric_values)
     inputs = {1: {"child": replay}}
     overrides = CurrentIIDOverrides(
-        entries={"eps": PhysicalValues(values=np.asarray([0.0, 0.0, 1.0, 0.5]))},
+        entries={"eps": PhysicalValues(values=jnp.asarray([0.0, 0.0, 1.0, 0.5]))},
         paths={},
         starts=np.ones((4,), dtype=np.int32),
     )

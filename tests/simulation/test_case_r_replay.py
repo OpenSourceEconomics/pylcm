@@ -64,7 +64,7 @@ from _lcm.solution.feasibility import (
 )
 from _lcm.solution.model_authority import _authority_from_template
 from _lcm.utils.logging import get_logger
-from lcm import ExecutionConfig, InitialNodes, LinSpacedGrid, Model
+from lcm import ExecutionConfig, InitialNodes, LinSpacedGrid, Model, Periods
 from lcm import Regime as UserRegime
 from lcm._solver_api.authority import _canonicalize_artifact_payload
 from lcm.exceptions import ExecutionPlanningError, InvalidSimulationInputError
@@ -307,7 +307,7 @@ def test_case_r_action_replay_retains_the_actual_physical_frame(
                 flat_params=model._process_params({}),
                 period=0,
                 period_value=jnp.asarray(0, dtype=jnp.int32),
-                age=jnp.asarray(0),
+                age=jnp.asarray(0, dtype=jnp.int32),
             ),
             **{SUBJECT_WIDTH_KEYWORD: 1},
         ),
@@ -454,7 +454,7 @@ def test_grid_policy_lookup_retains_the_resolved_solution_schema() -> None:
         state_transitions={"wealth": _terminal},
         n_periods=2,
         initial_nodes=InitialNodes(by_period={0: "alive"}),
-        edges={"alive": {"done": 0}},
+        edges={"alive": {"done": Periods(values=(0,))}},
         regime_id_class=_LifecycleRegimeId,
         enable_jit=True,
     )
@@ -513,14 +513,14 @@ def test_case_r_admitted_chunk_keeps_frame_through_transition_and_report(
             "entry": ShockGroup(
                 shocks={"eps": Uniform(start=0.25, stop=0.75)},
                 nodes=UserNodes(
-                    nodes=np.asarray([[0.0], [0.5], [1.0]]),
-                    weights=np.asarray([0.25, 0.5, 0.25]),
+                    nodes=jnp.asarray([[0.0], [0.5], [1.0]]),
+                    weights=jnp.asarray([0.25, 0.5, 0.25]),
                 ),
             )
         },
         n_periods=2,
         initial_nodes=InitialNodes(by_period={0: "alive"}),
-        edges={"alive": {"done": 0}},
+        edges={"alive": {"done": Periods(values=(0,))}},
         regime_id_class=_LifecycleRegimeId,
         execution_config=ExecutionConfig(
             axis_widths={"subject": 1}, device_memory_bytes=2**30
@@ -562,7 +562,7 @@ def test_case_r_admitted_chunk_keeps_frame_through_transition_and_report(
         }
     )
     overrides = CurrentIIDOverrides(
-        entries={"eps": PhysicalValues(values=np.asarray([0.3, 0.7]))}
+        entries={"eps": PhysicalValues(values=jnp.asarray([0.3, 0.7]))}
         if supplied
         else {},
         paths={},
