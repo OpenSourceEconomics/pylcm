@@ -9,6 +9,7 @@ import inspect
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, fields, replace
 from types import MappingProxyType
+from typing import NamedTuple, cast
 
 import jax
 import jax.numpy as jnp
@@ -31,6 +32,7 @@ from _lcm.egm.current_iid_projection import refine_projected_row
 from _lcm.egm.current_iid_pullback import pullback_resource_boundary
 from _lcm.egm.current_iid_resources_proof import prove_resources_only
 from _lcm.egm.interp import materialize_hermite_shadow
+from _lcm.egm.preferences import BoundUtilityOfAction
 from _lcm.egm.projected_continuation import ProjectedEGMCarry, ProjectedRowRead
 from _lcm.egm.query_data import QueryNodeKind
 from _lcm.egm.step import _EGMStep
@@ -309,6 +311,70 @@ class BalancedCaseUCarry(ProjectedEGMCarry):
         return MappingProxyType(result)
 
 
+class _ConditionalRow(NamedTuple):
+    """One node's original conditional construction at the row's lower end."""
+
+    envelope: OwnedEnvelope
+    saturated: ScalarBool
+    borrowing_limit: ScalarFloat
+    savings_ceiling: ScalarFloat
+    discounted_floor_value: ScalarFloat
+
+    @classmethod
+    def of(
+        cls,
+        *,
+        node: _ConstructedAssetNode,
+        envelope: OwnedEnvelope,
+        saturated: ScalarBool,
+    ) -> "_ConditionalRow":  # noqa: UP037 - PEP 649 classmethod evaluated before its class is bound
+        """Keep only the arrays that topology reads from the original node."""
+        return cls(
+            envelope=envelope,
+            saturated=saturated,
+            borrowing_limit=node.pieces.borrowing_limit,
+            savings_ceiling=node.pieces.savings_nodes[-1],
+            discounted_floor_value=node.discount_factor * node.expected_values[0],
+        )
+
+
+def _flatten_conditional_row(
+    record: _ConditionalRow,
+) -> tuple[tuple[PytreeChild | OwnedEnvelope, ...], None]:
+    return tuple(record), None
+
+
+def _flatten_conditional_row_with_keys(
+    record: _ConditionalRow,
+) -> tuple[
+    tuple[tuple[jax.tree_util.GetAttrKey, PytreeChild | OwnedEnvelope], ...], None
+]:
+    return tuple(
+        (jax.tree_util.GetAttrKey(name), leaf)
+        for name, leaf in zip(_ConditionalRow._fields, record, strict=True)
+    ), None
+
+
+# keyword-only-exempt: library-callback=jax.tree_util.register_pytree_with_keys
+def _unflatten_conditional_row(
+    metadata: None, children: Iterable[PytreeChild | OwnedEnvelope]
+) -> _ConditionalRow:
+    """Restore stacked, abstract or per-node leaves under the fixed schema."""
+    del metadata
+    leaves = tuple(children)
+    if len(leaves) != len(_ConditionalRow._fields):
+        raise TypeError("U conditional row reconstruction requires its exact fields.")
+    return cast("_ConditionalRow", tuple.__new__(_ConditionalRow, leaves))
+
+
+jax.tree_util.register_pytree_with_keys(
+    _ConditionalRow,
+    _flatten_conditional_row_with_keys,
+    _unflatten_conditional_row,
+    _flatten_conditional_row,
+)
+
+
 @dataclass(frozen=True, kw_only=True, eq=False)
 class SaturatedCaseUProgram:
     """Model-owned original constructor and fixed-conditional topology proof."""
@@ -403,6 +469,40 @@ class SaturatedCaseUProgram:
         )
         return node, saturated
 
+    def conditionals(self, *, guard: CaseUBalancedOperands) -> _ConditionalRow:
+        """Build each needed node's conditional row once; it never reads a query."""
+        nodes = self.nodes(guard=guard)
+
+        def one(
+            inputs: tuple[
+                Mapping[ShockName, ScalarFloat | ScalarInt],
+                Mapping[ShockName, ScalarFloat],
+                ScalarBool,
+            ],
+        ) -> _ConditionalRow:
+            physical, tangent, active = inputs
+
+            def produce() -> _ConditionalRow:
+                node, saturated = self.conditional(
+                    guard=guard, physical=physical, tangent=tangent
+                )
+                if node.owned_envelope is None:
+                    raise TypeError(
+                        "U topology requires its original full owned envelope."
+                    )
+                return _ConditionalRow.of(
+                    node=node, envelope=node.owned_envelope, saturated=saturated
+                )
+
+            # Inactive nodes are never read; zeros keep the stacked schema.
+            return jax.lax.cond(
+                active, produce, lambda: jax.tree.map(jnp.zeros_like, produce())
+            )
+
+        return jax.lax.map(
+            one, (nodes.physical, nodes.physical_tangent, _needed(nodes=nodes))
+        )
+
     def resources(
         self,
         *,
@@ -423,38 +523,50 @@ class SaturatedCaseUProgram:
         left: ScalarFloat,
         right: ScalarFloat,
         query: ScalarFloat | None = None,
+        conditionals: _ConditionalRow | None = None,
     ) -> ScalarBool:
-        """Exclude shadow critical roots and verify original consumed ownership."""
+        """Exclude shadow critical roots and verify original consumed ownership.
+
+        ``conditionals`` is ``conditionals()`` of this guard, built once per row.
+        """
         nodes = self.nodes(guard=guard)
         needed = _needed(nodes=nodes)
+        if conditionals is None:
+            conditionals = self.conditionals(guard=guard)
 
         def one(
             inputs: tuple[
                 Mapping[ShockName, ScalarFloat | ScalarInt],
                 Mapping[ShockName, ScalarFloat],
                 ScalarBool,
+                _ConditionalRow,
             ],
         ) -> ScalarBool:
-            physical, tangent, active = inputs
+            physical, tangent, active, conditional = inputs
 
             def check() -> ScalarBool:
-                node, saturated = self.conditional(
-                    guard=guard, physical=physical, tangent=tangent
+                utility_of_action = BoundUtilityOfAction(
+                    utility_func=self.point.pieces.utility_func,
+                    action_name=self.point.pieces.action_name,
+                    bound={
+                        **guard.pool,
+                        **physical,
+                        self.point.pieces.euler_state_name: guard.lower,
+                    },
                 )
-                row = node.owned_envelope
-                if row is None:
-                    raise TypeError(
-                        "U topology requires its original full owned envelope."
-                    )
                 low = self.resources(guard=guard, physical=physical, query=left)
                 high = self.resources(guard=guard, physical=physical, query=right)
                 scale, _, utility_valid = self.utility.coefficients(
                     pool={**guard.pool, **physical}, dtype=left.dtype
                 )
                 supported, owner, corner = _classify(
-                    node=node, row=row, scale=scale, lower=low, upper=high
+                    conditional=conditional,
+                    utility_of_action=utility_of_action,
+                    scale=scale,
+                    lower=low,
+                    upper=high,
                 )
-                valid = saturated & utility_valid & supported
+                valid = conditional.saturated & utility_valid & supported
                 if query is not None:
                     actual = self.solver(guard=guard).node(
                         liquid=query, physical=physical, physical_tangent=tangent
@@ -470,7 +582,9 @@ class SaturatedCaseUProgram:
 
             return jax.lax.cond(active, check, lambda: jnp.ones((), dtype=jnp.bool_))
 
-        matches = jax.lax.map(one, (nodes.physical, nodes.physical_tangent, needed))
+        matches = jax.lax.map(
+            one, (nodes.physical, nodes.physical_tangent, needed, conditionals)
+        )
         return nodes.law_valid & (left < right) & jnp.all(matches)
 
     def validate(self, *, carry: ProjectedEGMCarry, query: ScalarFloat) -> ScalarBool:
@@ -510,23 +624,20 @@ class SaturatedCaseUProgram:
         capacity = initial.grid.size
         nodes = self.nodes(guard=guard)
         needed = _needed(nodes=nodes)
+        # Query-independent per node; every cut and cell check below reuses it.
+        conditionals = self.conditionals(guard=guard)
 
         def cuts(
             inputs: tuple[
                 Mapping[ShockName, ScalarFloat | ScalarInt],
-                Mapping[ShockName, ScalarFloat],
                 ScalarBool,
+                _ConditionalRow,
             ],
         ) -> tuple[Float1D, ScalarBool]:
-            physical, tangent, active = inputs
+            physical, active, conditional = inputs
 
             def produce() -> tuple[Float1D, ScalarBool]:
-                node, saturated = self.conditional(
-                    guard=guard, physical=physical, tangent=tangent
-                )
-                row = node.owned_envelope
-                if row is None:
-                    raise TypeError("U native cut producer lost its original envelope.")
+                row, saturated = conditional.envelope, conditional.saturated
 
                 def pull(cut: ScalarFloat) -> tuple[Float1D, ScalarBool]:
                     def resource(query: ScalarFloat) -> ScalarFloat:
@@ -584,9 +695,7 @@ class SaturatedCaseUProgram:
                 ),
             )
 
-        extra, valid = jax.lax.map(
-            cuts, (nodes.physical, nodes.physical_tangent, needed)
-        )
+        extra, valid = jax.lax.map(cuts, (nodes.physical, needed, conditionals))
         raw = jnp.concatenate((initial.grid, extra.reshape(-1)))
         active = jnp.concatenate(
             (
@@ -625,7 +734,9 @@ class SaturatedCaseUProgram:
             & jnp.all((jnp.arange(capacity) >= length) | values.valid),
         )
         links = jax.vmap(
-            lambda left, right: self.cell(guard=guard, left=left, right=right)
+            lambda left, right: self.cell(
+                guard=guard, left=left, right=right, conditionals=conditionals
+            )
         )(grid[:-1], grid[1:])
         links = (jnp.arange(capacity - 1) < length - 1) & links
         components = jnp.cumsum(
@@ -661,6 +772,7 @@ class SaturatedCaseUProgram:
                     left=row.grid[index],
                     right=row.grid[index + 1],
                     query=query,
+                    conditionals=conditionals,
                 ),
             )
             return read._replace(
@@ -695,24 +807,40 @@ def _needed(*, nodes: CaseUCurrentNodes) -> BoolND:
 def _select(
     *, node: _ConstructedAssetNode, row: OwnedEnvelope, resources: ScalarFloat
 ) -> tuple[ScalarInt, ScalarBool, ScalarBool]:
+    """Select the original owner of one constructed node at ``resources``."""
+    return _select_conditional(
+        conditional=_ConditionalRow.of(
+            node=node, envelope=row, saturated=jnp.ones((), dtype=jnp.bool_)
+        ),
+        utility_of_action=node.utility_of_action,
+        resources=resources,
+    )
+
+
+def _select_conditional(
+    *,
+    conditional: _ConditionalRow,
+    utility_of_action: BoundUtilityOfAction,
+    resources: ScalarFloat,
+) -> tuple[ScalarInt, ScalarBool, ScalarBool]:
+    row = conditional.envelope
     bracket = _bracket_from_owned_row(refined=row, x_query=resources)
     value, policy, corner = _publish_node_selection(
         bracket=bracket.bracket,
         n_pad=row.grid.size,
         resources_at_node=resources,
-        borrowing_limit=node.pieces.borrowing_limit,
-        utility_of_action=node.utility_of_action,
-        discounted_expected_value_at_limit=node.discount_factor
-        * node.expected_values[0],
+        borrowing_limit=conditional.borrowing_limit,
+        utility_of_action=utility_of_action,
+        discounted_expected_value_at_limit=conditional.discounted_floor_value,
     )
-    saving = jnp.where(corner, node.pieces.borrowing_limit, bracket.savings)
+    saving = jnp.where(corner, conditional.borrowing_limit, bracket.savings)
     valid = (
         ~bracket.construction_invalid
         & jnp.isfinite(value)
         & jnp.isfinite(policy)
         & (policy > 0)
-        & (saving >= node.pieces.borrowing_limit)
-        & (saving <= node.pieces.savings_nodes[-1])
+        & (saving >= conditional.borrowing_limit)
+        & (saving <= conditional.savings_ceiling)
         & (corner | bracket.read_supported)
     )
     return jnp.where(corner, -1, bracket.owner_id), corner, valid
@@ -738,12 +866,13 @@ def _sum_sign(
 
 def _classify(
     *,
-    node: _ConstructedAssetNode,
-    row: OwnedEnvelope,
+    conditional: _ConditionalRow,
+    utility_of_action: BoundUtilityOfAction,
     scale: ScalarFloat,
     lower: ScalarFloat,
     upper: ScalarFloat,
 ) -> tuple[ScalarBool, ScalarInt, ScalarBool]:
+    row = conditional.envelope
     search = jnp.where(jnp.arange(row.grid.size) < row.n_kept, row.grid, jnp.inf)
     index = jnp.clip(
         jnp.searchsorted(search, lower, side="right") - 1, 0, row.grid.size - 2
@@ -756,12 +885,12 @@ def _classify(
         fp_lower=row.value[index],
         fp_upper=row.value[index + 1],
         slope_lower=_node_value_slope(
-            policy=c0, value=row.value[index], utility_of_action=node.utility_of_action
+            policy=c0, value=row.value[index], utility_of_action=utility_of_action
         ),
         slope_upper=_node_value_slope(
             policy=c1,
             value=row.value[index + 1],
-            utility_of_action=node.utility_of_action,
+            utility_of_action=utility_of_action,
         ),
     )
     signs, status = hermite_critical_bernstein_signs(
@@ -771,13 +900,13 @@ def _classify(
         v1=row.value[index + 1],
         a=a,
         b=b,
-        L=node.pieces.borrowing_limit,
+        L=conditional.borrowing_limit,
         A=scale,
         lower=lower,
         upper=upper,
     )
     zero = jnp.zeros_like(x0)
-    floor, ceiling = node.pieces.borrowing_limit, node.pieces.savings_nodes[-1]
+    floor, ceiling = conditional.borrowing_limit, conditional.savings_ceiling
     low0, low1 = (
         _sum_sign(a=x0, b=zero, c=c0, d=floor),
         _sum_sign(a=x0, b=h, c=c1, d=floor),
@@ -794,9 +923,11 @@ def _classify(
         & ((high0 == -1) | (high0 == 0))
         & ((high1 == -1) | (high1 == 0))
     )
-    left_owner, left_corner, left_valid = _select(node=node, row=row, resources=lower)
-    right_owner, right_corner, right_valid = _select(
-        node=node, row=row, resources=upper
+    left_owner, left_corner, left_valid = _select_conditional(
+        conditional=conditional, utility_of_action=utility_of_action, resources=lower
+    )
+    right_owner, right_corner, right_valid = _select_conditional(
+        conditional=conditional, utility_of_action=utility_of_action, resources=upper
     )
     root_free = (status == 0) & (jnp.all(signs > 0) | jnp.all(signs < 0))
     geometry = (

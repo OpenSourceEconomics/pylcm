@@ -3,6 +3,7 @@
 from dataclasses import replace
 from types import MappingProxyType
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -299,6 +300,44 @@ def test_genuine_u_model_publishes_nonexact_pwa_and_reconstructs_original_policy
         [1.0, 1.5, 2.0],
         decimal=DECIMAL_PRECISION,
     )
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_row_conditionals_equal_each_original_node_construction() -> None:
+    """The once-per-row conditional bank is each node's original construction."""
+    model = _model()
+    carry = _carry(solution=_solved(model=model))
+    _, generation = model._prepare_call(params={"discount_factor": 1.0})
+    prepared = acquire_installed_case_u_date(
+        generation=generation, regime_name="child", period=0
+    )
+    from _lcm.egm.current_iid_case_u_balanced import (  # noqa: PLC0415
+        BalancedCaseUCarry,
+        SaturatedCaseUProgram,
+        _ConditionalRow,
+    )
+
+    assert isinstance(carry, BalancedCaseUCarry)
+    program = prepared.date.guard_program
+    assert isinstance(program, SaturatedCaseUProgram)
+    nodes = program.nodes(guard=carry.guard)
+    bank = program.conditionals(guard=carry.guard)
+    for index in range(nodes.factors.shape[1]):
+        node, saturated = program.conditional(
+            guard=carry.guard,
+            physical={name: value[index] for name, value in nodes.physical.items()},
+            tangent={
+                name: value[index] for name, value in nodes.physical_tangent.items()
+            },
+        )
+        assert node.owned_envelope is not None
+        expected = _ConditionalRow.of(
+            node=node, envelope=node.owned_envelope, saturated=saturated
+        )
+        for actual, original in zip(
+            jax.tree.leaves(bank), jax.tree.leaves(expected), strict=True
+        ):
+            np.testing.assert_array_equal(actual[index], original)
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
