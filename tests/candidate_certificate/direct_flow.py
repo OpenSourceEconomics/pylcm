@@ -264,6 +264,7 @@ PROCESS_IID_SOURCE = "src/_lcm/processes/iid.py"
 PROCESS_AR1_SOURCE = "src/_lcm/processes/ar1.py"
 PROCESS_GRID_RESOLUTION_SOURCE = "src/_lcm/processes/grid_resolution.py"
 UNIFORM_PROCESS_GRID_SOURCE = "src/_lcm/simulation/process_grids.py"
+EAGER_STAGE_SOURCE = "src/_lcm/simulation/eager_stages.py"
 SUPPORT_FINGERPRINT_SOURCE = "src/_lcm/solution/fingerprint.py"
 SUPPORT_AUTHORITY_SOURCE = "src/_lcm/solution/model_authority.py"
 SUPPORT_PRECONDITIONS_SOURCE = "src/_lcm/solution/preconditions.py"
@@ -358,6 +359,7 @@ _ACTION_GRID_SOURCES = (ACTION_GRID_SOURCE,)
 _UNIFORM_PROCESS_SOURCES = (
     PROCESS_GRID_RESOLUTION_SOURCE,
     UNIFORM_PROCESS_GRID_SOURCE,
+    EAGER_STAGE_SOURCE,
     SUPPORT_FINGERPRINT_SOURCE,
     SUPPORT_AUTHORITY_SOURCE,
     SUPPORT_PRECONDITIONS_SOURCE,
@@ -630,6 +632,7 @@ _SOURCE_SEALS = {
     SUPPORT_AUTHORITY_SOURCE: "d04c1c11d281a24d4c8eabeab0a1376f6a8d7d3cbf337c5abe182ffcdef34567",
     SUPPORT_FINGERPRINT_SOURCE: "6ec013715e6faac2d13f7a27cd34c9c4dd10199379cfd4db4030aade3df39b75",
     UNIFORM_PROCESS_GRID_SOURCE: "f03298f080dfe4bace2e3affc82e0ca8e5d7adf20fe58978433c19305667b299",
+    EAGER_STAGE_SOURCE: "d0a52778e4966ecf9bbac4ecaee87f85f49df0aeb4bf7c390f8599bf7d97efa8",
     PROCESS_GRID_RESOLUTION_SOURCE: "c9eb81f9442d7628793d6ad905b2e96e4655e9eb48bf3de32f636541b985269f",
     NATIVE_VALUES_SOURCE: "4e7302d6cacb53a20f6a0a08e7f57d6e074dedddd8f6a95944a9ed1ed4df7bda",
     NATIVE_ARCHIVE_SOURCE: "fe7947028f564d83ca513f92e398d2fe7c32e13d3fcd071a1dd9a1a24a722890",
@@ -2109,6 +2112,15 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         {
             "SolutionPhase.resolve_process_grids": "433e871004a339428068e27d0e414e035eb8d1789fd73dc8b9cd85328362a045",
             "SolutionPhase.state_action_space": "c54e576769c9c3addaf2dc961cf604747d2fb3d6b29b5b3ec9a80c3b4f3a692e",
+            "resolve_phase_process_grids": "ef605a0ec86dc094d2613c8e3e6e27c3dd8ee91d21618f37386a24e7acc3339e",
+            "phase_state_action_space": "f27fbdd014df4497ca6531fa57d55fcfb77c995069815d63f47613833c70f126",
+        },
+    ),
+    EAGER_STAGE_SOURCE: (
+        "d4ab23671c44c85c1a367e02c547259599f7b8a946183bc6169ca1d86f80778f",
+        {
+            "_abstract_stage_operand": "25a8cdec68bfaa93e8b9260c5f4d5a63671069f06726ada770eb0274978446bd",
+            "run_eager_stage": "5c76a3887978ea959365beafdb8d8e78dde07bdc364826765e0677df3c18b548",
         },
     ),
     SIMULATION_COMPILE_SOURCE: (
@@ -12119,6 +12131,12 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = _contracts(
         "src/_lcm/engine.py": (
             "SolutionPhase.resolve_process_grids",
             "SolutionPhase.state_action_space",
+            "resolve_phase_process_grids",
+            "phase_state_action_space",
+        ),
+        "src/_lcm/simulation/eager_stages.py": (
+            "_abstract_stage_operand",
+            "run_eager_stage",
         ),
         "src/_lcm/simulation/chunk_admission.py": (
             "_ChunkProfiler.profile_widths",
@@ -12658,15 +12676,15 @@ def _uniform_process_errors(*, tree: ast.Module, source: SourcePath) -> list[str
 _UNIFORM_PROCESS_MUTATIONS = {
     "uniform_grid:replicated_layout_omitted": (
         ENGINE_SOURCE,
-        "SolutionPhase.resolve_process_grids",
+        "resolve_phase_process_grids",
         "expression",
         "jax.sharding.NamedSharding(plan.mesh, jax.sharding.PartitionSpec())",
         "jax.sharding.SingleDeviceSharding(devices[0])",
         1,
     ),
     "uniform_grid:producer_output_layout_omitted": (
-        UNIFORM_PROCESS_GRID_SOURCE,
-        "SimulationProcessGrids._produce",
+        EAGER_STAGE_SOURCE,
+        "run_eager_stage",
         "keyword",
         "output_sharding",
         "None",
@@ -12674,7 +12692,7 @@ _UNIFORM_PROCESS_MUTATIONS = {
     ),
     "uniform_grid:selected_device_ignored": (
         ENGINE_SOURCE,
-        "SolutionPhase.resolve_process_grids",
+        "resolve_phase_process_grids",
         "expression",
         "jax.sharding.SingleDeviceSharding(devices[0])",
         "jax.sharding.SingleDeviceSharding(jax.devices()[0])",
@@ -12697,11 +12715,11 @@ _UNIFORM_PROCESS_MUTATIONS = {
         1,
     ),
     "uniform_grid:foreign_owner_budget_omitted": (
-        UNIFORM_PROCESS_GRID_SOURCE,
-        "SimulationProcessGrids._produce",
+        EAGER_STAGE_SOURCE,
+        "run_eager_stage",
         "expression",
-        "tuple(dict.fromkeys((*self.devices, *current.spans)))",
-        "self.devices",
+        "tuple(dict.fromkeys((*devices, *current.spans)))",
+        "devices",
         1,
     ),
     "uniform_grid:resolver_result_rank_changed": (
@@ -12777,43 +12795,43 @@ _UNIFORM_PROCESS_MUTATIONS = {
         1,
     ),
     "uniform_grid:dispatch_before_admission": (
-        UNIFORM_PROCESS_GRID_SOURCE,
-        "SimulationProcessGrids._produce",
+        EAGER_STAGE_SOURCE,
+        "run_eager_stage",
         "before_assignment",
         "plan",
-        "_compute_uniform_grid(parameters=placed['parameters'], n_points=n_points)",
+        "function(**placed, **static_arguments)",
         1,
     ),
     "uniform_grid:external_residency_ignored": (
-        UNIFORM_PROCESS_GRID_SOURCE,
-        "SimulationProcessGrids._produce",
+        EAGER_STAGE_SOURCE,
+        "run_eager_stage",
         "expression",
         "max(external.values())",
         "0",
         1,
     ),
     "uniform_grid:peak_admission_ignored": (
-        UNIFORM_PROCESS_GRID_SOURCE,
-        "SimulationProcessGrids._produce",
+        EAGER_STAGE_SOURCE,
+        "run_eager_stage",
         "keyword",
         "budget_bytes",
         "None",
         2,
     ),
     "uniform_grid:shared_cache_keeps_operands": (
-        UNIFORM_PROCESS_GRID_SOURCE,
-        "SimulationProcessGrids._produce",
+        EAGER_STAGE_SOURCE,
+        "run_eager_stage",
         "expression",
         "abstract",
         "placed",
         2,
     ),
     "uniform_grid:readiness_omitted": (
-        UNIFORM_PROCESS_GRID_SOURCE,
-        "SimulationProcessGrids._produce",
+        EAGER_STAGE_SOURCE,
+        "run_eager_stage",
         "expression",
-        "plan.compiled.executable(**placed).block_until_ready()",
-        "plan.compiled.executable(**placed)",
+        "jax.block_until_ready(result)",
+        "result",
         1,
     ),
     "uniform_grid:caller_residency_omitted": (
@@ -12898,7 +12916,7 @@ _UNIFORM_PROCESS_MUTATIONS = {
     ),
     "uniform_grid:engine_scope_broadened": (
         ENGINE_SOURCE,
-        "SolutionPhase.resolve_process_grids",
+        "resolve_phase_process_grids",
         "expression",
         "process_grid_resolver.supports(spec)",
         "True",
@@ -12906,7 +12924,7 @@ _UNIFORM_PROCESS_MUTATIONS = {
     ),
     "uniform_grid:engine_recomputes_admitted_support": (
         ENGINE_SOURCE,
-        "SolutionPhase.state_action_space",
+        "phase_state_action_space",
         "expression",
         "name not in state_replacements",
         "True",
