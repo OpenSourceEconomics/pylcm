@@ -15,6 +15,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm import nbegm_step
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.current_iid_case_u_replay import (
@@ -277,7 +278,7 @@ def test_original_nbegm_ez_u_model_keeps_joint_ce_and_physical_candidates(
             )
     else:
         assert ref not in solution.retained_continuations
-    shocks = np.asarray([0.0, 0.5, 1.0])
+    shocks = np.asarray([0.0, 0.5, 1.0], dtype=canonical_float_dtype())
     q = np.asarray([0.0, 1.0, 0.25])
     simulated = model.simulate(
         params=params,
@@ -699,7 +700,7 @@ def test_original_nbegm_ez_default_archive_keeps_recursive_physical_replay(  # n
     future = solution.replay_artifacts[future_ref]
     assert isinstance(future, CaseUReplayChildren)
     assert future.child_names == ("done", "other")
-    shocks = np.asarray([0.0, 0.5, 1.0])
+    shocks = np.asarray([0.0, 0.5, 1.0], dtype=canonical_float_dtype())
     q = np.asarray([0.0, 0.25, 1.0])
     initial = {
         "wealth": jnp.full(shocks.shape, _WEALTH),

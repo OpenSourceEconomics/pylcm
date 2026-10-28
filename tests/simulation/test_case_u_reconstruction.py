@@ -9,6 +9,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.current_iid_case_u import CaseUPointSolver
 from _lcm.egm.current_iid_case_u_replay import (
     CASE_U_FUTURE_REPLAY,
@@ -116,7 +117,7 @@ def test_model_u_reconstructs_original_candidates_at_nodes_and_offgrid(
     """No projected policy is read; off-node frames alter the original Euler bank."""
     model = _model()
     solution = model.solve(params=_params(), log_level="off")
-    frame = np.asarray([0.0, 0.0, 1.0, 0.5])
+    frame = np.asarray([0.0, 0.0, 1.0, 0.5], dtype=canonical_float_dtype())
     initial = _initial(model=model)
     tagged = (
         PhysicalValues(values=frame)
@@ -398,7 +399,7 @@ def test_u_durable_solution_reconstructs_original_candidates_in_a_fresh_model(
     loaded = load_solution(path=path)
     assert loaded._engine_view is None
     fresh_model = _model()
-    physical = np.asarray([0.0, 0.0, 1.0, 0.5])
+    physical = np.asarray([0.0, 0.0, 1.0, 0.5], dtype=canonical_float_dtype())
     initial = {
         **_initial(model=fresh_model),
         "eps": PhysicalValues(values=physical),

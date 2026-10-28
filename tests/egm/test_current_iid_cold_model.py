@@ -13,6 +13,7 @@ import pytest
 
 import lcm.model as model_module
 from _lcm.continuation import ProjectedContinuationSpec
+from _lcm.dtypes import canonical_float_dtype
 from _lcm.execution.workspace_planning import (
     CompilerMemoryReservation,
     WorkspaceBudgetError,
@@ -296,7 +297,9 @@ def test_real_r_solution_leaf_tuple_replays_original_child_actions() -> None:
             "regime_id": jnp.full(
                 (2,), model.regime_names_to_ids["child"], dtype=jnp.int32
             ),
-            "eps": PhysicalValues(values=np.asarray([0.0, 1.0])),
+            "eps": PhysicalValues(
+                values=np.asarray([0.0, 1.0], dtype=canonical_float_dtype())
+            ),
         },
         log_level="off",
         seed=17,

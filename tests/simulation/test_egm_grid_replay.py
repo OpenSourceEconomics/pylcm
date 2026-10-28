@@ -9,6 +9,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.current_iid_case_u_replay import CASE_U_FUTURE_REPLAY, CaseUReplaySpec
 from lcm import (
     ConsumptionSavingsRegime,
@@ -153,7 +154,9 @@ def _simulate(
                 (3,), model.regime_names_to_ids["child"], dtype=jnp.int32
             ),
             "eps": (
-                PhysicalValues(values=np.asarray([0.0, 0.5, 1.0]))
+                PhysicalValues(
+                    values=np.asarray([0.0, 0.5, 1.0], dtype=canonical_float_dtype())
+                )
                 if physical is None
                 else physical
             ),
@@ -189,7 +192,7 @@ def test_grid_replay_exposes_literal_candidate_omission() -> None:
         )
     # Zero additive frames preserve an exact represented tie between the two
     # Cartesian choices; varied frames remain covered by the matched-grid test.
-    physical = PhysicalValues(values=np.zeros((3,)))
+    physical = PhysicalValues(values=np.zeros((3,), dtype=canonical_float_dtype()))
     actual_candidate = _simulate(
         model=candidate, solution=exact, physical=physical
     ).raw_results["child"][1]
