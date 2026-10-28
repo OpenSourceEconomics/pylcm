@@ -17,6 +17,7 @@ from _lcm.egm.outer_affine_structure import (
 from _lcm.typing import PytreeChild
 from lcm.typing import (
     FloatND,
+    LoopIndex,
     ReferenceName,
     ScalarBool,
     ScalarFloat,
@@ -203,7 +204,7 @@ def pullback_resource_boundary(
 
     # keyword-only-exempt: library-callback=jax.lax.fori_loop
     def bisect(
-        index: jax.Array, interval: tuple[jax.Array, jax.Array]
+        index: LoopIndex, interval: tuple[jax.Array, jax.Array]
     ) -> tuple[jax.Array, jax.Array]:
         del index
         lo, hi = interval
