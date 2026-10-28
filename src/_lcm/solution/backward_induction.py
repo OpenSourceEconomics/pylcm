@@ -544,6 +544,9 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     # Resolve every solve program, then compile unique lowerings when enabled.
     diagnostics_enabled = validation_enabled(logger)
     narrowings = 0
+    # A narrowing retry reuses every executable an earlier attempt compiled.
+    if executable_cache is None:
+        executable_cache = ExecutableCache()
     while True:
         try:
             compiled_programs = _compile_all_functions(
@@ -574,9 +577,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 process_grid_resolver=process_grid_resolver,
                 call_id=call_id,
                 gather_checks={} if gather_checks is None else gather_checks,
-                executable_cache=ExecutableCache()
-                if executable_cache is None
-                else executable_cache,
+                executable_cache=executable_cache,
                 structural_blueprints=structural_blueprints,
                 base_state_action_spaces=base_state_action_spaces,
                 collect_continuation_read_counts=diagnostics_enabled,

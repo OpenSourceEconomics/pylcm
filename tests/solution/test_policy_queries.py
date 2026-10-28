@@ -1740,3 +1740,44 @@ def test_information_mesh_unavailable_observation_keeps_producer_unexecuted(
         assert -1.0 in events["projection"]
         assert any(not np.isfinite(value) for value in events["law"])
         np.testing.assert_array_equal(valid[0], desired=False)
+
+
+def test_budget_narrowing_retries_reuse_executables_already_compiled(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A narrowing retry compiles no lowering key an earlier attempt compiled."""
+    records = []
+    log_record = backward._log_core_plan_record
+
+    def record(**kwargs):
+        records.append(kwargs)
+        return log_record(**kwargs)
+
+    monkeypatch.setattr(backward, "_log_core_plan_record", record)
+    model = _native_model(enable_jit=True, target_roles=64, budget=2**26)
+    _fanout_kernel(model=model, recompute=True)
+    model.solve(params={}, log_level="debug", runtime_checks=False)
+    budget = max(
+        item["memory"].reservation_bytes + item["resident_bytes"] for item in records
+    )
+    compiled_keys = []
+    compile_and_log = backward._compile_and_log
+
+    def count(**kwargs):
+        compiled_keys.append(kwargs["lowering_key"])
+        return compile_and_log(**kwargs)
+
+    monkeypatch.setattr(backward, "_compile_and_log", count)
+    narrowings = []
+    narrow = backward._narrow_native_closure
+
+    def observe(**kwargs):
+        narrowings.append(kwargs["error"].triple)
+        return narrow(**kwargs)
+
+    monkeypatch.setattr(backward, "_narrow_native_closure", observe)
+    model = _native_model(enable_jit=True, target_roles=64, budget=budget)
+    _fanout_kernel(model=model, recompute=False)
+    model.solve(params={}, log_level="off", runtime_checks=False)
+    assert narrowings
+    assert len(compiled_keys) == len(set(compiled_keys))
