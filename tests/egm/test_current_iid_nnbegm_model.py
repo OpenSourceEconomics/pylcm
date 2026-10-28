@@ -1,6 +1,7 @@
 """A genuine nested NB model maximizes both margins before current expectation."""
 
 from dataclasses import replace
+from pathlib import Path
 
 import jax.numpy as jnp
 import numpy as np
@@ -424,3 +425,115 @@ def _assert_original_nnbegm_banks(  # noqa: PLR0915 - original bank/tuple and cu
     np.testing.assert_almost_equal(
         upper.marginal, original_marginal, decimal=DECIMAL_PRECISION
     )
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_public_nnbegm_u_default_archive_replays_original_physics(  # noqa: PLR0915 - one genuine default archive and physical lifecycle
+    *, tmp_path: Path
+) -> None:
+    """Default retention delivers original nested NB physics to a fresh Model."""
+    from pandas.testing import assert_frame_equal  # noqa: PLC0415
+
+    from _lcm.dtypes import canonical_float_dtype  # noqa: PLC0415
+    from _lcm.solution.artifacts import OwnedSolutionView  # noqa: PLC0415
+    from lcm.persistence import load_solution  # noqa: PLC0415
+    from tests.egm.test_current_iid_call_owned_generation import (  # noqa: PLC0415
+        _public_model_from_declarations,
+    )
+
+    declarations = _declarations()
+    original = declarations.regimes["child"]
+    assert isinstance(original, NestedConsumptionSavingsRegime)
+    assert isinstance(original.solver, NEGM)
+    solver = NNBEGM(
+        inner=NBEGM(
+            savings_grid=original.solver.inner.savings_grid, jump_read="bridged"
+        ),
+        outer_search=FiniteOuterGrid(grid=original.solver.outer_grid),
+    )
+    child = replace(original, solver=solver)
+    assert isinstance(child.solver, NNBEGM)
+    assert isinstance(child.solver.inner, NBEGM)
+    declarations = replace(
+        declarations, regimes={**declarations.regimes, "child": child}
+    )
+    params = _params()
+    model = _public_model_from_declarations(declarations=declarations)
+    solution = model.solve(params=params, log_level="off")
+    assert solution.metadata.retention is ResultRetention.VALUES_AND_REPLAY
+    view = solution._engine_view
+    assert isinstance(view, OwnedSolutionView)
+    generation = view.generation
+    assert generation is not None
+    assert generation.execution is not model
+    assert model._generation_cache._cached[generation.key] is generation
+    reference = np.mean(
+        [_oracle(wealth=2.0, housing=1.0, shock=z)[:2] for z in (0.0, 3.0)], axis=0
+    )
+    assert _oracle(wealth=2.0, housing=1.0, shock=0.0)[6] == 0
+    assert _oracle(wealth=2.0, housing=1.0, shock=3.0)[6] == 1
+    np.testing.assert_almost_equal(
+        solution.values[1]["child"][1, 1], reference[0], decimal=DECIMAL_PRECISION
+    )
+    future = solution.replay_artifacts[
+        ArtifactRef(period=1, regime="child", key=CASE_U_FUTURE_REPLAY)
+    ]
+    assert isinstance(future, CaseUReplayChildren)
+    assert future.child_names == ("done",)
+    physical = np.asarray([0.0, 2.0, 3.0], dtype=canonical_float_dtype())
+    initial_conditions = {
+        "wealth": jnp.full(physical.shape, 2.0),
+        "housing": jnp.ones(physical.shape),
+        "age": jnp.ones(physical.shape),
+        "regime_id": jnp.full(
+            physical.shape, model.regime_names_to_ids["child"], jnp.int32
+        ),
+        "eps": PhysicalValues(values=physical),
+    }
+    result = model.simulate(
+        params=params,
+        solution=solution,
+        log_level="off",
+        seed=31,
+        initial_conditions=initial_conditions,
+    )
+    actual = result.raw_results["child"][1]
+    expected = np.asarray([_oracle(wealth=2.0, housing=1.0, shock=z) for z in physical])
+    np.testing.assert_array_almost_equal(
+        actual.actions["consumption"], expected[:, 2], decimal=DECIMAL_PRECISION
+    )
+    np.testing.assert_array_almost_equal(
+        actual.actions["investment"], expected[:, 4], decimal=DECIMAL_PRECISION
+    )
+    np.testing.assert_array_equal(actual.shocks["eps"], physical)
+    np.testing.assert_array_almost_equal(
+        result.raw_results["done"][2].states["wealth"],
+        expected[:, 3],
+        decimal=DECIMAL_PRECISION,
+    )
+    np.testing.assert_array_almost_equal(
+        result.raw_results["done"][2].states["housing"],
+        expected[:, 5],
+        decimal=DECIMAL_PRECISION,
+    )
+    assert float(actual.actions["investment"][2]) not in (-2.0, 0.0, 2.0)
+    assert float(actual.actions["consumption"][1]) not in (0.1, 5.0)
+    _assert_original_nnbegm_banks(model=generation.execution, future=future)
+    path = tmp_path / "public-nnbegm-default.lcm"
+    solution.save(path=path)
+    loaded = load_solution(path=path)
+    assert loaded._engine_view is None
+    fresh = _public_model_from_declarations(declarations=declarations)
+    replay = fresh.simulate(
+        params=params,
+        solution=loaded,
+        log_level="off",
+        seed=31,
+        initial_conditions=initial_conditions,
+    )
+    fresh_generation = fresh._generation_cache._cached[generation.key]
+    assert fresh_generation.key == generation.key
+    assert fresh_generation is not generation
+    assert fresh_generation.execution is not fresh
+    assert fresh_generation.execution is not generation.execution
+    assert_frame_equal(replay.to_dataframe(), result.to_dataframe(), check_exact=True)

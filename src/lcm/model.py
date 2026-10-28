@@ -1361,6 +1361,7 @@ class Model:
         )
         from _lcm.solution.nbegm import _BoundNBEGM  # noqa: PLC0415
         from _lcm.solution.negm import _BoundNEGM  # noqa: PLC0415
+        from _lcm.solution.nnbegm import _BoundNNBEGM  # noqa: PLC0415
 
         if (
             self._composite_states
@@ -1368,11 +1369,11 @@ class Model:
         ):
             raise UnsupportedOperationError(
                 "Public call-owned construction requires "
-                "current-IID DCEGM, NBEGM or NEGM declarations."
+                "current-IID DCEGM, NBEGM, NEGM or NNBEGM declarations."
             )
         representatives = prepared.prepared_structure.representative_user_regimes
         has_nested_source = any(
-            type(regime.solver) is _BoundNEGM
+            type(regime.solver) is _BoundNEGM or type(regime.solver) is _BoundNNBEGM
             for name, regime in representatives.items()
             if not prepared.prepared_structure.laws[name].terminal
         )
@@ -1394,7 +1395,7 @@ class Model:
                     )
                 continue
             solver = regime.solver
-            if type(solver) is _BoundNEGM:
+            if type(solver) is _BoundNEGM or type(solver) is _BoundNNBEGM:
                 # The original nested factory owns source/future geometry and
                 # finite-search admission with actual call-owned parameters.
                 continue
@@ -1412,7 +1413,7 @@ class Model:
                 raise UnsupportedOperationError(
                     f"Public call-owned source {name!r} requires original "
                     "one-state one-action DCEGM or NBEGM declarations, "
-                    "or original NEGM factory admission."
+                    "or original NEGM or NNBEGM factory admission."
                 )
         self._dated_parameters = self._prepare_dated_metadata(
             prepared=prepared, materializer=materializer
