@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "0523a2ad5d48a5491395b17196ad5483cb4195c919e98041b6f2b897283b72bd",
+  "source_inventory_sha256": "17b305e554c4e778f344190ea23d4e328b797c9e2decde3afc763e519d7bf2bb",
   "sources": [
     {
       "path": "src/_lcm/constraints/bounds.py",
@@ -318,7 +318,7 @@
     },
     {
       "path": "src/_lcm/regime_building/Q_and_F.py",
-      "sha256": "e8ac8633003f71a567be1633a178a90664e335fcec46e65ec37e998194722532"
+      "sha256": "0addee8dc9d16c95cd6ec0f82d30bc457d1a0481d5bbea57f5711ffd28e25825"
     },
     {
       "path": "src/_lcm/regime_building/age_normalization.py",
@@ -422,7 +422,7 @@
     },
     {
       "path": "src/_lcm/simulation/forward_program_profiles.py",
-      "sha256": "6dfc68b4698d0a04ec387d2bbe9648e49db0108e1f560e724fa0a95fa3d0c882"
+      "sha256": "38e010f032b30fcf51ddfb8d9df4723e3c08c8dcb2f526b928c5d1faa4c750ca"
     },
     {
       "path": "src/_lcm/simulation/gated_routing.py",
@@ -510,7 +510,7 @@
     },
     {
       "path": "src/_lcm/simulation/simulate.py",
-      "sha256": "94ea2cc448140dcdc746b742c43d60034a95b7bf3796f21903e0f0761916dfff"
+      "sha256": "ee5989242008a02a44011c04542285a9d5e0821db2c5dd962116f1b13724e55e"
     },
     {
       "path": "src/_lcm/simulation/solution_copies.py",

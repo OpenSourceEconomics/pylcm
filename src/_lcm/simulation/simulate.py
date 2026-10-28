@@ -64,6 +64,7 @@ from _lcm.regime_building.Q_and_F import (
     EDGE_REF_V_ARG,
     SAME_PERIOD_PARAMS_ARG,
     SAME_PERIOD_V_ARG,
+    has_action_integrity,
 )
 from _lcm.simulation import chunk_operations, population_operations
 from _lcm.simulation.additional_targets import _compute_targets
@@ -2299,8 +2300,8 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                     subject_arg_names=("in_regime", "genuine"),
                     subject_outputs=True,
                 )
-                if regime.simulation.post_decision_bounds
-                or regime.simulation.projected_forward_readers_by_period.get(period)
+                # The decision program declares the mask under this predicate.
+                if has_action_integrity(function=regime.simulation.Q_and_F[period])
                 else None
             )
             decision_outputs = execute_simulation_program(

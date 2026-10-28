@@ -212,11 +212,9 @@ def test_chunk_planning_publishes_one_executable_per_forward_program(
     step = ("age", "koopmans_aggregator__discount_factor", "period", "saving", "wealth")
     keys = sorted(map(_readable_key, observed[workers]["published"]), key=repr)
     assert keys == [
-        # The alive decision, over its two-point action product. Both decisions
-        # read the active-subject mask their action-integrity check needs.
+        # The alive decision, over its two-point action product.
         (
             (
-                "_lcm_active_subjects",
                 "age",
                 "koopmans_aggregator__discount_factor",
                 "next_regime_to_V_arr",
@@ -227,15 +225,11 @@ def test_chunk_planning_publishes_one_executable_per_forward_program(
             3,
             (("action_product", 2), ("subject", 3)),
         ),
-        # The terminal done decision.
-        (
-            ("_lcm_active_subjects", "age", "next_regime_to_V_arr", "period", "wealth"),
-            3,
-            (("subject", 3),),
-        ),
         # The alive transition and route, which read the same operands.
         (step, 3, (("subject", 3),)),
         (step, 3, (("subject", 3),)),
+        # The terminal done decision.
+        (("age", "next_regime_to_V_arr", "period", "wealth"), 3, (("subject", 3),)),
     ]
 
 

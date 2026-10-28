@@ -219,7 +219,7 @@ def has_arrival_queries(*, function: QAndFFunction) -> bool:
     )
 
 
-def has_projected_queries(*, function: QAndFFunction) -> bool:
+def has_projected_queries(*, function: Callable[..., PytreeValue]) -> bool:
     """Identify actual date-owned projected reads, independent of ordinary bounds."""
     return (
         isinstance(function, _QAndF | _CollectiveQAndF)
@@ -252,7 +252,7 @@ def projected_forward_readers(
     )
 
 
-def has_action_integrity(*, function: QAndFFunction) -> bool:
+def has_action_integrity(*, function: Callable[..., PytreeValue]) -> bool:
     """Actual bound and projected-read records use the same reduction transport."""
     return bool(runtime_bound_specs(function=function)) or has_projected_queries(
         function=function
