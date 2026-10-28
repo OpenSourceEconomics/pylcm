@@ -134,14 +134,33 @@ def test_ce_scaled_transport_batches_and_reduces_scalar_cotangent() -> None:
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
-def test_ce_scaled_transport_does_not_silently_differentiate_residuals() -> None:
+def test_ce_scaled_transport_differentiates_its_coefficient_to_second_order() -> None:
     one = jnp.asarray(1.0)
+    direction = jnp.asarray(1.5)
 
-    def changed_residual(logarithm: ScalarFloat) -> ScalarFloat:
-        return scale_ce_direction(logabs=logarithm, sign=one, direction=one)
+    def logarithmic(logarithm: ScalarFloat) -> ScalarFloat:
+        return scale_ce_direction(logabs=logarithm, sign=one, direction=direction)
 
-    with pytest.raises(NotImplementedError, match="first-order residuals only"):
-        jax.jvp(changed_residual, (one,), (one,))
+    def represented(coefficient: ScalarFloat) -> ScalarFloat:
+        return join_represented_ce_direction(
+            coefficient=coefficient, sign=one, base=one, direction=direction
+        )
+
+    logarithm, coefficient = jnp.asarray(0.25), jnp.asarray(2.0)
+    # d/dL (1.5 e^L) = 1.5 e^L at every order; d/dR (1 + 1.5 R) = 1.5, then 0.
+    expected = 1.5 * math.exp(0.25)
+    np.testing.assert_almost_equal(
+        jax.grad(logarithmic)(logarithm), expected, decimal=DECIMAL_PRECISION
+    )
+    np.testing.assert_almost_equal(
+        jax.grad(jax.grad(logarithmic))(logarithm), expected, decimal=DECIMAL_PRECISION
+    )
+    np.testing.assert_almost_equal(
+        jax.grad(represented)(coefficient), 1.5, decimal=DECIMAL_PRECISION
+    )
+    np.testing.assert_almost_equal(
+        jax.grad(jax.grad(represented))(coefficient), 0.0, decimal=DECIMAL_PRECISION
+    )
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
