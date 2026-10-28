@@ -896,6 +896,41 @@ def test_public_prepared_bad_params_and_capacity_refuse_before_factories(
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_public_case_r_archive_receiver_refuses_a_tight_budget_before_effect(
+    *, tmp_path: Path
+) -> None:
+    """A receiver whose budget cannot hold the replay refuses before it retains."""
+    declarations = _declarations()
+    result = _public_model_from_declarations(declarations=declarations).solve(
+        params=_params(), log_level="warning", max_compilation_workers=1
+    )
+    path = tmp_path / "tight-receiver.lcm"
+    result.save(path=path)
+    receiver = _public_model_from_declarations(
+        declarations=replace(
+            declarations,
+            execution_config=ExecutionConfig(device_memory_bytes=1 << 16),
+        )
+    )
+    with pytest.raises(
+        ExecutionPlanningError,
+        match="No workspace-width candidate fits the 65536-byte budget",
+    ):
+        receiver.simulate(
+            params=_params(),
+            solution=load_solution(path=path),
+            seed=19,
+            log_level="warning",
+            initial_conditions={
+                "regime_id": np.array([0]),
+                "age": np.array([0]),
+                "wealth": np.asarray([4.0], dtype=canonical_float_dtype()),
+            },
+        )
+    assert not receiver._generation_cache._cached
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
 def test_public_budgeted_case_r_archive_receiver_preserves_original_delivery(
     *, tmp_path: Path
 ) -> None:
