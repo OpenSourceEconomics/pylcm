@@ -153,7 +153,11 @@ def _utility(*, consumption: FloatND, **_kwargs: FloatND) -> FloatND:
 
 
 def _row() -> OwnedResourcesRow:
-    """An original owned flat-value row and its literal borrowing corner."""
+    """An original owned flat-value row and its literal borrowing corner.
+
+    The row saves 0.5, strictly above the 0.25 borrowing limit, so the row and
+    the corner are distinct actions.
+    """
     grid = jnp.asarray([1.0, 2.0])
     codes = jnp.zeros((2,), dtype=jnp.int32)
     return OwnedResourcesRow(
@@ -171,7 +175,7 @@ def _row() -> OwnedResourcesRow:
         ),
         marginal=jnp.zeros_like(grid),
         node_kind=jnp.full((2,), QueryNodeKind.FINITE, dtype=jnp.int32),
-        borrowing_limit=jnp.asarray(0.5),
+        borrowing_limit=jnp.asarray(0.25),
         upper_savings=jnp.asarray(2.0),
         expected_floor_value=jnp.asarray(0.0),
         discount_factor=jnp.asarray(1.0),

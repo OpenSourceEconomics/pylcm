@@ -130,7 +130,34 @@ def read_resources_candidate_details(
         & (selected.savings <= row.upper_savings)
         & (resources - selected.savings > 0.0)
     )
-    take_row = row_legal & (~finite_corner | (selected.value >= corner_value))
+    search, count = prepare_padded_grid(row.envelope.grid)
+    last = jnp.maximum(count - 1, 0)
+    insertion = jnp.searchsorted(search, resources, side="right")
+    exact_index = jnp.clip(insertion - 1, 0, last).astype(jnp.int32)
+    endpoint = (count > 0) & (
+        (row.envelope.grid[exact_index] == resources)
+        | (resources >= row.envelope.grid[last])
+    )
+    node_index = jnp.where(resources >= row.envelope.grid[last], last, exact_index)
+    upper = jnp.clip(insertion, 1, jnp.maximum(count - 1, 1)).astype(jnp.int32)
+    lower = upper - 1
+    indices, _, _ = _get_owned_local_piece(
+        grid=row.envelope.grid,
+        data=data,
+        supported_node=supported_node,
+        lower=lower,
+        upper=upper,
+        endpoint=endpoint,
+        node_index=node_index,
+        last=last,
+        use_left=(node_index == last) | (data.side_id[node_index] == -1),
+    )
+    # A piece whose records all save exactly the floor carries the corner action
+    # itself, so the literal corner, not its Hermite value read, owns it.
+    floor_piece = jnp.all(row.envelope.savings[indices] == row.borrowing_limit)
+    take_row = row_legal & (
+        ~finite_corner | (~floor_piece & (selected.value >= corner_value))
+    )
     feasible = domain & (row_legal | finite_corner)
     child_invalid = jnp.zeros((), dtype=jnp.bool_)
     for status in row.child_status or ():
@@ -178,28 +205,6 @@ def read_resources_candidate_details(
         valid=valid,
     )
 
-    search, count = prepare_padded_grid(row.envelope.grid)
-    last = jnp.maximum(count - 1, 0)
-    insertion = jnp.searchsorted(search, resources, side="right")
-    exact_index = jnp.clip(insertion - 1, 0, last).astype(jnp.int32)
-    endpoint = (count > 0) & (
-        (row.envelope.grid[exact_index] == resources)
-        | (resources >= row.envelope.grid[last])
-    )
-    node_index = jnp.where(resources >= row.envelope.grid[last], last, exact_index)
-    upper = jnp.clip(insertion, 1, jnp.maximum(count - 1, 1)).astype(jnp.int32)
-    lower = upper - 1
-    indices, _, _ = _get_owned_local_piece(
-        grid=row.envelope.grid,
-        data=data,
-        supported_node=supported_node,
-        lower=lower,
-        upper=upper,
-        endpoint=endpoint,
-        node_index=node_index,
-        last=last,
-        use_left=(node_index == last) | (data.side_id[node_index] == -1),
-    )
     return result, row_legal, indices[0]
 
 

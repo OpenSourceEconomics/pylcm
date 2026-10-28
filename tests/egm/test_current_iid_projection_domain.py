@@ -61,7 +61,9 @@ def _scaled_resources(*, liquid: ScalarFloat, eps: ScalarFloat) -> ScalarFloat:
 
 
 def _corner_utility(consumption: ScalarFloat) -> ScalarFloat:
-    return 0.5 + jnp.exp(-jnp.square((consumption - 0.87) / 0.01))
+    # Corner consumption is R - 0.25, so the bump lifts the corner above the flat
+    # row only near R = 1.37, between the 1.25/1.5/1.75 refinement probes.
+    return 0.5 + jnp.exp(-jnp.square((consumption - 1.12) / 0.01))
 
 
 def _unit_utility(consumption: ScalarFloat) -> ScalarFloat:
@@ -73,7 +75,11 @@ def _identity_query(savings: ScalarFloat) -> ScalarFloat:
 
 
 def _reference(*, liquid_grid: Float1D, capacity: int) -> ProjectedResourcesReference:
-    """Bind a flat owned candidate and a narrow smooth competing corner."""
+    """Bind a flat owned candidate and a narrow smooth competing corner.
+
+    The row saves 0.5, strictly above the 0.25 borrowing limit, so it is an
+    interior action distinct from the literal corner it competes with.
+    """
     grid = jnp.asarray([1.0, 2.0], dtype=liquid_grid.dtype)
     row = OwnedResourcesRow(
         envelope=OwnedEnvelope(
@@ -90,7 +96,7 @@ def _reference(*, liquid_grid: Float1D, capacity: int) -> ProjectedResourcesRefe
         ),
         marginal=jnp.zeros_like(grid),
         node_kind=jnp.full((2,), QueryNodeKind.FINITE, dtype=jnp.int32),
-        borrowing_limit=jnp.asarray(0.5, dtype=grid.dtype),
+        borrowing_limit=jnp.asarray(0.25, dtype=grid.dtype),
         upper_savings=jnp.asarray(2.0, dtype=grid.dtype),
         expected_floor_value=jnp.asarray(0.0, dtype=grid.dtype),
         discount_factor=jnp.asarray(1.0, dtype=grid.dtype),
