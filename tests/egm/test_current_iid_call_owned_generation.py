@@ -42,6 +42,7 @@ from lcm import (
 from lcm.exceptions import (
     ExecutionPlanningError,
     InvalidParamsError,
+    InvalidValueFunctionError,
     ModelSealError,
     ShockDeclarationError,
     SolutionIntegrityError,
@@ -626,6 +627,27 @@ def _public_model_from_declarations(*, declarations: _ModelConstructorInputs) ->
             if field.init
         }
     )
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_public_case_r_refuses_an_exhausted_projection_capacity() -> None:
+    """A row that cannot meet its budgets within capacity refuses, never truncates."""
+    declarations = _declarations()
+    child = declarations.regimes["child"]
+    assert isinstance(child.solver, DCEGM)
+    child = replace(
+        child, solver=replace(child.solver, current_iid_projection_capacity=16)
+    )
+    model = _public_model_from_declarations(
+        declarations=replace(
+            declarations, regimes={**declarations.regimes, "child": child}
+        )
+    )
+    with pytest.raises(
+        InvalidValueFunctionError,
+        match=r"Invalid projected continuation .* regime 'child', period 1",
+    ):
+        model.solve(params=_params(), log_level="warning", max_compilation_workers=1)
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
