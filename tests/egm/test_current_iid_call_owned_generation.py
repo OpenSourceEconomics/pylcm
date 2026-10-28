@@ -5,9 +5,10 @@ import sys
 from dataclasses import fields, replace
 from pathlib import Path
 from types import FunctionType, MappingProxyType
-from typing import Never
+from typing import Never, cast
 
 import cloudpickle
+import h5py
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -43,6 +44,7 @@ from lcm.exceptions import (
     InvalidParamsError,
     ModelSealError,
     ShockDeclarationError,
+    SolutionIntegrityError,
     UnsupportedOperationError,
 )
 from lcm.model import _ModelConstructorInputs
@@ -62,6 +64,11 @@ from tests.egm.test_current_iid_parent_demands import (
     _savings,
     _terminal,
     _utility,
+)
+from tests.solution.test_solution_persistence import (
+    _MutableJSONValue,
+    _read_manifest,
+    _replace_manifest,
 )
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
@@ -619,6 +626,62 @@ def _public_model_from_declarations(*, declarations: _ModelConstructorInputs) ->
             if field.init
         }
     )
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+@pytest.mark.parametrize(
+    ("defect", "match"),
+    [
+        ("corrupted", "leaf 0 checksum does not match"),
+        ("dropped", "do not exactly cover its artifact descriptors"),
+    ],
+)
+def test_public_case_r_archive_refuses_a_damaged_replay_payload(
+    *, defect: str, match: str, tmp_path: Path
+) -> None:
+    """A fresh Model never replays from a damaged or missing Case-R row."""
+    declarations = _declarations()
+    result = _public_model_from_declarations(declarations=declarations).solve(
+        params=_params(), log_level="warning", max_compilation_workers=1
+    )
+    path = tmp_path / "public-case-r.lcm"
+    result.save(path=path)
+    with h5py.File(path, "r+") as archive:
+        manifest = _read_manifest(archive)
+        artifacts = cast("list[dict[str, _MutableJSONValue]]", manifest["artifacts"])
+        (entry,) = (
+            entry
+            for entry in artifacts
+            if cast(
+                "dict[str, _MutableJSONValue]",
+                cast("list[dict[str, _MutableJSONValue]]", entry["leaves"])[0][
+                    "identity"
+                ],
+            )["type_id"]
+            == CASE_R_RESOURCES_REPLAY.type_id
+        )
+        if defect == "corrupted":
+            leaves = cast("list[dict[str, str]]", entry["leaves"])
+            dataset = archive[leaves[0]["dataset"]]
+            leaf = dataset[()]
+            leaf[0] += 1.0
+            dataset[...] = leaf
+        else:
+            artifacts.remove(entry)
+            _replace_manifest(archive=archive, manifest=manifest)
+    fresh = _public_model_from_declarations(declarations=declarations)
+    with pytest.raises(SolutionIntegrityError, match=match):
+        fresh.simulate(
+            params=_params(),
+            solution=load_solution(path=path),
+            seed=19,
+            log_level="warning",
+            initial_conditions={
+                "regime_id": np.array([0]),
+                "age": np.array([0]),
+                "wealth": np.array([4.0]),
+            },
+        )
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
