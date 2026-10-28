@@ -543,6 +543,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
 
     # Resolve every solve program, then compile unique lowerings when enabled.
     diagnostics_enabled = validation_enabled(logger)
+    narrowings = 0
     while True:
         try:
             compiled_programs = _compile_all_functions(
@@ -582,6 +583,16 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             )
             break
         except _CellBudgetError as error:
+            narrowings += 1
+            regime_name, period, core_key = error.triple
+            logger.info(
+                "Workspace narrowing %d: %r at %r period %d refused; %s",
+                narrowings,
+                core_key,
+                regime_name,
+                period,
+                error,
+            )
             regimes = _narrow_native_closure(regimes=regimes, error=error)
     compiled_functions = compiled_programs.executables
     replay_dispatches = {

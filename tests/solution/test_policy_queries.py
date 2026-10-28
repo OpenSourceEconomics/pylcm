@@ -4,6 +4,7 @@ The private adapter installed below is a stage fixture. Public Exit declarations
 and integrated collective publication are qualified by their own later stages.
 """
 
+import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -1030,6 +1031,40 @@ def test_recomputation_materially_admits_a_smaller_native_budget(
     result = model.solve(params={}, log_level="debug", runtime_checks=False)
     assert selected == [(True, 2)]
     np.testing.assert_array_equal(result.values[0]["root"], [[0, 3], [1, 4], [2, 5]])
+
+
+def test_each_budget_narrowing_names_its_refused_cell(
+    *, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A narrowing retry logs the refused triple and its budget refusal."""
+    records = []
+    log_record = backward._log_core_plan_record
+
+    def record(**kwargs):
+        records.append(kwargs)
+        return log_record(**kwargs)
+
+    monkeypatch.setattr(backward, "_log_core_plan_record", record)
+    model = _native_model(enable_jit=True, target_roles=64, budget=2**26)
+    _fanout_kernel(model=model, recompute=True)
+    model.solve(params={}, log_level="debug", runtime_checks=False)
+    budget = max(
+        item["memory"].reservation_bytes + item["resident_bytes"] for item in records
+    )
+    model = _native_model(enable_jit=True, target_roles=64, budget=budget)
+    _fanout_kernel(model=model, recompute=False)
+    with caplog.at_level(logging.INFO, logger="lcm"):
+        model.solve(params={}, log_level="progress", runtime_checks=False)
+    narrowings = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("Workspace narrowing ")
+    ]
+    assert narrowings
+    for attempt, message in enumerate(narrowings, start=1):
+        assert message.startswith(f"Workspace narrowing {attempt}: ")
+        assert " at 'root' period 0 refused; " in message
+        assert "cannot select a workspace width" in message
 
 
 @pytest.mark.parametrize("mutation", ["missing", "generation", "omitted", "duplicate"])
