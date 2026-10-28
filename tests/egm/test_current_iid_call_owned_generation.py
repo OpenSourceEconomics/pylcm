@@ -662,6 +662,49 @@ def test_public_case_r_row_matches_the_literal_economics_off_the_child_grid() ->
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_public_case_r_replay_matches_the_literal_policy_at_off_node_shocks() -> None:
+    """Physical replay at drawn, off-node shocks follows the closed-form policy.
+
+    Every Euler point of this log/log child lies on c = R/2, so its exact
+    envelope is c = (w + eps)/2 for any realized resources whose half lies on
+    the saving-grid span. Drawn shocks are not quadrature nodes {0, 1}; the
+    next state equals the saving R - c because the law's slope is one.
+    """
+    model = _public_model_from_declarations(declarations=_declarations())
+    params = _params()
+    result = model.solve(params=params, log_level="warning", max_compilation_workers=1)
+    n_subjects = 8
+    frame = model.simulate(
+        params=params,
+        solution=result,
+        seed=19,
+        log_level="warning",
+        initial_conditions={
+            "regime_id": np.zeros(n_subjects, dtype=int),
+            "age": np.zeros(n_subjects, dtype=int),
+            "wealth": np.linspace(2.5, 4.0, n_subjects, dtype=canonical_float_dtype()),
+        },
+    )
+    child = frame.raw_results["child"][1]
+    done = frame.raw_results["done"][2]
+    wealth = np.asarray(child.states["wealth"])
+    shock = np.asarray(child.shocks["eps"])
+    consumption = np.asarray(child.actions["consumption"])
+    assert not np.isin(shock, [0.0, 1.0]).any()
+    resources = wealth + shock
+    assert (resources / 2.0 >= 0.25).all()
+    assert (resources / 2.0 <= 12.75).all()
+    tolerance = max(1e-4, 8 * np.sqrt(np.finfo(consumption.dtype).eps))
+    np.testing.assert_allclose(consumption, resources / 2.0, rtol=0, atol=tolerance)
+    np.testing.assert_allclose(
+        np.asarray(done.states["wealth"]),
+        resources - consumption,
+        rtol=0,
+        atol=tolerance,
+    )
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
 def test_public_case_r_refuses_an_exhausted_projection_capacity() -> None:
     """A row that cannot meet its budgets within capacity refuses, never truncates."""
     declarations = _declarations()
