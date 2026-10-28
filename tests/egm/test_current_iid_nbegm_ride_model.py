@@ -10,6 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.current_iid_case_u_replay import CASE_U_FUTURE_REPLAY, CaseUReplayChildren
 from _lcm.egm.projected_continuation import (
     PROJECTED_EGM_CONTINUATION,
@@ -28,6 +29,7 @@ from lcm import (
     Model,
     categorical,
 )
+from lcm.model import _ModelConstructorInputs
 from lcm.persistence import load_solution
 from lcm.shocks import PhysicalValues, ShockGroup, Uniform, UserNodes
 from lcm.solver_api import ArtifactRef, ResultRetention, SolutionResult
@@ -95,7 +97,7 @@ def _params(*, tie: bool = False) -> UserParams:
     }
 
 
-def _model(*, tie: bool = False) -> Model:
+def _declarations() -> _ModelConstructorInputs:
     declarations = _actual_declarations()
     original = declarations.regimes["child"]
     assert isinstance(original, ConsumptionSavingsRegime)
@@ -132,25 +134,28 @@ def _model(*, tie: bool = False) -> Model:
         },
         functions={"utility": _terminal},
     )
+    return replace(
+        declarations,
+        regimes={"child": child, "done": done},
+        initial_nodes=InitialNodes(by_age={1: "child"}),
+        edges={"child": {"done": (1,)}},
+        regime_id_class=_ReplayRegime,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
+        shocks={
+            "income": ShockGroup(
+                shocks={"eps": Uniform(start=0.0, stop=1.0)},
+                nodes=UserNodes(
+                    nodes=jnp.asarray([[0.0], [1.0]]),
+                    weights=jnp.asarray([0.5, 0.5]),
+                ),
+            )
+        },
+    )
+
+
+def _model(*, tie: bool = False) -> Model:
     return Model._from_call_owned_params(
-        declarations=replace(
-            declarations,
-            regimes={"child": child, "done": done},
-            initial_nodes=InitialNodes(by_age={1: "child"}),
-            edges={"child": {"done": (1,)}},
-            regime_id_class=_ReplayRegime,
-            execution_config=ExecutionConfig(device_memory_bytes=None),
-            shocks={
-                "income": ShockGroup(
-                    shocks={"eps": Uniform(start=0.0, stop=1.0)},
-                    nodes=UserNodes(
-                        nodes=jnp.asarray([[0.0], [1.0]]),
-                        weights=jnp.asarray([0.5, 0.5]),
-                    ),
-                )
-            },
-        ),
-        params=_params(tie=tie),
+        declarations=_declarations(), params=_params(tie=tie)
     )
 
 
@@ -226,7 +231,7 @@ def test_nbegm_ride_u_model_selects_each_branch_before_current_expectation(
                 )
     wealth = np.asarray([1.5, 1.5, 3.0, 3.0, 3.0])
     q = np.asarray([0.0, 1.0, 0.25, 1.0, 0.25])
-    shocks = np.asarray([0.0, 1.0, 0.0, 1.0, 0.5])
+    shocks = np.asarray([0.0, 1.0, 0.0, 1.0, 0.5], dtype=canonical_float_dtype())
     initial = {
         "wealth": jnp.asarray(wealth),
         "q": jnp.asarray(q),
@@ -483,3 +488,108 @@ def _bank_oracle(
                     )
         branches.append(max(candidates, key=lambda row: row[0]))
     return max(branches, key=lambda row: row[0])
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_public_nbegm_ride_u_default_archive_replays_original_physics(
+    *, tmp_path: Path
+) -> None:
+    """Public construction retains the original branch owner through fresh replay."""
+    from pandas.testing import assert_frame_equal  # noqa: PLC0415
+
+    from _lcm.solution.artifacts import OwnedSolutionView  # noqa: PLC0415
+    from tests.egm.test_current_iid_call_owned_generation import (  # noqa: PLC0415
+        _public_model_from_declarations,
+    )
+
+    declarations = _declarations()
+    params = _params()
+    model = _public_model_from_declarations(declarations=declarations)
+    solution = model.solve(params=params, log_level="off")
+    assert solution.metadata.retention is ResultRetention.VALUES_AND_REPLAY
+    assert ArtifactRef(
+        period=1, regime="child", key=PROJECTED_EGM_CONTINUATION
+    ) not in (solution.retained_continuations)
+    future = solution.replay_artifacts[
+        ArtifactRef(period=1, regime="child", key=CASE_U_FUTURE_REPLAY)
+    ]
+    assert isinstance(future, CaseUReplayChildren)
+    assert future.child_names == ("done",)
+    view = solution._engine_view
+    assert isinstance(view, OwnedSolutionView)
+    generation = view.generation
+    assert generation is not None
+    assert generation.execution is not model
+    assert model._generation_cache._cached[generation.key] is generation
+    expected_values = np.asarray(
+        [
+            [
+                np.mean([_oracle(wealth=w, q=q, shock=z)[0] for z in (0.0, 1.0)])
+                for q in (0.0, 1.0)
+            ]
+            for w in (1.5, 3.0)
+        ]
+    )
+    np.testing.assert_array_almost_equal(
+        solution.values[1]["child"], expected_values, decimal=DECIMAL_PRECISION
+    )
+    wealth = np.asarray([1.5, 1.5, 3.0, 3.0, 3.0])
+    q = np.asarray([0.0, 1.0, 0.25, 1.0, 0.25])
+    shocks = np.asarray([0.0, 1.0, 0.0, 1.0, 0.5], dtype=canonical_float_dtype())
+    initial = {
+        "wealth": jnp.asarray(wealth),
+        "q": jnp.asarray(q),
+        "age": jnp.ones(wealth.shape),
+        "regime_id": jnp.full(
+            wealth.shape, model.regime_names_to_ids["child"], jnp.int32
+        ),
+        "eps": PhysicalValues(values=shocks),
+    }
+    result = model.simulate(
+        params=params,
+        initial_conditions=initial,
+        solution=solution,
+        seed=17,
+        log_level="off",
+    )
+    original = result.raw_results["child"][1]
+    expected = np.asarray(
+        [
+            _bank_oracle(wealth=w, q=a, shock=z)
+            for w, a, z in zip(wealth, q, shocks, strict=True)
+        ]
+    )
+    np.testing.assert_array_equal(original.actions["work"], expected[:, 4])
+    np.testing.assert_array_almost_equal(
+        original.actions["consumption"], expected[:, 2], decimal=DECIMAL_PRECISION
+    )
+    np.testing.assert_array_equal(original.shocks["eps"], shocks)
+    np.testing.assert_array_almost_equal(
+        result.raw_results["done"][2].states["wealth"],
+        expected[:, 3],
+        decimal=DECIMAL_PRECISION,
+    )
+    np.testing.assert_array_almost_equal(
+        result.raw_results["done"][2].states["q"],
+        q + 0.25 * expected[:, 4],
+        decimal=DECIMAL_PRECISION,
+    )
+    _assert_original_native_tuple(model=generation.execution, solution=solution)
+    path = tmp_path / "public-nbegm-ride-default.lcm"
+    solution.save(path=path)
+    loaded = load_solution(path=path)
+    assert loaded._engine_view is None
+    fresh = _public_model_from_declarations(declarations=declarations)
+    replay = fresh.simulate(
+        params=params,
+        initial_conditions=initial,
+        solution=loaded,
+        seed=17,
+        log_level="off",
+    )
+    fresh_generation = fresh._generation_cache._cached[generation.key]
+    assert fresh_generation.key == generation.key
+    assert fresh_generation is not generation
+    assert fresh_generation.execution is not fresh
+    assert fresh_generation.execution is not generation.execution
+    assert_frame_equal(replay.to_dataframe(), result.to_dataframe(), check_exact=True)

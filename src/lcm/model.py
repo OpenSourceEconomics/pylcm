@@ -1372,8 +1372,12 @@ class Model:
                 "current-IID DCEGM, NBEGM, NEGM or NNBEGM declarations."
             )
         representatives = prepared.prepared_structure.representative_user_regimes
-        has_nested_source = any(
-            type(regime.solver) is _BoundNEGM or type(regime.solver) is _BoundNNBEGM
+        # Nested sources and NB ride sources carry passive states into their
+        # terminal; the original factories admit their source geometry.
+        has_multistate_source = any(
+            type(regime.solver) is _BoundNEGM
+            or type(regime.solver) is _BoundNNBEGM
+            or (type(regime.solver) is _BoundNBEGM and len(regime.states) > 1)
             for name, regime in representatives.items()
             if not prepared.prepared_structure.laws[name].terminal
         )
@@ -1383,7 +1387,7 @@ class Model:
                 if (
                     type(regime.solver) is not GridSearch
                     or regime.actions
-                    or (not has_nested_source and len(regime.states) != 1)
+                    or (not has_multistate_source and len(regime.states) != 1)
                     or not all(
                         isinstance(grid, ContinuousGrid)
                         for grid in regime.states.values()
@@ -1395,9 +1399,13 @@ class Model:
                     )
                 continue
             solver = regime.solver
-            if type(solver) is _BoundNEGM or type(solver) is _BoundNNBEGM:
-                # The original nested factory owns source/future geometry and
-                # finite-search admission with actual call-owned parameters.
+            if (
+                type(solver) is _BoundNEGM
+                or type(solver) is _BoundNNBEGM
+                or (type(solver) is _BoundNBEGM and len(regime.states) > 1)
+            ):
+                # The original nested and NB ride factories own source/future
+                # geometry and admission with actual call-owned parameters.
                 continue
             if (
                 (type(solver) is not _BoundDCEGM and type(solver) is not _BoundNBEGM)
