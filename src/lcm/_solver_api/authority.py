@@ -471,6 +471,15 @@ def _bind_artifact_authority_template(
         _ARTIFACT_AUTHORITY_TEMPLATE_BINDINGS[identity] = binding
 
 
+@runtime_checkable
+class _ArrayCopier(Protocol):
+    """Call-local physical copy dependency; never retained by a public store."""
+
+    def __call__(self, *, leaf: jax.Array, label: str) -> jax.Array:
+        """Return one independent array preserving exact dtype, shape and layout."""
+        ...
+
+
 # keyword-only-exempt: primary-argument=authority
 def _artifact_authority_template_snapshot(
     authority: ArtifactAuthority,
@@ -724,15 +733,6 @@ def _payload_has_runtime_type(
         if expected is jax.Array
         else type(payload) is expected
     )
-
-
-@runtime_checkable
-class _ArrayCopier(Protocol):
-    """Call-local physical copy dependency; never retained by a public store."""
-
-    def __call__(self, *, leaf: jax.Array, label: str) -> jax.Array:
-        """Return one independent array preserving exact dtype, shape and layout."""
-        ...
 
 
 def _copy_artifact_array_leaf(
