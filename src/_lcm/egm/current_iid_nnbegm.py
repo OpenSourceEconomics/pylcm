@@ -722,7 +722,17 @@ _ORIGINAL_NNBEGM_METHODS = tuple(
     if inspect.isfunction(method)
     and (
         name == "__init__"
-        or name not in {"__repr__", "__eq__", "__hash__", "__setattr__", "__delattr__"}
+        # beartype monkey-patches a `__sizeof__` attribute cache onto checked
+        # classes; it wraps `object.__sizeof__` and is not engine code.
+        or name
+        not in {
+            "__repr__",
+            "__eq__",
+            "__hash__",
+            "__setattr__",
+            "__delattr__",
+            "__sizeof__",
+        }
     )
     for raw in (inspect.unwrap(method),)
 ) + tuple(

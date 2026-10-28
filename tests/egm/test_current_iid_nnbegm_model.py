@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from _lcm.egm.current_iid_case_u_replay import CASE_U_FUTURE_REPLAY, CaseUReplayChildren
+from _lcm.egm.current_iid_nnbegm import _ORIGINAL_NNBEGM_METHODS
 from _lcm.egm.projected_continuation import (
     PROJECTED_EGM_CONTINUATION,
     ProjectedEGMCarry,
@@ -884,3 +885,10 @@ def test_nnbegm_shape_capture_refuses_nested_host_or_plan_alias(*, branch: str) 
         assert not owner._pending
     finally:
         owner.close()
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_original_nnbegm_method_snapshot_excludes_beartype_sizeof_cache() -> None:
+    """The original-method snapshot holds only Python engine code."""
+    assert all(row[1] != "__sizeof__" for row in _ORIGINAL_NNBEGM_METHODS)
+    assert all(row[5] is row[4].__code__ for row in _ORIGINAL_NNBEGM_METHODS)
