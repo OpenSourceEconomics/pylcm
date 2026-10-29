@@ -367,7 +367,10 @@ class DCEGM(OneMarginSolver):
     )
     """Case-U reconstruction, or explicit approximate Cartesian replay.
 
-    Other solver-family replay routes keep their existing semantics.
+    For a plain DC-EGM regime, `"candidate"` simulates policy-first (the solved
+    policy rows are read at each subject's resources) and `"grid"` re-maximizes
+    over the Cartesian action grid. Other solver-family replay routes keep their
+    existing semantics.
     """
 
     accuracy: EGMAccuracy = field(

@@ -349,7 +349,6 @@ from lcm.solvers import (
     DCEGM,
     NNBEGM,
     AdaptiveOuterMesh,
-    EnvelopeConfig,
     FiniteOuterGrid,
     GridSearch,
     Solver,
@@ -7442,19 +7441,13 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     )
     next_state = next_state_build.by_period
 
-    # Replaying a solve-phase EGM policy is disabled until an envelope backend
-    # proves the complete read contract. The required proof covers both branch
-    # topology (every interior and exact-node switch is represented with
-    # one-sided records) and row support (a compacted gap is reported rather
-    # than bridged by interpolation). No shipped backend currently proves both:
-    # FUES can merge branches when its slope heuristic misses a switch, RFC and LTM
-    # leave switches between retained nodes, and the exact backend publishes no
-    # support verdict for a split segment chain.
-    #
-    # The remaining conditions below define the other invariants a future
-    # crossing-complete backend must satisfy: standalone DC-EGM, phase-invariant
+    # Simulation reads the solve-phase EGM policy (policy-first) wherever the
+    # published rows sit on the coordinates the subject is read at: standalone
+    # DC-EGM with its default `replay="candidate"`, phase-invariant
     # declarations, no taste shocks, no process or passive continuous-state row
-    # axes, and the single-post-state kernel.
+    # axes, a scalar savings floor, and the single-post-state kernel. Every
+    # upper-envelope backend qualifies; a read that leaves its row support falls
+    # back to the grid argmax per subject.
     phase_invariant = (
         not regime_declares_phased(user_regime, law=law)
         and not spec.carried_only_state_names
@@ -7616,7 +7609,14 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         )
     elif (
         bound_solver is not None
-        and _envelope_publishes_crossings(bound_solver)
+        and bound_solver.replay == "candidate"
+        and case_r_replay_spec is None
+        and case_u_replay_spec is None
+        and external_replay_route is None
+        and not replay_unsupported
+        # The read checks one scalar savings floor; a state-dependent (DAG)
+        # borrowing limit keeps the grid argmax.
+        and not any(bound.kind == "dag" for bound in post_decision_bounds)
         and phase_invariant
         and not has_taste_shocks
         and not _regime_has_process_state(own_v_info)
@@ -7808,42 +7808,6 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
             else simulation_context
         ),
     )
-
-
-# Upper envelopes whose published row carries every switch a read crosses.
-# Empty: no shipped backend provides the guarantee, so the branch-faithful policy
-# read is off and simulation keeps its grid-argmax. An envelope earns a place here
-# by passing the crossing- and support-completeness suites, not by intending to.
-_CROSSING_COMPLETE_ENVELOPES: tuple[type[EnvelopeConfig], ...] = ()
-
-
-def _envelope_publishes_crossings(solver: DCEGM) -> bool:
-    """Whether the solver's upper envelope certifies every segment crossing.
-
-    No shipped backend qualifies, so the read is off everywhere and simulation
-    keeps its grid-argmax. A branch-faithful policy read interpolates a row whose
-    envelope switches sit at duplicated abscissae carrying both branch records:
-
-    - `ExactEnvelope` ⇒ no: ownership is resolved per node cell and certified,
-      a boundary whose sides differ in value or policy emits both one-sided
-      records, and a chain with more owned sub-cells than the row has slots
-      overflows loudly through `n_kept`. The backend nevertheless publishes no
-      read-support verdict, so a row whose segment chain splits (NaN-dead
-      candidates, or a value decrease between consecutive candidates) carries
-      no signal that the reader would be bridging a gap rather than
-      interpolating one branch.
-    - `FUESEnvelope` ⇒ no: segment identity is decided by thresholding the
-      implied-savings slope (`FUESEnvelope.jump_thresh`) — a heuristic — and the
-      DC-EGM kernel supplies no segment labels. Two value branches whose
-      cross-segment slope stays below the threshold merge into one row with
-      no crossing inserted; the row then bridges the switch, and neither an
-      exhaustive scan nor a wider window repairs that, because the scan can
-      only search within the segment identity it was given. A FUES row is
-      therefore not certified crossing-complete for the read.
-    - `RFCEnvelope` / `LTMEnvelope` ⇒ no: the switch lands between retained
-      nodes.
-    """
-    return isinstance(solver.envelope, _CROSSING_COMPLETE_ENVELOPES)
 
 
 def _regime_has_process_state(v_interpolation_info: VInterpolationInfo) -> bool:

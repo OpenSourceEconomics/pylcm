@@ -26,9 +26,10 @@ from _lcm.egm.outer_inversion import DeclaredOuterInverse
 from _lcm.egm.outer_refinement import safeguarded_continuous_argmax
 from _lcm.egm.outer_replay_capability import OuterReplayCapability
 from _lcm.egm.published_policy import EGMSimPolicy
-from _lcm.engine import Regime
+from _lcm.engine import EGMPolicyRead, Regime
 from _lcm.simulation.simulate import (
     _interp_rows_with_support,
+    _read_egm_policy_first,
     _replace_continuous_action_with_policy_read,
 )
 from _lcm.utils.logging import get_logger
@@ -114,65 +115,60 @@ def test_policy_read_stays_piecewise_linear():
     assert float(policy[0]) == pytest.approx(0.75, abs=1e-9)
 
 
-def test_policy_replacement_reports_the_value_of_the_emitted_action(monkeypatch):
-    """An accepted off-grid action and its canonical value are published together."""
-    read = SimpleNamespace(
+def test_policy_first_reports_the_read_value_of_the_emitted_action(monkeypatch):
+    """The policy-first decision reports the read value of the action it emits.
+
+    On nodes `(1, 0)`, `(2, log 2)` with slopes `(1, 1/2)` the subject at
+    resources `1.5` consumes the linear policy read `0.75` and reports the
+    cubic Hermite value read `0.40907`; the subject at `3.0` is off the row's
+    support and is rejected for the grid argmax.
+    """
+    read = EGMPolicyRead(
         action_name="consumption",
+        resources_target="resources",
         savings_lower_bound=0.0,
-        payload_type=EGMSimPolicy,
-        consumer_route="egm_off_grid",
+        row_discrete_state_names=(),
+        row_passive_state_names=(),
+        row_discrete_action_names=(),
+        row_axis_lengths_by_period=MappingProxyType({0: ()}),
+        float_dtype="float64",
     )
-    regime = _StubRegime(
-        simulation=SimpleNamespace(
-            egm_policy_read=read,
-            replay_route=read,
-            grids={},
-        )
-    )
+    regime = _StubRegime(simulation=SimpleNamespace(egm_policy_read=read, grids={}))
     sim_policy = EGMSimPolicy(
-        endog_grid=jnp.array([0.0, 1.0]),
-        policy=jnp.array([0.2, 0.8]),
-        value=jnp.array([1.0, 2.0]),
+        endog_grid=jnp.array([1.0, 2.0]),
+        policy=jnp.array([0.5, 1.0]),
+        value=jnp.array([0.0, jnp.log(2.0)]),
         marginal_utility=jnp.array([1.0, 0.5]),
     )
+    resources = jnp.array([1.5, 3.0])
     monkeypatch.setattr(
         simulation_module,
-        "_resources_at_subjects",
-        lambda **_kwargs: jnp.array([1.0]),
-    )
-    monkeypatch.setattr(
-        simulation_module,
-        "_interp_rows_with_support",
-        lambda **_kwargs: (jnp.array([0.6]), jnp.array([True])),
+        "_compute_targets",
+        lambda **_kwargs: {"resources": resources},
     )
     monkeypatch.setattr(
         simulation_module,
         "_canonical_Q_at_actions",
-        lambda **_kwargs: (jnp.array([7.0]), jnp.array([True])),
-    )
-    monkeypatch.setattr(
-        simulation_module,
-        "_evaluate_canonical_Q_at_actions",
-        lambda **_kwargs: (jnp.array([7.0]), jnp.array([True])),
+        lambda **_kwargs: (jnp.full(2, jnp.nan), jnp.ones(2, dtype=bool)),
     )
 
-    _, reported_value, _ = _replace_continuous_action_with_policy_read(
-        optimal_actions=MappingProxyType({"consumption": jnp.array([0.5])}),
+    actions, value, accepted = _read_egm_policy_first(
         regime=regime,
         sim_policy=sim_policy,
-        states=MappingProxyType({"wealth": jnp.array([1.0])}),
+        states=MappingProxyType({"wealth": resources}),
+        canonical_states=MappingProxyType({"wealth": resources}),
+        action_names=("consumption",),
+        action_dtypes={"consumption": resources.dtype},
+        next_regime_to_V_arr=MappingProxyType({}),
         flat_params=MappingProxyType({}),
         period=0,
         age=jnp.asarray(40.0),
-        canonical_states=MappingProxyType({"wealth": jnp.array([1.0])}),
-        action_names=("consumption",),
-        next_regime_to_V_arr=MappingProxyType({}),
-        grid_values=jnp.array([5.0]),
-        in_regime=jnp.ones(1, dtype=bool),
-        logger=_SILENT,
+        in_regime=jnp.ones(2, dtype=bool),
     )
 
-    assert float(reported_value[0]) == 7.0
+    assert float(actions["consumption"][0]) == pytest.approx(0.75, abs=1e-9)
+    assert float(value[0]) == pytest.approx(0.4090736, abs=1e-6)
+    assert np.asarray(accepted).tolist() == [True, False]
 
 
 def test_nested_policy_replacement_keeps_only_canonically_better_pairs(

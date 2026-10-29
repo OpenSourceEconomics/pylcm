@@ -2289,7 +2289,10 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             )
 
         def decide(
-            *, space: StateActionSpace, in_regime: Bool1D
+            *,
+            space: StateActionSpace,
+            in_regime: Bool1D,
+            accepted: BoolND | None = None,
         ) -> tuple[IntND, FloatND, int]:
             nonlocal current_shocks
             active_subjects = (
@@ -2401,6 +2404,9 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                     n_subjects=n_chunk_subjects,
                     memory=memory,
                 )
+            if accepted is not None:
+                # A subject the policy read decided is never an empty grid row.
+                indices = jnp.where(accepted, jnp.maximum(indices, 0), indices)
             first_empty = run_simulation_operation(
                 memory=memory,
                 function=_first_empty_action_row,
@@ -2409,119 +2415,190 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             ).item()
             return indices, values, int(first_empty)
 
-        indices_optimal_actions, V_arr, empty_row = decide(
-            space=state_action_space, in_regime=subject_ids_in_regime
-        )
-        if empty_row >= 0 and sim_policy is None and entered_through is not None:
-            (
-                states,
-                subject_regime_ids,
-                own_stakeholder,
-                new_subject_regime_ids,
-                new_own_stakeholder,
-                entered_through,
-                subject_ids_in_regime,
-                empty_row,
-                redecide,
-            ) = _take_dissolution_routes(
-                regime_name=regime_name,
-                regime=regime,
-                regimes=regimes,
-                base_spaces=base_state_action_spaces,
-                ran_this_period=ran_this_period,
-                indices=indices_optimal_actions,
-                in_regime=subject_ids_in_regime,
-                entered_through=entered_through,
-                source_roles=cast("Int1D", source_roles),
-                states=states,
-                canonical_states=state_action_space.states,
-                subject_regime_ids=subject_regime_ids,
-                own_stakeholder=own_stakeholder,
-                new_subject_regime_ids=new_subject_regime_ids,
-                new_own_stakeholder=new_own_stakeholder,
-                regime_names_to_ids=regime_names_to_ids,
-                flat_params=flat_params,
-                period=period,
-                age=age,
-                subject_slice=subject_slice,
-                n_real=n_subjects
-                if original_n_subjects is None
-                else original_n_subjects,
-                logger=logger,
+        # Policy-first: a plain DC-EGM regime decides from its published rows,
+        # and the dense grid argmax runs only if some subject's read is
+        # rejected (off support, non-finite, outside the budget, infeasible).
+        # ponytail: one host sync per regime-period decides whether the grid
+        # argmax runs at all; when it does, it covers the whole chunk and only
+        # the rejected subjects take its decision. Gathering the rejected rows
+        # would recompile per subset size.
+        policy_first = None
+        if _reads_egm_policy_first(
+            regime=regime,
+            sim_policy=sim_policy,
+            action_names=state_action_space.action_names,
+        ):
+            active_in_regime = run_simulation_operation(
                 memory=memory,
-                records=dissolution_records,
+                function=_active_subjects,
+                arguments={"in_regime": subject_ids_in_regime, "genuine": genuine},
+                subject_arg_names=("in_regime", "genuine"),
+                subject_outputs=True,
             )
-            # Rows whose route leads back into this regime decide again at
-            # their projected state; their route is used up, so a row still
-            # without a feasible action is refused below.
-            if redecide and coded:
-                fail_if_a_held_process_code_is_off_node(
-                    states=states[regime_name],
-                    processes=coded,
-                    holders=subject_ids_in_regime & genuine,
-                    where=f"projected by a dissolution route back into regime "
-                    f"'{regime_name}' at period {period}",
-                    memory=memory,
-                )
-            if redecide:
-                state_action_space = create_regime_state_action_space(
-                    regime=regime,
-                    regime_states=states[regime_name],
-                    base=base_state_action_space,
-                )
-                indices_optimal_actions, V_arr, empty_row = decide(
-                    space=state_action_space, in_regime=subject_ids_in_regime
-                )
-        if empty_row >= 0 and sim_policy is None:
-            state = physical_state_at_row(
+            policy_first = _read_egm_policy_first(
                 regime=regime,
-                states=state_action_space.states,
-                row=empty_row,
-                regime_params={
-                    **regime.resolved_fixed_params,
-                    **regime_kernel_params(flat_params, regime_name=regime_name),
-                },
-                memory=memory,
-            )
-            raise NoFeasibleActionError(
-                f"Regime '{regime_name}', period {period}, state {state} "
-                "has no feasible action."
-            )
-        optimal_actions = run_simulation_operation(
-            memory=memory,
-            function=_lookup_values_from_indices,
-            arguments={
-                "flat_indices": indices_optimal_actions,
-                "grids": state_action_space.actions,
-            },
-            subject_arg_names=("flat_indices",) if indices_optimal_actions.ndim else (),
-        )
-        optimal_actions, V_arr, nested_fallback = (
-            _replace_continuous_action_with_policy_read(
-                optimal_actions=optimal_actions,
-                regime=regime,
-                sim_policy=sim_policy,
+                sim_policy=cast("EGMSimPolicy", sim_policy),
                 states=states[regime_name],
+                canonical_states=state_action_space.states,
+                action_names=state_action_space.action_names,
+                action_dtypes={
+                    name: jnp.asarray(grid).dtype
+                    for name, grid in state_action_space.actions.items()
+                },
+                next_regime_to_V_arr=next_regime_to_V_arr,
                 flat_params=regime_kernel_params(flat_params, regime_name=regime_name),
                 period=period,
                 age=age,
-                canonical_states=state_action_space.states,
-                action_names=state_action_space.action_names,
-                next_regime_to_V_arr=next_regime_to_V_arr,
+                in_regime=active_in_regime,
                 referenced_value_kwargs=referenced_value_kwargs,
-                grid_values=V_arr,
-                in_regime=run_simulation_operation(
-                    memory=memory,
-                    function=_active_subjects,
-                    arguments={"in_regime": subject_ids_in_regime, "genuine": genuine},
-                    subject_arg_names=("in_regime", "genuine"),
-                    subject_outputs=True,
-                )
-                if sim_policy is not None
-                else subject_ids_in_regime,
-                logger=logger,
             )
-        )
+        policy_accepted = None if policy_first is None else policy_first[2]
+        grid_owns_empty = sim_policy is None or policy_first is not None
+        if policy_first is not None and not bool(
+            jnp.any(active_in_regime & ~policy_first[2])
+        ):
+            optimal_actions, V_arr, _ = policy_first
+            nested_fallback = None
+        else:
+            indices_optimal_actions, V_arr, empty_row = decide(
+                space=state_action_space,
+                in_regime=subject_ids_in_regime,
+                accepted=policy_accepted,
+            )
+            if empty_row >= 0 and grid_owns_empty and entered_through is not None:
+                (
+                    states,
+                    subject_regime_ids,
+                    own_stakeholder,
+                    new_subject_regime_ids,
+                    new_own_stakeholder,
+                    entered_through,
+                    subject_ids_in_regime,
+                    empty_row,
+                    redecide,
+                ) = _take_dissolution_routes(
+                    regime_name=regime_name,
+                    regime=regime,
+                    regimes=regimes,
+                    base_spaces=base_state_action_spaces,
+                    ran_this_period=ran_this_period,
+                    indices=indices_optimal_actions,
+                    in_regime=subject_ids_in_regime,
+                    entered_through=entered_through,
+                    source_roles=cast("Int1D", source_roles),
+                    states=states,
+                    canonical_states=state_action_space.states,
+                    subject_regime_ids=subject_regime_ids,
+                    own_stakeholder=own_stakeholder,
+                    new_subject_regime_ids=new_subject_regime_ids,
+                    new_own_stakeholder=new_own_stakeholder,
+                    regime_names_to_ids=regime_names_to_ids,
+                    flat_params=flat_params,
+                    period=period,
+                    age=age,
+                    subject_slice=subject_slice,
+                    n_real=n_subjects
+                    if original_n_subjects is None
+                    else original_n_subjects,
+                    logger=logger,
+                    memory=memory,
+                    records=dissolution_records,
+                )
+                # Rows whose route leads back into this regime decide again at
+                # their projected state; their route is used up, so a row still
+                # without a feasible action is refused below.
+                if redecide and coded:
+                    fail_if_a_held_process_code_is_off_node(
+                        states=states[regime_name],
+                        processes=coded,
+                        holders=subject_ids_in_regime & genuine,
+                        where=f"projected by a dissolution route back into regime "
+                        f"'{regime_name}' at period {period}",
+                        memory=memory,
+                    )
+                if redecide:
+                    state_action_space = create_regime_state_action_space(
+                        regime=regime,
+                        regime_states=states[regime_name],
+                        base=base_state_action_space,
+                    )
+                    indices_optimal_actions, V_arr, empty_row = decide(
+                        space=state_action_space,
+                        in_regime=subject_ids_in_regime,
+                        accepted=policy_accepted,
+                    )
+            if empty_row >= 0 and grid_owns_empty:
+                state = physical_state_at_row(
+                    regime=regime,
+                    states=state_action_space.states,
+                    row=empty_row,
+                    regime_params={
+                        **regime.resolved_fixed_params,
+                        **regime_kernel_params(flat_params, regime_name=regime_name),
+                    },
+                    memory=memory,
+                )
+                raise NoFeasibleActionError(
+                    f"Regime '{regime_name}', period {period}, state {state} "
+                    "has no feasible action."
+                )
+            optimal_actions = run_simulation_operation(
+                memory=memory,
+                function=_lookup_values_from_indices,
+                arguments={
+                    "flat_indices": indices_optimal_actions,
+                    "grids": state_action_space.actions,
+                },
+                subject_arg_names=("flat_indices",)
+                if indices_optimal_actions.ndim
+                else (),
+            )
+            if policy_first is None:
+                optimal_actions, V_arr, nested_fallback = (
+                    _replace_continuous_action_with_policy_read(
+                        optimal_actions=optimal_actions,
+                        regime=regime,
+                        sim_policy=sim_policy,
+                        states=states[regime_name],
+                        flat_params=regime_kernel_params(
+                            flat_params, regime_name=regime_name
+                        ),
+                        period=period,
+                        age=age,
+                        canonical_states=state_action_space.states,
+                        action_names=state_action_space.action_names,
+                        next_regime_to_V_arr=next_regime_to_V_arr,
+                        referenced_value_kwargs=referenced_value_kwargs,
+                        grid_values=V_arr,
+                        in_regime=run_simulation_operation(
+                            memory=memory,
+                            function=_active_subjects,
+                            arguments={
+                                "in_regime": subject_ids_in_regime,
+                                "genuine": genuine,
+                            },
+                            subject_arg_names=("in_regime", "genuine"),
+                            subject_outputs=True,
+                        )
+                        if sim_policy is not None
+                        else subject_ids_in_regime,
+                        logger=logger,
+                    )
+                )
+            else:
+                policy_actions, policy_value, accepted = policy_first
+                optimal_actions = MappingProxyType(
+                    {
+                        name: jnp.where(
+                            accepted,
+                            policy_actions[name],
+                            jnp.asarray(optimal_actions[name]),
+                        )
+                        for name in optimal_actions
+                    }
+                )
+                V_arr = jnp.where(accepted, policy_value, V_arr)
+                nested_fallback = None
 
     # Store results for this regime-period
     # For state-less regimes (e.g., terminal regimes with no states), V_arr may be a
@@ -3070,7 +3147,7 @@ def _execute_finite_replay(
     )
 
 
-def _replace_continuous_action_with_policy_read(  # noqa: PLR0911
+def _replace_continuous_action_with_policy_read(
     *,
     optimal_actions: MappingProxyType[ActionName, FloatND | IntND],
     regime: Regime,
@@ -3089,28 +3166,12 @@ def _replace_continuous_action_with_policy_read(  # noqa: PLR0911
     logger: logging.Logger,
     referenced_value_kwargs: QAndFKwargs = MappingProxyType({}),
 ) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND, BoolND | None]:
-    """Interpolate the published EGM policy at each subject's resources.
+    """Apply a nested or finite NNBEGM policy read to the grid-argmax decision.
 
-    Replaces the grid-argmax continuous action with the off-grid solve-phase
-    optimum and reports the canonical value attained by the emitted pair.
-    Discrete-state axes index the row at the
-    subject's state (positions located on the variable's grid), and the row is
-    interpolated at the subject's resources. For a regime with discrete
-    actions the discrete branch is re-decided first: each branch's conditional
-    value row is interpolated at that branch's own resources, discrete-only
-    user constraints exclude infeasible branches, and the winner's policy row
-    supplies the continuous action while the recorded discrete actions switch
-    to the winning branch.
-    Applies only where the regime qualifies (`regime.simulation.egm_policy_read`
-    is set). Kept on the grid pair:
-    - rows with a passive continuous-state axis (the build-time gate excludes
-      passive regimes; the runtime guard is defensive) — each row is the
-      envelope policy conditional on one passive node, so blending across a
-      passive-dimension branch switch would read neither branch;
-    - subjects with any feasible branch out of its live row support (an
-      incomplete value comparison cannot pick the winner), or whose winning
-      read is non-finite, non-positive, or outside the intrinsic budget
-      (`action <= resources - savings_lower_bound`).
+    A flat `EGMSimPolicy` is read policy-first before the grid argmax runs
+    (`_read_egm_policy_first`); a flat payload that reaches this point (passive
+    row axes, or actions its rows do not carry) keeps the grid pair, as does
+    an `NBEGMGridPolicy`.
 
     Returns three things, and the second two are independent of each other:
 
@@ -3228,7 +3289,6 @@ def _replace_continuous_action_with_policy_read(  # noqa: PLR0911
     route = regime.simulation.replay_route
     if route.payload_type is None:
         return optimal_actions, grid_values, None
-    read = regime.simulation.egm_policy_read
     if route.consumer_route == "nnbegm_finite":
         replayed_actions, replayed_value = _replay_nnbegm_candidates(
             optimal_actions=optimal_actions,
@@ -3245,24 +3305,153 @@ def _replace_continuous_action_with_policy_read(  # noqa: PLR0911
             logger=logger,
         )
         return replayed_actions, replayed_value, None
-    if isinstance(sim_policy, NBEGMGridPolicy):
-        return optimal_actions, grid_values, None
-    # The route declared both, and the pre-simulation check refused any
-    # payload of another class, so the remaining path is the flat EGM read.
-    read = cast("EGMPolicyRead", read)
-    sim_policy = cast("EGMSimPolicy", sim_policy)
-    if sim_policy.row_passive_state_names:
-        return optimal_actions, grid_values, None
+    return optimal_actions, grid_values, None
 
+
+def _reads_egm_policy_first(
+    *,
+    regime: Regime,
+    sim_policy: (
+        EGMSimPolicy | NBEGMGridPolicy | NNBEGMSimPolicy | NestedEGMSimPolicy | None
+    ),
+    action_names: tuple[ActionName, ...],
+) -> bool:
+    """Whether this regime-period decides from the flat EGM policy rows.
+
+    The rows must carry every action the regime declares (the EGM continuous
+    action plus the discrete-action row axes) and no passive continuous-state
+    axis: each passive row is the envelope policy conditional on one passive
+    node, so blending across a passive-dimension branch switch would read
+    neither branch.
+    """
+    read = regime.simulation.egm_policy_read
+    return (
+        isinstance(sim_policy, EGMSimPolicy)
+        and isinstance(read, EGMPolicyRead)
+        and regime.simulation.replay_route.consumer_route == "egm_off_grid"
+        and not sim_policy.row_passive_state_names
+        and not regime.has_taste_shocks
+        and regime.simulation.current_iid_draw_plan is None
+        and set(action_names)
+        == {read.action_name, *sim_policy.row_discrete_action_names}
+    )
+
+
+def _read_egm_policy_first(
+    *,
+    regime: Regime,
+    sim_policy: EGMSimPolicy,
+    states: Mapping[StateOrActionName, FloatND | IntND],
+    canonical_states: Mapping[StateName, FloatND | IntND],
+    action_names: tuple[ActionName, ...],
+    action_dtypes: Mapping[ActionName, jnp.dtype],
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+    flat_params: FlatRegimeParams,
+    period: int,
+    age: ScalarFloat | ScalarInt,
+    in_regime: BoolND,
+    referenced_value_kwargs: QAndFKwargs = MappingProxyType({}),
+) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND, BoolND]:
+    """Decide from the published EGM rows instead of the action-grid argmax.
+
+    Each discrete-action branch's row is the solve-phase optimum conditional on
+    that branch. Its conditional value (cubic Hermite with the
+    marginal-utility slopes, the solve's convention) is read at the branch's
+    own resources; discrete-only constraints have already set infeasible
+    branch rows to `-inf`. The branch of largest read value wins, its policy
+    row (piecewise linear) supplies the continuous action, and its read value
+    is the reported value, so value, actions and transitions all belong to the
+    same (branch, action) pair.
+
+    Returns the actions, the reported value, and the per-subject acceptance.
+    A subject is accepted when every live branch read lies inside its row
+    support (otherwise the comparison is incomplete) and the winner's value
+    and action are finite, the action is positive, within the intrinsic budget
+    (`action <= resources - savings_lower_bound`, up to rounding, to which the
+    emitted action is clipped) and canonically feasible.
+    The caller replaces every rejected subject's decision by the grid argmax.
+    """
+    read = cast("EGMPolicyRead", regime.simulation.egm_policy_read)
     n_subjects = next(iter(states.values())).shape[0]
-
     state_positions = tuple(
         _grid_position(regime=regime, name=name, values=jnp.asarray(states[name]))
         for name in sim_policy.row_discrete_state_names
     )
+    branch_names = sim_policy.row_discrete_action_names
+    branch_grids = tuple(
+        jnp.asarray(regime.simulation.grids[name].to_jax()) for name in branch_names
+    )
+    branch_shape = tuple(int(grid.shape[0]) for grid in branch_grids)
+    values, policies, resources, in_support = [], [], [], []
+    for branch in itertools.product(*(range(size) for size in branch_shape)):
+        data: dict[str, np.ndarray | FloatND | IntND | BoolND | Sequence[str]] = {
+            **dict(states),
+            **{
+                name: jnp.full((n_subjects,), grid[position], dtype=grid.dtype)
+                for name, grid, position in zip(
+                    branch_names, branch_grids, branch, strict=True
+                )
+            },
+            "period": jnp.full(n_subjects, period, dtype=jnp.int32),
+            "age": jnp.full(n_subjects, age),
+        }
+        branch_resources = jnp.reshape(
+            jnp.asarray(
+                _compute_targets(
+                    data=data,
+                    targets=[read.resources_target],
+                    regime=regime,
+                    regime_params=flat_params,
+                )[read.resources_target]
+            ),
+            (n_subjects,),
+        )
+        index = (*state_positions, *branch)
+        value, support = _interp_rows_with_support(
+            sim_policy=sim_policy,
+            field="value",
+            index=index,
+            resources=branch_resources,
+            n_subjects=n_subjects,
+        )
+        policy, _ = _interp_rows_with_support(
+            sim_policy=sim_policy,
+            field="policy",
+            index=index,
+            resources=branch_resources,
+            n_subjects=n_subjects,
+        )
+        values.append(value)
+        policies.append(policy)
+        resources.append(branch_resources)
+        in_support.append(support)
 
-    score_actions = functools.partial(
-        _canonical_Q_at_actions,
+    stacked_values = jnp.stack(values)
+    # A dead (constraint-masked) row reads `-inf`, a row without read support
+    # reads NaN; neither competes, and only a live branch must be in support.
+    live = jnp.isfinite(stacked_values)
+    ranked = jnp.where(live, stacked_values, -jnp.inf)
+    winner = jnp.argmax(ranked, axis=0).astype(jnp.int32)
+    winner_value = _take_at_winner(stacked=ranked, winner=winner)
+    action = _take_at_winner(stacked=jnp.stack(policies), winner=winner)
+    winner_resources = _take_at_winner(stacked=jnp.stack(resources), winner=winner)
+    budget = winner_resources - read.savings_lower_bound
+    # A read on the constrained segment (`action = resources - floor`) can exceed
+    # the budget by rounding only; that read is the budget itself.
+    rounding = 8 * jnp.finfo(action.dtype).eps * jnp.maximum(1.0, jnp.abs(budget))
+    within_budget = action <= budget + rounding
+    action = jnp.minimum(action, budget)
+    winner_positions = jnp.unravel_index(winner, branch_shape)
+    actions = {
+        name: grid[positions]
+        for name, grid, positions in zip(
+            branch_names, branch_grids, winner_positions, strict=True
+        )
+    }
+    actions[read.action_name] = action
+    actions = {name: actions[name].astype(action_dtypes[name]) for name in action_names}
+    _, feasible = _canonical_Q_at_actions(
+        candidate_actions=actions,
         regime=regime,
         canonical_states=canonical_states,
         action_names=action_names,
@@ -3273,218 +3462,15 @@ def _replace_continuous_action_with_policy_read(  # noqa: PLR0911
         age=age,
         active_subjects=in_regime,
     )
-
-    if sim_policy.row_discrete_action_names:
-        redecided_actions, redecided_value = _redecide_branch_and_read_policy(
-            score_actions=score_actions,
-            grid_values=grid_values,
-            optimal_actions=optimal_actions,
-            regime=regime,
-            sim_policy=sim_policy,
-            states=states,
-            flat_params=flat_params,
-            period=period,
-            age=age,
-            read=read,
-            n_subjects=n_subjects,
-            state_positions=state_positions,
-        )
-        return redecided_actions, redecided_value, None
-
-    resources = _resources_at_subjects(
-        read=read,
-        regime=regime,
-        sim_policy=sim_policy,
-        states=states,
-        optimal_actions=optimal_actions,
-        flat_params=flat_params,
-        period=period,
-        age=age,
-        n_subjects=n_subjects,
-    )
-    off_grid_action, in_support = _interp_rows_with_support(
-        sim_policy=sim_policy,
-        field="policy",
-        index=state_positions,
-        resources=resources,
-        n_subjects=n_subjects,
-    )
-
-    # Post-read acceptance: the replacement must be an in-support
-    # interpolation (outside the live rows the read is an edge extension,
-    # not the policy), finite, positive, within the intrinsic budget, and
-    # score no worse than the grid-argmax action under the canonical Q — the
-    # same objective the grid maximization uses, so the replacement cannot
-    # degrade the decision it replaces. Any other read keeps that subject's
-    # grid-argmax value.
-    grid_action = jnp.asarray(optimal_actions[read.action_name])
-    off_grid_value, off_grid_feasible = score_actions(
-        candidate_actions=MappingProxyType(
-            {**optimal_actions, read.action_name: off_grid_action}
-        )
-    )
     accepted = (
-        in_support
-        & jnp.isfinite(off_grid_action)
-        & (off_grid_action > 0.0)
-        & (off_grid_action <= resources - read.savings_lower_bound)
-        & off_grid_feasible
-        & jnp.isfinite(off_grid_value)
-        & (off_grid_value >= grid_values)
+        jnp.all(~live | jnp.stack(in_support), axis=0)
+        & jnp.isfinite(winner_value)
+        & jnp.isfinite(action)
+        & (action > 0.0)
+        & within_budget
+        & feasible
     )
-    off_grid_action = jnp.where(accepted, off_grid_action, grid_action)
-    reported_value = jnp.where(accepted, off_grid_value, grid_values)
-
-    return (
-        MappingProxyType({**optimal_actions, read.action_name: off_grid_action}),
-        reported_value,
-        None,
-    )
-
-
-def _redecide_branch_and_read_policy(
-    *,
-    score_actions: Callable[..., tuple[FloatND, BoolND]],
-    grid_values: FloatND,
-    optimal_actions: MappingProxyType[ActionName, FloatND | IntND],
-    regime: Regime,
-    sim_policy: EGMSimPolicy,
-    states: Mapping[StateOrActionName, FloatND | IntND],
-    flat_params: FlatRegimeParams,
-    period: int,
-    age: ScalarFloat | ScalarInt,
-    read: EGMPolicyRead,
-    n_subjects: int,
-    state_positions: tuple[IntND, ...],
-) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND]:
-    """Re-decide the discrete branch off-grid and read the winner's policy.
-
-    Each discrete-action combo's published rows are the solve-phase optimum
-    conditional on that branch, so that branch's candidate continuous action is
-    its piecewise-linear policy read at the branch's own resources. Every
-    candidate is then scored by the **canonical state-action value** `Q` —
-    evaluated pointwise at that exact (branch, action) pair through the same
-    model DAG, transitions, constraints, aggregators, params, and next-period
-    value arrays the grid maximization uses. Consequences:
-    - the scalar a branch is ranked by is the objective its returned action
-      actually attains, so the emitted pair is an associated optimizer pair by
-      construction — no reconstructed continuation and no shape assumption
-      about it enter the comparison;
-    - infeasibility is the canonical feasibility flag, so user constraints and
-      the intrinsic budget mask branches exactly as they mask the grid argmax;
-    - the grid-argmax pair is itself a candidate: a replacement is accepted only
-      when it scores no worse under the same `Q`, so the off-grid read can never
-      degrade the finite-grid decision.
-    A subject keeps the grid-argmax pair (discrete and continuous alike) when no
-    branch is feasible, the winner's resources fall outside its live row support
-    (there the policy read is an edge extension rather than the policy), or the
-    winning read is non-finite, non-positive, or scores below the grid pair.
-    """
-    if "inverse_marginal_utility" not in regime.simulation.functions:
-        # Scope: the off-grid branch re-decision applies only where the solve
-        # publishes a closed-form `inverse_marginal_utility`; every other regime
-        # keeps the constraint-masked grid pair. (The re-decision itself reads
-        # the branch action from the published policy row, not the inverse, but
-        # broadening the scope to numeric-inverse regimes is left to a follow-up.)
-        return MappingProxyType(dict(optimal_actions)), grid_values
-
-    action_names = sim_policy.row_discrete_action_names
-    action_grids = tuple(
-        jnp.asarray(regime.simulation.grids[name].to_jax()) for name in action_names
-    )
-    combo_shape = tuple(int(grid.shape[0]) for grid in action_grids)
-    objectives_per_combo = []
-    policies_per_combo = []
-    resources_per_combo = []
-    feasible_per_combo = []
-    in_support_per_combo = []
-    for combo in itertools.product(*(range(size) for size in combo_shape)):
-        combo_actions = {
-            name: jnp.full((n_subjects,), grid[position], dtype=grid.dtype)
-            for name, grid, position in zip(
-                action_names, action_grids, combo, strict=True
-            )
-        }
-        data: dict[str, np.ndarray | FloatND | IntND | BoolND | Sequence[str]] = {
-            **dict(states),
-            **combo_actions,
-            "period": jnp.full(n_subjects, period, dtype=jnp.int32),
-            "age": jnp.full(n_subjects, age),
-        }
-        targets = _compute_targets(
-            data=data,
-            targets=[read.resources_target],
-            regime=regime,
-            regime_params=flat_params,
-        )
-        resources = jnp.reshape(
-            jnp.asarray(targets[read.resources_target]), (n_subjects,)
-        )
-        index = (*state_positions, *combo)
-        candidate_action, in_support = _interp_rows_with_support(
-            sim_policy=sim_policy,
-            field="policy",
-            index=index,
-            resources=resources,
-            n_subjects=n_subjects,
-        )
-        # Score the branch by the canonical `Q` at exactly the (branch, action)
-        # pair it would emit, so the ranking scalar is the objective the returned
-        # action attains and the canonical feasibility flag masks infeasible
-        # branches — the same objective and masking the grid argmax uses.
-        objective, feasible = score_actions(
-            candidate_actions=MappingProxyType(
-                {
-                    **optimal_actions,
-                    **combo_actions,
-                    read.action_name: candidate_action,
-                }
-            )
-        )
-        objectives_per_combo.append(jnp.where(feasible, objective, -jnp.inf))
-        policies_per_combo.append(candidate_action)
-        resources_per_combo.append(resources)
-        feasible_per_combo.append(feasible)
-        in_support_per_combo.append(in_support)
-
-    objectives = jnp.stack(objectives_per_combo)
-    policies = jnp.stack(policies_per_combo)
-    resources = jnp.stack(resources_per_combo)
-    feasible = jnp.stack(feasible_per_combo)
-    in_support = jnp.stack(in_support_per_combo)
-
-    winner = jnp.argmax(objectives, axis=0)
-
-    off_grid_action = _take_at_winner(stacked=policies, winner=winner)
-    winner_resources = _take_at_winner(stacked=resources, winner=winner)
-    winner_objective = _take_at_winner(stacked=objectives, winner=winner)
-    # The winner is accepted only if it scores no worse than the grid-argmax pair
-    # under the same canonical `Q`, so the replacement cannot degrade the
-    # finite-grid decision. Support is required of the winner alone: elsewhere a
-    # row read is an edge extension rather than the published policy.
-    accepted = (
-        jnp.any(feasible, axis=0)
-        & _take_at_winner(stacked=in_support, winner=winner)
-        & jnp.isfinite(winner_objective)
-        & jnp.isfinite(off_grid_action)
-        & (off_grid_action > 0.0)
-        & (off_grid_action <= winner_resources - read.savings_lower_bound)
-        & (winner_objective >= grid_values)
-    )
-
-    new_actions = dict(optimal_actions)
-    grid_action = jnp.asarray(optimal_actions[read.action_name])
-    new_actions[read.action_name] = jnp.where(accepted, off_grid_action, grid_action)
-    winner_positions = jnp.unravel_index(winner, combo_shape)
-    for name, grid, positions in zip(
-        action_names, action_grids, winner_positions, strict=True
-    ):
-        current = jnp.asarray(optimal_actions[name])
-        new_actions[name] = jnp.where(
-            accepted, grid[positions].astype(current.dtype), current
-        )
-    reported_value = jnp.where(accepted, winner_objective, grid_values)
-    return MappingProxyType(new_actions), reported_value
+    return MappingProxyType(actions), winner_value, accepted
 
 
 def _interp_across_outer_axis(
@@ -4352,11 +4338,35 @@ def _interp_rows_with_support(
         rows_x = rows_x[index]
         rows_f = rows_f[index]
         rows_slope = rows_slope[index] if rows_slope is not None else None
+    values, in_support = _interp_padded_rows(
+        rows_x=rows_x, rows_f=rows_f, rows_slope=rows_slope, resources=resources
+    )
+    return jnp.broadcast_to(values, (n_subjects,)), jnp.broadcast_to(
+        in_support, (n_subjects,)
+    )
+
+
+@jax.jit
+def _interp_padded_rows(
+    *,
+    rows_x: FloatND,
+    rows_f: FloatND,
+    rows_slope: FloatND | None,
+    resources: FloatND,
+) -> tuple[FloatND, BoolND]:
+    """Read one padded row per subject at its resources, with the support flag.
+
+    Compiled once per row shape: simulation reads these rows every
+    regime-period, and the eager per-operation dispatch dominated the read. A
+    single row shared by every subject (`rows_x.ndim == 1`) is read once at
+    all resources rather than copied per subject.
+    """
     if rows_x.ndim == 1:
-        rows_x = jnp.broadcast_to(rows_x, (n_subjects, *rows_x.shape))
-        rows_f = jnp.broadcast_to(rows_f, (n_subjects, *rows_f.shape))
-        if rows_slope is not None:
-            rows_slope = jnp.broadcast_to(rows_slope, (n_subjects, *rows_slope.shape))
+        values = interp_on_padded_grid(
+            x_query=resources, xp=rows_x, fp=rows_f, fp_slopes=rows_slope
+        )
+        last_live = rows_x[jnp.sum(jnp.isfinite(rows_x)) - 1]
+        return values, (resources >= rows_x[0]) & (resources <= last_live)
     if rows_slope is None:
         values = vmap(interp_on_padded_grid)(x_query=resources, xp=rows_x, fp=rows_f)
     else:
@@ -5220,47 +5230,6 @@ def _score_nested_action_pair(
         age=age,
     )
     return proposed_actions, values, feasible
-
-
-def _resources_at_subjects(
-    *,
-    read: EGMPolicyRead,
-    regime: Regime,
-    sim_policy: EGMSimPolicy,
-    states: Mapping[StateOrActionName, FloatND | IntND],
-    optimal_actions: MappingProxyType[ActionName, FloatND | IntND],
-    flat_params: FlatRegimeParams,
-    period: int,
-    age: ScalarFloat | ScalarInt,
-    n_subjects: int,
-) -> FloatND:
-    """Compute each subject's endogenous resources through the simulate DAG.
-
-    The chosen discrete actions enter the data: a budget whose income depends
-    on a discrete action (work choice) reads the simulated choice. The result
-    keeps the subject axis (`_compute_targets` squeezes its outputs, which
-    would collapse a single-subject vector to 0-d before the next-state vmap).
-    """
-    data: dict[str, np.ndarray | FloatND | IntND | BoolND | Sequence[str]] = {
-        **dict(states),
-        **{
-            name: jnp.asarray(optimal_actions[name])
-            for name in sim_policy.row_discrete_action_names
-        },
-        "period": jnp.full(n_subjects, period, dtype=jnp.int32),
-        "age": jnp.full(n_subjects, age),
-    }
-    return jnp.reshape(
-        jnp.asarray(
-            _compute_targets(
-                data=data,
-                targets=[read.resources_target],
-                regime=regime,
-                regime_params=flat_params,
-            )[read.resources_target]
-        ),
-        (n_subjects,),
-    )
 
 
 def _drawn_code_targets(

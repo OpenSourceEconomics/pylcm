@@ -22,7 +22,6 @@ import lcm.model as model_module
 import lcm.solver_api as solver_api_module
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
-from _lcm.regime_building import processing as regime_processing
 from _lcm.regime_building.processing import RegimeParameterMetadata
 from _lcm.simulation import simulate as simulation_module
 from _lcm.simulation.entry_allocations import SimulationEntryAllocations
@@ -71,7 +70,6 @@ from lcm.solver_api import (
     ValueArraySchema,
     ValueStore,
 )
-from lcm.solvers import RFCEnvelope
 from lcm.typing import (
     ActionName,
     FloatND,
@@ -425,7 +423,7 @@ def test_flat_param_fingerprint_frames_marker_like_path_components() -> None:
 
 
 def test_model_solve_omits_policy_without_replay_route() -> None:
-    model = _two_period_bequest_model()
+    model = _two_period_bequest_model(replay="grid")
     params = get_graph_only_retirement_params(n_periods=2, discount_factor=0.98)
 
     result = model.solve(params=params, log_level="off")
@@ -450,7 +448,7 @@ def test_model_solve_omits_policy_without_replay_route() -> None:
 
 def test_model_rejects_a_present_inapplicable_artifact() -> None:
     """A false present payload cannot replace model authority's omission."""
-    model = _two_period_bequest_model()
+    model = _two_period_bequest_model(replay="grid")
     params = get_graph_only_retirement_params(n_periods=2, discount_factor=0.98)
     solution = model.solve(params=params, log_level="off")
     policy_ref = ArtifactRef(
@@ -516,7 +514,7 @@ def test_solve_does_not_host_copy_policy_without_replay_route(
         return original_device_put(value, *args, **kwargs)
 
     monkeypatch.setattr(backward_induction.jax, "device_put", _reject_policy_host_copy)
-    model = _two_period_bequest_model()
+    model = _two_period_bequest_model(replay="grid")
     params = get_graph_only_retirement_params(n_periods=2, discount_factor=0.98)
 
     result = model.solve(params=params, log_level="off")
@@ -525,7 +523,7 @@ def test_solve_does_not_host_copy_policy_without_replay_route(
 
 
 def test_values_only_result_drops_replay_with_an_explicit_reason() -> None:
-    model = _two_period_bequest_model()
+    model = _two_period_bequest_model(replay="grid")
     params = get_graph_only_retirement_params(n_periods=2, discount_factor=0.98)
 
     result = model.solve(
@@ -1371,14 +1369,7 @@ def test_malformed_finite_nnbegm_payload_is_refused_before_forward(
 def test_declared_egm_policy_read_requires_a_valid_egm_payload_before_forward(
     *, payload: str | None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    get_full_model.cache_clear()
-    monkeypatch.setattr(
-        regime_processing,
-        "_CROSSING_COMPLETE_ENVELOPES",
-        (RFCEnvelope,),
-    )
     model = get_full_model(solver="dcegm", n_periods=2, envelope="rfc")
-    get_full_model.cache_clear()
     params = get_full_params(n_periods=2)
     initial_conditions = {
         "wealth": jnp.asarray([2.0]),
