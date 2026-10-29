@@ -120,10 +120,23 @@ class EconomicCEContinuation:
     def __call__(
         self, savings: ScalarFloat
     ) -> BoundedResult[tuple[ScalarFloat, ScalarFloat, ScalarFloat]]:
+        return self.reduce(savings=savings, savings_channel=True, source_channel=True)
+
+    def reduce(
+        self, *, savings: ScalarFloat, savings_channel: bool, source_channel: bool
+    ) -> BoundedResult[tuple[ScalarFloat, ScalarFloat, ScalarFloat]]:
+        """Reduce value plus the statically requested economic directions.
+
+        An unrequested direction is neither traced nor validated; its slot is zero.
+        """
         declared = self.declaration()
         if type(declared) is PowerMean:
             return power_mean_continuation(
-                continuation=self, savings=savings, declared=declared
+                continuation=self,
+                savings=savings,
+                declared=declared,
+                savings_channel=savings_channel,
+                source_channel=source_channel,
             )
         params = _bind_ce_parameters(declared=declared, pool=self.pool)
         parameter_direction = {
@@ -131,7 +144,11 @@ class EconomicCEContinuation:
             for name, flat in declared.flat_param_names.items()
         }
         transform = _EconomicTransform(
-            declared=declared, params=params, parameter_direction=parameter_direction
+            declared=declared,
+            params=params,
+            parameter_direction=parameter_direction,
+            savings_channel=savings_channel,
+            source_channel=source_channel,
         )
         names = tuple(self.direction)
 
@@ -154,8 +171,11 @@ class EconomicCEContinuation:
         )
         for parameter in (
             *params.values(),
-            *parameter_direction.values(),
-            *self.direction.values(),
+            *(
+                (*parameter_direction.values(), *self.direction.values())
+                if source_channel
+                else ()
+            ),
         ):
             valid &= jnp.all(jnp.isfinite(parameter))
         zero = jnp.zeros_like(savings)
@@ -203,6 +223,8 @@ class EconomicCEContinuation:
             params=params,
             parameter_direction=parameter_direction,
             partials=totals,
+            savings_channel=savings_channel,
+            source_channel=source_channel,
         )
         inactive = jnp.zeros((), dtype=jnp.bool_)
         return BoundedResult(
@@ -216,7 +238,9 @@ class EconomicCEContinuation:
         self, savings: ScalarFloat
     ) -> BoundedResult[tuple[ScalarFloat, ScalarFloat]]:
         """Supply the same economic CE to original Euler candidate inversion."""
-        result = self(savings)
+        result = self.reduce(
+            savings=savings, savings_channel=True, source_channel=False
+        )
         value, marginal, _ = result.output
         return BoundedResult(
             output=(value, marginal),
@@ -229,7 +253,9 @@ class EconomicCEContinuation:
         self, savings: ScalarFloat
     ) -> BoundedResult[tuple[ScalarFloat, ScalarFloat]]:
         """Supply the source envelope after original owned candidate selection."""
-        result = self(savings)
+        result = self.reduce(
+            savings=savings, savings_channel=False, source_channel=True
+        )
         value, _, marginal = result.output
         return BoundedResult(
             output=(value, marginal),
@@ -286,7 +312,10 @@ class EconomicCEContinuation:
         final, _ = jax.lax.scan(
             _CETargetFold(
                 source=_SourceNodeRead(
-                    reader=reader, direction=self.direction, savings=savings
+                    reader=reader,
+                    direction=self.direction,
+                    savings=savings,
+                    source_channel=transform.source_channel,
                 ),
                 transform=transform,
                 probability=probability,
@@ -309,6 +338,10 @@ class _EconomicTransform:
     """Actual flat parameter leaves at their supplied precision."""
     parameter_direction: Mapping[str, FloatND]
     """Explicit directions in that same declared CE parameter namespace."""
+    savings_channel: bool
+    """Whether the selected-savings direction is traced and validated."""
+    source_channel: bool
+    """Whether the source direction is traced and validated."""
 
     def __call__(
         self, inputs: tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarBool]
@@ -327,34 +360,29 @@ class _EconomicTransform:
                     **_args_for(func=self.declared.transform, params=params),
                 )
 
-            transformed, saving = jax.jvp(
-                transform,
-                (value, self.params),
-                (savings_direction, jax.tree.map(jnp.zeros_like, self.params)),
-            )
-            _, source = jax.jvp(
-                transform,
-                (value, self.params),
-                (source_direction, self.parameter_direction),
-            )
+            saving = source = jnp.zeros_like(value)
+            checked = [value]
+            if self.savings_channel:
+                transformed, saving = jax.jvp(
+                    transform,
+                    (value, self.params),
+                    (savings_direction, jax.tree.map(jnp.zeros_like, self.params)),
+                )
+                checked += [savings_direction, saving]
+            if self.source_channel:
+                source_transformed, source = jax.jvp(
+                    transform,
+                    (value, self.params),
+                    (source_direction, self.parameter_direction),
+                )
+                if not self.savings_channel:
+                    transformed = source_transformed
+                checked += [source_direction, source]
             if transformed.shape != value.shape:
                 raise UnsupportedOperationError(
                     "Economic CE transform must be elementwise."
                 )
-            valid = jnp.all(
-                jnp.isfinite(
-                    jnp.stack(
-                        (
-                            value,
-                            savings_direction,
-                            source_direction,
-                            transformed,
-                            saving,
-                            source,
-                        )
-                    )
-                )
-            )
+            valid = jnp.all(jnp.isfinite(jnp.stack((*checked, transformed))))
             return transformed, saving, source, valid
 
         zero = jnp.zeros_like(value)
@@ -458,17 +486,19 @@ def _ce_block_partials(
     ones = jnp.ones_like(values)
     numerator = jnp.sum(factored_weighted_term(factors=factors, values=transformed))
     mass = jnp.sum(factored_weighted_term(factors=factors, values=ones))
-    saving_sum = jnp.sum(factored_weighted_term(factors=factors, values=saving))
-    source_sum = jnp.sum(factored_weighted_term(factors=factors, values=source))
-    mass_source = jnp.zeros_like(mass)
-    for column in range(factors.shape[0]):
-        differentiated = factors.at[column].set(factor_directions[column])
-        source_sum += jnp.sum(
-            factored_weighted_term(factors=differentiated, values=transformed)
-        )
-        mass_source += jnp.sum(
-            factored_weighted_term(factors=differentiated, values=ones)
-        )
+    saving_sum = source_sum = mass_source = jnp.zeros_like(mass)
+    if transform.savings_channel:
+        saving_sum = jnp.sum(factored_weighted_term(factors=factors, values=saving))
+    if transform.source_channel:
+        source_sum = jnp.sum(factored_weighted_term(factors=factors, values=source))
+        for column in range(factors.shape[0]):
+            differentiated = factors.at[column].set(factor_directions[column])
+            source_sum += jnp.sum(
+                factored_weighted_term(factors=differentiated, values=transformed)
+            )
+            mass_source += jnp.sum(
+                factored_weighted_term(factors=differentiated, values=ones)
+            )
     valid = jnp.all(valid) & jnp.all(
         jnp.isfinite(jnp.stack((numerator, mass, saving_sum, source_sum, mass_source)))
     )
@@ -499,11 +529,11 @@ def _invert_economic_ce(
     params: Mapping[str, FloatND],
     parameter_direction: Mapping[str, FloatND],
     partials: _CEPartials,
+    savings_channel: bool,
+    source_channel: bool,
 ) -> tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarBool]:
     numerator, mass, saving_sum, source_sum, mass_source, valid = partials
     normalized = numerator / mass
-    saving_direction = saving_sum / mass
-    source_direction = (source_sum - normalized * mass_source) / mass
 
     # keyword-only-exempt: library-callback=jax.jvp
     def inverse(value: ScalarFloat, params: Mapping[str, FloatND]) -> ScalarFloat:
@@ -511,18 +541,28 @@ def _invert_economic_ce(
             value=value, **_args_for(func=declared.inverse, params=params)
         )
 
-    value, saving = jax.jvp(
-        inverse,
-        (normalized, params),
-        (saving_direction, jax.tree.map(jnp.zeros_like, params)),
-    )
-    _, source = jax.jvp(
-        inverse, (normalized, params), (source_direction, parameter_direction)
-    )
+    saving = source = jnp.zeros_like(normalized)
+    directions, outputs = [normalized], []
+    if savings_channel:
+        saving_direction = saving_sum / mass
+        value, saving = jax.jvp(
+            inverse,
+            (normalized, params),
+            (saving_direction, jax.tree.map(jnp.zeros_like, params)),
+        )
+        directions.append(saving_direction)
+        outputs.append(saving)
+    if source_channel:
+        source_direction = (source_sum - normalized * mass_source) / mass
+        source_value, source = jax.jvp(
+            inverse, (normalized, params), (source_direction, parameter_direction)
+        )
+        if not savings_channel:
+            value = source_value
+        directions.append(source_direction)
+        outputs.append(source)
     if value.shape != normalized.shape:
         raise UnsupportedOperationError("Economic CE inverse must be elementwise.")
-    valid &= jnp.all(
-        jnp.isfinite(jnp.stack((normalized, saving_direction, source_direction)))
-    )
-    valid &= (mass > 0.0) & jnp.all(jnp.isfinite(jnp.stack((value, saving, source))))
+    valid &= jnp.all(jnp.isfinite(jnp.stack(directions)))
+    valid &= (mass > 0.0) & jnp.all(jnp.isfinite(jnp.stack((value, *outputs))))
     return value, saving, source, valid

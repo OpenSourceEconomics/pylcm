@@ -2,6 +2,7 @@
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import cast
 
 import jax
 import jax.numpy as jnp
@@ -120,6 +121,8 @@ class _SourceNodeRead:
     """Source liquid and continuous physical directions at fixed current bases."""
     savings: ScalarFloat
     """Original selected saving, fixed in the source economic envelope."""
+    source_channel: bool = True
+    """Whether the coordinate's source-direction JVP is traced and validated."""
 
     def __call__(
         self, indices: tuple[ScalarInt, ...]
@@ -175,11 +178,14 @@ class _SourceNodeRead:
             )
             return self.queries(pool=pool)(physical)[0]
 
-        query, gradient = jax.jvp(
-            coordinate,
-            (tuple(reader.combo_pool[name] for name in names),),
-            (tuple(self.direction[name] for name in names),),
-        )
+        bases = tuple(reader.combo_pool[name] for name in names)
+        if self.source_channel:
+            query, gradient = jax.jvp(
+                coordinate, (bases,), (tuple(self.direction[name] for name in names),)
+            )
+        else:
+            query = coordinate(cast("tuple[ScalarFloat, ...]", bases))
+            gradient = jnp.zeros_like(query)
         physical = tuple(
             support[index]
             for support, index in zip(
@@ -207,11 +213,9 @@ class _SourceNodeRead:
             gradients=jnp.ones_like(query),
         )
         value, economic = result.output if isinstance(result, BoundedResult) else result
-        valid = (
-            jnp.isfinite(query)
-            & jnp.isfinite(gradient)
-            & jnp.isfinite(savings_gradient)
-        )
+        valid = jnp.isfinite(query) & jnp.isfinite(savings_gradient)
+        if self.source_channel:
+            valid &= jnp.isfinite(gradient)
         return BoundedResult(
             output=(value, economic, savings_gradient, gradient, valid),
             bound_status=(),
