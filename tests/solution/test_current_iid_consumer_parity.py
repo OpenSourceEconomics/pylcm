@@ -276,6 +276,45 @@ def test_declared_health_cost_shock_reproduces_node_state_model(solver: str) -> 
     )
 
 
+@pytest.mark.parametrize("cost_scale", [1 / np.sqrt(3.0), 0.5])
+def test_nbegm_health_cost_simulates_fresh_period_zero_draws(cost_scale: float) -> None:
+    """Omitted draws are realised fresh, including beyond the outermost nodes.
+
+    Resources `wealth + 2 - cost` then leave the range the quadrature nodes span on
+    the wealth grid; the policy is still the interior Euler solution `resources / 2`.
+    """
+    params = {"alive": {"total_costs": {"cost_scale": cost_scale}}}
+    model = _health_cost_model(solver="nbegm", declared=True)
+    solution = model.solve(params=params, log_level="off")
+    wealth = jnp.tile(jnp.arange(1.0, 6.0), 20)
+    panel = model.simulate(
+        params=params,
+        solution=solution,
+        initial_conditions={
+            "wealth": wealth,
+            "period": jnp.zeros(wealth.shape, dtype=jnp.int32),
+            "regime_id": jnp.zeros(wealth.shape, dtype=jnp.int32),
+        },
+        seed=3,
+        log_level="off",
+    ).to_dataframe()
+    panel.sort_values(["subject_id", "period"], inplace=True)
+    first = panel[panel["period"] == 0]
+    last = panel[panel["period"] == 1]
+    draws = first["hcc_transitory"].to_numpy(dtype=float)
+    resources = first["wealth"].to_numpy(dtype=float) + 2.0 - cost_scale * draws
+    node_reach = cost_scale * np.sqrt(3.0)
+    assert np.any((resources < 3.0 - node_reach) | (resources > 7.0 + node_reach))
+    consumption = first["consumption"].to_numpy(dtype=float)
+    assert_array_almost_equal(consumption, resources / 2, decimal=DECIMAL_PRECISION)
+    assert_array_almost_equal(
+        last["wealth"].to_numpy(dtype=float),
+        resources - consumption,
+        decimal=DECIMAL_PRECISION,
+    )
+    assert np.all(np.isfinite(panel["value"].to_numpy(dtype=float)))
+
+
 @categorical(ordered=True)
 class _Effort:
     low: ScalarInt
