@@ -254,6 +254,8 @@ from _lcm.simulation.shock_paths import (
 )
 from _lcm.simulation.simulate import (
     _lookup_values_from_indices,
+    _read_egm_policy_first,
+    _reads_egm_policy_first,
     _referenced_value_kwargs,
     _require_next_period_values,
     simulate,
@@ -6240,6 +6242,10 @@ class Model:
         attains the returned value. With taste shocks, the returned choice
         probabilities are the distribution of that subject's discrete choice.
         Repeated calls with the same number of rows reuse one compiled program.
+        A regime that `simulate` decides from its solved DC-EGM policy is looked
+        up the same way, with the grid argmax only where that read is rejected;
+        with `action_grids` or `keep_intermediates`, it takes the grid argmax over
+        the requested grid instead.
 
         Args:
             params: The parameters `solution` was solved with; checked against its
@@ -6426,7 +6432,7 @@ class Model:
             if allocations is not None:
                 allocations.close()
 
-    def _lookup_policy(  # noqa: C901, PLR0915 - preserve original replay routing and explicit projected refusal
+    def _lookup_policy(  # noqa: C901, PLR0912, PLR0915 - preserve original replay routing and explicit projected refusal
         self,
         *,
         params: UserParams,
@@ -6486,8 +6492,17 @@ class Model:
             # A block-major result keeps its values on the host; its value
             # store assembles each value the lookup reads, when it reads it.
             V_arrs = solution.values  # noqa: PD011
+        base = _build_base_state_action_spaces(
+            regimes=self._regimes,
+            flat_params=flat_params,
+            process_grid_resolver=resolver,
+        )[regime_name]
+        sim_policy = sim_policies.get(period, {}).get(regime_name)
+        reads_policy_first = sim_policy is not None and _reads_egm_policy_first(
+            regime=regime, sim_policy=sim_policy, action_names=base.action_names
+        )
         if (
-            sim_policies.get(period, {}).get(regime_name) is not None
+            (sim_policy is not None and not reads_policy_first)
             or replay_readers.get(period, {}).get(regime_name) is not None
             or case_r_inputs.get(period, {}).get(regime_name) is not None
         ):
@@ -6496,11 +6511,6 @@ class Model:
                 f"{period}; policy lookup supports the grid argmax only."
             )
             raise InvalidSimulationInputError(msg)
-        base = _build_base_state_action_spaces(
-            regimes=self._regimes,
-            flat_params=flat_params,
-            process_grid_resolver=resolver,
-        )[regime_name]
         _fail_if_off_grid(
             kind="state",
             given=states,
@@ -6575,6 +6585,49 @@ class Model:
                 ),
             )
             executor = unit
+        # A regime `simulate` decides from its published EGM rows is looked up
+        # the same way; the grid argmax below answers only the rows whose read
+        # is rejected. Restricted action grids and kept intermediates take the
+        # grid argmax over the requested grid instead.
+        policy_first = None
+        if reads_policy_first and not keep_intermediates and action_grids is None:
+            policy_first = _read_egm_policy_first(
+                regime=runtime_regime,
+                sim_policy=cast("EGMSimPolicy", sim_policy),
+                states=MappingProxyType(
+                    {name: jnp.asarray(s) for name, s in states.items()}
+                ),
+                canonical_states=space.states,
+                action_names=space.action_names,
+                action_dtypes={n: jnp.asarray(g).dtype for n, g in grids.items()},
+                next_regime_to_V_arr=next_V,
+                flat_params=regime_kernel_params(flat_params, regime_name=regime_name),
+                period=period,
+                age=self._time.values[period],  # noqa: PD011
+                in_regime=jnp.ones(n_rows, dtype=bool),
+                referenced_value_kwargs=references,
+            )
+            if bool(jnp.all(policy_first[2])):
+                if unit is not None:
+                    unit.close()
+                return _trim_lookup_rows(
+                    lookup=PolicyLookup(
+                        actions=policy_first[0],
+                        value=policy_first[1],
+                        Q=None,
+                        F=None,
+                        U=None,
+                        CE=None,
+                        Qc=None,
+                        choice_probabilities=None,
+                        conditional_actions=None,
+                        Q_objective=None,
+                    ),
+                    n_rows=n_query_rows,
+                    allocations=allocations,
+                    unit=unit,
+                    call_roots=(states, space.states, grids),
+                )
         # Taken after the runtime regimes above, which take the same lock, and
         # released before dispatch.
         with self._simulate_compile_lock:
@@ -6648,6 +6701,9 @@ class Model:
             if regime.has_taste_shocks
             else (by_role[ACTION_INDEX], space.actions)
         )
+        if policy_first is not None:
+            # A row the policy read decided is never an empty grid row.
+            indices = jnp.where(policy_first[2], jnp.maximum(indices, 0), indices)
         # A taste-shock regime publishes choice probabilities, not one decision,
         # so only a regime without taste shocks refuses an empty action set here.
         _fail_if_a_queried_state_has_no_feasible_action(
@@ -6689,10 +6745,20 @@ class Model:
             )
             jax.block_until_ready(actions)
             unit.close()
+        value = by_role[DECISION_VALUE]
+        if policy_first is not None:
+            policy_actions, policy_value, accepted = policy_first
+            actions = MappingProxyType(
+                {
+                    name: jnp.where(accepted, policy_actions[name], grid_action)
+                    for name, grid_action in actions.items()
+                }
+            )
+            value = jnp.where(accepted, policy_value, value)
         return _trim_lookup_rows(
             lookup=PolicyLookup(
                 actions=None if regime.has_taste_shocks else actions,
-                value=by_role[DECISION_VALUE],
+                value=value,
                 Q=by_role.get(ACTION_VALUES),
                 F=by_role.get(ACTION_FEASIBILITY),
                 U=by_role.get(FLOW_UTILITY),

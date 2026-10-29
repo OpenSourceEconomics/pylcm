@@ -102,6 +102,7 @@ from _lcm.simulation.gated_routing import (
     commit_gated_route_delta,
     gated_route_candidates,
 )
+from _lcm.simulation.host_operations import _HeldObject
 from _lcm.simulation.initial_conditions import (
     _initial_own_stakeholder,
     build_initial_states,
@@ -204,6 +205,7 @@ from _lcm.typing import (
     PeriodToRegimeToSimulationPolicy,
     PRNGKeyND,
     QAndFArg,
+    QAndFFunction,
     QAndFKwargs,
     RegimeIdsToNames,
     RegimeName,
@@ -3370,7 +3372,65 @@ def _read_egm_policy_first(
     (`action <= resources - savings_lower_bound`, up to rounding, to which the
     emitted action is clipped) and canonically feasible.
     The caller replaces every rejected subject's decision by the grid argmax.
+
+    The read runs as one compiled program, not operation by operation. The
+    period is traced, so the periods that share one `Q_and_F` kernel and the
+    same input shapes share that program.
     """
+    actions, winner_value, read_ok, evaluated = _policy_first_program(
+        held_regime=_HeldObject(regime),
+        held_Q_and_F=_HeldObject(regime.simulation.Q_and_F[period]),
+        sim_policy=sim_policy,
+        states=MappingProxyType(dict(states)),
+        canonical_states=MappingProxyType(dict(canonical_states)),
+        action_names=action_names,
+        action_dtypes=tuple(
+            (name, jnp.dtype(action_dtypes[name])) for name in action_names
+        ),
+        next_regime_to_V_arr=next_regime_to_V_arr,
+        flat_params=flat_params,
+        period=jnp.asarray(period, dtype=jnp.int32),
+        age=age,
+        in_regime=in_regime,
+        referenced_value_kwargs=MappingProxyType(dict(referenced_value_kwargs)),
+    )
+    _, feasible = _validated_canonical_Q(
+        evaluated=evaluated, regime=regime, period=period
+    )
+    return actions, winner_value, read_ok & feasible
+
+
+@functools.partial(
+    jax.jit,
+    static_argnames=("held_regime", "held_Q_and_F", "action_names", "action_dtypes"),
+)
+def _policy_first_program(
+    *,
+    held_regime: _HeldObject,
+    held_Q_and_F: _HeldObject,
+    sim_policy: EGMSimPolicy,
+    states: MappingProxyType[StateOrActionName, FloatND | IntND],
+    canonical_states: MappingProxyType[StateName, FloatND | IntND],
+    action_names: tuple[ActionName, ...],
+    action_dtypes: tuple[tuple[ActionName, jnp.dtype], ...],
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+    flat_params: FlatRegimeParams,
+    period: IntND,
+    age: ScalarFloat | ScalarInt,
+    in_regime: BoolND,
+    referenced_value_kwargs: QAndFKwargs,
+) -> tuple[
+    MappingProxyType[ActionName, FloatND | IntND],
+    FloatND,
+    BoolND,
+    tuple[FloatND, BoolND] | BoundedResult[tuple[FloatND, BoolND]],
+]:
+    """Compiled body of `_read_egm_policy_first`, before canonical feasibility.
+
+    Returns the actions, the winner's value, the read-side acceptance and the
+    unvalidated canonical evaluation of the emitted actions.
+    """
+    regime = cast("Regime", held_regime.value)
     read = cast("EGMPolicyRead", regime.simulation.egm_policy_read)
     n_subjects = next(iter(states.values())).shape[0]
     state_positions = tuple(
@@ -3449,8 +3509,9 @@ def _read_egm_policy_first(
         )
     }
     actions[read.action_name] = action
-    actions = {name: actions[name].astype(action_dtypes[name]) for name in action_names}
-    _, feasible = _canonical_Q_at_actions(
+    dtypes = dict(action_dtypes)
+    actions = {name: actions[name].astype(dtypes[name]) for name in action_names}
+    evaluated = _evaluate_canonical_Q_at_actions(
         candidate_actions=actions,
         regime=regime,
         canonical_states=canonical_states,
@@ -3461,16 +3522,16 @@ def _read_egm_policy_first(
         period=period,
         age=age,
         active_subjects=in_regime,
+        Q_and_F=cast("QAndFFunction", held_Q_and_F.value),
     )
-    accepted = (
+    read_ok = (
         jnp.all(~live | jnp.stack(in_support), axis=0)
         & jnp.isfinite(winner_value)
         & jnp.isfinite(action)
         & (action > 0.0)
         & within_budget
-        & feasible
     )
-    return MappingProxyType(actions), winner_value, accepted
+    return MappingProxyType(actions), winner_value, read_ok, evaluated
 
 
 def _interp_across_outer_axis(
@@ -5109,6 +5170,16 @@ def _canonical_Q_at_actions(
         referenced_value_kwargs=referenced_value_kwargs,
         active_subjects=active_subjects,
     )
+    return _validated_canonical_Q(evaluated=evaluated, regime=regime, period=period)
+
+
+def _validated_canonical_Q(
+    *,
+    evaluated: tuple[FloatND, BoolND] | BoundedResult[tuple[FloatND, BoolND]],
+    regime: Regime,
+    period: int,
+) -> tuple[FloatND, BoolND]:
+    """Refuse a canonical evaluation whose integrity records failed, else unwrap it."""
     if type(evaluated) is BoundedResult:
         from _lcm.solution.feasibility import (  # noqa: PLC0415 - avoid numerical declaration import cycles
             validate_query_input_status,
@@ -5145,17 +5216,24 @@ def _evaluate_canonical_Q_at_actions(
     action_names: tuple[ActionName, ...],
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
     flat_params: FlatRegimeParams,
-    period: int,
+    period: int | IntND,
     age: ScalarFloat | ScalarInt,
     referenced_value_kwargs: QAndFKwargs = MappingProxyType({}),
     active_subjects: BoolND | None = None,
+    Q_and_F: QAndFFunction | None = None,
 ) -> tuple[FloatND, BoolND] | BoundedResult[tuple[FloatND, BoolND]]:
-    """Evaluate canonical actions once, retaining integrity through transformations."""
+    """Evaluate canonical actions once, retaining integrity through transformations.
+
+    `Q_and_F` is the period's `regime.simulation.Q_and_F` entry; a caller that
+    traces `period` passes it, since a traced period cannot index the mapping.
+    """
     from _lcm.regime_building.processing import (  # noqa: PLC0415 - completed model's pointwise owner
         _SubjectPointwiseQAndF,
     )
 
-    function = regime.simulation.Q_and_F[period]
+    function = (
+        regime.simulation.Q_and_F[cast("int", period)] if Q_and_F is None else Q_and_F
+    )
     owner = function
     while isinstance(owner, functools.partial):
         if owner.args:
@@ -5169,7 +5247,7 @@ def _evaluate_canonical_Q_at_actions(
         next_regime_to_V_arr=next_regime_to_V_arr,
         **referenced_value_kwargs,
         **flat_params,
-        period=jnp.int32(period),
+        period=jnp.asarray(period, dtype=jnp.int32),
         age=age,
         **(
             {ACTIVE_SUBJECTS_ARGUMENT: active_subjects}

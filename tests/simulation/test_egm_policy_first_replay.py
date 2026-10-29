@@ -17,8 +17,10 @@ import numpy as np
 import pytest
 
 import _lcm.simulation.simulate as simulation
+import lcm_examples.iskhakov_et_al_2017 as iskhakov
 from lcm import AgeGrid, Model
 from lcm_examples.iskhakov_et_al_2017 import CONSUMPTION_GRID, dead, get_edges
+from tests.conftest import invariance_tolerances
 from tests.test_models.deterministic import base
 from tests.test_models.deterministic.dcegm_variants import (
     DCEGM_SOLVER,
@@ -157,3 +159,55 @@ def test_policy_first_tracks_the_grid_route_within_the_action_grid_step() -> Non
         grid_c, grid_v = grid[period]
         assert abs(policy_c - grid_c) <= band, (period, policy_c, grid_c, band)
         assert abs(policy_v - grid_v) <= band, (period, policy_v, grid_v, band)
+
+
+def test_lookup_policy_on_default_dcegm_returns_the_simulated_decision() -> None:
+    """`lookup_policy` answers on a default DC-EGM model with `simulate`'s choice.
+
+    At every simulated working-life state, the looked-up labor supply equals the
+    simulated one, and the looked-up consumption and value agree with the
+    simulated ones up to the reassociation a different row count allows. The
+    last subject starts beyond the published rows, so its period-0 read is
+    rejected and both take the grid argmax there.
+    """
+    n_periods = 4
+    model = iskhakov.get_dcegm_model(n_periods)
+    params = iskhakov.get_params(n_periods=n_periods)
+    solution = model.solve(params=params, log_level="off")
+    wealth = np.append(np.linspace(5.0, 180.0, 12), 1000.0)
+    frame = model.simulate(
+        params=params,
+        initial_conditions={
+            "wealth": jnp.asarray(wealth),
+            "age": jnp.full(wealth.shape, 40.0),
+            "regime_id": jnp.full(wealth.shape, iskhakov.RegimeId.working_life),
+        },
+        solution=solution,
+        seed=0,
+        log_level="off",
+    ).to_dataframe(use_categorical_codes=True)
+
+    for period in (0, 1):
+        rows = frame[
+            (frame["period"] == period) & (frame["regime_name"] == "working_life")
+        ]
+        lookup = model.lookup_policy(
+            params=params,
+            solution=solution,
+            period=period,
+            regime_name="working_life",
+            states={"wealth": jnp.asarray(rows["wealth"].to_numpy())},
+            use_categorical_codes=True,
+        )
+        assert lookup.actions is not None
+        np.testing.assert_array_equal(
+            np.asarray(lookup.actions["labor_supply"]),
+            rows["labor_supply"].to_numpy(),
+        )
+        for got, expected in (
+            (lookup.actions["consumption"], rows["consumption"]),
+            (lookup.value, rows["value"]),
+        ):
+            reference = expected.to_numpy()
+            rtol, atol = invariance_tolerances(reference)
+            np.testing.assert_allclose(np.asarray(got), reference, rtol=rtol, atol=atol)
