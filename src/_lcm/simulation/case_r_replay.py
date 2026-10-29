@@ -28,9 +28,6 @@ class CaseRReplayProfile(NamedTuple):
     law_invalid: jax.ShapeDtypeStruct
     invalid: jax.ShapeDtypeStruct
     feasible: jax.ShapeDtypeStruct
-    native_owner: jax.ShapeDtypeStruct
-    side_id: jax.ShapeDtypeStruct
-    corner: jax.ShapeDtypeStruct
 
 
 def case_r_profile_output(*, output: ShapeDtypePytree) -> CaseRReplayProfile:
@@ -44,7 +41,7 @@ def case_r_profile_output(*, output: ShapeDtypePytree) -> CaseRReplayProfile:
         raise ExecutionPlanningError(
             "Case-R profile has an incompatible output schema."
         )
-    actions, value, physical, law, invalid, feasible, owner, side, corner = children
+    actions, value, physical, law, invalid, feasible = children
     return CaseRReplayProfile(
         actions=_profile_mapping(values=actions),
         value=_profile_leaf(value=value),
@@ -52,9 +49,6 @@ def case_r_profile_output(*, output: ShapeDtypePytree) -> CaseRReplayProfile:
         law_invalid=_profile_leaf(value=law),
         invalid=_profile_leaf(value=invalid),
         feasible=_profile_leaf(value=feasible),
-        native_owner=_profile_leaf(value=owner),
-        side_id=_profile_leaf(value=side),
-        corner=_profile_leaf(value=corner),
     )
 
 

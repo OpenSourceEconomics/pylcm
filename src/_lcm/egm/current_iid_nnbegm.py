@@ -4,7 +4,7 @@ import functools
 import inspect
 import sys
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from fractions import Fraction
 from types import MappingProxyType
 from typing import TYPE_CHECKING, NamedTuple
@@ -211,6 +211,10 @@ class NNBEGMCaseUPoint:
     keeper_target: Callable[..., FloatND]
     outer_function: Callable[..., Mapping[str, FloatND]]
     outer_inverse: DeclaredOuterInverse
+    audit_banks: bool = field(
+        default=True, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Whether reads re-check each bank's original coordinates and owner ranges."""
 
     @property
     def euler_state_name(self) -> StateName:
@@ -458,6 +462,12 @@ class NNBEGMCaseUPoint:
             # separate from the value interpolant's own derivative.
             paired_marginal_read=False,
         )
+        if not self.audit_banks:
+            return profile, (
+                bank.support_valid
+                & ~jnp.any(profile.coverage_missing)
+                & ~jnp.any(corners.invalid)
+            )
         live = jnp.isfinite(bank.grid)
         node_resources = jax.vmap(
             lambda coordinate: function(

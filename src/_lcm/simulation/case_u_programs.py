@@ -54,9 +54,6 @@ def _case_u_output_roles(
             boolean,
             boolean,
             boolean,
-            integer,
-            integer,
-            boolean,
         ),
     )
     roles = (
@@ -70,9 +67,6 @@ def _case_u_output_roles(
         "current_iid_invalid",
         "current_iid_invalid",
         "action_feasible",
-        "candidate_owner",
-        "candidate_side",
-        "borrowing_corner",
     )
     return jax.tree.unflatten(jax.tree.structure(prototype), jax.tree.leaves(roles))
 

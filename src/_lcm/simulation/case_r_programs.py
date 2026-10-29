@@ -31,7 +31,6 @@ def _case_r_output_roles(
 ) -> OutputRoleTree:
     """Map a numeric prototype through the same registered output structure."""
     floating = jnp.asarray(0.0)
-    integer = jnp.zeros((), dtype=jnp.int32)
     boolean = jnp.zeros((), dtype=jnp.bool_)
     prototype = CaseRReplayOutput(
         actions={action_name: floating},
@@ -40,9 +39,6 @@ def _case_r_output_roles(
         law_invalid=boolean,
         invalid=boolean,
         feasible=boolean,
-        native_owner=integer,
-        side_id=integer,
-        corner=boolean,
     )
     roles = {
         "actions": "action",
@@ -51,9 +47,6 @@ def _case_r_output_roles(
         "law_invalid": "current_iid_invalid",
         "invalid": "current_iid_invalid",
         "feasible": "action_feasible",
-        "native_owner": "candidate_owner",
-        "side_id": "candidate_side",
-        "corner": "borrowing_corner",
     }
 
     # keyword-only-exempt: library-callback=jax.tree_util.tree_map_with_path

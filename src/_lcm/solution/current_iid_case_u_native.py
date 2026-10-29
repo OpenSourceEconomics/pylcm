@@ -59,6 +59,7 @@ from _lcm.egm.projected_continuation import (
 )
 from _lcm.egm.query_data import QueryNodeKind
 from _lcm.egm.step import _EGMStep
+from _lcm.egm.upper_envelope import get_bracket_finder
 from _lcm.engine import StateActionSpace
 from _lcm.execution.core_program import CoreBuildContext, CoreProgram, ProgramScope
 from _lcm.execution.output_layout import StateAxesLeading
@@ -1077,6 +1078,10 @@ def build_case_u_kernels(
                 future=replay_future,
                 date=date,
                 pieces=function.point.pieces,
+                replay_refine_to_bracket=get_bracket_finder(
+                    solver=build.native_case_u_sources[period].solver,
+                    n_refined=function.point.pieces.n_pad,
+                ),
                 fixed_flat_params=arguments.point.fixed_flat_params,
                 transition_target_names=arguments.point.base.transition_target_names,
                 savings_point_width=function.point.savings_point_width,

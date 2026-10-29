@@ -438,6 +438,7 @@ def prepare_scalar_nbegm_r_kernel(  # noqa: C901 - exact original construction, 
         ),
         row_tree=jax.tree.structure(bank),
         row_leaf_specs=resources_row_leaf_specs(row=bank),
+        envelope_arithmetic=original_core.envelope_arithmetic,
     )
     kernel = NativeNBCaseRPeriodKernel(
         context=context,
