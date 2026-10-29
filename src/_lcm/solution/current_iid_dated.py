@@ -5,6 +5,7 @@ runtime parameter schemas nor fabricates an economic continuation: templates
 are the genuine builders' shape inputs, and actual calls retain their statuses.
 """
 
+import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from types import MappingProxyType
@@ -59,6 +60,8 @@ from _lcm.solution.dcegm import EGMStepBuild, _BoundDCEGM
 from _lcm.typing import FlatParams
 from lcm.exceptions import UnsupportedOperationError
 from lcm.typing import RegimeName
+
+_logger = logging.getLogger("lcm")
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -394,6 +397,7 @@ def prepare_dated_balanced_kernels(  # noqa: C901, PLR0912, PLR0915 - one immuta
     native: dict[tuple[RegimeName, int], PreparedNativeCaseRDate] = {}
     case_u: dict[tuple[RegimeName, int], PreparedCaseUDate] = {}
     source_classes: dict[RegimeName, bool] = {}
+    capacity_warned: set[RegimeName] = set()
     materialization_contexts = {}
     # Strict next-date edges also handle a regime's self transition.
     for name, period in sorted(required, key=lambda item: (-item[1], item[0])):
@@ -497,6 +501,17 @@ def prepare_dated_balanced_kernels(  # noqa: C901, PLR0912, PLR0915 - one immuta
             case_u[name, period] = producer_u
             dates[name, period] = producer_u.date
             continue
+        if (
+            name not in capacity_warned
+            and plan is not None
+            and _warn_on_likely_short_projection_capacity(
+                regime_name=name,
+                n_nodes=int(plan.indices.shape[0]),
+                n_savings=build.savings_point_extent,
+                capacity=declarations[name].date_at(period=period).authority.capacity,
+            )
+        ):
+            capacity_warned.add(name)
         producer = prepare_native_case_r_date(
             context=context,
             solver=solver,
@@ -642,3 +657,34 @@ def prepare_dated_balanced_kernels(  # noqa: C901, PLR0912, PLR0915 - one immuta
     result.validate_euler_grids(expected=euler_grid_obligations)
     result.validate_state_utility()
     return result
+
+
+def _warn_on_likely_short_projection_capacity(
+    *, regime_name: RegimeName, n_nodes: int, n_savings: int, capacity: int
+) -> bool:
+    """Warn when a Case-R row's estimated record count exceeds its capacity.
+
+    The estimate `4 * n_nodes**2 * n_savings` tracks measured record counts once
+    the node count is moderate; at small node counts fixed overheads dominate.
+    It never refuses: the exact check runs after each solved period.
+
+    Returns:
+        Whether the warning was emitted.
+    """
+    estimate = 4 * n_nodes**2 * n_savings
+    if estimate <= capacity:
+        return False
+    _logger.warning(
+        "Regime '%s' may exhaust its current-IID projection capacity: an "
+        "estimated %d records (4 * %d**2 shock nodes * %d savings points) exceed "
+        "its capacity of %d. This is an estimate; the exact check runs after each "
+        "of its periods is solved. Raise `current_iid_projection_capacity` on the "
+        "solver of regime '%s' if that check refuses.",
+        regime_name,
+        estimate,
+        n_nodes,
+        n_savings,
+        capacity,
+        regime_name,
+    )
+    return True

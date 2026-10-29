@@ -1,6 +1,7 @@
 """Held genuine Model-generation frontiers, not successful row substitutes."""
 
 import inspect
+import logging
 import sys
 from collections.abc import Callable
 from dataclasses import fields, replace
@@ -849,6 +850,64 @@ def test_public_case_r_refuses_an_exhausted_projection_capacity(
     ]
     assert ("child", 1) in dispatched
     assert ("parent", 0) not in dispatched
+
+
+def _model_with_child_capacity(*, capacity: int) -> Model:
+    declarations = _declarations()
+    child = declarations.regimes["child"]
+    assert isinstance(child.solver, DCEGM)
+    child = replace(
+        child, solver=replace(child.solver, current_iid_projection_capacity=capacity)
+    )
+    return _public_model_from_declarations(
+        declarations=replace(
+            declarations, regimes={**declarations.regimes, "child": child}
+        )
+    )
+
+
+def _capacity_warnings(*, caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [
+        record.getMessage()
+        for record in caplog.records
+        if record.name.startswith("lcm")
+        and record.levelno == logging.WARNING
+        and "projection capacity" in record.getMessage()
+    ]
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_case_r_capacity_estimate_above_capacity_warns_before_solving(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Preparation warns, without refusing, when the record estimate exceeds capacity.
+
+    The child has two shock nodes and 22 savings points, so the estimate is
+    4 * 2**2 * 22 = 352 records, above a capacity of 256.
+    """
+    model = _model_with_child_capacity(capacity=256)
+    with caplog.at_level(logging.WARNING, logger="lcm"):
+        model._prepare_call(params=_params())
+    assert _capacity_warnings(caplog=caplog) == [
+        (
+            "Regime 'child' may exhaust its current-IID projection capacity: an "
+            "estimated 352 records (4 * 2**2 shock nodes * 22 savings points) exceed "
+            "its capacity of 256. This is an estimate; the exact check runs after "
+            "each of its periods is solved. Raise `current_iid_projection_capacity` "
+            "on the solver of regime 'child' if that check refuses."
+        )
+    ]
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_case_r_default_capacity_does_not_warn(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The default capacity covers the estimate of the small public fixture."""
+    model = _public_model_from_declarations(declarations=_declarations())
+    with caplog.at_level(logging.WARNING, logger="lcm"):
+        model._prepare_call(params=_params())
+    assert _capacity_warnings(caplog=caplog) == []
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
