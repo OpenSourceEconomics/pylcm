@@ -798,8 +798,8 @@ def test_public_case_r_replay_matches_the_literal_policy_at_off_node_shocks() ->
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
 @pytest.mark.parametrize(
     ("capacity", "needed"),
-    [(16, 44), (64, 65), (128, 147)],
-    ids=["native-partition", "balanced-partition", "refinement"],
+    [(16, 44), (64, 65)],
+    ids=["native-partition", "balanced-partition"],
 )
 def test_public_case_r_refuses_an_exhausted_projection_capacity(
     *, capacity: int, needed: int, monkeypatch: pytest.MonkeyPatch
@@ -809,8 +809,9 @@ def test_public_case_r_refuses_an_exhausted_projection_capacity(
     The refusal names the exhausted capacity, the least record count the row
     proved it needs, and the solver setting, before the parent period that
     would read the row runs. The native boundary pullbacks need 44 records;
-    the balanced partition proves only that it needs more than 64; the
-    sampled-accuracy refinement needs 147 at its first refused bisection.
+    the balanced partition proves only that it needs more than 64. The
+    Hermite-read refinement adds no record to the partition's 121, so this
+    row has no refinement-stage refusal.
     """
     declarations = _declarations()
     child = declarations.regimes["child"]

@@ -17,6 +17,10 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.egm.current_iid_balanced import (
+    BalancedProjectedEGMCarry,
+    BalancedResourcesProgram,
+)
 from _lcm.egm.current_iid_case_u_balanced import (
     BalancedCaseUCarry,
     SaturatedCaseUProgram,
@@ -244,6 +248,17 @@ def test_case_u_refinement_reads_its_row_as_consumers_do() -> None:
     model, carry = _solved_child(utility_reads_eps=True)
     assert isinstance(carry, BalancedCaseUCarry)
     authority, program = _case_u_program(model=model)
+    _assert_refinement_reads_as_consumers_do(
+        authority=authority, program=program, carry=carry
+    )
+
+
+def _assert_refinement_reads_as_consumers_do(
+    *,
+    authority: ProjectedChildAuthority,
+    program: SaturatedCaseUProgram | BalancedResourcesProgram,
+    carry: BalancedCaseUCarry | BalancedProjectedEGMCarry,
+) -> None:
     unpublished = ProjectedEGMCarry(
         **{
             field.name: getattr(carry, field.name)
@@ -290,3 +305,70 @@ def test_case_u_refinement_reads_its_row_as_consumers_do() -> None:
         probes
     )
     assert not bool(jnp.all(linear.value == predicted.value))
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_case_r_projected_row_meets_its_budget_with_few_records() -> None:
+    """Case R reads W by cubic Hermite in its stored slope, so few records suffice.
+
+    A linear read of the same smooth W needs 1393 records at float64 and 568 at
+    float32 to meet the value budget; the Hermite read needs 121 at both.
+    """
+    carry = _solved_child_carry(utility_reads_eps=False)
+    assert bool(carry.valid)
+    assert int(carry.valid_length) <= 150
+
+
+def _case_r_program(
+    *, model: Model
+) -> tuple[ProjectedChildAuthority, BalancedResourcesProgram]:
+    _, generation = model._prepare_call(params=_params())
+    owner = generation.solver_preparation(regime_name="child", period=1)
+    date = owner.declarations["child"].date_at(period=1)
+    program = date.guard_program
+    assert isinstance(program, BalancedResourcesProgram)
+    return date.authority, program
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_case_r_value_slope_is_the_derivative_of_the_reference_value() -> None:
+    """The stored slope is dW/dw, at records (cuts included) and between them.
+
+    W is the shock average of the child's Hermite row read at `w` and `w + 1`, so
+    its derivative is the average of that read's derivative there. Cut records
+    put a shock's resources exactly on a child node, where the slope must still
+    be the derivative of the read rather than of its bracket search.
+    """
+    model, carry = _solved_child(utility_reads_eps=False)
+    assert isinstance(carry, BalancedProjectedEGMCarry)
+    _, program = _case_r_program(model=model)
+    guard = carry.guard
+    slope = jax.jit(
+        jax.vmap(lambda query: program.value_slope(guard=guard, query=query))
+    )
+    records = carry.grid[: int(carry.valid_length)]
+    middles = records[:-1] + (records[1:] - records[:-1]) / 2.0
+    dense = jnp.asarray(_QUERIES, dtype=records.dtype)
+    # Stored at the records inside the refinement loop, recomputed elsewhere.
+    for queries, slopes in (
+        (records, carry.value_slope[: int(carry.valid_length)]),
+        (records, slope(records)),
+        (middles, slope(middles)),
+        (dense, slope(dense)),
+    ):
+        at = np.asarray(queries, dtype=np.float64)
+        expected = 0.5 * (_child_row_derivative(at) + _child_row_derivative(at + 1.0))
+        np.testing.assert_array_almost_equal(
+            slopes, expected, decimal=DECIMAL_PRECISION
+        )
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_case_r_refinement_reads_its_row_as_consumers_do() -> None:
+    """Refinement's predicted read is bit-for-bit the consumers' read of the row."""
+    model, carry = _solved_child(utility_reads_eps=False)
+    assert isinstance(carry, BalancedProjectedEGMCarry)
+    authority, program = _case_r_program(model=model)
+    _assert_refinement_reads_as_consumers_do(
+        authority=authority, program=program, carry=carry
+    )

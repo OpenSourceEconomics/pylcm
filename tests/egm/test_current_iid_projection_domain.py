@@ -14,7 +14,11 @@ from _lcm.continuation import ProjectedContinuationSpec
 from _lcm.egm.continuation import _validate_projected_child
 from _lcm.egm.current_iid_evaluation import CurrentResourcesEvaluator
 from _lcm.egm.current_iid_native import BoundResourcesMap
-from _lcm.egm.current_iid_projection import _assess_cells, _read_projected
+from _lcm.egm.current_iid_projection import (
+    _assess_cells,
+    _read_projected,
+    refine_projected_row,
+)
 from _lcm.egm.current_iid_publication import (
     FiniteResourcesDemands,
     ProjectedResourcesReference,
@@ -763,3 +767,47 @@ def test_projection_assessment_active_geometry_and_holes_still_refuse(
         carry=carry, reference=_affine_projection_reference, accuracy="certified"
     )
     assert bool(hard)
+
+
+def _bump(query: ScalarFloat) -> ScalarFloat:
+    """A smooth affine value with a Gaussian bump that forces bisection."""
+    return 2.0 * query + 3.0 + 0.1 * jnp.exp(-jnp.square((query - 1.5) / 0.25))
+
+
+def _bump_reference(query: ScalarFloat) -> ProjectedRowRead:
+    return _affine_projection_reference(query)._replace(
+        value=_bump(query), economic_marginal=jax.grad(_bump)(query)
+    )
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+@pytest.mark.parametrize("hermite", [False, True])
+@pytest.mark.parametrize(("capacity", "exhausted"), [(8, True), (256, False)])
+def test_refinement_exhausting_its_capacity_invalidates_and_reports_the_need(
+    *, hermite: bool, capacity: int, exhausted: bool
+) -> None:
+    """A refused bisection invalidates the row and reports more than its capacity.
+
+    Publication raises the named capacity refusal exactly when the reported
+    count exceeds the capacity. With ample capacity the same reference meets
+    the budgets, after needing more records than the small capacity holds.
+    """
+    row = _affine_projection_row(capacity=capacity)
+    ends = jax.vmap(_bump_reference)(row.grid[:2])
+    row = replace(
+        row,
+        value=row.value.at[:2].set(ends.value),
+        economic_marginal=row.economic_marginal.at[:2].set(ends.economic_marginal),
+    )
+    refined, needed, _ = jax.jit(
+        lambda initial: refine_projected_row(
+            initial=initial,
+            reference=_bump_reference,
+            accuracy="balanced",
+            value_slope=jax.grad(_bump) if hermite else None,
+        )
+    )(row)
+    assert bool(refined.valid) is not exhausted
+    assert (int(needed) > capacity) is exhausted
+    if not exhausted:
+        assert int(needed) == int(refined.valid_length) > 8

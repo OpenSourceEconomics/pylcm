@@ -527,6 +527,7 @@ def test_consumed_case_r_and_guarded_forward_records_are_callback_free(
         domain_lower=scalar,
         domain_upper=scalar,
         valid=valid,
+        value_slope=grid,
         guard=guard,
     )
     replay = CaseRReplayInput(
