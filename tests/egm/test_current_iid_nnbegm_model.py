@@ -1,5 +1,7 @@
 """A genuine nested NB model maximizes both margins before current expectation."""
 
+import subprocess
+import sys
 from dataclasses import replace
 from pathlib import Path
 
@@ -16,11 +18,14 @@ from _lcm.egm.projected_continuation import (
 )
 from lcm import Model, NestedConsumptionSavingsRegime
 from lcm.exceptions import UnsupportedOperationError
+from lcm.model import _ModelConstructorInputs
 from lcm.shocks import PhysicalValues
 from lcm.solver_api import ArtifactRef, ResultRetention
 from lcm.solvers import NBEGM, NEGM, NNBEGM, FiniteOuterGrid
 from tests.conftest import DECIMAL_PRECISION, EXACT_KERNEL_SKIP_REASON
 from tests.egm.test_current_iid_negm_model import _declarations, _oracle, _params
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
@@ -427,9 +432,57 @@ def _assert_original_nnbegm_banks(  # noqa: PLR0915 - original bank/tuple and cu
     )
 
 
+def _nnbegm_declarations(*, budget: int | None) -> _ModelConstructorInputs:
+    """The default nested NB solver over the NEGM fixture's grids."""
+    declarations = _declarations()
+    original = declarations.regimes["child"]
+    assert isinstance(original, NestedConsumptionSavingsRegime)
+    assert isinstance(original.solver, NEGM)
+    solver = NNBEGM(
+        inner=NBEGM(
+            savings_grid=original.solver.inner.savings_grid, jump_read="bridged"
+        ),
+        outer_search=FiniteOuterGrid(grid=original.solver.outer_grid),
+    )
+    return replace(
+        declarations,
+        regimes={**declarations.regimes, "child": replace(original, solver=solver)},
+        execution_config=replace(
+            declarations.execution_config, device_memory_bytes=budget
+        ),
+    )
+
+
+_FRESH_BUDGETED_SOLVE = """
+from tests.egm.test_current_iid_call_owned_generation import (
+    _public_model_from_declarations,
+)
+from tests.egm.test_current_iid_negm_model import _params
+from tests.egm.test_current_iid_nnbegm_model import _nnbegm_declarations
+
+model = _public_model_from_declarations(
+    declarations=_nnbegm_declarations(budget=1 << 28)
+)
+model.solve(params=_params(), log_level="off")
+"""
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_default_nnbegm_u_budgeted_solve_needs_no_exact_kernel_registration() -> None:
+    """An ordinary nested NB source solves in a process that never loaded the FFI."""
+    result = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", _FRESH_BUDGETED_SOLVE],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=_REPO_ROOT,
+    )
+    assert result.returncode == 0, result.stderr[-4000:]
+
+
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
 @pytest.mark.parametrize("budget", [None, 1 << 28], ids=["unbudgeted", "budgeted"])
-def test_public_nnbegm_u_default_archive_replays_original_physics(  # noqa: PLR0915 - one genuine default archive and physical lifecycle
+def test_public_nnbegm_u_default_archive_replays_original_physics(
     *, tmp_path: Path, budget: int | None
 ) -> None:
     """Default retention delivers original nested NB physics to a fresh Model."""
@@ -441,26 +494,7 @@ def test_public_nnbegm_u_default_archive_replays_original_physics(  # noqa: PLR0
         _public_model_from_declarations,
     )
 
-    declarations = _declarations()
-    original = declarations.regimes["child"]
-    assert isinstance(original, NestedConsumptionSavingsRegime)
-    assert isinstance(original.solver, NEGM)
-    solver = NNBEGM(
-        inner=NBEGM(
-            savings_grid=original.solver.inner.savings_grid, jump_read="bridged"
-        ),
-        outer_search=FiniteOuterGrid(grid=original.solver.outer_grid),
-    )
-    child = replace(original, solver=solver)
-    assert isinstance(child.solver, NNBEGM)
-    assert isinstance(child.solver.inner, NBEGM)
-    declarations = replace(
-        declarations,
-        regimes={**declarations.regimes, "child": child},
-        execution_config=replace(
-            declarations.execution_config, device_memory_bytes=budget
-        ),
-    )
+    declarations = _nnbegm_declarations(budget=budget)
     params = _params()
     model = _public_model_from_declarations(declarations=declarations)
     solution = model.solve(params=params, log_level="off")

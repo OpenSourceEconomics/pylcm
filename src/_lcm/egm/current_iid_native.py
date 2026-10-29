@@ -16,6 +16,7 @@ import jax.numpy as jnp
 
 from _lcm.current_iid import AdmittedGroupParams, CurrentIIDPlan, NodeOperands
 from _lcm.egm.carry import EGMCarry
+from _lcm.egm.comparison_arithmetic import ComparisonArithmetic
 from _lcm.egm.current_iid_balanced import BalancedResourcesProgram
 from _lcm.egm.current_iid_demands import (
     ParentResourcesDemand,
@@ -320,6 +321,7 @@ def replay_case_r_candidate(
     utility: BoundUtilityOfAction,
     coefficient: Fraction,
     owner_capacity: int,
+    arithmetic: ComparisonArithmetic,
 ) -> OwnedResourcesRead:
     """Read original candidates with the caller's same addressed physical frame.
 
@@ -331,7 +333,7 @@ def replay_case_r_candidate(
         selected = read_nbegm_resources_bank(
             bank=row,
             resources=resources(liquid, physical),
-            arithmetic="certified",
+            arithmetic=arithmetic,
         )
         return replace(selected, valid=selected.valid & frame_valid)
     if type(row) is not OwnedResourcesRow:
