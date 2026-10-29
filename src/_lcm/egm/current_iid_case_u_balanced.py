@@ -2,7 +2,7 @@
 
 Only the saturated-span class has fixed Hermite operands. Other U sources keep
 exact-coordinate publication. Conditional rows are temporary; the durable guard
-retains original producer operands and reconstructs ownership at consumption.
+retains original producer operands so `validate` can check ownership ex post.
 """
 
 import inspect
@@ -41,10 +41,6 @@ from _lcm.egm.projected_continuation import ProjectedEGMCarry, ProjectedRowRead
 from _lcm.egm.query_data import QueryNodeKind
 from _lcm.egm.step import _EGMStep
 from _lcm.egm.upper_envelope import _bracket_from_owned_row, get_upper_envelope
-from _lcm.egm.upper_envelope._exact_affine.ffi import certified_affine_compare
-from _lcm.egm.upper_envelope._exact_affine.hermite_critical import (
-    hermite_critical_bernstein_signs,
-)
 from _lcm.egm.upper_envelope.segment_envelope import OwnedEnvelope
 from _lcm.egm.validation import _dag_ancestors, _savings_stage_candidates
 from _lcm.probability import is_represented_zero
@@ -254,7 +250,7 @@ def _guard_mapping_names[T](values: Mapping[str, T]) -> tuple[str, ...]:
 
 @dataclass(frozen=True, kw_only=True)
 class BalancedCaseUCarry(ProjectedEGMCarry):
-    """Stored economics and original source inputs for consumed ownership."""
+    """Stored economics and original source inputs for ex-post ownership checks."""
 
     value_slope: FloatND
     """Derivative of the reference value at each finite record; zero elsewhere."""
@@ -460,7 +456,7 @@ class SaturatedCaseUProgram:
     ) -> ProjectedRowRead:
         """Original integrated level/economic derivative, rebuilt at each query.
 
-        Publication reads ``hoisted_reference``; consumer validation and tests
+        Publication reads ``hoisted_reference``; ex-post validation and tests
         keep this rebuilding oracle.
         """
         result, law_valid = self.point.evaluate_with_law(
@@ -797,7 +793,7 @@ class SaturatedCaseUProgram:
         query: ScalarFloat | None = None,
         conditionals: _ConditionalRow | None = None,
     ) -> ScalarBool:
-        """Exclude shadow critical roots and verify original consumed ownership.
+        """Link a cell whose ends keep one selection; with a query, check it ex post.
 
         ``conditionals`` is ``conditionals()`` of this guard, built once per row.
         """
@@ -828,13 +824,12 @@ class SaturatedCaseUProgram:
                 )
                 low = self.resources(guard=guard, physical=physical, query=left)
                 high = self.resources(guard=guard, physical=physical, query=right)
-                scale, _, utility_valid = self.utility.coefficients(
+                _, _, utility_valid = self.utility.coefficients(
                     pool={**guard.pool, **physical}, dtype=left.dtype
                 )
                 supported, owner, corner = _classify(
                     conditional=conditional,
                     utility_of_action=utility_of_action,
-                    scale=scale,
                     lower=low,
                     upper=high,
                 )
@@ -1022,7 +1017,7 @@ class SaturatedCaseUProgram:
             dtype=jnp.int32,
         )
         # IDs describe connected PWA regions, not a collapsed native roster.
-        # Original native ownership is reconstructed by cell() at consumption.
+        # Original native ownership is checked by validate() ex post only.
         row = replace(
             row,
             link_valid=links,
@@ -1135,29 +1130,10 @@ def _select_conditional(
     return jnp.where(corner, -1, bracket.owner_id), corner, valid
 
 
-def _sum_sign(
-    *, a: ScalarFloat, b: ScalarFloat, c: ScalarFloat, d: ScalarFloat
-) -> ScalarInt:
-    """Exact sign of a+b-c-d from two rational midpoint lines, without rounded sums."""
-    zero, one, half = jnp.zeros_like(a), jnp.ones_like(a), jnp.full_like(a, 0.5)
-    return certified_affine_compare(
-        a_x0=zero,
-        a_x1=one,
-        a_v0=a,
-        a_v1=b,
-        b_x0=zero,
-        b_x1=one,
-        b_v0=c,
-        b_v1=d,
-        x_query=half,
-    )
-
-
 def _classify(
     *,
     conditional: _ConditionalRow,
     utility_of_action: BoundUtilityOfAction,
-    scale: ScalarFloat,
     lower: ScalarFloat,
     upper: ScalarFloat,
 ) -> tuple[ScalarBool, ScalarInt, ScalarBool]:
@@ -1168,7 +1144,7 @@ def _classify(
     )
     x0, x1 = row.grid[index], row.grid[index + 1]
     c0, c1 = row.policy[index], row.policy[index + 1]
-    h, a, b, applicable = materialize_hermite_shadow(
+    h, _, _, applicable = materialize_hermite_shadow(
         xp_lower=x0,
         xp_upper=x1,
         fp_lower=row.value[index],
@@ -1182,35 +1158,15 @@ def _classify(
             utility_of_action=utility_of_action,
         ),
     )
-    signs, status = hermite_critical_bernstein_signs(
-        x0=x0,
-        h=h,
-        v0=row.value[index],
-        v1=row.value[index + 1],
-        a=a,
-        b=b,
-        L=conditional.borrowing_limit,
-        A=scale,
-        lower=lower,
-        upper=upper,
-    )
-    zero = jnp.zeros_like(x0)
+    # Ordinary rounded legality of the piece's node savings; the cell links
+    # when both ends then keep one owner/corner selection. No interior proof.
     floor, ceiling = conditional.borrowing_limit, conditional.savings_ceiling
-    low0, low1 = (
-        _sum_sign(a=x0, b=zero, c=c0, d=floor),
-        _sum_sign(a=x0, b=h, c=c1, d=floor),
-    )
-    high0, high1 = (
-        _sum_sign(a=x0, b=zero, c=c0, d=ceiling),
-        _sum_sign(a=x0, b=h, c=c1, d=ceiling),
-    )
+    s0, s1 = x0 - c0, (x0 + h) - c1
     legal = (
         (c0 > 0)
         & (c1 > 0)
-        & ((low0 == 0) | (low0 == 1))
-        & ((low1 == 0) | (low1 == 1))
-        & ((high0 == -1) | (high0 == 0))
-        & ((high1 == -1) | (high1 == 0))
+        & (jnp.minimum(s0, s1) >= floor)
+        & (jnp.maximum(s0, s1) <= ceiling)
     )
     left_owner, left_corner, left_valid = _select_conditional(
         conditional=conditional, utility_of_action=utility_of_action, resources=lower
@@ -1218,7 +1174,6 @@ def _classify(
     right_owner, right_corner, right_valid = _select_conditional(
         conditional=conditional, utility_of_action=utility_of_action, resources=upper
     )
-    root_free = (status == 0) & (jnp.all(signs > 0) | jnp.all(signs < 0))
     geometry = (
         (lower < upper)
         & (lower >= x0)
@@ -1230,7 +1185,7 @@ def _classify(
     )
     same = (left_owner == right_owner) & (left_corner == right_corner)
     return (
-        geometry & legal & root_free & same & left_valid & right_valid,
+        geometry & legal & same & left_valid & right_valid,
         left_owner,
         left_corner,
     )

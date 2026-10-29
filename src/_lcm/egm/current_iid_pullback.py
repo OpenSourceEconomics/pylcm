@@ -17,7 +17,6 @@ from _lcm.egm.outer_affine_structure import (
 from _lcm.typing import PytreeChild
 from lcm.typing import (
     FloatND,
-    LoopIndex,
     ReferenceName,
     ScalarBool,
     ScalarFloat,
@@ -140,6 +139,10 @@ def _monotone_outputs(
     ), None
 
 
+# Half-width, in ordered floating keys, of the bracket around the secant guess.
+_SECANT_BRACKET_KEYS = 1 << 10
+
+
 class BoundaryPullback(NamedTuple):
     """First represented pre-state reaching one native resources boundary."""
 
@@ -202,20 +205,35 @@ def pullback_resource_boundary(
 
     interior = ~reached(lower_resources) & reached(upper_resources)
 
-    # keyword-only-exempt: library-callback=jax.lax.fori_loop
-    def bisect(
-        index: LoopIndex, interval: tuple[jax.Array, jax.Array]
-    ) -> tuple[jax.Array, jax.Array]:
-        del index
+    # The map is affine up to rounding, so its secant inverse lands within a
+    # few keys of the answer. Start from a small bracket around it when the
+    # monotone map confirms that bracket; otherwise from the full one.
+    secant = lower + (boundary - lower_resources) * (upper - lower) / (
+        upper_resources - lower_resources
+    )
+    guess = key(jnp.where(jnp.isfinite(secant), jnp.clip(secant, lower, upper), lower))
+    width = jnp.asarray(_SECANT_BRACKET_KEYS, dtype=unsigned)
+    near_lo = jnp.where(guess - left > width, guess - width, left)
+    near_hi = jnp.where(right - guess > width, guess + width, right)
+    start_lo = jnp.where(
+        (near_lo == left) | ~reached(resources(coordinate(near_lo))), near_lo, left
+    )
+    start_hi = jnp.where(
+        (near_hi == right) | reached(resources(coordinate(near_hi))), near_hi, right
+    )
+
+    def bisect(interval: tuple[jax.Array, jax.Array]) -> tuple[jax.Array, jax.Array]:
         lo, hi = interval
         middle = lo + (hi - lo) // jnp.asarray(2, dtype=unsigned)
         at_boundary = reached(resources(coordinate(middle)))
         return (
-            jnp.where((lo < hi) & ~at_boundary, middle + 1, lo),
-            jnp.where((lo < hi) & at_boundary, middle, hi),
+            jnp.where(~at_boundary, middle + 1, lo),
+            jnp.where(at_boundary, middle, hi),
         )
 
-    first, last = jax.lax.fori_loop(0, bits, bisect, (left, right))
+    first, last = jax.lax.while_loop(
+        lambda interval: interval[0] < interval[1], bisect, (start_lo, start_hi)
+    )
     point = coordinate(first)
     predecessor = coordinate(jnp.maximum(first, left + 1) - 1)
     resolved = (

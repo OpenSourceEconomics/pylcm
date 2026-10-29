@@ -158,7 +158,7 @@ def read_projected_coordinate(
     jacobian: ScalarFloat,
     collect_read_counts: bool = False,
 ) -> BoundedResult[tuple[ScalarFloat, ScalarFloat]]:
-    """Read stored economics and the same producer guard at an actual coordinate."""
+    """Read stored economics and the producer clock at an actual coordinate."""
     row = carry
     read = read_projected_row(
         query=query,
@@ -175,16 +175,13 @@ def read_projected_coordinate(
         valid=row.valid,
         value_slope=row.value_slope_channel,
     )
-    if row.guard_required:
-        if guard_program is None:
-            raise TypeError(
-                "Balanced child read lacks its original source guard program."
-            )
-        guarded = guard_program.validate(carry=row, query=query)
-    else:
-        if guard_program is not None:
-            raise TypeError("Ordinary projected carry cannot borrow a balanced guard.")
-        guarded = jnp.ones((), dtype=jnp.bool_)
+    # The read interpolates stored channels with their domain/link/finite
+    # status. A balanced program's `validate` is an ex-post check only.
+    if row.guard_required and guard_program is None:
+        raise TypeError("Balanced child read lacks its original source guard program.")
+    if not row.guard_required and guard_program is not None:
+        raise TypeError("Ordinary projected carry cannot borrow a balanced guard.")
+    guarded = jnp.ones((), dtype=jnp.bool_)
     if row.guard_required:
         from _lcm.egm.current_iid_balanced import (  # noqa: PLC0415
             BalancedProjectedEGMCarry,

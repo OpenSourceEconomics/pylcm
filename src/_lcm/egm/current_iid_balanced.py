@@ -28,9 +28,6 @@ from _lcm.egm.interp import materialize_hermite_shadow
 from _lcm.egm.preferences import BoundUtilityOfAction
 from _lcm.egm.projected_continuation import ProjectedEGMCarry
 from _lcm.egm.step_core import OwnedResourcesRow, _EgmKernelPieces
-from _lcm.egm.upper_envelope._exact_affine.hermite_critical import (
-    hermite_critical_bernstein_signs,
-)
 from _lcm.egm.upper_envelope.segment_envelope import OwnedEnvelope
 from _lcm.probability import is_represented_zero
 from _lcm.solution.feasibility import (
@@ -62,7 +59,7 @@ class ResourcesRegionCatalog:
     length: ScalarInt
     """Mandatory retained prefix, bounded by the existing capacity."""
     smooth: BoolND
-    """Balanced root-excluded branch proposals requiring consumed checks."""
+    """Cells whose ends keep one owner/corner branch; no interior proof."""
     piece: IntND
     """Original local Hermite lower index for each proposed interval."""
     branch: IntND
@@ -473,12 +470,12 @@ def build_resources_catalog(
     required: Float1D,
     capacity: int,
 ) -> ResourcesRegionCatalog:
-    """Subdivide original resources pieces with exact critical-sign exclusion.
+    """Subdivide original resources pieces until cell ends share a selection.
 
-    Strict common Bernstein signs exclude ideal derivative roots. Mixed signs,
-    contacts, original-score branch changes and unresolved geometry stay holes.
-    This proves no target-log ULP bound; consumed ownership is independently
-    checked against the original rounded reader.
+    A cell links when both ends keep the piece owner or corner branch and are
+    feasible. Owner/branch changes, contacts and unresolved geometry stay
+    holes. No interior-selection proof is made; `validate_guard` checks
+    consumed ownership ex post.
     """
     row = evaluator.row
     grid = row.envelope.grid
@@ -523,7 +520,7 @@ def build_resources_catalog(
     def assess(catalog: ResourcesRegionCatalog) -> ResourcesRegionCatalog:
         smooth, piece, branch, reason = jax.vmap(
             lambda left, right: _classify_resource_cell(
-                evaluator=evaluator, scale=scale, lower=left, upper=right
+                evaluator=evaluator, lower=left, upper=right
             )
         )(catalog.points[:-1], catalog.points[1:])
         live = jnp.arange(capacity - 1) < catalog.length - 1
@@ -535,7 +532,10 @@ def build_resources_catalog(
             reason=jnp.where(live, reason, 0),
         )
 
-    def step(catalog: ResourcesRegionCatalog) -> ResourcesRegionCatalog:
+    def step(
+        state: tuple[ScalarInt, ResourcesRegionCatalog, ScalarBool],
+    ) -> tuple[ScalarInt, ResourcesRegionCatalog, ScalarBool]:
+        iteration, catalog, _ = state
         assessed = assess(catalog)
         live = jnp.arange(capacity - 1) < assessed.length - 1
         width = assessed.points[1:] - assessed.points[:-1]
@@ -556,14 +556,21 @@ def build_resources_catalog(
         points, length, valid = _ordered_points(
             raw=raw, active=active, capacity=capacity
         )
-        return replace(
-            assessed, points=points, length=length, valid=assessed.valid & valid
+        return (
+            iteration + 1,
+            replace(
+                assessed, points=points, length=length, valid=assessed.valid & valid
+            ),
+            insert,
         )
 
     # A fixed numerical capacity bounds locator work and scratch. Exhausted or
     # nonrepresentable neighborhoods retain false links and explicit reasons.
-    result = jax.lax.fori_loop(
-        0, min(capacity, 16), lambda _, catalog: step(catalog), initial
+    # A step that inserts nothing is the identity, so stop at the first one.
+    _, result, _ = jax.lax.while_loop(
+        lambda state: (state[0] < min(capacity, 16)) & state[2],
+        step,
+        (jnp.int32(0), initial, jnp.ones((), dtype=jnp.bool_)),
     )
     result = assess(result)
     live_cells = jnp.arange(capacity - 1) < result.length - 1
@@ -603,10 +610,14 @@ def build_resources_catalog(
 def _classify_resource_cell(
     *,
     evaluator: CurrentResourcesEvaluator,
-    scale: ScalarFloat,
     lower: ScalarFloat,
     upper: ScalarFloat,
 ) -> tuple[ScalarBool, ScalarInt, ScalarInt, ScalarInt]:
+    """Link a cell whose ends share the piece owner/corner branch, both feasible.
+
+    An ordinary rule: no proof that the cell interior keeps that selection.
+    Known discontinuities stay cut by the catalog's native points.
+    """
     row = evaluator.row
     grid = row.envelope.grid
     count = row.envelope.n_kept
@@ -615,7 +626,7 @@ def _classify_resource_cell(
         jnp.searchsorted(search, lower, side="right") - 1, 0, grid.size - 2
     )
     x0, x1 = grid[piece], grid[piece + 1]
-    h, a, b, applicable = materialize_hermite_shadow(
+    *_, applicable = materialize_hermite_shadow(
         xp_lower=x0,
         xp_upper=x1,
         fp_lower=row.envelope.value[piece],
@@ -623,19 +634,6 @@ def _classify_resource_cell(
         slope_lower=row.marginal[piece],
         slope_upper=row.marginal[piece + 1],
     )
-    signs, status = hermite_critical_bernstein_signs(
-        x0=x0,
-        h=h,
-        v0=row.envelope.value[piece],
-        v1=row.envelope.value[piece + 1],
-        a=a,
-        b=b,
-        L=row.borrowing_limit,
-        A=scale,
-        lower=lower,
-        upper=upper,
-    )
-    root_free = (status == 0) & (jnp.all(signs > 0) | jnp.all(signs < 0))
     left = read_resources_candidate(
         row=row,
         resources=lower,
@@ -681,7 +679,6 @@ def _classify_resource_cell(
     smooth = (
         geometry
         & legal
-        & root_free
         & same
         & left.valid
         & right.valid
@@ -691,7 +688,7 @@ def _classify_resource_cell(
     reason = jnp.where(
         ~geometry,
         1,
-        jnp.where(~legal, 2, jnp.where(~root_free, 3, jnp.where(~same, 4, 0))),
+        jnp.where(~legal, 2, jnp.where(~same, 4, 0)),
     ).astype(jnp.int32)
     return smooth, piece.astype(jnp.int32), branch, reason
 

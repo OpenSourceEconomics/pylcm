@@ -302,8 +302,8 @@ def publish_balanced_resources(
         reference=exact_reference, capacity=capacity
     )
     # This scalar is only the numeric PWA reader's connectivity address.
-    # Original economic ownership comes exclusively from the resource catalog
-    # and mandatory original-node guard, never equality of this address.
+    # Links come from the resource catalog, never equality of this address;
+    # the original-node guard checks ownership ex post only.
     initial = replace(initial, owner_id=jnp.zeros_like(initial.owner_id))
 
     # keyword-only-exempt: library-callback=jax.vmap
@@ -345,15 +345,12 @@ def publish_balanced_resources(
         valid=initial.valid & guard.law_valid,
     )
 
-    def checked_reference(liquid: ScalarFloat) -> ProjectedRowRead:
-        read = exact_reference(liquid)
-        return read._replace(
-            owner_id=jnp.zeros((), dtype=jnp.int32),
-            valid=read.valid & program.validate_guard(guard=guard, query=liquid),
-        )
+    # Probes read the reference only; `program.validate_guard` is ex post.
+    def probe_reference(liquid: ScalarFloat) -> ProjectedRowRead:
+        return exact_reference(liquid)._replace(owner_id=jnp.zeros((), dtype=jnp.int32))
 
     refined, refined_needed, _ = refine_projected_row(
-        initial=initial, reference=checked_reference, accuracy="balanced"
+        initial=initial, reference=probe_reference, accuracy="balanced"
     )
     # Exact-only carries stay valid: every interior read requires its own link.
     return BalancedProjectedEGMCarry(
