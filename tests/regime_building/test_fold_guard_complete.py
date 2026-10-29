@@ -102,10 +102,6 @@ def _u_zero() -> FloatND:
     return jnp.asarray(0.0)
 
 
-def _no_dissolution_gate(D_target: BoolND) -> BoolND:
-    return ~D_target
-
-
 def _true_gate() -> BoolND:
     return jnp.asarray(1.0) > 0.0
 
@@ -311,7 +307,7 @@ def _make_edge_fallback_regimes(
             ),
             gates={
                 "target": Gate(
-                    predicate=_no_dissolution_gate,
+                    predicate=_true_gate,
                     routes={
                         "only": StakeholderRoute(
                             target_stakeholder="f",

@@ -1306,12 +1306,12 @@ def test_public_model_solve_returns_labelled_values_for_every_demanded_period():
 
 
 def test_public_model_simulate_routes_dissolution_edge_when_flags_supplied():
-    """End-to-end: a dissolution `GatedEdge` whose gate reads `D_target` simulates.
+    """End-to-end: a dissolution arrival reading participation support simulates.
 
     Reproduces `test_dissolution_edge_routes_the_row_to_its_own_roles_single_regime`
-    through the public `Model` API: wage=2 (D=True) is routed to `single_f`
-    (the wife's leg, the role this cohort declares) instead of `married_ir`;
-    wage=1 and wage=3 (D=False) stay married.
+    through the public `Model` API: wage=2 (empty participation) is routed to
+    `single_f` (the wife's leg, the role this cohort declares) instead of
+    `married_ir`; wage=1 and wage=3 (both members participate) stay married.
     """
     model = _make_dissolution_model()
     solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="debug")
