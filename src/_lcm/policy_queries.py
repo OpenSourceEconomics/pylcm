@@ -985,25 +985,27 @@ def _finish_bank(*, shape: tuple[int, ...], size: int) -> _FinishBank:
     return _FinishBank(shape=shape, size=size)
 
 
-def _admit_node(*, node: QueryNode, period: int) -> None:
-    """Refuse an unrepresented action/status or information intersection."""
+def _admit_node(
+    *, node: QueryNode, period: int, same_period_values: bool = False
+) -> None:
+    """Refuse an unrepresented action/status or information intersection.
+
+    `same_period_values` says the caller supplies the query date's stored values,
+    which a target's value-dependent constraint reads.
+    """
     context = node.context
     if node.read.phase != "solve" or node.read.period != period:
         raise UnsupportedOperationError(
             "A policy query needs its exact solve phase/period."
         )
     if node.read.kind is QueryKind.INTEGRATED_FULL:
-        if set(node.read.projection) != set(context.state_action_space.state_names):
-            raise ValueError(
-                "A stored-value reader needs its complete declared schema."
-            )
+        _fail_if_projection_incomplete(node=node, reader="A stored-value reader")
         return
     _admit_query_solver(context=context, period=period)
     if period not in context.Q_and_F_functions:
         raise ValueError("The target action problem is inactive at this period.")
     _admit_query_objective(context=context, period=period)
-    if set(node.read.projection) != set(context.state_action_space.state_names):
-        raise ValueError("A query needs a complete canonical target-state projection.")
+    _fail_if_projection_incomplete(node=node, reader="A query")
     if context.has_taste_shocks and context.stakeholders is not None:
         raise UnsupportedOperationError(
             "A collective query does not declare an EV1 stakeholder-taste law."
@@ -1017,13 +1019,26 @@ def _admit_node(*, node: QueryNode, period: int) -> None:
         raise UnsupportedOperationError(
             "This query closure needs an unblocked, unfolded action problem."
         )
-    if context.same_period_ref_regimes or context.edge_reference_regimes:
+    if (
+        context.same_period_ref_regimes and not same_period_values
+    ) or context.edge_reference_regimes:
         raise UnsupportedOperationError(
             "A query cannot price another root's stored Full value."
         )
     if runtime_bound_specs(function=context.Q_and_F_functions[period]):
         raise UnsupportedOperationError(
             "Query bound integrity must have a native status adapter."
+        )
+
+
+def _fail_if_projection_incomplete(*, node: QueryNode, reader: str) -> None:
+    """Name the states a query's projection must cover and the ones it covers."""
+    expected = sorted(node.context.state_action_space.state_names)
+    if sorted(node.read.projection) != expected:
+        raise ValueError(
+            f"{reader} of regime {node.read.target!r} needs exactly one projection "
+            f"per state of its value function ({expected}); got "
+            f"{sorted(node.read.projection)}."
         )
 
 

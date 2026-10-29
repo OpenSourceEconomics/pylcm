@@ -7,11 +7,15 @@ from typing import TYPE_CHECKING, cast
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from _lcm.current_iid import CurrentIIDDrawFrame, CurrentIIDDrawPlan
 from _lcm.engine import Regime
 from _lcm.execution.core_program import CoreBuildContext
 from _lcm.execution.value_transfer import ValueArtifactKind
+from _lcm.grids.continuous import ContinuousGrid
+from _lcm.off_grid import count_off_grid, off_grid_message
+from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.collective import NO_ROLE
 from _lcm.shock_registry import ShockBinding
 from _lcm.simulation.arrival_routing import (
@@ -38,6 +42,7 @@ from _lcm.simulation.exits import (
 )
 from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
 from _lcm.simulation.runtime import SimulationRuntime, execute_simulation_program
+from _lcm.simulation.shock_paths import fail_if_a_held_process_code_is_off_node
 from _lcm.simulation.subject_groups import SubjectRows
 from _lcm.simulation.taste_stream import prepare_decision_taste_keys
 from _lcm.simulation.unit_executor import SimulationUnitExecutor
@@ -58,10 +63,11 @@ from _lcm.utils.counts import sum_counts
 from lcm.exceptions import (
     ExecutionPlanningError,
     NoFeasibleActionError,
+    OffGridStateError,
     ShockDeclarationError,
 )
 from lcm.shocks import ShockName
-from lcm.typing import BoolND, FloatND, IntND, RegimeName
+from lcm.typing import BoolND, FloatND, IntND, RegimeName, StateName
 
 if TYPE_CHECKING:
     from _lcm.policy_queries import PolicyAnswer, ScalarPolicyQueries
@@ -97,6 +103,9 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
     taste_key: PRNGKeyND | None = None,
     taste_addresses: Mapping[
         tuple[int, RegimeName], tuple[int, ...]
+    ] = MappingProxyType({}),
+    process_code_reads: Mapping[
+        RegimeName, Mapping[StateName, _ContinuousStochasticProcess]
     ] = MappingProxyType({}),
 ) -> tuple[StatesPerRegime, IntND, IntND, Mapping[RegimeName, PreparedExitDecision]]:
     """Choose at entry, route simultaneously, reveal, then prepare final actions."""
@@ -245,6 +254,9 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
             frame=frame,
             holders=holders,
             memory=memory,
+            regime_name=name,
+            period=period,
+            states=states[name],
         )
         root = plan.full.definitions[plan.full.root]
         for identifier, members in root.exit_targets.items():
@@ -326,8 +338,38 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
             "OriginalExitOutput", output
         )
         frame = CurrentIIDDrawFrame(*frame_payload)
+        # Every fallback is priced for every arriving row, so a fallback regime
+        # reading a process's node position must receive a node from each one.
+        root = queries.definitions[queries.root]
+        for member, query in root.exit_targets.get(1, {}).items():
+            fallback = queries.definitions[query].read.target
+            _fail_if_a_fallback_lands_off_a_raise_grid(
+                fallback=regimes[fallback],
+                fallback_name=fallback,
+                regime_name=name,
+                period=period,
+                states=entry_projections[query],
+                holders=holders,
+            )
+            if process_code_reads.get(fallback):
+                fail_if_a_held_process_code_is_off_node(
+                    states=entry_projections[query],
+                    processes=process_code_reads[fallback],
+                    holders=holders,
+                    where=f"projected by route '{member}' of the arrival from "
+                    f"regime '{source}' into regime '{name}' onto its fallback "
+                    f"regime '{fallback}' at period {period}",
+                    memory=memory,
+                )
         _check_answer(
-            queries=queries, answer=answer, frame=frame, holders=holders, memory=memory
+            queries=queries,
+            answer=answer,
+            frame=frame,
+            holders=holders,
+            memory=memory,
+            regime_name=name,
+            period=period,
+            states=states[name],
         )
         edge = f"{name}:{source}"
         arrival_frames[edge], arrival_pending[edge] = frame, holders
@@ -532,6 +574,9 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
             frame=frame,
             holders=holders,
             memory=memory,
+            regime_name=name,
+            period=period,
+            states=final_states[name],
         )
         source_answer, source_frame = originals.get(name, (answer, frame))
         physical_names = plan.physical_names
@@ -742,6 +787,49 @@ def _dispatch(
         executor.close()
 
 
+def _fail_if_a_fallback_lands_off_a_raise_grid(
+    *,
+    fallback: Regime,
+    fallback_name: RegimeName,
+    regime_name: RegimeName,
+    period: int,
+    states: Mapping[str, FloatND | IntND],
+    holders: BoolND,
+) -> None:
+    """Refuse an arrival fallback landing off a grid declared `off_grid="raise"`.
+
+    A `clip_state` grid's landing is clipped where the fallback is projected.
+    """
+    axes = fallback.solution.period_state_axes
+    for state, values in states.items():
+        grid = fallback.simulation.grids.get(state)
+        if (
+            not isinstance(grid, ContinuousGrid)
+            or isinstance(grid, _ContinuousStochasticProcess)
+            or grid.off_grid != "raise"
+        ):
+            continue
+        points = None if axes is None else axes.get(period, {}).get(state)
+        count = int(
+            count_off_grid(
+                values=jnp.asarray(values),
+                points=grid.to_jax() if points is None else jnp.asarray(points),
+                feasible=holders,
+            )
+        )
+        if count:
+            raise OffGridStateError(
+                off_grid_message(
+                    count=count,
+                    regime=regime_name,
+                    target=fallback_name,
+                    period=period,
+                    state=state,
+                    phase="arrival fallback",
+                )
+            )
+
+
 def _answer_status(
     *, valid: BoolND, support: BoolND, law_valid: BoolND, holders: BoolND
 ) -> tuple[BoolND, BoolND]:
@@ -767,6 +855,9 @@ def _check_answer(
     frame: CurrentIIDDrawFrame,
     holders: BoolND,
     memory: SimulationMemory | None,
+    regime_name: RegimeName,
+    period: int,
+    states: Mapping[str, FloatND | IntND],
 ) -> None:
     invalid, empty = run_simulation_operation(
         memory=memory,
@@ -783,8 +874,11 @@ def _check_answer(
             "Current exit law or query is invalid or unresolved during replay."
         )
     if bool(empty):
+        row = int(np.flatnonzero(np.asarray(holders & ~answer[2]))[0])
+        state = {name: np.asarray(value)[row].item() for name, value in states.items()}
         raise NoFeasibleActionError(
-            "The final current-period policy has no feasible action."
+            f"Regime '{regime_name}', period {period}, state {state}: the final "
+            "current-period policy has no feasible action."
         )
     if queries.landing_checks:
         totals = run_simulation_operation(

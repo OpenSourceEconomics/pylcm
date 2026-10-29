@@ -38,6 +38,7 @@ from _lcm.exit_queries import (
     _QueryGraphBuilder,
     _validate_query_projection_bindings,
 )
+from _lcm.grids.continuous import ContinuousGrid
 from _lcm.params.edges import regime_kernel_params
 from _lcm.policy_queries import (
     PolicyAnswer,
@@ -47,8 +48,9 @@ from _lcm.policy_queries import (
     ScalarPolicyQueries,
     _admit_node,
 )
+from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.Q_and_F import _CollectiveQAndF, _ComputeCE, _QAndF
-from _lcm.regime_building.V import get_V_interpolator
+from _lcm.regime_building.V import VInterpolationInfo, get_V_interpolator
 from _lcm.regime_building.value_adapter import (
     _AdaptedArrivalPredicate,
 )
@@ -66,17 +68,20 @@ from _lcm.utils.functools import NamedOperand, call_with_declared_arguments
 from lcm.arrivals import ArrivalDecision, ArrivalRead
 from lcm.exceptions import (
     ExecutionPlanningError,
+    ModelInitializationError,
     RegimeInitializationError,
     UnsupportedOperationError,
 )
 from lcm.shocks import Discrete
 from lcm.typing import (
     BoolND,
+    Float1D,
     FloatND,
     IntND,
     Phase,
     ReferenceName,
     RegimeName,
+    StateName,
     UserFunction,
 )
 
@@ -247,6 +252,11 @@ class _ArrivalPolicyValue:
     """Price the bound Boolean routing at this action's actual target landing."""
 
     plan: ArrivalQueryPlan
+    process_nodes: Mapping[StateName, Float1D] = field(
+        default_factory=lambda: MappingProxyType({}),
+        metadata={"fingerprint_omit_if_default": True},
+    )
+    """Nodes of each process state the continuation enumerates by position."""
 
     def __call__(
         self, **operands: PytreeValue
@@ -257,6 +267,10 @@ class _ArrivalPolicyValue:
             for name, value in operands.items()
             if name.startswith("next_") and name != "next_V_arr"
         }
+        # The continuation enumerates a process landing by its node position,
+        # which indexes stored values; the arrival reads the node's value.
+        for name, nodes in self.process_nodes.items():
+            states[name] = nodes[jnp.asarray(states[name]).astype(jnp.int32)]
         answer = self.plan.queries(
             states=cast("Mapping[str, FloatND]", states),
             arguments=arguments.by_target[self.plan.target],
@@ -296,15 +310,26 @@ def _source_action_problem(
             "next_V_arr",
             "arrival_arguments",
         ]
-        reader = with_signature(
-            _ArrivalPolicyValue(plan=plan), args=names, enforce=False
-        )
         if target in compute.scalar_targets:
-            scalar_readers[target] = reader
+            scalar_readers[target] = with_signature(
+                _ArrivalPolicyValue(plan=plan), args=names, enforce=False
+            )
             scalar_names[target] = ("arrival_arguments",)
             scalar_checks[target] = plan.queries.landing_checks
             continue
         original = continuations[target]
+        reader = with_signature(
+            _ArrivalPolicyValue(
+                plan=plan,
+                process_nodes=_landing_process_nodes(
+                    target=target,
+                    info=context.regime_to_v_interpolation_info[target],
+                    lottery_axis_names=original.lottery_axis_names,
+                ),
+            ),
+            args=names,
+            enforce=False,
+        )
         if (
             original.integrated_weight_names
             or original.draw_dependent_names
@@ -344,6 +369,36 @@ def _source_action_problem(
         if function.continuation_reads is None
         else function.continuation_reads | {"arrival_arguments"},
     )
+
+
+def _landing_process_nodes(
+    *,
+    target: RegimeName,
+    info: VInterpolationInfo,
+    lottery_axis_names: tuple[str, ...],
+) -> MappingProxyType[StateName, Float1D]:
+    """Return the nodes of each process state the continuation lands on by position.
+
+    Raises:
+        ModelInitializationError: If such a process is parameterized at runtime,
+            so its nodes are not known while the model builds.
+
+    """
+    nodes = {}
+    for name, grid in info.discrete_states.items():
+        if f"next_{name}" not in lottery_axis_names or not isinstance(
+            grid, _ContinuousStochasticProcess
+        ):
+            continue
+        if not grid.is_fully_specified:
+            raise ModelInitializationError(
+                f"An arrival into regime '{target}' reads the process '{name}' at "
+                "its landing, but that process is parameterized at runtime, so its "
+                "nodes are not known while the model builds. Fix its parameters "
+                "through the process constructor or `fixed_params`."
+            )
+        nodes[name] = grid.to_jax()
+    return MappingProxyType(nodes)
 
 
 def _bind_transport_templates(
@@ -780,6 +835,48 @@ def _make_integrated_read(
     return key
 
 
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _ClippedProjection:
+    """A projected landing coordinate clipped onto its `clip_state` grid."""
+
+    function: Callable[..., PytreeValue]
+    low: FloatND
+    high: FloatND
+
+    def __call__(self, **kwargs: PytreeValue) -> FloatND:
+        return jnp.clip(
+            jnp.asarray(self.function(**kwargs)), min=self.low, max=self.high
+        )
+
+
+def _clip_landing_states(
+    *,
+    projection: Mapping[StateName, Callable[..., PytreeValue]],
+    context: SolverBuildContext,
+    period: int,
+) -> dict[StateName, Callable[..., PytreeValue]]:
+    """Clip each landing coordinate a fallback writes onto a `clip_state` grid.
+
+    A subject routed to the fallback lands there exactly as a realised state
+    does, so it decides at the clipped state, never at the raw projection.
+    """
+    nodes = {
+        **context.state_action_space.states,
+        **(context.period_to_state_nodes or {}).get(period, {}),
+    }
+    clipped = dict(projection)
+    for state, function in projection.items():
+        grid = context.grids.get(state)
+        if isinstance(grid, ContinuousGrid) and grid.off_grid == "clip_state":
+            points = jnp.asarray(nodes[state])
+            clipped[state] = with_signature(
+                _ClippedProjection(function=function, low=points[0], high=points[-1]),
+                args=list(inspect.signature(function).parameters),
+                enforce=False,
+            )
+    return clipped
+
+
 def _member_index(*, context: SolverBuildContext, role: str | None) -> int | None:
     """Validate an explicitly declared destination role without picking a member."""
     members = context.stakeholders
@@ -1075,7 +1172,15 @@ def _bind_arrival(
                 physical_names=physical_names,
             )
             for state, function in mapped.items()
+            # A fallback also projects the states its regime only carries in
+            # simulation; the action problem it prices has no axis for them.
+            if state in builder.contexts[fallback.regime].state_action_space.state_names
         }
+        projected = _clip_landing_states(
+            projection=projected,
+            context=builder.contexts[fallback.regime],
+            period=builder.period,
+        )
         operand = f"_lcm_arrival_fallback_{len(fallbacks)}"
         inputs[operand] = builder.make(
             kind=QueryKind.PARTICIPATING,
@@ -1172,7 +1277,7 @@ def _bind_arrival(
     _validate_query_projection_bindings(nodes=builder.nodes, period=builder.period)
     if builder.phase == "solve":
         for node in builder.nodes.values():
-            _admit_node(node=node, period=builder.period)
+            _admit_node(node=node, period=builder.period, same_period_values=True)
     return ArrivalQueryPlan(
         source=source,
         target=target,

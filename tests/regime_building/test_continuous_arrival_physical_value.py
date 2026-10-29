@@ -79,10 +79,19 @@ def _addressed_physical_offers() -> FloatND:
     return jnp.stack(physical)
 
 
-def test_observed_continuous_arrival_reads_the_actual_off_node_value() -> None:
-    model = Model(
+def _squared_offer(wage_shock_f: FloatND) -> FloatND:
+    return wage_shock_f * wage_shock_f
+
+
+def _offer_model(*, shocked_source: bool = False) -> Model:
+    """With `shocked_source`, the source also draws the offer and pays its square."""
+    return Model(
         regimes={
-            "source": Regime(functions={"utility": _source_flow}),
+            "source": Regime(
+                functions={"utility": _squared_offer}, shocks=("innovation",)
+            )
+            if shocked_source
+            else Regime(functions={"utility": _source_flow}),
             "target": Regime(
                 functions={"utility": _cubic_offer}, shocks=("innovation",)
             ),
@@ -129,6 +138,19 @@ def test_observed_continuous_arrival_reads_the_actual_off_node_value() -> None:
             )
         },
     )
+
+
+def test_an_arrival_from_a_source_drawing_its_own_current_shock() -> None:
+    """The source's own draw pays `E[s^2] = 1` beside the arrival's 153/32."""
+    solution = _offer_model(shocked_source=True).solve(
+        params={"discount_factor": 0.5}, log_level="off"
+    )
+    np.testing.assert_allclose(solution.values[0]["source"], 1.0 + 153.0 / 32.0)
+    np.testing.assert_allclose(solution.values[1]["target"], 5.0)
+
+
+def test_observed_continuous_arrival_reads_the_actual_off_node_value() -> None:
+    model = _offer_model()
     params = {"discount_factor": 0.5}
     solution = model.solve(
         params=params, retention=ResultRetention.VALUES, log_level="off"
