@@ -152,8 +152,9 @@ def _u_zero_collective(*, wage: ContinuousState, work: DiscreteAction) -> FloatN
     return 0.0 * wage * work
 
 
-def _no_dissolution_gate(D_target: BoolND) -> BoolND:
-    return ~D_target
+def _always_open(wage: ContinuousState) -> BoolND:
+    """`married_ir` has no constraint, so no landing dissolves."""
+    return jnp.isfinite(wage)
 
 
 def _u_shared(wage: ContinuousState) -> FloatND:
@@ -208,7 +209,7 @@ def _shared_fallback_laws() -> dict[RegimeName, RegimeLawDeclaration | Transitio
             ),
             gates={
                 "married_ir": Gate(
-                    predicate=_no_dissolution_gate,
+                    predicate=_always_open,
                     routes={
                         "f": StakeholderRoute(
                             target_stakeholder="f",

@@ -16,16 +16,16 @@ import numpy as np
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
-from _lcm.simulation import gated_routing
 from _lcm.simulation.runtime import CompiledSimulationProgram
 from _lcm.typing import PytreeValue, ShapeDtypePytree
 from benchmarks.asv._compile_counters import count_compile_requests
 from lcm import (
     AgeGrid,
+    ArrivalDecision,
+    ArrivalRead,
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
-    Gate,
     Model,
     ProjectedRegimeValue,
     Regime,
@@ -120,10 +120,15 @@ def test_gated_edge_model_simulates_under_the_runtime_program(
     assert tuple(routed) == CONSENT_PERIOD_1_REGIMES
 
 
-def test_gate_evaluators_reuse_compilation_for_a_repeated_population(
+def test_arrival_programs_reuse_compilation_for_a_repeated_population(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A second forward call reuses the gate programs the first one built."""
+    """A second forward call reuses the arrival programs the first one built.
+
+    The arrival decision is evaluated inside the compiled simulation program,
+    so the first call must compile and the repeated one must dispatch the same
+    executables without tracing, lowering or compiling anything.
+    """
     model = _make_consent_model()
     params = {"discount_factor": _DISCOUNT_FACTOR}
     initial_conditions = {
@@ -132,28 +137,17 @@ def test_gate_evaluators_reuse_compilation_for_a_repeated_population(
         "regime_id": jnp.full(_N_SUBJECTS, ConsentRegimeId.single, dtype=jnp.int32),
     }
     solution = model.solve(params=params, log_level="debug")
-    calls: list[gated_routing._PopulationCall] = []
-    original = gated_routing.population_call
-
-    def observe(
-        *,
-        func: gated_routing._EdgeCallable,
-        axis_size: int,
-        subject_width: int | None = None,
-    ) -> gated_routing._PopulationCall:
-        call = original(func=func, axis_size=axis_size, subject_width=subject_width)
-        calls.append(call)
-        return call
-
-    monkeypatch.setattr(gated_routing, "population_call", observe)
-    model.simulate(
-        params=params,
-        initial_conditions=initial_conditions,
-        solution=solution,
-        log_level="debug",
-    )
-    assert calls, "The positive control must exercise the gate evaluators."
-    calls.clear()
+    compiled = _capture_compiled_dispatches(monkeypatch=monkeypatch)
+    with count_compile_requests() as first:
+        model.simulate(
+            params=params,
+            initial_conditions=initial_conditions,
+            solution=solution,
+            log_level="debug",
+        )
+    assert compiled, "The first population must dispatch a compiled program."
+    assert first.compile_requests > 0, "The positive control must compile."
+    compiled.clear()
     with count_compile_requests() as counts:
         result = model.simulate(
             params=params,
@@ -164,7 +158,7 @@ def test_gate_evaluators_reuse_compilation_for_a_repeated_population(
         for periods in result.raw_results.values():
             for period in periods.values():
                 jax.block_until_ready(period.V_arr)
-    assert not calls, "The repeated population rebuilt a gate evaluator."
+    assert compiled, "The repeated population must dispatch a compiled program."
     assert (
         counts.trace_requests,
         counts.lowering_requests,
@@ -249,9 +243,22 @@ def _make_consent_model() -> Model:
     single_law = ByAge(
         cases={0: {"married_terminal": StochasticTransition(func=_certain_transition)}}
     )
-    single_gates = {
-        "married_terminal": Gate(
+    single_arrivals = {
+        "married_terminal": ArrivalDecision(
             predicate=_consent_gate,
+            reads={
+                "V_target_f": ArrivalRead(
+                    regime="married_terminal",
+                    stakeholder="f",
+                    kind="Participating",
+                    projection={"education": _identity_education},
+                ),
+                "V_single_ref": ArrivalRead(
+                    regime="single_terminal",
+                    kind="Raw",
+                    projection={"education": _identity_education},
+                ),
+            },
             routes={
                 "f": StakeholderRoute(
                     target_stakeholder="f",
@@ -259,12 +266,6 @@ def _make_consent_model() -> Model:
                         regime="single_terminal",
                         projection={"education": _identity_education},
                     ),
-                )
-            },
-            references={
-                "V_single_ref": ProjectedRegimeValue(
-                    regime="single_terminal",
-                    projection={"education": _identity_education},
                 )
             },
         )
@@ -301,7 +302,7 @@ def _make_consent_model() -> Model:
             "single": Transition(
                 targets={"married_terminal": 0, "single_terminal": 0},
                 law=single_law,
-                gates=single_gates,
+                arrivals=single_arrivals,
             )
         },
     )

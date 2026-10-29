@@ -20,6 +20,8 @@ import pytest
 from _lcm.simulation.shock_paths import fail_if_a_held_process_code_is_off_node
 from lcm import (
     AgeGrid,
+    ArrivalDecision,
+    ArrivalRead,
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
@@ -141,8 +143,12 @@ def _closed_by_code(z_code: DiscreteState) -> BoolND:
     return z_code < 0
 
 
-def _no_dissolution(D_target: BoolND) -> BoolND:
-    return ~D_target
+def _has_policy_support(target_support: BoolND) -> BoolND:
+    return target_support
+
+
+def _landed_z(z: ContinuousState) -> ContinuousState:
+    return z
 
 
 def _off_middle_node(z_code: DiscreteState) -> BoolND:
@@ -227,7 +233,45 @@ def _gate_model(*, on_node: bool, enable_jit: bool) -> Model:
 
 
 def _dissolution_model(*, on_node: bool, enable_jit: bool) -> Model:
+    """Collective source landing in `a`, which has no policy at the middle node.
+
+    The on-node model decides the landing by `a`'s policy support. The off-node
+    model keeps the state-only `Gate` that opens exactly where `a` is feasible:
+    the arrival path does not yet refuse an off-node fallback into a code reader
+    (it raises `NoFeasibleActionError` instead), so the refusal is witnessed on
+    the gated route until that guard exists.
+    """
     work = DiscreteGrid(category_class=Work)
+    routes = {
+        "f": StakeholderRoute(
+            target_stakeholder="f",
+            fallback=ProjectedRegimeValue(
+                regime="a",
+                stakeholder="f",
+                projection={"z": _project_one if on_node else _project_off_node},
+            ),
+        ),
+        "m": StakeholderRoute(
+            target_stakeholder="m",
+            fallback=ProjectedRegimeValue(regime="b", projection={"z": _project_one}),
+        ),
+    }
+    arrivals = {
+        "a": ArrivalDecision(
+            predicate=_has_policy_support,
+            reads={
+                "target_support": ArrivalRead(
+                    regime="a",
+                    stakeholder="f",
+                    kind="Participating",
+                    field="support",
+                    projection={"z": _landed_z},
+                )
+            },
+            routes=routes,
+        )
+    }
+    gates = {"a": Gate(predicate=_off_middle_node, routes=routes)}
     return Model(
         regimes={
             "source": Regime(
@@ -255,31 +299,8 @@ def _dissolution_model(*, on_node: bool, enable_jit: bool) -> Model:
         edges={
             "source": Transition(
                 law=ByAge(cases={0: {"a": StochasticTransition(func=_prob_one)}}),
-                gates={
-                    "a": Gate(
-                        predicate=_no_dissolution,
-                        routes={
-                            "f": StakeholderRoute(
-                                target_stakeholder="f",
-                                fallback=ProjectedRegimeValue(
-                                    regime="a",
-                                    stakeholder="f",
-                                    projection={
-                                        "z": _project_one
-                                        if on_node
-                                        else _project_off_node
-                                    },
-                                ),
-                            ),
-                            "m": StakeholderRoute(
-                                target_stakeholder="m",
-                                fallback=ProjectedRegimeValue(
-                                    regime="b", projection={"z": _project_one}
-                                ),
-                            ),
-                        },
-                    )
-                },
+                arrivals=arrivals if on_node else {},
+                gates={} if on_node else gates,
             )
         },
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
@@ -422,7 +443,7 @@ def test_dissolution_route_off_node_back_into_code_reader_is_refused(
     enable_jit: bool,
 ):
     model = _dissolution_model(on_node=False, enable_jit=enable_jit)
-    with pytest.raises(InvalidStateTransitionError, match=r"dissolution route"):
+    with pytest.raises(InvalidStateTransitionError, match=r"off the process's nodes"):
         _simulate_from_source(model=model, roles=("f",))
 
 

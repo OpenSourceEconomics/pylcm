@@ -3,7 +3,7 @@
 A process state holds the value of a node, and an argument `z_code` receives that
 node's int32 position. The position belongs to the regime whose state is read:
 the declaring regime for its own functions, constraints and their projections,
-and the landing target for a gated edge's gate, references and fallbacks. Each
+and the landing target for a gated edge's gate and fallbacks. Each
 oracle below is a literal node table or payoff, never a production coordinate.
 """
 
@@ -19,6 +19,8 @@ import pytest
 from lcm import (
     AgeGrid,
     AgeSpecializedFunction,
+    ArrivalDecision,
+    ArrivalRead,
     ByAge,
     CollectiveUtility,
     DeterministicTransition,
@@ -127,8 +129,8 @@ def _participates(*, Q_f: FloatND, V_ref: FloatND) -> BoolND:
     return Q_f >= V_ref
 
 
-def _gate(*, z_code: DiscreteState, V_target_f: FloatND, V_gate_ref: FloatND) -> BoolND:
-    return (z_code >= 3) & (jnp.abs(V_target_f - V_gate_ref - BRACKET) < BRACKET / 2.0)
+def _gate(z_code: DiscreteState) -> BoolND:
+    return z_code >= 3
 
 
 def _one(age: FloatND) -> FloatND:
@@ -168,7 +170,6 @@ def _route_model(*, reverse: bool, enable_jit: bool) -> Model:
                 gates={
                     "married": Gate(
                         predicate=_gate,
-                        references={"V_gate_ref": reference},
                         routes={
                             "only": StakeholderRoute(
                                 target_stakeholder="f", fallback=reference
@@ -545,10 +546,48 @@ def _gate_without_process_read(V_target: FloatND) -> BoolND:
     return V_target > 0.0
 
 
+def _landed_z(z: ContinuousState) -> ContinuousState:
+    return z
+
+
 def _landing_model(*, runtime: bool, read_process: bool) -> Model:
-    """Source and target carry one uniform process on nodes [-1, 0, 1]."""
+    """Source and target carry one uniform process on nodes [-1, 0, 1].
+
+    Reading the process, the edge is a state `Gate`; otherwise an
+    `ArrivalDecision` reading the target's value.
+    """
     shock = UniformIIDProcess(
         n_points=3, start=-1.0, stop=None if runtime else 1.0, simulate_draws="nodes"
+    )
+    route = StakeholderRoute(
+        fallback=ProjectedRegimeValue(regime="fallback", projection={})
+    )
+    targets = {"target": 0, "fallback": 0}
+    law = ByAge(cases={0: {"target": StochasticTransition(func=_one)}})
+    transition = (
+        Transition(
+            targets=targets,
+            law=law,
+            gates={
+                "target": Gate(predicate=_gate_on_landing_value, routes={"only": route})
+            },
+        )
+        if read_process
+        else Transition(
+            targets=targets,
+            law=law,
+            arrivals={
+                "target": ArrivalDecision(
+                    predicate=_gate_without_process_read,
+                    reads={
+                        "V_target": ArrivalRead(
+                            kind="Raw", regime="target", projection={"z": _landed_z}
+                        )
+                    },
+                    routes={"only": route},
+                )
+            },
+        )
     )
     return Model(
         regimes={
@@ -556,28 +595,7 @@ def _landing_model(*, runtime: bool, read_process: bool) -> Model:
             "target": Regime(states={"z": shock}, functions={"utility": _five}),
             "fallback": Regime(functions={"utility": _one_payoff}),
         },
-        edges={
-            "source": Transition(
-                targets={"target": 0, "fallback": 0},
-                law=ByAge(cases={0: {"target": StochasticTransition(func=_one)}}),
-                gates={
-                    "target": Gate(
-                        predicate=(
-                            _gate_on_landing_value
-                            if read_process
-                            else _gate_without_process_read
-                        ),
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback", projection={}
-                                )
-                            )
-                        },
-                    )
-                },
-            )
-        },
+        edges={"source": transition},
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         initial_nodes={0: "source"},
         regime_id_class=LandingRegime,
