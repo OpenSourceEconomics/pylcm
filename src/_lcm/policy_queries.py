@@ -4,6 +4,7 @@ import functools
 import inspect
 import logging
 import math
+import weakref
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, replace
 from enum import StrEnum
@@ -14,6 +15,7 @@ from typing import Literal, Self, cast
 import jax
 import jax.numpy as jnp
 from dags import with_signature
+from jax.core import Tracer
 
 from _lcm.current_iid import CurrentIIDDrawFrame
 from _lcm.engine import StateActionSpace
@@ -1832,11 +1834,9 @@ def _query_action(
     call_arguments = {
         name: inputs[name] for name in inspect.signature(function).parameters
     }
-    evaluate = cast(
-        "Callable[..., EvaluatedQAndF]",
-        cast("CanonicalActionKernel", function).evaluated,
+    evaluated = _shared_evaluation(
+        function=cast("CanonicalActionKernel", function), arguments=call_arguments
     )
-    evaluated = evaluate(**call_arguments)
     parts = evaluated.parts
     q, ordinary = parts.Q, parts.F
     continuation_valid = (
@@ -1881,6 +1881,72 @@ def _query_action(
     if keep.ndim != 0:
         raise ValueError("Query participation must be scalar per action.")
     return q, ordinary & keep, valid, landings
+
+
+_SHARED_EVALUATIONS: weakref.WeakKeyDictionary[
+    CanonicalActionKernel, dict[Hashable, Callable[..., EvaluatedQAndF]]
+] = weakref.WeakKeyDictionary()
+
+
+def _shared_evaluation(
+    *, function: CanonicalActionKernel, arguments: Mapping[str, PytreeValue]
+) -> EvaluatedQAndF:
+    """Trace one action problem once per abstract signature, however often read.
+
+    An arrival continuation prices the target's own action problem at the
+    landing date, so a query's Q/F contains the next date's queries, whose Q/F
+    contains the date after. Inlined, every read re-traces that whole subtree.
+    A nested `jax.jit` keys the trace on the function and its abstract inputs:
+    later reads, the `eval_shape` that sizes a guarded branch, and every other
+    program of the same graph reuse the jaxpr. `inline=True` splices that jaxpr
+    into the caller, so the lowered program is the one the inlined trace gives.
+    Concrete leaves stay closed over, as they were, and an eager evaluation
+    stays eager.
+    """
+    leaves, treedef = jax.tree.flatten(arguments)
+    traced = tuple(isinstance(leaf, Tracer) for leaf in leaves)
+    if not any(traced):
+        return _evaluate(function=function)(**arguments)
+    fixed = tuple(
+        None if is_traced else leaf
+        for leaf, is_traced in zip(leaves, traced, strict=True)
+    )
+    key = (treedef, traced, tuple(_closed_over_key(leaf=leaf) for leaf in fixed))
+    try:
+        hash(key)
+    except TypeError:
+        return _evaluate(function=function)(**arguments)
+    variants = _SHARED_EVALUATIONS.setdefault(function, {})
+    if key not in variants:
+        # A strong reference here would keep the kernel, the weak key, alive.
+        kernel = weakref.ref(function)
+
+        def evaluate(*dynamic: PytreeValue) -> EvaluatedQAndF:
+            supplied = iter(dynamic)
+            return _evaluate(function=cast("CanonicalActionKernel", kernel()))(
+                **jax.tree.unflatten(
+                    treedef,
+                    [
+                        next(supplied) if is_traced else leaf
+                        for leaf, is_traced in zip(fixed, traced, strict=True)
+                    ],
+                )
+            )
+
+        variants[key] = jax.jit(evaluate, inline=True)
+    return variants[key](
+        *(leaf for leaf, is_traced in zip(leaves, traced, strict=True) if is_traced)
+    )
+
+
+def _evaluate(*, function: CanonicalActionKernel) -> Callable[..., EvaluatedQAndF]:
+    """The kernel's evaluation, called with the query's flat argument mapping."""
+    return cast("Callable[..., EvaluatedQAndF]", function.evaluated)
+
+
+def _closed_over_key(*, leaf: PytreeValue | None) -> Hashable:
+    """Key a concrete leaf by type and bits: `1 == 1.0` and `0.0 == -0.0`."""
+    return (type(leaf), leaf.hex() if isinstance(leaf, float) else leaf)
 
 
 def _check_query_answer(*, name: str, node: QueryNode, answer: PolicyAnswer) -> None:
