@@ -332,7 +332,11 @@ def _run_parent(
 def test_balanced_native_producer_reaches_actual_guarded_parent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Real native output and real parent reads retain both PWA channels."""
+    """Real parent reads give the Hermite level and the linear economic marginal.
+
+    On a smooth link the level is the cubic Hermite interpolant of the stored
+    values and value slopes; the economic marginal interpolates linearly.
+    """
     fixture = _native_balanced(monkeypatch)
     output = fixture.produce(fixture.pool)
     row = output.projected
@@ -344,8 +348,12 @@ def test_balanced_native_producer_reaches_actual_guarded_parent(
     index, query = _smooth_query(row)
     result = _reader(fixture=fixture, carry=row)(query)
     assert not bool(_coverage_missing(result))
-    expected_level = row.value[index] + 0.375 * (
-        row.value[index + 1] - row.value[index]
+    t, width = 0.375, row.grid[index + 1] - row.grid[index]
+    expected_level = (
+        (2 * t**3 - 3 * t**2 + 1) * row.value[index]
+        + (t**3 - 2 * t**2 + t) * width * row.value_slope[index]
+        + (-2 * t**3 + 3 * t**2) * row.value[index + 1]
+        + (t**3 - t**2) * width * row.value_slope[index + 1]
     )
     expected_marginal = row.economic_marginal[index] + 0.375 * (
         row.economic_marginal[index + 1] - row.economic_marginal[index]

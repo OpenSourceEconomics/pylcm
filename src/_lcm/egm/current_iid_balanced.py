@@ -229,14 +229,27 @@ class BalancedResourcesGuard:
 
 @dataclass(frozen=True, kw_only=True)
 class BalancedProjectedEGMCarry(ProjectedEGMCarry):
-    """Integrated PWA channels plus numeric original-candidate guard custody."""
+    """Integrated channels, value slopes and original-candidate guard custody."""
 
+    value_slope: FloatND
+    """Derivative of the reference value at each finite record; zero elsewhere."""
     guard: BalancedResourcesGuard
     """Original source/law/context arrays with real native reads and lifetime."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self.value_slope.shape != self.grid.shape:
+            raise ValueError("Case-R value slopes have a different row schema.")
+        if self.value_slope.dtype != self.grid.dtype:
+            raise TypeError("Case-R value slopes must share the grid dtype.")
 
     @property
     def guard_required(self) -> bool:
         return True
+
+    @property
+    def value_slope_channel(self) -> FloatND:
+        return self.value_slope
 
     def leaves(self) -> Mapping[tuple[str, ...], ContinuationLeaf]:
         """Expose every original guard buffer to native reads and lifetime rules."""
@@ -387,8 +400,8 @@ class BalancedResourcesProgram:
     def validate(self, *, carry: ProjectedEGMCarry, query: ScalarFloat) -> ScalarBool:
         """Compare original rounded tuples with resource-region authority.
 
-        The returned continuation channels remain PWA values and separately
-        interpolated economic marginals. Original reference levels are not
+        The returned continuation channels remain Hermite-read values and
+        separately interpolated economic marginals. Original reference levels are not
         substituted into the parent's Euler computation.
         """
         if not isinstance(carry, BalancedProjectedEGMCarry):
@@ -396,6 +409,14 @@ class BalancedResourcesProgram:
                 "Balanced read requires its original numeric guard payload."
             )
         return self.validate_guard(guard=carry.guard, query=query)
+
+    def value_slope(
+        self, *, guard: BalancedResourcesGuard, query: ScalarFloat
+    ) -> ScalarFloat:
+        """Derivative of the reference value, the Hermite slope of the level read."""
+        return self.evaluator(guard=guard).value_slope(
+            liquid=query, physical=guard.physical, factors=guard.factors
+        )
 
     def validate_guard(
         self, *, guard: BalancedResourcesGuard, query: ScalarFloat

@@ -233,7 +233,7 @@ def publish_balanced_resources(
     pool: EconFunctionKwargs,
     capacity: int,
 ) -> tuple[BalancedProjectedEGMCarry, ScalarInt]:
-    """Publish sampled-accurate PWA links outside bounded uncertainty holes.
+    """Publish sampled-accurate Hermite-read links outside uncertainty holes.
 
     Original declared/demanded coordinates and resource exact records consume
     the existing capacities. There is no silent truncation or capacity growth.
@@ -301,7 +301,7 @@ def publish_balanced_resources(
     initial, _ = assemble_exact_resources_samples(
         reference=exact_reference, capacity=capacity
     )
-    # This scalar is only the numeric PWA reader's connectivity address.
+    # This scalar is only the numeric row reader's connectivity address.
     # Links come from the resource catalog, never equality of this address;
     # the original-node guard checks ownership ex post only.
     initial = replace(initial, owner_id=jnp.zeros_like(initial.owner_id))
@@ -349,15 +349,21 @@ def publish_balanced_resources(
     def probe_reference(liquid: ScalarFloat) -> ProjectedRowRead:
         return exact_reference(liquid)._replace(owner_id=jnp.zeros((), dtype=jnp.int32))
 
-    refined, refined_needed, _ = refine_projected_row(
-        initial=initial, reference=probe_reference, accuracy="balanced"
+    refined, refined_needed, slopes = refine_projected_row(
+        initial=initial,
+        reference=probe_reference,
+        accuracy="balanced",
+        value_slope=lambda liquid: program.value_slope(guard=guard, query=liquid),
     )
+    if slopes is None:
+        raise TypeError("Case-R refinement lost its value slopes.")
     # Exact-only carries stay valid: every interior read requires its own link.
     return BalancedProjectedEGMCarry(
         **{
             field.name: getattr(refined, field.name)
             for field in fields(ProjectedEGMCarry)
         },
+        value_slope=slopes,
         guard=guard,
     ), jnp.maximum(partition.records_needed, refined_needed)
 

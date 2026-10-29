@@ -11,6 +11,7 @@ from _lcm.egm.current_iid_resource_query import (
     OwnedResourcesRead,
     read_resources_candidate,
     read_resources_candidate_details,
+    read_resources_candidate_with_slope,
 )
 from _lcm.egm.projected_continuation import ProjectedRowRead
 from _lcm.egm.step_core import OwnedResourcesRow
@@ -196,6 +197,43 @@ class CurrentResourcesEvaluator:
             ),
         )
         return result, nodes, row_legal, piece
+
+    def value_slope(
+        self,
+        *,
+        liquid: ScalarFloat,
+        physical: Mapping[ShockName, FloatND | IntND],
+        factors: FloatND,
+    ) -> ScalarFloat:
+        """Derivative of the integrated value in the pre-shock liquid state.
+
+        Each node contributes its selected value piece's own derivative in
+        resources, never an automatic derivative of the exact-node bracket
+        search. The weights do not depend on the liquid state.
+        """
+        live = jnp.all(~is_represented_zero(factors), axis=0)
+
+        def one(
+            inputs: tuple[Mapping[ShockName, ScalarFloat | ScalarInt], ScalarBool],
+        ) -> ScalarFloat:
+            draw, active = inputs
+            return jax.lax.cond(
+                active,
+                lambda: read_resources_candidate_with_slope(
+                    row=self.row,
+                    resources=self.resources(liquid, draw),
+                    utility_of_action=self.utility_of_action,
+                    owner_capacity=self.owner_capacity,
+                )[3],
+                lambda: jnp.zeros_like(liquid),
+            )
+
+        slopes = jax.lax.map(one, (physical, live))
+        return jnp.sum(
+            factored_weighted_term(
+                factors=factors, values=slopes * self.resources_slope
+            )
+        )
 
     def reference(
         self,

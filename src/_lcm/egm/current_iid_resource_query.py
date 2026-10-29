@@ -7,7 +7,7 @@ import jax
 import jax.numpy as jnp
 
 from _lcm.egm.carry import _get_owned_local_piece, _read_owned_row_with_support
-from _lcm.egm.interp import prepare_padded_grid
+from _lcm.egm.interp import _hermite_query_derivative, prepare_padded_grid
 from _lcm.egm.query_data import EGMQueryData, QueryNodeKind
 from _lcm.egm.step_core import OwnedResourcesRow
 from _lcm.typing import PytreeChild
@@ -75,7 +75,29 @@ def read_resources_candidate_details(
     utility_of_action: Callable[[ScalarFloat], ScalarFloat],
     owner_capacity: int,
 ) -> tuple[OwnedResourcesRead, ScalarBool, ScalarInt]:
+    """Return the selection with its row legality and owning local-piece index."""
+    selected, row_legal, piece, _ = read_resources_candidate_with_slope(
+        row=row,
+        resources=resources,
+        utility_of_action=utility_of_action,
+        owner_capacity=owner_capacity,
+    )
+    return selected, row_legal, piece
+
+
+def read_resources_candidate_with_slope(
+    *,
+    row: OwnedResourcesRow,
+    resources: ScalarFloat,
+    utility_of_action: Callable[[ScalarFloat], ScalarFloat],
+    owner_capacity: int,
+) -> tuple[OwnedResourcesRead, ScalarBool, ScalarInt, ScalarFloat]:
     """Reuse the associated owned interpolants and analytical constrained branch.
+
+    The last output is the selected value's derivative in resources: the
+    corner's ``u'(R - L)`` or the derivative of the owned local Hermite piece
+    the value is read from, zero where the value is not finite. It is not the
+    economic marginal, which the row reads linearly.
 
     The corner fields below contain the actual source expectation and literal
     interval, not a query authority or a dummy continuation. The same row,
@@ -141,7 +163,7 @@ def read_resources_candidate_details(
     node_index = jnp.where(resources >= row.envelope.grid[last], last, exact_index)
     upper = jnp.clip(insertion, 1, jnp.maximum(count - 1, 1)).astype(jnp.int32)
     lower = upper - 1
-    indices, _, _ = _get_owned_local_piece(
+    indices, piece_count, _ = _get_owned_local_piece(
         grid=row.envelope.grid,
         data=data,
         supported_node=supported_node,
@@ -205,7 +227,20 @@ def read_resources_candidate_details(
         valid=valid,
     )
 
-    return result, row_legal, indices[0]
+    local_grid = row.envelope.grid[indices]
+    local = supported_node[indices]
+    row_slope = _hermite_query_derivative(
+        x_query=resources,
+        search_grid=jnp.where(jnp.arange(2) < piece_count, local_grid, jnp.inf),
+        valid_length=piece_count,
+        xp=local_grid,
+        fp=jnp.where(local, row.envelope.value[indices], 0.0),
+        fp_slopes=jnp.where(local, row.marginal[indices], 0.0),
+    )
+    value_slope = jnp.where(
+        jnp.isfinite(result.value), jnp.where(take_row, row_slope, corner_marginal), 0.0
+    )
+    return result, row_legal, indices[0], value_slope
 
 
 _OWNED_RESOURCES_READ_FIELDS = tuple(field.name for field in fields(OwnedResourcesRead))
