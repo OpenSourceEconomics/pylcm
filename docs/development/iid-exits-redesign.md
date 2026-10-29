@@ -11,6 +11,62 @@ The owner authorized choosing these contracts in the implementation conversation
 standalone reference establishes its arithmetic; each engine route must also be
 connected to that reference through the public model API.
 
+## Speed-first amendment (2026-10-29)
+
+The owner adopted an ordinary-first direction for the whole EGM implementation and the
+remaining S10 plan, recorded on
+[issue 618](https://github.com/OpenSourceEconomics/pylcm/issues/618). It supersedes the
+clauses below that impose exact numerical choices, universal topology or ownership
+guarantees, or an expanding family × derivative × precision × archive matrix on ordinary
+EGM use. Each superseded clause carries a pointer to this section; its text stays as the
+historical record, and existing receipts, adverse runs and conclusions are unchanged.
+
+The existing balanced choice is the normal fast EGM mode; there is no new profile.
+Numerical approximation, shifted decision boundaries and some differing discrete choices
+are acceptable. Certification is optional and runs after solving. When no audit is
+requested it adds no tracing, numerical work, allocations, retained witnesses or
+compilation. NBEGM defaults to `envelope_arithmetic="ordinary"` and
+`probe_schedule="never"`, and routes with an ordinary equivalent do not refuse ordinary
+arithmetic.
+
+Ordinary behavior that remains required:
+
+- the economic model: shock timing and information, per-shock action selection before
+  integration, constraints, and the association of value, action, savings and
+  transitions; shock-specific policies are never averaged
+- the economic marginal as a channel distinct from the derivative of the value
+  interpolant, including the law and weight chain-rule terms of the Euler equation
+- the stable numerical primitives already implemented, real allocation limits and the
+  common generation, retention and archive lifecycle
+
+A different native owner or kink side caused by approximation is not a failed ordinary
+solve. A discrete owner, participation decision, kink side or exit id no longer "has no
+tolerance" as a default acceptance rule; the model's strict and weak comparison
+semantics remain, but approximate values can lead to different decisions. Ex-post
+comparisons report value loss, policy differences and useful aggregate effects; they do
+not promise the continuous optimum or a uniform domain error bound. Exact comparisons on
+a fixed candidate bank do not establish convergence; check that separately, when
+requested, with finer grids and quadrature.
+
+Revised completion gates:
+
+| Requirement                                                                                                                                               | Disposition                                                                                             |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| Genuine supported DC/NB/NEGM/NNBEGM solve, required incoming reads, physical action association, multi-period recurrence, default retention and save/load | Ship; reuse existing implementations and shared tests                                                   |
+| Stable CE and economic directions needed by an actually supported model                                                                                   | Ship ordinary functionality; do not extend every extreme arithmetic or AD class                         |
+| Exact owner/side/germ agreement, certified topology, exact predicates used only for checking, universal accuracy and all-action regret                    | Optional ex post; zero default cost                                                                     |
+| Full P1–P6 × C1–C6 × D1–D6 × dtype/device/lifecycle intersections, new cold or foreign-family capabilities, broad mutation and custody proofs             | Defer unless a named actual consumer requires the combination                                           |
+| Q1 generic GridSearch-to-EGM exit adapter                                                                                                                 | Keep separate unless advertised or needed by a concrete caller; EKL's GridSearch path does not need it  |
+| Actual device-memory budget, schema consistency and retained-result lifetime                                                                              | Keep in the common owner; do not duplicate proof machinery per family                                   |
+| Source receipts                                                                                                                                           | Preserve historical evidence; one source SHA, command and raw result record per new batch               |
+| S11 draw/override work                                                                                                                                    | Proceed independently; integrated checks depend on the supported consumers actually reached             |
+| S12 legacy retirement                                                                                                                                     | Proceed once actual consumers have working replacements and integration checks pass; not held by audits |
+
+This reduces unfinished acceptance coverage. It does not permit removing a working
+advertised feature, reinterpreting a model equation or labelling an unsupported read as
+supported. A concrete consumer need can bring back a deferred item without bringing back
+the former matrix.
+
 ## Accepted scope
 
 On 2026-10-24 the owner confirmed that faithful EKL remains a required acceptance case,
@@ -89,6 +145,9 @@ optional and must fail closed whenever it is actually claimed. Source seals and 
 certificate populations run offline or in CI; they do not replace independent economic
 checks.
 
+> Superseded: certification is optional and runs after solving at zero default cost; see
+> the [speed-first amendment](#speed-first-amendment-2026-10-29).
+
 A public balanced route must name its supported workload and serve every required
 continuation, parent, replay and archive read within it. A refused required read is a
 delivery gap. Private staged examples and exact samples do not establish public
@@ -133,6 +192,10 @@ row/date/law/context. Inactive quadrature rows are not corner selections. A comm
 partition index is only an address and cannot substitute for the economic roster. Keep
 any fixture inspection evidence separate from durable carry axes; production evidence
 retention must declare its own schema, native roles, reads and lifetime.
+
+> Superseded for ordinary solves: approximate ownership, sides and kink locations are
+> acceptable, and exact selection evidence is optional ex post; see the
+> [speed-first amendment](#speed-first-amendment-2026-10-29).
 
 The economic marginal is a separate, explicitly labelled channel. On smooth cells it
 includes derivatives of weights, physical-law transforms and resources. In particular,
@@ -221,6 +284,9 @@ additionally requires an analytic interval bound, a justified curvature or Lipsc
 bound, or exhaustive piecewise-affine verification. Diagnostics distinguish sampled
 validation from uniform bounds.
 
+> Superseded: discrete owner, participation, side and exit ids are not a default
+> acceptance rule; see the [speed-first amendment](#speed-first-amendment-2026-10-29).
+
 The private scalar DC Case-U route declares its immutable choice on the solver:
 `DCEGM(..., replay="candidate", accuracy="balanced")` retains original candidate
 reconstruction; `replay="grid"` explicitly selects the existing Cartesian forward
@@ -234,6 +300,9 @@ profile and refuses that current-IID declaration. Public EGM admission and the r
 family/discrete-branch witnesses remain required.
 
 ## What certified means
+
+> Superseded: this is the meaning of the optional ex-post check, not a default solve
+> requirement; see the [speed-first amendment](#speed-first-amendment-2026-10-29).
 
 Certification concerns represented operands, finite candidate banks, declared quadrature
 and piecewise representations. It does not certify the continuous economic optimum, the
@@ -530,6 +599,10 @@ semantic closure.
 
 ### Finite S10 acceptance workloads
 
+> Superseded: the revised gate table in the
+> [speed-first amendment](#speed-first-amendment-2026-10-29) replaces this matrix as the
+> completion gate.
+
 The adopted direction is recorded in
 `sciebo:pro-audits/pylcm-pr621-s10/bundle-round0/reply/pylcm-s10-direction-review-round0/`.
 Its `workload-matrix.json` binds the behavior IDs below; the direction verdict does not
@@ -808,6 +881,10 @@ not certify source-candidate topology. Unsupported links and unproved sides fail
 the real dated reader before discount or masking. The separate saturated-span BALANCED
 publisher retains its own source proof and refinement requirements.
 
+> Superseded for ordinary solves: unproved sides and links are approximated rather than
+> refused by default; see the
+> [speed-first amendment](#speed-first-amendment-2026-10-29).
+
 Candidate replay retains the required future continuations and original dated solver
 specification. At the realised physical frame it reconstructs the original alternatives
 and selects their associated action, saving and native owner before advancing the
@@ -899,6 +976,10 @@ reconstructs its own execution before reading the archive. Producer/date/schema,
 clock, domain, hole and source-validity checks remain mandatory. Unsupported projected
 reads retain their explicit refusal.
 
+> Superseded for ordinary solves: approximate envelopes and ownership are acceptable,
+> and exact ownership checks are optional ex post; see the
+> [speed-first amendment](#speed-first-amendment-2026-10-29).
+
 Finite-budget declaration preparation and prepared-Model restoration use the existing
 allocation owner before the original producers run. Completed metadata remains owned by
 the Model; actual calls charge it together with retained generations. The original cold
@@ -929,6 +1010,9 @@ lookup, state-grid inspection and initial-state bounds until those helpers have 
 supported execution-selection contract. Whole-domain topology and broad certificate
 campaigns remain separate from the sampled balanced acceptance gate.
 
+> Superseded: sampled represented-channel and ownership checks are optional ex post; see
+> the [speed-first amendment](#speed-first-amendment-2026-10-29).
+
 ### Public finite NEGM Case-U lifecycle
 
 The unbudgeted public NEGM route retains the original keeper and finite adjuster
@@ -944,3 +1028,6 @@ physical replay through a fresh public Model with independently reconstructed ex
 and authority. This scoped U lifecycle does not admit cold finite-budget nested
 production, establish resources-only R reuse or close the incoming-reader and nonlinear
 nested workloads in the finite S10 matrix.
+
+> Superseded: exact ownership checks are optional ex post and the remaining matrix rows
+> are deferred; see the [speed-first amendment](#speed-first-amendment-2026-10-29).
