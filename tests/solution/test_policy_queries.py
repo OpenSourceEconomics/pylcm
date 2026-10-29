@@ -1070,6 +1070,41 @@ def test_each_budget_narrowing_names_its_refused_cell(
         assert "cannot select a workspace width" in message
 
 
+def test_one_planning_pass_narrows_every_refused_cell(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two core refusals in one planning pass cost one narrowing and one re-plan.
+
+    Both refused cores belong to the root cell, whose single kernel serves them.
+    """
+    refusals = []
+    narrowed = []
+    passes = []
+    plan = backward.plan_workspace
+    compile_all = backward._compile_all_functions
+
+    def refuse_first_two_selections(**kwargs):
+        if len(refusals) < 2:
+            refusals.append(len(passes))
+            raise backward.WorkspaceBudgetError("refused")
+        return plan(**kwargs)
+
+    def count_passes(**kwargs):
+        passes.append(len(passes))
+        return compile_all(**kwargs)
+
+    def keep_kernel(*, regimes, error):
+        narrowed.append(error.triple[:2])
+        return regimes
+
+    monkeypatch.setattr(backward, "plan_workspace", refuse_first_two_selections)
+    monkeypatch.setattr(backward, "_compile_all_functions", count_passes)
+    monkeypatch.setattr(backward, "_narrow_native_closure", keep_kernel)
+    model = _native_model(enable_jit=True, budget=2**26)
+    model.solve(params={}, log_level="off", runtime_checks=False)
+    assert (narrowed, len(passes)) == ([("root", 0)], 2)
+
+
 @pytest.mark.parametrize("mutation", ["missing", "generation", "omitted", "duplicate"])
 def test_closed_schedule_refuses_incomplete_or_wrong_generation_bindings(
     mutation: str,
