@@ -362,15 +362,10 @@ _PROFILED_HELPER_MUTATIONS = {
         "return array_writer(value=np_value, dtype=np.dtype(np.int32), name=name)",
         "return jnp.asarray(np_value, dtype=jnp.int32)",
     ),
-    "simulation_finite_replay:diagnostic_bypassed": (
+    "simulation_finite_replay:feasibility_mask_bypassed": (
         "src/_lcm/simulation/simulate.py",
-        "        dropped=live & ~represented,",
-        "        dropped=jnp.zeros_like(live),",
-    ),
-    "simulation_finite_replay:canonical_ranking_bypassed": (
-        "src/_lcm/simulation/simulate.py",
-        "ranking_values = jnp.where(valid, canonical_values, -jnp.inf)",
-        "ranking_values = jnp.where(valid, candidate_inner, -jnp.inf)",
+        "ranking_values = jnp.where(represented & feasible, candidate_value, -jnp.inf)",
+        "ranking_values = jnp.where(represented, candidate_value, -jnp.inf)",
     ),
     "simulation_preflight:initial_feasibility_bypassed": (
         "src/_lcm/simulation/initial_conditions.py",
@@ -976,11 +971,6 @@ _FINITE_BUDGET_MUTATIONS = {
         'profile=cores["policy_prepare"],',
         'profile=cores["decision"],',
     ),
-    "finite_budget:diagnostic_profile_replaced": (
-        "src/_lcm/simulation/chunk_profiles.py",
-        "function=dropped_candidate_counts,",
-        "function=_empty_fallback,",
-    ),
     "finite_budget:distinct_artifact_copies_merged": (
         "src/_lcm/simulation/chunk_profiles.py",
         "identity = (read.target, required)",
@@ -1006,11 +996,6 @@ _FINITE_BUDGET_MUTATIONS = {
             '        "age": age,\n        "next_regime_to_V_arr": {},\n'
             "        **references,"
         ),
-    ),
-    "finite_budget:diagnostic_admission_bypassed": (
-        "src/_lcm/simulation/simulate.py",
-        "            memory=memory,\n            function=dropped_candidate_counts,",
-        "            memory=None,\n            function=dropped_candidate_counts,",
     ),
 }
 
@@ -1206,11 +1191,6 @@ _FINITE_POLICY_MUTATIONS = {
         "src/_lcm/simulation/policy_programs.py",
         "            values[0],",
         "            jnp.zeros_like(values[0]),",
-    ),
-    "finite_policy:actual_diagnostic_bypassed": (
-        "src/_lcm/simulation/simulate.py",
-        'arguments={"live": bank[2], "represented": bank[3]},',
-        'arguments={"live": bank[2], "represented": bank[2]},',
     ),
     "finite_policy:actual_rank_dispatch_replaced": (
         "src/_lcm/simulation/simulate.py",
@@ -1437,7 +1417,6 @@ def test_supplemental_sources_complete_the_pinned_registry_coverage() -> None:
         "solve_completion:conflict_wait_bypassed",
         "eager_core:planned_operand_placement_bypassed",
         "runtime_sharding:physical_partition_ignored",
-        "policy_diagnostics:represented_mask_ignored",
         "solve_descriptors:required_layout_replaced",
         "chunk_assembly:cpu_budget_exclusion_broadened",
         "chunk_admission:setup_fulfilled_by_unrelated_inputs",

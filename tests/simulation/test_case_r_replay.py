@@ -36,6 +36,7 @@ from _lcm.simulation.case_r_programs import (
     declare_case_r_replay_programs,
 )
 from _lcm.simulation.case_r_replay import (
+    CASE_STATUS_BAD_ROW,
     case_r_arguments,
     case_r_profile_output,
     case_r_status,
@@ -341,15 +342,14 @@ def test_case_r_replay_inputs_preserve_key_date_and_original_buffer_owners() -> 
 
 
 def test_case_r_integrity_is_checked_before_action_feasibility() -> None:
-    bad_law, bad_row, empty = case_r_status(
+    """One status code names the first refusal: law, then row, then feasibility."""
+    status = case_r_status(
         law_invalid=jnp.asarray([False, True]),
         invalid=jnp.asarray([True, True]),
         feasible=jnp.asarray([False, False]),
         in_regime=jnp.asarray([True, False]),
     )
-    assert not bool(bad_law)
-    assert bool(bad_row)
-    assert bool(empty)
+    assert int(status) == CASE_STATUS_BAD_ROW
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")

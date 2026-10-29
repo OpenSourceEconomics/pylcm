@@ -347,7 +347,6 @@ COMBINED_STORES_SOURCE = "src/lcm/_solver_api/stores.py"
 EAGER_CORE_SOURCE = "src/_lcm/execution/eager_core.py"
 RUNTIME_SHARDING_SOURCE = "src/_lcm/execution/runtime_sharding.py"
 
-POLICY_DIAGNOSTICS_SOURCE = "src/_lcm/simulation/policy_diagnostics.py"
 
 SOLVE_PENDING_WORK_SOURCE = "src/_lcm/execution/pending_work.py"
 
@@ -463,7 +462,6 @@ _CERTIFIED_CORRIDOR_SOURCES = (
     NATIVE_ARCHIVE_SOURCE,
     STRUCTURAL_BLUEPRINTS_SOURCE,
     SOLVE_PENDING_WORK_SOURCE,
-    POLICY_DIAGNOSTICS_SOURCE,
     EAGER_CORE_SOURCE,
     RUNTIME_SHARDING_SOURCE,
     COMBINED_ABSTRACT_PROGRAM_INPUTS_SOURCE,
@@ -640,7 +638,6 @@ _SOURCE_SEALS = {
     NATIVE_ARCHIVE_SOURCE: "fe7947028f564d83ca513f92e398d2fe7c32e13d3fcd071a1dd9a1a24a722890",
     STRUCTURAL_BLUEPRINTS_SOURCE: "28bbe1b8f6301458e86ad7ee8bcf3bfb02184b163c3f3b038d88b0a261cf8af9",
     SOLVE_PENDING_WORK_SOURCE: "5629a30a65f402a6c4a542dc3287b045e6b823c7f005f4b92cf0ffaac0930ad6",
-    POLICY_DIAGNOSTICS_SOURCE: "ed41f7f7e0378b0d86e153c53b399bd01350ea24a58a9b80cc88224158a0c0d3",
     EAGER_CORE_SOURCE: "d0049c2a38d3b77abc1c4cff1300f20ca034dff37b77edf7183537471d1cdb90",
     RUNTIME_SHARDING_SOURCE: "13f6b68846532c6631f27db1c84b47f6c866a992e037dfd8e40c791c16f50f90",
     COMBINED_ABSTRACT_PROGRAM_INPUTS_SOURCE: "1ade513e829c0bd8e053b90ab312e53f7b51a5a4da6ae1000079c5684a8017e4",
@@ -650,7 +647,7 @@ _SOURCE_SEALS = {
     COMBINED_CHUNK_OPERATIONS_SOURCE: "481b768fc97b134c671c386336a25e9e3e78b631a0a3bc4643d9e74d0ba47e54",
     COMBINED_CHUNK_PLANNING_SOURCE: "807378c7ac745eb7fc3d42c27020f6b40d10d40da3041dcdb647e7e2d3e0d90a",
     COMBINED_CHUNK_PROFILE_INVENTORY_SOURCE: "85070e5f57210e201be248c1f2deae8068dce674112f13efdb0eb94c1dd7f7b4",
-    COMBINED_CHUNK_PROFILES_SOURCE: "eb45d01f4cafa5f206e59a9bf94b39723c2466ecf61f7c754750b5c48f247d36",
+    COMBINED_CHUNK_PROFILES_SOURCE: "1a811c7145be58e14feb46ee9d69f89852bcd15940fd66c5c70f7f9642b03646",
     COMBINED_DIAGNOSTIC_OPERATIONS_SOURCE: "477f39609fff5371d88d941cc5c4a0c9ab9fe3692ad2845a3fc3a6befb633f42",
     COMBINED_FORWARD_PROGRAM_PROFILES_SOURCE: "448b64d1a4df3f04b14ef39e54a597fb88f7092cb8fa94350e6b91778addeb2f",
     COMBINED_POPULATION_OPERATIONS_SOURCE: "a9fdd59887462abc4e2f4321730bcfb397f69ba5f44f3db08001288773082ab8",
@@ -662,7 +659,7 @@ _SOURCE_SEALS = {
     COMBINED_AUTHORITY_SOURCE: "a98061fe4f30d97362d9668dc7461e8023052a46fad7513d3751637d7981d120",
     COMBINED_ENTRIES_SOURCE: "0c27d42858dde4a34b5e82a3622dee9c7b240c0c9c3284a2ba4a898bbf9a6510",
     COMBINED_STORES_SOURCE: "032482548248851cc53c7105a107bd9bde3aa110e1ca4e44f1d32460e7d47630",
-    SIMULATION_POLICY_PROGRAMS_SOURCE: "da6b8e7edb7ce86b2de1c944dc806060f613dda051fa0ce69f0cec92dead709b",
+    SIMULATION_POLICY_PROGRAMS_SOURCE: "46cbbf762052c1fe42b4c589c9ea0f486cea9edae1cb92043733a1a1c4d1e27e",
     PUBLISHED_POLICY_SOURCE: "c536ee71203f8eae66e77e9f4120e7f4dff9553ce528506d1a06b521f38456b2",
     SIMULATION_ENTRY_ALLOCATIONS_SOURCE: "41eb7238435a1c9780164197170c8de26650e1930dcc09c2e8d6454ad455fa90",
     NBEGM_SOURCE: "eea43dd08c6b9242e75b323e6eb3e7f2826298f49d2c2fdfd74f7852b78fa4fa",
@@ -713,7 +710,7 @@ _SOURCE_SEALS = {
     PROBABILITY_SOURCE: "60ccd04b143c714360388fcce2730804a4ca729ea4db82e4a0100732e155e53f",
     ENGINE_SOURCE: "5077cdfc6d99fec6ffef74236640434c1855c602ff8bf1e341c31dffc64edb31",
     STATE_ACTION_SPACE_SOURCE: "3c6a3a1111abd0889d9af97e0e88c0cf7dc27f07b5381746a5011cf4d8b423e7",
-    SIMULATION_SOURCE: "8e841294669d6245c3c58a3cc21f6717db1b8c1c3d251f6bd5dbb7259c45ae1b",
+    SIMULATION_SOURCE: "5cfe704bc32d530059401a4375b7b42771c34612b7d591efbdee7c7a5204c8d6",
     SIMULATION_TRANSITIONS_SOURCE: "5cef83cc6d594d6d7004dee5cfc82dec5be33d669ac7779d3f9a393058e548da",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
     MODEL_SOURCE: "0872b294c48901b711e615e41b44566ef7063529e88ef31272949dba9adf24c6",
@@ -1512,9 +1509,9 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     COMBINED_CHUNK_PROFILES_SOURCE: (
-        "2fd7a6c3906da7f2412a8bdf2abba0d76d825aa950938bd21a63b8c26d8b1ec6",
+        "29c4ac83507daf5831bba6f874029d55bec91f625ca3551712849e816c45b412",
         {
-            "profile_simulation_chunk": "5f082e24ff502b56f5695ddaeb2f5ed58b0aa681a5d60bfe1ffdefb45474300f",
+            "profile_simulation_chunk": "f79d90761ab57b4392cc599047c30436800d9728ce965d42799d7a5e0a233b04",
             "_period_copy_reservation": "0410fc6db2147bafa3c0db2e5976d7356831c35a8c3639bd333b476af9e9ace4",
             "_policy_read_sources": "a83d15eb8de8a505e80cdce7a9448b11d7a9ab3001e92beb7676b491fb63245e",
             "_retained_read_source": "ed76584900138b8fb392cb2a789f1a4c848698e4308662c02b4fe4bd7b6ad78e",
@@ -1557,13 +1554,11 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SIMULATION_SOURCE: (
-        "030a121fc5413a20c2b9f9076bbfd1e9da2b94438da04f42456f1b09bb3431bb",
+        "d8e20114119f238fd63e0d637aa41dd788606c5f560c56c311b134336ba0d192",
         {
             "simulate": "1cd13b9d16d2e7b786e14424450f1dbb8f326de768eae3ec0e23defd43b2bcf8",
-            "_simulate_regime_in_period": "7fe2f1e9e753da65c7dc82547ef77c13cb50d76a4b1de5814f1e09e0f2166f8b",
-            "_execute_finite_replay": "dd01d79a502c1027cd08f0656c59c6bbab7080c848a706bcac631e63188edc1f",
-            "_announce_dropped_outer_candidates": "977a3fc8627f295ad6837b46fcf94672449b532263c674be2209e509d6c088cd",
-            "_report_dropped_outer_candidates": "0825c06c02ecfe2ad8270e6d606c67f3063f945befeccf6debb4880194d54dc1",
+            "_simulate_regime_in_period": "ed9ce30597daed802b489ae40ed92afbd95978698a895cf66f44507d2c0254ce",
+            "_execute_finite_replay": "6ded3ff0186eeba07f2880caf5c21a9d08c6396d9806d49afd7985d8e10cab21",
             "_compute_starting_periods": "f50f6f3c87b21bdf082f3f3d71793c03574dfb93f1aad875d8689b8f773b65a4",
             "_concatenate_chunk_results": "e1217d0e707ef6a8b3d00dcef6abce948d065e125fc2886336bf537d276c1a41",
             "_validate_period_values": "30fe242e786e7e38637d380ecad0aa4d1689bc71c1fa9cbf2ae3c781e011a3c3",
@@ -1572,18 +1567,12 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_bind_unit_executor": "a787e30bafb80053703e1f4ce0c1d84feb5ac522cd41349665c600dcf9f1eda5",
             "_lookup_values_from_indices": "ebc4a036a447857f061c117b2eb0c9b9e61d5f17a40e90ea14a6e6205233ea9f",
             "_read_external_replay": "93258aae4ce02f4d6852f784b35412ba2bbf1d865d14c31cc107911f4119021b",
-            "_replay_nnbegm_candidates": "0b5f64f1fd51935234a48160621a1195a5f96e57044554eb092a191ed095557e",
-            "_prepare_nnbegm_candidate_bank": "d5406bb8fb04f481aeb91ecbce93394cf531239a137df46d28ace9993797b62f",
-            "_rank_nnbegm_candidate_bank": "d4aedb8192be59b0e2bf561e76e0e95b535fff908d41b0da4b0b726165c9e8d7",
+            "_replay_nnbegm_candidates": "80189ce07b3cb1f06f04a4a2daa1cb098eb45649c6ab8620ff1383b8d0b48fe8",
+            "_prepare_nnbegm_candidate_bank": "88fd8e8d35a769e86a683d4f0a3041927b9c7daf0e6327a61ea8b143123bfae6",
+            "_rank_nnbegm_candidate_bank": "e58788ebde739cee544df7a8b5cdddc0522ca5f08836ef6c2492bb69b01991c9",
             "_initialize_chunk_state": "ce97dba339426c926a50f326577ea8a09cdc8f18f9193b3ea3cdcc5403956092",
             "_canonical_Q_at_actions": "e5cbb584855a740b52dd140b83e90fce532a82a16c88a6d3429c2587285c002c",
             "_current_iid_invalid": "03f8f1abc5e8c93c93b5e606af988dbc139a874fe75a93c7aca63dad8900c877",
-        },
-    ),
-    POLICY_DIAGNOSTICS_SOURCE: (
-        "6ab53d88f11165b91371920ebecef50bf288c3ab3e4cec258e4d8787d8f84238",
-        {
-            "dropped_candidate_counts": "b82dee7807b85e869b9962f3b3b4f5fd0ee65a3ad51eeb54c074c814030b2afa",
         },
     ),
     MODEL_SOURCE: (
@@ -2089,12 +2078,12 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "ReplayPayload.restore": "e1599af0b523cc29f9c85190c51f29c6276cbb995d9dab8f085543780e511170",
             "_flatten_payload": "76b9b73e16baac373476d7717962fd4970064ea18e249fa28ddb43546913e042",
             "_unflatten_payload": "3a6918f57cfbe806f6fdeecb68342fce7a8a3c8db200603402b87bb1d1afb222",
-            "declare_finite_replay_programs": "b94959e2016b8968706726e1e9f7520dcdd9d62f963c7eb924160830c831cbce",
+            "declare_finite_replay_programs": "266fa720a7f101a29ee69956b46487aa2ca9896dd2fb5f45a4f73f3f65aa4fc9",
             "_program": "28db8919d1fd3fedc4488a07cff0d779569cd723bad25cb1d0fc7c2373e47e32",
             "_policy_reads": "10f8afa6126d8f8fa340c021147fa8ea69ad8ca126830968a3e1c43ee8b1d396",
             "_Prepare.__call__": "3263959a9fb7fa81ba52eb9b0afe9231865c73049a8367a05b391f700a20dd9b",
             "_Rank.__signature__": "50aa82bb239a45eb831ec1de9cc04766c44b88f9e2a8898243273711d1ca5bd7",
-            "_Rank.__call__": "18c3602d2576d2dc62357eb7244aa57067149bb2a4d59c0b37b05944d8db615b",
+            "_Rank.__call__": "d8a0d391afeab8c0d447395e7d4fcec9147389fcbe3a040501370dc68de1fca0",
         },
     ),
     PUBLISHED_POLICY_SOURCE: (
@@ -7823,10 +7812,7 @@ _FINITE_BUDGET_CONTRACTS = _contracts(
             "simulate",
             "_simulate_regime_in_period",
             "_execute_finite_replay",
-            "_announce_dropped_outer_candidates",
-            "_report_dropped_outer_candidates",
         ),
-        "src/_lcm/simulation/policy_diagnostics.py": ("dropped_candidate_counts",),
         "src/lcm/model.py": (
             "_validate_sharded_state_capability",
             "_supports_continuous_sharding_vocabulary",
@@ -11517,11 +11503,6 @@ _SUPPLEMENTAL_SOURCE_MUTATIONS = {
         "src/_lcm/execution/pending_work.py",
         "    owner.before(devices=devices)",
         "    owner.before(devices=frozenset())",
-    ),
-    "policy_diagnostics:represented_mask_ignored": (
-        POLICY_DIAGNOSTICS_SOURCE,
-        "jnp.sum(live & ~represented)",
-        "jnp.sum(live)",
     ),
     "eager_core:planned_operand_placement_bypassed": (
         "src/_lcm/execution/eager_core.py",

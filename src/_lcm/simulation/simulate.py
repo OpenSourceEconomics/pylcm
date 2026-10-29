@@ -64,6 +64,7 @@ from _lcm.regime_building.Q_and_F import (
     EDGE_REF_V_ARG,
     SAME_PERIOD_PARAMS_ARG,
     SAME_PERIOD_V_ARG,
+    _get_feasibility,
 )
 from _lcm.simulation import chunk_operations, population_operations
 from _lcm.simulation.additional_targets import _compute_targets
@@ -128,7 +129,6 @@ from _lcm.simulation.plan_summary import (
     SimulationPlanSummary,
     build_simulation_plan_summary,
 )
-from _lcm.simulation.policy_diagnostics import dropped_candidate_counts
 from _lcm.simulation.policy_programs import ReplayPayload
 from _lcm.simulation.program_arguments import (
     ACTIVE_SUBJECTS_ARGUMENT,
@@ -188,7 +188,6 @@ from _lcm.solution.continuation_reads import rekeyed_value_reads
 from _lcm.solution.feasibility import (
     BoundedResult,
     consume_runtime_bound_outputs,
-    reduce_bound_input_status,
     validate_runtime_bound_status,
 )
 from _lcm.solution.solve_phase_records import CallId, solve_phase
@@ -229,7 +228,6 @@ from lcm.exceptions import (
     InvalidValueFunctionError,
     NoFeasibleActionError,
     ShockDeclarationError,
-    UnrepresentableOuterCandidateError,
 )
 from lcm.result import SimulationResult
 from lcm.solver_api import SIMULATION_POLICY, ActionOutput, ReplayReader
@@ -2120,7 +2118,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
         )
         if memory is not None:
             memory.hold(tree=decision)
-        bad_law, bad_row, empty = run_simulation_operation(
+        status = run_simulation_operation(
             memory=memory,
             function=case_u_status,
             arguments={
@@ -2131,19 +2129,9 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             },
             subject_arg_names=("law_invalid", "invalid", "feasible", "in_regime"),
         )
-        if bool(bad_law):
-            raise ShockDeclarationError(
-                "Case-U physical replay has invalid law status."
-            )
-        if bool(bad_row):
-            raise ExecutionPlanningError(
-                "Case-U original candidate replay has unresolved row integrity."
-            )
-        if bool(empty):
-            raise NoFeasibleActionError(
-                f"Regime '{regime_name}', period {period} "
-                "has no feasible Case-U action."
-            )
+        _raise_on_current_iid_status(
+            status=status, case="U", regime_name=regime_name, period=period
+        )
         optimal_actions = MappingProxyType(dict(decision.actions))
         V_arr = decision.value
         current_shocks = decision.physical
@@ -2207,7 +2195,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
         )
         if memory is not None:
             memory.hold(tree=decision)
-        bad_law, bad_row, empty = run_simulation_operation(
+        status = run_simulation_operation(
             memory=memory,
             function=case_r_status,
             arguments={
@@ -2218,19 +2206,9 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             },
             subject_arg_names=("law_invalid", "invalid", "feasible", "in_regime"),
         )
-        if bool(bad_law):
-            raise ShockDeclarationError(
-                "Case-R physical replay has invalid law status."
-            )
-        if bool(bad_row):
-            raise ExecutionPlanningError(
-                "Case-R original candidate replay has unresolved row integrity."
-            )
-        if bool(empty):
-            raise NoFeasibleActionError(
-                f"Regime '{regime_name}', period {period} "
-                "has no feasible Case-R action."
-            )
+        _raise_on_current_iid_status(
+            status=status, case="R", regime_name=regime_name, period=period
+        )
         optimal_actions = MappingProxyType(dict(decision.actions))
         V_arr = decision.value
         current_shocks = decision.physical
@@ -2249,8 +2227,6 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             n_subjects=n_chunk_subjects,
             next_regime_to_V_arr=next_regime_to_V_arr,
             referenced_value_kwargs=referenced_value_kwargs,
-            logger=logger,
-            memory=memory,
         )
     else:
         taste_shock_kwargs = {}
@@ -2570,19 +2546,6 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                         next_regime_to_V_arr=next_regime_to_V_arr,
                         referenced_value_kwargs=referenced_value_kwargs,
                         grid_values=V_arr,
-                        in_regime=run_simulation_operation(
-                            memory=memory,
-                            function=_active_subjects,
-                            arguments={
-                                "in_regime": subject_ids_in_regime,
-                                "genuine": genuine,
-                            },
-                            subject_arg_names=("in_regime", "genuine"),
-                            subject_outputs=True,
-                        )
-                        if sim_policy is not None
-                        else subject_ids_in_regime,
-                        logger=logger,
                     )
                 )
             else:
@@ -2865,6 +2828,32 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
     )
 
 
+def _raise_on_current_iid_status(
+    *, status: ScalarInt, case: str, regime_name: RegimeName, period: int
+) -> None:
+    """Read back one current-IID replay status code and raise its refusal."""
+    from _lcm.simulation.case_r_replay import (  # noqa: PLC0415
+        CASE_STATUS_BAD_LAW,
+        CASE_STATUS_BAD_ROW,
+        CASE_STATUS_EMPTY,
+    )
+
+    code = int(status)
+    if code == CASE_STATUS_BAD_LAW:
+        raise ShockDeclarationError(
+            f"Case-{case} physical replay has invalid law status."
+        )
+    if code == CASE_STATUS_BAD_ROW:
+        raise ExecutionPlanningError(
+            f"Case-{case} original candidate replay has unresolved row integrity."
+        )
+    if code == CASE_STATUS_EMPTY:
+        raise NoFeasibleActionError(
+            f"Regime '{regime_name}', period {period} "
+            f"has no feasible Case-{case} action."
+        )
+
+
 def _take_dissolution_routes(
     *,
     regime_name: RegimeName,
@@ -3088,10 +3077,8 @@ def _execute_finite_replay(
     n_subjects: int,
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
     referenced_value_kwargs: QAndFKwargs,
-    logger: logging.Logger,
-    memory: SimulationMemory | None = None,
 ) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND, BoolND]:
-    """Run declared reconstruction, its host diagnostic, and canonical ranking."""
+    """Run the declared reconstruction and ranking programs."""
     payload = ReplayPayload.from_policy(sim_policy)
     bank = execute_simulation_program(
         programs=regime.simulation.programs,
@@ -3105,22 +3092,7 @@ def _execute_finite_replay(
             age=age,
         ),
     )
-    bank = cast("tuple[FloatND, FloatND, BoolND, BoolND]", bank)
-    if validation_enabled(logger):
-        n_dropped, total = run_simulation_operation(
-            memory=memory,
-            function=dropped_candidate_counts,
-            arguments={"live": bank[2], "represented": bank[3]},
-            subject_arg_names=("live", "represented"),
-        ).tolist()
-        if n_dropped:
-            _report_dropped_outer_candidates(
-                logger=logger,
-                n_dropped=n_dropped,
-                total=total,
-                regime_name=regime.name,
-                period=period,
-            )
+    bank = cast("tuple[FloatND, FloatND, FloatND, BoolND]", bank)
     ranked = execute_simulation_program(
         programs=regime.simulation.programs,
         family="policy_rank",
@@ -3162,8 +3134,6 @@ def _replace_continuous_action_with_policy_read(
     action_names: tuple[ActionName, ...],
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
     grid_values: FloatND,
-    in_regime: BoolND,
-    logger: logging.Logger,
     referenced_value_kwargs: QAndFKwargs = MappingProxyType({}),
 ) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND, BoolND | None]:
     """Apply a nested or finite NNBEGM policy read to the grid-argmax decision.
@@ -3179,18 +3149,11 @@ def _replace_continuous_action_with_policy_read(
     - the value to report for the emitted pair. Every path that keeps the grid
       pair returns `grid_values` unchanged; every accepted off-grid pair is
       scored by the canonical Q and returns that attained value. A rejected
-      nested read keeps the feasible grid pair or reports the canonical
-      score of the published branch the replay fell back to;
+      nested read keeps the grid pair and its grid value;
     - a nested-fallback flag: the per-subject Boolean array from
-      `_read_nested_policy`, extended to include canonical infeasibility,
-      non-finite scores, and pairs that score below the grid pair; or `None`
-      on every other path. The caller resolves `None` to all-False where
-      the regime's subject count is known.
-
-    For subjects assigned to this regime, a nested read for which neither the
-    proposal nor either baseline is safe raises `InvalidSimulationInputError`.
-    Out-of-regime rows are placeholders and do not participate in that failure
-    decision.
+      `_read_nested_policy`, extended to include canonical infeasibility and
+      non-finite scores; or `None` on every other path. The caller resolves
+      `None` to all-False where the regime's subject count is known.
     """
     if sim_policy is None:
         return optimal_actions, grid_values, None
@@ -3199,12 +3162,7 @@ def _replace_continuous_action_with_policy_read(
         # so this reader does not consult fields of `egm_policy_read`. The
         # model/result boundary still requires that marker to declare the cell's
         # consuming route before a labelled replay artifact reaches this point.
-        (
-            nested_actions,
-            nested_fallback,
-            nested_policy_value,
-            replay_candidate,
-        ) = _read_nested_policy(
+        nested_actions, nested_fallback = _read_nested_policy(
             payload=sim_policy,
             optimal_actions=optimal_actions,
             regime=regime,
@@ -3213,8 +3171,11 @@ def _replace_continuous_action_with_policy_read(
             period=period,
             age=age,
         )
-        nested_actions, nested_value, nested_feasible = _score_nested_action_pair(
-            proposed_actions=nested_actions,
+        # The read's winner is emitted; one canonical-Q evaluation reports its
+        # value and its user feasibility. A read that leaves support or budget,
+        # or is infeasible, keeps the grid pair and the grid value.
+        nested_value, nested_feasible = _canonical_Q_at_actions(
+            candidate_actions=nested_actions,
             regime=regime,
             canonical_states=canonical_states,
             action_names=action_names,
@@ -3224,66 +3185,20 @@ def _replace_continuous_action_with_policy_read(
             period=period,
             age=age,
         )
-        nested_admissible = _nested_actions_are_intrinsically_admissible(
-            payload=sim_policy,
-            actions=nested_actions,
-            regime=regime,
-            states=states,
-            flat_params=flat_params,
-            period=period,
-            age=age,
-            outer_domain_already_validated=True,
-        )
-        baseline_actions, baseline_value, baseline_admissible = _nested_grid_baseline(
-            payload=sim_policy,
-            grid_actions=optimal_actions,
-            regime=regime,
-            states=states,
-            canonical_states=canonical_states,
-            action_names=action_names,
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            flat_params=flat_params,
-            referenced_value_kwargs=referenced_value_kwargs,
-            period=period,
-            age=age,
-            replay_candidate=replay_candidate,
-        )
-        value_atol = getattr(sim_policy, "value_atol", 1e-10)
-        value_rtol = getattr(sim_policy, "value_rtol", 1e-8)
-        policy_value_band = value_atol + value_rtol * jnp.maximum(
-            jnp.abs(nested_policy_value), jnp.abs(nested_value)
-        )
-        policy_value_consistent = jnp.isfinite(nested_policy_value) & (
-            nested_value + policy_value_band >= nested_policy_value
-        )
-        accepted = (
-            ~nested_fallback
-            & nested_feasible
-            & nested_admissible
-            & policy_value_consistent
-            & jnp.isfinite(nested_value)
-            & ((~baseline_admissible) | (nested_value >= baseline_value))
-        )
-        fatal = in_regime & ~accepted & ~baseline_admissible
-        if bool(jnp.any(fatal)):
-            msg = (
-                "For at least one simulated subject, neither the nested policy replay "
-                "nor the canonical grid baseline is feasible."
-            )
-            raise InvalidSimulationInputError(msg)
+        accepted = ~nested_fallback & nested_feasible & jnp.isfinite(nested_value)
         emitted_actions = MappingProxyType(
             {
                 name: jnp.where(
                     accepted,
                     jnp.asarray(nested_actions[name]),
-                    jnp.asarray(baseline_actions[name]),
+                    jnp.asarray(optimal_actions[name]),
                 )
                 for name in optimal_actions
             }
         )
         return (
             emitted_actions,
-            jnp.where(accepted, nested_value, baseline_value),
+            jnp.where(accepted, nested_value, grid_values),
             ~accepted,
         )
     route = regime.simulation.replay_route
@@ -3302,7 +3217,6 @@ def _replace_continuous_action_with_policy_read(
             action_names=action_names,
             next_regime_to_V_arr=next_regime_to_V_arr,
             referenced_value_kwargs=referenced_value_kwargs,
-            logger=logger,
         )
         return replayed_actions, replayed_value, None
     return optimal_actions, grid_values, None
@@ -3493,12 +3407,7 @@ def _read_nested_policy(
     flat_params: FlatRegimeParams,
     period: int,
     age: ScalarFloat | ScalarInt,
-) -> tuple[
-    MappingProxyType[ActionName, FloatND | IntND],
-    BoolND,
-    FloatND,
-    tuple[FloatND, FloatND, BoolND],
-]:
+) -> tuple[MappingProxyType[ActionName, FloatND | IntND], BoolND]:
     """Replay the continuous-outer keeper/adjuster decision off-grid.
 
     Reconstructs, per subject, exactly the solve's decision problem in the
@@ -3525,17 +3434,7 @@ def _read_nested_policy(
     post-decision or keeper candidate does not resolve against the simulate
     function pool is refused rather than answered with the action-grid winner.
 
-    Returns four things:
-
-    - the recovered actions;
-    - a per-subject Boolean fallback flag;
-    - the winning value from the solve's policy surrogate, which lets the
-      caller refuse an emitted pair whose canonical Q is materially below the
-      surrogate value that selected it;
-    - the replay candidate bank: aligned outer actions, conditional inner
-      actions, and a preliminary admissibility mask for the keeper followed by
-      every published mesh node. The caller canonical-scores every surviving
-      row before selecting a fallback.
+    Returns the recovered actions and a per-subject Boolean fallback flag.
 
     Inference must refuse whenever any fallback entry is True; the flag reaches
     the user as the `nested_policy_fallback` column.
@@ -3685,349 +3584,7 @@ def _read_nested_policy(
     new_actions[payload.outer_action_name] = jnp.where(
         accepted, outer_action, jnp.asarray(optimal_actions[payload.outer_action_name])
     )
-    replay_candidate = _best_admissible_replay_candidate(
-        payload=payload,
-        candidate_values=candidate_values,
-        candidate_support=candidate_support,
-        candidate_actions=candidate_actions,
-        keeper_value=keeper_value,
-        keeper_support=keeper_support,
-        keeper_action=keeper_action,
-        keeper_post_decision=keep_value,
-        offset=offset,
-        transition_at=transition_at,
-        regime=regime,
-        states=states,
-        flat_params=flat_params,
-        period=period,
-        age=age,
-        n_subjects=n_subjects,
-    )
-    return MappingProxyType(new_actions), ~accepted, winner_value, replay_candidate
-
-
-def _best_admissible_replay_candidate(
-    *,
-    payload: NestedEGMSimPolicy,
-    candidate_values: FloatND,
-    candidate_support: BoolND,
-    candidate_actions: FloatND,
-    keeper_value: FloatND,
-    keeper_support: BoolND,
-    keeper_action: FloatND,
-    keeper_post_decision: FloatND,
-    offset: FloatND,
-    transition_at: Callable[[FloatND], FloatND],
-    regime: Regime,
-    states: Mapping[StateOrActionName, FloatND | IntND],
-    flat_params: FlatRegimeParams,
-    period: int,
-    age: ScalarFloat | ScalarInt,
-    n_subjects: int,
-) -> tuple[FloatND, FloatND, BoolND]:
-    """Return the complete pointwise-replayable keeper-plus-mesh bank.
-
-    The published policy is ordered as the keeper followed by one conditional
-    inner policy per outer mesh node. Each branch keeps its own inner action and
-    is admitted independently by the shared target-association predicate. The
-    separately solved keeper uses the outer state's declared domain; adjuster
-    rows use the adaptive policy's published mesh. The returned mask covers only
-    replay structure, interpolation support, finiteness, and the solver-owned
-    consumption budget.
-
-    Canonical user feasibility and canonical Q deliberately remain unresolved
-    here.  `_nested_grid_baseline` has the canonical state and continuation
-    inputs, so it evaluates every surviving row there in one vmapped call,
-    excludes infeasible/non-finite rows before ranking, and applies the stable
-    keeper-then-node tie order.  Returning the complete bank prevents an
-    inadmissible or lower-canonical-Q solve-value winner from suppressing a
-    valid published branch.
-
-    Returns:
-        Tuple of node-major outer actions, their aligned conditional inner
-        actions, and the preliminary admissibility mask, each shaped
-        ``(1 + n_outer_nodes, n_subjects)`` with the keeper in row zero.
-    """
-    outer_nodes = payload.adjuster.outer_nodes
-    n_nodes = outer_nodes.shape[0]
-    leading = {
-        "candidate_values": candidate_values.shape[0],
-        "candidate_support": candidate_support.shape[0],
-        "candidate_actions": candidate_actions.shape[0],
-    }
-    wrong = {name: size for name, size in leading.items() if size != n_nodes}
-    if wrong:
-        raise ValueError(
-            "The conditional bank reads must be node-major: their leading axis "
-            f"pairs each of the {n_nodes} outer nodes with its own inner "
-            f"policy, but {wrong} disagree with that length. Ranking a "
-            "transposed read would pair a node with another node's policy."
-        )
-
-    node_targets = jnp.broadcast_to(outer_nodes[:, None], candidate_values.shape)
-    targets = jnp.concatenate((keeper_post_decision[None, :], node_targets), axis=0)
-    published_values = jnp.concatenate(
-        (keeper_value[None, :], candidate_values), axis=0
-    )
-    support = jnp.concatenate((keeper_support[None, :], candidate_support), axis=0)
-    inner_actions = jnp.concatenate((keeper_action[None, :], candidate_actions), axis=0)
-
-    outer_actions = targets - offset[None, :]
-    images = vmap(transition_at)(outer_actions)
-
-    # The keeper is a separately solved exact branch, not an adjuster-mesh node.
-    # Its target may legally lie between the outer state's declared boundary and
-    # a deliberately narrower adaptive mesh, so it is checked against the state
-    # domain carried by the settled inverse. Adjuster rows remain conditional on
-    # the published mesh and are checked against that support.
-    inverse = payload.replay_capability.inverse
-    keeper_reaches_target = outer_candidate_is_admissible(
-        image=images[:1],
-        target=targets[:1],
-        low=jnp.asarray(inverse.low, dtype=images.dtype),
-        high=jnp.asarray(inverse.high, dtype=images.dtype),
-    )
-    adjusters_reach_target = outer_candidate_is_admissible(
-        image=images[1:],
-        target=targets[1:],
-        low=jnp.asarray(outer_nodes[0], dtype=images.dtype),
-        high=jnp.asarray(outer_nodes[-1], dtype=images.dtype),
-    )
-    reaches_target = jnp.concatenate(
-        (keeper_reaches_target, adjusters_reach_target), axis=0
-    )
-
-    resources = vmap(
-        functools.partial(
-            _nested_resources,
-            payload=payload,
-            regime=regime,
-            states=states,
-            flat_params=flat_params,
-            period=period,
-            age=age,
-            n_subjects=n_subjects,
-        )
-    )(outer_action=outer_actions, outer_post_decision=images)
-    preliminary_admissible = (
-        reaches_target
-        & support
-        & jnp.isfinite(outer_actions)
-        & jnp.isfinite(inner_actions)
-        & jnp.isfinite(resources)
-        & jnp.isfinite(published_values)
-        & (inner_actions > 0.0)
-        & (inner_actions <= resources - payload.savings_lower_bound)
-    )
-    return outer_actions, inner_actions, preliminary_admissible
-
-
-def _nested_actions_are_intrinsically_admissible(
-    *,
-    payload: NestedEGMSimPolicy,
-    actions: MappingProxyType[ActionName, FloatND | IntND],
-    regime: Regime,
-    states: Mapping[StateOrActionName, FloatND | IntND],
-    flat_params: FlatRegimeParams,
-    period: int,
-    age: ScalarFloat | ScalarInt,
-    outer_domain_already_validated: bool = False,
-) -> BoolND:
-    """Check the published outer-search domain and solver-owned budget.
-
-    Canonical Q feasibility covers user constraints, while the nested solver
-    owns the inner consumption budget and, for a raw grid pair, membership in
-    the adaptive policy's published outer support. A nested proposal has already
-    been checked against its branch-specific domain in `_read_nested_policy`:
-    state domain for the keeper, mesh support for an adjuster. Passing
-    `outer_domain_already_validated=True` avoids erasing that provenance by
-    applying the adjuster mesh to the keeper a second time.
-    """
-    n_subjects = next(iter(states.values())).shape[0]
-    _, transition_at = _outer_transition_offset_and_forward(
-        payload=payload,
-        regime=regime,
-        states=states,
-        flat_params=flat_params,
-        period=period,
-        age=age,
-        n_subjects=n_subjects,
-    )
-    outer_action = jnp.asarray(actions[payload.outer_action_name])
-    outer_post_decision = transition_at(outer_action)
-    if outer_domain_already_validated:
-        in_outer_domain = jnp.ones_like(outer_post_decision, dtype=bool)
-    else:
-        outer_nodes = payload.adjuster.outer_nodes
-        in_outer_domain = outer_candidate_is_admissible(
-            image=outer_post_decision,
-            # A generic grid pair has no nominal published target. Using its own
-            # image as target reduces the shared predicate to finite containment
-            # in the published mesh domain.
-            target=outer_post_decision,
-            low=jnp.asarray(outer_nodes[0], dtype=outer_post_decision.dtype),
-            high=jnp.asarray(outer_nodes[-1], dtype=outer_post_decision.dtype),
-        )
-    resources = _nested_resources(
-        payload=payload,
-        regime=regime,
-        states=states,
-        outer_action=outer_action,
-        outer_post_decision=outer_post_decision,
-        flat_params=flat_params,
-        period=period,
-        age=age,
-        n_subjects=n_subjects,
-    )
-    inner_action = jnp.asarray(actions[payload.inner_action_name])
-    return (
-        in_outer_domain
-        & jnp.isfinite(outer_action)
-        & jnp.isfinite(inner_action)
-        & jnp.isfinite(resources)
-        & (inner_action > 0.0)
-        & (inner_action <= resources - payload.savings_lower_bound)
-    )
-
-
-def _nested_grid_baseline(
-    *,
-    payload: NestedEGMSimPolicy,
-    grid_actions: MappingProxyType[ActionName, FloatND | IntND],
-    regime: Regime,
-    states: Mapping[StateOrActionName, FloatND | IntND],
-    canonical_states: Mapping[StateName, FloatND | IntND],
-    action_names: tuple[ActionName, ...],
-    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-    flat_params: FlatRegimeParams,
-    period: int,
-    age: ScalarFloat | ScalarInt,
-    replay_candidate: tuple[FloatND, FloatND, BoolND],
-    referenced_value_kwargs: QAndFKwargs = MappingProxyType({}),
-) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND, BoolND]:
-    """Return the deterministic canonical-Q baseline for nested replay.
-
-    The raw grid pair and the complete keeper-plus-mesh replay bank are scored
-    under the same canonical Q.  Every published bank row carries its own outer
-    and conditional inner action; preliminary replay/domain/budget failures,
-    canonical infeasibility, and non-finite canonical values are excluded
-    *before* the argmax.  A single ``vmap`` batches the per-row canonical calls,
-    avoiding a Python loop or one compilation per mesh node.
-
-    Tie order is explicit and stable: within the published bank the keeper is
-    row zero and therefore wins an exact tie, followed by ascending mesh-node
-    order.  The raw grid baseline wins an exact tie against the best published
-    row, preserving the existing no-degradation convention.  If neither side
-    survives, the returned admissibility is false and the caller raises before
-    emitting an action.
-    """
-    grid_value, grid_q_feasible = _canonical_Q_at_actions(
-        candidate_actions=grid_actions,
-        regime=regime,
-        canonical_states=canonical_states,
-        action_names=action_names,
-        next_regime_to_V_arr=next_regime_to_V_arr,
-        flat_params=flat_params,
-        referenced_value_kwargs=referenced_value_kwargs,
-        period=period,
-        age=age,
-    )
-    grid_intrinsically_admissible = _nested_actions_are_intrinsically_admissible(
-        payload=payload,
-        actions=grid_actions,
-        regime=regime,
-        states=states,
-        flat_params=flat_params,
-        period=period,
-        age=age,
-    )
-    grid_admissible = (
-        grid_q_feasible & grid_intrinsically_admissible & jnp.isfinite(grid_value)
-    )
-
-    replay_outer_actions, replay_inner_actions, replay_preliminary = replay_candidate
-    replay_outer_actions = jnp.asarray(replay_outer_actions)
-    replay_inner_actions = jnp.asarray(replay_inner_actions)
-    replay_preliminary = jnp.asarray(replay_preliminary).astype(bool)
-
-    # Older direct helper tests pass one candidate as `(n_subjects,)`; production
-    # passes the complete node-major bank.  Normalize both to `(branches, n)`.
-    grid_outer = jnp.asarray(grid_actions[payload.outer_action_name])
-    if replay_outer_actions.ndim == grid_outer.ndim:
-        replay_outer_actions = replay_outer_actions[None, ...]
-        replay_inner_actions = replay_inner_actions[None, ...]
-        replay_preliminary = replay_preliminary[None, ...]
-
-    # Canonical Q must still be total for rows that the replay predicate has
-    # already excluded: JAX transformations evaluate the whole batch.  Substitute
-    # the grid pair there, then mask those rows out before ranking.
-    safe_outer_actions = jnp.where(
-        replay_preliminary,
-        replay_outer_actions,
-        grid_outer[None, ...],
-    )
-    grid_inner = jnp.asarray(grid_actions[payload.inner_action_name])
-    safe_inner_actions = jnp.where(
-        replay_preliminary,
-        replay_inner_actions,
-        grid_inner[None, ...],
-    )
-
-    replay_values, replay_q_feasible = vmap(
-        functools.partial(
-            _canonical_Q_at_branch,
-            grid_actions=grid_actions,
-            outer_action_name=payload.outer_action_name,
-            inner_action_name=payload.inner_action_name,
-            regime=regime,
-            canonical_states=canonical_states,
-            action_names=action_names,
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            flat_params=flat_params,
-            referenced_value_kwargs=referenced_value_kwargs,
-            period=period,
-            age=age,
-        )
-    )(outer_action=safe_outer_actions, inner_action=safe_inner_actions)
-    replay_admissible = (
-        replay_preliminary & replay_q_feasible & jnp.isfinite(replay_values)
-    )
-    ranked_replay = jnp.where(replay_admissible, replay_values, -jnp.inf)
-    replay_winner = jnp.argmax(ranked_replay, axis=0)
-    subject = jnp.arange(grid_outer.shape[0])
-    replay_any = jnp.any(replay_admissible, axis=0)
-    replay_outer = replay_outer_actions[replay_winner, subject]
-    replay_inner = replay_inner_actions[replay_winner, subject]
-    replay_value = replay_values[replay_winner, subject]
-
-    fallback_actions = MappingProxyType(
-        {
-            **grid_actions,
-            payload.outer_action_name: replay_outer,
-            payload.inner_action_name: replay_inner,
-        }
-    )
-
-    # The grid pair participates as a canonical baseline.  It wins an exact tie;
-    # otherwise the higher canonical-Q admissible pair is emitted.
-    use_grid = grid_admissible & ((~replay_any) | (grid_value >= replay_value))
-    any_baseline = grid_admissible | replay_any
-    baseline_actions = MappingProxyType(
-        {
-            name: jnp.where(
-                use_grid,
-                jnp.asarray(grid_action),
-                jnp.asarray(fallback_actions[name]),
-            )
-            for name, grid_action in grid_actions.items()
-        }
-    )
-    baseline_value = jnp.where(
-        use_grid,
-        grid_value,
-        jnp.where(replay_any, replay_value, -jnp.inf),
-    )
-    return baseline_actions, baseline_value, any_baseline
+    return MappingProxyType(new_actions), ~accepted
 
 
 def _nested_resources(
@@ -4409,13 +3966,66 @@ def _select_nnbegm_discrete_actions(
     return selected_codes, selected_actions
 
 
-def _score_nnbegm_candidate_bank(
+def _nnbegm_bank_feasibility(
     *,
-    optimal_actions: MappingProxyType[ActionName, FloatND | IntND],
-    regime: Regime,
-    sim_policy: NNBEGMSimPolicy,
     candidate_inner: FloatND,
     candidate_outer: FloatND,
+    optimal_actions: Mapping[ActionName, FloatND | IntND],
+    regime: Regime,
+    sim_policy: NNBEGMSimPolicy,
+    flat_params: FlatRegimeParams,
+    period: int,
+    age: ScalarFloat | ScalarInt,
+    canonical_states: Mapping[StateName, FloatND | IntND],
+    action_names: tuple[ActionName, ...],
+) -> BoolND:
+    """Evaluate the period's constraints at every candidate tuple of the bank."""
+    functions, constraints = regime.simulation.feasibility_pools_by_period[period]
+    dag_bounds = tuple(
+        bound for bound in regime.simulation.post_decision_bounds if bound.kind == "dag"
+    )
+    feasibility = _get_feasibility(
+        functions=functions,
+        constraints=constraints,
+        bound_specs=dag_bounds,
+        bound_periods=(period,) if dag_bounds else (),
+    )
+    n_candidates = candidate_inner.shape[0]
+    codes = sim_policy.candidate_discrete_actions
+    bank = {
+        sim_policy.inner_action_name: candidate_inner,
+        sim_policy.outer_action_name: candidate_outer,
+        **{
+            name: jnp.broadcast_to(codes[:, position, None], candidate_inner.shape)
+            for position, name in enumerate(sim_policy.discrete_action_names)
+            if codes is not None
+        },
+    }
+    shared = {**flat_params, "period": jnp.int32(period), "age": age}
+    per_subject = {
+        **canonical_states,
+        **{name: optimal_actions[name] for name in action_names if name not in bank},
+    }
+    names = inspect.signature(feasibility).parameters
+
+    # Constraints are written for one state-action point, so the bank is mapped
+    # over candidates and subjects alike.
+    def at_point(point: Mapping[str, FloatND | IntND]) -> BoolND:
+        pool = {**shared, **point}
+        evaluated = feasibility(**{name: pool[name] for name in names})
+        output = evaluated.output if type(evaluated) is BoundedResult else evaluated
+        return jnp.asarray(output, dtype=bool)
+
+    def at_candidate(candidate: Mapping[ActionName, FloatND | IntND]) -> BoolND:
+        return jax.vmap(at_point)({**per_subject, **candidate})
+
+    return jax.vmap(at_candidate)(bank).reshape(n_candidates, -1)
+
+
+def _score_nnbegm_winner(
+    *,
+    winner_actions: Mapping[ActionName, FloatND | IntND],
+    regime: Regime,
     flat_params: FlatRegimeParams,
     period: int,
     age: ScalarFloat | ScalarInt,
@@ -4425,49 +4035,9 @@ def _score_nnbegm_candidate_bank(
     referenced_value_kwargs: QAndFKwargs = MappingProxyType({}),
     bound_summary: bool = False,
 ) -> tuple[FloatND, BoolND] | BoundedResult[tuple[FloatND, BoolND]]:
-    """Construct complete candidate action tuples and score canonical Q."""
-    n_candidates, n_subjects = candidate_inner.shape
-    excluded_action_names = {
-        sim_policy.inner_action_name,
-        sim_policy.outer_action_name,
-        *sim_policy.discrete_action_names,
-    }
-    candidate_actions = {
-        name: jnp.broadcast_to(
-            jnp.asarray(optimal_actions[name])[None, :],
-            (n_candidates, n_subjects),
-        )
-        for name in action_names
-        if name not in excluded_action_names
-    }
-    candidate_actions[sim_policy.inner_action_name] = candidate_inner
-    candidate_actions[sim_policy.outer_action_name] = candidate_outer
-
-    candidate_codes = sim_policy.candidate_discrete_actions
-    if sim_policy.discrete_action_names:
-        if candidate_codes is None:
-            raise ValueError("NNBEGM discrete replay payload is missing exact codes.")
-        if candidate_codes.shape != (
-            n_candidates,
-            len(sim_policy.discrete_action_names),
-        ):
-            raise ValueError("NNBEGM discrete replay code bank is misaligned.")
-        candidate_actions.update(
-            {
-                name: jnp.broadcast_to(
-                    candidate_codes[:, position, None],
-                    (n_candidates, n_subjects),
-                )
-                for position, name in enumerate(sim_policy.discrete_action_names)
-            }
-        )
-    elif candidate_codes is not None:
-        raise ValueError(
-            "NNBEGM smooth replay received an unexpected discrete code bank."
-        )
-
-    score_actions = functools.partial(
-        _evaluate_canonical_Q_at_actions,
+    """Score the winning complete action tuple once under canonical Q."""
+    scored = _evaluate_canonical_Q_at_actions(
+        candidate_actions=winner_actions,
         regime=regime,
         canonical_states=canonical_states,
         action_names=action_names,
@@ -4477,20 +4047,10 @@ def _score_nnbegm_candidate_bank(
         period=period,
         age=age,
     )
-    scored = jax.vmap(score_actions)(candidate_actions=candidate_actions)
-    if type(scored) is not BoundedResult:
-        return cast("tuple[FloatND, BoolND]", scored)
-    statuses = reduce_bound_input_status(
-        statuses=scored.bound_status,
-        active=jnp.ones((n_candidates,), dtype=bool),
-    )
-    if bound_summary:
-        return BoundedResult[tuple[FloatND, BoolND]](
-            output=cast("tuple[FloatND, BoolND]", scored.output),
-            bound_status=statuses,
-        )
+    if type(scored) is not BoundedResult or bound_summary:
+        return scored
     validate_runtime_bound_status(
-        statuses=statuses,
+        statuses=scored.bound_status,
         bound_specs=tuple(
             bound
             for bound in regime.simulation.post_decision_bounds
@@ -4688,11 +4248,10 @@ def _replay_nnbegm_candidates(
     canonical_states: Mapping[StateName, FloatND | IntND],
     action_names: tuple[ActionName, ...],
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-    logger: logging.Logger,
     referenced_value_kwargs: QAndFKwargs = MappingProxyType({}),
 ) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND]:
-    """Reconstruct, validate, then rank the exact solve candidate product."""
-    candidate_inner, candidate_outer, live, represented = (
+    """Reconstruct the solve candidate product, then rank it by published value."""
+    candidate_inner, candidate_outer, candidate_value, represented = (
         _prepare_nnbegm_candidate_bank(
             regime=regime,
             sim_policy=sim_policy,
@@ -4702,20 +4261,12 @@ def _replay_nnbegm_candidates(
             age=age,
         )
     )
-    # Keep this diagnostic before canonical scoring: runtime checks refuse an
-    # unrepresentable solve candidate before evaluating the remaining bank.
-    _announce_dropped_outer_candidates(
-        logger=logger,
-        dropped=live & ~represented,
-        n_live=live,
-        regime_name=regime.name,
-        period=period,
-    )
     return cast(
         "tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND]",
         _rank_nnbegm_candidate_bank(
             candidate_inner=candidate_inner,
             candidate_outer=candidate_outer,
+            candidate_value=candidate_value,
             represented=represented,
             optimal_actions=optimal_actions,
             regime=regime,
@@ -4739,8 +4290,14 @@ def _prepare_nnbegm_candidate_bank(
     flat_params: FlatRegimeParams,
     period: int,
     age: ScalarFloat | ScalarInt,
-) -> tuple[FloatND, FloatND, BoolND, BoolND]:
-    """Pure reconstruction with live/represented masks for the host diagnostic."""
+) -> tuple[FloatND, FloatND, FloatND, BoolND]:
+    """Pure reconstruction of the candidate bank and its represented mask.
+
+    Returns the inner actions, outer actions and published values of every
+    candidate at the subjects' states, and whether each candidate is live (in
+    support, finite) and its outer action reaches a stock inside the outer
+    state's domain.
+    """
     n_subjects = next(iter(states.values())).shape[0]
     coordinates = []
     in_support = jnp.ones((n_subjects,), dtype=bool)
@@ -4775,19 +4332,20 @@ def _prepare_nnbegm_candidate_bank(
         period=period,
         age=age,
     )
-    live = (
+    represented = (
         in_support[None, :]
         & jnp.isfinite(candidate_inner)
         & jnp.isfinite(candidate_value)
+        & outer_represented
     )
-    represented = live & outer_represented
-    return candidate_inner, candidate_outer, live, represented
+    return candidate_inner, candidate_outer, candidate_value, represented
 
 
 def _rank_nnbegm_candidate_bank(
     *,
     candidate_inner: FloatND,
     candidate_outer: FloatND,
+    candidate_value: FloatND,
     represented: BoolND,
     optimal_actions: MappingProxyType[ActionName, FloatND | IntND],
     regime: Regime,
@@ -4804,14 +4362,49 @@ def _rank_nnbegm_candidate_bank(
     tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND]
     | BoundedResult[tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND]]
 ):
-    """Pure canonical scoring and first-maximum ranking of the represented bank."""
+    """Pick the feasible represented candidate with the highest published value.
+
+    Feasibility is the regime's constraints at the subject's state, evaluated
+    over the bank; the continuation is not. JAX argmax returns the first
+    maximum, preserving keeper/outer-major then declared discrete-product order
+    exactly. Canonical Q scores the one winning action tuple for the reported
+    value; a winner it scores non-finite publishes no action, as does a subject
+    with no feasible represented candidate.
+    """
     n_candidates = candidate_inner.shape[0]
-    scored = _score_nnbegm_candidate_bank(
+    feasible = _nnbegm_bank_feasibility(
+        candidate_inner=candidate_inner,
+        candidate_outer=candidate_outer,
         optimal_actions=optimal_actions,
         regime=regime,
         sim_policy=sim_policy,
-        candidate_inner=candidate_inner,
-        candidate_outer=candidate_outer,
+        flat_params=flat_params,
+        period=period,
+        age=age,
+        canonical_states=canonical_states,
+        action_names=action_names,
+    )
+    ranking_values = jnp.where(represented & feasible, candidate_value, -jnp.inf)
+    winner = jnp.asarray(jnp.argmax(ranking_values, axis=0), dtype=jnp.int32)
+    selected_inner = _take_at_winner(stacked=candidate_inner, winner=winner)
+    selected_outer = _take_at_winner(stacked=candidate_outer, winner=winner)
+    selected_codes, selected_discrete_actions = _select_nnbegm_discrete_actions(
+        sim_policy=sim_policy,
+        winner=winner,
+        n_candidates=n_candidates,
+    )
+    scored = _score_nnbegm_winner(
+        winner_actions={
+            **{
+                name: optimal_actions[name]
+                for name in action_names
+                if name in optimal_actions
+            },
+            sim_policy.inner_action_name: selected_inner,
+            sim_policy.outer_action_name: selected_outer,
+            **selected_discrete_actions,
+        },
+        regime=regime,
         flat_params=flat_params,
         period=period,
         age=age,
@@ -4821,25 +4414,15 @@ def _rank_nnbegm_candidate_bank(
         referenced_value_kwargs=referenced_value_kwargs,
         bound_summary=bound_summary,
     )
-    canonical_values, canonical_feasible = cast(
+    selected_value, selected_feasible = cast(
         "tuple[FloatND, BoolND]",
         scored.output if type(scored) is BoundedResult else scored,
     )
-    valid = represented & canonical_feasible & jnp.isfinite(canonical_values)
-    ranking_values = jnp.where(valid, canonical_values, -jnp.inf)
-    # JAX argmax returns the first maximum, preserving keeper/outer-major then
-    # declared discrete-product order exactly.
-    winner = jnp.asarray(jnp.argmax(ranking_values, axis=0), dtype=jnp.int32)
-
-    any_valid = jnp.any(valid, axis=0)
-    selected_inner = _take_at_winner(stacked=candidate_inner, winner=winner)
-    selected_outer = _take_at_winner(stacked=candidate_outer, winner=winner)
-    selected_codes, selected_discrete_actions = _select_nnbegm_discrete_actions(
-        sim_policy=sim_policy,
-        winner=winner,
-        n_candidates=n_candidates,
+    any_valid = (
+        jnp.any(represented & feasible, axis=0)
+        & selected_feasible
+        & jnp.isfinite(selected_value)
     )
-    selected_value = _take_at_winner(stacked=canonical_values, winner=winner)
     chosen_inner = jnp.where(any_valid, selected_inner, jnp.nan)
     chosen_outer = jnp.where(any_valid, selected_outer, jnp.nan)
     chosen_value = jnp.where(any_valid, selected_value, -jnp.inf)
@@ -4868,57 +4451,6 @@ def _rank_nnbegm_candidate_bank(
         if type(scored) is BoundedResult
         else output
     )
-
-
-def _announce_dropped_outer_candidates(
-    *,
-    logger: logging.Logger,
-    dropped: BoolND,
-    n_live: BoolND,
-    regime_name: RegimeName,
-    period: int,
-) -> None:
-    """Report, once per regime-period, how many outer candidates were dropped.
-
-    The count is aggregated on device and read back as two scalars, so the
-    report costs one transfer per regime-period rather than one per candidate.
-    Runtime checks raise when replay cannot reconstruct a candidate ranked by
-    the solve. With checks disabled, candidates are still dropped.
-    """
-    if not validation_enabled(logger):
-        return
-    n_dropped = int(jnp.sum(dropped))
-    if n_dropped == 0:
-        return
-    total = int(jnp.sum(n_live))
-    _report_dropped_outer_candidates(
-        logger=logger,
-        n_dropped=n_dropped,
-        total=total,
-        regime_name=regime_name,
-        period=period,
-    )
-
-
-def _report_dropped_outer_candidates(
-    *,
-    logger: logging.Logger,
-    n_dropped: int,
-    total: int,
-    regime_name: RegimeName,
-    period: int,
-) -> None:
-    """Build the host report from admitted exact candidate counts."""
-    error = UnrepresentableOuterCandidateError(
-        f"Regime {regime_name!r} at period {period}: {n_dropped} of {total} "
-        "live outer candidates could not be reconstructed at their realized "
-        "state -- the recovered outer action reaches a stock outside the outer "
-        "state's declared domain. Those candidates are dropped from the "
-        "affected subjects' choice sets; a subject left with no candidate at "
-        "all publishes no action. Widen the outer state's grid so the reachable "
-        "post-decision stocks lie inside it, or coarsen the outer search."
-    )
-    raise_or_warn(logger=logger, error=error)
 
 
 def _grid_position(
@@ -5023,43 +4555,6 @@ class _InterpolatedProfileObjective:
         return self.interpolant.evaluate(
             nodes=self.nodes, values=self.values, query=query
         )
-
-
-def _canonical_Q_at_branch(
-    *,
-    outer_action: FloatND,
-    inner_action: FloatND,
-    grid_actions: MappingProxyType[ActionName, FloatND | IntND],
-    outer_action_name: ActionName,
-    inner_action_name: ActionName,
-    regime: Regime,
-    canonical_states: Mapping[StateName, FloatND | IntND],
-    action_names: tuple[ActionName, ...],
-    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-    flat_params: FlatRegimeParams,
-    referenced_value_kwargs: QAndFKwargs,
-    period: int,
-    age: ScalarFloat | ScalarInt,
-) -> tuple[FloatND, BoolND]:
-    """Score the grid actions with one replay branch's outer and inner pair."""
-    branch_actions = MappingProxyType(
-        {
-            **grid_actions,
-            outer_action_name: outer_action,
-            inner_action_name: inner_action,
-        }
-    )
-    return _canonical_Q_at_actions(
-        candidate_actions=branch_actions,
-        regime=regime,
-        canonical_states=canonical_states,
-        action_names=action_names,
-        next_regime_to_V_arr=next_regime_to_V_arr,
-        flat_params=flat_params,
-        referenced_value_kwargs=referenced_value_kwargs,
-        period=period,
-        age=age,
-    )
 
 
 def _read_candidate_bank(
@@ -5196,40 +4691,6 @@ def _evaluate_canonical_Q_at_actions(
         )
     values, feasible = cast("tuple[FloatND, BoolND]", evaluated)
     return jnp.asarray(values), jnp.asarray(feasible).astype(bool)
-
-
-def _score_nested_action_pair(
-    *,
-    proposed_actions: MappingProxyType[ActionName, FloatND | IntND],
-    regime: Regime,
-    canonical_states: Mapping[StateName, FloatND | IntND],
-    action_names: tuple[ActionName, ...],
-    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-    flat_params: FlatRegimeParams,
-    period: int,
-    age: ScalarFloat | ScalarInt,
-    referenced_value_kwargs: QAndFKwargs = MappingProxyType({}),
-) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND, BoolND]:
-    """Score the published nested action pair once through canonical Q.
-
-    The nested policy already publishes the solution-phase inner policy
-    conditional on outer nodes. Simulation interpolates that policy and verifies
-    the resulting pair against canonical Q; it does not solve another inner
-    optimization problem per subject. The caller accepts only finite, feasible,
-    intrinsically admissible pairs that weakly improve on the safe baseline.
-    """
-    values, feasible = _canonical_Q_at_actions(
-        candidate_actions=proposed_actions,
-        regime=regime,
-        canonical_states=canonical_states,
-        action_names=action_names,
-        next_regime_to_V_arr=next_regime_to_V_arr,
-        flat_params=flat_params,
-        referenced_value_kwargs=referenced_value_kwargs,
-        period=period,
-        age=age,
-    )
-    return proposed_actions, values, feasible
 
 
 def _drawn_code_targets(

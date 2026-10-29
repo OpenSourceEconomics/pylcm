@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "dd7cc884e235af325c5718c4d5c4b54fbedce2da9f0877de4f0042ede462f830",
+  "source_inventory_sha256": "0b9b21e324cbfb67b5a3ecbdb275674f374274b432cfdcd790a3debd7d52d350",
   "sources": [
     {
       "path": "src/_lcm/constraints/bounds.py",
@@ -390,7 +390,7 @@
     },
     {
       "path": "src/_lcm/simulation/chunk_profiles.py",
-      "sha256": "eb45d01f4cafa5f206e59a9bf94b39723c2466ecf61f7c754750b5c48f247d36"
+      "sha256": "1a811c7145be58e14feb46ee9d69f89852bcd15940fd66c5c70f7f9642b03646"
     },
     {
       "path": "src/_lcm/simulation/compile.py",
@@ -453,12 +453,8 @@
       "sha256": "cabfaf99af98887f1f142c8ddcd67cd84e9f59edfb9defffefff8d5aef08a9d4"
     },
     {
-      "path": "src/_lcm/simulation/policy_diagnostics.py",
-      "sha256": "ed41f7f7e0378b0d86e153c53b399bd01350ea24a58a9b80cc88224158a0c0d3"
-    },
-    {
       "path": "src/_lcm/simulation/policy_programs.py",
-      "sha256": "da6b8e7edb7ce86b2de1c944dc806060f613dda051fa0ce69f0cec92dead709b"
+      "sha256": "46cbbf762052c1fe42b4c589c9ea0f486cea9edae1cb92043733a1a1c4d1e27e"
     },
     {
       "path": "src/_lcm/simulation/population_operations.py",
@@ -510,7 +506,7 @@
     },
     {
       "path": "src/_lcm/simulation/simulate.py",
-      "sha256": "8e841294669d6245c3c58a3cc21f6717db1b8c1c3d251f6bd5dbb7259c45ae1b"
+      "sha256": "5cfe704bc32d530059401a4375b7b42771c34612b7d591efbdee7c7a5204c8d6"
     },
     {
       "path": "src/_lcm/simulation/solution_copies.py",
