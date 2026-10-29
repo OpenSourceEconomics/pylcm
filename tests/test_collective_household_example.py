@@ -6,6 +6,7 @@ under debug validation, simulated from a cohort of singles, and read off the
 published frame.
 """
 
+from collections import Counter
 from dataclasses import replace
 from typing import Unpack
 
@@ -13,6 +14,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.regime_building import Q_and_F
 from _lcm.solution import backward_induction
 from lcm.exits import RuleResult
 from lcm.solver_api import KernelOutput, ResultRetention
@@ -204,3 +206,29 @@ def test_a_missing_declared_arrival_payload_fails_before_the_period_roll(
             retention=ResultRetention.VALUES,
             log_level="off",
         )
+
+
+def test_each_query_action_problem_is_traced_once_per_solve(
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A query read inside another query's continuation reuses the target's trace.
+
+    An arrival continuation prices the target's action problem at the landing
+    date, so the reads nest date by date. Re-tracing that problem at every read
+    multiplies the traces by the fan-out of every later date.
+    """
+    traces: Counter[int] = Counter()
+    for kernel_class in (Q_and_F._QAndF, Q_and_F._CollectiveQAndF):
+        original = kernel_class.evaluated
+
+        # keyword-only-exempt: primary-argument=self
+        def counted(self, *args, _original=original, **kwargs):
+            traces[id(self)] += 1
+            return _original(self, *args, **kwargs)
+
+        monkeypatch.setattr(kernel_class, "evaluated", counted)
+    model = household.get_model(n_periods=3, wealth_n_points=2, consumption_n_points=2)
+    model.solve(params=household.get_params(), log_level="off")
+    assert traces
+    assert max(traces.values()) == 1
