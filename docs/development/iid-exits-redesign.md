@@ -67,6 +67,27 @@ advertised feature, reinterpreting a model equation or labelling an unsupported 
 supported. A concrete consumer need can bring back a deferred item without bringing back
 the former matrix.
 
+### Batch 4 compact acceptance set
+
+The S10 closing set reuses existing tests, one per distinct implementation mechanism.
+`tests/ci/ci-workloads.json` lists them as `egm_acceptance_tests` and
+`tests/conftest.py` marks them `egm_acceptance`, so `-m egm_acceptance` on their files
+selects exactly this set. Each still runs in its ordinary CI leg; no lane selects by the
+marker.
+
+| Mechanism                                                                                       | Tests                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Scalar current-IID integration, projected continuation recurrence and realized replay (DC R, U) | `test_current_iid_call_owned_generation.py`: `test_public_model_current_iid_balanced_solve_replay_and_archive` (resources-only), `test_public_case_r_replay_matches_the_literal_policy_at_off_node_shocks`; `test_case_u_reconstruction.py::test_model_u_reconstructs_original_candidates_at_nodes_and_offgrid`; `test_current_iid_case_u_parent_forward_required.py::test_required_enclosing_parent_forward_consumes_nonexact_u_guard`                   |
+| P2 genuine-U publication and hoisted read                                                       | `test_current_iid_projected_row_reference.py::test_case_u_projected_row_meets_its_budget_with_few_records`; `test_case_u_hoisted_contract.py::test_hoisted_reference_preserves_rebuilding_value_marginal_and_validity`                                                                                                                                                                                                                                    |
+| NB with a passive state and discrete branches; nonlinear-CE and null-weight directions          | `test_current_iid_nbegm_ride_model.py`: `test_nbegm_ride_u_model_selects_each_branch_before_current_expectation`, `test_public_nbegm_ride_u_default_archive_replays_original_physics`; `test_current_iid_nbegm_ez_model.py::test_original_nbegm_ez_model_runtime_parameter_directions`; `test_current_iid_nbegm_model.py::test_original_nbegm_r_null_probability_direction_keeps_counterfactual_value`                                                    |
+| NEGM and NNBEGM keeper/adjuster lifecycle                                                       | `test_current_iid_negm_model.py`: `test_public_negm_u_selects_complete_outer_choice_before_expectation`, `test_public_negm_u_default_archive_replays_original_physics`; `test_current_iid_nnbegm_model.py`: `test_original_nnbegm_u_selects_inner_nb_before_outer_choice`, `test_public_nnbegm_u_default_archive_replays_original_physics`; `test_ordinary_current_iid_replay.py::test_default_current_iid_replay_traces_no_certification` (every family) |
+| Shared law, date, budget and fresh-instance save/load                                           | `test_current_iid_dated_declarations.py::test_original_self_transition_keeps_distinct_incoming_dates`; `test_current_iid_case_u_installed_law.py::test_installed_u_current_law_marginal_reaches_original_parent`; `test_current_iid_cold_model.py::test_budgeted_public_model_solves_real_r_and_keeps_evicted_generation`; `test_builtin_policy_persistence.py::test_a_saved_egm_solution_simulates_identically_in_a_fresh_model`                         |
+
+Action-to-transition association and information timing are asserted inside the scalar R
+lifecycle (parent action and child landing) and the NB ride and NEGM tests (per-shock
+selection before expectation). The NEGM and NNBEGM archive tests run unbudgeted and with
+a finite budget. The cost capture is `benchmarks/capture_s10_cost.py`.
+
 ## Accepted scope
 
 On 2026-10-24 the owner confirmed that faithful EKL remains a required acceptance case,
