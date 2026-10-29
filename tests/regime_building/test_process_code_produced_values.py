@@ -235,11 +235,8 @@ def _gate_model(*, on_node: bool, enable_jit: bool) -> Model:
 def _dissolution_model(*, on_node: bool, enable_jit: bool) -> Model:
     """Collective source landing in `a`, which has no policy at the middle node.
 
-    The on-node model decides the landing by `a`'s policy support. The off-node
-    model keeps the state-only `Gate` that opens exactly where `a` is feasible:
-    the arrival path does not yet refuse an off-node fallback into a code reader
-    (it raises `NoFeasibleActionError` instead), so the refusal is witnessed on
-    the gated route until that guard exists.
+    The arrival decides the landing by `a`'s policy support; the off-node model's
+    `f` route projects back into `a`, which reads `z_code`.
     """
     work = DiscreteGrid(category_class=Work)
     routes = {
@@ -271,7 +268,6 @@ def _dissolution_model(*, on_node: bool, enable_jit: bool) -> Model:
             routes=routes,
         )
     }
-    gates = {"a": Gate(predicate=_off_middle_node, routes=routes)}
     return Model(
         regimes={
             "source": Regime(
@@ -299,8 +295,7 @@ def _dissolution_model(*, on_node: bool, enable_jit: bool) -> Model:
         edges={
             "source": Transition(
                 law=ByAge(cases={0: {"a": StochasticTransition(func=_prob_one)}}),
-                arrivals=arrivals if on_node else {},
-                gates={} if on_node else gates,
+                arrivals=arrivals,
             )
         },
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),

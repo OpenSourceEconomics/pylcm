@@ -25,6 +25,7 @@ import re
 from types import MappingProxyType
 
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 from _lcm.regime_building.gated_edges import build_fallback_state_projector
@@ -37,6 +38,8 @@ from lcm import (
     AgeGrid,
     AgeRange,
     AgeSpecializedGrid,
+    ArrivalDecision,
+    ArrivalRead,
     ByAge,
     DiscreteGrid,
     Gate,
@@ -119,6 +122,32 @@ def test_gate_ref_projection_must_cover_only_the_reference_value_functions_axes(
         match=re.escape("(['wage']); got ['career', 'wage']"),
     ):
         _build_model(fallback_projects_career=True, gate_ref_projects_career=True)
+
+
+def test_fallback_covering_a_carried_state_and_read_covering_solve_states_solves():
+    """The fallback owes `career`, the read must not name it, and both hold here.
+
+    Gate open at wage 2 (src_exit pays 0), closed at wage 1 (fallback pays the
+    wage), so src's value is `wage + 0.5 * (1, 0)`. A subject routed to the
+    fallback lands with career `2 * wage`.
+    """
+    model = _build_model(fallback_projects_career=True, gate_ref_projects_career=False)
+    solution = model.solve(params={"discount_factor": 0.5}, log_level="off")
+    np.testing.assert_array_equal(solution.values[0]["src"], [1.5, 2.0])
+    frame = model.simulate(
+        params={"discount_factor": 0.5},
+        solution=solution,
+        initial_conditions={
+            "age": jnp.array([0.0, 0.0]),
+            "wage": jnp.array([1.0, 2.0]),
+            "regime_id": jnp.array([RegimeId.src, RegimeId.src], dtype=jnp.int32),
+        },
+        seed=0,
+        log_level="off",
+    ).to_dataframe()
+    landed = frame.loc[frame["period"] == 1]
+    assert landed["regime_name"].tolist() == ["fallback", "src_exit"]
+    np.testing.assert_array_equal(landed["career"].iloc[:1], [2.0])
 
 
 def test_leg_fallback_projection_must_cover_an_age_specialized_state_of_its_regime():
@@ -333,8 +362,8 @@ def _build_model(
                         }
                     }
                 ),
-                gates={
-                    "src_exit": Gate(
+                arrivals={
+                    "src_exit": ArrivalDecision(
                         predicate=_gate,
                         routes={
                             "only": StakeholderRoute(
@@ -344,8 +373,9 @@ def _build_model(
                                 )
                             )
                         },
-                        references={
-                            "V_fallback_ref": ProjectedRegimeValue(
+                        reads={
+                            "V_fallback_ref": ArrivalRead(
+                                kind="IntegratedFull",
                                 regime="fallback",
                                 projection=gate_ref_projection,
                             )

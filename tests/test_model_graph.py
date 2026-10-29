@@ -11,9 +11,10 @@ import pytest
 from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
+    ArrivalDecision,
+    ArrivalRead,
     ByAge,
     DeterministicTransition,
-    Gate,
     LinSpacedGrid,
     Model,
     Phased,
@@ -372,8 +373,8 @@ class _DormantGateRegimeId:
     terminal: ScalarInt
 
 
-def test_value_only_source_age_does_not_activate_dormant_simulation_gate() -> None:
-    """A gate used at one source age owes no references at a value-only age."""
+def test_value_only_source_age_does_not_activate_dormant_simulation_arrival() -> None:
+    """An arrival used at one source age owes no reads at a value-only age."""
     grid = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
 
     def identity(x: ContinuousState) -> ContinuousState:
@@ -384,19 +385,21 @@ def test_value_only_source_age_does_not_activate_dormant_simulation_gate() -> No
 
     one = StochasticTransition(func=lambda: jnp.asarray(1.0))
     zero = StochasticTransition(func=lambda: jnp.asarray(0.0))
-    gates = {
-        "target": Gate(
+    arrivals = {
+        "target": ArrivalDecision(
             predicate=gate,
+            reads={
+                "V_reference": ArrivalRead(
+                    kind="IntegratedFull",
+                    regime="reference",
+                    projection={"x": identity},
+                )
+            },
             routes={
                 "only": StakeholderRoute(
                     fallback=ProjectedRegimeValue(
                         regime="fallback", projection={"x": identity}
                     )
-                )
-            },
-            references={
-                "V_reference": ProjectedRegimeValue(
-                    regime="reference", projection={"x": identity}
                 )
             },
         )
@@ -437,7 +440,7 @@ def test_value_only_source_age_does_not_activate_dormant_simulation_gate() -> No
                 "source": Transition(
                     targets={"source": 0, "target": 0, "fallback": 0, "terminal": 1},
                     law=solve_law,
-                    gates=gates,
+                    arrivals=arrivals,
                 ),
                 "other": {"target": 1},
                 "reference": {"terminal": 1},
@@ -446,7 +449,7 @@ def test_value_only_source_age_does_not_activate_dormant_simulation_gate() -> No
                 "source": Transition(
                     targets={"target": 0, "fallback": 0},
                     law=simulate_law,
-                    gates=gates,
+                    arrivals=arrivals,
                 ),
                 "other": {"terminal": 1},
             },

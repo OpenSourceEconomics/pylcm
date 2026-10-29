@@ -26,7 +26,6 @@ from lcm import (
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
-    Gate,
     IrregSpacedGrid,
     Model,
     ProjectedRegimeValue,
@@ -176,13 +175,8 @@ def _self_route_model(
     feasible=_feasible,
     projection=_project_to_three,
     off_grid: Literal["extrapolate", "clip_state"] = "extrapolate",
-    state_gate: bool = False,
 ) -> Model:
-    """The arrival into `a` falls back to `a` itself, projecting the wage to 3.
-
-    With `state_gate`, a state-only `Gate` opening exactly where `feasible`
-    holds decides the landing instead; it routes and values the same rows.
-    """
+    """The arrival into `a` falls back to `a` itself, projecting the wage to 3."""
     route = StakeholderRoute(
         target_stakeholder="f",
         fallback=ProjectedRegimeValue(
@@ -204,7 +198,6 @@ def _self_route_model(
             routes={"only": route},
         )
     }
-    gates = {"a": Gate(predicate=feasible, routes={"only": route})}
     grid = IrregSpacedGrid(points=np.array([1.0, 2.0, 3.0]))
     a_grid = IrregSpacedGrid(points=np.array([1.0, 2.0, 3.0]), off_grid=off_grid)
     return Model(
@@ -228,8 +221,7 @@ def _self_route_model(
         edges={
             "source": Transition(
                 law=ByAge(cases={0: {"a": StochasticTransition(func=_certain)}}),
-                arrivals={} if state_gate else arrivals,
-                gates=gates if state_gate else {},
+                arrivals=arrivals,
             )
         },
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
@@ -284,9 +276,7 @@ def test_a_self_route_decides_again_at_its_projected_state(
 def test_a_self_route_that_is_empty_again_raises():
     """The route is taken once: an empty projected state has nowhere to go."""
     assert reference_action(wage=3.0, constrained=False) is not None
-    model = _self_route_model(
-        enable_jit=True, feasible=_feasible_below_the_middle, state_gate=True
-    )
+    model = _self_route_model(enable_jit=True, feasible=_feasible_below_the_middle)
     with pytest.raises(NoFeasibleActionError, match=r"'a', period 1"):
         _simulate_self_route(model=model, runtime_checks=False)
 
@@ -302,7 +292,6 @@ def test_a_self_route_decides_again_at_its_clipped_projected_state():
         feasible=_feasible_at_the_clipped_top,
         projection=_project_to_four,
         off_grid="clip_state",
-        state_gate=True,
     )
     _, result = _simulate_self_route(model=model, runtime_checks=True)
     panel = result.to_dataframe(use_categorical_codes=True)

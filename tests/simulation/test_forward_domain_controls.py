@@ -152,7 +152,7 @@ def _multi_root_model(*, budgeted: bool) -> Model:
 
 
 def _gated_value_only_model(*, budgeted: bool) -> Model:
-    """A gate reference and a phased fallback's solve leg are read by value only."""
+    """An arrival read is solved by value only; the solve fallback leg is queried."""
     model = _gated_model(phased_fallback=True)
     if not budgeted:
         return model
@@ -312,11 +312,12 @@ _CASES: Mapping[str, _ForwardCase] = {
         "starts": ((40.0, "source"),),
         "params": {"discount_factor": 0.9},
         "forward": {(0, "source"), (1, "target"), (1, "fallback")},
-        "value_only": {(1, "reference"), (1, "priced")},
-        # Both are terminal and read their utility `w`.
-        "value_only_values": {(1, "reference"): (0.0, 1.0), (1, "priced"): (0.0, 1.0)},
+        # The arrival prices the `priced` solve leg by a query, not a stored value.
+        "value_only": {(1, "reference")},
+        # It is terminal and reads its utility `w`.
+        "value_only_values": {(1, "reference"): (0.0, 1.0)},
         "source_values": None,
-        # The gate compares equal values, so every subject takes the fallback.
+        # The arrival compares equal values, so every subject takes the fallback.
         "paths": {"source": 0, "fallback": 1},
     },
 }

@@ -46,7 +46,6 @@ from _lcm.simulation.gated_routing import (
 )
 from _lcm.simulation.simulate import _initial_own_stakeholder
 from _lcm.solution.backward_induction import solve
-from _lcm.typing import QualifiedName
 from _lcm.utils.logging import get_logger
 from lcm import (
     AgeRange,
@@ -96,25 +95,6 @@ def _identity_x(x: ContinuousState) -> ContinuousState:
 
 def _u_src(*, x: ContinuousState, work: DiscreteAction) -> FloatND:
     return jnp.zeros_like(x) * work
-
-
-def exposed_param_name(*, evaluator, qname: QualifiedName, namespace: str) -> str:
-    """The signature leaf under which `evaluator` exposes `namespace`'s `qname`.
-
-    Shared with `test_gated_edge_simulate_operand_recompute.py`: a test that
-    calls a gate evaluator directly must name its params the way the evaluator
-    exposes them, and asking the published provenance is how — hard-coding the
-    qualification scheme in every test would pin the naming instead of the
-    contract.
-    """
-    for exposed, provenance in evaluator.arg_provenance.params.items():
-        if provenance == (namespace, qname):
-            return exposed
-    msg = (
-        f"No argument of provenance {(namespace, qname)}; the evaluator has "
-        f"{dict(evaluator.arg_provenance.params)}."
-    )
-    raise AssertionError(msg)
 
 
 # A STATELESS gated target leaves `vmap` with zero batched args.

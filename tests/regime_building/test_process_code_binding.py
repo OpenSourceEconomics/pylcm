@@ -542,7 +542,11 @@ def _gate_on_landing_value(z: ContinuousState) -> BoolND:
     return z > 0.0
 
 
-def _gate_without_process_read(V_target: FloatND) -> BoolND:
+def _gate_without_process_read() -> BoolND:
+    return jnp.ones((), dtype=bool)
+
+
+def _arrival_on_landing_value(V_target: FloatND) -> BoolND:
     return V_target > 0.0
 
 
@@ -550,11 +554,13 @@ def _landed_z(z: ContinuousState) -> ContinuousState:
     return z
 
 
-def _landing_model(*, runtime: bool, read_process: bool) -> Model:
+def _landing_model(
+    *, runtime: bool, edge: Literal["gate-read", "gate-no-read", "arrival"]
+) -> Model:
     """Source and target carry one uniform process on nodes [-1, 0, 1].
 
-    Reading the process, the edge is a state `Gate`; otherwise an
-    `ArrivalDecision` reading the target's value.
+    The edge is a state `Gate` whose predicate reads the landed process or reads
+    nothing, or an `ArrivalDecision` reading the target's value at the landing.
     """
     shock = UniformIIDProcess(
         n_points=3, start=-1.0, stop=None if runtime else 1.0, simulate_draws="nodes"
@@ -569,16 +575,23 @@ def _landing_model(*, runtime: bool, read_process: bool) -> Model:
             targets=targets,
             law=law,
             gates={
-                "target": Gate(predicate=_gate_on_landing_value, routes={"only": route})
+                "target": Gate(
+                    predicate=(
+                        _gate_on_landing_value
+                        if edge == "gate-read"
+                        else _gate_without_process_read
+                    ),
+                    routes={"only": route},
+                )
             },
         )
-        if read_process
+        if edge != "arrival"
         else Transition(
             targets=targets,
             law=law,
             arrivals={
                 "target": ArrivalDecision(
-                    predicate=_gate_without_process_read,
+                    predicate=_arrival_on_landing_value,
                     reads={
                         "V_target": ArrivalRead(
                             kind="Raw", regime="target", projection={"z": _landed_z}
@@ -617,7 +630,7 @@ def _landing_source_values(*, model: Model, runtime: bool) -> np.ndarray:
 
 def test_gate_reads_the_landing_value_of_a_fixed_process():
     """The gate opens only at node 1, so `E[V] = (1 + 1 + 5) / 3`."""
-    model = _landing_model(runtime=False, read_process=True)
+    model = _landing_model(runtime=False, edge="gate-read")
     np.testing.assert_allclose(
         _landing_source_values(model=model, runtime=False),
         np.full(3, 7.0 / 3.0),
@@ -628,11 +641,18 @@ def test_gate_reads_the_landing_value_of_a_fixed_process():
 
 def test_gate_reading_a_runtime_process_value_at_its_landing_is_refused():
     with pytest.raises(ModelInitializationError, match="parameterized at runtime"):
-        _landing_model(runtime=True, read_process=True)
+        _landing_model(runtime=True, edge="gate-read")
+
+
+def test_arrival_landing_in_a_runtime_process_is_refused():
+    """An arrival enumerates the landed process by node; a runtime one has none."""
+    with pytest.raises(ModelInitializationError, match="parameterized at runtime"):
+        _landing_model(runtime=True, edge="arrival")
 
 
 def test_gate_not_reading_a_runtime_process_keeps_it_supported():
-    model = _landing_model(runtime=True, read_process=False)
+    """The gate refusal is scoped to the process it reads; open, so E[V] = 5."""
+    model = _landing_model(runtime=True, edge="gate-no-read")
     np.testing.assert_allclose(
         _landing_source_values(model=model, runtime=True),
         np.full(3, 5.0),

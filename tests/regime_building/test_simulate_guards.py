@@ -52,6 +52,7 @@ from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
     AgeRange,
+    ArrivalDecision,
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
@@ -59,6 +60,7 @@ from lcm import (
     LinearAggregator,
     LinearExpectation,
     LinSpacedGrid,
+    Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -252,6 +254,84 @@ def test_two_legs_sharing_a_fallback_regime_is_rejected_at_construction():
             ages=ages,
             regime_names=list(regimes_dict),
         )
+
+
+@categorical(ordered=False)
+class _SharedFallbackId:
+    married: ScalarInt
+    married_ir: ScalarInt
+    single_shared: ScalarInt
+
+
+def _never_arrives(wage: ContinuousState) -> BoolND:
+    return wage < 0.0
+
+
+def test_two_arrival_routes_sharing_a_fallback_regime_each_land_their_own_row():
+    """Arrival routes may share a fallback: each member lands at its own projection.
+
+    An arrival's fallback landing is keyed by the route a row's role selects,
+    not written per fallback regime, so the guard a gated edge needs does not
+    apply. With the arrival always rejected, `f` lands in `single_shared` at its
+    wage and `m` at `4 - wage`, in solve and in simulation.
+    """
+    routes = {
+        "f": StakeholderRoute(
+            target_stakeholder="f",
+            fallback=ProjectedRegimeValue(
+                regime="single_shared", projection={"wage": _identity_wage}
+            ),
+        ),
+        "m": StakeholderRoute(
+            target_stakeholder="m",
+            fallback=ProjectedRegimeValue(
+                regime="single_shared", projection={"wage": _reverse_wage}
+            ),
+        ),
+    }
+    model = Model(
+        regimes=_make_shared_fallback_regimes(),
+        edges={
+            "married": Transition(
+                law=ByAge(
+                    cases={
+                        AgeRange(exclusive_stop=1): {
+                            "married_ir": StochasticTransition(func=_prob_one)
+                        }
+                    }
+                ),
+                targets={"married_ir": 0, "single_shared": 0},
+                arrivals={
+                    "married_ir": ArrivalDecision(
+                        predicate=_never_arrives, routes=routes
+                    )
+                },
+            )
+        },
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
+        regime_id_class=_SharedFallbackId,
+        initial_nodes={0: "married"},
+    )
+    params = {"discount_factor": 1.0}
+    solution = model.solve(params=params, log_level="off")
+    np.testing.assert_array_equal(
+        solution.values[0]["married"], [[1.0, 3.0], [2.0, 2.0], [3.0, 1.0]]
+    )
+    frame = model.simulate(
+        params=params,
+        solution=solution,
+        initial_conditions={
+            "age": jnp.zeros(4),
+            "wage": jnp.array([1.0, 1.0, 2.0, 2.0]),
+            "own_stakeholder": jnp.array([0, 1, 0, 1], dtype=jnp.int32),
+            "regime_id": jnp.full(4, _SharedFallbackId.married, dtype=jnp.int32),
+        },
+        seed=0,
+        log_level="off",
+    ).to_dataframe()
+    landed = frame.loc[frame["period"] == 1].sort_values("subject_id")
+    assert landed["regime_name"].tolist() == ["single_shared"] * 4
+    np.testing.assert_array_equal(landed["wage"], [1.0, 3.0, 2.0, 2.0])
 
 
 def test_dissolution_fixture_has_distinct_fallbacks_and_still_constructs():
