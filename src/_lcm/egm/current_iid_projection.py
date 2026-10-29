@@ -25,6 +25,7 @@ class _ProjectionState(NamedTuple):
     carry: ProjectedEGMCarry
     done: ScalarBool
     iteration: ScalarInt
+    records_needed: ScalarInt
 
     def __reduce__(
         self,
@@ -41,13 +42,19 @@ def refine_projected_row(
     initial: ProjectedEGMCarry,
     reference: Callable[[ScalarFloat], ProjectedRowRead],
     accuracy: Literal["certified", "balanced"] = "certified",
-) -> ProjectedEGMCarry:
+) -> tuple[ProjectedEGMCarry, ScalarInt]:
     """Bisect failed smooth cells using the original selected-candidate reader.
 
     ``initial`` must contain all proven pullbacks and their owned jump sides.
     Refinement cannot prove that an undisclosed discontinuity does not exist.
     Missing topology, invalid references or exhausted capacity invalidate the
     mandatory status. Values and economic marginals have separate unit scales.
+
+    Returns:
+        Tuple of the refined row and the record count its last bisection needed.
+        The count exceeds the row capacity exactly when the capacity, and no
+        other cause, refused that bisection.
+
     """
     if initial.grid.ndim != 1:
         raise ValueError("Projection refinement operates on one original passive row.")
@@ -60,6 +67,9 @@ def refine_projected_row(
         room = (
             current.carry.valid_length + jnp.sum(failed, dtype=jnp.int32)
             <= current.carry.grid.size
+        )
+        needed = current.carry.valid_length + jnp.where(
+            hard_invalid, 0, jnp.sum(failed, dtype=jnp.int32)
         )
         invalid = hard_invalid | (any_failed & ~room)
         carry = replace(current.carry, valid=current.carry.valid & ~invalid)
@@ -76,6 +86,7 @@ def refine_projected_row(
             carry=carry,
             done=~any_failed | invalid | ~carry.valid,
             iteration=current.iteration + 1,
+            records_needed=needed,
         )
 
     state = jax.lax.while_loop(
@@ -85,6 +96,7 @@ def refine_projected_row(
             carry=initial,
             done=~initial.valid,
             iteration=jnp.asarray(0, dtype=jnp.int32),
+            records_needed=initial.valid_length,
         ),
     )
     hard_invalid, failed = _assess_cells(
@@ -93,7 +105,7 @@ def refine_projected_row(
     return replace(
         state.carry,
         valid=state.carry.valid & ~hard_invalid & ~jnp.any(failed),
-    )
+    ), state.records_needed
 
 
 def _read_projected(

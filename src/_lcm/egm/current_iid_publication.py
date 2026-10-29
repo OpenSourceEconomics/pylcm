@@ -232,11 +232,17 @@ def publish_balanced_resources(
     program: BalancedResourcesProgram,
     pool: EconFunctionKwargs,
     capacity: int,
-) -> BalancedProjectedEGMCarry:
+) -> tuple[BalancedProjectedEGMCarry, ScalarInt]:
     """Publish sampled-accurate PWA links outside bounded uncertainty holes.
 
     Original declared/demanded coordinates and resource exact records consume
     the existing capacities. There is no silent truncation or capacity growth.
+
+    Returns:
+        Tuple of the published row and the least record count its partition and
+        refinement needed, which exceeds `capacity` only when capacity refused
+        one of them.
+
     """
     from _lcm.egm.current_iid_projection import refine_projected_row  # noqa: PLC0415
 
@@ -346,7 +352,7 @@ def publish_balanced_resources(
             valid=read.valid & program.validate_guard(guard=guard, query=liquid),
         )
 
-    refined = refine_projected_row(
+    refined, refined_needed = refine_projected_row(
         initial=initial, reference=checked_reference, accuracy="balanced"
     )
     # Exact-only carries stay valid: every interior read requires its own link.
@@ -356,7 +362,7 @@ def publish_balanced_resources(
             for field in fields(ProjectedEGMCarry)
         },
         guard=guard,
-    )
+    ), jnp.maximum(partition.records_needed, refined_needed)
 
 
 def _pullback_balanced_partition(
@@ -433,4 +439,9 @@ def _pullback_balanced_partition(
         & retained
         & catalog.valid
         & jnp.all(pull_valid),
+        # An exhausted merge reports the least count it proves, not the total.
+        records_needed=jnp.maximum(
+            reference.partition.records_needed,
+            jnp.where(retained, length, capacity + 1),
+        ),
     )

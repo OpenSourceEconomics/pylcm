@@ -779,7 +779,7 @@ class SaturatedCaseUProgram:
                 owner_id=row.owner_id[index], valid=read.valid & supported
             )
 
-        refined = refine_projected_row(
+        refined, _ = refine_projected_row(
             initial=row, reference=checked_reference, accuracy="balanced"
         )
         return BalancedCaseUCarry(

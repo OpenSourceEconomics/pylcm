@@ -60,6 +60,7 @@ from _lcm.solution.feasibility import (
     FeasibilityKernelOutput,
     QueryInputStatus,
     _unflatten_query_input_status,
+    validate_query_input_status,
 )
 from _lcm.solution.preparation_clock import prepare_case_u_clock
 from _lcm.time import TimeAxis
@@ -70,12 +71,14 @@ from _lcm.typing import (
     PytreeValue,
     ShapeDtypePytree,
 )
+from lcm.exceptions import InvalidValueFunctionError
 from lcm.solver_api import ArtifactKey
 from lcm.typing import (
     FloatND,
     IntND,
     ReferenceName,
     RegimeName,
+    ScalarBool,
     ScalarFloat,
     ScalarInt,
 )
@@ -223,6 +226,7 @@ class CaseRProgramFunction:
                 result.selection
                 if self.retain_resources and self.core.balanced is None
                 else None,
+                result.projection_records_needed,
             ),
             bound_status=(),
             query_status=(
@@ -330,6 +334,7 @@ def case_r_output_roles(
         (template.empty_count, template.other_inf_count),
         template.current_iid_invalid,
         template.selection if retain_resources and retain_node_selection else None,
+        template.projection_records_needed,
     )
     roles = jax.tree.map(replicated, payload)
     return BoundedResult(
@@ -506,8 +511,19 @@ class NativeCaseRPeriodKernel:
         evaluated = compiled_cores[name](**arguments)
         if not isinstance(evaluated, BoundedResult):
             raise TypeError("Case-R native output lacks mandatory integrity.")
-        value, projected, resources, counts, current_iid_invalid, selection = (
-            evaluated.output
+        (
+            value,
+            projected,
+            resources,
+            counts,
+            current_iid_invalid,
+            selection,
+            records_needed,
+        ) = evaluated.output
+        self._fail_on_exhausted_projection(
+            records_needed=records_needed,
+            current_iid_invalid=current_iid_invalid,
+            query_status=evaluated.query_status,
         )
         return FeasibilityKernelOutput(
             value=value,
@@ -522,6 +538,35 @@ class NativeCaseRPeriodKernel:
             continuation_read_counts=evaluated.continuation_read_counts,
             feasibility_counts=counts,
             current_iid_invalid=current_iid_invalid,
+        )
+
+    def _fail_on_exhausted_projection(
+        self,
+        *,
+        records_needed: ScalarInt,
+        current_iid_invalid: ScalarBool,
+        query_status: tuple[QueryInputStatus, ...] | None,
+    ) -> None:
+        """Refuse a row whose refinement outgrew its capacity, at its own date.
+
+        An invalid current-IID law and the child slots' own refusals keep their
+        precedence; every other invalid row reaches the generic coverage refusal.
+        """
+        needed, law_invalid = jax.device_get((records_needed, current_iid_invalid))
+        capacity = self.spec.authority_at(period=self.period).capacity
+        if int(needed) <= capacity or bool(law_invalid):
+            return
+        validate_query_input_status(
+            statuses=(query_status or ())[:-1] or None,
+            authorities=self.query_input_authorities[:-1],
+        )
+        raise InvalidValueFunctionError(
+            f"Projection capacity exhausted in regime '{self.regime_name}', period "
+            f"{self.period}: the projected row of liquid state "
+            f"'{self.spec.liquid_state}' needs at least {int(needed)} records, "
+            f"more than its capacity of {capacity}. Raise "
+            "`current_iid_projection_capacity` on the solver of regime "
+            f"'{self.regime_name}'."
         )
 
 
@@ -653,6 +698,7 @@ def _native_case_r_array_template(
             ),
             jnp.zeros((current_nodes,), dtype=jnp.bool_),
         ),
+        projection_records_needed=jnp.zeros((), dtype=jnp.int32),
     )
 
 

@@ -93,6 +93,8 @@ class NativeCaseROutput(NamedTuple):
     empty_count: ScalarInt
     other_inf_count: ScalarInt
     selection: tuple[OwnedResourcesRead, BoolND]
+    projection_records_needed: ScalarInt
+    """Least record count the projected row needed; above capacity only if exhausted."""
 
     def __reduce__(
         self,
@@ -274,8 +276,9 @@ class NativeCaseRCore:
         projected, selected = assemble_exact_resources_samples(
             reference=reference, capacity=self.projection_capacity
         )
+        records_needed = partition.records_needed
         if self.balanced is not None:
-            projected = publish_balanced_resources(
+            projected, records_needed = publish_balanced_resources(
                 reference=reference,
                 program=self.balanced,
                 pool=pool,
@@ -303,6 +306,7 @@ class NativeCaseRCore:
                 ~node_values.empty & ~jnp.isfinite(node_values.value), dtype=jnp.int32
             ),
             selection=(selected, live),
+            projection_records_needed=records_needed,
         )
 
 

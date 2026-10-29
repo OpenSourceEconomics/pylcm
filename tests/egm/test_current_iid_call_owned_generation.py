@@ -2,10 +2,12 @@
 
 import inspect
 import sys
+from collections.abc import Callable
 from dataclasses import fields, replace
 from pathlib import Path
 from types import FunctionType, MappingProxyType
-from typing import Never, cast
+from typing import Literal, Never, cast
+from unittest.mock import Mock
 
 import cloudpickle
 import h5py
@@ -18,13 +20,19 @@ import pytest
 import lcm.model as model_module
 from _lcm.continuation import ProjectedContinuationSpec
 from _lcm.dtypes import canonical_float_dtype
+from _lcm.egm import current_iid_projection
 from _lcm.egm.current_iid_balanced import (
     BalancedProjectedEGMCarry,
     BalancedResourcesProgram,
 )
 from _lcm.egm.current_iid_projection import _read_projected
-from _lcm.egm.projected_continuation import PROJECTED_EGM_CONTINUATION
+from _lcm.egm.projected_continuation import (
+    PROJECTED_EGM_CONTINUATION,
+    ProjectedEGMCarry,
+    ProjectedRowRead,
+)
 from _lcm.params.mapping_leaf import MappingLeaf, UserMappingLeaf
+from _lcm.solution import backward_induction
 from _lcm.solution.artifacts import OwnedSolutionView
 from _lcm.solution.current_iid_case_r import (
     CASE_R_RESOURCES_REPLAY,
@@ -58,7 +66,15 @@ from lcm.persistence import load_solution
 from lcm.shocks import Normal, ShockGroup, UserNodes
 from lcm.solver_api import ArtifactRef, PersistencePolicy, ResultRetention
 from lcm.solvers import DCEGM, ExactEnvelope
-from lcm.typing import ContinuousAction, ContinuousState, FloatND, UserParams
+from lcm.typing import (
+    BoolND,
+    ContinuousAction,
+    ContinuousState,
+    FloatND,
+    ScalarBool,
+    ScalarFloat,
+    UserParams,
+)
 from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED
 from tests.egm.test_current_iid_parent_demands import (
     _current_resources,
@@ -788,24 +804,78 @@ def test_public_case_r_replay_matches_the_literal_policy_at_off_node_shocks() ->
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
-def test_public_case_r_refuses_an_exhausted_projection_capacity() -> None:
-    """A row that cannot meet its budgets within capacity refuses, never truncates."""
+@pytest.mark.parametrize(
+    ("capacity", "needed"),
+    [(16, 44), (64, 65), (128, 147)],
+    ids=["native-partition", "balanced-partition", "refinement"],
+)
+def test_public_case_r_refuses_an_exhausted_projection_capacity(
+    *, capacity: int, needed: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A row that outgrows its capacity refuses at its own date, never truncates.
+
+    The refusal names the exhausted capacity, the least record count the row
+    proved it needs, and the solver setting, before the parent period that
+    would read the row runs. The native boundary pullbacks need 44 records;
+    the balanced partition proves only that it needs more than 64; the
+    sampled-accuracy refinement needs 147 at its first refused bisection.
+    """
     declarations = _declarations()
     child = declarations.regimes["child"]
     assert isinstance(child.solver, DCEGM)
     child = replace(
-        child, solver=replace(child.solver, current_iid_projection_capacity=16)
+        child, solver=replace(child.solver, current_iid_projection_capacity=capacity)
     )
     model = _public_model_from_declarations(
         declarations=replace(
             declarations, regimes={**declarations.regimes, "child": child}
         )
     )
+    dispatch = Mock(wraps=backward_induction._run_dispatch_unit)
+    monkeypatch.setattr(backward_induction, "_run_dispatch_unit", dispatch)
     with pytest.raises(
         InvalidValueFunctionError,
         match=(
-            r"Invalid projected continuation .* regime 'child', period 1.*"
-            r"projection capacity of \d+ records.*current_iid_projection_capacity"
+            rf"^Projection capacity exhausted in regime 'child', period 1: the "
+            rf"projected row of liquid state 'wealth' needs at least {needed} "
+            rf"records, more than its capacity of {capacity}\. Raise "
+            r"`current_iid_projection_capacity` on the solver of regime 'child'\.$"
+        ),
+    ):
+        model.solve(params=_params(), log_level="warning", max_compilation_workers=1)
+    dispatched = [
+        (call.kwargs["regime_name"], call.kwargs["period"])
+        for call in dispatch.call_args_list
+    ]
+    assert ("child", 1) in dispatched
+    assert ("parent", 0) not in dispatched
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_public_case_r_hard_invalid_projection_keeps_the_generic_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A row refused for a reason other than capacity never blames the capacity."""
+    original = current_iid_projection._assess_cells
+
+    def hard_invalid(
+        *,
+        carry: ProjectedEGMCarry,
+        reference: Callable[[ScalarFloat], ProjectedRowRead],
+        accuracy: Literal["certified", "balanced"],
+    ) -> tuple[ScalarBool, BoolND]:
+        _, failed = original(carry=carry, reference=reference, accuracy=accuracy)
+        return jnp.ones((), dtype=jnp.bool_), failed
+
+    monkeypatch.setattr(current_iid_projection, "_assess_cells", hard_invalid)
+    model = _public_model_from_declarations(declarations=_declarations())
+    with pytest.raises(
+        InvalidValueFunctionError,
+        match=(
+            r"^Invalid projected continuation or unsupported pre-shock domain in "
+            r"regime 'child', period 1, liquid state 'wealth'\. One cause is a "
+            r"producer row that cannot meet its value and marginal budgets within "
+            r"its projection capacity of 4096 records"
         ),
     ):
         model.solve(params=_params(), log_level="warning", max_compilation_workers=1)

@@ -28,6 +28,8 @@ class CommonResourcesPartition(NamedTuple):
     points: Float1D
     length: ScalarInt
     valid: ScalarBool
+    records_needed: ScalarInt
+    """Distinct points before clipping to capacity; above it only when exhausted."""
 
     def __reduce__(
         self,
@@ -133,6 +135,7 @@ def pullback_native_partition(
             & jnp.all(retained)
             & (lower < upper)
         ),
+        records_needed=length,
     )
 
 
