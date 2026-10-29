@@ -903,6 +903,31 @@ def _incoming_edge_roots(
             )
             for state_name, projection in ref.projection.items()
         }
+    # An arrival into this regime is evaluated at its landing on this regime's
+    # states, like a gated edge: its predicate, read projections and fallback
+    # projections read them.
+    for source_name, law in laws.items():
+        decision = law.arrivals.get(regime_name)
+        if decision is None:
+            continue
+        roots[f"__incoming_arrival__{source_name}"] = decision.predicate
+        roots |= {
+            f"__incoming_arrival_read__{source_name}__{read_name}__{state_name}": (
+                projection
+            )
+            for read_name, read in decision.reads.items()
+            for state_name, projection in read.projection.items()
+        }
+        roots |= {
+            f"__incoming_arrival_fallback__{source_name}__{route_name}__{phase}__"
+            f"{state_name}": projection
+            for route_name, route in decision.routes.items()
+            for phase, ref in (
+                ("solve", route.solve_fallback),
+                ("simulate", route.simulate_fallback),
+            )
+            for state_name, projection in ref.projection.items()
+        }
     return MappingProxyType(roots)
 
 

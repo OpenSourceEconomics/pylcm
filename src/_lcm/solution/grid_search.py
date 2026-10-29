@@ -1006,15 +1006,15 @@ class _GridSearchArgumentBuilder:
             arguments[CURRENT_IID_NODES_ARGUMENT] = self.current_iid_plan.node_operands
             arguments[CURRENT_IID_ROWS_ARGUMENT] = self.current_iid_plan.indices
         if self.same_period_ref_regimes:
-            reference_values = (
-                MappingProxyType(
-                    {
-                        name: raw_next_regime_to_V_arr[name]
-                        for name in self.same_period_ref_regimes
-                    }
-                )
+            # Only the declared references: an arrival's date carries every stored
+            # value its source reads, which is not this program's operand tree.
+            available = (
+                raw_next_regime_to_V_arr
                 if context.same_period_regime_to_V_arr is None
                 else context.same_period_regime_to_V_arr
+            )
+            reference_values = MappingProxyType(
+                {name: available[name] for name in self.same_period_ref_regimes}
             )
             arguments["same_period_regime_to_V_arr"] = _value_argument(reference_values)
             arguments["same_period_regime_to_params"] = self._same_period_params(

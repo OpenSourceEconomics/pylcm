@@ -3,7 +3,8 @@
 Both public producer routes create z=0.25 after valid initial inputs:
 
 * an authored entry law from a source that does not carry z;
-* a forced closed gate's fallback projection, after node-valued candidate draws.
+* a forced closed arrival decision's fallback projection, after node-valued
+  candidate draws.
 
 There is no node at 0.25 on (-2, -1, 0, 1, 2). A code-reading destination must
 refuse before invoking its code consumer. Code-free destinations retain the
@@ -21,9 +22,10 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    ArrivalDecision,
+    ArrivalRead,
     ByAge,
     DiscreteGrid,
-    Gate,
     Model,
     NormalIIDProcess,
     ProjectedRegimeValue,
@@ -125,6 +127,10 @@ def _closed(V_target: FloatND) -> BoolND:
     return V_target < 0.0
 
 
+def _landed_z(z: ContinuousState) -> ContinuousState:
+    return z
+
+
 def _prob_one(age: FloatND) -> FloatND:
     return jnp.ones_like(age, dtype=float)
 
@@ -171,9 +177,16 @@ def _model(*, route: str, code: bool, on_node: bool, enable_jit: bool) -> Model:
             "source": Transition(
                 targets={"landing": 0, "fallback": 0},
                 law=ByAge(cases={0: {"landing": StochasticTransition(func=_prob_one)}}),
-                gates={
-                    "landing": Gate(
+                arrivals={
+                    "landing": ArrivalDecision(
                         predicate=_closed,
+                        reads={
+                            "V_target": ArrivalRead(
+                                kind="Raw",
+                                regime="landing",
+                                projection={"z": _landed_z},
+                            )
+                        },
                         routes={
                             "only": StakeholderRoute(
                                 fallback=ProjectedRegimeValue(

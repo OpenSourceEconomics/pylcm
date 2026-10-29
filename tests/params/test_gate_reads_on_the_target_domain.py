@@ -19,7 +19,6 @@ from lcm import (
     ArrivalDecision,
     ArrivalRead,
     ByAge,
-    Gate,
     LinSpacedGrid,
     Model,
     ProjectedRegimeValue,
@@ -35,7 +34,6 @@ from lcm import (
 from lcm.exceptions import (
     InvalidNameError,
     InvalidParamsError,
-    ModelInitializationError,
 )
 from lcm.solver_api import ResultRetention, SolutionResult
 from lcm.typing import (
@@ -67,10 +65,6 @@ def source_utility(z: ContinuousState) -> FloatND:
 
 
 def target_utility() -> FloatND:
-    return jnp.asarray(1.0)
-
-
-def target_h() -> FloatND:
     return jnp.asarray(1.0)
 
 
@@ -138,7 +132,6 @@ def build_model(
     reference_projection: Callable[..., FloatND] | None = None,
     route_projection: Callable[..., FloatND] | None = None,
     law: Callable[..., FloatND] = always,
-    target_functions: Mapping[str, Callable[..., FloatND]] | None = None,
 ) -> Model:
     """Source `src` moves `z` through a helper reading `next_y`; age 1 is gated.
 
@@ -169,9 +162,7 @@ def build_model(
                 },
                 functions=functions,
             ),
-            "target": Regime(
-                functions={"utility": target_utility, **(target_functions or {})}
-            ),
+            "target": Regime(functions={"utility": target_utility}),
             "fallback": (
                 Regime(states={"w": grid}, functions={"utility": fallback_utility_of_w})
                 if projects
@@ -189,19 +180,25 @@ def build_model(
                         1: {"target": StochasticTransition(func=law)},
                     }
                 ),
-                gates={
-                    "target": Gate(
+                arrivals={
+                    "target": ArrivalDecision(
                         predicate=gate,
-                        references=(
-                            {}
-                            if reference_projection is None
-                            else {
-                                "V_fallback": ProjectedRegimeValue(
-                                    regime="fallback",
-                                    projection={"w": reference_projection},
-                                )
-                            }
-                        ),
+                        reads={
+                            "V_target": ArrivalRead(
+                                kind="IntegratedFull", regime="target", projection={}
+                            ),
+                            **(
+                                {}
+                                if reference_projection is None
+                                else {
+                                    "V_fallback": ArrivalRead(
+                                        kind="IntegratedFull",
+                                        regime="fallback",
+                                        projection={"w": reference_projection},
+                                    )
+                                }
+                            ),
+                        },
                         routes={
                             "only": StakeholderRoute(
                                 fallback=ProjectedRegimeValue(
@@ -296,16 +293,6 @@ def test_gated_values_follow_the_gate_threshold(
 def test_gate_reading_a_next_name_directly_is_refused():
     with pytest.raises(InvalidNameError, match="next_y"):
         build_model(helper_name="h", helper_depth=1, gate=gate_reading_next_y)
-
-
-def test_gate_reading_a_function_of_its_target_is_refused():
-    """A gate argument named like a target function would be captured by it."""
-    with pytest.raises(ModelInitializationError, match="TARGET regime's own function"):
-        build_model(
-            helper_name="source_helper",
-            helper_depth=1,
-            target_functions={"h": target_h},
-        )
 
 
 @pytest.mark.parametrize(("helper_name", "helper_depth"), HELPER_CASES)

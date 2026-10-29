@@ -1387,12 +1387,6 @@ def test_params_template_is_one_namespace_over_all_three_aggregators() -> None:
     }
 
 
-@lcm.categorical(ordered=False)
-class GatedRegimeId:
-    alive: ScalarInt
-    couple: ScalarInt
-
-
 def _stay(wealth: ContinuousState) -> ContinuousState:
     return wealth
 
@@ -1403,56 +1397,6 @@ def _wealth_utility(wealth: ContinuousState) -> FloatND:
 
 def _couple_is_better(*, V_target_f: FloatND, V_target_m: FloatND) -> BoolND:
     return V_target_f >= V_target_m
-
-
-def test_a_gated_source_refuses_a_decoupled_aggregator() -> None:
-    """Which of the two values a gate would compare is not defined."""
-    wealth = lcm.LinSpacedGrid(start=1, stop=5, n_points=3)
-    with pytest.raises(
-        (ModelInitializationError, NotImplementedError), match="Decoupled"
-    ):
-        lcm.Model(
-            regimes={
-                "alive": lcm.Regime(
-                    states={"wealth": wealth},
-                    state_transitions={"wealth": _stay},
-                    functions={"utility": _wealth_utility},
-                    koopmans_aggregator=lcm.Decoupled(
-                        objective=additive, value=additive
-                    ),
-                ),
-                "couple": lcm.Regime(
-                    states={"wealth": wealth},
-                    functions={
-                        "utility": lcm.CollectiveUtility(
-                            utilities={"f": _wealth_utility, "m": _wealth_utility}
-                        )
-                    },
-                ),
-            },
-            n_periods=2,
-            regime_id_class=GatedRegimeId,
-            initial_nodes=lcm.InitialNodes(by_period={0: "alive"}),
-            edges={
-                "alive": lcm.Transition(
-                    law="couple",
-                    gates={
-                        "couple": lcm.Gate(
-                            predicate=_couple_is_better,
-                            routes={
-                                "her": lcm.StakeholderRoute(
-                                    target_stakeholder="f",
-                                    fallback=lcm.ProjectedRegimeValue(
-                                        regime="alive", projection={"wealth": _stay}
-                                    ),
-                                )
-                            },
-                        )
-                    },
-                )
-            },
-            enable_jit=False,
-        )
 
 
 def test_a_typed_arrival_source_refuses_unrepresented_decoupled_selection() -> None:

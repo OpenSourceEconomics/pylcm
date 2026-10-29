@@ -61,7 +61,11 @@ class ArrivalDecision:
     predicate: UserFunction
     """Exact Boolean comparison of arrival states and explicitly typed reads."""
     routes: Mapping[str, StakeholderRoute]
-    """One actual settlement per original source stakeholder."""
+    """One actual settlement per original source stakeholder.
+
+    Routes may share a fallback regime: each member lands at its own route's
+    projection, since the landing is selected by the row's role.
+    """
     reads: Mapping[ReferenceName, ArrivalRead] = field(
         default_factory=lambda: MappingProxyType({})
     )

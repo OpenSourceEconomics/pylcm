@@ -1778,7 +1778,9 @@ def test_current_iid_refuses_actual_uncomposed_reader_intersections(
             )
         )
     elif channel.startswith("gated"):
-        base = gated._build_model(gate=gated._closed_gate, enable_jit=False)
+        base = gated._build_model(
+            gate=gated._closed_by_age, enable_jit=False, reads_value=False
+        )
         regime_id_class = gated.RegimeId
         target = {
             "gated source": "src",
@@ -1917,7 +1919,9 @@ class _IslandId:
 
 
 def test_current_iid_preserves_an_unrelated_legacy_gated_component() -> None:
-    base = gated._build_model(gate=gated._closed_gate, enable_jit=False)
+    base = gated._build_model(
+        gate=gated._closed_by_age, enable_jit=False, reads_value=False
+    )
     model = Model(
         regimes={
             **base.user_regimes,

@@ -3,9 +3,10 @@
 A problem some start requires by value must have a law at the age it is read,
 whatever kind of read requires it, and adding a start never repairs a missing
 prerequisite. A registered regime no start reaches keeps its code, its place in
-the regime vector and its absence from every period. A gate folds only where
-its source reaches the gated target. Parameters are collected over the required
-cases, including value-only problems, and one parameter name has one schema.
+the regime vector and its absence from every period. A state-only gate folds
+only where its source reaches the gated target. Parameters are collected over
+the required cases, including value-only problems, and one parameter name has
+one schema.
 """
 
 from collections.abc import Callable, Mapping
@@ -18,6 +19,8 @@ import pytest
 from lcm import (
     AgeGrid,
     AgeRange,
+    ArrivalDecision,
+    ArrivalRead,
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
@@ -101,8 +104,18 @@ def _gate(*, V_target: FloatND, V_reference: FloatND) -> BoolND:
     return V_target > V_reference
 
 
+def _wealth_is_positive(wealth: ContinuousState) -> BoolND:
+    return wealth > 0.0
+
+
 def _identity(wealth: ContinuousState) -> ContinuousState:
     return wealth
+
+
+def _read(regime: RegimeName) -> ArrivalRead:
+    return ArrivalRead(
+        kind="IntegratedFull", regime=regime, projection={"wealth": _identity}
+    )
 
 
 def _projected(regime: RegimeName) -> ProjectedRegimeValue:
@@ -119,24 +132,41 @@ type Fallback = (
 type GatedStructure = Mapping[RegimeName, Mapping[RegimeName, AgeSelector]]
 
 
-def _target_gate(*, fallback: Fallback | None = None) -> dict[RegimeName, Gate]:
+type Decision = Gate | ArrivalDecision
+
+
+def _target_decision(
+    *, fallback: Fallback | None, reads_values: bool
+) -> dict[RegimeName, Decision]:
+    """Compare target and reference values on arrival, or gate on wealth alone."""
+    routes = {"only": StakeholderRoute(fallback=fallback or _projected("fallback"))}
+    if not reads_values:
+        return {"target": Gate(predicate=_wealth_is_positive, routes=routes)}
     return {
-        "target": Gate(
+        "target": ArrivalDecision(
             predicate=_gate,
-            routes={
-                "only": StakeholderRoute(fallback=fallback or _projected("fallback"))
-            },
-            references={"V_reference": _projected("reference")},
+            reads={"V_target": _read("target"), "V_reference": _read("reference")},
+            routes=routes,
         )
     }
 
 
 def _with_source_law(
-    *, phase: GatedStructure, law: TransitionLaw, gates: Mapping[RegimeName, Gate]
+    *,
+    phase: GatedStructure,
+    law: TransitionLaw,
+    decisions: Mapping[RegimeName, Decision],
 ) -> PhaseEdges:
     return {
         **phase,
-        "source": Transition(targets=phase["source"], law=law, gates=gates),
+        "source": Transition(
+            targets=phase["source"],
+            law=law,
+            gates={t: d for t, d in decisions.items() if isinstance(d, Gate)},
+            arrivals={
+                t: d for t, d in decisions.items() if isinstance(d, ArrivalDecision)
+            },
+        ),
     }
 
 
@@ -148,9 +178,10 @@ def _gated_model(
     priced: Regime | None = None,
     fallback: Fallback | None = None,
     edges: GatedStructure | Phased[GatedStructure, GatedStructure] | None = None,
+    reads_values: bool = True,
 ) -> Model:
     law = source or ByAge(cases={40: _gated_law()})
-    gates = _target_gate(fallback=fallback)
+    decisions = _target_decision(fallback=fallback, reads_values=reads_values)
     structure = edges or {"source": {"target": 40, "fallback": 40}}
     return Model(
         regimes={
@@ -165,18 +196,20 @@ def _gated_model(
         initial_nodes=initial_nodes or {40: "source"},
         edges=(
             Phased(
-                solve=_with_source_law(phase=structure.solve, law=law, gates=gates),
+                solve=_with_source_law(
+                    phase=structure.solve, law=law, decisions=decisions
+                ),
                 simulate=_with_source_law(
-                    phase=structure.simulate, law=law, gates=gates
+                    phase=structure.simulate, law=law, decisions=decisions
                 ),
             )
             if isinstance(structure, Phased)
-            else _with_source_law(phase=structure, law=law, gates=gates)
+            else _with_source_law(phase=structure, law=law, decisions=decisions)
         ),
     )
 
 
-def _gate_reference_without_law(initial_nodes: UserInitialNodes) -> Model:
+def _arrival_reference_without_law(initial_nodes: UserInitialNodes) -> Model:
     return _gated_model(
         initial_nodes=initial_nodes,
         reference=_nonterminal(),
@@ -192,6 +225,7 @@ def _solve_fallback_without_law(initial_nodes: UserInitialNodes) -> Model:
         initial_nodes=initial_nodes,
         priced=_nonterminal(),
         fallback=Phased(solve=_projected("priced"), simulate=_projected("fallback")),
+        reads_values=False,
         edges=Phased(
             solve={
                 "source": {"target": 40, "priced": 40},
@@ -276,10 +310,10 @@ def _same_period_reference_without_law(initial_nodes: UserInitialNodes) -> Model
 @pytest.mark.parametrize(
     ("build", "match"),
     [
-        (
-            _gate_reference_without_law,
+        pytest.param(
+            _arrival_reference_without_law,
             (
-                r"(?is)(?=.*gate.reference)(?=.*\(40, 'source'\))"
+                r"(?is)(?=.*arrival read)(?=.*\(40, 'source'\))"
                 r"(?=.*'reference' at age 45)"
             ),
         ),
@@ -288,12 +322,12 @@ def _same_period_reference_without_law(initial_nodes: UserInitialNodes) -> Model
             r"(?is)(?=.*fallback)(?=.*\(40, 'source'\))(?=.*'priced' at age 45)",
         ),
     ],
-    ids=["gate-reference", "solve-fallback"],
+    ids=["arrival-reference", "solve-fallback"],
 )
 def test_a_required_value_read_without_a_law_names_its_kind(
     *, build: Callable[[UserInitialNodes], Model], match: str
 ) -> None:
-    """A gate reference or valuation fallback lacking a law is named as such."""
+    """An arrival read or valuation fallback lacking a law is named as such."""
     with pytest.raises(ModelInitializationError, match=match):
         build({40: "source"})
 
@@ -310,10 +344,10 @@ def test_a_same_period_reference_without_a_law_names_its_kind() -> None:
 @pytest.mark.parametrize(
     ("build", "initial_nodes"),
     [
-        (_gate_reference_without_law, {40: "source", 45: "reference"}),
+        (_arrival_reference_without_law, {40: "source", 45: "reference"}),
         (_solve_fallback_without_law, {40: "source", 45: "priced"}),
     ],
-    ids=["gate-reference", "solve-fallback"],
+    ids=["arrival-reference", "solve-fallback"],
 )
 def test_an_added_root_does_not_repair_a_missing_prerequisite(
     *,
@@ -346,6 +380,7 @@ def test_a_gate_folds_at_every_age_its_target_is_reached() -> None:
         source=ByAge(cases={40: _gated_law(), 45: _gated_law()}),
         edges={"source": {"target": (40, 45), "fallback": (40, 45)}},
         initial_nodes={40: "source", 45: "source"},
+        reads_values=False,
     )
     folds = model._regimes["source"].gated_edges["target"].folds_by_period
     assert set(folds) == {1, 2}
@@ -469,6 +504,7 @@ def _source_owned_fold_model() -> Model:
         initial_nodes={40: "source", 45: "source"},
         source=ByAge(cases={40: "fallback", 45: _gated_law()}),
         edges={"source": {"fallback": (40, 45), "target": 45}},
+        reads_values=False,
     )
 
 
@@ -493,11 +529,11 @@ def _gated_move(*, target: RegimeName, stay: RegimeName) -> Transition:
             law={target: StochasticTransition(func=_prob_one)},
             then="dead",
         ),
-        gates={
-            target: Gate(
+        arrivals={
+            target: ArrivalDecision(
                 predicate=_marital_gate,
+                reads={"V_target": _read(target), "V_stay": _read(stay)},
                 routes={"only": StakeholderRoute(fallback=_projected(stay))},
-                references={"V_stay": _projected(stay)},
             )
         },
     )
@@ -525,7 +561,7 @@ def _marital_model() -> Model:
 
 
 def test_reciprocal_marriage_and_divorce_gates_build_without_a_cycle() -> None:
-    """Gates reading each other's next-period value add no same-period ordering."""
+    """Arrivals reading each other's next-period value add no same-period order."""
     assert _marital_model().reachability.nodes == frozenset(
         {(age, name) for age in (0, 1) for name in ("single", "married")}
         | {(2, "dead")}

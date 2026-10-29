@@ -15,7 +15,8 @@ same-period gate / value-constraint reading a fold name IT declares; this
 module pins the cross-regime case — a DIFFERENT regime's gate reading a
 folded TARGET or REFERENCE — which
 `_fail_if_folded_regime_is_same_period_endpoint` in
-`regime_building/processing.py` catches.
+`regime_building/processing.py` catches. A value-reading arrival decision's
+read of a folded REFERENCE is refused by the arrival query's admission instead.
 
 Only a singleton regime folds at all: a collective regime declaring a folded
 state is refused when the model is built, because its `-inf` dissolution
@@ -38,6 +39,8 @@ from _lcm.regime_law import RegimeLawDeclaration
 from _lcm.typing import RegimeNamesToIds
 from lcm import (
     AgeRange,
+    ArrivalDecision,
+    ArrivalRead,
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
@@ -50,7 +53,7 @@ from lcm import (
     categorical,
 )
 from lcm.ages import AgeGrid
-from lcm.exceptions import ModelInitializationError
+from lcm.exceptions import UnsupportedOperationError
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.transition import StochasticTransition, Transition
 from lcm.typing import BoolND, DiscreteAction, FloatND, RegimeName, ScalarInt
@@ -97,8 +100,8 @@ def _u_zero() -> FloatND:
     return jnp.asarray(0.0)
 
 
-def _no_dissolution_gate(D_target: BoolND) -> BoolND:
-    return ~D_target
+def _true_gate() -> BoolND:
+    return jnp.asarray(1.0) > 0.0
 
 
 def _solve_kwargs(
@@ -162,7 +165,7 @@ def _make_gated_target_regimes(
             ),
             gates={
                 "target": Gate(
-                    predicate=_no_dissolution_gate,
+                    predicate=_true_gate,
                     routes={
                         "only": StakeholderRoute(
                             target_stakeholder="f",
@@ -265,11 +268,11 @@ def test_unfolded_collective_same_period_reference_still_constructs():
 def _make_gate_refs_regimes(
     *, fold: bool
 ) -> tuple[dict[str, Regime], dict[RegimeName, RegimeLawDeclaration | Transition]]:
-    """`source`'s gate reads `gate_refs['V_ref']` -> `ref_target` (singleton, folded).
+    """`source`'s arrival reads `V_ref` -> `ref_target` (singleton, folded).
 
-    `target` (the gated-edge TARGET) is a plain, unfolded collective regime, so
-    the `gate_refs` reference is the only thing under test — the edge target
-    plays no part in the ordering this fixture exercises.
+    `target` (the arrival TARGET) is a plain, unfolded collective regime, so
+    the arrival read is the only thing under test — the edge target plays no
+    part in the ordering this fixture exercises.
     """
     source = Regime(
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -304,8 +307,8 @@ def _make_gate_refs_regimes(
                     }
                 }
             ),
-            gates={
-                "target": Gate(
+            arrivals={
+                "target": ArrivalDecision(
                     predicate=lambda V_ref: V_ref > 0.0,
                     routes={
                         "only": StakeholderRoute(
@@ -315,8 +318,9 @@ def _make_gate_refs_regimes(
                             ),
                         )
                     },
-                    references={
-                        "V_ref": ProjectedRegimeValue(
+                    reads={
+                        "V_ref": ArrivalRead(
+                            kind="IntegratedFull",
                             regime="ref_target",
                             projection={"wage_shock": lambda: 0.0},
                         )
@@ -332,13 +336,13 @@ def _make_gate_refs_regimes(
 
 
 def test_folded_gate_ref_reference_is_rejected():
-    """A folded `gate_refs` REFERENCE is rejected when the model is processed.
+    """A folded arrival REFERENCE is refused when the model is processed.
 
-    The gate reads the reference regime's value at each of its own nodes, so a
-    reference whose node axis has already been averaged away cannot answer the
-    question the gate asks.
+    An arrival read needs the reference regime's stored value on its declared,
+    unblocked schema, so a reference whose node axis has already been averaged
+    away by `fold=True` cannot be read.
     """
-    with pytest.raises(ModelInitializationError, match=r"gate_refs|same_period_refs"):
+    with pytest.raises(UnsupportedOperationError, match="unblocked stored schema"):
         process_regimes(
             **_solve_kwargs(
                 regimes_and_laws=_make_gate_refs_regimes(fold=True), ages=_AGES_2P
@@ -347,9 +351,9 @@ def test_folded_gate_ref_reference_is_rejected():
 
 
 def test_unfolded_gate_ref_reference_still_constructs():
-    """An unfolded `gate_refs` REFERENCE constructs.
+    """An unfolded arrival REFERENCE constructs.
 
-    Its per-node value is intact, which is what the gate reads, so the same
+    Its per-node value is intact, which is what the arrival reads, so the same
     topology is built as declared.
     """
     process_regimes(

@@ -17,6 +17,7 @@ from typing import Literal
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 from _lcm.engine import PeriodRegimeSimulationData
@@ -30,9 +31,32 @@ from _lcm.simulation.host_operations import StaticArgument
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.residency import measure_buffer_footprint
 from _lcm.typing import FootprintTree, PytreeByPeriod, PytreeValue, RegimeName
-from lcm import ExecutionConfig, Model
-from lcm.typing import ReferenceName, ScalarFloat, ScalarInt
-from tests.simulation.test_realised_dissolution_route import _PARAMS, _build_model
+from lcm import (
+    AgeGrid,
+    ByAge,
+    CollectiveUtility,
+    DiscreteGrid,
+    ExecutionConfig,
+    Gate,
+    IrregSpacedGrid,
+    Model,
+    ProjectedRegimeValue,
+    Regime,
+    StakeholderRoute,
+    Transition,
+    ValueDependentConstraint,
+    categorical,
+)
+from lcm.transition import StochasticTransition
+from lcm.typing import (
+    BoolND,
+    ContinuousState,
+    DiscreteAction,
+    FloatND,
+    ReferenceName,
+    ScalarFloat,
+    ScalarInt,
+)
 
 
 def _outcome_arrays(*, outcome: RerouteOutcome) -> FootprintTree:
@@ -205,3 +229,160 @@ def test_entry_carriers_stay_live_roots_through_diagnostics_and_next_setup(
     _simulate_budgeted(model=_budgeted_model())
     assert {phase for phase, _ in observed} == {"diagnostics", "next_setup"}
     assert all(is_live for _, is_live in observed)
+
+
+# The dissolution-flag reroute model these accounting checks measure, kept
+# here after its routing tests moved to an arrival support read.
+_OUTSIDE_OPTION_F = 0.5
+
+
+@categorical(ordered=False)
+class Work:
+    off: ScalarInt
+    on: ScalarInt
+
+
+@categorical(ordered=False)
+class RegimeId:
+    source: ScalarInt
+    pair: ScalarInt
+    alone_f: ScalarInt
+    alone_m: ScalarInt
+
+
+def _bowl(wage: FloatND | np.floating) -> FloatND | np.floating:
+    """Feasible at both nodes (payoff 1), infeasible around wage 2."""
+    return (wage - 2.0) ** 2
+
+
+def _ramp(wage: FloatND | np.floating) -> FloatND | np.floating:
+    """Infeasible at node 1 (payoff 0), feasible at node 3 (payoff 2)."""
+    return wage - 1.0
+
+
+def _to_pair(age: FloatND) -> FloatND:
+    return jnp.ones_like(age, dtype=float)
+
+
+def _u_source(wage: ContinuousState) -> FloatND:
+    return 0.0 * wage
+
+
+def _keep_wage(wage: ContinuousState) -> ContinuousState:
+    return wage
+
+
+def _pair_f_bowl(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
+    return _bowl(wage) + 0.0 * work
+
+
+def _pair_f_ramp(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
+    return _ramp(wage) + 0.0 * work
+
+
+_PAIR_F = {"bowl": _pair_f_bowl, "ramp": _pair_f_ramp}
+
+
+def _pair_m(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
+    return 0.0 * wage + 0.0 * work
+
+
+def _outside_f(wage: ContinuousState) -> FloatND:
+    return _OUTSIDE_OPTION_F + 0.0 * wage
+
+
+def _outside_m(wage: ContinuousState) -> FloatND:
+    return -100.0 + 0.0 * wage
+
+
+def _identity(wage: ContinuousState) -> ContinuousState:
+    return wage
+
+
+def _participation_f(*, Q_f: FloatND, V_alone_f: FloatND) -> BoolND:
+    return Q_f > V_alone_f
+
+
+def _no_dissolution(D_target: BoolND) -> BoolND:
+    return ~D_target
+
+
+def _build_model(
+    *,
+    payoff_name: str,
+    enable_jit: bool = True,
+    execution_config: ExecutionConfig | None = None,
+    fallback_grid: IrregSpacedGrid | None = None,
+    fallback_projection: Callable[[ContinuousState], ContinuousState] = _identity,
+) -> Model:
+    wage_grid = IrregSpacedGrid(points=np.array([1.0, 3.0]))
+    return Model(
+        edges={
+            "source": Transition(
+                targets={"pair": 0, "alone_m": 0},
+                law=ByAge(cases={0: {"pair": StochasticTransition(func=_to_pair)}}),
+                gates={
+                    "pair": Gate(
+                        predicate=_no_dissolution,
+                        routes={
+                            "only": StakeholderRoute(
+                                target_stakeholder="f",
+                                fallback=ProjectedRegimeValue(
+                                    regime="alone_m",
+                                    projection={"wage": fallback_projection},
+                                ),
+                            )
+                        },
+                    )
+                },
+            )
+        },
+        regimes={
+            "source": Regime(
+                states={"wage": wage_grid},
+                state_transitions={"wage": _keep_wage},
+                functions={"utility": _u_source},
+            ),
+            "pair": Regime(
+                states={"wage": wage_grid},
+                actions={"work": DiscreteGrid(category_class=Work)},
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={"f": _PAIR_F[payoff_name], "m": _pair_m}
+                    )
+                },
+                constraints={
+                    "participation_f": ValueDependentConstraint(
+                        predicate=_participation_f,
+                        references={
+                            "V_alone_f": ProjectedRegimeValue(
+                                regime="alone_f", projection={"wage": _identity}
+                            )
+                        },
+                    )
+                },
+            ),
+            "alone_f": Regime(
+                states={"wage": wage_grid}, functions={"utility": _outside_f}
+            ),
+            "alone_m": Regime(
+                states={"wage": wage_grid if fallback_grid is None else fallback_grid},
+                functions={"utility": _outside_m},
+            ),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
+        regime_id_class=RegimeId,
+        initial_nodes={0: "source"},
+        enable_jit=enable_jit,
+        execution_config=ExecutionConfig()
+        if execution_config is None
+        else execution_config,
+    )
+
+
+_PARAMS = {
+    "source": {"koopmans_aggregator": {"discount_factor": 1.0}},
+    "pair": {},
+    "alone_f": {},
+    "alone_m": {},
+}

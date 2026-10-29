@@ -1,7 +1,7 @@
-"""A gated edge's own functions contribute parameters under `params["edges"]`.
+"""An arrival decision's own functions contribute parameters under `params["edges"]`.
 
-A gated edge is declared with four kinds of user callable: the selection
-probability, the gate predicate, one projection per gate reference, and one
+An arrival decision is declared with four kinds of user callable: the selection
+probability, the decision predicate, one projection per typed read, and one
 projection per route fallback. Each is an ordinary DAG function, so every scalar
 it reads beyond the values and states the engine wires in is a model parameter.
 Its slot is its declaration path under `params["edges"][source][target]`, it is
@@ -9,8 +9,9 @@ listed by `get_params_template()`, and the value the user supplies for it is
 what the solved model uses.
 
 The topology is a mutual-consent edge. A single woman reaches a married couple
-only if both partners prefer marriage to their own single life (the gate), each
-partner's single life is valued by a gate reference read at a projected wage,
+only if both partners prefer marriage to their own single life (the arrival
+predicate), each partner's single life is valued by an `IntegratedFull` read at a
+projected wage,
 and a woman whose proposal is refused falls back to her own single value, also
 read at a projected wage. Wages live on the two-point grid $\\{1, 2\\}$ and every
 value below is exact on it.
@@ -33,9 +34,10 @@ from _lcm.simulation.gated_routing import bind_provenance_params
 # The declaration path of the one gated edge, below `params["edges"]`.
 from _lcm.typing import FlatParams
 from lcm import (
+    ArrivalDecision,
+    ArrivalRead,
     CollectiveUtility,
     DiscreteGrid,
-    Gate,
     LinSpacedGrid,
     Model,
     Phased,
@@ -481,18 +483,32 @@ def _build_model(
             func=_marry_for_sure if probability is None else probability
         )
     }
-    single_f_gates = {
-        "married_terminal": Gate(
+    single_f_arrivals = {
+        "married_terminal": ArrivalDecision(
             predicate=gate,
             routes={
                 "f": StakeholderRoute(target_stakeholder="f", fallback=wife_fallback)
             },
-            references={
-                "V_single_f_ref": ProjectedRegimeValue(
+            reads={
+                "V_target_f": ArrivalRead(
+                    kind="IntegratedFull",
+                    regime="married_terminal",
+                    stakeholder="f",
+                    projection={"wage": _wage_itself},
+                ),
+                "V_target_m": ArrivalRead(
+                    kind="IntegratedFull",
+                    regime="married_terminal",
+                    stakeholder="m",
+                    projection={"wage": _wage_itself},
+                ),
+                "V_single_f_ref": ArrivalRead(
+                    kind="IntegratedFull",
                     regime="single_f_terminal",
                     projection={"wage": _wage_itself},
                 ),
-                "V_single_m_ref": ProjectedRegimeValue(
+                "V_single_m_ref": ArrivalRead(
+                    kind="IntegratedFull",
                     regime="single_m_terminal",
                     projection={"wage": husband_reference_projection},
                 ),
@@ -532,7 +548,7 @@ def _build_model(
         ages=_AGES,
         regime_id_class=_RegimeId,
         initial_nodes={0: "single_f"},
-        edges={"single_f": Transition(law=single_f_law, gates=single_f_gates)},
+        edges={"single_f": Transition(law=single_f_law, arrivals=single_f_arrivals)},
     )
 
 

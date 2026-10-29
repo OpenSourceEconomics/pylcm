@@ -1143,6 +1143,11 @@ def _gate(*, V_target: FloatND, threshold: FloatND) -> BoolND:
     return V_target >= threshold
 
 
+def _done_value() -> lcm.ArrivalRead:
+    """The stored value of the terminal `done` regime, read at its arrival."""
+    return lcm.ArrivalRead(kind="IntegratedFull", regime="done", projection={})
+
+
 @pytest.mark.parametrize(("threshold", "expected"), [(5.0, 4.0), (10.0, 1.0)])
 def test_temporal_gate_requires_and_reads_target_period(
     *, threshold: float, expected: float
@@ -1159,9 +1164,10 @@ def test_temporal_gate_requires_and_reads_target_period(
         edges={
             "work": lcm.Transition(
                 law={"done": lcm.StochasticTransition(func=_one)},
-                gates={
-                    "done": lcm.Gate(
+                arrivals={
+                    "done": lcm.ArrivalDecision(
                         predicate=lcm.time_varying_params("threshold")(_gate),
+                        reads={"V_target": _done_value()},
                         routes={
                             "only": lcm.StakeholderRoute(
                                 fallback=lcm.ProjectedRegimeValue(
@@ -1272,10 +1278,7 @@ def test_temporal_gate_projection_reads_target_period(
     def compare(*, V_target: FloatND, V_reference: FloatND) -> BoolND:
         return V_target >= V_reference
 
-    projection = lcm.ProjectedRegimeValue(
-        regime="fallback",
-        projection={"wealth": lcm.time_varying_params("wage")(_flow)},
-    )
+    projection = {"wealth": lcm.time_varying_params("wage")(_flow)}
     model = lcm.Model(
         n_periods=2,
         regimes={
@@ -1291,11 +1294,30 @@ def test_temporal_gate_projection_reads_target_period(
         edges={
             "work": lcm.Transition(
                 law={"done": lcm.StochasticTransition(func=_one)},
-                gates={
-                    "done": lcm.Gate(
+                arrivals={
+                    "done": lcm.ArrivalDecision(
                         predicate=compare if reference else _gate,
-                        references={"V_reference": projection} if reference else {},
-                        routes={"only": lcm.StakeholderRoute(fallback=projection)},
+                        reads={
+                            "V_target": _done_value(),
+                            **(
+                                {
+                                    "V_reference": lcm.ArrivalRead(
+                                        kind="IntegratedFull",
+                                        regime="fallback",
+                                        projection=projection,
+                                    )
+                                }
+                                if reference
+                                else {}
+                            ),
+                        },
+                        routes={
+                            "only": lcm.StakeholderRoute(
+                                fallback=lcm.ProjectedRegimeValue(
+                                    regime="fallback", projection=projection
+                                )
+                            )
+                        },
                     )
                 },
             )
