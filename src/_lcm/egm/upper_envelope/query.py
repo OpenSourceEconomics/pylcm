@@ -1199,6 +1199,165 @@ def envelope_at_query_certified(
     )
 
 
+@overload
+def envelope_at_query_ordinary(
+    *,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    marginal: Float1D,
+    segment_id: Float1D,
+    stable_index: IntND | None = ...,
+    x_query: FloatND,
+    segment_block_size: int = ...,
+    arithmetic: ComparisonArithmetic = ...,
+    feasibility_partition: ResolvedAxisPartition | None = ...,
+    feasible_interval_mask: BoolND | None = ...,
+    return_owner: Literal[False] = ...,
+    candidate_savings: None = ...,
+) -> tuple[FloatND, FloatND, FloatND]: ...
+
+
+@overload
+def envelope_at_query_ordinary(
+    *,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    marginal: Float1D,
+    segment_id: Float1D,
+    stable_index: IntND | None = ...,
+    x_query: FloatND,
+    segment_block_size: int = ...,
+    arithmetic: ComparisonArithmetic = ...,
+    feasibility_partition: ResolvedAxisPartition | None = ...,
+    feasible_interval_mask: BoolND | None = ...,
+    return_owner: Literal[True],
+    candidate_savings: None = ...,
+) -> tuple[FloatND, FloatND, FloatND, IntND]: ...
+
+
+@overload
+def envelope_at_query_ordinary(
+    *,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    marginal: Float1D,
+    segment_id: Float1D,
+    stable_index: IntND | None = ...,
+    x_query: FloatND,
+    segment_block_size: int = ...,
+    arithmetic: ComparisonArithmetic = ...,
+    feasibility_partition: ResolvedAxisPartition | None = ...,
+    feasible_interval_mask: BoolND | None = ...,
+    return_owner: bool,
+    candidate_savings: None = ...,
+) -> tuple[FloatND, FloatND, FloatND] | tuple[FloatND, FloatND, FloatND, IntND]: ...
+
+
+@overload
+def envelope_at_query_ordinary(
+    *,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    marginal: Float1D,
+    segment_id: Float1D,
+    stable_index: IntND | None = ...,
+    x_query: FloatND,
+    segment_block_size: int = ...,
+    arithmetic: ComparisonArithmetic = ...,
+    feasibility_partition: ResolvedAxisPartition | None = ...,
+    feasible_interval_mask: BoolND | None = ...,
+    return_owner: Literal[False] = ...,
+    candidate_savings: Float1D,
+) -> tuple[FloatND, FloatND, FloatND, FloatND]: ...
+
+
+@overload
+def envelope_at_query_ordinary(
+    *,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    marginal: Float1D,
+    segment_id: Float1D,
+    stable_index: IntND | None = ...,
+    x_query: FloatND,
+    segment_block_size: int = ...,
+    arithmetic: ComparisonArithmetic = ...,
+    feasibility_partition: ResolvedAxisPartition | None = ...,
+    feasible_interval_mask: BoolND | None = ...,
+    return_owner: Literal[True],
+    candidate_savings: Float1D,
+) -> tuple[FloatND, FloatND, FloatND, FloatND, IntND]: ...
+
+
+@overload
+def envelope_at_query_ordinary(
+    *,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    marginal: Float1D,
+    segment_id: Float1D,
+    stable_index: IntND | None = ...,
+    x_query: FloatND,
+    segment_block_size: int = ...,
+    arithmetic: ComparisonArithmetic = ...,
+    feasibility_partition: ResolvedAxisPartition | None = ...,
+    feasible_interval_mask: BoolND | None = ...,
+    return_owner: bool = ...,
+    candidate_savings: Float1D,
+) -> (
+    tuple[FloatND, FloatND, FloatND, FloatND]
+    | tuple[FloatND, FloatND, FloatND, FloatND, IntND]
+): ...
+
+
+def envelope_at_query_ordinary(
+    *,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    marginal: Float1D,
+    segment_id: Float1D,
+    stable_index: IntND | None = None,
+    x_query: FloatND,
+    segment_block_size: int = 0,
+    arithmetic: ComparisonArithmetic = "ordinary",
+    feasibility_partition: ResolvedAxisPartition | None = None,
+    feasible_interval_mask: BoolND | None = None,
+    return_owner: bool = False,
+    candidate_savings: Float1D | None = None,
+) -> (
+    tuple[FloatND, FloatND, FloatND]
+    | tuple[FloatND, FloatND, FloatND, IntND]
+    | tuple[FloatND, FloatND, FloatND, FloatND]
+    | tuple[FloatND, FloatND, FloatND, FloatND, IntND]
+):
+    """Read the original envelope in working-format arithmetic only."""
+    if arithmetic != "ordinary":
+        raise ValueError("This selected reader requires ordinary arithmetic.")
+    return _envelope_at_query_selected(
+        endog_grid=endog_grid,
+        policy=policy,
+        value=value,
+        marginal=marginal,
+        segment_id=segment_id,
+        stable_index=stable_index,
+        x_query=x_query,
+        segment_block_size=segment_block_size,
+        arithmetic=arithmetic,
+        feasibility_partition=feasibility_partition,
+        feasible_interval_mask=feasible_interval_mask,
+        return_owner=return_owner,
+        candidate_savings=candidate_savings,
+        reducer=_reduce_envelope_ordinary,
+    )
+
+
 def published_owner(*, value: FloatND, stable_index: IntND) -> IntND:
     """Name the owner of every query that publishes a finite level.
 

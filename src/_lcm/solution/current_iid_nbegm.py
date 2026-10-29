@@ -72,6 +72,7 @@ from _lcm.solution.nbegm import (
     _NBEGMTiledCore,
     _RideAlongNBEGMPeriodKernel,
     _solve_certified_continuous_budget,
+    _solve_ordinary_continuous_budget,
 )
 from _lcm.time import TimeAxis
 from _lcm.typing import FlatParams, PytreeValue
@@ -227,11 +228,6 @@ def prepare_scalar_nbegm_u_kernels(  # noqa: C901, PLR0912, PLR0915 - bounded or
     actual_contexts = dict(contexts)
     for name, solver in solvers.items():
         context = contexts[name]
-        if materializer is not None and solver.envelope_arithmetic != "certified":
-            raise UnsupportedOperationError(
-                "Cold ordinary NB U requires admitted original "
-                "backend-probe preparation."
-            )
         periods = context.regimes_to_active_periods[name]
         if len(periods) != 1:
             raise UnsupportedOperationError(
@@ -457,9 +453,11 @@ def prepare_scalar_nbegm_u_kernels(  # noqa: C901, PLR0912, PLR0915 - bounded or
                     retain_query=True,
                     retain_policy=True,
                     solve_budget=(
-                        _solve_certified_continuous_budget
-                        if materializer is not None
-                        else core.solve_budget
+                        core.solve_budget
+                        if materializer is None
+                        else _solve_certified_continuous_budget
+                        if solver.envelope_arithmetic == "certified"
+                        else _solve_ordinary_continuous_budget
                     ),
                 ),
                 declared_law=law,

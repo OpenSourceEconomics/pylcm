@@ -71,6 +71,7 @@ from _lcm.egm.upper_envelope.query import (
     empty_envelope_winner,
     envelope_at_query,
     envelope_at_query_certified,
+    envelope_at_query_ordinary,
     finish_envelope_winner,
     merge_envelope_winner,
     published_owner,
@@ -649,6 +650,62 @@ def nbegm_multi_interval_step_certified(
         query_grid=query_grid,
         continuation_read=continuation_read,
         envelope_read=envelope_at_query_certified,
+    )
+
+
+def nbegm_multi_interval_step_ordinary(
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+    flat_interval_mask: tuple[bool, ...] | None = None,
+    arithmetic: ComparisonArithmetic = "ordinary",
+    feasibility_partition: ResolvedAxisPartition | None = None,
+    feasible_interval_mask: BoolND | None = None,
+    boundary_savings_targets: Float1D | None = None,
+    boundary_next_liquid: Float1D | None = None,
+    retain_query: bool = False,
+    return_owner: bool = False,
+    query_grid: Float1D | None = None,
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+) -> tuple[Float1D, Float1D, Float1D] | _NBEGMQueryStep | _OwnedNBEGMQueryStep:
+    """Use the original continuous bank with only its ordinary reader in the graph."""
+    if arithmetic != "ordinary":
+        raise ValueError("The selected continuous step requires ordinary arithmetic.")
+    return _nbegm_multi_interval_step_selected(
+        next_value=next_value,
+        next_marginal=next_marginal,
+        liquid_grid=liquid_grid,
+        next_liquid_grid=next_liquid_grid,
+        savings_grid=savings_grid,
+        discount_factor=discount_factor,
+        preferences=preferences,
+        next_liquid=next_liquid,
+        marginal_return=marginal_return,
+        coh_slopes=coh_slopes,
+        coh_intercepts=coh_intercepts,
+        breakpoints=breakpoints,
+        flat_interval_mask=flat_interval_mask,
+        arithmetic=arithmetic,
+        feasibility_partition=feasibility_partition,
+        feasible_interval_mask=feasible_interval_mask,
+        boundary_savings_targets=boundary_savings_targets,
+        boundary_next_liquid=boundary_next_liquid,
+        retain_query=retain_query,
+        return_owner=return_owner,
+        query_grid=query_grid,
+        continuation_read=continuation_read,
+        envelope_read=envelope_at_query_ordinary,
     )
 
 

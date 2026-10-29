@@ -246,10 +246,9 @@ def prepare_scalar_nbegm_r_kernel(  # noqa: C901 - exact original construction, 
         or original_core.interval_recipe is not None
         or original_core.feasibility_constraints
         or original_core.schedule_spec.discount_factor_dag is not None
-        or original_core.envelope_arithmetic != "certified"
     ):
         raise UnsupportedOperationError(
-            "Original NB Case R requires global affine certified resource topology."
+            "Original NB Case R requires global affine resource topology."
         )
     if continuation_plan.query_targets:
         raise UnsupportedOperationError(

@@ -110,6 +110,7 @@ from _lcm.egm.nbegm_step import (
     nbegm_continuous_resources_bank,
     nbegm_multi_interval_step,
     nbegm_multi_interval_step_certified,
+    nbegm_multi_interval_step_ordinary,
     nbegm_one_asset_step,
     nbegm_recurring_jump_step,
     nbegm_unified_step,
@@ -6108,6 +6109,68 @@ def _solve_certified_continuous_budget(
         )
     del jump_mask
     return nbegm_multi_interval_step_certified(
+        next_value=next_value,
+        next_marginal=next_marginal,
+        liquid_grid=liquid,
+        next_liquid_grid=next_liquid_grid,
+        savings_grid=savings_grid,
+        discount_factor=discount_factor,
+        preferences=preferences,
+        next_liquid=next_liquid,
+        marginal_return=marginal_return,
+        coh_slopes=coh_slopes,
+        coh_intercepts=coh_intercepts,
+        breakpoints=breakpoints,
+        flat_interval_mask=flat_mask,
+        arithmetic=arithmetic,
+        retain_query=retain_query,
+        return_owner=return_owner,
+        query_grid=source_query,
+        continuation_read=continuation_read,
+        feasibility_partition=feasibility_partition,
+        feasible_interval_mask=feasible_interval_mask,
+        boundary_savings_targets=boundary_savings_targets,
+        boundary_next_liquid=boundary_next_liquid,
+    )
+
+
+def _solve_ordinary_continuous_budget(
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    liquid: Float1D,
+    next_liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: FloatND,
+    preferences: Preferences,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+    is_single_jump: bool,
+    is_multi_jump: bool,
+    is_mixed: bool,
+    jump_mask: tuple[bool, ...],
+    flat_mask: tuple[bool, ...] | None,
+    feasibility_partition: ResolvedAxisPartition | None = None,
+    feasible_interval_mask: BoolND | None = None,
+    boundary_savings_targets: Float1D | None = None,
+    boundary_next_liquid: Float1D | None = None,
+    arithmetic: ComparisonArithmetic = "ordinary",
+    retain_query: bool = False,
+    return_owner: bool = False,
+    source_query: Float1D | None = None,
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+) -> _NBEGMStepChannels | _OwnedNBEGMQueryStep:
+    """Bind the original continuous ordinary bank before callback capture."""
+    if is_single_jump or is_multi_jump or is_mixed or (arithmetic != "ordinary"):
+        raise UnsupportedOperationError(
+            "Selected NB source requires continuous ordinary arithmetic."
+        )
+    del jump_mask
+    return nbegm_multi_interval_step_ordinary(
         next_value=next_value,
         next_marginal=next_marginal,
         liquid_grid=liquid,

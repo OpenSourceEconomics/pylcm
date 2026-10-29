@@ -1222,6 +1222,79 @@ def test_nbegm_r_law_derivatives_and_cold_bank_remain_explicit_refusals() -> Non
         )
 
 
+def _with_ordinary_envelope(
+    declarations: _ModelConstructorInputs,
+) -> _ModelConstructorInputs:
+    child = declarations.regimes["child"]
+    assert isinstance(child, ConsumptionSavingsRegime)
+    assert isinstance(child.solver, NBEGM)
+    solver = replace(child.solver, envelope_arithmetic="ordinary")
+    return replace(
+        declarations,
+        regimes={**declarations.regimes, "child": replace(child, solver=solver)},
+    )
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_cold_nbegm_u_model_solves_and_replays_with_ordinary_arithmetic() -> None:
+    """A budgeted NB U source reads its original bank in working-format arithmetic."""
+    model = Model._from_call_owned_params(
+        declarations=_with_ordinary_envelope(
+            _nb_declarations(device_memory_bytes=1 << 28)
+        ),
+        params=_nb_params(),
+    )
+    solution = model.solve(params=_nb_params(), log_level="off")
+    wealth = np.asarray([0.5, 1.5, 3.0])
+    reference = [
+        np.mean([_oracle(wealth=w, shock=z)[0] for z in (0.0, 1.0)]) for w in wealth
+    ]
+    np.testing.assert_array_almost_equal(
+        solution.values[1]["child"], reference, decimal=DECIMAL_PRECISION
+    )
+    physical = np.asarray([1.0, 0.0, 0.5], dtype=canonical_float_dtype())
+    result = model.simulate(
+        params=_nb_params(),
+        solution=solution,
+        initial_conditions={
+            "wealth": jnp.asarray(wealth),
+            "age": jnp.ones((3,)),
+            "regime_id": jnp.full(
+                (3,), model.regime_names_to_ids["child"], dtype=jnp.int32
+            ),
+            "eps": PhysicalValues(values=physical),
+        },
+        log_level="off",
+        seed=17,
+    )
+    expected = [
+        _oracle(wealth=w, shock=z)[2] for w, z in zip(wealth, physical, strict=True)
+    ]
+    np.testing.assert_array_almost_equal(
+        result.raw_results["child"][1].actions["consumption"],
+        expected,
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_original_nbegm_r_model_solves_with_ordinary_arithmetic() -> None:
+    """The NB Case-R resource bank publishes the oracle value under ordinary reads."""
+    model = Model._from_call_owned_params(
+        declarations=_with_ordinary_envelope(_r_declarations()), params=_nb_params()
+    )
+    kernel = model._regimes["child"].solution.period_kernels[1]
+    assert isinstance(kernel, NativeNBCaseRPeriodKernel)
+    solution = model.solve(params=_nb_params(), log_level="off")
+    reference = [
+        np.mean([_r_oracle(wealth=w, shock=z)[0] for z in (0.0, 1.0)])
+        for w in (0.375, 1.0, 2.0)
+    ]
+    np.testing.assert_array_almost_equal(
+        solution.values[1]["child"], reference, decimal=DECIMAL_PRECISION
+    )
+
+
 def _r_null_declarations(*, invalid_null: bool = False) -> _ModelConstructorInputs:
     declarations = _r_declarations()
     child = declarations.regimes["child"]

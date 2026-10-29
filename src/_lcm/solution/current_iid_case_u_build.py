@@ -428,8 +428,6 @@ def guard_case_u_shape(  # noqa: C901, PLR0912, PLR0915 - keep exact roles and p
         for _name, _method, _code, raw, _raw_code in _CASE_U_PLAN_METHODS
         if plan is not None
     )
-    if point is not None:
-        _require_case_u_native_preflight()
     function_depth = 0
     function_frames: list[types.FunctionType] = []
     roots = list(

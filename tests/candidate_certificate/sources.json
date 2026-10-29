@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "3250da3b8cdab5e808c6817d7c45b0a7260aedfe2c00e9527dff11c404ae5ea7",
+  "source_inventory_sha256": "f884b51693660e36fd93ad333d2d3334ce43ed23a976f12aea4c412d01d8c0d3",
   "sources": [
     {
       "path": "src/_lcm/constraints/bounds.py",
@@ -106,7 +106,7 @@
     },
     {
       "path": "src/_lcm/egm/nbegm_step.py",
-      "sha256": "4f090c19c2bda06f9c9fc6211fc827bf5de374dd8a6b48e4f6d2ddfbe9dfab35"
+      "sha256": "c3e05112a95b3def7d47a31b5f0dc7cdcd652ef30b3cee7bddd1083e60f06539"
     },
     {
       "path": "src/_lcm/egm/nested_floor.py",
@@ -170,7 +170,7 @@
     },
     {
       "path": "src/_lcm/egm/upper_envelope/query.py",
-      "sha256": "ff1ca5d6f8926685d718426111ac362741c0667974020c45537df8b0f75f102d"
+      "sha256": "0d8ee48720b8ce8ac58eb11a3fb7e6ef5ff60eab80fed9e8c84676fa97115038"
     },
     {
       "path": "src/_lcm/egm/upper_envelope/segment_envelope.py",
@@ -614,7 +614,7 @@
     },
     {
       "path": "src/_lcm/solution/nbegm.py",
-      "sha256": "6b8138594e6c4957917a46e11b5787961684246983f13d0d266f8d0184b16e82"
+      "sha256": "5a930769ff3dcf9880c22136b59a16f616c1665f8c5e84a2ac52e4114de8b06b"
     },
     {
       "path": "src/_lcm/solution/negm.py",
