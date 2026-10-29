@@ -36,6 +36,23 @@ from _lcm.solution.contract import (
 from _lcm.solution.kernel_output import ConsumedKernelOutput, consume_kernel_output
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from _lcm.typing import ArtifactPayload, HostArray, RegimeName
+from lcm import (
+    AgeGrid,
+    AgeRange,
+    ByAge,
+    CollectiveUtility,
+    DiscreteGrid,
+    Gate,
+    LinSpacedGrid,
+    Model,
+    ProjectedRegimeValue,
+    Regime,
+    StakeholderRoute,
+    Transition,
+    ValueDependentConstraint,
+    categorical,
+    fixed_transition,
+)
 from lcm.solver_api import (
     DISSOLUTION_FLAG,
     EGM_CONTINUATION,
@@ -47,8 +64,15 @@ from lcm.solver_api import (
     SolutionResult,
 )
 from lcm.solvers import EGM, OuterSearch
-from lcm.typing import FloatND
-from tests.solution.test_dissolution_flag_retention import _make_dissolution_model
+from lcm.transition import StochasticTransition
+from lcm.typing import (
+    BoolND,
+    ContinuousState,
+    DiscreteAction,
+    FloatND,
+    ScalarInt,
+    UserParams,
+)
 from tests.solution.test_egm_solver import _SAVINGS_GRID, _model, _params
 from tests.solution.test_n_nbegm_fixed_cost import _MESH
 from tests.solution.test_nbegm_retention_specialization import _NativeKernelKwargs
@@ -612,3 +636,192 @@ def test_consumed_artifact_channels_are_read_only_mappings(field_name: str) -> N
     """Each artifact channel of a consumed kernel output is a read-only mapping."""
     consumed = _consume(output=KernelOutput(value=jnp.zeros(2)), continuation_key=None)
     assert type(getattr(consumed, field_name)) is MappingProxyType
+
+
+# The collective model whose source gate reads its target's dissolution flag,
+# kept here for the kernel sweep after its retention tests were retired.
+_BETA = 0.95
+
+
+# Three wage nodes, so the individual-rationality mask can empty at the middle
+# one and give the dissolution model a `True` cell to route on.
+_WAGE = LinSpacedGrid(start=1.0, stop=3.0, n_points=3)
+
+
+@categorical(ordered=True)
+class Work:
+    leisure: ScalarInt
+    work: ScalarInt
+
+
+@categorical(ordered=False)
+class DissolutionRegimeId:
+    married: ScalarInt
+    married_ir: ScalarInt
+    married_terminal: ScalarInt
+    single_f: ScalarInt
+    single_f_terminal: ScalarInt
+    single_m: ScalarInt
+    single_m_terminal: ScalarInt
+
+
+def _prob_one(age: FloatND) -> FloatND:
+    return jnp.ones_like(age, dtype=float)
+
+
+def _identity_wage(wage: ContinuousState) -> ContinuousState:
+    return wage
+
+
+def _u_zero(wage: ContinuousState) -> FloatND:
+    return 0.0 * wage
+
+
+def _u_zero_collective(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
+    return 0.0 * wage * work
+
+
+def _u_married_ir_f(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
+    return 3.0 * (1.0 - work) + 2.0 * wage * work
+
+
+def _u_married_ir_m(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
+    return 0.5 * (1.0 - work) + wage * work
+
+
+def _u_single_f_ir(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
+    target = jnp.where((wage > 1.5) & (wage < 2.5), 5.5, 1.5)
+    return target * work
+
+
+def _u_single_m_ir(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
+    return 1.0 * work + 0.0 * wage
+
+
+def _ir_f(*, Q_f: FloatND, V_single_f_ref: FloatND, delta_f: FloatND) -> BoolND:
+    return Q_f >= V_single_f_ref - delta_f
+
+
+def _ir_m(*, Q_m: FloatND, V_single_m_ref: FloatND, delta_m: FloatND) -> BoolND:
+    return Q_m >= V_single_m_ref - delta_m
+
+
+def _no_dissolution_gate(D_target: BoolND) -> BoolND:
+    """Stay married exactly where the target household has not dissolved."""
+    return ~D_target
+
+
+def _make_dissolution_model() -> tuple[Model, UserParams]:
+    """A collective SOURCE whose gate reads the target's dissolution flag."""
+    married = Regime(
+        states={"wage": _WAGE},
+        state_transitions={"wage": fixed_transition("wage")},
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _u_zero_collective, "m": _u_zero_collective}
+            )
+        },
+    )
+    married_ir = Regime(
+        states={"wage": _WAGE},
+        state_transitions={"wage": fixed_transition("wage")},
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _u_married_ir_f, "m": _u_married_ir_m}
+            )
+        },
+        constraints={
+            "ir_f": ValueDependentConstraint(
+                predicate=_ir_f,
+                references={
+                    "V_single_f_ref": ProjectedRegimeValue(
+                        regime="single_f", projection={"wage": _identity_wage}
+                    )
+                },
+            ),
+            "ir_m": ValueDependentConstraint(
+                predicate=_ir_m,
+                references={
+                    "V_single_m_ref": ProjectedRegimeValue(
+                        regime="single_m", projection={"wage": _identity_wage}
+                    )
+                },
+            ),
+        },
+    )
+    married_terminal = Regime(
+        states={"wage": _WAGE},
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _u_zero_collective, "m": _u_zero_collective}
+            )
+        },
+    )
+    single_f = Regime(
+        states={"wage": _WAGE},
+        state_transitions={"wage": fixed_transition("wage")},
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={"utility": _u_single_f_ir},
+    )
+    single_f_terminal = Regime(
+        states={"wage": _WAGE},
+        functions={"utility": _u_zero},
+    )
+    single_m = single_f.replace(
+        functions={"utility": _u_single_m_ir},
+    )
+    model = Model(
+        regimes={
+            "married": married,
+            "married_ir": married_ir,
+            "married_terminal": married_terminal,
+            "single_f": single_f,
+            "single_f_terminal": single_f_terminal,
+            "single_m": single_m,
+            "single_m_terminal": single_f_terminal.replace(),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
+        regime_id_class=DissolutionRegimeId,
+        initial_nodes={0: "married"},
+        edges={
+            "married": Transition(
+                targets={"married_ir": 0, "single_f": 0, "single_m": 0},
+                law=ByAge(
+                    cases={
+                        AgeRange(exclusive_stop=1): {
+                            "married_ir": StochasticTransition(func=_prob_one)
+                        }
+                    }
+                ),
+                gates={
+                    "married_ir": Gate(
+                        predicate=_no_dissolution_gate,
+                        routes={
+                            "f": StakeholderRoute(
+                                target_stakeholder="f",
+                                fallback=ProjectedRegimeValue(
+                                    regime="single_f",
+                                    projection={"wage": _identity_wage},
+                                ),
+                            ),
+                            "m": StakeholderRoute(
+                                target_stakeholder="m",
+                                fallback=ProjectedRegimeValue(
+                                    regime="single_m",
+                                    projection={"wage": _identity_wage},
+                                ),
+                            ),
+                        },
+                    )
+                },
+            ),
+            "married_ir": {"married_terminal": 1},
+            "single_f": {"single_f_terminal": 1},
+            "single_m": {"single_m_terminal": (0, 1, 2)},
+        },
+    )
+    params = {"discount_factor": _BETA, "delta_f": 0.5, "delta_m": 0.2}
+    return model, params

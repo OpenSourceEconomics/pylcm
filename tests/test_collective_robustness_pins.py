@@ -34,7 +34,8 @@ from lcm import (
     categorical,
     fixed_transition,
 )
-from lcm.collective import Gate, ProjectedRegimeValue, StakeholderRoute
+from lcm.arrivals import ArrivalDecision
+from lcm.collective import ProjectedRegimeValue, StakeholderRoute
 from lcm.exceptions import PyLCMError
 from lcm.result import SimulationResult
 from lcm.transition import StochasticTransition
@@ -56,7 +57,7 @@ GATE_WAGE_GRID = LinSpacedGrid(start=1.0, stop=2.0, n_points=2)
 
 @categorical(ordered=False)
 class GateRegimeId:
-    """Regime ids of the model whose gate reads a dissolution flag."""
+    """Regime ids of the model whose arrival reads a dissolution flag."""
 
     source: ScalarInt  # code 0
     target: ScalarInt  # code 1
@@ -134,13 +135,12 @@ def test_non_integral_categorical_coordinate_is_rejected():
         find_coordinate(health=jnp.asarray(0.5))
 
 
-def test_gate_reading_a_dissolution_flag_on_a_singleton_target_is_rejected_at_build():
-    """A dissolution gate is rejected when its target cannot dissolve.
+def test_arrival_reading_a_dissolution_flag_is_rejected_at_build():
+    """An arrival decision reading `D_target` is rejected while it is declared.
 
-    A gate reading `D_target` names the target's dissolution flag, which only a
-    collective regime has. A singleton target publishes none, and no argument
-    to `solve` or `simulate` can supply one, so the declaration is rejected
-    while the model is being built.
+    No regime publishes a dissolution flag for an arrival to read, and no
+    argument to `solve` or `simulate` can supply one; a decision about whether
+    the target can act reads its typed policy support instead.
     """
     with pytest.raises((PyLCMError, NotImplementedError), match="D_target"):
         Model(
@@ -179,7 +179,7 @@ def _drop_stakeholder_metadata(*, directory: Path) -> None:
 
 
 def _make_singleton_target_dissolution_gate_regimes() -> MappingProxyType[str, Regime]:
-    """Build regimes whose gate reads the dissolution flag of a singleton target.
+    """Build regimes whose arrival reads the dissolution flag of a singleton target.
 
     Returns:
         Immutable mapping of the three regime names to regimes: the gated
@@ -205,11 +205,11 @@ def _make_singleton_target_dissolution_gate_regimes() -> MappingProxyType[str, R
 
 
 def _make_dissolution_gate_transition() -> Transition:
-    """Build the source's transition: a dissolution-gated edge into `target` at age 0.
+    """Build the source's transition: a dissolution-read arrival in `target` at age 0.
 
     Returns:
-        The `Transition` choosing between `target`, through a gate reading the
-        target's dissolution flag, and the never-entered `fallback`.
+        The `Transition` choosing between `target`, through an arrival reading
+        the target's dissolution flag, and the never-entered `fallback`.
 
     """
     return Transition(
@@ -222,8 +222,8 @@ def _make_dissolution_gate_transition() -> Transition:
                 }
             }
         ),
-        gates={
-            "target": Gate(
+        arrivals={
+            "target": ArrivalDecision(
                 predicate=_no_dissolution,
                 routes={
                     "only": StakeholderRoute(
@@ -249,7 +249,7 @@ def _husband_payoff(work: DiscreteAction) -> FloatND:
 
 
 def _no_dissolution(D_target: BoolND) -> BoolND:
-    """Gate open exactly where the target regime has not dissolved."""
+    """Arrival accepted exactly where the target regime has not dissolved."""
     return ~D_target
 
 
