@@ -74,9 +74,10 @@ def _bequest_utility(*, wealth: ContinuousState, age: float) -> FloatND:
 
 
 def _bonus_model(constraints: dict[FunctionName, UserFunction] | None = None) -> Model:
-    # MSS is the only backend whose rows certify every envelope crossing, so
-    # it is the only one that qualifies for the off-grid read.
-    solver = dataclasses.replace(DCEGM_SOLVER, envelope=envelope_config("mss"))
+    # No shipped backend currently qualifies for the off-grid read. The exact
+    # envelope is the stress case: it already emits every ownership change and
+    # lacks only a read-support verdict.
+    solver = dataclasses.replace(DCEGM_SOLVER, envelope=envelope_config("exact"))
     alive = dcegm_retirement.replace(
         solver=solver,
         actions={

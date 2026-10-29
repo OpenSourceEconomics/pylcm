@@ -215,11 +215,12 @@ Its original clock, device, JIT and supplied-node restrictions apply. Budgeted f
 archive replay still refuses unprofiled authority or payload copies.
 
 The supported typed envelope configurations are `ExactEnvelope`, `FUESEnvelope`,
-`RFCEnvelope`, `LTMEnvelope`, and `MSSEnvelope`. String selectors are not part of the
-public API. Exact-envelope node cells are tiled through the model's
-`ExecutionConfig(axis_widths={"envelope_cell": width})`; the axis is exported as
-`ENVELOPE_CELL_AXIS`. FUES uses a fixed scan unroll factor of one, recorded in the
-compiled program identity. See [Upper envelopes](envelopes.md) for their distinct
+`RFCEnvelope`, and `LTMEnvelope`; MSS was removed, and envelopes maintained outside
+pylcm are planned in [issue #632](https://github.com/OpenSourceEconomics/pylcm/issues/632).
+String selectors are not part of the public API. Exact-envelope node cells are tiled
+through the model's `ExecutionConfig(axis_widths={"envelope_cell": width})`; the axis is
+exported as `ENVELOPE_CELL_AXIS`. FUES uses a fixed scan unroll factor of one, recorded
+in the compiled program identity. See [Upper envelopes](envelopes.md) for their distinct
 contracts.
 
 `refined_grid_factor` provides NaN-padded storage headroom for ownership changes in each

@@ -9,7 +9,7 @@ DC-EGM solver as a discrete-choice consumption-savings problem:
   value-function grid axis (`rent` plus the owned levels `own_h1..own_h5`);
 - the own-vs-rent-and-level choice is a single discrete action `housing_choice`
   over the same categories, exactly like Application 1's work/retire labor-supply
-  action — solved by the discrete-choice upper envelope (FUES/MSS/LTM) and by
+  action — solved by the discrete-choice upper envelope (FUES/LTM) and by
   grid search (VFI);
 - the next-period housing state equals the chosen code (`next_housing =
   housing_choice`), so the discrete action drives the discrete-state transition.
@@ -78,15 +78,15 @@ def test_dcegm_regime_carries_the_dcegm_solver_on_assets():
     assert working.liquid.action == "consumption"
 
 
-@pytest.mark.parametrize("envelope", ["fues", "mss", "ltm"])
+@pytest.mark.parametrize("envelope", ["fues", "ltm"])
 def test_dcegm_accepts_each_table4_upper_envelope(
-    envelope: Literal["fues", "mss", "ltm"],
+    envelope: Literal["fues", "ltm"],
 ):
-    """Each Table 4 upper-envelope backend builds the discrete-housing regime.
+    """Each Table 4 upper-envelope backend pylcm ships builds the regime.
 
-    Table 4 reports FUES, MSS, and LTM alongside VFI. All three are 1-D
+    Table 4 reports FUES, MSS, and LTM alongside VFI. FUES and LTM are 1-D
     upper-envelope refinements of the same DC-EGM discrete-choice solve, so the
-    model must build under each.
+    model must build under each; MSS is not shipped by pylcm.
     """
     model = ds_app3_discrete_housing.build_model(
         variant="dcegm",

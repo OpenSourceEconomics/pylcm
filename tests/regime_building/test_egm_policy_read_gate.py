@@ -18,10 +18,7 @@ from lcm import (
     Transition,
     fixed_transition,
 )
-from lcm.solvers import (
-    FUESEnvelope,
-    MSSEnvelope,
-)
+from lcm.solvers import FUESEnvelope
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 from lcm_examples.iskhakov_et_al_2017 import WEALTH_GRID, next_wealth_from_savings
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
@@ -66,20 +63,6 @@ def test_non_crossing_envelope_backends_do_not_qualify(backend: EnvelopeName):
     assert model._regimes["retirement"].simulation.egm_policy_read is None
 
 
-def test_the_mss_backend_does_not_qualify_for_the_policy_read():
-    """MSS rows keep the grid path: the refinement can omit an owner.
-
-    Crossings are inserted only between adjacent query winners, so a branch
-    owning ground strictly inside one candidate interval leaves no record, and a
-    switch landing exactly on a candidate abscissa is suppressed by the
-    strict-interior test. Reading such a row off-grid publishes an action the
-    envelope never implied, and one the canonical-Q safeguard cannot recover
-    because an omitted owner is neither the emitted candidate nor on the grid.
-    """
-    model = _retirement_model_with_backend("mss")
-    assert model._regimes["retirement"].simulation.egm_policy_read is None
-
-
 @pytest.mark.parametrize("n_points_to_scan", [None, 8])
 def test_fues_does_not_qualify_for_the_policy_read(n_points_to_scan: int | None):
     """FUES rows keep the grid path: segment identity is a heuristic.
@@ -96,17 +79,6 @@ def test_fues_does_not_qualify_for_the_policy_read(n_points_to_scan: int | None)
         DCEGM_SOLVER,
         envelope=FUESEnvelope(n_points_to_scan=n_points_to_scan),
     )
-    model = _model_from_alive(
-        alive=dcegm_retirement.replace(
-            solver=solver,
-        )
-    )
-    assert model._regimes["retirement"].simulation.egm_policy_read is None
-
-
-def test_mss_backend_remains_disqualified_without_fues_controls():
-    """MSS has no FUES controls and remains outside the policy-read gate."""
-    solver = dataclasses.replace(DCEGM_SOLVER, envelope=MSSEnvelope())
     model = _model_from_alive(
         alive=dcegm_retirement.replace(
             solver=solver,

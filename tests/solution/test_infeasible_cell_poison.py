@@ -39,7 +39,16 @@ from lcm.consumption_savings_regime import (
     outer_unchanged,
 )
 from lcm.exceptions import InvalidValueFunctionError
-from lcm.solvers import DCEGM, EGM, NBEGM, NEGM, NNBEGM, FiniteOuterGrid, GridSearch
+from lcm.solvers import (
+    DCEGM,
+    EGM,
+    NBEGM,
+    NEGM,
+    NNBEGM,
+    FiniteOuterGrid,
+    GridSearch,
+    RFCEnvelope,
+)
 from lcm.transition import StochasticTransition
 from lcm.typing import (
     ActionName,
@@ -508,7 +517,7 @@ def _build_model(
         solver = (
             EGM(savings_grid=savings_grid)
             if solver_kind == "egm"
-            else DCEGM(savings_grid=savings_grid)
+            else DCEGM(savings_grid=savings_grid, envelope=RFCEnvelope())
             if solver_kind == "dcegm"
             else NBEGM(savings_grid=savings_grid)
         )
@@ -975,7 +984,10 @@ def _dead_branch_model(*, forbid_work: bool) -> Model:
             resources="resources",
             post_decision_state="savings",
         ),
-        solver=DCEGM(savings_grid=LinSpacedGrid(start=0.0, stop=15.0, n_points=40)),
+        solver=DCEGM(
+            savings_grid=LinSpacedGrid(start=0.0, stop=15.0, n_points=40),
+            envelope=RFCEnvelope(),
+        ),
     )
     dead = Regime(
         states={"wealth": wealth_grid, "status": status_grid},

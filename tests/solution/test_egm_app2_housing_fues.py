@@ -62,7 +62,7 @@ MIN_FRACTION_WITHIN = 0.82
 
 @pytest.mark.parametrize("envelope", ["fues"])
 def test_app2_fues_matches_vfi_on_liquid_interior(
-    envelope: Literal["fues", "mss", "ltm", "rfc"],
+    envelope: Literal["fues", "ltm", "rfc"],
 ):
     """App.2 EGM-FUES agrees with its VFI twin on the liquid interior in bulk.
 

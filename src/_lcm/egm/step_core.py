@@ -701,7 +701,7 @@ class _SolveOneCombo:
         # future-kink-induced fold is data-emergent (the inverted endogenous grid
         # decreases) rather than known a priori, so it is the backend's geometry —
         # not an explicit label — that resolves it. Explicit topology is the
-        # oracle/test path (LTM/MSS/query accept `segment_id`); production has none
+        # oracle/test path (LTM/query accept `segment_id`); production has none
         # to emit.
         # A backend that cannot certify off-grid read support returns the
         # four-element row and the read is treated as supported; only a backend

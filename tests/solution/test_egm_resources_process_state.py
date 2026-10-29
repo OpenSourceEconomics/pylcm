@@ -33,7 +33,7 @@ from lcm import (
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import DCEGM
+from lcm.solvers import DCEGM, RFCEnvelope
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -146,6 +146,7 @@ def next_regime(*, age: int, final_age_alive: float) -> ScalarInt:
 DCEGM_SOLVER = DCEGM(
     savings_grid=SAVINGS_GRID,
     n_constrained_points=64,
+    envelope=RFCEnvelope(),
 )
 
 

@@ -73,7 +73,7 @@ from lcm.exceptions import InvalidStateTransitionError, RegimeInitializationErro
 from lcm.regime import Regime as UserRegime
 from lcm.regime import StochasticTransition
 from lcm.solver_api import ResultRetention, SolutionResult
-from lcm.solvers import DCEGM
+from lcm.solvers import DCEGM, RFCEnvelope
 from lcm.transition import AgeSpecializedFunction
 from lcm.typing import (
     BoolND,
@@ -2031,7 +2031,10 @@ def test_dcegm_continuation_reads_nan_at_an_off_grid_child_code():
             "borrowing_limit": post_decision_lower_bound(margin=margin, lower=0.0)
         },
         liquid=margin,
-        solver=DCEGM(savings_grid=LinSpacedGrid(start=0.0, stop=3.0, n_points=7)),
+        solver=DCEGM(
+            savings_grid=LinSpacedGrid(start=0.0, stop=3.0, n_points=7),
+            envelope=RFCEnvelope(),
+        ),
     )
     dead = UserRegime(
         states={"wealth": wealth, "kind": DiscreteGrid(category_class=_TwoCodes)},

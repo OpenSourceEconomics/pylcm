@@ -39,8 +39,7 @@ the grid-argmax path:
   the stored policy solve the wrong simulate-phase FOC or puts the policy
   rows on the wrong coordinates;
 - every currently shipped upper-envelope backend — none has yet passed the
-  crossing- and support-completeness contract required by the read. MSS can
-  omit an owner that wins only inside one candidate interval; FUES can merge
+  crossing- and support-completeness contract required by the read. FUES can merge
   branches when its slope heuristic misses a switch; RFC and LTM leave
   switches between retained nodes; and the exact backend does not yet publish
   a support verdict for compacted gaps;
