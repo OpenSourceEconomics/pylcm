@@ -1612,6 +1612,7 @@
   "tests/solution/test_block_major_lifetime.py::test_a_saved_block_major_solution_loads_and_simulates_identically",
   "tests/solution/test_builtin_policy_persistence.py::test_a_restored_result_saves_to_an_equivalent_archive",
   "tests/solution/test_builtin_policy_persistence.py::test_a_restored_result_with_diagnostics_replays_in_a_fresh_model",
+  "tests/solution/test_builtin_policy_persistence.py::test_a_saved_egm_solution_simulates_identically_in_a_fresh_model",
   "tests/solution/test_builtin_policy_persistence.py::test_adaptive_nnbegm_policy_roundtrips_into_a_fresh_model",
   "tests/solution/test_builtin_policy_persistence.py::test_budgeted_simulation_from_a_foreign_nnbegm_solution_is_refused",
   "tests/solution/test_builtin_policy_persistence.py::test_builtin_egm_continuation_roundtrips_as_an_independent_lazy_entry",

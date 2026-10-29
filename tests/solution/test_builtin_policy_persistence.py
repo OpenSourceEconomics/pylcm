@@ -15,13 +15,16 @@ import numpy as np
 import pytest
 from pandas.testing import assert_frame_equal
 
+from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import NNBEGMSimPolicy
+from _lcm.simulation.current_iid_overrides import SimulationInitialConditionsInput
 from _lcm.solution.contract import BackwardInductionResult
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from lcm import ExecutionConfig, Model
 from lcm.exceptions import ExecutionPlanningError, InvalidSimulationInputError
 from lcm.persistence import load_solution, save_solution
+from lcm.shocks import PhysicalValues
 from lcm.solver_api import (
     DISSOLUTION_FLAG,
     EGM_CONTINUATION,
@@ -47,12 +50,14 @@ from lcm.solver_api import (
     ValueStore,
 )
 from lcm.solvers import EGMContinuationSpec
-from lcm.typing import RegimeName
+from lcm.typing import RegimeName, UserParams
 from tests.collective_fixtures import (
     ParamsDict,
     make_couple_initial_conditions,
     make_two_stakeholder_model,
 )
+from tests.conftest import EXACT_KERNEL_SKIP_REASON
+from tests.egm.test_current_iid_nbegm_model import _nb_params, _r_declarations
 from tests.simulation.test_nnbegm_split_workflow_parity import (
     _INITIAL,
     _N_PERIODS,
@@ -62,6 +67,8 @@ from tests.simulation.test_nnbegm_split_workflow_parity import (
 )
 from tests.solution.test_egm_published_policy import _two_period_bequest_model
 from tests.test_models import n_nbegm_toy as toy
+from tests.test_models import nbegm_tax_toy
+from tests.test_models.deterministic import dcegm_variants
 from tests.test_models.deterministic.dcegm_variants import (
     get_graph_only_retirement_params,
 )
@@ -941,3 +948,90 @@ def test_budgeted_simulation_from_a_foreign_nnbegm_solution_is_refused(
             log_level="off",
             seed=_SEED,
         )
+
+
+def _plain_dcegm() -> tuple[Model, UserParams, SimulationInitialConditionsInput]:
+    """Build the worker/retiree DC-EGM model outside its shared builder cache."""
+    n_periods = 3
+    model = dcegm_variants.get_full_model.__wrapped__(
+        solver="dcegm", n_periods=n_periods
+    )
+    initial = {
+        "wealth": jnp.asarray([10.0, 100.0, 300.0]),
+        "age": jnp.full(3, 40.0),
+        "regime_id": jnp.full(
+            3, model.regime_names_to_ids["working_life"], dtype=jnp.int32
+        ),
+    }
+    return model, dcegm_variants.get_full_params(n_periods=n_periods), initial
+
+
+def _plain_nbegm() -> tuple[Model, UserParams, SimulationInitialConditionsInput]:
+    """Build the one-asset tax-bracket NB-EGM toy."""
+    model = nbegm_tax_toy.build_model(variant="nbegm", n_periods=3)
+    initial = {
+        "liquid": jnp.asarray([1.0, 5.0, 20.0]),
+        "age": jnp.zeros(3),
+        "regime_id": jnp.full(3, model.regime_names_to_ids["alive"], dtype=jnp.int32),
+    }
+    return model, nbegm_tax_toy.build_params(), initial
+
+
+def _nb_case_r() -> tuple[Model, UserParams, SimulationInitialConditionsInput]:
+    """Build the current-IID NB Case-R child with realized physical draws."""
+    params = _nb_params()
+    model = Model._from_call_owned_params(declarations=_r_declarations(), params=params)
+    initial = {
+        "wealth": jnp.asarray([0.375, 1.0, 1.0, 2.0]),
+        "age": jnp.ones(4),
+        "regime_id": jnp.full(4, model.regime_names_to_ids["child"], dtype=jnp.int32),
+        "eps": PhysicalValues(
+            values=np.asarray([0.0, 0.0, 0.5, 1.0], dtype=canonical_float_dtype())
+        ),
+    }
+    return model, params, initial
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        pytest.param(_plain_dcegm, id="dcegm"),
+        pytest.param(_plain_nbegm, id="nbegm"),
+        pytest.param(
+            _nb_case_r,
+            id="nbegm-case-r",
+            marks=pytest.mark.requires_exact_affine_kernel(
+                reason=EXACT_KERNEL_SKIP_REASON
+            ),
+        ),
+    ],
+)
+def test_a_saved_egm_solution_simulates_identically_in_a_fresh_model(
+    *,
+    build: Callable[[], tuple[Model, UserParams, SimulationInitialConditionsInput]],
+    tmp_path: Path,
+) -> None:
+    """A fresh model simulates a saved and reloaded EGM solution like the source."""
+    source_model, params, initial = build()
+    solution = source_model.solve(params=params, log_level="off")
+    expected = source_model.simulate(
+        params=params,
+        initial_conditions=initial,
+        solution=solution,
+        log_level="off",
+        seed=_SEED,
+    )
+    restored = load_solution(
+        path=save_solution(solution=solution, path=tmp_path / "solution.lcm")
+    )
+
+    fresh_model, _params, _initial = build()
+    actual = fresh_model.simulate(
+        params=params,
+        initial_conditions=initial,
+        solution=restored,
+        log_level="off",
+        seed=_SEED,
+    )
+
+    assert_frame_equal(actual.to_dataframe(), expected.to_dataframe())
