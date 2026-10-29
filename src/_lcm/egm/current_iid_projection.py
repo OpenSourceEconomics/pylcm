@@ -147,7 +147,10 @@ def _record_slopes(
     finite: BoolND,
 ) -> FloatND:
     """Reference value slopes at finite records; other records store zero."""
-    return jnp.where(finite, jax.vmap(value_slope)(grid), 0.0)
+    return jax.lax.map(
+        lambda inputs: jax.lax.cond(inputs[1], value_slope, jnp.zeros_like, inputs[0]),
+        (grid, finite),
+    )
 
 
 def _read_projected(
@@ -192,16 +195,9 @@ def _assess_cells(
     invalid_geometry = jnp.any(
         active & (~jnp.isfinite(lower) | ~jnp.isfinite(upper) | (width < 0.0))
     )
+    # Endpoints are stored records; only interior probes inform the error.
     probes = jnp.stack(
-        (
-            lower,
-            upper,
-            lower + width / 4.0,
-            lower + width / 2.0,
-            lower + 3.0 * width / 4.0,
-            jnp.nextafter(lower, upper),
-            jnp.nextafter(upper, lower),
-        ),
+        (lower + width / 4.0, lower + width / 2.0, lower + 3.0 * width / 4.0),
         axis=-1,
     )
     probes = jnp.where(smooth[:, None], probes, carry.domain_lower)
@@ -239,8 +235,8 @@ def _assess_cells(
             query,
         )
 
-    active_probes = jnp.broadcast_to(active[:, None], probes.shape).reshape(-1)
-    hard, failed = jax.lax.map(assess_active, (probes.reshape(-1), active_probes))
+    smooth_probes = jnp.broadcast_to(smooth[:, None], probes.shape).reshape(-1)
+    hard, failed = jax.lax.map(assess_active, (probes.reshape(-1), smooth_probes))
     shape = probes.shape
     hard = hard.reshape(shape) & smooth[:, None]
     failed = failed.reshape(shape) & smooth[:, None]
