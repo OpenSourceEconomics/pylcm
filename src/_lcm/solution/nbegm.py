@@ -598,23 +598,25 @@ class NBEGM(OneMarginSolver):
     parent expectation; `"bridged"` does not expose an unfurled stochastic-row
     representation for a later fold.
     """
-    envelope_arithmetic: ComparisonArithmetic = "certified"
+    envelope_arithmetic: ComparisonArithmetic = "ordinary"
     """Which arithmetic decides ownership in the merged upper envelope.
 
     Every case, corner, and node candidate is read at each liquid query point and
     the largest owns it. How that comparison is made is this knob:
 
+    - `"ordinary"` (default) takes the largest read in the working format. It
+      decides every bracketed query at a fraction of the certified read's cost. Near
+      a crossing whose candidates differ by less than the format's resolution it can
+      pick a different owner or move the crossing slightly; the published value is
+      still read from one candidate together with its policy and marginal.
     - `"certified"` compares the exact affine values represented by the stored
       floating-point operands using fixed-width integer arithmetic. Exact value is
       ordered first, followed by deterministic geometric and stable-index tie-breaks.
       NaNs and other non-finite or invalid geometry are refused rather than ordered as
       ordinary candidates. This mode requires pylcm's installed exact-affine payload
       for the active backend and fails before returning a certified result when that
-      capability is unavailable.
-    - `"ordinary"` takes the largest read in the working format. It decides every
-      bracketed query at a fraction of the certified read's cost and is adequate only
-      where model-specific checks show candidates are separated by much more than the
-      format's resolution at their magnitude.
+      capability is unavailable. Select it when exact ownership is itself the object
+      of a check.
     """
     probe_failure: Literal["reject", "assume_declared"] = "reject"
     """What to do when a derivative probe cannot evaluate the model.
@@ -631,7 +633,7 @@ class NBEGM(OneMarginSolver):
       within-interval affinity, every liquid-reading law's interval-constancy,
       and the consumption flow's single-power form, to be validated empirically.
     """
-    probe_schedule: Literal["first_solve", "every_solve", "never"] = "every_solve"
+    probe_schedule: Literal["first_solve", "every_solve", "never"] = "never"
     """How often the parameter-dependent preconditions run.
 
     The affine-budget, interval-constancy, and single-power-flow probes
@@ -639,15 +641,16 @@ class NBEGM(OneMarginSolver):
     solve rather than at build. What they cost is therefore charged per solve,
     which an estimation loop pays on every criterion evaluation:
 
-    - `"every_solve"` — re-check every draw. This is the safe default because a
-      parameter can move a budget from affine to curved within an interval, or
+    - `"never"` (default) — skip all three, so a solve pays no probe cost; the
+      model author asserts each precondition. A model that violates one is solved
+      under a false structural assumption rather than refused.
+    - `"first_solve"` — check all three once per model and reuse their verdicts.
+      Use when parameter movement cannot change any precondition over the
+      supported parameter domain.
+    - `"every_solve"` — re-check every draw. Use while developing a model, or when
+      a parameter can move a budget from affine to curved within an interval,
       switch a law from piecewise-constant to smoothly varying, or turn a
       single-power flow into another functional form.
-    - `"first_solve"` — check all three once per model and reuse their verdicts.
-      Use only when the model author asserts that parameter movement cannot
-      change any precondition over the supported parameter domain.
-    - `"never"` — skip all three; the model author asserts each precondition and
-      validates the solve against an independent reference.
     """
 
     def _with_liquid_margin(self, margin: _BoundLiquidMargin) -> _BoundNBEGM:
@@ -3251,7 +3254,7 @@ def _build_nbegm_core(
     functions: EconFunctionsMapping,
     consumption_action: ActionName,
     case_spec: _NBEGMCaseSpec,
-    envelope_arithmetic: ComparisonArithmetic = "certified",
+    envelope_arithmetic: ComparisonArithmetic = "ordinary",
 ) -> _NBEGMCaseCore:
     """Build the jittable case-piece EGM core closing over the case split.
 
@@ -3703,7 +3706,7 @@ def _budget_affinity_check(
     liquid_state_name: StateName,
     require_unit_slope: bool,
     probe_failure: Literal["reject", "assume_declared"],
-    probe_schedule: Literal["first_solve", "every_solve", "never"] = "every_solve",
+    probe_schedule: Literal["first_solve", "every_solve", "never"] = "never",
     breakpoint_sources: tuple[_NBEGMSource, ...] = (),
     materializer: DatedGenerationMaterializer | None = None,
 ) -> ParamCheck:
@@ -4674,7 +4677,7 @@ def _deferred_probe(
     probe: Callable[..., None],
     regime_name: RegimeName,
     probe_arguments: _ProbeArguments,
-    probe_schedule: Literal["first_solve", "every_solve", "never"] = "every_solve",
+    probe_schedule: Literal["first_solve", "every_solve", "never"] = "never",
     **bound: _ProbeBinding,
 ) -> ParamCheck:
     """Configure a probe at model build and run it as its schedule asks.
@@ -5632,7 +5635,7 @@ def _collect_nbegm_schedule_spec(
     continuous_state: StateName,
     consumption_action_name: ActionName,
     probe_failure: Literal["reject", "assume_declared"] = "reject",
-    probe_schedule: Literal["first_solve", "every_solve", "never"] = "every_solve",
+    probe_schedule: Literal["first_solve", "every_solve", "never"] = "never",
     materializer: DatedGenerationMaterializer | None = None,
 ) -> _NBEGMScheduleSpec:
     """Collect a regime's piecewise-affine schedules into one breakpoint partition.
@@ -6463,7 +6466,7 @@ def _build_nbegm_continuous_core(
     consumption_action: ActionName,
     schedule_spec: _NBEGMScheduleSpec,
     feasibility_constraints: tuple[_NBEGMFeasibilityConstraint, ...] = (),
-    envelope_arithmetic: ComparisonArithmetic = "certified",
+    envelope_arithmetic: ComparisonArithmetic = "ordinary",
     materializer: DatedGenerationMaterializer | None = None,
 ) -> _NBEGMContinuousCore:
     """Build the jittable continuous-schedule EGM core for one continuation target.
@@ -6907,7 +6910,7 @@ def _nbegm_ride_along_statics(
     savings_grid: Float1D,
     schedule_spec: _NBEGMScheduleSpec,
     continuation_plan: ContinuationPlan,
-    envelope_arithmetic: ComparisonArithmetic = "certified",
+    envelope_arithmetic: ComparisonArithmetic = "ordinary",
     cell_width: int = 0,
     interval_width: int = 0,
     branch_width: int = 0,
@@ -10130,7 +10133,7 @@ def _collect_nbegm_discrete_spec(
     post_decision_function: FunctionName,
     continuous_state: StateName,
     probe_failure: Literal["reject", "assume_declared"],
-    probe_schedule: Literal["first_solve", "every_solve", "never"] = "every_solve",
+    probe_schedule: Literal["first_solve", "every_solve", "never"] = "never",
 ) -> _NBEGMDiscreteSpec:
     """Collect the discrete actions of a smooth regime and their grid codes.
 
@@ -10187,7 +10190,7 @@ def _collect_nbegm_schedule_discrete_spec(
     continuous_state: StateName,
     post_decision_function: FunctionName,
     probe_failure: Literal["reject", "assume_declared"],
-    probe_schedule: Literal["first_solve", "every_solve", "never"] = "every_solve",
+    probe_schedule: Literal["first_solve", "every_solve", "never"] = "never",
 ) -> _NBEGMScheduleDiscreteSpec:
     """Collect the discrete actions layered over a single-liquid cliff schedule."""
     import inspect  # noqa: PLC0415
@@ -10314,7 +10317,7 @@ def _build_nbegm_schedule_discrete_core(
     consumption_action: ActionName,
     spec: _NBEGMScheduleDiscreteSpec,
     taste_shock_scale: float,
-    envelope_arithmetic: ComparisonArithmetic = "certified",
+    envelope_arithmetic: ComparisonArithmetic = "ordinary",
 ) -> _NBEGMScheduleDiscreteCore:
     """Build the discrete-envelope core over a cliffed single-liquid budget.
 
@@ -10504,7 +10507,7 @@ def _build_nbegm_discrete_core(
     consumption_action: ActionName,
     discrete_spec: _NBEGMDiscreteSpec,
     taste_shock_scale: float,
-    envelope_arithmetic: ComparisonArithmetic = "certified",
+    envelope_arithmetic: ComparisonArithmetic = "ordinary",
 ) -> _NBEGMDiscreteCore:
     """Build the jittable discrete-envelope core for one continuation target.
 

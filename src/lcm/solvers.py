@@ -36,12 +36,12 @@ plain `Regime` stays the form for `GridSearch`.
 
 `DCEGM` defaults to `ExactEnvelope`, whose certified finite-candidate ownership
 requires pylcm's installed exact-affine payload. Selecting it without a compatible
-payload for the active JAX backend fails during `Model(...)`. Certified `NBEGM`
-requires the same installed capability and fails before returning a certified result
-when it is unavailable. `envelope_arithmetic="ordinary"` is the explicit no-kernel
-route under its documented approximation contract. Neither solver silently falls
-back. Solvers specialized to one paper's accounting remain published alongside that
-paper rather than here.
+payload for the active JAX backend fails during `Model(...)`. `NBEGM` defaults to
+`envelope_arithmetic="ordinary"`, which needs no native payload; selecting
+`envelope_arithmetic="certified"` requires the same installed capability and fails
+before returning a certified result when it is unavailable. Neither solver silently
+falls back. Solvers specialized to one paper's accounting remain published alongside
+that paper rather than here.
 
 A solver may also be written outside pylcm. `lcm.solvers` re-exports everything
 such a solver constructs — the execution-contract types (`CoreProgram`,

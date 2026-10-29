@@ -33,7 +33,7 @@ custom JVP, so `jax.jvp` and `jax.jacfwd` work and carry the exact slope, while
 `jax.grad` and `jax.vjp` raise: the rule inspects tangent finiteness so it can fail
 closed on a non-finite direction, which leaves JAX unable to transpose it, and no
 reverse rule is registered. This reaches ordinary models, because `ExactEnvelope` is the
-DCEGM default and `envelope_arithmetic="certified"` is NBEGM's.
+DCEGM default; NBEGM reaches it only with `envelope_arithmetic="certified"`.
 
 `ExactEnvelope` is the default. Its ownership decision relies on the exact-affine native
 payload installed as part of pylcm. pylcm neither downloads nor discovers an unrelated

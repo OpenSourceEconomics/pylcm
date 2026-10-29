@@ -304,15 +304,18 @@ See the [current-IID contract](../development/iid-exits-redesign.md#public-finit
 NBEGM(
     savings_grid=...,
     jump_read="one_sided",
-    envelope_arithmetic="certified",
+    envelope_arithmetic="ordinary",
     probe_failure="reject",
+    probe_schedule="never",
 )
 ```
 
 `jump_read` selects topology-preserving one-sided continuation reads or a faster bridged
 finite-grid read. `probe_failure="assume_declared"` turns an unexecutable structural
 probe into an author assertion and warning; it does not relax the mathematical
-prerequisite.
+prerequisite. The structural probes run only when `probe_schedule` selects them:
+`"never"` (the default) skips them, `"first_solve"` runs them once per model and
+`"every_solve"` on every parameter draw.
 
 The public scalar named-current-IID Case-U route retains the original conditional
 candidate bank, with one continuous state/action and an ordinary scalar action-free
@@ -324,20 +327,22 @@ accuracy. See the
 [current-IID contract](../development/iid-exits-redesign.md#public-scalar-nb-case-u-lifecycle)
 for sampled balanced checks and the candidate-omission boundary.
 
-With `envelope_arithmetic="certified"`, candidate ownership is ordered from the stored
-floating-point operands using fixed-width integer arithmetic. Exact affine value comes
-first, followed by deterministic geometric and stable-index tie-breaks. NaNs and other
-non-finite or invalid geometry are not ordinary ordered values: the query is rejected
-and remains uncovered/NaN so runtime validation can surface it. `"ordinary"` compares in
-the working floating format and requires model-specific validation near crossings.
+The default `envelope_arithmetic="ordinary"` compares candidates in the working
+floating format. Near a crossing it can choose a different owner or shift the crossing
+slightly; each published value still comes from one candidate together with its policy
+and marginal. With `envelope_arithmetic="certified"`, candidate ownership is ordered
+from the stored floating-point operands using fixed-width integer arithmetic. Exact
+affine value comes first, followed by deterministic geometric and stable-index
+tie-breaks. NaNs and other non-finite or invalid geometry are not ordinary ordered
+values: the query is rejected and remains uncovered/NaN so runtime validation can
+surface it.
 
 **Native capability.** `"certified"` uses pylcm's installed exact-affine CPU/CUDA
 payload; it is not a pure-JAX numerical option. A compatible payload must exist for the
 active JAX backend. NBEGM never silently falls back: if the payload is absent or
 unloadable, certified mode raises `ExactAffineKernelUnavailableError` before returning a
-certified result. Select `envelope_arithmetic="ordinary"` only when working-format
-ownership is acceptable under model-specific crossing checks. The same requirement
-applies when this NBEGM is the inner solver of `NNBEGM`.
+certified result. The same requirement applies when this NBEGM is the inner solver of
+`NNBEGM`. The default `envelope_arithmetic="ordinary"` needs no payload.
 
 Compiled widths belong to the model's `ExecutionConfig`, with constants imported from
 `lcm.solvers`. Only axes a program actually uses are declared:

@@ -6,7 +6,7 @@ from dataclasses import fields, replace
 from functools import partial
 from pathlib import Path
 from types import MappingProxyType, MethodType
-from typing import cast
+from typing import Literal, cast
 
 import jax
 import jax.numpy as jnp
@@ -167,7 +167,10 @@ def _kink_resources(*, wealth: FloatND, rebate: FloatND) -> FloatND:
 
 
 def _nb_declarations(
-    *, kink: bool = False, device_memory_bytes: int | None = None
+    *,
+    kink: bool = False,
+    device_memory_bytes: int | None = None,
+    probe_schedule: Literal["first_solve", "every_solve", "never"] = "never",
 ) -> _ModelConstructorInputs:
     declarations = _actual_declarations()
     old = declarations.regimes["child"]
@@ -192,7 +195,7 @@ def _nb_declarations(
             "resources": _kink_resources if kink else _resources,
             **({"rebate": _rebate} if kink else {}),
         },
-        solver=NBEGM(savings_grid=savings),
+        solver=NBEGM(savings_grid=savings, probe_schedule=probe_schedule),
     )
     return replace(
         declarations,
@@ -215,11 +218,18 @@ def _nb_declarations(
     )
 
 
-def _model(*, kink: bool = False, device_memory_bytes: int | None = None) -> Model:
+def _model(
+    *,
+    kink: bool = False,
+    device_memory_bytes: int | None = None,
+    probe_schedule: Literal["first_solve", "every_solve", "never"] = "never",
+) -> Model:
     return Model._from_call_owned_params(
         params=_nb_params(kink=kink),
         declarations=_nb_declarations(
-            kink=kink, device_memory_bytes=device_memory_bytes
+            kink=kink,
+            device_memory_bytes=device_memory_bytes,
+            probe_schedule=probe_schedule,
         ),
     )
 
@@ -485,7 +495,7 @@ def test_cold_nbegm_preserves_original_checks_and_owned_sample_roots() -> None:
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
 def test_nbegm_runtime_probe_refuses_before_unadmitted_numeric_output() -> None:
-    model = _model(device_memory_bytes=1 << 28)
+    model = _model(device_memory_bytes=1 << 28, probe_schedule="every_solve")
     flat, generation = model._prepare_call(params=_nb_params())
     check = model._regimes["child"].solution.param_checks[0]
     assert isinstance(check, _DeferredProbe)
@@ -507,7 +517,9 @@ def test_nbegm_runtime_probe_refuses_before_unadmitted_numeric_output() -> None:
 def test_nbegm_each_draw_uses_live_owner_and_revalidates_changed_budget(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    declarations = _nb_declarations(device_memory_bytes=1 << 28)
+    declarations = _nb_declarations(
+        device_memory_bytes=1 << 28, probe_schedule="every_solve"
+    )
     child = declarations.regimes["child"]
     assert isinstance(child, ConsumptionSavingsRegime)
     declarations = replace(
