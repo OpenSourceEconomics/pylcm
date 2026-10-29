@@ -2349,15 +2349,18 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 ),
             )
             if regime.simulation.current_iid_draw_plan is not None:
-                if (
-                    not isinstance(decision_outputs, tuple)
-                    or len(decision_outputs) != 4  # noqa: PLR2004 - declared replay tuple
+                # Runtime-bound records, when declared, follow the replay tuple.
+                if not isinstance(decision_outputs, tuple) or len(
+                    decision_outputs
+                ) != 4 + 2 * sum(
+                    bound.kind == "dag"
+                    for bound in regime.simulation.post_decision_bounds
                 ):
                     raise TypeError(
                         "Current IID replay must publish physical draws "
                         "and mandatory validity."
                     )
-                indices, values, physical, invalid = decision_outputs
+                indices, values, physical, invalid, *bound_records = decision_outputs
                 current_shocks = cast("Mapping[str, FloatND | IntND]", physical)
                 invalid = cast("BoolND", invalid)
                 if invalid.shape != in_regime.shape or invalid.dtype != jnp.bool_:
@@ -2377,7 +2380,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                         "require a complete physical frame on active cells; "
                         "otherwise supply named base innovations."
                     )
-                decision_outputs = (indices, values)
+                decision_outputs = (indices, values, *bound_records)
             decision_outputs = consume_projected_forward_outputs(
                 outputs=cast("tuple[QAndFArg, ...]", decision_outputs),
                 readers=regime.simulation.projected_forward_readers_by_period.get(

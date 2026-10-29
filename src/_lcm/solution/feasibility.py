@@ -773,6 +773,9 @@ class CountedGridSearch:
     ) -> CountedGridSearchOutput | BoundedResult[CountedGridSearchOutput]:
         """Count state cells, treating a household as a single decision."""
         evaluated = self.function(**kwargs)
+        bounded = evaluated if type(evaluated) is BoundedResult else None
+        if bounded is not None:
+            evaluated = bounded.output
         current_iid_invalid = None
         if self.current_iid:
             value, empty, invalid = cast(
@@ -780,10 +783,7 @@ class CountedGridSearch:
             )
             current_iid_invalid = jnp.any(invalid)
             evaluated = (value, empty)
-        value, empty = cast(
-            "tuple[FloatND, BoolND]",
-            evaluated.output if type(evaluated) is BoundedResult else evaluated,
-        )
+        value, empty = cast("tuple[FloatND, BoolND]", evaluated)
         infinite = jnp.isinf(value)
         if self.collective:
             infinite = jnp.any(infinite, axis=-1)
@@ -795,12 +795,12 @@ class CountedGridSearch:
             else (value, empty_count, other_inf_count)
         )
         if self.current_iid:
-            return cast("CountedGridSearchOutput", (*output, current_iid_invalid))
+            output = cast("CountedGridSearchOutput", (*output, current_iid_invalid))
         return (
             BoundedResult[CountedGridSearchOutput](
-                output=output, bound_status=evaluated.bound_status
+                output=output, bound_status=bounded.bound_status
             )
-            if type(evaluated) is BoundedResult
+            if bounded is not None
             else output
         )
 

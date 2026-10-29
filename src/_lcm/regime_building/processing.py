@@ -5493,10 +5493,7 @@ def _prepare_solution_phase(
                     "Decoupled decision",
                 ),
                 (bool(invariant_bindings), "invariant blocks"),
-                (
-                    bool(post_decision_bounds) or query_model is not None,
-                    "bound or query reconstruction",
-                ),
+                (query_model is not None, "query reconstruction"),
                 (
                     bool(gated_continuations)
                     or bool(laws[regime_name].gated_edges)
@@ -5655,8 +5652,12 @@ def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
                 ),
                 (bool(invariant_bindings), "invariant blocks"),
                 (
-                    bool(post_decision_bounds) or query_model is not None,
-                    "bound or query reconstruction",
+                    (
+                        any(bound.kind == "dag" for bound in post_decision_bounds)
+                        and not isinstance(solver, GridSearch)
+                    )
+                    or query_model is not None,
+                    "callable bound or query reconstruction",
                 ),
                 (
                     bool(gated_continuations)

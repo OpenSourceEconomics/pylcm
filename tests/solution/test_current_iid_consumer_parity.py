@@ -26,6 +26,7 @@ from lcm import (
     Regime,
     UniformIIDProcess,
     categorical,
+    post_decision_lower_bound,
 )
 from lcm.shocks import (
     EqualSpacedUniform,
@@ -97,16 +98,42 @@ def _log_wealth(*, wealth: ContinuousState) -> FloatND:
     return jnp.log(wealth)
 
 
+def _cost_shifted_floor(*, hcc_transitory: FloatND, floor_scale: float) -> FloatND:
+    """A floor on savings that moves with this period's health-cost draw."""
+    return 2.0 - floor_scale * hcc_transitory
+
+
+def _literal_floor(*, solver: str) -> float:
+    """A literal floor: binding under GridSearch, the savings-grid origin under EGM.
+
+    An endogenous-grid solver accepts only its savings grid's origin as a literal
+    floor, as the ACA model declares it.
+    """
+    return 1.5 if solver == "grid_search" else _SAVINGS_FLOOR
+
+
+_MARGIN = LiquidMargin(
+    state="wealth",
+    action="consumption",
+    resources="resources",
+    post_decision_state="savings",
+)
+
+
 # Steps of 1/2 hold every optimal saving R/2 for the integer resources R that the
 # unit-scaled Gauss-Hermite costs produce, so no solver interpolates off a node.
-_SAVINGS_GRID = IrregSpacedGrid(points=np.linspace(0.5, 6.0, 12))
+_SAVINGS_FLOOR = 0.5
+_SAVINGS_GRID = IrregSpacedGrid(points=np.linspace(_SAVINGS_FLOOR, 6.0, 12))
 
 
-def _health_cost_model(*, solver: str, declared: bool) -> Model:
+def _health_cost_model(
+    *, solver: str, declared: bool, bound: str | None = None
+) -> Model:
     """Two-period savings model whose transitory health cost is a current IID draw.
 
     The cost function reads the shock value, as `total_costs` reads `hcc_transitory`
-    in the ACA model, under that model's three solvers.
+    in the ACA model, under that model's three solvers. `bound` adds a declared
+    post-decision floor: `"literal"` a number, `"shock"` one reading the draw.
     """
     states: dict[StateName, LinSpacedGrid | NormalIIDProcess] = {
         "wealth": LinSpacedGrid(start=1.0, stop=5.0, n_points=5)
@@ -121,6 +148,15 @@ def _health_cost_model(*, solver: str, declared: bool) -> Model:
         "resources": _resources,
     }
     shocks = ("hcc",) if declared else ()
+    constraints = {}
+    if bound is not None:
+        functions["savings"] = _savings
+        constraints["borrowing_limit"] = post_decision_lower_bound(
+            margin=_MARGIN,
+            lower=_literal_floor(solver=solver)
+            if bound == "literal"
+            else _cost_shifted_floor,
+        )
     # Node-state EGM replays its policy on the declared action grid; this one holds
     # every optimum R/2.
     consumption = LinSpacedGrid(start=0.5, stop=6.0, n_points=12)
@@ -129,7 +165,7 @@ def _health_cost_model(*, solver: str, declared: bool) -> Model:
             states=states,
             actions={"consumption": consumption},
             functions=functions,
-            constraints={"affordable": _affordable},
+            constraints={"affordable": _affordable, **constraints},
             state_transitions={"wealth": {"done": _next_wealth_from_resources}},
             shocks=shocks,
         )
@@ -143,12 +179,8 @@ def _health_cost_model(*, solver: str, declared: bool) -> Model:
                 "inverse_marginal_utility": _inverse_marginal_utility,
             },
             state_transitions={"wealth": {"done": _next_wealth_from_savings}},
-            liquid=LiquidMargin(
-                state="wealth",
-                action="consumption",
-                resources="resources",
-                post_decision_state="savings",
-            ),
+            constraints=constraints,
+            liquid=_MARGIN,
             solver=(DCEGM if solver == "dcegm" else NBEGM)(savings_grid=_SAVINGS_GRID),
             shocks=shocks,
         )
@@ -204,10 +236,48 @@ def _integrate_node_axis(
 )
 def test_declared_health_cost_shock_reproduces_node_state_model(solver: str) -> None:
     """Values are the node-weighted node-state values; node draws keep its policy."""
+    _assert_reproduces_node_state_model(solver=solver, bound=None)
+
+
+@pytest.mark.parametrize(
+    ("solver", "bound"),
+    [
+        ("grid_search", "literal"),
+        ("grid_search", "shock"),
+        pytest.param(
+            "dcegm",
+            "literal",
+            marks=pytest.mark.requires_exact_affine_kernel(
+                reason=EXACT_KERNEL_SKIP_REASON
+            ),
+        ),
+        ("nbegm", "literal"),
+    ],
+)
+def test_declared_health_cost_shock_with_savings_floor_reproduces_node_state_model(
+    *, solver: str, bound: str
+) -> None:
+    """A declared savings floor binds at the realized draw, as on the node state.
+
+    The floor is either a number or reads the draw itself; both bind for some
+    wealth levels and nodes, so dropping the floor or reading it at another node
+    changes values and policies.
+    """
+    _assert_reproduces_node_state_model(solver=solver, bound=bound)
+
+
+def _assert_reproduces_node_state_model(*, solver: str, bound: str | None) -> None:
     # Unit costs at the Gauss-Hermite nodes -sqrt(3), 0, sqrt(3).
-    params = {"alive": {"total_costs": {"cost_scale": 1 / np.sqrt(3.0)}}}
-    legacy = _health_cost_model(solver=solver, declared=False)
-    declared = _health_cost_model(solver=solver, declared=True)
+    params = {
+        "alive": {
+            "total_costs": {"cost_scale": 1 / np.sqrt(3.0)},
+            "borrowing_limit_lower": {"floor_scale": 1 / np.sqrt(3.0)},
+        }
+        if bound == "shock"
+        else {"total_costs": {"cost_scale": 1 / np.sqrt(3.0)}}
+    }
+    legacy = _health_cost_model(solver=solver, declared=False, bound=bound)
+    declared = _health_cost_model(solver=solver, declared=True, bound=bound)
     legacy_solution = legacy.solve(params=params, log_level="off")
     declared_solution = declared.solve(params=params, log_level="off")
 

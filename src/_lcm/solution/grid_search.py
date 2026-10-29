@@ -1247,16 +1247,18 @@ class _GridSearchPeriodKernel:
         out = compiled_cores[core_key](**arguments)
         current_iid_invalid = None
         if self.current_iid:
-            if not isinstance(out, tuple) or len(out) != 4:  # noqa: PLR2004 - declared integrity tuple
+            # The integrity leaf follows the value and counts, before any bound
+            # records and landing totals.
+            n_outputs = 4 + 2 * self.n_runtime_bounds + bool(self.landing_checks)
+            if not isinstance(out, tuple) or len(out) != n_outputs:
                 raise TypeError("Mandatory current-IID integrity output is missing.")
-            *ordinary, current_iid_invalid = out
-            current_iid_invalid = cast("ScalarBool", current_iid_invalid)
+            current_iid_invalid = cast("ScalarBool", out[3])
             if (
                 current_iid_invalid.shape != ()
                 or current_iid_invalid.dtype != jnp.bool_
             ):
                 raise TypeError("Current-IID integrity must be a scalar Boolean.")
-            out = tuple(ordinary)
+            out = (*out[:3], *out[4:])
         landing_totals = None
         if self.landing_checks:
             from _lcm.solution.landing_counts import (  # noqa: PLC0415
