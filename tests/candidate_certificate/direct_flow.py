@@ -594,7 +594,7 @@ _SOURCE_SEALS = {
     "src/_lcm/current_iid.py": "ac4125498751dd102b5d6cddc1dc102c13030e589a64eb88b166eab3e71770d1",
     "src/_lcm/simulation/current_iid.py": "c675e9dffaa205b4049bf4c26438a70005766c368bc69a3dbb1d6e35cb66db99",
     "src/_lcm/egm/asset_row.py": "7a130991643a90a86349f7fd6b221950fb046489bf205677f3869a8607c260da",
-    "src/_lcm/egm/continuation.py": "93aa5c6dd6dcbb4588773a4b3b53a592616b792171cabe550104ab41592f4e99",
+    "src/_lcm/egm/continuation.py": "92cfa8d92681ba603ac878f1aba255512430667c149a866bc2ba3c778cbfa69b",
     "src/_lcm/egm/dcegm_query.py": "8d21916983c632df46ad96c57726cac6137322db985b2e0b9a9f7cb41b8ba9bb",
     "src/_lcm/egm/dcegm_query_model.py": "92788d75814f82e8acea2a9174a210997e04f68ec8253957836c8b327a03542a",
     "src/_lcm/egm/regime_introspection.py": "e1268a84eb34d1377c1fdf4672ccca73353190e0a77ebec405b7846fea11bbd0",
@@ -609,7 +609,7 @@ _SOURCE_SEALS = {
     S03_ONE_ASSET_STEP_SOURCE: "c63df7e9a681def81e2fcf6b578f3f817af7d402b819e674f441989abce403ff",
     S03_PREFERENCES_SOURCE: "12d41ccb73192a7742267ffaa688fff3fe337ae40ef2373f6fe93541b8effcba",
     S03_SCALAR_QUERY_SOURCE: "709d16f6377da621eee7292c7eb33c7b2c40f65cf8916d7b80d149f6f87c94d8",
-    S02__LCM_EGM_OUTER_ENVELOPE_SOURCE: "25dfb63f6271b084bf67cbd941629db79e0229cd51c250477d166eee7cc8db2f",
+    S02__LCM_EGM_OUTER_ENVELOPE_SOURCE: "0c17015f9a980411b047387354f23886cc7aead0e461eec1b87ceca07911b7fe",
     S02_LANDING_COUNTS_SOURCE: "ac2f58e204659a210bc0f4dcb851cb8487aa538ac1b03d6d5a532be7b95aa70d",
     S02__LCM_CONTINUATION_SOURCE: "1c631bf45d0935cf5c9dec4624ca3724cec10bb47154529add810948c7cf4760",
     S02__LCM_EGM_BUDGET_SOURCE: "1c8fb0cbc8f9156950bea34c71c9ccce2c58ac17ec6b9f1221f8c8966f1031d2",
@@ -749,7 +749,7 @@ _SOURCE_SEALS = {
     "src/_lcm/egm/upper_envelope/__init__.py": "b7dc64aef5007e1de5349a2cb57706d518403753c1d468ad46a585259e33b9ad",
     "src/_lcm/egm/upper_envelope/segment_envelope.py": "f718075c3f0849107ba6289e96d8c539cb4392b0a5f6bf0c1dd490ed33adff0c",
     "src/_lcm/egm/nested_floor.py": "8983b037774946af7a90aa106268659a69963e2d8f5dd4b55c6f5532dd2dbb72",
-    "src/_lcm/egm/finite_negm_query.py": "deb8afbaba19be4c6263b1183958e6b0cacd7857032d7d14b8139ef4f362fe84",
+    "src/_lcm/egm/finite_negm_query.py": "7ce90cf75e272da35fbe28608c88b2cbd1a93201e5c1b785b480b75f1e311289",
     "src/_lcm/egm/adaptive_nbegm_producer.py": "6e981492ef9f803816a1b6e579818e02c9754395b0dac2a19355c0361b115574",
     "src/_lcm/egm/nbegm_query_model.py": "d57f368e399523c823c3caa2082ae06cdec74a5c5b0da20d8a6a88abdf555ddd",
     "src/_lcm/egm/nbegm_query.py": "594f8e44f7a3ba541dfa35fab59a6e9629e2dee31dd63dff57b2ee07afc32702",
@@ -895,9 +895,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_hermite_read_at_fixed_query": "85544cecd9e5737937ce8cc514a5b19354eed1d3d171779f3f9b800e994a5292",
             "_linear_read_at_fixed_query": "e5ee72aa389f42657ac6a97621d9d93e75d9a330e84581f408df4fc953c49f1c",
             "_sanitize_gathered": "72dbdaa706e9540c1eb5833ae4ba933310565f91a3615f5a7969553fa80c5a86",
-            "interp_left_germ_on_prepared_grid": "d265f5365038d7813695ed6b6fd1d8ad1b2b4ba659341004261f0b22bdd9656c",
             "interp_left_record_on_prepared_grid": "d88caae609ae928a65c968280a9c718ba5ea3580664f745b94482891b310ba66",
-            "interp_right_germ_on_prepared_grid": "57ea00df567c6b40e9bdc15756c3f73c7309625094a57546646d5ea789ebb210",
             "interp_on_regular_grid": "71992b703d659849d9558d353a8314a42650a9d8d6fb41c452076b6189137681",
         },
     ),
@@ -2770,7 +2768,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/egm/continuation.py": (
-        "c46d289eb9e89de10aff5f9fe97798b8a7ea7f198283dc64c40e312ecdefb9da",
+        "83e62650a4d42b04d7c579c69d39de1b0a0dff4ef80e570b631912f3d1bb02fa",
         {
             "_child_row_values": "3a956663dd626460b776efa317ea5f1bdca72a19a6786a484dcaf370f0a30082",
             "_ActualChildQuery.__call__": "5502c0071b798d1ea39b340e99af4129f69217b977ef9b96d859fe0cbee41590",
@@ -2790,7 +2788,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_build_child_reads": "ccf8da8dc5c853b47f790cea752d7f8eb9912730449f985fefd071c6e89f17fe",
             "_child_draw_reads": "245d5121170150b1d19ecfb78c05e2f0939e3d8a7072183ef92266fce4960be7",
             "_choose_blended_side": "04879417051fa01bb194684a3231428730691686c39c6fdc4b3bb8c9ac7a95d4",
-            "_collapse_stacked_candidates": "cbcdf9e44c0137070f602322f6bdc138ab3e3ea6d990b3d176e85f834c8ed7a0",
+            "_collapse_stacked_candidates": "e59cdbdba27c8a696ca116a3af69acf30132cd3fc28d85bb7f66e6b5fc035029",
             "_compute_row_queries_and_gradients": "896ade9d239fd56ad6922dcb33691891925e60ad16bec8f7918fbcb22882b17e",
             "_draw_axis_names": "eada09cbd8ef8a4c46b2fc9e58aa1ae723142fef40d4787a35864fbceee0d6e8",
             "_expect_over_stochastic_nodes": "8385931c4e3f8701b5fde4f54b0db1a4c45ce9f2e44c0755c34ad2992b444cb6",
@@ -2805,9 +2803,8 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_on_node_scale": "499ff177d987dbe6f8d25ca952bc7eeef76b3843cc20f1116c76e7f264d8ceb1",
             "_partials_on_node_scale": "6e3ed59421e6391ddfb2a11bfabdd1f34f428c0abfd8e455b8b147c86f8dd6b8",
             "_read_feature_child_choices": "3d6fbe16e188a48d837f643afaa114fa8960ec593db538a0a2e6c23aef8c620b",
-            "_reshaped_germ": "4ab4a03aace5a7b04612d667e4289161864bb28626dea40bdc518e43015da3d9",
             "_seed_child_query": "75327ca4560cbd192699fdc7b8019ee748344497ab8de58c9472c1afae9ba75e",
-            "_stacked_blend_payloads": "d1c4a2f225a2ef0f3731d68572bf70411e4ac798d0a8ac1ce4dc48ac42db7af1",
+            "_stacked_blend_payloads": "244650d644e9f2eba160c6c6601d549c35829aeaf336821ff7741acfbd36bbaa",
             "_with_co_map_states": "2bc7faa0d63a672a221f061a44a9622e35baccb4a92f227355aff9e1b57553cb",
             "bind_continuation": "26d1a643a4796a1454179c77572035d9bde09f6c5b3e3a581ea47a0d766ef33d",
             "build_continuation_plan": "fbddb3c95240fcc9534f83c8a487f2efab80247cca84ab59910cbe0707c92aa7",
@@ -2815,7 +2812,6 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_accumulate_ez_partials_block": "b466ad601d3c750221ee6f09ec1a3e8bd6269f7f7baef3217751e0c3e814c7f7",
             "_composed_row_resources": "74533a91ac290c152f7fc6385a3051c7cf6f73b317dc0a71646fc49b1b49e5cc",
             "_composed_simple_resources": "29e687065c9babe4b63f8b879111715e05904030e9ec6c639cab91450ed8bdb8",
-            "_germ_and_left_record_rows": "696e4aaa6d34a291f1114d50e13617e5bc6d8955e53345c0998bb605ba627402",
             "_left_slope_row": "96cb4c92f9151a44b195a8e590dcf4b9f5d638e681074dd29503a70db474be69",
             "get_egm_continuation_targets": "b9ef5ac989fb93d2383969729d5b5feb77bc96fb391da4087abf2afff6542a30",
             "stochastic_node_axes": "82d34a340ad704f574d8137021361e8baed052d291344aee919c7862f1db2cd2",
@@ -3159,17 +3155,16 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/egm/finite_negm_query.py": (
-        "17ff20cadc93955d72cbeeb1403c0e133ccb1504ad4670626e184a2c303e209b",
+        "cf5a3b6cc19c3062ef3798673cfd0b83c25ce0dc41185ac5544b6f63e3143d66",
         {
             "_collapse_finite_selection": "4a25b2d177a60c0136423d0f56dc008e48996dcbeaf6eb4dcd142bf128ddaf50",
-            "_filter_finite_survivors": "6e4065b68b57f937aac5cca52894624e9889273246c411cf4b8854a48d9f42a2",
             "_read_finite_corner_row": "63cb79d2f5e1d7b1d421a14515809553a3a5c9f85056f5e72ead8c73116a045e",
-            "_read_finite_native_row": "163189c6c3f332270b1a21e1969be9295338dc5c6991c8af96641972320ce724",
-            "_read_finite_owned_side": "777cc740778b7c05a0f43f52d4a9345eb9b20eccbaca4db266a0790471fe0605",
+            "_read_finite_native_row": "bc20b4a9e05e263942ef24731092891cc1f8ede145db021f1962678c23646466",
+            "_read_finite_owned_side": "7dc3f1cb84892e41774e7750a3e5ee7f431cc673d92986c2564fb585b0ad9d2e",
             "_read_finite_resource_gradient": "c07ff486bf9f5bdc28df1a33f057294b9aca05a425e202df05709122bad57720",
-            "_select_finite_outer_profiles": "edb4d77dd9e97edd689de171d7fb42b2cb7c65c827c5df4e401ad76e50a4439c",
+            "_select_finite_outer_profiles": "02b082e8677fca9d708c59d90f71d06ba28ee7100a70a68229405913d863b7ce",
             "_single_row_finite_corner_read": "90dff3ecb15311291f506dd61a9cb2b0117895783051a956ccac754c94a23aaf",
-            "_validate_finite_outer_rows": "3ccef5ba41e59430220fccc58db2be9615b7c4d7c7c2f455fdbb46b5d8ec67fd",
+            "_validate_finite_outer_rows": "ba36937dcfd9018283a7230d6b91fe7095199ea3151950ba182be6f7a7d7f683",
             "read_finite_outer_choices": "287fb5b6eff1253d2a03eab7bceff901f7cfe79e9ee47fdf9409ab3488239dcc",
             "_finite_outer_publication_inputs": "4f16e5723551105dc96055286c98508e979aded1a52376dc93188170dff35387",
         },
@@ -3637,7 +3632,6 @@ _FINAL_NESTED_CONTRACTS = _contracts(
             "_read_finite_native_row",
             "_read_finite_owned_side",
             "_validate_finite_outer_rows",
-            "_filter_finite_survivors",
             "_select_finite_outer_profiles",
             "_collapse_finite_selection",
         ),
@@ -3764,9 +3758,9 @@ def _final_nested_errors(*, tree: ast.Module, source: SourcePath) -> list[str]:
     return errors
 
 
-EXPECTED_FINAL_NESTED_MUTATION_COUNT = 104
+EXPECTED_FINAL_NESTED_MUTATION_COUNT = 103
 EXPECTED_FINAL_NESTED_MUTATION_NAMES_SHA256 = (
-    "3d3f035499bfb13bcb8dccfc158894f2873ecd486907d9329706d3c1454362b2"
+    "02728053a901a11ee91c4c8232a76fee558a45b5eee06da3aabe5f5c47887359"
 )
 
 
@@ -8499,7 +8493,6 @@ _REVIEWED_PREFIX_CONTRACTS = _contracts(
             "_on_node_scale",
             "_partials_on_node_scale",
             "_read_feature_child_choices",
-            "_reshaped_germ",
             "_seed_child_query",
             "_stacked_blend_payloads",
             "_with_co_map_states",
@@ -8509,7 +8502,6 @@ _REVIEWED_PREFIX_CONTRACTS = _contracts(
             "_accumulate_ez_partials_block",
             "_composed_row_resources",
             "_composed_simple_resources",
-            "_germ_and_left_record_rows",
             "_left_slope_row",
             "get_egm_continuation_targets",
             "stochastic_node_axes",
@@ -8563,9 +8555,7 @@ _REVIEWED_PREFIX_CONTRACTS = _contracts(
             "_hermite_read_at_fixed_query",
             "_linear_read_at_fixed_query",
             "_sanitize_gathered",
-            "interp_left_germ_on_prepared_grid",
             "interp_left_record_on_prepared_grid",
-            "interp_right_germ_on_prepared_grid",
             "interp_on_regular_grid",
         ),
         "src/_lcm/egm/query_data.py": ("select_query_data",),

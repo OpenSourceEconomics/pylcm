@@ -332,9 +332,9 @@ class NEGMCaseUPoint:
         side = selection.right
         ordinary, corner = side.ordinary, side.corner
         use_corner = side.use_corner[0]
-        # A dead right-extension germ orders ties; it does not erase the
-        # selected native bank's economic marginal at a closed node. The
-        # ordinary profile already applies the strict-above clamp convention.
+        # A dead right extension does not erase the selected native bank's
+        # economic marginal at a closed node. The ordinary profile already
+        # applies the strict-above clamp convention.
         marginal = jnp.where(
             jnp.isnan(value),
             jnp.nan,
@@ -437,8 +437,7 @@ class NEGMCaseUPoint:
         )
         coefficient = jnp.asarray(float(self.coefficient), dtype=resources.dtype)
         # Every candidate has the same structurally proved positive affine
-        # resource slope. Multiplying the kth germ by that common positive
-        # slope**k leaves each original finite selector comparison unchanged.
+        # resource slope, so it cannot reorder the value-maximum selection.
         # Published economic marginals still include the resource Jacobian.
         utility = BoundUtilityOfAction(
             utility_func=pieces.utility_func,

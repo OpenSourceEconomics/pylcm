@@ -220,7 +220,7 @@ def prepare_original_negm_u_point(
     if keeper_coefficient != adjuster_coefficient:
         raise UnsupportedOperationError(
             "Finite NEGM U requires a shared positive affine liquid-resource "
-            "Jacobian for its original common-state germ ordering."
+            "Jacobian shared by every candidate of its common-state read."
         )
     functions = cast(
         "EconFunctionsMapping",

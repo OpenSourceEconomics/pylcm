@@ -157,7 +157,7 @@ def _assert_historical_counts(*, report: direct_flow.DirectMutationControls) -> 
     assert report["supplemental_mutation_count"] == 97
     assert report["retained_prefix_mutation_count"] == 113
     assert report["outer_helper_mutation_count"] == 40
-    assert report["final_nested_mutation_count"] == 104
+    assert report["final_nested_mutation_count"] == 103
 
 
 @pytest.mark.xdist_group("direct_flow_runner")
