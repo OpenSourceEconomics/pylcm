@@ -23,7 +23,12 @@ from _lcm.egm.asset_row import (
     publish_node_from_bracket,
 )
 from _lcm.egm.carry import EGMCarry
-from _lcm.egm.continuation import ContinuationPlan, _ChildRead
+from _lcm.egm.continuation import (
+    ContinuationPlan,
+    _ChildCarryReader,
+    _ChildRead,
+    _get_child_carry_reader,
+)
 from _lcm.egm.current_iid_case_u import (
     CaseUCurrentNodes,
     CaseUPointSolver,
@@ -31,6 +36,7 @@ from _lcm.egm.current_iid_case_u import (
 )
 from _lcm.egm.current_iid_ce import EconomicCEContinuation
 from _lcm.egm.current_iid_economic import read_case_u_continuation
+from _lcm.egm.current_iid_future import _SourceNodeRead
 from _lcm.egm.current_iid_power_bank import _bank_coefficients
 from _lcm.egm.current_iid_power_math import _materialize, _SignedLog, _sum_signed
 from _lcm.egm.current_iid_power_mean import (
@@ -939,6 +945,47 @@ def test_declared_ce_traces_only_the_requested_economic_direction(
     )
     assert candidate < both
     assert source < both
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_savings_node_read_skips_the_source_coordinate_direction() -> None:
+    """A savings-only node read keeps its bits without the source JVP."""
+    original = _point_solver()
+    grid = jnp.arange(1.0, 9.0)
+    child = EGMCarry(
+        endog_grid=grid,
+        value=2.0 * grid,
+        marginal_utility=jnp.full_like(grid, 7.0),
+        taste_shock_scale=jnp.asarray(0.0),
+    )
+    plan = original.pieces.continuation_plan
+    reader = _get_child_carry_reader(
+        read=_future_node_read(plan.child_reads["done"]),
+        carry=child,
+        combo_pool={**original.pool, "liquid": jnp.asarray(0.0)},
+        post_decision_name=plan.post_decision_name,
+        stochastic_node_width=2,
+        collect_continuation_read_counts=False,
+    )
+    assert isinstance(reader, _ChildCarryReader)
+    indices = tuple(jnp.int32(1) for _ in reader.stochastic_node_values)
+    both, candidate = (
+        _SourceNodeRead(
+            reader=reader,
+            direction={"liquid": jnp.asarray(1.0)},
+            savings=jnp.asarray(1.0),
+            source_channel=source_channel,
+        ).economic_components
+        for source_channel in (True, False)
+    )
+    full, savings_only = both(indices).output, candidate(indices).output
+    for kept in (0, 1, 2, 4):
+        assert np.asarray(savings_only[kept]).tobytes() == (
+            np.asarray(full[kept]).tobytes()
+        )
+    assert _equation_count(jax.make_jaxpr(candidate)(indices).jaxpr) < (
+        _equation_count(jax.make_jaxpr(both)(indices).jaxpr)
+    )
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")

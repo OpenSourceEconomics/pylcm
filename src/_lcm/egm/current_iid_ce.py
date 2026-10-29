@@ -312,7 +312,10 @@ class EconomicCEContinuation:
         final, _ = jax.lax.scan(
             _CETargetFold(
                 source=_SourceNodeRead(
-                    reader=reader, direction=self.direction, savings=savings
+                    reader=reader,
+                    direction=self.direction,
+                    savings=savings,
+                    source_channel=transform.source_channel,
                 ),
                 transform=transform,
                 probability=probability,

@@ -284,6 +284,7 @@ def power_mean_continuation(
                         reader=schedule.reader,
                         direction=continuation.direction,
                         savings=savings,
+                        source_channel=source_channel,
                     ),
                     probability=probability,
                     probability_direction=probability_direction,
