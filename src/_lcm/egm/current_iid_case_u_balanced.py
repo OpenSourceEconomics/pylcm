@@ -337,6 +337,8 @@ class _ConditionalRow(NamedTuple):
     borrowing_limit: ScalarFloat
     savings_ceiling: ScalarFloat
     discounted_floor_value: ScalarFloat
+    construction_valid: ScalarBool
+    """No mandatory child summary of the original construction flagged."""
 
     @classmethod
     def of(
@@ -346,13 +348,17 @@ class _ConditionalRow(NamedTuple):
         envelope: OwnedEnvelope,
         saturated: ScalarBool,
     ) -> "_ConditionalRow":  # noqa: UP037 - PEP 649 classmethod evaluated before its class is bound
-        """Keep only the arrays that topology reads from the original node."""
+        """Keep only the arrays that topology and reads use from the original node."""
+        construction_valid = jnp.ones((), dtype=jnp.bool_)
+        for leaf in jax.tree.leaves(node.child_status):
+            construction_valid &= ~jnp.any(leaf)
         return cls(
             envelope=envelope,
             saturated=saturated,
             borrowing_limit=node.pieces.borrowing_limit,
             savings_ceiling=node.pieces.savings_nodes[-1],
             discounted_floor_value=node.discount_factor * node.expected_values[0],
+            construction_valid=construction_valid,
         )
 
 
@@ -391,6 +397,18 @@ jax.tree_util.register_pytree_with_keys(
     _unflatten_conditional_row,
     _flatten_conditional_row,
 )
+
+
+class _NodeReads(NamedTuple):
+    """Selected reads off conditional rows at a query; scalar or node-stacked."""
+
+    value: FloatND
+    slope: FloatND
+    """Derivative of the selected value piece along the liquid direction."""
+    marginal: FloatND
+    """Current utility's derivative at the frozen selected saving."""
+    feasible: BoolND
+    valid: BoolND
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -440,7 +458,11 @@ class SaturatedCaseUProgram:
     def reference(
         self, *, guard: CaseUBalancedOperands, query: ScalarFloat
     ) -> ProjectedRowRead:
-        """Original integrated level/economic derivative, used only at production."""
+        """Original integrated level/economic derivative, rebuilt at each query.
+
+        Publication reads ``hoisted_reference``; consumer validation and tests
+        keep this rebuilding oracle.
+        """
         result, law_valid = self.point.evaluate_with_law(
             next_regime_to_continuation=guard.children,
             _lcm_current_iid=guard.group_params,
@@ -478,6 +500,86 @@ class SaturatedCaseUProgram:
         bracket, never an automatic derivative of the exact-node bracket
         selection. Weights and their tangents combine as in the integration.
         """
+        nodes, reads = self._node_reads(
+            guard=guard, conditionals=conditionals, query=query
+        )
+        factors = nodes.factors
+        terms = factored_weighted_term(factors=factors, values=reads.slope)
+        for column in range(factors.shape[0]):
+            terms += factored_weighted_term(
+                factors=_with_tangent(nodes=nodes, column=column), values=reads.value
+            )
+        return jnp.sum(terms)
+
+    def hoisted_reference(
+        self,
+        *,
+        guard: CaseUBalancedOperands,
+        conditionals: _ConditionalRow,
+        query: ScalarFloat,
+    ) -> ProjectedRowRead:
+        """``reference`` read off the fixed conditional rows, without rebuilding.
+
+        ``conditionals`` is ``conditionals()`` of this guard, built once per row.
+        Selection, saving and corner are the reference's own; admission makes
+        discount, future reads and child operands query-invariant, so the
+        economic marginal is the current utility's at the frozen saving. The
+        integration and validity follow the reference's.
+        """
+        nodes, reads = self._node_reads(
+            guard=guard, conditionals=conditionals, query=query
+        )
+        factors = nodes.factors
+        live = jnp.all(~is_represented_zero(factors), axis=0)
+        derivative_needed = _derivative_needed(nodes=nodes)
+        needed = live | derivative_needed
+        value_terms = factored_weighted_term(factors=factors, values=reads.value)
+        marginal_terms = factored_weighted_term(factors=factors, values=reads.marginal)
+        for column in range(factors.shape[0]):
+            marginal_terms += factored_weighted_term(
+                factors=_with_tangent(nodes=nodes, column=column), values=reads.value
+            )
+        value = jnp.sum(value_terms)
+        raw_marginal = jnp.sum(marginal_terms)
+        economic = jnp.any(live & jnp.isneginf(reads.value))
+        empty = jnp.any(live & ~reads.feasible)
+        physical_valid = jnp.ones((), dtype=jnp.bool_)
+        for tangent in nodes.physical_tangent.values():
+            physical_valid &= jnp.all(jnp.isfinite(tangent))
+        valid = (
+            nodes.law_valid
+            & jnp.all(~needed | reads.valid)
+            & jnp.all(jnp.isfinite(nodes.factor_tangent))
+            & physical_valid
+            & jnp.all(
+                ~live
+                | (jnp.isfinite(reads.value) & jnp.isfinite(value_terms))
+                | (jnp.isneginf(reads.value) & jnp.isneginf(value_terms))
+            )
+            & (jnp.isfinite(value) | (economic & jnp.isneginf(value)))
+            & jnp.all(jnp.isfinite(marginal_terms))
+            & jnp.isfinite(raw_marginal)
+            & jnp.all(~derivative_needed | jnp.isfinite(reads.value))
+            & (guard.pool["period"] == self.point.period)
+        )
+        for leaf in jax.tree.leaves(guard.floor_status):
+            valid &= ~jnp.any(leaf)
+        return ProjectedRowRead(
+            value,
+            jnp.where(empty | economic, 0.0, raw_marginal),
+            jnp.int32(0),
+            jnp.int32(0),
+            valid,
+        )
+
+    def _node_reads(
+        self,
+        *,
+        guard: CaseUBalancedOperands,
+        conditionals: _ConditionalRow,
+        query: ScalarFloat,
+    ) -> tuple[CaseUCurrentNodes, _NodeReads]:
+        """Each node's selected value, slope and economic marginal at ``query``."""
         pieces = self.point.pieces
         state = pieces.euler_state_name
         nodes = realise_case_u_nodes(
@@ -497,10 +599,11 @@ class SaturatedCaseUProgram:
                 ScalarBool,
                 _ConditionalRow,
             ],
-        ) -> tuple[ScalarFloat, ScalarFloat]:
+        ) -> _NodeReads:
             physical, tangent, active, conditional = inputs
+            floating = {name: physical[name] for name in tangent}
 
-            def read() -> tuple[ScalarFloat, ScalarFloat]:
+            def read() -> _NodeReads:
                 # keyword-only-exempt: library-callback=jax.jvp
                 def resources(
                     point: ScalarFloat, draw: Mapping[ShockName, ScalarFloat]
@@ -511,7 +614,7 @@ class SaturatedCaseUProgram:
 
                 at, direction = jax.jvp(
                     resources,
-                    (query, {name: physical[name] for name in tangent}),
+                    (query, floating),
                     (jnp.ones_like(query), tangent),
                 )
                 utility = BoundUtilityOfAction(
@@ -520,8 +623,9 @@ class SaturatedCaseUProgram:
                     bound={**guard.pool, **physical, state: query},
                 )
                 row = conditional.envelope
+                owned = _bracket_from_owned_row(refined=row, x_query=at)
                 value, policy, corner = _publish_node_selection(
-                    bracket=_bracket_from_owned_row(refined=row, x_query=at).bracket,
+                    bracket=owned.bracket,
                     n_pad=pieces.n_pad,
                     resources_at_node=at,
                     borrowing_limit=conditional.borrowing_limit,
@@ -548,18 +652,63 @@ class SaturatedCaseUProgram:
                         at - conditional.borrowing_limit, jnp.finfo(at.dtype).tiny
                     )
                 )
-                feasible = jnp.isfinite(value) & (policy > 0.0)
-                return (
-                    jnp.where(feasible, value, -jnp.inf),
-                    jnp.where(
-                        feasible, jnp.where(corner, floor, envelope) * direction, 0.0
+                # The selected saving is held fixed in the economic marginal.
+                saving = jnp.where(corner, conditional.borrowing_limit, owned.savings)
+
+                # keyword-only-exempt: library-callback=jax.jvp
+                def current_utility(
+                    point: ScalarFloat, draw: Mapping[ShockName, ScalarFloat]
+                ) -> ScalarFloat:
+                    return BoundUtilityOfAction(
+                        utility_func=pieces.utility_func,
+                        action_name=pieces.action_name,
+                        bound={**guard.pool, **physical, **draw, state: point},
+                    )(resources(point, draw) - saving)
+
+                _, marginal = jax.jvp(
+                    current_utility,
+                    (query, floating),
+                    (jnp.ones_like(query), tangent),
+                )
+                finite_or_economic = jnp.isfinite(value) | jnp.isneginf(value)
+                feasible = finite_or_economic & (policy > 0.0)
+                if pieces.feasibility_func is not None:
+                    feasible &= pieces.feasibility_func(
+                        **{**guard.pool, **physical, state: query}
+                    )
+                smooth = feasible & jnp.isfinite(value)
+                valid = (
+                    conditional.construction_valid
+                    & ~owned.construction_invalid
+                    & jnp.isfinite(saving)
+                    & jnp.isfinite(policy)
+                    & jnp.isfinite(marginal)
+                    & (saving >= conditional.borrowing_limit)
+                    & (saving <= conditional.savings_ceiling)
+                    & (corner | owned.read_supported)
+                    & finite_or_economic
+                )
+                return _NodeReads(
+                    value=jnp.where(feasible, value, -jnp.inf),
+                    slope=jnp.where(
+                        smooth, jnp.where(corner, floor, envelope) * direction, 0.0
                     ),
+                    marginal=jnp.where(smooth, marginal, 0.0),
+                    feasible=feasible,
+                    valid=valid,
                 )
 
             zero = jnp.zeros_like(query)
-            return jax.lax.cond(active, read, lambda: (zero, zero))
+            no = jnp.zeros((), dtype=jnp.bool_)
+            return jax.lax.cond(
+                active,
+                read,
+                lambda: _NodeReads(
+                    value=zero, slope=zero, marginal=zero, feasible=no, valid=~no
+                ),
+            )
 
-        values, slopes = jax.lax.map(
+        return nodes, jax.lax.map(
             one,
             (
                 nodes.physical,
@@ -568,21 +717,6 @@ class SaturatedCaseUProgram:
                 conditionals,
             ),
         )
-        factors = nodes.factors
-        terms = factored_weighted_term(factors=factors, values=slopes)
-        for column in range(factors.shape[0]):
-            terms += factored_weighted_term(
-                factors=jnp.concatenate(
-                    (
-                        factors[:column],
-                        nodes.factor_tangent[column : column + 1],
-                        factors[column + 1 :],
-                    ),
-                    axis=0,
-                ),
-                values=values,
-            )
-        return jnp.sum(terms)
 
     def conditional(
         self,
@@ -845,7 +979,11 @@ class SaturatedCaseUProgram:
             raw=raw, active=active, capacity=capacity
         )
         grid = jnp.where(jnp.arange(capacity) < length, points, initial.domain_lower)
-        values = jax.vmap(lambda query: self.reference(guard=guard, query=query))(grid)
+        values = jax.vmap(
+            lambda query: self.hoisted_reference(
+                guard=guard, conditionals=conditionals, query=query
+            )
+        )(grid)
         kinds = jnp.where(
             jnp.arange(capacity) < length,
             jnp.where(
@@ -891,35 +1029,23 @@ class SaturatedCaseUProgram:
             owner_id=jnp.where(jnp.arange(capacity) < length, components, -1),
         )
 
-        def checked_reference(query: ScalarFloat) -> ProjectedRowRead:
-            read = self.reference(guard=guard, query=query)
+        def owned_reference(query: ScalarFloat) -> ProjectedRowRead:
+            # Refinement only bisects cells of this row, so the owning region
+            # is the one the query falls in here.
+            read = self.hoisted_reference(
+                guard=guard, conditionals=conditionals, query=query
+            )
             search = jnp.where(
                 jnp.arange(capacity) < row.valid_length, row.grid, jnp.inf
             )
             index = jnp.clip(
                 jnp.searchsorted(search, query, side="right") - 1, 0, capacity - 2
             )
-            exact = jnp.any(
-                (jnp.arange(capacity) < row.valid_length) & (row.grid == query)
-            )
-            supported = jax.lax.cond(
-                exact,
-                lambda: jnp.ones((), dtype=jnp.bool_),
-                lambda: self.cell(
-                    guard=guard,
-                    left=row.grid[index],
-                    right=row.grid[index + 1],
-                    query=query,
-                    conditionals=conditionals,
-                ),
-            )
-            return read._replace(
-                owner_id=row.owner_id[index], valid=read.valid & supported
-            )
+            return read._replace(owner_id=row.owner_id[index])
 
         refined, _, slopes = refine_projected_row(
             initial=row,
-            reference=checked_reference,
+            reference=owned_reference,
             accuracy="balanced",
             value_slope=lambda query: self.value_slope(
                 guard=guard, conditionals=conditionals, query=query
@@ -939,7 +1065,12 @@ class SaturatedCaseUProgram:
 
 def _needed(*, nodes: CaseUCurrentNodes) -> BoolND:
     live = jnp.all(~is_represented_zero(nodes.factors), axis=0)
-    needed = live
+    return live | _derivative_needed(nodes=nodes)
+
+
+def _derivative_needed(*, nodes: CaseUCurrentNodes) -> BoolND:
+    """Nodes whose value enters only through a differentiated probability factor."""
+    needed = jnp.zeros(nodes.factors.shape[1:], dtype=jnp.bool_)
     for column in range(nodes.factors.shape[0]):
         others = jnp.concatenate(
             (nodes.factors[:column], nodes.factors[column + 1 :]), axis=0
@@ -948,6 +1079,18 @@ def _needed(*, nodes: CaseUCurrentNodes) -> BoolND:
             ~is_represented_zero(others), axis=0
         )
     return needed
+
+
+def _with_tangent(*, nodes: CaseUCurrentNodes, column: int) -> FloatND:
+    """The factor bank with one factor replaced by its liquid derivative."""
+    return jnp.concatenate(
+        (
+            nodes.factors[:column],
+            nodes.factor_tangent[column : column + 1],
+            nodes.factors[column + 1 :],
+        ),
+        axis=0,
+    )
 
 
 def _select(
