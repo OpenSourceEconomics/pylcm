@@ -114,7 +114,17 @@ def _along_link(
         inside = ((divisor_grid - query) * left + (query - left_grid) * right) / (
             divisor_grid - left_grid
         )
-        return jnp.where(at_endpoint, endpoint, inside)
+        # On a node the primal is the stored endpoint, but the read is still a
+        # point of the link's line: its derivative carries the line's slope times
+        # the node's motion relative to the query, as the certified reader's JVP
+        # does. `stop_gradient(inside) - inside` is a primal +0.0 whose tangent is
+        # minus the line's, so subtracting it keeps every endpoint bit (-0.0
+        # included) and swaps in the line's tangent. A zero-width self-bracket has
+        # no line and keeps its endpoint's tangent.
+        on_line = (right_grid != left_grid) & jnp.isfinite(inside)
+        zero = jnp.where(on_line, jax.lax.stop_gradient(inside) - inside, 0.0)
+        on_node = jnp.where(on_line, jax.lax.stop_gradient(endpoint), endpoint) - zero
+        return jnp.where(at_endpoint, on_node, inside)
     numerator, divisor, endpoint, at_endpoint = _link_terms(
         left=left,
         right=right,
