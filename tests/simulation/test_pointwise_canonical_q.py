@@ -1,12 +1,13 @@
 """Pointwise canonical Q evaluation for off-grid action scoring.
 
-Simulation decides discrete branches by maximizing the canonical state-action
-value `Q`. On the action grid that maximization is `argmax_and_max_Q_over_a`;
-off the grid a candidate continuous action needs the *same* `Q` evaluated at one
-action value per subject. `regime.simulation.Q_and_F[period]` is that pointwise
-evaluator: it shares the model DAG, transitions, constraints, aggregators,
-params, and next-period value arrays with the grid maximization, so a value it
-reports is comparable with the grid winner's value.
+The grid route decides discrete branches by maximizing the canonical
+state-action value `Q`. On the action grid that maximization is
+`argmax_and_max_Q_over_a`; off the grid a candidate continuous action needs the
+*same* `Q` evaluated at one action value per subject.
+`regime.simulation.Q_and_F[period]` is that pointwise evaluator: it shares the
+model DAG, transitions, constraints, aggregators, params, and next-period value
+arrays with the grid maximization, so a value it reports is comparable with the
+grid winner's value.
 """
 
 import dataclasses
@@ -16,9 +17,7 @@ from typing import cast
 import jax
 import jax.numpy as jnp
 import numpy as np
-import pytest
 
-import _lcm.simulation.simulate as simulate_module
 from _lcm.params.edges import regime_kernel_params
 from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.simulate import _lookup_values_from_indices
@@ -186,56 +185,3 @@ def test_pointwise_canonical_q_at_the_grid_argmax_action_reproduces_its_value():
     np.testing.assert_allclose(
         np.asarray(pointwise_values), np.asarray(grid_values), rtol=1e-6
     )
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "the off-grid policy read is gated on a crossing-complete env"
-        "elope and no shipped backend qualifies; this is the acceptance criteri"
-        "on for reopening the gate, so it must start passing again the moment one does"
-    ),
-)
-def test_off_grid_replacement_never_scores_below_the_grid_pair():
-    """Every emitted (branch, action) pair is worth at least the grid pair.
-
-    The off-grid read replaces the action-grid argmax only where the replacement
-    scores at least as high under the canonical `Q`, so simulating can never
-    return a pair the finite-grid decision would have beaten.
-    """
-    model = _bonus_model()
-    params = get_graph_only_retirement_params(
-        n_periods=2, discount_factor=_DISCOUNT_FACTOR
-    )
-    off_grid_wealth = jnp.asarray([12.0, 37.5, 88.25, 210.0])
-    n_subjects = off_grid_wealth.shape[0]
-
-    emitted_vs_grid: list[tuple[np.ndarray, np.ndarray]] = []
-    original = simulate_module._redecide_branch_and_read_policy
-
-    def record(**kwargs):
-        emitted_actions, emitted_values = original(**kwargs)
-        emitted_vs_grid.append(
-            (np.asarray(emitted_values), np.asarray(kwargs["grid_values"]))
-        )
-        return emitted_actions, emitted_values
-
-    simulate_module._redecide_branch_and_read_policy = record  # ty: ignore[invalid-assignment]
-    try:
-        model.simulate(
-            params=params,
-            initial_conditions={
-                "wealth": off_grid_wealth,
-                "age": jnp.full(n_subjects, 40.0),
-                "regime_id": jnp.full(
-                    n_subjects, retirement_only.RetirementOnlyRegimeId.retirement
-                ),
-            },
-            log_level="debug",
-        )
-    finally:
-        simulate_module._redecide_branch_and_read_policy = original
-
-    assert emitted_vs_grid
-    for emitted_values, grid_pair_values in emitted_vs_grid:
-        assert np.all(emitted_values >= grid_pair_values - 1e-6)

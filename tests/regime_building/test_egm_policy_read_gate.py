@@ -1,7 +1,8 @@
 """Build-time gates for the off-grid simulation policy read.
 
-`SimulationPhase.egm_policy_read` is set only where replaying the solve-phase
-policy is valid; every other configuration keeps the grid-argmax simulate path.
+`SimulationPhase.egm_policy_read` is set only where the published rows sit on
+the coordinates a subject is read at; every other configuration keeps the
+grid-argmax simulate path.
 """
 
 import dataclasses
@@ -18,10 +19,7 @@ from lcm import (
     Transition,
     fixed_transition,
 )
-from lcm.solvers import (
-    FUESEnvelope,
-    MSSEnvelope,
-)
+from lcm.solvers import FUESEnvelope
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 from lcm_examples.iskhakov_et_al_2017 import WEALTH_GRID, next_wealth_from_savings
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
@@ -54,64 +52,36 @@ def test_negm_regime_does_not_qualify_for_the_policy_read():
     assert model._regimes["alive"].simulation.egm_policy_read is None
 
 
-@pytest.mark.parametrize("backend", ["rfc", "ltm"])
-def test_non_crossing_envelope_backends_do_not_qualify(backend: EnvelopeName):
-    """RFC/LTM rows keep the grid path: they publish no crossing topology.
+@pytest.mark.parametrize(
+    "backend",
+    [
+        pytest.param(
+            "exact",
+            marks=pytest.mark.requires_exact_affine_kernel(
+                reason=EXACT_KERNEL_SKIP_REASON
+            ),
+        ),
+        "fues",
+        "rfc",
+        "ltm",
+        "mss",
+    ],
+)
+def test_every_envelope_backend_qualifies_for_the_policy_read(backend: EnvelopeName):
+    """Plain DC-EGM simulates policy-first under every upper-envelope backend.
 
-    Those backends leave the envelope switch between two retained nodes, so
-    linear policy interpolation across the switch would mix two branch
-    policies into an action belonging to neither.
+    The read needs no envelope certificate: a subject whose read leaves its
+    row support, or fails the budget or feasibility check, takes the grid
+    argmax instead.
     """
     model = _retirement_model_with_backend(backend)
-    assert model._regimes["retirement"].simulation.egm_policy_read is None
+    assert model._regimes["retirement"].simulation.egm_policy_read is not None
 
 
-def test_the_mss_backend_does_not_qualify_for_the_policy_read():
-    """MSS rows keep the grid path: the refinement can omit an owner.
-
-    Crossings are inserted only between adjacent query winners, so a branch
-    owning ground strictly inside one candidate interval leaves no record, and a
-    switch landing exactly on a candidate abscissa is suppressed by the
-    strict-interior test. Reading such a row off-grid publishes an action the
-    envelope never implied, and one the canonical-Q safeguard cannot recover
-    because an omitted owner is neither the emitted candidate nor on the grid.
-    """
-    model = _retirement_model_with_backend("mss")
-    assert model._regimes["retirement"].simulation.egm_policy_read is None
-
-
-@pytest.mark.parametrize("n_points_to_scan", [None, 8])
-def test_fues_does_not_qualify_for_the_policy_read(n_points_to_scan: int | None):
-    """FUES rows keep the grid path: segment identity is a heuristic.
-
-    FUES groups candidates into segments by thresholding the implied-savings
-    slope (`FUESEnvelope.jump_thresh`), and the DC-EGM kernel supplies no segment
-    labels. A cross-segment slope below the threshold merges two value
-    branches into one row — no crossing is inserted and the row bridges the
-    gap between them — regardless of the scan width, so even the exhaustive
-    scan does not certify the crossing topology the off-grid read
-    interpolates over (see `test_fues_segment_detection.py`).
-    """
-    solver = dataclasses.replace(
-        DCEGM_SOLVER,
-        envelope=FUESEnvelope(n_points_to_scan=n_points_to_scan),
-    )
-    model = _model_from_alive(
-        alive=dcegm_retirement.replace(
-            solver=solver,
-        )
-    )
-    assert model._regimes["retirement"].simulation.egm_policy_read is None
-
-
-def test_mss_backend_remains_disqualified_without_fues_controls():
-    """MSS has no FUES controls and remains outside the policy-read gate."""
-    solver = dataclasses.replace(DCEGM_SOLVER, envelope=MSSEnvelope())
-    model = _model_from_alive(
-        alive=dcegm_retirement.replace(
-            solver=solver,
-        )
-    )
+def test_grid_replay_keeps_the_grid_argmax():
+    """`DCEGM(replay="grid")` opts a plain DC-EGM regime out of the policy read."""
+    solver = dataclasses.replace(DCEGM_SOLVER, replay="grid")
+    model = _model_from_alive(alive=dcegm_retirement.replace(solver=solver))
     assert model._regimes["retirement"].simulation.egm_policy_read is None
 
 

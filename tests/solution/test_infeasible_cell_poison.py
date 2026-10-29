@@ -235,8 +235,9 @@ def _assert_same_public_result(
     states = {state_name: jnp.asarray([4.0, 7.0, 10.0])}
     if solver_kind in ("negm", "nnbegm"):
         states["illiquid"] = jnp.asarray([0.0, 1.0, 2.0])
-    # NNBEGM exposes its published policy through native replay, not lookup_policy.
-    for period in () if solver_kind == "nnbegm" else (0, 1):
+    # NNBEGM and DC-EGM expose their published policy through native replay
+    # (policy-first simulation), not lookup_policy; the paths below cover it.
+    for period in () if solver_kind in ("nnbegm", "dcegm") else (0, 1):
         expected_policy = model.lookup_policy(
             params=reference_params,
             solution=reference,

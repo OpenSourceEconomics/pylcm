@@ -142,7 +142,11 @@ _PROFILED_HELPER_MUTATIONS = {
     ),
     "simulation_index:scalar_runtime_subject_role": (
         "src/_lcm/simulation/simulate.py",
-        'subject_arg_names=("flat_indices",) if indices_optimal_actions.ndim else (),',
+        (
+            'subject_arg_names=("flat_indices",)\n'
+            "                if indices_optimal_actions.ndim\n"
+            "                else (),"
+        ),
         'subject_arg_names=("flat_indices",),',
     ),
     "simulation_pandas:dataframe_writer_omitted": (
