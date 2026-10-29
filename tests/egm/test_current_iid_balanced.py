@@ -19,7 +19,9 @@ from _lcm.continuation import ProjectedContinuationSpec
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.current_iid_balanced import (
     BalancedProjectedEGMCarry,
+    BalancedResourcesProgram,
     _mapping_path_key,
+    _matches_catalog,
     _semantic_native_key,
     build_resources_catalog,
 )
@@ -31,7 +33,10 @@ from _lcm.egm.current_iid_native import (
     NativeCaseRInputs,
     NativeCaseROutput,
 )
-from _lcm.egm.current_iid_resource_query import read_resources_candidate
+from _lcm.egm.current_iid_resource_query import (
+    read_resources_candidate,
+    read_resources_candidate_details,
+)
 from _lcm.egm.interp import materialize_hermite_shadow
 from _lcm.egm.projected_child import ProjectedChildReader
 from _lcm.egm.projected_continuation import ProjectedEGMCarry
@@ -273,6 +278,12 @@ def _reader(
     )
 
 
+def _guard_program(fixture: _BalancedFixture) -> BalancedResourcesProgram:
+    program = fixture.spec.date_at(period=1).guard_program
+    assert isinstance(program, BalancedResourcesProgram)
+    return program
+
+
 def _smooth_query(carry: BalancedProjectedEGMCarry) -> tuple[int, ScalarFloat]:
     links = np.flatnonzero(np.asarray(carry.link_valid))
     assert links.size > 0
@@ -412,9 +423,10 @@ def test_changed_traced_parameters_rebuild_original_guard(
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
-def test_original_owner_mismatch_refuses_unchanged_pwa_levels(
+def test_original_owner_mismatch_is_flagged_ex_post_not_at_read(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The read interpolates stored channels; the guard program checks ex post."""
     fixture = _native_balanced(monkeypatch)
     row = fixture.produce(fixture.pool).projected
     assert isinstance(row, BalancedProjectedEGMCarry)
@@ -432,13 +444,17 @@ def test_original_owner_mismatch_refuses_unchanged_pwa_levels(
         ),
     )
     np.testing.assert_array_equal(corrupted.value, row.value)
-    assert bool(_coverage_missing(_reader(fixture=fixture, carry=corrupted)(query)))
+    assert not bool(_coverage_missing(_reader(fixture=fixture, carry=corrupted)(query)))
+    program = _guard_program(fixture)
+    assert bool(program.validate(carry=row, query=query))
+    assert not bool(program.validate(carry=corrupted, query=query))
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
-def test_hole_and_invalid_source_fail_before_actual_parent_zero_discount(
+def test_hole_fails_at_read_and_invalid_source_fails_ex_post(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A stored hole refuses the read; source corruption is an ex-post finding."""
     fixture = _native_balanced(monkeypatch)
     row = fixture.produce(fixture.pool).projected
     assert isinstance(row, BalancedProjectedEGMCarry)
@@ -461,11 +477,12 @@ def test_hole_and_invalid_source_fail_before_actual_parent_zero_discount(
             ),
         ),
     )
-    assert bool(_coverage_missing(_reader(fixture=fixture, carry=poisoned)(query)))
+    program = _guard_program(fixture)
+    assert not bool(program.validate(carry=poisoned, query=query))
     bad_law = replace(
         row, guard=replace(row.guard, law_valid=jnp.zeros((), dtype=jnp.bool_))
     )
-    assert bool(_coverage_missing(_reader(fixture=fixture, carry=bad_law)(row.grid[0])))
+    assert not bool(program.validate(carry=bad_law, query=row.grid[0]))
 
 
 def _log_row(*, gap: float) -> tuple[CurrentResourcesEvaluator, ScalarFloat]:
@@ -490,8 +507,8 @@ def _log_row(*, gap: float) -> tuple[CurrentResourcesEvaluator, ScalarFloat]:
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
 # A binary gap keeps the tangent representable: a rounded decimal moves it off center.
 @pytest.mark.parametrize("gap", [0.0, 2.0**-10])
-def test_hidden_corner_island_and_tangent_remain_explicit_holes(gap: float) -> None:
-    """Critical exclusion detects contacts missed by ordinary refinement probes."""
+def test_hidden_corner_island_is_linked_and_flagged_ex_post(gap: float) -> None:
+    """Ordinary links miss an island between probes; the ex-post check finds it."""
     evaluator, center = _log_row(gap=gap)
     probes = jnp.asarray([1.0, 1.25, 1.5, 1.75, 2.0], dtype=center.dtype)
     selected = jax.vmap(
@@ -522,8 +539,26 @@ def test_hidden_corner_island_and_tangent_remain_explicit_holes(gap: float) -> N
         & (center <= catalog.points[1:])
         & (jnp.arange(127) < catalog.length - 1)
     )
-    assert bool(jnp.any(touches & ~catalog.smooth))
-    assert not bool(jnp.any(touches & catalog.smooth))
+    # Both ends of the covering cell select the same interior owner.
+    assert bool(jnp.any(touches & catalog.smooth))
+    selected, legal, piece = read_resources_candidate_details(
+        row=evaluator.row,
+        resources=center,
+        utility_of_action=evaluator.utility_of_action,
+        owner_capacity=1,
+    )
+    matched = _matches_catalog(
+        catalog=catalog,
+        row=evaluator.row,
+        resources=center,
+        owner=selected.native_owner,
+        side=selected.side_id,
+        corner=selected.corner,
+        feasible=selected.feasible,
+        legal=legal,
+        native_piece=piece,
+    )
+    assert bool(matched) is (gap == 0)
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
