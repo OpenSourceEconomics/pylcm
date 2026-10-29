@@ -50,7 +50,7 @@ from lcm.exceptions import (
     ScaledLotteryDifferentiationError,
 )
 from lcm.regime import FunctionEntry, RegimeReplacement
-from lcm.solvers import DCEGM, NBEGM, NNBEGM, FiniteOuterGrid
+from lcm.solvers import DCEGM, NBEGM, NNBEGM, FiniteOuterGrid, RFCEnvelope
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.typing import (
     BoolND,
@@ -367,6 +367,7 @@ def test_dcegm_rejects_certainty_equivalent():
     """DC-EGM's Euler inversion assumes expected utility; the guard names GridSearch."""
     dcegm = DCEGM(
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
+        envelope=RFCEnvelope(),
     )
     with pytest.raises(RegimeInitializationError, match="GridSearch"):
         _make_model(
@@ -2249,6 +2250,7 @@ def test_dcegm_rejects_a_linear_subclass_with_changed_complete_semantics(
     """A continuation solver must not silently substitute plain expectation."""
     dcegm = DCEGM(
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
+        envelope=RFCEnvelope(),
     )
     with pytest.raises(RegimeInitializationError, match="GridSearch"):
         _make_model(

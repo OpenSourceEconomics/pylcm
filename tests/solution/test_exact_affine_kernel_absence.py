@@ -15,6 +15,7 @@ import pytest
 
 from _lcm.egm.upper_envelope._exact_affine import ffi
 from lcm.exceptions import ExactAffineKernelUnavailableError, ModelInitializationError
+from lcm.solvers import ExactEnvelope
 from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED
 from tests.test_models import nbegm_medicaid_toy, negm_kinked_toy
 from tests.test_models.dcegm_paper_twin import build_dcegm_model
@@ -25,7 +26,7 @@ def test_a_selected_exact_backend_fails_during_model_construction(monkeypatch):
     monkeypatch.setattr(ffi, "kernel_available_for_current_backend", lambda: False)
 
     with pytest.raises(ExactAffineKernelUnavailableError, match="ExactEnvelope"):
-        build_dcegm_model()
+        build_dcegm_model(envelope=ExactEnvelope())
 
 
 def test_certified_nbegm_requires_the_exact_kernel_at_construction(monkeypatch):
@@ -45,7 +46,7 @@ def test_construction_on_a_kernelless_platform_reports_the_absence_as_such(
     monkeypatch.setattr(ffi, "kernel_available_for_current_backend", lambda: False)
 
     with pytest.raises(ExactAffineKernelUnavailableError) as excinfo:
-        build_dcegm_model()
+        build_dcegm_model(envelope=ExactEnvelope())
 
     assert excinfo.errisinstance(ExactAffineKernelUnavailableError)
     assert not excinfo.errisinstance(ModelInitializationError)

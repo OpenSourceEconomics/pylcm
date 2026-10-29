@@ -63,9 +63,12 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def _full_kernel() -> tuple[_DCEGMPeriodKernel, OracleContext]:
-    """The worker regime's DC-EGM kernel of the full model and its solve inputs."""
+    """The worker regime's exact-envelope DC-EGM kernel and its solve inputs.
+
+    The graph assertions pin the exact envelope's `envelope_cell` axis.
+    """
     kernel, context = ride_along_kernel(
-        model=get_full_model(solver="dcegm", n_periods=_N_PERIODS),
+        model=get_full_model(solver="dcegm", n_periods=_N_PERIODS, envelope="exact"),
         params=get_full_params(n_periods=_N_PERIODS),
         regime_name=_REGIME,
         period=_PERIOD,

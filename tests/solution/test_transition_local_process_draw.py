@@ -43,7 +43,7 @@ from lcm import (
     RouwenhorstAR1Process,
     categorical,
 )
-from lcm.solvers import DCEGM
+from lcm.solvers import DCEGM, RFCEnvelope
 from lcm.transition import StochasticTransition
 from lcm.typing import ContinuousState, DiscreteState, FloatND, ScalarInt
 from tests.conftest import X64_ENABLED
@@ -139,7 +139,9 @@ def _income_nodes_and_probs(process: Process) -> tuple[np.ndarray, np.ndarray]:
 def _model(*, solver: Solver, process: Process) -> Model:
     savings_grid = LinSpacedGrid(start=0.0, stop=42.0, n_points=80)
     alive_solver = (
-        DCEGM(savings_grid=savings_grid, n_constrained_points=16)
+        DCEGM(
+            savings_grid=savings_grid, n_constrained_points=16, envelope=RFCEnvelope()
+        )
         if solver == "dcegm"
         else resolve_solver(variant=solver, savings_grid=savings_grid)
     )
