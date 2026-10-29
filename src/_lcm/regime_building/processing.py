@@ -4102,6 +4102,63 @@ def _fail_if_gated_edges_invalid(
                 edge=edge,
                 target=representative_user_regimes[target_name],
             )
+        _fail_if_arrivals_invalid(
+            regime_name=regime_name,
+            laws=laws,
+            user_regimes=user_regimes,
+            representative_user_regimes=representative_user_regimes,
+            regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+        )
+
+
+def _fail_if_arrivals_invalid(
+    *,
+    regime_name: RegimeName,
+    laws: RegimeLaws,
+    user_regimes: Mapping[RegimeName, UserRegime],
+    representative_user_regimes: Mapping[RegimeName, FinalizedUserRegime],
+    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+) -> None:
+    """Validate one source's arrival fallbacks and reads like a gated edge's.
+
+    An arrival's fallbacks and reads are the same two consumers as a gated
+    edge's leg fallbacks and gate references, and owe the same coverage.
+
+    Raises:
+        ModelInitializationError: On the first violated declaration.
+    """
+    for target_name, decision in laws[regime_name].arrivals.items():
+        prefix = f"Regime {regime_name!r}, arrival into {target_name!r}: "
+        for route_name, route in decision.routes.items():
+            phases: tuple[
+                tuple[Literal["solve", "simulate"], ProjectedRegimeValue], ...
+            ] = (
+                (
+                    ("solve", route.solve_fallback),
+                    ("simulate", route.simulate_fallback),
+                )
+                if route.fallback_is_phased
+                else (("simulate", route.solve_fallback),)
+            )
+            for phase, fallback in phases:
+                label = f"({phase}) " if route.fallback_is_phased else ""
+                _fail_if_ref_invalid(
+                    prefix=f"{prefix}route '{route_name}': fallback {label}",
+                    ref=fallback,
+                    user_regimes=user_regimes,
+                    representative_user_regimes=representative_user_regimes,
+                    regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+                    projection_phase=phase,
+                )
+        for read_name, read in decision.reads.items():
+            _fail_if_ref_invalid(
+                prefix=f"{prefix}reads['{read_name}'] ",
+                ref=read,
+                user_regimes=user_regimes,
+                representative_user_regimes=representative_user_regimes,
+                regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+                projection_phase="solve",
+            )
 
 
 def _fail_if_off_grid_landing_is_possible(

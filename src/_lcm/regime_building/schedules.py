@@ -697,7 +697,7 @@ def resolve_demand(  # noqa: C901 - shared fixed point for occupancy, values and
                         requester=f"a {kind} {phase} policy query",
                         name=name,
                         period=period,
-                        side=phase,
+                        side="solve " if phase == "solution" else "simulate ",
                         ages=ages,
                     )
                 )
@@ -831,18 +831,13 @@ def resolve_demand(  # noqa: C901 - shared fixed point for occupancy, values and
             .get(name, {})
             .get(period, ())
         )
-        pair = f"({ages.exact_values[period]}, '{name}')"
-        kinds = {
-            **dict.fromkeys(reads, f"a fallback of {pair}"),
-            **dict.fromkeys(
-                _gate_references(
-                    gated_edges=schedules.gated_edges_by_regime.get(name, {}),
-                    targets=targets,
-                ),
-                f"a gate reference of {pair}",
-            ),
-            **dict.fromkeys(targets, here),
-        }
+        kinds = _read_kinds(
+            reads=reads,
+            gated=schedules.gated_edges_by_regime.get(name, {}),
+            targets=targets,
+            pair=f"({ages.exact_values[period]}, '{name}')",
+            here=here,
+        )
         work.extend((False, period + 1, target, kinds[target]) for target in reads)
 
     return dataclasses.replace(
@@ -913,6 +908,33 @@ def _restricted(
             for name, by_period in by_regime.items()
         }
     )
+
+
+def _read_kinds(
+    *,
+    reads: tuple[RegimeName, ...],
+    gated: Mapping[RegimeName, GatedEdge],
+    targets: tuple[RegimeName, ...],
+    pair: str,
+    here: str,
+) -> dict[RegimeName, str]:
+    """Name what each stored value read of one pair is, for a missing-law error.
+
+    A read that is neither a gated fallback, a gate reference nor a target is an
+    arrival's IntegratedFull read.
+    """
+    return {
+        **dict.fromkeys(reads, f"an arrival read of {pair}"),
+        **dict.fromkeys(
+            _fallbacks(gated_edges=gated, targets=targets, side="solve"),
+            f"a fallback of {pair}",
+        ),
+        **dict.fromkeys(
+            _gate_references(gated_edges=gated, targets=targets),
+            f"a gate reference of {pair}",
+        ),
+        **dict.fromkeys(targets, here),
+    }
 
 
 def _unavailable_message(

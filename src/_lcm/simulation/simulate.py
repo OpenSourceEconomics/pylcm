@@ -1070,6 +1070,7 @@ def _simulate_subject_chunk(  # noqa: PLR0915
                 taste_key=taste_key,
                 taste_addresses=taste_addresses,
                 current_iid_overrides=current_iid_overrides,
+                process_code_reads=process_code_reads,
             )
         )
         # Current exits are simultaneous. The scheduled transition accumulators
