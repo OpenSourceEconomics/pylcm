@@ -454,8 +454,8 @@ class NNBEGMCaseUPoint:
             supported_corner=corners.supported,
             finite_corner=corners.finite,
             invalid_corner=corners.invalid,
-            # This exact requested bank node retains its original economic M;
-            # the value interpolant's directional germ remains separate.
+            # This exact requested bank node retains its original economic M,
+            # separate from the value interpolant's own derivative.
             paired_marginal_read=False,
         )
         live = jnp.isfinite(bank.grid)
@@ -613,8 +613,8 @@ class NNBEGMCaseUPoint:
         use_corner = side.use_corner[0]
         ordinary = side.ordinary
         corner = side.corner
-        # The right-extension germ orders ties; its dead mask must not erase
-        # the selected original bank's economic marginal at a closed node.
+        # The right extension's dead mask must not erase the selected
+        # original bank's economic marginal at a closed node.
         marginal = jnp.where(
             jnp.isnan(value),
             jnp.nan,

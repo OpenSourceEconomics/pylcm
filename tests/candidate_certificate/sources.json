@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "8f9185e01c08574b93658384ef6dad293e779d41cbb49d7dbe95d0aa56a79890",
+  "source_inventory_sha256": "3f376d1e4a4bfa785f594a8c5e52d1e0db43b526951dfd40f7e4bc151a5273fd",
   "sources": [
     {
       "path": "src/_lcm/constraints/bounds.py",
@@ -58,7 +58,7 @@
     },
     {
       "path": "src/_lcm/egm/continuation.py",
-      "sha256": "93aa5c6dd6dcbb4588773a4b3b53a592616b792171cabe550104ab41592f4e99"
+      "sha256": "92cfa8d92681ba603ac878f1aba255512430667c149a866bc2ba3c778cbfa69b"
     },
     {
       "path": "src/_lcm/egm/dcegm_query.py",
@@ -82,7 +82,7 @@
     },
     {
       "path": "src/_lcm/egm/finite_negm_query.py",
-      "sha256": "deb8afbaba19be4c6263b1183958e6b0cacd7857032d7d14b8139ef4f362fe84"
+      "sha256": "7ce90cf75e272da35fbe28608c88b2cbd1a93201e5c1b785b480b75f1e311289"
     },
     {
       "path": "src/_lcm/egm/framed_arithmetic.py",
@@ -126,7 +126,7 @@
     },
     {
       "path": "src/_lcm/egm/outer_envelope.py",
-      "sha256": "25dfb63f6271b084bf67cbd941629db79e0229cd51c250477d166eee7cc8db2f"
+      "sha256": "0c17015f9a980411b047387354f23886cc7aead0e461eec1b87ceca07911b7fe"
     },
     {
       "path": "src/_lcm/egm/outer_interpolation.py",

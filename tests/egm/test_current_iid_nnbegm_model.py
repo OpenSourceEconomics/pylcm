@@ -406,8 +406,6 @@ def _assert_original_nnbegm_banks(  # noqa: PLR0915 - original bank/tuple and cu
     assert bool(profile.right.supported)
     assert bool(profile.right.dead)
     assert bool(jnp.isposinf(upper_bank.grid[-1]))
-    assert bool(profile.right.germ[0])
-    np.testing.assert_array_equal(profile.right.germ[1:], np.zeros(3))
     np.testing.assert_array_equal(
         [upper.native_owner, upper.side_id],
         [original_row.owner[upper_slot], original_row.query_data.side_id[upper_slot]],
