@@ -85,6 +85,7 @@ from _lcm.execution.execution_plan import (
 )
 from _lcm.execution.footprint import (
     ArtifactFootprint,
+    ResidentBreakdown,
     ResidentInventory,
     ScheduledUnit,
     concrete_device_bytes,
@@ -4170,6 +4171,50 @@ def _narrow_native_closure(
     return MappingProxyType({**regimes, name: updated})
 
 
+_RESIDENT_SPLIT_OWNERS = 8
+
+
+def _log_resident_split(
+    *, logger: logging.Logger, triple: _CoreTriple, breakdown: ResidentBreakdown
+) -> None:
+    """Warn with what a refused cell's busiest device holds, summing to its total.
+
+    Live alias groups are aggregated by the kind and owning regime of the stored
+    value they name; groups naming no stored value count as `other`. The largest
+    owners are listed and the rest summed into one remainder.
+    """
+    owners: dict[str, int] = {}
+    for group, size in breakdown.live.items():
+        address = next(
+            (key for key in group if isinstance(key, ValueArtifactAddress)), None
+        )
+        owner = "other" if address is None else f"{address.kind}:{address.regime}"
+        owners[owner] = owners.get(owner, 0) + size
+    ranked = sorted(owners.items(), key=lambda item: item[1], reverse=True)
+    shown = ranked[:_RESIDENT_SPLIT_OWNERS]
+    rest = ranked[_RESIDENT_SPLIT_OWNERS:]
+    live = [f"live[{owner}]={size}" for owner, size in shown]
+    if rest:
+        live.append(
+            f"live[remainder of {len(rest)} owners]={sum(size for _, size in rest)}"
+        )
+    regime_name, period, core_key = triple
+    logger.warning(
+        "Resident split for regime %r period %d core %r on device %d: total=%d = "
+        "%s + internal=%d + peer_outputs=%d + fixed_owners=%d + transfer_scratch=%d",
+        regime_name,
+        period,
+        core_key,
+        breakdown.device_id,
+        breakdown.total,
+        " + ".join(live) if live else "live=0",
+        breakdown.internal_bytes,
+        breakdown.peer_bytes,
+        breakdown.fixed_bytes,
+        breakdown.transfer_scratch_bytes,
+    )
+
+
 def _width_selection_failure(
     *,
     triple: _CoreTriple,
@@ -4978,6 +5023,12 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
             except ExecutionPlanningError as error:
                 if budget_bytes is None:
                     raise
+                if isinstance(error, WorkspaceBudgetError):
+                    _log_resident_split(
+                        logger=logger,
+                        triple=triple,
+                        breakdown=resident_inventory[triple].resident_breakdown(),
+                    )
                 raise _width_selection_failure(
                     triple=triple,
                     resident_bytes=resident_bytes_by_triple[triple],
