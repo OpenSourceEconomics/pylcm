@@ -120,6 +120,8 @@ def _solve_with(
         n_liquid=8,
         n_savings=10,
         n_consumption=12,
+        # The census budgets were measured on the certified reader's footprint.
+        nbegm_overrides={"envelope_arithmetic": "certified"},
         execution_config=execution_config,
     )
     # Runtime checks off: their untiled off-grid count producers are admitted

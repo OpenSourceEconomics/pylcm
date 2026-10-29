@@ -4,7 +4,7 @@ import inspect
 from fractions import Fraction
 from functools import partial
 from pathlib import Path
-from typing import NotRequired, cast
+from typing import Literal, NotRequired, cast
 
 import jax
 import jax.numpy as jnp
@@ -1353,6 +1353,7 @@ def _egm_time_model(
     resources: UserFunction | lcm.PeriodSpecializedFunction = _wealth_resources,
     ride_along: bool = False,
     case_functions: dict[str, FunctionEntry] | None = None,
+    probe_schedule: Literal["first_solve", "every_solve", "never"] = "never",
 ) -> tuple[
     lcm.Model,
     dict[str, float | lcm.TimeVarying | dict[str, dict[str, float | lcm.TimeVarying]]],
@@ -1363,7 +1364,7 @@ def _egm_time_model(
     solver = (
         EGM(savings_grid=savings_grid)
         if solver_name == "egm"
-        else NBEGM(savings_grid=savings_grid)
+        else NBEGM(savings_grid=savings_grid, probe_schedule=probe_schedule)
     )
     wealth_grid = lcm.LinSpacedGrid(start=5.0, stop=20.0, n_points=4)
     extra_states = (
@@ -1527,7 +1528,10 @@ def _time_curved_resources(*, liquid: ContinuousState, curvature: FloatND) -> Fl
 def test_nbegm_temporal_budget_probe_checks_source_period_zero() -> None:
     """A nonlinear budget at period zero cannot hide behind later affine entries."""
     model, params, _ = _egm_time_model(
-        solver_name="nbegm", temporal_role="constant", resources=_time_curved_resources
+        solver_name="nbegm",
+        temporal_role="constant",
+        resources=_time_curved_resources,
+        probe_schedule="every_solve",
     )
     params["curvature"] = lcm.TimeVarying(values=jnp.array([0.1, 0.0]), periods=(0, 1))
     with pytest.raises(lcm.exceptions.RegimeInitializationError, match="affine"):
@@ -1539,7 +1543,10 @@ def test_nbegm_temporal_budget_probe_checks_source_period_zero() -> None:
 def test_nbegm_temporal_budget_probe_ignores_inactive_periods() -> None:
     """An unused nonlinear row does not invalidate the source period's budget."""
     model, params, _ = _egm_time_model(
-        solver_name="nbegm", temporal_role="constant", resources=_time_curved_resources
+        solver_name="nbegm",
+        temporal_role="constant",
+        resources=_time_curved_resources,
+        probe_schedule="every_solve",
     )
     params["curvature"] = lcm.TimeVarying(values=jnp.array([0.0, 0.1]), periods=(0, 1))
     check_solver_params(
@@ -1611,6 +1618,7 @@ def test_nbegm_temporal_probe_respects_specialized_period_groups(
         temporal_role="constant",
         source_periods=(0, 2),
         ride_along=ride_along,
+        probe_schedule="every_solve",
         resources=lcm.PeriodSpecializedFunction(
             build=_period_local_ride_resources
             if ride_along

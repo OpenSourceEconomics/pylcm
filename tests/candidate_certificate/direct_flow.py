@@ -759,7 +759,7 @@ _SOURCE_SEALS = {
     "src/_lcm/egm/outer_interpolation.py": "fd68eb3baa62055bf4a92a572fbec5e055a08809be044a647a31ff7982fc92a8",
     "src/_lcm/egm/outer_refinement.py": "7335546f8df6f1981544cca692d29823f4dc7b7af52d737b7df5c62ac62b8368",
     "src/_lcm/optimization/golden_section.py": "9e76572097e0281e76e59c0b7b430929cc9147754354780a6321f500bcd53f85",
-    "src/_lcm/egm/upper_envelope/query.py": "0d8ee48720b8ce8ac58eb11a3fb7e6ef5ff60eab80fed9e8c84676fa97115038",
+    "src/_lcm/egm/upper_envelope/query.py": "6754d07b78d075c9b407635deea53bcac4f4f1702fb8bc366b3d9e937c6f8dec",
     "src/_lcm/utils/counts.py": "a9087a3c42d32ff0ca82cf24fda2b59ed57cb77efef94714a37a6ca7cf7a3f82",
     "src/_lcm/egm/nbegm_step.py": "c3e05112a95b3def7d47a31b5f0dc7cdcd652ef30b3cee7bddd1083e60f06539",
     "src/_lcm/egm/nbegm_segments.py": "658a74ca40e3da1c025c3d03e0f8bf695feb45953113521a4700f2c1d1890505",
@@ -3042,7 +3042,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
     "src/_lcm/egm/upper_envelope/query.py": (
         "207319529445c9b72b98094f3650ecec3df703acfcdb6c15d4ed857cbc00251b",
         {
-            "_along_link": "3c82a606fb97c258a6c2661f36e0066e696e4ab74d2e259a762739688a861232",
+            "_along_link": "ad185ea9f330db56b8ee89e1ded66042f67a6dcbd103389842b33d931340d071",
             "_batched_link_terms": "5a1f8a56d71c43c7e7f914a52cf7d141b7e56067b6dc5291462581392890a978",
             "_block_query_terms": "92202932da6a42bb48529eaccd431a6ad340c125a7d3a60749cd4c7a17d77b5a",
             "_derived_subnormal_possible": "24d06e5cda74ae4dd4e3cb8caaaaacaaa5e4c1e6714afde4f5814af123a999a3",
