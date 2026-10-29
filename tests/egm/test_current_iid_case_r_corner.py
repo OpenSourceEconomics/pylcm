@@ -55,7 +55,9 @@ def _corner_declarations() -> _ModelConstructorInputs:
     Every interior saving queried below, `R / 2`, is a grid node, so the
     grid-conditional reference is the literal closed form. At the child domain's
     lower end the low node's resources are 1.25, strictly above the floor.
-    Parent saving starts at 0.75, landing at 2.0.
+    Parent saving starts at 0.75, landing at 2.0. The parent replays on its
+    declared consumption grid, so it consumes exactly 2.0 and lands the child on
+    the corner.
     """
     base = _declarations()
     savings = IrregSpacedGrid(
@@ -91,6 +93,7 @@ def _corner_declarations() -> _ModelConstructorInputs:
             solver=DCEGM(
                 savings_grid=IrregSpacedGrid(points=np.array([0.75, 1.0, 4.0])),
                 envelope=ExactEnvelope(),
+                replay="grid",
             ),
         ),
         "child": replace(
