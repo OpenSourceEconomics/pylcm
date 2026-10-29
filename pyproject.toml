@@ -491,6 +491,7 @@ ini_options.addopts = [
 ini_options.markers = [
   "ci(tier, paths): bounded CI policy tier and relevant source paths",
   "coverage(backends, precisions): backend and precision coverage obligations",
+  "egm_acceptance: compact S10 EGM acceptance set (issue 618 Batch 4)",
   "gpu: Tests that require a GPU (skipped on CPU-only machines)",
   "illustrative: Tests are designed for illustrative purposes",
   """\

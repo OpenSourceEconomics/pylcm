@@ -15,7 +15,8 @@
   "macos_capacity_note": "fp64-macos general uses four shards at four workers with macOS-only observed weights from run 39586308373 (see leg_weights_note). Root frozen_head/file_weights, other leg weights/counts and the job payload/total guardrails are unchanged.",
   "linux_only_note": "linux_only_files lists general-universe files that the macOS and Windows general legs do not run: files with no reasonably expected OS-dependent behaviour (numerics, certificates, kernels), as opposed to paths, file I/O and persistence, process spawning, locale or float formatting and platform dependencies. Files whose classification was uncertain, and numeric files that also hold a save/load/pickle/capture test, stay on every OS. The Linux legs still run every general file. With the reduced universe the macOS and Windows general legs take one shard each; the layout is 4/1/1/4 (fp64 Linux, fp64 macOS, fp64 Windows, fp32 Linux).",
   "os_persistence_note": "os_persistence_tests are the tests/solution tests whose body writes, reads, pickles or replays on-disk state (save/load_solution, pickle/cloudpickle, h5py, npz, log_path, tmp_path): 214 test functions in 42 files. The whole battery is `slow`, so the macOS and Windows general legs never ran them; tests-os-persistence runs them there by marker at two workers. Their predicted payload uses the Linux fp64 JUnit seconds of the selected cases on run 39196899855 attempt 1 (head c359260bc, 2159 s, largest file 593 s); no macOS or Windows measurement exists, so it is a Linux-measured estimate.",
-  "certificate_heavy_note": "tests/test_final_nested_helper_certificate.py and tests/test_grid_search_candidate_certificate.py left the general universe: each file alone came within 2 minutes of the 30-minute payload guardrail as an indivisible loadfile atom (fp64 1696 s and 1576 s, fp32 1309 s and 1793 s on run 39196899855). tests-certificate-heavy runs both at fp64 and fp32 under --dist load, so their tests spread over two workers; its predicted payload is half their summed leg seconds."
+  "certificate_heavy_note": "tests/test_final_nested_helper_certificate.py and tests/test_grid_search_candidate_certificate.py left the general universe: each file alone came within 2 minutes of the 30-minute payload guardrail as an indivisible loadfile atom (fp64 1696 s and 1576 s, fp32 1309 s and 1793 s on run 39196899855). tests-certificate-heavy runs both at fp64 and fp32 under --dist load, so their tests spread over two workers; its predicted payload is half their summed leg seconds.",
+  "egm_acceptance_note": "egm_acceptance_tests is the compact S10 Batch-4 EGM acceptance set of #618 (docs/development/iid-exits-redesign.md, Batch 4): one test function per distinct implementation mechanism, not a feature product. `tests/conftest.py` marks them `egm_acceptance`; no lane selects by that marker, every entry already runs in its ordinary leg. Select the set with `-m egm_acceptance` on its files."
  },
  "guardrails": {
   "job_payload_ceiling_minutes": 30,
@@ -1825,6 +1826,27 @@
   "tests/solution/test_workspace_budget_solve.py::test_fixed_action_product_width_over_budget_names_the_request",
   "tests/solution/test_workspace_budget_solve.py::test_no_budget_uses_the_bootstrap_width",
   "tests/solution/test_workspace_budget_solve.py::test_replay_of_a_budgeted_capture_reproduces_its_value"
+ ],
+ "egm_acceptance_tests": [
+  "tests/egm/test_case_u_hoisted_contract.py::test_hoisted_reference_preserves_rebuilding_value_marginal_and_validity",
+  "tests/egm/test_current_iid_call_owned_generation.py::test_public_case_r_replay_matches_the_literal_policy_at_off_node_shocks",
+  "tests/egm/test_current_iid_call_owned_generation.py::test_public_model_current_iid_balanced_solve_replay_and_archive",
+  "tests/egm/test_current_iid_case_u_installed_law.py::test_installed_u_current_law_marginal_reaches_original_parent",
+  "tests/egm/test_current_iid_case_u_parent_forward_required.py::test_required_enclosing_parent_forward_consumes_nonexact_u_guard",
+  "tests/egm/test_current_iid_cold_model.py::test_budgeted_public_model_solves_real_r_and_keeps_evicted_generation",
+  "tests/egm/test_current_iid_dated_declarations.py::test_original_self_transition_keeps_distinct_incoming_dates",
+  "tests/egm/test_current_iid_nbegm_ez_model.py::test_original_nbegm_ez_model_runtime_parameter_directions",
+  "tests/egm/test_current_iid_nbegm_model.py::test_original_nbegm_r_null_probability_direction_keeps_counterfactual_value",
+  "tests/egm/test_current_iid_nbegm_ride_model.py::test_nbegm_ride_u_model_selects_each_branch_before_current_expectation",
+  "tests/egm/test_current_iid_nbegm_ride_model.py::test_public_nbegm_ride_u_default_archive_replays_original_physics",
+  "tests/egm/test_current_iid_negm_model.py::test_public_negm_u_default_archive_replays_original_physics",
+  "tests/egm/test_current_iid_negm_model.py::test_public_negm_u_selects_complete_outer_choice_before_expectation",
+  "tests/egm/test_current_iid_nnbegm_model.py::test_original_nnbegm_u_selects_inner_nb_before_outer_choice",
+  "tests/egm/test_current_iid_nnbegm_model.py::test_public_nnbegm_u_default_archive_replays_original_physics",
+  "tests/egm/test_current_iid_projected_row_reference.py::test_case_u_projected_row_meets_its_budget_with_few_records",
+  "tests/simulation/test_case_u_reconstruction.py::test_model_u_reconstructs_original_candidates_at_nodes_and_offgrid",
+  "tests/simulation/test_ordinary_current_iid_replay.py::test_default_current_iid_replay_traces_no_certification",
+  "tests/solution/test_builtin_policy_persistence.py::test_a_saved_egm_solution_simulates_identically_in_a_fresh_model"
  ],
  "per_test_ceiling_backlog": [
   {

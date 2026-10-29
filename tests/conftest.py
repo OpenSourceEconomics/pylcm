@@ -383,11 +383,15 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     """
     slow = pytest.mark.slow
     os_persistence = frozenset(ci_workloads.os_persistence_tests())
+    egm_acceptance = frozenset(ci_workloads.egm_acceptance_tests())
     for item in items:
         if "solution" in item.path.parts:
             item.add_marker(slow)
-        if _test_function_key(item=item, root=config.rootpath) in os_persistence:
+        key = _test_function_key(item=item, root=config.rootpath)
+        if key in os_persistence:
             item.add_marker(pytest.mark.os_persistence)
+        if key in egm_acceptance:
+            item.add_marker(pytest.mark.egm_acceptance)
 
     _validate_exact_kernel_markers(items=items)
     _apply_backend_skips(items=items)

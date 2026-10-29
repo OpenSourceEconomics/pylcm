@@ -7,6 +7,7 @@ matches what `cpu.yml` actually runs and what `tests/` actually contains.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -366,11 +367,16 @@ def test_every_general_shard_universe_file_exists_and_is_collectable():
         assert (_REPO_ROOT / name).is_file(), name
 
 
-def test_every_os_persistence_test_names_a_test_function_in_its_file():
+@pytest.mark.parametrize(
+    "listed", [ci_workloads.os_persistence_tests, ci_workloads.egm_acceptance_tests]
+)
+def test_every_listed_test_names_a_test_function_in_its_file(
+    *, listed: Callable[[], tuple[str, ...]]
+):
     """Each entry is `<file>::<test function>` and that function exists."""
     import ast  # noqa: PLC0415
 
-    entries = ci_workloads.os_persistence_tests()
+    entries = listed()
     assert entries
     missing = []
     for entry in entries:
