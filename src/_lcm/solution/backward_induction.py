@@ -740,7 +740,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     )
     # Every copy a period's transfer cache holds belongs to this solve alone.
     transfer_generation = uuid.uuid4().hex
-    store_on_host = resolved_execution.value_storage == "host"
+    store_on_host = resolved_execution.value_storage_kind != "device"
     in_flight_host_copies: tuple[jax.Array, ...] = ()
     with solve_phase(name="backward_induction", logger=logger, call_id=call_id):
         # Planning and compilation leave a large, long-lived object graph behind
@@ -4222,7 +4222,7 @@ def _stored_values_note(*, execution: ResolvedExecution) -> str:
     Empty under host storage, which already keeps them off the device. Leading
     space included, so a caller appends it to a sentence.
     """
-    if execution.value_storage == "host":
+    if execution.value_storage_kind != "device":
         return ""
     return (
         " The resident bytes include the values of every period solved so far; "
@@ -4685,13 +4685,13 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                 regimes=regimes,
                 ledger=(
                     input_liveness
-                    if execution.value_storage == "device"
+                    if execution.value_storage_kind == "device"
                     else _build_planned_input_liveness(
                         regimes=regimes,
                         program_metadata=representative_metadata,
                         retain_all_artifacts=retain_all_artifacts,
                         persistable_artifact_refs=persistable_artifact_refs,
-                        value_storage=execution.value_storage,
+                        value_storage="host",
                     )
                 ),
                 templates=SolveInputMappings(

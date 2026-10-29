@@ -4,6 +4,7 @@ import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from types import MappingProxyType
 from typing import Literal
 
@@ -334,7 +335,7 @@ class ExecutionConfig:
     published values and simulated panels are those of the period-major route.
     """
 
-    value_storage: Literal["device", "host"] = "device"
+    value_storage: Literal["device", "host"] | Path = "device"
     """Where a solve keeps each period's values once no period still to be solved
     reads them.
 
@@ -347,9 +348,18 @@ class ExecutionConfig:
       Reading a value returns a device copy, so results, reads and simulated
       panels are those of device storage, bit for bit. The copy runs on every
       backend, CPU included.
+    - A directory buffers the values on disk, for when host memory is short too.
+      Values travel as under `"host"` and are then written, from a background
+      thread, to a file of their own per solve, `solution-<id>.h5` in that
+      directory; a written value leaves host memory, and the solve waits while two
+      periods still wait to be written. Reads load a value from the file. The file
+      is in the `SolutionResult.save` format and is deleted with its result unless
+      `SolutionResult.save` keeps a copy. A failed solve leaves
+      `solution-<id>.incomplete` behind, recording how far it got.
 
-    `"host"` does not combine with `InvariantBlockSchedule.BLOCK_MAJOR`, which
-    moves its values to the host on a route of its own.
+    `"host"` and a directory do not combine with
+    `InvariantBlockSchedule.BLOCK_MAJOR`, which moves its values to the host on a
+    route of its own.
     """
 
     action_partitions: Mapping[RegimeName, int] = field(
@@ -441,6 +451,11 @@ class ExecutionConfig:
     instead of from the ranked frontier.
     """
 
+    @property
+    def value_storage_kind(self) -> Literal["device", "host", "disk"]:
+        """Where solved values are kept, naming a directory only as `"disk"`."""
+        return "disk" if isinstance(self.value_storage, Path) else self.value_storage
+
     def __post_init__(self) -> None:
         """Reject ambiguous or unusable values at construction."""
         _fail_if_budget_invalid(device_memory_bytes=self.device_memory_bytes)
@@ -497,12 +512,17 @@ class ExecutionConfig:
 
 
 def _fail_if_value_storage_invalid(
-    *, value_storage: Literal["device", "host"], schedule: InvariantBlockSchedule
+    *, value_storage: Literal["device", "host"] | Path, schedule: InvariantBlockSchedule
 ) -> None:
-    """Refuse host storage on the block-major route."""
-    if value_storage == "host" and schedule is InvariantBlockSchedule.BLOCK_MAJOR:
+    """Require an existing directory; refuse off-device storage when block-major."""
+    if isinstance(value_storage, Path) and not value_storage.is_dir():
         raise ValueError(
-            "ExecutionConfig.value_storage='host' does not combine with "
+            "ExecutionConfig.value_storage must name an existing directory, got "
+            f"{value_storage!r}."
+        )
+    if value_storage != "device" and schedule is InvariantBlockSchedule.BLOCK_MAJOR:
+        raise ValueError(
+            f"ExecutionConfig.value_storage={value_storage!r} does not combine with "
             "invariant_block_schedule=BLOCK_MAJOR, which moves its values to the "
             "host on a route of its own."
         )

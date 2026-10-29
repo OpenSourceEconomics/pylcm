@@ -16,6 +16,7 @@ import math
 import os
 import tempfile
 import threading
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from enum import Enum, auto
 from pathlib import Path
@@ -883,9 +884,16 @@ def _with_standard_template(
 
 
 def _prepare_solution_for_save(  # noqa: C901, PLR0912, PLR0915
-    *, solution: _SolutionResultBoundary
+    *,
+    solution: _SolutionResultBoundary,
+    written_values: Mapping[tuple[int, RegimeName], jax.ShapeDtypeStruct] | None = None,
 ) -> _SaveSnapshot:
-    """Validate and copy one complete result before the archive writer runs."""
+    """Validate and copy one complete result before the archive writer runs.
+
+    `written_values` are the shape and dtype of each value already in the
+    archive, by coordinate; they are checked against their schemas and not
+    prepared again.
+    """
     envelope = _snapshot_solution_for_save(solution=solution)
     metadata = envelope.metadata
     values = envelope.values
@@ -926,7 +934,19 @@ def _prepare_solution_for_save(  # noqa: C901, PLR0912, PLR0915
             "Solution value entries do not match the declared value schemas."
         )
     prepared_values: list[_PreparedPayload] = []
-    for period, regime in sorted(value_coordinates):
+    if written_values is not None:
+        if set(written_values) != value_coordinates:
+            raise IncompatibleSolutionError(
+                "The values written to the archive do not match the declared value "
+                "schemas."
+            )
+        for coordinate, written in written_values.items():
+            schema = metadata.value_schemas[coordinate]
+            if written.shape != schema.shape or written.dtype != np.dtype(schema.dtype):
+                raise IncompatibleSolutionError(
+                    f"Value at {coordinate!r} does not match its declared schema."
+                )
+    for period, regime in sorted(value_coordinates if written_values is None else ()):
         schema = metadata.value_schemas[(period, regime)]
         identity: dict[str, JSONValue] = {
             "kind": "value",
@@ -1534,66 +1554,85 @@ def _retention_selects_artifact(
 
 def _write_archive(*, snapshot: _SaveSnapshot, path: Path) -> None:
     """Write one preflighted complete archive to a path that is not yet public."""
+    with h5py.File(path, "w") as archive:
+        _write_archive_contents(
+            archive=archive,
+            payloads=archive.create_group(_PAYLOAD_GROUP),
+            snapshot=snapshot,
+            value_entries=[],
+            counter=0,
+        )
+
+
+def _write_archive_contents(
+    *,
+    archive: h5py.File,
+    payloads: h5py.Group,
+    snapshot: _SaveSnapshot,
+    value_entries: list[JSONValue],
+    counter: int,
+) -> None:
+    """Write a snapshot's payloads after those already written, then the manifest.
+
+    `value_entries` are the manifest entries of values already in `payloads`, and
+    `counter` the next free payload address.
+    """
     manifest: dict[str, JSONValue] = {
         "format_version": SOLUTION_FORMAT_VERSION,
         "pylcm_version": PYLCM_VERSION,
         "solver_api_version": SOLVER_API_VERSION,
         "solution_schema_version": SOLUTION_SCHEMA_VERSION,
         "metadata": dict(snapshot.metadata),
-        "values": [],
+        "values": value_entries,
         "artifacts": [],
         "omissions": [],
     }
-    with h5py.File(path, "w") as archive:
-        payloads = archive.create_group(_PAYLOAD_GROUP)
-        counter = 0
-        value_entries = cast("list[JSONValue]", manifest["values"])
-        for prepared in snapshot.values:
-            address = f"{counter:08d}"
-            counter += 1
-            value_entries.append(
-                _write_payload_entry(
-                    payloads=payloads,
-                    address=address,
-                    prepared=prepared,
-                )
+    for prepared in snapshot.values:
+        address = f"{counter:08d}"
+        counter += 1
+        value_entries.append(
+            _write_payload_entry(
+                payloads=payloads,
+                address=address,
+                prepared=prepared,
             )
-
-        artifact_entries = cast("list[JSONValue]", manifest["artifacts"])
-        for prepared in snapshot.artifacts:
-            address = f"{counter:08d}"
-            counter += 1
-            artifact_entries.append(
-                _write_payload_entry(
-                    payloads=payloads,
-                    address=address,
-                    prepared=prepared,
-                )
-            )
-
-        manifest["omissions"] = [
-            {
-                "period": ref.period,
-                "regime": ref.regime,
-                "type_id": ref.key.type_id,
-                "schema_version": ref.key.schema_version,
-                "reason": reason.value,
-            }
-            for ref, reason in snapshot.omissions
-        ]
-        manifest_bytes = json.dumps(
-            manifest,
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=True,
-            allow_nan=False,
-        ).encode("utf-8")
-        manifest_dataset = archive.create_dataset(
-            _MANIFEST_DATASET,
-            data=np.frombuffer(manifest_bytes, dtype=np.uint8),
         )
-        manifest_dataset.attrs["sha256"] = hashlib.sha256(manifest_bytes).hexdigest()
-        archive.flush()
+
+    artifact_entries = cast("list[JSONValue]", manifest["artifacts"])
+    for prepared in snapshot.artifacts:
+        address = f"{counter:08d}"
+        counter += 1
+        artifact_entries.append(
+            _write_payload_entry(
+                payloads=payloads,
+                address=address,
+                prepared=prepared,
+            )
+        )
+
+    manifest["omissions"] = [
+        {
+            "period": ref.period,
+            "regime": ref.regime,
+            "type_id": ref.key.type_id,
+            "schema_version": ref.key.schema_version,
+            "reason": reason.value,
+        }
+        for ref, reason in snapshot.omissions
+    ]
+    manifest_bytes = json.dumps(
+        manifest,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8")
+    manifest_dataset = archive.create_dataset(
+        _MANIFEST_DATASET,
+        data=np.frombuffer(manifest_bytes, dtype=np.uint8),
+    )
+    manifest_dataset.attrs["sha256"] = hashlib.sha256(manifest_bytes).hexdigest()
+    archive.flush()
 
 
 def _write_payload_entry(
@@ -2687,3 +2726,180 @@ def _check_archive_versions(*, manifest: dict[str, JSONValue]) -> None:
 
 
 __all__ = ["load_solution_archive", "save_solution_archive"]
+
+
+# A streamed archive is written under this suffix until it is complete or abandoned.
+_PARTIAL_SUFFIX: Final = ".h5.partial"
+_COMPLETE_SUFFIX: Final = ".h5"
+_INCOMPLETE_SUFFIX: Final = ".incomplete"
+# The dataset holding an abandoned archive's record, in place of the manifest.
+_INCOMPLETE_DATASET: Final = "incomplete"
+
+
+class _ArchiveFile:
+    """Where one streamed archive's file is, and its handle while it is written."""
+
+    def __init__(self, *, path: Path, handle: h5py.File) -> None:
+        self.path = path
+        self.handle: h5py.File | None = handle
+        self.lock = threading.Lock()
+
+    def read(self, *, dataset: str) -> np.ndarray:
+        """Read one dataset, through the writing handle while the file is open."""
+        with self.lock:
+            if self.handle is not None:
+                return np.asarray(self.handle[dataset][()])
+            with h5py.File(self.path, "r") as archive:
+                return np.asarray(archive[dataset][()])
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class DiskValueEntry(_LazyEntry):
+    """One value a solve wrote to its archive, read back onto its sharding."""
+
+    file: _ArchiveFile
+    """The archive file the value is in."""
+
+    dataset: str
+    """Path of the value's dataset in the archive."""
+
+    identity: MappingProxyType[str, JSONValue]
+    """The identity the value's checksum covers."""
+
+    sha256: str
+    """Checksum of the value as written."""
+
+    sharding: jax.sharding.Sharding
+    """Sharding the solve published the value on."""
+
+    @property
+    def load_state(self) -> LoadState:
+        """Nothing of a value on disk is in memory until it is read."""
+        return LoadState.UNLOADED
+
+    def host_value(self) -> np.ndarray:
+        """Read the value from the archive and verify it against its checksum.
+
+        Raises:
+            SolutionIntegrityError: The bytes read differ from those written.
+
+        """
+        array = self.file.read(dataset=self.dataset)
+        if _array_checksum(identity=dict(self.identity), array=array) != self.sha256:
+            raise SolutionIntegrityError(
+                f"Value {self.dataset!r} in {self.file.path} differs from what the "
+                "solve wrote."
+            )
+        return array
+
+    def materialize(self, *, template: ArtifactPayload | None = None) -> jax.Array:
+        """Read the value onto the devices it was solved on."""
+        del template
+        return jax.device_put(
+            self.host_value(), self.sharding.with_memory_kind("device")
+        )
+
+    def fresh_value(self) -> jax.Array:
+        """Read the value into device buffers owned by this reader alone."""
+        return self.materialize()
+
+
+class StreamedSolutionArchive:
+    """One solve's archive, written value by value while the solve runs.
+
+    The file is `<name>.h5.partial` in `directory` while it is written. Completing
+    it adds the result's artifacts and the manifest, in the format
+    `SolutionResult.save` writes, and renames it to `<name>.h5`. Abandoning it
+    writes a record in place of the manifest and renames it to
+    `<name>.incomplete`, which `load_solution` refuses.
+    """
+
+    def __init__(self, *, directory: Path, name: str) -> None:
+        self._directory = directory
+        self._name = name
+        path = directory / f"{name}{_PARTIAL_SUFFIX}"
+        handle = h5py.File(path, "x")
+        self._file = _ArchiveFile(path=path, handle=handle)
+        self._handle = handle
+        self._payloads = handle.create_group(_PAYLOAD_GROUP)
+        self._value_entries: list[JSONValue] = []
+        self._written: dict[tuple[int, RegimeName], jax.ShapeDtypeStruct] = {}
+        self._counter = 0
+
+    def write_value(
+        self,
+        *,
+        period: int,
+        regime: RegimeName,
+        value: np.ndarray,
+        sharding: jax.sharding.Sharding,
+    ) -> DiskValueEntry:
+        """Write one value and return the entry that reads it back."""
+        prepared = _prepare_payload(
+            payload=value,
+            identity={"kind": "value", "period": period, "regime": regime},
+        )
+        with self._file.lock:
+            address = f"{self._counter:08d}"
+            self._counter += 1
+            entry = _write_payload_entry(
+                payloads=self._payloads, address=address, prepared=prepared
+            )
+            self._value_entries.append(entry)
+            self._written[(period, regime)] = jax.ShapeDtypeStruct(
+                value.shape, value.dtype
+            )
+        leaf = cast("list[dict[str, JSONValue]]", entry["leaves"])[0]
+        return DiskValueEntry(
+            file=self._file,
+            dataset=cast("str", leaf["dataset"]),
+            identity=MappingProxyType(cast("dict[str, JSONValue]", leaf["identity"])),
+            sha256=cast("str", leaf["sha256"]),
+            sharding=sharding,
+        )
+
+    def complete(self, *, solution: _SolutionResultBoundary) -> Path:
+        """Add the result's artifacts and manifest, and publish the archive.
+
+        Returns:
+            The path of the complete archive.
+
+        """
+        snapshot = _prepare_solution_for_save(
+            solution=solution, written_values=MappingProxyType(dict(self._written))
+        )
+        with self._file.lock:
+            _write_archive_contents(
+                archive=self._handle,
+                payloads=self._payloads,
+                snapshot=snapshot,
+                value_entries=self._value_entries,
+                counter=self._counter,
+            )
+            return self._close(suffix=_COMPLETE_SUFFIX)
+
+    def abandon(self, *, record: Mapping[str, JSONValue]) -> Path:
+        """Record how far the solve got in place of a manifest, and close the file.
+
+        Returns:
+            The path of the incomplete archive.
+
+        """
+        encoded = json.dumps(dict(record), sort_keys=True, allow_nan=False).encode()
+        with self._file.lock:
+            self._handle.create_dataset(
+                _INCOMPLETE_DATASET, data=np.frombuffer(encoded, dtype=np.uint8)
+            )
+            return self._close(suffix=_INCOMPLETE_SUFFIX)
+
+    def _close(self, *, suffix: str) -> Path:
+        """Flush and close the file, then rename it under `suffix`."""
+        self._handle.flush()
+        self._handle.close()
+        with self._file.path.open("r+b") as file_handle:
+            os.fsync(file_handle.fileno())
+        path = self._directory / f"{self._name}{suffix}"
+        self._file.path.replace(path)
+        self._file.path = path
+        self._file.handle = None
+        return path

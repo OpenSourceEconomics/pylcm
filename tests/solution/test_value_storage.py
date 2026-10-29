@@ -13,6 +13,7 @@ an accelerator.
 """
 
 from collections.abc import Callable, Mapping
+from pathlib import Path
 from types import MappingProxyType
 from typing import Literal, Unpack, cast
 
@@ -82,6 +83,39 @@ def test_host_value_storage_refuses_the_block_major_schedule() -> None:
     with pytest.raises(ValueError, match="value_storage"):
         ExecutionConfig(
             value_storage="host",
+            invariant_block_schedule=InvariantBlockSchedule.BLOCK_MAJOR,
+        )
+
+
+def test_value_storage_takes_an_existing_directory(tmp_path: Path) -> None:
+    """A directory keeps each solve's values on disk."""
+    config = ExecutionConfig(value_storage=tmp_path)
+
+    assert config.value_storage == tmp_path
+    assert config.value_storage_kind == "disk"
+
+
+def test_value_storage_kind_names_device_and_host_storage() -> None:
+    assert ExecutionConfig().value_storage_kind == "device"
+    assert _host().value_storage_kind == "host"
+
+
+def test_value_storage_refuses_a_missing_directory(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match=r"value_storage.*directory"):
+        ExecutionConfig(value_storage=tmp_path / "missing")
+
+
+def test_value_storage_refuses_a_file(tmp_path: Path) -> None:
+    file = tmp_path / "values.h5"
+    file.touch()
+    with pytest.raises(ValueError, match=r"value_storage.*directory"):
+        ExecutionConfig(value_storage=file)
+
+
+def test_disk_value_storage_refuses_the_block_major_schedule(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="value_storage"):
+        ExecutionConfig(
+            value_storage=tmp_path,
             invariant_block_schedule=InvariantBlockSchedule.BLOCK_MAJOR,
         )
 
