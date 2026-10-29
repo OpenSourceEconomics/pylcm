@@ -1,9 +1,9 @@
-"""Exact rational reference for the MSS segment-envelope contract.
+"""Exact rational reference for the segment-envelope contract.
 
 An independent oracle for the exact upper envelope of a set of affine value
 segments and for the certified sign of an affine difference. It uses
-`fractions.Fraction` throughout, shares no control flow with the production MSS
-backend, and is the acceptance reference the optimized `refine_envelope` is
+`fractions.Fraction` throughout, shares no control flow with the production
+envelope backends, and is the acceptance reference the exact segment envelope is
 tested against (open-cell ownership, node-aligned crossings, translation
 invariance, collinear tie intervals).
 

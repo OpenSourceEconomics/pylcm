@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "a79bb697f93d9043e7eb7b5d8484706c2af15a14969b68e3609ab638edce30b2",
+  "source_inventory_sha256": "6cff36eb3fa5c9e2958e02677dba05b652f9b23c17b66169b21fb2d75078e263",
   "sources": [
     {
       "path": "src/_lcm/constraints/bounds.py",
@@ -142,7 +142,7 @@
     },
     {
       "path": "src/_lcm/egm/published_policy.py",
-      "sha256": "469ca23b7e32b14f816f0c4301265334ae1b857d335dc182161ec166afb711b6"
+      "sha256": "c536ee71203f8eae66e77e9f4120e7f4dff9553ce528506d1a06b521f38456b2"
     },
     {
       "path": "src/_lcm/egm/query_data.py",
@@ -158,15 +158,15 @@
     },
     {
       "path": "src/_lcm/egm/step.py",
-      "sha256": "11b765e2ee41f0c892a6e4df1bd98ace7bb5ec7db7ec96798b09c8bd9e4ebb81"
+      "sha256": "220e68c78ab20c3f16d6f3f1b72b5429a5ac1694b3e3c1a374ba979cf87c126e"
     },
     {
       "path": "src/_lcm/egm/step_core.py",
-      "sha256": "dfa0394747e1aa516dc1749205044d277f472d92089bc77125c5e4aa304e3182"
+      "sha256": "4e231dd2ba0ae20f62ce0ffc24fd36f487f9538da8c51eb0285422a22fbfa57a"
     },
     {
       "path": "src/_lcm/egm/upper_envelope/__init__.py",
-      "sha256": "b7dc64aef5007e1de5349a2cb57706d518403753c1d468ad46a585259e33b9ad"
+      "sha256": "2615b9a364b7ca1c927ca68b752cff17b318268adddbb2c234c145ed59c196d8"
     },
     {
       "path": "src/_lcm/egm/upper_envelope/query.py",
@@ -342,7 +342,7 @@
     },
     {
       "path": "src/_lcm/regime_building/processing.py",
-      "sha256": "0676ffcbda4f43e68782661304448adf0b5742be0ca8987567f4a67488362024"
+      "sha256": "7a112da35ab476c061020d0a27a1d18055c8a63e834d632a6051cc79829c55e8"
     },
     {
       "path": "src/_lcm/regime_building/zero_safe.py",
@@ -570,7 +570,7 @@
     },
     {
       "path": "src/_lcm/solution/dcegm.py",
-      "sha256": "ed4a2292081cce565170cebdfc4459988612c8e3467459f2761f9e858b34c929"
+      "sha256": "a812b6313bb80f1f2a9c839fa25777fd176a2ceeb053265499284e61433db975"
     },
     {
       "path": "src/_lcm/solution/diagnostics.py",
@@ -614,7 +614,7 @@
     },
     {
       "path": "src/_lcm/solution/nbegm.py",
-      "sha256": "47d48966cb630bc15e977416fc9073070b4397cfe54730039a9b7e969f8b6f15"
+      "sha256": "eea43dd08c6b9242e75b323e6eb3e7f2826298f49d2c2fdfd74f7852b78fa4fa"
     },
     {
       "path": "src/_lcm/solution/negm.py",

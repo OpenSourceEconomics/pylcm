@@ -46,10 +46,10 @@ def _closed_form_model() -> Model:
         states={"wealth": LogSpacedGrid(start=0.25, stop=400.0, n_points=400)},
         functions={"utility": _bequest_utility},
     )
-    # No shipped backend currently qualifies for the off-grid read. MSS remains
-    # the intended stress case because its segment sweep is closest to the
-    # required crossing-complete representation.
-    solver = dataclasses.replace(DCEGM_SOLVER, envelope=envelope_config("mss"))
+    # No shipped backend currently qualifies for the off-grid read. The exact
+    # envelope is the stress case: it already emits every ownership change and
+    # lacks only a read-support verdict.
+    solver = dataclasses.replace(DCEGM_SOLVER, envelope=envelope_config("exact"))
     return Model(
         regimes={
             "retirement": dcegm_retirement.replace(
@@ -131,7 +131,7 @@ def test_discrete_action_regime_consumption_can_leave_the_action_grid():
     """
     n_periods = 3
     model = dcegm_variants.get_full_model(
-        solver="dcegm", n_periods=n_periods, envelope=envelope_config("mss")
+        solver="dcegm", n_periods=n_periods, envelope=envelope_config("exact")
     )
     params = dcegm_variants.get_full_params(n_periods=n_periods)
 

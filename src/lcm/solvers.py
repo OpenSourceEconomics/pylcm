@@ -134,7 +134,6 @@ from _lcm.solution.dcegm import (
     ExactEnvelope,
     FUESEnvelope,
     LTMEnvelope,
-    MSSEnvelope,
     RFCEnvelope,
 )
 from _lcm.solution.egm import EGM
@@ -270,7 +269,6 @@ __all__ = [
     "LeafAuthority",
     "LeafDescriptor",
     "LoadState",
-    "MSSEnvelope",
     "OmissionReason",
     "OneMarginSolver",
     "OuterBranchAggregator",

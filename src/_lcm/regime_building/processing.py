@@ -7447,8 +7447,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     # topology (every interior and exact-node switch is represented with
     # one-sided records) and row support (a compacted gap is reported rather
     # than bridged by interpolation). No shipped backend currently proves both:
-    # MSS can omit an owner that wins only inside one candidate interval, FUES
-    # can merge branches when its slope heuristic misses a switch, RFC and LTM
+    # FUES can merge branches when its slope heuristic misses a switch, RFC and LTM
     # leave switches between retained nodes, and the exact backend publishes no
     # support verdict for a split segment chain.
     #
@@ -7825,13 +7824,6 @@ def _envelope_publishes_crossings(solver: DCEGM) -> bool:
     keeps its grid-argmax. A branch-faithful policy read interpolates a row whose
     envelope switches sit at duplicated abscissae carrying both branch records:
 
-    - `MSSEnvelope` ⇒ no: the refinement inserts crossings only between adjacent query
-      winners, so a branch that owns ground strictly inside one candidate
-      interval leaves no record in the row. Opening the read on such a row does
-      not merely blur a switch — it publishes a different action, and one the
-      canonical-Q safeguard cannot recover, because that safeguard rescores the
-      emitted candidate against the finite action grid and an omitted owner is
-      in neither set.
     - `ExactEnvelope` ⇒ no: ownership is resolved per node cell and certified,
       a boundary whose sides differ in value or policy emits both one-sided
       records, and a chain with more owned sub-cells than the row has slots

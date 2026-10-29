@@ -23,7 +23,7 @@ from lcm import (
     categorical,
     post_decision_lower_bound,
 )
-from lcm.solvers import DCEGM, MSSEnvelope
+from lcm.solvers import DCEGM, RFCEnvelope
 from lcm.transition import fixed_transition
 from lcm.typing import ContinuousState, FloatND, ScalarInt, UserParams
 from tests.conftest import DECIMAL_PRECISION, EXACT_KERNEL_SKIP_REASON
@@ -127,7 +127,7 @@ def _model() -> tuple[Model, UserParams]:
                 solver=DCEGM(
                     savings_grid=IrregSpacedGrid(points=np.array([0.25, 0.5, 0.75])),
                     n_constrained_points=4,
-                    envelope=MSSEnvelope(),
+                    envelope=RFCEnvelope(),
                 ),
             ),
             "child": ConsumptionSavingsRegime(

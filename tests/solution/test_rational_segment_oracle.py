@@ -1,8 +1,8 @@
-"""Exact-oracle contract for the MSS segment envelope.
+"""Exact-oracle contract for the segment envelope.
 
-These tests pin the geometric and numerical facts the optimized `refine_envelope`
+These tests pin the geometric and numerical facts an exact segment envelope
 must satisfy, expressed against the independent rational oracle in
-`_mss_segment_oracle`: open-cell ownership (a middle branch that owns an open
+`_rational_segment_oracle`: open-cell ownership (a middle branch that owns an open
 interval while only tying at its boundaries), branch/run count vs discrete-action
 count, node-aligned crossing classification by certified margin sign, one-sided
 ownership at higher-order ties, translation invariance, and the collinear-overlap
@@ -13,7 +13,7 @@ import itertools
 import random
 from fractions import Fraction
 
-from tests.solution._mss_segment_oracle import (
+from tests.solution._rational_segment_oracle import (
     Branch,
     FloatSegment,
     all_breakpoints,

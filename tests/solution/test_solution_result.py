@@ -71,7 +71,7 @@ from lcm.solver_api import (
     ValueArraySchema,
     ValueStore,
 )
-from lcm.solvers import MSSEnvelope
+from lcm.solvers import RFCEnvelope
 from lcm.typing import (
     ActionName,
     FloatND,
@@ -1375,9 +1375,9 @@ def test_declared_egm_policy_read_requires_a_valid_egm_payload_before_forward(
     monkeypatch.setattr(
         regime_processing,
         "_CROSSING_COMPLETE_ENVELOPES",
-        (MSSEnvelope,),
+        (RFCEnvelope,),
     )
-    model = get_full_model(solver="dcegm", n_periods=2, envelope="mss")
+    model = get_full_model(solver="dcegm", n_periods=2, envelope="rfc")
     get_full_model.cache_clear()
     params = get_full_params(n_periods=2)
     initial_conditions = {

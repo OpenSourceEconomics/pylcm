@@ -3,7 +3,7 @@
 `NBEGM` solves a 1-D consumption-savings problem whose budget may carry
 declared breakpoints (kinks and cliffs): the budget is partitioned into
 affine-in-liquid intervals, each case piece is solved by EGM, and the pieces
-are merged by the MSS upper envelope. `build_period_kernels` returns one
+are merged by the query-side upper envelope. `build_period_kernels` returns one
 `PeriodKernel` per period — a non-jitted adapter that wraps the solver's
 shared jitted core (deduped by function identity, so periods sharing a core
 reuse one compiled program) and assembles a `KernelOutput` (value array,

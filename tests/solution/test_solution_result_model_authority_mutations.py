@@ -24,7 +24,7 @@ from lcm.solver_api import (
     ArtifactStore,
     AxisRole,
 )
-from lcm.solvers import MSSEnvelope
+from lcm.solvers import RFCEnvelope
 from tests.simulation.test_nnbegm_split_workflow_parity import (
     _INITIAL as _ADAPTIVE_INITIAL,
 )
@@ -189,13 +189,13 @@ def ordinary_egm_fixture():
         patch.setattr(
             regime_processing,
             "_CROSSING_COMPLETE_ENVELOPES",
-            (MSSEnvelope,),
+            (RFCEnvelope,),
         )
         # The replay gate is construction-time state, so this must be a fresh model.
         model = get_full_model(
             solver="dcegm",
             n_periods=2,
-            envelope="mss",
+            envelope="rfc",
         )
     get_full_model.cache_clear()
     params = get_full_params(n_periods=2)

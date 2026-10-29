@@ -135,7 +135,7 @@ def get_full_model(
     *,
     solver: Literal["brute_force", "dcegm"],
     n_periods: int,
-    envelope: Literal["exact", "fues", "rfc", "ltm", "mss"] | None = None,
+    envelope: Literal["exact", "fues", "rfc", "ltm"] | None = None,
 ) -> Model:
     """Build the three-regime worker/retirement/dead model for the requested solver.
 

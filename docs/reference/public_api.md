@@ -233,7 +233,6 @@ surfaces remain outside that top-level namespace:
 | [`lcm.solvers.FUESEnvelope`](envelopes.md#api-approximate-envelope-backends)               | FUES configuration              |
 | [`lcm.solvers.RFCEnvelope`](envelopes.md#api-approximate-envelope-backends)                | RFC configuration               |
 | [`lcm.solvers.LTMEnvelope`](envelopes.md#api-approximate-envelope-backends)                | LTM configuration               |
-| [`lcm.solvers.MSSEnvelope`](envelopes.md#api-approximate-envelope-backends)                | MSS configuration               |
 | [`lcm.solvers.OuterSearch`](outer_search.md#api-outer-search)                              | Outer-search marker             |
 | [`lcm.solvers.FiniteOuterGrid`](outer_search.md#api-finite-outer-grid)                     | Finite search                   |
 | [`lcm.solvers.AdaptiveOuterMesh`](outer_search.md#api-adaptive-outer-mesh)                 | Adaptive continuous search      |

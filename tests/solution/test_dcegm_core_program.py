@@ -46,7 +46,7 @@ from lcm.solver_api import (
     OmissionReason,
     ResultRetention,
 )
-from lcm.solvers import ENVELOPE_CELL_AXIS, SAVINGS_POINT_AXIS, MSSEnvelope
+from lcm.solvers import ENVELOPE_CELL_AXIS, SAVINGS_POINT_AXIS, RFCEnvelope
 from tests.conftest import assert_agrees_to_ulp
 from tests.solution._nbegm_direct_oracle import OracleContext, ride_along_kernel
 from tests.solution.test_egm_passive import _get_model as _passive_model
@@ -153,9 +153,9 @@ def test_model_authority_rejects_a_policy_type_conflicting_with_the_route(
     monkeypatch.setattr(
         regime_processing,
         "_CROSSING_COMPLETE_ENVELOPES",
-        (MSSEnvelope,),
+        (RFCEnvelope,),
     )
-    model = get_full_model(solver="dcegm", n_periods=_N_PERIODS, envelope="mss")
+    model = get_full_model(solver="dcegm", n_periods=_N_PERIODS, envelope="rfc")
     get_full_model.cache_clear()
     assert model._regimes[_REGIME].simulation.egm_policy_read is not None
     kernel = model._regimes[_REGIME].solution.period_kernels[_PERIOD]
