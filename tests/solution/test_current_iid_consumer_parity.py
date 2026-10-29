@@ -26,6 +26,7 @@ from lcm import (
     Regime,
     UniformIIDProcess,
     categorical,
+    fixed_transition,
 )
 from lcm.shocks import (
     EqualSpacedUniform,
@@ -458,3 +459,144 @@ def test_declared_uniform_adjustment_cost_reproduces_node_state_model() -> None:
             decimal=DECIMAL_PRECISION,
             err_msg=column,
         )
+
+
+@categorical(ordered=True)
+class _Health:
+    bad: ScalarInt
+    good: ScalarInt
+
+
+def _shocked_log_consumption(
+    *, consumption: ContinuousAction, taste: FloatND
+) -> FloatND:
+    return (1.0 + 0.2 * taste) * jnp.log(consumption)
+
+
+def _shocked_inverse_marginal_utility(
+    *, marginal_continuation: FloatND, taste: FloatND
+) -> FloatND:
+    return (1.0 + 0.2 * taste) / marginal_continuation
+
+
+def _health_resources(
+    *, wealth: ContinuousState, good_health: DiscreteState
+) -> FloatND:
+    return wealth + 1.5 + 0.5 * good_health
+
+
+def _health_bequest(*, wealth: ContinuousState, good_health: DiscreteState) -> FloatND:
+    return jnp.log(wealth) + 0.1 * good_health
+
+
+def _carried_health_model(*, declared: bool) -> Model:
+    """NBEGM source whose passive discrete state is carried into its terminal.
+
+    As aca's `pref_type`, the terminal regime keeps the discrete state, so the
+    child carry has a leading discrete axis that the current-IID source must index.
+    """
+    states: dict[StateName, LinSpacedGrid | DiscreteGrid | NormalIIDProcess] = {
+        "wealth": LinSpacedGrid(start=1.0, stop=5.0, n_points=5),
+        "good_health": DiscreteGrid(category_class=_Health),
+    }
+    if not declared:
+        states["taste"] = NormalIIDProcess(
+            n_points=_N_HCC_NODES, gauss_hermite=True, mu=0.0, sigma=1.0
+        )
+    alive = ConsumptionSavingsRegime(
+        states=states,
+        actions={"consumption": LinSpacedGrid(start=0.5, stop=6.0, n_points=12)},
+        functions={
+            "utility": _shocked_log_consumption,
+            "resources": _health_resources,
+            "savings": _savings,
+            "inverse_marginal_utility": _shocked_inverse_marginal_utility,
+        },
+        state_transitions={
+            "wealth": {"done": _next_wealth_from_savings},
+            "good_health": {"done": fixed_transition("good_health")},
+        },
+        liquid=LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources="resources",
+            post_decision_state="savings",
+        ),
+        solver=NBEGM(savings_grid=_SAVINGS_GRID),
+        shocks=("taste",) if declared else (),
+    )
+    done = Regime(
+        states={
+            "wealth": _SAVINGS_GRID,
+            "good_health": DiscreteGrid(category_class=_Health),
+        },
+        functions={"utility": _health_bequest},
+    )
+    return Model(
+        regimes={"alive": alive, "done": done},
+        n_periods=2,
+        initial_nodes=InitialNodes(by_period={0: "alive"}),
+        edges={"alive": {"done": Periods(values=(0,))}},
+        regime_id_class=_CostRegimeId,
+        fixed_params={"discount_factor": 1.0},
+        shocks=(
+            {
+                "taste": ShockGroup(
+                    shocks={"taste": Normal(mu=0.0, sigma=1.0)},
+                    nodes=Product(taste=GaussHermite(n=_N_HCC_NODES)),
+                )
+            }
+            if declared
+            else {}
+        ),
+    )
+
+
+def test_nbegm_carries_passive_discrete_state_into_terminal() -> None:
+    """A terminal carrying a discrete state reproduces the node-state NBEGM values."""
+    legacy = _carried_health_model(declared=False)
+    declared = _carried_health_model(declared=True)
+    legacy_solution = legacy.solve(params={}, log_level="off")
+    declared_solution = declared.solve(params={}, log_level="off")
+    weights = NormalIIDProcess(
+        n_points=_N_HCC_NODES, gauss_hermite=True, mu=0.0, sigma=1.0
+    ).get_transition_probs()[0]
+    assert_array_almost_equal(
+        declared_solution.values[0]["alive"],
+        _integrate_node_axis(
+            model=legacy,
+            values=legacy_solution.values[0]["alive"],
+            regime_name="alive",
+            shock="taste",
+            weights=weights,
+        ),
+        decimal=DECIMAL_PRECISION,
+    )
+
+    good_health = jnp.repeat(jnp.arange(2, dtype=jnp.int32), 5)
+    wealth = jnp.tile(jnp.arange(1.0, 6.0), 2)
+    panel = declared.simulate(
+        params={},
+        solution=declared_solution,
+        initial_conditions={
+            "wealth": wealth,
+            "good_health": good_health,
+            "period": jnp.zeros(wealth.shape, dtype=jnp.int32),
+            "regime_id": jnp.zeros(wealth.shape, dtype=jnp.int32),
+        },
+        seed=7,
+        log_level="off",
+        use_categorical_codes=True,
+    ).to_dataframe(use_categorical_codes=True)
+    panel.sort_values(["subject_id", "period"], inplace=True)
+    first = panel[panel["period"] == 0]
+    last = panel[panel["period"] == 1]
+    np.testing.assert_array_equal(last["good_health"].to_numpy(), good_health)
+    consumption = first["consumption"].to_numpy(dtype=float)
+    resources = np.asarray(wealth) + 1.5 + 0.5 * np.asarray(good_health)
+    assert np.all(consumption > 0)
+    assert_array_almost_equal(
+        last["wealth"].to_numpy(dtype=float),
+        resources - consumption,
+        decimal=DECIMAL_PRECISION,
+    )

@@ -380,6 +380,8 @@ def _require_ordinary_passive_child_rows(
     Ordinary child reads precompute passive resource-row bindings even when
     their resources ignore those axes. These are generation-owned grid buffers,
     independent of projected dates and runtime stochastic node operands.
+    Deterministic discrete child states are leading carry axes that the
+    ordinary read indexes before the passive row block.
     """
     if not isinstance(spec, EGMContinuationSpec):
         raise UnsupportedOperationError(
@@ -399,7 +401,6 @@ def _require_ordinary_passive_child_rows(
         or read.query_action_names
         or read.query_action_values
         or read.n_outer_candidates
-        or read.discrete_state_names
         or read.stochastic_state_names
         or read.stochastic_node_values
         or read.process_grid_names
@@ -420,7 +421,7 @@ def _require_ordinary_passive_child_rows(
             values.shape != (math.prod(shape),) or values.dtype != grid.dtype
             for grid, values in zip(read.passive_grids, read.row_values, strict=True)
         )
-        or child.value.shape[:-1] != shape
+        or child.value.shape[len(read.discrete_state_names) : -1] != shape
         or child.marginal_utility.shape != child.value.shape
         or child.endog_grid.shape not in (child.value.shape, child.value.shape[-1:])
     ):
