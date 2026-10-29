@@ -50,11 +50,11 @@ def read_nbegm_resources_bank(
             & jnp.isfinite(savings[0])
         )
     )
+    # A query beyond the solve's resource support reads the outermost original
+    # segments, as an ordinary node-state policy does off its grid.
     valid = (
         ~bank.construction_invalid
         & jnp.isfinite(resources)
-        & (resources >= bank.resources_support[0])
-        & (resources <= bank.resources_support[-1])
         & numeric
         & (
             ~feasible

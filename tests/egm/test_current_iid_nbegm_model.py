@@ -1113,10 +1113,18 @@ def test_original_nbegm_r_model_retains_one_bank_and_replays_offnode(  # noqa: P
             bank=bank, resources=jnp.asarray(0.375), arithmetic="certified"
         )
         assert bool(corner.corner)
-    invalid = read_nbegm_resources_bank(
+    # Beyond the solve's resource support, the outermost original segment answers.
+    beyond = read_nbegm_resources_bank(
         bank=bank, resources=jnp.asarray(6.0), arithmetic="certified"
     )
-    assert not bool(invalid.valid)
+    assert bool(beyond.valid & beyond.feasible)
+    np.testing.assert_array_almost_equal(
+        [beyond.value, resource_scale * beyond.marginal, beyond.policy, beyond.savings],
+        _r_oracle(
+            wealth=6.0 / resource_scale, shock=0.0, resource_scale=resource_scale
+        ),
+        decimal=DECIMAL_PRECISION,
+    )
 
     wealth = np.asarray([0.375, 1.0, 1.0, 2.0])
     physical = np.asarray([0.0, 0.0, 0.5, 1.0], dtype=canonical_float_dtype())
