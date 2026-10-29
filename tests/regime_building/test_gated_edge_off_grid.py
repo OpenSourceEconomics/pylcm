@@ -595,8 +595,8 @@ def _witness_model() -> Model:
                 law=ByAge(
                     cases={0: {"target": StochasticTransition(func=_certain_target)}}
                 ),
-                gates={
-                    "target": Gate(
+                arrivals={
+                    "target": ArrivalDecision(
                         predicate=_witness_gate,
                         routes={
                             "only": StakeholderRoute(
@@ -606,10 +606,17 @@ def _witness_model() -> Model:
                                 )
                             )
                         },
-                        references={
-                            "V_reference": ProjectedRegimeValue(
-                                regime="reference", projection={"x": _identity_x}
-                            )
+                        reads={
+                            "V_target": ArrivalRead(
+                                kind="IntegratedFull",
+                                regime="target",
+                                projection={"x": _identity_x},
+                            ),
+                            "V_reference": ArrivalRead(
+                                kind="IntegratedFull",
+                                regime="reference",
+                                projection={"x": _identity_x},
+                            ),
                         },
                     )
                 },
