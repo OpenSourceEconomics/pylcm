@@ -35,8 +35,11 @@ there. Re-enable JIT once the issue is resolved.
 `log_level` controls console output. `runtime_checks=True` independently enables
 numerical validation and raises on its first failure, including with `log_level="off"`.
 Use debug output to inspect timing and value statistics; keep runtime checks enabled
-while diagnosing a model. Construction, parameter schema and result-identity checks
-remain active even when numerical checks are explicitly disabled.
+while diagnosing a model. `"debug"` also counts and logs exterior next states on
+continuous grids whose `off_grid` rule is not `"raise"`; the other levels skip these
+count-only sweeps (see [Grids](grids.md#values-outside-a-state-grid)). Construction,
+parameter schema and result-identity checks remain active even when numerical checks are
+explicitly disabled.
 
 ```python
 solution = model.solve(params=params, log_level="off", runtime_checks=True)

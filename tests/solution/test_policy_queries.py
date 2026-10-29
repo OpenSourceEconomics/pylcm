@@ -5,6 +5,7 @@ and integrated collective publication are qualified by their own later stages.
 """
 
 import logging
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -20,7 +21,9 @@ import lcm
 from _lcm import policy_queries as queries
 from _lcm.arrival_queries import bind_arrival_query_graph
 from _lcm.execution.core_program import CoreBuildContext
+from _lcm.execution.footprint import ResidentBreakdown
 from _lcm.execution.output_layout import StateAxesLeading, resolve_output_layout
+from _lcm.execution.value_transfer import ValueArtifactAddress, ValueArtifactKind
 from _lcm.policy_queries import (
     PolicyAnswer,
     QueryKind,
@@ -1067,6 +1070,41 @@ def test_each_budget_narrowing_names_its_refused_cell(
         assert "cannot select a workspace width" in message
 
 
+def test_one_planning_pass_narrows_every_refused_cell(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two core refusals in one planning pass cost one narrowing and one re-plan.
+
+    Both refused cores belong to the root cell, whose single kernel serves them.
+    """
+    refusals = []
+    narrowed = []
+    passes = []
+    plan = backward.plan_workspace
+    compile_all = backward._compile_all_functions
+
+    def refuse_first_two_selections(**kwargs):
+        if len(refusals) < 2:
+            refusals.append(len(passes))
+            raise backward.WorkspaceBudgetError("refused")
+        return plan(**kwargs)
+
+    def count_passes(**kwargs):
+        passes.append(len(passes))
+        return compile_all(**kwargs)
+
+    def keep_kernel(*, regimes, error):
+        narrowed.append(error.triple[:2])
+        return regimes
+
+    monkeypatch.setattr(backward, "plan_workspace", refuse_first_two_selections)
+    monkeypatch.setattr(backward, "_compile_all_functions", count_passes)
+    monkeypatch.setattr(backward, "_narrow_native_closure", keep_kernel)
+    model = _native_model(enable_jit=True, budget=2**26)
+    model.solve(params={}, log_level="off", runtime_checks=False)
+    assert (narrowed, len(passes)) == ([("root", 0)], 2)
+
+
 @pytest.mark.parametrize("mutation", ["missing", "generation", "omitted", "duplicate"])
 def test_closed_schedule_refuses_incomplete_or_wrong_generation_bindings(
     mutation: str,
@@ -1781,3 +1819,83 @@ def test_budget_narrowing_retries_reuse_executables_already_compiled(
     model.solve(params={}, log_level="off", runtime_checks=False)
     assert narrowings
     assert len(compiled_keys) == len(set(compiled_keys))
+
+
+def test_budget_refusal_logs_the_resident_split_of_its_busiest_device(
+    *, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A budget refusal warns with resident components summing to its total."""
+    records = []
+    log_record = backward._log_core_plan_record
+
+    def record(**kwargs):
+        records.append(kwargs)
+        return log_record(**kwargs)
+
+    monkeypatch.setattr(backward, "_log_core_plan_record", record)
+    model = _native_model(enable_jit=True, target_roles=64, budget=2**26)
+    _fanout_kernel(model=model, recompute=True)
+    model.solve(params={}, log_level="debug", runtime_checks=False)
+    budget = max(
+        item["memory"].reservation_bytes + item["resident_bytes"] for item in records
+    )
+    model = _native_model(enable_jit=True, target_roles=64, budget=budget)
+    kernel = _fanout_kernel(model=model, recompute=False)
+    monkeypatch.setattr(type(kernel), "narrow_workspace", lambda _self: None)
+    with (
+        caplog.at_level(logging.WARNING, logger="lcm"),
+        pytest.raises(backward.ExecutionPlanningError, match="budget") as error,
+    ):
+        model.solve(params={}, log_level="progress", runtime_checks=False)
+    (resident,) = (
+        int(value)
+        for value in re.findall(r"keeps (\d+) bytes resident", str(error.value))
+    )
+    splits = [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno == logging.WARNING
+        and record.getMessage().startswith("Resident split for regime 'root'")
+    ]
+    total, *components = (int(value) for value in re.findall(r"=(\d+)", splits[-1]))
+    assert (total, sum(components)) == (resident, resident)
+
+
+def test_resident_split_aggregates_owners_and_bounds_the_listing(
+    *, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Live groups sum per kind and owning regime; the smallest share a remainder."""
+    values = {
+        frozenset(
+            {
+                ValueArtifactAddress(
+                    kind=ValueArtifactKind.REGIME_VALUE, period=period, regime=name
+                )
+            }
+        ): size
+        for name, size in zip("abcdefghi", range(10, 100, 10), strict=True)
+        for period in (1, 2)
+    }
+    breakdown = ResidentBreakdown(
+        device_id=0,
+        live=MappingProxyType({**values, frozenset({"scratch"}): 1}),
+        peer_bytes=2,
+        internal_bytes=3,
+        fixed_bytes=4,
+        transfer_scratch_bytes=5,
+    )
+    with caplog.at_level(logging.WARNING, logger="lcm"):
+        backward._log_resident_split(
+            logger=logging.getLogger("lcm"),
+            triple=("root", 0, "core"),
+            breakdown=breakdown,
+        )
+    assert caplog.records[-1].getMessage() == (
+        "Resident split for regime 'root' period 0 core 'core' on device 0: "
+        "total=915 = live[regime_value:i]=180 + live[regime_value:h]=160 + "
+        "live[regime_value:g]=140 + live[regime_value:f]=120 + "
+        "live[regime_value:e]=100 + live[regime_value:d]=80 + "
+        "live[regime_value:c]=60 + live[regime_value:b]=40 + "
+        "live[remainder of 2 owners]=21 + internal=3 + peer_outputs=2 + "
+        "fixed_owners=4 + transfer_scratch=5"
+    )

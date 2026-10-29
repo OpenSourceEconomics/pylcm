@@ -85,6 +85,7 @@ from _lcm.execution.execution_plan import (
 )
 from _lcm.execution.footprint import (
     ArtifactFootprint,
+    ResidentBreakdown,
     ResidentInventory,
     ScheduledUnit,
     concrete_device_bytes,
@@ -583,18 +584,26 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 collect_continuation_read_counts=diagnostics_enabled,
             )
             break
-        except _CellBudgetError as error:
-            narrowings += 1
-            regime_name, period, core_key = error.triple
-            logger.info(
-                "Workspace narrowing %d: %r at %r period %d refused; %s",
-                narrowings,
-                core_key,
-                regime_name,
-                period,
-                error,
-            )
-            regimes = _narrow_native_closure(regimes=regimes, error=error)
+        except _CellBudgetRefusalsError as refusals:
+            # One kernel serves every core of its cell, so a cell is narrowed once
+            # per planning pass however many of its cores were refused. Narrowing
+            # one cell can move another's resident position, so the loop re-plans
+            # until a pass is free of refusals.
+            first_by_cell: dict[tuple[RegimeName, int], _CellBudgetError] = {}
+            for error in refusals.errors:
+                first_by_cell.setdefault(error.triple[:2], error)
+            for error in first_by_cell.values():
+                narrowings += 1
+                regime_name, period, core_key = error.triple
+                logger.info(
+                    "Workspace narrowing %d: %r at %r period %d refused; %s",
+                    narrowings,
+                    core_key,
+                    regime_name,
+                    period,
+                    error,
+                )
+                regimes = _narrow_native_closure(regimes=regimes, error=error)
     compiled_functions = compiled_programs.executables
     replay_dispatches = {
         (regime_name, period)
@@ -4144,6 +4153,14 @@ class _CellBudgetError(WorkspaceBudgetError):
         self.triple = triple
 
 
+class _CellBudgetRefusalsError(WorkspaceBudgetError):
+    """Every budget-only refusal of one planning pass, in selection order."""
+
+    def __init__(self, errors: Sequence[_CellBudgetError]) -> None:
+        super().__init__(" ".join(str(error) for error in errors))
+        self.errors = tuple(errors)
+
+
 def _narrow_native_closure(
     *, regimes: MappingProxyType[RegimeName, Regime], error: _CellBudgetError
 ) -> MappingProxyType[RegimeName, Regime]:
@@ -4168,6 +4185,50 @@ def _narrow_native_closure(
         ),
     )
     return MappingProxyType({**regimes, name: updated})
+
+
+_RESIDENT_SPLIT_OWNERS = 8
+
+
+def _log_resident_split(
+    *, logger: logging.Logger, triple: _CoreTriple, breakdown: ResidentBreakdown
+) -> None:
+    """Warn with what a refused cell's busiest device holds, summing to its total.
+
+    Live alias groups are aggregated by the kind and owning regime of the stored
+    value they name; groups naming no stored value count as `other`. The largest
+    owners are listed and the rest summed into one remainder.
+    """
+    owners: dict[str, int] = {}
+    for group, size in breakdown.live.items():
+        address = next(
+            (key for key in group if isinstance(key, ValueArtifactAddress)), None
+        )
+        owner = "other" if address is None else f"{address.kind}:{address.regime}"
+        owners[owner] = owners.get(owner, 0) + size
+    ranked = sorted(owners.items(), key=lambda item: item[1], reverse=True)
+    shown = ranked[:_RESIDENT_SPLIT_OWNERS]
+    rest = ranked[_RESIDENT_SPLIT_OWNERS:]
+    live = [f"live[{owner}]={size}" for owner, size in shown]
+    if rest:
+        live.append(
+            f"live[remainder of {len(rest)} owners]={sum(size for _, size in rest)}"
+        )
+    regime_name, period, core_key = triple
+    logger.warning(
+        "Resident split for regime %r period %d core %r on device %d: total=%d = "
+        "%s + internal=%d + peer_outputs=%d + fixed_owners=%d + transfer_scratch=%d",
+        regime_name,
+        period,
+        core_key,
+        breakdown.device_id,
+        breakdown.total,
+        " + ".join(live) if live else "live=0",
+        breakdown.internal_bytes,
+        breakdown.peer_bytes,
+        breakdown.fixed_bytes,
+        breakdown.transfer_scratch_bytes,
+    )
 
 
 def _width_selection_failure(
@@ -4924,6 +4985,9 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         selected_fallbacks: dict[_CoreTriple, PlannedCore] = {}
         if gather_checks is None:
             gather_checks = {}
+        # Budget refusals are collected across every core so the caller narrows
+        # them all before one re-plan; any other planning error stays fatal.
+        budget_refusals: list[_CellBudgetError] = []
         for triple, candidates in candidates_by_triple.items():
             programs_by_width = {
                 candidate[1]: resolved_programs[candidate] for candidate in candidates
@@ -4978,7 +5042,13 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
             except ExecutionPlanningError as error:
                 if budget_bytes is None:
                     raise
-                raise _width_selection_failure(
+                if isinstance(error, WorkspaceBudgetError):
+                    _log_resident_split(
+                        logger=logger,
+                        triple=triple,
+                        breakdown=resident_inventory[triple].resident_breakdown(),
+                    )
+                failure = _width_selection_failure(
                     triple=triple,
                     resident_bytes=resident_bytes_by_triple[triple],
                     transfer_scratch_bytes=resident_inventory[
@@ -4990,7 +5060,12 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                     skipped_fallback_evaluations=skipped_fallback_evaluations.get(
                         triple, 0
                     ),
-                ) from error
+                )
+                if not isinstance(failure, _CellBudgetError):
+                    raise failure from error
+                failure.__cause__ = error
+                budget_refusals.append(failure)
+                continue
             if execution.halve_on_materialised_gather:
                 plan = _halve_while_gather_materialises(
                     triple=triple,
@@ -5061,6 +5136,9 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                     resident_bytes=resident_bytes_by_candidate.get(selected_candidate),
                     logger=logger,
                 )
+
+        if budget_refusals:
+            raise _CellBudgetRefusalsError(budget_refusals)
 
     capture_admission: dict[
         tuple[str, int], dict[str, MappingProxyType[str, int | None]]

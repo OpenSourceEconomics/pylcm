@@ -627,33 +627,42 @@ def test_explicit_raise_is_mandatory_at_every_runtime_and_output_setting(
         )
 
 
+@pytest.mark.parametrize("log_level", ["off", "warning", "progress"])
 @pytest.mark.parametrize("off_grid", ["extrapolate", "clip_lookup", "clip_state"])
-def test_silent_solve_does_not_materialize_unreportable_off_grid_counts(
-    *, off_grid: OffGrid, monkeypatch: pytest.MonkeyPatch
+def test_non_debug_solve_does_not_materialize_count_only_off_grid_diagnostics(
+    *,
+    off_grid: OffGrid,
+    log_level: Literal["off", "warning", "progress"],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Hidden count diagnostics must not allocate a full phase Cartesian grid."""
+    """Below `"debug"`, a non-raise grid is neither counted nor reported."""
 
     def reject_count_sweep(**_kwargs) -> None:
-        pytest.fail("Silent solve expanded an optional off-grid diagnostic grid")
+        pytest.fail("A non-debug solve expanded an optional off-grid diagnostic grid")
 
     monkeypatch.setattr(
         transition_checks, "_off_grid_target_counts", reject_count_sweep
     )
-    solution = _model(off_grid=off_grid).solve(
+    _model(off_grid=off_grid).solve(
         params={"discount_factor": 1.0, "reward": 2.0},
-        log_level="off",
+        log_level=log_level,
         runtime_checks=True,
     )
-    assert np.isfinite(solution.values[0]["alive"]).all()
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if "Off-grid next states:" in record.getMessage()
+    ] == []
 
 
 @pytest.mark.parametrize("off_grid", ["extrapolate", "clip_lookup", "clip_state"])
-def test_checked_solve_reports_the_raw_count_before_clipping(
+def test_debug_solve_reports_the_raw_count_before_clipping(
     *, off_grid: OffGrid, caplog: pytest.LogCaptureFixture
 ) -> None:
     """Both clipped modes report the same original exterior cell as extrapolation."""
     model = _model(off_grid=off_grid)
-    model.solve(params={"discount_factor": 1.0, "reward": 2.0}, log_level="warning")
+    model.solve(params={"discount_factor": 1.0, "reward": 2.0}, log_level="debug")
     rows = [
         record.getMessage()
         for record in caplog.records
@@ -1448,7 +1457,7 @@ def test_budgeted_public_solve_admits_every_off_grid_count(
         transition_checks, "_evaluate_admitted_transition_producer", _recording_admit
     )
     _wide_model(device_memory_bytes=2**28).solve(
-        params={"discount_factor": 1.0, "reward": 2.0}, log_level="warning"
+        params={"discount_factor": 1.0, "reward": 2.0}, log_level="debug"
     )
     assert admitted == [("wealth", "consumption")]
 

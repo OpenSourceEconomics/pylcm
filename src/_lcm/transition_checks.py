@@ -592,18 +592,21 @@ def validate_off_grid_transitions(
     summary: _ValidationSummary | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
 ) -> None:
-    """Count raw landings, or only enforce mandatory raise policy in preflight.
+    """Enforce `off_grid="raise"` grids, and count every grid at `"debug"`.
+
+    A `"raise"` grid is always counted and refuses an exterior landing. The
+    count-only diagnostics for the other rules run only when the call's
+    `log_level` is `"debug"`, runtime checks are enabled and `mandatory_only`
+    is false, since each count can expand a full phase Cartesian grid.
 
     A regime whose solve kernels count its landings is left out: its value
     constraints or gated edges decide which landings are reached only once
     values are known. Its realized landings are counted as simulation advances.
     """
-    # Count-only diagnostics can expand simulation-only axes during solve, so a
-    # logger that would not report the counts skips them.
     checked = (
         validation_enabled(logger)
         and not mandatory_only
-        and logger.isEnabledFor(logging.WARNING)
+        and logger.isEnabledFor(logging.DEBUG)
     )
     for period in range(ages.n_periods - 1):
         for name, regime in regimes.items():
