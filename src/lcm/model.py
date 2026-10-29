@@ -3185,8 +3185,9 @@ class Model:
         active periods and phase grids. The first failure raises with the same
         diagnostic as ``solve(runtime_checks=True)``; valid laws return ``None``.
         Checks are always enabled. A law that cannot be numerically validated is
-        reported as a warning; otherwise nothing is printed. This does not
-        validate utilities, solver outputs or continuous next-state finiteness.
+        reported as a warning. Exterior next states on every continuous state
+        grid are counted and logged as in a ``log_level="debug"`` solve. This does
+        not validate utilities, solver outputs or continuous next-state finiteness.
 
         Args:
             params: Model parameters compatible with ``get_params_template()``.
@@ -3205,7 +3206,7 @@ class Model:
                 regimes=self._regimes,
                 flat_params=flat_params,
                 ages=self._time,
-                logger=get_call_logger(log_level="warning", runtime_checks=True),
+                logger=get_call_logger(log_level="debug", runtime_checks=True),
                 process_grid_resolver=None,
                 memory=self._transition_memory(flat_params=flat_params),
                 producers=self._simulate_entry_operations,

@@ -1,6 +1,7 @@
 """Report empty action sets without confusing them with feasible infinite values."""
 
 import ast
+import logging
 import re
 from contextlib import nullcontext
 from pathlib import Path
@@ -261,13 +262,17 @@ def test_simulation_reports_an_empty_initial_state(*, enable_jit: bool) -> None:
 
 
 @pytest.mark.parametrize("enable_jit", [False, True])
-def test_a_fully_feasible_solve_has_only_off_grid_warning(
+def test_a_fully_feasible_debug_solve_has_only_off_grid_warning(
     *, enable_jit: bool, caplog: pytest.LogCaptureFixture
 ) -> None:
     """Feasible actions can leave the hull without empty-action/value warnings."""
     model = _model(enable_jit=enable_jit, constrained=False)
-    model.solve(params={"discount_factor": 0.5}, log_level="warning")
-    assert [record.getMessage() for record in caplog.records] == [
+    model.solve(params={"discount_factor": 0.5}, log_level="debug")
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno >= logging.WARNING
+    ] == [
         (
             "Off-grid next states: regime='working', target='working', "
             "period=0, state='wealth', phase='solve', count=2"
