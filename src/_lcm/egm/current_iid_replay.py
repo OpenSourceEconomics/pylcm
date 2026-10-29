@@ -2,7 +2,7 @@
 
 import inspect
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from fractions import Fraction
 from types import MappingProxyType
 from typing import NamedTuple, cast
@@ -11,6 +11,7 @@ import jax
 import jax.numpy as jnp
 
 from _lcm.current_iid import AdmittedGroupParams, CurrentIIDDrawPlan
+from _lcm.egm.comparison_arithmetic import ComparisonArithmetic
 from _lcm.egm.current_iid_native import BoundResourcesMap, replay_case_r_candidate
 from _lcm.egm.current_iid_resources_artifact import (
     OriginalResourcesRow,
@@ -60,6 +61,10 @@ class CaseRReplayPeriod:
     """Original native container layout, retained only by the model declaration."""
     row_leaf_specs: tuple[jax.ShapeDtypeStruct, ...]
     """Exact original leaf count, shapes and dtypes before artifact placement."""
+    envelope_arithmetic: ComparisonArithmetic = field(
+        default="ordinary", metadata={"fingerprint_omit_if_default": True}
+    )
+    """The producer's envelope comparison arithmetic, used to read an NB bank."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -174,7 +179,7 @@ type _CaseRReplayChild = PytreeChild | Mapping[ReferenceName, PytreeChild]
 
 
 class CaseRReplayOutput(NamedTuple):
-    """Action-valued decision, same frame and mandatory original-row evidence."""
+    """Action-valued decision, same frame and its integrity summaries."""
 
     actions: Mapping[ActionName, FloatND]
     value: FloatND
@@ -182,9 +187,6 @@ class CaseRReplayOutput(NamedTuple):
     law_invalid: BoolND
     invalid: BoolND
     feasible: BoolND
-    native_owner: IntND
-    side_id: IntND
-    corner: BoolND
 
     def __reduce__(
         self,
@@ -315,6 +317,7 @@ class CaseRActionReplay:
                 ),
                 coefficient=declaration.coefficient,
                 owner_capacity=declaration.owner_capacity,
+                arithmetic=declaration.envelope_arithmetic,
             )
             actual = {
                 **pool,
@@ -335,9 +338,6 @@ class CaseRActionReplay:
                 law_invalid=~frame.valid,
                 invalid=~selected.valid,
                 feasible=selected.feasible & ordinary,
-                native_owner=selected.native_owner,
-                side_id=selected.side_id,
-                corner=selected.corner,
             )
 
         return cell(subject=states, addressed=keys, supplied=overrides)

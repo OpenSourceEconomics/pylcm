@@ -17,6 +17,7 @@ from _lcm.egm.current_iid_case_u_replay import (
     CaseUReplayInput,
     CaseUReplayPeriod,
 )
+from _lcm.egm.current_iid_nnbegm import NNBEGMCaseUPoint
 from _lcm.engine import Regime
 from _lcm.shock_overrides import CurrentIIDOverride
 from _lcm.simulation.case_r_replay import case_r_status
@@ -46,7 +47,7 @@ from lcm.typing import (
 
 
 class CaseUReplayOutput(NamedTuple):
-    """Original action, same realised frame and mandatory construction summaries."""
+    """Replayed action, same realised frame and its integrity summaries."""
 
     actions: Mapping[ActionName, FloatND | IntND]
     value: FloatND
@@ -54,9 +55,6 @@ class CaseUReplayOutput(NamedTuple):
     law_invalid: BoolND
     invalid: BoolND
     feasible: BoolND
-    native_owner: IntND
-    side_id: IntND
-    corner: BoolND
 
 
 # NamedTuple is already a JAX node; semantic keys are needed by role/materializer
@@ -167,6 +165,8 @@ class CaseUActionReplay:
                 borrowing_limit=borrowing_limit,
                 outer_nodes=negm_outer_nodes,
             )
+            if type(point) is NNBEGMCaseUPoint:
+                point = replace(point, audit_banks=False)
             nested = point.select(
                 liquid=states[point.euler_state_name],
                 physical=frame.physical,
@@ -195,9 +195,6 @@ class CaseUActionReplay:
                 law_invalid=~frame.valid,
                 invalid=invalid,
                 feasible=original.feasible & feasible,
-                native_owner=original.native_owner,
-                side_id=original.side_id,
-                corner=original.corner,
             )
         if declaration.nbegm_point is not None:
             from _lcm.egm.current_iid_nbegm import NBCaseURidePoint  # noqa: PLC0415
@@ -257,9 +254,6 @@ class CaseUActionReplay:
                 law_invalid=~frame.valid,
                 invalid=invalid,
                 feasible=selected.output.feasible & feasible,
-                native_owner=selected.output.native_owner,
-                side_id=selected.output.side_id,
-                corner=selected.output.corner,
             )
         if declaration.pieces is None:
             raise TypeError("Case-U replay lost its original solver constructor.")
@@ -273,8 +267,13 @@ class CaseUActionReplay:
         reads = pieces.continuation_plan.child_reads
         if len(reads) != len(child_age_values):
             raise TypeError("Case-U reconstruction lost its original child clocks.")
+        if declaration.replay_refine_to_bracket is None:
+            raise TypeError("Case-U replay lost its configured envelope reader.")
         pieces = replace(
             pieces,
+            refine_to_bracket=declaration.replay_refine_to_bracket,
+            check_query_construction=False,
+            collect_continuation_read_counts=False,
             continuation_plan=replace(
                 pieces.continuation_plan,
                 child_reads=MappingProxyType(
@@ -287,15 +286,7 @@ class CaseUActionReplay:
                 ),
             ),
         )
-        # Conditional realised-frame reconstruction holds the physical values
-        # fixed. The unconditional solve still uses the original law tangent.
-        physical = frame.physical
-        tangent = {
-            name: jnp.zeros_like(value)
-            for name, value in physical.items()
-            if jnp.issubdtype(value.dtype, jnp.floating)
-        }
-        selected = CaseUPointSolver(
+        value, policy, selected_feasible, valid = CaseUPointSolver(
             pieces=pieces,
             pool={
                 **pool,
@@ -309,20 +300,9 @@ class CaseUActionReplay:
             savings_point_width=declaration.savings_point_width,
             stochastic_node_width=declaration.stochastic_node_width,
             envelope_cell_width=declaration.envelope_cell_width,
-        ).node(
-            liquid=states[pieces.euler_state_name],
-            physical=physical,
-            physical_tangent=tangent,
-        )
-        invalid = ~selected.output.valid | (period != declaration.future.period)
-        for status in (*selected.bound_status, *(selected.query_status or ())):
-            invalid |= jnp.any(jnp.stack(tuple(status)))
-        actual = {
-            **pool,
-            **states,
-            **frame.physical,
-            pieces.action_name: selected.output.policy,
-        }
+        ).action(liquid=states[pieces.euler_state_name], physical=frame.physical)
+        invalid = ~valid | (period != declaration.future.period)
+        actual = {**pool, **states, **frame.physical, pieces.action_name: policy}
         feasible = self.feasibility(
             **{
                 name: actual[name]
@@ -330,15 +310,12 @@ class CaseUActionReplay:
             }
         )
         return CaseUReplayOutput(
-            actions={pieces.action_name: selected.output.policy},
-            value=selected.output.value,
+            actions={pieces.action_name: policy},
+            value=value,
             physical=dict(frame.physical),
             law_invalid=~frame.valid,
             invalid=invalid,
-            feasible=selected.output.feasible & feasible,
-            native_owner=selected.output.native_owner,
-            side_id=selected.output.side_id,
-            corner=selected.output.corner,
+            feasible=selected_feasible & feasible,
         )
 
 
@@ -432,9 +409,6 @@ class CaseUReplayProfile(NamedTuple):
     law_invalid: jax.ShapeDtypeStruct
     invalid: jax.ShapeDtypeStruct
     feasible: jax.ShapeDtypeStruct
-    native_owner: jax.ShapeDtypeStruct
-    side_id: jax.ShapeDtypeStruct
-    corner: jax.ShapeDtypeStruct
 
 
 def case_u_profile_output(*, output: ShapeDtypePytree) -> CaseUReplayProfile:
@@ -451,7 +425,7 @@ def case_u_profile_output(*, output: ShapeDtypePytree) -> CaseUReplayProfile:
         CaseUReplayOutput._fields
     ):
         raise ExecutionPlanningError("Case-U profile has a foreign output schema.")
-    actions, value, physical, law, invalid, feasible, owner, side, corner = children
+    actions, value, physical, law, invalid, feasible = children
     return CaseUReplayProfile(
         actions=_profile_mapping(values=actions),
         value=_profile_leaf(value=value),
@@ -459,9 +433,6 @@ def case_u_profile_output(*, output: ShapeDtypePytree) -> CaseUReplayProfile:
         law_invalid=_profile_leaf(value=law),
         invalid=_profile_leaf(value=invalid),
         feasible=_profile_leaf(value=feasible),
-        native_owner=_profile_leaf(value=owner),
-        side_id=_profile_leaf(value=side),
-        corner=_profile_leaf(value=corner),
     )
 
 

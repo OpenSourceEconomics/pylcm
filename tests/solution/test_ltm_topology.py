@@ -1,8 +1,7 @@
-"""LTM and MSS must not bridge unrelated branches into a spurious envelope.
+"""LTM must not bridge unrelated branches into a spurious envelope.
 
-Both backends infer segment topology from the candidate ordering: LTM treats
-every consecutive input pair as one envelope segment, and MSS starts a new
-segment only where the grid or value decreases. Neither holds when a
+LTM infers segment topology from the candidate ordering: it treats every
+consecutive input pair as one envelope segment. That does not hold when a
 discrete-choice switch raises both the endogenous resource and the value — the
 two unrelated branch endpoints are then linked into a segment that never
 existed, and the envelope is read off that phantom bridge. The exact envelope
@@ -11,10 +10,9 @@ existed, and the envelope is read off that phantom bridge. The exact envelope
 
 import jax.numpy as jnp
 import numpy as np
-import pytest
 
 from _lcm.egm.interp import interp_on_padded_grid
-from _lcm.egm.upper_envelope import ltm, mss
+from _lcm.egm.upper_envelope import ltm
 from tests.solution._envelope_oracle import exact_envelope
 
 # Three branches fed in the order A, B, C:
@@ -29,8 +27,8 @@ _POLICY = jnp.array([0.0, 0.0, 10.0, 10.0, 5.0, 5.0])
 _SEGMENT = jnp.array([0.0, 0.0, 1.0, 1.0, 2.0, 2.0])
 
 
-def _published_value_at(*, backend, x_query):
-    grid, _policy, value, _n = backend.refine_envelope(
+def _published_value_at(*, x_query):
+    grid, _policy, value, _n = ltm.refine_envelope(
         endog_grid=_ENDOG,
         policy=_POLICY,
         value=_VALUE,
@@ -42,8 +40,7 @@ def _published_value_at(*, backend, x_query):
     )
 
 
-@pytest.mark.parametrize("backend", [ltm, mss])
-def test_backend_matches_oracle_on_a_non_bridging_branch(backend):
+def test_backend_matches_oracle_on_a_non_bridging_branch():
     """Given explicit topology the backend reports branch C, not the A-to-B bridge.
 
     The exact envelope at x=1.5 is branch C's 0.5. Inferring topology from the
@@ -59,5 +56,5 @@ def test_backend_matches_oracle_on_a_non_bridging_branch(backend):
     )
     np.testing.assert_allclose(oracle_value, [0.5], atol=1e-12)
 
-    published = _published_value_at(backend=backend, x_query=1.5)
+    published = _published_value_at(x_query=1.5)
     np.testing.assert_allclose(published, 0.5, atol=1e-9)

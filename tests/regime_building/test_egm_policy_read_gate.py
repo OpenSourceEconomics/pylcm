@@ -64,7 +64,6 @@ def test_negm_regime_does_not_qualify_for_the_policy_read():
         "fues",
         "rfc",
         "ltm",
-        "mss",
     ],
 )
 def test_every_envelope_backend_qualifies_for_the_policy_read(backend: EnvelopeName):

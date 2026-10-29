@@ -373,6 +373,69 @@ def test_public_partial_correlated_frame_has_an_explicit_refusal() -> None:
         )
 
 
+def _simulate_correlated_paths(
+    *, paths: dict[str, BaseInnovations | PhysicalValues], runtime_checks: bool
+) -> pd.DataFrame:
+    group = ShockGroup(
+        shocks={"eps": Normal(mu=0, sigma=1), "other": Normal(mu=0, sigma=1)},
+        correlation=((1.0, 0.5), (0.5, 1.0)),
+        nodes=MonteCarlo(2, seed=7),
+    )
+    return (
+        _model(group=group)
+        .simulate(
+            params={"discount_factor": 0.5},
+            initial_conditions={
+                "period": np.zeros(2, dtype=np.int32),
+                "regime_id": np.zeros(2, dtype=np.int32),
+            },
+            shock_paths=paths,
+            seed=3,
+            log_level="off",
+            runtime_checks=runtime_checks,
+        )
+        .to_dataframe(use_categorical_codes=True)
+    )
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+@pytest.mark.parametrize("runtime_checks", [False, True])
+def test_public_mixed_correlated_frame_has_an_explicit_refusal(
+    *, runtime_checks: bool
+) -> None:
+    """A physical cell beside a base cell of one correlated group is refused."""
+    dtype = jnp.asarray(0.0).dtype
+    with pytest.raises(ShockDeclarationError, match="complete physical frame"):
+        _simulate_correlated_paths(
+            paths={
+                "eps": PhysicalValues(values=np.ones(3, dtype=dtype)),
+                "other": BaseInnovations(values=np.zeros(3, dtype=dtype)),
+            },
+            runtime_checks=runtime_checks,
+        )
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+@pytest.mark.parametrize("runtime_checks", [False, True])
+def test_public_complete_correlated_frame_keeps_supplied_bits(
+    *, runtime_checks: bool
+) -> None:
+    """A complete correlated physical frame is admitted and replayed exactly."""
+    eps = np.asarray([[0.5, -1.0, 2.0], [-0.25, 1.5, -2.0]])
+    eps = eps.astype(jnp.asarray(0.0).dtype)
+    frame = _simulate_correlated_paths(
+        paths={
+            "eps": PhysicalValues(values=eps),
+            "other": PhysicalValues(values=-eps),
+        },
+        runtime_checks=runtime_checks,
+    )
+    for period in range(3):
+        rows = frame.query("period == @period").sort_values("subject_id")
+        np.testing.assert_array_equal(rows["eps"], eps[:, period])
+        np.testing.assert_array_equal(rows["action"], eps[:, period] > 0)
+
+
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
 @pytest.mark.parametrize("shape", [(), (4, 3), (2,)])
 def test_public_path_shape_and_coverage_are_explicit(shape: tuple[int, ...]) -> None:

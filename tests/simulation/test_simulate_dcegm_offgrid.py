@@ -46,8 +46,9 @@ def _closed_form_model() -> Model:
         states={"wealth": LogSpacedGrid(start=0.25, stop=400.0, n_points=400)},
         functions={"utility": _bequest_utility},
     )
-    # Every backend reads the policy off-grid; MSS stays the stress case.
-    solver = dataclasses.replace(DCEGM_SOLVER, envelope=envelope_config("mss"))
+    # Every backend reads the policy off-grid; the exact envelope is the stress
+    # case: it emits every ownership change.
+    solver = dataclasses.replace(DCEGM_SOLVER, envelope=envelope_config("exact"))
     return Model(
         regimes={
             "retirement": dcegm_retirement.replace(
@@ -110,7 +111,7 @@ def test_discrete_action_regime_consumption_can_leave_the_action_grid():
     """
     n_periods = 3
     model = dcegm_variants.get_full_model(
-        solver="dcegm", n_periods=n_periods, envelope=envelope_config("mss")
+        solver="dcegm", n_periods=n_periods, envelope=envelope_config("exact")
     )
     params = dcegm_variants.get_full_params(n_periods=n_periods)
 

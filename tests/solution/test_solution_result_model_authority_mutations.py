@@ -183,7 +183,7 @@ def _as_egm_subclass(policy: EGMSimPolicy) -> EGMSimPolicy:
 def ordinary_egm_fixture():
     """A genuine ordinary-EGM result on the policy-first read route."""
     get_full_model.cache_clear()
-    model = get_full_model(solver="dcegm", n_periods=2, envelope="mss")
+    model = get_full_model(solver="dcegm", n_periods=2, envelope="rfc")
     get_full_model.cache_clear()
     params = get_full_params(n_periods=2)
     solution = model.solve(params=params, log_level="off")

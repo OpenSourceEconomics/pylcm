@@ -62,9 +62,12 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def _full_kernel() -> tuple[_DCEGMPeriodKernel, OracleContext]:
-    """The worker regime's DC-EGM kernel of the full model and its solve inputs."""
+    """The worker regime's exact-envelope DC-EGM kernel and its solve inputs.
+
+    The graph assertions pin the exact envelope's `envelope_cell` axis.
+    """
     kernel, context = ride_along_kernel(
-        model=get_full_model(solver="dcegm", n_periods=_N_PERIODS),
+        model=get_full_model(solver="dcegm", n_periods=_N_PERIODS, envelope="exact"),
         params=get_full_params(n_periods=_N_PERIODS),
         regime_name=_REGIME,
         period=_PERIOD,
@@ -147,7 +150,7 @@ def test_the_graph_publishes_planned_values_and_replay_variants():
 
 def test_model_authority_rejects_a_policy_type_conflicting_with_the_route() -> None:
     get_full_model.cache_clear()
-    model = get_full_model(solver="dcegm", n_periods=_N_PERIODS, envelope="mss")
+    model = get_full_model(solver="dcegm", n_periods=_N_PERIODS, envelope="rfc")
     get_full_model.cache_clear()
     assert model._regimes[_REGIME].simulation.egm_policy_read is not None
     kernel = model._regimes[_REGIME].solution.period_kernels[_PERIOD]

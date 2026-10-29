@@ -145,10 +145,16 @@ def _require_case_u_plan_methods() -> None:
             raise TypeError("Original Case-U plan method authority changed.")
 
 
-def _require_case_u_native_preflight() -> None:
-    """Read completed DCEGM capability authority without loading or registering."""
+def _require_case_u_native_preflight(*, registered: bool) -> None:
+    """Read completed DCEGM capability authority without loading or registering.
+
+    Args:
+        registered: Whether the route traces the native kernels, so they must
+            already be registered. An ordinary route only reaches the exports
+            by reference; their identity is still checked.
+    """
     if (
-        exact_affine_ffi._REGISTERED is not True  # noqa: SLF001
+        (registered and exact_affine_ffi._REGISTERED is not True)  # noqa: SLF001
         or exact_affine_ffi._TARGETS is not exact_affine_ffi._ORIGINAL_TARGETS  # noqa: SLF001
         or exact_affine_ffi.EXACT_AFFINE_HANDLER_SYMBOLS
         is not exact_affine_ffi._ORIGINAL_TARGETS  # noqa: SLF001
@@ -428,6 +434,22 @@ def guard_case_u_shape(  # noqa: C901, PLR0912, PLR0915 - keep exact roles and p
         for _name, _method, _code, raw, _raw_code in _CASE_U_PLAN_METHODS
         if plan is not None
     )
+    # Only certified arithmetic and ExactEnvelope trace the native kernels.
+    if type(point) is NBCaseUProgram:
+        cores = (point.pieces.core,)
+    elif nn_nested:
+        cores = tuple(inner.core for inner in nn_inners)
+    else:
+        cores = None
+    traces_native = cores is None or any(
+        (
+            core.envelope_arithmetic
+            if isinstance(core, _NBEGMContinuousCore)
+            else core.statics.envelope_arithmetic
+        )
+        == "certified"
+        for core in cores
+    )
     function_depth = 0
     function_frames: list[types.FunctionType] = []
     roots = list(
@@ -471,7 +493,7 @@ def guard_case_u_shape(  # noqa: C901, PLR0912, PLR0915 - keep exact roles and p
                 _raw_code,
             ) in _CASE_U_NATIVE_EXPORTS:
                 if value is original or value is raw:
-                    _require_case_u_native_preflight()
+                    _require_case_u_native_preflight(registered=traces_native)
                     self.frame(label="abstract-original-native-numerical-abi")
                     self._visit_native_python_function_seal(raw)
                     return

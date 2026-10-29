@@ -155,8 +155,6 @@ class CaseUPointSolver:
             raise UnsupportedOperationError(
                 "Case-U nonlinear CE requires its actual declared CE identity."
             )
-        if not self.pieces.check_query_construction:
-            raise TypeError("Case-U points require original owned construction status.")
 
     def prepare_node(
         self,
@@ -256,6 +254,8 @@ class CaseUPointSolver:
     ) -> BoundedResult[OwnedResourcesRead]:
         """Select original candidates and compute the separate economic envelope."""
         pieces = self.pieces
+        if not pieces.check_query_construction:
+            raise TypeError("Case-U points require original owned construction status.")
         (
             construct,
             discount,
@@ -380,6 +380,50 @@ class CaseUPointSolver:
                 left=construct.read_counts, right=future.continuation_read_counts
             ),
         )
+
+    def action(
+        self,
+        *,
+        liquid: ScalarFloat,
+        physical: Mapping[ShockName, ScalarFloat | ScalarInt],
+    ) -> tuple[ScalarFloat, ScalarFloat, ScalarBool, ScalarBool]:
+        """Build one frame's envelope once and read its action and value.
+
+        This is the replay read: no economic marginal, continuation read or
+        status roster is formed, and the pieces' bracket finder decides which
+        envelope arithmetic and provenance the frame pays for.
+
+        Returns:
+            Tuple of value, consumption policy, feasibility and validity.
+        """
+        pieces = self.pieces
+        construct, discount, _, _, pool, _, _ = self.prepare_node(
+            liquid=liquid, physical=physical, physical_tangent={}
+        )
+        bracket = construct.bracket
+        if isinstance(bracket, OwnedQueryBracket):
+            bracket = bracket.bracket
+        value, policy, _ = _publish_node_selection(
+            bracket=bracket,
+            n_pad=pieces.n_pad,
+            resources_at_node=construct.resources_at_node,
+            borrowing_limit=construct.pieces.borrowing_limit,
+            utility_of_action=construct.utility_of_action,
+            discounted_expected_value_at_limit=discount * construct.expected_values[0],
+        )
+        feasible = (jnp.isfinite(value) | jnp.isneginf(value)) & (policy > 0.0)
+        if pieces.feasibility_func is not None:
+            feasible &= pieces.feasibility_func(
+                **{**pool, pieces.euler_state_name: liquid}
+            )
+        valid = (
+            jnp.isfinite(policy)
+            & (jnp.isfinite(value) | jnp.isneginf(value))
+            & jnp.isfinite(discount)
+        )
+        if construct.pieces.floor_status is not None:
+            valid &= ~jnp.any(jnp.stack(tuple(construct.pieces.floor_status)))
+        return jnp.where(feasible, value, -jnp.inf), policy, feasible, valid
 
     def integrate(
         self, *, liquid: ScalarFloat, nodes: CaseUCurrentNodes

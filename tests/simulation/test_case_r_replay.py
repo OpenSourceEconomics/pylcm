@@ -83,7 +83,6 @@ from tests.simulation.test_budget_lifecycle import _LifecycleRegimeId
 def test_case_r_output_preserves_roles_and_abstract_reconstruction() -> None:
     """Role and abstract trees reuse the numeric schema without checked construction."""
     floating = jnp.asarray(0.0)
-    integer = jnp.zeros((), dtype=jnp.int32)
     boolean = jnp.zeros((), dtype=jnp.bool_)
     numeric = CaseRReplayOutput(
         actions={"consumption": floating},
@@ -92,9 +91,6 @@ def test_case_r_output_preserves_roles_and_abstract_reconstruction() -> None:
         law_invalid=boolean,
         invalid=boolean,
         feasible=boolean,
-        native_owner=integer,
-        side_id=integer,
-        corner=boolean,
     )
     abstract = jax.eval_shape(lambda: numeric)
     assert jax.tree.structure(abstract) == jax.tree.structure(numeric)
@@ -104,20 +100,12 @@ def test_case_r_output_preserves_roles_and_abstract_reconstruction() -> None:
     profile = case_r_profile_output(output=abstract)
     assert profile.actions["consumption"] is abstract.actions["consumption"]
     assert profile.physical["eps"] is abstract.physical["eps"]
-    for name in (
-        "value",
-        "law_invalid",
-        "invalid",
-        "feasible",
-        "native_owner",
-        "side_id",
-        "corner",
-    ):
+    for name in ("value", "law_invalid", "invalid", "feasible"):
         assert getattr(profile, name) is getattr(abstract, name)
     with pytest.raises(ExecutionPlanningError, match="incompatible output schema"):
         case_r_profile_output(output=())
     restored = jax.tree.map(lambda leaf: jnp.zeros(leaf.shape, leaf.dtype), abstract)
-    np.testing.assert_array_equal(restored.native_owner, 0)
+    np.testing.assert_array_equal(restored.value, 0.0)
     assert restored.invalid.dtype == jnp.bool_
     restore, (metadata, children) = numeric.__reduce__()
     retained = restore(metadata, children)
@@ -135,9 +123,6 @@ def test_case_r_output_preserves_roles_and_abstract_reconstruction() -> None:
         "law_invalid": "current_iid_invalid",
         "invalid": "current_iid_invalid",
         "feasible": "action_feasible",
-        "native_owner": "candidate_owner",
-        "side_id": "candidate_side",
-        "corner": "borrowing_corner",
     }
     for path, label in jax.tree_util.tree_flatten_with_path(roles)[0]:
         assert isinstance(path[0], jax.tree_util.GetAttrKey)
@@ -328,8 +313,6 @@ def test_case_r_action_replay_retains_the_actual_physical_frame(
         decimal=DECIMAL_PRECISION,
     )
     np.testing.assert_array_equal(output.value, [1.0, 1.0])
-    np.testing.assert_array_equal(output.native_owner, [0, 0])
-    np.testing.assert_array_equal(output.corner, [False, False])
     assert not np.any(output.invalid)
     assert not np.any(output.law_invalid)
     assert np.all(output.feasible)

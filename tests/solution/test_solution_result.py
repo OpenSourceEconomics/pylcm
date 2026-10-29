@@ -1369,7 +1369,7 @@ def test_malformed_finite_nnbegm_payload_is_refused_before_forward(
 def test_declared_egm_policy_read_requires_a_valid_egm_payload_before_forward(
     *, payload: str | None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    model = get_full_model(solver="dcegm", n_periods=2, envelope="mss")
+    model = get_full_model(solver="dcegm", n_periods=2, envelope="rfc")
     params = get_full_params(n_periods=2)
     initial_conditions = {
         "wealth": jnp.asarray([2.0]),

@@ -5,6 +5,14 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### MSS upper envelope removed
+
+- `MSSEnvelope` is no longer part of `lcm.solvers`: a timing study found it dominated
+  by `ExactEnvelope`. Select `ExactEnvelope` (the default), `FUESEnvelope`,
+  `RFCEnvelope` or `LTMEnvelope` instead. An interface for envelopes maintained outside
+  pylcm is planned in
+  [issue #632](https://github.com/OpenSourceEconomics/pylcm/issues/632).
+
 ### Stochastic-volatility example
 
 - The shipped example now declares current Normal income with positive base

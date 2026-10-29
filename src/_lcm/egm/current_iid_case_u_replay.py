@@ -5,7 +5,7 @@ The private scalar route reconstructs actions with the original dated node solve
 """
 
 import math
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import TYPE_CHECKING
@@ -20,6 +20,7 @@ from _lcm.continuation import (
 )
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.step_core import _EgmKernelPieces
+from _lcm.egm.upper_envelope.fues import QueryBracket
 from _lcm.execution.core_program import ValueRead
 from _lcm.simulation.replay_inputs import replay_payload_reads
 from _lcm.simulation.value_reads import PeriodSimulationReads
@@ -202,6 +203,10 @@ class CaseUReplayPeriod:
         default=None, metadata={"fingerprint_omit_if_default": True}
     )
     """Genuine complete finite nested constructor, separate from NB ownership."""
+    replay_refine_to_bracket: Callable[..., QueryBracket] | None = field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+    """The configured envelope's bracket finder without provenance, for replay."""
 
     @property
     def action_name(self) -> str:

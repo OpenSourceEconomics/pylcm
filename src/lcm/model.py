@@ -5522,9 +5522,10 @@ class Model:
                 token; restored results instead match the durable model fingerprint.
                 When omitted, ``simulate`` obtains the same complete result from an
                 automatic solve.
-            seed: Integer random seed or scalar typed `jax.random.key`; a typed
-                key is used directly, preserving its PRNG implementation. `None`
-                draws a fresh integer seed. Raw uint32 keys are refused.
+            seed: Integer random seed or scalar typed Threefry `jax.random.key`,
+                used directly; other key implementations and raw uint32 keys are
+                refused. `None` draws a fresh integer seed. Draws are addressed by
+                original initial-condition row, so reordering rows changes them.
             taste_shock_seed: Optional independent integer seed or scalar typed
                 key for common taste-shock
                 realizations across counterfactual simulations. Matching exact

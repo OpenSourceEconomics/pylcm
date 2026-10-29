@@ -348,9 +348,11 @@ function while subjects start at different ages cannot be evaluated and raises
 - `seed=None`: Integer random seed or scalar typed Threefry key
   (`jax.random.key(..., impl="threefry2x32")`, the JAX default). An integer becomes a
   Threefry key whatever `jax_default_prng_impl` says; other key implementations are
-  refused, because their draws would change with the subject chunk width. Collective
-  dissolution gates consume their addressed replay artifacts from `solution`; the
-  automatic-solve path retains and threads them itself.
+  refused, because their draws would change with the subject chunk width. Each draw is
+  addressed by the subject's original row position in `initial_conditions`, so
+  reordering those rows changes which draws a subject receives. Collective dissolution
+  gates consume their addressed replay artifacts from `solution`; the automatic-solve
+  path retains and threads them itself.
 - `taste_shock_seed=None`: Optional independent integer seed or scalar typed key for
   common taste shocks across counterfactual models. Omit it to keep the ordinary `seed`
   behavior.
@@ -682,3 +684,10 @@ the transition into period `p` comes from column `p`. A deterministic law readin
 `next_<shock>` sees the supplied draw before computing its own next state. Shocks
 omitted from the mapping retain the ordinary seeded stream, and solve expectations
 remain stochastic.
+
+A named current shock declared in a `ShockGroup` takes a tagged record instead of a bare
+array: `BaseInnovations(values=...)` for independent base coordinates, mapped through
+the current law, or `PhysicalValues(values=...)` for realised values. A correlated group
+takes physical values only as a complete frame; a partial frame, or physical values
+mixed with base coordinates, is refused. Tagged entry values and their precedence are
+described in the [shocks reference](../reference/shocks.md#typed-draw-inputs).

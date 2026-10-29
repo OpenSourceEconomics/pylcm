@@ -64,6 +64,7 @@ from lcm.exceptions import RegimeInitializationError
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.processes import RouwenhorstAR1Process
 from lcm.result import SimulationResult
+from lcm.solvers import RFCEnvelope
 from lcm.transition import StochasticTransition, Transition
 from lcm.typing import DiscreteAction, FloatND, RegimeName, ScalarInt
 from tests.conftest import bind_laws, build_prepared_structure
@@ -339,6 +340,7 @@ def test_fold_on_non_gridsearch_solver_is_rejected():
             ),
             solver=DCEGM(
                 savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
+                envelope=RFCEnvelope(),
             ),
         )
 

@@ -41,7 +41,7 @@ from lcm import (
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import DCEGM, EnvelopeConfig
+from lcm.solvers import DCEGM, EnvelopeConfig, RFCEnvelope
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.typing import (
     BoolND,
@@ -208,6 +208,7 @@ done_retired = UserRegime(
 
 DCEGM_SOLVER = DCEGM(
     savings_grid=SAVINGS_GRID,
+    envelope=RFCEnvelope(),
 )
 
 
@@ -338,9 +339,9 @@ def build_dcegm_model(
 
     The default reproduces the fixture run's pinned uniform grid; a grid
     clustered toward the borrowing limit resolves the low-wealth region the
-    uniform grid cannot. `envelope=None` retains pylcm's documented exact
-    default; backend-independent construction tests pass a portable envelope
-    explicitly.
+    uniform grid cannot. `envelope=None` retains `DCEGM_SOLVER`'s `RFCEnvelope`,
+    which compiles faster than pylcm's `ExactEnvelope` default; a test that needs
+    the exact backend passes it explicitly.
     """
     solver = dataclasses.replace(DCEGM_SOLVER, savings_grid=savings_grid)
     if envelope is not None:

@@ -231,7 +231,7 @@ from _lcm.typing import (
 from _lcm.utils.dispatchers import map_over_leading_axis, productmap
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import DCEGM, MSSEnvelope
+from lcm.solvers import DCEGM
 from lcm.typing import (
     BoolND,
     DiscreteAction,
@@ -797,12 +797,6 @@ def _get_egm_step(
     get_solve_one_combo = (
         _get_solve_one_combo_asset_rows if asset_row_mode else _get_solve_one_combo
     )
-    # Only the MSS backend computes a per-row read-support verdict; the other
-    # backends (and the asset-row kernel) report the constant fail-closed
-    # `False` on a channel the policy-read gate never consumes from them.
-    # Masking on that constant would blank every published row, so the gap
-    # mask applies only where the verdict is actually computed.
-    mask_gap_rows = isinstance(solver.envelope, MSSEnvelope) and not asset_row_mode
     pieces = _build_kernel_pieces(
         materializer=materializer,
         solver=solver,
@@ -836,7 +830,6 @@ def _get_egm_step(
     return _EGMStep(
         pieces=pieces,
         get_solve_one_combo=get_solve_one_combo,
-        mask_gap_rows=mask_gap_rows,
         has_taste_shocks=has_taste_shocks,
         own_discrete_state_names=own_discrete_state_names,
         own_passive_state_names=own_passive_state_names,
@@ -866,9 +859,6 @@ class _EGMStep:
         ],
     ]
     """Builder of the per-combo solve (single-post-state or asset-row)."""
-
-    mask_gap_rows: bool
-    """Whether the backend's read-support verdict masks the simulation rows."""
 
     has_taste_shocks: bool
     """Whether the regime smooths its discrete actions with EV1 taste shocks."""
@@ -1013,7 +1003,6 @@ class _EGMStep:
                     rows=mapped,
                     pieces=pieces,
                     taste_shock_scale=own_taste_shock_scale,
-                    mask_gap_rows=self.mask_gap_rows,
                     has_taste_shocks=self.has_taste_shocks,
                     discrete_state_names=self.own_discrete_state_names,
                     passive_state_names=self.own_passive_state_names,
@@ -1025,7 +1014,7 @@ class _EGMStep:
                 policy_stack,
                 value_stack,
                 marginal_stack,
-                read_supported_stack,
+                _,
             ) = mapped
             n_state_axes = len(self.own_discrete_state_names) + len(
                 self.own_passive_state_names
@@ -1050,21 +1039,11 @@ class _EGMStep:
                 marginal_utility=marginal_stack,
                 taste_shock_scale=own_taste_shock_scale,
             )
-            # A row whose refinement reports a compacted coverage gap is
-            # withheld from the off-grid read (its linear span fabricates
-            # values there): the simulation rows are NaN-poisoned per combo,
-            # so the read's finite/in-support acceptance falls back to the
-            # grid-argmax pair. The solve-side carry keeps the row unchanged.
-            read_ok = (
-                read_supported_stack[..., None]
-                if self.mask_gap_rows
-                else jnp.asarray(True)  # noqa: FBT003
-            )
             sim_policy = EGMSimPolicy(
-                endog_grid=jnp.where(read_ok, grid_stack, jnp.nan),
-                policy=jnp.where(read_ok, policy_stack, jnp.nan),
-                value=jnp.where(read_ok, value_stack, jnp.nan),
-                marginal_utility=jnp.where(read_ok, marginal_stack, jnp.nan),
+                endog_grid=grid_stack,
+                policy=policy_stack,
+                value=value_stack,
+                marginal_utility=marginal_stack,
                 row_discrete_state_names=self.own_discrete_state_names,
                 row_passive_state_names=self.own_passive_state_names,
                 row_discrete_action_names=tuple(self.own_discrete_action_values),
@@ -1075,26 +1054,20 @@ class _EGMStep:
                 return _publish_conditional_combo(
                     combo=combo,
                     taste_shock_scale=own_taste_shock_scale,
-                    mask_gap_rows=self.mask_gap_rows,
                     retain_nested_feasibility=pieces._retain_nested_feasibility,  # noqa: SLF001
                 )
-            V_arr, grid_row, policy_row, value_row, marginal_row, read_supported = combo
+            V_arr, grid_row, policy_row, value_row, marginal_row, _ = combo
             carry = EGMCarry(
                 endog_grid=grid_row,
                 value=value_row,
                 marginal_utility=marginal_row,
                 taste_shock_scale=own_taste_shock_scale,
             )
-            # See the combo branch: a gap-compacted row is withheld from the
-            # off-grid read; the carry keeps it.
-            read_ok = (
-                read_supported if self.mask_gap_rows else jnp.asarray(True)  # noqa: FBT003
-            )
             sim_policy = EGMSimPolicy(
-                endog_grid=jnp.where(read_ok, grid_row, jnp.nan),
-                policy=jnp.where(read_ok, policy_row, jnp.nan),
-                value=jnp.where(read_ok, value_row, jnp.nan),
-                marginal_utility=jnp.where(read_ok, marginal_row, jnp.nan),
+                endog_grid=grid_row,
+                policy=policy_row,
+                value=value_row,
+                marginal_utility=marginal_row,
             )
         return V_arr, carry, sim_policy
 
@@ -1104,7 +1077,6 @@ def _publish_conditional_product(
     rows: BoundedResult[_MappedConditionalRows],
     pieces: _EgmKernelPieces,
     taste_shock_scale: ScalarFloat,
-    mask_gap_rows: bool,
     has_taste_shocks: bool,
     discrete_state_names: tuple[StateName, ...],
     passive_state_names: tuple[StateName, ...],
@@ -1114,7 +1086,7 @@ def _publish_conditional_product(
     | BoundedResult[_NestedDCEGMStepChannels]
 ):
     """Publish conditional choice rows and reduce feasibility on state nodes."""
-    V, grid, policy, value, marginal, read_supported, data, feasible = rows.output
+    V, grid, policy, value, marginal, _, data, feasible = rows.output
     n_state_axes = len(discrete_state_names) + len(passive_state_names)
     action_axes = tuple(range(n_state_axes, len(pieces.combo_names)))
     if action_axes and has_taste_shocks:
@@ -1140,12 +1112,11 @@ def _publish_conditional_product(
         taste_shock_scale=taste_shock_scale,
         query_data=data,
     )
-    read_ok = read_supported[..., None] if mask_gap_rows else jnp.asarray(a=True)
     sim_policy = EGMSimPolicy(
-        endog_grid=jnp.where(read_ok, grid, jnp.nan),
-        policy=jnp.where(read_ok, policy, jnp.nan),
-        value=jnp.where(read_ok, value, jnp.nan),
-        marginal_utility=jnp.where(read_ok, marginal, jnp.nan),
+        endog_grid=grid,
+        policy=policy,
+        value=value,
+        marginal_utility=marginal,
         row_discrete_state_names=discrete_state_names,
         row_passive_state_names=passive_state_names,
         row_discrete_action_names=discrete_action_names,
@@ -1211,16 +1182,13 @@ def _publish_conditional_combo(
     *,
     combo: BoundedResult[_ConditionalComboRows],
     taste_shock_scale: ScalarFloat,
-    mask_gap_rows: bool,
     retain_nested_feasibility: bool = False,
 ) -> (
     BoundedResult[tuple[FloatND, EGMCarry, EGMSimPolicy, FeasibilityCounts | None]]
     | BoundedResult[_NestedDCEGMStepChannels]
 ):
     """Publish one conditional row with independent counts and bounded integrity."""
-    value, grid, policy, row_value, marginal, read_supported, data, feasible = (
-        combo.output
-    )
+    value, grid, policy, row_value, marginal, _, data, feasible = combo.output
     carry = EGMCarry(
         endog_grid=grid,
         value=row_value,
@@ -1228,12 +1196,11 @@ def _publish_conditional_combo(
         taste_shock_scale=taste_shock_scale,
         query_data=data,
     )
-    read_ok = read_supported if mask_gap_rows else jnp.asarray(a=True)
     sim_policy = EGMSimPolicy(
-        endog_grid=jnp.where(read_ok, grid, jnp.nan),
-        policy=jnp.where(read_ok, policy, jnp.nan),
-        value=jnp.where(read_ok, row_value, jnp.nan),
-        marginal_utility=jnp.where(read_ok, marginal, jnp.nan),
+        endog_grid=grid,
+        policy=policy,
+        value=row_value,
+        marginal_utility=marginal,
     )
     if retain_nested_feasibility:
         counts = (

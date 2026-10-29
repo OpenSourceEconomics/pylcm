@@ -74,8 +74,9 @@ def _bequest_utility(*, wealth: ContinuousState, age: float) -> FloatND:
 
 
 def _bonus_model(constraints: dict[FunctionName, UserFunction] | None = None) -> Model:
-    # Every backend reads the policy off-grid; MSS stays the stress case.
-    solver = dataclasses.replace(DCEGM_SOLVER, envelope=envelope_config("mss"))
+    # Every backend reads the policy off-grid; the exact envelope is the stress
+    # case: it emits every ownership change.
+    solver = dataclasses.replace(DCEGM_SOLVER, envelope=envelope_config("exact"))
     alive = dcegm_retirement.replace(
         solver=solver,
         liquid=dataclasses.replace(dcegm_retirement.liquid, resources="resources"),
