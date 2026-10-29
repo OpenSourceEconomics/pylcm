@@ -34,6 +34,7 @@ from _lcm.typing import (
     PeriodToRegimeToVArr,
     RegimeName,
 )
+from lcm._solver_api.entries import _LazyEntry
 from lcm.solver_api import (
     DISSOLUTION_FLAG,
     EGM_CONTINUATION,
@@ -414,10 +415,16 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
     return result
 
 
-def _holds_host_arrays(*, nested: Mapping[int, Mapping[RegimeName, jax.Array]]) -> bool:
-    """Whether a solve stored these per-period arrays in pinned host memory."""
+def _holds_host_arrays(
+    *, nested: Mapping[int, Mapping[RegimeName, jax.Array | _LazyEntry]]
+) -> bool:
+    """Whether a solve stored these per-period arrays off the device.
+
+    A value in pinned host memory or written to disk is read back through a
+    device view.
+    """
     return any(
-        is_host_value(array)
+        isinstance(array, _LazyEntry) or is_host_value(array)
         for regime_to_array in nested.values()
         for array in regime_to_array.values()
     )

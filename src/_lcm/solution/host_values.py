@@ -10,7 +10,7 @@ are those of device storage.
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Literal
+from typing import Literal, cast
 
 import jax
 import numpy as np
@@ -104,42 +104,54 @@ class HostValueEntry(_LazyEntry):
 
     @classmethod
     def _admit_joint_materialization(cls, *, entries: tuple[_LazyEntry, ...]) -> None:
-        """Refuse to place host-stored values on the devices together above budget.
-
-        Raises:
-            ExecutionPlanningError: Naming each device whose need exceeds the
-                budget, with the remedies.
-
-        """
-        host_entries = tuple(
-            entry for entry in entries if isinstance(entry, HostValueEntry)
+        """Refuse to place host-stored values on the devices together above budget."""
+        admit_values_on_devices(
+            layouts=tuple(
+                (entry.value, entry.budget_bytes)
+                for entry in entries
+                if isinstance(entry, HostValueEntry)
+            ),
+            where="host-stored",
         )
-        budgets = {
-            entry.budget_bytes
-            for entry in host_entries
-            if entry.budget_bytes is not None
-        }
-        if not budgets:
-            return
-        budget = min(budgets)
-        need: dict[int, int] = {}
-        for entry in host_entries:
-            footprint = per_device_footprint(array=entry.value)
-            for device in footprint.device_ids:
-                need[device] = need.get(device, 0) + footprint.bytes_per_device
-        over = {device: count for device, count in need.items() if count > budget}
-        if not over:
-            return
-        msg = (
-            f"Materializing {len(host_entries)} host-stored values at once needs "
-            f"{dict(sorted(over.items()))!r} bytes on devices whose budget is "
-            f"{budget} bytes. The solve ran with ExecutionConfig(value_storage="
-            "'host') because its values do not fit the devices together. Read them "
-            "one at a time with SolutionResult.value(period=..., regime=...), save "
-            "the result with SolutionResult.save, or raise "
-            "ExecutionConfig.device_memory_bytes."
-        )
-        raise ExecutionPlanningError(msg)
+
+
+def admit_values_on_devices(
+    *,
+    layouts: tuple[tuple[jax.Array | jax.ShapeDtypeStruct, int | None], ...],
+    where: str,
+) -> None:
+    """Refuse to place stored values on their devices at once above the budget.
+
+    Each layout is a value's array or shape, on the sharding it is read onto,
+    with the per-device budget of the solve that stored it.
+
+    Raises:
+        ExecutionPlanningError: Naming each device whose need exceeds the
+            budget, with the remedies.
+
+    """
+    budgets = {budget for _, budget in layouts if budget is not None}
+    if not budgets:
+        return
+    budget = min(budgets)
+    need: dict[int, int] = {}
+    for layout, _ in layouts:
+        footprint = per_device_footprint(array=layout)
+        for device in footprint.device_ids:
+            need[device] = need.get(device, 0) + footprint.bytes_per_device
+    over = {device: count for device, count in need.items() if count > budget}
+    if not over:
+        return
+    msg = (
+        f"Materializing {len(layouts)} {where} values at once needs "
+        f"{dict(sorted(over.items()))!r} bytes on devices whose budget is "
+        f"{budget} bytes. The solve kept them off the devices with "
+        "ExecutionConfig.value_storage because they do not fit together. Read "
+        "them one at a time with SolutionResult.value(period=..., regime=...), "
+        "save the result with SolutionResult.save, or raise "
+        "ExecutionConfig.device_memory_bytes."
+    )
+    raise ExecutionPlanningError(msg)
 
 
 class _RecentDeviceCopies:
@@ -148,7 +160,9 @@ class _RecentDeviceCopies:
     def __init__(self) -> None:
         self._copies: dict[int, dict[RegimeName, jax.Array]] = {}
 
-    def read(self, *, period: int, regime: RegimeName, stored: jax.Array) -> jax.Array:
+    def read(
+        self, *, period: int, regime: RegimeName, stored: jax.Array | _LazyEntry
+    ) -> jax.Array:
         """Return the device copy of one stored value, copying it on first read.
 
         The period read least recently is dropped first. A reader holds a value
@@ -163,7 +177,11 @@ class _RecentDeviceCopies:
             self._copies[period] = {}
         copies = self._copies[period]
         if regime not in copies:
-            copies[regime] = to_device(stored)
+            copies[regime] = (
+                cast("jax.Array", stored.materialize())
+                if isinstance(stored, _LazyEntry)
+                else to_device(stored)
+            )
         return copies[regime]
 
 
@@ -174,7 +192,7 @@ class _DeviceReadPeriod(Mapping[RegimeName, jax.Array]):
         self,
         *,
         period: int,
-        stored: Mapping[RegimeName, jax.Array],
+        stored: Mapping[RegimeName, jax.Array | _LazyEntry],
         copies: _RecentDeviceCopies,
     ) -> None:
         self._period = period
@@ -194,7 +212,7 @@ class _DeviceReadPeriod(Mapping[RegimeName, jax.Array]):
 
 
 def device_read_view(
-    *, values: Mapping[int, Mapping[RegimeName, jax.Array]]
+    *, values: Mapping[int, Mapping[RegimeName, jax.Array | _LazyEntry]]
 ) -> MappingProxyType[int, MappingProxyType[RegimeName, jax.Array]]:
     """Return host-stored arrays as a mapping that hands out device copies.
 

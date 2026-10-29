@@ -12,11 +12,15 @@ CPU devices have a pinned host memory kind too, so the copy path runs here as on
 an accelerator.
 """
 
+import filecmp
+import gc
+import json
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from types import MappingProxyType
 from typing import Literal, Unpack, cast
 
+import h5py
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -26,12 +30,14 @@ from beartype.roar import BeartypeCallHintParamViolation
 from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.execution.value_transfer import ValueArtifactAddress, ValueArtifactKind
 from _lcm.execution.workspace_planning import WorkspaceBudgetError
+from _lcm.persistence.solution import DiskValueEntry
 from _lcm.solution import backward_induction
 from _lcm.solution.host_values import HostValueEntry, copy_values_to_host
 from _lcm.solution.result_snapshot import own_value_store
 from _lcm.utils.logging import get_logger
 from lcm import ExecutionConfig, InvariantBlockSchedule, Model
 from lcm.exceptions import ExecutionPlanningError
+from lcm.persistence import load_solution
 from lcm.solver_api import ValueStore
 from lcm.typing import RegimeName
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
@@ -579,3 +585,234 @@ def test_a_blocked_host_storage_solve_simulates_the_blocked_device_panel() -> No
     ]
 
     assert panels[0].equals(panels[1])
+
+
+# keyword-only-exempt: primary-argument=directory
+def _disk(
+    directory: Path, *, device_memory_bytes: int | None = None
+) -> ExecutionConfig:
+    return ExecutionConfig(
+        value_storage=directory,
+        device_memory_bytes="device"
+        if device_memory_bytes is None
+        else device_memory_bytes,
+    )
+
+
+def _archives(directory: Path) -> list[str]:
+    return sorted(child.name for child in directory.iterdir())
+
+
+@_MODELS
+def test_disk_storage_publishes_the_device_storage_values(
+    *, tmp_path: Path, build_model: Callable[[ExecutionConfig], Model]
+) -> None:
+    """Every value read back from disk is bitwise the device-storage value."""
+    device = build_model(ExecutionConfig()).solve(params=_PARAMS, log_level="off")
+    disk = build_model(_disk(tmp_path)).solve(params=_PARAMS, log_level="off")
+
+    assert {p: set(v) for p, v in disk.values.items()} == {
+        p: set(v) for p, v in device.values.items()
+    }
+    for period, regime_to_value in device.values.items():
+        for regime_name, value in regime_to_value.items():
+            read = disk.value(period=period, regime=regime_name)
+            assert read.sharding.memory_kind == "device"
+            np.testing.assert_array_equal(
+                np.asarray(read), np.asarray(value), strict=True
+            )
+
+
+def test_disk_storage_keeps_each_solve_in_a_file_of_its_own(tmp_path: Path) -> None:
+    """Two results of one model read from two complete archives."""
+    model = _three_regime_model(_disk(tmp_path))
+    first = model.solve(params=_PARAMS, log_level="off")
+    second = model.solve(params=_PARAMS, log_level="off")
+    names = _archives(tmp_path)
+
+    assert len(names) == 2
+    assert all(n.startswith("solution-") and n.endswith(".h5") for n in names)
+    assert {
+        type(entry) for entry in cast("ValueStore", first.values)._entries.values()
+    } == {DiskValueEntry}
+    np.testing.assert_array_equal(
+        np.asarray(first.value(period=0, regime="a")),
+        np.asarray(second.value(period=0, regime="a")),
+        strict=True,
+    )
+
+
+def test_a_disk_archive_is_deleted_with_the_last_reader_of_its_values(
+    tmp_path: Path,
+) -> None:
+    solution = _three_regime_model(_disk(tmp_path)).solve(
+        params=_PARAMS, log_level="off"
+    )
+    assert len(_archives(tmp_path)) == 1
+
+    del solution
+    gc.collect()
+
+    assert _archives(tmp_path) == []
+
+
+def test_saving_a_disk_result_copies_its_archive(tmp_path: Path) -> None:
+    """The saved file is the archive the solve wrote, and it outlives the result."""
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    solution = _three_regime_model(_disk(storage)).solve(
+        params=_PARAMS, log_level="off"
+    )
+    (archive,) = storage.iterdir()
+
+    saved = solution.save(path=tmp_path / "kept.h5")
+    value = np.asarray(solution.value(period=4, regime="c"))
+
+    assert filecmp.cmp(saved, archive, shallow=False)
+    del solution
+    gc.collect()
+    assert list(storage.iterdir()) == []
+    np.testing.assert_array_equal(
+        np.asarray(load_solution(path=saved).value(period=4, regime="c")),
+        value,
+        strict=True,
+    )
+
+
+@pytest.mark.parametrize(
+    ("build_model", "initial_conditions"),
+    [
+        (_three_regime_model, _three_regime_initial_conditions),
+        (_gated_model, _gated_initial_conditions),
+    ],
+    ids=["three-regime", "gated-edge"],
+)
+def test_disk_storage_simulates_the_device_storage_panel(
+    *,
+    tmp_path: Path,
+    build_model: Callable[[ExecutionConfig], Model],
+    initial_conditions: Callable[[], dict[str, jax.Array]],
+) -> None:
+    panels = [
+        build_model(config)
+        .simulate(
+            params=_PARAMS,
+            initial_conditions=initial_conditions(),
+            seed=3,
+            log_level="off",
+        )
+        .to_dataframe()
+        for config in (ExecutionConfig(), _disk(tmp_path))
+    ]
+
+    assert panels[0].equals(panels[1])
+
+
+def _host_value_periods_at_each_kernel(
+    *, monkeypatch: pytest.MonkeyPatch, model: Model
+) -> list[tuple[int, frozenset[int]]]:
+    """Return, per kernel start, its period and the periods of live host copies."""
+    period_of: dict[int, int] = {}
+    samples: list[tuple[int, frozenset[int]]] = []
+    run_period_kernel = backward_induction._run_period_kernel
+    copy_values_to_host = backward_induction.copy_values_to_host
+
+    def _copy(
+        *, values: Mapping[RegimeName, jax.Array]
+    ) -> MappingProxyType[RegimeName, jax.Array]:
+        copies = copy_values_to_host(values=values)
+        if values and all(value.ndim >= 2 for value in values.values()):
+            period = current[-1]
+            for copy in copies.values():
+                period_of[copy.unsafe_buffer_pointer()] = period
+        return copies
+
+    current: list[int] = []
+
+    def _run(**kwargs: Unpack[RunPeriodKernelKwargs]) -> RunPeriodKernelResult:
+        current.append(kwargs["period"])
+        samples.append(
+            (
+                kwargs["period"],
+                frozenset(
+                    period_of[pointer]
+                    for array in jax.live_arrays()
+                    if array.sharding.memory_kind == "pinned_host"
+                    and (pointer := array.unsafe_buffer_pointer()) in period_of
+                ),
+            )
+        )
+        return run_period_kernel(**kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(backward_induction, "_run_period_kernel", _run)
+        patch.setattr(backward_induction, "copy_values_to_host", _copy)
+        model.solve(params=_PARAMS, log_level="off")
+    return samples
+
+
+def test_disk_storage_keeps_at_most_two_unwritten_periods_in_host_memory(
+    *, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A kernel finds host copies of the two periods after its own at most.
+
+    Under host storage the check fires: every solved period stays in host memory.
+    """
+    disk = _host_value_periods_at_each_kernel(
+        monkeypatch=monkeypatch, model=_three_regime_model(_disk(tmp_path))
+    )
+    host = _host_value_periods_at_each_kernel(
+        monkeypatch=monkeypatch, model=_three_regime_model(_host())
+    )
+
+    def _bounded(*, resident: frozenset[int], period: int) -> bool:
+        return resident <= {period + 1, period + 2}
+
+    assert all(_bounded(resident=r, period=p) for p, r in disk), disk
+    assert not all(_bounded(resident=r, period=p) for p, r in host), host
+
+
+def test_a_failed_disk_solve_leaves_an_incomplete_record(
+    *, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The record names how far the solve got; nothing else is left behind."""
+    run_period_kernel = backward_induction._run_period_kernel
+
+    def _fail_at_period_1(
+        **kwargs: Unpack[RunPeriodKernelKwargs],
+    ) -> RunPeriodKernelResult:
+        if kwargs["period"] == 1:
+            msg = "injected failure"
+            raise RuntimeError(msg)
+        return run_period_kernel(**kwargs)
+
+    monkeypatch.setattr(backward_induction, "_run_period_kernel", _fail_at_period_1)
+    with pytest.raises(RuntimeError, match="injected failure"):
+        _three_regime_model(_disk(tmp_path)).solve(params=_PARAMS, log_level="off")
+
+    (name,) = _archives(tmp_path)
+    assert name.startswith("solution-")
+    assert name.endswith(".incomplete")
+    with h5py.File(tmp_path / name, "r") as file:
+        record = json.loads(bytes(file["incomplete"][()]).decode())
+    assert record["last_completed_period"] == 2
+    assert record["dtype"] == (
+        "float64" if jax.config.read("jax_enable_x64") else "float32"
+    )
+    assert set(record) == {
+        "last_completed_period",
+        "dtype",
+        "model_fingerprint",
+        "params_fingerprint",
+        "pylcm_version",
+    }
+
+
+def test_a_disk_value_entry_carries_the_solve_budget(tmp_path: Path) -> None:
+    model = _three_regime_model(_disk(tmp_path, device_memory_bytes=_AMPLE_BUDGET))
+    solution = model.solve(params=_PARAMS, log_level="off")
+    entries = cast("ValueStore", solution.values)._entries.values()
+
+    assert {
+        entry.budget_bytes for entry in entries if isinstance(entry, DiskValueEntry)
+    } == {model._execution.device_memory_bytes}

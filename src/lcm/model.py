@@ -89,6 +89,7 @@ from _lcm.persistence.snapshots import (
     _save_simulate_snapshot,
     _save_solve_snapshot,
 )
+from _lcm.persistence.solution import StreamedSolutionArchive
 from _lcm.processes.ar1 import (
     RouwenhorstAR1Process,
     TauchenAR1Process,
@@ -2187,6 +2188,76 @@ class Model:
     ) -> SolutionResult:
         """Build the canonical public result from processed parameters.
 
+        Under disk value storage the solve writes its values to an archive of
+        its own in the storage directory. The archive is completed once the
+        result is built, and abandoned, with a record of how far the solve got,
+        if anything fails.
+        """
+        value_archive = (
+            StreamedSolutionArchive(
+                directory=cast("Path", self._execution.value_storage),
+                name=f"solution-{uuid.uuid4().hex}",
+                budget_bytes=self._execution.device_memory_bytes,
+            )
+            if self._execution.value_storage_kind == "disk"
+            else None
+        )
+        try:
+            result = self._solve_into(
+                flat_params=flat_params,
+                solve_parameter_views=solve_parameter_views,
+                params=params,
+                log=log,
+                retention=retention,
+                max_compilation_workers=max_compilation_workers,
+                log_path=log_path,
+                log_keep_n_latest=log_keep_n_latest,
+                retained_input_arrays=retained_input_arrays,
+                process_grid_resolver=process_grid_resolver,
+                call_id=call_id,
+                period_capture=period_capture,
+                value_archive=value_archive,
+            )
+            if value_archive is not None:
+                value_archive.complete(solution=result)
+        except BaseException:
+            if value_archive is not None:
+                value_archive.abandon(
+                    record={
+                        "last_completed_period": value_archive.last_completed_period,
+                        "dtype": (
+                            "float64"
+                            if jax.config.read("jax_enable_x64")
+                            else "float32"
+                        ),
+                        "params_fingerprint": self._params_fingerprint(
+                            flat_params=flat_params
+                        ),
+                        "pylcm_version": PYLCM_VERSION,
+                    }
+                )
+            raise
+        return result
+
+    def _solve_into(
+        self,
+        *,
+        flat_params: FlatParams,
+        solve_parameter_views: Mapping[RegimeName, FlatParams] = MappingProxyType({}),
+        params: UserParams,
+        log: logging.Logger,
+        retention: ResultRetention,
+        max_compilation_workers: int | None,
+        log_path: str | Path | None,
+        log_keep_n_latest: int,
+        retained_input_arrays: _RetainedInputArrays = (),
+        process_grid_resolver: ProcessGridResolver | None = None,
+        call_id: CallId | None = None,
+        period_capture: CaptureContext | None = None,
+        value_archive: StreamedSolutionArchive | None = None,
+    ) -> SolutionResult:
+        """Solve and assemble the result, writing values to `value_archive` if given.
+
         The declared solution authority is the model's, shared across solves
         with the same grid support; the solve's generated replay facts are
         bound into a copy that belongs to this result alone. Under the
@@ -2200,6 +2271,8 @@ class Model:
             process_grid_resolver=process_grid_resolver,
             call_id=call_id,
         )
+        if value_archive is not None:
+            value_archive.describe(model_fingerprint=preparation.model_fingerprint)
         if self._solves_block_major:
             retained = self._component_schedule(
                 preparation=preparation,
@@ -2237,6 +2310,7 @@ class Model:
             process_grid_resolver=process_grid_resolver,
             call_id=call_id,
             period_capture=period_capture,
+            value_archive=value_archive,
         )
         return self._finish_solution(
             preparation=preparation,
@@ -2417,6 +2491,7 @@ class Model:
         process_grid_resolver: ProcessGridResolver | None = None,
         call_id: CallId | None = None,
         period_capture: CaptureContext | None = None,
+        value_archive: StreamedSolutionArchive | None = None,
     ) -> BackwardInductionResult:
         """Run backward induction, persisting a diagnostic snapshot when warranted.
 
@@ -2466,6 +2541,7 @@ class Model:
                 gather_checks=self._gather_checks,
                 period_capture=period_capture,
                 structural_blueprints=self._structural_blueprints,
+                value_archive=value_archive,
             )
         except InvalidValueFunctionError as exc:
             if log_path is not None and exc.partial_solution is not None:

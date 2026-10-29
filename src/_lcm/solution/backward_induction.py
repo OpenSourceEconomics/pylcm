@@ -162,6 +162,11 @@ from _lcm.params.edges import (
     is_gated_cell_slot,
     regime_kernel_params,
 )
+from _lcm.persistence.solution import (
+    DiskValueEntry,
+    PeriodValueWriter,
+    StreamedSolutionArchive,
+)
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.gated_edges import (
     EDGE_PERIOD_CONTEXT_ARGS,
@@ -260,6 +265,7 @@ from _lcm.typing import (
     FootprintTree,
     HostArray,
     ParamsLeaf,
+    PeriodToRegimeToVArr,
     PRNGKeyND,
     PytreeByPeriod,
     PytreeValue,
@@ -430,6 +436,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     executable_cache: ExecutableCache | None = None,
     period_capture: CaptureContext | None = None,
     structural_blueprints: StructuralBlueprintCache | None = None,
+    value_archive: StreamedSolutionArchive | None = None,
 ) -> BackwardInductionResult:
     """Solve a model by backward induction, whatever solver each regime declares.
 
@@ -488,6 +495,9 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         structural_blueprints: The model's store of immutable structural
             blueprints, which a warm solve of the same abstract schema binds
             instead of resolving every program again. `None` resolves afresh.
+        value_archive: The archive disk value storage writes this solve's values
+            to; required with, and only with, a directory as value storage. The
+            returned values then read from it.
 
     Returns:
         The named backward-induction outputs: the immutable mapping of periods
@@ -643,7 +653,8 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             extra={"release_skipped": "eager dispatch"},
         )
 
-    solution: dict[int, MappingProxyType[RegimeName, FloatND]] = {}
+    # A value disk storage has written is a lazy entry that reads it back.
+    solution: dict[int, MappingProxyType[RegimeName, FloatND | DiskValueEntry]] = {}
     simulation_policies: dict[int, MappingProxyType[RegimeName, SimulationPolicy]] = {}
     generated_replay_authorities: dict[
         int, MappingProxyType[RegimeName, GeneratedReplayAuthority]
@@ -742,6 +753,12 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     transfer_generation = uuid.uuid4().hex
     store_on_host = resolved_execution.value_storage_kind != "device"
     in_flight_host_copies: tuple[jax.Array, ...] = ()
+    if (resolved_execution.value_storage_kind == "disk") != (value_archive is not None):
+        msg = "A value archive is required with, and only with, disk value storage."
+        raise ValueError(msg)
+    value_writer = (
+        None if value_archive is None else PeriodValueWriter(archive=value_archive)
+    )
     with solve_phase(name="backward_induction", logger=logger, call_id=call_id):
         # Planning and compilation leave a large, long-lived object graph behind
         # (programs, frontiers, executables). Freezing it after one collection
@@ -1336,11 +1353,22 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                     # kernels and before the next period's, so it runs while the
                     # next period computes. The device copy stays reachable only
                     # through the rolled inputs, which release it once read.
-                    solution[period] = (
+                    host_copies = (
                         copy_values_to_host(values=period_solution)
                         if store_on_host
-                        else MappingProxyType(period_solution)
+                        else None
                     )
+                    solution[period] = (
+                        MappingProxyType(period_solution)
+                        if host_copies is None
+                        else host_copies
+                    )
+                    # Disk storage writes the host copies from a background thread
+                    # and swaps each written period's copies for disk entries.
+                    if value_writer is not None and host_copies is not None:
+                        solution.update(
+                            value_writer.submit(period=period, values=host_copies)
+                        )
                     # Publish each collective regime's dissolution flag D alongside
                     # V, where a reader exists. Kept as a plain per-period mapping
                     # (not rolled like `next_regime_to_V_arr`): nothing consumes a
@@ -1437,7 +1465,11 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                         for array in period_mapping.get(
                             period, MappingProxyType({})
                         ).values()
+                        if isinstance(array, jax.Array)
                     )
+
+            if value_writer is not None:
+                solution.update(value_writer.drain())
 
             if diagnostics_enabled or stats_enabled:
                 try:
@@ -1447,7 +1479,10 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                         solution=(
                             device_read_view(values=solution)
                             if store_on_host
-                            else MappingProxyType(solution)
+                            # Only disk storage puts entries in `solution`.
+                            else cast(
+                                "PeriodToRegimeToVArr", MappingProxyType(solution)
+                            )
                         ),
                         regimes=regimes,
                         flat_params=flat_params,
@@ -1468,12 +1503,16 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             gc.unfreeze()
             if pending_work is not None:
                 pending_work.close()
+            if value_writer is not None:
+                value_writer.close()
 
     total_elapsed = time.monotonic() - total_start
     logger.info("Solution complete  (%s)", format_duration(seconds=total_elapsed))
 
     return BackwardInductionResult(
-        value_functions=MappingProxyType(solution),
+        # Under disk storage some values are lazy entries reading the archive;
+        # the result's value store and device views read them back.
+        value_functions=cast("PeriodToRegimeToVArr", MappingProxyType(solution)),
         simulation_policies=MappingProxyType(simulation_policies),
         generated_replay_authorities=MappingProxyType(generated_replay_authorities),
         dissolution_flags=MappingProxyType(dissolution_flags),
@@ -2705,7 +2744,7 @@ def _build_base_state_action_spaces(
 
 def _drain_V_arr_shards(
     *,
-    solution: dict[int, MappingProxyType[RegimeName, FloatND]],
+    solution: dict[int, MappingProxyType[RegimeName, FloatND | DiskValueEntry]],
     dissolution_flags: dict[int, MappingProxyType[RegimeName, BoolND]] | None = None,
 ) -> None:
     """Block until every V_arr (and dissolution-flag) shard is materialised.
@@ -2727,6 +2766,8 @@ def _drain_V_arr_shards(
         if period_mapping is not None
         for regime_mapping in period_mapping.values()
         for array in regime_mapping.values()
+        # A value written to disk is no longer an array in flight.
+        if isinstance(array, jax.Array)
     )
     jax.block_until_ready(array_leaves)
 
@@ -7118,7 +7159,13 @@ def _structural_key(
             ),
             frozen_policy(
                 {
-                    field.name: getattr(execution, field.name)
+                    # Where values are kept shapes the plan; which directory
+                    # holds them does not.
+                    field.name: (
+                        execution.value_storage_kind
+                        if field.name == "value_storage"
+                        else getattr(execution, field.name)
+                    )
                     for field in dataclasses.fields(execution)
                     if field.name not in _ADMISSION_ONLY_EXECUTION_FIELDS
                 }

@@ -9,14 +9,18 @@ plugin object, Python class, or executable code is serialized.
 # public persistence exceptions at its trust boundary.
 # ruff: noqa: TRY301
 
+import collections
 import contextlib
 import hashlib
 import json
 import math
 import os
+import shutil
 import tempfile
 import threading
+import weakref
 from collections.abc import Mapping
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from enum import Enum, auto
 from pathlib import Path
@@ -32,6 +36,7 @@ from h5py import h5o  # ty: ignore[unresolved-import]
 
 from _lcm import version as _version
 from _lcm.dtypes import CanonicalArrayWriter
+from _lcm.solution.host_values import admit_values_on_devices
 from _lcm.solution.result_snapshot import (
     snapshot_artifact_authorities,
     snapshot_artifact_store,
@@ -500,10 +505,14 @@ def save_solution_archive(*, solution: _SolutionResultBoundary, path: Path) -> P
     if not path.parent.is_dir():
         raise FileNotFoundError(f"Parent directory does not exist: {path.parent}")
 
+    # A result whose solve streamed it to disk is already that archive.
+    streamed = _streamed_archive_of(solution=solution)
     # Materialize, validate, and copy the entire result before creating even a
     # temporary archive.  The writer therefore cannot observe a different user
     # container or mutable array from the object that passed preflight.
-    snapshot = _prepare_solution_for_save(solution=solution)
+    snapshot = (
+        None if streamed is not None else _prepare_solution_for_save(solution=solution)
+    )
 
     tmp_path: Path | None = None
     try:
@@ -514,7 +523,10 @@ def save_solution_archive(*, solution: _SolutionResultBoundary, path: Path) -> P
         )
         os.close(descriptor)
         tmp_path = Path(tmp_name)
-        _write_archive(snapshot=snapshot, path=tmp_path)
+        if snapshot is None:
+            shutil.copyfile(cast("Path", streamed), tmp_path)
+        else:
+            _write_archive(snapshot=snapshot, path=tmp_path)
         # Opened for writing without truncation: the flush needs a writable
         # handle, since Windows refuses to flush a read-only one.
         with tmp_path.open("r+b") as file_handle:
@@ -2737,12 +2749,26 @@ _INCOMPLETE_DATASET: Final = "incomplete"
 
 
 class _ArchiveFile:
-    """Where one streamed archive's file is, and its handle while it is written."""
+    """Where one streamed archive's file is, and its handle while it is written.
+
+    A complete archive is deleted once nothing reads it any more: every value
+    entry holds this object, so the file goes with the last of them. An
+    abandoned archive is kept.
+    """
 
     def __init__(self, *, path: Path, handle: h5py.File) -> None:
         self.path = path
         self.handle: h5py.File | None = handle
         self.lock = threading.Lock()
+        self.completed_for: weakref.ref[_SolutionResultBoundary] | None = None
+        self._deletable: list[Path | None] = [None]
+        weakref.finalize(self, _delete_archive, self._deletable)
+
+    def publish(self, *, path: Path, deletable: bool) -> None:
+        """Record the archive's final name, and whether it goes with its readers."""
+        self.path = path
+        self.handle = None
+        self._deletable[0] = path if deletable else None
 
     def read(self, *, dataset: str) -> np.ndarray:
         """Read one dataset, through the writing handle while the file is open."""
@@ -2772,10 +2798,36 @@ class DiskValueEntry(_LazyEntry):
     sharding: jax.sharding.Sharding
     """Sharding the solve published the value on."""
 
+    shape: tuple[int, ...]
+    """Shape of the value."""
+
+    dtype: np.dtype
+    """Dtype of the value."""
+
+    budget_bytes: int | None = None
+    """Per-device budget of the solve that wrote the value; `None` unbudgeted."""
+
     @property
     def load_state(self) -> LoadState:
         """Nothing of a value on disk is in memory until it is read."""
         return LoadState.UNLOADED
+
+    @classmethod
+    def _admit_joint_materialization(cls, *, entries: tuple[_LazyEntry, ...]) -> None:
+        """Refuse to place disk-stored values on the devices together above budget."""
+        admit_values_on_devices(
+            layouts=tuple(
+                (
+                    jax.ShapeDtypeStruct(
+                        entry.shape, entry.dtype, sharding=entry.sharding
+                    ),
+                    entry.budget_bytes,
+                )
+                for entry in entries
+                if isinstance(entry, DiskValueEntry)
+            ),
+            where="disk-stored",
+        )
 
     def host_value(self) -> np.ndarray:
         """Read the value from the archive and verify it against its checksum.
@@ -2814,9 +2866,14 @@ class StreamedSolutionArchive:
     `<name>.incomplete`, which `load_solution` refuses.
     """
 
-    def __init__(self, *, directory: Path, name: str) -> None:
+    def __init__(
+        self, *, directory: Path, name: str, budget_bytes: int | None = None
+    ) -> None:
         self._directory = directory
         self._name = name
+        self._budget_bytes = budget_bytes
+        self._written_periods: set[int] = set()
+        self._description: dict[str, JSONValue] = {}
         path = directory / f"{name}{_PARTIAL_SUFFIX}"
         handle = h5py.File(path, "x")
         self._file = _ArchiveFile(path=path, handle=handle)
@@ -2856,7 +2913,25 @@ class StreamedSolutionArchive:
             identity=MappingProxyType(cast("dict[str, JSONValue]", leaf["identity"])),
             sha256=cast("str", leaf["sha256"]),
             sharding=sharding,
+            shape=value.shape,
+            dtype=value.dtype,
+            budget_bytes=self._budget_bytes,
         )
+
+    def describe(self, **fields: JSONValue) -> None:
+        """Remember facts about the solve that an abandoned archive records."""
+        self._description.update(fields)
+
+    def mark_period_written(self, *, period: int) -> None:
+        """Record that every value of `period` is in the file."""
+        with self._file.lock:
+            self._written_periods.add(period)
+
+    @property
+    def last_completed_period(self) -> int | None:
+        """Earliest period every value of which is in the file; `None` if none is."""
+        with self._file.lock:
+            return min(self._written_periods, default=None)
 
     def complete(self, *, solution: _SolutionResultBoundary) -> Path:
         """Add the result's artifacts and manifest, and publish the archive.
@@ -2876,7 +2951,9 @@ class StreamedSolutionArchive:
                 value_entries=self._value_entries,
                 counter=self._counter,
             )
-            return self._close(suffix=_COMPLETE_SUFFIX)
+            path = self._close(suffix=_COMPLETE_SUFFIX, deletable=True)
+            self._file.completed_for = weakref.ref(solution)
+            return path
 
     def abandon(self, *, record: Mapping[str, JSONValue]) -> Path:
         """Record how far the solve got in place of a manifest, and close the file.
@@ -2885,14 +2962,16 @@ class StreamedSolutionArchive:
             The path of the incomplete archive.
 
         """
-        encoded = json.dumps(dict(record), sort_keys=True, allow_nan=False).encode()
+        encoded = json.dumps(
+            self._description | dict(record), sort_keys=True, allow_nan=False
+        ).encode()
         with self._file.lock:
             self._handle.create_dataset(
                 _INCOMPLETE_DATASET, data=np.frombuffer(encoded, dtype=np.uint8)
             )
-            return self._close(suffix=_INCOMPLETE_SUFFIX)
+            return self._close(suffix=_INCOMPLETE_SUFFIX, deletable=False)
 
-    def _close(self, *, suffix: str) -> Path:
+    def _close(self, *, suffix: str, deletable: bool) -> Path:
         """Flush and close the file, then rename it under `suffix`."""
         self._handle.flush()
         self._handle.close()
@@ -2900,6 +2979,111 @@ class StreamedSolutionArchive:
             os.fsync(file_handle.fileno())
         path = self._directory / f"{self._name}{suffix}"
         self._file.path.replace(path)
-        self._file.path = path
-        self._file.handle = None
+        self._file.publish(path=path, deletable=deletable)
         return path
+
+
+class PeriodValueWriter:
+    """Writes a solve's host-stored values to its archive from a background thread.
+
+    Each period's values go in one job, in solve order. A submit returns the
+    periods whose writes have finished, with the entries that read them back, so
+    the caller can drop their host copies; it waits while more than
+    `max_pending` periods are still unwritten, which bounds host memory.
+    """
+
+    def __init__(
+        self, *, archive: StreamedSolutionArchive, max_pending: int = 2
+    ) -> None:
+        self._archive = archive
+        self._max_pending = max_pending
+        self._executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="lcm-value-writer"
+        )
+        self._pending: collections.deque[
+            tuple[int, Future[MappingProxyType[RegimeName, DiskValueEntry]]]
+        ] = collections.deque()
+
+    def submit(
+        self, *, period: int, values: Mapping[RegimeName, jax.Array]
+    ) -> tuple[tuple[int, MappingProxyType[RegimeName, DiskValueEntry]], ...]:
+        """Queue one period's host copies; return the periods now written."""
+        self._pending.append(
+            (
+                period,
+                self._executor.submit(self._write, period=period, values=dict(values)),
+            )
+        )
+        written = []
+        while self._pending and (
+            len(self._pending) > self._max_pending or self._pending[0][1].done()
+        ):
+            done_period, future = self._pending.popleft()
+            written.append((done_period, future.result()))
+        return tuple(written)
+
+    def drain(
+        self,
+    ) -> tuple[tuple[int, MappingProxyType[RegimeName, DiskValueEntry]], ...]:
+        """Wait for every queued period and return them all."""
+        written = tuple((period, future.result()) for period, future in self._pending)
+        self._pending.clear()
+        return written
+
+    def close(self) -> None:
+        """Let queued writes finish, so the archive records how far they got."""
+        self._executor.shutdown(wait=True)
+
+    def _write(
+        self, *, period: int, values: dict[RegimeName, jax.Array]
+    ) -> MappingProxyType[RegimeName, DiskValueEntry]:
+        entries = MappingProxyType(
+            {
+                regime: self._archive.write_value(
+                    period=period,
+                    regime=regime,
+                    value=np.asarray(value),
+                    sharding=value.sharding,
+                )
+                for regime, value in values.items()
+            }
+        )
+        self._archive.mark_period_written(period=period)
+        return entries
+
+
+def _delete_archive(location: list[Path | None]) -> None:
+    """Delete a complete streamed archive once nothing reads it any more."""
+    if location[0] is not None:
+        with contextlib.suppress(OSError):
+            location[0].unlink()
+
+
+def _streamed_archive_of(*, solution: _SolutionResultBoundary) -> Path | None:
+    """Return the archive a solve wrote for exactly this result, if there is one.
+
+    Every value of the result must read from one complete streamed archive that
+    was completed from this very result object, so the file holds what saving
+    the result would write.
+    """
+    values = solution.values if type(solution) is SolutionResult else None
+    if type(values) is not ValueStore:
+        return None
+    files = {
+        id(entry.file): entry.file
+        for entry in values._entries.values()  # noqa: SLF001
+        if isinstance(entry, DiskValueEntry)
+    }
+    if len(files) != 1 or len(values._entries) != sum(  # noqa: SLF001
+        isinstance(entry, DiskValueEntry)
+        for entry in values._entries.values()  # noqa: SLF001
+    ):
+        return None
+    (file,) = files.values()
+    if (
+        file.handle is not None
+        or file.completed_for is None
+        or file.completed_for() is not solution
+    ):
+        return None
+    return file.path
