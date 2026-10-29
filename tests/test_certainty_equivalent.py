@@ -598,6 +598,7 @@ def test_nbegm_certainty_equivalent_rejects_a_varying_elasticity_flow():
 
     nbegm = NBEGM(
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
+        probe_schedule="every_solve",
     )
     alive = ConsumptionSavingsRegime(
         states={"wealth": _WEALTH, "kind": DiscreteGrid(category_class=_Kind)},
@@ -748,6 +749,7 @@ def test_nbegm_certainty_equivalent_rejects_a_negative_flow():
 
     nbegm = NBEGM(
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
+        probe_schedule="every_solve",
     )
     alive = ConsumptionSavingsRegime(
         states={"wealth": _WEALTH, "kind": DiscreteGrid(category_class=_Kind)},
