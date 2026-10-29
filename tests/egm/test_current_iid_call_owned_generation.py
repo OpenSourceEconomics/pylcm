@@ -97,12 +97,16 @@ from tests.solution.test_solution_persistence import (
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
 
-def _declarations(*, runtime_child_grid: bool = False) -> _ModelConstructorInputs:
+def _declarations(
+    *, runtime_child_grid: bool = False, parent_grid_replay: bool = False
+) -> _ModelConstructorInputs:
     """Original age-reading economics with the analytically complete source domain.
 
     Parent saving at most four lands at 8.5. The child extends past that landing;
     log/log endpoint optima are resources/2, with income zero or one. Both
     initial and shifted runtime endpoints have those optima in the savings grid.
+    `parent_grid_replay` simulates the parent by the argmax over its declared
+    consumption grid instead of reading its solved EGM policy.
     """
     grid = IrregSpacedGrid(points=np.array([1.0, 4.0]))
     child_grid = (
@@ -159,6 +163,7 @@ def _declarations(*, runtime_child_grid: bool = False) -> _ModelConstructorInput
         solver=DCEGM(
             savings_grid=IrregSpacedGrid(points=np.array([0.5, 0.75, 1.0, 4.0])),
             envelope=ExactEnvelope(),
+            replay="grid" if parent_grid_replay else "candidate",
         ),
     )
     child = ConsumptionSavingsRegime(
@@ -571,7 +576,8 @@ def test_public_model_current_iid_balanced_solve_replay_and_archive(  # noqa: PL
     *, tmp_path: Path
 ) -> None:
     """Public construction retains the same original economics through fresh replay."""
-    declarations = _declarations()
+    # The parent action oracle below scores the declared consumption grid.
+    declarations = _declarations(parent_grid_replay=True)
     constructor_inputs = {
         field.name: getattr(declarations, field.name)
         for field in fields(declarations)
@@ -1220,7 +1226,8 @@ def test_public_budgeted_case_r_archive_receiver_preserves_original_delivery(
     *, tmp_path: Path
 ) -> None:
     """A fresh budgeted public receiver owns the original default Case-R archive."""
-    declarations = _declarations()
+    # The parent action oracle below scores the declared consumption grid.
+    declarations = _declarations(parent_grid_replay=True)
     params = _params()
     producer = _public_model_from_declarations(declarations=declarations)
     result = producer.solve(
