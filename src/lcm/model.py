@@ -1373,7 +1373,8 @@ class Model:
             )
         representatives = prepared.prepared_structure.representative_user_regimes
         # Nested sources and NB ride sources carry passive states into their
-        # terminal; the original factories admit their source geometry.
+        # terminal, deterministic discrete ones included; the original factories
+        # admit their source geometry.
         has_multistate_source = any(
             type(regime.solver) is _BoundNEGM
             or type(regime.solver) is _BoundNNBEGM
@@ -1390,6 +1391,7 @@ class Model:
                     or (not has_multistate_source and len(regime.states) != 1)
                     or not all(
                         isinstance(grid, ContinuousGrid)
+                        or (has_multistate_source and isinstance(grid, DiscreteGrid))
                         for grid in regime.states.values()
                     )
                 ):
