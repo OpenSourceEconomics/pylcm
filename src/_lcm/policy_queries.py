@@ -6,7 +6,7 @@ import logging
 import math
 import weakref
 from collections.abc import Callable, Hashable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from graphlib import CycleError, TopologicalSorter
 from types import MappingProxyType
@@ -315,6 +315,13 @@ class QueryNode:
                 raise ValueError("A reader answer shape needs nonnegative dimensions.")
             object.__setattr__(self, "answer_shape", shape)
 
+    def __repr__(self) -> str:
+        """Name the read only; `jax.jit` stringifies callables holding a node."""
+        return (
+            f"QueryNode(kind={self.read.kind.value!r}, target={self.read.target!r}, "
+            f"period={self.read.period}, role={self.read.role!r})"
+        )
+
     @property
     def value_shape(self) -> tuple[int, ...]:
         """Return the answer owner's tuple shape, independent of physical laws."""
@@ -565,6 +572,19 @@ class ScalarPolicyQueries:
             for check in _query_landing_checks(node=node)
         )
 
+    @functools.cached_property
+    def _node_value_reads(self) -> tuple[tuple[str, ValueRead], ...]:
+        """Each node's continuation reads, walked once per graph for every core key.
+
+        Nested arrival graphs share query instances, so the walk is linear in the
+        distinct graphs rather than in the paths through them.
+        """
+        return tuple(
+            (name, read)
+            for name, node in self.definitions.items()
+            for read in _node_inputs(node=node, period=node.read.period)[1]
+        )
+
     def value_reads(self, *, core_key: str) -> tuple[ValueRead, ...]:
         """Address every continuation at its exact nested simulation operand."""
         source_regime = self.definitions[self.root].read.target
@@ -583,8 +603,7 @@ class ScalarPolicyQueries:
                     ),
                 ),
             )
-            for name, node in self.definitions.items()
-            for read in _node_inputs(node=node, period=node.read.period)[1]
+            for name, read in self._node_value_reads
         )
 
     def __call__(
@@ -1313,7 +1332,10 @@ class _QueryCore:
     node: QueryNode
     period: int
     name: str = ""
-    definitions: Mapping[str, QueryNode] = MappingProxyType({})
+    definitions: Mapping[str, QueryNode] = field(
+        default=MappingProxyType({}), repr=False
+    )
+    """Whole query graph; omitted from the repr `jax.jit` takes of this callable."""
 
     def __call__(self, **arguments: PytreeValue) -> PolicyAnswer:
         """Select target actions at mapped coordinates, retaining common tuples."""

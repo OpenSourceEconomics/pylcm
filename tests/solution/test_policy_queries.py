@@ -20,7 +20,11 @@ import pytest
 import lcm
 from _lcm import policy_queries as queries
 from _lcm.arrival_queries import bind_arrival_query_graph
-from _lcm.execution.core_program import CoreBuildContext
+from _lcm.execution.core_program import (
+    CoreArgumentBuilder,
+    CoreBuildContext,
+    ValueRead,
+)
 from _lcm.execution.footprint import ResidentBreakdown
 from _lcm.execution.output_layout import StateAxesLeading, resolve_output_layout
 from _lcm.execution.value_transfer import ValueArtifactAddress, ValueArtifactKind
@@ -1899,3 +1903,47 @@ def test_resident_split_aggregates_owners_and_bounds_the_listing(
         "live[remainder of 2 owners]=21 + internal=3 + peer_outputs=2 + "
         "fixed_owners=4 + transfer_scratch=5"
     )
+
+
+def test_query_core_repr_is_bounded_by_its_name() -> None:
+    """A jitted query core renders in a few hundred characters, whatever its graph."""
+    _native_model(enable_jit=False)
+    node = QueryNode(
+        read=_read(kind=QueryKind.PARTICIPATING, target="target"),
+        context=_CONTEXTS["target"],
+    )
+    definitions = {f"target_{i}": node for i in range(100)}
+    core = queries._QueryCore(
+        node=node, period=0, name="target_0", definitions=definitions
+    )
+    assert len(repr(core)) < 300
+
+
+def test_value_reads_walk_each_query_node_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every core key reuses one walk of the graph's continuation operands."""
+    _native_model(enable_jit=False)
+    node = QueryNode(
+        read=_read(kind=QueryKind.PARTICIPATING, target="target"),
+        context=_CONTEXTS["target"],
+    )
+    scalar = queries.ScalarPolicyQueries(
+        definitions={"first": node, "second": node}, root="first", period=0
+    )
+    walked = []
+    node_inputs = queries._node_inputs
+
+    def counted(
+        *, node: QueryNode, period: int
+    ) -> tuple[CoreArgumentBuilder, tuple[ValueRead, ...]]:
+        walked.append(node)
+        return node_inputs(node=node, period=period)
+
+    monkeypatch.setattr(queries, "_node_inputs", counted)
+    reads = {key: scalar.value_reads(core_key=key) for key in ("a", "b", "a")}
+    assert len(walked) == 2
+    assert {read.source.core_key for read in reads["a"]} <= {"a"}
+    assert [
+        replace(read, source=replace(read.source, core_key="a")) for read in reads["b"]
+    ] == list(reads["a"])
