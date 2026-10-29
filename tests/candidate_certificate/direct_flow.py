@@ -591,7 +591,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 # Source seals and corridor anchors require semantic verification of the combined
 # inventories before refresh; these inherited pins deliberately retain that gate.
 _SOURCE_SEALS = {
-    "src/_lcm/current_iid.py": "ac4125498751dd102b5d6cddc1dc102c13030e589a64eb88b166eab3e71770d1",
+    "src/_lcm/current_iid.py": "5ba6b89d75a0fe53195cd7377fde08d7e91b3187be2b32bedf5185b449e1ce8b",
     "src/_lcm/simulation/current_iid.py": "c675e9dffaa205b4049bf4c26438a70005766c368bc69a3dbb1d6e35cb66db99",
     "src/_lcm/egm/asset_row.py": "7a130991643a90a86349f7fd6b221950fb046489bf205677f3869a8607c260da",
     "src/_lcm/egm/continuation.py": "92cfa8d92681ba603ac878f1aba255512430667c149a866bc2ba3c778cbfa69b",
@@ -626,7 +626,7 @@ _SOURCE_SEALS = {
     BOUND_NORMALIZATION_SOURCE: "55f0e24bed63303ed9338798a876b6ad4a4b287b174d9513c2065fede183d495",
     USER_REGIME_BOUND_SOURCE: "a970b46791d8e8037b7d9a34d047d4b9582c3ed9cc3a12394f112aea28ab4ccb",
     LIQUID_BOUND_DECLARATION_SOURCE: "16118c29929f206f05925d88688edbc447f31c3a7aae1e73f022570e981ab886",
-    FEASIBILITY_SOURCE: "cd85c3c70c1e677f141a4815e5ecf1a5fe4e9bccf89e0dc5f629b14bdec4a911",
+    FEASIBILITY_SOURCE: "f129bedefd4b78af9cc9e132deaf7a6014b2388e600fd2a8a64ff0a81b277be6",
     ACTION_GRID_SOURCE: "76a059f7cc7d7e7d2a99e0ffd626ddbd76b89724d5e24f3bb10ad86501268309",
     SUPPORT_TRANSITION_CHECKS_SOURCE: "ace7cc6b2d5a820ad1401912c0a744a67a849cf8c6bd050480412a9cbca75601",
     SUPPORT_DIAGNOSTICS_SOURCE: "477761e6556a83fd2e271e4ab6c258cf4799d62d10d3a2d46dbf31f69b7161d8",
@@ -694,9 +694,9 @@ _SOURCE_SEALS = {
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
     ARGMAX_SOURCE: "b508d4e10350de8b54707db238d01c7de6c73b4ca6b0176e0c6c12ec762952dc",
     COLLECTIVE_SOURCE: "4cc0683d493f597684f5801909d297145d8bade0aa752c3e35cf8af2cb55edd9",
-    MAX_Q_SOURCE: "56aa3e57f88f082d549dd8c38301030a572f45ead0d8c64ef2ef0ac3b0c04779",
-    PROCESSING_SOURCE: "2f366bfe069608742d7b3d8910deead95d08a2bd1c9884c8da3ac9ca7e338c0b",
-    GRID_SEARCH_SOURCE: "8540136c11a5a1d630bcdab092a52a771164b94cd3b6c2a5a97ae60f934b1340",
+    MAX_Q_SOURCE: "274859ca8f33be8e6d8204cfc5bd968977c5648d6f9e0b673467c6f7e145aaf8",
+    PROCESSING_SOURCE: "8e4dab8047895c869ba8a6a9ea16c1d3bd33b0992fd4a34edc25377c6d4e6508",
+    GRID_SEARCH_SOURCE: "d69ed0179030008dd0c6d87cf1a25f3448357524b0ded6d4460291ace259f3e4",
     CORE_PROGRAM_SOURCE: "7d8197a3d2607a3380be63408ae4cf2b8d8ebbe68b043cc3aff76bf1f5c6b78a",
     OUTPUT_LAYOUT_SOURCE: "515b2ba9c622053fb51f4711201b489efe12e1739114135f91038f1bedd0067a",
     VALUE_TRANSFER_SOURCE: "73e10e24135c76e550ddadd5c3982469e164983d3b852d8c77f77b7b9f81a769",
@@ -713,7 +713,7 @@ _SOURCE_SEALS = {
     PROBABILITY_SOURCE: "60ccd04b143c714360388fcce2730804a4ca729ea4db82e4a0100732e155e53f",
     ENGINE_SOURCE: "5077cdfc6d99fec6ffef74236640434c1855c602ff8bf1e341c31dffc64edb31",
     STATE_ACTION_SPACE_SOURCE: "3c6a3a1111abd0889d9af97e0e88c0cf7dc27f07b5381746a5011cf4d8b423e7",
-    SIMULATION_SOURCE: "8e841294669d6245c3c58a3cc21f6717db1b8c1c3d251f6bd5dbb7259c45ae1b",
+    SIMULATION_SOURCE: "35badbc65b9a08d92344a54856bd205d78c5bcf23fae66aea0e7f3bbfc1d4092",
     SIMULATION_TRANSITIONS_SOURCE: "5cef83cc6d594d6d7004dee5cfc82dec5be33d669ac7779d3f9a393058e548da",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
     MODEL_SOURCE: "0872b294c48901b711e615e41b44566ef7063529e88ef31272949dba9adf24c6",
@@ -833,17 +833,17 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/current_iid.py": (
-        "141be8c45cd3cad35d1866c7cb1903698e6650f886020e5453c52031ab452c5a",
+        "87e10aed8c30598cd6f6d37285d713364168ac9519940f3c5ae2259aad3eed14",
         {
-            "CurrentIIDPlan.wrap": "a9fcdbcb96e54728e40fcbfad47a7d8b47804e6fc027799a4580b0210e42ac34",
+            "CurrentIIDPlan.wrap": "415ff5f7a33f87b3a4b144f1c8e40fa396647c10eba3f8bd0a4d8f55ac6f9899",
             "CurrentIIDPlan.realise_nodes": "10f8f048fa4869011b54643a8b587a935d5cb357c4fec4d81fbe3b052b91cd49",
             "CurrentIIDPlan.realise_information_nodes": "a5a534312b1dfc8c295533986ad5be93cc248a3e4c779c5e6000f9772ad4f3c2",
             "law_parameters": "505b635e5e1b780512a6bff80897ec809f2f6134c30842985ed95bbc3fcac209",
             "law_informativeness": "ddf05d5b6c372f3eb607c047e708b1d16f6022934a5d9488e6656513ad5f4e3a",
             "CurrentIIDDrawPlan.wrap": "481df62f00544beb8a3df789a4be5d684713e4218aea5ef7bb8409339a3eab00",
-            "_CurrentIIDExpectation.__call__": "a5c7ad3150940b478a373f5f6f6e8370c9a246221a90986ccd896b62b58df417",
-            "_CurrentIIDDraw.__call__": "5778e92311929a7533b4f21b933a0ba754515ecf928fd27704aad842c52fd4ee",
-            "_evaluate_node": "c628b5107c477ccf0dd688ec0d29b1a2f626a4a49298f9fb364a41476070958e",
+            "_CurrentIIDExpectation.__call__": "b9c862c37800e73695ff6d3cd8f312ac30c5b8e2072061a5ed1ec873d35e10f7",
+            "_CurrentIIDDraw.__call__": "6ca53c447d665625b4dee743fabc7d51ee1f2e87bb3de7cd86881a1891c423a5",
+            "_evaluate_node": "3e61f7799d0388e6211fca9d7495a09bcfae32ca1573e6e6314bad050e0f1e78",
             "CurrentIIDDrawPlan.realise": "39b31890b7521b6fd2888b0d584a7674446fb853dcca60f392e8dc1f16e34b91",
             "_draw_base_value": "4554e685f57a99188070a0050d53d1caa2b36c79d9c023ed629ea25aece79746",
             "_law_inputs": "b29f6f0fc9a9a5e0e206bad5d4888e74fdcef311ca2fe8aac47160398bde06a0",
@@ -1027,7 +1027,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
     FEASIBILITY_SOURCE: (
         "2ba638375db093b4f81d885b944f4c6ada988c41e1641f8adb0a5d0d95236bbf",
         {
-            "CountedGridSearch.__call__": "625970bc02eaea7839b14fbe8f1c91f4e327a8ce0b5d3665868479e953d6a068",
+            "CountedGridSearch.__call__": "aa2fb5423c29121bafae479f6e7d0fe5c658a8e0785b19bb0ecf9f713c832d3b",
             "FeasibilityKernelOutput.__post_init__": "86b70647353aab0cba371e2414e90c5e20ceca94c7dfc903f033928d5d1b6279",
             "_flatten_bound_status": "927d19863379fd04d664d9257c6c8d0694571e234e0e287202971bc264922f73",
             "_flatten_bound_status_with_keys": "0b34cc1ec4c4ec1600e53141fff93d963d97bf4f993b4f59a73bf3d2b510467c",
@@ -1560,7 +1560,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         "030a121fc5413a20c2b9f9076bbfd1e9da2b94438da04f42456f1b09bb3431bb",
         {
             "simulate": "1cd13b9d16d2e7b786e14424450f1dbb8f326de768eae3ec0e23defd43b2bcf8",
-            "_simulate_regime_in_period": "7fe2f1e9e753da65c7dc82547ef77c13cb50d76a4b1de5814f1e09e0f2166f8b",
+            "_simulate_regime_in_period": "6393c625050405f3e61f0b2911860fad174e8faecf28ca037fb2b1d6770a2c0e",
             "_execute_finite_replay": "dd01d79a502c1027cd08f0656c59c6bbab7080c848a706bcac631e63188edc1f",
             "_announce_dropped_outer_candidates": "977a3fc8627f295ad6837b46fcf94672449b532263c674be2209e509d6c088cd",
             "_report_dropped_outer_candidates": "0825c06c02ecfe2ad8270e6d606c67f3063f945befeccf6debb4880194d54dc1",
@@ -2329,14 +2329,14 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_GridSearchPeriodKernel.__post_init__": "1e8c230f0845d9b8335c667f38593221a957c34955efe44921763bce6cd24ac7",
             "_GridSearchPeriodKernel.core_programs": "0d96f7bea814e419ef1dbdebbc3257d63c3c0d36d9e6e52e619f8f44ae5a8a56",
             "_GridSearchPeriodKernel.with_fixed_params": "5f5a26e02b136c760bd242cd91c22b76153adc9828a13d20de7a6a98f5877e14",
-            "_GridSearchPeriodKernel.__call__": "bfccd37712e61a6fa7d2a65a053e82b29afcebbf8983bcfbc03706983c6921f8",
+            "_GridSearchPeriodKernel.__call__": "ebe1ea0bc427736ff6b6c7921c3c4b48fed9eff51482bbe5ff52e3f73af22d5b",
             "_FlattenBoundedGridSearch.__call__": "114b0acaace961b15c442d9bfc59dcd41409c73962f3034f3e29546b79cf6ac0",
             "_grid_search_fold_weights": "9a9e0af52881e46a569335fd73c809b56c08f752ad38f01731769ca6e0c97f78",
             "_fail_if_decoupled_route_is_unsupported": "0cfd97f1c692b3f82b78d5a9403da93c902b88aa8805e26137930ad2b7dd301e",
         },
     ),
     MAX_Q_SOURCE: (
-        "159d33526d3138837e0194f7d6d4f7e517eeaee7543ee6d4b587ddaf551d919e",
+        "85c3e312c9073cc5b0f954e38fd69f11d3af35b3619bef4ac0278f15c5870696",
         {
             "get_action_partitioned_max_Q_over_a": "7e4b9b51294748528dbe9d26c80af48f4dc7ef8a8f75090e0d110d56eab6db80",
             "_ActionPartitionedMaxQOverA.__call__": "9252a1202b3781ff23df05c28e65d4585e16274e0ac6abd6bcc0c4a7dfdfdbdc",
@@ -6380,12 +6380,15 @@ def _feasibility_summary_errors(tree: ast.Module) -> list[str]:
     if not _body_matches(
         node=method,
         expected_source="""evaluated = self.function(**kwargs)
+bounded = evaluated if type(evaluated) is BoundedResult else None
+if bounded is not None:
+    evaluated = bounded.output
 current_iid_invalid = None
 if self.current_iid:
     value, empty, invalid = cast('tuple[FloatND, BoolND, ScalarBool]', evaluated)
     current_iid_invalid = jnp.any(invalid)
     evaluated = (value, empty)
-value, empty = cast('tuple[FloatND, BoolND]', evaluated.output if type(evaluated) is BoundedResult else evaluated)
+value, empty = cast('tuple[FloatND, BoolND]', evaluated)
 infinite = jnp.isinf(value)
 if self.collective:
     infinite = jnp.any(infinite, axis=-1)
@@ -6393,8 +6396,8 @@ empty_count = jnp.sum(empty, dtype=jnp.int32)
 other_inf_count = jnp.sum(infinite & ~empty, dtype=jnp.int32)
 output: CountedGridSearchOutput = (value, empty, empty_count, other_inf_count) if self.collective else (value, empty_count, other_inf_count)
 if self.current_iid:
-    return cast('CountedGridSearchOutput', (*output, current_iid_invalid))
-return BoundedResult[CountedGridSearchOutput](output=output, bound_status=evaluated.bound_status) if type(evaluated) is BoundedResult else output
+    output = cast('CountedGridSearchOutput', (*output, current_iid_invalid))
+return BoundedResult[CountedGridSearchOutput](output=output, bound_status=bounded.bound_status) if bounded is not None else output
 """,
     ):
         errors.append("native feasibility summary: producer value or counters changed")
@@ -10331,16 +10334,16 @@ def current_iid_adapter_errors(
         (
             _CURRENT_IID_SOURCE,
             "_CurrentIIDExpectation.__call__",
-            "values, empty = jax.vmap(partial(_evaluate_node, function=self.function, arguments=arguments))(physical)",
+            "evaluated = jax.vmap(partial(_evaluate_node, function=self.function, arguments=arguments))(physical)",
         ),
         (
             _CURRENT_IID_SOURCE,
-            "_CurrentIIDExpectation.__call__",
+            "_integrate_nodes",
             "return jnp.sum(terms), jnp.any(support & empty), ~valid",
         ),
         (
             _CURRENT_IID_SOURCE,
-            "_CurrentIIDDraw.__call__",
+            "_replay_output",
             "return index, value, dict(physical), ~valid",
         ),
         (
@@ -10351,7 +10354,7 @@ def current_iid_adapter_errors(
         (
             GRID_SEARCH_SOURCE,
             "_GridSearchPeriodKernel.__call__",
-            "if self.current_iid:\n    if not isinstance(out, tuple) or len(out) != 4:\n        raise TypeError('Mandatory current-IID integrity output is missing.')\n    *ordinary, current_iid_invalid = out\n    current_iid_invalid = cast('ScalarBool', current_iid_invalid)\n    if current_iid_invalid.shape != () or current_iid_invalid.dtype != jnp.bool_:\n        raise TypeError('Current-IID integrity must be a scalar Boolean.')\n    out = tuple(ordinary)",
+            "if self.current_iid:\n    n_outputs = 4 + 2 * self.n_runtime_bounds + bool(self.landing_checks)\n    if not isinstance(out, tuple) or len(out) != n_outputs:\n        raise TypeError('Mandatory current-IID integrity output is missing.')\n    current_iid_invalid = cast('ScalarBool', out[3])\n    if current_iid_invalid.shape != () or current_iid_invalid.dtype != jnp.bool_:\n        raise TypeError('Current-IID integrity must be a scalar Boolean.')\n    out = (*out[:3], *out[4:])",
         ),
         (
             BACKWARD_INDUCTION_SOURCE,

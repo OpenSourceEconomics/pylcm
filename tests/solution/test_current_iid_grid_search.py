@@ -46,7 +46,6 @@ from lcm import (
     Regime,
     UniformIIDProcess,
     categorical,
-    post_decision_lower_bound,
 )
 from lcm.exceptions import (
     ExecutionPlanningError,
@@ -73,7 +72,6 @@ from lcm.shocks import (
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.typing import ContinuousState, DiscreteAction, FloatND, ScalarInt, UserParams
 from tests.conftest import DECIMAL_PRECISION
-from tests.constraints import test_dynamic_lower_bound as bound
 from tests.simulation import test_aot_same_period_refs as reference
 from tests.simulation._callback_types import ChunkProfileInputs
 from tests.solution import test_decoupled
@@ -1750,7 +1748,6 @@ def test_null_joint_events_do_not_poison_native_values(poison: float) -> None:
     [
         "co-map",
         "invariant blocks",
-        "bound",
         "gated source",
         "gated open target",
         "gated fallback",
@@ -1780,15 +1777,6 @@ def test_current_iid_refuses_actual_uncomposed_reader_intersections(
                 device_memory_bytes=None,
             )
         )
-    elif channel == "bound":
-        base = bound._model(
-            declaration=post_decision_lower_bound(
-                margin=bound.LIQUID, lower=bound.lower
-            )
-        )
-        regime_id_class = bound.RegimeId
-        target = "done"
-        execution = ExecutionConfig(device_memory_bytes=None)
     elif channel.startswith("gated"):
         base = gated._build_model(gate=gated._closed_gate, enable_jit=False)
         regime_id_class = gated.RegimeId

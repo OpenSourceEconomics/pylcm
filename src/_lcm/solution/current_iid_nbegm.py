@@ -10,6 +10,7 @@ import jax
 import jax.numpy as jnp
 
 from _lcm.certainty_equivalent import PowerMean, aggregates_nonlinearly
+from _lcm.constraints.dispositions import ProvedByConstruction
 from _lcm.continuation import (
     ContinuationPayload,
     ProjectedContinuationSpec,
@@ -333,11 +334,23 @@ def prepare_scalar_nbegm_u_kernels(  # noqa: C901, PLR0912, PLR0915 - bounded or
             raise UnsupportedOperationError(
                 "NB U source-point ownership requires a continuous kink schedule."
             )
-        proved = (
-            ()
-            if solver.post_decision_bound is None
-            else solver.post_decision_bound.declaration_names
-        )
+        # A literal floor at the savings-grid origin is proved by the grid.
+        proved = {
+            *(
+                ()
+                if solver.post_decision_bound is None
+                else solver.post_decision_bound.declaration_names
+            ),
+            *(
+                entry.constraint_name
+                for entry in (
+                    ()
+                    if context.constraint_plan is None
+                    else context.constraint_plan.entries
+                )
+                if isinstance(entry.disposition, ProvedByConstruction)
+            ),
+        }
         if any(
             constraint not in proved
             for constraint in context.user_regimes[name].constraints

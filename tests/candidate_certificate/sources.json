@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "dd7cc884e235af325c5718c4d5c4b54fbedce2da9f0877de4f0042ede462f830",
+  "source_inventory_sha256": "6b33ec5f942cc75f377b6053770ed4099e8985fdb5b772fc9d55fa752dd54f71",
   "sources": [
     {
       "path": "src/_lcm/constraints/bounds.py",
@@ -34,7 +34,7 @@
     },
     {
       "path": "src/_lcm/current_iid.py",
-      "sha256": "ac4125498751dd102b5d6cddc1dc102c13030e589a64eb88b166eab3e71770d1"
+      "sha256": "5ba6b89d75a0fe53195cd7377fde08d7e91b3187be2b32bedf5185b449e1ce8b"
     },
     {
       "path": "src/_lcm/dtypes.py",
@@ -338,11 +338,11 @@
     },
     {
       "path": "src/_lcm/regime_building/max_Q_over_a.py",
-      "sha256": "56aa3e57f88f082d549dd8c38301030a572f45ead0d8c64ef2ef0ac3b0c04779"
+      "sha256": "274859ca8f33be8e6d8204cfc5bd968977c5648d6f9e0b673467c6f7e145aaf8"
     },
     {
       "path": "src/_lcm/regime_building/processing.py",
-      "sha256": "2f366bfe069608742d7b3d8910deead95d08a2bd1c9884c8da3ac9ca7e338c0b"
+      "sha256": "8e4dab8047895c869ba8a6a9ea16c1d3bd33b0992fd4a34edc25377c6d4e6508"
     },
     {
       "path": "src/_lcm/regime_building/zero_safe.py",
@@ -510,7 +510,7 @@
     },
     {
       "path": "src/_lcm/simulation/simulate.py",
-      "sha256": "8e841294669d6245c3c58a3cc21f6717db1b8c1c3d251f6bd5dbb7259c45ae1b"
+      "sha256": "35badbc65b9a08d92344a54856bd205d78c5bcf23fae66aea0e7f3bbfc1d4092"
     },
     {
       "path": "src/_lcm/simulation/solution_copies.py",
@@ -582,7 +582,7 @@
     },
     {
       "path": "src/_lcm/solution/feasibility.py",
-      "sha256": "cd85c3c70c1e677f141a4815e5ecf1a5fe4e9bccf89e0dc5f629b14bdec4a911"
+      "sha256": "f129bedefd4b78af9cc9e132deaf7a6014b2388e600fd2a8a64ff0a81b277be6"
     },
     {
       "path": "src/_lcm/solution/fingerprint.py",
@@ -590,7 +590,7 @@
     },
     {
       "path": "src/_lcm/solution/grid_search.py",
-      "sha256": "8540136c11a5a1d630bcdab092a52a771164b94cd3b6c2a5a97ae60f934b1340"
+      "sha256": "d69ed0179030008dd0c6d87cf1a25f3448357524b0ded6d4460291ace259f3e4"
     },
     {
       "path": "src/_lcm/solution/kernel_output.py",

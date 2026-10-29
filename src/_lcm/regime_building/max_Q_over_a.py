@@ -64,7 +64,9 @@ from lcm.typing import BoolND, FloatND, IntND, ReferenceName, ScalarFloat
 TASTE_SHOCK_SCALE_PARAM = "taste_shocks__scale"
 
 type MaxOutput = FloatND | tuple[FloatND, BoolND] | CurrentIIDMaxOutput
-type BoundedMaxOutput = MaxOutput | BoundedResult[MaxOutput]
+type BoundedMaxOutput = (
+    MaxOutput | BoundedResult[MaxOutput] | BoundedResult[CurrentIIDMaxOutput]
+)
 type ArgmaxOutput = tuple[IntND, FloatND]
 type BoundedArgmaxOutput = (
     ArgmaxOutput | BoundedResult[ArgmaxOutput] | CurrentIIDDrawOutput

@@ -27,6 +27,7 @@ from _lcm.shock_overrides import (
     physical_recovery_status,
 )
 from _lcm.shock_registry import ShockBinding, ShockRegistry, law_input_validity
+from _lcm.solution.feasibility import BoundedResult, reduce_bound_input_status
 from _lcm.typing import ArgmaxQOverAFunction, PRNGKeyND, PytreeValue, QAndFArg
 from _lcm.zero_safe import factored_weighted_term
 from lcm.exceptions import InvalidParamsError, ShockDeclarationError
@@ -330,7 +331,7 @@ class _CurrentIIDDraw:
 
     def __call__(
         self, **kwargs: PytreeValue
-    ) -> tuple[IntND, FloatND, Mapping[ShockName, FloatND | IntND], ScalarBool]:
+    ) -> CurrentIIDDrawOutput | BoundedResult[CurrentIIDDrawOutput]:
         group_params = cast(
             "Mapping[ShockGroupName, Mapping[ReferenceName, LawValue | BoolND]]",
             kwargs[CURRENT_IID_ARGUMENT],
@@ -366,16 +367,30 @@ class _CurrentIIDDraw:
         )
         physical, valid = frame.physical, frame.valid
         available = {**arguments, **physical}
-        index, value = cast(
-            "tuple[IntND, FloatND]",
-            self.function(
-                **{
-                    name: available[name]
-                    for name in inspect.signature(self.function).parameters
-                }
-            ),
+        evaluated = self.function(
+            **{
+                name: available[name]
+                for name in inspect.signature(self.function).parameters
+            }
         )
-        return index, value, dict(physical), ~valid
+        if type(evaluated) is not BoundedResult:
+            return _replay_output(decision=evaluated, physical=physical, valid=valid)
+        return BoundedResult(
+            output=_replay_output(
+                decision=evaluated.output, physical=physical, valid=valid
+            ),
+            bound_status=evaluated.bound_status,
+        )
+
+
+def _replay_output(
+    *,
+    decision: PytreeValue,
+    physical: Mapping[ShockName, FloatND | IntND],
+    valid: ScalarBool,
+) -> CurrentIIDDrawOutput:
+    index, value = cast("tuple[IntND, FloatND]", decision)
+    return index, value, dict(physical), ~valid
 
 
 def _draw_base_value(*, key: PRNGKeyND, uniform: bool) -> FloatND:
@@ -531,7 +546,7 @@ class CurrentIIDPlan:
 
     def wrap(
         self, function: Callable[..., PytreeValue]
-    ) -> Callable[..., tuple[FloatND, BoolND, ScalarBool]]:
+    ) -> Callable[..., CurrentIIDMaxOutput | BoundedResult[CurrentIIDMaxOutput]]:
         """Bind the current law inside the native scalar-cell decision program."""
         names = tuple(inspect.signature(function).parameters)
         return with_signature(
@@ -742,7 +757,9 @@ class _CurrentIIDExpectation:
     plan: CurrentIIDPlan
     """Immutable law and joint support."""
 
-    def __call__(self, **kwargs: QAndFArg) -> tuple[FloatND, BoolND, ScalarBool]:
+    def __call__(
+        self, **kwargs: QAndFArg
+    ) -> CurrentIIDMaxOutput | BoundedResult[CurrentIIDMaxOutput]:
         group_params = cast(
             "Mapping[ShockGroupName, Mapping[ReferenceName, LawValue | BoolND]]",
             kwargs[CURRENT_IID_ARGUMENT],
@@ -768,12 +785,33 @@ class _CurrentIIDExpectation:
             node_operands=node_operands,
             indices=indices,
         )
-        values, empty = jax.vmap(
+        evaluated = jax.vmap(
             partial(_evaluate_node, function=self.function, arguments=arguments)
         )(physical)
-        support = jnp.all(~is_represented_zero(factor_array), axis=0)
-        terms = factored_weighted_term(factors=factor_array, values=values)
-        return jnp.sum(terms), jnp.any(support & empty), ~valid
+        if type(evaluated) is not BoundedResult:
+            return _integrate_nodes(
+                evaluated=evaluated, factor_array=factor_array, valid=valid
+            )
+        # A post-decision floor reads the realized draw, so every node is an
+        # actual lane of its integrity record, as on the node-state route.
+        return BoundedResult(
+            output=_integrate_nodes(
+                evaluated=evaluated.output, factor_array=factor_array, valid=valid
+            ),
+            bound_status=reduce_bound_input_status(
+                statuses=evaluated.bound_status,
+                active=jnp.ones(factor_array.shape[1], dtype=jnp.bool_),
+            ),
+        )
+
+
+def _integrate_nodes(
+    *, evaluated: PytreeValue, factor_array: FloatND, valid: ScalarBool
+) -> CurrentIIDMaxOutput:
+    values, empty = cast("tuple[FloatND, BoolND]", evaluated)
+    support = jnp.all(~is_represented_zero(factor_array), axis=0)
+    terms = factored_weighted_term(factors=factor_array, values=values)
+    return jnp.sum(terms), jnp.any(support & empty), ~valid
 
 
 # keyword-only-exempt: library-callback=jax.vmap
@@ -782,13 +820,10 @@ def _evaluate_node(
     *,
     function: Callable[..., PytreeValue],
     arguments: Mapping[ReferenceName, QAndFArg],
-) -> tuple[FloatND, BoolND]:
+) -> PytreeValue:
     inputs = {**arguments, **physical}
-    return cast(
-        "tuple[FloatND, BoolND]",
-        function(
-            **{name: inputs[name] for name in inspect.signature(function).parameters}
-        ),
+    return function(
+        **{name: inputs[name] for name in inspect.signature(function).parameters}
     )
 
 
