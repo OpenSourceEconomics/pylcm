@@ -109,7 +109,11 @@ def test_policy_first_reports_the_read_value_of_the_emitted_action(monkeypatch):
         row_axis_lengths_by_period=MappingProxyType({0: ()}),
         float_dtype="float64",
     )
-    regime = _StubRegime(simulation=SimpleNamespace(egm_policy_read=read, grids={}))
+    regime = _StubRegime(
+        simulation=SimpleNamespace(
+            egm_policy_read=read, grids={}, Q_and_F={0: lambda **_kwargs: None}
+        )
+    )
     sim_policy = EGMSimPolicy(
         endog_grid=jnp.array([1.0, 2.0]),
         policy=jnp.array([0.5, 1.0]),
@@ -124,7 +128,7 @@ def test_policy_first_reports_the_read_value_of_the_emitted_action(monkeypatch):
     )
     monkeypatch.setattr(
         simulation_module,
-        "_canonical_Q_at_actions",
+        "_evaluate_canonical_Q_at_actions",
         lambda **_kwargs: (jnp.full(2, jnp.nan), jnp.ones(2, dtype=bool)),
     )
 
