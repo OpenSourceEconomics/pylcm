@@ -352,7 +352,7 @@ def publish_balanced_resources(
             valid=read.valid & program.validate_guard(guard=guard, query=liquid),
         )
 
-    refined, refined_needed = refine_projected_row(
+    refined, refined_needed, _ = refine_projected_row(
         initial=initial, reference=checked_reference, accuracy="balanced"
     )
     # Exact-only carries stay valid: every interior read requires its own link.

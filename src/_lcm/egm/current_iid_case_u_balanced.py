@@ -31,7 +31,11 @@ from _lcm.egm.current_iid_log_utility import LogUtilityProgram
 from _lcm.egm.current_iid_projection import refine_projected_row
 from _lcm.egm.current_iid_pullback import pullback_resource_boundary
 from _lcm.egm.current_iid_resources_proof import prove_resources_only
-from _lcm.egm.interp import materialize_hermite_shadow
+from _lcm.egm.interp import (
+    _hermite_query_derivative,
+    materialize_hermite_shadow,
+    prepare_padded_grid,
+)
 from _lcm.egm.preferences import BoundUtilityOfAction
 from _lcm.egm.projected_continuation import ProjectedEGMCarry, ProjectedRowRead
 from _lcm.egm.query_data import QueryNodeKind
@@ -61,6 +65,7 @@ from _lcm.typing import (
     PytreeValue,
     ShapeDtypePytree,
 )
+from _lcm.zero_safe import factored_weighted_term
 from lcm.exceptions import UnsupportedOperationError
 from lcm.shocks import LawValue, ShockGroupName, ShockName
 from lcm.typing import (
@@ -249,13 +254,26 @@ def _guard_mapping_names[T](values: Mapping[str, T]) -> tuple[str, ...]:
 
 @dataclass(frozen=True, kw_only=True)
 class BalancedCaseUCarry(ProjectedEGMCarry):
-    """Stored PWA economics and original source inputs for consumed ownership."""
+    """Stored economics and original source inputs for consumed ownership."""
 
+    value_slope: FloatND
+    """Derivative of the reference value at each finite record; zero elsewhere."""
     guard: CaseUBalancedOperands
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self.value_slope.shape != self.grid.shape:
+            raise ValueError("Case-U value slopes have a different row schema.")
+        if self.value_slope.dtype != self.grid.dtype:
+            raise TypeError("Case-U value slopes must share the grid dtype.")
 
     @property
     def guard_required(self) -> bool:
         return True
+
+    @property
+    def value_slope_channel(self) -> FloatND:
+        return self.value_slope
 
     def leaves(self) -> Mapping[tuple[str, ...], FloatND | IntND | BoolND]:
         return MappingProxyType(
@@ -445,6 +463,126 @@ class SaturatedCaseUProgram:
             jnp.int32(0),
             valid,
         )
+
+    def value_slope(
+        self,
+        *,
+        guard: CaseUBalancedOperands,
+        conditionals: _ConditionalRow,
+        query: ScalarFloat,
+    ) -> ScalarFloat:
+        """Derivative of the reference value, read off the fixed conditional rows.
+
+        Each node's level derivative is the selected piece's own: the borrowing
+        corner's ``u'(R - L)`` or the Hermite piece of a non-collapsed envelope
+        bracket, never an automatic derivative of the exact-node bracket
+        selection. Weights and their tangents combine as in the integration.
+        """
+        pieces = self.point.pieces
+        state = pieces.euler_state_name
+        nodes = realise_case_u_nodes(
+            plan=self.point.plan,
+            liquid=query,
+            liquid_state=state,
+            arguments=guard.pool,
+            group_params=guard.group_params,
+            node_operands=guard.node_operands,
+            indices=guard.indices,
+        )
+
+        def one(
+            inputs: tuple[
+                Mapping[ShockName, ScalarFloat | ScalarInt],
+                Mapping[ShockName, ScalarFloat],
+                ScalarBool,
+                _ConditionalRow,
+            ],
+        ) -> tuple[ScalarFloat, ScalarFloat]:
+            physical, tangent, active, conditional = inputs
+
+            def read() -> tuple[ScalarFloat, ScalarFloat]:
+                # keyword-only-exempt: library-callback=jax.jvp
+                def resources(
+                    point: ScalarFloat, draw: Mapping[ShockName, ScalarFloat]
+                ) -> ScalarFloat:
+                    return self.resources(
+                        guard=guard, physical={**physical, **draw}, query=point
+                    )
+
+                at, direction = jax.jvp(
+                    resources,
+                    (query, {name: physical[name] for name in tangent}),
+                    (jnp.ones_like(query), tangent),
+                )
+                utility = BoundUtilityOfAction(
+                    utility_func=pieces.utility_func,
+                    action_name=pieces.action_name,
+                    bound={**guard.pool, **physical, state: query},
+                )
+                row = conditional.envelope
+                value, policy, corner = _publish_node_selection(
+                    bracket=_bracket_from_owned_row(refined=row, x_query=at).bracket,
+                    n_pad=pieces.n_pad,
+                    resources_at_node=at,
+                    borrowing_limit=conditional.borrowing_limit,
+                    utility_of_action=utility,
+                    discounted_expected_value_at_limit=(
+                        conditional.discounted_floor_value
+                    ),
+                )
+                search, length = prepare_padded_grid(row.grid)
+                envelope = _hermite_query_derivative(
+                    x_query=at,
+                    search_grid=search,
+                    valid_length=length,
+                    xp=row.grid,
+                    fp=row.value,
+                    fp_slopes=jax.vmap(
+                        lambda policy, value: _node_value_slope(
+                            policy=policy, value=value, utility_of_action=utility
+                        )
+                    )(row.policy, row.value),
+                )
+                floor = jax.grad(utility)(
+                    jnp.maximum(
+                        at - conditional.borrowing_limit, jnp.finfo(at.dtype).tiny
+                    )
+                )
+                feasible = jnp.isfinite(value) & (policy > 0.0)
+                return (
+                    jnp.where(feasible, value, -jnp.inf),
+                    jnp.where(
+                        feasible, jnp.where(corner, floor, envelope) * direction, 0.0
+                    ),
+                )
+
+            zero = jnp.zeros_like(query)
+            return jax.lax.cond(active, read, lambda: (zero, zero))
+
+        values, slopes = jax.lax.map(
+            one,
+            (
+                nodes.physical,
+                nodes.physical_tangent,
+                _needed(nodes=nodes),
+                conditionals,
+            ),
+        )
+        factors = nodes.factors
+        terms = factored_weighted_term(factors=factors, values=slopes)
+        for column in range(factors.shape[0]):
+            terms += factored_weighted_term(
+                factors=jnp.concatenate(
+                    (
+                        factors[:column],
+                        nodes.factor_tangent[column : column + 1],
+                        factors[column + 1 :],
+                    ),
+                    axis=0,
+                ),
+                values=values,
+            )
+        return jnp.sum(terms)
 
     def conditional(
         self,
@@ -779,14 +917,22 @@ class SaturatedCaseUProgram:
                 owner_id=row.owner_id[index], valid=read.valid & supported
             )
 
-        refined, _ = refine_projected_row(
-            initial=row, reference=checked_reference, accuracy="balanced"
+        refined, _, slopes = refine_projected_row(
+            initial=row,
+            reference=checked_reference,
+            accuracy="balanced",
+            value_slope=lambda query: self.value_slope(
+                guard=guard, conditionals=conditionals, query=query
+            ),
         )
+        if slopes is None:
+            raise TypeError("Case-U refinement lost its value slopes.")
         return BalancedCaseUCarry(
             **{
                 field.name: getattr(refined, field.name)
                 for field in fields(ProjectedEGMCarry)
             },
+            value_slope=slopes,
             guard=guard,
         )
 

@@ -76,7 +76,7 @@ from lcm.typing import (
     ScalarFloat,
     UserParams,
 )
-from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED
+from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.egm.test_current_iid_parent_demands import (
     _current_resources,
     _identity,
@@ -213,15 +213,6 @@ def _params(
     }
 
 
-_SLOW_X64_U = pytest.mark.skipif(
-    X64_ENABLED,
-    reason=(
-        "At fp64 the balanced U refinement takes hours at the default projection "
-        "capacity; tracked as S10 P2 performance."
-    ),
-)
-
-
 def _utility_reading_eps(*, consumption: ContinuousAction, eps: FloatND) -> FloatND:
     return jnp.log(consumption) + 0.125 * eps
 
@@ -246,7 +237,7 @@ def _utility_reading_bonus(*, consumption: ContinuousAction, bonus: FloatND) -> 
     [
         ("resources", NativeCaseRPeriodKernel),
         *(
-            pytest.param(channel, NativeCaseUPeriodKernel, marks=_SLOW_X64_U)
+            pytest.param(channel, NativeCaseUPeriodKernel)
             for channel in ("utility", "helper", "law")
         ),
     ],
@@ -922,8 +913,11 @@ def test_public_case_r_hard_invalid_projection_keeps_the_generic_refusal(
         carry: ProjectedEGMCarry,
         reference: Callable[[ScalarFloat], ProjectedRowRead],
         accuracy: Literal["certified", "balanced"],
+        slopes: FloatND | None = None,
     ) -> tuple[ScalarBool, BoolND]:
-        _, failed = original(carry=carry, reference=reference, accuracy=accuracy)
+        _, failed = original(
+            carry=carry, reference=reference, accuracy=accuracy, slopes=slopes
+        )
         return jnp.ones((), dtype=jnp.bool_), failed
 
     monkeypatch.setattr(current_iid_projection, "_assess_cells", hard_invalid)

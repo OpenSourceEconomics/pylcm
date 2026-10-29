@@ -173,6 +173,7 @@ def read_projected_coordinate(
         domain_lower=row.domain_lower,
         domain_upper=row.domain_upper,
         valid=row.valid,
+        value_slope=row.value_slope_channel,
     )
     if row.guard_required:
         if guard_program is None:

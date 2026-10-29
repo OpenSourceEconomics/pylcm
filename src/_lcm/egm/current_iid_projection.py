@@ -26,6 +26,7 @@ class _ProjectionState(NamedTuple):
     done: ScalarBool
     iteration: ScalarInt
     records_needed: ScalarInt
+    slopes: FloatND | None
 
     def __reduce__(
         self,
@@ -42,18 +43,22 @@ def refine_projected_row(
     initial: ProjectedEGMCarry,
     reference: Callable[[ScalarFloat], ProjectedRowRead],
     accuracy: Literal["certified", "balanced"] = "certified",
-) -> tuple[ProjectedEGMCarry, ScalarInt]:
+    value_slope: Callable[[ScalarFloat], ScalarFloat] | None = None,
+) -> tuple[ProjectedEGMCarry, ScalarInt, FloatND | None]:
     """Bisect failed smooth cells using the original selected-candidate reader.
 
     ``initial`` must contain all proven pullbacks and their owned jump sides.
     Refinement cannot prove that an undisclosed discontinuity does not exist.
     Missing topology, invalid references or exhausted capacity invalidate the
     mandatory status. Values and economic marginals have separate unit scales.
+    With ``value_slope``, the derivative of the reference value, every finite
+    record stores that slope and the row's level read is cubic Hermite.
 
     Returns:
-        Tuple of the refined row and the record count its last bisection needed.
-        The count exceeds the row capacity exactly when the capacity, and no
-        other cause, refused that bisection.
+        Tuple of the refined row, the record count its last bisection needed and
+        the stored value slopes (None without ``value_slope``). The count exceeds
+        the row capacity exactly when the capacity, and no other cause, refused
+        that bisection.
 
     """
     if initial.grid.ndim != 1:
@@ -61,7 +66,10 @@ def refine_projected_row(
 
     def step(current: _ProjectionState) -> _ProjectionState:
         hard_invalid, failed = _assess_cells(
-            carry=current.carry, reference=reference, accuracy=accuracy
+            carry=current.carry,
+            reference=reference,
+            accuracy=accuracy,
+            slopes=current.slopes,
         )
         any_failed = jnp.any(failed)
         room = (
@@ -74,19 +82,38 @@ def refine_projected_row(
         invalid = hard_invalid | (any_failed & ~room)
         carry = replace(current.carry, valid=current.carry.valid & ~invalid)
 
-        def insert(row: ProjectedEGMCarry) -> ProjectedEGMCarry:
+        def insert(
+            row: tuple[ProjectedEGMCarry, FloatND | None],
+        ) -> tuple[ProjectedEGMCarry, FloatND | None]:
             return _insert_projection_nodes(
-                carry=row, failed=failed, reference=reference
+                carry=row[0],
+                failed=failed,
+                reference=reference,
+                slopes=row[1],
+                value_slope=value_slope,
             )
 
-        carry = jax.lax.cond(
-            any_failed & room & ~hard_invalid, insert, lambda row: row, carry
+        carry, slopes = jax.lax.cond(
+            any_failed & room & ~hard_invalid,
+            insert,
+            lambda row: row,
+            (carry, current.slopes),
         )
         return _ProjectionState(
             carry=carry,
             done=~any_failed | invalid | ~carry.valid,
             iteration=current.iteration + 1,
             records_needed=needed,
+            slopes=slopes,
+        )
+
+    slopes = None
+    if value_slope is not None:
+        slopes = _record_slopes(
+            value_slope=value_slope,
+            grid=initial.grid,
+            finite=(jnp.arange(initial.grid.size) < initial.valid_length)
+            & (initial.node_kind == QueryNodeKind.FINITE),
         )
 
     state = jax.lax.while_loop(
@@ -97,20 +124,36 @@ def refine_projected_row(
             done=~initial.valid,
             iteration=jnp.asarray(0, dtype=jnp.int32),
             records_needed=initial.valid_length,
+            slopes=slopes,
         ),
     )
     hard_invalid, failed = _assess_cells(
-        carry=state.carry, reference=reference, accuracy=accuracy
+        carry=state.carry, reference=reference, accuracy=accuracy, slopes=state.slopes
     )
-    return replace(
-        state.carry,
-        valid=state.carry.valid & ~hard_invalid & ~jnp.any(failed),
-    ), state.records_needed
+    return (
+        replace(
+            state.carry,
+            valid=state.carry.valid & ~hard_invalid & ~jnp.any(failed),
+        ),
+        state.records_needed,
+        state.slopes,
+    )
+
+
+def _record_slopes(
+    *,
+    value_slope: Callable[[ScalarFloat], ScalarFloat],
+    grid: FloatND,
+    finite: BoolND,
+) -> FloatND:
+    """Reference value slopes at finite records; other records store zero."""
+    return jnp.where(finite, jax.vmap(value_slope)(grid), 0.0)
 
 
 def _read_projected(
-    *, carry: ProjectedEGMCarry, query: ScalarFloat
+    *, carry: ProjectedEGMCarry, query: ScalarFloat, slopes: FloatND | None = None
 ) -> ProjectedRowRead:
+    """The consumers' read; ``slopes`` stands in for an unpublished slope channel."""
     return read_projected_row(
         query=query,
         grid=carry.grid,
@@ -124,6 +167,7 @@ def _read_projected(
         domain_lower=carry.domain_lower,
         domain_upper=carry.domain_upper,
         valid=carry.valid,
+        value_slope=carry.value_slope_channel if slopes is None else slopes,
     )
 
 
@@ -132,6 +176,7 @@ def _assess_cells(
     carry: ProjectedEGMCarry,
     reference: Callable[[ScalarFloat], ProjectedRowRead],
     accuracy: Literal["certified", "balanced"],
+    slopes: FloatND | None = None,
 ) -> tuple[ScalarBool, BoolND]:
     dtype = carry.grid.dtype
     eps = jnp.finfo(dtype).eps
@@ -163,7 +208,7 @@ def _assess_cells(
 
     def assess(query: ScalarFloat) -> tuple[ScalarBool, ScalarBool]:
         actual = reference(query)
-        predicted = _read_projected(carry=carry, query=query)
+        predicted = _read_projected(carry=carry, query=query, slopes=slopes)
         both_economic = jnp.isneginf(actual.value) & jnp.isneginf(predicted.value)
         finite = jnp.isfinite(actual.value) & jnp.isfinite(predicted.value)
         hard = (
@@ -216,7 +261,9 @@ def _insert_projection_nodes(
     carry: ProjectedEGMCarry,
     failed: BoolND,
     reference: Callable[[ScalarFloat], ProjectedRowRead],
-) -> ProjectedEGMCarry:
+    slopes: FloatND | None = None,
+    value_slope: Callable[[ScalarFloat], ScalarFloat] | None = None,
+) -> tuple[ProjectedEGMCarry, FloatND | None]:
     capacity = carry.grid.size
     middle = carry.grid[:-1] + (carry.grid[1:] - carry.grid[:-1]) / 2.0
     middle = jnp.where(failed, middle, carry.domain_lower)
@@ -243,6 +290,15 @@ def _insert_projection_nodes(
     edge = jnp.concatenate((carry.link_valid, jnp.zeros((1,), dtype=bool)))
     edge_rows = jnp.repeat(edge, 2)
     links = jnp.zeros((capacity,), dtype=bool).at[slots].set(edge_rows, mode="drop")
+    if slopes is not None and value_slope is not None:
+        slopes = interleaved(
+            values=slopes,
+            inserted=_record_slopes(
+                value_slope=value_slope,
+                grid=middle,
+                finite=failed & (node_kind == QueryNodeKind.FINITE),
+            ),
+        )
     return replace(
         carry,
         grid=interleaved(values=carry.grid, inserted=middle),
@@ -256,7 +312,7 @@ def _insert_projection_nodes(
         link_valid=links[:-1],
         valid_length=carry.valid_length + jnp.sum(failed, dtype=jnp.int32),
         valid=carry.valid & jnp.all(~failed | sample.valid),
-    )
+    ), slopes
 
 
 def _flatten_projection_state(

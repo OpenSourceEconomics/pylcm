@@ -165,6 +165,11 @@ class ProjectedEGMCarry:
         """Identify carries requiring original-source ownership verification."""
         return False
 
+    @property
+    def value_slope_channel(self) -> FloatND | None:
+        """Stored derivative of the value records, or None for a linear level read."""
+        return None
+
     def value_at(self, *, query: FloatND) -> FloatND:
         """Require the parent to consume the projection's mandatory status."""
         del query
@@ -218,12 +223,15 @@ def read_projected_row(
     domain_lower: FloatND,
     domain_upper: FloatND,
     valid: ScalarBool,
+    value_slope: Float1D | None = None,
 ) -> ProjectedRowRead:
     """Read one original row, preserving exact nodes before interpolation.
 
     The caller selects a passive row before this operation and must consume
     ``valid`` even if its value is subsequently discounted or masked out.
     A query outside the declared domain is unsupported rather than clamped.
+    With ``value_slope``, a finite smooth link reads its level by cubic Hermite
+    in the stored value derivative; the economic marginal stays linear.
     """
     capacity = grid.size
     active = jnp.arange(capacity) < valid_length
@@ -251,9 +259,14 @@ def read_projected_row(
     smooth = represented_link & (finite_link | economic_link)
     weight = (query - grid[lower]) / jnp.where(span > 0.0, span, 1.0)
     arithmetic_value = jnp.where(jnp.isfinite(value), value, 0.0)
-    level = arithmetic_value[lower] + weight * (
-        arithmetic_value[upper] - arithmetic_value[lower]
-    )
+    rise = arithmetic_value[upper] - arithmetic_value[lower]
+    level = arithmetic_value[lower] + weight * rise
+    if value_slope is not None:
+        # A non-finite stored slope on a finite link invalidates the level.
+        level = level + weight * (1.0 - weight) * (
+            (1.0 - weight) * (span * value_slope[lower] - rise)
+            - weight * (span * value_slope[upper] - rise)
+        )
     marginal = economic_marginal[lower] + weight * (
         economic_marginal[upper] - economic_marginal[lower]
     )
