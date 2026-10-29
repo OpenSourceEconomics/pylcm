@@ -7,10 +7,12 @@ from dataclasses import replace
 from fractions import Fraction
 from types import MappingProxyType
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 from dags import with_signature
+from jax.extend.core import ClosedJaxpr, Jaxpr
 
 from _lcm.certainty_equivalent import PowerMean, QuasiArithmeticMean
 from _lcm.current_iid import CurrentIIDPlan
@@ -865,6 +867,62 @@ def test_declared_ce_transforms_original_future_nodes_before_joint_reduction() -
     )
     assert result.query_status is not None
     assert not bool(result.query_status[0].coverage_missing)
+
+
+def _equation_count(jaxpr: Jaxpr) -> int:
+    count = len(jaxpr.eqns)
+    for eqn in jaxpr.eqns:
+        for param in eqn.params.values():
+            for inner in param if isinstance(param, tuple | list) else (param,):
+                if isinstance(inner, ClosedJaxpr):
+                    count += _equation_count(inner.jaxpr)
+                elif isinstance(inner, Jaxpr):
+                    count += _equation_count(inner)
+    return count
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_declared_ce_traces_only_the_requested_economic_direction() -> None:
+    """Candidate and source reads do not trace the direction they discard."""
+    original = _point_solver()
+    plan = original.pieces.continuation_plan
+    grid = jnp.arange(1.0, 9.0)
+    child = EGMCarry(
+        endog_grid=grid,
+        value=2.0 * grid,
+        marginal_utility=jnp.full_like(grid, 7.0),
+        taste_shock_scale=jnp.asarray(0.0),
+    )
+    reader = EconomicCEContinuation(
+        plan=replace(
+            plan,
+            certainty_equivalent=QuasiArithmeticMean(
+                transform=_quadratic_transform, inverse=_quadratic_inverse
+            ),
+            child_reads=MappingProxyType(
+                {"done": _future_node_read(plan.child_reads["done"])}
+            ),
+        ),
+        pool={
+            **original.pool,
+            "liquid": jnp.asarray(0.0),
+            "certainty_equivalent__theta": jnp.asarray(1.0),
+        },
+        direction={
+            "liquid": jnp.asarray(1.0),
+            "certainty_equivalent__theta": jnp.asarray(0.5),
+        },
+        children=MappingProxyType({"done": child}),
+        dtype=grid.dtype,
+        stochastic_node_width=2,
+    )
+    saving = jnp.asarray(1.0)
+    both, candidate, source = (
+        _equation_count(jax.make_jaxpr(read)(saving).jaxpr)
+        for read in (reader, reader.savings, reader.source)
+    )
+    assert candidate < both
+    assert source < both
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
