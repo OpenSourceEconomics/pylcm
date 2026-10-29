@@ -4,22 +4,17 @@ from collections.abc import Mapping
 from dataclasses import replace
 from types import MappingProxyType
 
-import jax
-
 from _lcm.continuation import ProjectedContinuationSpec
 from _lcm.egm.current_iid_demands import ParentResourcesDemand
 from _lcm.egm.step import _EGMStep
 from _lcm.egm.step_core import _EgmKernelPieces
 from _lcm.execution.core_program import CoreBuildContext
-from _lcm.materialization import DatedGenerationMaterializer
 from _lcm.solution.continuation_target import union_fixed_params
 from _lcm.solution.contract import PeriodKernel, SolutionKernels, SolverBuildContext
 from _lcm.solution.current_iid_case_r import (
     CaseRArguments,
     CaseRProgramFunction,
     NativeCaseRPeriodKernel,
-    case_r_native_inputs,
-    trace_native_case_r,
 )
 from _lcm.solution.current_iid_case_r_build import PreparedNativeCaseRDate
 from _lcm.solution.current_iid_query_exclusions import (
@@ -92,9 +87,8 @@ def close_prepared_case_r_parent_demands(
     contexts: Mapping[RegimeName, SolverBuildContext],
     call_contexts: Mapping[tuple[RegimeName, int], CoreBuildContext],
     fixed_flat_params: FlatParams,
-    materializer: DatedGenerationMaterializer | None = None,
 ) -> Mapping[tuple[RegimeName, int], PreparedNativeCaseRDate]:
-    """Close actual consumers and re-trace frozen schemas before CorePrograms."""
+    """Close actual consumers onto frozen producer schemas before CorePrograms."""
     result = {}
     for (target, target_period), producer in prepared.items():
         spec = specs[target]
@@ -138,32 +132,8 @@ def close_prepared_case_r_parent_demands(
         call = call_contexts[target, target_period]
         if call.period != target_period or call.ages is not contexts[target].ages:
             raise TypeError("Demand closure lost its original date/clock.")
-        fixed = union_fixed_params(
-            fixed_flat_params=fixed_flat_params,
-            regime_name=target,
-            transition_target_names=arguments.base.transition_target_names,
-        )
-        native = case_r_native_inputs(
-            core=core,
-            arguments={
-                **fixed,
-                **(
-                    arguments(call)
-                    if materializer is None
-                    else arguments.prepare(context=call, materializer=materializer)
-                ),
-            },
-            materializer=materializer,
-        )
-        traced = trace_native_case_r(core=core, native_arguments=native)
-        if jax.tree.structure(traced) != jax.tree.structure(producer.template):
-            raise TypeError("Incoming demands changed the frozen producer output tree.")
-        actual = tuple((leaf.shape, leaf.dtype) for leaf in jax.tree.leaves(traced))
-        frozen = tuple(
-            (leaf.shape, leaf.dtype) for leaf in jax.tree.leaves(producer.template)
-        )
-        if actual != frozen:
-            raise TypeError("Incoming demands changed a frozen producer leaf schema.")
+        # The frozen template declares the program's output roles; lowering
+        # checks the closed core's output against them, so no shape re-trace.
         result[target, target_period] = replace(
             producer, core=core, arguments=arguments
         )

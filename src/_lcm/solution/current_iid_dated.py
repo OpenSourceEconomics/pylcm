@@ -592,7 +592,6 @@ def prepare_dated_balanced_kernels(  # noqa: C901, PLR0912, PLR0915 - one immuta
         contexts=final_contexts,
         call_contexts=materialization_contexts,
         fixed_flat_params=fixed_flat_params,
-        materializer=materializer,
     )
     closed_case_u = close_case_u_parent_demands(
         prepared=case_u,
