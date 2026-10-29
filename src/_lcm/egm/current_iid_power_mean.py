@@ -139,25 +139,22 @@ def _join_uncertainty_bound(
     )
 
 
-def _bank_input_valid(*, bank: PowerMeanNodeBank) -> ScalarBool:
+def _bank_input_valid(
+    *, bank: PowerMeanNodeBank, savings_channel: bool, source_channel: bool
+) -> ScalarBool:
     positive = ~is_represented_zero(bank.coefficients)
     normal = ~is_below_smallest_normal(bank.coefficients)
     # Per-event product scaling supplies normal coefficients. Therefore the
     # canonical primal's common lifting is identity, and Dw/Z share units.
     valid = bank.valid & jnp.all(~positive | normal)
     valid &= jnp.all(jnp.isfinite(bank.coefficients) & (bank.coefficients >= 0.0))
-    valid &= jnp.all(jnp.isfinite(bank.differentiated_coefficients))
-    valid &= jnp.all(
-        ~bank.needed
-        | (
-            jnp.isfinite(bank.values)
-            & (bank.values > 0.0)
-            & jnp.isfinite(bank.economic)
-            & jnp.isfinite(bank.savings_coordinates)
-            & jnp.isfinite(bank.source_coordinates)
-        )
-    )
-    return valid
+    node = jnp.isfinite(bank.values) & (bank.values > 0.0) & jnp.isfinite(bank.economic)
+    if savings_channel:
+        node &= jnp.isfinite(bank.savings_coordinates)
+    if source_channel:
+        valid &= jnp.all(jnp.isfinite(bank.differentiated_coefficients))
+        node &= jnp.isfinite(bank.source_coordinates)
+    return valid & jnp.all(~bank.needed | node)
 
 
 def _unit_risk_exponent(
@@ -210,14 +207,19 @@ def _unit_risk_exponent(
     return result
 
 
-def reduce_power_mean_economic(
+def reduce_power_mean_economic(  # noqa: PLR0915 - both channels share one priced lottery
     *,
     declared: PowerMean,
     params: Mapping[str, FloatND],
     parameter_direction: Mapping[str, FloatND],
     bank: PowerMeanNodeBank,
+    savings_channel: bool = True,
+    source_channel: bool = True,
 ) -> tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarBool]:
-    """Price the declared joint lottery once and retain both economic directions."""
+    """Price the declared joint lottery once with the requested economic directions.
+
+    An unrequested direction is neither traced nor validated; its slot is zero.
+    """
     if type(declared) is not PowerMean:
         raise TypeError("Stable economic context requires the actual exact PowerMean.")
     context = declared._scaled_context(  # noqa: SLF001
@@ -227,10 +229,11 @@ def reduce_power_mean_economic(
         params=params,
     )
     p = 1.0 - params["risk_aversion"]
-    dp = -parameter_direction["risk_aversion"]
     ln_two = jnp.log(jnp.asarray(2.0, dtype=bank.values.dtype))
     positive = ~is_represented_zero(bank.coefficients)
-    valid = _bank_input_valid(bank=bank)
+    valid = _bank_input_valid(
+        bank=bank, savings_channel=savings_channel, source_channel=source_channel
+    )
     # The primal's null-node masked logs are deliberately not reused here.
     values = jnp.where(bank.needed, bank.values, 1.0)
     log_v = log_of_nonnegative(values)
@@ -241,7 +244,8 @@ def reduce_power_mean_economic(
     log_z = context.log_mass
     log_t = log_z + context.log_moment
     log_c = log_of_nonnegative(context.value)
-    valid &= jnp.all(jnp.isfinite(jnp.stack((p, dp, log_z, log_t, log_c))))
+    valid &= jnp.all(jnp.isfinite(jnp.stack((p, log_z, log_t, log_c))))
+    valid &= jnp.isfinite(context.value) & (context.value > 0.0)
     economic = _signed(value=jnp.where(bank.needed, bank.economic, 0.0))
 
     def child_terms(*, coordinate: FloatND) -> _SignedLog:
@@ -251,157 +255,160 @@ def reduce_power_mean_economic(
             positive.astype(values.dtype) * economic.sign * direction.sign,
         )
 
-    savings_terms = child_terms(coordinate=bank.savings_coordinates)
-    source_terms = child_terms(coordinate=bank.source_coordinates)
-    q = _signed(value=d)
-    q = _SignedLog(q.logabs + _log_exprel(argument=u), q.sign)
-    mean_q = _sum_signed(
-        terms=_SignedLog(
-            log_w + q.logabs - log_z, positive.astype(values.dtype) * q.sign
-        )
-    )
-    # E|q| survives an inner cancellation in Eq, including a rounded zero.
-    log_mean_abs_q = _log_magnitude(
-        terms=_SignedLog(
-            log_w + q.logabs - log_z, positive.astype(values.dtype) * q.sign
-        )
-    )
-    dw = _signed(value=bank.differentiated_coefficients)
-    log_dw = dw.logabs - bank.differentiated_shifts * ln_two
-    near_weight = _join(
-        parts=(
-            _SignedLog(log_c + log_dw + q.logabs - log_t, dw.sign * q.sign),
-            _SignedLog(log_c + log_dw + mean_q.logabs - log_t, -dw.sign * mean_q.sign),
-        )
-    )
-    safe_p = jnp.where(p == 0.0, 1.0, p)
-    signed_p = _signed(value=safe_p)
-    far_weight = _join(
-        parts=(
-            _SignedLog(
-                log_c + log_dw + u - log_t - signed_p.logabs, dw.sign * signed_p.sign
-            ),
-            _SignedLog(
-                log_c + log_dw - log_z - signed_p.logabs, -dw.sign * signed_p.sign
-            ),
-        )
-    )
-    weight_terms = _choose(
-        predicate=context.near_geometric, left=near_weight, right=far_weight
-    )
-    weight_magnitudes = _choose(
-        predicate=context.near_geometric,
-        left=_join(
-            parts=(
-                _SignedLog(log_c + log_dw + q.logabs - log_t, dw.sign * q.sign),
-                _SignedLog(log_c + log_dw + log_mean_abs_q - log_t, -dw.sign),
-            )
-        ),
-        right=far_weight,
-    )
-
-    signed_dp = _signed(value=dp)
-    signed_d = _signed(value=d)
-    # Use the original primal's branch and ratio; do not reclassify via p*m.
-    z = jnp.where(context.near_geometric, context.deviation_ratio, 0.0)
-    phi = _signed(value=_phi(argument=z))
-    near_exponent = _join(
-        parts=(
-            _SignedLog(
-                log_c
-                + signed_dp.logabs
-                + log_w
-                - log_z
-                + 2.0 * signed_d.logabs
-                + _log_psi(argument=u)
-                - jnp.log1p(z),
-                positive.astype(values.dtype) * signed_dp.sign,
-            ),
-            _SignedLog(
-                log_c + signed_dp.logabs + 2.0 * mean_q.logabs + phi.logabs,
-                signed_dp.sign * phi.sign,
-            ),
-        )
-    )
-    signed_k = _signed(value=context.log_moment)
-    far_exponent = _join(
-        parts=(
-            _SignedLog(
-                log_c
-                + signed_dp.logabs
-                + log_w
-                + u
-                - log_t
-                + signed_d.logabs
-                - signed_p.logabs,
-                positive.astype(values.dtype)
-                * signed_dp.sign
-                * signed_d.sign
-                * signed_p.sign,
-            ),
-            _SignedLog(
-                log_c + signed_dp.logabs + signed_k.logabs - 2.0 * signed_p.logabs,
-                -signed_dp.sign * signed_k.sign,
-            ),
-        )
-    )
-    unit_exponent = jax.lax.cond(
-        (p == 0.0) & ~is_represented_zero(dp),
-        lambda: _unit_risk_exponent(
-            values=values,
-            d=d,
-            log_w=log_w,
-            positive=positive,
-            log_z=log_z,
-            log_c=log_c,
-            dp=dp,
-        ),
-        lambda: _SignedLog(jnp.full_like(p, -jnp.inf), jnp.zeros_like(p)),
-    )
-    # Each regime has a different term count; sum in signed scale before choice.
-    exponent = _choose(
-        predicate=p == 0.0,
-        left=unit_exponent,
-        right=_choose(
-            predicate=context.near_geometric,
-            left=_sum_signed(terms=near_exponent),
-            right=_sum_signed(terms=far_exponent),
-        ),
-    )
-    near_exponent_magnitudes = _join(
-        parts=(
-            _SignedLog(
-                near_exponent.logabs[: values.shape[0]],
-                near_exponent.sign[: values.shape[0]],
-            ),
-            _SignedLog(
-                log_c + signed_dp.logabs + 2.0 * log_mean_abs_q + phi.logabs,
-                signed_dp.sign * phi.sign,
-            ),
-        )
-    )
-    log_exponent_magnitude = jnp.where(
-        p == 0.0,
-        unit_exponent.logabs,
-        jnp.where(
-            context.near_geometric,
-            _log_magnitude(terms=near_exponent_magnitudes),
-            _log_magnitude(terms=far_exponent),
-        ),
-    )
-    saving = _materialize(value=_sum_signed(terms=savings_terms))
-    source = _materialize(
-        value=_sum_signed(terms=_join(parts=(source_terms, weight_terms, exponent)))
-    )
-    valid &= (
-        jnp.isfinite(context.value)
-        & (context.value > 0.0)
-        & jnp.isfinite(saving)
-        & jnp.isfinite(source)
-        & _direction_supported(
+    saving = source = jnp.zeros_like(context.value)
+    if savings_channel:
+        savings_terms = child_terms(coordinate=bank.savings_coordinates)
+        saving = _materialize(value=_sum_signed(terms=savings_terms))
+        valid &= jnp.isfinite(saving) & _direction_supported(
             direction=saving, log_magnitude=_log_magnitude(terms=savings_terms)
         )
-        & _direction_supported(
+    if source_channel:
+        dp = -parameter_direction["risk_aversion"]
+        valid &= jnp.isfinite(dp)
+        source_terms = child_terms(coordinate=bank.source_coordinates)
+        q = _signed(value=d)
+        q = _SignedLog(q.logabs + _log_exprel(argument=u), q.sign)
+        mean_q = _sum_signed(
+            terms=_SignedLog(
+                log_w + q.logabs - log_z, positive.astype(values.dtype) * q.sign
+            )
+        )
+        # E|q| survives an inner cancellation in Eq, including a rounded zero.
+        log_mean_abs_q = _log_magnitude(
+            terms=_SignedLog(
+                log_w + q.logabs - log_z, positive.astype(values.dtype) * q.sign
+            )
+        )
+        dw = _signed(value=bank.differentiated_coefficients)
+        log_dw = dw.logabs - bank.differentiated_shifts * ln_two
+        near_weight = _join(
+            parts=(
+                _SignedLog(log_c + log_dw + q.logabs - log_t, dw.sign * q.sign),
+                _SignedLog(
+                    log_c + log_dw + mean_q.logabs - log_t, -dw.sign * mean_q.sign
+                ),
+            )
+        )
+        safe_p = jnp.where(p == 0.0, 1.0, p)
+        signed_p = _signed(value=safe_p)
+        far_weight = _join(
+            parts=(
+                _SignedLog(
+                    log_c + log_dw + u - log_t - signed_p.logabs,
+                    dw.sign * signed_p.sign,
+                ),
+                _SignedLog(
+                    log_c + log_dw - log_z - signed_p.logabs, -dw.sign * signed_p.sign
+                ),
+            )
+        )
+        weight_terms = _choose(
+            predicate=context.near_geometric, left=near_weight, right=far_weight
+        )
+        weight_magnitudes = _choose(
+            predicate=context.near_geometric,
+            left=_join(
+                parts=(
+                    _SignedLog(log_c + log_dw + q.logabs - log_t, dw.sign * q.sign),
+                    _SignedLog(log_c + log_dw + log_mean_abs_q - log_t, -dw.sign),
+                )
+            ),
+            right=far_weight,
+        )
+
+        signed_dp = _signed(value=dp)
+        signed_d = _signed(value=d)
+        # Use the original primal's branch and ratio; do not reclassify via p*m.
+        z = jnp.where(context.near_geometric, context.deviation_ratio, 0.0)
+        phi = _signed(value=_phi(argument=z))
+        near_exponent = _join(
+            parts=(
+                _SignedLog(
+                    log_c
+                    + signed_dp.logabs
+                    + log_w
+                    - log_z
+                    + 2.0 * signed_d.logabs
+                    + _log_psi(argument=u)
+                    - jnp.log1p(z),
+                    positive.astype(values.dtype) * signed_dp.sign,
+                ),
+                _SignedLog(
+                    log_c + signed_dp.logabs + 2.0 * mean_q.logabs + phi.logabs,
+                    signed_dp.sign * phi.sign,
+                ),
+            )
+        )
+        signed_k = _signed(value=context.log_moment)
+        far_exponent = _join(
+            parts=(
+                _SignedLog(
+                    log_c
+                    + signed_dp.logabs
+                    + log_w
+                    + u
+                    - log_t
+                    + signed_d.logabs
+                    - signed_p.logabs,
+                    positive.astype(values.dtype)
+                    * signed_dp.sign
+                    * signed_d.sign
+                    * signed_p.sign,
+                ),
+                _SignedLog(
+                    log_c + signed_dp.logabs + signed_k.logabs - 2.0 * signed_p.logabs,
+                    -signed_dp.sign * signed_k.sign,
+                ),
+            )
+        )
+        unit_exponent = jax.lax.cond(
+            (p == 0.0) & ~is_represented_zero(dp),
+            lambda: _unit_risk_exponent(
+                values=values,
+                d=d,
+                log_w=log_w,
+                positive=positive,
+                log_z=log_z,
+                log_c=log_c,
+                dp=dp,
+            ),
+            lambda: _SignedLog(jnp.full_like(p, -jnp.inf), jnp.zeros_like(p)),
+        )
+        # Each regime has a different term count; sum in signed scale before choice.
+        exponent = _choose(
+            predicate=p == 0.0,
+            left=unit_exponent,
+            right=_choose(
+                predicate=context.near_geometric,
+                left=_sum_signed(terms=near_exponent),
+                right=_sum_signed(terms=far_exponent),
+            ),
+        )
+        near_exponent_magnitudes = _join(
+            parts=(
+                _SignedLog(
+                    near_exponent.logabs[: values.shape[0]],
+                    near_exponent.sign[: values.shape[0]],
+                ),
+                _SignedLog(
+                    log_c + signed_dp.logabs + 2.0 * log_mean_abs_q + phi.logabs,
+                    signed_dp.sign * phi.sign,
+                ),
+            )
+        )
+        log_exponent_magnitude = jnp.where(
+            p == 0.0,
+            unit_exponent.logabs,
+            jnp.where(
+                context.near_geometric,
+                _log_magnitude(terms=near_exponent_magnitudes),
+                _log_magnitude(terms=far_exponent),
+            ),
+        )
+        source = _materialize(
+            value=_sum_signed(terms=_join(parts=(source_terms, weight_terms, exponent)))
+        )
+        valid &= jnp.isfinite(source) & _direction_supported(
             direction=source,
             log_magnitude=_join_uncertainty_bound(
                 log_magnitude=_log_magnitude(
@@ -423,5 +430,4 @@ def reduce_power_mean_economic(
                 ),
             ),
         )
-    )
     return context.value, saving, source, valid

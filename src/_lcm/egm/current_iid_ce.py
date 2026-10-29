@@ -127,13 +127,16 @@ class EconomicCEContinuation:
     ) -> BoundedResult[tuple[ScalarFloat, ScalarFloat, ScalarFloat]]:
         """Reduce value plus the statically requested economic directions.
 
-        An unrequested direction is neither traced nor validated; its output slot
-        is zero. The stable PowerMean bank always reduces both directions.
+        An unrequested direction is neither traced nor validated; its slot is zero.
         """
         declared = self.declaration()
         if type(declared) is PowerMean:
             return power_mean_continuation(
-                continuation=self, savings=savings, declared=declared
+                continuation=self,
+                savings=savings,
+                declared=declared,
+                savings_channel=savings_channel,
+                source_channel=source_channel,
             )
         params = _bind_ce_parameters(declared=declared, pool=self.pool)
         parameter_direction = {

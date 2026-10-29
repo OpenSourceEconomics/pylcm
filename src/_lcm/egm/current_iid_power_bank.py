@@ -96,8 +96,16 @@ def _bank_coefficients(
     *,
     factors: FloatND,
     tangents: FloatND,
+    differentiate: bool = True,
 ) -> tuple[FloatND, IntND, FloatND, IntND]:
     coefficients, shifts = jax.vmap(_event_product)(factors.T)
+    if not differentiate:
+        return (
+            coefficients,
+            shifts,
+            jnp.zeros((factors.shape[0], *coefficients.shape), coefficients.dtype),
+            jnp.zeros((factors.shape[0], *shifts.shape), shifts.dtype),
+        )
 
     def differentiated(column: IntND) -> tuple[FloatND, IntND]:
         return jax.vmap(_event_product)(factors.at[column].set(tangents[column]).T)
@@ -201,8 +209,13 @@ def power_mean_continuation(
     ),
     savings: ScalarFloat,
     declared: PowerMean,
+    savings_channel: bool,
+    source_channel: bool,
 ) -> BoundedResult[tuple[ScalarFloat, ScalarFloat, ScalarFloat]]:
-    """Read the actual complete joint roster with its original point authority."""
+    """Read the actual complete joint roster with its original point authority.
+
+    Only the statically requested economic directions are traced and validated.
+    """
     owner = continuation.power_mean_owner
     if owner is None:
         raise UnsupportedOperationError(
@@ -235,9 +248,15 @@ def power_mean_continuation(
     )
     for parameter in (
         *actual_params.values(),
-        *parameter_direction.values(),
-        *continuation.direction.values(),
-        *probability_directions.values(),
+        *(
+            (
+                *parameter_direction.values(),
+                *continuation.direction.values(),
+                *probability_directions.values(),
+            )
+            if source_channel
+            else ()
+        ),
     ):
         valid &= jnp.all(jnp.isfinite(parameter))
     layout, schedules = _joint_layout(continuation=continuation, declared=declared)
@@ -302,7 +321,9 @@ def power_mean_continuation(
                 "Stable PowerMean bank differs from its actual original roster."
             )
         coefficient, shift, derivative_coefficient, derivative_shift = (
-            _bank_coefficients(factors=factors, tangents=tangents)
+            _bank_coefficients(
+                factors=factors, tangents=tangents, differentiate=source_channel
+            )
         )
         pad = layout.factor_arity - target_layout.factor_arity
         banks.append(
@@ -348,6 +369,8 @@ def power_mean_continuation(
         params=actual_params,
         parameter_direction=parameter_direction,
         bank=bank,
+        savings_channel=savings_channel,
+        source_channel=source_channel,
     )
     inactive = jnp.zeros((), dtype=jnp.bool_)
     return BoundedResult(

@@ -882,10 +882,12 @@ def _equation_count(jaxpr: Jaxpr) -> int:
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
-def test_declared_ce_traces_only_the_requested_economic_direction() -> None:
+@pytest.mark.parametrize("stable", [False, True])
+def test_declared_ce_traces_only_the_requested_economic_direction(
+    *, stable: bool
+) -> None:
     """Candidate and source reads do not trace the direction they discard."""
     original = _point_solver()
-    plan = original.pieces.continuation_plan
     grid = jnp.arange(1.0, 9.0)
     child = EGMCarry(
         endog_grid=grid,
@@ -893,25 +895,39 @@ def test_declared_ce_traces_only_the_requested_economic_direction() -> None:
         marginal_utility=jnp.full_like(grid, 7.0),
         taste_shock_scale=jnp.asarray(0.0),
     )
-    reader = EconomicCEContinuation(
-        plan=replace(
-            plan,
-            certainty_equivalent=QuasiArithmeticMean(
-                transform=_quadratic_transform, inverse=_quadratic_inverse
-            ),
-            child_reads=MappingProxyType(
-                {"done": _future_node_read(plan.child_reads["done"])}
-            ),
+    parameter = (
+        "certainty_equivalent__risk_aversion"
+        if stable
+        else "certainty_equivalent__theta"
+    )
+    plan = replace(
+        original.pieces.continuation_plan,
+        certainty_equivalent=PowerMean()
+        if stable
+        else QuasiArithmeticMean(
+            transform=_quadratic_transform, inverse=_quadratic_inverse
         ),
+        child_reads=MappingProxyType(
+            {
+                "done": _future_node_read(
+                    original.pieces.continuation_plan.child_reads["done"]
+                )
+            }
+        ),
+    )
+    reader = EconomicCEContinuation(
+        power_mean_owner=replace(
+            original,
+            children=MappingProxyType({"done": child}),
+            pieces=replace(original.pieces, continuation_plan=plan),
+        ),
+        plan=plan,
         pool={
             **original.pool,
             "liquid": jnp.asarray(0.0),
-            "certainty_equivalent__theta": jnp.asarray(1.0),
+            parameter: jnp.asarray(1.0),
         },
-        direction={
-            "liquid": jnp.asarray(1.0),
-            "certainty_equivalent__theta": jnp.asarray(0.5),
-        },
+        direction={"liquid": jnp.asarray(1.0), parameter: jnp.asarray(0.5)},
         children=MappingProxyType({"done": child}),
         dtype=grid.dtype,
         stochastic_node_width=2,
