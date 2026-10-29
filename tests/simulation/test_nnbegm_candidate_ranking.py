@@ -6,17 +6,19 @@ from fractions import Fraction
 from types import MappingProxyType
 from typing import cast
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from jax._src.interpreters.batching import BatchTracer
 
 from _lcm.egm.outer_inversion import DeclaredOuterInverse
 from _lcm.egm.outer_replay_capability import OuterReplayCapability
 from _lcm.egm.published_policy import NNBEGMSimPolicy
 from _lcm.engine import NNBEGMPolicyRead, Regime
 from _lcm.simulation import compile as simulation_compile
+from _lcm.simulation import simulate as simulation_module
 from _lcm.simulation.simulate import _replay_nnbegm_candidates
-from _lcm.utils.logging import get_logger
 from lcm import ExecutionConfig, LinSpacedGrid
 from lcm.exceptions import RegimeInitializationError
 from lcm.solver_api import SIMULATION_POLICY
@@ -72,40 +74,26 @@ def _simulate_rows(
     )
 
 
-def test_public_replay_ranks_every_reconstructed_candidate_by_canonical_q() -> None:
-    """The pinned off-grid witness chooses the candidate its emitted pair attains."""
+def test_public_replay_ranks_the_bank_by_its_published_values() -> None:
+    """The pinned off-grid witness emits the candidate its published value ranks.
+
+    Keeper plus the declared OUTER_GRID are the complete represented bank. The
+    interpolated published values choose target 20/7 at this state, although
+    canonical Q at the reconstructed actions would prefer 30/7: the replay
+    reads the solved policy and does not re-rank it.
+    """
     row = _simulate_rows(
         wealth=np.array([1.0467]),
         illiquid=np.array([2.04]),
     ).iloc[0]
 
     target = float(row["illiquid"] + row["illiquid_investment"])
-    consumption = float(row["consumption"])
-    value = float(row["value"])
-
-    # Keeper plus the declared OUTER_GRID are the complete represented bank.
-    # Interpolated stored values choose 2.8571 on the immutable baseline, while
-    # canonical Q at the already-reconstructed complete actions strictly chooses
-    # 4.2857. The target identity is the structural assertion; the associated
-    # interpolated inner action and attained Q receive working-dtype headroom.
     is_fp32 = jnp.asarray(0.0).dtype == jnp.float32
     np.testing.assert_allclose(
         target,
-        30.0 / 7.0,
+        20.0 / 7.0,
         rtol=0.0,
         atol=3e-5 if is_fp32 else 3e-10,
-    )
-    np.testing.assert_allclose(
-        consumption,
-        0.6695,
-        rtol=0.0,
-        atol=4e-3 if is_fp32 else 8e-4,
-    )
-    np.testing.assert_allclose(
-        value,
-        -18.1265,
-        rtol=0.0,
-        atol=8e-3 if is_fp32 else 1.5e-3,
     )
 
 
@@ -216,6 +204,10 @@ def _synthetic_replay(
                 }
             ),
             Q_and_F=MappingProxyType({0: q_and_f}),
+            # The synthetic bank carries no constraints of the toy it borrows from.
+            feasibility_pools_by_period=MappingProxyType(
+                {0: (MappingProxyType({}), MappingProxyType({}))}
+            ),
             egm_policy_read=NNBEGMPolicyRead(
                 outer_target_function_by_period=MappingProxyType({0: outer_target}),
                 outer_post_decision="outer_target",
@@ -252,82 +244,94 @@ def _synthetic_replay(
         canonical_states=states,
         action_names=("inner", "outer", *discrete_names),
         next_regime_to_V_arr=MappingProxyType({}),
-        logger=get_logger(log_level="off"),
     )
 
 
-def test_canonical_masks_exclude_unrepresented_infeasible_and_nonfinite_q() -> None:
-    """Neither representation gaps nor invalid canonical scores can win."""
+def _q_equal_to_outer(*, inner, outer, state, next_regime_to_V_arr, period, age):
+    """Canonical Q that reports the outer action, feasible everywhere."""
+    del inner, state, next_regime_to_V_arr, period, age
+    return outer, jnp.ones_like(outer, dtype=bool)
+
+
+def test_published_value_ranks_and_canonical_q_reports_the_winner() -> None:
+    """The highest published value wins; canonical Q supplies only its value.
+
+    Canonical Q here would prefer the last candidate; it is never consulted
+    for the ranking. A candidate with a non-finite published value is not live.
+    """
+    actions, value = _synthetic_replay(
+        inner=[0, 1, 2, 3],
+        outer=[100, 101, 102, 103],
+        marker=[0, 5, 1, np.nan],
+        q_and_f=_q_equal_to_outer,
+    )
+
+    np.testing.assert_array_equal(np.asarray(actions["inner"]), [1.0])
+    np.testing.assert_array_equal(np.asarray(actions["outer"]), [101.0])
+    np.testing.assert_array_equal(np.asarray(value), [101.0])
+
+
+@pytest.mark.parametrize(
+    ("q_value", "feasible"),
+    [(1.0, False), (np.nan, True), (np.inf, True), (-np.inf, True)],
+)
+def test_a_winner_canonical_q_rejects_publishes_no_action(
+    *, q_value: float, feasible: bool
+) -> None:
+    """An infeasible or non-finitely scored winner fails closed, not to a runner-up."""
 
     def q_and_f(*, inner, outer, state, next_regime_to_V_arr, period, age):
         del outer, state, next_regime_to_V_arr, period, age
-        value = jnp.select(
-            [
-                inner == 0,
-                inner == 1,
-                inner == 2,
-                inner == 3,
-                inner == 4,
-                inner == 6,
-            ],
-            [1.0, jnp.nan, jnp.inf, -jnp.inf, 100.0, 200.0],
-            default=2.0,
+        winner = inner == 1
+        return (
+            jnp.where(winner, q_value, 2.0),
+            jnp.where(winner, feasible, jnp.ones_like(winner)),
         )
-        return value, inner != 4
 
     actions, value = _synthetic_replay(
-        inner=[0, 1, 2, 3, 4, 5, 6],
-        outer=[100, 101, 102, 103, 104, 105, 106],
-        marker=[0, 0, 0, 0, 0, 0, np.nan],
+        inner=[0, 1, 2],
+        outer=[100, 101, 102],
+        marker=[0, 5, 1],
         q_and_f=q_and_f,
     )
 
-    np.testing.assert_array_equal(np.asarray(actions["inner"]), [5.0])
-    np.testing.assert_array_equal(np.asarray(actions["outer"]), [105.0])
-    np.testing.assert_array_equal(np.asarray(value), [2.0])
+    assert np.all(np.isnan(np.asarray(actions["inner"])))
+    assert np.all(np.isnan(np.asarray(actions["outer"])))
+    np.testing.assert_array_equal(np.asarray(value), [-np.inf])
 
 
 def test_strict_winner_is_permutation_invariant_and_exact_ties_are_first() -> None:
-    """Strict rankings follow economics; exact ties follow supplied row order."""
-
-    def strict_q(*, inner, outer, state, next_regime_to_V_arr, period, age):
-        del inner, state, next_regime_to_V_arr, period, age
-        return outer, jnp.ones_like(outer, dtype=bool)
-
+    """Strict published rankings survive reordering; exact ties take row order."""
     base_actions, base_value = _synthetic_replay(
         inner=[10, 20, 30],
         outer=[1, 4, 2],
-        marker=[99, 98, 97],
-        q_and_f=strict_q,
+        marker=[1, 4, 2],
+        q_and_f=_q_equal_to_outer,
     )
     permuted_actions, permuted_value = _synthetic_replay(
         inner=[30, 10, 20],
         outer=[2, 1, 4],
-        marker=[97, 99, 98],
-        q_and_f=strict_q,
+        marker=[2, 1, 4],
+        q_and_f=_q_equal_to_outer,
     )
     np.testing.assert_array_equal(np.asarray(base_actions["inner"]), [20.0])
     np.testing.assert_array_equal(np.asarray(permuted_actions["inner"]), [20.0])
     np.testing.assert_array_equal(np.asarray(base_value), [4.0])
     np.testing.assert_array_equal(np.asarray(permuted_value), [4.0])
 
-    def tied_q(*, inner, outer, state, next_regime_to_V_arr, period, age):
-        del inner, state, next_regime_to_V_arr, period, age
-        return jnp.zeros_like(outer), jnp.ones_like(outer, dtype=bool)
-
     tied_actions, tied_value = _synthetic_replay(
         inner=[11, 22],
         outer=[3, 4],
-        marker=[-10, 10],
-        q_and_f=tied_q,
+        marker=[7, 7],
+        q_and_f=_q_equal_to_outer,
     )
     np.testing.assert_array_equal(np.asarray(tied_actions["inner"]), [11.0])
     np.testing.assert_array_equal(np.asarray(tied_actions["outer"]), [3.0])
-    np.testing.assert_array_equal(np.asarray(tied_value), [0.0])
+    np.testing.assert_array_equal(np.asarray(tied_value), [3.0])
 
 
-def test_discrete_times_outer_bank_is_scored_as_complete_exact_tuples() -> None:
-    """Exact discrete codes participate in Q before the candidate reduction."""
+def test_discrete_times_outer_bank_emits_the_winner_complete_tuple() -> None:
+    """The winner's exact discrete code travels with its inner and outer actions."""
 
     def q_and_f(*, inner, outer, choice, state, next_regime_to_V_arr, period, age):
         del inner, state, next_regime_to_V_arr, period, age
@@ -336,7 +340,7 @@ def test_discrete_times_outer_bank_is_scored_as_complete_exact_tuples() -> None:
     actions, value = _synthetic_replay(
         inner=[1, 2, 3, 4],
         outer=[0, 0, 1, 1],
-        marker=[100, 90, 80, 70],
+        marker=[70, 80, 90, 100],
         discrete_codes=[[0], [1], [0], [1]],
         q_and_f=q_and_f,
     )
@@ -345,16 +349,12 @@ def test_discrete_times_outer_bank_is_scored_as_complete_exact_tuples() -> None:
     np.testing.assert_array_equal(np.asarray(actions["choice"]), [1])
     np.testing.assert_array_equal(np.asarray(value), [11.0])
 
-    def tied_q(*, inner, outer, choice, state, next_regime_to_V_arr, period, age):
-        del inner, choice, state, next_regime_to_V_arr, period, age
-        return jnp.zeros_like(outer), jnp.ones_like(outer, dtype=bool)
-
     tied_actions, _ = _synthetic_replay(
         inner=[1, 2, 3, 4],
         outer=[0, 0, 1, 1],
-        marker=[-1, 5, 6, 7],
+        marker=[7, 7, 7, 7],
         discrete_codes=[[0], [1], [0], [1]],
-        q_and_f=tied_q,
+        q_and_f=q_and_f,
     )
     np.testing.assert_array_equal(np.asarray(tied_actions["inner"]), [1.0])
     np.testing.assert_array_equal(np.asarray(tied_actions["choice"]), [0])
@@ -440,7 +440,7 @@ def _public_bank_data():
 
 
 def _scalar_bank_oracle(*, wealth: float, illiquid: float) -> dict[str, float | int]:
-    """Literal candidate reconstruction, toy equations, masks, and strict max."""
+    """Literal candidate reconstruction, published-value strict max, toy Q."""
     inner_bank, target_bank, marker_bank, terminal_v, wealth_grid, illiquid_grid = (
         _public_bank_data()
     )
@@ -477,20 +477,17 @@ def _scalar_bank_oracle(*, wealth: float, illiquid: float) -> dict[str, float | 
                 illiquid_grid=illiquid_grid,
             ),
         )
-        resources = wealth + toy.LABOUR_INCOME - investment
-        savings = resources - consumption
         if not (
             np.isfinite(consumption)
             and np.isfinite(investment)
             and np.isfinite(marker)
-            and consumption > 0.0
-            and savings >= toy.SAVINGS_FLOOR
-            and wealth_grid[0]
-            <= (next_wealth := (1.0 + toy.LIQUID_RATE) * savings)
-            <= wealth_grid[-1]
             and illiquid_grid[0] <= target <= illiquid_grid[-1]
         ):
             continue
+        if best is not None and marker <= float(best["marker"]):
+            continue
+        resources = wealth + toy.LABOUR_INCOME - investment
+        next_wealth = (1.0 + toy.LIQUID_RATE) * (resources - consumption)
         continuation = cast(
             "float",
             _literal_bilinear(
@@ -501,18 +498,14 @@ def _scalar_bank_oracle(*, wealth: float, illiquid: float) -> dict[str, float | 
                 illiquid_grid=illiquid_grid,
             ),
         )
-        q = -1.0 / consumption + _PARAMS["discount_factor"] * continuation
-        if not np.isfinite(q):
-            continue
-        candidate: dict[str, float | int] = {
+        best = {
             "index": index,
+            "marker": marker,
             "consumption": consumption,
             "investment": investment,
             "target": target,
-            "value": q,
+            "value": -1.0 / consumption + _PARAMS["discount_factor"] * continuation,
         }
-        if best is None or q > float(best["value"]):
-            best = candidate
     assert best is not None
     return best
 
@@ -554,7 +547,7 @@ def _dense_conditional_oracle(*, wealth: float, illiquid: float) -> dict[str, fl
 
 
 def test_scalar_bank_oracle_matches_public_replay_on_off_grid_mutations() -> None:
-    """Independent scalar candidate reconstruction agrees on identity/actions/Q."""
+    """Independent scalar reconstruction agrees on the winner, actions and its Q."""
     wealth = np.array([1.0467, 0.83, 1.37, 2.21, 3.42, 4.73])
     illiquid = np.array([2.04, 1.31, 2.63, 3.79, 5.27, 7.41])
     rows = _simulate_rows(wealth=wealth, illiquid=illiquid)
@@ -680,7 +673,7 @@ def test_candidate_ranking_is_invariant_to_subject_batching(
         for width in (3, 1):
             chunked, chunked_bank, owners = observations[width]
             assert owners == whole_owners
-            for index in (1, 2, 3):
+            for index in (1, 3):
                 np.testing.assert_array_equal(whole_bank[index], chunked_bank[index])
             for expected, got in zip(whole_bank, chunked_bank, strict=True):
                 np.testing.assert_array_equal(np.isfinite(expected), np.isfinite(got))
@@ -731,3 +724,46 @@ def test_a_bank_with_every_candidate_dropped_emits_no_winner() -> None:
     assert np.all(np.isnan(np.asarray(actions["inner"])))
     assert np.all(np.isnan(np.asarray(actions["outer"])))
     np.testing.assert_array_equal(np.asarray(value), [-np.inf])
+
+
+def _batch_depth(value: jax.Array) -> int:
+    """Count the `vmap` axes a traced value carries."""
+    depth = 0
+    while isinstance(value, BatchTracer):
+        depth += 1
+        value = value.val
+    return depth
+
+
+def _record_canonical_q_batching(monkeypatch) -> list[tuple[int, int, int]]:
+    """Spy canonical Q; record (action depth, state depth, period) per call."""
+    original = simulation_module._evaluate_canonical_Q_at_actions
+    calls: list[tuple[int, int, int]] = []
+
+    def spy(**kwargs):
+        calls.append(
+            (
+                max(map(_batch_depth, jax.tree.leaves(kwargs["candidate_actions"]))),
+                max(map(_batch_depth, jax.tree.leaves(kwargs["canonical_states"]))),
+                kwargs["period"],
+            )
+        )
+        return original(**kwargs)
+
+    monkeypatch.setattr(simulation_module, "_evaluate_canonical_Q_at_actions", spy)
+    return calls
+
+
+def test_finite_replay_scores_canonical_q_once_on_the_read_winner(
+    monkeypatch,
+) -> None:
+    """Canonical Q scores the winning candidate only, never the whole bank.
+
+    The published candidate values choose the winner; canonical Q then reports
+    the value of that one action tuple. An action argument batched over an axis
+    the states do not carry would be the candidate bank.
+    """
+    calls = _record_canonical_q_batching(monkeypatch)
+    _simulate_rows(wealth=np.array([1.0467, 9.3]), illiquid=np.array([2.04, 7.7]))
+    assert calls
+    assert all(actions == states for actions, states, _ in calls), calls

@@ -693,11 +693,6 @@ def test_action_grid_admission_has_a_literal_inventory_obligation() -> None:
     assert isinstance(_parse("src/_lcm/simulation/action_grids.py"), ast.Module)
 
 
-def test_finite_policy_diagnostic_is_a_literal_certificate_obligation():
-    """Include the profiled live-versus-represented candidate diagnostic."""
-    assert isinstance(_parse("src/_lcm/simulation/policy_diagnostics.py"), ast.Module)
-
-
 def test_eager_dependencies_are_literal_certificate_obligations():
     """Include the live eager placement and physical-layout dependencies."""
     assert isinstance(_parse("src/_lcm/execution/eager_core.py"), ast.Module)

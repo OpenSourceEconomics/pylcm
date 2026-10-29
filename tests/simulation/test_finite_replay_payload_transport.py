@@ -297,10 +297,10 @@ def test_replacement_payload_changes_cached_prepare_and_rank(
         ),
     )
     original_bank = cast("CandidateBank", case.preparation.result)
-    assert np.any(np.asarray(original_bank[2]))
+    assert np.any(np.isfinite(np.asarray(original_bank[2])))
     np.testing.assert_array_equal(bank[0], original_bank[0])
     np.testing.assert_array_equal(bank[1], original_bank[1])
-    assert not np.any(np.asarray(bank[2]))
+    assert not np.any(np.isfinite(np.asarray(bank[2])))
     assert not np.any(np.asarray(bank[3]))
     ranked = cast(
         "RankedBank",
@@ -382,7 +382,7 @@ def _tied_q_and_f[Ignored](
 def test_actual_rank_program_keeps_first_tie_and_ignores_dropped_candidates(
     produced_case: _ProducedCase,
 ) -> None:
-    """The real tiled rank body chooses the first live member of an exact Q tie."""
+    """The real tiled rank body takes the first live member of a published tie."""
     case = produced_case
     wrapper = case.ranking.program.function
     assert isinstance(wrapper, _SubjectTiled)
@@ -414,7 +414,7 @@ def test_actual_rank_program_keeps_first_tie_and_ignores_dropped_candidates(
         bank = (
             jnp.ones_like(original_bank[0]),
             original_bank[1],
-            represented,
+            jnp.zeros_like(original_bank[2]),
             represented,
         )
         ranked = cast(

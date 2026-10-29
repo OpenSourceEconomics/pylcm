@@ -85,7 +85,6 @@ from _lcm.simulation.membership import (
     _empty_subject_membership,
 )
 from _lcm.simulation.operand_placement import subject_operand_sharding
-from _lcm.simulation.policy_diagnostics import dropped_candidate_counts
 from _lcm.simulation.program_arguments import gate_route_arguments
 from _lcm.simulation.programs import forward_regimes_by_period
 from _lcm.simulation.random import (
@@ -549,20 +548,11 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                     subject_outputs=True,
                 )
             elif regime.simulation.replay_route.consumer_route == "nnbegm_finite":
-                bank = cast(
-                    "tuple[jax.ShapeDtypeStruct, ...]",
-                    _record_core(
-                        inventory=inventory,
-                        profile=cores["policy_prepare"],
-                        family="policy_prepare",
-                    ),
+                _record_core(
+                    inventory=inventory,
+                    profile=cores["policy_prepare"],
+                    family="policy_prepare",
                 )
-                if runtime_checks:
-                    inventory.operation(
-                        function=dropped_candidate_counts,
-                        arguments={"live": bank[2], "represented": bank[3]},
-                        subject_arg_names=("live", "represented"),
-                    )
                 rank_outputs = cast(
                     "tuple[ShapeDtypePytree, ...]",
                     _record_core(

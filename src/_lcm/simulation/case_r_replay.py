@@ -16,7 +16,7 @@ from _lcm.engine import Regime
 from _lcm.params.edges import regime_kernel_params
 from _lcm.typing import FlatParams, PytreeValue, ShapeDtypePytree
 from lcm.exceptions import ExecutionPlanningError
-from lcm.typing import BoolND, ReferenceName
+from lcm.typing import BoolND, ReferenceName, ScalarInt
 
 
 class CaseRReplayProfile(NamedTuple):
@@ -104,16 +104,31 @@ def case_r_arguments(
     )
 
 
+CASE_STATUS_OK = 0
+CASE_STATUS_BAD_LAW = 1
+CASE_STATUS_BAD_ROW = 2
+CASE_STATUS_EMPTY = 3
+
+
 def case_r_status(
     *,
     law_invalid: BoolND,
     invalid: BoolND,
     feasible: BoolND,
     in_regime: BoolND,
-) -> tuple[BoolND, BoolND, BoolND]:
-    """Check mandatory law/row integrity before interpreting action feasibility."""
-    return (
-        jnp.any(in_regime & law_invalid),
-        jnp.any(in_regime & invalid),
-        jnp.any(in_regime & ~feasible),
-    )
+) -> ScalarInt:
+    """Summarise the replay's refusals in one device-side code.
+
+    Law validity is checked first, then row validity, then action feasibility,
+    so the caller reads back one scalar per regime-period. The code is the
+    first refusal that applies, or `CASE_STATUS_OK`.
+    """
+    return jnp.select(
+        (
+            jnp.any(in_regime & law_invalid),
+            jnp.any(in_regime & invalid),
+            jnp.any(in_regime & ~feasible),
+        ),
+        (CASE_STATUS_BAD_LAW, CASE_STATUS_BAD_ROW, CASE_STATUS_EMPTY),
+        default=CASE_STATUS_OK,
+    ).astype(jnp.int32)
