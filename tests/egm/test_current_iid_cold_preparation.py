@@ -1,5 +1,8 @@
 """Genuine original EGM builders under the same call-owned allocation boundary."""
 
+import functools
+from collections.abc import Callable
+
 import jax
 import numpy as np
 import pytest
@@ -15,6 +18,7 @@ from _lcm.solution.current_iid_case_r import (
     trace_native_case_r,
 )
 from _lcm.solution.dcegm import _dcegm_output_roles, _dcegm_query_slots_and_capabilities
+from _lcm.typing import PytreeValue, ShapeDtypePytree
 from lcm import Model
 from lcm.exceptions import ExecutionPlanningError
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
@@ -202,3 +206,28 @@ def test_actual_owned_output_roles_match_original_numeric_metadata() -> None:
         assert not owner._pending
     finally:
         owner.close()
+
+
+def test_cold_case_r_build_traces_each_native_date_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Demand closure takes the frozen schema; lowering checks the output roles."""
+    from _lcm.egm.current_iid_native import NativeCaseRCore  # noqa: PLC0415
+
+    traced: list[NativeCaseRCore] = []
+    original = jax.eval_shape
+
+    def counting(
+        fun: Callable[..., PytreeValue], *args: PytreeValue, **kwargs: PytreeValue
+    ) -> ShapeDtypePytree:
+        if isinstance(fun, functools.partial) and isinstance(fun.func, NativeCaseRCore):
+            traced.append(fun.func)
+        return original(fun, *args, **kwargs)
+
+    monkeypatch.setattr(jax, "eval_shape", counting)
+    model = Model._from_call_owned_params(
+        declarations=_declarations(), params=_params_r()
+    )
+    model._prepare_call(params=_params_r())
+    # The child's single date installs its balanced schema by one shape trace.
+    assert len(traced) == 1
