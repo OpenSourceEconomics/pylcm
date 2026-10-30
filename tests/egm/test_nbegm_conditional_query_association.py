@@ -183,13 +183,17 @@ def test_flat_lower_corner_keeps_its_selected_nonzero_saving_node() -> None:
 
 @pytest.mark.parametrize("streamed", [False, True])
 def test_extra_target_keeps_its_own_interval_saving(*, streamed: bool) -> None:
-    """A winning extra target carries saving 7/8 from the query's interval."""
+    """A winning extra target carries saving 7/8 from the query's interval.
+
+    The extra target sits 0.1 above the smooth continuation (a cliff jump), so it
+    beats the interior Euler saving 5/6 that the smooth continuation alone yields.
+    """
     liquid = jnp.asarray([0.75, 1.5, 3.0])
     savings = jnp.asarray([0.5, 1.0, 1.5])
     extra = jnp.asarray([[0.75], [0.875]])
     value = jnp.broadcast_to(jnp.log(3.0 * savings + 4.0), (2, 3))
     marginal = jnp.broadcast_to(3.0 / (3.0 * savings + 4.0), (2, 3))
-    extra_value = jnp.log(3.0 * extra + 4.0)
+    extra_value = jnp.log(3.0 * extra + 4.0) + 0.1
 
     def read(indices: IntND) -> tuple[FloatND, FloatND, FloatND]:
         return (
@@ -220,7 +224,7 @@ def test_extra_target_keeps_its_own_interval_saving(*, streamed: bool) -> None:
     legacy = cast("Callable[..., _OldOwned]", function)(**arguments, return_owner=True)
     for actual, expected in zip(
         (legacy[0][-1], legacy[1][-1], legacy[2][-1]),
-        (math.log(901.0 / 64.0), 8.0 / 17.0, 17.0 / 8.0),
+        (math.log(901.0 / 64.0) + 0.1, 8.0 / 17.0, 17.0 / 8.0),
         strict=True,
     ):
         np.testing.assert_array_almost_equal(

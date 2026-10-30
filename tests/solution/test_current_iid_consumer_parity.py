@@ -367,19 +367,7 @@ def _assert_reproduces_node_state_model(*, solver: str, bound: str | None) -> No
 
 @pytest.mark.parametrize(
     "cost_scale",
-    [
-        1 / np.sqrt(3.0),
-        pytest.param(
-            0.5,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason=(
-                    "the NBEGM ride-along solve snaps savings to the grid with a "
-                    "process co-state; lands with wip/607-nbsnap"
-                ),
-            ),
-        ),
-    ],
+    [1 / np.sqrt(3.0), 0.5],
 )
 def test_nbegm_health_cost_simulates_fresh_period_zero_draws(cost_scale: float) -> None:
     """Omitted draws are realised fresh, including beyond the outermost nodes.

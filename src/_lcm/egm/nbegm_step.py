@@ -55,6 +55,7 @@ from _lcm.egm.ez_kernel import (
     ez_period_value,
 )
 from _lcm.egm.framed_arithmetic import binade_exponent, framed_difference
+from _lcm.egm.interp import interp_on_prepared_grid, prepare_padded_grid
 from _lcm.egm.nbegm_segments import (
     affords_an_action,
     mask_dead_candidates,
@@ -1679,13 +1680,26 @@ def nbegm_multi_interval_step_savings(  # noqa: PLR0915 - preserve the original 
     # is the hard borrowing corner. Each point is its own zero-width self-pair
     # with a distinct segment id (below), so a node feasible at a single liquid
     # point stays bracketable by the link-only envelope at its own abscissa.
-    node_consumption = coh_grid[None, :] - savings_grid[:, None]
+    # Each node offers the Euler optimum inside the bracket it opens where that
+    # beats the node itself (see `_refine_savings_node_actions`).
+    node_savings, node_continuation = _refine_savings_node_actions(
+        coh=coh_grid,
+        savings_grid=savings_grid,
+        cont_value=cont_value,
+        cont_marginal=cont_marginal,
+        euler_consumption=consumption,
+        discount_factor=discount_factor,
+        preferences=preferences,
+        inverse_eis=inverse_eis,
+    )
+    node_savings, node_continuation = node_savings.T, node_continuation.T
+    node_consumption = coh_grid[None, :] - node_savings
     node_feasible = node_consumption > 0.0
     node_consumption_safe = jnp.where(node_feasible, node_consumption, 1.0)
     if inverse_eis is not None:
         node_value_safe = ez_period_value(
             flow=preferences.utility(node_consumption_safe),
-            nu=cont_value[:, None],
+            nu=node_continuation,
             discount_factor=discount_factor,
             inverse_eis=inverse_eis,
         )
@@ -1700,7 +1714,7 @@ def nbegm_multi_interval_step_savings(  # noqa: PLR0915 - preserve the original 
         node_value_safe = preferences.utility(
             node_consumption_safe
         ) + _discounted_continuation(
-            discount_factor=discount_factor, cont_value=cont_value[:, None]
+            discount_factor=discount_factor, cont_value=node_continuation
         )
         node_marginal_safe = preferences.marginal_utility(node_consumption_safe)
     node_value = jnp.where(node_feasible, node_value_safe, jnp.nan)
@@ -1727,7 +1741,7 @@ def nbegm_multi_interval_step_savings(  # noqa: PLR0915 - preserve the original 
                 _as_pairs(
                     jnp.where(
                         node_feasible,
-                        jnp.broadcast_to(savings_grid[:, None], node_consumption.shape),
+                        node_savings,
                         jnp.nan,
                     ).ravel()
                 ),
@@ -2370,6 +2384,7 @@ def nbegm_per_interval_continuation_step_savings(
         liquid_grid=liquid_grid,
         savings_grid=savings_grid,
         cont_value=cont_value,
+        cont_marginal=cont_marginal,
         discount_factor=discount_factor,
         preferences=preferences,
         coh_slopes=coh_slopes,
@@ -2389,6 +2404,7 @@ def nbegm_per_interval_continuation_step_savings(
             liquid_grid=liquid_grid,
             savings_grid=extra_savings,
             cont_value=extra_cont_value,
+            cont_marginal=None,
             discount_factor=discount_factor,
             preferences=preferences,
             coh_slopes=coh_slopes,
@@ -3239,6 +3255,7 @@ class _IntervalWinnerStep:
             liquid_grid=self.liquid_grid,
             savings_grid=self.savings_grid,
             cont_value=block_value,
+            cont_marginal=block_marginal,
             interval_indices=indices,
             interval_live=interval_live,
             discount_factor=self.discount_factor,
@@ -3255,6 +3272,7 @@ class _IntervalWinnerStep:
                 liquid_grid=self.liquid_grid,
                 savings_grid=block_cliff_savings,
                 cont_value=block_extra_value,
+                cont_marginal=None,
                 interval_indices=indices,
                 interval_live=interval_live,
                 discount_factor=self.discount_factor,
@@ -3398,6 +3416,7 @@ def _savings_node_point_candidates_for_interval_block(
     liquid_grid: Float1D,
     savings_grid: FloatND,
     cont_value: FloatND,
+    cont_marginal: FloatND | None,
     interval_indices: IntND,
     interval_live: BoolND,
     discount_factor: ScalarFloat,
@@ -3414,6 +3433,7 @@ def _savings_node_point_candidates_for_interval_block(
     The arrays retain the canonical full point-family shape so the scan body is
     fixed across dynamic breakpoint placements.  Points outside the current
     interval block are NaN-dead; every point is live in exactly one block.
+    `cont_marginal` refines the nodes as in `_savings_node_point_candidates`.
     """
     interval_of_grid = jnp.searchsorted(breakpoints, liquid_grid, side="right")
     matches = (interval_of_grid[:, None] == interval_indices[None, :]) & interval_live[
@@ -3432,6 +3452,15 @@ def _savings_node_point_candidates_for_interval_block(
         if savings_grid.ndim > 1
         else jnp.broadcast_to(savings_grid[None, :], point_cont_value.shape)
     )
+    if cont_marginal is not None:
+        savings_at_grid, point_cont_value = _refine_savings_node_actions(
+            coh=point_coh,
+            savings_grid=savings_grid,
+            cont_value=point_cont_value,
+            cont_marginal=cont_marginal[local_interval],
+            discount_factor=discount_factor,
+            preferences=preferences,
+        )
     consumption = point_coh[:, None] - savings_at_grid
     feasible = affords_an_action(consumption) & belongs[:, None]
     safe_consumption = jnp.where(feasible, consumption, 1.0)
@@ -3476,6 +3505,7 @@ def _savings_node_point_candidates(
     liquid_grid: Float1D,
     savings_grid: FloatND,
     cont_value: FloatND,
+    cont_marginal: FloatND | None,
     discount_factor: ScalarFloat,
     preferences: Preferences,
     coh_slopes: Float1D,
@@ -3494,7 +3524,10 @@ def _savings_node_point_candidates(
     the inversion has no root) is still carried — and each pair is a segment
     the envelope brackets exactly at its own grid point, so visibility does not
     depend on how many grid points the interval holds. Infeasible entries
-    (consumption non-positive) are NaN-dead.
+    (consumption non-positive) are NaN-dead. With `cont_marginal`, a node whose
+    bracket holds the point's Euler optimum offers that optimum instead where it is
+    worth more (`_refine_savings_node_actions`); save-to-cliff targets pass `None`
+    and stay exact.
 
     Returns:
         Tuple of the flattened pair-interleaved `(endog, value, policy,
@@ -3516,13 +3549,23 @@ def _savings_node_point_candidates(
         if per_interval_savings
         else savings_grid[None, :]
     )
+    point_cont_value = cont_value[interval_of_grid]
+    if cont_marginal is not None:
+        savings_at_grid, point_cont_value = _refine_savings_node_actions(
+            coh=point_coh,
+            savings_grid=savings_grid,
+            cont_value=point_cont_value,
+            cont_marginal=cont_marginal[interval_of_grid],
+            discount_factor=discount_factor,
+            preferences=preferences,
+        )
     node_consumption = point_coh[:, None] - savings_at_grid
     node_feasible = affords_an_action(node_consumption)
     node_consumption_safe = jnp.where(node_feasible, node_consumption, 1.0)
     node_utility = preferences.utility(node_consumption_safe)
     node_value = jnp.where(
         node_feasible,
-        node_utility + discount_factor * cont_value[interval_of_grid],
+        node_utility + discount_factor * point_cont_value,
         jnp.nan,
     )
     node_endog = jnp.where(
@@ -3551,6 +3594,162 @@ def _savings_node_point_candidates(
         _as_pairs(node_consumption_safe),
         _as_pairs(node_marginal),
         _as_pairs(node_segment),
+    )
+
+
+def _refine_savings_node_actions(
+    *,
+    coh: Float1D,
+    savings_grid: Float1D,
+    cont_value: FloatND,
+    cont_marginal: FloatND,
+    discount_factor: ScalarFloat,
+    preferences: Preferences,
+    euler_consumption: FloatND | None = None,
+    inverse_eis: ScalarFloat | None = None,
+) -> tuple[FloatND, FloatND]:
+    """Move each savings-node action to the Euler optimum inside the bracket it opens.
+
+    The savings-node family offers every node as an exact action, while the Euler
+    path between two endogenous points is read along a chord that sags below the
+    concave value. Between two nodes the chord's sag and a node's misplacement
+    loss are of the same order, so a bare node would displace the interior
+    optimum. Where a point's cash-on-hand lies between the endogenous
+    cash-on-hand of nodes `s_i` and `s_{i+1}`, node `i` therefore offers instead
+    the saving the Euler path interpolates there, valued at the cubic Hermite read
+    of the continuation and its savings marginal, capped by the tangent at either
+    node — whenever that action is worth more than the node. The read is trusted
+    only on a bracket whose secant lies between its two positive endpoint
+    marginals, as a smooth increasing concave continuation's does, and such a
+    continuation lies below both tangents; a jump or a convex kink inside the
+    bracket fails the secant test and keeps the node.
+
+    Args:
+        coh: Cash-on-hand at each point, shape `(n_points,)`.
+        savings_grid: Post-decision savings nodes, shape `(n_nodes,)`.
+        cont_value: Continuation value at the nodes, shared `(n_nodes,)` or per
+            point `(n_points, n_nodes)`.
+        cont_marginal: The continuation's derivative in savings, same shape.
+        discount_factor: Discount factor.
+        preferences: The regime's felicity bundle.
+        euler_consumption: Consumption solving each node's Euler equation, same
+            shape; `None` inverts the additive Euler equation from
+            `cont_marginal`.
+        inverse_eis: Epstein-Zin inverse EIS; `None` selects the additive
+            aggregator.
+
+    Returns:
+        Tuple of the saving and the continuation level of each point's action per
+        node, each shaped `(n_points, n_nodes)`.
+
+    """
+    shape = (coh.shape[0], savings_grid.shape[0])
+    value_rows = jnp.broadcast_to(cont_value, shape)
+    marginal_rows = jnp.broadcast_to(cont_marginal, shape)
+    if euler_consumption is None:
+        euler_consumption = jax.vmap(
+            functools.partial(
+                _invert_euler_over_rows,
+                discount_factor=discount_factor,
+                preferences=preferences,
+            )
+        )(marginal_rows)
+    endog_coh = jnp.broadcast_to(euler_consumption + savings_grid, shape)
+    lower_coh, upper_coh = endog_coh[:, :-1], endog_coh[:, 1:]
+    node_step = jnp.diff(savings_grid)
+    secant = jnp.diff(value_rows, axis=1) / node_step
+    smooth = (
+        jnp.isfinite(lower_coh)
+        & jnp.isfinite(upper_coh)
+        & (upper_coh > lower_coh)
+        & (marginal_rows[:, 1:] > 0.0)
+        & (marginal_rows[:, 1:] <= secant)
+        & (secant <= marginal_rows[:, :-1])
+    )
+    share = (coh[:, None] - lower_coh) / jnp.where(smooth, upper_coh - lower_coh, 1.0)
+    inside = smooth & (share >= 0.0) & (share <= 1.0)
+    left_node = jnp.broadcast_to(savings_grid[:-1], lower_coh.shape)
+    link_saving = jnp.where(inside, left_node + share * node_step, left_node)
+    link_continuation = jax.vmap(
+        functools.partial(_hermite_savings_read, savings_grid=savings_grid)
+    )(link_saving, value_rows, marginal_rows)
+    # A concave continuation lies below its tangent at either node of the bracket.
+    link_continuation = jnp.minimum(
+        link_continuation,
+        jnp.minimum(
+            value_rows[:, :-1] + marginal_rows[:, :-1] * (link_saving - left_node),
+            value_rows[:, 1:] - marginal_rows[:, 1:] * (savings_grid[1:] - link_saving),
+        ),
+    )
+
+    def period_value(*, consumption: FloatND, continuation: FloatND) -> FloatND:
+        flow = preferences.utility(consumption)
+        if inverse_eis is not None:
+            return ez_period_value(
+                flow=flow,
+                nu=continuation,
+                discount_factor=discount_factor,
+                inverse_eis=inverse_eis,
+            )
+        return flow + _discounted_continuation(
+            discount_factor=discount_factor, cont_value=continuation
+        )
+
+    link_consumption = coh[:, None] - link_saving
+    node_consumption = coh[:, None] - left_node
+    link_feasible = (
+        inside & affords_an_action(link_consumption) & jnp.isfinite(link_continuation)
+    )
+    node_feasible = affords_an_action(node_consumption)
+    link_value = period_value(
+        consumption=jnp.where(link_feasible, link_consumption, 1.0),
+        continuation=link_continuation,
+    )
+    node_value = period_value(
+        consumption=jnp.where(node_feasible, node_consumption, 1.0),
+        continuation=value_rows[:, :-1],
+    )
+    take_link = link_feasible & (~node_feasible | (link_value > node_value))
+    saving = jnp.concatenate(
+        [
+            jnp.where(take_link, link_saving, left_node),
+            jnp.broadcast_to(savings_grid[-1:], (shape[0], 1)),
+        ],
+        axis=1,
+    )
+    continuation = jnp.concatenate(
+        [
+            jnp.where(take_link, link_continuation, value_rows[:, :-1]),
+            value_rows[:, -1:],
+        ],
+        axis=1,
+    )
+    return saving, continuation
+
+
+# keyword-only-exempt: library-callback=jax.vmap
+def _invert_euler_over_rows(
+    row: Float1D, *, discount_factor: ScalarFloat, preferences: Preferences
+) -> Float1D:
+    """Euler-invert one row of savings-node marginal continuations."""
+    return _invert_euler_over_savings(
+        cont_marginal=row, discount_factor=discount_factor, preferences=preferences
+    )
+
+
+# keyword-only-exempt: library-callback=jax.vmap
+def _hermite_savings_read(
+    query: Float1D, values: Float1D, slopes: Float1D, *, savings_grid: Float1D
+) -> Float1D:
+    """Read one continuation row by cubic Hermite on the savings grid."""
+    search_grid, valid_length = prepare_padded_grid(savings_grid)
+    return interp_on_prepared_grid(
+        x_query=query,
+        search_grid=search_grid,
+        valid_length=valid_length,
+        xp=savings_grid,
+        fp=values,
+        fp_slopes=slopes,
     )
 
 
@@ -3799,6 +3998,7 @@ def nbegm_unified_step_savings(
                 extra_cont_value[None, :],
                 (coh_slopes.shape[0], extra_cont_value.shape[0]),
             ),
+            cont_marginal=None,
             discount_factor=discount_factor,
             preferences=preferences,
             coh_slopes=coh_slopes,
