@@ -357,9 +357,12 @@ class ExecutionConfig:
       `SolutionResult.save` keeps a copy. A failed solve leaves
       `solution-<id>.incomplete` behind, recording how far it got.
 
-    `"host"` and a directory do not combine with
-    `InvariantBlockSchedule.BLOCK_MAJOR`, which moves its values to the host on a
-    route of its own.
+    Under `InvariantBlockSchedule.BLOCK_MAJOR`, `"device"` keeps each code's
+    values on the device through its solve and then copies them to host memory,
+    as the schedule always has. `"host"` solves each code with host storage, so
+    the device holds the window of one code, and keeps the pinned copies. A
+    directory does not yet combine with `BLOCK_MAJOR`, and component jobs take
+    `"device"` only.
     """
 
     action_partitions: Mapping[RegimeName, int] = field(
@@ -514,17 +517,19 @@ class ExecutionConfig:
 def _fail_if_value_storage_invalid(
     *, value_storage: Literal["device", "host"] | Path, schedule: InvariantBlockSchedule
 ) -> None:
-    """Require an existing directory; refuse off-device storage when block-major."""
+    """Require an existing directory; refuse one with the block-major schedule."""
     if isinstance(value_storage, Path) and not value_storage.is_dir():
         raise ValueError(
             "ExecutionConfig.value_storage must name an existing directory, got "
             f"{value_storage!r}."
         )
-    if value_storage != "device" and schedule is InvariantBlockSchedule.BLOCK_MAJOR:
+    if (
+        isinstance(value_storage, Path)
+        and schedule is InvariantBlockSchedule.BLOCK_MAJOR
+    ):
         raise ValueError(
-            f"ExecutionConfig.value_storage={value_storage!r} does not combine with "
-            "invariant_block_schedule=BLOCK_MAJOR, which moves its values to the "
-            "host on a route of its own."
+            f"ExecutionConfig.value_storage={value_storage!r} does not yet combine "
+            "with invariant_block_schedule=BLOCK_MAJOR; use 'host' or 'device'."
         )
 
 

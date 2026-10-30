@@ -57,6 +57,7 @@ from _lcm.solution.diagnostics import (
     emit_component_feasibility_warnings,
 )
 from _lcm.solution.grid_search import _GridSearchPeriodKernel
+from _lcm.solution.host_values import is_host_value
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from _lcm.solution.v_topology import (
     _get_regime_V_shapes_and_shardings,
@@ -82,6 +83,10 @@ else:
     # A component's blocks are read and deleted by the schedule itself; the
     # runtime annotation check must not walk them while they are being retired.
     type _ComponentBlocks = object
+
+# One retained block of one code: a host NumPy array, or the pinned host array a
+# solve with host storage made.
+type _HostBlock = np.ndarray | jax.Array
 
 _REMEDY = (
     "Keep the default InvariantBlockSchedule.PERIOD_MAJOR, or remove the state "
@@ -374,7 +379,9 @@ class RetainedComponentValues:
         self._layouts = MappingProxyType(dict(layouts))
         self._coordinates: tuple[_Coordinate, ...] = ()
         self._budget_bytes = budget_bytes
-        self._blocks: dict[int, MappingProxyType[_Coordinate, np.ndarray]] = {}
+        # A block is a NumPy array, or a pinned host array when the solve kept
+        # its values with host storage.
+        self._blocks: dict[int, MappingProxyType[_Coordinate, _HostBlock]] = {}
         self._device_to_host_bytes = 0
         self._host_to_device_bytes = 0
 
@@ -409,9 +416,18 @@ class RetainedComponentValues:
             for regime, block in regimes.items()
         }
         coverage = self._coverage.with_code(code=code, entries=frozenset(flat))
-        host = jax.device_get(flat)
+        # Under host storage the solve already copied each period to pinned host
+        # memory; those copies are the blocks. Device values are copied here.
+        host: dict[_Coordinate, _HostBlock] = {
+            coordinate: (
+                jax.block_until_ready(block)
+                if is_host_value(block)
+                else jax.device_get(block)
+            )
+            for coordinate, block in flat.items()
+        }
         self._keep(code=code, coverage=coverage, host=host)
-        self._device_to_host_bytes += sum(array.nbytes for array in host.values())
+        self._device_to_host_bytes += sum(int(array.nbytes) for array in host.values())
         if not self._coordinates:
             self._coordinates = tuple(flat)
         delete_blocks(blocks=blocks)
@@ -444,7 +460,7 @@ class RetainedComponentValues:
         if not self._coordinates:
             self._coordinates = coordinates
 
-    def host_blocks(self, *, code: int) -> MappingProxyType[_Coordinate, np.ndarray]:
+    def host_blocks(self, *, code: int) -> MappingProxyType[_Coordinate, _HostBlock]:
         """Return one retained component's host blocks in publication order."""
         blocks = self._blocks[code]
         return MappingProxyType(
@@ -456,7 +472,7 @@ class RetainedComponentValues:
         *,
         code: int,
         coverage: ComponentCoverage,
-        host: Mapping[_Coordinate, np.ndarray],
+        host: Mapping[_Coordinate, _HostBlock],
     ) -> None:
         """Hold one component's host blocks once each has the component shape."""
         for coordinate, array in host.items():
@@ -473,7 +489,14 @@ class RetainedComponentValues:
                 )
                 raise ExecutionPlanningError(msg)
         self._blocks[code] = MappingProxyType(
-            {coordinate: np.asarray(array) for coordinate, array in host.items()}
+            {
+                coordinate: (
+                    array
+                    if isinstance(array, jax.Array) and is_host_value(array)
+                    else np.asarray(array)
+                )
+                for coordinate, array in host.items()
+            }
         )
         self._coverage = coverage
 
@@ -482,7 +505,10 @@ class RetainedComponentValues:
         self._coverage.fail_if_incomplete()
         layout = self._layouts[(period, regime)]
         return np.concatenate(
-            [self._blocks[code][(period, regime)] for code in self._coverage.codes],
+            [
+                np.asarray(self._blocks[code][(period, regime)])
+                for code in self._coverage.codes
+            ],
             axis=layout.axis,
         )
 
@@ -684,10 +710,18 @@ class _ComponentValueEntry(_LazyEntry):
 
 
 def delete_blocks(*, blocks: _ComponentBlocks) -> None:
-    """Delete every device buffer of one component's values that is still alive."""
+    """Delete every device buffer of one component's values that is still alive.
+
+    A block in host memory is the retention's own copy under host storage, so it
+    is left to its owner.
+    """
     for regimes in blocks.values():
         for block in regimes.values():
-            if isinstance(block, jax.Array) and not block.is_deleted():
+            if (
+                isinstance(block, jax.Array)
+                and not block.is_deleted()
+                and not is_host_value(block)
+            ):
                 block.delete()
 
 
@@ -921,6 +955,8 @@ class SolvingComponentValues:
         self._live: dict[
             int, MappingProxyType[int, MappingProxyType[RegimeName, jax.Array]]
         ] = {}
+        # Codes retained at acquisition, whose live values are uploaded copies.
+        self._read_back: set[int] = set()
 
     @property
     def codes(self) -> tuple[int, ...]:
@@ -940,13 +976,29 @@ class SolvingComponentValues:
     def acquire(
         self, *, code: int
     ) -> MappingProxyType[int, MappingProxyType[RegimeName, jax.Array]]:
-        """Solve the code's component and return its values on the device."""
+        """Solve the code's component and return its values on the device.
+
+        Under host storage the solve has already moved the values to the host,
+        so they are retained at once and read back for the code's subjects.
+        """
         values = self._schedule.solve_component(code=code)
+        if any(
+            is_host_value(block)
+            for regimes in values.values()
+            for block in regimes.values()
+        ):
+            self._schedule.retain_component(code=code, blocks=values)
+            self._read_back.add(code)
+            values = self._schedule.retained.upload(code=code)
         self._live[code] = values
         return values
 
     def release(self, *, code: int) -> None:
         """Retain the code's values on the host and delete them on the device."""
+        if code in self._read_back:
+            self._read_back.discard(code)
+            delete_blocks(blocks=self._live.pop(code))
+            return
         self._schedule.retain_component(code=code, blocks=self._live.pop(code))
 
     def abandon(self, *, code: int) -> None:

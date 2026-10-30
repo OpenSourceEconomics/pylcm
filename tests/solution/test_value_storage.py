@@ -12,8 +12,10 @@ CPU devices have a pinned host memory kind too, so the copy path runs here as on
 an accelerator.
 """
 
+import dataclasses
 import filecmp
 import gc
+import importlib
 import json
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -41,13 +43,15 @@ from _lcm.utils.logging import get_logger
 from lcm import ExecutionConfig, InvariantBlockSchedule, Model
 from lcm.exceptions import ExecutionPlanningError
 from lcm.persistence import load_solution
-from lcm.solver_api import ValueStore
+from lcm.solver_api import SolutionResult, ValueStore
 from lcm.typing import RegimeName
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.regime_building.test_collective_regime_simulate import (
     _DISSOLUTION_PARAMS,
     _make_dissolution_model,
 )
+from tests.simulation import test_type_grouped_simulation as life_cycle
+from tests.solution import test_block_major_lifetime as lifetime
 from tests.solution._callback_types import (
     ResidentInventoryKwargs,
     ResidentInventoryResult,
@@ -85,15 +89,6 @@ def test_value_storage_refuses_an_unknown_target() -> None:
     """Only the device and the host are storage targets."""
     with pytest.raises(BeartypeCallHintParamViolation, match="value_storage"):
         ExecutionConfig(value_storage="disk")  # ty: ignore[invalid-argument-type]
-
-
-def test_host_value_storage_refuses_the_block_major_schedule() -> None:
-    """Block-major already moves its values to the host on its own route."""
-    with pytest.raises(ValueError, match="value_storage"):
-        ExecutionConfig(
-            value_storage="host",
-            invariant_block_schedule=InvariantBlockSchedule.BLOCK_MAJOR,
-        )
 
 
 def test_value_storage_takes_an_existing_directory(tmp_path: Path) -> None:
@@ -1128,3 +1123,121 @@ def test_planning_a_budgeted_call_copies_no_more_values_than_an_unbudgeted_one(
     ]
 
     assert copies[1] == copies[0]
+
+
+def _life_cycle(
+    *,
+    schedule: InvariantBlockSchedule | None,
+    value_storage: Literal["device", "host"] | Path,
+) -> Model:
+    """The typed life cycle, blocked by preference type when `schedule` is given."""
+    model = life_cycle._model(typed_dead=True)
+    config = dataclasses.replace(
+        lifetime._config(schedule=schedule, subject_width=3),
+        value_storage=value_storage,
+    )
+    return Model(
+        edges=model.edges,
+        regimes=model.user_regimes,
+        ages=model.ages,
+        regime_id_class=life_cycle._RegimeId,
+        initial_nodes={0: "work"},
+        execution_config=config,
+    )
+
+
+_LIFE_CYCLE_PARAMS = life_cycle._params(typed_dead=True)
+
+
+def _life_cycle_values(solution: SolutionResult) -> dict[tuple[int, str], np.ndarray]:
+    return {
+        (period, regime): np.asarray(solution.value(period=period, regime=regime))
+        for period, regime_to_value in solution.values.items()
+        for regime in regime_to_value
+    }
+
+
+def test_block_major_host_storage_publishes_the_block_major_values() -> None:
+    """Each code's values move to pinned host memory and assemble bit for bit.
+
+    The reference is block-major on the device: block-major and period-major
+    already differ in the last bits of some values.
+    """
+    device, host = (
+        _life_cycle_values(
+            _life_cycle(
+                schedule=InvariantBlockSchedule.BLOCK_MAJOR, value_storage=storage
+            ).solve(params=_LIFE_CYCLE_PARAMS, log_level="off")
+        )
+        for storage in ("device", "host")
+    )
+
+    assert host.keys() == device.keys()
+    for coordinate, value in device.items():
+        np.testing.assert_array_equal(host[coordinate], value, strict=True)
+
+
+def test_block_major_host_storage_retains_pinned_blocks() -> None:
+    """The retention keeps the blocks where the solve stored them."""
+    solution = _life_cycle(
+        schedule=InvariantBlockSchedule.BLOCK_MAJOR, value_storage="host"
+    ).solve(params=_LIFE_CYCLE_PARAMS, log_level="off")
+    engine_view = solution._engine_view
+    assert engine_view is not None
+    retained = engine_view.component_values
+    assert retained is not None
+
+    blocks = [
+        block
+        for code in retained.coverage.codes
+        for block in retained.host_blocks(code=code).values()
+    ]
+    assert blocks
+    assert {
+        block.sharding.memory_kind for block in blocks if isinstance(block, jax.Array)
+    } == {"pinned_host"}
+    assert all(isinstance(block, jax.Array) for block in blocks)
+
+
+@pytest.mark.parametrize("combined", [False, True], ids=["from-solution", "combined"])
+def test_block_major_host_storage_simulates_the_block_major_panel(
+    *, combined: bool
+) -> None:
+    """Reading each code back from pinned blocks gives the device-storage panel."""
+    panels = []
+    for value_storage in ("device", "host"):
+        model = _life_cycle(
+            schedule=InvariantBlockSchedule.BLOCK_MAJOR, value_storage=value_storage
+        )
+        solution = (
+            None
+            if combined
+            else model.solve(params=_LIFE_CYCLE_PARAMS, log_level="off")
+        )
+        panels.append(
+            model.simulate(
+                params=_LIFE_CYCLE_PARAMS,
+                initial_conditions=life_cycle._initial(),
+                solution=solution,
+                seed=0,
+                log_level="off",
+            ).to_dataframe()
+        )
+
+    assert panels[1].equals(panels[0])
+
+
+def test_component_jobs_refuse_value_storage_off_the_device(tmp_path: Path) -> None:
+    """Jobs keep their own block files; a storage mode would be ignored."""
+    component_jobs = importlib.import_module("lcm.component_jobs")
+    model = _life_cycle(
+        schedule=InvariantBlockSchedule.BLOCK_MAJOR, value_storage="host"
+    )
+
+    with pytest.raises(ExecutionPlanningError, match="value_storage"):
+        component_jobs.plan_component_jobs(
+            model=model,
+            params=_LIFE_CYCLE_PARAMS,
+            directory=tmp_path / "jobs",
+            n_jobs=2,
+        )
