@@ -614,34 +614,25 @@ def _metadata_program(*, disposition: str, action_reduction: bool) -> SimpleName
         requirements=SimpleNamespace(
             reduced_axes=(SimpleNamespace(name="action_product"),)
             if action_reduction
-            else (),
-            internal_inputs={},
+            else ()
         ),
     )
 
 
 def _full_metadata_kernel() -> _MetadataKernel:
-    # Administrative/Raw decoys disagree with the actual Full root on both facts.
+    # Bank decoys disagree with the chunk loop on both facts.
     decoy = _metadata_program(disposition="dense", action_reduction=True)
-    publisher = _metadata_program(disposition="planned", action_reduction=False)
-    publisher.requirements.internal_inputs["answer"] = SimpleNamespace(
-        producer="full", label="answer"
+    chunks = _metadata_program(disposition="planned", action_reduction=False)
+    chunks.function = SimpleNamespace(
+        schedule=(SimpleNamespace(name="raw"), SimpleNamespace(name="full"))
     )
     return _MetadataKernel(
-        programs={
-            "_initialize": decoy,
-            "_source": decoy,
-            "raw": decoy,
-            "full": _metadata_program(disposition="planned", action_reduction=False),
-            "_publish": publisher,
-            "_chunks": decoy,
-            "_finish": decoy,
-        }
+        programs={"_initialize": decoy, "_chunks": chunks, "_finish": decoy}
     )
 
 
 def test_query_metadata_uses_the_full_root_without_action_streaming() -> None:
-    """PLANNED Full publication differs from the first administrative/Raw nodes."""
+    """The PLANNED chunk loop ending at the Full root describes its publication."""
     assert _kernel_execution_metadata(_full_metadata_kernel()) == {
         "streamed": False,
         "execution_disposition": "planned",
@@ -655,9 +646,7 @@ def test_query_metadata_uses_the_full_root_without_action_streaming() -> None:
 def test_query_metadata_refuses_an_unproved_full_publication(mutation: str) -> None:
     kernel = _full_metadata_kernel()
     if mutation == "wrong-producer":
-        kernel.programs["_publish"].requirements.internal_inputs[
-            "answer"
-        ].producer = "raw"
+        kernel.programs["_chunks"].function.schedule = (SimpleNamespace(name="raw"),)
     elif mutation == "wrong-kind":
         kernel.definitions["full"].read.kind = "Raw"
     elif mutation == "wrong-context":
