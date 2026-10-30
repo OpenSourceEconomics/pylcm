@@ -16,12 +16,12 @@ from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm import (
     AgeRange,
-    ArrivalDecision,
-    ArrivalRead,
     ByAge,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -127,8 +127,8 @@ def _make_model_with_a_gate_reading_a_broadcast_state() -> Model:
                         }
                     }
                 ),
-                arrivals={
-                    "retired": ArrivalDecision(
+                participation={
+                    "retired": ParticipationCheck(
                         predicate=_gate_reading_bonus,
                         routes={
                             "self": StakeholderRoute(
@@ -140,7 +140,7 @@ def _make_model_with_a_gate_reading_a_broadcast_state() -> Model:
                             )
                         },
                         reads={
-                            "V_target": ArrivalRead(
+                            "V_target": ParticipationRead(
                                 kind="IntegratedFull",
                                 regime="retired",
                                 projection={
@@ -148,7 +148,7 @@ def _make_model_with_a_gate_reading_a_broadcast_state() -> Model:
                                     "bonus": _project_bonus_identically,
                                 },
                             ),
-                            "V_outside_ref": ArrivalRead(
+                            "V_outside_ref": ParticipationRead(
                                 kind="IntegratedFull",
                                 regime="outside",
                                 projection={"wage": _project_wage_identically},
@@ -195,8 +195,8 @@ def _make_model_with_a_projection_reading_a_target_state() -> Model:
                         }
                     }
                 ),
-                arrivals={
-                    "retired": ArrivalDecision(
+                participation={
+                    "retired": ParticipationCheck(
                         predicate=_gate_comparing_values,
                         routes={
                             "self": StakeholderRoute(
@@ -208,7 +208,7 @@ def _make_model_with_a_projection_reading_a_target_state() -> Model:
                             )
                         },
                         reads={
-                            "V_target": ArrivalRead(
+                            "V_target": ParticipationRead(
                                 kind="IntegratedFull",
                                 regime="retired",
                                 projection={
@@ -216,7 +216,7 @@ def _make_model_with_a_projection_reading_a_target_state() -> Model:
                                     "bonus": _project_bonus_identically,
                                 },
                             ),
-                            "V_outside_ref": ArrivalRead(
+                            "V_outside_ref": ParticipationRead(
                                 kind="IntegratedFull",
                                 regime="outside",
                                 projection={"wage": _project_wage_from_bonus},

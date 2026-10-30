@@ -17,11 +17,11 @@ from _lcm.regime_building.transition_support import (
 from lcm import (
     AgeGrid,
     AgeRange,
-    ArrivalDecision,
-    ArrivalRead,
     ByAge,
     LinSpacedGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -350,11 +350,11 @@ def _gated_model(*, phased_fallback: bool) -> Model:
         else ProjectedRegimeValue(regime="fallback", projection={"wealth": _identity})
     )
     law = ByAge(cases={40: {"target": StochasticTransition(func=_prob_one)}})
-    arrivals = {
-        "target": ArrivalDecision(
+    participation = {
+        "target": ParticipationCheck(
             predicate=_gate,
             reads={
-                name: ArrivalRead(
+                name: ParticipationRead(
                     kind="IntegratedFull",
                     regime=regime,
                     projection={"wealth": _identity},
@@ -381,26 +381,32 @@ def _gated_model(*, phased_fallback: bool) -> Model:
         edges=Phased(
             solve={
                 "source": Transition(
-                    targets={"target": 40, "priced": 40}, law=law, arrivals=arrivals
+                    targets={"target": 40, "priced": 40},
+                    law=law,
+                    participation=participation,
                 )
             },
             simulate={
                 "source": Transition(
-                    targets={"target": 40, "fallback": 40}, law=law, arrivals=arrivals
+                    targets={"target": 40, "fallback": 40},
+                    law=law,
+                    participation=participation,
                 )
             },
         )
         if phased_fallback
         else {
             "source": Transition(
-                targets={"target": 40, "fallback": 40}, law=law, arrivals=arrivals
+                targets={"target": 40, "fallback": 40},
+                law=law,
+                participation=participation,
             )
         },
     )
 
 
-def test_arrival_reads_and_fallbacks_are_demanded_at_the_landing_age() -> None:
-    """The arrival's reference is valued only; the fallback is also a landing."""
+def test_participation_reads_and_fallbacks_are_demanded_at_the_landing_age() -> None:
+    """The check's reference is only valued; the fallback is also a landing."""
     reachability = _gated_model(phased_fallback=False).reachability
     assert (reachability.nodes, reachability.visited_nodes) == (
         frozenset(
@@ -413,8 +419,8 @@ def test_arrival_reads_and_fallbacks_are_demanded_at_the_landing_age() -> None:
 def test_a_phased_fallback_prices_one_regime_and_lands_in_another() -> None:
     """The solve leg is priced only; the simulate leg is a physical landing.
 
-    The arrival prices the solve leg by a query of `priced` at the landing age,
-    so `priced` is active in the solution phase without becoming a stored node.
+    The participation check prices the solve leg by a query of `priced` at the landing
+    age, so `priced` is active in the solution phase without becoming a stored node.
     """
     reachability = _gated_model(phased_fallback=True).reachability
     assert (reachability.nodes, reachability.visited_nodes) == (

@@ -1,4 +1,4 @@
-"""A repeating arrival stops where the original source's supported edges stop."""
+"""A repeating participation check stops where the source's supported edges stop."""
 
 import jax.numpy as jnp
 import numpy as np
@@ -20,7 +20,9 @@ class _RegimeId:
     src_fallback: ScalarInt
 
 
-def test_public_repeating_arrival_stops_at_the_sources_last_supported_date() -> None:
+def test_public_repeating_participation_stops_at_the_sources_last_supported_date() -> (
+    None
+):
     """A kept row exits ordinarily after the actual final source date."""
     declaration = _repeating_self_loop_laws()["src"]
     assert isinstance(declaration, Transition)
@@ -33,7 +35,7 @@ def test_public_repeating_arrival_stops_at_the_sources_last_supported_date() -> 
             "src": Transition(
                 targets={"src": 0, "src_exit": (0, 1), "src_fallback": 0},
                 law=declaration.law,
-                arrivals=declaration.arrivals,
+                participation=declaration.participation,
             )
         },
     )

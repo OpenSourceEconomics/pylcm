@@ -145,7 +145,7 @@ class GateReadsValueError(RegimeInitializationError):
     """Raised when a `Gate` predicate reads a value of its target regime.
 
     A gate routes on the target's states and parameters. A move decided by
-    comparing values is an `Exit` of the source regime, or an `ArrivalDecision`
+    comparing values is an `Exit` of the source regime, or a `ParticipationCheck`
     when the comparison is made on landing.
     """
 

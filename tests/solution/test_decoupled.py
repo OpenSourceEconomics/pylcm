@@ -1373,11 +1373,13 @@ def _couple_is_better(*, V_target_f: FloatND, V_target_m: FloatND) -> BoolND:
     return V_target_f >= V_target_m
 
 
-def test_a_typed_arrival_source_refuses_unrepresented_decoupled_selection() -> None:
+def test_a_typed_participation_source_refuses_unrepresented_decoupled_selection() -> (
+    None
+):
     """A native source query must not rank actions by the reported value."""
 
     @lcm.categorical(ordered=False)
-    class ArrivalRegimeId:
+    class ParticipationRegimeId:
         alive: ScalarInt
         couple: ScalarInt
         alone: ScalarInt
@@ -1418,23 +1420,23 @@ def test_a_typed_arrival_source_refuses_unrepresented_decoupled_selection() -> N
                 ),
             },
             ages=lcm.AgeGrid(start=0, inclusive_stop=1, step="Y"),
-            regime_id_class=ArrivalRegimeId,
+            regime_id_class=ParticipationRegimeId,
             initial_nodes=lcm.InitialNodes(by_age={0.0: "alive"}),
             edges={
                 "alive": lcm.Transition(
                     law="couple",
-                    arrivals={
-                        "couple": lcm.ArrivalDecision(
+                    participation={
+                        "couple": lcm.ParticipationCheck(
                             predicate=_couple_is_better,
                             reads={
-                                "V_target_f": lcm.ArrivalRead(
+                                "V_target_f": lcm.ParticipationRead(
                                     regime="couple",
                                     stakeholder="f",
                                     kind="Raw",
                                     field="value",
                                     projection={"wealth": _stay},
                                 ),
-                                "V_target_m": lcm.ArrivalRead(
+                                "V_target_m": lcm.ParticipationRead(
                                     regime="couple",
                                     stakeholder="m",
                                     kind="Raw",

@@ -6,7 +6,7 @@ schedules have to hold for that:
 
 - A fallback runs after every target it serves, whatever order the regimes are
   declared in, so any acyclic arrangement of targets and fallbacks simulates.
-- An arrival decision may name its own target as the fallback, at a projected
+- A participation check may name its own target as the fallback, at a projected
   state. A household landing where the target has no policy support then decides
   in the same regime at the projected state, and its period's row records that
   decision.
@@ -21,13 +21,13 @@ import pytest
 
 from lcm import (
     AgeGrid,
-    ArrivalDecision,
-    ArrivalRead,
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
     IrregSpacedGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -176,18 +176,18 @@ def _self_route_model(
     projection=_project_to_three,
     off_grid: Literal["extrapolate", "clip_state"] = "extrapolate",
 ) -> Model:
-    """The arrival into `a` falls back to `a` itself, projecting the wage to 3."""
+    """The participation check into `a` falls back to `a`, projecting the wage to 3."""
     route = StakeholderRoute(
         target_stakeholder="f",
         fallback=ProjectedRegimeValue(
             regime="a", stakeholder="f", projection={"wage": projection}
         ),
     )
-    arrivals = {
-        "a": ArrivalDecision(
+    participation = {
+        "a": ParticipationCheck(
             predicate=_has_policy_support,
             reads={
-                "target_support": ArrivalRead(
+                "target_support": ParticipationRead(
                     regime="a",
                     stakeholder="f",
                     kind="Participating",
@@ -221,7 +221,7 @@ def _self_route_model(
         edges={
             "source": Transition(
                 law=ByAge(cases={0: {"a": StochasticTransition(func=_certain)}}),
-                arrivals=arrivals,
+                participation=participation,
             )
         },
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),

@@ -35,11 +35,11 @@ from dags import with_signature
 from _lcm.beartype_conf import REGIME_CONF
 
 if TYPE_CHECKING:
-    from _lcm.arrival_queries import ArrivalQueryPlan
     from _lcm.current_iid import CurrentIIDPlan
+    from _lcm.participation_queries import ParticipationQueryPlan
 else:
-    # Arrival query construction imports the engine before solver contexts finish.
-    type ArrivalQueryPlan = object
+    # Participation query construction imports the engine before solver contexts finish.
+    type ParticipationQueryPlan = object
     # The innovation registry reaches this solver through the public Regime facade.
     type CurrentIIDPlan = object
 from _lcm.constraints.routes import (
@@ -797,8 +797,12 @@ def grid_search_query_inputs(
         same_period_ref_regimes=context.same_period_ref_regimes,
         edge_reference_regimes=references,
         edge_target_regimes=context.edge_target_regimes,
-        arrival_queries=context.arrival_queries.get(period, MappingProxyType({})),
-        arrival_surfaces=context.arrival_surfaces.get(period, MappingProxyType({})),
+        participation_queries=context.participation_queries.get(
+            period, MappingProxyType({})
+        ),
+        participation_surfaces=context.participation_surfaces.get(
+            period, MappingProxyType({})
+        ),
     )
     reads = _value_reads(
         regime_name=context.regime_name,
@@ -808,30 +812,34 @@ def grid_search_query_inputs(
         edge_reference_regimes=references,
         edge_target_regimes=context.edge_target_regimes,
     )
-    if builder.arrival_surfaces:
-        from _lcm.arrival_queries import plan_surface_address  # noqa: PLC0415
+    if builder.participation_surfaces:
+        from _lcm.participation_queries import plan_surface_address  # noqa: PLC0415
 
-        # An arrival target's value enters as the source's stored surface, read
+        # A participation target's value enters as the source's stored surface, read
         # through the same continuation leaf an ordinary value read fills.
         reads = tuple(
             replace(
                 read,
                 target=plan_surface_address(
-                    plan=builder.arrival_surfaces[str(read.source.path[0])]
+                    plan=builder.participation_surfaces[str(read.source.path[0])]
                 ),
             )
             if read.source.channel is ValueInputChannel.NEXT_REGIME_VALUE
-            and read.source.path[0] in builder.arrival_surfaces
+            and read.source.path[0] in builder.participation_surfaces
             else read
             for read in reads
         )
-    if builder.arrival_queries:
-        from _lcm.arrival_queries import arrival_source_value_reads  # noqa: PLC0415
+    if builder.participation_queries:
+        from _lcm.participation_queries import (  # noqa: PLC0415
+            participation_source_value_reads,
+        )
 
         reads = (
             *reads,
-            *arrival_source_value_reads(
-                plans=builder.arrival_queries, source=context.regime_name, period=period
+            *participation_source_value_reads(
+                plans=builder.participation_queries,
+                source=context.regime_name,
+                period=period,
             ),
         )
     return builder, reads
@@ -962,33 +970,35 @@ class _GridSearchArgumentBuilder:
     same_period_ref_regimes: tuple[RegimeName, ...] = ()
     edge_reference_regimes: tuple[RegimeName, ...] = ()
     edge_target_regimes: tuple[RegimeName, ...] = ()
-    arrival_queries: Mapping[RegimeName, ArrivalQueryPlan] = field(
+    participation_queries: Mapping[RegimeName, ParticipationQueryPlan] = field(
         default_factory=lambda: MappingProxyType({})
     )
-    arrival_surfaces: Mapping[RegimeName, ArrivalQueryPlan] = field(
+    participation_surfaces: Mapping[RegimeName, ParticipationQueryPlan] = field(
         default_factory=lambda: MappingProxyType({}),
         metadata={"fingerprint_omit_if_default": True},
     )
-    """Arrival targets read from the source's stored arrival surface, by the plan
-    whose decision that surface stores."""
+    """Participation targets read from the source's stored participation surface, by
+    the plan whose decision that surface stores."""
 
     def __call__(
         self, context: CoreBuildContext
     ) -> Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]:
         """Return the exact kwargs shared by lowering and the runtime call."""
-        if self.arrival_queries:
-            from _lcm.arrival_queries import ArrivalSourceArguments  # noqa: PLC0415
+        if self.participation_queries:
+            from _lcm.participation_queries import (  # noqa: PLC0415
+                ParticipationSourceArguments,
+            )
 
-            return ArrivalSourceArguments(
-                base=replace(self, arrival_queries=MappingProxyType({})),
-                plans=self.arrival_queries,
+            return ParticipationSourceArguments(
+                base=replace(self, participation_queries=MappingProxyType({})),
+                plans=self.participation_queries,
             )(context)
         state_action_space = cast("StateActionSpace", context.state_action_space)
         next_regime_to_V_arr = context.next_regime_to_V_arr
         flat_params = cast("FlatParams", context.flat_params)
         ages = cast("TimeAxis", context.ages)
         raw_next_regime_to_V_arr = next_regime_to_V_arr
-        surfaces = self._arrival_surface_values(context=context)
+        surfaces = self._participation_surface_values(context=context)
         next_regime_to_V_arr = self._with_edge_substitution(
             next_regime_to_V_arr=MappingProxyType(
                 {
@@ -1022,8 +1032,8 @@ class _GridSearchArgumentBuilder:
             arguments[CURRENT_IID_NODES_ARGUMENT] = self.current_iid_plan.node_operands
             arguments[CURRENT_IID_ROWS_ARGUMENT] = self.current_iid_plan.indices
         if self.same_period_ref_regimes:
-            # Only the declared references: an arrival's date carries every stored
-            # value its source reads, which is not this program's operand tree.
+            # Only the declared references: a participation check's date carries every
+            # stored value its source reads, which is not this program's operand tree.
             available = (
                 raw_next_regime_to_V_arr
                 if context.same_period_regime_to_V_arr is None
@@ -1043,37 +1053,38 @@ class _GridSearchArgumentBuilder:
             )
         )
         if surfaces:
-            from _lcm.arrival_queries import (  # noqa: PLC0415
-                ARRIVAL_SURFACE_ARGUMENTS,
+            from _lcm.participation_queries import (  # noqa: PLC0415
+                PARTICIPATION_SURFACE_ARGUMENTS,
                 surface_reader_arguments,
             )
 
-            arguments[ARRIVAL_SURFACE_ARGUMENTS] = surface_reader_arguments(
-                plans={name: self.arrival_surfaces[name] for name in surfaces},
+            arguments[PARTICIPATION_SURFACE_ARGUMENTS] = surface_reader_arguments(
+                plans={name: self.participation_surfaces[name] for name in surfaces},
                 context=context,
             )
         return MappingProxyType(arguments)
 
-    def _arrival_surface_values(
+    def _participation_surface_values(
         self, *, context: CoreBuildContext
     ) -> dict[RegimeName, ValueTemplate]:
-        """Read each surfaced arrival target from the arrival's own operands."""
-        if not self.arrival_surfaces:
+        """Read each surfaced participation target from its check's operands."""
+        if not self.participation_surfaces:
             return {}
-        from _lcm.arrival_queries import (  # noqa: PLC0415
-            _ArrivalBuildContext,
+        from _lcm.participation_queries import (  # noqa: PLC0415
+            _ParticipationBuildContext,
             plan_surface_address,
         )
 
-        if not isinstance(context, _ArrivalBuildContext):
+        if not isinstance(context, _ParticipationBuildContext):
             msg = (
-                f"Regime '{self.regime_name}' reads stored arrival surfaces, which "
-                "only an arrival reader's operands carry."
+                f"Regime '{self.regime_name}' reads stored participation surfaces, "
+                "which "
+                "only a participation reader's operands carry."
             )
             raise ExecutionPlanningError(msg)
         return {
-            name: context.arrival_values[plan_surface_address(plan=plan)]
-            for name, plan in self.arrival_surfaces.items()
+            name: context.participation_values[plan_surface_address(plan=plan)]
+            for name, plan in self.participation_surfaces.items()
             if name in self.target_regimes
         }
 

@@ -1,11 +1,11 @@
-"""An arrival prices a target whose participation constraint reads another regime.
+"""A participation check prices a target whose own constraint reads another regime.
 
-Married lets the wife work (her utility 1.25) or not (0.75); the husband gets 100
-only if she does not work. Her participation constraint against single's same-
-date value 1.0 leaves only work feasible, so her married value is 1.25. The
-arrival keeps the marriage where her married value exceeds single's, so young's
-value is 1.25. Ignoring the constraint makes her married value 0.75, the arrival
-rejects, and young's value is single's 1.0.
+Married lets the wife work (her utility 1.25) or not (0.75); the husband gets 100 only
+if she does not work. Her participation constraint against single's same-date value 1.0
+leaves only work feasible, so her married value is 1.25. The participation check keeps
+the marriage where her married value exceeds single's, so young's value is 1.25.
+Ignoring the constraint makes her married value 0.75, the participation check rejects,
+and young's value is single's 1.0.
 """
 
 import jax.numpy as jnp
@@ -14,12 +14,12 @@ import pytest
 
 from lcm import (
     AgeGrid,
-    ArrivalDecision,
-    ArrivalRead,
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -27,7 +27,7 @@ from lcm import (
     ValueDependentConstraint,
     categorical,
 )
-from lcm.arrivals import ArrivalValueKind
+from lcm.participation import ParticipationValueKind
 from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, DiscreteAction, FloatND, ScalarInt
 
@@ -75,8 +75,8 @@ def _one(age: FloatND) -> FloatND:
 
 def _model(
     *,
-    target_kind: ArrivalValueKind,
-    reference_kind: ArrivalValueKind,
+    target_kind: ParticipationValueKind,
+    reference_kind: ParticipationValueKind,
     enable_jit: bool,
 ) -> Model:
     single = ProjectedRegimeValue(regime="single", projection={})
@@ -100,17 +100,17 @@ def _model(
             "young": Transition(
                 targets={"married": 0, "single": 0},
                 law=ByAge(cases={0: {"married": StochasticTransition(func=_one)}}),
-                arrivals={
-                    "married": ArrivalDecision(
+                participation={
+                    "married": ParticipationCheck(
                         predicate=_marries,
                         reads={
-                            "V_target_f": ArrivalRead(
+                            "V_target_f": ParticipationRead(
                                 kind=target_kind,
                                 regime="married",
                                 stakeholder="f",
                                 projection={},
                             ),
-                            "V_single": ArrivalRead(
+                            "V_single": ParticipationRead(
                                 kind=reference_kind, regime="single", projection={}
                             ),
                         },
@@ -140,10 +140,10 @@ def _model(
         ("IntegratedFull", "IntegratedFull"),
     ],
 )
-def test_arrival_prices_a_target_constraint_on_another_regimes_value(
+def test_participation_prices_a_target_constraint_on_another_regimes_value(
     *,
-    target_kind: ArrivalValueKind,
-    reference_kind: ArrivalValueKind,
+    target_kind: ParticipationValueKind,
+    reference_kind: ParticipationValueKind,
     enable_jit: bool,
 ) -> None:
     model = _model(

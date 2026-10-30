@@ -15,13 +15,13 @@ import pytest
 
 from lcm import (
     AgeGrid,
-    ArrivalDecision,
-    ArrivalRead,
     ByAge,
     DeterministicTransition,
     Gate,
     LinSpacedGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -246,11 +246,11 @@ def source_name_gate_model(*, declare_pruned_source_x: bool) -> Model:
         edges={
             "src": Transition(
                 law=ByAge(cases={0: {"target": StochasticTransition(func=certain)}}),
-                arrivals={
-                    "target": ArrivalDecision(
+                participation={
+                    "target": ParticipationCheck(
                         predicate=gate_with_free_x,
                         reads={
-                            "V_target": ArrivalRead(
+                            "V_target": ParticipationRead(
                                 kind="IntegratedFull", regime="target", projection={}
                             )
                         },

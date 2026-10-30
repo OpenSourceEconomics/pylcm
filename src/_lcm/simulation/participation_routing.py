@@ -7,14 +7,14 @@ import jax.numpy as jnp
 from lcm.typing import BoolND, FloatND, IntND
 
 
-def pending_arrival_rows(
+def pending_participation_rows(
     *, regime_ids: IntND, entered_through: IntND, source_id: IntND, target_id: IntND
 ) -> BoolND:
     """Select only rows carrying this scheduled incoming edge's provenance."""
     return (regime_ids == target_id) & (entered_through == source_id)
 
 
-def record_arrival_entries(
+def record_participation_entries(
     *,
     drawn_ids: IntND,
     routed_ids: IntND,
@@ -23,14 +23,14 @@ def record_arrival_entries(
     source_id: int,
     target_ids: tuple[int, ...],
 ) -> IntND:
-    """Remember actual scheduled arrivals, excluding other edges' fallbacks."""
+    """Remember scheduled participation checks, excluding other edges' fallbacks."""
     selected = jnp.zeros_like(holders)
     for target in target_ids:
         selected |= (drawn_ids == target) & (routed_ids == target)
     return jnp.where(holders & selected, source_id, entries)
 
 
-def arrival_route_codes(
+def participation_route_codes(
     *,
     original: IntND,
     incoming: IntND,
@@ -55,7 +55,7 @@ def ordinary_exit_rows(*, holders: BoolND, pending: tuple[BoolND, ...]) -> BoolN
     return holders
 
 
-def arrival_frame_bases(
+def participation_frame_bases(
     *,
     bases: Mapping[str, FloatND],
     produced: Mapping[str, BoolND],

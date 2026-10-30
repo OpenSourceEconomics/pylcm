@@ -1143,9 +1143,9 @@ def _gate(*, V_target: FloatND, threshold: FloatND) -> BoolND:
     return V_target >= threshold
 
 
-def _done_value() -> lcm.ArrivalRead:
-    """The stored value of the terminal `done` regime, read at its arrival."""
-    return lcm.ArrivalRead(kind="IntegratedFull", regime="done", projection={})
+def _done_value() -> lcm.ParticipationRead:
+    """The terminal `done` regime's stored value, read by its participation check."""
+    return lcm.ParticipationRead(kind="IntegratedFull", regime="done", projection={})
 
 
 @pytest.mark.parametrize(("threshold", "expected"), [(5.0, 4.0), (10.0, 1.0)])
@@ -1164,8 +1164,8 @@ def test_temporal_gate_requires_and_reads_target_period(
         edges={
             "work": lcm.Transition(
                 law={"done": lcm.StochasticTransition(func=_one)},
-                arrivals={
-                    "done": lcm.ArrivalDecision(
+                participation={
+                    "done": lcm.ParticipationCheck(
                         predicate=lcm.time_varying_params("threshold")(_gate),
                         reads={"V_target": _done_value()},
                         routes={
@@ -1294,14 +1294,14 @@ def test_temporal_gate_projection_reads_target_period(
         edges={
             "work": lcm.Transition(
                 law={"done": lcm.StochasticTransition(func=_one)},
-                arrivals={
-                    "done": lcm.ArrivalDecision(
+                participation={
+                    "done": lcm.ParticipationCheck(
                         predicate=compare if reference else _gate,
                         reads={
                             "V_target": _done_value(),
                             **(
                                 {
-                                    "V_reference": lcm.ArrivalRead(
+                                    "V_reference": lcm.ParticipationRead(
                                         kind="IntegratedFull",
                                         regime="fallback",
                                         projection=projection,

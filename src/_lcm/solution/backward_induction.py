@@ -41,7 +41,6 @@ from jax._src.dtypes import ExtendedDType
 from jax._src.lib import xla_client
 from jaxtyping import Float, Int, Scalar
 
-from _lcm.arrival_continuation import arrival_surface_leaves
 from _lcm.continuation import ContinuationSpec
 from _lcm.engine import (
     Regime,
@@ -164,6 +163,7 @@ from _lcm.params.edges import (
     is_gated_cell_slot,
     regime_kernel_params,
 )
+from _lcm.participation_continuation import participation_surface_leaves
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.gated_edges import (
     EDGE_PERIOD_CONTEXT_ARGS,
@@ -656,7 +656,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     retained_continuations: dict[ArtifactRef, ArtifactPayload] = {}
     replay_artifacts: dict[ArtifactRef, ArtifactPayload] = {}
     auxiliary_artifacts: dict[ArtifactRef, ArtifactPayload] = {}
-    arrival_surfaces: dict[
+    participation_surfaces: dict[
         int, MappingProxyType[RegimeName, MappingProxyType[str, FloatND]]
     ] = {}
 
@@ -1350,27 +1350,27 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                         retained_continuations[
                             ArtifactRef(period=period, regime=regime_name, key=key)
                         ] = jax.block_until_ready(jax.device_put(payload, host_device))
-                period_arrival_surfaces = {
+                period_participation_surfaces = {
                     regime_name: surfaces
                     for regime_name, payload in period_continuations.items()
-                    if (surfaces := arrival_surface_leaves(payload))
+                    if (surfaces := participation_surface_leaves(payload))
                 }
-                if period_arrival_surfaces:
-                    # Replay prices arrivals with the solve's own plans, so it
-                    # reads these surfaces under every retention, like values.
-                    arrival_host = jax.devices("cpu")[0]
-                    arrival_surfaces[period] = MappingProxyType(
+                if period_participation_surfaces:
+                    # Replay prices participation checks with the solve's own plans, so
+                    # it reads these surfaces under every retention, like values.
+                    participation_host = jax.devices("cpu")[0]
+                    participation_surfaces[period] = MappingProxyType(
                         {
                             regime_name: MappingProxyType(
                                 {
                                     name: jax.block_until_ready(
-                                        jax.device_put(surface, arrival_host)
+                                        jax.device_put(surface, participation_host)
                                     )
                                     for name, surface in surfaces.items()
                                 }
                             )
                             for regime_name, surfaces in (
-                                period_arrival_surfaces.items()
+                                period_participation_surfaces.items()
                             )
                         }
                     )
@@ -1443,7 +1443,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         retained_continuations=ArtifactStore(retained_continuations),
         replay_artifacts=ArtifactStore(replay_artifacts),
         auxiliary_artifacts=ArtifactStore(auxiliary_artifacts),
-        arrival_surfaces=MappingProxyType(arrival_surfaces),
+        participation_surfaces=MappingProxyType(participation_surfaces),
     )
 
 
@@ -2057,9 +2057,9 @@ def _roll_continuation_inputs(
     the next period. A regime inactive this period drops out, and nothing keeps
     its earlier value alive for the roll.
 
-    Constant-schema carries keep their template key set and update the entries
-    solved this period. Date-specific carries keep only this period's actual
-    publications, so an undemanded arrival cannot retain another date's operands.
+    Constant-schema carries keep their template key set and update the entries solved
+    this period. Date-specific carries keep only this period's actual publications, so
+    an undemanded participation check cannot retain another date's operands.
 
     Returns:
         Tuple of the rolled V mapping and the rolled carry mapping.

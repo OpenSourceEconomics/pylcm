@@ -1,4 +1,4 @@
-"""Call-local original-value operands for replaying a dated arrival price."""
+"""Call-local original-value operands for replaying a dated participation price."""
 
 from collections.abc import Mapping
 from dataclasses import fields, replace
@@ -22,19 +22,21 @@ else:
     type ScalarPolicyQueries = object
 
 
-# Retained stored arrival surfaces: period, publishing regime, payload leaf name.
-type ArrivalSurfaces = Mapping[int, Mapping[RegimeName, Mapping[str, ValueTemplate]]]
+# Retained stored participation surfaces: period, publishing regime, payload leaf name.
+type ParticipationSurfaces = Mapping[
+    int, Mapping[RegimeName, Mapping[str, ValueTemplate]]
+]
 
 
-def is_arrival_surface(*, address: ValueArtifactAddress) -> bool:
-    """Whether `address` names a stored arrival surface leaf."""
-    from _lcm.arrival_queries import _is_surface  # noqa: PLC0415
+def is_participation_surface(*, address: ValueArtifactAddress) -> bool:
+    """Whether `address` names a stored participation surface leaf."""
+    from _lcm.participation_queries import _is_surface  # noqa: PLC0415
 
     return _is_surface(address=address, period=address.period)
 
 
-def stored_arrival_surface(
-    *, address: ValueArtifactAddress, surfaces: ArrivalSurfaces
+def stored_participation_surface(
+    *, address: ValueArtifactAddress, surfaces: ParticipationSurfaces
 ) -> ValueTemplate:
     """The retained surface `address` names.
 
@@ -46,19 +48,19 @@ def stored_arrival_surface(
         return surfaces[address.period][address.regime][address.leaf_path[-1]]
     except KeyError as error:
         raise ExecutionPlanningError(
-            "Arrival replay is missing its stored arrival surface for "
+            "Participation replay is missing its stored participation surface for "
             f"{address.leaf_path[-1]!r} at period {address.period}, published by "
             f"{address.regime!r}. Simulate from a solution of this model, as "
             "solved or as loaded from its saved archive; a copy that dropped its "
-            "arrival surfaces cannot replay."
+            "participation surfaces cannot replay."
         ) from error
 
 
-def _declared_arrival_origins(
+def _declared_participation_origins(
     *, queries: ScalarPolicyQueries
 ) -> Mapping[ValueArtifactAddress, ValueArtifactAddress]:
     """Recover only model-owned aliases reachable from this actual query closure."""
-    from _lcm.arrival_queries import _transport_alias  # noqa: PLC0415
+    from _lcm.participation_queries import _transport_alias  # noqa: PLC0415
 
     origins = {}
     pending = [queries]
@@ -69,14 +71,14 @@ def _declared_arrival_origins(
             continue
         visited.add(id(graph))
         for node in graph.definitions.values():
-            for plans in node.context.arrival_queries.values():
+            for plans in node.context.participation_queries.values():
                 for plan in plans.values():
                     for name, origin in plan.transport_origins.items():
                         alias = _transport_alias(plan=plan, name=name)
                         previous = origins.setdefault(alias, origin)
                         if previous != origin:
                             raise ExecutionPlanningError(
-                                "An arrival replay alias has conflicting "
+                                "A participation replay alias has conflicting "
                                 "original owners."
                             )
                     pending.append(plan.queries)
@@ -92,32 +94,35 @@ def _original_value(
     while address.kind is ValueArtifactKind.CONTINUATION_LEAF:
         if address in visited or address not in aliases:
             raise ExecutionPlanningError(
-                "Arrival replay requested an undeclared or cyclic operand origin."
+                "Participation replay requested an undeclared or cyclic operand origin."
             )
         visited.add(address)
         address = aliases[address]
     if address.kind is not ValueArtifactKind.REGIME_VALUE:
-        raise ExecutionPlanningError("Arrival replay needs an original stored value.")
+        raise ExecutionPlanningError(
+            "Participation replay needs an original stored value."
+        )
     return address
 
 
-def arrival_replay_value_reads(
+def participation_replay_value_reads(
     *, queries: ScalarPolicyQueries, core_key: str
 ) -> tuple[ValueRead, ...]:
     """Declare absolute original dates instead of requiring persisted solve carries."""
-    aliases = _declared_arrival_origins(queries=queries)
+    aliases = _declared_participation_origins(queries=queries)
     reads = []
     for read in queries.value_reads(core_key=core_key):
         if read.target.kind is not ValueArtifactKind.CONTINUATION_LEAF:
             reads.append(read)
             continue
-        if is_arrival_surface(address=read.target):
+        if is_participation_surface(address=read.target):
             # A stored surface is its own retained array, not an alias of one.
             reads.append(
                 replace(
                     read,
                     source=replace(
-                        read.source, channel=ValueInputChannel.ARRIVAL_REPLAY_VALUE
+                        read.source,
+                        channel=ValueInputChannel.PARTICIPATION_REPLAY_VALUE,
                     ),
                 )
             )
@@ -128,28 +133,28 @@ def arrival_replay_value_reads(
                 read,
                 target=original,
                 source=replace(
-                    read.source, channel=ValueInputChannel.ARRIVAL_REPLAY_VALUE
+                    read.source, channel=ValueInputChannel.PARTICIPATION_REPLAY_VALUE
                 ),
             )
         )
     return tuple(reads)
 
 
-def arrival_replay_context(
+def participation_replay_context(
     *,
     queries: ScalarPolicyQueries,
     context: CoreBuildContext,
     values: Mapping[int, Mapping[RegimeName, ValueTemplate]],
-    surfaces: ArrivalSurfaces = MappingProxyType({}),
+    surfaces: ParticipationSurfaces = MappingProxyType({}),
 ) -> CoreBuildContext:
     """Borrow demanded numeric operands without capturing the result or its history.
 
     A transported operand is the original stored value at its absolute date; a
-    stored arrival surface is the solve's retained surface at its date.
+    stored participation surface is the solve's retained surface at its date.
     """
-    from _lcm.arrival_queries import _ArrivalBuildContext  # noqa: PLC0415
+    from _lcm.participation_queries import _ParticipationBuildContext  # noqa: PLC0415
 
-    reads = queries.value_reads(core_key="arrival_replay_context")
+    reads = queries.value_reads(core_key="participation_replay_context")
     addressed = {
         read.target
         for read in reads
@@ -157,23 +162,25 @@ def arrival_replay_context(
     }
     if not addressed:
         return context
-    aliases = _declared_arrival_origins(queries=queries)
+    aliases = _declared_participation_origins(queries=queries)
     operands = {}
     for alias in addressed:
-        if is_arrival_surface(address=alias):
-            operands[alias] = stored_arrival_surface(address=alias, surfaces=surfaces)
+        if is_participation_surface(address=alias):
+            operands[alias] = stored_participation_surface(
+                address=alias, surfaces=surfaces
+            )
             continue
         original = _original_value(address=alias, aliases=aliases)
         try:
             operands[alias] = values[original.period][original.regime]
         except KeyError as error:
             raise ExecutionPlanningError(
-                "Arrival replay is missing its declared original-date value."
+                "Participation replay is missing its declared original-date value."
             ) from error
-    return _ArrivalBuildContext(
+    return _ParticipationBuildContext(
         **{
             declaration.name: getattr(context, declaration.name)
             for declaration in fields(CoreBuildContext)
         },
-        arrival_values=MappingProxyType(operands),
+        participation_values=MappingProxyType(operands),
     )

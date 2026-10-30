@@ -24,7 +24,7 @@ from _lcm.typing import (
     FlatParams,
     HostArray,
     ParamsLeaf,
-    PeriodToRegimeToArrivalSurfaces,
+    PeriodToRegimeToParticipationSurfaces,
     PeriodToRegimeToSimulationPolicy,
     PeriodToRegimeToVArr,
     RegimeName,
@@ -89,8 +89,8 @@ class OwnedSolutionView:
     """The solution authority bound to this solve."""
     generation: CanonicalModelGeneration | None = None
     """Strong ownership of the actual producing programs, including after eviction."""
-    arrival_surfaces: PeriodToRegimeToArrivalSurfaces = MappingProxyType({})
-    """The solve's stored arrival surfaces, which arrival replay reads."""
+    participation_surfaces: PeriodToRegimeToParticipationSurfaces = MappingProxyType({})
+    """The solve's stored participation surfaces, which participation replay reads."""
     component_values: RetainedComponentValues | None = None
     """The host retention behind a block-major result's values, else `None`.
 
@@ -385,7 +385,9 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
         "_artifact_authority",
         MappingProxyType(dict(authority.artifacts)),
     )
-    object.__setattr__(result, "_arrival_surfaces", internal_result.arrival_surfaces)
+    object.__setattr__(
+        result, "_participation_surfaces", internal_result.participation_surfaces
+    )
     object.__setattr__(
         result,
         "_engine_view",
@@ -400,7 +402,7 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
             ),
             replay_artifacts=MappingProxyType(replay),
             authority=authority,
-            arrival_surfaces=internal_result.arrival_surfaces,
+            participation_surfaces=internal_result.participation_surfaces,
             component_values=component_values,
             generation=generation,
         ),

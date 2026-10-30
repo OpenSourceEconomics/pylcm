@@ -6,8 +6,8 @@ level (build + solve a miniature, then call
 `substitute_gated_edge_continuations` and `route_gated_edges` directly on
 hand-crafted realized states).
 
-The namespace of a value operand read at the arrival is covered by the
-`ArrivalDecision` tests in `tests/params/test_gate_reads_on_the_target_domain.py`.
+The namespace of a value operand read at the participation check is covered by the
+`ParticipationCheck` tests in `tests/params/test_gate_reads_on_the_target_domain.py`.
 
 **A STATELESS gated target does not crash `vmap`.** With no states of its own
 (a terminal scrap-value regime), the evaluator's batched kwargs are empty

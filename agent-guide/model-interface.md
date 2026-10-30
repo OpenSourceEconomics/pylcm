@@ -84,8 +84,8 @@ Model(
   targets, `[source][target][arg]` for a per-target cell (gated or not), and
   `[source][target]["predicate"][arg]`,
   `[source][target]["routes"][route]["fallback"][state][arg]` for a target's `Gate` or
-  `ArrivalDecision`, and `[source][target]["references"][read][state][arg]` for an
-  `ArrivalRead` projection.
+  `ParticipationCheck`, and `[source][target]["reads"][read][state][arg]` for a
+  `ParticipationRead` projection.
   Values resolve from that path, `params["edges"][source][arg]` or the model level; a
   regime-level value never reaches an edge callable. Per-target state laws stay under
   their source regime.
@@ -322,7 +322,7 @@ Model(
   argument named `V_target`, `V_target_<s>` or `D_target` raises `GateReadsValueError`
   when the `Gate` is declared, and `Gate` takes no `references`. A move decided by
   comparing values is an `Exit` in the source's `Regime(exits=...)` (current period) or
-  an `ArrivalDecision` in `Transition(arrivals=...)` with named `ArrivalRead`s (on
+  a `ParticipationCheck` in `Transition(participation=...)` with named `ParticipationRead`s (on
   landing). The Boolean-dtype requirement is checked **at evaluation**, i.e. on the
   first `solve()`, not at build.
 - `ParetoObjective(weights=...)` scalarizes the household; a weight may read the

@@ -17,8 +17,8 @@ cover that, and each goes in a slot an ordinary model already has.
 
 `ProjectedRegimeValue` reads another regime's value in the *same* period, for a value
 constraint's comparison and for a route's fallback. A move decided by comparing values
-is not a `Gate`: it is a participation `Exit` of the source regime, or an
-`ArrivalDecision` evaluated on landing.
+is not a `Gate`: it is a participation `Exit` of the source regime, or a
+`ParticipationCheck` evaluated on landing.
 
 The complete worked model is `lcm_examples.collective_household`. This page walks
 through the pieces; the exact declaration contracts are in
@@ -127,7 +127,8 @@ and the offending argument.
 The regime's mask is the AND of the ordinary constraints and the value-dependent ones. A
 cell whose mask is empty carries the `-inf` sentinel: there is no viable household
 there. Where its members go instead is declared on the regime as a participation `Exit`,
-or on the incoming edge as an `ArrivalDecision` reading the household's policy support.
+or on the incoming edge as a `ParticipationCheck` reading the household's policy
+support.
 
 A value constraint cannot excuse a discrete law that leaves its grid. Such a law sends a
 state to a code outside `0..n-1`, and an off-grid code has no value to compare with. The
@@ -154,18 +155,18 @@ constraints = {
 Written as one predicate, `(work == 0) & (Q_f >= 0.0)`, the same restriction is refused
 when only `work == 1` sends a discrete state off its grid.
 
-## Marrying and dissolving: a decision on arrival
+## Marrying and dissolving: a participation check on landing
 
 A raw transition between regimes with different stakeholder structure stays rejected —
-there is no rule that would say who the arriving row is. An `ArrivalDecision` supplies
+there is no rule that would say who the arriving row is. A `ParticipationCheck` supplies
 one. It lives on the source's edges in `Model(edges=...)`, in the `Transition`'s
-`arrivals`, keyed by the destination it decides on. Its `reads` name every value the
-predicate compares, each an `ArrivalRead` of a regime at projected coordinates:
+`participation`, keyed by the destination it decides on. Its `reads` name every value
+the predicate compares, each a `ParticipationRead` of a regime at projected coordinates:
 
 ```python
 from lcm import (
-    ArrivalDecision,
-    ArrivalRead,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     StakeholderRoute,
     StochasticTransition,
@@ -185,8 +186,8 @@ edges = {
             "couple": StochasticTransition(func=meets_a_partner),
             "single_f": StochasticTransition(func=meets_nobody),
         },
-        arrivals={
-            "couple": ArrivalDecision(
+        participation={
+            "couple": ParticipationCheck(
                 predicate=mutual_consent,
                 routes={
                     "her": StakeholderRoute(
@@ -198,16 +199,16 @@ edges = {
                     )
                 },
                 reads={
-                    "V_couple_f": ArrivalRead(
+                    "V_couple_f": ParticipationRead(
                         kind="IntegratedFull", regime="couple", stakeholder="f"
                     ),
-                    "V_couple_m": ArrivalRead(
+                    "V_couple_m": ParticipationRead(
                         kind="IntegratedFull", regime="couple", stakeholder="m"
                     ),
-                    "V_alone_f": ArrivalRead(
+                    "V_alone_f": ParticipationRead(
                         kind="IntegratedFull", regime="single_f", projection=...
                     ),
-                    "V_alone_m": ArrivalRead(
+                    "V_alone_m": ParticipationRead(
                         kind="IntegratedFull", regime="single_m", projection=...
                     ),
                 },
@@ -231,8 +232,8 @@ source's `Regime(exits=...)`; see the [migration guide](migrating_dated_regimes.
 
 ### A gate routes on states
 
-A `Gate` in `Transition(gates=...)` takes the same `routes` as an arrival decision, but
-its `predicate` decides from the landing state alone: a **Boolean** function on the
+A `Gate` in `Transition(gates=...)` takes the same `routes` as a participation check,
+but its `predicate` decides from the landing state alone: a **Boolean** function on the
 *target* regime's grid that reads ordinary target states and params and the target
 fold's `period` / `age`.
 
@@ -246,8 +247,8 @@ equal `Gate` in both or none. A route's `fallback` is the one part of a gate tha
 
 A gate never reads a value. A predicate naming `V_target`, `V_target_<s>` or `D_target`
 raises `GateReadsValueError` when the `Gate` is declared, and a `Gate` takes no
-`references`. Write a comparison of values as an `ArrivalDecision` with named reads, or
-as an `Exit` of the source regime.
+`references`. Write a comparison of values as a `ParticipationCheck` with named reads,
+or as an `Exit` of the source regime.
 
 The Boolean requirement is not a build-time check: the dtype is examined where the gate
 is actually evaluated, so a gate returning a probability is refused on the first
@@ -265,11 +266,11 @@ holds where the household still has a feasible action:
 edges = {
     "couple": Transition(
         law={"couple": StochasticTransition(func=stays_married)},
-        arrivals={
-            "couple": ArrivalDecision(
+        participation={
+            "couple": ParticipationCheck(
                 predicate=has_policy_support,  # target_support
                 reads={
-                    "target_support": ArrivalRead(
+                    "target_support": ParticipationRead(
                         kind="Participating",
                         regime="couple",
                         stakeholder="f",
@@ -343,15 +344,15 @@ falls between the target's nodes:
 
 ## Participation checks over several periods
 
-An [`ArrivalDecision`](../reference/model_and_regime.md#api-arrival-decisions) is a
-participation check at the date a scheduled transition lands. The transition produces
+An [`ParticipationCheck`](../reference/model_and_regime.md#api-participation-checks) is
+a participation check at the date a scheduled transition lands. The transition produces
 the landing state, the check compares values there, and the row then either takes the
 target or its route's fallback. `lcm_examples.collective_household` declares two:
 
 - a **continuing couple** is re-tested every period: it stays together where its
   participating policy still has support at the new wealth, and dissolves into two
   singles at half the household's wealth otherwise;
-- a **new match** is checked once, on arrival: the couple forms only if both partners
+- a **new match** is checked once, on landing: the couple forms only if both partners
   are better off in the household than single at the landing.
 
 A household choosing today has to price these checks: its savings depend on what each
@@ -413,7 +414,7 @@ read from it is `NaN` as well rather than a silently wrong number.
 
 This affects a period only when
 
-- at least two arrival dates lie ahead of it, so the checks follow each other, and
+- at least two participation dates lie ahead of it, so the checks follow each other, and
 - landings fall between grid nodes, which needs a continuous target state.
 
 In a four-period household model only period 0 is affected; periods 1 to 3 are
@@ -428,11 +429,11 @@ simulates exactly like the one that wrote it.
 ### Why: the cost of rebuilding every check
 
 Rebuilding every check at its landing nests one action problem inside the next, down to
-the horizon. Each further arrival date multiplies the cost of a period by roughly the
-target's number of actions times its reads and lottery nodes. In the household example
-with 10 wealth nodes and 5 consumption shares, going from three to four periods raised
-the couple's period-0 query time from 57 ms to 1048 ms on one CPU machine, and the
-four-period solve took 84.9 s with 10.9 GB peak memory.
+the horizon. Each further participation date multiplies the cost of a period by roughly
+the target's number of actions times its reads and lottery nodes. In the household
+example with 10 wealth nodes and 5 consumption shares, going from three to four periods
+raised the couple's period-0 query time from 57 ms to 1048 ms on one CPU machine, and
+the four-period solve took 84.9 s with 10.9 GB peak memory.
 
 With stored surfaces each period prices exactly one check, whatever the horizon, so the
 solve grows linearly in the number of periods. The same four-period solve takes 37.0 s
@@ -510,10 +511,10 @@ as branches, it falls by about four for each halving of $h$. With support decidi
 same model's check instead, neither read converges near the switch (both stay between
 0.36 and 2.0, for a jump of 1.9), as the bound above says.
 
-**A pylcm witness** (`tests/solution/test_arrival_pricing_depth.py`; the same structure:
-she leaves rich households at the last check, he is overruled, and every period-0 node
-lands at the middle of a cell there). The largest error of the couple's period-0 values,
-both members, all nodes:
+**A pylcm witness** (`tests/solution/test_participation_pricing_depth.py`; the same
+structure: she leaves rich households at the last check, he is overruled, and every
+period-0 node lands at the middle of a cell there). The largest error of the couple's
+period-0 values, both members, all nodes:
 
 | node spacing $h$ | value after the check | branches, decided at the landing |
 | ---------------: | --------------------: | -------------------------------: |

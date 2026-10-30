@@ -14,7 +14,7 @@ from tests.regime_building.test_collective_regime_simulate import _solve_dissolu
 
 @pytest.fixture(scope="module")
 def dissolution():
-    """A solved participation arrival, whose couple dissolves at the middle wage."""
+    """A solved participation check, whose couple dissolves at the middle wage."""
     return _solve_dissolution()
 
 

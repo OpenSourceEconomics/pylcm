@@ -3,7 +3,7 @@
 A predicate naming a target value component or the dissolution flag is refused
 when the gate is declared, with a message pointing to the two declarations that
 express a value-driven move: a source `Exit` in `Regime(exits=...)` for a move
-decided in the current period, and an `ArrivalDecision` for a comparison made on
+decided in the current period, and a `ParticipationCheck` for a comparison made on
 landing.
 """
 
@@ -54,7 +54,7 @@ def test_a_value_reading_gate_predicate_is_refused(
     message = str(excinfo.value)
     assert operand in message
     assert "exits=" in message
-    assert "ArrivalDecision" in message
+    assert "ParticipationCheck" in message
 
 
 def test_gate_reads_value_error_is_a_regime_initialization_error() -> None:
@@ -63,7 +63,7 @@ def test_gate_reads_value_error_is_a_regime_initialization_error() -> None:
 
 
 def test_a_gate_declares_no_references() -> None:
-    """Projected references are read by an `ArrivalDecision`, not by a gate."""
+    """Projected references are read by a `ParticipationCheck`, not by a gate."""
     with pytest.raises(TypeError, match="references"):
         Gate(
             predicate=_reads_state,

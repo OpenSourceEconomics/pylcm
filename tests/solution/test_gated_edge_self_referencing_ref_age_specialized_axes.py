@@ -1,8 +1,8 @@
-"""A represented arrival reference reads its own exact age-specialized grid.
+"""A represented participation reference reads its own exact age-specialized grid.
 
 The named IntegratedFull object may be the scheduled target or a value-only
 mirror with another state name. Both have identical grids and values. Their
-references must therefore give identical arrival pricing and routing at each age.
+references must therefore give identical participation pricing and routing at each age.
 """
 
 import jax.numpy as jnp
@@ -13,11 +13,11 @@ from numpy.testing import assert_array_almost_equal as aaae
 from lcm import (
     AgeGrid,
     AgeSpecializedGrid,
-    ArrivalDecision,
-    ArrivalRead,
     ByAge,
     LinSpacedGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -96,7 +96,7 @@ def test_the_saver_is_priced_at_the_continuation_it_actually_receives(
     Waiting pays nothing, so a saver at the age it opens the account is worth
     exactly `beta` times whatever it continues into. The gate decides which
     regime that is, and the router re-decides it from the same predicate, so the
-    two answers have to describe the same branch at the same arrival date.
+    two answers have to describe the same branch at the same participation date.
     """
     model = _build_model(reference_regime=reference_regime)
     params = {"discount_factor": _DISCOUNT_FACTOR}
@@ -118,11 +118,11 @@ def test_the_saver_is_priced_at_the_continuation_it_actually_receives(
     )
 
 
-def test_self_reference_binds_distinct_actual_arrival_dates() -> None:
-    """Bind each native arrival query to its exact target date.
+def test_self_reference_binds_distinct_actual_participation_dates() -> None:
+    """Bind each native participation query to its exact target date.
 
     Both source dates must bind an IntegratedFull read of the account at their
-    own arrival date, including an account that is terminal before model end.
+    own participation date, including an account that is terminal before model end.
     """
     from _lcm.policy_queries import QueryKind, _PolicyQueryKernel  # noqa: PLC0415
 
@@ -131,7 +131,7 @@ def test_self_reference_binds_distinct_actual_arrival_dates() -> None:
     for source_period in (0, 1):
         kernel = model._regimes["saver"].solution.period_kernels[source_period]
         assert isinstance(kernel, _PolicyQueryKernel)
-        plan = kernel.root_context.arrival_queries[source_period]["account"]
+        plan = kernel.root_context.participation_queries[source_period]["account"]
         assert plan.period == source_period + 1
         represented = [
             node
@@ -174,7 +174,7 @@ def _build_model(*, reference_regime: RegimeName) -> Model:
         cases={0: {"saver": staying_put, "account": opening}, 1: {"account": opening}}
     )
     saver_gates = {
-        "account": ArrivalDecision(
+        "account": ParticipationCheck(
             predicate=_clears_the_hurdle,
             routes={
                 "only": StakeholderRoute(
@@ -185,7 +185,7 @@ def _build_model(*, reference_regime: RegimeName) -> Model:
                 )
             },
             reads={
-                "ref_value": ArrivalRead(
+                "ref_value": ParticipationRead(
                     kind="IntegratedFull",
                     regime=reference_regime,
                     projection=projection,
@@ -227,7 +227,7 @@ def _build_model(*, reference_regime: RegimeName) -> Model:
             "saver": Transition(
                 targets={"saver": 0, "account": (0, 1), "annuity": (0, 1)},
                 law=saver_law,
-                arrivals=saver_gates,
+                participation=saver_gates,
             )
         },
     )

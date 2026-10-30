@@ -282,8 +282,8 @@ A gate routes on states, never on a value. A predicate argument named `V_target`
 values is declared where its comparison is made:
 
 - in the current period, as an `Exit` of the source regime in `Regime(exits=...)`;
-- on landing, as an `ArrivalDecision` in `Transition(arrivals=...)`, whose `reads` name
-  each value the predicate compares.
+- on landing, as a `ParticipationCheck` in `Transition(participation=...)`, whose
+  `reads` name each value the predicate compares.
 
 At the end of each period's solve, the engine folds one gated continuation per declared
 edge and source stakeholder $s$ on the target regime's grid,
