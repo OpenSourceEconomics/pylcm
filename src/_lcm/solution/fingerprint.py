@@ -884,7 +884,6 @@ def fingerprint_model_structure(
                 ),
                 "state_names": regime.solution.state_names,
                 "action_names": regime.solution.action_names,
-                "fold_state_names": regime.fold_state_names,
                 "stakeholders": regime.stakeholders,
                 "solver_identity": user_regimes[name].solver.identity,
                 "replay_identity": (

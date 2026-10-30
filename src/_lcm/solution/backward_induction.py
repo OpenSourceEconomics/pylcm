@@ -6827,11 +6827,7 @@ def _build_structural_blueprint(
             )
             if family is not None:
                 family_width_candidates[family] = width_candidates
-        state_order = tuple(
-            name
-            for name in state_action_space.states
-            if name not in regime.fold_state_names
-        )
+        state_order = tuple(state_action_space.states)
         consumed = core_key in consumed_names
         # A consumer is lowered against the producer's top-ranked subtree, so a
         # later candidate whose published shape, dtype or weak typing follows the
@@ -7097,14 +7093,7 @@ def _value_axis_names(
 ) -> MappingProxyType[RegimeName, tuple[StateName, ...]]:
     """Name the axes of every regime's stored value, in stored order."""
     return MappingProxyType(
-        {
-            name: tuple(
-                state
-                for state in regime.solution.state_names
-                if state not in regime.fold_state_names
-            )
-            for name, regime in regimes.items()
-        }
+        {name: tuple(regime.solution.state_names) for name, regime in regimes.items()}
     )
 
 
@@ -8026,11 +8015,7 @@ def _log_core_plan_record(
         hlo_text = None
     record = build_core_plan_record(
         triple=triple,
-        state_names=tuple(
-            name
-            for name in regime.solution.state_names
-            if name not in regime.fold_state_names
-        ),
+        state_names=tuple(regime.solution.state_names),
         value_shape=layout.expected_value_shape,
         value_sharding=layout.expected_leaves[0].sharding,
         axis_extents={

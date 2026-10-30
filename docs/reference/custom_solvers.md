@@ -448,13 +448,12 @@ The engine stores and rolls the artifact without reading its fields, so a solver
 can carry whatever its own parents need.
 
 Before publishing a template, call `context.place_on_regime_devices(template=template)`.
-Array leaves whose leading shape matches the regime's stored-value state axes (excluding
-folded states) are partitioned along its sharded states; trailing axes stay unsharded.
-Scalars and arrays with another leading shape replicate over the regime's submesh. An
-unsharded regime uses its assigned single device. The method preserves values, non-array
-leaves, and the pytree structure. Model construction refuses a continuation template if
-any array leaf uses a different device set, with an error naming this public placement
-method.
+Array leaves whose leading shape matches the regime's stored-value state axes are
+partitioned along its sharded states; trailing axes stay unsharded. Scalars and arrays
+with another leading shape replicate over the regime's submesh. An unsharded regime uses
+its assigned single device. The method preserves values, non-array leaves, and the
+pytree structure. Model construction refuses a continuation template if any array leaf
+uses a different device set, with an error naming this public placement method.
 
 Three declarations must agree, and each is checked at a different moment, so a mistake
 surfaces as early as it can be seen.

@@ -5,6 +5,12 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Folded-IID machinery removed
+
+- `lcm.solvers.SolverBuildContext.fold_state_names` is removed. No declaration could
+  set it since `fold=` was removed, so it was always empty. A custom solver that read it
+  must drop the read.
+
 ### EGM regimes refuse IID shocks entering utility
 
 - An endogenous-grid regime (`DCEGM`, `NBEGM`, `NEGM`, `NNBEGM`) whose `utility` reads

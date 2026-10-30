@@ -1497,16 +1497,6 @@ class Regime:
     has_taste_shocks: bool = False
     """Whether the regime declares EV1 taste shocks on its discrete actions."""
 
-    fold_state_names: tuple[StateName, ...] = ()
-    """IID-process states declared `fold=True`, or empty (the default).
-
-    A folded state is integrated out of the stored value by quadrature at
-    solve time, so it is NOT an axis of the regime's stored `V`-array: the
-    backward-induction V topology (`_get_regime_V_shapes_and_shardings`)
-    excludes it from the shape/sharding it computes for this regime. Empty
-    keeps the default path byte-identical.
-    """
-
     certainty_equivalent: CertaintyEquivalent | None
     """Nonlinear certainty equivalent declared by the regime, if any."""
 
@@ -1817,7 +1807,6 @@ def place_template_on_regime_devices[Template](
     grids: MappingProxyType[StateOrActionName, Grid],
     sharded_state_names: frozenset[StateName],
     states: Mapping[StateName, FloatND | IntND],
-    fold_state_names: tuple[StateName, ...],
     submesh_device_ids: tuple[int, ...],
     action_partitions: int = 1,
 ) -> Template:
@@ -1829,7 +1818,7 @@ def place_template_on_regime_devices[Template](
         devices=devices,
         action_partitions=action_partitions,
     )
-    state_order = tuple(name for name in states if name not in fold_state_names)
+    state_order = tuple(states)
     replicated = (
         jax.sharding.SingleDeviceSharding(devices[0])
         if plan is None

@@ -47,7 +47,7 @@ streamed branch-hard-max then dynamically bound log-sum-exp composition,
 per-discrete-cell mean-zero Gumbel noise, and flat-index reconstruction, including the
 deep shared helper bodies. The construction and correctness of Q/F values
 and feasibility—including user DAGs, constraints, transitions, interpolation,
-continuation arithmetic, and folded-process weights—is outside this certificate
+and continuation arithmetic—is outside this certificate
 and remains owned by its dedicated semantic tests.
 
 The executable sweep remains deliberately finite: two action grids, six
@@ -770,70 +770,6 @@ def test_structural_blueprint_mutation_is_rejected(*, tmp_path: Path, mutation: 
     assert result["offending_paths"] == [_STRUCTURAL_BLUEPRINT_SOURCE]
 
 
-_MAX_Q_SOURCE = "src/_lcm/regime_building/max_Q_over_a.py"
-_FOLDED_BODY_MUTATIONS = {
-    "width_forwarding_filtered": (
-        (
-            "        out = self.mapped(\n"
-            "            next_regime_to_V_arr=next_regime_to_V_arr, "
-            "**states_actions_params\n"
-            "        )"
-        ),
-        (
-            "        out = self.mapped(\n"
-            "            next_regime_to_V_arr=next_regime_to_V_arr,\n"
-            "            **{\n"
-            "                name: value\n"
-            "                for name, value in states_actions_params.items()\n"
-            "                if name != '_lcm_action_block_width'\n"
-            "            },\n"
-            "        )"
-        ),
-    ),
-    "published_value_changed": (
-        'output=cast("MaxOutput", V_arr if empty is None else (V_arr, empty)),',
-        'output=cast("MaxOutput", -V_arr if empty is None else (-V_arr, empty)),',
-    ),
-    "empty_support_dropped": (
-        "empty = jnp.any(empty & support, axis=axis)",
-        "empty = jnp.any(empty, axis=axis)",
-    ),
-}
-
-
-@pytest.mark.parametrize("mutation", tuple(_FOLDED_BODY_MUTATIONS))
-def test_folded_kernel_mutation_is_rejected_after_byte_reseal(
-    *, mutation: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Resealing the source bytes cannot hide a changed folded-kernel body."""
-    root = _SRC_ROOT.parent
-    marker, replacement = _FOLDED_BODY_MUTATIONS[mutation]
-    source = (root / _MAX_Q_SOURCE).read_text(encoding="utf-8")
-    sources = verify_direct_candidate_flow(repo_root=root)["certified_corridor_sources"]
-    for relative in sources:
-        target = tmp_path / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(
-            source.replace(marker, replacement, 1)
-            if relative == _MAX_Q_SOURCE
-            else (root / relative).read_text(encoding="utf-8"),
-            encoding="utf-8",
-        )
-    monkeypatch.setattr(
-        "tests.candidate_certificate.direct_flow._SOURCE_SEALS",
-        {relative: sha256_file(tmp_path / relative) for relative in sources},
-    )
-
-    result = verify_direct_candidate_flow(repo_root=tmp_path)
-
-    assert (
-        source.count(marker),
-        any("source seal mismatch" in error for error in result["errors"]),
-        result["offending_paths"],
-        any("streamed max-Q builder" in error for error in result["errors"]),
-    ) == (1, False, [_MAX_Q_SOURCE], True)
-
-
 _BACKWARD_SOURCE = "src/_lcm/solution/backward_induction.py"
 # The continuation reservation repeats the size line, so the docstring tail
 # pins the feasibility reservation.
@@ -1114,16 +1050,10 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
         "streaming_width_transport:core_program_keyword_desynchronized",
         "streaming_width_transport:colliding_q_argument_filtered",
         "streaming_width_transport:colliding_q_argument_substituted",
-        "streaming_fold:width_keyword_renamed",
         "streaming_width_builder:collision_validation_removed",
-        "streaming_provider:fold_route_disabled",
         "streaming_provider:co_map_route_disabled",
         "streaming_provider:co_map_reference_guard_bypassed",
-        "streaming_fold:rejection_restored",
-        "streaming_fold:productmap_output_filtered",
         "streaming_classifier:collective_ev1_admitted",
-        "streaming_classifier:ev1_fold_admitted",
-        "streaming_classifier:collective_fold_admitted",
         "streaming_classifier:ev1_without_discrete_action_admitted",
         "streaming_classifier:jit_disabled_gate_reintroduced",
         "streaming_classifier:trivial_product_admitted",
@@ -1134,10 +1064,6 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
         "streaming_classifier:collective_resource_gate_bypassed",
         "streaming_classifier:ev1_precedes_trivial_product",
         "streaming_classifier:collective_precedes_co_map",
-        "streaming_fold:reduction_after_co_map",
-        "streaming_fold:signature_positionalized",
-        "streaming_fold:width_signature_dropped",
-        "streaming_fold:width_forwarding_filtered",
         "streaming_co_map:inner_state_reincluded",
         "streaming_co_map:state_order_reversed",
         "streaming_co_map:continuation_axes_broadcast",
@@ -1263,27 +1189,27 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
     original_names = {
         name for name in names if not name.startswith("simulation_adapter:")
     }
-    assert len(original_names) == 390
+    assert len(original_names) == 380
     assert (
         hashlib.sha256(("\n".join(sorted(original_names)) + "\n").encode()).hexdigest()
-        == "f85d9becf7d49e1e160b8d2291125c6742b1c1e78025248b4e04611309c03854"
+        == "73b99cc5e6503e740328b3923fe0684799d8d11030bf9fd6ba6e083159946f15"
     )
     historical_names = {
         name
         for name in names
         if not name.startswith("simulation_adapter:initial_physical_")
     }
-    assert len(historical_names) == 408
+    assert len(historical_names) == 398
     assert (
         hashlib.sha256(
             ("\n".join(sorted(historical_names)) + "\n").encode()
         ).hexdigest()
-        == "bc2b2009af0efec23e71a543c0ba6f443fabc4fe25aeb9a74280712c265fdf55"
+        == "a00c2dd641b34fdfa7f618fb19d3e79648c1082583727f15fafbb004d62faf6d"
     )
-    assert len(names) == 420
+    assert len(names) == 410
     assert (
         hashlib.sha256(("\n".join(sorted(names)) + "\n").encode()).hexdigest()
-        == "f336bcbcca6ffee605c11974059ae301e067fafec2ad2d6e0c33f34ee5c964ab"
+        == "c94857b93f5a6254cbda1aa14b3658232da1df482f907578db49540ac23aeb6c"
     )
 
 
@@ -2882,7 +2808,6 @@ _S02_IMPORTED_HELPERS = (
     ("src/_lcm/solution/feasibility.py", "_unflatten_bounded_result"),
     ("src/_lcm/transition_checks.py", "_validate_off_grid_bound_status"),
     ("src/_lcm/simulation/initial_conditions.py", "_validate_initial_bound_status"),
-    ("src/_lcm/solution/grid_search.py", "_grid_search_fold_weights"),
     ("src/_lcm/solution/backward_induction.py", "_accumulate_landing_totals"),
     ("src/_lcm/utils/functools.py", "publish_signature"),
     ("src/_lcm/continuation.py", "_query_bound_evaluator_targets"),

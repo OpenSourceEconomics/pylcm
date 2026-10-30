@@ -477,11 +477,7 @@ def _update_digest_value(
 
 def _canonical_value_axis_names(*, regime: Regime) -> tuple[str, ...]:
     """Return the public names of the axes in one canonical stored value."""
-    state_axes = tuple(
-        name
-        for name in regime.solution.state_names
-        if name not in regime.fold_state_names
-    )
+    state_axes = tuple(regime.solution.state_names)
     return (
         (*state_axes, "stakeholder") if regime.stakeholders is not None else state_axes
     )

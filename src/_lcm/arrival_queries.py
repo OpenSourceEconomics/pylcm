@@ -1351,11 +1351,7 @@ def _make_integrated_read(
 ) -> str:
     """Declare a shock-free stored representation with explicit native authority."""
     context = builder.contexts[read.regime]
-    if (
-        context.fold_state_names
-        or context.co_map_state_names
-        or context.invariant_bindings
-    ):
+    if context.co_map_state_names or context.invariant_bindings:
         raise UnsupportedOperationError(
             "IntegratedFull arrival interpolation needs an explicit unblocked "
             "stored schema."

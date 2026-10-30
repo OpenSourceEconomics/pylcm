@@ -1627,7 +1627,7 @@ def _build_same_period_ref_reader(
     (interpolation-worthy, possibly off-grid) — unlike the ordinary
     continuation-value path, which always feeds a process axis its exact
     on-grid Markov-chain index. When the reference regime carries a
-    non-folded process state (`_ContinuousStochasticProcess`, classified
+    process state (`_ContinuousStochasticProcess`, classified
     `discrete_states` for the Markov-chain solve path but read here as a
     genuine value), `get_V_interpolator`'s process-aware mode
     (`interpolate_process_axes=True`) is used so that axis is linearly

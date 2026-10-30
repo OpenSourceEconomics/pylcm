@@ -66,10 +66,9 @@ expected max—it evaluates bounded C-order action blocks and reduces them witho
 changing that candidate support. These programs publish only solve-time `VALUE`; replay
 and policy artifacts are not integrated. Value references and gated targets stream
 unless they intersect a co-mapped state through a separate reference channel. Ordinary
-co-mapped routes and eligible singleton hard-max folds also stream; the latter still
-evaluate the complete fold-node axis before quadrature. Trivial action products,
-JIT-disabled execution, the co-map/reference intersection, and all simulation-policy
-construction remain dense. See the canonical
+co-mapped routes also stream. Trivial action products, JIT-disabled execution, the
+co-map/reference intersection, and all simulation-policy construction remain dense. See
+the canonical
 [GridSearch route matrix](../reference/solvers.md#gridsearch-jit-route-matrix) for the
 combinations unsupported by the streamed program. This execution route does not by
 itself establish a runtime or peak-memory improvement. EGM-family solvers replace one

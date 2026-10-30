@@ -156,8 +156,8 @@ deliberately dense, unsupported, or trivial declares no `action_product` axis.
 
 The separate `cell` axis tiles the flattened Cartesian product of inner states.
 `ExecutionConfig(axis_widths={"cell": n})` bounds the number of state cells evaluated
-together, including any folded quadrature nodes. Each output leaf recovers its state
-axes before folding; collective values also retain their trailing stakeholder axis.
+together. Each output leaf recovers its state axes; collective values also retain their
+trailing stakeholder axis.
 Sharded states stay outside this loop; fixed states also retain their co-mapping with
 continuation values, preserving device-local reads. Empty and singleton state products
 declare no `cell` axis. A core
@@ -175,13 +175,10 @@ This matrix uses exactly three disposition labels:
 | Singleton EV1 with at least one discrete action | deliberately dense | Dense action reduction preserves canonical floating-point reduction order and winner identity; the blocked reference does not yet preserve that contract. |
 | Same-period references, edge references, or gated targets without a co-mapped state | streamed | Each target artifact and its exact source argument path is declared; the resolved transfer supplies it as a dynamic input to the streamed solve core. |
 | Ordinary co-mapped state route without a separate reference channel | streamed | Continuation leaves co-map with the state cell while actions stream. |
-| Singleton hard max with folded states, including an ordinary co-map | streamed | Actions stream at each fold node; the unchanged quadrature still evaluates and reduces the full fold-node axis. |
 | Co-mapped state plus a separate same-period or edge-reference channel | deliberately dense | The two data transports are not yet represented together by the streamed program. |
 | No action, or an action product containing at most one candidate | deliberately dense | Blocking a trivial product adds no useful execution choice. |
 | JIT disabled, including the raw execution path | deliberately dense | The action-streamed program is a JIT lowering route. |
 | Collective EV1 | unsupported | The action-streamed solve program has no collective EV1 reduction. |
-| EV1 plus a folded state | unsupported | The action-streamed solve program does not compose EV1 and fold reductions. |
-| Collective hard max plus a folded state | unsupported | The action-streamed solve program does not compose collective and fold reductions. |
 | EV1 without a discrete action | unsupported | The GridSearch EV1 reduction requires a discrete-choice axis. |
 | Any simulation-policy construction | deliberately dense | Simulation lies outside this solve-route classifier and continues to recompute policies on the dense action product. |
 

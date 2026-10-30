@@ -19,7 +19,7 @@ reference stream preserves the discrete-prefix branch order, hard-maxes each bra
 then adds exactly one branch value to a log-sum-exp reduction bound to the runtime scale.
 The economic
 construction of Q/F values and feasibility—including user DAGs, constraints,
-transitions, continuation values, interpolation, and fold weights—is an explicit
+transitions, continuation values, and interpolation—is an explicit
 semantic boundary and is not re-proved here. The proof is strict by design: a new
 statement in either certified transport corridor is not assumed harmless; it has
 to enter the explicit, independently checked representation allowlist.
@@ -28,7 +28,7 @@ The ten corridors are:
 
 * singleton solve -> ``Q_arr.max(where=F_arr, ...)``;
 * singleton streamed solve -> complete C-order blocks -> mergeable hard max ->
-  optional unchanged fold quadrature -> compiled VALUE core;
+  compiled VALUE core;
 * singleton action-partitioned solve -> admitted GridSearch request -> one
   contiguous run of whole C-order blocks per device of the action axis, unowned
   and padded slots infeasible -> exact hard-max accumulator -> gather over the
@@ -599,7 +599,7 @@ _SOURCE_SEALS = {
     "src/_lcm/egm/step.py": "97f9fa73f3001584eafebb3ac40696702a3faa9752947f91642ae9e1115942cd",
     "src/_lcm/egm/step_core.py": "e291e523552d2c0371a32b2193fb071e3ebf24f2b4371fe29de1cb1428c774ef",
     "src/_lcm/solution/dcegm.py": "08db6c6ab4aa0b7860177ec54297535ca4a563667f84043f2159efe1e8ba3edd",
-    DECOUPLED_BOUND_SOURCE: "f86bcae9805cf3c72cb3be638d20070dc80b5cd3b94fcfdd2dfe85a0da4757cf",
+    DECOUPLED_BOUND_SOURCE: "9a78743edda1d4b2cc13b65d42451c0568040cfd8fa4bdbe9f31c3fdba950316",
     S03_EULER_SOURCE: "a5e95cde939adcefdf3d8310f6617df4f203ae3479bc318cd92ac51c020d0f55",
     S03_DECLARED_LAW_SOURCE: "635329b1a16ebe7b80ae57acfcc3fa3fd2c1b65a7b6778d1f72dc985f47e0e69",
     S03_INTERP_SOURCE: "4eee527815c5a2fdec690a349f5bf303a13c667b3142036f07dbda3e0ba92765",
@@ -608,12 +608,12 @@ _SOURCE_SEALS = {
     S03_PREFERENCES_SOURCE: "12d41ccb73192a7742267ffaa688fff3fe337ae40ef2373f6fe93541b8effcba",
     S03_SCALAR_QUERY_SOURCE: "709d16f6377da621eee7292c7eb33c7b2c40f65cf8916d7b80d149f6f87c94d8",
     S02__LCM_EGM_OUTER_ENVELOPE_SOURCE: "0c17015f9a980411b047387354f23886cc7aead0e461eec1b87ceca07911b7fe",
-    S02_LANDING_COUNTS_SOURCE: "ac2f58e204659a210bc0f4dcb851cb8487aa538ac1b03d6d5a532be7b95aa70d",
+    S02_LANDING_COUNTS_SOURCE: "466f804943c4bcca9db78b89ac6602ed2b5fe80f8245ca82513f5d3a8f0035cc",
     S02__LCM_CONTINUATION_SOURCE: "b9793cbca0f776bebd5c0efbfd9a835fbae1a090e6ad0b12c9f27fa01c1f45a7",
     S02__LCM_EGM_BUDGET_SOURCE: "1c8fb0cbc8f9156950bea34c71c9ccce2c58ac17ec6b9f1221f8c8966f1031d2",
     S02__LCM_EGM_CARRY_SOURCE: "17c85a9146e68a8b57487754bcb89b879e62bcd391699d82ac4116ec7e4c4691",
     S02__LCM_EGM_QUERY_DATA_SOURCE: "5ca53117248f9009d4d9b696fdb46a361fa47c5b082757ccc9beb6ccd967bde3",
-    S02__LCM_REGIME_BUILDING_Q_AND_F_SOURCE: "9f59a7bb35e5aef01aa3d7ece0c7902e1422973e14ecfb93237fb844e5b4a798",
+    S02__LCM_REGIME_BUILDING_Q_AND_F_SOURCE: "c9189a03ce746343eee09bf4b3379a393f29be30abf4a838450f68de9c2f08d0",
     S02__LCM_SIMULATION_SUBJECT_PARALLEL_SOURCE: "66d70a81a7ec535d92933bc8841c6bbe7472e227509f88fc6d3bdd00b6c95e76",
     S02__LCM_SOLUTION_EGM_SOURCE: "c554d6e993da4b3b253ae8235a7fcac56c74a7bdc9c2537e84515d6c39af52bf",
     S02__LCM_SOLUTION_KERNEL_OUTPUT_SOURCE: "4b814b0aecacb22cc1f5b47d6bb9006f3f0f5eb08dc0eb18f1345fcd4becb770",
@@ -630,7 +630,7 @@ _SOURCE_SEALS = {
     SUPPORT_DIAGNOSTICS_SOURCE: "477761e6556a83fd2e271e4ab6c258cf4799d62d10d3a2d46dbf31f69b7161d8",
     SUPPORT_PRECONDITIONS_SOURCE: "5df8b182b8cb3c37f6ab76719386cc809052bcc00cda63772d698c75071f4092",
     SUPPORT_AUTHORITY_SOURCE: "09e76e5a1349c3393090af6207156df6deaa6b467fe1c10ae2d0ca1b4020b2c3",
-    SUPPORT_FINGERPRINT_SOURCE: "06312769c7b04d62adad53720ed380eb699906aeec1472af16e4cfe770b4e877",
+    SUPPORT_FINGERPRINT_SOURCE: "04e205858592579c2b2959c91aeb190438b526b629a989b9f4eb5e4a9d65b925",
     UNIFORM_PROCESS_GRID_SOURCE: "f03298f080dfe4bace2e3affc82e0ca8e5d7adf20fe58978433c19305667b299",
     EAGER_STAGE_SOURCE: "d0a52778e4966ecf9bbac4ecaee87f85f49df0aeb4bf7c390f8599bf7d97efa8",
     PROCESS_GRID_RESOLUTION_SOURCE: "c9eb81f9442d7628793d6ad905b2e96e4655e9eb48bf3de32f636541b985269f",
@@ -654,7 +654,7 @@ _SOURCE_SEALS = {
     COMBINED_PROGRAM_ARGUMENTS_SOURCE: "6a2456971c37180be88aeebb13c3bb5b67a145ec07093f917ad0ffc562eb5e76",
     COMBINED_SOLUTION_COPIES_SOURCE: "fbe188d3954a523522624823c769fda4c5831e138d2cb8421fc0f1453946886d",
     COMBINED_RESULT_SNAPSHOT_SOURCE: "7f80572d1135587912fccef482ce9aae26770bffa881b2bb63c99accbeefd0d9",
-    COMBINED_VALIDATE_V_SOURCE: "70609bbd14dba6eeccf204a8f112c78cbd85799efbd007ecb880157259ecd2f3",
+    COMBINED_VALIDATE_V_SOURCE: "a4656b9c6cb112d4bda161f10b95752658da3879554ba45388f003a4820c0ebd",
     COMBINED_LOGGING_SOURCE: "95f189e5713c7e97516b69e8298a79eea24f2baca9f7b55b62b56b81a1163023",
     COMBINED_AUTHORITY_SOURCE: "a98061fe4f30d97362d9668dc7461e8023052a46fad7513d3751637d7981d120",
     COMBINED_ENTRIES_SOURCE: "0c27d42858dde4a34b5e82a3622dee9c7b240c0c9c3284a2ba4a898bbf9a6510",
@@ -679,7 +679,7 @@ _SOURCE_SEALS = {
     SIMULATION_ENTRY_INPUTS_SOURCE: "4cc1968398b169fe94d7ebde349b58192dabfca4bee93f1d5e98a0d3da0839e7",
     SIMULATION_RESIDENCY_SOURCE: "269a66f4a0abd46e3bb6b9bd8b9df6c3c73bd5507c2c236edea7d881efe78274",
     SIMULATION_GATED_ROUTING_SOURCE: "f12dbe6046cc67839880131e621a98ae94b80a97d9653a1363b82497ee023142",
-    VALUE_TOPOLOGY_SOURCE: "9220e9bfd60e2f0c9221075ab62fb72ac5f7e9b25b3fc31fb629e7c3e50d3ca7",
+    VALUE_TOPOLOGY_SOURCE: "829818395b0a71ea20ae89a3be9c0f69e1d8bc94fdcf7713e6e2d8fdbc4322bf",
     RETAINED_BUFFERS_SOURCE: "da258d05eb675557936c77c2b4396facf62449cbacd62fd837e320cfbf0a93a7",
     SCHEDULER_SOURCE: "772152206f9e9b8361f276e995123ba1b6109e9a476a455aa322e9c6503197ec",
     LIVENESS_SOURCE: "056bda4d48f26768ed8615925ce8ff89665bb8eed94b59d69f02701a95943dff",
@@ -691,15 +691,15 @@ _SOURCE_SEALS = {
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
     ARGMAX_SOURCE: "b508d4e10350de8b54707db238d01c7de6c73b4ca6b0176e0c6c12ec762952dc",
     COLLECTIVE_SOURCE: "4cc0683d493f597684f5801909d297145d8bade0aa752c3e35cf8af2cb55edd9",
-    MAX_Q_SOURCE: "3ddae252ab1a7c94714515db70375ec69c0f1575cfc1cc79ec81b816bd7b2630",
-    PROCESSING_SOURCE: "fc4f1c7ad95183a38caac1beac598160c406b93f5a8fd85f5fd0f6b459843a4f",
-    GRID_SEARCH_SOURCE: "a3d2e437ae33f5a55eb437e2dc372e81bd25898b2a75d3276651086bc5680b6d",
+    MAX_Q_SOURCE: "62e5010e5f535ed3731218a5549167d6f5ea332b145d2dcece88d492949fd78c",
+    PROCESSING_SOURCE: "8b75a14e556664a94adc04fffb26c0f3edb9589586632ae85f2898b4c2906f0d",
+    GRID_SEARCH_SOURCE: "28a278861215f191a0f3830413db98de4c422197b544f5a6c86cca36e9fd6620",
     CORE_PROGRAM_SOURCE: "7d8197a3d2607a3380be63408ae4cf2b8d8ebbe68b043cc3aff76bf1f5c6b78a",
     OUTPUT_LAYOUT_SOURCE: "c7da1256b36b3b6d89200bbae5267936d84e27746ff2c776dced4ea612ec3eb9",
     VALUE_TRANSFER_SOURCE: "6dccf91ac6fb40dae3ddcc3a887359cc5816985f176c95b2a7162d47d8134162",
     FOOTPRINT_SOURCE: "229c23faa12723aeb8725c2a1681ee56011b317f31ba75896762876a0a143de0",
     INTERNAL_OUTPUTS_SOURCE: "e41e5581295b427e22ecb3f533281c030fec77c01cf224d1a844ae6f54fe28e1",
-    ACTION_STREAMING_SOURCE: "bd9f6fd2b95a01cb8fed06664be6c0d99f94fe73f74e1cbf65d4be3d36ba4c8f",
+    ACTION_STREAMING_SOURCE: "6e0ec0453908057f98b4ebe16cc354e8cf4fe581e0acb4e18f203bb8e8cccdfe",
     ACTION_REDUCTION_SOURCE: "26355ac3edf5da80a44b4f9754b71c29e8edffc68b1a7b7ac253b9bfbf749a0f",
     COLLECTIVE_ACTION_REDUCTION_SOURCE: "40a7abd9b738055f00e347e6ac056fe69bf2501ba41f7ec82b40a18bf627c7e0",
     DISPATCHERS_SOURCE: "a78d5271fcfc7437b68bd755ce7c2b8b0b78d5f26ed00a3fb4424133725da8b2",
@@ -708,23 +708,23 @@ _SOURCE_SEALS = {
     ZERO_SAFE_SOURCE: "8d54492b73e33461f750420eef45ba8c8281c467acd0c77ba2eb90281793c8d3",
     LOGSUMEXP_ACTION_REDUCTION_SOURCE: "4799ad9bfbc02ae1e5d5270a18ed81fe682f1004d63ae6cf796ff48ac5699445",
     PROBABILITY_SOURCE: "60ccd04b143c714360388fcce2730804a4ca729ea4db82e4a0100732e155e53f",
-    ENGINE_SOURCE: "5912f7adbdabb6d6738094c45f03bb49c789678cf74f9a096b9519198ee2fc0a",
+    ENGINE_SOURCE: "9723b0411730e6bea66d1812f9bdab63d720aadb2c3a2adf8b8ad7da19680640",
     STATE_ACTION_SPACE_SOURCE: "761150639f8756f1157abbcc425e39e5d0b8a949afc0ccaf6f29bdad964d7476",
     SIMULATION_SOURCE: "20487d7afa180a46c1b2855cdd528f524278ce523cef943f6aa55d8905762886",
     SIMULATION_TRANSITIONS_SOURCE: "5cef83cc6d594d6d7004dee5cfc82dec5be33d669ac7779d3f9a393058e548da",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
-    MODEL_SOURCE: "822444ce8d214fdcc2b354424bbd4a8c59642b969f5787b56b139d4e40cbe6b2",
+    MODEL_SOURCE: "0dc838fee18b9d7a33a3acea73ad0624fb961ccc4bb8c42b319ccd891fdd64e8",
     SOLVER_API_SOURCE: "65c8235466fdeda91e14b94863e8e8fa84eaa4fefc7b0e0fd30e5efcd514ffc5",
-    BACKWARD_INDUCTION_SOURCE: "57976d505a4909f12fc70fee9662146f3061fb394d608456706123e3049909ba",
-    PERIOD_REPLAY_SOURCE: "ce332a3cf77a3d6c2344298b65234263006025de9d21b120d00941f7549f9965",
+    BACKWARD_INDUCTION_SOURCE: "9c84daf46d6131f4853e5798bf13bc8090d05b8b415119f2c5e1e981e097d0ec",
+    PERIOD_REPLAY_SOURCE: "d504ad8064dd8d7fc127ebd05510dc7ef1abc939627ab3f004b1ee75427e19ae",
     INITIAL_CONDITIONS_SOURCE: "bb8e072ad4981e03f4a6980a1745d4b6ea78578529e041789576d5c6e3f156bb",
     RESULT_SOURCE: "d2b09b95537cb65dff52e87a4b9b91a6fe99570e8b98c7ce33a95f5e9d7f5ef1",
     RESULT_DATAFRAME_SOURCE: "25a69be5f649e3b52dbcebd63656dd62311164fd4aa2b9d31051e14fe5b9864b",
     RESULT_METADATA_SOURCE: "ba9ec4f48e7df67b4a57a35cd3e781906d7ef64a35f3bc37238033c1c168df3e",
     ADDITIONAL_TARGETS_SOURCE: "3a4d95d5c88c801bb8bb0881a52cd8985e1cc17efdbfbf5474332e46b8d46614",
     SIMULATION_RANDOM_SOURCE: "54092637d7965da26670b1f1dca8b04cf780815a349a8a71dbb243d81f5a7c25",
-    FOLD_ZERO_SAFE_SOURCE: "301fcd3bec1211b60872159fe585e55e9742be62a975dd76b33f6f5cb45971e5",
-    SOLUTION_CONTRACT_SOURCE: "285e4fe1a8bb61acf9c6ee10392975c74a47427d55e8c4aeb5e0bb9377d01ef7",
+    FOLD_ZERO_SAFE_SOURCE: "c1c748c17eabf1f3439bf4309a1cf79ed3a6dc85c8532a3a4b3dcb5559acf638",
+    SOLUTION_CONTRACT_SOURCE: "208bff8192d778969d6717b25170d8706cc8c063a1b1fda31c7d27bdb746e106",
     GRIDS_INIT_SOURCE: "3c720bc2240dd1cfd45855ce501f03f8a05abda5de1142b9d00208e517b9ddce",
     GRID_BASE_SOURCE: "2d9c7f1a0827f3ca172417a2ee2bf60b15c9ccb3dcedf3a94fb502e2d57538de",
     GRID_COORDINATES_SOURCE: "9dd0cf9e3c702023cd3cfa40a3164bf399ea295c57349223b8ab617c7f3533d5",
@@ -733,7 +733,7 @@ _SOURCE_SEALS = {
     PIECEWISE_GRID_SOURCE: "88dea9f6573e8b88db1a4f7a28f77b80eeb7a06bc29e70d4314be76237a1bc9f",
     PROCESSES_INIT_SOURCE: "fbce6ed4c889cf4c30f5242c142b4dcf2fa9e186b75cd17be1557f827abff00a",
     PROCESS_BASE_SOURCE: "d58cde6ce85e550fa957eedcce87a65185a8b46015b7ad275fe604fd9383c5ac",
-    PROCESS_IID_SOURCE: "d9d7710735022fdc8204ff149da3d07cf7c778fdd73a7bd359d613ab8e026ccf",
+    PROCESS_IID_SOURCE: "30c2a11596026ab28b842188f9f7c43812f0ddd580603fcb2286c4c8efe7ac7d",
     PROCESS_AR1_SOURCE: "00720117e85027b487947dc8f28c028a56cb0cc7a3dc4f011f4d7932646af313",
     VARIABLES_SOURCE: "8445fd5d92144d013955027460ee204debfdcedf8bb5ef5d10092538cd18de8c",
     PARAMS_REGIME_TEMPLATE_SOURCE: "0c3efccefd6ae95072be965bbcbcd36dd8575accf5f24a5cba9a8112ba12d111",
@@ -946,7 +946,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/solution/contract.py": (
-        "c1e4b35d3530c7b08373c39193c324761bbd78d34bde3624f2184be529f62166",
+        "f4a338919de1912edcfb5dbc243110155fb835fcae0e1a849c8aaf32bcd51f81",
         {
             "SolutionKernels.__post_init__": "1af79c468efac956445e2c9a1e816b260851b589681fe69754c72d395153f795",
         },
@@ -1374,9 +1374,9 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
     VALUE_TOPOLOGY_SOURCE: (
         "459380b89036a1887a51d2de505b82ba24e928214799557da5dbff55f035df03",
         {
-            "expected_V_rank": "3fb0dac3bed9027261436cff2316bd122cff31e99dd1b825977272d09e6212f7",
+            "expected_V_rank": "2be8d811d62379a0a72d34af1b5288551f7ab86d77b37ea0823b3084b605e36e",
             "placed_V_sharding": "2232aa6bbc1e01337e19bd39637a254e34d14e9e6296407c2aceb6b2467333c2",
-            "_get_regime_V_shapes_and_shardings": "c712d242ed26f7d444d84b9ae61add8b59037222ebe6c533b387a86fad4c5b4b",
+            "_get_regime_V_shapes_and_shardings": "8d97859a24d555705254552af1860f7e77a440bfa770471178f86fe1bd555eb2",
             "_build_V_arr_template": "84aa944560553fc96f52d39bfca74c8707d376dd5e9493235a907dba9c26f396",
         },
     ),
@@ -1576,11 +1576,11 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     MODEL_SOURCE: (
-        "0f1c3b501aba6c8faef2a3e7fce3a0a5ee8a0a673f0d148561d11cf0404e27a4",
+        "e453dbf370fb28c9c2994fce72fbf1b2de5d6ac8a658e9d4ddc17b748e1c25c0",
         {
-            "_validate_sharded_state_capability": "ee8b7e8a97fd413d2376a655558ea7b2a2ab61589a0ddd624ed44b69dfe5fa8d",
+            "_validate_sharded_state_capability": "e60cbf29e61c167df80d03b822e100799d7f9be529a8013c6f014be6df0c7233",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
-            "_supports_unsharded_continuous_process": "d837bd4f6c97be377ae02dca1f2044e1eb9974c6e7e08bc48866bed0f6886b18",
+            "_supports_unsharded_continuous_process": "ada180f61a2afc82613c246bc9512b1f492bc947a5a31dde3f717a8b9cfe463c",
             "Model.__init__": "8845d6f25e4ba049f1ae175a2b6a4109ad97cb502b5f7a3cd56cd450f1030e7d",
             "Model.simulate": "98e15f2d21d6b41a06b0a964a049e939591fa49bb126037705ece30733b21e9c",
             "Model._open_entry_allocations": "f04741303c8c423e4cf4a738c7385390001be4fa113ad691be00e412fe15f07e",
@@ -1684,7 +1684,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_iter_edge_topologies": "ba1a385a7779fb841a865a76bbb185c30653f27a7f66c2d888e147dcddcd4725",
             "_build_base_state_action_spaces": "7a0648369e6ca73456ba099ed2cde0bffd294728dfaf482a7ea07b477eea792d",
             "_resolve_output_layouts_and_lowering_keys": "9a7ca112027ab83e686d6bdb7c36305f3268b676dad01d5fc4cdc0caa365cd0e",
-            "_build_structural_blueprint": "1cc25b2c279aaf71fc3d449cac9d78d2f05b7285a06983bbb1aac04f4a4bfd56",
+            "_build_structural_blueprint": "8b84ad84b9d93e2f7e846eb33fbe105de31d6a5d5c34dab94911e6453635f7d7",
             "_bind_structural_blueprint": "71990a1c2417e81464e44045b10cad6d6e61b5da2db5775aedcfcbbfec3cbee0",
             "_structural_key": "c45c76077325375e6721a821bac2f0406779f1e9cfdd4422414757c783c631c7",
             "_evaluate_edge_fold": "6ea390648d0a06fb74959ac36694fad5eaab135c8c1e258d4eb48458148a60ee",
@@ -2105,7 +2105,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     ENGINE_SOURCE: (
-        "258addf20c4746672aa4c7b06d004e506cd964e9a49d7f5a7816f6431615c465",
+        "25afe20945db3aa431ea25d64f6e9c6f6188bdef2524aab561a25cb78bf2c50f",
         {
             "SolutionPhase.resolve_process_grids": "433e871004a339428068e27d0e414e035eb8d1789fd73dc8b9cd85328362a045",
             "SolutionPhase.state_action_space": "c54e576769c9c3addaf2dc961cf604747d2fb3d6b29b5b3ec9a80c3b4f3a692e",
@@ -2142,7 +2142,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "fingerprint_solution_support": "7b96d4f0c60f892df96d252b6dd5c8e3454db6da5509990e9f8d7d7e25e21174",
             "fingerprint_model": "04c8f2960e52d4144353b1e3b962edbc17b00eb05fc68a3207cf4826acbbda51",
             "_grid_support": "9709180334fc4732e2193f6b736667d6a96648f1346401a886bd7da0f41b65bf",
-            "fingerprint_model_structure": "172561f90f3fb8181c86b0154bda45e3a5eb033d5e5c02a054d893544ff419a0",
+            "fingerprint_model_structure": "0051c6fc97c65fa6e0932762aa4485dff54f2963689b06fe05289676dd30a44f",
             "_query_semantic_descriptor": "602544e2ed8bb315d1bd8a9425e486338810ba663c55197bebcfbe1e9eccac0d",
             "_project_user_regime_declaration": "a2b9cf5ca24d3082e5d5f333acb93fa6679ae026185b8f30f7bb1a1d8f83038b",
             "_semantic_fingerprint": "75f98beb48082f6fda273258837d03a38221af56812f8d621163ebfdfdda893b",
@@ -2296,12 +2296,12 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     GRID_SEARCH_SOURCE: (
-        "bf90ff3b5a60899cb465ca349e0c7791a8367ae67fe4e1af430c76fc223c66c7",
+        "587b9ce1b7f266fd7ef5d65e2c6abbb6a0e14daeb74bdfbe548e0c5533499665",
         {
-            "GridSearch.build_period_kernels": "28bbc2e21f65884f028341f953ca877f5c58ca421b10cf80fa241d5d1ef1b496",
+            "GridSearch.build_period_kernels": "7fc55cd72aed16711d2e72ce3ba753533dc33fcaec76e71f988c988c61bddcae",
             "grid_search_query_inputs": "9669c1379525b6d33f6260424b9301b85e0aca3eaaeaa01591253c9cff4a1566",
-            "_action_partition_mesh": "cab2381dbe9650e10620db20b6614ccb015eb147ff3356ab66e90cec58bf06fe",
-            "_classify_action_streaming": "8165f079219429b82f955b4708874d438b3c9ce5e6415b277542c3857082c18b",
+            "_action_partition_mesh": "d27f64ff5fc6a3e08d9fb316bafb2ad3579bf8db5adb00b977e0eccdbc9e79b1",
+            "_classify_action_streaming": "f0d47c360d905cc8439aadbdcb88009df7e36b695f30ac5050cc28b68d4462eb",
             "_select_action_width_keyword": "b45663df866d5a48c05b8955b6cdc68515697e8fa925566ae72afd06b3850104",
             "_select_cell_width_keyword": "f686d6cc7ae0d93dd1e3c301600872996943c7e3d6788c9d5098d39449793727",
             "_select_width_keyword": "00cd19cec6e137d7d9e044bc1625793b1d6f78bbdfc93d6858bb6f8e9d3c022f",
@@ -2318,12 +2318,11 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_GridSearchPeriodKernel.with_fixed_params": "5f5a26e02b136c760bd242cd91c22b76153adc9828a13d20de7a6a98f5877e14",
             "_GridSearchPeriodKernel.__call__": "211bc04a734b041e7e62316b05db3149567eec95f609a46792bd9bf21ea0e74a",
             "_FlattenBoundedGridSearch.__call__": "114b0acaace961b15c442d9bfc59dcd41409c73962f3034f3e29546b79cf6ac0",
-            "_grid_search_fold_weights": "9a9e0af52881e46a569335fd73c809b56c08f752ad38f01731769ca6e0c97f78",
             "_fail_if_decoupled_route_is_unsupported": "0cfd97f1c692b3f82b78d5a9403da93c902b88aa8805e26137930ad2b7dd301e",
         },
     ),
     MAX_Q_SOURCE: (
-        "85c3e312c9073cc5b0f954e38fd69f11d3af35b3619bef4ac0278f15c5870696",
+        "50f17a82a27e7cb6b72d0ac8e27e3ea0d5b67cf1d8dfa6a1461d587c0351c0f0",
         {
             "get_action_partitioned_max_Q_over_a": "7e4b9b51294748528dbe9d26c80af48f4dc7ef8a8f75090e0d110d56eab6db80",
             "_ActionPartitionedMaxQOverA.__call__": "9252a1202b3781ff23df05c28e65d4585e16274e0ac6abd6bcc0c4a7dfdfdbdc",
@@ -2332,19 +2331,17 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_call_with_operands": "c26f9db85ab67d1b4d6c730076cba1d0c6b64e2d7dd98159d9c4d37b21c24c0c",
             "_get_extra_param_names": "cd97225f061bc5ef0bba82b75864b9cc7622174d10fe741c510ebba7d5efde0d",
             "_fail_if_action_width_keyword_collides": "d72946426a1e4a1d300fa4812f07eea8139236693ef8f79d0e8384b9d59a9f0d",
-            "get_streaming_max_Q_over_a": "44e9f9671f8e8fad2f7a9a3c0b91c0d55543c864adbcf016835bc48e2f317c63",
-            "_fail_if_full_V_streaming_route_is_unsupported": "cd4c96d572ec7df9dc269f5fa2bfc1ec5c16fe0a78de3be56adc28c15f065d2c",
+            "get_streaming_max_Q_over_a": "ba5b2b78ccd1a80284a977ceb122b842ddedbfb45eeceadf74b2faace175a358",
+            "_fail_if_full_V_streaming_route_is_unsupported": "0f31ea90edeebbfb4d94e07697a44f28ccb2d0b2092d8e4a78c4981d63ae8f67",
             "_fail_if_streaming_co_map_layout_is_invalid": "59c06aedafc8bcbe31d7f2f7f7b7d94e1d8044bf529c6f11a05882c5bf1d7979",
-            "_wrap_with_fold_reduction": "6070533814c5dcbe42cf8a4536de9990ea79a3ac71096afbcd4d61886041410b",
             "_StreamedMaxQOverA.__call__": "63ccbba0326478a8c341290f65c480d45d53b592cad8e769bf97821ea131f6ad",
-            "get_max_Q_over_a": "c14b014393c8a99b8a7ba6be7fdd06135e49b65a44f2ef61e7b03b007237e415",
+            "get_max_Q_over_a": "4f047e57dbe12468f2c04518d75c87398bd32c6fa72a422d69845c4fb238f99f",
             "get_argmax_and_max_Q_over_a": "e963eef0544eccdf4f3add8197233301d068bca76660a711062e6c2df0308ff3",
             "_HardMaxQOverA.__call__": "461bfdb336128ac3f51ceda31703085bd87d06db3d0bd17af42956d96e25c873",
             "_HardMaxArgmaxQOverA.__call__": "8bafbe4d1f5d99962015e674980474e38b4a86c44c91d81bcd3f68b620e6ac66",
             "_SmoothedMaxQOverA.__call__": "b0f96f4b687109b1ed00ce6a7bfdb20f2b726fe3973d369358e75c634cb83a16",
             "_TasteShockArgmaxQOverA.__call__": "76e67e0e11ea6ff97a12fac34a1d7dcd3b88ad65a4ecc70c45eff17e225da395",
             "_with_bound_summary": "b013f2b5bf18ce8760c35c94ebd4058c4340d9ab306e7b4a834fe30d4a0063e7",
-            "_FoldedMaxQOverA.__call__": "2687aa8d24a5181a1e1cacbb379c9a01e15fcb0bde9c55d52e111c31df0370a9",
         },
     ),
     ACTION_STREAMING_SOURCE: (
@@ -2458,7 +2455,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     PROCESSING_SOURCE: (
-        "ded8078bf284320350d5f8dff2ddb5c46752b664c3585833692ac49fbe6f1172",
+        "a3b18ee005bff5a2b292be15a3c833024da1b42b581d03414ee97037eebe0a41",
         {
             "_build_per_subject_decisions_per_period": "b04fb50baadb61f7a5301b2ec1af99a6c53e10355574f1bddf3da94f606ac67a",
             "process_regimes": "288b4375dff6c1f924dc3e646f38e3c4471887ce440c6b99f9528bf26129c67f",
@@ -2469,8 +2466,8 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_prepare_scalar_egm_query_models": "14738d0d901df243cadefb2ce4b5f38570d719c23570785619050257a7aec0bb",
             "_fail_if_a_declaration_moved_more_than_the_kernels": "77f7d0d6adebd110f143c0156321536d67434715df60d1c7375fbfc3d0ac269e",
             "_fail_if_a_continuation_demand_is_unmet": "3aba143cb3f660bb0d07a6f8c524527a4e58bbe22a96aef28ca45f0f3317fba1",
-            "_build_solution_phase": "84066480c27dcddc2b8e9bdd9dfa0be407b3ae9d2ce97da1ab856f6238bf55f8",
-            "_process_regime_core": "77f41e5bdc1dc753f60717e47bdbd8a8eec70a66cf33f1aafa7f4b3b7c4aa03d",
+            "_build_solution_phase": "463d3697cb1778da6bd9a8b8a82c97808dbb0b55dee4b71044578f47e9e689c3",
+            "_process_regime_core": "16413940b64ec3b02d3598e2ea1e0cbc65426580937770b5719411d1cf3c4b9f",
             "_prepare_dcegm_query_models": "9dbd436a6be2af9365412d2c594afbea4335103f3f2a8234c9f521605d5f85fe",
             "_canonical_constraint_routing_inputs": "b014cb91c503eb021cd7aee8b6ead91fa54a86b0ffc1b8fde29e80978b53327e",
             "_prepare_nbegm_query_models": "1b73177b06799eed293c42985ef536c39282074a07075aa4dd8508f25c743ac4",
@@ -2479,7 +2476,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_nbegm_query_function_pools": "3d5549c36db6f139068d67a76c0234a3055f84989391576fe5615658ba39ce1b",
             "_nbegm_query_row_state_names": "f398c3a4c47b01a2fe7811f0c76f4ed01618129e38e7e86d703743fa24dea2ca",
             "_solver_with_query_authority": "0eb2703b05650da0b98779c17f9401b9d948debeed46d27068215ba1fe1a6385",
-            "_build_simulation_phase": "9c09d124bdf7a1fa80aca8dc252c25f731b36ced7bf33f6c63fb9cfb8f0afa4e",
+            "_build_simulation_phase": "0c63bd6180dcb3f51792720a1ca4ce01549bc13894047a85162cff9d43358fcd",
         },
     ),
     SIMULATION_PROGRAMS_SOURCE: (
@@ -2564,7 +2561,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         None,
         {
             "replay_period": "b7de416a252dccf06fc5390f7739a17298dcbf3ec372f3c61fee4087afe6f23d",
-            "_compile_cores_for_one_period": "b4e2f901108d74b0e9070889f288a8b84652e56cad458463ce3d2859a14dfb18",
+            "_compile_cores_for_one_period": "46916b78f629d1b59762e1730e5e03d16af259444baae4bebb53eb0a536047b9",
             "_core_build_context_for_one_period": "99623b13b7115d3e2bae90addfce95ea9fa10ef237529287a2c6cd3bab1bd8c0",
         },
     ),
@@ -2715,12 +2712,11 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/solution/landing_counts.py": (
-        "c0b41de52c1eca64730c8afec2f0b88b096585a6ecfded9b2615123f3767c936",
+        "0704a956b3575a28dd781c77cb470acaaf121ba584f3a9a1a3d15df6e0a83479",
         {
             "landing_checks_of": "5246312411fdfca9375fdc34b38e57a15620ff2a1da81d0d5d6c67bb0a74b9d9",
-            "get_landing_counting_max_Q_over_a": "f57081013973a279fead4eaf296eba5ab3f9322c364b55a01ed7e37612779778",
+            "get_landing_counting_max_Q_over_a": "315ce911b414f4ff218b8ba31a0db312afa3ccc1589d32a46a76ae6eff76252c",
             "_LandingCountingReduction.__call__": "faeeca7757e7ca66f394f6b72e1dde7ad58ca7ebd81f73d32830a3f056a30a3b",
-            "_LandingCountingFold.__call__": "6d12d6fadc0bcea3f456324e0397e1e860a74cf1b4d5593919ae49287c445b42",
             "LandingCountedGridSearch.__call__": "a2e4c8877e1c1a2c7313ea3537866e5ece847751ba84ed0032d21ae0b9bb22d1",
             "_feasible_landing_counts": "1ad2cc2b01dfa37959918d4aabac29875d658ffc3b21924e1c981b2769226668",
             "fail_on_reached_landings": "6d2f6676a0fa1fd706be1baf0baf0e575c79b0a3068a8f86b94fe2056996418f",
@@ -3074,7 +3070,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/regime_building/decoupled.py": (
-        "70f5fcda52ea91383e4be13f747c98033510baba317a980283ffbecb221b1aa0",
+        "05fddca4be3c16450e3b7c20773fabded7756765f4d6467b3d9955aad453bbce",
         {
             "DecoupledTasteShockLookup.__call__": "4cb697f078e503dab438fe5bab75631d3d2f31758b480bb707d920f95fafbbd9",
             "DecoupledWithActionParts.__call__": "44e85f717a656bc945256d5ad95ff6083b48cede4874fbc80a78cc9b493e29b7",
@@ -3083,7 +3079,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "decoupled_logsum": "76dee3957e4adf72e6524c280a97893dd6f19e000ba14be848c729f70d5a387c",
             "get_conditional_profiles": "0de48ea6866b2cf6c0fbf612ed308a90d82fa31adeadda93b905746042454413",
             "get_decoupled_Q_over_a": "119e3f97d9d92fbfaf6dcb2356c130994f55c5e78028b69fc8dede33f075bbaa",
-            "get_decoupled_max_Q_over_a": "9f7be2a41daa00d2ff9848491fe97ebaf9d0a695830b3824a7c4226361eb49b6",
+            "get_decoupled_max_Q_over_a": "19e8f18fc54b33298628b051b4d060ba602088e14bc50bab1f9815c3571f60b5",
         },
     ),
     "src/_lcm/utils/counts.py": (
@@ -4978,7 +4974,6 @@ def _candidate_value_projection(tree: ast.Module) -> ast.Module:
         "_HardMaxArgmaxQOverA",
         "_SmoothedMaxQOverA",
         "_TasteShockArgmaxQOverA",
-        "_FoldedMaxQOverA",
     }
 
     def project(statements: list[ast.stmt]) -> list[ast.stmt]:
@@ -5134,18 +5129,6 @@ def _candidate_value_projection(tree: ast.Module) -> ast.Module:
             for method in definition.body:
                 if isinstance(method, ast.FunctionDef) and method.name == "__call__":
                     method.body = project(method.body)
-                    if definition.name == "_FoldedMaxQOverA":
-                        method.body = [
-                            statement
-                            for statement in method.body
-                            if not _statements_match(
-                                observed=[statement],
-                                expected_source="ordinary = out.output if type(out) is BoundedResult else out",
-                            )
-                        ]
-                        for node in ast.walk(method):
-                            if isinstance(node, ast.Name) and node.id == "ordinary":
-                                node.id = "out"
                     if isinstance(
                         method.returns, ast.BinOp
                     ) and _is_bounded_result_name(method.returns.right):
@@ -5251,24 +5234,6 @@ mapped = (
         batch_sizes={name: batch_sizes[name] for name in inner_state_names},
     )
 )
-if fold_state_names:
-    _fail_if_collective(
-        fold_state_names=fold_state_names, stakeholders=stakeholders
-    )
-    mapped = _wrap_with_fold_reduction(
-        mapped=cast("Callable[..., FloatND | tuple[FloatND, BoolND]]", mapped),
-        fold_state_names=fold_state_names,
-        fold_weights=fold_weights,
-        fold_conditioning=fold_conditioning,
-        inner_state_names=inner_state_names,
-        return_feasibility=return_feasibility,
-        action_names=action_names,
-        state_names=state_names,
-        extra_param_names=[
-            *extra_param_names,
-            *((cell_width_keyword,) if cell_width_keyword is not None else ()),
-        ],
-    )
 if not co_map_state_names:
     return mapped
 mapped = allow_args(mapped)
@@ -5321,9 +5286,6 @@ Q_and_F = productmap(
                 "co_map_v_arr_in_axes",
                 "stakeholders",
                 "pareto_weights",
-                "fold_state_names",
-                "fold_weights",
-                "fold_conditioning",
                 "cell_width_keyword",
                 "untiled_state_names",
                 "broadcast_state_names",
@@ -5340,9 +5302,6 @@ Q_and_F = productmap(
                 "()",
                 "None",
                 "None",
-                "()",
-                "MappingProxyType({})",
-                "MappingProxyType({})",
                 "None",
                 "()",
                 "()",
@@ -5509,66 +5468,22 @@ _STREAMED_MAX_BUILDER_PINS = _callable_pins(
         "_fail_if_action_width_keyword_collides",
         "_fail_if_full_V_streaming_route_is_unsupported",
         "_fail_if_streaming_co_map_layout_is_invalid",
-        "_wrap_with_fold_reduction",
         "_StreamedMaxQOverA.__call__",
     ),
 )
 
 
 def _streamed_max_builder_errors(tree: ast.Module) -> list[str]:
-    """Pin streamed VALUE production, optional folding, and fail-closed boundaries."""
-    errors = _exact_callable_errors(
+    """Pin streamed VALUE production and fail-closed boundaries."""
+    return _exact_callable_errors(
         tree=tree,
         label="streamed max-Q builder",
         contracts=_STREAMED_MAX_BUILDER_PINS,
     )
-    try:
-        _, folded = _method_definition(
-            tree=_candidate_value_projection(tree),
-            class_name="_FoldedMaxQOverA",
-            method_name="__call__",
-        )
-    except ValueError as error:
-        return [*errors, f"streamed max-Q builder: {error}"]
-    if not _body_matches(
-        node=folded,
-        expected_source="""out = self.mapped(
-    next_regime_to_V_arr=next_regime_to_V_arr, **states_actions_params
-)
-if self.return_feasibility:
-    V_arr, empty = cast("tuple[FloatND, BoolND]", out)
-else:
-    V_arr = cast("FloatND", out)
-    empty = None
-for name, axis, conditioning_axis in self.fold_steps:
-    weights = self.fold_weights[name]
-    if conditioning_axis is not None:
-        weights = _broadcast_conditioned_rows(
-            rows=weights,
-            conditioning_axis=conditioning_axis,
-            fold_axis=axis,
-            shape=V_arr.shape,
-        )
-    if empty is not None:
-        if weights.ndim == 1:
-            weight_shape = [1] * V_arr.ndim
-            weight_shape[axis] = weights.shape[0]
-            support = weights.reshape(weight_shape) > 0
-        else:
-            support = weights > 0
-        empty = jnp.any(empty & support, axis=axis)
-    V_arr = self.fold_reducers[name](a=V_arr, axis=axis, weights=weights)
-return V_arr if empty is None else (V_arr, empty)
-""",
-    ):
-        errors.append(
-            "streamed max-Q builder: folded value or support transport changed"
-        )
-    return errors
 
 
 def _max_kernel_surface_errors(tree: ast.Module) -> list[str]:
-    """Pin the six max-Q kernel classes to fields, one ``__call__``, and no more.
+    """Pin the five max-Q kernel classes to fields, one ``__call__``, and no more.
 
     Every corridor above reads the reduction out of a kernel's ``__call__`` and
     its operands out of ``self.<field>``. A property, a descriptor, or a
@@ -5614,17 +5529,6 @@ def _max_kernel_surface_errors(tree: ast.Module) -> list[str]:
                 "action_width_keyword: str",
                 "whole_product_Q_and_F: RawActionFunction",
                 "return_feasibility: bool = False",
-            ),
-        ),
-        (
-            "folded max-Q kernel",
-            "_FoldedMaxQOverA",
-            (
-                "mapped: Callable[..., BoundedMaxOutput]",
-                "fold_steps: tuple[tuple[StateName, int, int | None], ...]",
-                "fold_weights: Mapping[StateName, FloatND]",
-                "fold_reducers: Mapping[StateName, Callable[..., FloatND]]",
-                "return_feasibility: bool",
             ),
         ),
         (
@@ -6257,8 +6161,6 @@ DENSE_CO_MAP_REFERENCE_CHANNEL = "deliberately_dense:co_map_with_separate_refere
 DENSE_OFF_GRID_RAISE_COUNT = "deliberately_dense:off_grid_raise_count"
 DENSE_DECOUPLED = "deliberately_dense:decoupled"
 UNSUPPORTED_COLLECTIVE_EV1 = "unsupported:collective_ev1"
-UNSUPPORTED_EV1_FOLD = "unsupported:ev1_fold"
-UNSUPPORTED_COLLECTIVE_FOLD = "unsupported:collective_fold"
 UNSUPPORTED_EV1_WITHOUT_DISCRETE_ACTION = "unsupported:ev1_without_discrete_action"
 
 @property
@@ -8838,7 +8740,6 @@ _S02_QUERY_STATUS_CONTRACTS = _contracts(
             "get_streaming_max_Q_over_a",
             "_StreamedMaxQOverA.__call__",
             "_with_bound_summary",
-            "_FoldedMaxQOverA.__call__",
             "get_max_Q_over_a",
             "get_argmax_and_max_Q_over_a",
             "_HardMaxQOverA.__call__",
@@ -8855,7 +8756,6 @@ _S02_QUERY_STATUS_CONTRACTS = _contracts(
             "_FlattenBoundedGridSearch.__call__",
             "_GridSearchPeriodKernel.__call__",
             "GridSearch.build_period_kernels",
-            "_grid_search_fold_weights",
         ),
         "src/_lcm/solution/action_streaming.py": (
             "_bounded_hard_max",
@@ -8930,7 +8830,6 @@ _S02_QUERY_STATUS_CONTRACTS = _contracts(
             "landing_checks_of",
             "get_landing_counting_max_Q_over_a",
             "_LandingCountingReduction.__call__",
-            "_LandingCountingFold.__call__",
             "LandingCountedGridSearch.__call__",
             "_feasible_landing_counts",
             "fail_on_reached_landings",
@@ -10848,8 +10747,7 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> DirectFlowReport:
             "singleton_solve": "Q_and_F -> Q_arr.max(where=F_arr)",
             "singleton_streamed_solve": (
                 "Q_and_F -> canonical C-order action blocks -> exact mergeable "
-                "hard max -> optional unchanged fold quadrature -> VALUE-only "
-                "compiled core"
+                "hard max -> VALUE-only compiled core"
             ),
             "singleton_action_partitioned_solve": (
                 "admitted GridSearch request -> device-mapped kernel over the "
@@ -12009,22 +11907,6 @@ _S02_HELPER_MUTATIONS = {
         "expression",
         "_validate_initial_bound_status",
         "candidate_filter._validate_initial_bound_status",
-        1,
-    ),
-    "s02_status:fold_weight_helper_changes_row": (
-        "src/_lcm/solution/grid_search.py",
-        "_grid_search_fold_weights",
-        "expression",
-        "process.get_transition_probs()[0]",
-        "process.get_transition_probs()[-1]",
-        1,
-    ),
-    "s02_status:fold_weight_call_seam_replaced": (
-        "src/_lcm/solution/grid_search.py",
-        "GridSearch.build_period_kernels",
-        "expression",
-        "_grid_search_fold_weights",
-        "candidate_filter._grid_search_fold_weights",
         1,
     ),
     "s02_status:landing_total_helper_loses_left_bank": (
@@ -13670,14 +13552,6 @@ _ACTION_PARTITION_MUTATIONS = {
         "False",
         1,
     ),
-    "action_partition:fold_route_admitted": (
-        GRID_SEARCH_SOURCE,
-        "_action_partition_mesh",
-        "expression",
-        "bool(context.fold_state_names)",
-        "False",
-        1,
-    ),
     "action_partition:co_map_route_admitted": (
         GRID_SEARCH_SOURCE,
         "_action_partition_mesh",
@@ -14864,23 +14738,6 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             new="                        width_keyword=_ACTION_WIDTH_KEYWORD,",
             label="streamed CoreProgram width-keyword transport",
         ),
-        "streaming_provider:fold_route_disabled": replace_once(
-            source=grid_source,
-            old=(
-                "    else:\n"
-                "        disposition = _ActionStreamingDisposition.STREAMED\n"
-                "    return disposition"
-            ),
-            new=(
-                "    elif context.fold_state_names:\n"
-                "        disposition = "
-                "_ActionStreamingDisposition.DENSE_TRIVIAL_ACTION_PRODUCT\n"
-                "    else:\n"
-                "        disposition = _ActionStreamingDisposition.STREAMED\n"
-                "    return disposition"
-            ),
-            label="streamed singleton fold eligibility",
-        ),
         "streaming_provider:co_map_route_disabled": replace_once(
             source=grid_source,
             old=(
@@ -14922,20 +14779,6 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             ),
             new="        disposition = _ActionStreamingDisposition.STREAMED",
             label="collective EV1 disposition",
-        ),
-        "streaming_classifier:ev1_fold_admitted": replace_once(
-            source=grid_source,
-            old="        disposition = _ActionStreamingDisposition.UNSUPPORTED_EV1_FOLD",
-            new="        disposition = _ActionStreamingDisposition.STREAMED",
-            label="EV1 fold disposition",
-        ),
-        "streaming_classifier:collective_fold_admitted": replace_once(
-            source=grid_source,
-            old=(
-                "        disposition = _ActionStreamingDisposition.UNSUPPORTED_COLLECTIVE_FOLD"
-            ),
-            new="        disposition = _ActionStreamingDisposition.STREAMED",
-            label="collective fold disposition",
         ),
         "streaming_classifier:ev1_without_discrete_action_admitted": replace_once(
             source=grid_source,
@@ -15161,123 +15004,6 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             ),
             new="    pass",
             label="streamed direct-builder width collision validation",
-        ),
-    }
-    specs["streaming_fold:width_keyword_renamed"] = {
-        "path": MAX_Q_SOURCE,
-        "source": replace_once(
-            source=max_source,
-            old="                action_width_keyword,\n",
-            new='                f"{action_width_keyword}_renamed",\n',
-            label="streamed fold selected-width keyword",
-        ),
-    }
-
-    streaming_fold_extra_params = (
-        "            extra_param_names=[\n"
-        "                *extra_param_names,\n"
-        "                action_width_keyword,\n"
-        "                *((cell_width_keyword,) if cell_width_keyword is not None else ()),\n"
-        "            ],\n"
-    )
-    streaming_fold_block = (
-        "    if fold_state_names:\n"
-        "        _fail_if_collective(\n"
-        "            fold_state_names=fold_state_names, stakeholders=stakeholders\n"
-        "        )\n"
-        "        mapped = _wrap_with_fold_reduction(\n"
-        '            mapped=cast("Callable[..., BoundedMaxOutput]", mapped),\n'
-        "            fold_state_names=fold_state_names,\n"
-        "            fold_weights=fold_weights,\n"
-        "            fold_conditioning=fold_conditioning,\n"
-        "            inner_state_names=inner_state_names,\n"
-        "            return_feasibility=return_feasibility,\n"
-        "            action_names=action_names,\n"
-        "            state_names=state_names,\n"
-        + streaming_fold_extra_params
-        + "        )\n"
-    )
-    streaming_fold_after_co_map = replace_once(
-        source=max_source,
-        old=streaming_fold_block,
-        new="",
-        label="streamed fold block relocation source",
-    )
-    streaming_fold_after_co_map = _insert_before_nth(
-        text=streaming_fold_after_co_map,
-        marker=(
-            '    return cast(\n        "MaxQOverAFunction[BoundedMaxOutput]",\n        allow_only_kwargs(func=mapped, enforce=False),\n    )'
-        ),
-        insertion=streaming_fold_block,
-        occurrence=2,
-    )
-
-    specs["streaming_fold:rejection_restored"] = {
-        "path": MAX_Q_SOURCE,
-        "source": _insert_before_nth(
-            text=max_source,
-            marker="    if fold_state_names:\n        _fail_if_collective(",
-            insertion=(
-                "    if fold_state_names:\n"
-                '        raise NotImplementedError("Full-V action streaming does not support fold states.")\n'
-            ),
-            occurrence=2,
-        ),
-    }
-    specs["streaming_fold:productmap_output_filtered"] = {
-        "path": MAX_Q_SOURCE,
-        "source": _replace_nth(
-            text=max_source,
-            marker='            mapped=cast("Callable[..., BoundedMaxOutput]", mapped),',
-            replacement=(
-                '            mapped=cast("Callable[..., BoundedMaxOutput]", '
-                "candidate_filter(mapped)),"
-            ),
-            occurrence=2,
-        ),
-    }
-    specs["streaming_fold:reduction_after_co_map"] = {
-        "path": MAX_Q_SOURCE,
-        "source": streaming_fold_after_co_map,
-    }
-    specs["streaming_fold:signature_positionalized"] = {
-        "path": MAX_Q_SOURCE,
-        "source": replace_once(
-            source=max_source,
-            old='        ),\n        kwargs=[\n            "next_regime_to_V_arr",',
-            new='        ),\n        args=[\n            "next_regime_to_V_arr",',
-            label="streamed fold keyword-only signature",
-        ),
-    }
-    specs["streaming_fold:width_signature_dropped"] = {
-        "path": MAX_Q_SOURCE,
-        "source": replace_once(
-            source=max_source,
-            old=streaming_fold_extra_params,
-            new="            extra_param_names=extra_param_names,\n",
-            label="streamed fold width signature",
-        ),
-    }
-    specs["streaming_fold:width_forwarding_filtered"] = {
-        "path": MAX_Q_SOURCE,
-        "source": replace_once(
-            source=max_source,
-            old=(
-                "        out = self.mapped(\n"
-                "            next_regime_to_V_arr=next_regime_to_V_arr, **states_actions_params\n"
-                "        )"
-            ),
-            new=(
-                "        out = self.mapped(\n"
-                "            next_regime_to_V_arr=next_regime_to_V_arr,\n"
-                "            **{\n"
-                "                name: value\n"
-                "                for name, value in states_actions_params.items()\n"
-                "                if name != '_lcm_action_block_width'\n"
-                "            },\n"
-                "        )"
-            ),
-            label="streamed fold width forwarding",
         ),
     }
     specs["streaming_co_map:inner_state_reincluded"] = {
@@ -18450,7 +18176,6 @@ def _decoupled_bound_transport_errors(tree: ast.Module) -> list[str]:
         "runtime_bound_specs": "_lcm.regime_building.Q_and_F",
         "BoundedResult": "_lcm.solution.feasibility",
         "_with_bound_summary": "_lcm.regime_building.max_Q_over_a",
-        "_wrap_with_fold_reduction": "_lcm.regime_building.max_Q_over_a",
         "productmap": "_lcm.utils.dispatchers",
         "tiled_productmap": "_lcm.utils.dispatchers",
         "with_signature": "dags",
@@ -18534,17 +18259,6 @@ def _decoupled_bound_transport_errors(tree: ast.Module) -> list[str]:
             )
         )
     )
-    folds = [
-        node
-        for node in ast.walk(state)
-        if isinstance(node, ast.Call)
-        and _call_name(node) == "_wrap_with_fold_reduction"
-    ]
-    if len(folds) != 1 or not _expression_matches(
-        node=_keyword(call=folds[0], name="mapped") if folds else None,
-        source='cast("Callable[..., BoundedMaxOutput]", mapped)',
-    ):
-        errors.append(f"{prefix}: folded mappings lose their bound result")
     returns = [node for node in ast.walk(readout) if isinstance(node, ast.Return)]
     if len(returns) != 3:
         errors.append(f"{prefix}: hard and EV1 return owners changed")

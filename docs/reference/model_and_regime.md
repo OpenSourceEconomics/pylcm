@@ -299,8 +299,8 @@ when the exit is unavailable cannot reach user functions there.
 
 Native current-period exits use each queried regime's declared `GridSearch` solver.
 Endogenous-grid query reconstruction is not implemented. Query admission also refuses
-folded, invariant or co-mapped state layouts, action partitioning, stored Full-value
-references and runtime-bound query status adapters.
+invariant or co-mapped state layouts, action partitioning, stored Full-value references
+and runtime-bound query status adapters.
 
 Collective current-IID decisions select one common action and route exits at each node,
 then integrate each member's selected value. Stored values retain the stakeholder axis

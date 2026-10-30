@@ -516,7 +516,8 @@ def _route_metadata(model: Model) -> _RouteMetadata:
     declarations = getattr(model, "user_regimes", {})
     transitions = getattr(model, "declared_transitions", {}).get("solve", {})
     for regime_name, regime in sorted(model._regimes.items()):  # noqa: SLF001
-        fold_names = tuple(regime.fold_state_names)
+        # Historical checkouts carried folded IID states; head has none.
+        fold_names = tuple(getattr(regime, "fold_state_names", ()))
         action_names = tuple(regime.solution.action_names)
         action_extents = tuple(
             _grid_extent(regime.solution.grids[name]) for name in action_names

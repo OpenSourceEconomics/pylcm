@@ -504,12 +504,12 @@ extreme sensitivity is not an accuracy-qualified marginal channel. Later economi
 marginals must weight their explicitly represented derivative values.
 
 Uncomposed current-IID intersections fail explicitly: non-GridSearch decisions,
-Decoupled objectives, legacy folded axes, action partitions, co-mapped or invariant
-state blocks, bound/query reconstruction, and gated or same-period value readers.
-Refusals follow actual owners and incoming readers, preserving unrelated legacy
-components. Policy lookup awaits explicit observation/conditional semantics. Signed rule
-ancestry is refused at the native decision boundary. These scoped holds do not retire
-legacy routes or complete the later exit, query and signed-reader stages.
+Decoupled objectives, action partitions, co-mapped or invariant state blocks,
+bound/query reconstruction, and gated or same-period value readers. Refusals follow
+actual owners and incoming readers, preserving unrelated legacy components. Policy
+lookup awaits explicit observation/conditional semantics. Signed rule ancestry is
+refused at the native decision boundary. These scoped holds do not retire legacy routes
+or complete the later exit, query and signed-reader stages.
 
 ## Legacy migration
 

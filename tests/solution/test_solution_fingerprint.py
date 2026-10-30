@@ -2049,7 +2049,6 @@ def _fingerprint_regime(
                 active_regimes_by_period=(frozenset({"alive"}),) * 2
             ),
         ),
-        "fold_state_names": (),
         "stakeholders": None,
         "resolved_fixed_params": MappingProxyType({}),
     }.items():

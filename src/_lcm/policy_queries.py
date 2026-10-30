@@ -957,13 +957,12 @@ def _admit_node(
             "A collective query does not declare an EV1 stakeholder-taste law."
         )
     if (
-        context.fold_state_names
-        or context.co_map_state_names
+        context.co_map_state_names
         or context.invariant_bindings
         or context.action_partitions != 1
     ):
         raise UnsupportedOperationError(
-            "This query closure needs an unblocked, unfolded action problem."
+            "This query closure needs an unblocked action problem."
         )
     if (
         context.same_period_ref_regimes and not same_period_values
