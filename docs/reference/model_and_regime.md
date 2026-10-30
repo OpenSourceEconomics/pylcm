@@ -284,6 +284,20 @@ target shocks are priced before the source choice and revealed when a mover exec
 destination's Participating action. Partial observation of a correlated group is
 refused; see the adopted [IID and exit contract](../development/iid-exits-redesign.md).
 
+When an exit observes every shock of a target group, all of that group's quadrature rows
+are the same physical point, so the target's policy is evaluated once and that answer is
+weighted by every row's original weight. Values equal the row-by-row reduction. A group
+the exit observes only partly keeps its row-by-row evaluation. Model build refuses a
+fully observed group of the caller's own shocks whose continuous law (`Normal`,
+`LogNormal`, `Uniform`) can be degenerate at the caller but not at the target, for
+example a spread read from a state that the exit changes, naming what would have to be
+implemented to support it.
+
+The cells of a query chunk and the rows of an information support run as batched lanes.
+A lane whose exit is unavailable is still computed and then discarded; its target reads
+its first grid point instead of the projected state, so a projection that is meaningless
+when the exit is unavailable cannot reach user functions there.
+
 Native current-period exits use each queried regime's declared `GridSearch` solver.
 Endogenous-grid query reconstruction is not implemented. Query admission also refuses
 folded, invariant or co-mapped state layouts, action partitioning, stored Full-value

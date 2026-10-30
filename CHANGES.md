@@ -5,6 +5,15 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Consent pricing evaluates observed target rows once
+
+- An exit that observes every shock of a target group prices that group's rows from one
+  representative, and query cells and information rows run as batched lanes. Values are
+  unchanged up to floating-point vectorization. Partly observed groups keep their rows.
+  Model build refuses an observed continuous caller law whose spread can vanish at the
+  caller but not at the target; see
+  [Current-period exits](docs/reference/model_and_regime.md#current-period-exits).
+
 ### Post-choice shocks
 
 - `Regime(post_choice_shocks=("group", ...))` declares model-level `ShockGroup`s drawn

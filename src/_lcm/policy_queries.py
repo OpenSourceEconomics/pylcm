@@ -743,9 +743,12 @@ def build_policy_query_kernel(
     builders: dict[str, _QueryArguments] = {}
     cores: dict[str, _QueryCore] = {}
     reads: list[ValueRead] = []
+    from _lcm.query_information import pinned_support  # noqa: PLC0415
+
     for name in order:
         node = definitions[name]
         _admit_node(node=node, period=period)
+        pinned_support(name=name, definitions=definitions)
         base, value_reads = _node_inputs(node=node, period=period)
         builders[name] = _QueryArguments(
             node=node,
@@ -1384,9 +1387,10 @@ class _QueryCore:
             has_information,
         )
 
-        if has_information(
+        information = has_information(
             node=self.node, definitions=self.definitions, period=self.period
-        ):
+        )
+        if information:
             cell = InformationQueryCell(
                 name=self.name,
                 node=self.node,
@@ -1399,86 +1403,86 @@ class _QueryCore:
                     arguments.get(_INFORMATION, {}),
                 ),
             )
-
-            def information_cell(
-                item: tuple[
-                    BoolND,
-                    Mapping[str, FloatND | IntND],
-                    Mapping[str, tuple[FloatND, IntND, BoolND]],
-                ],
-            ) -> PolicyAnswer:
-                active, states, rows = item
-                return cell(
-                    live=active,
-                    source=states,
-                    dependencies={
-                        name: (*answer, dependencies[name][3], dependencies[name][4])
-                        for name, answer in rows.items()
-                    },
-                )
-
-            answer = jax.lax.map(
-                information_cell,
-                (
-                    live,
-                    source,
-                    {name: answer[:3] for name, answer in dependencies.items()},
-                ),
-            )
-            # Information consumers select their own actions; only values travel.
-            return cast(
-                "PolicyAnswer",
-                (
-                    answer[0],
-                    jnp.full(live.shape, -1, dtype=jnp.int32),
-                    answer[2],
-                    jnp.all(answer[3]),
-                    _query_landing_totals(counts=answer[4]),
-                ),
-            )
-        cell = functools.partial(
-            _query_cell,
-            node=self.node,
-            period=self.period,
-            fixed=fixed,
-            projection_operands=projection_operands,
-        )
-        if self.node.available is None and self.node.decision is None:
-            answer = jax.vmap(
-                cell, in_axes=(0, 0, dict.fromkeys(dependencies, (0, 0, 0, None, None)))
-            )(live, source, dependencies)
         else:
-            # A batched cond becomes select. Keep unsafe unavailable benchmark
-            # arithmetic behind a scalar conditional, including in transposes.
-            def guarded(
-                item: tuple[
-                    BoolND,
-                    Mapping[str, FloatND | IntND],
-                    Mapping[str, tuple[FloatND, IntND, BoolND]],
-                ],
-            ) -> PolicyAnswer:
-                active, states, rows = item
-                return cell(
-                    active,
-                    states,
-                    {
-                        name: (*answer, dependencies[name][3], dependencies[name][4])
-                        for name, answer in rows.items()
-                    },
-                )
-
-            answer = jax.lax.map(
-                guarded,
-                (
-                    live,
-                    source,
-                    {name: answer[:3] for name, answer in dependencies.items()},
-                ),
+            cell = functools.partial(
+                _query_cell,
+                node=self.node,
+                period=self.period,
+                fixed=fixed,
+                projection_operands=projection_operands,
             )
-        return cast(
-            "PolicyAnswer",
-            (*answer[:3], jnp.all(answer[3]), _query_landing_totals(counts=answer[4])),
+
+        def lane(
+            item: tuple[
+                BoolND,
+                Mapping[str, FloatND | IntND],
+                Mapping[str, tuple[FloatND, IntND, BoolND]],
+            ],
+        ) -> PolicyAnswer:
+            active, states, rows = item
+            return cell(
+                live=active,
+                source=states,
+                dependencies={
+                    name: (*answer, dependencies[name][3], dependencies[name][4])
+                    for name, answer in rows.items()
+                },
+            )
+
+        # Cells run as lanes: a guard selects each lane's absent answer, and its
+        # guarded branch reads stand-in inputs (see `_mapped_query_states`).
+        answer = map_lanes(
+            function=lane,
+            operands=(
+                live,
+                source,
+                {name: answer[:3] for name, answer in dependencies.items()},
+            ),
         )
+        return (
+            answer[0],
+            # Information consumers select their own actions; only values travel.
+            jnp.full(live.shape, -1, dtype=jnp.int32) if information else answer[1],
+            answer[2],
+            jnp.all(answer[3]),
+            _query_landing_totals(counts=answer[4]),
+        )
+
+
+def map_lanes[T: PytreeValue, R: PytreeValue](
+    *,
+    function: Callable[[T], R],
+    operands: T,
+    batch_size: int | None = None,
+) -> R:
+    """Evaluate independent lanes together, `batch_size` at a time.
+
+    A guard inside `function` then selects per lane rather than branching, so its
+    guarded branch also runs on discarded lanes. That branch reads stand-in
+    inputs there, and its loops are bounded, so it stays finite and silent.
+    """
+    batched = jax.vmap(function)
+    size = jax.tree.leaves(operands)[0].shape[0]
+    if batch_size is None or batch_size >= size:
+        return batched(operands)
+    # `lax.map(batch_size=)` cannot reshape an empty output such as zero checks.
+    steps, rest = divmod(size, batch_size)
+    head = jax.tree.map(
+        lambda leaf: leaf.reshape((steps * batch_size, *leaf.shape[2:])),
+        jax.lax.map(
+            batched,
+            jax.tree.map(
+                lambda leaf: leaf[: steps * batch_size].reshape(
+                    (steps, batch_size, *leaf.shape[1:])
+                ),
+                operands,
+            ),
+        ),
+    )
+    if not rest:
+        return head
+    tail = batched(jax.tree.map(lambda leaf: leaf[steps * batch_size :], operands))
+    return jax.tree.map(lambda *leaves: jnp.concatenate(leaves), head, tail)
 
 
 # keyword-only-exempt: library-callback=jax.vmap
@@ -1507,6 +1511,7 @@ def _query_cell(
         def admitted() -> PolicyAnswer:
             return _active_query_cell(
                 live=live,
+                guard=active & live,
                 source=source,
                 dependencies=dependencies,
                 node=node,
@@ -1531,6 +1536,7 @@ def _query_cell(
         return jax.lax.cond(active & live, admitted, lambda: absent)
     return _active_query_cell(
         live=live,
+        guard=live,
         source=source,
         dependencies=dependencies,
         node=node,
@@ -1600,6 +1606,7 @@ def _observation_inputs(
     arguments: Mapping[str, Mapping[str, PytreeValue]],
     period: int,
     available: Mapping[str, PytreeValue],
+    guard: BoolND | None = None,
 ) -> Mapping[str, FloatND | IntND]:
     """Use proved equal law-input maps, excluding unrelated target settlements."""
     producer = node.observation_sources[group]
@@ -1618,12 +1625,14 @@ def _observation_inputs(
             "period": fixed["period"],
             "age": fixed["age"],
         },
+        guard=guard,
     )
 
 
 def _active_query_cell(
     *,
     live: BoolND,
+    guard: BoolND,
     source: Mapping[str, FloatND | IntND],
     dependencies: Mapping[str, PolicyAnswer],
     node: QueryNode,
@@ -1644,7 +1653,7 @@ def _active_query_cell(
             if name == _PHYSICAL_CONTEXTS or name in node.read.physical_inputs
         },
     }
-    mapped = _mapped_query_states(node=node, available=available)
+    mapped = _mapped_query_states(node=node, available=available, guard=guard)
     arguments = {**fixed, **projection_operands, **mapped}
     arguments.setdefault(_PHYSICAL_CONTEXTS, {})
     context = node.context
@@ -1852,8 +1861,13 @@ def _mapped_query_states(
     node: QueryNode,
     available: Mapping[str, PytreeValue],
     names: frozenset[str] | None = None,
+    guard: BoolND | None = None,
 ) -> Mapping[str, FloatND | IntND]:
-    """Canonical scalar settlement boundary shared by solve and actual routing."""
+    """Canonical scalar settlement boundary shared by solve and actual routing.
+
+    Under a false `guard` a cell runs only as a discarded lane of a batch, and the
+    target reads its first grid point instead: a point its own solve evaluates.
+    """
     mapped = {
         name: jnp.asarray(
             helper(
@@ -1865,7 +1879,13 @@ def _mapped_query_states(
     }
     if any(value.ndim != 0 for value in mapped.values()):
         raise ValueError("A mapped query state must be scalar per source cell.")
-    return mapped
+    if guard is None:
+        return mapped
+    grid = node.context.state_action_space.states
+    return {
+        name: jnp.where(guard, value, jnp.asarray(grid[name][0], value.dtype))
+        for name, value in mapped.items()
+    }
 
 
 def _query_action(
