@@ -168,16 +168,16 @@ def test_constrained_corner_wins_at_the_bottom_of_the_liquid_grid() -> None:
     """The borrowing-constrained corner prices the bottom liquid cells.
 
     Where the flow's marginal at full cash-on-hand still exceeds the
-    continuation's (all but the lowest health node at the bottom liquid
-    point), the optimum is the corner `c = coh`, `s = 0`, with the analytic
+    continuation's (the three upper health nodes at the bottom liquid point),
+    the optimum is the corner `c = coh`, `s = 0`, with the analytic
     penultimate-period value
     `[(1-beta) (coh e^h)^(1-rho) + beta nu_0^(1-rho)]^(1/(1-rho))` and
     `nu_0 = sqrt(1.03 * 0 + 1) = 1`. Pricing that corner correctly requires
     the continuation read at `s = 0` to land on the terminal carry (covered
     since the dead grid starts at zero) and the corner candidate to beat any
-    off-support interior record in the envelope. At the lowest health node the
-    interior optimum is feasible, so the value there may only exceed the
-    corner — never fall below it.
+    off-support interior record in the envelope. At the two lowest health nodes
+    the interior optimum is feasible (a small positive saving at the second), so
+    the value there may only exceed the corner — never fall below it.
     """
     beta = _PARAMS["alive"]["koopmans_aggregator"]["discount_factor"]
     rho = (
@@ -205,8 +205,8 @@ def test_constrained_corner_wins_at_the_bottom_of_the_liquid_grid() -> None:
         (1.0 - beta) * (coh * np.exp(health_nodes)) ** (1.0 - rho)
         + beta * 1.0 ** (1.0 - rho)
     ) ** (1.0 / (1.0 - rho))
-    np.testing.assert_allclose(values[1:], corner[1:], rtol=1e-6)
-    assert values[0] >= corner[0] - 1e-9
+    np.testing.assert_allclose(values[2:], corner[2:], rtol=1e-6)
+    assert np.all(values[:2] >= corner[:2] - 1e-9)
 
 
 def test_nbegm_epstein_zin_flow_shock_matches_brute_force() -> None:

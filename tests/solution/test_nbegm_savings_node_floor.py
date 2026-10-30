@@ -7,13 +7,23 @@ dominate the best such action. The Euler interior path alone cannot guarantee
 this: at a continuation kink between savings nodes (the marginal continuation
 drops sharply, e.g. across a child-value interpolation node), the Euler
 inversion has no root, so the optimum there must be carried by an explicit
-savings-node candidate.
+savings-node candidate. Where the continuation is smooth, the floor must not
+displace the interior Euler optimum between two nodes.
 """
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
+from numpy.testing import assert_array_almost_equal
 
-from _lcm.egm.nbegm_step import nbegm_per_interval_continuation_step_savings
+from _lcm.egm.comparison_arithmetic import ComparisonArithmetic
+from _lcm.egm.nbegm_step import (
+    nbegm_multi_interval_step_savings,
+    nbegm_per_interval_continuation_step_savings,
+)
+from _lcm.egm.preferences import Preferences
+from lcm.typing import FloatND
+from tests.conftest import DECIMAL_PRECISION, EXACT_KERNEL_SKIP_REASON
 from tests.solution._crra_preferences import crra_preferences
 
 _CRRA = 3.84
@@ -85,4 +95,113 @@ def test_merged_value_dominates_every_feasible_savings_node_action():
         floor - 1e-6,
         np.asarray(value),
         err_msg="merged value falls below the savings-node Bellman floor",
+    )
+
+
+def _taste_log_preferences(*, taste: float) -> Preferences:
+    """Build the bundle `u(c) = taste * log(c)` with its marginal and inverse."""
+
+    def utility(consumption: FloatND) -> FloatND:
+        return taste * jnp.log(consumption)
+
+    def marginal_utility(consumption: FloatND) -> FloatND:
+        return taste / consumption
+
+    def inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
+        return taste / marginal_continuation
+
+    return Preferences(
+        utility=utility,
+        marginal_utility=marginal_utility,
+        inverse_marginal_utility=inverse_marginal_utility,
+    )
+
+
+_HALF_COST_NODE = 0.5 * float(np.sqrt(3.0))
+
+
+@pytest.mark.parametrize(
+    "arithmetic",
+    [
+        "ordinary",
+        pytest.param(
+            "certified",
+            marks=pytest.mark.requires_exact_affine_kernel(
+                reason=EXACT_KERNEL_SKIP_REASON
+            ),
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    ("coh_intercept", "taste"),
+    [
+        (2.0 + _HALF_COST_NODE, 1.0),
+        (2.0 - _HALF_COST_NODE, 1.0),
+        (3.3, 1.0),
+        (2.0 - _HALF_COST_NODE, 1.5),
+    ],
+)
+@pytest.mark.parametrize("per_interval", [False, True])
+def test_off_node_query_publishes_the_interior_euler_policy(
+    *,
+    coh_intercept: float,
+    taste: float,
+    arithmetic: ComparisonArithmetic,
+    per_interval: bool,
+) -> None:
+    """Between savings nodes the published policy is the interior Euler solution.
+
+    Felicity `taste * log(c)` against the continuation `log(s)` with no discounting
+    has its optimum at `c = taste * R / (1 + taste)` for cash-on-hand `R`. The
+    savings grid steps by 1/2 and these cash-on-hand levels put every optimal saving
+    strictly between two nodes, where saving the nearest node is a feasible but
+    worse action: the published value stays at or above that node's value, and the
+    published policy is the interior optimum. The per-interval step reads the same
+    continuation row in each of two intervals of one smooth budget.
+    """
+    liquid_grid = jnp.linspace(1.0, 5.0, 5)
+    savings_grid = jnp.linspace(0.5, 6.0, 12)
+    preferences = _taste_log_preferences(taste=taste)
+    if per_interval:
+        value, _, policy = nbegm_per_interval_continuation_step_savings(
+            cont_value=jnp.tile(jnp.log(savings_grid), (2, 1)),
+            cont_marginal=jnp.tile(1.0 / savings_grid, (2, 1)),
+            liquid_grid=liquid_grid,
+            savings_grid=savings_grid,
+            discount_factor=jnp.asarray(1.0),
+            preferences=preferences,
+            coh_slopes=jnp.ones(2),
+            coh_intercepts=jnp.full(2, coh_intercept),
+            breakpoints=jnp.array([2.5]),
+            arithmetic=arithmetic,
+        )
+    else:
+        value, _, policy = nbegm_multi_interval_step_savings(
+            cont_value=jnp.log(savings_grid),
+            cont_marginal=1.0 / savings_grid,
+            liquid_grid=liquid_grid,
+            savings_grid=savings_grid,
+            discount_factor=jnp.asarray(1.0),
+            preferences=preferences,
+            coh_slopes=jnp.ones(1),
+            coh_intercepts=jnp.full(1, coh_intercept),
+            breakpoints=jnp.zeros(0),
+            arithmetic=arithmetic,
+        )
+
+    coh = np.asarray(liquid_grid) + coh_intercept
+    nodes = np.asarray(savings_grid)
+    assert not np.isin(coh / (1.0 + taste), nodes).any()
+    assert_array_almost_equal(
+        policy, taste * coh / (1.0 + taste), decimal=DECIMAL_PRECISION
+    )
+    node_consumption = coh[:, None] - nodes[None, :]
+    node_value = np.where(
+        node_consumption > 0.0,
+        taste * np.log(np.where(node_consumption > 0.0, node_consumption, 1.0))
+        + np.log(nodes)[None, :],
+        -np.inf,
+    )
+    np.testing.assert_array_less(
+        node_value.max(axis=1) - 10.0**-DECIMAL_PRECISION, np.asarray(value)
     )
