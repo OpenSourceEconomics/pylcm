@@ -28,10 +28,12 @@ import pandas as pd
 import pytest
 from beartype.roar import BeartypeCallHintParamViolation
 
+import lcm.model as model_module
 from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.execution.value_transfer import ValueArtifactAddress, ValueArtifactKind
 from _lcm.execution.workspace_planning import WorkspaceBudgetError
 from _lcm.persistence.solution import DiskValueEntry
+from _lcm.simulation import chunk_admission
 from _lcm.solution import backward_induction, host_values
 from _lcm.solution.host_values import HostValueEntry, copy_values_to_host
 from _lcm.solution.result_snapshot import own_value_store
@@ -823,14 +825,35 @@ def test_a_disk_value_entry_carries_the_solve_budget(tmp_path: Path) -> None:
 _ONE_SUBJECT_PER_CHUNK = MappingProxyType({"subject": 1})
 
 
+def _while_flagged[**P, R](
+    *, function: Callable[P, R], flag: list[bool]
+) -> Callable[P, R]:
+    """Wrap `function` so that `flag[0]` is true exactly while it runs."""
+
+    def _wrapped(*args: P.args, **kwargs: P.kwargs) -> R:
+        flag[0] = True
+        try:
+            return function(*args, **kwargs)
+        finally:
+            flag[0] = False
+
+    return _wrapped
+
+
 def _value_copies_while_simulating(
     *,
     monkeypatch: pytest.MonkeyPatch,
     model: Model,
     initial_conditions: dict[str, jax.Array],
+    outside_the_loop: bool = False,
 ) -> tuple[list[tuple[int, RegimeName]], pd.DataFrame]:
-    """Return each stored value copied onto the device, and the panel."""
+    """Return each stored value the simulation loop copies onto the device.
+
+    Only copies made while the engine simulates count, or with `outside_the_loop`
+    only those made before and after it, while the call prepares and plans.
+    """
     copied: list[tuple[int, RegimeName]] = []
+    simulating: list[bool] = [False]
     read = host_values._RecentDeviceCopies.read
 
     # keyword-only-exempt: primary-argument=self
@@ -841,13 +864,20 @@ def _value_copies_while_simulating(
         regime: RegimeName,
         stored: jax.Array | DiskValueEntry,
     ) -> jax.Array:
-        if regime not in self._copies.get(period, {}):
+        if simulating[0] != outside_the_loop and regime not in self._copies.get(
+            period, {}
+        ):
             copied.append((period, regime))
         return read(self, period=period, regime=regime, stored=stored)
 
     solution = model.solve(params=_PARAMS, log_level="off")
     with monkeypatch.context() as patch:
         patch.setattr(host_values._RecentDeviceCopies, "read", _counting_read)
+        patch.setattr(
+            model_module,
+            "simulate",
+            _while_flagged(function=model_module.simulate, flag=simulating),
+        )
         panel = model.simulate(
             params=_PARAMS,
             initial_conditions=initial_conditions,
@@ -979,3 +1009,122 @@ def test_several_chunks_report_dissolutions_in_the_device_order() -> None:
 
     assert results[1].to_dataframe().equals(results[0].to_dataframe())
     assert results[1]._dissolution_fallbacks == results[0]._dissolution_fallbacks
+
+
+def _budgeted(*, value_storage: Literal["device", "host"]) -> ExecutionConfig:
+    return ExecutionConfig(
+        value_storage=value_storage, device_memory_bytes=_AMPLE_BUDGET
+    )
+
+
+def _one_subject_per_budgeted_chunk(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the budgeted planner consider one subject per chunk only.
+
+    A budget picks the widest admitted chunk, which for these small models is
+    the whole population; only the candidate list forces several chunks.
+    """
+    monkeypatch.setattr(
+        chunk_admission, "_independent_outer_candidates", lambda **_: (1,)
+    )
+
+
+def test_budgeted_chunks_copy_the_stored_values_a_single_chunk_copies(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Under a budget too, several chunks run period by period."""
+    single, _ = _value_copies_while_simulating(
+        monkeypatch=monkeypatch,
+        model=_three_regime_model(_budgeted(value_storage="host")),
+        initial_conditions=_three_regime_initial_conditions(),
+    )
+    _one_subject_per_budgeted_chunk(monkeypatch)
+    several, _ = _value_copies_while_simulating(
+        monkeypatch=monkeypatch,
+        model=_three_regime_model(_budgeted(value_storage="host")),
+        initial_conditions=_three_regime_initial_conditions(),
+    )
+
+    assert single
+    assert sorted(several) == sorted(single)
+
+
+def test_budgeted_chunks_under_host_storage_simulate_the_device_panel(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _one_subject_per_budgeted_chunk(monkeypatch)
+    device = (
+        _three_regime_model(_budgeted(value_storage="device"))
+        .simulate(
+            params=_PARAMS,
+            initial_conditions=_three_regime_initial_conditions(),
+            seed=3,
+            log_level="off",
+        )
+        .to_dataframe()
+    )
+    _, host = _value_copies_while_simulating(
+        monkeypatch=monkeypatch,
+        model=_three_regime_model(_budgeted(value_storage="host")),
+        initial_conditions=_three_regime_initial_conditions(),
+    )
+
+    assert host.equals(device)
+
+
+def test_the_planner_reserves_every_subjects_state_for_several_chunks() -> None:
+    """The reservation covers each initial-condition column of every subject."""
+    initial_conditions = _three_regime_initial_conditions()
+    devices = (jax.devices()[0],)
+
+    reserved = chunk_admission._population_carry_bytes(
+        initial_conditions=initial_conditions, subject_devices=devices
+    )
+
+    columns = sum(int(column.nbytes) for column in initial_conditions.values())
+    assert reserved[devices[0]] >= columns
+
+
+def test_a_budget_without_room_for_every_subjects_state_is_refused(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The refusal names the remedies that shrink the population's state."""
+    _one_subject_per_budgeted_chunk(monkeypatch)
+    monkeypatch.setattr(
+        chunk_admission,
+        "_population_carry_bytes",
+        lambda **_: dict.fromkeys(jax.devices(), _AMPLE_BUDGET),
+    )
+    model = _three_regime_model(_budgeted(value_storage="host"))
+    solution = model.solve(params=_PARAMS, log_level="off")
+
+    with pytest.raises(ExecutionPlanningError, match="fewer subjects"):
+        model.simulate(
+            params=_PARAMS,
+            initial_conditions=_three_regime_initial_conditions(),
+            solution=solution,
+            seed=3,
+            log_level="off",
+        )
+
+
+def test_planning_a_budgeted_call_copies_no_more_values_than_an_unbudgeted_one(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Measuring and profiling read the values' metadata, not copies of them."""
+    _one_subject_per_budgeted_chunk(monkeypatch)
+    copies = [
+        sorted(
+            _value_copies_while_simulating(
+                monkeypatch=monkeypatch,
+                model=_three_regime_model(config),
+                initial_conditions=_three_regime_initial_conditions(),
+                outside_the_loop=True,
+            )[0]
+        )
+        for config in (
+            ExecutionConfig(value_storage="host", device_memory_bytes=None),
+            _budgeted(value_storage="host"),
+        )
+    ]
+
+    assert copies[1] == copies[0]

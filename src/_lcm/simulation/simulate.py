@@ -581,7 +581,13 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
         len(windows) > 1
         and group_plan is None
         and component_values is None
-        and memory is None
+        and (
+            memory is None
+            or (
+                prepared_chunks is not None
+                and prepared_chunks.reserves_population_carry
+            )
+        )
         and is_device_read_view(period_to_regime_to_V_arr)
     )
     if runs_periods_outside:
@@ -595,22 +601,22 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
                         _subject_chunk_periods(
                             initial_states={
                                 name: _population_window(
-                                    array=array, window=window, memory=None
+                                    array=array, window=window, memory=memory
                                 )
                                 for name, array in initial_states.items()
                             },
                             initial_regime_ids=_population_window(
                                 array=initial_conditions["regime_id"],
                                 window=window,
-                                memory=None,
+                                memory=memory,
                             ),
                             initial_own_stakeholder=_population_window(
                                 array=initial_own_stakeholder,
                                 window=window,
-                                memory=None,
+                                memory=memory,
                             ),
                             starting_periods=_population_window(
-                                array=starting_periods, window=window, memory=None
+                                array=starting_periods, window=window, memory=memory
                             ),
                             n_subjects=n_subjects,
                             subject_slice=window,
@@ -635,7 +641,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
                             taste_addresses=taste_addresses,
                             logger=logger,
                             device_ids=device_ids,
-                            memory=None,
+                            memory=memory,
                             call_inputs=call_inputs,
                             process_grid_resolver=process_grid_resolver,
                             shock_paths=shock_paths,
@@ -649,6 +655,9 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
                     ),
                     n_periods=ages.n_periods,
                     host_device=cast("jax.Device", host_device),
+                    memory=memory,
+                    prepared_chunks=prepared_chunks,
+                    completed_setup=completed_setup,
                 )
             )
             # Reported in the order chunk by chunk would report them.
@@ -870,9 +879,15 @@ def _log_simulation_plan(
 
 def _simulate_windows_period_by_period(
     *,
-    chunks: tuple[Generator[SubjectChunkResults, None, SubjectChunkResults], ...],
+    chunks: tuple[
+        Generator[tuple[SubjectChunkResults, ArrayTree], None, SubjectChunkResults],
+        ...,
+    ],
     n_periods: int,
     host_device: jax.Device,
+    memory: SimulationMemory | None = None,
+    prepared_chunks: PreparedSimulationChunks | None = None,
+    completed_setup: DeviceBufferFootprint | None = None,
 ) -> list[SubjectChunkResults]:
     """Run every chunk through a period before any chunk starts the next.
 
@@ -881,28 +896,52 @@ def _simulate_windows_period_by_period(
     period's values cross over once, as with a single chunk. Each chunk's results
     of a period go to the host as soon as the period is done.
 
+    Under a budget the waiting chunks' carries are charged while a chunk runs,
+    and each chunk is admitted against its prepared profile before its first
+    period, as the chunk-by-chunk loop admits it before it starts.
+
     Returns:
         Each chunk's results, in chunk order.
 
     """
-    results: list[SubjectChunkResults] = []
+    carries: list[ArrayTree] = [() for _ in chunks]
+    so_far: list[SubjectChunkResults] = [{} for _ in chunks]
     for period in range(n_periods):
-        for chunk in chunks:
-            so_far = next(chunk)
-            for by_period in so_far.values():
+        for index, chunk in enumerate(chunks):
+            if memory is not None:
+                if period == 0 and prepared_chunks is not None:
+                    prepared_chunks.require_chunk(
+                        memory=memory, completed_setup=completed_setup
+                    )
+                memory.parked = tuple(
+                    carry for other, carry in enumerate(carries) if other != index
+                )
+            so_far[index], carries[index] = next(chunk)
+            for by_period in so_far[index].values():
                 if period in by_period:
                     by_period[period] = offload_chunk(
-                        tree=by_period[period], host_device=host_device, memory=None
+                        tree=by_period[period], host_device=host_device, memory=memory
                     )
-    for chunk in chunks:
-        try:
-            next(chunk)
-        except StopIteration as finished:
-            results.append(finished.value)
-        else:
-            msg = "A chunk ran more periods than the model has."
-            raise RuntimeError(msg)
-    return results
+            if memory is not None:
+                memory.close_unit()
+                memory.set_chunk_inputs(tree=())
+                memory.replace_outputs(tree=so_far)
+    if memory is not None:
+        memory.parked = ()
+    return [_finish_chunk(chunk=chunk) for chunk in chunks]
+
+
+def _finish_chunk(
+    *,
+    chunk: Generator[tuple[SubjectChunkResults, ArrayTree], None, SubjectChunkResults],
+) -> SubjectChunkResults:
+    """Return the results of a chunk that has run through every period."""
+    try:
+        next(chunk)
+    except StopIteration as finished:
+        return finished.value
+    msg = "A chunk ran more periods than the model has."
+    raise RuntimeError(msg)
 
 
 def _window_groups(
@@ -1052,11 +1091,12 @@ def _subject_chunk_periods(  # noqa: PLR0915
         RegimeName, Mapping[StateName, _ContinuousStochasticProcess]
     ] = MappingProxyType({}),
     dissolution_records: list[DissolutionFallback] | None = None,
-) -> Generator[SubjectChunkResults, None, SubjectChunkResults]:
+) -> Generator[tuple[SubjectChunkResults, ArrayTree], None, SubjectChunkResults]:
     """Run the period loop for one chunk of subjects, pausing after each period.
 
     After each period the generator yields the chunk's results so far, the
-    period's included, and at the end returns them. No period reads an earlier
+    period's included, with the carry it keeps until its next period, and at the
+    end returns the results. No period reads an earlier
     period's results, so a caller may offload them as they are yielded. Run to
     its end, it is the whole loop for one chunk; a caller holding one generator
     per chunk can instead run every chunk through one period before any starts
@@ -1424,7 +1464,20 @@ def _subject_chunk_periods(  # noqa: PLR0915
 
         elapsed = time.monotonic() - period_start
         log_period_timing(logger=logger, elapsed=elapsed)
-        yield simulation_results
+        # What the chunk keeps on the device until its next period, which a
+        # budget charges while other chunks take their turn.
+        yield (
+            simulation_results,
+            (
+                states,
+                subject_regime_ids,
+                own_stakeholder,
+                key,
+                taste_key,
+                source_roles,
+                entered_through,
+            ),
+        )
 
     return simulation_results
 

@@ -15,7 +15,7 @@ import dataclasses
 import weakref
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 import jax
 import jax.numpy as jnp
@@ -50,15 +50,20 @@ from lcm.typing import BoolND, FloatND
 # The replay inputs resolved from a solution, keyed by period and regime: values,
 # simulation policies, dissolution flags and replay readers, each `None` when the
 # solution provides none; empty before any solution is resolved.
-type _ResolvedInputs = (
-    tuple[
-        Mapping[int, Mapping[RegimeName, FloatND]] | None,
-        Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None,
-        Mapping[int, Mapping[RegimeName, BoolND]] | None,
-        Mapping[int, Mapping[RegimeName, PreparedReplayReader]] | None,
-    ]
-    | tuple[()]
-)
+if TYPE_CHECKING:
+    type _ResolvedInputs = (
+        tuple[
+            Mapping[int, Mapping[RegimeName, FloatND]] | None,
+            Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None,
+            Mapping[int, Mapping[RegimeName, BoolND]] | None,
+            Mapping[int, Mapping[RegimeName, PreparedReplayReader]] | None,
+        ]
+        | tuple[()]
+    )
+else:
+    # A runtime check samples one entry of each mapping, and sampling a view of
+    # values kept off the device copies that value onto the device.
+    type _ResolvedInputs = object
 
 
 @dataclasses.dataclass(kw_only=True, eq=False)

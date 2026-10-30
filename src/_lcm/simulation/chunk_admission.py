@@ -11,6 +11,7 @@ from dataclasses import dataclass, replace
 from functools import partial
 from time import perf_counter
 from types import MappingProxyType
+from typing import TYPE_CHECKING
 
 import jax
 
@@ -45,10 +46,18 @@ from _lcm.simulation.residency import (
 from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.subject_groups import grouped_extent
 from _lcm.solution.backward_induction import _abstract_value_key, _hashable_metadata
+from _lcm.solution.host_values import is_device_read_view, planning_stand_in
 from _lcm.time import TimeAxis
 from _lcm.typing import FlatParams, RegimeName, RegimeNamesToIds, SimulationPolicy
 from _lcm.utils.logging import LogLevel
 from lcm.exceptions import ExecutionPlanningError
+
+if TYPE_CHECKING:
+    type _StoredValues = Mapping[int, Mapping[str, jax.Array]]
+else:
+    # A runtime check samples one entry, and sampling a read-through view of
+    # values kept off the device copies that value onto the device.
+    type _StoredValues = object
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -60,6 +69,9 @@ class PreparedSimulationChunks:
     admitted_inputs: DeviceBufferFootprint
     budget_note: str = ""
     """Clause naming the budget and the remedies, appended to a chunk refusal."""
+    reserves_population_carry: bool = False
+    """Whether the width was admitted beside every subject's carry, as simulating
+    values kept off the device period by period across several chunks needs."""
 
     def require_chunk(
         self,
@@ -126,7 +138,7 @@ def prepare_simulation_chunks(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
-    values: Mapping[int, Mapping[str, jax.Array]],
+    values: _StoredValues,
     flags: Mapping[int, Mapping[str, jax.Array]],
     ages: TimeAxis,
     initial_conditions: Mapping[str, jax.Array],
@@ -216,7 +228,9 @@ def prepare_simulation_chunks(
         runtime=runtime,
         regimes=regimes,
         call_inputs=call_inputs,
-        values=values,
+        # Profiles and their cache keys need only the values' shapes and
+        # placement; reading values kept off the device would copy them.
+        values=planning_stand_in(values),
         flags=flags,
         policies=policies,
         ages=ages,
@@ -236,12 +250,69 @@ def prepare_simulation_chunks(
         current_iid_override_schema=current_iid_override_schema,
     )
     plan = _plan_independent_chunks(profiler=profiler, alignment=alignment)
+    # Values kept off the device are simulated period by period when there are
+    # several chunks, so every chunk's carry is live while one chunk runs. That
+    # carry grows with the population, not the width; admit beside it.
+    reserves_population_carry = (
+        group_sizes is None
+        and is_device_read_view(values)
+        and plan.profile.n_subjects < plan.profile.padded_population
+    )
+    if reserves_population_carry:
+        carry = _population_carry_bytes(
+            initial_conditions=initial_conditions,
+            subject_devices=runtime.subject_devices,
+        )
+        try:
+            plan = _plan_independent_chunks(
+                profiler=replace(
+                    profiler,
+                    resident=MappingProxyType(
+                        {
+                            device: bytes_ + carry.get(device, 0)
+                            for device, bytes_ in resident.items()
+                        }
+                    ),
+                ),
+                alignment=alignment,
+            )
+        except ExecutionPlanningError as error:
+            msg = (
+                "Simulating values kept off the device in several chunks runs every "
+                "chunk through a period before the next, so every subject's state "
+                f"stays on the device: about {dict(sorted(carry.items(), key=str))!r} "
+                "bytes beside a chunk's workspace. Simulate fewer subjects per call "
+                "or raise ExecutionConfig.device_memory_bytes."
+                f"{runtime.execution.device_memory_cap_note()}"
+            )
+            raise ExecutionPlanningError(msg) from error
     return PreparedSimulationChunks(
         plan=plan,
         call_inputs=call_inputs,
         admitted_inputs=memory.inputs,
         budget_note=runtime.execution.device_memory_cap_note(),
+        reserves_population_carry=reserves_population_carry,
     )
+
+
+def _population_carry_bytes(
+    *,
+    initial_conditions: Mapping[str, jax.Array],
+    subject_devices: tuple[jax.Device, ...],
+) -> dict[jax.Device, int]:
+    """Estimate each subject device's share of every subject's carry.
+
+    A carry holds a subject's states, regime and role, all shaped like its
+    initial conditions, and two route trackers of one 32-bit integer each; its
+    keys are per chunk. The estimate charges the whole population, the running
+    chunk included, whose carry its own profile also charges.
+    """
+    population = int(initial_conditions["regime_id"].shape[0])
+    total = sum(int(column.nbytes) for column in initial_conditions.values())
+    # Role (when the initial conditions name none) and the two route trackers.
+    total += 3 * population * 4
+    share = math.ceil(total / len(subject_devices))
+    return dict.fromkeys(subject_devices, share)
 
 
 def _simulation_chunk_profile_key(
@@ -249,7 +320,7 @@ def _simulation_chunk_profile_key(
     runtime: SimulationRuntime,
     regimes: Mapping[str, Regime],
     call_inputs: SimulationCallInputs,
-    values: Mapping[int, Mapping[str, jax.Array]],
+    values: Mapping[int, Mapping[str, jax.Array | jax.ShapeDtypeStruct]],
     flags: Mapping[int, Mapping[str, jax.Array]],
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None,
     ages: TimeAxis,
@@ -358,7 +429,7 @@ class _ChunkProfiler:
     runtime: SimulationRuntime
     regimes: Mapping[str, Regime]
     call_inputs: SimulationCallInputs
-    values: Mapping[int, Mapping[str, jax.Array]]
+    values: Mapping[int, Mapping[str, jax.Array | jax.ShapeDtypeStruct]]
     flags: Mapping[int, Mapping[str, jax.Array]]
     ages: TimeAxis
     initial_conditions: Mapping[str, jax.Array]

@@ -11,7 +11,7 @@ import weakref
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 import jax
 import numpy as np
@@ -158,8 +158,20 @@ def admit_values_on_devices(
 class _RecentDeviceCopies:
     """Device copies of the stored arrays of the most recently read periods."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        stand_in: MappingProxyType[
+            int, MappingProxyType[RegimeName, jax.ShapeDtypeStruct]
+        ],
+    ) -> None:
         self._copies: dict[int, dict[RegimeName, jax.Array]] = {}
+        self.stand_in = stand_in
+        """The view's values as shapes on their device placement, for planners."""
+
+    def held(self) -> tuple[dict[RegimeName, jax.Array], ...]:
+        """Return the device copies kept, one mapping per cached period."""
+        return tuple(self._copies.values())
 
     def read(
         self, *, period: int, regime: RegimeName, stored: jax.Array | _LazyEntry
@@ -222,7 +234,19 @@ def device_read_view(
     holds at most three periods on the device and copies each period once per
     walk.
     """
-    copies = _RecentDeviceCopies()
+    copies = _RecentDeviceCopies(
+        stand_in=MappingProxyType(
+            {
+                period: MappingProxyType(
+                    {
+                        regime: _device_stand_in(stored=value)
+                        for regime, value in stored.items()
+                    }
+                )
+                for period, stored in values.items()
+            }
+        )
+    )
     view = MappingProxyType(
         {
             period: MappingProxyType(
@@ -237,14 +261,64 @@ def device_read_view(
     return view
 
 
+if TYPE_CHECKING:
+    type _StoredValues = Mapping[int, Mapping[RegimeName, jax.Array]]
+else:
+    # A runtime check samples one entry, and sampling a read-through view copies
+    # that value onto the device.
+    type _StoredValues = object
+
+
 # The copy cache of every live read-through view, by the view's id.
 _VIEW_COPIES: weakref.WeakValueDictionary[int, _RecentDeviceCopies] = (
     weakref.WeakValueDictionary()
 )
 
 
-def is_device_read_view(
-    values: Mapping[int, Mapping[RegimeName, jax.Array]],
-) -> bool:
+def is_device_read_view(values: _StoredValues) -> bool:
     """Whether `values` is a read-through view of values kept off the device."""
     return id(values) in _VIEW_COPIES
+
+
+def _device_stand_in(*, stored: jax.Array | _LazyEntry) -> jax.ShapeDtypeStruct:
+    """Describe a stored value as the array a read would place on the device."""
+    if isinstance(stored, jax.Array):
+        return jax.ShapeDtypeStruct(
+            stored.shape,
+            stored.dtype,
+            sharding=stored.sharding.with_memory_kind("device"),
+        )
+    # A disk entry records the shape, dtype and sharding it was solved on.
+    shape, dtype, sharding = (
+        cast("tuple[int, ...]", getattr(stored, "shape")),  # noqa: B009
+        cast("np.dtype", getattr(stored, "dtype")),  # noqa: B009
+        cast("jax.sharding.Sharding", getattr(stored, "sharding")),  # noqa: B009
+    )
+    return jax.ShapeDtypeStruct(
+        shape, dtype, sharding=sharding.with_memory_kind("device")
+    )
+
+
+def planning_stand_in(
+    values: _StoredValues,
+) -> Mapping[int, Mapping[RegimeName, jax.Array | jax.ShapeDtypeStruct]]:
+    """Return a read-through view as shapes, or any other values as they are.
+
+    Planners need only the shape, dtype and placement of the values; reading a
+    view for them would copy every value onto the device.
+    """
+    copies = _VIEW_COPIES.get(id(values))
+    return values if copies is None else copies.stand_in
+
+
+def device_copies_of_view(*, view_id: int) -> tuple[jax.Array, ...] | None:
+    """Return the device copies the read-through view with `view_id` keeps.
+
+    `None` when no live view has that id, so a caller can ask of any object.
+    """
+    copies = _VIEW_COPIES.get(view_id)
+    if copies is None:
+        return None
+    return tuple(
+        copy for regime_to_copy in copies.held() for copy in regime_to_copy.values()
+    )

@@ -218,7 +218,7 @@ def type_local_view(
     *,
     route: SubjectGroupingRoute,
     read: ValueRead,
-    stored: ValueND,
+    stored: ValueND | jax.ShapeDtypeStruct,
     required_sharding: jax.sharding.Sharding,
     code: int,
     stored_codes: tuple[int, ...] | None = None,
@@ -259,7 +259,7 @@ def type_local_transfer(
     route: SubjectGroupingRoute | None,
     code: int | None,
     read: ValueRead,
-    stored: ValueND,
+    stored: ValueND | jax.ShapeDtypeStruct,
     required_sharding: jax.sharding.Sharding,
     stored_codes: tuple[int, ...] | None = None,
 ) -> ResolvedValueTransfer:
@@ -267,7 +267,9 @@ def type_local_transfer(
 
     Without a route the value is read whole. With one, a value carrying the
     state is selected on its stored layout first and only that block moves.
-    `stored_codes` are the codes the stored value holds, `None` for all.
+    `stored_codes` are the codes the stored value holds, `None` for all. Only
+    the stored value's shape and layout are read, so a planner may pass its
+    shape.
     """
     view = (
         None
