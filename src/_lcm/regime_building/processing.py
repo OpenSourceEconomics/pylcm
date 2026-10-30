@@ -7502,10 +7502,11 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     # Simulation reads the solve-phase EGM policy (policy-first) wherever the
     # published rows sit on the coordinates the subject is read at: standalone
     # DC-EGM with its default `replay="candidate"`, phase-invariant
-    # declarations, no taste shocks, no process or passive continuous-state row
-    # axes, a scalar savings floor, and the single-post-state kernel. Every
-    # upper-envelope backend qualifies; a read that leaves its row support falls
-    # back to the grid argmax per subject.
+    # declarations, no taste shocks, no passive continuous-state row axes,
+    # process row axes only with fixed, unconditioned nodes, a scalar savings
+    # floor, and the single-post-state kernel. Every upper-envelope backend
+    # qualifies; a read that leaves its row support falls back to the grid
+    # argmax per subject.
     phase_invariant = (
         not regime_declares_phased(user_regime, law=law)
         and not spec.carried_only_state_names
@@ -7677,7 +7678,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         and not any(bound.kind == "dag" for bound in post_decision_bounds)
         and phase_invariant
         and not has_taste_shocks
-        and not _regime_has_process_state(own_v_info)
+        and not _regime_has_unread_process_state(own_v_info)
         and not _regime_has_passive_state(
             v_interpolation_info=own_v_info,
             euler_state_name=bound_solver.continuous_state,
@@ -7868,15 +7869,19 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     )
 
 
-def _regime_has_process_state(v_interpolation_info: VInterpolationInfo) -> bool:
-    """Whether the regime carries a continuous stochastic-process state.
+def _regime_has_unread_process_state(v_interpolation_info: VInterpolationInfo) -> bool:
+    """Whether a process state's rows cannot be blended at a simulated value.
 
     A process is stored among the node-valued discrete states, so its policy
-    row is a discrete axis. Its simulation transition draws a continuous value
-    off the process grid, which a nearest-node row read cannot resolve.
+    row is a discrete axis, and its simulation transition may draw a value
+    between nodes. The policy read blends the two bracketing node rows linearly
+    in the node coordinate, the rule the process's transition weights follow
+    off node. That needs nodes fixed at build time, and an unconditioned law:
+    a state-conditioned process computes its weights directly at the value.
     """
     return any(
         isinstance(grid, _ContinuousStochasticProcess)
+        and (not grid.is_fully_specified or grid.state_conditioned is not None)
         for grid in v_interpolation_info.discrete_states.values()
     )
 

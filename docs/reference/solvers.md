@@ -282,12 +282,25 @@ Only rejected subjects take the argmax on the regime's declared action grid. The
 reported value is the read value: the canonical evaluation at the emitted action
 supplies only feasibility, and the default path runs no ownership audit.
 
+A process state (an IID or AR(1) shock declared as a state, for example
+`NormalIIDProcess`) is a node axis of the published rows, and its simulated value can
+fall between nodes. Each branch then reads the two bracketing node rows at the subject's
+resources and blends them linearly in the node coordinate, extrapolating along the edge
+segment beyond the outer nodes. The process's transition weights follow the same rule
+off node, so the blended continuation is the one the grid argmax scores. A value on a
+node reads that node's row alone. When the shock enters only resources, every node row
+is the same function of resources and the read is the continuous optimum. When it enters
+utility, the read is a linear interpolation of the node policies in the shock.
+
 Policy-first needs a regime whose actions are the EGM action plus discrete actions, with
-a scalar savings floor. It does not apply with taste shocks, phase-specific declarations,
-carried-only states, process or passive continuous states, or a savings stage that reads
-the Euler state. Such DC-EGM regimes simulate by the action-grid argmax, so their
-continuous action can differ from the off-grid solve policy. With taste shocks,
-simulated choice frequencies follow the grid-restricted choice-specific values.
+a scalar savings floor and process states with fixed, unconditioned nodes. It does not
+apply with taste shocks, phase-specific declarations, carried-only states, passive
+continuous states, a process whose law arrives as runtime params or is state-conditioned,
+or a savings stage that reads the Euler state. Such DC-EGM regimes simulate by the
+action-grid argmax, so their continuous action can differ from the off-grid solve policy.
+With taste shocks, simulated choice frequencies follow the grid-restricted
+choice-specific values. NBEGM regimes, with or without process states, also simulate by
+the action-grid argmax.
 
 Named current-IID regimes replay at the realized shock instead. Case-U reruns the
 period's node solve with the regime's configured envelope; Case-R reads the retained

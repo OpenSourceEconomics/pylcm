@@ -46,16 +46,18 @@ the grid-argmax path:
 - regimes with a passive continuous state — each row is the envelope policy
   conditional on one passive node, so blending rows across a passive-dimension
   branch switch would read an action from neither branch;
-- regimes with a continuous stochastic-process state — the process is a
-  node-valued row axis, but its simulation transition draws an off-node
-  continuous value that nearest-node row selection cannot resolve;
+- regimes with a continuous stochastic-process state whose nodes arrive as
+  runtime params or whose law is state-conditioned. A process with fixed,
+  unconditioned nodes is a node-valued row axis; an off-node simulated value
+  blends its two bracketing node rows linearly in the node coordinate, the
+  rule the process's transition weights follow off node;
 - asset-row DC-EGM regimes (a savings-stage function reads the Euler state) —
   the per-node solve publishes one point per exogenous asset node, not a
   crossing-complete row, so interpolating across nodes would mix branches;
 - regimes with EV1 taste shocks, whose realized draws perturb the decision.
-Publishing per-passive-node / per-process-node conditional values and
-re-deciding across those axes the way the discrete-action axis already is
-lifts the passive, process, and asset-row exclusions (the tracked follow-up).
+Publishing per-passive-node conditional values and re-deciding across those
+axes the way the discrete-action axis already is lifts the passive and
+asset-row exclusions (the tracked follow-up).
 
 Unlike the rolling `EGMCarry` (the cross-period continuation channel, overwritten
 each period), this is retained only when inspection or an eligible simulation

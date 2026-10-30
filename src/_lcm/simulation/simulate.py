@@ -3292,7 +3292,8 @@ def _read_egm_policy_first(
     branch rows to `-inf`. The branch of largest read value wins, its policy
     row (piecewise linear) supplies the continuous action, and its read value
     is the reported value, so value, actions and transitions all belong to the
-    same (branch, action) pair.
+    same (branch, action) pair. A process state between its nodes reads each
+    branch from the blend of its two bracketing node rows (`_row_selections`).
 
     Returns the actions, the reported value, and the per-subject acceptance.
     A subject is accepted when every live branch read lies inside its row
@@ -3439,9 +3440,8 @@ def _policy_first_body(
     """
     read = cast("EGMPolicyRead", regime.simulation.egm_policy_read)
     n_subjects = next(iter(states.values())).shape[0]
-    state_positions = tuple(
-        _grid_position(regime=regime, name=name, values=jnp.asarray(states[name]))
-        for name in sim_policy.row_discrete_state_names
+    selections = _row_selections(
+        regime=regime, names=sim_policy.row_discrete_state_names, states=states
     )
     branch_names = sim_policy.row_discrete_action_names
     branch_grids = tuple(
@@ -3472,18 +3472,19 @@ def _policy_first_body(
             ),
             (n_subjects,),
         )
-        index = (*state_positions, *branch)
-        value, support = _interp_rows_with_support(
+        value, support = _blended_row_read(
             sim_policy=sim_policy,
             field="value",
-            index=index,
+            selections=selections,
+            branch=branch,
             resources=branch_resources,
             n_subjects=n_subjects,
         )
-        policy, _ = _interp_rows_with_support(
+        policy, _ = _blended_row_read(
             sim_policy=sim_policy,
             field="policy",
-            index=index,
+            selections=selections,
+            branch=branch,
             resources=branch_resources,
             n_subjects=n_subjects,
         )
@@ -4018,6 +4019,120 @@ def _keeper_post_decision(
     return jnp.reshape(
         jnp.asarray(keep_func(**cast("dict[str, FloatND | IntND]", kwargs))),
         (n_subjects,),
+    )
+
+
+# A row index over the discrete-state row axes, with the per-subject coefficient
+# it enters the read with (`None`: the subject's only row).
+type _RowSelection = tuple[tuple[IntND | int, ...], FloatND | None]
+
+
+def _row_selections(
+    *,
+    regime: Regime,
+    names: tuple[StateName, ...],
+    states: Mapping[StateOrActionName, FloatND | IntND],
+) -> tuple[_RowSelection, ...]:
+    """Select each subject's discrete-state rows and their blend coefficients.
+
+    An ordinary discrete state selects its node's row. A process state's value
+    may lie between nodes; it reads the two bracketing node rows blended linearly
+    in the node coordinate (extrapolating along the edge segment), the rule its
+    transition weights follow off node. A node value takes its own row with
+    coefficient exactly one. Where every row axis is a process, every node's row
+    is shared by all subjects and is read once for all of them, rather than
+    gathered per subject.
+    """
+    process_names = {
+        name
+        for name in names
+        if isinstance(regime.simulation.grids[name], _ContinuousStochasticProcess)
+    }
+    shared = set(names) == process_names
+    per_axis: list[tuple[tuple[IntND | int, FloatND | None], ...]] = []
+    for name in names:
+        values = jnp.asarray(states[name])
+        nodes = jnp.asarray(regime.simulation.grids[name].to_jax())
+        if name not in process_names:
+            per_axis.append(
+                ((_grid_position(regime=regime, name=name, values=values), None),)
+            )
+        elif nodes.shape[0] == 1:
+            per_axis.append(((0, None),))
+        else:
+            lo, weight = _node_bracket(nodes=nodes, values=values)
+            per_axis.append(
+                tuple(
+                    (
+                        node,
+                        jnp.where(node == lo, 1.0 - weight, 0.0)
+                        + jnp.where(node == lo + 1, weight, 0.0),
+                    )
+                    for node in range(int(nodes.shape[0]))
+                )
+                if shared
+                else ((lo, 1.0 - weight), (lo + 1, weight))
+            )
+    selections = []
+    for combo in itertools.product(*per_axis):
+        coefficients = [
+            coefficient for _, coefficient in combo if coefficient is not None
+        ]
+        selections.append(
+            (
+                tuple(position for position, _ in combo),
+                functools.reduce(jnp.multiply, coefficients) if coefficients else None,
+            )
+        )
+    return tuple(selections)
+
+
+def _node_bracket(*, nodes: Float1D, values: FloatND) -> tuple[IntND, FloatND]:
+    """Lower bracketing node and linear weight of each value, as in the weights.
+
+    Mirrors `get_irreg_coordinate`: the lower node is clipped to the first or
+    last segment, so the weight extrapolates beyond the outer nodes, and a node
+    value has weight exactly 0 (or exactly 1 at the last node).
+    """
+    lo = jnp.clip(
+        jnp.searchsorted(nodes, values, side="right") - 1, 0, nodes.shape[0] - 2
+    )
+    return lo, (values - nodes[lo]) / (nodes[lo + 1] - nodes[lo])
+
+
+def _blended_row_read(
+    *,
+    sim_policy: EGMSimPolicy,
+    field: Literal["policy", "value"],
+    selections: tuple[_RowSelection, ...],
+    branch: tuple[int, ...],
+    resources: FloatND,
+    n_subjects: int,
+) -> tuple[FloatND, BoolND]:
+    """Read one field of the selected rows and blend them by their coefficients.
+
+    A row with coefficient zero contributes nothing, not even a `-inf` or NaN
+    read; the blend is in support where every contributing row is. A row
+    without a coefficient is the subject's only row and is returned as read.
+    """
+    values, supports = [], []
+    for index, coefficient in selections:
+        read, in_support = _interp_rows_with_support(
+            sim_policy=sim_policy,
+            field=field,
+            index=(*index, *branch),
+            resources=resources,
+            n_subjects=n_subjects,
+        )
+        if coefficient is None:
+            values.append(read)
+            supports.append(in_support)
+        else:
+            values.append(jnp.where(coefficient == 0.0, 0.0, coefficient * read))
+            supports.append((coefficient == 0.0) | in_support)
+    return (
+        functools.reduce(jnp.add, values),
+        functools.reduce(jnp.logical_and, supports),
     )
 
 
