@@ -1,6 +1,6 @@
 """A `ProjectedRegimeValue` reading a NON-FOLDED process-state V interpolates it.
 
-A process state (`NormalIIDProcess`, `fold=False`) is classified
+A process state (`NormalIIDProcess`) is classified
 `topology="discrete"` for the ordinary Markov-chain solve path
 (`_lcm.variables._raw_variable_info`), so its V-array axis is read via
 integer fancy-indexing there — correct, since the solve-side continuation

@@ -775,7 +775,7 @@ def shocked_utility(*, choice: DiscreteAction, shock: FloatND) -> FloatND:
 SHOCK_POINTS = 3
 
 
-def _shocked_model(*, fold: bool) -> lcm.Model:
+def _shocked_model() -> lcm.Model:
     return lcm.Model(
         n_periods=3,
         regimes={
@@ -788,7 +788,6 @@ def _shocked_model(*, fold: bool) -> lcm.Model:
                         gauss_hermite=True,
                         mu=0.0,
                         sigma=1.0,
-                        fold=fold,
                     ),
                 },
                 state_transitions={"wealth": next_wealth},
@@ -809,31 +808,6 @@ def _shocked_model(*, fold: bool) -> lcm.Model:
                 "end": lcm.Periods(values=(1,)),
             }
         },
-    )
-
-
-@pytest.mark.parametrize("period", [0, 1])
-def test_folded_state_averages_the_stored_value(*, period: int) -> None:
-    """Folding the shock gives the unfolded stored value averaged over its nodes."""
-    params = _params(beta_tilde=BETA)
-    unfolded = _shocked_model(fold=False)
-    folded = _shocked_model(fold=True)
-    weights = np.asarray(
-        cast(
-            "lcm.NormalIIDProcess", unfolded.user_regimes["decide"].states["shock"]
-        ).get_transition_probs()[0]
-    )
-    assert_array_almost_equal(
-        folded.solve(params=params, log_level="off").value(
-            period=period, regime="decide"
-        ),
-        np.asarray(
-            unfolded.solve(params=params, log_level="off").value(
-                period=period, regime="decide"
-            )
-        )
-        @ weights,
-        decimal=DECIMAL_PRECISION,
     )
 
 

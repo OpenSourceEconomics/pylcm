@@ -3,6 +3,7 @@
 import math
 from dataclasses import dataclass, field
 from fractions import Fraction
+from typing import Self
 
 import jax
 import jax.numpy as jnp
@@ -12,7 +13,7 @@ from jaxtyping import Float
 
 from _lcm.beartype_conf import GRID_CONF
 from _lcm.processes.base import sealed, standard_normal
-from _lcm.processes.iid import NormalIIDProcess
+from _lcm.processes.iid import FOLD_REMOVED, NormalIIDProcess
 from _lcm.typing import PRNGKeyND
 from lcm.exceptions import GridInitializationError
 from lcm.typing import BoolND, Float1D, Float2D, FloatND, StateName
@@ -32,7 +33,7 @@ class JointNormalIIDProcess:
     covariance factor. Simulation uses the corresponding continuous Gaussian law.
     Singular positive-semidefinite covariance matrices are supported, including zero
     variances. Parameters set to `None` are supplied under the declaration's key in
-    the regime's parameter mapping. `fold=True` folds all independent coordinates.
+    the regime's parameter mapping.
 
     The engine's value axes are independent normal coordinates: a correlated tensor
     does not have separate Cartesian grids in physical shock coordinates. User DAGs
@@ -51,14 +52,23 @@ class JointNormalIIDProcess:
     """Symmetric positive-semidefinite covariance; `None` leaves it at runtime."""
     n_std: float | int | None = None
     """Equally spaced support halfwidth, required without Gauss-Hermite."""
-    fold: bool = False
-    """Integrate the current-period shock tensor out of stored values."""
+    fold: bool = field(default=False, init=False, repr=False)
+    """Engine-internal; always `False`. No declaration sets it."""
     exact_zero_pivots: tuple[tuple[str, tuple[bool, ...] | None], ...] = field(
         init=False, default=(), repr=False, compare=False
     )
     """Exact zero pivots of the fixed covariance rounded to each float dtype name.
 
     `None` where the rounded covariance is not positive semidefinite."""
+
+    def __new__(
+        cls,
+        *args: object,  # noqa: ARG004, PAN001 - refuses removed keywords first
+        **kwargs: object,  # noqa: PAN001 - refuses removed keywords before any check
+    ) -> Self:
+        if "fold" in kwargs:
+            raise TypeError(FOLD_REMOVED)
+        return super().__new__(cls)
 
     def __post_init__(self) -> None:
         if not self.states or len(set(self.states)) != len(self.states):
@@ -129,7 +139,6 @@ class JointNormalIIDProcess:
             mu=0.0,
             sigma=1.0,
             n_std=self.n_std,
-            fold=self.fold,
         )
 
     def validate_mean(self, mean: NormalMean | FloatND | HostNormalArray) -> None:

@@ -1943,43 +1943,12 @@ def test_current_iid_preserves_an_unrelated_legacy_gated_component() -> None:
     np.testing.assert_allclose(result.values[0]["iid_island"], 4.0)
 
 
-def _legacy_with_new(*, eps: FloatND, new_iid: FloatND) -> FloatND:
-    return eps**2 + new_iid**2
-
-
-def test_current_iid_refuses_uncomposed_legacy_fold_axis() -> None:
-    with pytest.raises(UnsupportedOperationError, match=r"Current IID.*legacy folded"):
-        Model(
-            regimes={
-                "alive": Regime(
-                    states={
-                        "eps": NormalIIDProcess(
-                            n_points=3, gauss_hermite=True, mu=0.0, sigma=1.0, fold=True
-                        )
-                    },
-                    functions={"utility": _legacy_with_new},
-                    shocks=("innovation",),
-                )
-            },
-            n_periods=1,
-            regime_id_class=_TerminalId,
-            initial_nodes=InitialNodes(by_period={0: "alive"}),
-            edges={},
-            shocks={
-                "innovation": ShockGroup(
-                    shocks={"new_iid": Normal(mu=0, sigma=0)},
-                    nodes=UserNodes(nodes=np.array([[0.0]]), weights=np.ones(1)),
-                )
-            },
-        )
-
-
 @pytest.mark.parametrize(
     "law_name", ["normal-hermite", "normal-spaced", "lognormal", "uniform"]
 )
-def test_affine_legacy_fold_rule_preserves_ordinary_values(law_name: str) -> None:
+def test_current_group_value_averages_the_legacy_state_value(law_name: str) -> None:
     if law_name == "uniform":
-        legacy = UniformIIDProcess(n_points=5, start=-1.0, stop=3.0, fold=True)
+        legacy = UniformIIDProcess(n_points=5, start=-1.0, stop=3.0)
         law = Uniform(start=-1, stop=3)
         rule = EqualSpacedUniform(n=5)
     else:
@@ -1990,7 +1959,6 @@ def test_affine_legacy_fold_rule_preserves_ordinary_values(law_name: str) -> Non
             mu=0.3,
             sigma=1.2,
             n_std=None if gauss_hermite else 2.5,
-            fold=True,
         )
         law = (LogNormal if law_name == "lognormal" else Normal)(mu=0.3, sigma=1.2)
         rule = GaussHermite(n=5) if gauss_hermite else EqualSpaced(n=5, n_std=2.5)
@@ -2019,7 +1987,8 @@ def test_affine_legacy_fold_rule_preserves_ordinary_values(law_name: str) -> Non
     ).solve(params={}, log_level="off", runtime_checks=False)
     assert_array_almost_equal(
         candidate.values[0]["alive"],
-        reference.values[0]["alive"],
+        np.asarray(reference.values[0]["alive"])
+        @ np.asarray(legacy.get_transition_probs()[0]),
         decimal=DECIMAL_PRECISION,
     )
 

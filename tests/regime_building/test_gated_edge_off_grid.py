@@ -238,7 +238,6 @@ def _make_categorical_process_fallback_model(
                         mu=0.0,
                         sigma=1.0,
                         n_std=1.0,
-                        fold=False,
                     ),
                 },
                 functions={"utility": _utility_categorical_fallback},

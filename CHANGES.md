@@ -31,18 +31,26 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   caller but not at the target; see
   [Current-period exits](docs/reference/model_and_regime.md#current-period-exits).
 
-### Post-choice shocks
+### Shock timing is read off the model
 
-- `Regime(post_choice_shocks=("group", ...))` declares model-level `ShockGroup`s drawn
-  after the regime's choice. Only its state transitions read them, as `next_<shock>`;
-  the solve integrates the transitions over the group's nodes and weights, and
-  simulation samples one node per subject. A utility, constraint or regime transition
-  reading such a shock is refused at model build, naming the function and the shock.
-- This replaces inferring a transition-only shock from a `fold=True` IID state read only
-  as `next_<shock>`. That spelling now raises `RegimeInitializationError` pointing to
-  `post_choice_shocks`; see
-  [Declare shocks drawn after the choice](docs/user_guide/migrating_dated_regimes.md#declare-shocks-drawn-after-the-choice).
-  Initial conditions no longer silently drop a column named after such a shock.
+- Every stochastic process follows one rule. Reading `x` in a model function reads this
+  period's realization, known at the choice; reading `next_x` reads the draw after the
+  choice, which the solve integrates in the continuation. AR(1) and Markov states
+  already behaved this way.
+- A `ShockGroup` listed in `Regime(shocks=...)`, or an IID process declared as a state,
+  carries an axis only when some function of the regime reads its current value. A
+  shock read only as `next_x` by state transitions has no axis: the solve integrates
+  the transitions over its nodes and weights, and simulation samples one node per
+  subject. An initial value supplied for such a state is dropped.
+- Utility and constraints reading `next_x` are refused at model build. A group read both
+  as `x` and as `next_x` in one regime is refused; declare the shock as an IID process
+  state to carry the realization into the next period.
+- `repr(model)` lists, per regime, which shocks carry an axis and which are integrated
+  out.
+- `Regime(post_choice_shocks=...)` and the `fold=` argument of IID processes are
+  removed; both raise `TypeError` naming the replacement. List the group in
+  `Regime(shocks=...)` and drop `fold=`; see
+  [Shock timing is inferred](docs/user_guide/migrating_dated_regimes.md#shock-timing-is-inferred).
 
 ### Gates route on states only
 

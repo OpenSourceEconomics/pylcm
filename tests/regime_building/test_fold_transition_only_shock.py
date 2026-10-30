@@ -1,9 +1,10 @@
-"""A post-choice shock is drawn after the action and read only by transitions.
+"""A shock read only as its draw `next_xi` is integrated out of the regime.
 
 Costs realized *after* the period's choices are computed from the draw `next_xi`
-inside the wealth law. The shock is declared `Regime(post_choice_shocks=...)`, so it
-is no state of the regime: the value function stores no axis for it, and the
-source's continuation sums over the draw's nodes with the group's own weights.
+inside the wealth law. Nothing reads the current value `xi`, so the shock is no
+state of the regime: the value function stores no axis for it, and the source's
+continuation sums over the draw's nodes with the shock's own weights. This holds
+for a `Model(shocks=...)` group and for an IID process declared as a state alike.
 
 The oracle is a literal backward induction over every wealth node, every
 consumption node and every draw node, with linear interpolation in wealth and
@@ -11,8 +12,9 @@ linear extrapolation past the grid ends, which is what the solver does. A second
 oracle is the same model with the shock carried as an ordinary IID state, whose
 value is constant across the shock axis.
 
-Utility, constraints and the regime transition choose or route before the draw,
-so a read of the shock from any of them is refused when the model is built.
+Utility and constraints are evaluated before the draw, so a read of `next_xi` from
+either is refused when the model is built. A read of the current value `xi` gives
+the shock an axis.
 """
 
 import jax.numpy as jnp
@@ -30,7 +32,7 @@ from lcm import (
     Transition,
     categorical,
 )
-from lcm.exceptions import ModelInitializationError, RegimeInitializationError
+from lcm.exceptions import InvalidNameError, ModelInitializationError
 from lcm.shocks import GaussHermite, Normal, Product, ShockGroup
 from lcm.transition import StochasticTransition
 from lcm.typing import (
@@ -38,7 +40,6 @@ from lcm.typing import (
     ContinuousAction,
     ContinuousState,
     FloatND,
-    FunctionName,
     ReferenceName,
     ScalarInt,
     UserFunction,
@@ -82,6 +83,12 @@ def _next_wealth(
     return wealth - consumption - cost + 1.0
 
 
+def _next_wealth_from_savings_net_of_cost(
+    *, savings: FloatND, labor_income: FloatND, interest_rate: float, cost: FloatND
+) -> ContinuousState:
+    return (1 + interest_rate) * savings + labor_income - cost
+
+
 def _utility(consumption: ContinuousAction) -> FloatND:
     return jnp.log(consumption)
 
@@ -92,6 +99,12 @@ def _utility_reading_xi(*, consumption: ContinuousAction, xi: FloatND) -> FloatN
 
 def _utility_reading_cost(*, consumption: ContinuousAction, cost: FloatND) -> FloatND:
     return jnp.log(consumption) - cost
+
+
+def _utility_reading_next_xi(
+    *, consumption: ContinuousAction, next_xi: FloatND
+) -> FloatND:
+    return jnp.log(consumption) - next_xi
 
 
 def _cost_is_affordable(*, wealth: ContinuousState, next_xi: FloatND) -> BoolND:
@@ -124,7 +137,7 @@ def _model(
         state_transitions={"wealth": _next_wealth},
         functions={"utility": utility, "cost": _cost},
         constraints=constraints or {},
-        post_choice_shocks=() if as_state else ("cost_shock",),
+        shocks=() if as_state else ("cost_shock",),
     )
     dead = Regime(
         states={"wealth": WEALTH_GRID},
@@ -211,45 +224,39 @@ def _alive_values(model: Model) -> dict[int, np.ndarray]:
     }
 
 
-def test_a_post_choice_shock_is_not_a_state_of_the_regime() -> None:
-    assert _model().state_names(regime_name="alive") == ("wealth",)
+@pytest.mark.parametrize("as_state", [False, True], ids=["group", "iid-state"])
+def test_a_shock_read_only_as_its_draw_is_not_a_state_of_the_regime(
+    *, as_state: bool
+) -> None:
+    assert _model(as_state=as_state).state_names(regime_name="alive") == ("wealth",)
 
 
-def test_the_post_choice_value_has_no_shock_axis_in_any_period() -> None:
-    shapes = {period: V.shape for period, V in _alive_values(_model()).items()}
+@pytest.mark.parametrize("as_state", [False, True], ids=["group", "iid-state"])
+def test_a_shock_read_only_as_its_draw_leaves_no_axis_in_any_period(
+    *, as_state: bool
+) -> None:
+    values = _alive_values(_model(as_state=as_state))
+    shapes = {period: V.shape for period, V in values.items()}
 
     assert shapes == dict.fromkeys((0, 1, 2), (len(WEALTH_GRID.to_jax()),))
 
 
+@pytest.mark.parametrize("as_state", [False, True], ids=["group", "iid-state"])
 @pytest.mark.parametrize("period", [0, 1, 2])
-def test_the_post_choice_value_matches_the_literal_backward_induction(
-    period: int,
+def test_the_integrated_value_matches_the_literal_backward_induction(
+    *, as_state: bool, period: int
 ) -> None:
-    V = _alive_values(_model())[period]
+    V = _alive_values(_model(as_state=as_state))[period]
 
     np.testing.assert_allclose(V, _reference_alive_values()[period], rtol=0, atol=_ATOL)
 
 
-@pytest.mark.parametrize("period", [0, 1, 2])
-def test_the_post_choice_value_equals_every_slice_of_the_state_value(
-    period: int,
-) -> None:
-    model = _model(as_state=True)
-    order = model.state_names(regime_name="alive")
-    carried = np.transpose(
-        _alive_values(model)[period], [order.index("wealth"), order.index("xi")]
-    )
-    post_choice = _alive_values(_model())[period]
-
-    np.testing.assert_allclose(
-        carried,
-        np.broadcast_to(post_choice[:, None], carried.shape),
-        rtol=0,
-        atol=_ATOL,
-    )
+def test_the_model_repr_lists_the_integrated_shock() -> None:
+    assert "alive: integrated=[cost_shock]" in repr(_model())
+    assert "alive: integrated=[xi]" in repr(_model(as_state=True))
 
 
-def test_the_post_choice_policy_equals_the_state_policy() -> None:
+def test_the_integrated_policy_does_not_depend_on_the_declaration() -> None:
     """Simulated consumption agrees subject by subject in the first period.
 
     Both models start every subject at the same wealth; consumption at age 0 is
@@ -264,8 +271,6 @@ def test_the_post_choice_policy_equals_the_state_policy() -> None:
             "age": jnp.zeros(n),
             "regime_id": jnp.full(n, _RegimeId.alive),
         }
-        if as_state:
-            initial_conditions["xi"] = jnp.zeros(n)
         df = (
             _model(as_state=as_state)
             .simulate(
@@ -282,7 +287,7 @@ def test_the_post_choice_policy_equals_the_state_policy() -> None:
     np.testing.assert_array_equal(consumption[False], consumption[True])
 
 
-def test_simulated_wealth_lands_on_a_drawn_post_choice_cost() -> None:
+def test_simulated_wealth_lands_on_a_drawn_cost() -> None:
     """Next wealth is the law evaluated at one of the group's nodes, per subject."""
     wealth = jnp.asarray([4.0, 6.0, 8.0, 10.0] * 8)
     n = wealth.shape[0]
@@ -311,60 +316,89 @@ def test_simulated_wealth_lands_on_a_drawn_post_choice_cost() -> None:
     assert len(np.unique(np.round(cost.to_numpy(), 4))) > 1
 
 
+def test_an_iid_state_read_as_its_value_and_its_draw_keeps_its_axis() -> None:
+    model = _model(as_state=True, utility=_utility_reading_xi)
+    order = model.state_names(regime_name="alive")
+    V = _alive_values(model)[0]
+
+    assert set(order) == {"wealth", "xi"}
+    assert V.shape[order.index("xi")] == N_XI
+    assert "alive: axis=[xi]" in repr(model)
+
+
+def test_a_group_read_as_its_value_and_its_draw_is_refused() -> None:
+    with pytest.raises(
+        ModelInitializationError,
+        match=r"(?s)'xi'.*'next_xi'.*cost_shock.*NormalIIDProcess",
+    ):
+        _model(utility=_utility_reading_xi)
+
+
+@pytest.mark.parametrize("as_state", [False, True], ids=["group", "iid-state"])
 @pytest.mark.parametrize(
-    ("utility", "function"),
-    [(_utility_reading_xi, "utility"), (_utility_reading_cost, "cost")],
-    ids=["current-spelling", "through-a-helper"],
+    "utility",
+    [_utility_reading_next_xi, _utility_reading_cost],
+    ids=["direct", "through-a-helper"],
 )
-def test_a_utility_reading_the_post_choice_shock_is_refused(
-    *, utility: UserFunction, function: FunctionName
+def test_a_utility_reading_the_draw_is_refused(
+    *, as_state: bool, utility: UserFunction
 ) -> None:
     with pytest.raises(
-        ModelInitializationError,
-        match=rf"(?s)'{function}'.*'xi'.*cost_shock.*transition",
+        InvalidNameError, match=r"(?s)'utility' reads 'next_xi'.*'next_' prefix"
     ):
-        _model(utility=utility)
+        _model(as_state=as_state, utility=utility)
 
 
-def test_a_constraint_reading_the_post_choice_shock_is_refused() -> None:
+@pytest.mark.parametrize("as_state", [False, True], ids=["group", "iid-state"])
+def test_a_constraint_reading_the_draw_is_refused(*, as_state: bool) -> None:
     with pytest.raises(
-        ModelInitializationError,
-        match=r"(?s)'affordable'.*'next_xi'.*cost_shock.*transition",
+        InvalidNameError, match=r"(?s)'affordable' reads 'next_xi'.*'next_' prefix"
     ):
-        _model(constraints={"affordable": _cost_is_affordable})
+        _model(as_state=as_state, constraints={"affordable": _cost_is_affordable})
 
 
-def test_a_folded_state_read_only_as_its_draw_points_to_post_choice_shocks() -> None:
-    with pytest.raises(RegimeInitializationError, match="post_choice_shocks"):
+def test_fold_is_refused_with_the_inference_rule() -> None:
+    with pytest.raises(TypeError, match=r"(?s)fold.*removed.*next_"):
+        NormalIIDProcess(
+            n_points=N_XI,
+            gauss_hermite=True,
+            mu=0.0,
+            sigma=1.0,
+            fold=True,  # ty: ignore[unknown-argument]
+        )
+
+
+def test_post_choice_shocks_is_refused_with_the_inference_rule() -> None:
+    with pytest.raises(TypeError, match=r"(?s)post_choice_shocks.*removed.*shocks="):
         Regime(
-            actions={
-                "consumption": IrregSpacedGrid(points=np.array(CONSUMPTION_NODES)),
-            },
-            states={
-                "wealth": WEALTH_GRID,
-                "xi": NormalIIDProcess(
-                    n_points=N_XI, gauss_hermite=True, mu=0.0, sigma=1.0, fold=True
-                ),
-            },
-            state_transitions={"wealth": _next_wealth},
-            functions={"utility": _utility, "cost": _cost},
+            states={"wealth": WEALTH_GRID},
+            functions={"utility": _bequest},
+            post_choice_shocks=("cost_shock",),  # ty: ignore[unknown-argument]
         )
 
 
-def test_post_choice_shocks_on_an_egm_regime_are_refused() -> None:
+def test_a_draw_only_group_on_an_egm_regime_is_integrated_out() -> None:
     ages = AgeGrid(start=40, inclusive_stop=60, step="10Y")
-    with pytest.raises(ModelInitializationError, match="GridSearch"):
-        Model(
-            regimes={
-                "working_life": iskhakov.dcegm_working_life,
-                "retirement": iskhakov.dcegm_retirement.replace(
-                    post_choice_shocks=("cost_shock",)
-                ),
-                "dead": iskhakov.dead,
-            },
-            edges=iskhakov.get_edges(ages=ages),
-            ages=ages,
-            regime_id_class=iskhakov.RegimeId,
-            initial_nodes={ages.exact_values[0]: "working_life"},
-            shocks={"cost_shock": _cost_shock()},
-        )
+    retirement = iskhakov.dcegm_retirement
+    model = Model(
+        regimes={
+            "working_life": iskhakov.dcegm_working_life,
+            "retirement": retirement.replace(
+                functions={**retirement.functions, "cost": _cost},
+                state_transitions={
+                    **retirement.state_transitions,
+                    "wealth": _next_wealth_from_savings_net_of_cost,
+                },
+                shocks=("cost_shock",),
+            ),
+            "dead": iskhakov.dead,
+        },
+        edges=iskhakov.get_edges(ages=ages),
+        ages=ages,
+        regime_id_class=iskhakov.RegimeId,
+        initial_nodes={ages.exact_values[0]: "working_life"},
+        shocks={"cost_shock": _cost_shock()},
+    )
+
+    assert model.state_names(regime_name="retirement") == ("wealth",)
+    assert "retirement: integrated=[xi]" in repr(model)

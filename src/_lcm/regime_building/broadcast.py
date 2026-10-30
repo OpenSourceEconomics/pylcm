@@ -39,7 +39,7 @@ from typing import Literal, TypedDict, cast, no_type_check
 from dags import get_ancestors
 
 from _lcm.exits import exit_functions
-from _lcm.processes import _ContinuousStochasticProcess
+from _lcm.processes import _ContinuousStochasticProcess, _IIDProcess
 from _lcm.reachability import PhaseName, candidate_targets_from_transition
 from _lcm.regime_building.age_specialization import resolve_node
 from _lcm.regime_building.conditional_actions import (
@@ -506,6 +506,107 @@ def _reachable_targets(
             )
             for regime_name, user_regime in user_regimes.items()
         }
+    )
+
+
+def split_transition_only_shocks(
+    *,
+    user_regimes: Mapping[RegimeName, UserRegime],
+    discrete_names: frozenset[str],
+    laws: RegimeLaws,
+    koopmans_aggregator: UserFunction,
+    ages: TimeAxis | None = None,
+    active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
+) -> tuple[
+    MappingProxyType[RegimeName, UserRegime],
+    MappingProxyType[RegimeName, MappingProxyType[StateName, _IIDProcess]],
+]:
+    """Take IID process states that only a transition reads out of the state space.
+
+    An IID process without a conditioning state is *transition-only* in a regime
+    when nothing the regime computes reads the shock's current value: not its
+    utility, constraints, regime transition or any law of motion. Only the draw
+    `next_<shock>` is read, by the laws toward the next period. The regime's
+    value then does not depend on the shock, so the shock is no state of the
+    regime: the value stores no axis for it and the period is not evaluated per
+    node. The draw is still taken on every edge whose laws read it, from the
+    process's own nodes and weights, as a transition-local lottery the source's
+    continuation sums over.
+
+    A regime that reads the current value keeps the shock as an ordinary state,
+    so a source law reading the draw toward it hands over that state's value.
+
+    Args:
+        user_regimes: Mapping of regime names to pruned `Regime` instances.
+        discrete_names: Pre-adaptation discrete names, including model-level
+            derived categoricals. A process can feed a categorical code read.
+        laws: Each regime's law, by regime name.
+        koopmans_aggregator: The model-level Bellman aggregator.
+        ages: The model's time axis, used to resolve age-specialized functions.
+        active_periods_by_regime: The per-regime coverage.
+
+    Returns:
+        Tuple of the regimes without their transition-only shocks and, per
+        regime that has any, its transition-only shocks by state name.
+
+    """
+    specs = {
+        name: normalize_regime_phases(regime, law=laws[name])
+        for name, regime in user_regimes.items()
+    }
+    targets_by_source = _reachable_targets(user_regimes=user_regimes, laws=laws)
+    every_state_kept = {
+        name: frozenset(regime.states) for name, regime in user_regimes.items()
+    }
+    transition_only: dict[RegimeName, dict[StateName, _IIDProcess]] = {}
+    for name, regime in user_regimes.items():
+        candidates = {
+            state: grid
+            for state, grid in regime.states.items()
+            if isinstance(grid, _IIDProcess) and grid.state_conditioned is None
+        }
+        if not candidates:
+            continue
+        within_period: set[str] = set()
+        for phase_name in ("solution", "simulation"):
+            within_period |= _needed_names(
+                phase_slice=getattr(specs[name], phase_name),
+                regime_name=name,
+                user_regime=regime,
+                laws=laws,
+                phase_name=phase_name,
+                koopmans_aggregator=koopmans_aggregator,
+                candidate_targets=targets_by_source[name],
+                kept=every_state_kept,
+                discrete_names=discrete_names,
+                ages=ages,
+                active_periods=(
+                    None
+                    if active_periods_by_regime is None
+                    else active_periods_by_regime.get(name, ())
+                ),
+            )
+        if unread := {
+            state: grid
+            for state, grid in candidates.items()
+            if state not in within_period
+        }:
+            transition_only[name] = unread
+
+    regimes = {
+        name: regime.replace(
+            states={
+                state: grid
+                for state, grid in regime.states.items()
+                if state not in transition_only.get(name, {})
+            }
+        )
+        if name in transition_only
+        else regime
+        for name, regime in user_regimes.items()
+    }
+    return MappingProxyType(regimes), MappingProxyType(
+        {name: MappingProxyType(shocks) for name, shocks in transition_only.items()}
     )
 
 

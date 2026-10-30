@@ -48,8 +48,7 @@ class ExtremeValueTasteShocks:
     At least one discrete action is required. The implemented solver routes are
     `GridSearch` and `DCEGM`. The declaration is rejected for `NEGM`, `NBEGM`,
     and `NNBEGM`; for collective regimes; on a source regime with a
-    `Gate`; together with an IID state declared
-    `fold=True`; and together with a nonlinear certainty equivalent. These
+    `Gate`; and together with a nonlinear certainty equivalent. These
     combinations are rejected during `Regime` declaration or `Model`
     construction, before solve, rather than silently dropping the shocks.
 

@@ -1,9 +1,7 @@
 """Rank contract for a value function handed back to `simulate`.
 
 A regime's stored value function carries one axis per solve state it keeps as a
-grid axis, plus one trailing stakeholder axis when the regime is collective. A
-folded state is integrated out by quadrature when the value is stored and
-contributes no axis at all.
+grid axis, plus one trailing stakeholder axis when the regime is collective.
 
 Solving and then simulating with the returned solution is the documented
 workflow, so the rank a solve produces is by definition the rank `simulate`
@@ -23,12 +21,12 @@ from numpy.testing import assert_array_almost_equal as aaae
 from lcm.exceptions import InvalidSimulationInputError
 from tests.collective_fixtures import (
     DISCOUNT_FACTOR,
-    FOLD_TERMINAL_PAYOFF,
-    folded_shock_nodes,
+    SHOCKED_TERMINAL_PAYOFF,
     make_couple_initial_conditions,
-    make_folding_singleton_initial_conditions,
-    make_folding_singleton_model,
+    make_shocked_singleton_initial_conditions,
+    make_shocked_singleton_model,
     make_two_stakeholder_model,
+    wage_shock_nodes,
 )
 from tests.conftest import DECIMAL_PRECISION
 
@@ -71,27 +69,26 @@ def test_supplied_collective_V_passes_shape_validation_at_debug():
     )
 
 
-def test_supplied_folded_V_passes_shape_validation_at_debug():
-    """A folded state's regime supplies a value function the rank check accepts.
+def test_supplied_shock_V_passes_shape_validation_at_debug():
+    """An IID shock state's regime supplies a value function the rank check accepts.
 
-    The fold takes the quadrature when the value is stored, so the stored array
-    has one axis fewer than the regime has states — here none at all. Each
-    simulated subject still realizes its own node: working pays `10 + shock`
-    and the terminal regime pays a constant on top.
+    The stored array carries the shock's axis, and each simulated subject reads
+    the value at its own node: working pays `10 + shock` and the terminal regime
+    pays a constant on top.
     """
-    model, params = make_folding_singleton_model()
+    model, params = make_shocked_singleton_model()
     solution = model.solve(params=params, log_level="off")
 
     result = model.simulate(
         params=params,
-        initial_conditions=make_folding_singleton_initial_conditions(n_subjects=2),
+        initial_conditions=make_shocked_singleton_initial_conditions(n_subjects=2),
         solution=solution,
         log_level="debug",
         seed=0,
     )
 
-    nodes = folded_shock_nodes()
-    entry_values = 10.0 + nodes[:2] + DISCOUNT_FACTOR * FOLD_TERMINAL_PAYOFF
+    nodes = wage_shock_nodes()
+    entry_values = 10.0 + nodes[:2] + DISCOUNT_FACTOR * SHOCKED_TERMINAL_PAYOFF
     values = (
         result.to_dataframe()
         .set_index(["subject_id", "period"])
@@ -102,9 +99,9 @@ def test_supplied_folded_V_passes_shape_validation_at_debug():
         values,
         [
             entry_values[0],  # subject 0, period 0: seeded at the lowest node
-            FOLD_TERMINAL_PAYOFF,  # subject 0, period 1
+            SHOCKED_TERMINAL_PAYOFF,  # subject 0, period 1
             entry_values[1],  # subject 1, period 0: seeded at the second node
-            FOLD_TERMINAL_PAYOFF,  # subject 1, period 1
+            SHOCKED_TERMINAL_PAYOFF,  # subject 1, period 1
         ],
         decimal=DECIMAL_PRECISION,
     )

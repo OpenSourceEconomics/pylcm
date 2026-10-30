@@ -231,8 +231,7 @@ A general regime declares:
 | `derived_categoricals`  | Discrete grids for categorical DAG outputs                                    |
 | `solver`                | `lcm.solvers.GridSearch()` by default                                         |
 | `taste_shocks`          | Optional EV1 taste-shock configuration                                        |
-| `shocks`                | Model-level current-IID shock groups the regime reads before its choice       |
-| `post_choice_shocks`    | Model-level shock groups drawn after the choice, read only by transitions     |
+| `shocks`                | Model-level IID shock groups; read as `x` or, from transitions, as `next_x`   |
 | `koopmans_aggregator`   | Optional regime-level continuation aggregator, `Phased` or `Decoupled`        |
 | `certainty_equivalent`  | Optional regime-level lottery reduction                                       |
 | `exits`                 | Named current-period moves with mapped policy queries                         |
@@ -407,10 +406,9 @@ probabilities; see [Solvers and capabilities](solvers.md#api-dcegm).
 
 This feature requires at least one discrete action and is implemented by `GridSearch`
 and `DCEGM`. It is rejected for `NEGM`, `NBEGM`, and `NNBEGM`; on a collective regime;
-on the source regime of a gated transition; together with a folded IID state
-(`fold=True`); and together with a nonlinear certainty equivalent. These are semantic
-boundaries, not ignored options: the declaration is rejected during `Regime` declaration
-or `Model` construction, before solve.
+on the source regime of a gated transition; and together with a nonlinear certainty
+equivalent. These are semantic boundaries, not ignored options: the declaration is
+rejected during `Regime` declaration or `Model` construction, before solve.
 
 (api-euler-gamma)=
 
