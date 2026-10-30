@@ -2749,11 +2749,12 @@ _INCOMPLETE_DATASET: Final = "incomplete"
 
 
 class _ArchiveFile:
-    """Where one streamed archive's file is, and its handle while it is written.
+    """Where one archive's file is, and its handle while it is written.
 
     A complete archive is deleted once nothing reads it any more: every value
     entry holds this object, so the file goes with the last of them. An
-    abandoned archive is kept.
+    abandoned archive is kept. One that was never finished, because the call
+    writing it failed without abandoning it, is closed and kept as incomplete.
     """
 
     def __init__(self, *, path: Path, handle: h5py.File) -> None:
@@ -2761,14 +2762,16 @@ class _ArchiveFile:
         self.handle: h5py.File | None = handle
         self.lock = threading.Lock()
         self.completed_for: weakref.ref[_SolutionResultBoundary] | None = None
-        self._deletable: list[Path | None] = [None]
-        weakref.finalize(self, _delete_archive, self._deletable)
+        self._fate = _ArchiveFate(path=path, handle=handle)
+        weakref.finalize(self, _settle_archive, self._fate)
 
     def publish(self, *, path: Path, deletable: bool) -> None:
         """Record the archive's final name, and whether it goes with its readers."""
         self.path = path
         self.handle = None
-        self._deletable[0] = path if deletable else None
+        self._fate.path = path
+        self._fate.handle = None
+        self._fate.delete = deletable
 
     def read(self, *, dataset: str) -> np.ndarray:
         """Read one dataset, through the writing handle while the file is open."""
@@ -2777,6 +2780,20 @@ class _ArchiveFile:
                 return np.asarray(self.handle[dataset][()])
             with h5py.File(self.path, "r") as archive:
                 return np.asarray(archive[dataset][()])
+
+
+@dataclass(kw_only=True)
+class _ArchiveFate:
+    """What becomes of an archive's file once nothing reads it any more."""
+
+    path: Path
+    """Where the file is now."""
+
+    handle: h5py.File | None
+    """The writing handle while the file was never published."""
+
+    delete: bool = False
+    """Whether the published file goes with its last reader."""
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -2856,8 +2873,8 @@ class DiskValueEntry(_LazyEntry):
         return self.materialize()
 
 
-class StreamedSolutionArchive:
-    """One solve's archive, written value by value while the solve runs.
+class _SolutionArchiveFile:
+    """A solve's archive file while values are written to it, and how it ends.
 
     The file is `<name>.h5.partial` in `directory` while it is written. Completing
     it adds the result's artifacts and the manifest, in the format
@@ -2872,16 +2889,79 @@ class StreamedSolutionArchive:
         self._directory = directory
         self._name = name
         self._budget_bytes = budget_bytes
-        self._written_periods: set[int] = set()
         self._description: dict[str, JSONValue] = {}
         path = directory / f"{name}{_PARTIAL_SUFFIX}"
         handle = h5py.File(path, "x")
         self._file = _ArchiveFile(path=path, handle=handle)
         self._handle = handle
         self._payloads = handle.create_group(_PAYLOAD_GROUP)
+        self._counter = 0
+
+    def describe(self, **fields: JSONValue) -> None:
+        """Remember facts about the solve that an abandoned archive records."""
+        self._description.update(fields)
+
+    def abandon(self, *, record: Mapping[str, JSONValue]) -> Path:
+        """Record how far the solve got in place of a manifest, and close the file.
+
+        Returns:
+            The path of the incomplete archive.
+
+        """
+        encoded = json.dumps(
+            self._description | dict(record), sort_keys=True, allow_nan=False
+        ).encode()
+        with self._file.lock:
+            self._handle.create_dataset(
+                _INCOMPLETE_DATASET, data=np.frombuffer(encoded, dtype=np.uint8)
+            )
+            return self._close(suffix=_INCOMPLETE_SUFFIX, deletable=False)
+
+    def _complete(
+        self,
+        *,
+        solution: _SolutionResultBoundary,
+        value_entries: list[JSONValue],
+        written: Mapping[tuple[int, RegimeName], jax.ShapeDtypeStruct],
+    ) -> Path:
+        """Add the result's artifacts and manifest beside written values; publish."""
+        snapshot = _prepare_solution_for_save(
+            solution=solution, written_values=MappingProxyType(dict(written))
+        )
+        with self._file.lock:
+            _write_archive_contents(
+                archive=self._handle,
+                payloads=self._payloads,
+                snapshot=snapshot,
+                value_entries=value_entries,
+                counter=self._counter,
+            )
+            path = self._close(suffix=_COMPLETE_SUFFIX, deletable=True)
+            self._file.completed_for = weakref.ref(solution)
+            return path
+
+    def _close(self, *, suffix: str, deletable: bool) -> Path:
+        """Flush and close the file, then rename it under `suffix`."""
+        self._handle.flush()
+        self._handle.close()
+        with self._file.path.open("r+b") as file_handle:
+            os.fsync(file_handle.fileno())
+        path = self._directory / f"{self._name}{suffix}"
+        self._file.path.replace(path)
+        self._file.publish(path=path, deletable=deletable)
+        return path
+
+
+class StreamedSolutionArchive(_SolutionArchiveFile):
+    """One period-major solve's archive, written value by value while it runs."""
+
+    def __init__(
+        self, *, directory: Path, name: str, budget_bytes: int | None = None
+    ) -> None:
+        super().__init__(directory=directory, name=name, budget_bytes=budget_bytes)
+        self._written_periods: set[int] = set()
         self._value_entries: list[JSONValue] = []
         self._written: dict[tuple[int, RegimeName], jax.ShapeDtypeStruct] = {}
-        self._counter = 0
 
     def write_value(
         self,
@@ -2918,10 +2998,6 @@ class StreamedSolutionArchive:
             budget_bytes=self._budget_bytes,
         )
 
-    def describe(self, **fields: JSONValue) -> None:
-        """Remember facts about the solve that an abandoned archive records."""
-        self._description.update(fields)
-
     def mark_period_written(self, *, period: int) -> None:
         """Record that every value of `period` is in the file."""
         with self._file.lock:
@@ -2940,47 +3016,144 @@ class StreamedSolutionArchive:
             The path of the complete archive.
 
         """
-        snapshot = _prepare_solution_for_save(
-            solution=solution, written_values=MappingProxyType(dict(self._written))
+        return self._complete(
+            solution=solution, value_entries=self._value_entries, written=self._written
         )
-        with self._file.lock:
-            _write_archive_contents(
-                archive=self._handle,
-                payloads=self._payloads,
-                snapshot=snapshot,
-                value_entries=self._value_entries,
-                counter=self._counter,
-            )
-            path = self._close(suffix=_COMPLETE_SUFFIX, deletable=True)
-            self._file.completed_for = weakref.ref(solution)
-            return path
 
-    def abandon(self, *, record: Mapping[str, JSONValue]) -> Path:
-        """Record how far the solve got in place of a manifest, and close the file.
+
+class BlockedSolutionArchive(_SolutionArchiveFile):
+    """One block-major solve's archive, filled one code's blocks at a time.
+
+    Each value has one dataset of its full shape; a code's block goes into the
+    code's slice along the blocked state's axis. A value's checksum covers the
+    complete value, so it is computed at completion, reading each value back once.
+    """
+
+    def __init__(
+        self, *, directory: Path, name: str, budget_bytes: int | None = None
+    ) -> None:
+        super().__init__(directory=directory, name=name, budget_bytes=budget_bytes)
+        self._codes: tuple[int, ...] = ()
+        self._datasets: dict[tuple[int, RegimeName], tuple[str, int]] = {}
+        self._written_codes: list[int] = []
+
+    def prepare(self, *, codes: tuple[int, ...]) -> None:
+        """Record the codes in the order their blocks sit along the blocked axis."""
+        self._codes = codes
+
+    def write_block(
+        self,
+        *,
+        code: int,
+        coordinate: tuple[int, RegimeName],
+        block: np.ndarray,
+        axis: int,
+        full_shape: tuple[int, ...],
+    ) -> None:
+        """Write one code's block of one value into the value's dataset."""
+        with self._file.lock:
+            if coordinate not in self._datasets:
+                address = f"{self._counter:08d}"
+                self._counter += 1
+                self._payloads.create_group(address).create_dataset(
+                    "leaf_0000", shape=full_shape, dtype=block.dtype
+                )
+                self._datasets[coordinate] = (address, axis)
+            address, _ = self._datasets[coordinate]
+            dataset = self._payloads[address]["leaf_0000"]
+            dataset[self._slice(code=code, axis=axis, ndim=len(full_shape))] = block
+
+    def read_block(
+        self, *, code: int, coordinate: tuple[int, RegimeName]
+    ) -> np.ndarray:
+        """Read one code's block of one value back from the file."""
+        address, axis = self._datasets[coordinate]
+        dataset_path = f"{_PAYLOAD_GROUP}/{address}/leaf_0000"
+        with self._file.lock:
+            if self._file.handle is not None:
+                dataset = self._file.handle[dataset_path]
+                return np.asarray(
+                    dataset[self._slice(code=code, axis=axis, ndim=dataset.ndim)]
+                )
+            with h5py.File(self._file.path, "r") as archive:
+                dataset = archive[dataset_path]
+                return np.asarray(
+                    dataset[self._slice(code=code, axis=axis, ndim=dataset.ndim)]
+                )
+
+    def mark_code_written(self, *, code: int) -> None:
+        """Record that every block of `code` is in the file."""
+        with self._file.lock:
+            self._written_codes.append(code)
+
+    @property
+    def last_completed_period(self) -> int | None:
+        """Block-major completes codes, not periods; see `completed_codes`."""
+        return None
+
+    @property
+    def completed_codes(self) -> tuple[int, ...]:
+        """Codes every block of which is in the file, in the order they were written."""
+        with self._file.lock:
+            return tuple(self._written_codes)
+
+    @property
+    def archive_file(self) -> _ArchiveFile:
+        """The file every block of this archive is read from."""
+        return self._file
+
+    def complete(self, *, solution: _SolutionResultBoundary) -> Path:
+        """Checksum every assembled value, add artifacts and manifest; publish.
 
         Returns:
-            The path of the incomplete archive.
+            The path of the complete archive.
 
         """
-        encoded = json.dumps(
-            self._description | dict(record), sort_keys=True, allow_nan=False
-        ).encode()
+        value_entries: list[JSONValue] = []
+        written: dict[tuple[int, RegimeName], jax.ShapeDtypeStruct] = {}
         with self._file.lock:
-            self._handle.create_dataset(
-                _INCOMPLETE_DATASET, data=np.frombuffer(encoded, dtype=np.uint8)
-            )
-            return self._close(suffix=_INCOMPLETE_SUFFIX, deletable=False)
+            handle = cast("h5py.File", self._file.handle)
+            for (period, regime), (address, _) in self._datasets.items():
+                array = np.asarray(handle[f"{_PAYLOAD_GROUP}/{address}/leaf_0000"][()])
+                identity: dict[str, JSONValue] = {
+                    "kind": "value",
+                    "period": period,
+                    "regime": regime,
+                }
+                leaf_identity = identity | {"address": address, "leaf": 0, "path": []}
+                value_entries.append(
+                    identity
+                    | {
+                        "address": address,
+                        "payload_kind": "array",
+                        "leaves": [
+                            {
+                                "dataset": f"{_PAYLOAD_GROUP}/{address}/leaf_0000",
+                                "path": [],
+                                "shape": list(array.shape),
+                                "dtype": array.dtype.str,
+                                "identity": leaf_identity,
+                                "sha256": _array_checksum(
+                                    identity=leaf_identity, array=array
+                                ),
+                            }
+                        ],
+                    }
+                )
+                written[(period, regime)] = jax.ShapeDtypeStruct(
+                    array.shape, array.dtype
+                )
+        return self._complete(
+            solution=solution, value_entries=value_entries, written=written
+        )
 
-    def _close(self, *, suffix: str, deletable: bool) -> Path:
-        """Flush and close the file, then rename it under `suffix`."""
-        self._handle.flush()
-        self._handle.close()
-        with self._file.path.open("r+b") as file_handle:
-            os.fsync(file_handle.fileno())
-        path = self._directory / f"{self._name}{suffix}"
-        self._file.path.replace(path)
-        self._file.publish(path=path, deletable=deletable)
-        return path
+    def _slice(self, *, code: int, axis: int, ndim: int) -> tuple[slice, ...]:
+        """Select one code's position along the blocked axis."""
+        position = self._codes.index(code)
+        return tuple(
+            slice(position, position + 1) if dim == axis else slice(None)
+            for dim in range(ndim)
+        )
 
 
 class PeriodValueWriter:
@@ -3052,34 +3225,51 @@ class PeriodValueWriter:
         return entries
 
 
-def _delete_archive(location: list[Path | None]) -> None:
-    """Delete a complete streamed archive once nothing reads it any more."""
-    if location[0] is not None:
-        with contextlib.suppress(OSError):
-            location[0].unlink()
+def _settle_archive(fate: _ArchiveFate) -> None:
+    """Delete a complete archive, or keep a never-finished one as incomplete."""
+    with contextlib.suppress(OSError, ValueError):
+        if fate.handle is not None:
+            fate.handle.close()
+            fate.path.replace(
+                fate.path.with_name(
+                    fate.path.name.removesuffix(_PARTIAL_SUFFIX) + _INCOMPLETE_SUFFIX
+                )
+            )
+        elif fate.delete:
+            fate.path.unlink()
+
+
+def _archive_file_of(*, entry: _LazyEntry | FloatND) -> _ArchiveFile | None:
+    """Return the archive file a value entry reads from, if it reads from one.
+
+    A block-major entry reads through its retention, which knows its archive.
+    """
+    if isinstance(entry, DiskValueEntry):
+        return entry.file
+    owner = getattr(entry, "owner", None)
+    archive_file = getattr(owner, "archive_file", None)
+    return archive_file if isinstance(archive_file, _ArchiveFile) else None
 
 
 def _streamed_archive_of(*, solution: _SolutionResultBoundary) -> Path | None:
     """Return the archive a solve wrote for exactly this result, if there is one.
 
-    Every value of the result must read from one complete streamed archive that
-    was completed from this very result object, so the file holds what saving
-    the result would write.
+    Every value of the result must read from one complete archive that was
+    completed from this very result object, so the file holds what saving the
+    result would write.
     """
     values = solution.values if type(solution) is SolutionResult else None
     if type(values) is not ValueStore:
         return None
-    files = {
-        id(entry.file): entry.file
+    files = [
+        _archive_file_of(entry=entry)
         for entry in values._entries.values()  # noqa: SLF001
-        if isinstance(entry, DiskValueEntry)
-    }
-    if len(files) != 1 or len(values._entries) != sum(  # noqa: SLF001
-        isinstance(entry, DiskValueEntry)
-        for entry in values._entries.values()  # noqa: SLF001
-    ):
+    ]
+    if not files or any(file is None for file in files):
         return None
-    (file,) = files.values()
+    if len({id(file) for file in files}) != 1:
+        return None
+    file = cast("_ArchiveFile", files[0])
     if (
         file.handle is not None
         or file.completed_for is None

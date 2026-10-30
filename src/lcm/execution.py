@@ -361,8 +361,8 @@ class ExecutionConfig:
     values on the device through its solve and then copies them to host memory,
     as the schedule always has. `"host"` solves each code with host storage, so
     the device holds the window of one code, and keeps the pinned copies. A
-    directory does not yet combine with `BLOCK_MAJOR`, and component jobs take
-    `"device"` only.
+    directory does the same and writes each code's blocks into one archive per
+    solve, holding no block in memory. Component jobs take `"device"` only.
     """
 
     action_partitions: Mapping[RegimeName, int] = field(
@@ -480,9 +480,7 @@ class ExecutionConfig:
             raise ValueError(
                 "ExecutionConfig.simulation_sharding must be legacy or subjects."
             )
-        _fail_if_value_storage_invalid(
-            value_storage=self.value_storage, schedule=self.invariant_block_schedule
-        )
+        _fail_if_value_storage_invalid(value_storage=self.value_storage)
         widths = _normalized_axis_widths(axis_widths=self.axis_widths)
         object.__setattr__(self, "axis_widths", MappingProxyType(widths))
         object.__setattr__(
@@ -515,21 +513,13 @@ class ExecutionConfig:
 
 
 def _fail_if_value_storage_invalid(
-    *, value_storage: Literal["device", "host"] | Path, schedule: InvariantBlockSchedule
+    *, value_storage: Literal["device", "host"] | Path
 ) -> None:
-    """Require an existing directory; refuse one with the block-major schedule."""
+    """Require a value storage directory to exist."""
     if isinstance(value_storage, Path) and not value_storage.is_dir():
         raise ValueError(
             "ExecutionConfig.value_storage must name an existing directory, got "
             f"{value_storage!r}."
-        )
-    if (
-        isinstance(value_storage, Path)
-        and schedule is InvariantBlockSchedule.BLOCK_MAJOR
-    ):
-        raise ValueError(
-            f"ExecutionConfig.value_storage={value_storage!r} does not yet combine "
-            "with invariant_block_schedule=BLOCK_MAJOR; use 'host' or 'device'."
         )
 
 

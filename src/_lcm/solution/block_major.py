@@ -33,6 +33,7 @@ simulation holds the rows of its codes' subjects alone.
 import dataclasses
 import json
 import logging
+import math
 from collections.abc import Callable, Generator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -47,6 +48,7 @@ from _lcm.engine import Regime
 from _lcm.execution.core_program import InvariantBinding, core_program_graph
 from _lcm.execution.footprint import layout_footprint
 from _lcm.execution.invariant_blocks import block_state_action_space
+from _lcm.persistence.solution import BlockedSolutionArchive, _ArchiveFile
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.solution import backward_induction
 from _lcm.solution.backward_induction import ExecutableCache
@@ -84,9 +86,45 @@ else:
     # runtime annotation check must not walk them while they are being retired.
     type _ComponentBlocks = object
 
-# One retained block of one code: a host NumPy array, or the pinned host array a
-# solve with host storage made.
-type _HostBlock = np.ndarray | jax.Array
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _ArchivedBlock:
+    """One code's block of one value, held in the solve's archive, not in memory."""
+
+    archive: BlockedSolutionArchive
+    """The archive the block was written to."""
+
+    code: int
+    """The code the block belongs to."""
+
+    coordinate: tuple[int, RegimeName]
+    """The value the block is part of."""
+
+    shape: tuple[int, ...]
+    """Shape of the block."""
+
+    dtype: np.dtype
+    """Dtype of the block."""
+
+    @property
+    def nbytes(self) -> int:
+        """Bytes the block takes when read."""
+        return math.prod(self.shape) * self.dtype.itemsize
+
+    def read(self) -> np.ndarray:
+        """Read the block back from the archive."""
+        return self.archive.read_block(code=self.code, coordinate=self.coordinate)
+
+
+# One retained block of one code: a host NumPy array, the pinned host array a
+# solve with host storage made, or a block written to the solve's archive.
+type _HostBlock = np.ndarray | jax.Array | _ArchivedBlock
+
+
+def _block_array(block: _HostBlock) -> np.ndarray | jax.Array:
+    """Return a retained block's data, reading an archived block from its file."""
+    return block.read() if isinstance(block, _ArchivedBlock) else block
+
 
 _REMEDY = (
     "Keep the default InvariantBlockSchedule.PERIOD_MAJOR, or remove the state "
@@ -371,8 +409,13 @@ class RetainedComponentValues:
         codes: tuple[int, ...],
         layouts: Mapping[_Coordinate, ValueLayout],
         budget_bytes: int | None,
+        archive: BlockedSolutionArchive | None = None,
     ) -> None:
-        """Hold an empty retention for `codes` over the solved `layouts`."""
+        """Hold an empty retention for `codes` over the solved `layouts`.
+
+        With an `archive`, each retained code's blocks are written to it and only
+        their description is held.
+        """
         self._coverage = ComponentCoverage(
             state_name=state_name, codes=codes, entries=frozenset(layouts)
         )
@@ -384,6 +427,14 @@ class RetainedComponentValues:
         self._blocks: dict[int, MappingProxyType[_Coordinate, _HostBlock]] = {}
         self._device_to_host_bytes = 0
         self._host_to_device_bytes = 0
+        self._archive = archive
+        if archive is not None:
+            archive.prepare(codes=codes)
+
+    @property
+    def archive_file(self) -> _ArchiveFile | None:
+        """The file this retention's blocks are read from; `None` when in memory."""
+        return None if self._archive is None else self._archive.archive_file
 
     @property
     def coverage(self) -> ComponentCoverage:
@@ -418,7 +469,7 @@ class RetainedComponentValues:
         coverage = self._coverage.with_code(code=code, entries=frozenset(flat))
         # Under host storage the solve already copied each period to pinned host
         # memory; those copies are the blocks. Device values are copied here.
-        host: dict[_Coordinate, _HostBlock] = {
+        copied: dict[_Coordinate, np.ndarray | jax.Array] = {
             coordinate: (
                 jax.block_until_ready(block)
                 if is_host_value(block)
@@ -426,8 +477,22 @@ class RetainedComponentValues:
             )
             for coordinate, block in flat.items()
         }
+        self._device_to_host_bytes += sum(
+            int(array.nbytes) for array in copied.values()
+        )
+        host: dict[_Coordinate, _HostBlock] = (
+            dict(copied)
+            if self._archive is None
+            else {
+                coordinate: self._write_block(
+                    archive=self._archive, code=code, coordinate=coordinate, block=block
+                )
+                for coordinate, block in copied.items()
+            }
+        )
         self._keep(code=code, coverage=coverage, host=host)
-        self._device_to_host_bytes += sum(int(array.nbytes) for array in host.values())
+        if self._archive is not None:
+            self._archive.mark_code_written(code=code)
         if not self._coordinates:
             self._coordinates = tuple(flat)
         delete_blocks(blocks=blocks)
@@ -460,11 +525,42 @@ class RetainedComponentValues:
         if not self._coordinates:
             self._coordinates = coordinates
 
-    def host_blocks(self, *, code: int) -> MappingProxyType[_Coordinate, _HostBlock]:
+    def _write_block(
+        self,
+        *,
+        archive: BlockedSolutionArchive,
+        code: int,
+        coordinate: _Coordinate,
+        block: np.ndarray | jax.Array,
+    ) -> _ArchivedBlock:
+        """Write one block into its value's slice of the archive."""
+        layout = self._layouts[coordinate]
+        array = np.asarray(block)
+        archive.write_block(
+            code=code,
+            coordinate=coordinate,
+            block=array,
+            axis=layout.axis,
+            full_shape=layout.shape,
+        )
+        return _ArchivedBlock(
+            archive=archive,
+            code=code,
+            coordinate=coordinate,
+            shape=array.shape,
+            dtype=array.dtype,
+        )
+
+    def host_blocks(
+        self, *, code: int
+    ) -> MappingProxyType[_Coordinate, np.ndarray | jax.Array]:
         """Return one retained component's host blocks in publication order."""
         blocks = self._blocks[code]
         return MappingProxyType(
-            {coordinate: blocks[coordinate] for coordinate in self._coordinates}
+            {
+                coordinate: _block_array(blocks[coordinate])
+                for coordinate in self._coordinates
+            }
         )
 
     def _keep(
@@ -492,7 +588,8 @@ class RetainedComponentValues:
             {
                 coordinate: (
                     array
-                    if isinstance(array, jax.Array) and is_host_value(array)
+                    if isinstance(array, _ArchivedBlock)
+                    or (isinstance(array, jax.Array) and is_host_value(array))
                     else np.asarray(array)
                 )
                 for coordinate, array in host.items()
@@ -506,7 +603,7 @@ class RetainedComponentValues:
         layout = self._layouts[(period, regime)]
         return np.concatenate(
             [
-                np.asarray(self._blocks[code][(period, regime)])
+                np.asarray(_block_array(self._blocks[code][(period, regime)]))
                 for code in self._coverage.codes
             ],
             axis=layout.axis,
@@ -549,7 +646,9 @@ class RetainedComponentValues:
         """Place one retained component back on the devices it was solved on."""
         blocks = self._blocks[code]
         placed = {
-            coordinate: jax.device_put(array, self._layouts[coordinate].sharding)
+            coordinate: jax.device_put(
+                _block_array(array), self._layouts[coordinate].sharding
+            )
             for coordinate, array in blocks.items()
         }
         self._host_to_device_bytes += sum(array.nbytes for array in blocks.values())
@@ -759,6 +858,7 @@ class ComponentSchedule:
         solve: Callable[..., BackwardInductionResult],
         logger: logging.Logger,
         codes: tuple[int, ...] | None = None,
+        archive: BlockedSolutionArchive | None = None,
     ) -> None:
         """Prepare the schedule; no component is solved yet.
 
@@ -775,6 +875,8 @@ class ComponentSchedule:
             codes: The codes to solve, or `None` for every code. A selection
                 solves its codes in grid order; its retention holds those codes
                 alone and so never publishes a result.
+            archive: The archive each code's blocks are written to under disk
+                value storage, or `None` to hold them in memory.
 
         Raises:
             ExecutionPlanningError: A selected code is not a code of the state.
@@ -822,6 +924,7 @@ class ComponentSchedule:
                 ),
             ),
             budget_bytes=budget_bytes,
+            archive=archive,
         )
 
     @property

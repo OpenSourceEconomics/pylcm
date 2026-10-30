@@ -36,7 +36,7 @@ from _lcm.execution.value_transfer import ValueArtifactAddress, ValueArtifactKin
 from _lcm.execution.workspace_planning import WorkspaceBudgetError
 from _lcm.persistence.solution import DiskValueEntry
 from _lcm.simulation import chunk_admission
-from _lcm.solution import backward_induction, host_values
+from _lcm.solution import backward_induction, block_major, host_values
 from _lcm.solution.host_values import HostValueEntry, copy_values_to_host
 from _lcm.solution.result_snapshot import own_value_store
 from _lcm.utils.logging import get_logger
@@ -114,14 +114,6 @@ def test_value_storage_refuses_a_file(tmp_path: Path) -> None:
     file.touch()
     with pytest.raises(ValueError, match=r"value_storage.*directory"):
         ExecutionConfig(value_storage=file)
-
-
-def test_disk_value_storage_refuses_the_block_major_schedule(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="value_storage"):
-        ExecutionConfig(
-            value_storage=tmp_path,
-            invariant_block_schedule=InvariantBlockSchedule.BLOCK_MAJOR,
-        )
 
 
 @_MODELS
@@ -1241,3 +1233,126 @@ def test_component_jobs_refuse_value_storage_off_the_device(tmp_path: Path) -> N
             directory=tmp_path / "jobs",
             n_jobs=2,
         )
+
+
+def _block_major_disk(directory: Path) -> Model:
+    return _life_cycle(
+        schedule=InvariantBlockSchedule.BLOCK_MAJOR, value_storage=directory
+    )
+
+
+def test_block_major_disk_storage_publishes_the_block_major_values(
+    tmp_path: Path,
+) -> None:
+    """Every code's blocks go to one archive and assemble bit for bit."""
+    device = _life_cycle_values(
+        _life_cycle(
+            schedule=InvariantBlockSchedule.BLOCK_MAJOR, value_storage="device"
+        ).solve(params=_LIFE_CYCLE_PARAMS, log_level="off")
+    )
+    solution = _block_major_disk(tmp_path).solve(
+        params=_LIFE_CYCLE_PARAMS, log_level="off"
+    )
+    disk = _life_cycle_values(solution)
+    (name,) = _archives(tmp_path)
+
+    assert name.startswith("solution-")
+    assert name.endswith(".h5")
+    assert disk.keys() == device.keys()
+    for coordinate, value in device.items():
+        np.testing.assert_array_equal(disk[coordinate], value, strict=True)
+
+
+def test_block_major_disk_storage_keeps_no_block_in_memory(tmp_path: Path) -> None:
+    solution = _block_major_disk(tmp_path).solve(
+        params=_LIFE_CYCLE_PARAMS, log_level="off"
+    )
+    engine_view = solution._engine_view
+    assert engine_view is not None
+    retained = engine_view.component_values
+    assert retained is not None
+
+    assert {
+        type(block).__name__
+        for blocks in retained._blocks.values()
+        for block in blocks.values()
+    } == {"_ArchivedBlock"}
+
+
+def test_a_block_major_disk_archive_loads_saves_and_goes_with_its_result(
+    tmp_path: Path,
+) -> None:
+    """The archive is an ordinary saved solution, copied by save and then deleted."""
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    solution = _block_major_disk(storage).solve(
+        params=_LIFE_CYCLE_PARAMS, log_level="off"
+    )
+    (archive,) = storage.iterdir()
+    values = _life_cycle_values(solution)
+
+    saved = solution.save(path=tmp_path / "kept.h5")
+
+    assert filecmp.cmp(saved, archive, shallow=False)
+    del solution
+    gc.collect()
+    assert list(storage.iterdir()) == []
+    reloaded = _life_cycle_values(load_solution(path=saved))
+    for coordinate, value in values.items():
+        np.testing.assert_array_equal(reloaded[coordinate], value, strict=True)
+
+
+@pytest.mark.parametrize("combined", [False, True], ids=["from-solution", "combined"])
+def test_block_major_disk_storage_simulates_the_block_major_panel(
+    *, tmp_path: Path, combined: bool
+) -> None:
+    panels = []
+    for value_storage in ("device", tmp_path):
+        model = _life_cycle(
+            schedule=InvariantBlockSchedule.BLOCK_MAJOR, value_storage=value_storage
+        )
+        solution = (
+            None
+            if combined
+            else model.solve(params=_LIFE_CYCLE_PARAMS, log_level="off")
+        )
+        panels.append(
+            model.simulate(
+                params=_LIFE_CYCLE_PARAMS,
+                initial_conditions=life_cycle._initial(),
+                solution=solution,
+                seed=0,
+                log_level="off",
+            ).to_dataframe()
+        )
+
+    assert panels[1].equals(panels[0])
+
+
+def test_a_failed_block_major_disk_solve_records_its_completed_codes(
+    *, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    solve_component = block_major.ComponentSchedule.solve_component
+    solved: list[int] = []
+
+    # keyword-only-exempt: primary-argument=self
+    def _fail_on_the_second_code(
+        self: block_major.ComponentSchedule, *, code: int
+    ) -> MappingProxyType[int, MappingProxyType[RegimeName, jax.Array]]:
+        if solved:
+            msg = "injected failure"
+            raise RuntimeError(msg)
+        solved.append(code)
+        return solve_component(self, code=code)
+
+    monkeypatch.setattr(
+        block_major.ComponentSchedule, "solve_component", _fail_on_the_second_code
+    )
+    with pytest.raises(RuntimeError, match="injected failure"):
+        _block_major_disk(tmp_path).solve(params=_LIFE_CYCLE_PARAMS, log_level="off")
+
+    (name,) = _archives(tmp_path)
+    assert name.endswith(".incomplete")
+    with h5py.File(tmp_path / name, "r") as file:
+        record = json.loads(bytes(file["incomplete"][()]).decode())
+    assert record["completed_codes"] == solved
