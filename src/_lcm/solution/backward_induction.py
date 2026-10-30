@@ -359,7 +359,6 @@ type _DispatchOutputs = tuple[
     Mapping[ArtifactKey, ArtifactPayload],
     Mapping[ArtifactKey, ArtifactPayload],
     SimulationPolicy | None,
-    BoolND | None,
     FeasibilityCounts | None,
     tuple[FloatND | IntND | BoolND | None, ...],
 ]
@@ -1103,7 +1102,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                             result.replay_artifacts,
                             result.auxiliary_artifacts,
                             result.simulation_policy,
-                            result.dissolution,
                             result.feasibility_counts,
                             _diagnostic_arrays(
                                 diagnostics=()

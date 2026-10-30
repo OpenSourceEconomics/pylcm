@@ -1058,11 +1058,11 @@ def test_value_transfer_copies_a_named_target_onto_a_single_device_source():
 
 
 @_skip_pytest_parallel
-def test_collective_grid_search_value_and_dissolution_have_planned_state_layout():
-    """Collective V keeps its stakeholder axis replicated; D has state rank.
+def test_collective_grid_search_value_has_planned_state_layout():
+    """Collective V keeps its stakeholder axis replicated.
 
     Values agree across differently fused device topologies to dtype-scale rounding;
-    dissolution and layout remain exact.
+    layout remains exact.
     """
     distributed_model = _make_one_axis_collective_model(distributed=True)
     working_kernels = distributed_model._regimes["working"].solution.period_kernels
@@ -1078,20 +1078,14 @@ def test_collective_grid_search_value_and_dissolution_have_planned_state_layout(
     )
     single_model = _make_one_axis_collective_model(distributed=False)
 
-    # Imported here: the fixture module creates arrays at import, which would
-    # initialize JAX before this module pins its CPU topology.
-    from tests.collective_fixtures import recorded_dissolution_flags  # noqa: PLC0415
-
-    with recorded_dissolution_flags() as distributed_flags:
-        distributed_values = distributed_model.solve(
-            log_level="off",
-            params={"discount_factor": 0.95},
-        )
-    with recorded_dissolution_flags() as single_flags:
-        single_values = single_model.solve(
-            log_level="off",
-            params={"discount_factor": 0.95},
-        )
+    distributed_values = distributed_model.solve(
+        log_level="off",
+        params={"discount_factor": 0.95},
+    )
+    single_values = single_model.solve(
+        log_level="off",
+        params={"discount_factor": 0.95},
+    )
 
     for period, regime_to_value in distributed_values.values.items():
         for regime_name, value in regime_to_value.items():
@@ -1103,14 +1097,6 @@ def test_collective_grid_search_value_and_dissolution_have_planned_state_layout(
             reference = single_values.values[period][regime_name]
             eps = np.finfo(np.asarray(value).dtype).eps
             np.testing.assert_allclose(value, reference, rtol=2 * eps, atol=2 * eps)
-            dissolution = distributed_flags[period][regime_name]
-            assert isinstance(dissolution, jax.Array)
-            assert dissolution.shape == (4, 4)
-            assert isinstance(dissolution.sharding, NamedSharding)
-            assert dissolution.sharding.spec == PartitionSpec("type1", None)
-            np.testing.assert_array_equal(
-                dissolution, single_flags[period][regime_name]
-            )
 
 
 @_skip_pytest_parallel

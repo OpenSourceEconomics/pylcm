@@ -34,9 +34,7 @@ from lcm.typing import (
 
 type FeasibilityCounts = tuple[IntND, IntND]
 type CountedGridSearchOutput = (
-    tuple[FloatND, IntND, IntND]
-    | tuple[FloatND, BoolND, IntND, IntND]
-    | tuple[FloatND, IntND, IntND, ScalarBool]
+    tuple[FloatND, IntND, IntND] | tuple[FloatND, IntND, IntND, ScalarBool]
 )
 
 if TYPE_CHECKING:
@@ -749,11 +747,7 @@ class CountedGridSearch:
             infinite = jnp.any(infinite, axis=-1)
         empty_count = jnp.sum(empty, dtype=jnp.int32)
         other_inf_count = jnp.sum(infinite & ~empty, dtype=jnp.int32)
-        output: CountedGridSearchOutput = (
-            (value, empty, empty_count, other_inf_count)
-            if self.collective
-            else (value, empty_count, other_inf_count)
-        )
+        output: CountedGridSearchOutput = (value, empty_count, other_inf_count)
         if self.current_iid:
             output = cast("CountedGridSearchOutput", (*output, current_iid_invalid))
         return (

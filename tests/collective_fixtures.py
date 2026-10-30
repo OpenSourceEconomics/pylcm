@@ -23,12 +23,13 @@ built model.
 
 from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Unpack, cast
+from typing import Unpack
 
 import jax.numpy as jnp
 import pytest
 
 from _lcm.solution import backward_induction
+from _lcm.solution.feasibility import FeasibilityKernelOutput
 from _lcm.typing import RegimeName
 from lcm import (
     AgeGrid,
@@ -41,7 +42,7 @@ from lcm import (
     categorical,
 )
 from lcm.regime import RegimeReplacement
-from lcm.solver_api import DISSOLUTION_FLAG, KernelOutput
+from lcm.solver_api import KernelOutput
 from lcm.typing import (
     BoolND,
     ContinuousState,
@@ -61,27 +62,58 @@ type InitialConditions = dict[str, FloatND | IntND]
 
 @contextmanager
 def recorded_dissolution_flags() -> Generator[dict[int, dict[RegimeName, BoolND]]]:
-    """Record each collective kernel's dissolution flag while a solve runs.
+    """Record each collective kernel's dissolved cells while a solve runs.
 
-    A collective regime's kernel publishes, on its solve-time channel, the flag
-    `D` that is `True` on the state cells whose household action set is empty.
-    The yielded mapping fills in, by period and regime, as the solve runs.
+    A collective kernel writes the `-inf` sentinel into every stakeholder's value
+    on the state cells whose household action set is empty; solve publishes no
+    separate flag. The recorded flag `D` is `True` where every stakeholder slice
+    is `-inf`, so a feasible cell whose best value is itself `-inf` would also
+    count; the models these tests solve have none. The yielded mapping fills in,
+    by period and regime, as the solve runs.
     """
     flags: dict[int, dict[RegimeName, BoolND]] = {}
     original = backward_induction._run_period_kernel
 
     def recording(**kwargs: Unpack[_KernelKwargs]) -> KernelOutput:
         output = original(**kwargs)
-        flag = output.solve_time_artifacts.get(DISSOLUTION_FLAG)
-        if flag is not None:
-            flags.setdefault(kwargs["period"], {})[kwargs["regime_name"]] = cast(
-                "BoolND", flag
+        if kwargs["regime"].stakeholders is not None:
+            flags.setdefault(kwargs["period"], {})[kwargs["regime_name"]] = jnp.all(
+                jnp.isneginf(output.value), axis=-1
             )
         return output
 
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr(backward_induction, "_run_period_kernel", recording)
         yield flags
+
+
+@contextmanager
+def recorded_feasibility_counts() -> Generator[
+    dict[int, dict[RegimeName, tuple[int, int]]]
+]:
+    """Record each kernel's `(empty, other -inf)` state-cell counts while a solve runs.
+
+    The first count is the kernel's own empty-feasible-set mask; the second counts
+    the cells whose value is infinite although some action is feasible. Together
+    they tell a dissolving cell from an on-path `-inf` value, which the value array
+    alone cannot.
+    """
+    counts: dict[int, dict[RegimeName, tuple[int, int]]] = {}
+    original = backward_induction._run_period_kernel
+
+    def recording(**kwargs: Unpack[_KernelKwargs]) -> KernelOutput:
+        output = original(**kwargs)
+        if isinstance(output, FeasibilityKernelOutput):
+            empty, other_inf = output.feasibility_counts
+            counts.setdefault(kwargs["period"], {})[kwargs["regime_name"]] = (
+                int(empty),
+                int(other_inf),
+            )
+        return output
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(backward_induction, "_run_period_kernel", recording)
+        yield counts
 
 
 @categorical(ordered=True)

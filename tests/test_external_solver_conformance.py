@@ -42,7 +42,6 @@ from lcm import (
 from lcm.exceptions import InvalidSimulationInputError, ModelInitializationError
 from lcm.persistence import load_solution, replay_period
 from lcm.solver_api import (
-    DISSOLUTION_FLAG,
     SOLVER_DIAGNOSTICS,
     ActionOutput,
     ArtifactAuthority,
@@ -675,11 +674,11 @@ class _ReservedArtifactAuthoritySolver(ReferenceSolver):
     """Reference solver attempting to reuse an engine-owned artifact identity."""
 
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
-        """Relabel a custom replay authority with the dissolution type id."""
+        """Relabel a custom replay authority with the diagnostics type id."""
         kernels = super().build_period_kernels(context=context)
         artifact = kernels.artifact_authorities[OPTIONAL_REPLAY_KEY]
         reserved_key = ArtifactKey(
-            type_id=DISSOLUTION_FLAG.type_id,
+            type_id=SOLVER_DIAGNOSTICS.type_id,
             schema_version=2,
         )
         descriptor = dataclasses.replace(

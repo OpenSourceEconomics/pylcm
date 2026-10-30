@@ -1979,7 +1979,7 @@ def _fail_if_collective_regime_folds(
 ) -> None:
     """Reject a collective regime that declares a folded state.
 
-    A collective regime publishes a dissolution flag beside its value: where no
+    A collective regime's kernel computes a dissolution flag: where no
     action satisfies every stakeholder's participation constraint it flags the
     cell and writes `-inf`, a sentinel meaning "not sustainable, take the
     outside option" that a gated edge resolves against the outside option. That

@@ -182,7 +182,6 @@ surfaces remain outside that top-level namespace:
 | [`lcm.solver_api.SolutionSource`](runtime_and_results.md#api-solution-result)                              | In-memory or persisted origin                     |
 | [`lcm.solver_api.ValueArraySchema`](runtime_and_results.md#api-solution-result)                            | Named value-array shape/dtype                     |
 | [`lcm.solver_api.SIMULATION_POLICY`](runtime_and_results.md#api-solution-result)                           | Replay-policy schema key                          |
-| [`lcm.solver_api.DISSOLUTION_FLAG`](runtime_and_results.md#api-solution-result)                            | Dissolution-flag schema key                       |
 | [`lcm.solver_api.EGM_CONTINUATION`](runtime_and_results.md#api-solution-result)                            | Continuation schema key                           |
 | [`lcm.solver_api.SOLVER_DIAGNOSTICS`](runtime_and_results.md#api-solution-result)                          | Diagnostics schema key                            |
 | [`lcm.solver_api.ContinuationArtifact`](custom_solvers.md)                                                 | Keyed rolling-continuation protocol               |
@@ -308,7 +307,6 @@ documented in [Custom solvers](custom_solvers.md).
 | [`lcm.solvers.PersistencePolicy`](custom_solvers.md)                                       | Per-artifact persistence policy                   |
 | [`lcm.solvers.EGM_CONTINUATION`](custom_solvers.md)                                        | Continuation schema key                           |
 | [`lcm.solvers.SIMULATION_POLICY`](custom_solvers.md)                                       | Replay-policy schema key                          |
-| [`lcm.solvers.DISSOLUTION_FLAG`](custom_solvers.md)                                        | Dissolution-flag schema key                       |
 | [`lcm.solvers.SOLVER_DIAGNOSTICS`](custom_solvers.md)                                      | Diagnostics schema key                            |
 | [`lcm.solvers.ContinuationArtifact`](custom_solvers.md)                                    | Keyed rolling-continuation protocol               |
 | [`lcm.solvers.ContinuationReader`](custom_solvers.md#publishing-a-continuation)            | What a parent may ask a payload                   |

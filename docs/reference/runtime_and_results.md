@@ -453,9 +453,9 @@ consulted, so a mapping whose keys disagree with its items cannot smuggle a payl
 the checks. Nested `period -> regime -> value` and flat `(period, regime) -> value`
 forms are recognized from the same traversal.
 
-Built-in key identities include `SIMULATION_POLICY`, `DISSOLUTION_FLAG`,
-`EGM_CONTINUATION`, and `SOLVER_DIAGNOSTICS`. The `omissions` mapping distinguishes an
-artifact that is not applicable, not requested, unsupported, or not persisted.
+Built-in key identities include `SIMULATION_POLICY`, `EGM_CONTINUATION`, and
+`SOLVER_DIAGNOSTICS`. The `omissions` mapping distinguishes an artifact that is not
+applicable, not requested, unsupported, or not persisted.
 
 Metadata carries a durable SHA-256 model fingerprint, the exact digest of canonical
 parameters that can affect the solution, solver and replay-route identities, artifact

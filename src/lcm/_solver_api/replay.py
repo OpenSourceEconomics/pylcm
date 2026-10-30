@@ -175,9 +175,6 @@ class ReplayReader(Protocol):
 # installed solver and pylcm always address the same schema.
 EGM_CONTINUATION = ArtifactKey(type_id="pylcm.egm.continuation", schema_version=2)
 SIMULATION_POLICY = ArtifactKey(type_id="pylcm.simulation.policy", schema_version=1)
-DISSOLUTION_FLAG = ArtifactKey(
-    type_id="pylcm.collective.dissolution_flag", schema_version=1
-)
 SOLVER_DIAGNOSTICS = ArtifactKey(type_id="pylcm.solver.diagnostics", schema_version=1)
 
 # The coordinate an EGM carry's rows are tabulated on. It is also the state such

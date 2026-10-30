@@ -66,9 +66,7 @@ from _lcm.execution.core_program import (
 )
 from _lcm.execution.invariant_blocks import block_state_action_space
 from _lcm.execution.output_layout import (
-    DISSOLUTION_FLAG,
     VALUE,
-    OutputRoleLeaf,
     StateAxesLeading,
 )
 from _lcm.execution.value_transfer import (
@@ -114,7 +112,6 @@ from _lcm.typing import (
 )
 from lcm._solver_api.capabilities import SolverExecutionCapabilities
 from lcm.exceptions import ExecutionPlanningError
-from lcm.solver_api import DISSOLUTION_FLAG as DISSOLUTION_FLAG_ARTIFACT
 from lcm.solver_api import KernelOutput
 from lcm.typing import (
     BoolND,
@@ -527,20 +524,9 @@ class GridSearch(Solver):
                 argument_builder=argument_builder,
                 requirements=requirements,
                 output_roles=(
-                    *(
-                        (
-                            VALUE,
-                            DISSOLUTION_FLAG,
-                            StateAxesLeading(state_names=(), dtype=jnp.int32, shape=()),
-                            StateAxesLeading(state_names=(), dtype=jnp.int32, shape=()),
-                        )
-                        if context.stakeholders is not None
-                        else (
-                            VALUE,
-                            StateAxesLeading(state_names=(), dtype=jnp.int32, shape=()),
-                            StateAxesLeading(state_names=(), dtype=jnp.int32, shape=()),
-                        )
-                    ),
+                    VALUE,
+                    StateAxesLeading(state_names=(), dtype=jnp.int32, shape=()),
+                    StateAxesLeading(state_names=(), dtype=jnp.int32, shape=()),
                     *(
                         (StateAxesLeading(state_names=(), dtype=jnp.bool_, shape=()),)
                         if current_iid_plan is not None
@@ -1338,15 +1324,9 @@ class _GridSearchPeriodKernel:
                 )
         bound_status = ()
         if self.n_runtime_bounds:
-            ordinary_count = (
-                4
-                if cast("tuple[OutputRoleLeaf, ...]", program.output_roles)[1]
-                is DISSOLUTION_FLAG
-                else 3
-            )
-            # Scalar integrity flags follow the ordinary value/count channels.
+            # Scalar integrity flags follow the value and its two counts.
             numeric_outputs = cast("tuple[jax.Array, ...] | list[jax.Array]", out)
-            flag_values = numeric_outputs[ordinary_count:]
+            flag_values = numeric_outputs[3:]
             if len(flag_values) != 2 * self.n_runtime_bounds:
                 raise TypeError(
                     "Mandatory bound records do not match declared scalar outputs."
@@ -1358,27 +1338,10 @@ class _GridSearchPeriodKernel:
                 )
                 for index in range(0, len(flag_values), 2)
             )
-            out = numeric_outputs[:ordinary_count]
+            out = numeric_outputs[:3]
         # A program declaring the value alone publishes no feasibility counts.
         if program.output_roles is VALUE:
             return KernelOutput(value=cast("FloatND", out))
-        if (
-            cast("tuple[OutputRoleLeaf, ...]", program.output_roles)[1]
-            is DISSOLUTION_FLAG
-        ):
-            V_arr, dissolution, empty_count, other_inf_count = cast(
-                "tuple[FloatND, BoolND, IntND, IntND]", out
-            )
-            return FeasibilityKernelOutput(
-                value=V_arr,
-                solve_time_artifacts={DISSOLUTION_FLAG_ARTIFACT: dissolution},
-                feasibility_counts=(empty_count, other_inf_count),
-                bound_status=bound_status,
-                landing_totals=cast("IntND | None", landing_totals)
-                if self.n_runtime_bounds
-                else None,
-                landing_checks=self.landing_checks if self.n_runtime_bounds else (),
-            )
         V_arr, empty_count, other_inf_count = cast("tuple[FloatND, IntND, IntND]", out)
         return FeasibilityKernelOutput(
             value=V_arr,

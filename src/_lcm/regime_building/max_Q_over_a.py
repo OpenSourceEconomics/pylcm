@@ -1405,7 +1405,7 @@ def _fail_if_collective(
 ) -> None:
     """Refuse to build a fold reduction for a collective regime.
 
-    A collective regime's value carries a dissolution flag beside it: where no
+    A collective regime's kernel computes a dissolution flag: where no
     action satisfies every stakeholder's participation constraint the cell is
     flagged and written `-inf`, a not-sustainable sentinel a gated edge
     resolves to the outside option. Quadrature cannot average a sentinel, so

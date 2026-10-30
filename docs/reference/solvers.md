@@ -193,9 +193,8 @@ remaining eligible route is streamed.
 Here, **unsupported** is a disposition of the action-streamed solve program, not a new
 public solver capability verdict. Model validation may reject the corresponding
 declaration; where the declaration is otherwise valid, the existing dense GridSearch
-core remains the compatibility path. Streamed programs publish only solve-time `VALUE`,
-or `VALUE` plus `DISSOLUTION_FLAG` for a collective route; replay and policy artifacts
-are not integrated. Runtime and peak-memory effects require measurement; bounded action
+core remains the compatibility path. Streamed programs publish only solve-time `VALUE`;
+replay and policy artifacts are not integrated. Runtime and peak-memory effects require measurement; bounded action
 evaluation alone is not a performance claim.
 
 For planned GridSearch solve cores, a continuation or reference declaration identifies

@@ -353,8 +353,9 @@ State-only gate routing keeps its behavior.
   regime, stakeholder and projection.
 - A gate reading `~D_target` becomes an `ArrivalDecision` reading the target's
   `ArrivalRead(kind="Participating", field="support")`, as in the fragment above.
-- `solve()` publishes no `DISSOLUTION_FLAG` replay artifact under any `ResultRetention`.
-  A household that lands in a gated target where no action is feasible takes its route's
+- `solve()` publishes no dissolution flag under any `ResultRetention`, and the
+  `DISSOLUTION_FLAG` artifact key is removed from `lcm.solver_api` and `lcm.solvers`. A
+  household that lands in a gated target where no action is feasible takes its route's
   fallback in simulation; `SimulationResult.dissolution_fallbacks` records those rows
   when runtime checks are on.
 
