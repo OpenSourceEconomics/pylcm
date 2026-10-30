@@ -30,7 +30,6 @@ from _lcm.execution.core_program import (
     InternalOutputSpec,
     ValueRead,
 )
-from _lcm.execution.liveness import PlannedInputLiveness
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
 from _lcm.execution.pending_work import PendingSolveWork
 from _lcm.grids import DiscreteGrid
@@ -80,6 +79,7 @@ _PHYSICAL_CONTEXTS = "_lcm_query_physical_contexts"
 _INFORMATION = "_lcm_query_information"
 _ACTING = "_lcm_query_acting"
 _TASTE = "_lcm_query_taste"
+_QUERY_ARGUMENTS = "query_arguments"
 _FLAT_OPERAND_PATH_LENGTH = 2
 
 
@@ -709,7 +709,13 @@ def build_policy_query_kernel(
     """Expand one genuine occupant root into a common-chunk native query graph."""
     if isinstance(chunk_size, bool) or chunk_size < 1:
         raise ValueError("A native query chunk must be positive.")
-    if {"_initialize", "_source", "_publish", "_finish"} & definitions.keys():
+    if {
+        "_initialize",
+        "_source",
+        "_publish",
+        "_finish",
+        "_chunks",
+    } & definitions.keys():
         raise ValueError("Query keys collide with native publication programs.")
     _admit_query_solver(context=root_context, period=period)
     root_space = root_context.state_action_space
@@ -908,6 +914,57 @@ def build_policy_query_kernel(
         output_roles=VALUE,
         disposition=CoreExecutionDisposition.PLANNED,
     )
+    retained = _query_schedule(
+        definitions={name: definitions[name] for name in order},
+        root=root,
+        recompute=False,
+    )
+    programs["_chunks"] = CoreProgram(
+        name="_chunks",
+        function=_QueryChunks(
+            source=_source_chunk(width=chunk_size),
+            cores={name: cast("_QueryCore", programs[name].function) for name in order},
+            schedule=retained,
+            chunks=bank_shape[0] // chunk_size,
+        ),
+        argument_builder=_ChunkArguments(
+            bank=replace(bank_arguments, write=False), builders=builders
+        ),
+        requirements=CoreExecutionRequirements(
+            value_reads=tuple(
+                replace(
+                    read,
+                    source=replace(
+                        read.source,
+                        core_key="_chunks",
+                        argument=_QUERY_ARGUMENTS,
+                        path=(
+                            name,
+                            read.source.argument or read.source.channel.value,
+                            *read.source.path,
+                        ),
+                    ),
+                )
+                for name in order
+                for read in programs[name].requirements.value_reads
+            ),
+            host_buffers=host_buffers,
+            host_axis_names=("query_cell",),
+        ),
+        output_roles=(
+            StateAxesLeading(state_names=(), shape=bank_shape, dtype=dtype),
+            StateAxesLeading(state_names=(), shape=(len(retained),), dtype=jnp.bool_),
+            tuple(
+                StateAxesLeading(
+                    state_names=(),
+                    shape=(len(_query_landing_checks(node=definitions[step.name])),),
+                    dtype=jnp.int32,
+                )
+                for step in retained
+            ),
+        ),
+        disposition=CoreExecutionDisposition.PLANNED,
+    )
     schedule = _closed_query_schedule(
         definitions={name: definitions[name] for name in order},
         root=root,
@@ -1077,6 +1134,105 @@ def _admit_query_solver(*, context: SolverBuildContext, period: int) -> None:
         raise UnsupportedOperationError(
             f"Native policy query for {context.regime_name!r} requires its declared "
             "GridSearch solver; endogenous-grid query reconstruction is separate."
+        )
+
+
+@dataclass(frozen=True, kw_only=True)
+class _ChunkArguments:
+    """Every query's canonical arguments, the source grids and the bank carry."""
+
+    bank: _BankArguments
+    builders: Mapping[str, _QueryArguments]
+
+    def __call__(
+        self, context: CoreBuildContext
+    ) -> Mapping[str, PytreeValue | ShapeDtypePytree]:
+        return MappingProxyType({**self.operands(context), **self.bank(context)})
+
+    def operands(
+        self, context: CoreBuildContext
+    ) -> dict[str, PytreeValue | ShapeDtypePytree]:
+        """Source grids and per-query arguments, built once per dispatch."""
+        return {
+            "states": cast("StateActionSpace", context.state_action_space).states,
+            _QUERY_ARGUMENTS: cast(
+                "PytreeValue",
+                MappingProxyType(
+                    {name: builder(context) for name, builder in self.builders.items()}
+                ),
+            ),
+        }
+
+
+type _ChunkOutput = tuple[FloatND, BoolND, tuple[IntND, ...]]
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _QueryChunks:
+    """Run the retained query schedule over every chunk inside one native loop.
+
+    Each iteration gathers one padded source chunk, evaluates every query in
+    schedule order and writes the root answer into the bank. Per scheduled
+    query, numerical statuses are AND-ed and reached-landing counts summed
+    across chunks, so the host checks them once per period.
+    """
+
+    source: _SourceChunk
+    cores: Mapping[str, _QueryCore]
+    schedule: tuple[InternalDispatch, ...]
+    chunks: int
+
+    def __call__(
+        self,
+        *,
+        states: Mapping[str, FloatND | IntND],
+        bank: FloatND,
+        query_arguments: Mapping[str, Mapping[str, PytreeValue]],
+    ) -> _ChunkOutput:
+        # keyword-only-exempt: library-callback=jax.lax.fori_loop
+        def run(index: jax.Array, carry: _ChunkOutput) -> _ChunkOutput:
+            bank, statuses, totals = carry
+            # The loop index is int64 under x64; the source offset is int32.
+            start = (index * self.source.width).astype(jnp.int32)
+            source, live = self.source(states=states, start=start)
+            answers: dict[tuple[str, int], PolicyAnswer] = {}
+            for step in self.schedule:
+                arguments = dict(query_arguments[step.name])
+                arguments[_SOURCE], arguments[_LIVE] = source, live
+                arguments.update(
+                    {
+                        operand: answers[producer]
+                        for operand, producer in step.inputs.items()
+                    }
+                )
+                answers[step.identity] = self.cores[step.name](**arguments)
+            return (
+                _write_query_chunk(
+                    bank=bank, start=start, answer=answers[self.schedule[-1].identity]
+                ),
+                statuses
+                & jnp.stack([answers[step.identity][3] for step in self.schedule]),
+                tuple(
+                    total + answers[step.identity][4]
+                    for total, step in zip(totals, self.schedule, strict=True)
+                ),
+            )
+
+        return jax.lax.fori_loop(
+            0,
+            self.chunks,
+            run,
+            (
+                bank,
+                jnp.ones((len(self.schedule),), dtype=jnp.bool_),
+                tuple(
+                    jnp.zeros(
+                        (len(_query_landing_checks(node=self.cores[step.name].node)),),
+                        dtype=jnp.int32,
+                    )
+                    for step in self.schedule
+                ),
+            ),
         )
 
 
@@ -1986,14 +2142,16 @@ def _closed_over_key(*, leaf: PytreeValue | None) -> Hashable:
     return (type(leaf), leaf.hex() if isinstance(leaf, float) else leaf)
 
 
-def _check_query_answer(*, name: str, node: QueryNode, answer: PolicyAnswer) -> None:
+def _check_query_answer(
+    *, name: str, node: QueryNode, status: bool, totals: IntND
+) -> None:
     """Check mandatory numerical status before this producer's reached landings."""
-    if not bool(answer[3]):
+    if not status:
         raise ExecutionPlanningError(
             f"Policy query {name!r} has unresolved numerical status."
         )
     fail_on_query_landings(
-        totals=answer[4],
+        totals=totals,
         checks=tuple(
             query_landing_check(
                 check=check, source=node.read.target, period=node.read.period
@@ -2044,9 +2202,13 @@ class _PolicyQueryKernel:
         )
 
     def narrow_workspace(self) -> PeriodKernel | None:
-        """Try exact recomputation before rebuilding a smaller common chunk."""
+        """Recompute when that lowers the answer peak, else halve the common chunk."""
         if not self.recompute:
-            return self.with_recomputation()
+            recomputed = self.with_recomputation()
+            if _answer_peak(programs=recomputed.programs) < _answer_peak(
+                programs=self.programs
+            ):
+                return recomputed
         if self.chunk_size == 1:
             return None
         candidate = build_policy_query_kernel(
@@ -2055,7 +2217,7 @@ class _PolicyQueryKernel:
             definitions=self.definitions,
             root=self.root,
             chunk_size=max(1, self.chunk_size // 2),
-            recompute=True,
+            recompute=self.recompute,
         )
         return candidate.with_fixed_params(fixed_flat_params=self.fixed_flat_params)
 
@@ -2081,6 +2243,14 @@ class _PolicyQueryKernel:
                 {
                     name: replace(program, argument_builder=builders[name])
                     if name in builders
+                    else replace(
+                        program,
+                        argument_builder=replace(
+                            cast("_ChunkArguments", program.argument_builder),
+                            builders=builders,
+                        ),
+                    )
+                    if name == "_chunks"
                     else program
                     for name, program in self.programs.items()
                 }
@@ -2101,7 +2271,7 @@ class _PolicyQueryKernel:
         same_period_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,
         edge_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,
     ) -> KernelOutput:
-        """Dispatch compiled producers, check status, then commit actual readers."""
+        """Run every chunk in one dispatch, check statuses, then publish the bank."""
         del logger
         context = CoreBuildContext(
             state_action_space=state_action_space,
@@ -2113,97 +2283,68 @@ class _PolicyQueryKernel:
             same_period_regime_to_V_arr=same_period_regime_to_V_arr,
             edge_regime_to_V_arr=edge_regime_to_V_arr,
         )
-        size = math.prod(value.size for value in state_action_space.states.values())
+        program = self.programs["_chunks"]
         owner = PendingSolveWork()
-        buffers: dict[tuple[str, int], PolicyAnswer] = {}
         try:
             bank = cast("FloatND", compiled_cores["_initialize"]())
             owner.record(outputs=bank, devices=frozenset(bank.devices()))
-            for start in range(0, size, self.chunk_size):
-                closed_schedule = self.programs[
-                    self.root
-                ].requirements.internal_schedule
-                schedule = closed_schedule[1:-1]
-                ledger = PlannedInputLiveness(
-                    dispatch_accesses={
-                        step.identity: tuple(
-                            (
-                                start,
-                                producer,
-                                generation,
-                                self.programs[step.name]
-                                .requirements.internal_inputs[operand]
-                                .label,
-                            )
-                            for operand, (producer, generation) in step.inputs.items()
-                        )
-                        for step in closed_schedule
-                    }
+            arguments = {
+                **cast("_ChunkArguments", program.argument_builder).operands(context),
+                "bank": bank,
+            }
+            devices = frozenset(
+                device
+                for value in jax.tree.leaves(arguments)
+                if isinstance(value, jax.Array)
+                for device in value.devices()
+            )
+            owner.before(devices=devices)
+            bank, statuses, totals = cast(
+                "_ChunkOutput", compiled_cores["_chunks"](**arguments)
+            )
+            owner.record(outputs=(bank, statuses, totals), devices=devices)
+            del arguments
+            for step, status, total in zip(
+                cast("_QueryChunks", program.function).schedule,
+                jax.device_get(statuses).tolist(),
+                totals,
+                strict=True,
+            ):
+                _check_query_answer(
+                    name=step.name,
+                    node=self.definitions[step.name],
+                    status=status,
+                    totals=total,
                 )
-                devices = frozenset(bank.devices())
-                owner.before(devices=devices)
-                frame = compiled_cores["_source"](
-                    states=state_action_space.states, start=jnp.int32(start)
-                )
-                owner.record(outputs=frame, devices=devices)
-                ledger.commit_successful_dispatch(dispatch=("_source", 0))
-                states, live = cast(
-                    "tuple[Mapping[str, FloatND | IntND], BoolND]", frame
-                )
-                for step in schedule:
-                    name = step.name
-                    arguments = dict(self.builders[name](context))
-                    arguments[_SOURCE], arguments[_LIVE] = states, live
-                    arguments.update(
-                        {
-                            operand: buffers[producer]
-                            for operand, producer in step.inputs.items()
-                            if operand not in {_SOURCE, _LIVE}
-                        }
-                    )
-                    devices = frozenset(
-                        device
-                        for value in jax.tree.leaves(arguments)
-                        if isinstance(value, jax.Array)
-                        for device in value.devices()
-                    )
-                    owner.before(devices=devices)
-                    answer = cast("PolicyAnswer", compiled_cores[name](**arguments))
-                    owner.record(outputs=answer, devices=devices)
-                    _check_query_answer(
-                        name=name, node=self.definitions[name], answer=answer
-                    )
-                    buffers[step.identity] = answer
-                    # Completion witnesses cannot retain an owner past its census.
-                    owner.before(devices=devices)
-                    ledger.commit_successful_dispatch(dispatch=step.identity)
-                    for key in tuple(buffers):
-                        if ledger.is_release_eligible(artifact=(start, *key, "answer")):
-                            buffers.pop(key)
-                    del answer, arguments
-                answer = buffers[(self.root, 0)]
-                owner.before(devices=frozenset(bank.devices()))
-                bank = cast(
-                    "FloatND",
-                    compiled_cores["_publish"](
-                        bank=bank,
-                        start=jnp.int32(start),
-                        answer=answer,
-                    ),
-                )
-                owner.record(outputs=bank, devices=frozenset(bank.devices()))
-                ledger.commit_successful_dispatch(dispatch=("_publish", 0))
-                ledger.assert_solve_complete()
-                owner.before(devices=frozenset(bank.devices()))
-                buffers.clear()
-                del answer, states, live, frame
             owner.before(devices=frozenset(bank.devices()))
             value = cast("FloatND", compiled_cores["_finish"](bank=bank))
             owner.record(outputs=value, devices=frozenset(value.devices()))
             return KernelOutput(value=value)
         finally:
             owner.close()
-            buffers.clear()
+
+
+def _answer_peak(*, programs: Mapping[str, CoreProgram]) -> int:
+    """Largest sum of declared answer bytes held at once by the closed schedule."""
+    schedule = programs["_source"].requirements.internal_schedule
+    last_reads = {
+        producer: index
+        for index, step in enumerate(schedule)
+        for producer in step.inputs.values()
+    }
+    live: dict[tuple[str, int], int] = {}
+    peak = 0
+    for index, step in enumerate(schedule):
+        live[step.identity] = sum(
+            math.prod(cast("tuple[int, ...]", role.shape))
+            * jnp.dtype(role.dtype).itemsize
+            for role in jax.tree.leaves(programs[step.name].output_roles)
+        )
+        peak = max(peak, sum(live.values()))
+        for producer, last in last_reads.items():
+            if last == index:
+                live.pop(producer, None)
+    return peak
 
 
 def _closed_query_schedule(
