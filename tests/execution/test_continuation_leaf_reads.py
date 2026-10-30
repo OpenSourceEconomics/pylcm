@@ -123,6 +123,31 @@ def test_arrival_replay_refuses_an_unqualified_original(*, defect: str) -> None:
         )
 
 
+def test_arrival_replay_admits_a_stored_arrival_surface() -> None:
+    """A retained arrival surface is read at its own date, beside original values."""
+    from _lcm.arrival_queries import surface_address  # noqa: PLC0415
+
+    sharding = _replicated_sharding()
+    target = surface_address(source="retired", target="retired", period=4)
+    transfer = ResolvedValueTransfer(
+        target=target,
+        source=ValueConsumerAddress(
+            source_period=3,
+            source_regime="working",
+            core_key="arrival",
+            channel=ValueInputChannel.ARRIVAL_REPLAY_VALUE,
+            argument="query_arguments",
+            path=("query_1", "V_arr"),
+        ),
+        kind=ValueTransferKind.ALIGNED_LOCAL,
+        stored_sharding=sharding,
+        source_sharding=sharding,
+        expected_shape=(5, 8),
+        expected_dtype=jnp.float32,
+    )
+    assert transfer.target == target
+
+
 def test_arrival_continuation_read_keeps_the_transported_array_identity() -> None:
     """A predecessor reads the actual later-value array through dated custody."""
     future_value = jnp.asarray([3.0, 7.0])

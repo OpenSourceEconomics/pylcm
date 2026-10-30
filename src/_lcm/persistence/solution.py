@@ -111,6 +111,10 @@ _MANIFEST_DATASET: Final = "manifest"
 _PAYLOAD_GROUP: Final = "payloads"
 # Optional manifest field, written only by a solve that stored arrival surfaces.
 _ARRIVAL_SURFACES: Final = "arrival_surfaces"
+# What each stored arrival surface's trailing axis holds: the branches and
+# decision operands of `_lcm.arrival_queries.surface_channels`, or, where the
+# decision cannot be re-run between nodes, the value after it.
+_ARRIVAL_SURFACE_LAYOUT: Final = "decision-branches"
 _UNLOADED: Final = _Unloaded.UNLOADED
 _PAYLOAD_ADDRESS_LENGTH: Final = 8
 _SHA256_HEX_LENGTH: Final = 64
@@ -902,6 +906,7 @@ def _surface_identity(
 ) -> dict[str, JSONValue]:
     return {
         "kind": "arrival_surface",
+        "layout": _ARRIVAL_SURFACE_LAYOUT,
         "period": period,
         "regime": regime,
         "name": name,
@@ -964,6 +969,12 @@ def _lazy_arrival_surfaces(
             value=entry.get("name"), label="arrival surface name"
         )
         coordinate = (period, regime, name)
+        if entry.get("layout") != _ARRIVAL_SURFACE_LAYOUT:
+            raise SolutionIntegrityError(
+                f"Persisted arrival surface {coordinate!r} stores the layout "
+                f"{entry.get('layout')!r}, not {_ARRIVAL_SURFACE_LAYOUT!r}; "
+                "re-solve the model and save it again."
+            )
         if (
             period >= metadata.n_periods
             or regime not in metadata.regime_names

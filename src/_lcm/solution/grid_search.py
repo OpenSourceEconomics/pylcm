@@ -823,10 +823,17 @@ def grid_search_query_inputs(
         edge_target_regimes=context.edge_target_regimes,
     )
     if builder.arrival_surfaces:
+        from _lcm.arrival_queries import plan_surface_address  # noqa: PLC0415
+
         # An arrival target's value enters as the source's stored surface, read
         # through the same continuation leaf an ordinary value read fills.
         reads = tuple(
-            replace(read, target=builder.arrival_surfaces[str(read.source.path[0])])
+            replace(
+                read,
+                target=plan_surface_address(
+                    plan=builder.arrival_surfaces[str(read.source.path[0])]
+                ),
+            )
             if read.source.channel is ValueInputChannel.NEXT_REGIME_VALUE
             and read.source.path[0] in builder.arrival_surfaces
             else read
@@ -972,11 +979,12 @@ class _GridSearchArgumentBuilder:
     arrival_queries: Mapping[RegimeName, ArrivalQueryPlan] = field(
         default_factory=lambda: MappingProxyType({})
     )
-    arrival_surfaces: Mapping[RegimeName, ValueArtifactAddress] = field(
+    arrival_surfaces: Mapping[RegimeName, ArrivalQueryPlan] = field(
         default_factory=lambda: MappingProxyType({}),
         metadata={"fingerprint_omit_if_default": True},
     )
-    """Arrival targets whose value is the source's stored arrival surface."""
+    """Arrival targets read from the source's stored arrival surface, by the plan
+    whose decision that surface stores."""
 
     def __call__(
         self, context: CoreBuildContext
@@ -1048,6 +1056,16 @@ class _GridSearchArgumentBuilder:
                 flat_params=flat_params,
             )
         )
+        if surfaces:
+            from _lcm.arrival_queries import (  # noqa: PLC0415
+                ARRIVAL_SURFACE_ARGUMENTS,
+                surface_reader_arguments,
+            )
+
+            arguments[ARRIVAL_SURFACE_ARGUMENTS] = surface_reader_arguments(
+                plans={name: self.arrival_surfaces[name] for name in surfaces},
+                context=context,
+            )
         return MappingProxyType(arguments)
 
     def _arrival_surface_values(
@@ -1056,7 +1074,10 @@ class _GridSearchArgumentBuilder:
         """Read each surfaced arrival target from the arrival's own operands."""
         if not self.arrival_surfaces:
             return {}
-        from _lcm.arrival_queries import _ArrivalBuildContext  # noqa: PLC0415
+        from _lcm.arrival_queries import (  # noqa: PLC0415
+            _ArrivalBuildContext,
+            plan_surface_address,
+        )
 
         if not isinstance(context, _ArrivalBuildContext):
             msg = (
@@ -1065,8 +1086,8 @@ class _GridSearchArgumentBuilder:
             )
             raise ExecutionPlanningError(msg)
         return {
-            name: context.arrival_values[address]
-            for name, address in self.arrival_surfaces.items()
+            name: context.arrival_values[plan_surface_address(plan=plan)]
+            for name, plan in self.arrival_surfaces.items()
             if name in self.target_regimes
         }
 

@@ -49,9 +49,11 @@ from lcm.typing import FloatND, IntND, RegimeName
 if TYPE_CHECKING:
     from _lcm.arrival_queries import ArrivalQueryPlan
     from _lcm.engine import Regime, StateActionSpace
+    from _lcm.policy_queries import ScalarPolicyQueries
 else:
     # Plans are built by `_lcm.arrival_queries`, which imports this module.
     type ArrivalQueryPlan = object
+    type ScalarPolicyQueries = object
     # Canonical construction imports the engine before installing these adapters.
     type Regime = object
     type StateActionSpace = object
@@ -247,11 +249,15 @@ class _SurfaceArguments:
 
 @dataclass(frozen=True, kw_only=True, eq=False)
 class _ArrivalSurfaces:
-    """Tabulate each arrival's value on its target's grid nodes.
+    """Tabulate each arrival decision's branches on its target's grid nodes.
 
     At every node the arrival plan rebuilds the target's action problem exactly,
-    as a reader at the landing does. A node whose answer fails its integrity
-    check is NaN, so a reader interpolating from it is NaN too.
+    as a reader at the landing does, and stores the operands its decision
+    consumes rather than the decision (see `surface_channels`), or the value
+    after it where the decision cannot be re-run between nodes
+    (`decides_between_nodes`). A node whose
+    answer fails its integrity check is NaN in every channel, so a reader
+    interpolating from it is NaN too.
     """
 
     plans: Mapping[str, ArrivalQueryPlan]
@@ -263,20 +269,30 @@ class _ArrivalSurfaces:
         grids: Mapping[str, Mapping[str, FloatND | IntND]],
         arrival_arguments: ArrivalQueryArguments,
     ) -> dict[str, FloatND]:
+        from _lcm.arrival_queries import (  # noqa: PLC0415
+            decides_between_nodes,
+            surface_queries,
+        )
+
         by_target = arrival_arguments.by_target
         surfaces = {}
         for name, plan in self.plans.items():
             states = grids[name]
             arguments = by_target[plan.target]
+            channel_queries = (
+                surface_queries(plan=plan)
+                if decides_between_nodes(plan=plan)
+                else plan.queries
+            )
 
             # keyword-only-exempt: library-callback=jax.lax.map
             def answer(
                 point: Mapping[str, FloatND | IntND],
                 *,
-                plan: ArrivalQueryPlan = plan,
+                queries: ScalarPolicyQueries = channel_queries,
                 arguments: Mapping[str, Mapping[str, PytreeValue]] = arguments,
             ) -> FloatND:
-                result = plan.queries(states=point, arguments=arguments)
+                result = queries(states=point, arguments=arguments)
                 return jnp.where(result[3], result[0], jnp.nan)
 
             if not states:
