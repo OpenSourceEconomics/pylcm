@@ -117,6 +117,7 @@ from _lcm.persistence.snapshots import (
     _save_simulate_snapshot,
     _save_solve_snapshot,
 )
+from _lcm.post_choice_shocks import lower_post_choice_shocks
 from _lcm.processes.ar1 import (
     RouwenhorstAR1Process,
     TauchenAR1Process,
@@ -142,7 +143,6 @@ from _lcm.regime_building.broadcast import (
     ModelSlots,
     merge_model_slots,
     prune_broadcast_variables,
-    split_transition_only_folds,
     validate_model_slots,
 )
 from _lcm.regime_building.collective import build_role_vocabulary
@@ -427,6 +427,7 @@ from lcm.shocks import (
     PhysicalValues,
     ShockGroup,
     ShockGroupName,
+    ShockName,
     UserNodes,
 )
 from lcm.solver_api import (
@@ -575,7 +576,6 @@ class _PickledModel(TypedDict):
     _solution_model_instance_id: NotRequired[str]
     _declared_edge_vocabulary: MappingProxyType[RegimeName, EdgeVocabulary]
     _cells_without_edges: MappingProxyType[tuple[RegimeName, int], DroppedCells]
-    _transition_only_shock_names: NotRequired[frozenset[str]]
     _draw_only_processes: NotRequired[
         Mapping[RegimeName, Mapping[StateName, _IIDProcess]]
     ]
@@ -1054,8 +1054,15 @@ class Model:
 
     @property
     def shocks(self) -> Mapping[ShockGroupName, ShockGroup]:
-        """Return immutable model-level current-IID declarations."""
+        """Return immutable model-level IID shock-group declarations."""
         return self._shock_registry.groups
+
+    @property
+    def _current_shock_names(self) -> frozenset[ShockName]:
+        """Name the shocks realised before a choice; post-choice draws are not."""
+        return frozenset(self._shock_registry.innovations).difference(
+            *self._draw_only_processes.values()
+        )
 
     _shock_registry: ShockRegistry
     """Named innovation identities and unpruned consumer/legacy declarations."""
@@ -1091,13 +1098,8 @@ class Model:
     ]
     """Declared names and their categories, retained before variable pruning."""
 
-    _transition_only_shock_names: frozenset[str]
-    """Folded IID shocks no regime reads within its period.
-
-    They are no states of any regime; an initial value given for one is dropped.
-    """
     _draw_only_processes: Mapping[RegimeName, Mapping[StateName, _IIDProcess]]
-    """Declarations of transition-local folded shocks, retained for path validation."""
+    """Each regime's post-choice shocks, retained for path validation."""
     _process_code_reads: Mapping[
         RegimeName, Mapping[StateName, _ContinuousStochasticProcess]
     ]
@@ -1203,7 +1205,8 @@ class Model:
                 zero. This mode has no age grid.
             description: Description of the model.
             regime_id_class: Dataclass mapping regime names to integer indices.
-            shocks: Named current-IID declarations, referenced by Regime.shocks.
+            shocks: Named IID shock groups, referenced by `Regime.shocks` or
+                `Regime.post_choice_shocks`.
                 Runtime law slots use `params[group][slot]`, independently of
                 ordinary regime parameters. Singleton GridSearch integrates the
                 nodewise decision and replays fresh physical realizations.
@@ -1697,6 +1700,9 @@ class Model:
             model_slots=model_slots,
             output_only_functions=output_only_functions,
         )
+        post_choice_shocks = lower_post_choice_shocks(
+            regimes=merged_regimes, laws=laws, groups=shocks
+        )
         self._shock_registry = create_shock_registry(
             shocks=shocks,
             regimes=merged_regimes,
@@ -1786,19 +1792,7 @@ class Model:
             visited_periods_by_regime=schedules.simulation_context_periods_by_regime,
             discrete_names=discrete_names,
         )
-        pruned_regimes, draw_only_processes = split_transition_only_folds(
-            user_regimes=pruned_regimes,
-            discrete_names=discrete_names,
-            laws=laws,
-            koopmans_aggregator=koopmans_aggregator,
-            ages=self._time,
-            active_periods_by_regime=schedules.context_periods_by_regime,
-        )
-        # Removal is regime-local; initialization preserves names another regime keeps.
-        self._transition_only_shock_names = frozenset(
-            name for shocks in draw_only_processes.values() for name in shocks
-        )
-        self._draw_only_processes = draw_only_processes
+        self._draw_only_processes = post_choice_shocks
         # A regime law reads the values of value grids as every user function
         # does; it still returns regime codes or probabilities.
         # A process law named in `fixed_params` means exactly what the same
@@ -1969,7 +1963,7 @@ class Model:
             visited_periods_by_regime=schedules.acting_periods_by_regime,
             declared_transitions=self._declared_transitions,
             declared_edge_vocabulary=declared_edge_vocabulary,
-            draw_only_processes=draw_only_processes,
+            draw_only_processes=post_choice_shocks,
             # The pruning candidates combine state and action names. Only the
             # model state slot establishes a state's diagnostic provenance.
             broadcast_variables={
@@ -2850,7 +2844,6 @@ class Model:
             _composite_states=self._composite_states,
             _declared_edge_vocabulary=self._declared_edge_vocabulary,
             _cells_without_edges=self._cells_without_edges,
-            _transition_only_shock_names=self._transition_only_shock_names,
             _draw_only_processes=self._draw_only_processes,
             _process_code_reads=self._process_code_reads,
             pruned_variables=self.pruned_variables,
@@ -2954,9 +2947,6 @@ class Model:
         )
         self._param_name_candidates = state.get(
             "_param_name_candidates", _get_param_name_candidates(self.user_regimes)
-        )
-        self._transition_only_shock_names = state.get(
-            "_transition_only_shock_names", frozenset()
         )
         self._draw_only_processes = state.get(
             "_draw_only_processes", MappingProxyType({})
@@ -5524,7 +5514,7 @@ class Model:
             split_current_iid_inputs(
                 initial=initial_conditions,
                 paths=shock_paths,
-                names=frozenset(self._shock_registry.innovations),
+                names=self._current_shock_names,
             )
         )
         initial_conditions = lower_initial_time(
@@ -5681,7 +5671,6 @@ class Model:
                     regimes=self._regimes,
                     array_writer=entry_allocations,
                     ages=self._time,
-                    unread_names=self._transition_only_shock_names,
                 )
                 self._fail_if_entry_is_not_permitted(
                     initial_conditions=initial_conditions
@@ -7017,7 +7006,7 @@ class Model:
             split_current_iid_inputs(
                 initial=initial_conditions,
                 paths=None,
-                names=frozenset(self._shock_registry.innovations),
+                names=self._current_shock_names,
             )
         )
         initial_conditions = lower_initial_time(
@@ -7060,7 +7049,6 @@ class Model:
             initial_conditions=initial_conditions,
             regimes=self._regimes,
             ages=self._time,
-            unread_names=self._transition_only_shock_names,
         )
         self._fail_if_entry_is_not_permitted(initial_conditions=canonical)
         overrides = resolve_current_iid_overrides(

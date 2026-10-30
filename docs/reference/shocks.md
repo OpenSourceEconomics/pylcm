@@ -230,6 +230,16 @@ as ordinary regime parameters. Integrated execution must explicitly project thos
 from `params[group]`, bind correlation support and enforce per-invocation exact host
 correlation admission, numerical validity and signed ancestry.
 
+`Regime(post_choice_shocks=("bill",))` references a group realised after that regime's
+choice instead. Only the regime's state transitions read its shocks, as `next_<shock>`;
+utility, constraints and the regime transition may not, and model construction refuses
+such a read by name. Each shock lowers to one fixed node set, so the group needs
+continuous laws with fixed parameters, independent shocks and a deterministic unsigned
+rule. The solve integrates the transitions over those nodes and weights; simulation
+samples one node per subject. A group is current or post-choice across the whole model,
+not both, and only `GridSearch` regimes declare one. A `shock_paths` entry for a
+post-choice shock is a plain array of physical values.
+
 Registry declarations can be inspected and persisted. Ordinary GridSearch consumers bind
 the current law inside their node decision and fresh simulation draw. Solver/query
 intersections require their corresponding integrated producer and otherwise refuse

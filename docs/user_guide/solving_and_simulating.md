@@ -679,11 +679,11 @@ subject's starting regime in its entry period, and afterwards every regime the
 simulation can reach from there, since later regime membership is itself drawn. A
 subject's entry value is replaced only when its starting regime draws the shock. Cells
 no regime can read, such as those before a subject enters, are ignored and may hold
-`NaN`. Folded shocks are supported, including transition-local draws: a draw affecting
-the transition into period `p` comes from column `p`. A deterministic law reading
-`next_<shock>` sees the supplied draw before computing its own next state. Shocks
-omitted from the mapping retain the ordinary seeded stream, and solve expectations
-remain stochastic.
+`NaN`. Folded shocks are supported, and so are draws taken inside a transition,
+including post-choice shocks: a draw affecting the transition into period `p` comes from
+column `p`. A deterministic law reading `next_<shock>` sees the supplied draw before
+computing its own next state. Shocks omitted from the mapping retain the ordinary seeded
+stream, and solve expectations remain stochastic.
 
 A named current shock declared in a `ShockGroup` takes a tagged record instead of a bare
 array: `BaseInnovations(values=...)` for independent base coordinates, mapped through

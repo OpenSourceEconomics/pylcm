@@ -96,6 +96,7 @@ class _SlotsBesideFunctions(TypedDict, total=False):
     solver: _solvers.Solver
     taste_shocks: ExtremeValueTasteShocks | None
     shocks: tuple[ShockGroupName, ...]
+    post_choice_shocks: tuple[ShockGroupName, ...]
     exits: Mapping[str, Exit]
     koopmans_aggregator: UserFunction | Phased | Decoupled | None
     certainty_equivalent: CertaintyEquivalent | None
@@ -313,6 +314,18 @@ class Regime:
     shocks: tuple[ShockGroupName, ...] = ()
     """Model-level current-IID group references, separate from state processes."""
 
+    post_choice_shocks: tuple[ShockGroupName, ...] = ()
+    """Model-level IID groups drawn after this regime's choice.
+
+    Each name references a `Model(shocks=...)` group. Its shocks are realised
+    between the action and next period's state, so only this regime's state
+    transitions read them, as `next_<shock>`, directly or through regime
+    functions that nothing else reads. Utility, constraints and the regime
+    transition are evaluated before the draw and cannot read a post-choice shock.
+    The solve integrates the transitions over the group's nodes and weights;
+    simulation draws one node per subject from those weights.
+    """
+
     exits: Mapping[str, Exit] = field(default_factory=lambda: MappingProxyType({}))
     """Named current-period choices to mapped destination policies."""
 
@@ -451,13 +464,21 @@ class Regime:
         object.__setattr__(self, name, value)
 
     def __post_init__(self) -> None:
-        if len(set(self.shocks)) != len(self.shocks) or any(
-            not name.isidentifier()
-            or path_segment_name_errors(kind="Shock group", names=(name,))
-            for name in self.shocks
-        ):
+        for slot in ("shocks", "post_choice_shocks"):
+            names = getattr(self, slot)
+            if len(set(names)) != len(names) or any(
+                not name.isidentifier()
+                or path_segment_name_errors(kind="Shock group", names=(name,))
+                for name in names
+            ):
+                raise RegimeInitializationError(
+                    f"{slot} must contain unique ordinary group names."
+                )
+        if both := sorted(set(self.shocks) & set(self.post_choice_shocks)):
             raise RegimeInitializationError(
-                "shocks must contain unique ordinary group names."
+                f"Shock groups {both!r} are declared in both `shocks` and "
+                "`post_choice_shocks`. A group is realised either before the "
+                "choice or after it; declare it in one of the two."
             )
         self._lower_value_dependent_declarations()
         self._fail_if_egm_solver_has_no_margin_declaration()

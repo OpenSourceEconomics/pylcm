@@ -211,6 +211,46 @@ endogenous-grid publication and reconstruction are not implemented yet; that wor
 remains gated on the production cost diagnostic. This migration does not establish
 support for those solver combinations.
 
+### Declare shocks drawn after the choice
+
+A `fold=True` IID state that a regime reads only through its draw `next_<shock>` is
+refused when the regime is built. Such a shock is drawn after the choice, so it is no
+state: declare it as a group and list the group in `Regime(post_choice_shocks=...)`.
+
+```python
+# Removed: raises RegimeInitializationError.
+alive = Regime(
+    states={
+        "wealth": wealth_grid,
+        "xi": NormalIIDProcess(
+            n_points=5, gauss_hermite=True, mu=0.0, sigma=1.0, fold=True
+        ),
+    },
+    state_transitions={"wealth": next_wealth},
+    functions={"utility": utility, "medical_bill": medical_bill},
+)
+
+# Current declaration fragment.
+shocks = {
+    "bill_shock": ShockGroup(
+        shocks={"xi": Normal(mu=0.0, sigma=1.0)},
+        nodes=Product(xi=GaussHermite(5)),
+    )
+}
+alive = Regime(
+    states={"wealth": wealth_grid},
+    state_transitions={"wealth": next_wealth},
+    functions={"utility": utility, "medical_bill": medical_bill},
+    post_choice_shocks=("bill_shock",),
+)
+```
+
+`medical_bill` keeps reading `next_xi`. The same Gauss-Hermite rule reproduces the
+former solution. Drop the shock from initial conditions; a `shock_paths` entry for it is
+still a plain array. Utility, constraints and the regime transition may not read a
+post-choice shock; see
+[Shocks realized after choices](continuous_stochastic_processes.md#shocks-realized-after-choices-and-used-only-by-a-transition).
+
 (migrating-gates)=
 
 ## Preserve the economic date of a value-dependent decision

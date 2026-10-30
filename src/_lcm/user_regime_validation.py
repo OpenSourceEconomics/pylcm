@@ -2300,6 +2300,29 @@ def _fold_transition_read_errors(
         transition_hit |= _fold_dependency_closure(
             roots=(func,), resolution_table=resolution_table
         )
+    read_by_the_regime = _fold_dependency_closure(
+        roots=tuple(
+            variant
+            for entry in resolution_table.values()
+            for variant in _function_variants(entry)
+        ),
+        resolution_table=resolution_table,
+    )
+    post_choice = [
+        name
+        for name in fold_names
+        if f"next_{name}" in transition_hit and name not in read_by_the_regime
+    ]
+    if post_choice:
+        return (
+            (
+                f"fold=True on state(s) {post_choice} is read only as the draw "
+                "'next_<state>' by a transition. A shock drawn after the choice "
+                "is no state: declare it as a `ShockGroup` in `Model(shocks=...)`, "
+                "list the group in `Regime(post_choice_shocks=...)`, and drop the "
+                "state."
+            ),
+        )
     transition_hit &= set(fold_names)
     if not transition_hit:
         return ()
