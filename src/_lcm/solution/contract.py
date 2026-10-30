@@ -88,7 +88,6 @@ from _lcm.typing import (
 )
 from lcm._solver_api.capabilities import SolverExecutionCapabilities
 from lcm.solver_api import (
-    DISSOLUTION_FLAG,
     EGM_CONTINUATION,
     SIMULATION_POLICY,
     SOLVER_API_VERSION,
@@ -607,7 +606,6 @@ GENERATED_REPLAY_AUTHORITY = ArtifactKey(
 
 _ENGINE_ARTIFACT_TYPE_IDS = frozenset(
     {
-        DISSOLUTION_FLAG.type_id,
         EGM_CONTINUATION.type_id,
         GENERATED_REPLAY_AUTHORITY.type_id,
         SIMULATION_POLICY.type_id,

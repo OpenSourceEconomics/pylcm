@@ -14,6 +14,14 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   preferences. Move the shock into resources, or solve the regime with `GridSearch`;
   see [DC-EGM](docs/reference/solvers.md#api-dcegm).
 
+### Dissolution-flag artifact key removed
+
+- `lcm.solver_api.DISSOLUTION_FLAG` and `lcm.solvers.DISSOLUTION_FLAG` are removed, and
+  the type id `pylcm.collective.dissolution_flag` is no longer reserved. A collective
+  kernel no longer emits the flag on its solve-time channel; simulation recomputes an
+  empty feasible set at the realised state. External solvers that imported the key or
+  published under it must drop it.
+
 ### Consent pricing evaluates observed target rows once
 
 - An exit that observes every shock of a target group prices that group's rows from one

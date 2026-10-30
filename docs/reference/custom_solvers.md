@@ -668,9 +668,8 @@ incompatible persisted results clearly; plugins own any migration they choose to
 outside the replay path.
 
 Custom artifact authorities must use plugin-owned type IDs. The built-in
-`SIMULATION_POLICY`, `DISSOLUTION_FLAG`, `EGM_CONTINUATION`, and `SOLVER_DIAGNOSTICS`
-type-ID namespaces (including other schema versions) are reserved for the engine's own
-channel readers.
+`SIMULATION_POLICY`, `EGM_CONTINUATION`, and `SOLVER_DIAGNOSTICS` type-ID namespaces
+(including other schema versions) are reserved for the engine's own channel readers.
 
 ## Conformance contract
 

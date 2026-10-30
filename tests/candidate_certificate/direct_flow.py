@@ -14,7 +14,7 @@ compiled, and dispatched. The collective and EV1 streaming implementations remai
 sealed reference algorithms, but the native program graph deliberately selects their
 dense canonical reducers instead. A collective reference block is scalarized without
 changing action support; every stakeholder value is gathered at the one shared
-household winner and published with the empty-feasible-set dissolution flag. The EV1
+household winner and set to `-inf` on an empty feasible set. The EV1
 reference stream preserves the discrete-prefix branch order, hard-maxes each branch,
 then adds exactly one branch value to a log-sum-exp reduction bound to the runtime scale.
 The economic
@@ -37,7 +37,7 @@ The ten corridors are:
   subject tiles -> materialized, resolved and dispatched decision program;
 * collective solve -> ``collective_readout(..., feasibility=F_arr, ...)``;
 * collective streamed reference -> complete C-order stakeholder blocks -> shared
-  household hard max -> compiled ``(VALUE, DISSOLUTION_FLAG)`` core;
+  household hard max -> compiled VALUE core;
 * collective simulate -> published dense ``collective_argmax_and_readout(...,
   feasibility=F_arr, ...)`` -> subject tiles -> selected decision executable;
 * taste-shock dense solve fallback -> exact mask, continuous maximum, then full
@@ -613,10 +613,10 @@ _SOURCE_SEALS = {
     S02__LCM_EGM_BUDGET_SOURCE: "1c8fb0cbc8f9156950bea34c71c9ccce2c58ac17ec6b9f1221f8c8966f1031d2",
     S02__LCM_EGM_CARRY_SOURCE: "17c85a9146e68a8b57487754bcb89b879e62bcd391699d82ac4116ec7e4c4691",
     S02__LCM_EGM_QUERY_DATA_SOURCE: "5ca53117248f9009d4d9b696fdb46a361fa47c5b082757ccc9beb6ccd967bde3",
-    S02__LCM_REGIME_BUILDING_Q_AND_F_SOURCE: "448bece166cc9b18143b9aa0c85b595f9a7fe8ff8c96aa57e37ded8c74261b1f",
+    S02__LCM_REGIME_BUILDING_Q_AND_F_SOURCE: "9f59a7bb35e5aef01aa3d7ece0c7902e1422973e14ecfb93237fb844e5b4a798",
     S02__LCM_SIMULATION_SUBJECT_PARALLEL_SOURCE: "66d70a81a7ec535d92933bc8841c6bbe7472e227509f88fc6d3bdd00b6c95e76",
     S02__LCM_SOLUTION_EGM_SOURCE: "c554d6e993da4b3b253ae8235a7fcac56c74a7bdc9c2537e84515d6c39af52bf",
-    S02__LCM_SOLUTION_KERNEL_OUTPUT_SOURCE: "89ec60c1d59ace639e8df466f06c3a2167e9376633bc7e54c7ba050a84362ab3",
+    S02__LCM_SOLUTION_KERNEL_OUTPUT_SOURCE: "4b814b0aecacb22cc1f5b47d6bb9006f3f0f5eb08dc0eb18f1345fcd4becb770",
     AGE_BOUND_NORMALIZATION_SOURCE: "e1be1cea72f9aa5228a76523477405e8bbee9dde28de08248f14c7e4b8cfc5e8",
     DYNAMIC_BOUND_SOURCE: "8f44c31d42f69d8316e78cadba7b19230a69893d7f6cb0bc2daa72f0a0d684f5",
     POST_DECISION_BOUND_SOURCE: "4ff8b8c7b64be2395c821acb5f328765c7a9ac2c5198fd0b2be3960227837f6c",
@@ -624,7 +624,7 @@ _SOURCE_SEALS = {
     BOUND_NORMALIZATION_SOURCE: "55f0e24bed63303ed9338798a876b6ad4a4b287b174d9513c2065fede183d495",
     USER_REGIME_BOUND_SOURCE: "5d3c3db93c25346969e8f32bd8ae657b60ef7c55ce6374c14abe1ce9de226d13",
     LIQUID_BOUND_DECLARATION_SOURCE: "16118c29929f206f05925d88688edbc447f31c3a7aae1e73f022570e981ab886",
-    FEASIBILITY_SOURCE: "0e7f97e01b522d23cc84d18013978e6d954e526bc70e56ac5a62bfdabef390b4",
+    FEASIBILITY_SOURCE: "8017af41d7234f5e87bf484e8f9f6501f76c760585f856901c5163215d7dabad",
     ACTION_GRID_SOURCE: "76a059f7cc7d7e7d2a99e0ffd626ddbd76b89724d5e24f3bb10ad86501268309",
     SUPPORT_TRANSITION_CHECKS_SOURCE: "ace7cc6b2d5a820ad1401912c0a744a67a849cf8c6bd050480412a9cbca75601",
     SUPPORT_DIAGNOSTICS_SOURCE: "477761e6556a83fd2e271e4ab6c258cf4799d62d10d3a2d46dbf31f69b7161d8",
@@ -691,11 +691,11 @@ _SOURCE_SEALS = {
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
     ARGMAX_SOURCE: "b508d4e10350de8b54707db238d01c7de6c73b4ca6b0176e0c6c12ec762952dc",
     COLLECTIVE_SOURCE: "4cc0683d493f597684f5801909d297145d8bade0aa752c3e35cf8af2cb55edd9",
-    MAX_Q_SOURCE: "274859ca8f33be8e6d8204cfc5bd968977c5648d6f9e0b673467c6f7e145aaf8",
+    MAX_Q_SOURCE: "3ddae252ab1a7c94714515db70375ec69c0f1575cfc1cc79ec81b816bd7b2630",
     PROCESSING_SOURCE: "fc4f1c7ad95183a38caac1beac598160c406b93f5a8fd85f5fd0f6b459843a4f",
-    GRID_SEARCH_SOURCE: "b908ff1825874e20a70706d64e10169a8742fb9c6b0525f718e97ebb13504d9e",
+    GRID_SEARCH_SOURCE: "a3d2e437ae33f5a55eb437e2dc372e81bd25898b2a75d3276651086bc5680b6d",
     CORE_PROGRAM_SOURCE: "7d8197a3d2607a3380be63408ae4cf2b8d8ebbe68b043cc3aff76bf1f5c6b78a",
-    OUTPUT_LAYOUT_SOURCE: "515b2ba9c622053fb51f4711201b489efe12e1739114135f91038f1bedd0067a",
+    OUTPUT_LAYOUT_SOURCE: "c7da1256b36b3b6d89200bbae5267936d84e27746ff2c776dced4ea612ec3eb9",
     VALUE_TRANSFER_SOURCE: "6dccf91ac6fb40dae3ddcc3a887359cc5816985f176c95b2a7162d47d8134162",
     FOOTPRINT_SOURCE: "229c23faa12723aeb8725c2a1681ee56011b317f31ba75896762876a0a143de0",
     INTERNAL_OUTPUTS_SOURCE: "e41e5581295b427e22ecb3f533281c030fec77c01cf224d1a844ae6f54fe28e1",
@@ -713,9 +713,9 @@ _SOURCE_SEALS = {
     SIMULATION_SOURCE: "20487d7afa180a46c1b2855cdd528f524278ce523cef943f6aa55d8905762886",
     SIMULATION_TRANSITIONS_SOURCE: "5cef83cc6d594d6d7004dee5cfc82dec5be33d669ac7779d3f9a393058e548da",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
-    MODEL_SOURCE: "952e60782a2ba0986d89bb32d9a9068d1ac21e4059eaaadad6fd19f4a2fa287a",
-    SOLVER_API_SOURCE: "6e6ce8ea13d16205eee5a463794f57bcccf04b2be1f6f70e36da99f2d7915579",
-    BACKWARD_INDUCTION_SOURCE: "9c7a5a8f9b9c24382b4f5629c974158bc754fa1b5fbf53dcdc51fa78346fc0ed",
+    MODEL_SOURCE: "03237e427c91eb90787bd1b8794b37942fa0e93ca3ce96f12a4f84e0873a1528",
+    SOLVER_API_SOURCE: "65c8235466fdeda91e14b94863e8e8fa84eaa4fefc7b0e0fd30e5efcd514ffc5",
+    BACKWARD_INDUCTION_SOURCE: "57976d505a4909f12fc70fee9662146f3061fb394d608456706123e3049909ba",
     PERIOD_REPLAY_SOURCE: "ce332a3cf77a3d6c2344298b65234263006025de9d21b120d00941f7549f9965",
     INITIAL_CONDITIONS_SOURCE: "a2f44c8df953265bd5d219c1cd6f58d1c4c328d8ed543d6a96a0299cac05bd96",
     RESULT_SOURCE: "d2b09b95537cb65dff52e87a4b9b91a6fe99570e8b98c7ce33a95f5e9d7f5ef1",
@@ -724,7 +724,7 @@ _SOURCE_SEALS = {
     ADDITIONAL_TARGETS_SOURCE: "3a4d95d5c88c801bb8bb0881a52cd8985e1cc17efdbfbf5474332e46b8d46614",
     SIMULATION_RANDOM_SOURCE: "54092637d7965da26670b1f1dca8b04cf780815a349a8a71dbb243d81f5a7c25",
     FOLD_ZERO_SAFE_SOURCE: "301fcd3bec1211b60872159fe585e55e9742be62a975dd76b33f6f5cb45971e5",
-    SOLUTION_CONTRACT_SOURCE: "90be1a7867eeedcea726dc8a93af7d4ff556e216183cca4c929b0ac2e243ba45",
+    SOLUTION_CONTRACT_SOURCE: "285e4fe1a8bb61acf9c6ee10392975c74a47427d55e8c4aeb5e0bb9377d01ef7",
     GRIDS_INIT_SOURCE: "3c720bc2240dd1cfd45855ce501f03f8a05abda5de1142b9d00208e517b9ddce",
     GRID_BASE_SOURCE: "2d9c7f1a0827f3ca172417a2ee2bf60b15c9ccb3dcedf3a94fb502e2d57538de",
     GRID_COORDINATES_SOURCE: "9dd0cf9e3c702023cd3cfa40a3164bf399ea295c57349223b8ab617c7f3533d5",
@@ -946,7 +946,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/solution/contract.py": (
-        "49710e503737253f955eba160fd0cc0bedf052bd3a3cd9f1fd687cf33f4a9ee6",
+        "c1e4b35d3530c7b08373c39193c324761bbd78d34bde3624f2184be529f62166",
         {
             "SolutionKernels.__post_init__": "1af79c468efac956445e2c9a1e816b260851b589681fe69754c72d395153f795",
         },
@@ -1022,9 +1022,9 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     FEASIBILITY_SOURCE: (
-        "f3e08f6755c6ec5493f41579c6cfa6302dbbc7bd53a862e3cb1dc8dc62ee4203",
+        "335d3e1640b7cb544ee9d7d45e9e6e34455aed90e63b107058583d9c3be1ea86",
         {
-            "CountedGridSearch.__call__": "aa2fb5423c29121bafae479f6e7d0fe5c658a8e0785b19bb0ecf9f713c832d3b",
+            "CountedGridSearch.__call__": "5e6ad9fb08c3e6b0686723c6fdd21426738924e19a809f9b9bd561a10dec2b30",
             "FeasibilityKernelOutput.__post_init__": "86b70647353aab0cba371e2414e90c5e20ceca94c7dfc903f033928d5d1b6279",
             "_flatten_bound_status": "927d19863379fd04d664d9257c6c8d0694571e234e0e287202971bc264922f73",
             "_flatten_bound_status_with_keys": "0b34cc1ec4c4ec1600e53141fff93d963d97bf4f993b4f59a73bf3d2b510467c",
@@ -1576,7 +1576,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     MODEL_SOURCE: (
-        "2298263b20b02b7698dd601de0b5fa0da459e69cedc926561f5aa5845eb5c722",
+        "4b2ae276f6d79263be55dc80a20e321364f9bfc2011fc650499533996d742d10",
         {
             "_validate_sharded_state_capability": "ee8b7e8a97fd413d2376a655558ea7b2a2ab61589a0ddd624ed44b69dfe5fa8d",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
@@ -1585,7 +1585,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "Model.simulate": "bbb2a7fe0323d89a642001f10b146f34e70d0b6d61bdaac7fdbee2b53b0025d7",
             "Model._open_entry_allocations": "f04741303c8c423e4cf4a738c7385390001be4fa113ad691be00e412fe15f07e",
             "Model._check_solution_result_structure": "4c8dc7a19d5e3ba4ecb885a34ed0bf7632ac79fea02be289f4e76ef53496556c",
-            "Model._consume_foreign_solution": "3ff68e993932eb824d1783e71443e5496b493fad0887cb84eb345a1a82e6b3dc",
+            "Model._consume_foreign_solution": "d177ba499751ca141c5ec84fccd09c6c19772466d94ab472af9b683e258a2424",
             "Model._resolve_compile_batch_size": "27791b63c37282ce72ab9e537fda65cd20796d2a494a804392862219401dba7e",
             "Model._resolve_solution_result": "af6e50e330c0900fc92d0d316c585ecaf07448cb5b6e27edb2f2a14b2353ce4b",
             "Model._snapshot_solution_envelope": "9a4c08dc99912920df4b670212a15313e4e4e79446b8ae6a19a11fe6ba66910a",
@@ -1605,17 +1605,17 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     OUTPUT_LAYOUT_SOURCE: (
-        "fd5aaa06d7edcae90067a183eb30a3f0f553020b02227285c0d3b76d963a60a3",
+        "7b3218b1a8123aa50a3a82c072e546425292509e7066b31b3fffbb8c41083156",
         {
             "_assert_output_leaf": "845951305b74c0dbb2a93f7598fc9d9163f85279eb047595677fca6ba8c38f48",
             "PlannedCore.__call__": "82afebbf7faeab894944b641a83549ab412a2dccf2d635f26fde3f7efbc0b607",
-            "resolve_output_layout": "fd4b0bf4b456d80b0ae34fb7758020d60a6b8066b69e9c1a33eecf3cb8dd7b2a",
-            "_validate_output_roles": "69cd6ed164c72556999cb6eb25879fb8872c85833e3457253815683d6fe68d2d",
+            "resolve_output_layout": "7579394608436c2a10760f8aeae69345eb4a5712aa8272b313b2cf7b9fd5e46b",
+            "_validate_output_roles": "af25964852174ea07907914e53fd5dba39423c9ca5e39b0b92ae2f60ea924f1b",
             "assert_output_layout": "ef03e0e23694014524ff2b57c2f86bd38cff03cb3fe3e7f24007460e1d22d2b7",
             "_assert_output_metadata": "c455ca94a5f5c58a5d4441e8efb374e74702d1d236390e2899790eb17613e648",
             "PlannedCore.__post_init__": "4286c0114b8d1e6303ac63c7d4c91b3a05671b19d671bc62981e050301cefc3e",
             "assert_value_leaf_layout": "1abeb94a2353ff938207399038fc8e9cb978ab47f07957728b70d7eb70fd4eff",
-            "_resolve_output_leaf": "dd0f95072a0f88a5bc5e7e8652f7837e9d77656ef4797eadfad74d318dbcbf6f",
+            "_resolve_output_leaf": "e762486c955dca195c95807def56807eb7c5c3bc04d9c2034ac2f5404a46c440",
             "_state_axes_leading_sharding": "20d39af17152908d29ee6ab50a3334ccb7636547cf4558ae8e9b0a6392c61441",
             "_state_axis_spec": "1772f28f0ed2c23f764c7494c6a6925c3b8fcee59180122a31c75bfcdeea79d4",
             "StateAxesLeading.__post_init__": "0bd0d18d5a0caff060ce3a860622a537a26aa061a164e9bdab4423b2ea4d2698",
@@ -1669,13 +1669,13 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     BACKWARD_INDUCTION_SOURCE: (
-        "b1dc723d369e24a39976937ba51a20f4198b63135df07ef0693d5b6eb7cb74ec",
+        "1eef7044025b82e23a070196ce7ec2d3b1f2260c1416a695ab146edb452c8288",
         {
             "_period_transfer_scratch_reservations": "e614b686048f4131f4b612386ca89ed8cec5f786fc64ac82f7ba87866e54fc76",
             "_continuous_value_replica_required": "4f22692255b3746899ee7b2849776ea8967090af80d68d46272cd0b9a5bc771b",
             "_compile_all_functions": "ed9819ba6df4bdcb67db2a020993608812dcba72e620523cbab3df2d9f15f99a",
             "_prepare_solve_programs": "e33a8807e20366842eb782fa8b06423d699bf8ecd3c33fc1c622bcd6f1512f0d",
-            "solve": "9b0c33adcf92c6b0f86b363ae6b4181e3baa4411cd5d36db855190e1c941c05d",
+            "solve": "f4d9da6165059a765e48e14f7e05cabe79f1caceda37dd879c341e6ad5054827",
             "_cores_with_transfer_cache": "fba35f0f74a7a496f2302ea160d4ce6b832d56abc6d0fee14bc07843b47a0fd0",
             "_release_closed_period_inputs": "9fef8a1766bde0e8904fa6588651beea415b6ddcc1d3fec126bf68e100039863",
             "_retire_donated_inputs": "c760bf519c3eab446a2cf7164c4158e5f318de35d9787a62ba24ee8ce5c90a12",
@@ -2296,9 +2296,9 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     GRID_SEARCH_SOURCE: (
-        "269a942d887e920474f83f47ec39166d6d94d667ce2aa88f233384fc2ea31dfd",
+        "bf90ff3b5a60899cb465ca349e0c7791a8367ae67fe4e1af430c76fc223c66c7",
         {
-            "GridSearch.build_period_kernels": "39157034fc62043a68a064a93a38e31bcfc74918fb7f8a3201702c205309a970",
+            "GridSearch.build_period_kernels": "28bbc2e21f65884f028341f953ca877f5c58ca421b10cf80fa241d5d1ef1b496",
             "grid_search_query_inputs": "9669c1379525b6d33f6260424b9301b85e0aca3eaaeaa01591253c9cff4a1566",
             "_action_partition_mesh": "cab2381dbe9650e10620db20b6614ccb015eb147ff3356ab66e90cec58bf06fe",
             "_classify_action_streaming": "8165f079219429b82f955b4708874d438b3c9ce5e6415b277542c3857082c18b",
@@ -2316,7 +2316,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_GridSearchPeriodKernel.__post_init__": "1e8c230f0845d9b8335c667f38593221a957c34955efe44921763bce6cd24ac7",
             "_GridSearchPeriodKernel.core_programs": "0d96f7bea814e419ef1dbdebbc3257d63c3c0d36d9e6e52e619f8f44ae5a8a56",
             "_GridSearchPeriodKernel.with_fixed_params": "5f5a26e02b136c760bd242cd91c22b76153adc9828a13d20de7a6a98f5877e14",
-            "_GridSearchPeriodKernel.__call__": "ebe1ea0bc427736ff6b6c7921c3c4b48fed9eff51482bbe5ff52e3f73af22d5b",
+            "_GridSearchPeriodKernel.__call__": "211bc04a734b041e7e62316b05db3149567eec95f609a46792bd9bf21ea0e74a",
             "_FlattenBoundedGridSearch.__call__": "114b0acaace961b15c442d9bfc59dcd41409c73962f3034f3e29546b79cf6ac0",
             "_grid_search_fold_weights": "9a9e0af52881e46a569335fd73c809b56c08f752ad38f01731769ca6e0c97f78",
             "_fail_if_decoupled_route_is_unsupported": "0cfd97f1c692b3f82b78d5a9403da93c902b88aa8805e26137930ad2b7dd301e",
@@ -2709,9 +2709,9 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/solution/kernel_output.py": (
-        "03a69ea63dd6701fd551d682b695d273c6216a1012a91213d8d514c39f49552f",
+        "d83378130262054bea7d254086afa73aa462df701fa0ab6601642849e3d1262a",
         {
-            "consume_kernel_output": "26f9a541efb25f864997f90d8be23047eb0a1194c73f81abfb692103486b1ab4",
+            "consume_kernel_output": "e7313e4f2175eb1838d00a42d8a34363f384ef34ab8b10fed3748792b767be11",
         },
     ),
     "src/_lcm/solution/landing_counts.py": (
@@ -2961,7 +2961,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/lcm/_solver_api/replay.py": (
-        "50dab3dda63ebd2422c326438519b998d60cc2d39563c52588d5f9f083770f52",
+        "62fe630e77400921da54a54303dea59514117def5332ab74b8437b6a056364e2",
         {},
     ),
     "src/_lcm/egm/ez_kernel.py": (
@@ -6382,7 +6382,7 @@ if self.collective:
     infinite = jnp.any(infinite, axis=-1)
 empty_count = jnp.sum(empty, dtype=jnp.int32)
 other_inf_count = jnp.sum(infinite & ~empty, dtype=jnp.int32)
-output: CountedGridSearchOutput = (value, empty, empty_count, other_inf_count) if self.collective else (value, empty_count, other_inf_count)
+output: CountedGridSearchOutput = (value, empty_count, other_inf_count)
 if self.current_iid:
     output = cast('CountedGridSearchOutput', (*output, current_iid_invalid))
 return BoundedResult[CountedGridSearchOutput](output=output, bound_status=bounded.bound_status) if bounded is not None else output
@@ -6487,15 +6487,11 @@ def _output_layout_errors(tree: ast.Module) -> list[str]:
         statement
         for statement in tree.body
         if isinstance(statement, ast.Assign)
-        and any(
-            _target_names(target) in {("VALUE",), ("DISSOLUTION_FLAG",)}
-            for target in statement.targets
-        )
+        and any(_target_names(target) == ("VALUE",) for target in statement.targets)
     ]
     if not _statements_match(
         observed=assignments,
         expected_source="""VALUE = OutputRole.VALUE
-DISSOLUTION_FLAG = OutputRole.DISSOLUTION_FLAG
 """,
     ):
         errors.append("output layout: logical output-role bindings changed")
@@ -10875,7 +10871,7 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> DirectFlowReport:
                 "non-production reference: Q_and_F -> weighted C-order stakeholder "
                 "blocks -> one shared "
                 "household hard max -> exact stakeholder gather -> compiled "
-                "(VALUE, DISSOLUTION_FLAG) core"
+                "VALUE core"
             ),
             "collective_simulate": (
                 "published dense decision program: Q_and_F -> trailing stakeholder split -> "
@@ -14604,8 +14600,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         "path": FEASIBILITY_SOURCE,
         "source": replace_once(
             source=feasibility_source,
-            old="else (value, empty_count, other_inf_count)",
-            new="else (-value, empty_count, other_inf_count)",
+            old="output: CountedGridSearchOutput = (value, empty_count, other_inf_count)",
+            new="output: CountedGridSearchOutput = (-value, empty_count, other_inf_count)",
             label="feasibility summary unchanged value",
         ),
     }
@@ -14674,12 +14670,6 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             old="                requirements=requirements,",
             new="                requirements=CoreExecutionRequirements(),",
             label="native graph requirements authority",
-        ),
-        "native_graph:collective_output_role_dropped": replace_once(
-            source=grid_source,
-            old="                    if context.stakeholders is not None\n",
-            new="                    if False\n",
-            label="native graph output-role authority",
         ),
         "native_graph:planned_disposition_forced_dense": replace_once(
             source=grid_source,
@@ -15048,16 +15038,6 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
                 "    ):"
             ),
             label="collective/co-map precedence",
-        ),
-        "streaming_collective:published_dissolution_inverted": replace_once(
-            source=grid_source,
-            old=(
-                "                solve_time_artifacts={DISSOLUTION_FLAG_ARTIFACT: dissolution},"
-            ),
-            new=(
-                "                solve_time_artifacts={DISSOLUTION_FLAG_ARTIFACT: ~dissolution},"
-            ),
-            label="streamed collective result publication",
         ),
         "value_access:grid_reachable_targets_dropped": replace_once(
             source=grid_source,

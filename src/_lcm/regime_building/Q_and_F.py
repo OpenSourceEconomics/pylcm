@@ -1264,7 +1264,7 @@ def get_Q_and_F_terminal_collective(
             predicates (params already renamed to qnames). A terminal cell's
             action value IS its utility — there is no continuation — so a
             predicate's `Q_<s>` is stakeholder `s`'s terminal payoff. An
-            all-infeasible cell publishes the dissolution flag `D` and the
+            all-infeasible cell sets the dissolution flag `D` and the
             `-inf` sentinel; the engine resolves no outside option in its place,
             because a terminal regime has no continuation to route into.
         same_period_refs: Immutable mapping of reference-value names to resolved
@@ -1947,7 +1947,7 @@ def get_Q_and_F_collective(
             values, and ordinary states / actions / functions / params via the
             DAG; the results are ANDed into the feasibility mask, so the
             household argmax runs over `F ∧ g(Q^s, V_ref, ...)` and an
-            all-infeasible cell publishes the dissolution flag `D` downstream.
+            all-infeasible cell sets the kernel's dissolution flag `D`.
         same_period_refs: Immutable mapping of reference-value names to resolved
             same-period reference declarations. When non-empty, the returned
             `Q_and_F` carries the extra argument `SAME_PERIOD_V_ARG` — the

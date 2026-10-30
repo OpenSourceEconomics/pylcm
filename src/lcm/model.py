@@ -397,7 +397,6 @@ from lcm.shocks import (
     ShockName,
 )
 from lcm.solver_api import (
-    DISSOLUTION_FLAG,
     EGM_CONTINUATION,
     PYLCM_VERSION,
     SIMULATION_POLICY,
@@ -3294,10 +3293,7 @@ class Model:
                 if (
                     regime.simulation.replay_route.policy_applicable
                     or regime.simulation.external_replay_route is not None
-                    or any(
-                        key != DISSOLUTION_FLAG
-                        for key in regime.solution.artifact_authorities
-                    )
+                    or bool(regime.solution.artifact_authorities)
                 ):
                     raise ExecutionPlanningError(
                         f"Budgeted foreign solution for regime {regime_name!r} "
@@ -3736,13 +3732,11 @@ class Model:
         )
         standard_type_ids = {
             SIMULATION_POLICY.type_id,
-            DISSOLUTION_FLAG.type_id,
             EGM_CONTINUATION.type_id,
             SOLVER_DIAGNOSTICS.type_id,
         }
         exact_standard_keys = {
             SIMULATION_POLICY,
-            DISSOLUTION_FLAG,
             EGM_CONTINUATION,
             SOLVER_DIAGNOSTICS,
         }
@@ -3759,7 +3753,7 @@ class Model:
                 (store_name, ref)
                 for store_name, store in named_stores
                 for ref in store
-                if ref.key in {SIMULATION_POLICY, DISSOLUTION_FLAG}
+                if ref.key == SIMULATION_POLICY
                 and authority.replay.get(ref) is not None
                 and store_name != authority.replay[ref].channel
             )

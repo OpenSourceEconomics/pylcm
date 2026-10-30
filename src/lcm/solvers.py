@@ -154,7 +154,6 @@ from lcm.outer_search import (
     OuterSearch,
 )
 from lcm.solver_api import (
-    DISSOLUTION_FLAG,
     EGM_CONTINUATION,
     EGM_ENDOGENOUS_COORDINATE,
     PYLCM_VERSION,
@@ -208,7 +207,6 @@ __all__ = [
     "BRANCH_AXIS",
     "CELL_AXIS",
     "DCEGM",
-    "DISSOLUTION_FLAG",
     "EGM",
     "EGM_CONTINUATION",
     "EGM_ENDOGENOUS_COORDINATE",

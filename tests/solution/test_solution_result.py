@@ -51,7 +51,6 @@ from lcm.exceptions import (
 )
 from lcm.persistence import load_solution
 from lcm.solver_api import (
-    DISSOLUTION_FLAG,
     EGM_CONTINUATION,
     SIMULATION_POLICY,
     SOLVER_DIAGNOSTICS,
@@ -622,13 +621,11 @@ def test_builtin_artifact_keys_are_stably_versioned() -> None:
         for key in (
             EGM_CONTINUATION,
             SIMULATION_POLICY,
-            DISSOLUTION_FLAG,
             SOLVER_DIAGNOSTICS,
         )
     } == {
         "pylcm.egm.continuation": 2,
         "pylcm.simulation.policy": 1,
-        "pylcm.collective.dissolution_flag": 1,
         "pylcm.solver.diagnostics": 1,
     }
 

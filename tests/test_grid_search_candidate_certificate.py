@@ -427,8 +427,8 @@ def test_feasibility_summary_rejects_changed_native_values() -> None:
     """Changing only the wrapper's value readout breaks its transport proof."""
     source = (_SRC_ROOT / "_lcm/solution/feasibility.py").read_text(encoding="utf-8")
     changed = source.replace(
-        "else (value, empty_count, other_inf_count)",
-        "else (-value, empty_count, other_inf_count)",
+        "output: CountedGridSearchOutput = (value, empty_count, other_inf_count)",
+        "output: CountedGridSearchOutput = (-value, empty_count, other_inf_count)",
     )
     assert changed != source
     assert _feasibility_summary_errors(ast.parse(changed))
@@ -1096,7 +1096,6 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
         "native_graph:function_wrapped",
         "native_graph:argument_builder_wrapped",
         "native_graph:requirements_erased",
-        "native_graph:collective_output_role_dropped",
         "native_graph:planned_disposition_forced_dense",
         "native_graph:dense_reason_erased",
         "native_graph:donation_candidates_changed",
@@ -1154,7 +1153,6 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
         "streaming_dispatch:bypass_compiled_core",
         "streaming_collective:builder_dissolution_inverted",
         "streaming_collective:builder_stakeholder_axis_sliced",
-        "streaming_collective:published_dissolution_inverted",
         "streaming_ev1:runtime_scale_constant",
         "streaming_ev1:scale_signature_dropped",
         "streaming_ev1:published_value_negated",
@@ -1272,27 +1270,27 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
     original_names = {
         name for name in names if not name.startswith("simulation_adapter:")
     }
-    assert len(original_names) == 392
+    assert len(original_names) == 390
     assert (
         hashlib.sha256(("\n".join(sorted(original_names)) + "\n").encode()).hexdigest()
-        == "89663220cf8da4b5bf9d74510749d2cb0353078da23131e0e8a70e9cd45fcacb"
+        == "f85d9becf7d49e1e160b8d2291125c6742b1c1e78025248b4e04611309c03854"
     )
     historical_names = {
         name
         for name in names
         if not name.startswith("simulation_adapter:initial_physical_")
     }
-    assert len(historical_names) == 410
+    assert len(historical_names) == 408
     assert (
         hashlib.sha256(
             ("\n".join(sorted(historical_names)) + "\n").encode()
         ).hexdigest()
-        == "0a861eb7ca01cb47fa9d2e5b4b8ead7935f40349678139b9608687f211aa6603"
+        == "bc2b2009af0efec23e71a543c0ba6f443fabc4fe25aeb9a74280712c265fdf55"
     )
-    assert len(names) == 422
+    assert len(names) == 420
     assert (
         hashlib.sha256(("\n".join(sorted(names)) + "\n").encode()).hexdigest()
-        == "e679f793253493d8b2353546edd92c9a927dff19ea2a5814bb5a68b3733ff346"
+        == "f336bcbcca6ffee605c11974059ae301e067fafec2ad2d6e0c33f34ee5c964ab"
     )
 
 
