@@ -320,8 +320,23 @@ continuous states, a process whose law arrives as runtime params or is state-con
 or a savings stage that reads the Euler state. Such DC-EGM regimes simulate by the
 action-grid argmax, so their continuous action can differ from the off-grid solve policy.
 With taste shocks, simulated choice frequencies follow the grid-restricted
-choice-specific values. NBEGM regimes, with or without process states, also simulate by
-the action-grid argmax.
+choice-specific values.
+
+An `NBEGM` regime that carries a state besides its liquid state (a discrete state or a
+process state riding along) reads its solved policy the same way, under the same
+eligibility. Its policy is published on the regime's state grid: the liquid state reads
+linearly between its two bracketing grid nodes, and a process state between its nodes
+blends the bracketing node rows as above. With discrete actions, the branch whose
+published conditional value reads largest wins and its conditional policy supplies the
+continuous action. Acceptance requires the liquid state inside its grid, a live branch,
+and a finite, positive action within the intrinsic budget that the regime's constraints
+admit; rejected subjects take the action-grid argmax. The reported value is the
+canonical evaluation at the emitted actions, since the policy carries no value at an
+off-grid state. A read between grid nodes is a linear interpolation of the solved
+policy: across a jump or kink of that policy it is not the optimum at the realized
+state, and no rescoring against the grid argmax corrects it. An `NBEGM` regime whose
+only state is its liquid state publishes no state-grid policy and simulates by the
+action-grid argmax.
 
 Regimes reading named current-IID shocks are node-state regimes and simulate by the
 action-grid argmax at the realized draw; see

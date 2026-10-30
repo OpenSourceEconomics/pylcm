@@ -226,11 +226,12 @@ def egm_sim_policy_role_tree(
 class NBEGMGridPolicy:
     """Inner NBEGM action on the regime state grid.
 
-    This is an intermediate solve artifact. A nested outer solver stacks one
-    instance per candidate before publishing the joint replay payload. A
-    discrete inner envelope additionally retains every branch's conditional
-    action and value; smooth solves leave those optional banks absent so their
-    hot path and storage stay unchanged.
+    A standalone ride-along NB-EGM regime retains it as its simulation policy,
+    read at each subject's realized state (`NBEGMPolicyRead`). A nested outer
+    solver stacks one instance per candidate before publishing the joint replay
+    payload. A discrete inner envelope additionally retains every branch's
+    conditional action and value; smooth solves leave those optional banks
+    absent so their hot path and storage stay unchanged.
     """
 
     action: FloatND

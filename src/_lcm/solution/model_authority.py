@@ -37,8 +37,14 @@ from _lcm.egm.nested_published_policy import NestedEGMSimPolicy, OuterPolicyBank
 from _lcm.egm.outer_inversion import DeclaredOuterInverse
 from _lcm.egm.outer_replay_capability import OuterReplayCapability
 from _lcm.egm.outer_search import AdaptiveOuterMesh
-from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
-from _lcm.engine import EGMPolicyRead, NNBEGMPolicyRead, Regime, StateActionSpace
+from _lcm.egm.published_policy import EGMSimPolicy, NBEGMGridPolicy, NNBEGMSimPolicy
+from _lcm.engine import (
+    EGMPolicyRead,
+    NBEGMPolicyRead,
+    NNBEGMPolicyRead,
+    Regime,
+    StateActionSpace,
+)
 from _lcm.execution.core_program import (
     ProgramScope,
     core_program_graph,
@@ -132,7 +138,7 @@ class ReplayCellDescriptor:
 
     ref: ArtifactRef
     payload_type: ArtifactRuntimeType | tuple[ArtifactRuntimeType, ...] | None
-    route: EGMPolicyRead | NNBEGMPolicyRead | None
+    route: EGMPolicyRead | NBEGMPolicyRead | NNBEGMPolicyRead | None
     shape: tuple[int, ...] | None
     dtype: str | None
     applicable: bool
@@ -269,11 +275,13 @@ def _snapshot_replay_cell_descriptor(
 
     route = descriptor.route
     if type(route) is EGMPolicyRead:
-        copied_route: EGMPolicyRead | NNBEGMPolicyRead | None = (
+        copied_route: EGMPolicyRead | NBEGMPolicyRead | NNBEGMPolicyRead | None = (
             _snapshot_egm_policy_read(route)
         )
     elif type(route) is NNBEGMPolicyRead:
         copied_route = _snapshot_nnbegm_policy_read(route)
+    elif type(route) is NBEGMPolicyRead:
+        copied_route = _snapshot_nbegm_policy_read(route)
     else:
         copied_route = None
 
@@ -318,9 +326,11 @@ def _validate_replay_cell_descriptor(  # noqa: C901
     elif payload_type is not None and not isinstance(payload_type, type):
         raise TypeError("Replay payload_type must be a type, exact tuple, or None.")
     route_type = type(descriptor.route)
-    if descriptor.route is not None and (
-        route_type is not EGMPolicyRead and route_type is not NNBEGMPolicyRead
-    ):
+    if descriptor.route is not None and route_type not in {
+        EGMPolicyRead,
+        NBEGMPolicyRead,
+        NNBEGMPolicyRead,
+    }:
         raise TypeError("Replay authority has an unsupported route wrapper.")
     if descriptor.shape is not None:
         _require_exact_shape(value=descriptor.shape, label="replay authority shape")
@@ -389,6 +399,49 @@ def _snapshot_egm_policy_read(route: EGMPolicyRead) -> EGMPolicyRead:
                 period: tuple(lengths)
                 for period, lengths in route.row_axis_lengths_by_period.items()
             }
+        ),
+    )
+
+
+def _snapshot_nbegm_policy_read(route: NBEGMPolicyRead) -> NBEGMPolicyRead:
+    """Copy an NB-EGM state-grid route after validating every structural field."""
+    for value, label in (
+        (route.action_name, "NB-EGM action_name"),
+        (route.resources_target, "NB-EGM resources_target"),
+        (route.liquid_state_name, "NB-EGM liquid_state_name"),
+        (route.float_dtype, "NB-EGM float_dtype"),
+        (route.integer_dtype, "NB-EGM integer_dtype"),
+    ):
+        _require_nonempty_exact_str(value=value, label=label)
+    _require_exact_float(
+        value=route.savings_lower_bound, label="NB-EGM savings_lower_bound"
+    )
+    _require_exact_names(value=route.state_names, label="NB-EGM state_names")
+    _require_exact_names(
+        value=route.discrete_action_names, label="NB-EGM discrete_action_names"
+    )
+    _require_exact_period_lengths(
+        value=route.state_axis_lengths_by_period,
+        label="NB-EGM state_axis_lengths_by_period",
+    )
+    if route.liquid_state_name not in route.state_names or any(
+        len(codes) != len(route.discrete_action_names)
+        or any(type(code) is not int for code in codes)
+        for codes in route.branch_discrete_action_codes
+    ):
+        raise TypeError("An NB-EGM route has an inconsistent state or branch layout.")
+    return replace(
+        route,
+        state_names=tuple(route.state_names),
+        state_axis_lengths_by_period=MappingProxyType(
+            {
+                period: tuple(lengths)
+                for period, lengths in route.state_axis_lengths_by_period.items()
+            }
+        ),
+        discrete_action_names=tuple(route.discrete_action_names),
+        branch_discrete_action_codes=tuple(
+            tuple(codes) for codes in route.branch_discrete_action_codes
         ),
     )
 
@@ -1682,13 +1735,19 @@ def _validate_artifact_producer_types(
 
 def _policy_artifact_layout(
     *,
-    policy_read: EGMPolicyRead | NNBEGMPolicyRead | None,
+    policy_read: EGMPolicyRead | NBEGMPolicyRead | NNBEGMPolicyRead | None,
     template_snapshot: _CanonicalArtifactTemplate | None,
     period: int,
 ) -> _ArtifactLayout:
     """Describe every built-in policy leaf with its mathematical axes."""
     if isinstance(policy_read, EGMPolicyRead):
         return _egm_policy_artifact_layout(
+            policy_read=policy_read,
+            template_snapshot=template_snapshot,
+            period=period,
+        )
+    if isinstance(policy_read, NBEGMPolicyRead):
+        return _nbegm_policy_artifact_layout(
             policy_read=policy_read,
             template_snapshot=template_snapshot,
             period=period,
@@ -1754,6 +1813,70 @@ def _egm_policy_artifact_layout(
         axes=axes,
         state_roles=row_state_names,
         action_roles=_unique_names((policy_read.action_name, *row_action_names)),
+    )
+
+
+def _nbegm_policy_artifact_layout(
+    *,
+    policy_read: NBEGMPolicyRead,
+    template_snapshot: _CanonicalArtifactTemplate | None,
+    period: int,
+) -> _ArtifactLayout:
+    """Return the state axes of an NB-EGM policy and its optional branch banks.
+
+    Leaves follow `NBEGMGridPolicy`'s flatten order: the collapsed action, then,
+    with discrete actions, the branch action and value banks (branch axis
+    leading) and the branch-code matrix.
+    """
+    state_names = policy_read.state_names
+    axes = _model_role_axes(
+        names=state_names,
+        lengths=policy_read.state_axis_lengths_by_period[period],
+        state_names=state_names,
+        action_names=(),
+    )
+    branch_axis = "pylcm:nbegm:branch"
+    field_axis = "pylcm:nbegm:discrete_action_field"
+    leaf_axis_names = (
+        (
+            state_names,
+            (branch_axis, *state_names),
+            (branch_axis, *state_names),
+            (branch_axis, field_axis),
+        )
+        if policy_read.discrete_action_names
+        else (state_names,)
+    )
+    paths = () if template_snapshot is None else template_snapshot.leaf_paths
+    if paths and len(paths) != len(leaf_axis_names):
+        raise TypeError("An NB-EGM policy template has inconsistent leaves.")
+    leaf_axes: dict[TreePath, tuple[str, ...]] = dict(
+        zip(paths, leaf_axis_names[: len(paths)], strict=True)
+    )
+    if policy_read.discrete_action_names:
+        n_branches = len(policy_read.branch_discrete_action_codes)
+        axes = (
+            *axes,
+            AxisAuthority(
+                name=branch_axis,
+                length=n_branches,
+                role=AxisRole.CANDIDATE,
+                coordinates=tuple(range(n_branches)),
+            ),
+            AxisAuthority(
+                name=field_axis,
+                length=len(policy_read.discrete_action_names),
+                role=AxisRole.OTHER,
+                coordinates=tuple(policy_read.discrete_action_names),
+            ),
+        )
+    return _ArtifactLayout(
+        leaf_axis_names=MappingProxyType(leaf_axes),
+        axes=tuple(axes),
+        state_roles=state_names,
+        action_roles=_unique_names(
+            (policy_read.action_name, *policy_read.discrete_action_names)
+        ),
     )
 
 
@@ -3148,7 +3271,7 @@ class _AuthorityBinding:
 def _policy_shape_and_node_count(
     *,
     regime: Regime,
-    policy_read: EGMPolicyRead | NNBEGMPolicyRead | None,
+    policy_read: EGMPolicyRead | NBEGMPolicyRead | NNBEGMPolicyRead | None,
     period: int,
 ) -> tuple[tuple[int, ...] | None, int | None]:
     """Return model-owned primary-array shape and EGM trailing-node length."""
@@ -3159,6 +3282,8 @@ def _policy_shape_and_node_count(
             raise TypeError(msg)
         node_count = int(template.value.shape[-1])
         return (*policy_read.row_axis_lengths_by_period[period], node_count), node_count
+    if isinstance(policy_read, NBEGMPolicyRead):
+        return policy_read.state_axis_lengths_by_period[period], None
     if not isinstance(policy_read, NNBEGMPolicyRead):
         return None, None
     if not policy_read.replay_policy_is_nested:
@@ -3193,11 +3318,11 @@ def _materialize_authority_zeros(
 
 def _policy_persistence_and_template(
     *,
-    policy_read: EGMPolicyRead | NNBEGMPolicyRead | None,
+    policy_read: EGMPolicyRead | NBEGMPolicyRead | NNBEGMPolicyRead | None,
     policy_shape: tuple[int, ...] | None,
     expected_replay_capability: OuterReplayCapability | None,
     materializer: DatedGenerationMaterializer | None = None,
-) -> tuple[PersistencePolicy, EGMSimPolicy | NNBEGMSimPolicy | None]:
+) -> tuple[PersistencePolicy, EGMSimPolicy | NBEGMGridPolicy | NNBEGMSimPolicy | None]:
     """Return the route's persistence policy and model-built PyTree template."""
     if isinstance(policy_read, EGMPolicyRead):
         if policy_shape is None:
@@ -3217,6 +3342,13 @@ def _policy_persistence_and_template(
             row_discrete_state_names=policy_read.row_discrete_state_names,
             row_passive_state_names=policy_read.row_passive_state_names,
             row_discrete_action_names=policy_read.row_discrete_action_names,
+        )
+
+    if isinstance(policy_read, NBEGMPolicyRead):
+        return PersistencePolicy.MODEL_VERIFIABLE, _nbegm_policy_template(
+            policy_read=policy_read,
+            policy_shape=policy_shape,
+            materializer=materializer,
         )
 
     if materializer is not None and isinstance(policy_read, NNBEGMPolicyRead):
@@ -3267,6 +3399,41 @@ def _policy_persistence_and_template(
         )
 
     return PersistencePolicy.NOT_PERSISTED, None
+
+
+def _nbegm_policy_template(
+    *,
+    policy_read: NBEGMPolicyRead,
+    policy_shape: tuple[int, ...] | None,
+    materializer: DatedGenerationMaterializer | None,
+) -> NBEGMGridPolicy:
+    """Build the NB-EGM state-grid policy template from the route's facts."""
+    if policy_shape is None:
+        raise TypeError("An NB-EGM replay route has no model-owned policy shape.")
+    action = (
+        jnp.zeros(policy_shape, dtype=policy_read.float_dtype)
+        if materializer is None
+        else _materialize_authority_zeros(
+            schema=jax.ShapeDtypeStruct(policy_shape, policy_read.float_dtype),
+            materializer=materializer,
+        )
+    )
+    if not policy_read.discrete_action_names:
+        return NBEGMGridPolicy(action=action, state_names=policy_read.state_names)
+    bank = jnp.broadcast_to(
+        action, (len(policy_read.branch_discrete_action_codes), *policy_shape)
+    )
+    return NBEGMGridPolicy(
+        action=action,
+        state_names=policy_read.state_names,
+        branch_inner_action=bank,
+        branch_value=bank,
+        branch_discrete_actions=jnp.asarray(
+            policy_read.branch_discrete_action_codes,
+            dtype=policy_read.integer_dtype,
+        ),
+        discrete_action_names=policy_read.discrete_action_names,
+    )
 
 
 def _inner_policy_from_array(

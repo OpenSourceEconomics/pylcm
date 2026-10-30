@@ -23,7 +23,7 @@ from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.continuation import ContinuationPayload, ContinuationSpec, EGMQuerySpec
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.projected_continuation import ProjectedChildAuthority
-from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
+from _lcm.egm.published_policy import EGMSimPolicy, NBEGMGridPolicy, NNBEGMSimPolicy
 from _lcm.execution.execution_plan import visible_devices
 from _lcm.execution.placement import ACTION_PARTITION_AXIS
 from _lcm.grids import DiscreteGrid, Grid, IrregSpacedGrid
@@ -1025,6 +1025,73 @@ class EGMPolicyRead:
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
+class NBEGMPolicyRead:
+    """Names for the realized-state read of a published `NBEGMGridPolicy`.
+
+    The stored policy is the optimal inner action on the regime's state grid;
+    simulation reads it at each subject's realized state instead of argmaxing
+    over the action grid. A discrete action is chosen by the largest read of its
+    published conditional value.
+    """
+
+    action_name: ActionName
+    """The NB-EGM continuous action the read replaces."""
+
+    resources_target: FunctionName
+    """DAG function computing the resources the intrinsic budget bounds."""
+
+    savings_lower_bound: float
+    """Lower bound of the solver's savings grid, the borrowing limit of the
+    post-read budget check (`action <= resources - bound`)."""
+
+    liquid_state_name: StateName
+    """The Euler state, read linearly on its grid."""
+
+    state_names: tuple[StateName, ...]
+    """Exact state axes of the published arrays, in storage order."""
+
+    state_axis_lengths_by_period: MappingProxyType[int, tuple[int, ...]]
+    """Exact lengths of the ordered state axes in every active period."""
+
+    discrete_action_names: tuple[ActionName, ...]
+    """Exact columns of the published branch codes, in declared order."""
+
+    branch_discrete_action_codes: tuple[tuple[int, ...], ...]
+    """Exact code rows of the published branch axis, in product order."""
+
+    float_dtype: str
+    """Canonical dtype of every floating array leaf in the payload."""
+
+    integer_dtype: str
+    """Canonical dtype of the branch-code leaf in the payload."""
+
+    @property
+    def replay_mode(self) -> ReplayMode:
+        """The stored policy names the decision; simulation reads it off-grid."""
+        return ReplayMode.EXACT_REPLAY
+
+    @property
+    def payload_type(self) -> type[NBEGMGridPolicy]:
+        """The exact replay payload class this route reads."""
+        return NBEGMGridPolicy
+
+    @property
+    def policy_applicable(self) -> bool:
+        """A qualifying NB-EGM regime always publishes its state-grid policy."""
+        return True
+
+    @property
+    def policy_required(self) -> bool:
+        """A successful solve of a qualifying regime must retain the policy."""
+        return True
+
+    @property
+    def consumer_route(self) -> str:
+        """The reader that interpolates the policy at a subject's state."""
+        return "nbegm_grid"
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class NNBEGMPolicyRead:
     """Realized-state adapter for the NNBEGM joint replay payload."""
 
@@ -1294,11 +1361,12 @@ class SimulationPhase:
     regime-selection checker evaluates it on every visited period.
     """
 
-    egm_policy_read: EGMPolicyRead | NNBEGMPolicyRead | None = None
+    egm_policy_read: EGMPolicyRead | NBEGMPolicyRead | NNBEGMPolicyRead | None = None
     """Off-grid read of the published EGM simulation policy, or `None`.
 
     Present only where replaying the solve-phase policy is valid:
-    - the regime is solved by an EGM kernel that publishes `EGMSimPolicy`;
+    - the regime is solved by an EGM kernel that publishes `EGMSimPolicy`,
+      `NBEGMGridPolicy` or an NNBEGM payload;
     - the Koopmans aggregator `W` is phase-invariant (a phase-variant `W`
       changes the simulate-phase FOC, so the stored policy is wrong there);
     - the regime declares no taste shocks.

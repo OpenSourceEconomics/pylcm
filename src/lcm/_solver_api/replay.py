@@ -229,6 +229,7 @@ _BUILT_IN_ROUTE_IDS: MappingProxyType[tuple[ReplayMode, str | None], str] = (
             (ReplayMode.VALID_RECOMPUTATION, None): "pylcm.grid_recomputation",
             (ReplayMode.UNSUPPORTED, None): "pylcm.replay_unsupported",
             (ReplayMode.EXACT_REPLAY, "egm_off_grid"): "pylcm.egm_off_grid",
+            (ReplayMode.EXACT_REPLAY, "nbegm_grid"): "pylcm.nbegm_grid",
             (ReplayMode.EXACT_REPLAY, "nnbegm_finite"): "pylcm.nnbegm_finite",
             (ReplayMode.EXACT_REPLAY, "nnbegm_nested"): "pylcm.nnbegm_nested",
             (ReplayMode.VALID_RECOMPUTATION, "nnbegm_finite"): "pylcm.nnbegm_finite",
