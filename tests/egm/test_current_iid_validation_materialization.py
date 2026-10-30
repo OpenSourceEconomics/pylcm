@@ -1,6 +1,5 @@
 """Original eager validator arithmetic and ownership under actual admission."""
 
-from collections.abc import Callable
 from functools import partial
 from types import MappingProxyType
 
@@ -13,22 +12,13 @@ from jax._src.api import Inline
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.nbegm_probe_stages import probe_points
 from _lcm.egm.validation import (
-    _admitted_validation_unique,
     validate_dcegm_regime,
 )
 from _lcm.execution.workspace_planning import WorkspaceBudgetError
-from _lcm.solution.generation import canonical_generation_roots
 from _lcm.typing import PytreeValue
 from lcm.exceptions import ExecutionPlanningError, ModelInitializationError
 from lcm.typing import BoolND, FloatND
 from tests.egm.test_current_iid_generation_materialization import _owner
-from tests.egm.test_current_iid_parent_demands import (
-    _current_resources,
-    _inverse,
-    _resources,
-    _savings,
-    _utility,
-)
 from tests.solution.test_post_decision_lower_bound import _model as _bounded_model
 
 pytestmark = pytest.mark.coverage(backends=("cpu",), precisions="both")
@@ -36,56 +26,6 @@ pytestmark = pytest.mark.coverage(backends=("cpu",), precisions="both")
 
 def _original_minimum(*, values: FloatND) -> FloatND:
     return jnp.min(values)
-
-
-def test_original_minimum_keeps_admitted_bytes_and_primitive() -> None:
-    """The NN domain reduction retains the original eager primitive boundary."""
-    from jax.extend.core import primitives as primitive_objects  # noqa: PLC0415
-
-    from _lcm.egm.validation_stages import prepare_validation_recipe  # noqa: PLC0415
-    from _lcm.solution.nnbegm import _nnbegm_outer_domain_flags  # noqa: PLC0415
-
-    dtype = canonical_float_dtype()
-    values = jnp.asarray([0.75, -0.0, 0.25], dtype=dtype)
-    arguments = {"values": values}
-    expected = _original_minimum(values=values)
-    recipe = prepare_validation_recipe(function=_original_minimum, arguments=arguments)
-    assert tuple(stage.primitive for stage, _operands, _outputs in recipe.stages) == (
-        primitive_objects.reduce_min_p,
-    )
-    owner = _owner(roots=(values, expected))
-    try:
-        actual = owner.evaluate_validation(
-            function=_original_minimum, arguments=arguments
-        )
-        assert isinstance(actual, jax.Array)
-        assert actual.dtype == expected.dtype
-        assert actual.shape == expected.shape
-        assert actual.weak_type == expected.weak_type
-        assert np.asarray(actual).tobytes() == np.asarray(expected).tobytes()
-        assert any(
-            root is actual for root in jax.tree.leaves(owner.solve_input_roots())
-        )
-        domain_arguments = {
-            "nodes": values,
-            "low": jnp.asarray(0.0, dtype=dtype),
-            "high": jnp.asarray(1.0, dtype=dtype),
-        }
-        expected_flags = _nnbegm_outer_domain_flags(**domain_arguments)
-        actual_flags = owner.evaluate_validation(
-            function=_nnbegm_outer_domain_flags, arguments=domain_arguments
-        )
-        for actual_flag, expected_flag in zip(
-            actual_flags, expected_flags, strict=True
-        ):
-            assert actual_flag.dtype == expected_flag.dtype
-            assert actual_flag.shape == expected_flag.shape
-            assert actual_flag.weak_type == expected_flag.weak_type
-            assert (
-                np.asarray(actual_flag).tobytes() == np.asarray(expected_flag).tobytes()
-            )
-    finally:
-        owner.close()
 
 
 def test_validator_minimum_name_cannot_authorize_a_foreign_primitive() -> None:
@@ -169,33 +109,6 @@ def test_validator_stack_name_cannot_authorize_a_foreign_primitive() -> None:
     )
     with pytest.raises(ExecutionPlanningError, match="unsupported eager primitive"):
         _stage(equation=equation.replace(primitive=Primitive("stack")))
-
-
-@pytest.mark.parametrize(
-    ("function", "values"),
-    [
-        (_utility, {"consumption": 0.75}),
-        (_resources, {"wealth": 1.25}),
-        (_current_resources, {"wealth": 1.25, "eps": -0.125}),
-        (_savings, {"resources": 1.25, "consumption": 0.75}),
-        (_inverse, {"marginal_continuation": 1.25}),
-    ],
-)
-def test_original_economic_callback_bytes_and_weak_type(
-    *, function: Callable[..., PytreeValue], values: dict[str, float]
-) -> None:
-    arguments = {name: jnp.asarray(value) for name, value in values.items()}
-    expected = function(**arguments)
-    owner = _owner(roots=(*arguments.values(), expected))
-    try:
-        actual = owner.evaluate_validation(function=function, arguments=arguments)
-        assert isinstance(expected, jax.Array)
-        assert isinstance(actual, jax.Array)
-        assert actual.dtype == expected.dtype
-        assert actual.weak_type == expected.weak_type
-        assert np.asarray(actual).tobytes() == np.asarray(expected).tobytes()
-    finally:
-        owner.close()
 
 
 @jax.jit
@@ -431,19 +344,6 @@ def test_referenced_callback_array_survives_unrelated_publish(
         owner.close()
 
 
-def test_actual_integer_unique_cardinality_keeps_original_JAX_values() -> None:
-    indices = jnp.asarray([0, 0, 2, 2, 3], dtype=jnp.int32)
-    expected = jnp.unique(indices)
-    owner = _owner(roots=(indices, expected))
-    try:
-        actual = _admitted_validation_unique(indices=indices, materializer=owner)
-        assert actual.shape == (3,)
-        assert actual.dtype == indices.dtype
-        assert np.asarray(actual).tobytes() == np.asarray(expected).tobytes()
-    finally:
-        owner.close()
-
-
 def _broad_then_add(*, value: FloatND) -> FloatND:
     broad = jnp.broadcast_to(value, (4096,))
     return broad + 1.0
@@ -504,25 +404,11 @@ def test_original_real_DCEGM_validator_keeps_outcome_and_diagnostic(
         laws=laws,
         solution_reachability=prepared.prepared_structure.reachability.solution,
     )
-    owner = _owner(
-        roots=(
-            *model._generation_roots(),
-            *canonical_generation_roots(declarations=(regime,)),
-        )
-    )
-    try:
-        if wrong_inverse:
-            with pytest.raises(ModelInitializationError) as expected:
-                validate()
-            with pytest.raises(ModelInitializationError) as actual:
-                validate(materializer=owner)
-            assert str(actual.value) == str(expected.value)
-            assert "inconsistent" in str(actual.value)
-        else:
-            assert validate() is None
-            assert validate(materializer=owner) is None
-    finally:
-        owner.close()
+    if wrong_inverse:
+        with pytest.raises(ModelInitializationError, match="inconsistent"):
+            validate()
+    else:
+        assert validate() is None
 
 
 def _original_isnan(*, value: FloatND) -> BoolND:

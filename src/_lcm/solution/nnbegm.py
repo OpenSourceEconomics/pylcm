@@ -64,7 +64,6 @@ from _lcm.egm.outer_replay_capability import (
     resolve_outer_replay_capability,
 )
 from _lcm.egm.outer_search import AdaptiveOuterMesh, FiniteOuterGrid, OuterSearch
-from _lcm.egm.projected_continuation import ProjectedChildAuthority
 from _lcm.egm.published_policy import (
     EGMSimPolicy,
     NBEGMGridPolicy,
@@ -152,7 +151,6 @@ from lcm.exceptions import (
     ModelInitializationError,
     RegimeInitializationError,
     UnrepresentableOuterCandidateError,
-    UnsupportedOperationError,
 )
 from lcm.solver_api import (
     EGM_CONTINUATION,
@@ -170,7 +168,6 @@ from lcm.typing import (
     FloatND,
     FunctionName,
     IntND,
-    ScalarBool,
     ScalarFloat,
     StateName,
 )
@@ -439,16 +436,6 @@ class NNBEGM(TwoMarginSolver):
             fail_if_kernel_grids_withhold_their_points,
         )
 
-        if context.materializer is not None and (
-            type(self) is not _BoundNNBEGM
-            or type(self.inner) is not _BoundNBEGM
-            or type(self.outer_search) is not FiniteOuterGrid
-            or type(self.branch_aggregator) is not DeterministicOuterMaximum
-        ):
-            raise UnsupportedOperationError(
-                "Owned NNBEGM requires its original bound NB inner and finite "
-                "deterministic outer search."
-            )
         user_regime = context.user_regimes[context.regime_name]
         _fail_if_nnbegm_phase_variation(
             regime_name=context.regime_name,
@@ -485,14 +472,12 @@ class NNBEGM(TwoMarginSolver):
             outer_state=outer_state,
             outer_state_grid=cast("Grid", user_regime.states[outer_state]),
             outer_search=bound.outer_search,
-            materializer=context.materializer,
         )
         fail_if_declared_lower_bound_disagrees_with_the_grid(
             regime_name=context.regime_name,
             user_regime=user_regime,
             solver=bound.inner,
             solver_name="NNBEGM",
-            materializer=context.materializer,
         )
         _validate_nbegm_case_piece_declarations(context=context, solver=bound.inner)
 
@@ -546,7 +531,7 @@ class NNBEGM(TwoMarginSolver):
         query_input_authorities: dict[
             int,
             tuple[
-                tuple[RegimeName, int, PostDecisionBoundSpec | ProjectedChildAuthority],
+                tuple[RegimeName, int, PostDecisionBoundSpec],
                 ...,
             ],
         ] = {}
@@ -2372,9 +2357,7 @@ def _merge_nnbegm_reader_contracts(
     capabilities: dict[int, Mapping[RegimeName, ContinuationCapabilities]],
     authorities: dict[
         int,
-        tuple[
-            tuple[RegimeName, int, PostDecisionBoundSpec | ProjectedChildAuthority], ...
-        ],
+        tuple[tuple[RegimeName, int, PostDecisionBoundSpec], ...],
     ],
 ) -> None:
     """Forward matching actual inner readers across disjoint source-period groups."""
@@ -2692,7 +2675,6 @@ def _fail_if_the_outer_search_leaves_the_outer_state_domain(
     outer_state: StateName,
     outer_state_grid: Grid,
     outer_search: OuterSearch,
-    materializer: DatedGenerationMaterializer | None = None,
 ) -> None:
     """Refuse an outer search that names a stock the outer state cannot hold.
 
@@ -2708,11 +2690,7 @@ def _fail_if_the_outer_search_leaves_the_outer_state_domain(
     """
     match outer_search:
         case FiniteOuterGrid():
-            nodes = (
-                outer_search.grid.to_jax()
-                if materializer is None
-                else materializer.materialize_grid(spec=outer_search.grid)
-            )
+            nodes = outer_search.grid.to_jax()
             label = "outer grid"
         case AdaptiveOuterMesh():
             nodes = outer_search.initial_grid.to_jax()
@@ -2720,40 +2698,16 @@ def _fail_if_the_outer_search_leaves_the_outer_state_domain(
         case _:
             return
 
-    domain = (
-        outer_state_grid.to_jax()
-        if materializer is None
-        else materializer.materialize_grid(spec=outer_state_grid)
-    )
-    if materializer is None:
-        low, high = domain[0], domain[-1]
-        below = jnp.min(nodes) < low
-        above = jnp.max(nodes) > high
-        outside = below | above
-    else:
-        low = materializer.evaluate_validation(
-            function=_nnbegm_grid_first, arguments={"points": domain}
-        )
-        high = materializer.evaluate_validation(
-            function=_nnbegm_grid_last, arguments={"points": domain}
-        )
-        below, above, outside = materializer.evaluate_validation(
-            function=_nnbegm_outer_domain_flags,
-            arguments={"nodes": nodes, "low": low, "high": high},
-        )
+    domain = outer_state_grid.to_jax()
+    low, high = domain[0], domain[-1]
+    below = jnp.min(nodes) < low
+    above = jnp.max(nodes) > high
+    outside = below | above
     if not bool(outside):
         return
 
     side = "below" if bool(below) else "above"
-    offending = (
-        (float(jnp.min(nodes)) if bool(below) else float(jnp.max(nodes)))
-        if materializer is None
-        else float(
-            materializer.evaluate_validation(
-                function=jnp.min if bool(below) else jnp.max, arguments={"a": nodes}
-            )
-        )
-    )
+    offending = float(jnp.min(nodes)) if bool(below) else float(jnp.max(nodes))
     msg = (
         f"Regime {regime_name!r}: the NNBEGM {label} reaches outside the "
         f"declared domain of the outer state {outer_state!r}. Its node "
@@ -3217,15 +3171,6 @@ def _nnbegm_grid_first(*, points: Float1D) -> ScalarFloat:
 def _nnbegm_grid_last(*, points: Float1D) -> ScalarFloat:
     """Read the original last grid node as an admitted stage."""
     return points[-1]
-
-
-def _nnbegm_outer_domain_flags(
-    *, nodes: Float1D, low: ScalarFloat, high: ScalarFloat
-) -> tuple[ScalarBool, ScalarBool, ScalarBool]:
-    """Keep the original outer-domain comparisons and disjunction."""
-    below = jnp.min(nodes) < low
-    above = jnp.max(nodes) > high
-    return below, above, below | above
 
 
 _ORIGINAL_FINITE_NNBEGM_PERIOD_KERNEL = _FiniteNNBEGMPeriodKernel

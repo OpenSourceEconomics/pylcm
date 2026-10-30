@@ -63,8 +63,6 @@ from _lcm.regime_building.Q_and_F import (
     get_Q_and_F_parts,
     has_action_integrity,
     has_objective_profile,
-    has_projected_queries,
-    projected_forward_readers,
     runtime_bound_specs,
 )
 from _lcm.simulation.gated_routing import (
@@ -261,7 +259,6 @@ def build_simulation_programs(
                 ),
                 subject_arg_names=declared_lookup_subject_names,
                 n_bound_records=len(runtime_bound_specs(function=kernel)),
-                n_query_records=int(has_projected_queries(function=kernel)),
             )
         action_values[period] = dataclasses.replace(
             decision[period],
@@ -397,11 +394,7 @@ def _decision_programs(
                 ),
                 tiled_axes=(subject_axis(state_names=simulation_state_names),),
                 value_reads=rekeyed_value_reads(
-                    reads=_decision_value_reads(
-                        context=context,
-                        period=period,
-                        function=Q_and_F_functions[period],
-                    ),
+                    reads=_decision_value_reads(context=context, period=period),
                     core_key=DECISION_PROGRAM,
                 ),
             ),
@@ -837,7 +830,7 @@ def _decision_subject_arg_names(*, context: SolverBuildContext) -> tuple[str, ..
 
 
 def _decision_value_reads(
-    *, context: SolverBuildContext, period: int, function: QAndFFunction
+    *, context: SolverBuildContext, period: int
 ) -> tuple[ValueRead, ...]:
     """Declare every stored value leaf one period's decision reads."""
     target_regimes = (
@@ -847,27 +840,15 @@ def _decision_value_reads(
             period=period, source=context.regime_name
         )
     )
-    readers = projected_forward_readers(function=function)
-    return (
-        *_value_reads(
-            regime_name=context.regime_name,
-            period=period,
-            target_regimes=tuple(
-                target for target in target_regimes if target not in readers
-            ),
-            same_period_ref_regimes=context.same_period_ref_regimes,
-            edge_reference_regimes=_edge_reference_regimes_for_targets(
-                context=context, target_regimes=target_regimes
-            ),
-            edge_target_regimes=context.edge_target_regimes,
+    return _value_reads(
+        regime_name=context.regime_name,
+        period=period,
+        target_regimes=target_regimes,
+        same_period_ref_regimes=context.same_period_ref_regimes,
+        edge_reference_regimes=_edge_reference_regimes_for_targets(
+            context=context, target_regimes=target_regimes
         ),
-        *(
-            read
-            for reader in readers.values()
-            for read in reader.reads(
-                source=context.regime_name, period=period, core=DECISION_PROGRAM
-            )
-        ),
+        edge_target_regimes=context.edge_target_regimes,
     )
 
 
@@ -875,10 +856,7 @@ def _bound_output_roles(*, function: QAndFFunction) -> tuple[StateAxesLeading, .
     """Declare one scalar Boolean leaf per mandatory canonical integrity flag."""
     return tuple(
         StateAxesLeading(state_names=(), dtype=jnp.bool_, shape=())
-        for _ in range(
-            2 * len(runtime_bound_specs(function=function))
-            + 3 * int(has_projected_queries(function=function))
-        )
+        for _ in range(2 * len(runtime_bound_specs(function=function)))
     )
 
 
@@ -920,13 +898,11 @@ def _decision_body(
 ) -> Callable[..., PytreeValue]:
     """Build one period group's decision body, tiled over the subject axis."""
     n_bound_records = len(runtime_bound_specs(function=Q_and_F))
-    n_query_records = int(has_projected_queries(function=Q_and_F))
     if not streams_actions:
         return _SubjectTiled(
             func=dense_reducer,
             subject_arg_names=subject_arg_names,
             n_bound_records=n_bound_records,
-            n_query_records=n_query_records,
         )
     from _lcm.regime_building.max_Q_over_a import (  # noqa: PLC0415
         _get_extra_param_names,
@@ -961,7 +937,6 @@ def _decision_body(
         func=cell,
         subject_arg_names=subject_arg_names,
         n_bound_records=n_bound_records,
-        n_query_records=n_query_records,
     )
 
 

@@ -10,10 +10,10 @@ nothing about asset-row mode, the multi-target machinery itself, or the kernel
 orchestration that maps it over the discrete-combo product.
 """
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import NamedTuple, cast
+from typing import cast
 
 import jax
 import jax.numpy as jnp
@@ -35,7 +35,6 @@ from _lcm.egm.preferences import (
     BoundUtilityOfAction,
     get_numeric_inverse_marginal_utility,
 )
-from _lcm.egm.projected_continuation import ProjectedEGMCarry
 from _lcm.egm.query_data import EGMQueryData, QueryNodeKind
 from _lcm.egm.upper_envelope import OwnedQueryBracket
 from _lcm.egm.upper_envelope.fues import QueryBracket
@@ -58,7 +57,6 @@ from _lcm.typing import (
     ActionName,
     EconFunctionArg,
     EconFunctionKwargs,
-    PytreeChild,
     RegimeName,
     StateName,
 )
@@ -256,9 +254,7 @@ def _get_solve_one_combo(
     pieces: _EgmKernelPieces,
     pool: EconFunctionKwargs,
     state_grid: Float1D,
-    next_regime_to_continuation: MappingProxyType[
-        RegimeName, EGMCarry | ProjectedEGMCarry
-    ],
+    next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
     euler_point_width: int | None,
     savings_point_width: int | None,
     stochastic_node_width: int | None,
@@ -289,42 +285,6 @@ def _get_solve_one_combo(
         envelope_cell_width=envelope_cell_width,
         resolved_process_grids=resolved_process_grids,
     )
-
-
-type _OwnedResourcesChild = (
-    PytreeChild
-    | OwnedEnvelope
-    | BoundInputStatus
-    | tuple[QueryInputStatus, ...]
-    | ContinuationReadCounts
-)
-
-
-class OwnedResourcesRow(NamedTuple):
-    """Transient canonical source row with original owners and mandatory integrity."""
-
-    envelope: OwnedEnvelope
-    marginal: Float1D
-    node_kind: IntND
-    borrowing_limit: ScalarFloat
-    upper_savings: ScalarFloat
-    expected_floor_value: ScalarFloat
-    discount_factor: ScalarFloat
-    discounted_floor_value: ScalarFloat
-    resources_domain: Float1D
-    construction_invalid: ScalarBool
-    floor_status: BoundInputStatus | None
-    child_status: tuple[QueryInputStatus, ...] | None
-    continuation_read_counts: ContinuationReadCounts | None
-
-    def __reduce__(
-        self,
-    ) -> tuple[
-        Callable[[None, Iterable[_OwnedResourcesChild]], OwnedResourcesRow],
-        tuple[None, tuple[_OwnedResourcesChild, ...]],
-    ]:
-        """Retain the fixed keyed schema through original-buffer reconstruction."""
-        return _unflatten_owned_resources_row, (None, tuple(self))
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -366,9 +326,7 @@ class _SolveOneCombo:
     state_grid: Float1D
     """The regime's exogenous Euler-state grid."""
 
-    next_regime_to_continuation: MappingProxyType[
-        RegimeName, EGMCarry | ProjectedEGMCarry
-    ]
+    next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry]
     """The next period's EGM carries."""
 
     savings_point_width: int | None
@@ -538,69 +496,10 @@ class _SolveOneCombo:
             ),
         )
 
-    def owned_resources_row(
-        self,
-        *,
-        combo_values: tuple[ScalarInt | ScalarFloat, ...],
-        resources_domain: Float1D,
-        refine: Callable[..., OwnedEnvelope],
-    ) -> OwnedResourcesRow:
-        """Construct one canonical transient row on its whole resources domain.
-
-        The caller supplies the same common finite resources domain for every
-        current draw that reuses this row. Original child expectation, Euler
-        inversion, constrained candidates and envelope selection run once here.
-        No query authority is manufactured and no current node bank is returned.
-        """
-        row = self._construct(
-            combo_values=combo_values,
-            resources_domain=resources_domain,
-            owned_refine=refine,
-        )
-        if not isinstance(row.refined, OwnedEnvelope):
-            raise TypeError("A projected source requires its native owned envelope.")
-        marginal = jax.vmap(jax.grad(row.utility_of_action))(
-            jnp.where(jnp.isnan(row.refined.policy), 1.0, row.refined.policy)
-        )
-        marginal = jnp.where(jnp.isnan(row.refined.policy), jnp.nan, marginal)
-        marginal = jnp.where(jnp.isneginf(row.refined.value), 0.0, marginal)
-        invalid, kinds = _source_construction_status(
-            refined=row.refined,
-            marginal_row=marginal,
-            expected_at_floor=row.expected_values[0],
-        )
-        domain_invalid = (
-            resources_domain.size < _MIN_RESOURCES_DOMAIN_POINTS
-            or resources_domain.ndim != 1
-        )
-        invalid = (
-            invalid
-            | domain_invalid
-            | jnp.any(~jnp.isfinite(resources_domain))
-            | jnp.any(resources_domain[1:] <= resources_domain[:-1])
-        )
-        return OwnedResourcesRow(
-            envelope=row.refined,
-            marginal=marginal,
-            node_kind=kinds,
-            borrowing_limit=row.pieces.borrowing_limit,
-            upper_savings=row.pieces.savings_nodes[-1],
-            expected_floor_value=row.expected_values[0],
-            discount_factor=row.discount_factor,
-            discounted_floor_value=row.discount_factor * row.expected_values[0],
-            resources_domain=resources_domain,
-            construction_invalid=invalid,
-            floor_status=row.pieces.floor_status,
-            child_status=row.child_status,
-            continuation_read_counts=row.read_counts,
-        )
-
     def _construct(
         self,
         *,
         combo_values: tuple[ScalarInt | ScalarFloat, ...],
-        resources_domain: Float1D | None = None,
-        owned_refine: Callable[..., OwnedEnvelope] | None = None,
     ) -> _ConstructedCombo:
         """Run the shared candidate producer before publication chooses coordinates."""
         pieces = self.pieces
@@ -630,11 +529,7 @@ class _SolveOneCombo:
             resolved_process_grids=self.resolved_process_grids,
         )
         child_status = None
-        conditional = (
-            pieces.query_spec is not None
-            or pieces.check_query_construction
-            or owned_refine is not None
-        )
+        conditional = pieces.query_spec is not None or pieces.check_query_construction
         if conditional:
             candidates, child_status, read_counts = _compute_nodes_after_first(
                 first=compute_node(pieces.savings_nodes[0]),
@@ -656,17 +551,11 @@ class _SolveOneCombo:
             euler_state_name=pieces.euler_state_name,
             bound=combo_pool,
         )
-        publish_resources = (
-            jax.vmap(own_resources_of_state)(self.state_grid)
-            if resources_domain is None
-            else resources_domain
-        )
+        publish_resources = jax.vmap(own_resources_of_state)(self.state_grid)
 
         constrained_actions, constrained_values = _compute_constrained_candidates(
             first_endogenous_point=endog_grid[0],
-            publish_resources=(
-                publish_resources if resources_domain is None else resources_domain
-            ),
+            publish_resources=(publish_resources),
             borrowing_limit=pieces.borrowing_limit,
             n_constrained=pieces.n_constrained,
             constrained_ratio=pieces.constrained_ratio,
@@ -714,7 +603,7 @@ class _SolveOneCombo:
             if pieces._negm_current_publication  # noqa: SLF001
             else {}
         )
-        refine = pieces.refine if owned_refine is None else owned_refine
+        refine = pieces.refine
         refined = refine(
             cell_width=self.envelope_cell_width,
             endog_grid=jnp.where(candidate_dead, jnp.nan, candidate_grid),
@@ -1137,9 +1026,7 @@ def _get_compute_node(
     combo_pool: EconFunctionKwargs,
     discount_factor: ScalarFloat,
     utility_of_action: Callable[[ScalarFloat], ScalarFloat],
-    next_regime_to_continuation: MappingProxyType[
-        RegimeName, EGMCarry | ProjectedEGMCarry
-    ],
+    next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
     dtype: np.dtype,
     stochastic_node_width: int | None,
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
@@ -1487,41 +1374,3 @@ def _publish_V_and_carry_rows(
     # parent a wrong-but-finite slope past the NaN diagnostics.
     marginal_row = jnp.where(overflowed, jnp.nan, marginal_utility).astype(dtype)
     return V_row, value_row, marginal_row
-
-
-def _flatten_owned_resources_row(
-    record: OwnedResourcesRow,
-) -> tuple[tuple[_OwnedResourcesChild, ...], None]:
-    return tuple(record), None
-
-
-def _flatten_owned_resources_row_with_keys(
-    record: OwnedResourcesRow,
-) -> tuple[tuple[tuple[jax.tree_util.GetAttrKey, _OwnedResourcesChild], ...], None]:
-    return tuple(
-        (jax.tree_util.GetAttrKey(name), leaf)
-        for name, leaf in zip(OwnedResourcesRow._fields, record, strict=True)
-    ), None
-
-
-# keyword-only-exempt: library-callback=jax.tree_util.register_pytree_with_keys
-def _unflatten_owned_resources_row(
-    metadata: None,
-    children: Iterable[_OwnedResourcesChild],
-) -> OwnedResourcesRow:
-    """Restore native numeric, abstract or role leaves under the fixed schema."""
-    del metadata
-    leaves = tuple(children)
-    if len(leaves) != len(OwnedResourcesRow._fields):
-        raise TypeError(
-            "Native OwnedResourcesRow reconstruction requires its exact fields."
-        )
-    return cast("OwnedResourcesRow", tuple.__new__(OwnedResourcesRow, leaves))
-
-
-jax.tree_util.register_pytree_with_keys(
-    OwnedResourcesRow,
-    _flatten_owned_resources_row_with_keys,
-    _unflatten_owned_resources_row,
-    _flatten_owned_resources_row,
-)

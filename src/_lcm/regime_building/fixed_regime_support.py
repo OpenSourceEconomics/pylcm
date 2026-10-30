@@ -103,7 +103,6 @@ def prune_fixed_regime_support(
     user_regimes: Mapping[RegimeName, UserRegime],
     laws: RegimeLaws,
     fixed_params: UserParams,
-    materializer: DatedGenerationMaterializer | None = None,
 ) -> FixedRegimeSupport:
     """Remove exactly zero cells whose entire dependency graph is fixed.
 
@@ -125,7 +124,6 @@ def prune_fixed_regime_support(
             regime=regime,
             law=laws[name],
             fixed_flat=fixed_flat,
-            materializer=materializer,
         )
         consumed.update(law_keys)
         removed_in_both = removed["solve"] & removed["simulate"]
@@ -137,7 +135,6 @@ def prune_fixed_regime_support(
             fixed_flat=fixed_flat,
             consumed=consumed,
             reads=reads,
-            materializer=materializer,
         )
         state_transitions = {
             state: _trim_state_law(
@@ -149,7 +146,6 @@ def prune_fixed_regime_support(
                 fixed_flat=fixed_flat,
                 consumed=consumed,
                 reads=reads,
-                materializer=materializer,
             )
             for state, law in regime.state_transitions.items()
         }
@@ -193,7 +189,6 @@ def _prune_regime_transition(
     regime: UserRegime,
     law: RegimeLaw,
     fixed_flat: Mapping[QualifiedName, UserParamsLeaf],
-    materializer: DatedGenerationMaterializer | None = None,
 ) -> tuple[RegimeTransitionLaw, MappingProxyType[Side, frozenset[str]], frozenset[str]]:
     """Remove zero cells, keeping a joint-lottery edge in both phases or neither.
 
@@ -215,7 +210,6 @@ def _prune_regime_transition(
             fixed_flat=fixed_flat,
             consumed=consumed,
             protected=protected,
-            materializer=materializer,
         )
         removed: MappingProxyType[Side, frozenset[str]] = MappingProxyType(
             {
@@ -281,7 +275,6 @@ def _trim_joint_transitions(
     fixed_flat: Mapping[QualifiedName, UserParamsLeaf],
     consumed: set[str],
     reads: dict[RegimeName, set[str]],
-    materializer: DatedGenerationMaterializer | None = None,
 ) -> MappingProxyType[RegimeName, Mapping[str, _JointDeclaration]]:
     """Omit joint kernels toward targets removed in both phases at every age."""
     node_names = frozenset(
@@ -312,7 +305,6 @@ def _trim_joint_transitions(
                             ancestors=(),
                             non_params=node_names,
                             reads=reads.setdefault(target, set()),
-                            materializer=materializer,
                         )
                     )
     return MappingProxyType(
@@ -332,7 +324,6 @@ def _prune_law(
     fixed_flat: Mapping[QualifiedName, UserParamsLeaf],
     consumed: set[str],
     protected: frozenset[str],
-    materializer: DatedGenerationMaterializer | None = None,
 ) -> RegimeTransitionLaw:
     if isinstance(law, ByAge):
         return law.with_mapped_laws(
@@ -343,7 +334,6 @@ def _prune_law(
                 fixed_flat=fixed_flat,
                 consumed=consumed,
                 protected=protected,
-                materializer=materializer,
             )
         )
     if law is None:
@@ -355,7 +345,6 @@ def _prune_law(
         fixed_flat=fixed_flat,
         consumed=consumed,
         protected=protected,
-        materializer=materializer,
     )
 
 
@@ -367,7 +356,6 @@ def _prune_case(
     fixed_flat: Mapping[QualifiedName, UserParamsLeaf],
     consumed: set[str],
     protected: frozenset[str],
-    materializer: DatedGenerationMaterializer | None = None,
 ) -> AgeCaseLaw:
     if isinstance(law, Phased):
         return Phased(
@@ -379,7 +367,6 @@ def _prune_case(
                 fixed_flat=fixed_flat,
                 consumed=consumed,
                 protected=protected,
-                materializer=materializer,
             ),
             simulate=_prune_phase(
                 law=law.simulate,
@@ -389,7 +376,6 @@ def _prune_case(
                 fixed_flat=fixed_flat,
                 consumed=consumed,
                 protected=protected,
-                materializer=materializer,
             ),
         )
     if not isinstance(law, Mapping):
@@ -404,7 +390,6 @@ def _prune_case(
         fixed_flat=fixed_flat,
         consumed=consumed,
         protected=protected,
-        materializer=materializer,
     )
     simulate = _prune_cells(
         law=law,
@@ -414,7 +399,6 @@ def _prune_case(
         fixed_flat=fixed_flat,
         consumed=consumed,
         protected=protected,
-        materializer=materializer,
     )
     return (
         solve if set(solve) == set(simulate) else Phased(solve=solve, simulate=simulate)
@@ -430,7 +414,6 @@ def _prune_phase(
     fixed_flat: Mapping[QualifiedName, UserParamsLeaf],
     consumed: set[str],
     protected: frozenset[str],
-    materializer: DatedGenerationMaterializer | None = None,
 ) -> PhaseTransitionLaw:
     if not isinstance(law, Mapping):
         return law
@@ -442,7 +425,6 @@ def _prune_phase(
         fixed_flat=fixed_flat,
         consumed=consumed,
         protected=protected,
-        materializer=materializer,
     )
 
 
@@ -455,7 +437,6 @@ def _prune_cells(
     fixed_flat: Mapping[QualifiedName, UserParamsLeaf],
     consumed: set[str],
     protected: frozenset[str],
-    materializer: DatedGenerationMaterializer | None = None,
 ) -> Mapping[RegimeName, TargetLawCell]:
     retained: dict[RegimeName, TargetLawCell] = {}
     removed_keys: set[str] = set()
@@ -468,7 +449,6 @@ def _prune_cells(
                 regime=regime,
                 fixed_flat=fixed_flat,
                 ancestors=(),
-                materializer=materializer,
             )
             if isinstance(cell, StochasticTransition) and target not in protected
             else None
@@ -659,7 +639,6 @@ def _trim_state_law(
     fixed_flat: Mapping[QualifiedName, UserParamsLeaf],
     consumed: set[str],
     reads: dict[RegimeName, set[str]],
-    materializer: DatedGenerationMaterializer | None = None,
 ) -> StateTransitionEntry:
     """Omit explicit laws toward targets removed from the relevant phase."""
     if isinstance(law, Phased):
@@ -674,7 +653,6 @@ def _trim_state_law(
                 fixed_flat=fixed_flat,
                 consumed=consumed,
                 reads=reads,
-                materializer=materializer,
             )
         return Phased(
             solve=_trim_state_side(law=law.solve, removed=removed["solve"]),
@@ -691,7 +669,6 @@ def _trim_state_law(
             fixed_flat=fixed_flat,
             consumed=consumed,
             reads=reads,
-            materializer=materializer,
         )
     solve = _trim_state_side(law=law, removed=removed["solve"])
     simulate = _trim_state_side(law=law, removed=removed["simulate"])
@@ -724,7 +701,6 @@ def _record_removed_state_keys(
     fixed_flat: Mapping[QualifiedName, UserParamsLeaf],
     consumed: set[str],
     reads: dict[RegimeName, set[str]],
-    materializer: DatedGenerationMaterializer | None = None,
 ) -> None:
     """Keep fixed keys and reads of handoff cells omitted with their zero edges."""
     if not isinstance(law, Mapping):
@@ -741,7 +717,6 @@ def _record_removed_state_keys(
                     fixed_flat=fixed_flat,
                     ancestors=(),
                     reads=reads.setdefault(target, set()),
-                    materializer=materializer,
                 )
             )
 

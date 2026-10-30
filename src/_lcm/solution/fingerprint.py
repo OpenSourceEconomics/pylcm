@@ -528,24 +528,6 @@ def fingerprint_solution_support(
     )
 
 
-def fingerprint_prepared_solution_support(
-    *,
-    support: Mapping[RegimeName, Mapping[str, _Reachable]],
-    flat_params: FlatParams,
-) -> str:
-    """Use the installed support record before genuine dated programs exist."""
-    return _fingerprint_resolved_solution_support(
-        support={
-            name: {
-                key: record[key]
-                for key in ("states", "discrete_actions", "continuous_actions")
-            }
-            for name, record in support.items()
-        },
-        flat_params=flat_params,
-    )
-
-
 def _fingerprint_resolved_solution_support(
     *, support: Mapping[RegimeName, _Reachable], flat_params: FlatParams
 ) -> str:

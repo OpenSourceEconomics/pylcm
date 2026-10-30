@@ -25,7 +25,6 @@ from _lcm.continuation import (
     ContinuationSpec,
     EGMContinuationSpec,
     EGMQuerySpec,
-    ProjectedContinuationSpec,
     validate_query_bound_authority,
     validate_query_evaluator_authority,
     validate_query_model_authority,
@@ -40,7 +39,6 @@ from _lcm.egm.outer_search import AdaptiveOuterMesh
 from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
 from _lcm.engine import EGMPolicyRead, NNBEGMPolicyRead, Regime, StateActionSpace
 from _lcm.execution.core_program import (
-    ProgramScope,
     core_program_graph,
     retained_artifact_payload_type,
 )
@@ -50,10 +48,7 @@ from _lcm.materialization import DatedGenerationMaterializer
 from _lcm.params.edges import regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.age_normalization import resolve_periodized_nodes
-from _lcm.solution.artifacts import (
-    _canonical_value_axis_names,
-    projected_forward_consumer_routes,
-)
+from _lcm.solution.artifacts import _canonical_value_axis_names
 from _lcm.solution.contract import BackwardInductionResult
 from _lcm.solution.nnbegm import derive_nnbegm_replay_capability
 from _lcm.solution.result_snapshot import (
@@ -705,7 +700,7 @@ class _ArtifactLayout:
     action_roles: tuple[str, ...] = ()
 
 
-def build_solution_authority(  # noqa: C901, PLR0912, PLR0915
+def build_solution_authority(  # noqa: C901, PLR0915
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
@@ -735,7 +730,6 @@ def build_solution_authority(  # noqa: C901, PLR0912, PLR0915
     values: dict[tuple[int, RegimeName], ValueCellDescriptor] = {}
     replay: dict[ArtifactRef, ReplayCellDescriptor] = {}
     artifacts: dict[ArtifactRef, ArtifactAuthority] = {}
-    projected_routes = projected_forward_consumer_routes(regimes=regimes)
 
     for regime_name, regime in regimes.items():
         value_descriptor = ValueCellDescriptor(
@@ -917,7 +911,6 @@ def build_solution_authority(  # noqa: C901, PLR0912, PLR0915
                     axes=policy_layout.axes,
                     state_roles=policy_layout.state_roles,
                     action_roles=policy_layout.action_roles,
-                    consumer_route=None,
                     applicable=False,
                     required=False,
                     array_copier=array_copier,
@@ -962,58 +955,9 @@ def build_solution_authority(  # noqa: C901, PLR0912, PLR0915
                         state_action_space=state_action_space,
                         spec=continuation_spec,
                     )
-                durable_projected = False
-                if type(continuation_spec) is ProjectedContinuationSpec:
-                    from _lcm.egm.current_iid_case_u_balanced import (  # noqa: PLC0415 - actual projected program is installed
-                        BalancedCaseUCarry,
-                        SaturatedCaseUProgram,
-                    )
-                    from _lcm.egm.projected_child import (  # noqa: PLC0415 - avoid numerical declaration import cycles
-                        require_projected_carry,
-                    )
-
-                    if type(continuation_template) is BalancedCaseUCarry and isinstance(
-                        continuation_spec.date_at(period=period).guard_program,
-                        SaturatedCaseUProgram,
-                    ):
-                        require_projected_carry(
-                            date=continuation_spec.date_at(period=period),
-                            target=regime_name,
-                            carry=continuation_template,
-                        )
-                        durable_projected = True
                 continuation_persistence = (
                     PersistencePolicy.MODEL_VERIFIABLE
                     if isinstance(continuation_template, EGMCarry)
-                    or _is_installed_exact_u_continuation(
-                        regime=regime,
-                        regime_name=regime_name,
-                        period=period,
-                        spec=continuation_spec,
-                        template=continuation_template,
-                    )
-                    or _is_installed_nbegm_r_continuation(
-                        regime=regime,
-                        regime_name=regime_name,
-                        period=period,
-                        spec=continuation_spec,
-                        template=continuation_template,
-                    )
-                    or _is_installed_balanced_r_continuation(
-                        regime=regime,
-                        regime_name=regime_name,
-                        period=period,
-                        spec=continuation_spec,
-                        template=continuation_template,
-                    )
-                    or _is_installed_negm_u_continuation(
-                        regime=regime,
-                        regime_name=regime_name,
-                        period=period,
-                        spec=continuation_spec,
-                        template=continuation_template,
-                    )
-                    or durable_projected
                     else PersistencePolicy.NOT_PERSISTED
                 )
                 continuation_snapshot, continuation_containers = (
@@ -1063,7 +1007,7 @@ def build_solution_authority(  # noqa: C901, PLR0912, PLR0915
                     consumer_route=(
                         _EGM_CONTINUATION_ROUTE
                         if continuation_layout is not None
-                        else projected_routes.get(continuation_ref)
+                        else None
                     ),
                     applicable=True,
                     required=True,
@@ -1079,20 +1023,6 @@ def build_solution_authority(  # noqa: C901, PLR0912, PLR0915
                     if continuation_layout is not None
                     else continuation_authority
                 )
-
-    for ref, route in projected_routes.items():
-        artifact = artifacts.get(ref)
-        if (
-            artifact is None
-            or not artifact.applicable
-            or not artifact.required
-            or artifact.descriptor.channel is not ArtifactChannel.CONTINUATION
-            or artifact.descriptor.persistence is not PersistencePolicy.MODEL_VERIFIABLE
-            or artifact.consumer_route != route
-        ):
-            raise TypeError(
-                "Projected forward lost its original durable child authority."
-            )
 
     return SolutionAuthority(
         values=MappingProxyType(values),
@@ -1270,326 +1200,6 @@ def _validate_required_external_producers(
             "An external replay route has no CoreProgram producer for required "
             f"artifacts {tuple(sorted(missing))!r}."
         )
-
-
-def supports_owned_case_r_artifacts(*, regime: Regime, regime_name: RegimeName) -> bool:
-    """Recognize only the original guarded-R row and dated continuation producer."""
-    spec = regime.solution.continuation_spec
-    replay = regime.simulation.case_r_replay_spec
-    if (
-        type(spec) is not ProjectedContinuationSpec
-        or replay is None
-        or regime.simulation.replay_route.policy_applicable
-        or regime.simulation.external_replay_route is not None
-        or set(regime.solution.artifact_authorities) != {replay.artifact_key}
-        or set(replay.periods) != set(regime.active_periods)
-    ):
-        return False
-    return all(
-        _is_installed_balanced_r_continuation(
-            regime=regime,
-            regime_name=regime_name,
-            period=period,
-            spec=spec,
-            template=spec.template_at(period=period),
-        )
-        for period in regime.active_periods
-    )
-
-
-def supports_owned_negm_u_artifacts(*, regime: Regime, regime_name: RegimeName) -> bool:
-    """Require an exact installed nested source and its original future artifact."""
-    from _lcm.egm.current_iid_case_u_replay import (  # noqa: PLC0415
-        CASE_U_FUTURE_REPLAY,
-        CASE_U_REPLAY_IDENTITY,
-    )
-    from _lcm.egm.current_iid_negm import NEGMCaseUPoint  # noqa: PLC0415
-    from _lcm.egm.current_iid_nnbegm import NNBEGMCaseUPoint  # noqa: PLC0415
-    from _lcm.solution.current_iid_negm import (  # noqa: PLC0415 - producer imports authority
-        NativeNEGMCaseUPeriodKernel,
-    )
-
-    spec = regime.solution.continuation_spec
-    replay = regime.simulation.case_u_replay_spec
-    if (
-        type(spec) is not ProjectedContinuationSpec
-        or replay is None
-        or replay is not regime.solution.case_u_replay_spec
-        or replay.regime != regime_name
-        or replay.artifact_key != CASE_U_FUTURE_REPLAY
-        or replay.identity != CASE_U_REPLAY_IDENTITY
-        or regime.simulation.replay_route.policy_applicable
-        or regime.simulation.external_replay_route is not None
-        or set(regime.solution.artifact_authorities) != {CASE_U_FUTURE_REPLAY}
-        or set(replay.periods) != set(regime.active_periods)
-    ):
-        return False
-    for period in regime.active_periods:
-        if not _is_installed_negm_u_continuation(
-            regime=regime,
-            regime_name=regime_name,
-            period=period,
-            spec=spec,
-            template=spec.template_at(period=period),
-        ):
-            return False
-        kernel = regime.solution.period_kernels[period]
-        declaration = replay.periods[period]
-        if (
-            type(kernel) is not NativeNEGMCaseUPeriodKernel
-            or (
-                type(kernel.point) is not NEGMCaseUPoint
-                and type(kernel.point) is not NNBEGMCaseUPoint
-            )
-            or declaration.negm_point is not kernel.point
-            or declaration.date is not spec.date_at(period=period)
-            or declaration.future is not kernel.future
-        ):
-            return False
-    return True
-
-
-def _is_installed_balanced_r_continuation(
-    *,
-    regime: Regime,
-    regime_name: RegimeName,
-    period: int,
-    spec: ContinuationSpec,
-    template: ArtifactPayload,
-) -> bool:
-    """Recognize the installed guarded-R producer, not a matching payload class."""
-    from _lcm.egm.current_iid_balanced import (  # noqa: PLC0415 - producer imports authority construction
-        BalancedProjectedEGMCarry,
-        BalancedResourcesProgram,
-    )
-    from _lcm.egm.projected_child import (  # noqa: PLC0415 - reuse original producer schema check
-        require_projected_carry,
-    )
-    from _lcm.solution.current_iid_case_r import (  # noqa: PLC0415 - producer imports authority construction
-        CaseRArguments,
-        CaseRProgramFunction,
-        NativeCaseRPeriodKernel,
-    )
-
-    kernel = regime.solution.period_kernels[period]
-    if (
-        type(spec) is not ProjectedContinuationSpec
-        or type(template) is not BalancedProjectedEGMCarry
-        or type(kernel) is not NativeCaseRPeriodKernel
-        or kernel.spec is not spec
-        or kernel.period != period
-        or kernel.regime_name != regime_name
-        or not {"main", "replay"} <= kernel.programs.keys()
-    ):
-        return False
-    date = spec.date_at(period=period)
-    replay = regime.simulation.case_r_replay_spec
-    if (
-        date.template is not template
-        or type(date.guard_program) is not BalancedResourcesProgram
-        or date.authority.producer != regime_name
-        or date.authority.period != period
-        or kernel.query_input_authorities[-1][2] is not date.authority
-        or replay is None
-        or replay is not regime.solution.case_r_replay_spec
-        or replay.regime != regime_name
-        or period not in replay.periods
-    ):
-        return False
-    original = replay.periods[period]
-    core = None
-    for name, retain in (("main", False), ("replay", True)):
-        program = kernel.programs[name]
-        function = program.function
-        while isinstance(function, functools.partial):
-            if function.args:
-                return False
-            function = function.func
-        arguments = program.argument_builder
-        if (
-            type(function) is not CaseRProgramFunction
-            or type(arguments) is not CaseRArguments
-            or function.retain_resources is not retain
-            or (core is not None and function.core is not core)
-        ):
-            return False
-        core = function.core
-        if (
-            core.balanced is not date.guard_program
-            or arguments.plan is not core.plan
-            or arguments.base.regime_name != regime_name
-            or core.pieces.euler_state_name != spec.liquid_state
-            or original.resources is not core.pieces.own_resources_func
-            or original.utility is not core.pieces.utility_func
-            or original.coefficient != core.coefficient
-            or original.owner_capacity != core.owner_capacity
-        ):
-            return False
-    # The original replay contract validates the acquired row's tree and leaf
-    # descriptors at restoration/use; no second schema encoder is needed here.
-    require_projected_carry(date=date, target=regime_name, carry=template)
-    return True
-
-
-def _is_installed_exact_u_continuation(
-    *,
-    regime: Regime,
-    regime_name: RegimeName,
-    period: int,
-    spec: ContinuationSpec,
-    template: ArtifactPayload,
-) -> bool:
-    """Recognize only the installed original exact-U date and numerical template."""
-    if type(spec) is not ProjectedContinuationSpec:
-        return False
-    from _lcm.egm.current_iid_nbegm import (  # noqa: PLC0415 - original NB imports authority construction
-        NBCaseUArguments,
-        NBCaseUPoint,
-        NBCaseUProgram,
-        NBCaseURidePoint,
-    )
-    from _lcm.egm.projected_continuation import ProjectedEGMCarry  # noqa: PLC0415
-    from _lcm.solution.current_iid_case_u_native import (  # noqa: PLC0415 - producer imports authority construction
-        CaseUExactArguments,
-        CaseUExactFunction,
-        CaseURideExactFunction,
-        NativeCaseUPeriodKernel,
-    )
-    from _lcm.solution.current_iid_nbegm import (  # noqa: PLC0415 - original NB imports authority construction
-        NativeNBCaseUPeriodKernel,
-    )
-
-    kernel = regime.solution.period_kernels[period]
-    if type(kernel) is NativeNBCaseUPeriodKernel:
-        date = spec.date_at(period=period)
-        function = kernel.program.function
-        if type(kernel.point) is NBCaseURidePoint:
-            if (
-                type(function) is not CaseURideExactFunction
-                or function.passive_names != kernel.point.passive_names
-                or function.state_names
-                != tuple(kernel.context.state_action_space.states)
-                or kernel.point.core.statics.ride_names != kernel.point.passive_names
-                or kernel.point.core.statics.liquid_name
-                != kernel.point.euler_state_name
-            ):
-                return False
-        elif (
-            type(kernel.point) is not NBCaseUPoint
-            or type(function) is not CaseUExactFunction
-        ):
-            return False
-        return (
-            type(template) is ProjectedEGMCarry
-            and kernel.spec is spec
-            and kernel.period == period
-            and kernel.context.regime_name == regime_name
-            and kernel.context.projected_continuation_declarations[regime_name] is spec
-            and kernel.template.output.projected is template
-            and date.template is template
-            and type(kernel.program.function)
-            in (CaseUExactFunction, CaseURideExactFunction)
-            and type(kernel.program.function.point) is NBCaseUProgram
-            and type(kernel.program.argument_builder) is CaseUExactArguments
-            and type(kernel.program.argument_builder.point) is NBCaseUArguments
-            and kernel.program.function.point.pieces is kernel.point
-            and kernel.program.argument_builder.point.pieces is kernel.point
-            and date.authority.producer == regime_name
-            and date.authority.period == period
-            and date.authority.artifact_key == spec.artifact_key
-            and date.guard_program is None
-        )
-    if (
-        type(kernel) is not NativeCaseUPeriodKernel
-        or type(template) is not ProjectedEGMCarry
-    ):
-        return False
-    date = spec.date_at(period=period)
-    return (
-        kernel.spec is spec
-        and kernel.prepared.period == period
-        and kernel.prepared.context.regime_name == regime_name
-        and kernel.prepared.date is date
-        and kernel.prepared.template.output.projected is template
-        and date.template is template
-        and date.authority.producer == regime_name
-        and date.authority.period == period
-        and date.authority.artifact_key == spec.artifact_key
-        and date.guard_program is None
-    )
-
-
-def _is_installed_nbegm_r_continuation(
-    *,
-    regime: Regime,
-    regime_name: RegimeName,
-    period: int,
-    spec: ContinuationSpec,
-    template: ArtifactPayload,
-) -> bool:
-    """Authenticate the actual NB resources producer and its original dated schema."""
-    if type(spec) is not ProjectedContinuationSpec:
-        return False
-    from _lcm.egm.current_iid_nbegm_r import NBCaseRProgram  # noqa: PLC0415
-    from _lcm.egm.projected_continuation import ProjectedEGMCarry  # noqa: PLC0415
-    from _lcm.execution.core_program import ProgramScope  # noqa: PLC0415
-    from _lcm.solution.current_iid_nbegm_r import (  # noqa: PLC0415 - producer imports authority construction
-        NativeNBCaseRPeriodKernel,
-        NBCaseRArguments,
-    )
-
-    kernel = regime.solution.period_kernels[period]
-    if (
-        type(kernel) is not NativeNBCaseRPeriodKernel
-        or type(template) is not ProjectedEGMCarry
-    ):
-        return False
-    date = spec.date_at(period=period)
-    if not (
-        kernel.spec is spec
-        and kernel.period == period
-        and kernel.context.regime_name == regime_name
-        and kernel.context.projected_continuation_declarations[regime_name] is spec
-        and kernel.projected_template is template
-        and date.template is template
-        and date.authority.producer == regime_name
-        and date.authority.period == period
-        and date.authority.artifact_key == spec.artifact_key
-        and date.guard_program is None
-        and frozenset(kernel.programs) == frozenset({"main", "replay"})
-    ):
-        return False
-    original = kernel.programs["main"].function
-    if type(original) is not NBCaseRProgram:
-        return False
-    for key, program in kernel.programs.items():
-        function, arguments = program.function, program.argument_builder
-        if not (
-            type(function) is NBCaseRProgram
-            and type(arguments) is NBCaseRArguments
-            and program.name == key
-            and program.scope
-            is (ProgramScope.REPLAY if key == "replay" else ProgramScope.VALUES_ONLY)
-            and program.replaces_program == ("main" if key == "replay" else None)
-            and function.period == arguments.period == period
-            and arguments.source == regime_name
-            and arguments.ages is kernel.context.ages
-            and function.plan is arguments.plan
-            and function.plan is kernel.context.current_iid_plans[period]
-            and function.core is original.core
-            and function.declared_law is original.declared_law
-            and function.continuation_plan is original.continuation_plan
-            and function.target == arguments.target == original.target
-            and function.action_name == original.action_name
-            and function.coefficient == original.coefficient
-            and function.euler_state_name
-            == arguments.state
-            == date.authority.liquid_state
-            and function.capacity == date.authority.capacity
-            and function.retain_resources is (key == "replay")
-        ):
-            return False
-    return True
 
 
 def _period_artifact_payload_types(
@@ -2479,7 +2089,6 @@ def _authority_from_template(
     state_roles: tuple[str, ...] = (),
     action_roles: tuple[str, ...] = (),
     categorical_domains: dict[str, CategoryDomain] | None = None,
-    consumer_route: ReplayRouteIdentity | None = None,
     applicable: bool,
     required: bool,
     array_copier: _ArrayCopier | None = None,
@@ -2506,7 +2115,6 @@ def _authority_from_template(
         state_roles=state_roles,
         action_roles=action_roles,
         categorical_domains=categorical_domains,
-        consumer_route=consumer_route,
         applicable=applicable,
         required=required,
         array_copier=array_copier,
@@ -3177,17 +2785,17 @@ def _policy_shape_and_node_count(
     return (*policy_read.row_axis_lengths_by_period[period], node_count), node_count
 
 
+def _zeros_for_template(*, schema: jax.ShapeDtypeStruct) -> jax.Array:
+    """Materialize a zero template from its exact metadata schema."""
+    return jnp.zeros(schema.shape, dtype=schema.dtype)
+
+
 def _materialize_authority_zeros(
     *, schema: jax.ShapeDtypeStruct, materializer: DatedGenerationMaterializer
 ) -> jax.Array:
     """Admit the original zero-template factory from its exact metadata schema."""
-    from _lcm.solution.current_iid_case_r import _zeros_for_template  # noqa: PLC0415
-
-    return cast(
-        "jax.Array",
-        materializer.produce(
-            function=functools.partial(_zeros_for_template, schema=schema), arguments={}
-        ),
+    return materializer.produce(
+        function=functools.partial(_zeros_for_template, schema=schema), arguments={}
     )
 
 
@@ -3346,131 +2954,3 @@ __all__ = [
     "bind_generated_solution_authority",
     "build_solution_authority",
 ]
-
-
-def _is_installed_negm_u_continuation(  # noqa: PLR0911 - separate exact DC and NB original owner checks
-    *,
-    regime: Regime,
-    regime_name: RegimeName,
-    period: int,
-    spec: ContinuationSpec,
-    template: ArtifactPayload,
-) -> bool:
-    """Recognize only this exact installed genuine complete finite nested source."""
-    from _lcm.egm.current_iid_negm import NEGMCaseUPoint  # noqa: PLC0415
-    from _lcm.egm.current_iid_negm_program import (  # noqa: PLC0415
-        NEGMCaseUArguments,
-        NEGMCaseUProgram,
-    )
-    from _lcm.egm.current_iid_nnbegm import NNBEGMCaseUPoint  # noqa: PLC0415
-    from _lcm.egm.projected_continuation import ProjectedEGMCarry  # noqa: PLC0415
-    from _lcm.egm.step import _EGMStep  # noqa: PLC0415
-    from _lcm.solution.current_iid_case_u_native import (  # noqa: PLC0415
-        CaseUExactArguments,
-        CaseURideExactFunction,
-    )
-    from _lcm.solution.current_iid_negm import (  # noqa: PLC0415 - producer imports authority
-        NativeNEGMCaseUPeriodKernel,
-    )
-    from _lcm.solution.dcegm import _DCEGMPeriodKernel  # noqa: PLC0415
-    from _lcm.solution.negm import _NEGMPeriodKernel  # noqa: PLC0415
-    from _lcm.solution.nnbegm import _FiniteNNBEGMPeriodKernel  # noqa: PLC0415
-
-    kernel = regime.solution.period_kernels[period]
-    if (
-        type(kernel) is not NativeNEGMCaseUPeriodKernel
-        or type(spec) is not ProjectedContinuationSpec
-        or type(template) is not ProjectedEGMCarry
-    ):
-        return False
-    date = spec.date_at(period=period)
-    point = kernel.point
-    if (
-        type(point) not in (NEGMCaseUPoint, NNBEGMCaseUPoint)
-        or kernel.spec is not spec
-        or kernel.period != period
-        or point.period != period
-        or point.context is not kernel.context
-        or kernel.context.regime_name != regime_name
-        or kernel.context.projected_continuation_declarations[regime_name] is not spec
-        or kernel.template.output.projected is not template
-        or date.template is not template
-        or kernel.context.current_iid_plans.get(period) is not point.plan
-        or (
-            type(point) is NEGMCaseUPoint and type(point.owner) is not _NEGMPeriodKernel
-        )
-        or (
-            type(point) is NNBEGMCaseUPoint
-            and type(point.owner) is not _FiniteNNBEGMPeriodKernel
-        )
-        or point.owner.regime_name != regime_name
-        or date.authority.producer != regime_name
-        or date.authority.period != period
-        or date.authority.artifact_key != spec.artifact_key
-        or date.guard_program is not None
-        or point.source_grid
-        is not kernel.context.state_action_space.states[point.euler_state_name]
-        or point.outer_nodes is not point.owner.outer_grid_values
-        or point.savings_nodes is not point.keeper.savings_nodes
-        or point.borrowing_limit is not point.keeper.borrowing_limit
-        or kernel.future.source != regime_name
-        or kernel.future.period != period
-        or tuple(kernel.future.specs) != (point.target,)
-    ):
-        return False
-    for original, pieces in (
-        (point.owner.keeper_kernel, point.keeper),
-        (point.owner.adjuster_kernel, point.adjuster),
-    ):
-        if type(point) is NNBEGMCaseUPoint:
-            from _lcm.egm.current_iid_nnbegm import NNBEGMInnerSource  # noqa: PLC0415
-            from _lcm.solution.nbegm import (  # noqa: PLC0415
-                _NBEGMTiledCore,
-                _RideAlongNBEGMPeriodKernel,
-            )
-
-            if (
-                type(pieces) is not NNBEGMInnerSource
-                or type(original) is not _RideAlongNBEGMPeriodKernel
-                or pieces.kernel is not original
-                or type(pieces.core) is not _NBEGMTiledCore
-                or original.core_programs()["main"].function is not pieces.core
-                or pieces.core.continuation_plan is not pieces.continuation_plan
-                or not pieces.has_original_linear_plan(context=kernel.context)
-            ):
-                return False
-        elif (
-            type(original) is not _DCEGMPeriodKernel
-            or type(original.demand_step) is not _EGMStep
-            or original.demand_step.pieces is not pieces
-        ):
-            return False
-        if (
-            type(point) is NEGMCaseUPoint
-            and pieces.continuation_plan.certainty_equivalent
-            is not kernel.context.certainty_equivalent
-        ) or tuple(pieces.continuation_plan.stateful_targets) != (point.target,):
-            return False
-    for scope, program in (
-        (ProgramScope.VALUES_ONLY, kernel.program),
-        (ProgramScope.REPLAY, kernel.replay_program),
-    ):
-        function, arguments = program.function, program.argument_builder
-        if (
-            type(function) is not CaseURideExactFunction
-            or type(function.point) is not NEGMCaseUProgram
-            or type(arguments) is not CaseUExactArguments
-            or type(arguments.point) is not NEGMCaseUArguments
-            or function.point.pieces is not point
-            or arguments.point.pieces is not point
-            or function.point.plan is not point.plan
-            or function.point.period != period
-            or arguments.point.ages is not kernel.context.ages
-            or arguments.point.regime_name != regime_name
-            or function.capacity != date.authority.capacity
-            or function.passive_names != point.passive_names
-            or function.state_names != tuple(kernel.context.state_action_space.states)
-            or program.scope is not scope
-        ):
-            return False
-    return True

@@ -13,7 +13,6 @@ from numpy.testing import assert_array_almost_equal
 
 from _lcm import shock_nodes
 from _lcm.current_iid import CURRENT_IID_ARGUMENT
-from _lcm.current_iid_node_adapter import NATIVE_CURRENT_IID_SWITCH
 from _lcm.execution.core_program import (
     CoreBuildContext,
     core_program_graph,
@@ -79,7 +78,6 @@ from tests.solution import test_decoupled
 from tests.solution import test_gated_edge_stateless_target_solve as gated
 from tests.solution import test_invariant_blocking_scalar as invariant
 from tests.solution._iid_shock_oracles import finite_backward
-from tests.test_models import dcegm_paper_twin
 
 
 @categorical(ordered=False)
@@ -1249,23 +1247,11 @@ def test_saved_replay_retains_its_physical_innovations(tmp_path) -> None:
     )
 
 
-@pytest.mark.parametrize("family", ["dcegm", "decoupled"])
-def test_new_iid_refuses_uncomposed_native_families(
-    *, family: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Legacy admitted families retain their routes; new IID requires composition."""
-
-    if family == "dcegm":
-        # The node-state axis admits this source; the refusal is the native route's.
-        monkeypatch.setenv(NATIVE_CURRENT_IID_SWITCH, "1")
-        base = dcegm_paper_twin.get_model(solver="dcegm")
-        regime_id_class = dcegm_paper_twin.TwinRegimeId
-        # A dated DC-EGM source is call-owned, refused at its declaration shape.
-        message = r"requires original one-state one-action DCEGM"
-    else:
-        base = test_decoupled._model()
-        regime_id_class = test_decoupled.RegimeId
-        message = r"Current IID"
+def test_new_iid_refuses_uncomposed_native_families() -> None:
+    """A legacy admitted family retains its route; new IID requires composition."""
+    base = test_decoupled._model()
+    regime_id_class = test_decoupled.RegimeId
+    message = r"Current IID"
     with pytest.raises(UnsupportedOperationError, match=message):
         Model(
             regimes={

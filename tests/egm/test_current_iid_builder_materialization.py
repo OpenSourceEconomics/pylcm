@@ -7,7 +7,6 @@ from typing import Literal, cast
 
 import jax
 import numpy as np
-import pandas as pd
 import pytest
 
 from _lcm.egm.validation import (
@@ -28,7 +27,6 @@ from _lcm.grids import (
 from _lcm.processes.iid import NormalIIDProcess, UniformIIDProcess
 from _lcm.solution.dcegm import _BoundDCEGM
 from _lcm.solution.generation import canonical_generation_roots
-from lcm import Model
 from lcm.exceptions import (
     ExecutionPlanningError,
     GridInitializationError,
@@ -37,7 +35,6 @@ from lcm.exceptions import (
 from lcm.typing import Float1D
 from tests.egm.test_current_iid_generation_materialization import _owner
 from tests.solution.test_post_decision_lower_bound import _model as _bounded_model
-from tests.test_temporal_params import _model as _temporal_model
 
 pytestmark = pytest.mark.coverage(backends=("cpu",), precisions="both")
 
@@ -146,47 +143,6 @@ def test_original_value_grid_cache_roots_are_charged_before_code_upload() -> Non
         owner.close()
 
 
-def test_shared_fixed_normalizer_preserves_labelled_temporal_inputs(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # The GridSearch source is outside cold dated admission, which its own tests
-    # cover; only the shared fixed normalizer under a materializer is checked here.
-    monkeypatch.setattr(Model, "_require_cold_dated_route", lambda *_a, **_k: None)
-    series = pd.Series(
-        [2.0, 90.0, 1.0, 91.0],
-        index=pd.Index([41, 99, 40, 99], name="age"),
-    )
-    model = _temporal_model(fixed=series, age=True)
-    prepared = model._declaration_preparation
-    assert prepared is not None
-    original = model._prepare_dated_metadata(prepared=prepared)
-    owner = _owner(roots=model._generation_roots())
-    try:
-        actual = model._prepare_dated_metadata(prepared=prepared, materializer=owner)
-        expected_leaves = jax.tree.leaves(original.fixed.granular)
-        actual_leaves = jax.tree.leaves(actual.fixed.granular)
-        assert jax.tree.structure(original.fixed.granular) == jax.tree.structure(
-            actual.fixed.granular
-        )
-        for expected, value in zip(expected_leaves, actual_leaves, strict=True):
-            assert value.dtype == expected.dtype
-            assert np.asarray(value).tobytes() == np.asarray(expected).tobytes()
-        # Labels align by age (40, 41), not by their order in the series.
-        wage = np.asarray(actual.fixed.granular["work"]["utility__wage"])
-        np.testing.assert_array_equal(wage[:2], [1.0, 2.0])
-        # The normalization does not reorder, rewrite or consume caller labels.
-        pd.testing.assert_series_equal(
-            series,
-            pd.Series(
-                [2.0, 90.0, 1.0, 91.0],
-                index=pd.Index([41, 99, 40, 99], name="age"),
-            ),
-        )
-        assert isinstance(actual.fixed.granular, MappingProxyType)
-    finally:
-        owner.close()
-
-
 @pytest.mark.parametrize("stage", ["params", "initial"])
 def test_published_unrelated_tree_keeps_cached_grid_charged(
     *, stage: Literal["params", "initial"]
@@ -231,25 +187,8 @@ def test_dcegm_grid_hygiene_keeps_original_coverage_error() -> None:
         _fail_if_grid_hygiene_violated(
             regime_name="saving", user_regime=regime, solver=solver
         )
-    owner = _owner(
-        roots=(
-            *model._generation_roots(),
-            *canonical_generation_roots(declarations=(solver,)),
-        )
-    )
-    try:
-        with pytest.raises(ModelInitializationError) as actual:
-            _fail_if_grid_hygiene_violated(
-                regime_name="saving",
-                user_regime=regime,
-                solver=solver,
-                materializer=owner,
-            )
-        assert str(actual.value) == str(original.value)
-        assert "3.0" in str(actual.value)
-        assert "4.0" in str(actual.value)
-    finally:
-        owner.close()
+    assert "3.0" in str(original.value)
+    assert "4.0" in str(original.value)
 
 
 @pytest.mark.parametrize("irregular", [False, True])
@@ -272,23 +211,5 @@ def test_declared_lower_bound_keeps_original_exact_grid_error(
             solver=solver,
             solver_name="DCEGM",
         )
-    owner = _owner(
-        roots=(
-            *model._generation_roots(),
-            *canonical_generation_roots(declarations=(solver,)),
-        )
-    )
-    try:
-        with pytest.raises(ModelInitializationError) as actual:
-            fail_if_declared_lower_bound_disagrees_with_the_grid(
-                regime_name="saving",
-                user_regime=regime,
-                solver=solver,
-                solver_name="DCEGM",
-                materializer=owner,
-            )
-        assert str(actual.value) == str(original.value)
-        assert "-2.0" in str(actual.value)
-        assert "-0.5" in str(actual.value)
-    finally:
-        owner.close()
+    assert "-2.0" in str(original.value)
+    assert "-0.5" in str(original.value)

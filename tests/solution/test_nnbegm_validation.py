@@ -10,10 +10,8 @@ the inner liquid post-decision margin, directly or through a sibling law.
 import contextlib
 import logging
 from collections.abc import Callable, Generator
-from dataclasses import replace
 
 import jax.numpy as jnp
-import numpy as np
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
@@ -29,8 +27,6 @@ from _lcm.typing import ArtifactPayload
 from lcm import (
     AgeGrid,
     ConsumptionSavingsRegime,
-    InitialNodes,
-    IrregSpacedGrid,
     LinSpacedGrid,
     Model,
     categorical,
@@ -50,18 +46,11 @@ from lcm.regime import Regime
 from lcm.solver_api import SIMULATION_POLICY
 from lcm.solvers import (
     DCEGM,
-    NBEGM,
-    NEGM,
-    NNBEGM,
     AdaptiveOuterMesh,
-    ExactEnvelope,
     FiniteOuterGrid,
 )
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
-from tests.egm import test_current_iid_case_u_owned_core as case_u_owned_core
-from tests.egm import test_current_iid_nd_parent_demands as nd_parent_demands
-from tests.egm import test_current_iid_negm_model as current_iid_negm
 from tests.test_models import n_nbegm_toy
 
 
@@ -758,60 +747,6 @@ def _dcegm_parent_of_finite_nnbegm_child() -> Model:
     )
 
 
-def _dcegm_parent_of_current_shock_finite_nnbegm_child() -> Model:
-    """The same pairing where the finite NNBEGM child draws current-period shocks."""
-    declarations = current_iid_negm._declarations()
-    child = declarations.regimes["child"]
-    assert isinstance(child, NestedConsumptionSavingsRegime)
-    assert isinstance(child.solver, NEGM)
-    child = replace(
-        child,
-        solver=NNBEGM(
-            inner=NBEGM(
-                savings_grid=child.solver.inner.savings_grid, jump_read="bridged"
-            ),
-            outer_search=FiniteOuterGrid(grid=child.solver.outer_grid),
-        ),
-    )
-    scalar = case_u_owned_core._actual_declarations().regimes["child"]
-    assert isinstance(scalar, ConsumptionSavingsRegime)
-    parent = replace(
-        scalar,
-        states={"wealth": IrregSpacedGrid(points=np.asarray([0.5, 1.75]))},
-        actions={"consumption": IrregSpacedGrid(points=np.asarray([0.1, 5.0]))},
-        functions={
-            "utility": nd_parent_demands._parent_utility,
-            "inverse_marginal_utility": nd_parent_demands._parent_inverse,
-            "resources": _young_resources,
-            "savings": current_iid_negm._savings,
-        },
-        state_transitions={
-            "wealth": {"child": current_iid_negm._next_wealth},
-            "housing": {"child": nd_parent_demands._parent_q},
-        },
-        solver=DCEGM(
-            savings_grid=IrregSpacedGrid(points=np.asarray([0.5, 1.5, 2.0])),
-            envelope=ExactEnvelope(),
-        ),
-        shocks=(),
-    )
-    return Model._from_call_owned_params(
-        declarations=replace(
-            declarations,
-            regimes={**declarations.regimes, "parent": parent, "child": child},
-            ages=AgeGrid(exact_values=(0, 1, 2)),
-            initial_nodes=InitialNodes(by_age={0: "parent", 1: "child"}),
-            regime_id_class=nd_parent_demands._Regimes,
-            edges={"parent": {"child": (0,)}, "child": {"done": (1,)}},
-        ),
-        params={
-            "discount_factor": 1.0,
-            "parent": {"next_housing": {"landing_q": 0.0}},
-            "child": {},
-        },
-    )
-
-
 @pytest.mark.parametrize(
     ("build", "parent", "child", "advice"),
     [
@@ -822,14 +757,6 @@ def _dcegm_parent_of_current_shock_finite_nnbegm_child() -> Model:
             r"Solve 'young' with NBEGM or GridSearch instead, or declare it as a "
             r"NestedConsumptionSavingsRegime solved with NNBEGM\.",
             id="ordinary-child",
-        ),
-        pytest.param(
-            _dcegm_parent_of_current_shock_finite_nnbegm_child,
-            "parent",
-            "child",
-            r"'child' also draws current-period shocks, and such a finite NNBEGM "
-            r"regime does not yet accept a non-terminal predecessor under any solver",
-            id="current-shock-child",
         ),
     ],
 )

@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Literal, NamedTuple, cast
 import jax
 import jax.numpy as jnp
 
-from _lcm.egm.projected_continuation import ProjectedChildAuthority
 from _lcm.post_decision_bound import PostDecisionBoundSpec
 from _lcm.typing import (
     DataclassInstance,
@@ -525,30 +524,10 @@ def validate_runtime_bound_status(
             )
 
 
-def _is_projected_status(
-    *,
-    authority: PostDecisionBoundSpec | ProjectedChildAuthority,
-    target: RegimeName,
-    period: int,
-    nonfinite: bool,
-    invalid_grid: bool,
-) -> bool:
-    """Authenticate projected provenance and prohibit fictitious floor statuses."""
-    if not isinstance(authority, ProjectedChildAuthority):
-        return False
-    if target != authority.producer or period != authority.period:
-        raise TypeError("Projected child status has a different producer/date.")
-    if nonfinite or invalid_grid:
-        raise TypeError("Projected child reads cannot report a floor read.")
-    return True
-
-
 def validate_query_input_status(
     *,
     statuses: tuple[QueryInputStatus, ...] | None,
-    authorities: tuple[
-        tuple[RegimeName, int, PostDecisionBoundSpec | ProjectedChildAuthority], ...
-    ],
+    authorities: tuple[tuple[RegimeName, int, PostDecisionBoundSpec], ...],
 ) -> None:
     """Accept all child arithmetic before interpreting any query coverage failure."""
     if len(statuses or ()) != len(authorities):
@@ -565,15 +544,6 @@ def validate_query_input_status(
     for (target, period, bound), (nonfinite, invalid_grid, _) in zip(
         authorities, flags, strict=True
     ):
-        if isinstance(bound, ProjectedChildAuthority):
-            _is_projected_status(
-                authority=bound,
-                target=target,
-                period=period,
-                nonfinite=bool(nonfinite),
-                invalid_grid=bool(invalid_grid),
-            )
-            continue
         if nonfinite or invalid_grid:
             declarations = ", ".join(bound.declaration_names)
             reason = (
@@ -589,16 +559,6 @@ def validate_query_input_status(
         authorities, flags, strict=True
     ):
         if missing:
-            if isinstance(bound, ProjectedChildAuthority):
-                raise InvalidValueFunctionError(
-                    "Invalid projected continuation or unsupported pre-shock "
-                    f"domain in regime '{target}', period {period}, "
-                    f"liquid state '{bound.liquid_state}'. One cause is a "
-                    "producer row that cannot meet its value and marginal "
-                    f"budgets within its projection capacity of {bound.capacity} "
-                    "records; raise `current_iid_projection_capacity` on the "
-                    f"solver of regime '{bound.producer}' if so."
-                )
             declarations = ", ".join(bound.declaration_names)
             raise InvalidValueFunctionError(
                 f"query_coverage_missing for borrowing bound '{declarations}' in "

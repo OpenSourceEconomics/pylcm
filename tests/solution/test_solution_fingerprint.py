@@ -1214,7 +1214,7 @@ def test_forged_beartype_wrappers_fail_closed() -> None:
     changed = _forge_beartype_wrapper(1)
     assert baseline(2) != changed(2)
 
-    changed.__module__ = "_lcm.solution.current_iid_case_u_build"
+    changed.__module__ = "_lcm.solution.backward_induction"
     for function in (baseline, changed):
         with pytest.raises(TypeError, match="uncaptured transparent beartype wrapper"):
             fingerprints._semantic_fingerprint(function)
@@ -2619,25 +2619,25 @@ def test_solver_scalar_default_identity_is_not_semantics() -> None:
     original = DCEGM(
         savings_grid=grid_declarations.IrregSpacedGrid(points=np.array([1.0, 2.0]))
     )
-    capacity = int(str(original.current_iid_projection_capacity))
+    factor = float(str(original.refined_grid_factor))
     replay = (" " + original.replay)[1:]
     accuracy = (" " + original.accuracy)[1:]
-    assert capacity == original.current_iid_projection_capacity
-    assert capacity is not original.current_iid_projection_capacity
+    assert factor == original.refined_grid_factor
+    assert factor is not original.refined_grid_factor
     assert replay == original.replay
     assert replay is not original.replay
     assert accuracy == original.accuracy
     assert accuracy is not original.accuracy
     restored = dataclasses.replace(
         original,
-        current_iid_projection_capacity=capacity,
+        refined_grid_factor=factor,
         replay=replay,
         accuracy=accuracy,
     )
     assert fingerprints._semantic_fingerprint(original) == (
         fingerprints._semantic_fingerprint(restored)
     )
-    changed = dataclasses.replace(original, current_iid_projection_capacity=4097)
+    changed = dataclasses.replace(original, refined_grid_factor=3.0)
     assert fingerprints._semantic_fingerprint(original) != (
         fingerprints._semantic_fingerprint(changed)
     )

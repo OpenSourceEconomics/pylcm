@@ -707,9 +707,6 @@ def test_owned_negm_validator_preserves_original_additive_and_cross_term_checks(
 ):
     """The actual owner retains the original additive identity and rejection."""
     from _lcm.egm.negm_validation import validate_negm_regime  # noqa: PLC0415
-    from tests.egm.test_current_iid_generation_materialization import (  # noqa: PLC0415
-        _owner,
-    )
 
     additive = _VALID.replace(
         functions={
@@ -722,21 +719,10 @@ def test_owned_negm_validator_preserves_original_additive_and_cross_term_checks(
     coupled = additive.replace(
         functions={**dict(additive.functions), "utility": _multiplicative_utility}
     )
-    owner = _owner()
-    owner.budget_bytes = 1 << 28
-    try:
+    validate_negm_regime(
+        regime_name="alive", user_regime=additive, law=_NON_TERMINAL_LAW
+    )
+    with pytest.raises(ModelInitializationError, match="not additively separable"):
         validate_negm_regime(
-            regime_name="alive",
-            user_regime=additive,
-            law=_NON_TERMINAL_LAW,
-            materializer=owner,
+            regime_name="alive", user_regime=coupled, law=_NON_TERMINAL_LAW
         )
-        with pytest.raises(ModelInitializationError, match="not additively separable"):
-            validate_negm_regime(
-                regime_name="alive",
-                user_regime=coupled,
-                law=_NON_TERMINAL_LAW,
-                materializer=owner,
-            )
-    finally:
-        owner.close()
