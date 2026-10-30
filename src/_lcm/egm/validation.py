@@ -73,6 +73,7 @@ from _lcm.egm.current_iid_euler_grid import (
     DatedEulerGridObligation,
     ResolvedDatedEulerGrid,
 )
+from _lcm.egm.outer_search import FiniteOuterGrid
 from _lcm.egm.preferences import BoundUtilityOfAction
 from _lcm.egm.validation_materialization import (
     _validation_bound_disagrees,
@@ -1123,6 +1124,34 @@ def _fail_if_grid_hygiene_violated(
 _CURRENT_U_PASSIVE_STATE_COUNT = 2
 
 
+def _finite_nnbegm_target_message(
+    *, regime_name: RegimeName, target_name: RegimeName, current_shocks: bool
+) -> str:
+    """Explain why a DCEGM regime cannot precede a finite NNBEGM regime.
+
+    A target with current-period shocks admits no non-terminal predecessor under
+    any solver, so the alternatives offered for an ordinary target do not apply.
+    """
+    msg = (
+        f"Regime '{regime_name}' is solved with DCEGM and its successor regime "
+        f"'{target_name}' is solved with NNBEGM over a FiniteOuterGrid. This "
+        f"combination is not supported: simulating '{regime_name}' would evaluate "
+        f"actions whose next-period states lie outside the domain '{target_name}' "
+        "was solved on."
+    )
+    if current_shocks:
+        return (
+            f"{msg} '{target_name}' also draws current-period shocks, and such a "
+            "finite NNBEGM regime does not yet accept a non-terminal predecessor "
+            "under any solver: NBEGM, GridSearch and NNBEGM predecessors are "
+            "refused as well."
+        )
+    return (
+        f"{msg} Solve '{regime_name}' with NBEGM or GridSearch instead, or declare "
+        "it as a NestedConsumptionSavingsRegime solved with NNBEGM."
+    )
+
+
 def _fail_if_target_regime_incompatible(
     *,
     regime_name: RegimeName,
@@ -1138,6 +1167,9 @@ def _fail_if_target_regime_incompatible(
     """
     from _lcm.solution.nbegm import (  # noqa: PLC0415 - finalized family is read after solver modules initialize
         _BoundNBEGM,
+    )
+    from _lcm.solution.nnbegm import (  # noqa: PLC0415 - finalized family is read after solver modules initialize
+        NNBEGM,
     )
 
     for target_name in solution_reachability.union_targets(source=regime_name):
@@ -1159,6 +1191,16 @@ def _fail_if_target_regime_incompatible(
             # actual current-U producer and close every incoming exact demand.
             # An ordinary NB value-only carry remains incompatible here.
             continue
+        if isinstance(target.solver, NNBEGM) and isinstance(
+            target.solver.outer_search, FiniteOuterGrid
+        ):
+            raise ModelInitializationError(
+                _finite_nnbegm_target_message(
+                    regime_name=regime_name,
+                    target_name=target_name,
+                    current_shocks=bool(target.shocks),
+                )
+            )
         if not isinstance(target.solver, DCEGM):
             msg = (
                 f"Regime '{regime_name}' uses the DCEGM solver and can reach "

@@ -34,7 +34,7 @@ remaining prerequisites.
 | ------------ | ------------------------------------------------------------ | ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | `GridSearch` | Regime or a specialized regime                               | General discrete-continuous action product                                   | Ordinary callable constraints; EV1 taste shocks; transition-local joint lotteries                                                                                                                                                            | Broad representation; eligible singleton hard-max routes stream actions, while EV1 and collective reductions use dense actions |
 | `EGM`        | ConsumptionSavingsRegime with one LiquidMargin               | Smooth concave one-state/one-action cash-on-hand problem                     | One continuous state and action; no discrete/process axes; identity resources; additive continuation; provable post-decision lower bound                                                                                                     | Narrow structural contract with no upper envelope                                                                              |
-| `DCEGM`      | ConsumptionSavingsRegime with one LiquidMargin               | One liquid Euler margin and optional discrete choice                         | Valid resources and post-decision roles; lower bound; supported passive states and continuation layout; EV1 taste shocks                                                                                                                     | Constrained candidates and upper envelope; simulation may re-optimize on the action grid                                       |
+| `DCEGM`      | ConsumptionSavingsRegime with one LiquidMargin               | One liquid Euler margin and optional discrete choice                         | Valid resources and post-decision roles; lower bound; supported passive states and continuation layout; EV1 taste shocks; no finite NNBEGM successor regime                                                                                  | Constrained candidates and upper envelope; simulation may re-optimize on the action grid                                       |
 | `NBEGM`      | ConsumptionSavingsRegime with one LiquidMargin               | Supported declared kinks, jumps, hard boundaries or smooth discrete branches | Supported case-piece or piecewise-affine declaration; proven constraint routes; nonlinear CE only on eligible ride-along routes; no EV1 taste shocks; marginal donation only on an unsharded self-carry main program with eligible ownership | Preserves declared topology; structural probes and candidate geometry add cost                                                 |
 | `NEGM`       | NestedConsumptionSavingsRegime with liquid and outer margins | DCEGM inner solve conditional on a finite outer grid                         | Inner DCEGM contract plus outer state/action, post-decision, no-adjustment and cost roles; no EV1 taste shocks                                                                                                                               | Exact relative to the outer candidate set; retained candidates can dominate memory                                             |
 | `NNBEGM`     | NestedConsumptionSavingsRegime with liquid and outer margins | NBEGM inner solve inside a finite or adaptive outer search                   | Inner NBEGM contract plus compatible outer search and branch aggregation; no EV1 taste shocks                                                                                                                                                | Declared budget topology inside each outer candidate adds structural and computational cost                                    |
@@ -56,6 +56,21 @@ Potential axes depend on the selected solver configuration. Model construction a
 only axes declared by its actual programs; these tables do not waive structural
 validation. Host-repeated programs may contain planned compiled cores. Regime submesh
 placement and simulation subject tiling are separate execution policies.
+
+(unsupported-solver-combinations)=
+## Unsupported combinations
+
+A `DCEGM` regime cannot be followed by a non-terminal regime solved by `NNBEGM` with a
+`FiniteOuterGrid`. Simulating the DCEGM regime would evaluate actions whose next-period
+states lie outside the domain the NNBEGM regime was solved on. `Model(...)` therefore
+refuses the pairing with a `ModelInitializationError`. Solve the preceding regime with
+one of:
+
+- `NBEGM` or `GridSearch`
+- `NNBEGM`, declaring the regime as a `NestedConsumptionSavingsRegime`
+
+A finite NNBEGM regime with named current-IID shocks does not yet accept a non-terminal
+predecessor under any solver, so none of these alternatives applies to it.
 
 ## Nonlinear certainty equivalents
 

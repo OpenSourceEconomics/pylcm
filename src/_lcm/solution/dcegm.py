@@ -267,7 +267,8 @@ class DCEGM(OneMarginSolver):
             problem_shape="One liquid Euler margin and optional discrete choice",
             prerequisites=(
                 "Valid resources and post-decision roles; lower bound; supported "
-                "passive states and continuation layout; EV1 taste shocks"
+                "passive states and continuation layout; EV1 taste shocks; no "
+                "finite NNBEGM successor regime"
             ),
             main_tradeoff=(
                 "Constrained candidates and upper envelope; simulation may "
