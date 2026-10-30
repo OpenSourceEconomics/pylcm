@@ -359,6 +359,7 @@ from _lcm.typing import (
     InitialConditions,
     ParamsLeaf,
     ParamsTemplate,
+    PeriodToRegimeToArrivalSurfaces,
     PeriodToRegimeToDissolutionFlags,
     PeriodToRegimeToSimulationPolicy,
     PeriodToRegimeToVArr,
@@ -533,6 +534,7 @@ type _ResolvedSolution = tuple[
     _PeriodToRegimeToReplayReader,
     CurrentIIDReplayInputs,
     ProjectedForwardInputs,
+    PeriodToRegimeToArrivalSurfaces,
 ]
 
 
@@ -4141,6 +4143,7 @@ class Model:
             self._build_projected_forward_inputs(
                 solution=solution, authority=engine_view.authority
             ),
+            engine_view.arrival_surfaces,
         )
 
     def _consume_foreign_solution(
@@ -4246,6 +4249,9 @@ class Model:
                 array_writer=validation_materializer,
                 array_copier=array_copier,
             ),
+            # A result from elsewhere carries no stored arrival surfaces; arrival
+            # replay refuses where it would read one.
+            MappingProxyType({}),
         )
 
     def _check_solution_result_structure(
@@ -5698,6 +5704,7 @@ class Model:
                         period_to_regime_to_replay_reader,
                         current_iid_replay_inputs,
                         projected_forward_inputs,
+                        arrival_surfaces,
                     ) = self._resolve_solution_result(
                         solution=solution,
                         flat_params=flat_params,
@@ -5712,6 +5719,7 @@ class Model:
                 period_to_regime_to_replay_reader = None
                 current_iid_replay_inputs = None
                 projected_forward_inputs = None
+                arrival_surfaces = None
             with solve_phase(name="simulation_inputs", logger=log, call_id=call_id):
                 if entry_allocations is not None:
                     entry_allocations.update_solution(
@@ -5723,6 +5731,7 @@ class Model:
                             period_to_regime_to_replay_reader,
                             current_iid_replay_inputs,
                             projected_forward_inputs,
+                            arrival_surfaces,
                         ),
                     )
                 initial_conditions = split_initial_conditions(
@@ -5890,6 +5899,7 @@ class Model:
                 period_to_regime_to_replay_reader = MappingProxyType({})
                 current_iid_replay_inputs = MappingProxyType({})
                 projected_forward_inputs = MappingProxyType({})
+                arrival_surfaces = MappingProxyType({})
             elif solution is None:
                 solve_params = (
                     flat_params
@@ -5931,6 +5941,7 @@ class Model:
                         period_to_regime_to_replay_reader,
                         current_iid_replay_inputs,
                         projected_forward_inputs,
+                        arrival_surfaces,
                     ) = self._resolve_solution_result(
                         solution=solution,
                         flat_params=flat_params,
@@ -5946,6 +5957,7 @@ class Model:
                     or period_to_regime_to_replay_reader is None
                     or current_iid_replay_inputs is None
                     or projected_forward_inputs is None
+                    or arrival_surfaces is None
                 ):
                     raise AssertionError(
                         "Simulation solution inputs were not resolved."
@@ -5960,6 +5972,7 @@ class Model:
                             period_to_regime_to_replay_reader,
                             current_iid_replay_inputs,
                             projected_forward_inputs,
+                            arrival_surfaces,
                         ),
                     )
                     entry_allocations.publish(stage="initial", tree=initial_conditions)
@@ -6003,6 +6016,7 @@ class Model:
                         policies=period_to_regime_to_sim_policy,
                         current_iid_replay_inputs=current_iid_replay_inputs,
                         projected_forward_inputs=projected_forward_inputs,
+                        arrival_surfaces=arrival_surfaces,
                         ages=self._time,
                         initial_conditions=initial_conditions,
                         regime_names_to_ids=self.regime_names_to_ids,
@@ -6065,6 +6079,7 @@ class Model:
                 period_to_regime_to_replay_reader=period_to_regime_to_replay_reader,
                 current_iid_replay_inputs=current_iid_replay_inputs,
                 projected_forward_inputs=projected_forward_inputs,
+                arrival_surfaces=arrival_surfaces,
                 ages=self._time,
                 simulation_output_dtypes=self.simulation_output_dtypes,
                 seed=seed,
@@ -6480,7 +6495,7 @@ class Model:
         )
         if allocations is not None:
             allocations.update_solution(solution=solution, resolved_inputs=resolved)
-        V_arrs, sim_policies, _, replay_readers, case_r_inputs, projected_inputs = (
+        V_arrs, sim_policies, _, replay_readers, case_r_inputs, projected_inputs, _ = (
             resolved
         )
         if projected_inputs and regime.simulation.projected_forward_readers_by_period:

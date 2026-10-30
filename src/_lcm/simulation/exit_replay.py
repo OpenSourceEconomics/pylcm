@@ -24,7 +24,12 @@ from _lcm.simulation.arrival_routing import (
     ordinary_exit_rows,
     pending_arrival_rows,
 )
-from _lcm.simulation.arrival_values import arrival_replay_context
+from _lcm.simulation.arrival_values import (
+    ArrivalSurfaces,
+    arrival_replay_context,
+    is_arrival_surface,
+    stored_arrival_surface,
+)
 from _lcm.simulation.chunk_operations import regime_mask
 from _lcm.simulation.current_iid import prepare_current_iid_keys
 from _lcm.simulation.current_iid_overrides import (
@@ -96,6 +101,7 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
     values: Mapping[int, Mapping[RegimeName, FloatND]],
     owner: PeriodSimulationReads,
     key: PRNGKeyND,
+    surfaces: ArrivalSurfaces = MappingProxyType({}),
     subject_slice: slice | SubjectRows,
     original_n_subjects: int,
     memory: SimulationMemory | None,
@@ -207,6 +213,7 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
             period=period,
             ages=ages,
             values=values,
+            surfaces=surfaces,
             owner=owner,
             unit=name,
             family="exit_full",
@@ -305,6 +312,7 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
                     period=period,
                     ages=ages,
                     values=values,
+                    surfaces=surfaces,
                     owner=owner,
                     unit=name,
                     family=family,
@@ -519,6 +527,7 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
             period=period,
             ages=ages,
             values=values,
+            surfaces=surfaces,
             owner=owner,
             unit=name,
             family="exit_participating",
@@ -664,6 +673,7 @@ def _query_arguments(
     values: Mapping[int, Mapping[RegimeName, FloatND]],
     owner: PeriodSimulationReads,
     unit: RegimeName,
+    surfaces: ArrivalSurfaces = MappingProxyType({}),
     family: str,
     regime: Regime,
 ) -> _QueryArguments:
@@ -676,6 +686,7 @@ def _query_arguments(
                 context=arrival_replay_context(
                     queries=queries,
                     values=values,
+                    surfaces=surfaces,
                     context=CoreBuildContext(
                         state_action_space=replace(
                             context.state_action_space,
@@ -700,13 +711,15 @@ def _query_arguments(
         else getattr(regime.simulation.programs, family)[period]
     )
     for read in program.requirements.value_reads:
-        if read.target.kind is not ValueArtifactKind.REGIME_VALUE:
+        if is_arrival_surface(address=read.target):
+            stored = stored_arrival_surface(address=read.target, surfaces=surfaces)
+        elif read.target.kind is ValueArtifactKind.REGIME_VALUE:
+            stored = values[read.target.period][read.target.regime]
+        else:
             raise ExecutionPlanningError(
                 "Exit replay needs canonical regime-value query operands."
             )
-        array = owner.read(
-            unit=unit, read=read, value=values[read.target.period][read.target.regime]
-        )
+        array = owner.read(unit=unit, read=read, value=cast("jax.Array", stored))
         _set_read(arguments=arguments, path=read.source.path, array=array)
     return arguments
 

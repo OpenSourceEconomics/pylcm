@@ -812,6 +812,7 @@ def grid_search_query_inputs(
         edge_reference_regimes=references,
         edge_target_regimes=context.edge_target_regimes,
         arrival_queries=context.arrival_queries.get(period, MappingProxyType({})),
+        arrival_surfaces=context.arrival_surfaces.get(period, MappingProxyType({})),
     )
     reads = _value_reads(
         regime_name=context.regime_name,
@@ -821,6 +822,16 @@ def grid_search_query_inputs(
         edge_reference_regimes=references,
         edge_target_regimes=context.edge_target_regimes,
     )
+    if builder.arrival_surfaces:
+        # An arrival target's value enters as the source's stored surface, read
+        # through the same continuation leaf an ordinary value read fills.
+        reads = tuple(
+            replace(read, target=builder.arrival_surfaces[str(read.source.path[0])])
+            if read.source.channel is ValueInputChannel.NEXT_REGIME_VALUE
+            and read.source.path[0] in builder.arrival_surfaces
+            else read
+            for read in reads
+        )
     if builder.arrival_queries:
         from _lcm.arrival_queries import arrival_source_value_reads  # noqa: PLC0415
 
@@ -961,6 +972,11 @@ class _GridSearchArgumentBuilder:
     arrival_queries: Mapping[RegimeName, ArrivalQueryPlan] = field(
         default_factory=lambda: MappingProxyType({})
     )
+    arrival_surfaces: Mapping[RegimeName, ValueArtifactAddress] = field(
+        default_factory=lambda: MappingProxyType({}),
+        metadata={"fingerprint_omit_if_default": True},
+    )
+    """Arrival targets whose value is the source's stored arrival surface."""
 
     def __call__(
         self, context: CoreBuildContext
@@ -978,9 +994,15 @@ class _GridSearchArgumentBuilder:
         flat_params = cast("FlatParams", context.flat_params)
         ages = cast("TimeAxis", context.ages)
         raw_next_regime_to_V_arr = next_regime_to_V_arr
+        surfaces = self._arrival_surface_values(context=context)
         next_regime_to_V_arr = self._with_edge_substitution(
             next_regime_to_V_arr=MappingProxyType(
-                {name: raw_next_regime_to_V_arr[name] for name in self.target_regimes}
+                {
+                    name: surfaces[name]
+                    if name in surfaces
+                    else raw_next_regime_to_V_arr[name]
+                    for name in self.target_regimes
+                }
             ),
             edge_regime_to_V_arr=context.edge_regime_to_V_arr,
         )
@@ -1027,6 +1049,26 @@ class _GridSearchArgumentBuilder:
             )
         )
         return MappingProxyType(arguments)
+
+    def _arrival_surface_values(
+        self, *, context: CoreBuildContext
+    ) -> dict[RegimeName, ValueTemplate]:
+        """Read each surfaced arrival target from the arrival's own operands."""
+        if not self.arrival_surfaces:
+            return {}
+        from _lcm.arrival_queries import _ArrivalBuildContext  # noqa: PLC0415
+
+        if not isinstance(context, _ArrivalBuildContext):
+            msg = (
+                f"Regime '{self.regime_name}' reads stored arrival surfaces, which "
+                "only an arrival reader's operands carry."
+            )
+            raise ExecutionPlanningError(msg)
+        return {
+            name: context.arrival_values[address]
+            for name, address in self.arrival_surfaces.items()
+            if name in self.target_regimes
+        }
 
     def _with_edge_substitution(
         self,

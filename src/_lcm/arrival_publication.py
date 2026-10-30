@@ -1,12 +1,14 @@
 """Borrow already declared native inputs for a dated arrival reconstruction."""
 
 import logging
+import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import TYPE_CHECKING, cast
 
 import jax
+import jax.numpy as jnp
 
 from _lcm.arrival_continuation import (
     ARRIVAL_CONTINUATION,
@@ -18,11 +20,13 @@ from _lcm.continuation import ContinuationPayload
 from _lcm.execution.core_program import (
     CoreArgumentBuilder,
     CoreBuildContext,
+    CoreExecutionDisposition,
+    CoreExecutionRequirements,
     CoreProgram,
     ValueRead,
     core_program_graph,
 )
-from _lcm.execution.output_layout import VALUE
+from _lcm.execution.output_layout import VALUE, StateAxesLeading
 from _lcm.execution.value_transfer import (
     ValueArtifactAddress,
     ValueArtifactKind,
@@ -31,14 +35,23 @@ from _lcm.execution.value_transfer import (
 )
 from _lcm.solution.contract import PeriodKernel, SolverBuildContext
 from _lcm.time import TimeAxis
-from _lcm.typing import FlatParams, PytreeValue, ShapeDtypePytree, ValueTemplate
+from _lcm.typing import (
+    ArrivalQueryArguments,
+    FlatParams,
+    PytreeValue,
+    ShapeDtypePytree,
+    ValueTemplate,
+)
 from lcm.exceptions import ExecutionPlanningError, UnsupportedOperationError
 from lcm.solver_api import ContinuationReader, KernelOutput
-from lcm.typing import FloatND, RegimeName
+from lcm.typing import FloatND, IntND, RegimeName
 
 if TYPE_CHECKING:
+    from _lcm.arrival_queries import ArrivalQueryPlan
     from _lcm.engine import Regime, StateActionSpace
 else:
+    # Plans are built by `_lcm.arrival_queries`, which imports this module.
+    type ArrivalQueryPlan = object
     # Canonical construction imports the engine before installing these adapters.
     type Regime = object
     type StateActionSpace = object
@@ -191,6 +204,154 @@ def _publication_programs(
     return MappingProxyType(updated)
 
 
+_SURFACES = "_arrival_surfaces"
+
+
+@dataclass(frozen=True, kw_only=True)
+class _SurfaceGrids:
+    """The target grid nodes each stored arrival surface is tabulated on."""
+
+    grids: Mapping[str, Mapping[str, FloatND | IntND]]
+
+    def __call__(
+        self, context: CoreBuildContext
+    ) -> Mapping[str, PytreeValue | ShapeDtypePytree]:
+        del context
+        return MappingProxyType(
+            {"grids": cast("PytreeValue", MappingProxyType(dict(self.grids)))}
+        )
+
+
+@dataclass(frozen=True, kw_only=True)
+class _SurfaceArguments:
+    """The publisher's own arrival operands, as its action problem receives them."""
+
+    arguments: CoreArgumentBuilder
+    fixed_flat_params: FlatParams = MappingProxyType({})
+
+    def __call__(
+        self, context: CoreBuildContext
+    ) -> Mapping[str, PytreeValue | ShapeDtypePytree]:
+        from _lcm.policy_queries import _query_flat_params  # noqa: PLC0415
+
+        return self.arguments(
+            replace(
+                context,
+                flat_params=_query_flat_params(
+                    flat_params=cast("FlatParams", context.flat_params),
+                    fixed_flat_params=self.fixed_flat_params,
+                ),
+            )
+        )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _ArrivalSurfaces:
+    """Tabulate each arrival's value on its target's grid nodes.
+
+    At every node the arrival plan rebuilds the target's action problem exactly,
+    as a reader at the landing does. A node whose answer fails its integrity
+    check is NaN, so a reader interpolating from it is NaN too.
+    """
+
+    plans: Mapping[str, ArrivalQueryPlan]
+    width: int
+
+    def __call__(
+        self,
+        *,
+        grids: Mapping[str, Mapping[str, FloatND | IntND]],
+        arrival_arguments: ArrivalQueryArguments,
+    ) -> dict[str, FloatND]:
+        by_target = arrival_arguments.by_target
+        surfaces = {}
+        for name, plan in self.plans.items():
+            states = grids[name]
+            arguments = by_target[plan.target]
+
+            # keyword-only-exempt: library-callback=jax.lax.map
+            def answer(
+                point: Mapping[str, FloatND | IntND],
+                *,
+                plan: ArrivalQueryPlan = plan,
+                arguments: Mapping[str, Mapping[str, PytreeValue]] = arguments,
+            ) -> FloatND:
+                result = plan.queries(states=point, arguments=arguments)
+                return jnp.where(result[3], result[0], jnp.nan)
+
+            if not states:
+                surfaces[name] = answer({})
+                continue
+            extents = tuple(nodes.size for nodes in states.values())
+            mesh = jnp.meshgrid(*states.values(), indexing="ij")
+            points = {
+                state: coordinate.reshape(-1)
+                for state, coordinate in zip(states, mesh, strict=True)
+            }
+            size = math.prod(extents)
+            values = jax.lax.map(answer, points, batch_size=min(self.width, size))
+            surfaces[name] = values.reshape(*extents, *values.shape[1:])
+        return surfaces
+
+
+def _surface_program(
+    *,
+    base: PeriodKernel,
+    owner: RegimeName,
+    period: int,
+    plans: Mapping[str, ArrivalQueryPlan],
+    grids: Mapping[str, Mapping[str, FloatND | IntND]],
+    templates: Mapping[str, ArrivalOperand],
+    width: int,
+) -> CoreProgram:
+    """Declare the native program computing the publisher's stored surfaces."""
+    from _lcm.arrival_queries import (  # noqa: PLC0415 - canonical query graphs import this module
+        ArrivalSourceArguments,
+        arrival_source_value_reads,
+    )
+
+    by_target = {plan.target: plan for plan in plans.values()}
+    schedules = [
+        program.requirements.internal_schedule
+        for program in core_program_graph(kernel=base).values()
+    ]
+    if any(schedule != schedules[0] for schedule in schedules):
+        raise ExecutionPlanningError(
+            "An arrival surface needs its publisher's one closed schedule."
+        )
+    return CoreProgram(
+        name=_SURFACES,
+        function=_ArrivalSurfaces(plans=MappingProxyType(dict(plans)), width=width),
+        argument_builder=_SurfaceArguments(
+            arguments=ArrivalSourceArguments(
+                base=_SurfaceGrids(grids=MappingProxyType(dict(grids))),
+                plans=MappingProxyType(by_target),
+            ),
+            fixed_flat_params=getattr(base, "fixed_flat_params", MappingProxyType({})),
+        ),
+        requirements=CoreExecutionRequirements(
+            value_reads=tuple(
+                replace(read, source=replace(read.source, core_key=_SURFACES))
+                for read in arrival_source_value_reads(
+                    plans=by_target, source=owner, period=period
+                )
+            ),
+            internal_schedule=schedules[0],
+        ),
+        output_roles={
+            name: StateAxesLeading(
+                state_names=(), shape=template.shape, dtype=template.dtype
+            )
+            for name, template in templates.items()
+        },
+        disposition=CoreExecutionDisposition.DENSE,
+        disposition_reason=(
+            "Arrival surfaces are tabulated over the target grid in a bounded "
+            "sequential map; one plan answer per node."
+        ),
+    )
+
+
 @dataclass(frozen=True, kw_only=True)
 class _BorrowedArrivalKernel:
     """Publish exact input identities only after the genuine Full solve succeeds."""
@@ -198,22 +359,47 @@ class _BorrowedArrivalKernel:
     base: PeriodKernel
     template: ArrivalContinuation
     origins: Mapping[str, ValueArtifactAddress]
+    surfaces: Mapping[str, ArrivalQueryPlan] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    """The publisher's own arrival plan behind each stored surface leaf."""
+    surface_grids: Mapping[str, Mapping[str, FloatND | IntND]] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    """Target grid nodes of each stored surface leaf, at the landing date."""
+    surface_width: int = 1
+    """Grid nodes tabulated at once."""
     _core_programs: Mapping[str, CoreProgram] = field(
         init=False, repr=False, compare=False
     )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "origins", MappingProxyType(dict(self.origins)))
-        object.__setattr__(
-            self,
-            "_core_programs",
+        programs = dict(
             _publication_programs(
                 graph=core_program_graph(kernel=self.base),
                 origins=self.origins,
                 owner=self.template.regime,
                 period=self.template.period,
-            ),
+            )
         )
+        if self.surfaces:
+            if _SURFACES in programs:
+                raise ExecutionPlanningError(
+                    "Arrival surfaces collide with a native publication program."
+                )
+            programs[_SURFACES] = _surface_program(
+                base=self.base,
+                owner=self.template.regime,
+                period=self.template.period,
+                plans=self.surfaces,
+                grids=self.surface_grids,
+                templates={
+                    name: self.template.operands[name] for name in self.surfaces
+                },
+                width=self.surface_width,
+            )
+        object.__setattr__(self, "_core_programs", MappingProxyType(programs))
 
     def core_programs(self) -> Mapping[str, CoreProgram]:
         """Retain the genuine producer's numerical graph and all native readers."""
@@ -292,6 +478,30 @@ class _BorrowedArrivalKernel:
                 "Combining arrival and another continuation publisher "
                 "is an S10 dependency."
             )
+        if self.surfaces:
+            surfaces = cast(
+                "Mapping[str, FloatND]",
+                compiled_cores[_SURFACES](
+                    **programs[_SURFACES].argument_builder(
+                        CoreBuildContext(
+                            state_action_space=state_action_space,
+                            next_regime_to_V_arr=next_regime_to_V_arr,
+                            next_regime_to_continuation=next_regime_to_continuation,
+                            flat_params=flat_params,
+                            period=period,
+                            ages=ages,
+                            **optional,
+                        )
+                    )
+                ),
+            )
+            for name, surface in surfaces.items():
+                template = self.template.operands[name]
+                operands[name] = (
+                    surface
+                    if surface.sharding == template.sharding
+                    else jax.device_put(surface, template.sharding)
+                )
         payload = ArrivalContinuation(
             regime=self.template.regime,
             period=period,
@@ -347,33 +557,43 @@ def install_arrival_publishers(
     canonical_regimes: Mapping[RegimeName, Regime],
     contexts: Mapping[RegimeName, SolverBuildContext],
 ) -> MappingProxyType[RegimeName, Regime]:
-    """Admit borrowed schemas against the actual producer's declared native reads."""
-    templates: dict[RegimeName, dict[int, ArrivalContinuation]] = {}
-    origins: dict[RegimeName, dict[int, Mapping[str, ValueArtifactAddress]]] = {}
-    for context in contexts.values():
-        for plans in context.arrival_queries.values():
-            for plan in plans.values():
-                if plan.transport_template is None:
-                    continue
-                templates.setdefault(plan.target, {})[plan.period] = (
-                    plan.transport_template
-                )
-                origins.setdefault(plan.target, {})[plan.period] = (
-                    plan.transport_origins
-                )
+    """Admit borrowed schemas against the actual producer's declared native reads.
+
+    A regime whose arrival surfaces a later reader needs also tabulates them
+    in its own period program and publishes them in the same dated payload.
+    """
     updated = dict(canonical_regimes)
-    for target, dated in templates.items():
-        regime = updated[target]
+    for owner, context in contexts.items():
+        if not context.arrival_publications:
+            continue
+        regime = updated[owner]
         if regime.solution.continuation_spec is not None:
             raise UnsupportedOperationError(
                 "Combining arrival custody with an existing continuation "
                 "is an S10 dependency."
             )
         kernels = dict(regime.solution.period_kernels)
-        for period, template in dated.items():
-            base = kernels[period]
+        for period, publication in context.arrival_publications.items():
+            plans = context.arrival_queries.get(period, MappingProxyType({}))
+            from _lcm.arrival_queries import landing_grid  # noqa: PLC0415
+
             publisher = _BorrowedArrivalKernel(
-                base=base, template=template, origins=origins[target][period]
+                base=kernels[period],
+                template=publication.template,
+                origins=publication.origins,
+                surfaces=MappingProxyType(
+                    {
+                        name: plans[target]
+                        for name, target in publication.surfaces.items()
+                    }
+                ),
+                surface_grids=MappingProxyType(
+                    {
+                        name: landing_grid(context=contexts[target], period=period + 1)
+                        for name, target in publication.surfaces.items()
+                    }
+                ),
+                surface_width=context.axis_widths.get("query_cell", 64),
             )
             graph = publisher.core_programs()
             native = {
@@ -381,21 +601,28 @@ def install_arrival_publishers(
                 for program in graph.values()
                 for read in program.requirements.value_reads
                 if read.source.source_period == period
-                and read.source.source_regime == target
+                and read.source.source_regime == owner
             }
-            if any(origin not in native for origin in origins[target][period].values()):
+            if any(origin not in native for origin in publication.origins.values()):
                 raise UnsupportedOperationError(
                     "An arrival publisher needs an explicit native read for every "
                     "additional comparison origin."
                 )
             kernels[period] = publisher
+        dated = {
+            period: publication.template
+            for period, publication in context.arrival_publications.items()
+        }
         spec = ArrivalContinuationSpec(
             template=dated[min(dated)],
             artifact_key=ARRIVAL_CONTINUATION,
             templates_by_period=dated,
-            origins_by_period=origins[target],
+            origins_by_period={
+                period: publication.origins
+                for period, publication in context.arrival_publications.items()
+            },
         )
-        updated[target] = replace(
+        updated[owner] = replace(
             regime,
             solution=replace(
                 regime.solution,

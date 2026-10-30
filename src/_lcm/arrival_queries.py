@@ -14,8 +14,10 @@ from dags.tree import qname_from_tree_path
 
 from _lcm.arrival_continuation import (
     ARRIVAL_CONTINUATION,
+    ARRIVAL_SURFACE_PREFIX,
     ArrivalContinuation,
     ArrivalOperand,
+    arrival_surface_name,
 )
 from _lcm.current_iid import (
     CURRENT_IID_ARGUMENT,
@@ -111,6 +113,54 @@ class _ArrivalBuildContext(CoreBuildContext):
     )
 
 
+@dataclass(frozen=True, kw_only=True)
+class ArrivalPublication:
+    """The dated arrival payload one regime publishes, and how each leaf arises.
+
+    `origins` are borrowed stored values a later arrival reader needs; `surfaces`
+    are computed by this regime's own arrival plans: each names the target whose
+    stored arrival surface the leaf holds.
+    """
+
+    template: ArrivalContinuation
+    origins: Mapping[str, ValueArtifactAddress] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    surfaces: Mapping[str, RegimeName] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+
+
+def surface_address(
+    *, source: RegimeName, target: RegimeName, period: int
+) -> ValueArtifactAddress:
+    """Address the stored arrival surface `source` publishes at `period`.
+
+    The surface is the value an arrival from `source` into `target` collects,
+    tabulated on `target`'s grid one period later. It is a leaf of `source`'s
+    own dated arrival payload, so it is transported, admitted and released
+    like that payload.
+    """
+    return ValueArtifactAddress(
+        kind=ValueArtifactKind.CONTINUATION_LEAF,
+        period=period,
+        regime=source,
+        artifact_key=ARRIVAL_CONTINUATION,
+        leaf_path=("operands", arrival_surface_name(target=target)),
+    )
+
+
+def _is_surface(*, address: ValueArtifactAddress, period: int) -> bool:
+    """Whether a plan dated `period` reads `address` as a stored arrival surface."""
+    return (
+        address.kind is ValueArtifactKind.CONTINUATION_LEAF
+        and address.period == period
+        and address.artifact_key == ARRIVAL_CONTINUATION
+        and isinstance(name := address.leaf_path[-1], str)
+        and name.startswith(ARRIVAL_SURFACE_PREFIX)
+    )
+
+
 def _transport_name(*, origin: ValueArtifactAddress) -> str:
     key = origin.artifact_key
     identity = (
@@ -137,13 +187,18 @@ def _transport_alias(*, plan: ArrivalQueryPlan, name: str) -> ValueArtifactAddre
 def _arrival_values(
     *, context: CoreBuildContext, plan: ArrivalQueryPlan
 ) -> Mapping[ValueArtifactAddress, ValueTemplate]:
-    required = {
-        read.target
-        for read in plan.queries.value_reads(core_key="arrival")
-        if read.target.period > plan.period
-    }
+    reads = plan.queries.value_reads(core_key="arrival")
+    surfaces = _surface_values(
+        context=context,
+        addresses={
+            read.target
+            for read in reads
+            if _is_surface(address=read.target, period=plan.period)
+        },
+    )
+    required = {read.target for read in reads if read.target.period > plan.period}
     if not required:
-        return MappingProxyType({})
+        return MappingProxyType(surfaces)
     template = plan.transport_template
     if template is None:
         raise UnsupportedOperationError(
@@ -157,6 +212,7 @@ def _arrival_values(
                 ]
                 for origin in required
             }
+            | surfaces
         )
     payload = context.next_regime_to_continuation.get(plan.target)
     if not isinstance(payload, ArrivalContinuation) or (
@@ -173,7 +229,28 @@ def _arrival_values(
             origin: payload.operands[_transport_name(origin=origin)]
             for origin in required
         }
+        | surfaces
     )
+
+
+def _surface_values(
+    *, context: CoreBuildContext, addresses: set[ValueArtifactAddress]
+) -> dict[ValueArtifactAddress, ValueTemplate]:
+    """Read each stored arrival surface from its publisher's dated payload."""
+    if isinstance(context, _ArrivalBuildContext):
+        return {address: context.arrival_values[address] for address in addresses}
+    values = {}
+    for address in addresses:
+        payload = context.next_regime_to_continuation.get(address.regime)
+        if not isinstance(payload, ArrivalContinuation) or (
+            payload.regime,
+            payload.period,
+        ) != (address.regime, address.period):
+            raise ExecutionPlanningError(
+                "An arrival requires its exact producer-date stored surface."
+            )
+        values[address] = payload.leaves()[address.leaf_path]
+    return values
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -237,6 +314,7 @@ def arrival_source_value_reads(
                 core_key="main",
                 channel=ValueInputChannel.CONTINUATION_LEAF
                 if read.target.period > plan.period
+                or _is_surface(address=read.target, period=plan.period)
                 else ValueInputChannel.NEXT_REGIME_VALUE,
                 argument="arrival_arguments",
                 path=("by_target", target, *read.source.path),
@@ -408,23 +486,22 @@ def _bind_transport_templates(
     canonical_regimes: Mapping[RegimeName, Regime],
     origin_templates: dict[ValueArtifactAddress, ArrivalOperand],
     dated_templates: dict[tuple[RegimeName, int], ArrivalContinuation],
-) -> dict[RegimeName, dict[RegimeName, ArrivalQueryPlan]]:
-    """Union the actual incoming readers of each one producer-date payload."""
-    origins: dict[RegimeName, dict[str, ValueArtifactAddress]] = {}
-    for plans in plans_by_source.values():
-        for target, plan in plans.items():
-            for read in plan.queries.value_reads(core_key="arrival"):
-                if read.target.period <= plan.period:
-                    continue
-                if read.view is not None:
-                    raise UnsupportedOperationError(
-                        "Arrival transport requires a whole stored operand leaf."
-                    )
-                origins.setdefault(target, {})[_transport_name(origin=read.target)] = (
-                    read.target
-                )
-    for target, unsorted in origins.items():
-        declarations = dict(sorted(unsorted.items()))
+) -> tuple[
+    dict[RegimeName, dict[RegimeName, ArrivalQueryPlan]],
+    dict[RegimeName, ArrivalPublication],
+]:
+    """Union the actual incoming readers of each one producer-date payload.
+
+    A plan borrows the later stored values its rebuilt action problems read
+    through its target's payload, and reads each stored arrival surface from the
+    payload of the regime whose action problem it rebuilds.
+    """
+    origins, surfaces = _borrowed_reads(
+        plans_by_source=plans_by_source, contexts=contexts
+    )
+    publications = {}
+    for owner in sorted(origins.keys() | surfaces.keys()):
+        declarations = dict(sorted(origins.get(owner, {}).items()))
         operands = {}
         for name, origin in declarations.items():
             if origin not in origin_templates:
@@ -436,28 +513,123 @@ def _bind_transport_templates(
                 )
             operands[name] = origin_templates[origin]
         period = next(
-            plan.period
-            for plans in plans_by_source.values()
-            for name, plan in plans.items()
-            if name == target
+            plan.period for plans in plans_by_source.values() for plan in plans.values()
         )
-        schema = hashlib.sha256(repr(tuple(declarations)).encode()).hexdigest()
-        template = ArrivalContinuation(
-            regime=target, period=period, schema=schema, operands=operands
-        )
-        dated_templates[target, period] = template
-        origins[target] = declarations
-    return {
-        source: {
-            target: replace(
-                plan,
-                transport_template=dated_templates.get((target, plan.period)),
-                transport_origins=MappingProxyType(origins.get(target, {})),
+        surfaced = dict(sorted(surfaces.get(owner, {}).items()))
+        for name, target in surfaced.items():
+            operands[name] = _surface_template(
+                context=contexts[owner],
+                target_context=contexts[target],
+                plan=contexts[owner].arrival_queries[period][target],
             )
-            for target, plan in plans.items()
-        }
-        for source, plans in plans_by_source.items()
+        schema = hashlib.sha256(repr(tuple(operands)).encode()).hexdigest()
+        template = ArrivalContinuation(
+            regime=owner, period=period, schema=schema, operands=operands
+        )
+        dated_templates[owner, period] = template
+        origins[owner] = declarations
+        publications[owner] = ArrivalPublication(
+            template=template,
+            origins=MappingProxyType(declarations),
+            surfaces=MappingProxyType(surfaced),
+        )
+    return (
+        {
+            source: {
+                target: replace(
+                    plan,
+                    transport_template=dated_templates.get((target, plan.period)),
+                    transport_origins=MappingProxyType(origins.get(target, {})),
+                )
+                for target, plan in plans.items()
+            }
+            for source, plans in plans_by_source.items()
+        },
+        publications,
+    )
+
+
+def _borrowed_reads(
+    *,
+    plans_by_source: Mapping[RegimeName, Mapping[RegimeName, ArrivalQueryPlan]],
+    contexts: Mapping[RegimeName, SolverBuildContext],
+) -> tuple[
+    dict[RegimeName, dict[str, ValueArtifactAddress]],
+    dict[RegimeName, dict[str, RegimeName]],
+]:
+    """Collect, per payload owner, the later values and the surfaces plans borrow."""
+    origins: dict[RegimeName, dict[str, ValueArtifactAddress]] = {}
+    surfaces: dict[RegimeName, dict[str, RegimeName]] = {}
+    for plans in plans_by_source.values():
+        for target, plan in plans.items():
+            for read in plan.queries.value_reads(core_key="arrival"):
+                if _is_surface(address=read.target, period=plan.period):
+                    owner = read.target.regime
+                    surfaces.setdefault(owner, {})[read.target.leaf_path[-1]] = (
+                        _surfaced_target(context=contexts[owner], address=read.target)
+                    )
+                    continue
+                if read.target.period <= plan.period:
+                    continue
+                if read.view is not None:
+                    raise UnsupportedOperationError(
+                        "Arrival transport requires a whole stored operand leaf."
+                    )
+                origins.setdefault(target, {})[_transport_name(origin=read.target)] = (
+                    read.target
+                )
+    return origins, surfaces
+
+
+def _surfaced_target(
+    *, context: SolverBuildContext, address: ValueArtifactAddress
+) -> RegimeName:
+    """Recover the arrival target whose stored surface `address` names."""
+    for target in context.arrival_queries.get(address.period, {}):
+        if (
+            surface_address(
+                source=context.regime_name, target=target, period=address.period
+            )
+            == address
+        ):
+            return target
+    raise ExecutionPlanningError(
+        "A stored arrival surface names no arrival of its publishing regime."
+    )
+
+
+def _surface_template(
+    *,
+    context: SolverBuildContext,
+    target_context: SolverBuildContext,
+    plan: ArrivalQueryPlan,
+) -> ArrivalOperand:
+    """Shape a stored surface like the target's value, one answer per node."""
+    shape = (
+        *(
+            nodes.size
+            for nodes in landing_grid(
+                context=target_context, period=plan.period
+            ).values()
+        ),
+        *plan.queries.definitions[plan.queries.root].value_shape,
+    )
+    return context.place_on_regime_devices(
+        template=jnp.zeros(shape, dtype=canonical_float_dtype())
+    )
+
+
+def landing_grid(
+    *, context: SolverBuildContext, period: int
+) -> MappingProxyType[str, FloatND | IntND]:
+    """The nodes a target's value is stored on at `period`, in stored axis order."""
+    nodes = {
+        **context.state_action_space.states,
+        **(context.period_to_state_nodes or {}).get(period, {}),
     }
+    return MappingProxyType(
+        {name: nodes[name] for name in context.state_action_space.states}
+    )
 
 
 def _origin_template(
@@ -504,8 +676,16 @@ def install_arrival_source_queries(
     canonical_regimes: Mapping[RegimeName, Regime],
     contexts: Mapping[RegimeName, SolverBuildContext],
 ) -> MappingProxyType[RegimeName, SolverBuildContext]:
-    """Bind future policy graphs after their actual later action problems exist."""
+    """Bind each arrival to its target's action problem one level deep.
+
+    A source's own action problem reads every arrival at its exact landing. The
+    plan behind that read rebuilds the target's action problem there, from a
+    pricing context: the canonical action problem, whose own next-date arrivals
+    read the stored surface of that arrival by ordinary interpolation. So no
+    plan contains another plan, whatever the number of later arrival dates.
+    """
     updated = dict(contexts)
+    pricing = dict(contexts)
     origin_templates: dict[ValueArtifactAddress, ArrivalOperand] = {}
     dated_templates: dict[tuple[RegimeName, int], ArrivalContinuation] = {}
     periods = sorted(
@@ -533,7 +713,7 @@ def install_arrival_source_queries(
             )
             plans = {
                 target: bind_arrival_query_graph(
-                    contexts=updated,
+                    contexts=pricing,
                     canonical_regimes=canonical_regimes,
                     source=source,
                     target=target,
@@ -546,13 +726,23 @@ def install_arrival_source_queries(
             }
             if plans:
                 plans_by_source[source] = plans
-        plans_by_source = _bind_transport_templates(
+        if not plans_by_source:
+            continue
+        plans_by_source, publications = _bind_transport_templates(
             plans_by_source=plans_by_source,
             contexts=updated,
             canonical_regimes=canonical_regimes,
             origin_templates=origin_templates,
             dated_templates=dated_templates,
         )
+        for owner, publication in publications.items():
+            context = updated[owner]
+            updated[owner] = replace(
+                context,
+                arrival_publications=MappingProxyType(
+                    {**context.arrival_publications, period + 1: publication}
+                ),
+            )
         for source, plans in plans_by_source.items():
             context = updated[source]
             updated[source] = replace(
@@ -569,6 +759,23 @@ def install_arrival_source_queries(
                     {
                         **context.arrival_queries,
                         period: MappingProxyType(plans),
+                    }
+                ),
+            )
+            reader = pricing[source]
+            pricing[source] = replace(
+                reader,
+                arrival_surfaces=MappingProxyType(
+                    {
+                        **reader.arrival_surfaces,
+                        period: MappingProxyType(
+                            {
+                                target: surface_address(
+                                    source=source, target=target, period=period
+                                )
+                                for target in plans
+                            }
+                        ),
                     }
                 ),
             )

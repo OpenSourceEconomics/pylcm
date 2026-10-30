@@ -66,6 +66,7 @@ from _lcm.engine import (
     Variables,
     place_template_on_regime_devices,
 )
+from _lcm.execution.value_transfer import ValueArtifactAddress
 from _lcm.grids import Grid
 from _lcm.materialization import DatedGenerationMaterializer
 from _lcm.post_decision_bound import PostDecisionBoundSpec
@@ -81,6 +82,7 @@ from _lcm.typing import (
     EconFunctionsMapping,
     FlatParams,
     FunctionName,
+    PeriodToRegimeToArrivalSurfaces,
     PeriodToRegimeToDissolutionFlags,
     PeriodToRegimeToSimulationPolicy,
     PeriodToRegimeToVArr,
@@ -133,7 +135,7 @@ from lcm.typing import Float1D, FloatND, UserFunction
 # enumerates the payload classes the shipped routes declare.
 
 if TYPE_CHECKING:
-    from _lcm.arrival_queries import ArrivalQueryPlan
+    from _lcm.arrival_queries import ArrivalPublication, ArrivalQueryPlan
     from _lcm.current_iid import CurrentIIDDrawPlan, CurrentIIDPlan
     from _lcm.regime_building.finalize import FinalizedUserRegime
     from _lcm.regime_building.V import VInterpolationInfo
@@ -141,11 +143,13 @@ if TYPE_CHECKING:
 
     type RegimeLawsMapping = Mapping[RegimeName, RegimeLaw]
     type ArrivalQueriesMapping = Mapping[int, Mapping[RegimeName, ArrivalQueryPlan]]
+    type ArrivalPublicationsMapping = Mapping[int, ArrivalPublication]
 
     type UserRegimesMapping = Mapping[RegimeName, FinalizedUserRegime]
     type RegimeToVInterpolationInfo = MappingProxyType[RegimeName, VInterpolationInfo]
 else:
     ArrivalQueriesMapping = Mapping
+    ArrivalPublicationsMapping = Mapping
     # The innovation plan imports the solver facade through its law registry.
     type CurrentIIDPlan = object
     type CurrentIIDDrawPlan = object
@@ -295,6 +299,23 @@ class SolverBuildContext:
         default_factory=lambda: MappingProxyType({})
     )
     """Actual next-date policy/value read graphs inside this source's Q/F."""
+
+    arrival_surfaces: Mapping[int, Mapping[RegimeName, ValueArtifactAddress]] = field(
+        default_factory=lambda: MappingProxyType({}),
+        metadata={"fingerprint_omit_if_default": True},
+    )
+    """Stored arrival surface each arrival target's continuation reads, by period.
+
+    Set only on the contexts an arrival plan rebuilds an action problem from.
+    There the action problem's next-date arrivals read the source's stored
+    surface by ordinary value interpolation instead of nesting another plan.
+    """
+
+    arrival_publications: ArrivalPublicationsMapping = field(
+        default_factory=lambda: MappingProxyType({}),
+        metadata={"fingerprint_omit_if_default": True},
+    )
+    """Dated arrival payload this regime publishes: borrowed values and surfaces."""
 
     scalar_query_models: Mapping[RegimeName, ScalarEGMQueryModel] | None = None
     """Trusted scalar query pools prepared once before numerical kernel factories."""
@@ -679,6 +700,14 @@ class BackwardInductionResult:
 
     auxiliary_artifacts: ArtifactStore = field(default_factory=ArtifactStore)
     """Addressed solver-defined inspection/persistence artifacts."""
+
+    arrival_surfaces: PeriodToRegimeToArrivalSurfaces = MappingProxyType({})
+    """Stored arrival surfaces, by period, publishing regime and payload leaf.
+
+    Arrival replay rebuilds the same plans the solve priced with, so it reads
+    the same surfaces. Retained on the host beside the values, whatever the
+    retention, because every simulated arrival price needs them.
+    """
 
 
 @runtime_checkable

@@ -48,7 +48,13 @@ from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.subject_groups import grouped_extent
 from _lcm.solution.backward_induction import _abstract_value_key, _hashable_metadata
 from _lcm.time import TimeAxis
-from _lcm.typing import FlatParams, RegimeName, RegimeNamesToIds, SimulationPolicy
+from _lcm.typing import (
+    FlatParams,
+    PeriodToRegimeToArrivalSurfaces,
+    RegimeName,
+    RegimeNamesToIds,
+    SimulationPolicy,
+)
 from _lcm.utils.logging import LogLevel
 from lcm.exceptions import ExecutionPlanningError
 
@@ -143,6 +149,7 @@ def prepare_simulation_chunks(
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None = None,
     current_iid_replay_inputs: CurrentIIDReplayInputs = MappingProxyType({}),
     projected_forward_inputs: ProjectedForwardInputs = MappingProxyType({}),
+    arrival_surfaces: PeriodToRegimeToArrivalSurfaces = MappingProxyType({}),
     process_grid_resolver: ProcessGridResolver | None = None,
     max_compilation_workers: int | None = None,
     group_sizes: tuple[int, ...] | None = None,
@@ -183,6 +190,7 @@ def prepare_simulation_chunks(
                     flags,
                     ages.values,
                     projected_forward_inputs,
+                    arrival_surfaces,
                 )
             ),
         )
@@ -232,6 +240,7 @@ def prepare_simulation_chunks(
         policies=policies,
         current_iid_replay_inputs=current_iid_replay_inputs,
         projected_forward_inputs=projected_forward_inputs,
+        arrival_surfaces=arrival_surfaces,
         ages=ages,
         initial_conditions=initial_conditions,
         regime_names_to_ids=regime_names_to_ids,
@@ -267,6 +276,7 @@ def _simulation_chunk_profile_key(
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None,
     current_iid_replay_inputs: CurrentIIDReplayInputs = MappingProxyType({}),
     projected_forward_inputs: ProjectedForwardInputs = MappingProxyType({}),
+    arrival_surfaces: PeriodToRegimeToArrivalSurfaces = MappingProxyType({}),
     ages: TimeAxis,
     initial_conditions: Mapping[str, jax.Array],
     regime_names_to_ids: RegimeNamesToIds,
@@ -330,6 +340,7 @@ def _simulation_chunk_profile_key(
         ),
         _abstract_value_key(value=current_iid_replay_inputs),
         _abstract_value_key(value=projected_forward_inputs),
+        _abstract_value_key(value=arrival_surfaces),
         _abstract_value_key(value=values),
         _abstract_value_key(value=flags),
         _abstract_value_key(value=initial_conditions),
@@ -392,6 +403,7 @@ class _ChunkProfiler:
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None = None
     current_iid_replay_inputs: CurrentIIDReplayInputs = MappingProxyType({})
     projected_forward_inputs: ProjectedForwardInputs = MappingProxyType({})
+    arrival_surfaces: PeriodToRegimeToArrivalSurfaces = MappingProxyType({})
     max_compilation_workers: int | None = None
     group_sizes: tuple[int, ...] | None = None
     current_iid_override_schema: CurrentIIDOverrideSchema = ()
@@ -459,6 +471,7 @@ class _ChunkProfiler:
             "policies": self.policies,
             "current_iid_replay_inputs": self.current_iid_replay_inputs,
             "projected_forward_inputs": self.projected_forward_inputs,
+            "arrival_surfaces": self.arrival_surfaces,
             "ages": self.ages,
             "initial_conditions": self.initial_conditions,
             "regime_names_to_ids": self.regime_names_to_ids,

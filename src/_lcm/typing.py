@@ -526,6 +526,10 @@ type PeriodToRegimeToSimulationPolicy = MappingProxyType[
 type PeriodToRegimeToDissolutionFlags = MappingProxyType[
     int, MappingProxyType[RegimeName, BoolND]
 ]
+# Stored arrival surfaces by period, publishing regime and payload leaf name.
+type PeriodToRegimeToArrivalSurfaces = MappingProxyType[
+    int, MappingProxyType[RegimeName, MappingProxyType[str, FloatND]]
+]
 
 
 @runtime_checkable

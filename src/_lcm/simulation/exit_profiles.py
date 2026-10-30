@@ -1,6 +1,7 @@
 """Inventory the actual original-choice, route and revealed-action programs."""
 
 from collections.abc import Callable, Mapping
+from types import MappingProxyType
 from typing import cast
 
 import jax
@@ -14,7 +15,7 @@ from _lcm.simulation.arrival_routing import (
     ordinary_exit_rows,
     pending_arrival_rows,
 )
-from _lcm.simulation.arrival_values import arrival_replay_context
+from _lcm.simulation.arrival_values import ArrivalSurfaces, arrival_replay_context
 from _lcm.simulation.chunk_operations import _regime_mask
 from _lcm.simulation.chunk_profile_inventory import ChunkProfileInventory, abstract_tree
 from _lcm.simulation.current_iid_overrides import (
@@ -69,6 +70,7 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
     regime_names_to_ids: RegimeNamesToIds,
     flat_params: FlatParams,
     values: Mapping[int, Mapping[str, jax.Array]],
+    surfaces: ArrivalSurfaces = MappingProxyType({}),
     ages: TimeAxis,
     key: jax.ShapeDtypeStruct,
     taste_key: jax.ShapeDtypeStruct | None,
@@ -175,6 +177,7 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
             context=arrival_replay_context(
                 queries=queries,
                 values=values,
+                surfaces=surfaces,
                 context=CoreBuildContext(
                     state_action_space=context.state_action_space,
                     next_regime_to_V_arr=values.get(period + 1, {}),

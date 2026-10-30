@@ -41,6 +41,7 @@ from jax._src.dtypes import ExtendedDType
 from jax._src.lib import xla_client
 from jaxtyping import Float, Int, Scalar
 
+from _lcm.arrival_continuation import arrival_surface_leaves
 from _lcm.continuation import ContinuationSpec
 from _lcm.engine import (
     Regime,
@@ -673,6 +674,9 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     retained_continuations: dict[ArtifactRef, ArtifactPayload] = {}
     replay_artifacts: dict[ArtifactRef, ArtifactPayload] = {}
     auxiliary_artifacts: dict[ArtifactRef, ArtifactPayload] = {}
+    arrival_surfaces: dict[
+        int, MappingProxyType[RegimeName, MappingProxyType[str, FloatND]]
+    ] = {}
 
     # Every collective kernel publishes `D`, but only two things read the
     # ACCUMULATED per-period mapping: forward simulation, for a gate that
@@ -1400,6 +1404,30 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                         retained_continuations[
                             ArtifactRef(period=period, regime=regime_name, key=key)
                         ] = jax.block_until_ready(jax.device_put(payload, host_device))
+                period_arrival_surfaces = {
+                    regime_name: surfaces
+                    for regime_name, payload in period_continuations.items()
+                    if (surfaces := arrival_surface_leaves(payload))
+                }
+                if period_arrival_surfaces:
+                    # Replay prices arrivals with the solve's own plans, so it
+                    # reads these surfaces under every retention, like values.
+                    arrival_host = jax.devices("cpu")[0]
+                    arrival_surfaces[period] = MappingProxyType(
+                        {
+                            regime_name: MappingProxyType(
+                                {
+                                    name: jax.block_until_ready(
+                                        jax.device_put(surface, arrival_host)
+                                    )
+                                    for name, surface in surfaces.items()
+                                }
+                            )
+                            for regime_name, surfaces in (
+                                period_arrival_surfaces.items()
+                            )
+                        }
+                    )
                 if retain_all_artifacts:
                     assert host_device is not None  # noqa: S101
                     for (
@@ -1470,6 +1498,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         retained_continuations=ArtifactStore(retained_continuations),
         replay_artifacts=ArtifactStore(replay_artifacts),
         auxiliary_artifacts=ArtifactStore(auxiliary_artifacts),
+        arrival_surfaces=MappingProxyType(arrival_surfaces),
     )
 
 
