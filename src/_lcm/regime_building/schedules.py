@@ -134,8 +134,8 @@ class RegimeSchedules:
         PhaseKey, MappingProxyType[RegimeName, MappingProxyType[int, tuple[str, ...]]]
     ] = MappingProxyType({})
     """Per phase, per source regime, the regimes whose next-age value a gated
-    edge reads at each period: gate references, plus the solve fallbacks in
-    the solution phase."""
+    edge or arrival reads at each period: the solve fallbacks in the solution
+    phase, plus each arrival's integrated reads."""
 
     landings_by_regime: MappingProxyType[
         RegimeName, MappingProxyType[int, tuple[str, ...]]
@@ -437,7 +437,6 @@ def resolve_regime_schedules(
         value_reads["solution"][name] = MappingProxyType(
             {
                 period: (
-                    *_gate_references(gated_edges=gated, targets=targets),
                     *_fallbacks(gated_edges=gated, targets=targets, side="solve"),
                     *(
                         read.regime
@@ -453,7 +452,6 @@ def resolve_regime_schedules(
         value_reads["simulation"][name] = MappingProxyType(
             {
                 period: (
-                    *_gate_references(gated_edges=gated, targets=targets),
                     *(
                         read.regime
                         for target in targets
@@ -651,7 +649,7 @@ def resolve_demand(  # noqa: C901 - shared fixed point for occupancy, values and
     - a visit (H) requires the pair's value, its realized successors and gated
       landings as visits, and the values the realized routing reads;
     - a value (S) requires the values its backward problem reads: perceived
-      continuation targets, gate references, solve fallbacks and same-period
+      continuation targets, solve fallbacks and same-period
       references. Realized routes out of a value-only pair are not followed.
 
     Every required pair must be an available problem: a terminal regime, or a
@@ -876,7 +874,7 @@ def gated_source_periods(
 
     A gate holds wherever its target is reached: solve gates count at valued
     nodes and simulation gates at visited nodes, provided the selected phase
-    graph contains the gated edge. A gated edge folds and reads its references
+    graph contains the gated edge. A gated edge folds and reads its fallbacks
     only after those periods.
     """
     periods: dict[tuple[RegimeName, RegimeName], set[int]] = {}
@@ -920,18 +918,14 @@ def _read_kinds(
 ) -> dict[RegimeName, str]:
     """Name what each stored value read of one pair is, for a missing-law error.
 
-    A read that is neither a gated fallback, a gate reference nor a target is an
-    arrival's IntegratedFull read.
+    A read that is neither a gated fallback nor a target is an arrival's
+    IntegratedFull read.
     """
     return {
         **dict.fromkeys(reads, f"an arrival read of {pair}"),
         **dict.fromkeys(
             _fallbacks(gated_edges=gated, targets=targets, side="solve"),
             f"a fallback of {pair}",
-        ),
-        **dict.fromkeys(
-            _gate_references(gated_edges=gated, targets=targets),
-            f"a gate reference of {pair}",
         ),
         **dict.fromkeys(targets, here),
     }
@@ -953,18 +947,6 @@ def _unavailable_message(
         else f"where `edges` declares no {side}edge out of '{name}' at that age"
     )
     return f"{requester} requires '{name}' at age {age}, {reason}."
-
-
-def _gate_references(
-    *, gated_edges: Mapping[RegimeName, GatedEdge], targets: tuple[RegimeName, ...]
-) -> tuple[RegimeName, ...]:
-    """The regimes whose value the gates of the reached `targets` read."""
-    return tuple(
-        reference.regime
-        for target, edge in gated_edges.items()
-        if target in targets
-        for reference in edge.gate_refs.values()
-    )
 
 
 def _fallbacks(

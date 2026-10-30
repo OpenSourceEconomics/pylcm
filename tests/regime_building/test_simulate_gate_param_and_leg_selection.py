@@ -190,7 +190,6 @@ def _solve_f3_fixture():
     )
     solution = _bi_result.value_functions
     _sim_policies = _bi_result.simulation_policies
-    _dissolution_flags = _bi_result.dissolution_flags
     return regimes, regime_names_to_ids, flat_params, solution
 
 
@@ -219,7 +218,6 @@ def test_stateless_gated_target_routes_without_vmap_axis_size_error():
         next_regime_to_V_arr=solution[1],
         base_state_action_spaces=base_state_action_spaces,
         period_to_regime_to_V_arr=solution,
-        period_to_regime_to_dissolution_flags=MappingProxyType({}),
         flat_params=flat_params,
     )
     assert "stateless_target" in same_period_mappings
@@ -275,7 +273,6 @@ def test_vmap_without_axis_size_fails_for_a_stateless_target():
         next_regime_to_V_arr=solution[1],
         base_state_action_spaces=base_state_action_spaces,
         period_to_regime_to_V_arr=solution,
-        period_to_regime_to_dissolution_flags=MappingProxyType({}),
         flat_params=flat_params,
     )
     evaluator = src.gated_edges["stateless_target"].simulate_gate_evaluator_at(period=1)

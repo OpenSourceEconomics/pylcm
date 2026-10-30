@@ -150,7 +150,7 @@ def _copy_resolved_values(
     original: Callable[..., model_module._ResolvedSolution],
     **arguments: Unpack[SolutionResolution],
 ) -> model_module._ResolvedSolution:
-    values, policies, flags, readers, current_iid_replay, projected_forward = original(
+    values, policies, readers, current_iid_replay, projected_forward = original(
         self, **arguments
     )
     copied = jax.tree.map(jnp.copy, values)
@@ -165,7 +165,7 @@ def _copy_resolved_values(
         ).values()
     )
     observed.values = copied
-    return copied, policies, flags, readers, current_iid_replay, projected_forward
+    return copied, policies, readers, current_iid_replay, projected_forward
 
 
 # keyword-only-exempt: library-callback=functools.partialmethod

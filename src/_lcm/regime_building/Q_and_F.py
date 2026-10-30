@@ -1453,7 +1453,7 @@ class _TerminalCollectiveQAndF:
 # reference regimes to their current-period V arrays enters the kernel
 # signature. Only regimes declaring `same_period_refs` carry it.
 # Kernel argument holding each edge-reference regime's value array. A gated
-# edge's gate references and leg fallbacks are read where the SOURCE lands, but
+# edge's leg fallbacks are read where the SOURCE lands, but
 # the value they name belongs to the period the source lands IN. Backward
 # induction has already solved that period, so the arrays arrive here rolled
 # forward — and from the RAW rolled mapping, never the edge-substituted one,
@@ -1550,7 +1550,7 @@ class GatedContinuationSpec:
     """Target states the gate reads, supplied at the landing point."""
 
     projected_readers: tuple[ProjectedLandingReader, ...] = ()
-    """Gate references and leg fallbacks, read at the landing point."""
+    """Leg fallbacks, read at the landing point."""
 
     target_ages: Float1D
     """Age at each model period, indexed by the period the gate is read in.
@@ -1570,12 +1570,12 @@ class GatedContinuationSchedule:
     """Specs keyed by FOLD period. A source standing at `t` reads the `t + 1`
     entry: that is the period whose value arrays the edge folds, and whose
     grids its projected readers close over. Keyed by period for the reason
-    `ResolvedGatedEdge.folds_by_period` is — a gate reference on an
+    `ResolvedGatedEdge.folds_by_period` is — a leg fallback on an
     `AgeSpecializedGrid` is read on its own regime's nodes, which move with
     age while their shape does not."""
 
     reference_regimes: tuple[RegimeName, ...]
-    """Regimes this edge's gate references and leg fallbacks interpolate.
+    """Regimes this edge's leg fallbacks interpolate.
     Enters the Q_and_F grouping key, so two periods whose reference grids
     differ never share one compiled kernel."""
 
@@ -2505,8 +2505,8 @@ def evaluate_projected_readers(
 ) -> MappingProxyType[str, FloatND]:
     """Read each projected reference at one landing point.
 
-    A gate reference and a leg fallback name another regime's value at
-    coordinates a projection produces, so both are evaluated AT the landing
+    A leg fallback names another regime's value at coordinates a projection
+    produces, so it is evaluated AT the landing
     rather than tabulated on the target's grid: pre-tabulating them would make
     the source interpolate `V_ref o projection`, which equals the value the
     branch pays only where the projection is affine.
@@ -2594,7 +2594,7 @@ def _get_pointwise_gated_interpolator(
         combine: The edge's gate, applied to the interpolated channels.
         gate_state_names: Target states the gate reads, supplied at the landing
             point under their own names.
-        projected_readers: Gate references and leg fallbacks. Each is evaluated
+        projected_readers: Leg fallbacks. Each is evaluated
             here, at the landing, rather than read off a channel: its projection
             maps onto ANOTHER regime's grid, so tabulating it on the target's
             grid would leave the source interpolating `V_ref o projection` where
@@ -2635,8 +2635,7 @@ def _get_pointwise_gated_interpolator(
             f"A gated edge's gate reads {co_mapped_reads}, which the "
             "continuation co-maps as fixed distributed state(s). A co-mapped "
             "axis is sliced off before the continuation is read, so there is "
-            "no landing coordinate to evaluate the gate at. Read the state "
-            "through a gate reference, or remove it from "
+            "no landing coordinate to evaluate the gate at. Remove it from "
             "ExecutionConfig.sharded_states."
         )
         raise ValueError(msg)
@@ -2757,7 +2756,7 @@ class _PointwiseGatedInterpolator:
     resolved_landing: frozenset[str]
     """Landing coordinates the node resolution produces."""
     projected_readers: tuple[ProjectedLandingReader, ...]
-    """Gate references and leg fallbacks, evaluated at the landing."""
+    """Leg fallbacks, evaluated at the landing."""
     arg_names: tuple[ReferenceName, ...]
     """The published argument names, in order."""
     landing_counter: Callable[..., IntND] | None = field(

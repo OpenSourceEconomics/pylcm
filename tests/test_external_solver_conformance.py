@@ -2130,7 +2130,7 @@ def test_invalid_placed_replay_payload_is_rejected_before_reader_construction(
     solution = _solve(model=model)
     prepared = model._resolve_solution_result(
         solution=solution, flat_params=model._process_params(_PARAMS)
-    )[3][0]["active"]
+    )[2][0]["active"]
     owner = PeriodSimulationReads(
         period=0,
         devices=(jax.devices()[0],),

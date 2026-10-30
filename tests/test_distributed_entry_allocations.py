@@ -57,7 +57,6 @@ class PrepareChunkArguments(TypedDict):
     regimes: MappingProxyType[RegimeName, EngineRegime]
     flat_params: FlatParams
     values: Mapping[int, Mapping[RegimeName, jax.Array]]
-    flags: Mapping[int, Mapping[RegimeName, jax.Array]]
     ages: TimeAxis
     initial_conditions: Mapping[str, jax.Array]
     regime_names_to_ids: RegimeNamesToIds

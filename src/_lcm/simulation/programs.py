@@ -666,7 +666,6 @@ class _GateFoldArguments(TypedDict):
         Mapping[RegimeName, Mapping[StateName, ContinuousState | DiscreteState]] | None
     )
     edge_values: Mapping[RegimeName, Mapping[RegimeName, FloatND]]
-    edge_flags: Mapping[RegimeName, BoolND]
     flat_params: FlatParams
     fold_age: FoldAge
 
@@ -675,7 +674,6 @@ class _GateRouteArguments(TypedDict):
     """The arguments a gate-route program hands its body, besides the width."""
 
     edge_values: Mapping[RegimeName, Mapping[RegimeName, FloatND]]
-    edge_flags: Mapping[RegimeName, BoolND]
     next_states: StatesPerRegime
     new_subject_regime_ids: Int1D
     subjects_in_regime: Bool1D
@@ -699,7 +697,7 @@ _GATE_ROUTE_SUBJECT_ARG_NAMES = (
 class _GateFoldBody:
     """One period's gated continuations, folded on the regime-level grids.
 
-    The fold reads the next period's value and dissolution arrays over each
+    The fold reads the next period's value arrays over each
     target's own grid and writes the substituted continuation over that same
     grid. No operand and no output carries a subject axis, so the body is
     replicated rather than partitioned wherever the population is spread over
@@ -728,7 +726,6 @@ class _GateFoldBody:
             base_state_action_spaces=MappingProxyType({}),
             target_states_by_target=arguments["target_states_by_target"],
             edge_values=arguments["edge_values"],
-            edge_flags=arguments["edge_flags"],
             flat_params=arguments["flat_params"],
             fold_age=arguments["fold_age"],
         )
@@ -768,7 +765,6 @@ class _GateRouteBody:
             regime=self.regime,
             fold_period=self.fold_period,
             edge_values=arguments["edge_values"],
-            edge_flags=arguments["edge_flags"],
             candidate_states=arguments["next_states"],
             regime_names_to_ids=self.regime_names_to_ids,
             new_subject_regime_ids=arguments["new_subject_regime_ids"],

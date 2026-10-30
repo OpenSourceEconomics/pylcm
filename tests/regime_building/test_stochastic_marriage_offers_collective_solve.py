@@ -77,6 +77,7 @@ from lcm.typing import (
     ScalarInt,
     UserFunction,
 )
+from tests.collective_fixtures import recorded_dissolution_flags
 from tests.conftest import bind_laws, build_prepared_structure
 
 # Stochastic marriage offer: single_f (singleton) -> married_terminal (collective),
@@ -343,18 +344,19 @@ def _solve_offer_regimes(*, enable_jit: bool = False):
             "married_terminal": MappingProxyType({}),
         }
     )
-    _bi_result = solve(
-        program_fingerprint="test_stochastic_marriage_offers_collective_solve",
-        flat_params=flat_params,
-        ages=ages,
-        regimes=regimes,
-        logger=get_logger(log_level="off"),
-        enable_jit=enable_jit,
-    )
+    with recorded_dissolution_flags() as dissolution_flags:
+        _bi_result = solve(
+            program_fingerprint="test_stochastic_marriage_offers_collective_solve",
+            flat_params=flat_params,
+            ages=ages,
+            regimes=regimes,
+            logger=get_logger(log_level="off"),
+            enable_jit=enable_jit,
+        )
     return (
         _bi_result.value_functions,
         _bi_result.simulation_policies,
-        _bi_result.dissolution_flags,
+        dissolution_flags,
     )
 
 

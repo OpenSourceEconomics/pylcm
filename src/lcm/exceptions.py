@@ -141,6 +141,15 @@ class RegimeInitializationError(ModelInitializationError):
     """
 
 
+class GateReadsValueError(RegimeInitializationError):
+    """Raised when a `Gate` predicate reads a value of its target regime.
+
+    A gate routes on the target's states and parameters. A move decided by
+    comparing values is an `Exit` of the source regime, or an `ArrivalDecision`
+    when the comparison is made on landing.
+    """
+
+
 class OffGridPolicyError(ModelInitializationError):
     """Raised when a solver cannot honour a state grid's declared `off_grid` rule."""
 

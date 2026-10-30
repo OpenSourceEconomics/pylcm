@@ -6,8 +6,8 @@ title: Collective regimes
 
 Two small household models. The first isolates the shared argmax: one action, two
 members who value it differently. The second adds what makes a household more than a
-joint utility function — a participation constraint reading each partner's outside
-option in the *same* period, and a transition routing each partner somewhere different
+joint utility function — a participation rule reading each partner's outside option in
+the *same* period, and a decision on arrival routing each partner somewhere different
 when the household ends. Both use two- and three-point grids and one binary action, so
 every value below can be recomputed by hand; the grids are curated for exposition and
 tests, not calibrated.
@@ -64,34 +64,31 @@ The second model runs three ages. `married` decides at age 0;
 `married_terminal` closes the household at age 2. `single_f` and `single_m` are the
 outside options, terminal from age 1 on. The wage is fixed at 1, 2, or 3 and never
 moves, so the wage node alone decides the outcome. `f` alone is worth 5.5 at the middle
-node and 1.5 elsewhere; `m` alone is worth 1 everywhere. Each partner compares their own
-action value against that same-period outside option through a
-`ValueDependentConstraint`:
+node and 1.5 elsewhere; `m` alone is worth 1 everywhere. At age 1 each partner compares
+their own action value against that same-period outside option. The comparison is the
+rule of a participation `Exit`, which also says where each partner goes when no common
+action passes it:
 
 ```python
 def participation_f(*, Q_f, V_single_f_ref):
     return Q_f >= V_single_f_ref - 0.5
 
 
-constraints = {
-    "participation_f": ValueDependentConstraint(
-        predicate=participation_f,
-        references={
-            "V_single_f_ref": ProjectedRegimeValue(
-                regime="single_f",
-                projection={"wage": identity_wage},
-            )
+exits = {
+    "dissolve": Exit(
+        targets={
+            "f": ExitTarget(regime="single_f", projection={"wage": identity_wage}),
+            "m": ExitTarget(regime="single_m", projection={"wage": identity_wage}),
         },
-    ),
-    # ... and the mirror image for m against single_m
+        rule=ParticipationRule(),  # keeps actions passing both partners' thresholds
+    )
 }
 ```
 
-At wages 1 and 3 some action clears both constraints. At the middle node `f`'s outside
-option jumps to 5.5, so her constraint demands 5.0 and the best the household can offer
-her is 4 — no action clears both, and the cell holds no viable household. That is a
-structural outcome rather than a number: the cell carries the `-inf` sentinel, and the
-regime publishes a dissolution flag.
+At wages 1 and 3 some action clears both thresholds. At the middle node `f`'s outside
+option jumps to 5.5, so her threshold demands 5.0 and the best the household can offer
+her is 4 — no action clears both, the household dissolves, and each partner is paid
+their single value:
 
 ```python
 from lcm_examples.collective_regimes import get_dissolution_model
@@ -102,24 +99,21 @@ solution = model.solve(
     log_level="debug",
 )
 
-from lcm.solver_api import DISSOLUTION_FLAG
-
-dissolution_flags = solution.replay_artifacts.project(DISSOLUTION_FLAG)
-dissolution_flags[1]["married_with_participation"]
-# Array([False,  True, False], dtype=bool)
+solution.values[1]["married_with_participation"]
 ```
 
-The solve logs `Inf in V_arr for regime 'married_with_participation'` at that age, which
-is the sentinel doing its job rather than a defect.
+```text
+[[2.  1. ]
+ [5.5 1. ]
+ [6.  3. ]]
+```
 
-`married` reaches age 1 through a gated transition whose `Gate` is keyed by
-`married_with_participation` — the branch where the gate is **open** and the couple
-keeps going — with the predicate reading the target's dissolution flag. Each
-stakeholder's route names the role they take inside the surviving couple and the
-singleton value they fall back to when the gate shuts. The law and the gate sit on
-`married`'s edges. The law reaches `married_with_participation` from age 0 only, and the
-`Transition` derives its destinations from it: that target and both fallback regimes, at
-age 0.
+`married` reaches age 1 through an `ArrivalDecision` keyed by
+`married_with_participation` — the branch where the decision is **open** and the couple
+keeps going. Its predicate reads, on landing, whether the couple's participating policy
+has support at that wage. Each stakeholder's route names the role they take inside the
+surviving couple and the singleton value they fall back to when the decision shuts. The
+law reaches `married_with_participation` from age 0 only.
 
 ```python
 edges = {
@@ -133,9 +127,18 @@ edges = {
                 }
             }
         ),
-        gates={
-            "married_with_participation": Gate(
-                predicate=lambda D_target: ~D_target,
+        arrivals={
+            "married_with_participation": ArrivalDecision(
+                predicate=has_policy_support,
+                reads={
+                    "target_support": ArrivalRead(
+                        regime="married_with_participation",
+                        stakeholder="f",
+                        kind="Participating",
+                        field="support",
+                        projection={"wage": identity_wage},
+                    )
+                },
                 routes={
                     "f": StakeholderRoute(
                         target_stakeholder="f",
@@ -155,7 +158,7 @@ edges = {
 
 Keying this edge by `single_f` would send both partners into `single_f` whenever the
 household survives, which is why the key is the couple; see
-[the gate-open rule](../user_guide/collective_regimes.md#the-key-is-always-the-gate-open-target).
+[the open-branch rule](../user_guide/collective_regimes.md#the-key-is-always-the-open-branch).
 `married` produces no flow utility of its own, so its value is the routed continuation
 discounted at 0.95: `(1.9, 0.95)` at wage 1 and `(5.7, 2.85)` at wage 3, against `f`'s
 fallback `0.95 × 5.5 = 5.225` at the middle node.

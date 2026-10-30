@@ -170,7 +170,6 @@ def _solve(
     )
     solution = _bi_result.value_functions
     _sim_policies = _bi_result.simulation_policies
-    _dissolution_flags = _bi_result.dissolution_flags
     return solution
 
 
@@ -570,7 +569,6 @@ def _solve_jit(
     )
     solution = _bi_result.value_functions
     _sim_policies = _bi_result.simulation_policies
-    _dissolution_flags = _bi_result.dissolution_flags
     return solution
 
 
@@ -924,7 +922,6 @@ def test_coarse_candidate_folding_a_target_local_process_is_not_rejected():
     )
     solution = _bi_result.value_functions
     _s = _bi_result.simulation_policies
-    _d = _bi_result.dissolution_flags
     # The folded process leaves no axis on the terminal value.
     assert solution[1]["terminal"].shape == ()
 
@@ -1018,7 +1015,6 @@ def test_coarse_self_transition_retains_the_self_continuation():
     )
     solution = _bi_result.value_functions
     _s = _bi_result.simulation_policies
-    _d = _bi_result.dissolution_flags
     # A live self-continuation lifts the value above the one-period utility (~10).
     assert float(jnp.mean(solution[0]["stay"])) > 10.5
 
@@ -1312,7 +1308,6 @@ def _solve_route(
     )
     solution = _bi_result.value_functions
     _sim_policies = _bi_result.simulation_policies
-    _dissolution_flags = _bi_result.dissolution_flags
     return solution
 
 
@@ -1467,7 +1462,6 @@ def _simulate_route(
     )
     solution = _bi_result.value_functions
     _sim_policies = _bi_result.simulation_policies
-    dissolution_flags = _bi_result.dissolution_flags
     initial_conditions = MappingProxyType(
         {
             "age": jnp.array([0.0]),
@@ -1482,7 +1476,6 @@ def _simulate_route(
         regime_names_to_ids=regime_names_to_ids,
         logger=get_logger(log_level="off"),
         period_to_regime_to_V_arr=solution,
-        period_to_regime_to_dissolution_flags=dissolution_flags,
         ages=_AGES,
         simulation_output_dtypes={},
         seed=0,

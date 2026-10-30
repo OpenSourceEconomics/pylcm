@@ -50,11 +50,6 @@ from _lcm.materialization import DatedGenerationMaterializer
 from _lcm.params.edges import regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.age_normalization import resolve_periodized_nodes
-from _lcm.regime_building.gated_edges import (
-    edge_may_fold_at_period,
-    gate_reads_dissolution_flag,
-    source_reads_folded_wbar,
-)
 from _lcm.solution.artifacts import (
     _canonical_value_axis_names,
     projected_forward_consumer_routes,
@@ -84,7 +79,6 @@ from lcm._solver_api.authority import _ArrayCopier
 from lcm._solver_api.identity import ArtifactRuntimeType
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import (
-    DISSOLUTION_FLAG,
     SIMULATION_POLICY,
     SOLVER_DIAGNOSTICS,
     ArtifactAuthority,
@@ -116,10 +110,6 @@ from lcm.typing import ActionName, FloatND, IntND
 
 _EGM_CONTINUATION_ROUTE = ReplayRouteIdentity(
     route_id="pylcm.egm_continuation",
-    route_version=1,
-)
-_DISSOLUTION_ROUTE = ReplayRouteIdentity(
-    route_id="pylcm.gated_edge_dissolution",
     route_version=1,
 )
 _NNBEGM_NESTED_ROUTE = "nnbegm_nested"
@@ -745,7 +735,6 @@ def build_solution_authority(  # noqa: C901, PLR0912, PLR0915
     values: dict[tuple[int, RegimeName], ValueCellDescriptor] = {}
     replay: dict[ArtifactRef, ReplayCellDescriptor] = {}
     artifacts: dict[ArtifactRef, ArtifactAuthority] = {}
-    required_dissolution_cells = _required_dissolution_cells(regimes=regimes)
     projected_routes = projected_forward_consumer_routes(regimes=regimes)
 
     for regime_name, regime in regimes.items():
@@ -769,8 +758,6 @@ def build_solution_authority(  # noqa: C901, PLR0912, PLR0915
         policy_required = False if external_route is not None else route.policy_required
         consumer_route = None if external_route is not None else route.consumer_route
 
-        flag_applicable = regime.stakeholders is not None
-        flag_shape = value_descriptor.shape[:-1] if flag_applicable else None
         # Always resolve named state/action axes from canonical runtime parameters.
         # A plugin build context can carry placeholder nodes for runtime irregular
         # grids; those values are descriptive input, never model authority.
@@ -941,72 +928,6 @@ def build_solution_authority(  # noqa: C901, PLR0912, PLR0915
                     state_action_space=state_action_space,
                     array_copier=array_copier,
                 )
-            flag_ref = ArtifactRef(
-                period=period,
-                regime=regime_name,
-                key=DISSOLUTION_FLAG,
-            )
-            replay[flag_ref] = ReplayCellDescriptor(
-                ref=flag_ref,
-                payload_type=Array if flag_applicable else None,
-                route=None,
-                shape=flag_shape,
-                dtype="bool" if flag_applicable else None,
-                applicable=flag_applicable,
-                required=coordinate in required_dissolution_cells,
-                consumer_route=("gated_edge_dissolution" if flag_applicable else None),
-            )
-            if flag_applicable and flag_shape is not None:
-                flag_axis_names = value_descriptor.axis_names[: len(flag_shape)]
-                flag_axes = tuple(
-                    AxisAuthority(
-                        name=name,
-                        length=length,
-                        role=(
-                            AxisRole.STATE
-                            if name in state_action_space.states
-                            else AxisRole.OTHER
-                        ),
-                        coordinates=(
-                            ()
-                            if name in state_action_space.states
-                            else tuple(range(length))
-                        ),
-                    )
-                    for name, length in zip(flag_axis_names, flag_shape, strict=True)
-                )
-                flag_authority = _authority_from_template(
-                    key=DISSOLUTION_FLAG,
-                    channel=ArtifactChannel.REPLAY,
-                    persistence=PersistencePolicy.MODEL_VERIFIABLE,
-                    payload_runtime_type=Array,
-                    template=(
-                        jnp.zeros(flag_shape, dtype=bool)
-                        if materializer is None
-                        else _materialize_authority_zeros(
-                            schema=jax.ShapeDtypeStruct(flag_shape, bool),
-                            materializer=materializer,
-                        )
-                    ),
-                    leaf_axis_names=MappingProxyType({(): flag_axis_names}),
-                    axes=flag_axes,
-                    state_roles=tuple(
-                        name
-                        for name in flag_axis_names
-                        if name in state_action_space.states
-                    ),
-                    consumer_route=_DISSOLUTION_ROUTE,
-                    applicable=True,
-                    required=coordinate in required_dissolution_cells,
-                    array_copier=array_copier,
-                )
-                artifacts[flag_ref] = _bind_model_owned_artifact_facts(
-                    authority=flag_authority,
-                    regime=regime,
-                    state_action_space=state_action_space,
-                    array_copier=array_copier,
-                )
-
             for key, custom_authority in custom_authorities.items():
                 if key != custom_authority.descriptor.key:
                     raise TypeError(
@@ -3412,38 +3333,6 @@ def _adaptive_policy_template(
         value_atol=policy_read.value_atol,
         value_rtol=policy_read.value_rtol,
     )
-
-
-def _required_dissolution_cells(
-    *, regimes: MappingProxyType[RegimeName, Regime]
-) -> frozenset[tuple[int, RegimeName]]:
-    """Return every target cell whose flag a canonical gated route consumes."""
-    solved_by_period: dict[int, set[RegimeName]] = {}
-    for regime_name, regime in regimes.items():
-        for period in regime.active_periods:
-            solved_by_period.setdefault(period, set()).add(regime_name)
-
-    required: set[tuple[int, RegimeName]] = set()
-    for source_name, source in regimes.items():
-        for edge in source.gated_edges.values():
-            if not gate_reads_dissolution_flag(edge=edge):
-                continue
-            for period, solved_regimes in solved_by_period.items():
-                source_reads = source_reads_folded_wbar(
-                    source_active_periods=source.active_periods,
-                    fold_period=period,
-                )
-                if not source_reads:
-                    continue
-                if edge_may_fold_at_period(
-                    edge=edge,
-                    source_name=source_name,
-                    fold_period=period,
-                    solved_regimes=solved_regimes,
-                    source_reads_wbar=True,
-                ):
-                    required.add((period, edge.target))
-    return frozenset(required)
 
 
 __all__ = [

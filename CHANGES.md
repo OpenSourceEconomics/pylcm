@@ -5,6 +5,20 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Gates route on states only
+
+- Value-reading gates, `Gate.references` and the dissolution-flag artifact are
+  removed. State-only gate routing keeps its behavior.
+- A `Gate` predicate naming `V_target`, `V_target_<s>` or `D_target` raises the new
+  `lcm.exceptions.GateReadsValueError` when the gate is declared, and
+  `Gate(references=...)` raises `TypeError`. Declare a value comparison made in the
+  current period as an `Exit` in `Regime(exits=...)`, and one made on landing as an
+  `ArrivalDecision` with named `ArrivalRead`s in `Transition(arrivals=...)`; see
+  [Gates route on states only](docs/user_guide/migrating_dated_regimes.md#gates-route-on-states-only).
+- `solve()` no longer publishes a `DISSOLUTION_FLAG` replay artifact, and
+  `simulate(solution=...)` reads none. A household landing in a gated target cell where
+  no action is feasible still takes its route's fallback.
+
 ### MSS upper envelope removed
 
 - `MSSEnvelope` is no longer part of `lcm.solvers`: a timing study found it dominated

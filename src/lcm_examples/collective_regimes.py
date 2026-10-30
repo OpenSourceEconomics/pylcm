@@ -244,8 +244,9 @@ def get_dissolution_model(
     """Build a three-period collective model with participation and dissolution.
 
     At wage two, neither household action satisfies both participation constraints.
-    The target regime publishes a dissolution flag, and the source's value-dependent
-    transition routes each stakeholder to their own singleton fallback.
+    The arrival decision reads the couple's participating policy support on
+    landing, and routes each stakeholder to their own singleton fallback where it
+    is empty.
     """
     single_f = Regime(
         states={"wage": _DISSOLUTION_WAGE_GRID},

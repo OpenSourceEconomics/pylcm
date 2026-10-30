@@ -7,8 +7,8 @@ a caller must supply. It fails closed on a name that shadows a function and on a
 transition-local node read from outside its transition.
 
 `create_edge_params_template` reads the callables a source's `Model(edges=...)`
-declaration holds — its regime-transition law, gates, gate references and route
-fallbacks — and returns that source's branch of `params["edges"]`.
+declaration holds — its regime-transition law, gates, arrival decisions and
+route fallbacks — and returns that source's branch of `params["edges"]`.
 """
 
 import inspect
@@ -34,10 +34,7 @@ from _lcm.params.edges import (
 from _lcm.params.temporal import validate_temporal_variants
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.collective import PARETO_OBJECTIVE_ENTRY
-from _lcm.regime_building.gated_edges import (
-    EDGE_PERIOD_CONTEXT_ARGS,
-    is_target_value_operand,
-)
+from _lcm.regime_building.gated_edges import EDGE_PERIOD_CONTEXT_ARGS
 from _lcm.regime_building.transitions import collect_state_transitions
 from _lcm.regime_law import DecomposedTransition, RegimeLaw
 from _lcm.typing import (
@@ -129,8 +126,8 @@ def create_regime_params_template(  # noqa: C901 - classify ordinary and law-onl
     entries to the template under pseudo-function keys matching the state or
     action name.
 
-    The regime-transition law and a gated edge's gate, gate references and
-    route fallbacks are read here only for the checks on what they may read.
+    The regime-transition law and a gated edge's gate and route fallbacks are
+    read here only for the checks on what they may read.
     Their parameters belong to the source's branch of `params["edges"]`, which
     `create_edge_params_template` builds from the declared law.
 
@@ -253,7 +250,6 @@ def create_regime_params_template(  # noqa: C901 - classify ordinary and law-onl
             name=name,
             func=func,
             non_params=non_params,
-            strip_target_value_operands=False,
         )
 
         params = _drop_engine_provided_args(
@@ -440,7 +436,6 @@ def _exit_params_template(
                 | rule_operands(stakeholders=user_regime.stakeholders)
                 if path[-1] == "rule"
                 else variables,
-                strip_target_value_operands=False,
             )
             branch = exit_params.setdefault(path[1], {})
             for segment in path[2:]:
@@ -593,8 +588,8 @@ def create_edge_params_template(
     - a law over all targets ⇒ `[<param>]`;
     - a per-target cell ⇒ `[<target>][<param>]`, gated or not;
     - a target's gate predicate ⇒ `[<target>]["predicate"][<param>]`;
-    - a gate reference's projection of one reference-regime state ⇒
-      `[<target>]["references"][<reference>][<state>][<param>]`;
+    - an arrival read's projection of one reference-regime state ⇒
+      `[<target>]["references"][<read>][<state>][<param>]`;
     - a route fallback's projection ⇒
       `[<target>]["routes"][<route>]["fallback"][<state>][<param>]`, with a
       `"solve"` / `"simulate"` level after `"fallback"` when it is `Phased`.
@@ -602,14 +597,14 @@ def create_edge_params_template(
     The template is read off the declared laws, every `ByAge` case and both
     phases included, so its slots do not depend on the horizon or on which cells
     a fixed zero prunes. A law runs on the source regime's grid and reads its
-    variables. A gate and a projection run on the target regime's grid and read
-    its states, its `V_target` value components, `D_target`, the gate's
-    reference keys, `period` and `age`; a name only the source declares is one
-    of their parameters. None of the engine-bound names is a parameter. The
-    vocabulary holds what a regime declares even where no demanded law reads it,
-    so a variable that only a case no age selects reads is never mistaken for a
-    parameter. Only the law's cases decide whether it reads parameters both over
-    all targets and per target; a gate is not one of its cases.
+    variables. A gate, an arrival predicate and a projection run on the target
+    regime's grid and read its states, an arrival's read keys, `period` and
+    `age`; a name only the source declares is one of their parameters. None of
+    the engine-bound names is a parameter. The vocabulary holds what a regime
+    declares even where no demanded law reads it, so a variable that only a case
+    no age selects reads is never mistaken for a parameter. Only the law's cases
+    decide whether it reads parameters both over all targets and per target; a
+    gate is not one of its cases.
 
     Args:
         source: The source regime's name.
@@ -646,10 +641,8 @@ def create_edge_params_template(
                 variables
                 if gate is None
                 else _gated_edge_wired_names(
-                    gate_reference_names=frozenset(
-                        gate.reads
-                        if isinstance(gate, ArrivalDecision)
-                        else gate.references
+                    read_names=frozenset(
+                        gate.reads if isinstance(gate, ArrivalDecision) else ()
                     ),
                     target_state_names=(
                         vocabulary_by_regime[path[0]].states
@@ -662,7 +655,6 @@ def create_edge_params_template(
                 name="edge",
                 func=func,
                 non_params=non_params,
-                strip_target_value_operands=isinstance(gate, Gate),
                 kind=(
                     "Edge-callable (at "
                     f"{user_path(path=(EDGES, source, *path))}) argument"
@@ -797,10 +789,8 @@ def _route_decision_callables(
 ) -> Iterator[tuple[tuple[str, ...], UserFunction, Gate | ArrivalDecision | None]]:
     """Yield landed-domain callbacks at their own edge-parameter paths."""
     yield (*path, PREDICATE), decision.predicate, decision
-    references = (
-        decision.reads if isinstance(decision, ArrivalDecision) else decision.references
-    )
-    for ref_name, ref in references.items():
+    reads = decision.reads if isinstance(decision, ArrivalDecision) else {}
+    for ref_name, ref in reads.items():
         for state_name, projection in ref.projection.items():
             yield (*path, REFERENCES, ref_name, state_name), projection, decision
     for route_name, route in decision.routes.items():
@@ -1056,7 +1046,6 @@ def _discovered_params(
     name: FunctionName | TransitionFunctionName,
     func: UserFunction | Phased,
     non_params: AbstractSet[str],
-    strip_target_value_operands: bool,
     kind: str | None = None,
 ) -> MappingProxyType[str, str]:
     """Return the parameters one collected template entry contributes.
@@ -1067,8 +1056,6 @@ def _discovered_params(
             parameters are unioned so one flat params dict satisfies both phases.
         non_params: Names the engine wires at call time, which never surface as
             user-facing parameters.
-        strip_target_value_operands: Whether the reserved `V_target` vocabulary
-            is engine-wired here too, which holds for a gated edge's callables.
         kind: How an invalid argument name's error introduces the arguments; the
             template key `name` when omitted.
 
@@ -1109,7 +1096,6 @@ def _discovered_params(
         arg_name: cast("str", annotation)
         for arg_name, annotation in sorted(tree.items())
         if arg_name not in non_params
-        and not (strip_target_value_operands and is_target_value_operand(arg_name))
     } | {field: cast("str", annotation) for field, annotation in bound.items()}
     return _annotate_temporal_params(
         params=params, functions=list(_callables_in(value=func)), name=name
@@ -1855,7 +1841,6 @@ def _gated_edge_entries(law: RegimeLaw) -> MappingProxyType[FunctionName, UserFu
     DAG function:
 
     - the `gate` predicate;
-    - one projection per state of each gate reference's reference regime;
     - one projection per state of each route fallback's reference regime, per
       phase when the fallback is `Phased`.
 
@@ -1873,10 +1858,6 @@ def _gated_edge_entries(law: RegimeLaw) -> MappingProxyType[FunctionName, UserFu
     entries: dict[FunctionName, UserFunction] = {}
     for target_regime_name, edge in law.gated_edges.items():
         entries[qname_from_tree_path((PREDICATE, target_regime_name))] = edge.gate
-        for ref_name, ref in edge.gate_refs.items():
-            for state_name, projection in ref.projection.items():
-                key = f"{REFERENCES}_{ref_name}_{state_name}"
-                entries[qname_from_tree_path((key, target_regime_name))] = projection
         for leg_name, leg in edge.legs.items():
             for phase, ref in _fallbacks_by_phase(
                 solve=leg.solve_fallback,
@@ -1910,34 +1891,28 @@ def _fallbacks_by_phase(
 
 def _gated_edge_wired_names(
     *,
-    gate_reference_names: frozenset[ReferenceName],
+    read_names: frozenset[ReferenceName],
     target_state_names: frozenset[StateName],
 ) -> frozenset[ReferenceName]:
-    """Return the names ONE edge's gate callables read that the engine binds itself.
+    """Return the names ONE edge's landed callables read that the engine binds.
 
-    A gate and a projection are evaluated on that edge's TARGET regime's grid, so
-    the names no user supplies are those of that evaluation, not the source's:
+    A gate, an arrival predicate and a projection are evaluated on that edge's
+    TARGET regime's grid, so the names no user supplies are those of that
+    evaluation, not the source's:
 
     - the target regime's states and the code `<name>_code` of each discrete
       one, which the fold binds from that regime's grids;
-    - `D_target`, the target's dissolution flag;
-    - each key of THIS edge's gate `references`, bound to that reference's
-      interpolated value;
+    - each key of THIS edge's arrival `reads`, bound to that read's value;
     - `period` and `age` of the fold.
 
     The set is per edge because that is what makes the answer right. A name that
     is engine-bound on one edge — the target's own state, another edge's
-    reference key, or any state of a regime this edge never reaches — is an
+    read key, or any state of a regime this edge never reaches — is an
     ordinary parameter here, and widening the set to a model-wide union drops it
-    from the template, leaving the gate reading a value nothing can supply.
-
-    The target's own value components enter under the reserved `V_target`
-    vocabulary and are recognised by `is_target_value_operand` instead, since
-    their per-stakeholder spellings depend on the target regime rather than on
-    anything the source declares.
+    from the template, leaving the callable reading a value nothing can supply.
 
     Args:
-        gate_reference_names: The keys of the edge's gate references.
+        read_names: The keys of the edge's arrival reads; empty for a gate.
         target_state_names: State names declared by that edge's target regime,
             with the code `<name>_code` of each discrete one.
 
@@ -1948,10 +1923,9 @@ def _gated_edge_wired_names(
     """
     return frozenset(
         {
-            "D_target",
             *EDGE_PERIOD_CONTEXT_ARGS,
             *target_state_names,
-            *gate_reference_names,
+            *read_names,
         }
     )
 

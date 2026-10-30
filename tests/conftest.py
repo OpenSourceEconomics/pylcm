@@ -69,7 +69,6 @@ from lcm.collective import Gate
 from lcm.transition import Transition, TransitionLaw
 from lcm.tuning import _array_ulp_gap
 from lcm.typing import (
-    BoolND,
     Float1D,
     FloatND,
     Int1D,
@@ -814,7 +813,6 @@ def build_prepared_structure(
                         target: Gate(
                             predicate=edge.gate,
                             routes=edge.legs,
-                            references=edge.gate_refs,
                             off_grid=edge.off_grid,
                         )
                         for target, edge in law.gated_edges.items()
@@ -974,9 +972,6 @@ class SubjectChunkKwargs(TypedDict, closed=True):
     regime_ids_to_names: RegimeIdsToNames
     period_to_regime_to_V_arr: MappingProxyType[
         int, MappingProxyType[RegimeName, FloatND]
-    ]
-    period_to_regime_to_dissolution_flags: MappingProxyType[
-        int, MappingProxyType[RegimeName, BoolND]
     ]
     flat_params: FlatParams
     ages: TimeAxis

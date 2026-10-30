@@ -20,9 +20,9 @@ value_functions = solution.values
 ```
 
 Backward induction returns one immutable `SolutionResult`. Its `values` mapping is
-indexed by `period -> regime_name -> value_function_array`; replay policies, collective
-dissolution flags, diagnostics, metadata, and omission reasons remain in their labelled
-fields and addressed artifact stores.
+indexed by `period -> regime_name -> value_function_array`; replay policies,
+diagnostics, metadata, and omission reasons remain in their labelled fields and
+addressed artifact stores.
 
 To inspect values with their state coordinates, use
 `solution.value_array(period=0, regime="working")`. It returns an xarray `DataArray`
@@ -57,12 +57,12 @@ result = model.simulate(
 ```
 
 `VALUES` drops replay artifacts and works only when every simulated decision can be
-recovered from values and no applicable collective gate needs a dissolution flag.
-`ALL_PERSISTABLE_ARTIFACTS` keeps only what the result carries on its own: continuation
-or solver-defined artifacts are kept only where their model-built authority marks them
-as independently verifiable, and the `NNBEGM` replay policy of an `AdaptiveOuterMesh`
-search, which is replayed against a solve-generated mesh the model instance holds
-privately, is omitted as `NOT_PERSISTED`. Diagnostics follow `log_level`, not retention.
+recovered from values. `ALL_PERSISTABLE_ARTIFACTS` keeps only what the result carries on
+its own: continuation or solver-defined artifacts are kept only where their model-built
+authority marks them as independently verifiable, and the `NNBEGM` replay policy of an
+`AdaptiveOuterMesh` search, which is replayed against a solve-generated mesh the model
+instance holds privately, is omitted as `NOT_PERSISTED`. Diagnostics follow `log_level`,
+not retention.
 
 Simulation validates the durable model fingerprint, exact solution-relevant canonical
 parameters, solver/plugin and replay-route versions, value coverage and schemas, and

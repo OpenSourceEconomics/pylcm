@@ -297,10 +297,29 @@ and declare whether they read outside values through `reads_outside_values`. The
 return a Boolean arrival verdict. A custom source rule combined with source EV1 tastes
 is explicitly refused; this does not refuse a custom rule pricing a hidden EV1 target.
 
+### Gates route on states only
+
+Value-reading gates, `Gate.references` and the dissolution-flag artifact are removed.
+State-only gate routing keeps its behavior.
+
+- A `Gate` predicate that names `V_target`, `V_target_<s>` or `D_target` raises
+  `GateReadsValueError` when the gate is declared. Declare the comparison as an `Exit`
+  of the source regime when it is made in the current period, or as an `ArrivalDecision`
+  with named `ArrivalRead`s when it is made on landing.
+- `Gate(references=...)` raises `TypeError`. Move each reference into the arrival
+  decision's `reads`, as an `ArrivalRead(kind="IntegratedFull", ...)` with the same
+  regime, stakeholder and projection.
+- A gate reading `~D_target` becomes an `ArrivalDecision` reading the target's
+  `ArrivalRead(kind="Participating", field="support")`, as in the fragment above.
+- `solve()` publishes no `DISSOLUTION_FLAG` replay artifact under any `ResultRetention`.
+  A household that lands in a gated target where no action is feasible takes its route's
+  fallback in simulation; `SimulationResult.dissolution_fallbacks` records those rows
+  when runtime checks are on.
+
 See the executable declaration examples in `lcm_examples.collective_regimes` and
-`tests/simulation/test_current_exits.py`. The uncertainty and collective reference pages
-still describe parts of the former state-grid/value-gate interface; their rewrite is
-pending. Use the declarations above for this migration.
+`tests/simulation/test_current_exits.py`. The uncertainty reference page still describes
+parts of the former state-grid interface; its rewrite is pending. Use the declarations
+above for this migration.
 
 (migrating-edge-parameters)=
 

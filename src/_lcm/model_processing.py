@@ -1067,7 +1067,7 @@ def _validate_all_variables_used(
       output it consumes at the Bellman step;
     - the regime transition;
     - a value-constraint predicate or a `same_period_refs` projection;
-    - the gate, gate references or fallback projections of a gated edge whose
+    - the gate or fallback projections of a gated edge whose
       target is this regime — those are declared on the source regime but
       evaluated here, so this regime is where the state they read must live;
     - a law of motion, unless it is a `fixed_transition` identity;
@@ -1119,8 +1119,8 @@ def _validate_all_variables_used(
         # `root_functions` is the single definition of what a root computation
         # is, shared with the broadcast pruning walk so the two cannot disagree
         # about what counts as a read. It also supplies the reads no per-regime
-        # walk can see: a gated edge declared on another regime whose gate,
-        # gate references and fallbacks are evaluated on *this* regime's grid.
+        # walk can see: a gated edge declared on another regime whose gate
+        # and fallbacks are evaluated on *this* regime's grid.
         solve_roots = root_functions(
             regime_name=regime_name, regime=user_regime, laws=laws, phase="solve"
         )

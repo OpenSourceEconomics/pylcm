@@ -120,7 +120,6 @@ def profile_forward_programs(
     flat_params: FlatParams,
     base_spaces: Mapping[str, StateActionSpace],
     values: Mapping[int, Mapping[str, jax.Array]],
-    flags: Mapping[int, Mapping[str, jax.Array]] = MappingProxyType({}),
     ages: TimeAxis,
     n_subjects: int,
     widths: Mapping[str, int],
@@ -161,7 +160,6 @@ def profile_forward_programs(
                 base=base_spaces[name],
                 base_spaces=base_spaces,
                 values=values,
-                flags=flags,
                 ages=ages,
                 n_subjects=n_subjects,
                 widths=widths,
@@ -191,7 +189,6 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
     base: StateActionSpace,
     base_spaces: Mapping[str, StateActionSpace],
     values: Mapping[int, Mapping[str, jax.Array]],
-    flags: Mapping[int, Mapping[str, jax.Array]],
     ages: TimeAxis,
     n_subjects: int,
     widths: Mapping[str, int],
@@ -286,17 +283,9 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
                 if target in values.get(period + 1, {})
             }
         )
-        edge_flags = MappingProxyType(
-            {
-                target: flags[period + 1][target]
-                for target in edge_values
-                if target in flags.get(period + 1, {})
-            }
-        )
         fold_arguments = {
             **gate_fold_arguments(
                 edge_values=_shared_tree(tree=edge_values, devices=devices),
-                edge_flags=_shared_tree(tree=edge_flags, devices=devices),
                 flat_params=_shared_tree(tree=flat_params, devices=devices),
                 fold_age=age,
             ),

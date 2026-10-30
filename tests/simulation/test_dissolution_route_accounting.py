@@ -231,8 +231,9 @@ def test_entry_carriers_stay_live_roots_through_diagnostics_and_next_setup(
     assert all(is_live for _, is_live in observed)
 
 
-# The dissolution-flag reroute model these accounting checks measure, kept
-# here after its routing tests moved to an arrival support read.
+# The reroute model these accounting checks measure: the gate opens onto the
+# couple everywhere, and the couple has no feasible action between its wage
+# nodes, so a household landing there takes its route's fallback.
 _OUTSIDE_OPTION_F = 0.5
 
 
@@ -303,8 +304,8 @@ def _participation_f(*, Q_f: FloatND, V_alone_f: FloatND) -> BoolND:
     return Q_f > V_alone_f
 
 
-def _no_dissolution(D_target: BoolND) -> BoolND:
-    return ~D_target
+def _open_onto_pair(wage: ContinuousState) -> BoolND:
+    return wage >= 0.0
 
 
 def _build_model(
@@ -323,7 +324,7 @@ def _build_model(
                 law=ByAge(cases={0: {"pair": StochasticTransition(func=_to_pair)}}),
                 gates={
                     "pair": Gate(
-                        predicate=_no_dissolution,
+                        predicate=_open_onto_pair,
                         routes={
                             "only": StakeholderRoute(
                                 target_stakeholder="f",

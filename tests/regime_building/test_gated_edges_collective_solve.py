@@ -127,10 +127,6 @@ def _ir_m(*, Q_m: FloatND, V_single_m_ref: FloatND, delta_m: FloatND) -> BoolND:
     return Q_m >= V_single_m_ref - delta_m
 
 
-def _no_dissolution_gate(D_target: BoolND) -> BoolND:
-    return ~D_target
-
-
 def _consent_source() -> Regime:
     """The consent source, which may move into the couple at age 0."""
     return Regime(
@@ -301,11 +297,7 @@ def _solve_consent(*, enable_jit: bool = False):
         logger=get_logger(log_level="off"),
         enable_jit=enable_jit,
     )
-    return (
-        _bi_result.value_functions,
-        _bi_result.simulation_policies,
-        _bi_result.dissolution_flags,
-    )
+    return _bi_result.value_functions, _bi_result.simulation_policies
 
 
 def test_consent_gate_routes_marriage_value_and_fallback():
@@ -319,14 +311,14 @@ def test_consent_gate_routes_marriage_value_and_fallback():
     Wbar = [2, 3]; V_single_f(period 0) = wage + beta*Wbar(wage):
         wage=1: 1 + 0.95*2 = 2.9;  wage=2: 2 + 0.95*3 = 4.85.
     """
-    solution, _sim, _dissolution = _solve_consent()
+    solution, _sim = _solve_consent()
     V_single_f = np.asarray(solution[0]["single_f"])
     np.testing.assert_allclose(V_single_f, np.array([2.9, 4.85]), rtol=1e-6)
 
 
 def test_consent_gate_matches_under_jit():
     """The public (jitted) path folds the same edge."""
-    solution, _sim, _dissolution = _solve_consent(enable_jit=True)
+    solution, _sim = _solve_consent(enable_jit=True)
     np.testing.assert_allclose(
         np.asarray(solution[0]["single_f"]), np.array([2.9, 4.85]), rtol=1e-6
     )
@@ -481,10 +473,10 @@ def test_edge_leg_naming_a_missing_target_stakeholder_is_rejected():
 # Full mini-EKL topology in ONE model via the public API.
 #
 # `_make_full_topology_regimes` / `_full_topology_transitions` /
-# `_with_full_topology_laws` are the legacy value-gate fixture still imported by
-# tests/solution (fold reads, liveness pins, period replay/waves, release log).
-# They retire with those consumers. The test here uses the migrated topology:
-# consent arrival decisions and a current-period participation exit.
+# `_with_full_topology_laws` are the topology tests/solution imports (fold reads,
+# liveness pins, period replay/waves, release log): state-gated consent edges and
+# value constraints in `married`. The test here dissolves `married` through a
+# current-period participation exit instead.
 
 
 @categorical(ordered=False)
@@ -500,7 +492,7 @@ class EKLRegimeId:
 
 
 def _make_full_topology_regimes() -> dict[str, Regime]:
-    """The mini-EKL regimes: consent edges into `married`, a dissolution edge out.
+    """The mini-EKL regimes: consent edges into `married`, a plain edge out.
 
     The regimes carry no law. The sources with several outgoing edges at an age
     (`single_f`, `single_m`, `married`) take theirs from
@@ -575,13 +567,25 @@ def _make_full_topology_regimes() -> dict[str, Regime]:
     }
 
 
+def _consent_where_marriage_pays_both(wage: ContinuousState) -> BoolND:
+    """Mutual consent of the mini-EKL topology, stated on the landing wage.
+
+    On the wage grid {1, 2, 3} marriage pays both partners strictly more than
+    their single references only at wage 3: (V_married_f, V_married_m) is
+    (2, 1), (-inf, -inf), (6, 3) against references (1.5, 1), (5.5, 1),
+    (1.5, 1). A gate routes on states, so the comparison is written as the wage
+    set where it holds.
+    """
+    return wage > 2.5
+
+
 def _full_topology_transitions() -> dict[str, Transition]:
     """The transitions of the mini-EKL sources with several outgoing edges at an age.
 
     - `single_f` / `single_m`: at age 0 a mutual-consent edge into `married`,
       each single's own leg falling back to her `*_p1` regime;
-    - `married`: at age 1 a dissolution edge into `married_terminal`, each
-      stakeholder falling back to her own single terminal regime.
+    - `married`: at age 1 a plain move into `married_terminal`, whose actions are
+      all feasible, so no member ever needs a fallback there.
     """
 
     def _consent_leg(
@@ -596,15 +600,6 @@ def _full_topology_transitions() -> dict[str, Transition]:
             )
         }
 
-    consent_gate_refs = {
-        "V_single_f_ref": ProjectedRegimeValue(
-            regime="single_f_p1", projection={"wage": _identity_wage}
-        ),
-        "V_single_m_ref": ProjectedRegimeValue(
-            regime="single_m_p1", projection={"wage": _identity_wage}
-        ),
-    }
-
     def _consent_transition(
         *, fallback_regime: RegimeName, stakeholder: str
     ) -> Transition:
@@ -618,11 +613,10 @@ def _full_topology_transitions() -> dict[str, Transition]:
             ),
             gates={
                 "married": Gate(
-                    predicate=_consent_gate,
+                    predicate=_consent_where_marriage_pays_both,
                     routes=_consent_leg(
                         fallback_regime=fallback_regime, stakeholder=stakeholder
                     ),
-                    references=consent_gate_refs,
                 )
             },
         )
@@ -637,28 +631,7 @@ def _full_topology_transitions() -> dict[str, Transition]:
                         "married_terminal": StochasticTransition(func=_prob_one)
                     }
                 }
-            ),
-            gates={
-                "married_terminal": Gate(
-                    predicate=_no_dissolution_gate,
-                    routes={
-                        "f": StakeholderRoute(
-                            target_stakeholder="f",
-                            fallback=ProjectedRegimeValue(
-                                regime="single_f_terminal",
-                                projection={"wage": _identity_wage},
-                            ),
-                        ),
-                        "m": StakeholderRoute(
-                            target_stakeholder="m",
-                            fallback=ProjectedRegimeValue(
-                                regime="single_m_terminal",
-                                projection={"wage": _identity_wage},
-                            ),
-                        ),
-                    },
-                )
-            },
+            )
         ),
     }
 
@@ -827,19 +800,17 @@ def test_singleton_source_with_two_legs_is_rejected():
         _consent_model(two_routes)
 
 
-def _always_open_gate(V_target_f: FloatND) -> BoolND:
-    return jnp.ones_like(V_target_f, dtype=bool)
+def _always_open_gate(wage: ContinuousState) -> BoolND:
+    return jnp.ones_like(wage, dtype=bool)
 
 
-def _edge_with_refs(
-    *, fallback_regime: RegimeName, gate_ref_regime: RegimeName
-) -> GatedEdge:
-    """A one-leg gated edge whose fallback and gate reference name given regimes.
+def _edge_with_refs(*, fallback_regime: RegimeName) -> GatedEdge:
+    """A one-leg gated edge whose fallback names the given regime.
 
-    The co-activity guard reads only `.legs[*].fallback.regime` and
-    `.gate_refs[*].regime`, so everything else here is filler that keeps the edge
-    a well-formed `GatedEdge`: the guard runs before any regime graph exists and
-    never evaluates the gate or the projections.
+    The co-activity guard reads only `.legs[*].fallback.regime`, so everything
+    else here is filler that keeps the edge a well-formed `GatedEdge`: the guard
+    runs before any regime graph exists and never evaluates the gate or the
+    projections.
     """
     return GatedEdge(
         gate=_always_open_gate,
@@ -853,31 +824,20 @@ def _edge_with_refs(
                 )
             }
         ),
-        gate_refs=MappingProxyType(
-            {
-                "g": ProjectedRegimeValue(
-                    regime=gate_ref_regime,
-                    projection={"wage": _identity_wage},
-                )
-            }
-        ),
     )
 
 
 def test_gated_edge_reference_uncovered_in_consumed_period_is_rejected():
-    """A gate reference (or fallback) uncovered in a period whose ``Wbar`` is
+    """A fallback uncovered in a period whose ``Wbar`` is
     actually CONSUMED (target covered at t, source covered at t-1) must be rejected
     at construction, so the solve-side `_roll_gated_edges` never feeds the source
     a stale later-period ``Wbar``.
     """
-    edge = _edge_with_refs(
-        fallback_regime="single_f_terminal", gate_ref_regime="single_m_terminal"
-    )
+    edge = _edge_with_refs(fallback_regime="single_m_terminal")
     regimes_to_active_periods = MappingProxyType(
         {
             "single_f": (0,),  # source solved in period 0
             "married_terminal": (1,),  # target solved in period 1 -> consumed
-            "single_f_terminal": (1,),  # also solved in period 1
             "single_m_terminal": (2,),  # not solved in consumed period 1
         }
     )
@@ -899,15 +859,12 @@ def test_gated_edge_reference_uncovered_in_consumed_period_is_rejected():
 
 
 def test_gated_edge_references_covered_in_every_consumed_period_pass():
-    """References covered in every consumed period pass the guard."""
-    edge = _edge_with_refs(
-        fallback_regime="single_f_terminal", gate_ref_regime="single_m_terminal"
-    )
+    """A fallback covered in every consumed period passes the guard."""
+    edge = _edge_with_refs(fallback_regime="single_m_terminal")
     regimes_to_active_periods = MappingProxyType(
         {
             "single_f": (0,),
             "married_terminal": (1,),
-            "single_f_terminal": (1,),
             "single_m_terminal": (1,),
         }
     )
@@ -938,9 +895,7 @@ def test_gated_edge_reference_uncovered_at_unconsumed_boundary_passes():
     # Self-loop: source == target == "src", solved in periods {0, 1}; the
     # fallback is solved in {1, 2}, i.e. not in target-solved period 0 — but
     # period 0's Wbar is unconsumed (no source at period -1), so it is legal.
-    edge = _edge_with_refs(
-        fallback_regime="src_fallback", gate_ref_regime="src_fallback"
-    )
+    edge = _edge_with_refs(fallback_regime="src_fallback")
     regimes_to_active_periods = MappingProxyType(
         {
             "src": (0, 1),
@@ -959,14 +914,8 @@ def test_gated_edge_reference_uncovered_at_unconsumed_boundary_passes():
     )
 
 
-@pytest.mark.parametrize("field_name", ["legs", "gate_refs"])
-def test_gated_edge_refuses_a_plain_dict_for_its_mappings(field_name: str) -> None:
+def test_gated_edge_refuses_a_plain_dict_for_its_legs() -> None:
     """A gated edge holds read-only mappings; a plain dict is refused."""
-    edge = _edge_with_refs(fallback_regime="single", gate_ref_regime="single")
-    arguments = {
-        "legs": edge.legs,
-        "gate_refs": edge.gate_refs,
-        field_name: dict(getattr(edge, field_name)),
-    }
-    with pytest.raises(RegimeInitializationError, match=field_name):
-        GatedEdge(gate=_always_open_gate, **arguments)  # ty: ignore[invalid-argument-type]
+    edge = _edge_with_refs(fallback_regime="single")
+    with pytest.raises(RegimeInitializationError, match="legs"):
+        GatedEdge(gate=_always_open_gate, legs=dict(edge.legs))  # ty: ignore[invalid-argument-type]

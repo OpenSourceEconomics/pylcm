@@ -343,7 +343,6 @@ def test_actual_u_forward_subphase_admits_complete_program_or_refuses_budget(
         "regimes": regimes,
         "flat_params": flat,
         "values": values,
-        "flags": {},
         "ages": actual_model._time,
         "initial_conditions": initial,
         "regime_names_to_ids": model.regime_names_to_ids,

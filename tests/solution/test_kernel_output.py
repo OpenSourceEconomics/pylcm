@@ -638,13 +638,14 @@ def test_consumed_artifact_channels_are_read_only_mappings(field_name: str) -> N
     assert type(getattr(consumed, field_name)) is MappingProxyType
 
 
-# The collective model whose source gate reads its target's dissolution flag,
-# kept here for the kernel sweep after its retention tests were retired.
+# A collective model whose target's participation mask empties at one cell, so
+# its kernel publishes a `True` solve-time dissolution flag there. It serves the
+# kernel sweep below.
 _BETA = 0.95
 
 
 # Three wage nodes, so the individual-rationality mask can empty at the middle
-# one and give the dissolution model a `True` cell to route on.
+# one.
 _WAGE = LinSpacedGrid(start=1.0, stop=3.0, n_points=3)
 
 
@@ -706,13 +707,13 @@ def _ir_m(*, Q_m: FloatND, V_single_m_ref: FloatND, delta_m: FloatND) -> BoolND:
     return Q_m >= V_single_m_ref - delta_m
 
 
-def _no_dissolution_gate(D_target: BoolND) -> BoolND:
-    """Stay married exactly where the target household has not dissolved."""
-    return ~D_target
+def _stay_married(wage: ContinuousState) -> BoolND:
+    """Open onto the couple at every wage the target can land on."""
+    return wage >= 0.0
 
 
 def _make_dissolution_model() -> tuple[Model, UserParams]:
-    """A collective SOURCE whose gate reads the target's dissolution flag."""
+    """A collective SOURCE gated, on its target's states, into a collective target."""
     married = Regime(
         states={"wage": _WAGE},
         state_transitions={"wage": fixed_transition("wage")},
@@ -798,7 +799,7 @@ def _make_dissolution_model() -> tuple[Model, UserParams]:
                 ),
                 gates={
                     "married_ir": Gate(
-                        predicate=_no_dissolution_gate,
+                        predicate=_stay_married,
                         routes={
                             "f": StakeholderRoute(
                                 target_stakeholder="f",

@@ -200,14 +200,12 @@ def policy_rank_arguments(
 def gate_fold_arguments(
     *,
     edge_values: PytreeValue | ShapeDtypePytree,
-    edge_flags: PytreeValue | ShapeDtypePytree,
     flat_params: PytreeValue | ShapeDtypePytree,
     fold_age: PytreeValue | ShapeDtypePytree,
 ) -> dict[ReferenceName, PytreeValue | ShapeDtypePytree]:
     """Bind the raw addressed inputs of a gated-continuation fold."""
     return {
         "edge_values": edge_values,
-        "edge_flags": edge_flags,
         "flat_params": flat_params,
         "fold_age": fold_age,
     }
@@ -216,7 +214,6 @@ def gate_fold_arguments(
 def gate_route_arguments(
     *,
     edge_values: PytreeValue | ShapeDtypePytree,
-    edge_flags: PytreeValue | ShapeDtypePytree,
     next_states: PytreeValue | ShapeDtypePytree,
     new_subject_regime_ids: PytreeValue | ShapeDtypePytree,
     subjects_in_regime: PytreeValue | ShapeDtypePytree,
@@ -228,7 +225,6 @@ def gate_route_arguments(
     """Bind realized-state gate operands and the current carrier."""
     return {
         "edge_values": edge_values,
-        "edge_flags": edge_flags,
         "next_states": next_states,
         "new_subject_regime_ids": new_subject_regime_ids,
         "subjects_in_regime": subjects_in_regime,

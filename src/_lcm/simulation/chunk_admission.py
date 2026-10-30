@@ -129,7 +129,6 @@ def prepare_simulation_chunks(
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
     values: Mapping[int, Mapping[str, jax.Array]],
-    flags: Mapping[int, Mapping[str, jax.Array]],
     ages: TimeAxis,
     initial_conditions: Mapping[str, jax.Array],
     regime_names_to_ids: RegimeNamesToIds,
@@ -180,7 +179,6 @@ def prepare_simulation_chunks(
                     flat_params,
                     initial_conditions,
                     values,
-                    flags,
                     ages.values,
                     projected_forward_inputs,
                 )
@@ -228,7 +226,6 @@ def prepare_simulation_chunks(
         regimes=regimes,
         call_inputs=call_inputs,
         values=values,
-        flags=flags,
         policies=policies,
         current_iid_replay_inputs=current_iid_replay_inputs,
         projected_forward_inputs=projected_forward_inputs,
@@ -263,7 +260,6 @@ def _simulation_chunk_profile_key(
     regimes: Mapping[str, Regime],
     call_inputs: SimulationCallInputs,
     values: Mapping[int, Mapping[str, jax.Array]],
-    flags: Mapping[int, Mapping[str, jax.Array]],
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None,
     current_iid_replay_inputs: CurrentIIDReplayInputs = MappingProxyType({}),
     projected_forward_inputs: ProjectedForwardInputs = MappingProxyType({}),
@@ -331,7 +327,6 @@ def _simulation_chunk_profile_key(
         _abstract_value_key(value=current_iid_replay_inputs),
         _abstract_value_key(value=projected_forward_inputs),
         _abstract_value_key(value=values),
-        _abstract_value_key(value=flags),
         _abstract_value_key(value=initial_conditions),
         _abstract_value_key(value=ages.values),
     )
@@ -376,7 +371,6 @@ class _ChunkProfiler:
     regimes: Mapping[str, Regime]
     call_inputs: SimulationCallInputs
     values: Mapping[int, Mapping[str, jax.Array]]
-    flags: Mapping[int, Mapping[str, jax.Array]]
     ages: TimeAxis
     initial_conditions: Mapping[str, jax.Array]
     regime_names_to_ids: RegimeNamesToIds
@@ -455,7 +449,6 @@ class _ChunkProfiler:
             "runtime": self.runtime,
             "regimes": self.regimes,
             "values": self.values,
-            "flags": self.flags,
             "policies": self.policies,
             "current_iid_replay_inputs": self.current_iid_replay_inputs,
             "projected_forward_inputs": self.projected_forward_inputs,

@@ -54,16 +54,15 @@ from _lcm.typing import (
     RegimeName,
     SimulationPolicy,
 )
-from lcm.typing import BoolND, Float1D, FloatND, Int1D
+from lcm.typing import Float1D, FloatND, Int1D
 
 # The replay inputs resolved from a solution, keyed by period and regime: values,
-# simulation policies, dissolution flags and replay readers, each `None` when the
-# solution provides none; empty before any solution is resolved.
+# simulation policies and replay readers, each `None` when the solution provides
+# none; empty before any solution is resolved.
 type _ResolvedInputs = (
     tuple[
         Mapping[int, Mapping[RegimeName, FloatND]] | None,
         Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None,
-        Mapping[int, Mapping[RegimeName, BoolND]] | None,
         Mapping[int, Mapping[RegimeName, PreparedReplayReader]] | None,
         CurrentIIDReplayInputs | None,
         ProjectedForwardInputs | None,

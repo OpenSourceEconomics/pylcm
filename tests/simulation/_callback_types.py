@@ -95,9 +95,6 @@ class SimulationChunkInputs(TypedDict):
     period_to_regime_to_V_arr: simulation.MappingProxyType[
         int, simulation.MappingProxyType[simulation.RegimeName, simulation.FloatND]
     ]
-    period_to_regime_to_dissolution_flags: simulation.MappingProxyType[
-        int, simulation.MappingProxyType[simulation.RegimeName, simulation.BoolND]
-    ]
     flat_params: simulation.FlatParams
     ages: simulation.TimeAxis
     seed: int
@@ -127,11 +124,6 @@ class ChunkProfileInputs(TypedDict):
     base_spaces: chunk_profiles.Mapping[str, chunk_profiles.StateActionSpace]
     values: chunk_profiles.Mapping[
         int, chunk_profiles.Mapping[str, chunk_profiles.jax.Array]
-    ]
-    flags: NotRequired[
-        chunk_profiles.Mapping[
-            int, chunk_profiles.Mapping[str, chunk_profiles.jax.Array]
-        ]
     ]
     ages: chunk_profiles.TimeAxis
     initial_conditions: chunk_profiles.Mapping[str, chunk_profiles.jax.Array]
@@ -163,9 +155,6 @@ class ChunkProfileKeyInputs(TypedDict):
     regimes: chunk_admission.Mapping[chunk_admission.RegimeName, chunk_admission.Regime]
     call_inputs: chunk_admission.SimulationCallInputs
     values: chunk_admission.Mapping[
-        int, chunk_admission.Mapping[str, chunk_admission.jax.Array]
-    ]
-    flags: chunk_admission.Mapping[
         int, chunk_admission.Mapping[str, chunk_admission.jax.Array]
     ]
     policies: (
@@ -237,9 +226,6 @@ class ChunkPreparation(TypedDict):
     ]
     flat_params: chunk_admission.FlatParams
     values: chunk_admission.Mapping[
-        int, chunk_admission.Mapping[str, chunk_admission.jax.Array]
-    ]
-    flags: chunk_admission.Mapping[
         int, chunk_admission.Mapping[str, chunk_admission.jax.Array]
     ]
     ages: chunk_admission.TimeAxis

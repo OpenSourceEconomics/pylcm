@@ -231,7 +231,6 @@ def test_couple_simulates_recomputed_joint_argmax_two_periods():
     )
     solution = _bi_result.value_functions
     _sim_policies = _bi_result.simulation_policies
-    dissolution_flags = _bi_result.dissolution_flags
 
     initial_conditions = MappingProxyType(
         {
@@ -250,7 +249,6 @@ def test_couple_simulates_recomputed_joint_argmax_two_periods():
         regime_names_to_ids=regime_names_to_ids,
         logger=get_logger(log_level="debug"),
         period_to_regime_to_V_arr=solution,
-        period_to_regime_to_dissolution_flags=dissolution_flags,
         ages=ages,
         simulation_output_dtypes={},
         seed=0,
@@ -306,7 +304,6 @@ def test_couple_simulate_with_runtime_validation_enabled():
     )
     solution = _bi_result.value_functions
     _sim_policies = _bi_result.simulation_policies
-    dissolution_flags = _bi_result.dissolution_flags
     initial_conditions = MappingProxyType(
         {
             "wage": jnp.array([8.0, 40.0]),
@@ -324,7 +321,6 @@ def test_couple_simulate_with_runtime_validation_enabled():
         regime_names_to_ids=regime_names_to_ids,
         logger=get_logger(log_level="debug"),
         period_to_regime_to_V_arr=solution,
-        period_to_regime_to_dissolution_flags=dissolution_flags,
         ages=ages,
         simulation_output_dtypes={},
         seed=0,
@@ -493,8 +489,7 @@ def _solve_consent():
     )
     solution = _bi_result.value_functions
     _sim_policies = _bi_result.simulation_policies
-    dissolution_flags = _bi_result.dissolution_flags
-    return ages, regimes, regime_names_to_ids, flat_params, solution, dissolution_flags
+    return ages, regimes, regime_names_to_ids, flat_params, solution
 
 
 def test_consent_routing_simulate_matches_gate_exactly():
@@ -504,9 +499,7 @@ def test_consent_routing_simulate_matches_gate_exactly():
     V_single_m_ref=0.5) -> OPEN. Gate at wage=2: (4 > 3) & (2 > 3) -> the
     husband's outside option beats marriage -> CLOSED (unanimity).
     """
-    ages, regimes, regime_names_to_ids, flat_params, solution, dissolution_flags = (
-        _solve_consent()
-    )
+    ages, regimes, regime_names_to_ids, flat_params, solution = _solve_consent()
     initial_conditions = MappingProxyType(
         {
             "wage": jnp.array([1.0, 2.0]),
@@ -523,7 +516,6 @@ def test_consent_routing_simulate_matches_gate_exactly():
         regime_names_to_ids=regime_names_to_ids,
         logger=get_logger(log_level="debug"),
         period_to_regime_to_V_arr=solution,
-        period_to_regime_to_dissolution_flags=dissolution_flags,
         ages=ages,
         simulation_output_dtypes={},
         seed=0,
@@ -552,9 +544,7 @@ def test_consent_routing_simulate_matches_gate_exactly():
 
 def test_consent_routing_never_populates_the_non_routed_target():
     """single_m_terminal has no source edge in this topology, so it stays empty."""
-    ages, regimes, regime_names_to_ids, flat_params, solution, dissolution_flags = (
-        _solve_consent()
-    )
+    ages, regimes, regime_names_to_ids, flat_params, solution = _solve_consent()
     initial_conditions = MappingProxyType(
         {
             "wage": jnp.array([1.0, 2.0]),
@@ -571,7 +561,6 @@ def test_consent_routing_never_populates_the_non_routed_target():
         regime_names_to_ids=regime_names_to_ids,
         logger=get_logger(log_level="debug"),
         period_to_regime_to_V_arr=solution,
-        period_to_regime_to_dissolution_flags=dissolution_flags,
         ages=ages,
         simulation_output_dtypes={},
         seed=0,
@@ -846,8 +835,7 @@ def _solve_dissolution():
     )
     solution = _bi_result.value_functions
     _sim_policies = _bi_result.simulation_policies
-    dissolution_flags = _bi_result.dissolution_flags
-    return ages, regimes, regime_names_to_ids, flat_params, solution, dissolution_flags
+    return ages, regimes, regime_names_to_ids, flat_params, solution
 
 
 def test_dissolution_edge_routes_the_row_to_its_own_roles_single_regime():
@@ -858,9 +846,7 @@ def test_dissolution_edge_routes_the_row_to_its_own_roles_single_regime():
     real regime membership change, not merely a value-side fold. wage=1 and
     wage=3 stay married (`married_ir`, D=False there).
     """
-    ages, regimes, regime_names_to_ids, flat_params, solution, dissolution_flags = (
-        _solve_dissolution()
-    )
+    ages, regimes, regime_names_to_ids, flat_params, solution = _solve_dissolution()
     np.testing.assert_allclose(
         np.asarray(solution[1]["married_ir"])[1], [5.5, 1.0], rtol=1e-6
     )
@@ -884,7 +870,6 @@ def test_dissolution_edge_routes_the_row_to_its_own_roles_single_regime():
         regime_names_to_ids=regime_names_to_ids,
         logger=get_logger(log_level="debug"),
         period_to_regime_to_V_arr=solution,
-        period_to_regime_to_dissolution_flags=dissolution_flags,
         ages=ages,
         simulation_output_dtypes={},
         seed=0,
@@ -920,9 +905,7 @@ def _simulate_directly_in_married_ir(*, wages: list[float]) -> SimulationResult:
     Initializing subjects directly into `married_ir` bypasses the `married`
     source, so the value router's routing does not preempt the masked cell.
     """
-    ages, regimes, regime_names_to_ids, flat_params, solution, dissolution_flags = (
-        _solve_dissolution()
-    )
+    ages, regimes, regime_names_to_ids, flat_params, solution = _solve_dissolution()
     n_subjects = len(wages)
     initial_conditions = MappingProxyType(
         {
@@ -945,7 +928,6 @@ def _simulate_directly_in_married_ir(*, wages: list[float]) -> SimulationResult:
         regime_names_to_ids=regime_names_to_ids,
         logger=get_logger(log_level="debug"),
         period_to_regime_to_V_arr=solution,
-        period_to_regime_to_dissolution_flags=dissolution_flags,
         ages=ages,
         simulation_output_dtypes={},
         seed=0,
@@ -954,7 +936,7 @@ def _simulate_directly_in_married_ir(*, wages: list[float]) -> SimulationResult:
 
 def test_empty_participation_publishes_the_original_exit_payoffs() -> None:
     """Full pays the original outside tuple where no common stay action participates."""
-    _, _, _, _, values, _ = _solve_dissolution()
+    _, _, _, _, values = _solve_dissolution()
     np.testing.assert_allclose(values[1]["married_ir"][1], [5.5, 1.0], rtol=1e-6)
 
 
@@ -1164,8 +1146,7 @@ def _solve_consent_discrete_axis():
     )
     solution = _bi_result.value_functions
     _sim_policies = _bi_result.simulation_policies
-    dissolution_flags = _bi_result.dissolution_flags
-    return ages, regimes, regime_names_to_ids, flat_params, solution, dissolution_flags
+    return ages, regimes, regime_names_to_ids, flat_params, solution
 
 
 def test_consent_routing_simulate_with_discrete_target_axis_routes_correctly():
@@ -1180,7 +1161,7 @@ def test_consent_routing_simulate_with_discrete_target_axis_routes_correctly():
     `educ` contributes 0.0 to every utility, so its exact numeric routing and
     values are identical to `test_consent_routing_simulate_matches_gate_exactly`.
     """
-    ages, regimes, regime_names_to_ids, flat_params, solution, dissolution_flags = (
+    ages, regimes, regime_names_to_ids, flat_params, solution = (
         _solve_consent_discrete_axis()
     )
     initial_conditions = MappingProxyType(
@@ -1203,7 +1184,6 @@ def test_consent_routing_simulate_with_discrete_target_axis_routes_correctly():
         regime_names_to_ids=regime_names_to_ids,
         logger=get_logger(log_level="debug"),
         period_to_regime_to_V_arr=solution,
-        period_to_regime_to_dissolution_flags=dissolution_flags,
         ages=ages,
         simulation_output_dtypes={},
         seed=0,
@@ -1399,9 +1379,7 @@ def test_to_dataframe_splits_collective_value_into_per_stakeholder_columns():
     (`value`=3.0). Each row must be finite in exactly the column(s) its own
     regime populates and NaN in the other regime kind's column(s).
     """
-    ages, regimes, regime_names_to_ids, flat_params, solution, dissolution_flags = (
-        _solve_consent()
-    )
+    ages, regimes, regime_names_to_ids, flat_params, solution = _solve_consent()
     initial_conditions = MappingProxyType(
         {
             "wage": jnp.array([1.0, 2.0]),
@@ -1418,7 +1396,6 @@ def test_to_dataframe_splits_collective_value_into_per_stakeholder_columns():
         regime_names_to_ids=regime_names_to_ids,
         logger=get_logger(log_level="debug"),
         period_to_regime_to_V_arr=solution,
-        period_to_regime_to_dissolution_flags=dissolution_flags,
         ages=ages,
         simulation_output_dtypes={},
         seed=0,
@@ -1537,7 +1514,6 @@ def test_to_dataframe_singleton_only_value_column_is_unchanged():
     )
     solution = _bi_result.value_functions
     _sim_policies = _bi_result.simulation_policies
-    dissolution_flags = _bi_result.dissolution_flags
     initial_conditions = MappingProxyType(
         {
             "wage": jnp.array([8.0, 40.0]),
@@ -1552,7 +1528,6 @@ def test_to_dataframe_singleton_only_value_column_is_unchanged():
         regime_names_to_ids=regime_names_to_ids,
         logger=get_logger(log_level="debug"),
         period_to_regime_to_V_arr=solution,
-        period_to_regime_to_dissolution_flags=dissolution_flags,
         ages=ages,
         simulation_output_dtypes={},
         seed=0,

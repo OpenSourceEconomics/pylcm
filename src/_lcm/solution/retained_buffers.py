@@ -193,7 +193,6 @@ class _RetainedBuffers:
             for name in (
                 "values",
                 "simulation_policies",
-                "dissolution_flags",
                 "replay_artifacts",
                 "authority",
             ):
