@@ -591,7 +591,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 _SOURCE_SEALS = {
     "src/_lcm/current_iid.py": "e91354ad9c33273fe05d512ee2896455f68d509dfafe865870391090bbaa2cb9",
     "src/_lcm/simulation/current_iid.py": "c675e9dffaa205b4049bf4c26438a70005766c368bc69a3dbb1d6e35cb66db99",
-    "src/_lcm/egm/asset_row.py": "6afd894331cb17aca0b6b28eb2e9e9c43bfba19bec4bd7c539000a532e5322a6",
+    "src/_lcm/egm/asset_row.py": "a1754248507153a646157269741645c745b956c916821d592d009e429d97c8fe",
     "src/_lcm/egm/continuation.py": "ecea4e3e177c92abd735e9365edf0578b2dd4795fadfdca5286147123595d5f0",
     "src/_lcm/egm/dcegm_query.py": "8d21916983c632df46ad96c57726cac6137322db985b2e0b9a9f7cb41b8ba9bb",
     "src/_lcm/egm/dcegm_query_model.py": "92788d75814f82e8acea2a9174a210997e04f68ec8253957836c8b327a03542a",
@@ -2734,7 +2734,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/egm/asset_row.py": (
-        "2ff238fbed078bf2dcd33bc6f221e90f7d797c6272b4e65eac9ef6347a8673d7",
+        "72ab4fe531fb583e2ac8ae6ded68e92641a33bd174e4f13affb85167eca2eb21",
         {
             "_SolveOneComboAssetRows.__call__": "3e5f29a1c3a32581da66ab54dc92ebc2268aaa57d97811c7052c941ebfc22404",
             "_SolveOneNode.__call__": "f440068fbd1882c4e935864b43612aab34eadbbcf3d662931792817dbb322c5f",
@@ -2747,7 +2747,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_node_value_slope": "5bc5e2890ce90fe67fb992ec104c4d6783573a6f0b3b226b6ce6c20b368bc081",
             "_status_asset_rows": "402f4ecb9f972630c245c9493df3537fa1362654240438169c8ae0d8e14fb223",
             "_with_asset_child_status": "7b3499350a8d6c510e4b60eb52e44cc66135f63fbc0d1b41f1a5deb35f88e369",
-            "publish_node_from_bracket": "1d1c24b85478cf62d5ae872ec4589ed30223d0c6207d8f92fc58c3d06b90a7c5",
+            "publish_node_from_bracket": "94aa6cf964f2972a034300246056ec6e240e94e90857243fe5a02440d2e939e5",
             "_ExpectedContinuationValue.__call__": "b640419789c95b21164ba51bd8ce9cca24641825fa2116fd5392db900152c1f4",
             "_continuation_of_euler_state": "9c84c359d24f4e2a7ca29543b0edf3e84dfda4c63749b7f4a5d1d55f18b27d82",
             "_get_expected_continuation_value": "f0ed81bf374283cb9f9dd548024b0fdd17392ea6a1390ca8a72902aaae0f5a0b",

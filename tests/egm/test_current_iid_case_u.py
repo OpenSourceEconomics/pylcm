@@ -4,10 +4,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.egm.asset_row import (
-    _publish_node_selection,
-    publish_node_from_bracket,
-)
+from _lcm.egm.asset_row import publish_node_from_bracket
 from _lcm.egm.current_iid_power_math import _materialize, _SignedLog, _sum_signed
 from _lcm.egm.upper_envelope.fues import QueryBracket
 from lcm.typing import (
@@ -24,7 +21,7 @@ def _zero_utility(consumption: ScalarFloat) -> ScalarFloat:
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
 def test_original_asset_publication_owns_corner_equality() -> None:
-    """The shared source selector keeps the existing literal corner at equality."""
+    """At equal values the literal corner wins and sets the closed-form action."""
     bracket = QueryBracket(
         lower_grid=jnp.asarray(1.0),
         upper_grid=jnp.asarray(2.0),
@@ -35,7 +32,7 @@ def test_original_asset_publication_owns_corner_equality() -> None:
         first_grid=jnp.asarray(1.0),
         n_kept=jnp.int32(2),
     )
-    value, policy, corner = _publish_node_selection(
+    value, policy = publish_node_from_bracket(
         bracket=bracket,
         n_pad=2,
         resources_at_node=jnp.asarray(1.5),
@@ -43,17 +40,7 @@ def test_original_asset_publication_owns_corner_equality() -> None:
         utility_of_action=_zero_utility,
         discounted_expected_value_at_limit=jnp.asarray(0.0),
     )
-    assert bool(corner)
     np.testing.assert_array_equal([value, policy], [0.0, 1.25])
-    original = publish_node_from_bracket(
-        bracket=bracket,
-        n_pad=2,
-        resources_at_node=jnp.asarray(1.5),
-        borrowing_limit=jnp.asarray(0.25),
-        utility_of_action=_zero_utility,
-        discounted_expected_value_at_limit=jnp.asarray(0.0),
-    )
-    np.testing.assert_array_equal([value, policy], original)
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")

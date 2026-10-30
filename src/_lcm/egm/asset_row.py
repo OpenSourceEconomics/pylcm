@@ -26,10 +26,7 @@ from _lcm.egm.carry import EGMCarry
 from _lcm.egm.continuation import (
     bind_continuation,
 )
-from _lcm.egm.interp import (
-    _interp_between_nodes,
-    interp_on_padded_grid,
-)
+from _lcm.egm.interp import _interp_between_nodes
 from _lcm.egm.preferences import BoundUtilityOfAction
 from _lcm.egm.query_data import EGMLiquidCornerData, EGMQueryData, QueryNodeKind
 from _lcm.egm.step_core import (
@@ -1147,94 +1144,6 @@ class _ExpectedContinuationValue:
         return result[0]
 
 
-def _publish_node_V_and_policy(
-    *,
-    refined_grid: Float1D,
-    refined_policy: Float1D,
-    refined_value: Float1D,
-    n_kept: ScalarInt,
-    n_pad: int,
-    resources_at_node: ScalarFloat,
-    borrowing_limit: ScalarFloat,
-    utility_of_action: Callable[[ScalarFloat], ScalarFloat],
-    discounted_expected_value_at_limit: ScalarFloat,
-) -> tuple[ScalarFloat, ScalarFloat]:
-    """Publish one asset node's value and optimal action at its single query.
-
-    The scalar-query counterpart of `_publish_V_and_carry_rows`: below the
-    lowest refined envelope point the closed-form constrained value is
-    published outright; everywhere else the Hermite read of the refined
-    envelope is floored at the constrained value, which remains a
-    feasible-policy lower bound. The published action follows the winning
-    branch — the closed-form action `R - borrowing_limit` where the
-    constrained value wins, the interpolated refined policy otherwise.
-    Envelope overflow NaN-poisons both outputs so the solve loop's NaN
-    diagnostics surface the offending (regime, period).
-
-    The production asset-row solve publishes via `_publish_V_and_carry_rows`,
-    which likewise materializes the full refined row and slices the bracket (no
-    streaming); this single-query form is the readable reference the row-path
-    equivalence tests (`test_egm_refine_to_query.py`) check that publisher
-    against.
-
-    Args:
-        refined_grid: Refined endogenous grid row from the envelope backend.
-        refined_policy: Refined policy row.
-        refined_value: Refined value row.
-        n_kept: Number of envelope points the backend kept.
-        n_pad: Static length of the refined rows.
-        resources_at_node: Resources at this exogenous Euler node (the row's
-            single publish query).
-        borrowing_limit: Lower bound of the savings grid.
-        utility_of_action: Utility with everything but the continuous action
-            bound.
-        discounted_expected_value_at_limit: Discounted expected continuation
-            value at the lowest savings node.
-
-    Returns:
-        Tuple of the node's published value and published optimal action.
-
-    """
-    dtype = resources_at_node.dtype
-    overflowed = n_kept > n_pad
-
-    marginal_utility = jax.vmap(jax.grad(utility_of_action))(
-        jnp.where(jnp.isnan(refined_policy), 1.0, refined_policy)
-    )
-    marginal_utility = jnp.where(jnp.isnan(refined_policy), jnp.nan, marginal_utility)
-    marginal_utility = jnp.where(jnp.isneginf(refined_value), 0.0, marginal_utility)
-
-    value_interpolated = interp_on_padded_grid(
-        x_query=resources_at_node,
-        xp=refined_grid,
-        fp=refined_value,
-        fp_slopes=marginal_utility,
-    )
-    policy_interpolated = interp_on_padded_grid(
-        x_query=resources_at_node,
-        xp=refined_grid,
-        fp=refined_policy,
-    )
-    closed_form_action = resources_at_node - borrowing_limit
-    value_constrained = jnp.where(
-        closed_form_action > 0.0,
-        utility_of_action(jnp.maximum(closed_form_action, jnp.finfo(dtype).tiny))
-        + discounted_expected_value_at_limit,
-        -jnp.inf,
-    )
-    below_refined = (closed_form_action > 0.0) & (resources_at_node <= refined_grid[0])
-    constrained_wins = below_refined | (value_constrained >= value_interpolated)
-    V_node = jnp.where(
-        below_refined,
-        value_constrained,
-        jnp.maximum(value_interpolated, value_constrained),
-    )
-    policy_node = jnp.where(constrained_wins, closed_form_action, policy_interpolated)
-    V_node = jnp.where(overflowed, jnp.nan, V_node).astype(dtype)
-    policy_node = jnp.where(overflowed, jnp.nan, policy_node).astype(dtype)
-    return V_node, policy_node
-
-
 def publish_node_from_bracket(
     *,
     bracket: QueryBracket,
@@ -1246,9 +1155,8 @@ def publish_node_from_bracket(
 ) -> tuple[ScalarFloat, ScalarFloat]:
     """Publish one asset node's value and optimal action from its query bracket.
 
-    The single-bracket counterpart of `_publish_node_V_and_policy`: it consumes
-    the two envelope nodes `refine_to_bracket` sliced around `resources_at_node`
-    from the full refined row. The published economics are identical:
+    Reads the two envelope nodes `refine_to_bracket` sliced around
+    `resources_at_node` from the full refined row:
 
     - The value is the cubic-Hermite read of the envelope between the two
       bracket nodes (the value slope at each node is `grad(utility_of_action)`
@@ -1258,6 +1166,11 @@ def publish_node_from_bracket(
       published outright; the winning branch sets the action (the closed-form
       `R - borrowing_limit` where constrained wins, the interpolated policy
       otherwise).
+    - Between the lowest envelope node and the first Euler point nothing needs
+      substituting: the node's constrained candidates span up to
+      `min(first Euler point, resources_at_node)`, so a binding query sits on
+      the top constrained candidate and the Hermite read returns its exact
+      closed-form value.
     - Envelope overflow (`n_kept > n_pad`) NaN-poisons both outputs, identical
       to the row path, so the solve loop's NaN diagnostics surface the offending
       (regime, period).
@@ -1283,27 +1196,6 @@ def publish_node_from_bracket(
         Tuple of the node's published value and published optimal action.
 
     """
-    value, policy, _ = _publish_node_selection(
-        bracket=bracket,
-        n_pad=n_pad,
-        resources_at_node=resources_at_node,
-        borrowing_limit=borrowing_limit,
-        utility_of_action=utility_of_action,
-        discounted_expected_value_at_limit=discounted_expected_value_at_limit,
-    )
-    return value, policy
-
-
-def _publish_node_selection(
-    *,
-    bracket: QueryBracket,
-    n_pad: int,
-    resources_at_node: ScalarFloat,
-    borrowing_limit: ScalarFloat,
-    utility_of_action: Callable[[ScalarFloat], ScalarFloat],
-    discounted_expected_value_at_limit: ScalarFloat,
-) -> tuple[ScalarFloat, ScalarFloat, ScalarBool]:
-    """Retain the original asset-row selector's action and corner-at-equality bit."""
     dtype = resources_at_node.dtype
     overflowed = bracket.n_kept > n_pad
 
@@ -1370,7 +1262,7 @@ def _publish_node_selection(
     policy_node = jnp.where(constrained_wins, closed_form_action, policy_interpolated)
     V_node = jnp.where(overflowed, jnp.nan, V_node).astype(dtype)
     policy_node = jnp.where(overflowed, jnp.nan, policy_node).astype(dtype)
-    return V_node, policy_node, constrained_wins
+    return V_node, policy_node
 
 
 def _node_value_slope(
