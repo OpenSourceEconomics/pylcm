@@ -9,7 +9,7 @@ rest of that path joined by `QNAME_DELIMITER`, e.g.
 - `n_periods` for a law over all targets;
 - `dead__rate` for a per-target cell, gated or not;
 - `dead__predicate__min_wealth` for the gate on `dead`;
-- `dead__references__spouse__wealth__scale` for a participation read;
+- `dead__reads__spouse__wealth__scale` for a participation read;
 - `dead__routes__husband__fallback__solve__wealth__scale` for one phase of a
   route fallback.
 

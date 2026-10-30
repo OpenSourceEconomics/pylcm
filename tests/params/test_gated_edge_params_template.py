@@ -290,10 +290,7 @@ def test_engine_edge_namespace_holds_exactly_the_template_slots():
     assert set(edge_params(flat_params, source="single_f")) == {
         "married_terminal__meeting_rate",
         "married_terminal__predicate__marriage_premium",
-        (
-            "married_terminal__references__V_single_m_ref__wage__"
-            "husband_reference_weight"
-        ),
+        ("married_terminal__reads__V_single_m_ref__wage__husband_reference_weight"),
         "married_terminal__routes__f__fallback__wage__wife_fallback_weight",
     }
 
