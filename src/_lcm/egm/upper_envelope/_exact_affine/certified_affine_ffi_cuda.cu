@@ -5,6 +5,7 @@
 #include <cuda_runtime.h>
 #include "exact_affine_core.h"
 #include "exact_cell_hull_core.h"
+#include "exact_hermite_critical_core.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/ffi.h"
 
@@ -696,3 +697,155 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Ret<ffi::Buffer<ffi::F64>>()
         .Ret<ffi::Buffer<ffi::S32>>()
         .Ret<ffi::Buffer<ffi::S32>>());
+
+namespace {
+template <typename T>
+__global__ void HermiteCriticalKernel(int64_t n,
+    const T* x0,
+    const T* h,
+    const T* v0,
+    const T* v1,
+    const T* a,
+    const T* b,
+    const T* lower_limit,
+    const T* log_scale,
+    const T* lower,
+    const T* upper,
+    int32_t* signs, int32_t* status, uint32_t* workspace) {
+  constexpr int N = core::CriticalTraits<T>::kLimbs;
+  for (int64_t i = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+       i < n; i += static_cast<int64_t>(blockDim.x) * gridDim.x) {
+    status[i] = core::HermiteCriticalBernstein(
+        x0[i], h[i], v0[i], v1[i], a[i], b[i], lower_limit[i], log_scale[i], lower[i],
+        upper[i],
+        workspace + i * (2 * N), signs + i * 4);
+  }
+}
+
+template <typename T, ffi::DataType DType>
+ffi::Error HermiteCriticalImpl(
+    cudaStream_t stream,
+    ffi::Buffer<DType> x0,
+    ffi::Buffer<DType> h,
+    ffi::Buffer<DType> v0,
+    ffi::Buffer<DType> v1,
+    ffi::Buffer<DType> a,
+    ffi::Buffer<DType> b,
+    ffi::Buffer<DType> lower_limit,
+    ffi::Buffer<DType> log_scale,
+    ffi::Buffer<DType> lower,
+    ffi::Buffer<DType> upper,
+    ffi::ResultBuffer<ffi::S32> signs,
+    ffi::ResultBuffer<ffi::S32> status,
+    ffi::ResultBuffer<ffi::U32> workspace) {
+  constexpr size_t N = core::CriticalTraits<T>::kLimbs;
+  const size_t n = x0.element_count();
+  const size_t sizes[] = {
+      h.element_count(),
+      v0.element_count(),
+      v1.element_count(),
+      a.element_count(),
+      b.element_count(),
+      lower_limit.element_count(),
+      log_scale.element_count(),
+      lower.element_count(),
+      upper.element_count(),
+      (*status).element_count(),
+  };
+  for (size_t size : sizes) {
+    if (size != n) return ffi::Error::InvalidArgument(
+        "Hermite critical operands and status must match");
+  }
+  if (n > SIZE_MAX / (2 * N) || (*signs).element_count() != n * 4 ||
+      (*workspace).element_count() != n * (2 * N)) {
+    return ffi::Error::InvalidArgument("Hermite critical result workspace mismatch");
+  }
+  if (n == 0) return ffi::Error::Success();
+  const int64_t blocks = (static_cast<int64_t>(n) - 1) / 128 + 1;
+  HermiteCriticalKernel<<<static_cast<int>(blocks < 1024 ? blocks : 1024), 128,
+                         0, stream>>>(
+      static_cast<int64_t>(n), x0.typed_data(), h.typed_data(), v0.typed_data(),
+      v1.typed_data(), a.typed_data(), b.typed_data(), lower_limit.typed_data(),
+      log_scale.typed_data(), lower.typed_data(), upper.typed_data(),
+      (*signs).typed_data(), (*status).typed_data(), (*workspace).typed_data());
+  const cudaError_t error = cudaGetLastError();
+  if (error != cudaSuccess) return ffi::Error::Internal(
+      std::string("Hermite critical launch failed: ") + cudaGetErrorString(error));
+  return ffi::Error::Success();
+}
+
+ffi::Error HermiteCriticalF32Impl(
+    cudaStream_t stream,
+    ffi::Buffer<ffi::F32> x0,
+    ffi::Buffer<ffi::F32> h,
+    ffi::Buffer<ffi::F32> v0,
+    ffi::Buffer<ffi::F32> v1,
+    ffi::Buffer<ffi::F32> a,
+    ffi::Buffer<ffi::F32> b,
+    ffi::Buffer<ffi::F32> lower_limit,
+    ffi::Buffer<ffi::F32> log_scale,
+    ffi::Buffer<ffi::F32> lower,
+    ffi::Buffer<ffi::F32> upper,
+    ffi::ResultBuffer<ffi::S32> signs,
+    ffi::ResultBuffer<ffi::S32> status,
+    ffi::ResultBuffer<ffi::U32> workspace) {
+  return HermiteCriticalImpl<float, ffi::F32>(
+      stream, x0, h, v0, v1, a, b, lower_limit, log_scale, lower, upper, signs, status, workspace);
+}
+
+ffi::Error HermiteCriticalF64Impl(
+    cudaStream_t stream,
+    ffi::Buffer<ffi::F64> x0,
+    ffi::Buffer<ffi::F64> h,
+    ffi::Buffer<ffi::F64> v0,
+    ffi::Buffer<ffi::F64> v1,
+    ffi::Buffer<ffi::F64> a,
+    ffi::Buffer<ffi::F64> b,
+    ffi::Buffer<ffi::F64> lower_limit,
+    ffi::Buffer<ffi::F64> log_scale,
+    ffi::Buffer<ffi::F64> lower,
+    ffi::Buffer<ffi::F64> upper,
+    ffi::ResultBuffer<ffi::S32> signs,
+    ffi::ResultBuffer<ffi::S32> status,
+    ffi::ResultBuffer<ffi::U32> workspace) {
+  return HermiteCriticalImpl<double, ffi::F64>(
+      stream, x0, h, v0, v1, a, b, lower_limit, log_scale, lower, upper, signs, status, workspace);
+}
+
+}  // namespace
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(
+    ExactHermiteCriticalBernsteinF32, HermiteCriticalF32Impl,
+    ffi::Ffi::Bind()
+        .Ctx<ffi::PlatformStream<cudaStream_t>>()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Ret<ffi::Buffer<ffi::S32>>()
+        .Ret<ffi::Buffer<ffi::S32>>()
+        .Ret<ffi::Buffer<ffi::U32>>());
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(
+    ExactHermiteCriticalBernsteinF64, HermiteCriticalF64Impl,
+    ffi::Ffi::Bind()
+        .Ctx<ffi::PlatformStream<cudaStream_t>>()
+        .Arg<ffi::Buffer<ffi::F64>>()
+        .Arg<ffi::Buffer<ffi::F64>>()
+        .Arg<ffi::Buffer<ffi::F64>>()
+        .Arg<ffi::Buffer<ffi::F64>>()
+        .Arg<ffi::Buffer<ffi::F64>>()
+        .Arg<ffi::Buffer<ffi::F64>>()
+        .Arg<ffi::Buffer<ffi::F64>>()
+        .Arg<ffi::Buffer<ffi::F64>>()
+        .Arg<ffi::Buffer<ffi::F64>>()
+        .Arg<ffi::Buffer<ffi::F64>>()
+        .Ret<ffi::Buffer<ffi::S32>>()
+        .Ret<ffi::Buffer<ffi::S32>>()
+        .Ret<ffi::Buffer<ffi::U32>>());

@@ -37,11 +37,11 @@ from _lcm.regime_building.argmax import argmax_and_max
 from _lcm.regime_building.collective import ParetoWeights, collective_argmax_and_readout
 from _lcm.regime_building.max_Q_over_a import _evaluate_pareto_weights
 from _lcm.regime_building.Q_and_F import (
-    QAndFParts,
-    _CollectiveQAndF,
-    _QAndF,
-    has_arrival_queries,
+    CanonicalActionKernel,
+    EvaluatedQAndF,
+    LandingCheck,
     has_objective_profile,
+    has_projected_queries,
     runtime_bound_specs,
 )
 from _lcm.solution.contract import ContinuationPayload, PeriodKernel, SolverBuildContext
@@ -50,6 +50,10 @@ from _lcm.solution.grid_search import (
     _GridSearchArgumentBuilder,
     grid_search_query_inputs,
 )
+from _lcm.solution.landing_counts import (
+    fail_on_query_landings,
+    query_landing_check,
+)
 from _lcm.time import TimeAxis
 from _lcm.typing import (
     FlatEdgeParams,
@@ -57,8 +61,10 @@ from _lcm.typing import (
     FlatRegimeParams,
     PytreeValue,
     QAndFKwargs,
+    QueryLandingCheck,
     ShapeDtypePytree,
 )
+from _lcm.utils.counts import sum_counts
 from _lcm.utils.dispatchers import productmap, vary_carry_like_body
 from lcm.exceptions import ExecutionPlanningError, UnsupportedOperationError
 from lcm.shocks import ShockGroupName
@@ -325,8 +331,37 @@ def _node_inputs(
     return grid_search_query_inputs(context=node.context, period=period)
 
 
-# Values at one common selected action, stable action id, support, integrity.
-type PolicyAnswer = tuple[FloatND, IntND, BoolND, BoolND]
+# Values at one common action, stable ID, support, integrity, reached-landing counts.
+type PolicyAnswer = tuple[FloatND, IntND, BoolND, BoolND, IntND]
+
+
+def _query_landing_checks(*, node: QueryNode) -> tuple[LandingCheck, ...]:
+    if node.read.kind in {QueryKind.ARRIVAL, QueryKind.INTEGRATED_FULL}:
+        return ()
+    return getattr(
+        node.context.Q_and_F_functions[node.read.period], "landing_checks", ()
+    )
+
+
+def _evaluated_query_landings(*, node: QueryNode, evaluated: EvaluatedQAndF) -> IntND:
+    """Require the original canonical count vector in declared check order."""
+    checks = _query_landing_checks(node=node)
+    if checks:
+        if len(evaluated.landing_counts) != 1:
+            raise TypeError("Canonical query lost its declared landing-count vector.")
+        landings = evaluated.landing_counts[0]
+        if landings.shape != (len(checks),) or landings.dtype != jnp.int32:
+            raise TypeError("Canonical query landing counts changed shape or dtype.")
+    else:
+        if evaluated.landing_counts:
+            raise TypeError("Canonical query returned undeclared landing checks.")
+        landings = jnp.zeros((0,), dtype=jnp.int32)
+    return landings
+
+
+def _query_landing_totals(*, counts: IntND) -> IntND:
+    """Reduce source/information axes, retaining the declared check axis."""
+    return sum_counts(counts=counts, axis=tuple(range(counts.ndim - 1)))
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -508,6 +543,26 @@ class ScalarPolicyQueries:
             }
         )
 
+    @property
+    def landing_checks(self) -> tuple[QueryLandingCheck, ...]:
+        """Match the reached-landing lane to each actual producing query/date."""
+        order = demanded_query_order(
+            reads={name: node.read for name, node in self.definitions.items()},
+            dependencies={
+                name: tuple(node.inputs.values())
+                for name, node in self.definitions.items()
+            },
+            roots=(self.root,),
+        )
+        return tuple(
+            query_landing_check(
+                check=check, source=node.read.target, period=node.read.period
+            )
+            for name in order
+            for node in (self.definitions[name],)
+            for check in _query_landing_checks(node=node)
+        )
+
     def value_reads(self, *, core_key: str) -> tuple[ValueRead, ...]:
         """Address every continuation at its exact nested simulation operand."""
         source_regime = self.definitions[self.root].read.target
@@ -589,7 +644,11 @@ class ScalarPolicyQueries:
                         for operand, producer in node.inputs.items()
                     },
                 )
-                answers[name] = (*answer[:3], jnp.all(answer[3]))
+                answers[name] = (
+                    *answer[:3],
+                    jnp.all(answer[3]),
+                    _query_landing_totals(counts=answer[4]),
+                )
                 continue
             answers[name] = _query_cell(
                 jnp.asarray(a=True),
@@ -608,7 +667,13 @@ class ScalarPolicyQueries:
                 ),
             )
         answer = answers[self.root]
-        return (*answer[:1], answer[1][0] if answer[1].ndim else answer[1], *answer[2:])
+        return (
+            answer[0],
+            answer[1][0] if answer[1].ndim else answer[1],
+            answer[2],
+            answer[3],
+            jnp.concatenate(tuple(answers[name][4] for name in order)),
+        )
 
 
 def build_policy_query_kernel(
@@ -743,7 +808,6 @@ def build_policy_query_kernel(
         from _lcm.query_information import (  # noqa: PLC0415 - keep information policy beside query core
             has_information,
             support_shape,
-            support_size,
         )
 
         information = has_information(node=node, definitions=definitions, period=period)
@@ -778,13 +842,7 @@ def build_policy_query_kernel(
                 ),
                 StateAxesLeading(
                     state_names=(),
-                    shape=(
-                        chunk_size,
-                        *information_shape,
-                        support_size(node=node, period=period),
-                    )
-                    if information
-                    else (chunk_size,),
+                    shape=(chunk_size,),
                     dtype=jnp.int32,
                 ),
                 StateAxesLeading(
@@ -793,6 +851,11 @@ def build_policy_query_kernel(
                     dtype=jnp.bool_,
                 ),
                 StateAxesLeading(state_names=(), shape=(), dtype=jnp.bool_),
+                StateAxesLeading(
+                    state_names=(),
+                    shape=(len(_query_landing_checks(node=node)),),
+                    dtype=jnp.int32,
+                ),
             ),
             disposition=CoreExecutionDisposition.PLANNED,
             internal_outputs=(InternalOutputSpec(label="answer", path=()),),
@@ -1296,7 +1359,7 @@ class _QueryCore:
                     live=active,
                     source=states,
                     dependencies={
-                        name: (*answer, dependencies[name][3])
+                        name: (*answer, dependencies[name][3], dependencies[name][4])
                         for name, answer in rows.items()
                     },
                 )
@@ -1309,7 +1372,17 @@ class _QueryCore:
                     {name: answer[:3] for name, answer in dependencies.items()},
                 ),
             )
-            return cast("PolicyAnswer", (*answer[:3], jnp.all(answer[3])))
+            # Information consumers select their own actions; only values travel.
+            return cast(
+                "PolicyAnswer",
+                (
+                    answer[0],
+                    jnp.full(live.shape, -1, dtype=jnp.int32),
+                    answer[2],
+                    jnp.all(answer[3]),
+                    _query_landing_totals(counts=answer[4]),
+                ),
+            )
         cell = functools.partial(
             _query_cell,
             node=self.node,
@@ -1319,7 +1392,7 @@ class _QueryCore:
         )
         if self.node.available is None and self.node.decision is None:
             answer = jax.vmap(
-                cell, in_axes=(0, 0, dict.fromkeys(dependencies, (0, 0, 0, None)))
+                cell, in_axes=(0, 0, dict.fromkeys(dependencies, (0, 0, 0, None, None)))
             )(live, source, dependencies)
         else:
             # A batched cond becomes select. Keep unsafe unavailable benchmark
@@ -1336,7 +1409,7 @@ class _QueryCore:
                     active,
                     states,
                     {
-                        name: (*answer, dependencies[name][3])
+                        name: (*answer, dependencies[name][3], dependencies[name][4])
                         for name, answer in rows.items()
                     },
                 )
@@ -1349,7 +1422,10 @@ class _QueryCore:
                     {name: answer[:3] for name, answer in dependencies.items()},
                 ),
             )
-        return cast("PolicyAnswer", (*answer[:3], jnp.all(answer[3])))
+        return cast(
+            "PolicyAnswer",
+            (*answer[:3], jnp.all(answer[3]), _query_landing_totals(counts=answer[4])),
+        )
 
 
 # keyword-only-exempt: library-callback=jax.vmap
@@ -1396,6 +1472,7 @@ def _query_cell(
                 jnp.asarray(-1, dtype=jnp.int32),
                 jnp.asarray(a=False),
                 jnp.asarray(a=True),
+                jnp.zeros((len(_query_landing_checks(node=node)),), dtype=jnp.int32),
             ),
         )
         return jax.lax.cond(active & live, admitted, lambda: absent)
@@ -1532,6 +1609,7 @@ def _active_query_cell(
             answer[1],
             live & answer[2],
             ~live | (answer[3] & _mapped_query_valid(node=node, mapped=mapped)),
+            answer[4],
         )
     action_point = with_signature(
         functools.partial(
@@ -1545,14 +1623,14 @@ def _active_query_cell(
         enforce=False,
     )
     evaluate = cast(
-        "Callable[..., tuple[FloatND, BoolND, BoolND]]",
+        "Callable[..., tuple[FloatND, BoolND, BoolND, IntND]]",
         productmap(
             func=action_point,
             variables=context.state_action_space.action_names,
             batch_sizes=dict.fromkeys(context.state_action_space.action_names, 0),
         ),
     )
-    q, feasible, valid = evaluate(
+    q, feasible, valid, landing_counts = evaluate(
         **{name: arguments[name] for name in context.state_action_space.action_names}
     )
     axes = tuple(range(feasible.ndim))
@@ -1590,6 +1668,7 @@ def _active_query_cell(
         jnp.where(support, action, -1).astype(jnp.int32),
         live & support,
         ~live | valid,
+        sum_counts(counts=jnp.where(live, landing_counts, 0), axis=axes),
     )
     if node.decision is not None:
         operands = {
@@ -1654,6 +1733,11 @@ def _validate_decision_answer(*, node: QueryNode, answer: PolicyAnswer) -> None:
         raise ValueError("A bound query decision must return scalar support.")
     if answer[3].shape != () or answer[3].dtype != jnp.bool_:
         raise ValueError("A bound query decision must return scalar integrity.")
+    if (
+        answer[4].shape != (len(_query_landing_checks(node=node)),)
+        or answer[4].dtype != jnp.int32
+    ):
+        raise ValueError("A bound query decision lost its declared landing counts.")
 
 
 def _taste_query_choice(
@@ -1738,7 +1822,7 @@ def _query_action(
     arguments: Mapping[str, PytreeValue],
     dependencies: Mapping[str, PolicyAnswer],
     **actions: PytreeValue,
-) -> tuple[FloatND, BoolND, BoolND]:
+) -> tuple[FloatND, BoolND, BoolND, IntND]:
     """Preserve the canonical Q/F arrays and add only declared participation."""
     function = cast(
         "Callable[..., tuple[FloatND, BoolND]]",
@@ -1748,16 +1832,23 @@ def _query_action(
     call_arguments = {
         name: inputs[name] for name in inspect.signature(function).parameters
     }
-    continuation_valid = jnp.asarray(a=True)
-    if has_arrival_queries(function=function):
-        parts = cast(
-            "Callable[..., QAndFParts]",
-            cast("_QAndF | _CollectiveQAndF", function).parts,
-        )(**call_arguments)
-        q, ordinary = parts.Q, parts.F
-        continuation_valid = cast("BoolND", parts.continuation_valid)
-    else:
-        q, ordinary = function(**call_arguments)
+    evaluate = cast(
+        "Callable[..., EvaluatedQAndF]",
+        cast("CanonicalActionKernel", function).evaluated,
+    )
+    evaluated = evaluate(**call_arguments)
+    parts = evaluated.parts
+    q, ordinary = parts.Q, parts.F
+    continuation_valid = (
+        jnp.asarray(a=True)
+        if parts.continuation_valid is None
+        else parts.continuation_valid
+    )
+    # Participation consumes this Q before it decides keep: its rejection cannot
+    # erase a continuation landing already needed by an ordinarily feasible action.
+    landings = jnp.where(
+        ordinary, _evaluated_query_landings(node=node, evaluated=evaluated), 0
+    )
     expected_q_shape = (
         () if node.context.stakeholders is None else (len(node.context.stakeholders),)
     )
@@ -1767,11 +1858,17 @@ def _query_action(
         raise TypeError("Canonical query feasibility must be boolean.")
     if ordinary.ndim != 0:
         raise ValueError("Canonical query feasibility must be scalar per action.")
-    valid = (~ordinary | continuation_valid) & ~jnp.any(
-        ordinary & jnp.any(jnp.isnan(q))
+    checked_valid = (
+        continuation_valid
+        if has_projected_queries(function=function)
+        else (~ordinary | continuation_valid)
     )
+    valid = checked_valid & ~jnp.any(ordinary & jnp.any(jnp.isnan(q)))
+    for status in evaluated.bound_status:
+        for flag in status:
+            valid &= ~jnp.any(flag)
     if node.participation is None:
-        return q, ordinary, valid
+        return q, ordinary, valid, landings
     operands = {**inputs, **dependencies, "q": q}
     keep = node.participation(
         **{
@@ -1783,7 +1880,25 @@ def _query_action(
         raise TypeError("Query participation must be boolean.")
     if keep.ndim != 0:
         raise ValueError("Query participation must be scalar per action.")
-    return q, ordinary & keep, valid
+    return q, ordinary & keep, valid, landings
+
+
+def _check_query_answer(*, name: str, node: QueryNode, answer: PolicyAnswer) -> None:
+    """Check mandatory numerical status before this producer's reached landings."""
+    if not bool(answer[3]):
+        raise ExecutionPlanningError(
+            f"Policy query {name!r} has unresolved numerical status."
+        )
+    fail_on_query_landings(
+        totals=answer[4],
+        checks=tuple(
+            query_landing_check(
+                check=check, source=node.read.target, period=node.read.period
+            )
+            for check in _query_landing_checks(node=node)
+        ),
+        phase="solve",
+    )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -1952,10 +2067,9 @@ class _PolicyQueryKernel:
                     owner.before(devices=devices)
                     answer = cast("PolicyAnswer", compiled_cores[name](**arguments))
                     owner.record(outputs=answer, devices=devices)
-                    if not bool(answer[3]):
-                        raise ExecutionPlanningError(
-                            f"Policy query {name!r} has unresolved numerical status."
-                        )
+                    _check_query_answer(
+                        name=name, node=self.definitions[name], answer=answer
+                    )
                     buffers[step.identity] = answer
                     # Completion witnesses cannot retain an owner past its census.
                     owner.before(devices=devices)

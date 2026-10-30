@@ -16,6 +16,7 @@ from _lcm.continuation import ContinuationPayload
 from _lcm.egm import continuation as continuation_module
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.query_data import QueryNodeKind
+from _lcm.post_decision_bound import PostDecisionBoundSpec
 from _lcm.solution.dcegm import _BoundDCEGM, _DCEGMPeriodKernel
 from _lcm.solution.egm import _EGMPeriodKernel
 from _lcm.solution.feasibility import (
@@ -404,6 +405,7 @@ def test_actual_child_failure_survives_literal_source_with_optional_checks_off(
     slots = registry[0]
     assert slots[0][0] == "child"
     assert slots[0][1] == 1
+    assert isinstance(slots[0][2], PostDecisionBoundSpec)
     assert slots[0][2].lower_target == authority.bound.lower_target
     changed_context: OracleContext
     if failure == "coverage":

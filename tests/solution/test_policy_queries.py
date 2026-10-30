@@ -378,6 +378,7 @@ def test_arrival_consumer_uses_boolean_rule_and_source_owned_answer_shape() -> N
             jnp.asarray(-1, jnp.int32),
             jnp.where(accept, target[2], outside[2]),
             target[3] & outside[3],
+            jnp.zeros((0,), dtype=jnp.int32),
         )
 
     node = QueryNode(
@@ -397,12 +398,14 @@ def test_arrival_consumer_uses_boolean_rule_and_source_owned_answer_shape() -> N
                 jnp.asarray(0, jnp.int32),
                 jnp.asarray(a=True),
                 jnp.asarray(a=True),
+                jnp.zeros((0,), dtype=jnp.int32),
             ),
             "outside": (
                 jnp.asarray(-2.0),
                 jnp.asarray(0, jnp.int32),
                 jnp.asarray(a=True),
                 jnp.asarray(a=True),
+                jnp.zeros((0,), dtype=jnp.int32),
             ),
         },
         node=node,
@@ -485,6 +488,44 @@ def test_native_query_selects_one_mapped_target_tuple(*, enable_jit: bool) -> No
         [[4, 1], [1, 4]],
         decimal=DECIMAL_PRECISION,
     )
+
+
+def test_noninformation_native_and_scalar_queries_keep_action_ids() -> None:
+    """Observed action IDs remain available on ordinary and acting policies."""
+    model = _native_model(enable_jit=True)
+    context = _CONTEXTS["target"]
+    node = QueryNode(
+        read=_read(kind=QueryKind.PARTICIPATING, target="target"), context=context
+    )
+    scalar = queries.ScalarPolicyQueries(
+        definitions={"target": node}, root="target", period=0
+    )
+    arguments = scalar.arguments(
+        context=CoreBuildContext(
+            state_action_space=context.state_action_space,
+            next_regime_to_V_arr={},
+            next_regime_to_continuation={},
+            flat_params={},
+            period=0,
+            ages=model._time,
+        )
+    )
+    native = jax.jit(queries._QueryCore(node=node, period=0))(
+        **{
+            **arguments["target"],
+            queries._SOURCE: {"wealth": jnp.asarray([0.0, 1.0])},
+            queries._LIVE: jnp.ones((2,), dtype=jnp.bool_),
+        }
+    )
+    np.testing.assert_array_equal(native[0], [[4.0, 1.0], [1.0, 4.0]])
+    np.testing.assert_array_equal(native[1], [0, 1])
+    for wealth in (0, 1):
+        answer = scalar(
+            states={"wealth": jnp.asarray(float(wealth))},
+            arguments=cast("Mapping[str, Mapping[str, PytreeValue]]", arguments),
+        )
+        np.testing.assert_array_equal(answer[0], native[0][wealth])
+        assert int(answer[1]) == wealth
 
 
 def _keep_both(*, q: FloatND, left: PolicyAnswer, right: PolicyAnswer) -> FloatND:
@@ -704,7 +745,7 @@ def test_failed_query_reader_keeps_inputs_uncommitted_and_drains(
             if failure == "exception":
                 raise RuntimeError("seeded query reader failure")
             answer = root(**kwargs)
-            return (*answer[:3], jnp.zeros_like(answer[3]))
+            return (*answer[:3], jnp.zeros_like(answer[3]), answer[4])
 
         def publish(**kwargs):
             del kwargs
@@ -1353,6 +1394,132 @@ def _information_mesh_inputs(
     return model, node, cast("Mapping[str, PytreeValue]", arguments["target"])
 
 
+def _information_native_keep(*, q: FloatND, outside: PolicyAnswer) -> BoolND:
+    return q >= outside[0]
+
+
+@pytest.mark.parametrize(
+    ("kind", "gate"),
+    [
+        (QueryKind.RAW, "plain"),
+        (QueryKind.PARTICIPATING, "plain"),
+        (QueryKind.PARTICIPATING, "live"),
+        (QueryKind.PARTICIPATING, "availability"),
+        (QueryKind.PARTICIPATING, "admitted-poison"),
+    ],
+)
+def test_information_native_output_omits_hidden_policy_axes(
+    *, kind: QueryKind, gate: str
+) -> None:
+    """Native value transport keeps scalar policies and all economic guards."""
+    events: dict[str, list[float]] = {"projection": [], "law": []}
+    _model, original, fixed = _information_mesh_inputs(
+        guarded=gate == "availability", events=events
+    )
+    read = replace(
+        original.read,
+        physical_inputs=frozenset({"eps"}),
+        policy_information=frozenset({"eps"}),
+    )
+    parent = replace(
+        original,
+        read=replace(read, kind=QueryKind.FULL),
+        inputs={"outside": "child"},
+        participation=_information_native_keep,
+    )
+    child = replace(
+        original,
+        read=replace(read, kind=kind, price_information=frozenset({"eps"})),
+        ancestors=("parent",),
+    )
+    definitions = {"parent": parent, "child": child}
+    kernel = build_policy_query_kernel(
+        root_context=parent.context,
+        period=0,
+        definitions=definitions,
+        root="parent",
+        chunk_size=2,
+    )
+    wealth = jnp.asarray([1.0, 4.0] if gate == "plain" else [-1.0, 1.0])
+    live = jnp.asarray([gate != "live", True])
+    source = {"wealth": wealth}
+    information = {"parent": fixed}
+    cell = InformationQueryCell(
+        name="child",
+        node=child,
+        definitions=definitions,
+        period=0,
+        fixed=fixed,
+        projection_operands={},
+        information_arguments=information,
+    )
+
+    def scalar_child(index: IntND) -> PolicyAnswer:
+        return cell(live=live[index], source={"wealth": wealth[index]}, dependencies={})
+
+    expected = jax.block_until_ready(
+        jax.jit(lambda: jax.lax.map(scalar_child, jnp.arange(2)))()
+    )
+    arguments = {
+        **fixed,
+        queries._SOURCE: source,
+        queries._LIVE: live,
+        queries._INFORMATION: information,
+    }
+    program = kernel.programs["child"]
+    lowered = jax.jit(program.function).lower(**arguments)
+    assert lowered.out_info[1].shape == live.shape
+    assert isinstance(program.output_roles, tuple)
+    action_role = program.output_roles[1]
+    assert isinstance(action_role, StateAxesLeading)
+    assert action_role.shape == live.shape
+    actual = jax.block_until_ready(lowered.compile()(**arguments))
+    np.testing.assert_array_equal(actual[1], -np.ones(live.shape, np.int32))
+    assert actual[1].dtype == jnp.int32
+    assert expected[1].ndim > actual[1].ndim
+    for index in (0, 2):
+        assert actual[index].dtype == expected[index].dtype
+        np.testing.assert_array_equal(actual[index], expected[index])
+    np.testing.assert_array_equal(actual[3], jnp.all(expected[3]))
+    parent_cell = InformationQueryCell(
+        name="parent",
+        node=parent,
+        definitions=definitions,
+        period=0,
+        fixed=fixed,
+        projection_operands={},
+        information_arguments={},
+    )
+
+    def scalar_parent(index: IntND) -> PolicyAnswer:
+        return parent_cell(
+            live=live[index],
+            source={"wealth": wealth[index]},
+            dependencies={
+                "outside": (
+                    expected[0][index],
+                    expected[1][index],
+                    expected[2][index],
+                    jnp.all(expected[3]),
+                    queries._query_landing_totals(counts=expected[4][index]),
+                )
+            },
+        )
+
+    expected_parent = jax.block_until_ready(
+        jax.jit(lambda: jax.lax.map(scalar_parent, jnp.arange(2)))()
+    )
+    actual_parent = jax.block_until_ready(
+        jax.jit(kernel.programs["parent"].function)(**{**arguments, "outside": actual})
+    )
+    np.testing.assert_array_equal(actual_parent[1], -np.ones(live.shape, np.int32))
+    for index in (0, 2):
+        np.testing.assert_array_equal(actual_parent[index], expected_parent[index])
+    np.testing.assert_array_equal(actual_parent[3], jnp.all(expected_parent[3]))
+    assert bool(actual[3]) == (gate != "admitted-poison")
+    jax.effects_barrier()
+
+
 @pytest.mark.parametrize("ancestor", [False, True])
 @pytest.mark.parametrize("gate", ["live", "availability", "admitted-poison"])
 def test_information_mesh_neutral_branch_keeps_axes_and_runtime_guard(
@@ -1388,20 +1555,28 @@ def test_information_mesh_neutral_branch_keeps_axes_and_runtime_guard(
             dependencies={},
         )
         for name, leaf in zip(
-            ("value", "action", "support", "valid"), answer, strict=True
+            ("value", "action", "support", "valid", "landing_count"),
+            answer,
+            strict=True,
         ):
             manual = getattr(jax.typeof(leaf), "manual_axis_type", None)
             assert manual is not None
             assert manual.varying <= frozenset({"X"}), (name, manual.varying)
             if name == "value":
                 assert manual.varying == frozenset({"X"})
-        return answer[0][None], answer[1][None], answer[2][None], answer[3][None]
+        return (
+            answer[0][None],
+            answer[1][None],
+            answer[2][None],
+            answer[3][None],
+            answer[4][None],
+        )
 
     mapped = jax.shard_map(
         local,
         mesh=mesh,
         in_specs=({"wealth": jax.P("X"), "live": jax.P("X")},),
-        out_specs=(jax.P("X"),) * 4,
+        out_specs=(jax.P("X"),) * 5,
         check_vma=True,
     )
     inputs = {
@@ -1425,12 +1600,14 @@ def test_information_mesh_neutral_branch_keeps_axes_and_runtime_guard(
         (2, *dimensions, 2),
         (2, *dimensions),
         (2, *dimensions),
+        (2, *dimensions, 0),
     )
     assert tuple(leaf.dtype for leaf in answer) == (
         jnp.asarray(0.0).dtype,
         jnp.int32,
         jnp.bool_,
         jnp.bool_,
+        jnp.int32,
     )
     assert all(leaf.sharding.spec == jax.P("X") for leaf in answer)
     np.testing.assert_array_equal(answer[0][1], np.full(dimensions, 2.0))

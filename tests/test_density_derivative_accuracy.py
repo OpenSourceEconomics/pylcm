@@ -10,8 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.processes import density_derivative_admission as admission
-from _lcm.processes.ar1 import _certify_density_derivative_row, _TauchenOnNodesProcess
+from _lcm.processes.ar1 import _TauchenOnNodesProcess
 from _lcm.regime_building.processing import _get_weights_func_for_process
 from lcm import (
     AgeGrid,
@@ -24,6 +23,7 @@ from lcm import (
 )
 from lcm.typing import ContinuousState, FloatND, ScalarFloat, ScalarInt, UserParams
 from tests.conftest import DECIMAL_PRECISION, X64_ENABLED
+from tests.test_models import density_derivative_admission as admission
 from tests.test_models.pr626_density_sensitivity_oracle import (
     density_pairwise_derivative,
 )
@@ -82,7 +82,7 @@ def _inputs(
 
 def _certify_case(case: _DensityInputs) -> None:
     dtype = jnp.float64 if X64_ENABLED else jnp.float32
-    _certify_density_derivative_row(
+    admission.certify_density_derivative_row(
         (
             jnp.asarray(case.nodes, dtype=dtype),
             jnp.asarray(case.mu, dtype=dtype),
@@ -379,19 +379,19 @@ def test_density_certificate_rejects_signed_integer_extrema(*, field: str) -> No
     else:
         exponents[0, 0] = np.iinfo(np.int64).min
     with pytest.raises(ArithmeticError, match=r"(?i)(power|exponent)"):
-        admission._checked_density_coefficients(
-            np.asarray([-1.0, 1.0], dtype=dtype),
-            scalar_zero,
-            scalar_zero,
-            scalar_zero,
-            np.asarray(1.0, dtype=dtype),
-            np.asarray(0, dtype=np.int64),
-            np.zeros(2, dtype=dtype),
-            powers,
-            np.ones(2, dtype=dtype),
-            np.ones(2, dtype=np.bool_),
-            np.zeros((4, 2), dtype=dtype),
-            exponents,
+        admission._certify_density_coefficients(
+            nodes=np.asarray([-1.0, 1.0], dtype=dtype),
+            location=scalar_zero,
+            rho=scalar_zero,
+            source=scalar_zero,
+            sigma=np.asarray(1.0, dtype=dtype),
+            reference=np.asarray(0, dtype=np.int64),
+            residuals=np.zeros(2, dtype=dtype),
+            powers=powers,
+            selected_exp=np.ones(2, dtype=dtype),
+            active=np.ones(2, dtype=np.bool_),
+            coefficient_mantissas=np.zeros((4, 2), dtype=dtype),
+            coefficient_exponents=exponents,
         )
 
 

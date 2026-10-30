@@ -18,6 +18,7 @@ from _lcm.params.sequence_leaf import SequenceLeaf
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.solution.contract import BackwardInductionResult
+from _lcm.solution.generation import CanonicalModelGeneration
 from _lcm.solution.host_values import (
     device_read_view,
     is_host_value,
@@ -35,6 +36,7 @@ from _lcm.typing import (
     RegimeName,
 )
 from lcm._solver_api.entries import _LazyEntry
+from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import (
     DISSOLUTION_FLAG,
     EGM_CONTINUATION,
@@ -48,6 +50,7 @@ from lcm.solver_api import (
     CategoryDomain,
     OmissionReason,
     PersistencePolicy,
+    ReplayRouteIdentity,
     ResultRetention,
     SolutionMetadata,
     SolutionResult,
@@ -95,12 +98,90 @@ class OwnedSolutionView:
     """Every retained replay-channel payload, by reference, for plugin routes."""
     authority: SolutionAuthority
     """The solution authority bound to this solve."""
+    generation: CanonicalModelGeneration | None = None
+    """Strong ownership of the actual producing programs, including after eviction."""
     component_values: RetainedComponentValues | None = None
     """The host retention behind a block-major result's values, else `None`.
 
     A block-major result keeps no complete value on a device: `values` is
     empty, and a consumer reads one code's values at a time from here.
     """
+
+
+def projected_forward_consumer_routes(
+    *, regimes: Mapping[RegimeName, Regime]
+) -> Mapping[ArtifactRef, ReplayRouteIdentity]:
+    """Bind each actual projected child read to its installed forward route."""
+    from _lcm.continuation import ProjectedContinuationSpec  # noqa: PLC0415
+
+    routes = {}
+    for regime in regimes.values():
+        for (
+            period,
+            readers,
+        ) in regime.simulation.projected_forward_readers_by_period.items():
+            for target, reader in readers.items():
+                spec = regimes[target].solution.continuation_spec
+                if (
+                    type(spec) is not ProjectedContinuationSpec
+                    or reader.target != target
+                    or reader.date is not spec.date_at(period=period + 1)
+                ):
+                    raise ExecutionPlanningError(
+                        "Projected forward retention lost its installed child date."
+                    )
+                ref = ArtifactRef(
+                    period=reader.date.authority.period,
+                    regime=target,
+                    key=reader.date.authority.artifact_key,
+                )
+                route = _replay_route_identity(regime.simulation.replay_route)
+                if ref in routes and routes[ref] != route:
+                    raise ExecutionPlanningError(
+                        "Projected forward continuation requires a single durable "
+                        "consumer-route identity."
+                    )
+                routes[ref] = route
+    return MappingProxyType(routes)
+
+
+def selected_persistable_artifact_refs(
+    *,
+    regimes: Mapping[RegimeName, Regime],
+    authority: SolutionAuthority,
+    retention: ResultRetention,
+) -> frozenset[ArtifactRef]:
+    """Select durable outputs from retention and actual forward child demands."""
+    if retention is ResultRetention.ALL_PERSISTABLE_ARTIFACTS:
+        return frozenset(
+            ref
+            for ref, artifact in authority.artifacts.items()
+            if artifact.applicable
+            and artifact.descriptor.persistence is PersistencePolicy.MODEL_VERIFIABLE
+        )
+    if retention is not ResultRetention.VALUES_AND_REPLAY:
+        return frozenset()
+    routes = frozenset(
+        _replay_route_identity(regime.simulation.replay_route)
+        for regime in regimes.values()
+    )
+    required = {
+        ref
+        for ref, artifact in authority.artifacts.items()
+        if artifact.applicable
+        and artifact.required
+        and artifact.descriptor.channel is ArtifactChannel.CONTINUATION
+        and artifact.descriptor.persistence is PersistencePolicy.MODEL_VERIFIABLE
+        and artifact.descriptor.required_for & routes
+    }
+    for ref, route in projected_forward_consumer_routes(regimes=regimes).items():
+        artifact = authority.artifacts.get(ref)
+        if ref not in required or artifact is None or artifact.consumer_route != route:
+            raise ExecutionPlanningError(
+                "Projected forward requires its model-verifiable retained "
+                "continuation and actual consumer route."
+            )
+    return frozenset(required)
 
 
 def build_solution_result(  # noqa: C901, PLR0912, PLR0915
@@ -116,6 +197,7 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
     durable_identity: bool = True,
     authority: SolutionAuthority,
     flat_params: FlatParams,
+    generation: CanonicalModelGeneration | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
     component_values: RetainedComponentValues | None = None,
     device_memory_bytes: int | None = None,
@@ -259,6 +341,9 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
                 else:
                     omissions[dissolution_ref] = OmissionReason.UNSUPPORTED
 
+    persistable_artifact_refs = selected_persistable_artifact_refs(
+        regimes=regimes, authority=authority, retention=retention
+    )
     present_refs = (
         set(retained_continuations) | set(replay) | set(auxiliary) | set(diagnostics)
     )
@@ -268,7 +353,10 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
         descriptor = artifact_authority.descriptor
         selected = retention is ResultRetention.ALL_PERSISTABLE_ARTIFACTS or (
             retention is ResultRetention.VALUES_AND_REPLAY
-            and descriptor.channel is ArtifactChannel.REPLAY
+            and (
+                descriptor.channel is ArtifactChannel.REPLAY
+                or ref in persistable_artifact_refs
+            )
         )
         if not artifact_authority.applicable:
             omissions[ref] = OmissionReason.NOT_APPLICABLE
@@ -410,6 +498,7 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
             replay_artifacts=MappingProxyType(replay),
             authority=authority,
             component_values=component_values,
+            generation=generation,
         ),
     )
     return result

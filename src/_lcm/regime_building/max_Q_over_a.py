@@ -33,7 +33,7 @@ from _lcm.regime_building.collective import (
 from _lcm.regime_building.Q_and_F import (
     BoundedActionOutput,
     BoundedQAndF,
-    runtime_bound_specs,
+    has_action_integrity,
 )
 from _lcm.regime_building.zero_safe import zero_safe_average
 from _lcm.solution.action_reduction import HardMaxResult
@@ -82,7 +82,11 @@ def _with_bound_summary[Output: PytreeValue](
 ) -> Output | BoundedResult[Output]:
     """Preserve scalar integrity while the action owner reduces ordinary channels."""
     return (
-        BoundedResult(output=output, bound_status=evaluated.bound_status)
+        BoundedResult(
+            output=output,
+            bound_status=evaluated.bound_status,
+            query_status=evaluated.query_status,
+        )
         if type(evaluated) is BoundedResult
         else output
     )
@@ -232,7 +236,7 @@ def get_max_Q_over_a(
             dict.fromkeys((*extra_param_names, *pareto_weights.param_names))
         )
 
-    bound_summary = bool(runtime_bound_specs(function=Q_and_F))
+    bound_summary = bool(has_action_integrity(function=Q_and_F))
     action_kernel: ActionFunction = (
         BoundedQAndF(function=Q_and_F) if bound_summary else Q_and_F
     )
@@ -569,7 +573,7 @@ def get_streaming_max_Q_over_a(
         extra_param_names=extra_param_names,
     )
 
-    bound_summary = bool(runtime_bound_specs(function=Q_and_F))
+    bound_summary = bool(has_action_integrity(function=Q_and_F))
     streamed_max_Q_over_a = with_signature(
         _StreamedMaxQOverA(
             Q_and_F=Q_and_F,
@@ -729,7 +733,7 @@ class _StreamedMaxQOverA:
             if name in self.q_and_f_arg_names
         }
         if (
-            runtime_bound_specs(function=self.Q_and_F)
+            has_action_integrity(function=self.Q_and_F)
             and not self.has_taste_shocks
             and self.stakeholders is None
         ):
@@ -753,6 +757,7 @@ class _StreamedMaxQOverA:
                     else result.best_value
                 ),
                 bound_status=bounded.bound_status,
+                query_status=bounded.query_status,
             )
         if self.has_taste_shocks:
             ev1_cell = build_streaming_ev1_max_Q_over_a(
@@ -773,6 +778,7 @@ class _StreamedMaxQOverA:
                 ev1_output = BoundedResult(
                     output=ev1_result.output.smoothed_value,
                     bound_status=ev1_result.bound_status,
+                    query_status=ev1_result.query_status,
                 )
             else:
                 ev1_output = ev1_result.smoothed_value
@@ -847,6 +853,7 @@ class _StreamedMaxQOverA:
             return BoundedResult(
                 output=(result.best_stakeholder_values, ~result.any_feasible),
                 bound_status=collective_result.bound_status,
+                query_status=collective_result.query_status,
             )
         return (
             collective_result.best_stakeholder_values,
@@ -934,14 +941,14 @@ def get_action_partitioned_max_Q_over_a(
             width_keyword=cell_width_keyword,
             untiled_variables=untiled_state_names,
             broadcast_variables=broadcast_state_names,
-            bound_summary=bool(runtime_bound_specs(function=Q_and_F)),
+            bound_summary=bool(has_action_integrity(function=Q_and_F)),
         )
         if cell_width_keyword is not None
         else productmap(
             func=partitioned_max_Q_over_a,
             variables=state_names,
             batch_sizes={name: batch_sizes[name] for name in state_names},
-            bound_summary=bool(runtime_bound_specs(function=Q_and_F)),
+            bound_summary=bool(has_action_integrity(function=Q_and_F)),
         )
     )
     static_names = (
@@ -1021,6 +1028,7 @@ class _ActionPartitionedMaxQOverA:
                     else reduced.best_value
                 ),
                 bound_status=result.bound_status,
+                query_status=result.query_status,
             )
         return (
             (result.best_value, ~result.any_feasible)
@@ -1566,7 +1574,7 @@ def get_argmax_and_max_Q_over_a(
             dict.fromkeys((*extra_param_names, *pareto_weights.param_names))
         )
 
-    bound_summary = bool(runtime_bound_specs(function=Q_and_F))
+    bound_summary = bool(has_action_integrity(function=Q_and_F))
     action_kernel: ActionFunction = (
         BoundedQAndF(function=Q_and_F) if bound_summary else Q_and_F
     )

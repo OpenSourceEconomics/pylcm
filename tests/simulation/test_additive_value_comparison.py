@@ -21,7 +21,7 @@ import pandas as pd
 import pytest
 
 from _lcm.dtypes import canonical_float_dtype
-from _lcm.regime_building.Q_and_F import ArrivalContinuationEvaluation, _QAndF
+from _lcm.regime_building.Q_and_F import CheckedContinuationEvaluation, _QAndF
 from _lcm.simulation.programs import _StreamedArgmaxQOverA, _SubjectTiled
 from _lcm.typing import (
     FlatParams,
@@ -147,7 +147,7 @@ def _evaluate_operands(
             zero=jnp.zeros_like(utility),
             states_actions_params=cell,
         )
-        assert not isinstance(result, ArrivalContinuationEvaluation)
+        assert not isinstance(result, CheckedContinuationEvaluation)
         continuation = result[0]
         aggregation = q.build_W_kwargs(cell)
         assert len(aggregation) == 1

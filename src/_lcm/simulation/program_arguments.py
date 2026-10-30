@@ -5,6 +5,7 @@ from types import MappingProxyType
 from typing import cast
 
 import jax
+import numpy as np
 
 from _lcm.current_iid import (
     CURRENT_IID_ARGUMENT,
@@ -16,6 +17,7 @@ from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.shock_overrides import CurrentIIDOverride
 from _lcm.typing import PRNGKeyND, PytreeValue, QualifiedName, ShapeDtypePytree
 from lcm.typing import (
+    BoolND,
     ContinuousState,
     DiscreteState,
     ReferenceName,
@@ -23,6 +25,8 @@ from lcm.typing import (
     ScalarInt,
     StateName,
 )
+
+ACTIVE_SUBJECTS_ARGUMENT = "_lcm_active_subjects"
 
 
 def decision_arguments(
@@ -39,6 +43,10 @@ def decision_arguments(
     params: Mapping[QualifiedName, PytreeValue | ShapeDtypePytree],
     period: PytreeValue | ShapeDtypePytree,
     age: PytreeValue | ShapeDtypePytree,
+    active_subjects: BoolND
+    | np.ndarray[tuple[int], np.dtype[np.bool_]]
+    | jax.ShapeDtypeStruct
+    | None = None,
 ) -> dict[ReferenceName, PytreeValue | ShapeDtypePytree]:
     """Preserve the decision call's existing last-writer precedence exactly."""
     return {
@@ -52,6 +60,11 @@ def decision_arguments(
         **params,
         "period": period,
         "age": age,
+        **(
+            {ACTIVE_SUBJECTS_ARGUMENT: active_subjects}
+            if active_subjects is not None
+            else {}
+        ),
     }
 
 

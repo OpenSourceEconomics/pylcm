@@ -26,6 +26,7 @@ from _lcm.policy_queries import PolicyAnswer, QueryNode
 from _lcm.probability import is_represented_zero
 from _lcm.shock_registry import ShockBinding
 from _lcm.typing import PytreeValue, QAndFKwargs
+from _lcm.utils.counts import sum_counts
 from _lcm.utils.dispatchers import vary_carry_like_body
 from _lcm.zero_safe import factored_weighted_term
 from lcm.shocks import ShockGroupName
@@ -519,7 +520,7 @@ class InformationQueryCell:
         fixed = self.information_arguments[name]
 
         def admitted() -> PolicyAnswer:
-            frame, _ = self._realise(
+            frame, factors = self._realise(
                 node=node, fixed=fixed, source=source, frames=frames
             )
             if not _has_local_information(node=node, period=node.read.period):
@@ -531,15 +532,21 @@ class InformationQueryCell:
                     source=source,
                     dependencies=dependencies,
                 )
-            return jax.lax.map(
-                lambda row: self._ancestors(
+
+            def point(row: IntND) -> PolicyAnswer:
+                answer = self._ancestors(
                     position=position + 1,
                     frames={**frames, name: _row(frame=frame, row=row)},
                     indices=(*indices, row),
                     live=live,
                     source=source,
                     dependencies=dependencies,
-                ),
+                )
+                present = jnp.all(~is_represented_zero(factors[:, row]))
+                return (*answer[:4], jnp.where(present, answer[4], 0))
+
+            return jax.lax.map(
+                point,
                 jnp.arange(self._size(name=name, node=node), dtype=jnp.int32),
             )
 
@@ -561,6 +568,8 @@ class InformationQueryCell:
                 node=self.definitions[name], period=self.definitions[name].read.period
             )
         )
+        from _lcm.policy_queries import _query_landing_checks  # noqa: PLC0415
+
         members = self.node.value_shape
         return (
             jnp.full((*dimensions, *members), -jnp.inf),
@@ -571,6 +580,9 @@ class InformationQueryCell:
             ),
             jnp.zeros(dimensions, jnp.bool_),
             jnp.ones(dimensions, jnp.bool_),
+            jnp.zeros(
+                (*dimensions, len(_query_landing_checks(node=self.node))), jnp.int32
+            ),
         )
 
     def _own(
@@ -604,6 +616,7 @@ class InformationQueryCell:
                         jnp.asarray(-1, jnp.int32),
                         answer[2][dependency_index],
                         answer[3],
+                        answer[4],
                     )
                     for name, answer in dependencies.items()
                 }
@@ -628,7 +641,7 @@ class InformationQueryCell:
                 point,
                 jnp.arange(self._size(name=self.name, node=self.node), dtype=jnp.int32),
             )
-            values, actions, support, valid = answers
+            values, actions, support, valid, landings = answers
             expanded = jnp.broadcast_to(
                 factors.reshape((*factors.shape, *((1,) * (values.ndim - 1)))),
                 (factors.shape[0], *values.shape),
@@ -641,6 +654,7 @@ class InformationQueryCell:
                 actions,
                 jnp.all(~present | support),
                 jnp.all(frame.valid) & jnp.all(valid),
+                sum_counts(counts=jnp.where(present[:, None], landings, 0), axis=0),
             )
 
         absent = vary_carry_like_body(

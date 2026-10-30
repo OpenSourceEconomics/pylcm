@@ -28,6 +28,7 @@ type CharacteristicValue = int | bool | float
 
 _INT32_MIN = int(np.iinfo(np.int32).min)
 _INT32_MAX = int(np.iinfo(np.int32).max)
+_FLOAT32_MAX = float(np.finfo(np.float32).max)
 
 
 @beartype(conf=CATEGORICAL_CONF)
@@ -60,7 +61,8 @@ def characteristics(
             describes.
         by_category: Mapping of every category name, in declaration order, to its
             characteristics. Every category sets the same characteristics,
-            in any order, each to a Python `int`, `bool` or finite `float`.
+            in any order, each to a Python `int`, `bool` or `float`; a float
+            is finite and within the float32 range.
             Each characteristic has one type throughout the table, and no two
             categories set all characteristics to the same values.
 
@@ -74,7 +76,8 @@ def characteristics(
         CategoricalDefinitionError: If the table does not describe exactly the
             categories of `category_class` in order, the categories set
             different characteristics, a value is not a Python `int`, `bool` or
-            finite `float`, an integer leaves the allowed int32 range, a
+            `float`, a float is not finite or leaves the float32 range, an
+            integer leaves the allowed int32 range, a
             characteristic mixes types, or two categories share all characteristics.
 
     """
@@ -252,9 +255,11 @@ def _check_column(*, name: str, values: Mapping[str, CharacteristicValue]) -> li
         return [f"Characteristic `{name}` mixes {types} values."]
     if type(next(iter(values.values()))) is float:
         return [
-            f"`{case}.{name}` is {value!r}; float characteristics must be finite."
+            f"`{case}.{name}` is {value!r}; float characteristics must be finite "
+            f"and within the float32 range, magnitude at most {_FLOAT32_MAX:g}, so "
+            f"they stay finite at either precision."
             for case, value in values.items()
-            if not np.isfinite(value)
+            if not abs(value) <= _FLOAT32_MAX
         ]
     return [
         (
@@ -291,16 +296,34 @@ def _get_identifying_names(
             f"category_with takes only bool or signed-integer columns; "
             f"float or other unsupported columns were given: {unsupported}."
         )
+    ties = _get_ties(columns=columns, names=names)
+    if ties:
+        details = "; ".join(f"codes {codes}" for codes in ties)
+        queryable = tuple(
+            name for name in columns if columns[name].dtype.kind in {"b", "i"}
+        )
+        if _get_ties(columns=columns, names=queryable):
+            floats = [name for name in columns if name not in queryable]
+            advice = (
+                f"The remaining columns {floats} are float properties and cannot "
+                f"identify a category; add an integer or bool characteristic, or use "
+                f"the class constant."
+            )
+        else:
+            advice = "Pass more characteristics, or use the class constant."
+        raise CategoricalDefinitionError(
+            f"The characteristics {list(names)} do not tell all categories apart: "
+            f"{details} share them. {advice}"
+        )
+    return names
+
+
+def _get_ties(
+    *, columns: Mapping[str, np.ndarray], names: tuple[str, ...]
+) -> list[list[int]]:
+    """Return the groups of codes that share their values in all `names` columns."""
     groups: dict[tuple[CharacteristicValue, ...], list[int]] = {}
     rows = zip(*(np.asarray(columns[name]).tolist() for name in names), strict=True)
     for code, row in enumerate(rows):
         groups.setdefault(row, []).append(code)
-    ties = [codes for codes in groups.values() if len(codes) > 1]
-    if ties:
-        details = "; ".join(f"codes {codes}" for codes in ties)
-        raise CategoricalDefinitionError(
-            f"The characteristics {list(names)} do not tell all categories apart: "
-            f"{details} share them. Pass more characteristics, or use the class "
-            f"constant."
-        )
-    return names
+    return [codes for codes in groups.values() if len(codes) > 1]

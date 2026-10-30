@@ -121,8 +121,14 @@ _PROFILED_HELPER_MUTATIONS = {
     ),
     "automatic_params:placed_binding_omitted": (
         "src/lcm/model.py",
-        "                flat_params=solve_params,",
-        "                flat_params=flat_params,",
+        (
+            "                solution = self._solve_from_flat_params(\n"
+            "                    flat_params=solve_params,"
+        ),
+        (
+            "                solution = self._solve_from_flat_params(\n"
+            "                    flat_params=flat_params,"
+        ),
     ),
     "simulation_index:scalar_profile_subject_sharding": (
         "src/_lcm/simulation/forward_program_profiles.py",
@@ -211,14 +217,12 @@ _PROFILED_HELPER_MUTATIONS = {
     "simulation_pandas:resolved_solution_owner_omitted": (
         "src/lcm/model.py",
         (
-            "                period_to_regime_to_replay_reader = None\n"
             '            with solve_phase(name="simulation_inputs", logger=log, '
             "call_id=call_id):\n"
             "                if entry_allocations is not None:\n"
             "                    entry_allocations.update_solution("
         ),
         (
-            "                period_to_regime_to_replay_reader = None\n"
             '            with solve_phase(name="simulation_inputs", logger=log, '
             "call_id=call_id):\n"
             "                if entry_allocations is not None:\n"
@@ -227,8 +231,15 @@ _PROFILED_HELPER_MUTATIONS = {
     ),
     "simulation_entry:automatic_solve_owners_omitted": (
         "src/lcm/model.py",
-        "else entry_allocations.solve_input_roots()",
-        "else ()",
+        (
+            "else entry_allocations.solve_input_roots()\n"
+            "                    ),\n"
+            "                    validation_materializer=entry_allocations,"
+        ),
+        (
+            "else ()\n                    ),\n"
+            "                    validation_materializer=entry_allocations,"
+        ),
     ),
     "simulation_entry:private_solve_owners_omitted": (
         "src/lcm/model.py",
@@ -259,8 +270,15 @@ _PROFILED_HELPER_MUTATIONS = {
     ),
     "simulation_entry:normalized_solve_inputs_omitted": (
         "src/_lcm/simulation/entry_allocations.py",
-        "            self.model_roots,\n            tuple(self._stages.values()),",
-        "            self.model_roots,\n            (),",
+        (
+            "            self.model_roots,\n"
+            "            self._retained_generation_roots(),\n"
+            "            tuple(self._stages.values()),"
+        ),
+        (
+            "            self.model_roots,\n"
+            "            self._retained_generation_roots(),\n            (),"
+        ),
     ),
     "simulation_entry:fixed_solve_inventory_omitted": (
         "src/_lcm/solution/backward_induction.py",
@@ -282,8 +300,8 @@ _PROFILED_HELPER_MUTATIONS = {
     ),
     "simulation_entry:entry_model_roots_omitted": (
         "src/lcm/model.py",
-        "            model_roots=(\n                self._time.values,",
-        "            model_roots=() and (\n                self._time.values,",
+        "            model_roots=self._generation_roots(),",
+        "            model_roots=(),",
     ),
     "simulation_entry:preflight_owner_inventory_omitted": (
         "src/lcm/model.py",
@@ -1147,8 +1165,15 @@ _FINITE_POLICY_MUTATIONS = {
     ),
     "finite_policy:fixed_binding_declaration_bypassed": (
         "src/_lcm/model_processing.py",
-        "name: declare_finite_replay_programs(regime)",
-        "name: regime",
+        (
+            "name: declare_finite_replay_programs(regime)\n"
+            "            for name, regime in regimes.items()\n        }\n    )\n"
+            "    return regimes, params_template"
+        ),
+        (
+            "name: regime\n            for name, regime in regimes.items()\n"
+            "        }\n    )\n    return regimes, params_template"
+        ),
     ),
     "finite_policy:output_action_order_changed": (
         "src/_lcm/simulation/policy_programs.py",

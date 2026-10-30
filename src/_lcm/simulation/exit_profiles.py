@@ -27,6 +27,7 @@ from _lcm.simulation.exit_replay import (
     _moving_actor_rows,
     _original_bases,
     _original_produced,
+    _query_reached_landing_totals,
     exit_bindings,
 )
 from _lcm.simulation.exits import arrival_entry_routes, route_original_subjects
@@ -226,7 +227,9 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
             ),
         )
 
-    def check(*, answer: _Answer, frame: _Frame, holders: jax.ShapeDtypeStruct) -> None:
+    def check(
+        *, answer: _Answer, frame: _Frame, holders: jax.ShapeDtypeStruct, landings: bool
+    ) -> None:
         inventory.operation(
             function=_answer_status,
             arguments={
@@ -236,6 +239,11 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
                 "holders": holders,
             },
         )
+        if landings:
+            inventory.operation(
+                function=_query_reached_landing_totals,
+                arguments={"counts": answer[4], "holders": holders},
+            )
 
     originals: dict[str, tuple[_Answer, _Frame]] = {}
     projections = {}
@@ -287,7 +295,12 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
         output = native(name=name, family="exit_full", columns=states, holders=holders)
         answer, frame = cast("_Answer", output[0]), cast("_Frame", output[1])
         originals[name] = (answer, frame)
-        check(answer=answer, frame=frame, holders=holders)
+        check(
+            answer=answer,
+            frame=frame,
+            holders=holders,
+            landings=bool(queries.landing_checks),
+        )
         projected = cast("Mapping[str, ShapeDtypePytree]", output[2])
         paid = cast("Mapping[str, ShapeDtypePytree]", output[3])
         for identifier, members in queries.definitions[
@@ -326,7 +339,12 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
             holders=cast("jax.ShapeDtypeStruct", holders),
         )
         answer, frame = cast("_Answer", output[0]), cast("_Frame", output[1])
-        check(answer=answer, frame=frame, holders=cast("jax.ShapeDtypeStruct", holders))
+        check(
+            answer=answer,
+            frame=frame,
+            holders=cast("jax.ShapeDtypeStruct", holders),
+            landings=bool(entry.queries.landing_checks),
+        )
         edge = f"{name}:{source}"
         arrival_frames[edge], arrival_pending[edge] = frame, holders
         entry_routes, route_codes, addresses = arrival_entry_routes(
@@ -470,7 +488,16 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
             produced=produced,
         )
         answer, frame = cast("_Answer", output[0]), cast("_Frame", output[1])
-        check(answer=answer, frame=frame, holders=holders)
+        check(
+            answer=answer,
+            frame=frame,
+            holders=holders,
+            landings=bool(
+                regime.simulation.exit_queries[period]
+                .participating[name]
+                .landing_checks
+            ),
+        )
         source_answer, source_frame = originals.get(name, (answer, frame))
         names = regime.simulation.exit_queries[period].physical_names
         source_physical = cast("Mapping[str, jax.ShapeDtypeStruct]", source_frame[0])

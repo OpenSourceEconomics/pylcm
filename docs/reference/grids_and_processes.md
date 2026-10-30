@@ -20,8 +20,9 @@ an outcome grid and its transition mechanism.
 - `characteristics(category_class=Category, by_category=...)` checks a table of every
   category's Python `int`, `bool` or finite `float` characteristics, keyed by category
   name in declaration order. Columns use one scalar type; integer values fit int32 above
-  its minimum. Rows set the same characteristics and remain distinct. The returned
-  arrays are read-only and indexed by code, with bool, int32 or float64 dtype.
+  its minimum, and float values fit float32. Rows set the same characteristics and
+  remain distinct. The returned arrays are read-only and indexed by code, with bool,
+  int32 or float64 dtype.
 - `category_with(columns, **characteristics)` returns the int32 code of the category
   with the given characteristics, or the int32 minimum where none has them. The given
   identifying columns must tell all categories apart and have bool or signed-integer
@@ -90,11 +91,9 @@ process parameter. All rules accept `StateConditioned` scales. Continuous simula
 retains the normal law; node simulation uses the selected matrix.
 
 Density-rule differentiation uses normalized scaled arithmetic without a host
-certificate. A private `_lcm` developer/test checker can certify deliberately supplied
-rows against a dimensionless absolute-plus-relative budget (`1e-12` at float64, `1e-5`
-at float32), or raise `DensityDerivativeAccuracyError`. It adds no check to solve,
-simulation or routine AD and is not a public model-validation API. See the
-[finite-row guarantee and developer invocation](../user_guide/continuous_stochastic_processes.md).
+certificate. A componentwise accuracy certificate exists only as a test oracle and adds
+no check to solve, simulation or routine AD. See
+[density derivatives](../user_guide/continuous_stochastic_processes.md).
 
 A process owns its transition mechanism. Adding a second law under `state_transitions`
 is an ambiguous declaration and is rejected.

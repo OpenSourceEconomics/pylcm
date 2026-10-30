@@ -34,6 +34,7 @@ from _lcm.egm.carry import EGMCarry
 from _lcm.egm.continuation import _aggregate_child_choices
 from _lcm.egm.dcegm_query import _evaluate, _passive_weights
 from _lcm.egm.nbegm_query import NBEGMQuery, _read_nb_compact_corner
+from _lcm.egm.projected_continuation import ProjectedChildAuthority
 from _lcm.egm.query_data import select_query_data
 from _lcm.post_decision_bound import PostDecisionBoundSpec
 from _lcm.solution.continuation_target import union_free_params
@@ -215,7 +216,9 @@ class Seam:
     """The child's solved carry, captured at the parent's kernel entry."""
     pool: EconFunctionKwargs
     """The child's processed parameters and clock, without any state."""
-    authorities: tuple[tuple[RegimeName, int, PostDecisionBoundSpec], ...]
+    authorities: tuple[
+        tuple[RegimeName, int, PostDecisionBoundSpec | ProjectedChildAuthority], ...
+    ]
     """The parent's declared query slots, for host validation."""
 
 

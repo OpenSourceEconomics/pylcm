@@ -17,12 +17,14 @@ import jax.numpy as jnp
 import jax.scipy as jsp
 import numpy as np
 import pytest
+from dags import concatenate_functions
 from numpy._core.overrides import array_function_dispatch
 
 import _lcm.grids.continuous as grid_declarations
 import lcm.model as lcm_model
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.constraints.ir import And
+from _lcm.egm.query_data import QueryNodeKind
 from _lcm.engine import Regime as EngineRegime
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.processes.grid_resolution import ProcessGridResolver
@@ -43,8 +45,15 @@ from lcm import (
     ref,
 )
 from lcm.case_piece import CaseBoundary
+from lcm.execution import (
+    ExecutionConfig,
+    InvariantBlockSchedule,
+    WidthSearch,
+    WidthSearchPolicy,
+)
 from lcm.regime import FunctionEntry, StateTransitionEntry
 from lcm.regime import Regime as UserRegime
+from lcm.shocks import GaussHermite, Normal, Product, ShockGroup
 from lcm.solver_api import (
     ArtifactChannel,
     ArtifactDescriptor,
@@ -56,6 +65,7 @@ from lcm.solver_api import (
     SolverIdentity,
 )
 from lcm.solvers import (
+    DCEGM,
     SolutionKernels,
     Solver,
     SolverBuildContext,
@@ -1148,6 +1158,7 @@ def test_trusted_frozen_dependencies_bind_their_semantic_state(
         LinSpacedGrid,
         np.dtype,
         partial,
+        MappingProxyType,
         inspect.Signature.empty,
         And,
         dags_exceptions.InvalidFunctionArgumentsError,
@@ -1158,6 +1169,7 @@ def test_trusted_frozen_dependencies_bind_their_semantic_state(
         "grid-class",
         "numpy-dtype-class",
         "partial-class",
+        "mapping-proxy",
         "inspect-empty",
         "constraint-class",
         "dags-exception-class",
@@ -1202,6 +1214,7 @@ def test_forged_beartype_wrappers_fail_closed() -> None:
     changed = _forge_beartype_wrapper(1)
     assert baseline(2) != changed(2)
 
+    changed.__module__ = "_lcm.solution.current_iid_case_u_build"
     for function in (baseline, changed):
         with pytest.raises(TypeError, match="uncaptured transparent beartype wrapper"):
             fingerprints._semantic_fingerprint(function)
@@ -1579,6 +1592,15 @@ def test_direct_enum_dependency_fails_closed() -> None:
         fingerprints._semantic_fingerprint(_uses_enum_dependency)
 
 
+def test_default_shock_independence_has_a_distinct_declaration_fingerprint() -> None:
+    group = ShockGroup(shocks={"offer": Normal()}, nodes=Product(offer=GaussHermite(3)))
+    runtime_correlation = dataclasses.replace(group, correlation=None)
+
+    independent = fingerprints._semantic_fingerprint(group)
+    assert independent == fingerprints._semantic_fingerprint(group)
+    assert independent != fingerprints._semantic_fingerprint(runtime_correlation)
+
+
 def test_engine_descriptor_enums_and_solver_identity_remain_supported() -> None:
     descriptor = ArtifactDescriptor(
         key=ArtifactKey(type_id="tests.compatibility", schema_version=1),
@@ -1674,6 +1696,108 @@ def test_jax_ops_numeric_function_allowlist_is_identity_sealed(
     )
     monkeypatch.setattr(jax.ops, "segment_sum", nominal_segment_sum)
     assert fingerprints._native_numeric_callable_kind(nominal_segment_sum) is None
+
+
+def test_original_cond_operand_omission_has_closed_native_metadata() -> None:
+    """The genuine native omission marker is metadata, never a numeric operand."""
+    assert fingerprints._semantic_fingerprint(jax.lax.cond) == (
+        fingerprints._semantic_fingerprint(jax.lax.cond)
+    )
+
+
+@pytest.mark.parametrize(
+    "scalar_type",
+    [
+        np.generic,
+        np.number,
+        np.integer,
+        np.signedinteger,
+        np.unsignedinteger,
+        np.inexact,
+        np.floating,
+        np.complexfloating,
+        np.flexible,
+        np.character,
+        np.float32,
+        np.int32,
+    ],
+)
+def test_numpy_scalar_categories_have_distinct_versioned_identity(
+    *, scalar_type: type[np.generic]
+) -> None:
+    """Abstract scalar categories have identity without a concrete dtype."""
+    fingerprint = fingerprints._semantic_fingerprint(scalar_type)
+    assert fingerprint == fingerprints._semantic_fingerprint(scalar_type)
+    assert fingerprint != fingerprints._semantic_fingerprint(np.float64)
+
+
+def test_nominal_numpy_scalar_category_cannot_spoof_native_identity() -> None:
+    class NominalFloating:
+        pass
+
+    NominalFloating.__module__ = "numpy"
+    NominalFloating.__name__ = "floating"
+    NominalFloating.__qualname__ = "floating"
+    assert not fingerprints._is_native_numeric_type(NominalFloating)
+    with pytest.raises(TypeError, match="direct class dependency"):
+        fingerprints._semantic_fingerprint(NominalFloating)
+
+
+@pytest.mark.parametrize(
+    "changed",
+    ["owner", "default", "signature", "wrappee", "export", "raw-default", "code"],
+)
+def test_cond_operand_origin_changes_refuse_native_sealing(
+    *, changed: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    genuine = jax.lax.cond
+    original = fingerprints._JAX_COND_ORIGINAL
+    module = fingerprints._JAX_COND_MODULE
+    assert isinstance(original, FunctionType)
+    assert isinstance(module, ModuleType)
+    baseline = fingerprints._semantic_fingerprint(genuine)
+    assert baseline
+    if changed == "owner":
+        monkeypatch.setattr(module, "_no_operand_sentinel", object())
+    elif changed == "default":
+        monkeypatch.setattr(original, "__kwdefaults__", {"operand": object()})
+    elif changed == "signature":
+        monkeypatch.setattr(
+            genuine,
+            "__signature__",
+            inspect.signature(genuine),
+            raising=False,
+        )
+    elif changed == "wrappee":
+        clone = FunctionType(original.__code__, original.__globals__)
+        monkeypatch.setattr(genuine, "__wrapped__", clone)
+    elif changed == "export":
+        monkeypatch.setattr(jax.lax, "cond", jax.lax.switch)
+    elif changed == "raw-default":
+        monkeypatch.setattr(
+            genuine,
+            "__kwdefaults__",
+            {"operand": fingerprints._JAX_COND_OPERAND_DEFAULT},
+        )
+    else:
+        monkeypatch.setattr(original, "__code__", _next_regime_code.__code__)
+    with pytest.raises(TypeError, match="Original JAX cond"):
+        fingerprints._semantic_fingerprint(genuine)
+
+
+def test_cond_omission_identity_does_not_admit_user_or_nominal_defaults() -> None:
+    marker = fingerprints._JAX_COND_OPERAND_DEFAULT
+
+    def nominal_cond(operand: object = marker) -> object:  # noqa: PAN001 - Deliberately tests an opaque user default, including the real native marker.
+        return operand
+
+    with pytest.raises(TypeError, match="default dependency for parameter 'operand'"):
+        fingerprints._semantic_fingerprint(nominal_cond)
+    nominal_cond.__module__ = jax.lax.cond.__module__
+    nominal_cond.__name__ = jax.lax.cond.__name__
+    nominal_cond.__qualname__ = jax.lax.cond.__qualname__
+    with pytest.raises(TypeError, match="default dependency for parameter 'operand'"):
+        fingerprints._semantic_fingerprint(nominal_cond)
 
 
 def test_numpy_dispatcher_alias_has_the_same_native_identity() -> None:
@@ -2362,3 +2486,180 @@ def test_referenced_closure_attribute_paths_is_a_read_only_mapping() -> None:
         code=_closure_reading_attribute_paths()
     )
     assert isinstance(paths, MappingProxyType)
+
+
+def test_execution_declaration_enums_have_distinct_durable_fingerprints() -> None:
+    """Original schedule and width policy remain explicit semantic declarations."""
+    period_major = ExecutionConfig(
+        invariant_block_schedule=InvariantBlockSchedule.PERIOD_MAJOR,
+        width_search=WidthSearchPolicy(kind=WidthSearch.EXHAUSTIVE),
+    )
+    block_major = dataclasses.replace(
+        period_major, invariant_block_schedule=InvariantBlockSchedule.BLOCK_MAJOR
+    )
+    bounded = dataclasses.replace(
+        period_major, width_search=WidthSearchPolicy(kind=WidthSearch.BOUNDED)
+    )
+    original = fingerprints._semantic_fingerprint(period_major)
+    assert original == fingerprints._semantic_fingerprint(period_major)
+    assert original != fingerprints._semantic_fingerprint(block_major)
+    assert original != fingerprints._semantic_fingerprint(bounded)
+
+
+def _with_output_annotation(annotation: fingerprints._Annotation):
+    function = _callable_with_params("value")
+    function.__signature__ = inspect.signature(function).replace(
+        return_annotation=annotation
+    )
+    return function
+
+
+def test_named_dag_output_annotations_preserve_names_types_and_order() -> None:
+    dag = concatenate_functions(
+        functions={"next_wealth": _solve_law},
+        targets=["next_wealth"],
+        return_type="dict",
+        enforce_signature=False,
+        set_annotations=True,
+    )
+    annotation = inspect.signature(dag).return_annotation
+    assert annotation == {"next_wealth": "int"}
+    baseline = fingerprints._semantic_fingerprint(_with_output_annotation(annotation))
+    for changed in ({"next_assets": "int"}, {"next_wealth": "float"}):
+        assert baseline != fingerprints._semantic_fingerprint(
+            _with_output_annotation(changed)
+        )
+    first = {"next_wealth": "int", "next_income": "float"}
+    second = {"next_income": "float", "next_wealth": "int"}
+    assert fingerprints._semantic_fingerprint(_with_output_annotation(first)) != (
+        fingerprints._semantic_fingerprint(_with_output_annotation(second))
+    )
+
+
+@pytest.mark.parametrize(
+    ("annotation", "reason"),
+    [
+        ({"next_wealth": object()}, "unsupported function annotation"),
+        ({0: "ContinuousState"}, "exact string keys"),
+    ],
+)
+def test_named_output_annotation_values_remain_strict(
+    *, annotation: fingerprints._Annotation, reason: str
+) -> None:
+    with pytest.raises(TypeError, match=reason):
+        fingerprints._semantic_fingerprint(_with_output_annotation(annotation))
+
+
+class _MappingProxyNominalTwin:
+    pass
+
+
+_MappingProxyNominalTwin.__module__ = "builtins"
+_MappingProxyNominalTwin.__qualname__ = "mappingproxy"
+
+
+def test_nominal_mappingproxy_class_is_not_builtin_authority() -> None:
+    with pytest.raises(TypeError, match="direct class dependency"):
+        fingerprints._semantic_fingerprint(
+            _dependency_closure(_MappingProxyNominalTwin)
+        )
+
+
+def test_original_query_node_kind_keeps_economic_status_distinct() -> None:
+    finite = fingerprints._semantic_fingerprint(QueryNodeKind.FINITE)
+    assert finite != fingerprints._semantic_fingerprint(
+        QueryNodeKind.ECONOMIC_MINUS_INF
+    )
+    assert finite != fingerprints._semantic_fingerprint(1)
+
+
+def test_grid_default_string_identity_is_not_semantics() -> None:
+    original = grid_declarations.IrregSpacedGrid(points=np.array([1.0, 2.0]))
+    restored_string = (" " + original.off_grid)[1:]
+    assert type(restored_string) is type(original.off_grid)
+    assert restored_string == original.off_grid
+    assert restored_string is not original.off_grid
+    restored = dataclasses.replace(original, off_grid=restored_string)
+    assert fingerprints._semantic_fingerprint(original) == (
+        fingerprints._semantic_fingerprint(restored)
+    )
+    changed = dataclasses.replace(original, off_grid="clip_lookup")
+    assert fingerprints._semantic_fingerprint(original) != (
+        fingerprints._semantic_fingerprint(changed)
+    )
+
+
+def test_solver_scalar_default_identity_is_not_semantics() -> None:
+    original = DCEGM(
+        savings_grid=grid_declarations.IrregSpacedGrid(points=np.array([1.0, 2.0]))
+    )
+    capacity = int(str(original.current_iid_projection_capacity))
+    replay = (" " + original.replay)[1:]
+    accuracy = (" " + original.accuracy)[1:]
+    assert capacity == original.current_iid_projection_capacity
+    assert capacity is not original.current_iid_projection_capacity
+    assert replay == original.replay
+    assert replay is not original.replay
+    assert accuracy == original.accuracy
+    assert accuracy is not original.accuracy
+    restored = dataclasses.replace(
+        original,
+        current_iid_projection_capacity=capacity,
+        replay=replay,
+        accuracy=accuracy,
+    )
+    assert fingerprints._semantic_fingerprint(original) == (
+        fingerprints._semantic_fingerprint(restored)
+    )
+    changed = dataclasses.replace(original, current_iid_projection_capacity=4097)
+    assert fingerprints._semantic_fingerprint(original) != (
+        fingerprints._semantic_fingerprint(changed)
+    )
+
+
+@dataclass(frozen=True)
+class _DefaultOmissionValue:
+    value: fingerprints._Reachable = dataclasses.field(
+        default=4096, metadata={"fingerprint_omit_if_default": True}
+    )
+
+
+def test_default_omission_preserves_types_nondefaults_and_arrays() -> None:
+    original = fingerprints._semantic_fingerprint(_DefaultOmissionValue())
+    assert original == fingerprints._semantic_fingerprint(
+        _DefaultOmissionValue(value=int("4096"))
+    )
+    for value in (4097, 4096.0, "4096", True, np.array([4096, 4096])):
+        assert original != fingerprints._semantic_fingerprint(
+            _DefaultOmissionValue(value=value)
+        )
+
+
+@dataclass(frozen=True)
+class _EmptyOmissionDefaults:
+    mapping: Mapping[str, int] = dataclasses.field(
+        default=MappingProxyType({}), metadata={"fingerprint_omit_if_default": True}
+    )
+    sequence: tuple[int, ...] = dataclasses.field(
+        default=(), metadata={"fingerprint_omit_if_default": True}
+    )
+    frozen: frozenset[int] = dataclasses.field(
+        default=frozenset(), metadata={"fingerprint_omit_if_default": True}
+    )
+
+
+def test_exact_empty_default_containers_keep_semantic_fingerprints() -> None:
+    original = _EmptyOmissionDefaults()
+    restored = _EmptyOmissionDefaults(
+        mapping=MappingProxyType({}), sequence=(), frozen=frozenset()
+    )
+    assert original.mapping is not restored.mapping
+    baseline = fingerprints._semantic_fingerprint(original)
+    assert baseline == fingerprints._semantic_fingerprint(restored)
+    for changed in (
+        dataclasses.replace(original, mapping=MappingProxyType({"x": 1})),
+        dataclasses.replace(original, sequence=(1,)),
+        dataclasses.replace(original, frozen=frozenset({1})),
+        dataclasses.replace(original, mapping={}),
+    ):
+        assert baseline != fingerprints._semantic_fingerprint(changed)

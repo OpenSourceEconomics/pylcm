@@ -70,7 +70,15 @@ from lcm.exceptions import (
     UnsupportedOperationError,
 )
 from lcm.shocks import Discrete
-from lcm.typing import BoolND, FloatND, Phase, ReferenceName, RegimeName, UserFunction
+from lcm.typing import (
+    BoolND,
+    FloatND,
+    IntND,
+    Phase,
+    ReferenceName,
+    RegimeName,
+    UserFunction,
+)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -240,7 +248,9 @@ class _ArrivalPolicyValue:
 
     plan: ArrivalQueryPlan
 
-    def __call__(self, **operands: PytreeValue) -> tuple[FloatND, BoolND]:
+    def __call__(
+        self, **operands: PytreeValue
+    ) -> tuple[FloatND, BoolND] | tuple[tuple[FloatND, BoolND], IntND]:
         arguments = cast("ArrivalQueryArguments", operands["arrival_arguments"])
         states = {
             name.removeprefix("next_"): value
@@ -251,7 +261,12 @@ class _ArrivalPolicyValue:
             states=cast("Mapping[str, FloatND]", states),
             arguments=arguments.by_target[self.plan.target],
         )
-        return answer[0], answer[3]
+        value_and_integrity = (answer[0], answer[3])
+        return (
+            (value_and_integrity, answer[4])
+            if self.plan.queries.landing_checks
+            else value_and_integrity
+        )
 
 
 def _source_action_problem(
@@ -273,6 +288,7 @@ def _source_action_problem(
     continuations = dict(compute.continuations)
     scalar_readers = dict(compute.arrival_scalar_readers)
     scalar_names = dict(compute.arrival_scalar_arg_names)
+    scalar_checks = dict(compute.arrival_scalar_landing_checks)
     for target, plan in plans.items():
         target_names = plan.queries.definitions[plan.queries.root].read.projection
         names = [
@@ -286,6 +302,7 @@ def _source_action_problem(
         if target in compute.scalar_targets:
             scalar_readers[target] = reader
             scalar_names[target] = ("arrival_arguments",)
+            scalar_checks[target] = plan.queries.landing_checks
             continue
         original = continuations[target]
         if (
@@ -309,15 +326,19 @@ def _source_action_problem(
             or original.original_value_axes,
             original_value_axes=(),
             arrival_query=True,
+            landing_checks=plan.queries.landing_checks,
         )
+    compute = replace(
+        compute,
+        continuations=MappingProxyType(continuations),
+        arrival_scalar_readers=MappingProxyType(scalar_readers),
+        arrival_scalar_arg_names=MappingProxyType(scalar_names),
+        arrival_scalar_landing_checks=tuple(scalar_checks.items()),
+    )
     return replace(
         function,
-        compute_CE=replace(
-            compute,
-            continuations=MappingProxyType(continuations),
-            arrival_scalar_readers=MappingProxyType(scalar_readers),
-            arrival_scalar_arg_names=MappingProxyType(scalar_names),
-        ),
+        compute_CE=compute,
+        landing_checks=compute.landing_checks,
         arg_names=(*function.arg_names, "arrival_arguments"),
         continuation_reads=None
         if function.continuation_reads is None
@@ -575,7 +596,13 @@ class _ArrivalReducer:
             valid &= accepted | fallback[3]
         value = jnp.stack(routed) if self.collective else routed[0]
         # This is a routing branch ID, never a maximizer over the comparisons.
-        return value, (~accepted).astype(jnp.int32), support, valid
+        return (
+            value,
+            (~accepted).astype(jnp.int32),
+            support,
+            valid,
+            jnp.zeros((0,), jnp.int32),
+        )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -656,6 +683,7 @@ class _IntegratedValue:
             jnp.asarray(-1, jnp.int32),
             jnp.asarray(a=True),
             ~jnp.isnan(value),
+            jnp.zeros((0,), jnp.int32),
         )
 
 

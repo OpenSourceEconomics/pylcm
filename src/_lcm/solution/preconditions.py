@@ -24,6 +24,7 @@ from typing import cast
 import jax.numpy as jnp
 
 from _lcm.engine import Regime
+from _lcm.materialization import DatedGenerationMaterializer
 from _lcm.params.edges import regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.collective import PARETO_OBJECTIVE_ENTRY, ParetoWeights
@@ -37,6 +38,7 @@ def check_solver_params(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> None:
     """Run every regime solver's parameter-dependent preconditions.
 
@@ -69,7 +71,17 @@ def check_solver_params(
     )
     for regime in regimes.values():
         for check in regime.solution.param_checks:
-            check(flat_params=complete)
+            if materializer is None:
+                check(flat_params=complete)
+                continue
+            from _lcm.solution.nbegm import (  # noqa: PLC0415 - original host check, acquired only for an owned draw
+                _DeferredProbe,
+            )
+
+            if type(check) is _DeferredProbe:
+                check.evaluate(flat_params=complete, materializer=materializer)
+            else:
+                check(flat_params=complete)
 
 
 def check_pareto_weights(

@@ -1,5 +1,6 @@
 """Collection of classes that are used by the user to define the model and grids."""
 
+import contextlib
 import dataclasses
 import functools
 import hashlib
@@ -7,8 +8,8 @@ import logging
 import os
 import threading
 import uuid
-from collections import OrderedDict
-from collections.abc import Callable, Iterator, Mapping
+import weakref
+from collections.abc import Callable, Generator, Iterator, Mapping
 from difflib import SequenceMatcher
 from pathlib import Path
 from types import MappingProxyType
@@ -29,7 +30,23 @@ from beartype import beartype
 from beartype.roar import BeartypeCallHintViolation
 
 from _lcm.beartype_conf import MODEL_CONF, PARAMS_CONF, SIMULATION_INPUT_CONF
+from _lcm.egm.current_iid_case_u_replay import CaseUReplayChildren, CaseUReplayInput
+from _lcm.egm.current_iid_envelope import (
+    StateUtilityObligations,
+    dated_state_utility_obligations,
+)
+from _lcm.egm.current_iid_euler_grid import (
+    EulerGridObligations,
+    dated_euler_grid_obligations,
+)
+from _lcm.egm.current_iid_replay import CaseRReplayInput
+from _lcm.egm.current_iid_replay_inputs import (
+    CurrentIIDReplayInput,
+    CurrentIIDReplayInputs,
+)
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
+from _lcm.egm.projected_child import require_projected_carry
+from _lcm.egm.projected_continuation import ProjectedEGMCarry
 from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
 from _lcm.engine import (
     EGMPolicyRead,
@@ -39,16 +56,19 @@ from _lcm.engine import (
 )
 from _lcm.execution.core_program import CoreProgram, core_program_graph
 from _lcm.execution.execution_plan import (
+    ExecutionHardware,
     ResolvedExecution,
     fail_if_axis_widths_name_undeclared_axes,
     fail_if_per_regime_widths_name_non_solve_axes,
     resolve_execution_config,
+    resolve_execution_hardware,
     visible_device_ids,
     visible_device_pool_limits,
 )
 from _lcm.execution.footprint import layout_footprint
 from _lcm.execution.output_layout import OutputRoleLeaf
 from _lcm.grids import (
+    ContinuousGrid,
     DiscreteGrid,
     Grid,
     IrregSpacedGrid,
@@ -58,6 +78,7 @@ from _lcm.grids import (
     PiecewiseLogSpacedGrid,
 )
 from _lcm.grids.categorical import get_category_codes, validate_category_class
+from _lcm.materialization import DatedGenerationMaterializer
 from _lcm.model_graph import (
     DroppedCells,
     ModelGraph,
@@ -68,9 +89,14 @@ from _lcm.model_graph import (
     prepare_graph,
 )
 from _lcm.model_processing import (
+    PreparedDatedGeneration,
+    PreparedDatedParameters,
     _validate_param_types,
+    build_private_dated_balanced_regimes,
     build_regimes_and_template,
     fail_if_nonpositive_taste_shock_scale,
+    prepare_dated_call_support,
+    prepare_dated_parameters,
     validate_model_inputs,
 )
 from _lcm.off_grid import fail_if_endogenous_grid_reads_a_clipped_grid
@@ -79,12 +105,14 @@ from _lcm.pandas_utils import (
     initial_conditions_from_dataframe,
 )
 from _lcm.params.edges import regime_kernel_params
+from _lcm.params.mapping_leaf import UserMappingLeaf
 from _lcm.params.processing import (
     broadcast_to_template,
     cast_params_to_canonical_dtypes,
     materialize_granular_transition_params,
 )
 from _lcm.params.regime_template import EdgeVocabulary, create_edge_vocabulary
+from _lcm.params.sequence_leaf import UserSequenceLeaf
 from _lcm.persistence.snapshots import (
     _save_simulate_snapshot,
     _save_solve_snapshot,
@@ -113,6 +141,7 @@ from _lcm.regime_building.action_partitioning import (
     action_partition_width_ceilings,
     fail_if_action_partition_route_is_unsupported,
 )
+from _lcm.regime_building.age_normalization import _regime_has_markers
 from _lcm.regime_building.broadcast import (
     ModelSlots,
     merge_model_slots,
@@ -120,6 +149,7 @@ from _lcm.regime_building.broadcast import (
     split_transition_only_folds,
     validate_model_slots,
 )
+from _lcm.regime_building.collective import build_role_vocabulary
 from _lcm.regime_building.composite_states import (
     CompositeLowering,
     lower_composite_initial_conditions,
@@ -142,9 +172,12 @@ from _lcm.regime_building.invariant_blocking import (
 )
 from _lcm.regime_building.phases import project_onto_solve_phase
 from _lcm.regime_building.processing import (
+    PreparedModelStructure,
     Regime,
+    RegimeParameterMetadata,
     prepare_model_structure,
 )
+from _lcm.regime_building.projected_forward import ProjectedForwardInputs
 from _lcm.regime_building.schedules import (
     gated_source_periods,
     lower_demanded_transitions,
@@ -174,6 +207,7 @@ from _lcm.simulation.current_iid_overrides import (
     resolve_current_iid_overrides,
     split_current_iid_inputs,
 )
+from _lcm.simulation.declaration_inputs import open_declaration_allocations
 from _lcm.simulation.entry_allocations import SimulationEntryAllocations
 from _lcm.simulation.entry_inputs import capture_simulation_entry_inputs
 from _lcm.simulation.host_operations import ProfiledSimulationOperations
@@ -237,6 +271,7 @@ from _lcm.solution.artifacts import (
     OwnedSolutionView,
     build_solution_result,
     fingerprint_flat_params,
+    selected_persistable_artifact_refs,
 )
 from _lcm.solution.backward_induction import (
     GatherChecks,
@@ -255,12 +290,22 @@ from _lcm.solution.contract import BackwardInductionResult
 from _lcm.solution.feasibility import consume_runtime_bound_outputs
 from _lcm.solution.fingerprint import (
     SolutionParamProjection,
+    _semantic_fingerprint,
+    _SemanticHasher,
     fingerprint_model,
+    fingerprint_model_declarations,
     fingerprint_model_programs,
     fingerprint_model_structure,
+    fingerprint_prepared_solution_support,
     fingerprint_solution_support,
     project_solution_params,
     solution_param_projection,
+)
+from _lcm.solution.generation import (
+    CanonicalGenerationCache,
+    CanonicalModelGeneration,
+    canonical_generation_roots,
+    canonical_parameter_schema,
 )
 from _lcm.solution.lower_candidate import lower_period_candidate
 from _lcm.solution.lowering_descriptors import describe_lowering_value
@@ -271,7 +316,6 @@ from _lcm.solution.model_authority import (
     _state_action_space_for_period,
     bind_declared_solution_authority,
     bind_generated_solution_authority,
-    build_solution_authority,
     snapshot_solution_authority,
 )
 from _lcm.solution.model_seal import BindingRecorder, SealedBindings
@@ -358,6 +402,7 @@ from lcm.exceptions import (
     InvalidSimulationInputError,
     InvalidValueFunctionError,
     ModelInitializationError,
+    ModelSealError,
     NoFeasibleActionError,
     UnsupportedOperationError,
 )
@@ -376,7 +421,13 @@ from lcm.regime import (
 )
 from lcm.regime import Regime as UserRegime
 from lcm.result import PolicyLookup, SimulationResult
-from lcm.shocks import BaseInnovations, PhysicalValues, ShockGroup, ShockGroupName
+from lcm.shocks import (
+    BaseInnovations,
+    PhysicalValues,
+    ShockGroup,
+    ShockGroupName,
+    UserNodes,
+)
 from lcm.solver_api import (
     DISSOLUTION_FLAG,
     EGM_CONTINUATION,
@@ -480,6 +531,8 @@ type _ResolvedSolution = tuple[
     PeriodToRegimeToSimulationPolicy,
     PeriodToRegimeToDissolutionFlags,
     _PeriodToRegimeToReplayReader,
+    CurrentIIDReplayInputs,
+    ProjectedForwardInputs,
 ]
 
 
@@ -494,6 +547,12 @@ class _ReplayPayloadSource(Protocol):
 
 
 class _PickledModel(TypedDict):
+    _constructor_inputs: NotRequired[_ModelConstructorInputs | None]
+    _declaration_preparation: NotRequired[_ModelDeclarationPreparation | None]
+    _dated_parameters: NotRequired[PreparedDatedParameters | None]
+    _dated_generation: NotRequired[PreparedDatedGeneration | None]
+    _initial_generation_key: NotRequired[str | None]
+    _prepared_declaration_seal: NotRequired[str]
     """The attributes a pickled `Model` carries.
 
     `__setstate__` rebuilds everything else: the per-process state, the published
@@ -536,7 +595,7 @@ class _PickledModel(TypedDict):
     _param_name_candidates: NotRequired[
         MappingProxyType[RegimeName, MappingProxyType[ReferenceName, str]]
     ]
-    _regimes: MappingProxyType[RegimeName, Regime]
+    _regimes: NotRequired[MappingProxyType[RegimeName, Regime]]
     stakeholder_names_to_ids: MappingProxyType[str, int]
     enable_jit: bool
     simulation_output_dtypes: MappingProxyType[str, pd.CategoricalDtype]
@@ -695,6 +754,234 @@ def _materialize_artifact_projection(
     )
 
 
+def _constructor_container_children(value: object) -> tuple[object, ...]:  # noqa: PAN001 - actual heterogeneous constructor declarations
+    """Observe retained bindings without evaluating callbacks or copying arrays."""
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return tuple(getattr(value, item.name) for item in dataclasses.fields(value))
+    if isinstance(value, UserMappingLeaf | UserSequenceLeaf):
+        return (value.data,)
+    if isinstance(value, Mapping):
+        return tuple(item for pair in value.items() for item in pair)
+    if isinstance(value, tuple | list | set | frozenset):
+        return tuple(value)
+    return ()
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True, eq=False)
+class _ConstructorContainerBinding:
+    """Retain one exact declaration container and the bindings captured from it."""
+
+    owner: object  # noqa: PAN001 - actual heterogeneous declaration container
+    children: tuple[object, ...]  # noqa: PAN001 - original heterogeneous field/entry references
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True, eq=False)
+class _ConstructorNumericBinding:
+    """Original supported mutable host leaf and its captured semantic bytes."""
+
+    owner: np.ndarray
+    digest: str
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True, eq=False)
+class _ConstructorSeriesBinding:
+    """Retained temporal/labelled source requiring a separate private contract."""
+
+    owner: pd.Series
+
+
+def _capture_constructor_bindings(
+    *,
+    values: tuple[object, ...],  # noqa: PAN001 - actual heterogeneous constructor surface
+) -> tuple[
+    _ConstructorContainerBinding
+    | _ConstructorNumericBinding
+    | _ConstructorSeriesBinding,
+    ...,
+]:
+    """Retain original children so identity reuse cannot conceal rebinding."""
+    seen: set[int] = set()
+    result = []
+    pending = list(values)
+    while pending:
+        value = pending.pop()
+        if id(value) in seen:
+            continue
+        seen.add(id(value))
+        if isinstance(value, pd.Series):
+            result.append(_ConstructorSeriesBinding(owner=value))
+            continue
+        if isinstance(value, np.ndarray) and not value.dtype.hasobject:
+            result.append(
+                _ConstructorNumericBinding(
+                    owner=value, digest=_semantic_fingerprint(np.asarray(value))
+                )
+            )
+            continue
+        children = _constructor_container_children(value)
+        if children or isinstance(value, Mapping | tuple | list | set | frozenset):
+            result.append(_ConstructorContainerBinding(owner=value, children=children))
+            pending.extend(children)
+    return tuple(result)
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _ModelConstructorInputs:
+    """Immutable real declarations shared by initial and call-owned generations."""
+
+    description: str = ""
+    ages: AgeGrid | None = None
+    n_periods: int | None = None
+    regimes: Mapping[RegimeName, UserRegime]
+    regime_id_class: type[DataclassInstance]
+    shocks: Mapping[ShockGroupName, ShockGroup] = MappingProxyType({})
+    enable_jit: bool = True
+    durable_identity: bool = True
+    fixed_params: UserParams = MappingProxyType({})
+    derived_categoricals: Mapping[FunctionName, DiscreteGrid] = MappingProxyType({})
+    functions: Mapping[FunctionName, FunctionEntry] = MappingProxyType({})
+    constraints: Mapping[FunctionName, ConstraintEntry] = MappingProxyType({})
+    output_only_functions: tuple[FunctionName, ...] = ()
+    states: Mapping[StateName, StateEntry] = MappingProxyType({})
+    state_transitions: Mapping[StateName, StateTransitionEntry] = MappingProxyType({})
+    actions: Mapping[ActionName, ActionEntry] = MappingProxyType({})
+    koopmans_aggregator: UserFunction = LinearAggregator()
+    certainty_equivalent: CertaintyEquivalent = LinearExpectation()
+    execution_config: ExecutionConfig = dataclasses.field(
+        default_factory=ExecutionConfig
+    )
+    initial_nodes: UserInitialNodes
+    edges: DeclaredModelEdges
+    composite_states: Mapping[StateName, CompositeState] = MappingProxyType({})
+
+    _container_bindings: tuple[
+        _ConstructorContainerBinding
+        | _ConstructorNumericBinding
+        | _ConstructorSeriesBinding,
+        ...,
+    ] = dataclasses.field(init=False, repr=False, compare=False)
+    _input_bindings: tuple[object, ...] = dataclasses.field(  # noqa: PAN001 - actual heterogeneous constructor surface
+        init=False, repr=False, compare=False
+    )
+
+    def __post_init__(self) -> None:
+        """Retain and seal declaration bindings without copying numerical operands."""
+        for name in (
+            "regimes",
+            "shocks",
+            "fixed_params",
+            "derived_categoricals",
+            "functions",
+            "constraints",
+            "states",
+            "state_transitions",
+            "actions",
+            "composite_states",
+        ):
+            object.__setattr__(
+                self, name, ensure_containers_are_immutable(getattr(self, name))
+            )
+        object.__setattr__(self, "edges", snapshot_transition_containers(self.edges))
+        inputs = tuple(
+            getattr(self, item.name) for item in dataclasses.fields(self) if item.init
+        )
+        object.__setattr__(self, "_input_bindings", inputs)
+        object.__setattr__(
+            self, "_container_bindings", _capture_constructor_bindings(values=inputs)
+        )
+
+    def check_retained(self, *, dated: bool = False) -> None:
+        """Check raw retained bindings and contents before any declaration effects."""
+        current_inputs = tuple(
+            getattr(self, item.name) for item in dataclasses.fields(self) if item.init
+        )
+        if any(
+            left is not right
+            for left, right in zip(current_inputs, self._input_bindings, strict=True)
+        ):
+            raise RuntimeError(
+                "Retained Model constructor field bindings changed before "
+                "canonical declaration preparation."
+            )
+        for binding in self._container_bindings:
+            if isinstance(binding, _ConstructorSeriesBinding):
+                if dated:
+                    raise UnsupportedOperationError(
+                        "Private dated generation requires retained pandas Series "
+                        "value/index/dimension/label custody before preparation; "
+                        "this supported parameter class remains required."
+                    )
+                continue
+            if isinstance(binding, _ConstructorNumericBinding):
+                if _semantic_fingerprint(np.asarray(binding.owner)) != binding.digest:
+                    raise RuntimeError(
+                        "Retained Model constructor numeric contents changed before "
+                        "canonical declaration preparation."
+                    )
+                continue
+            current = _constructor_container_children(binding.owner)
+            if len(current) != len(binding.children) or any(
+                left is not right
+                for left, right in zip(current, binding.children, strict=True)
+            ):
+                raise RuntimeError(
+                    "Retained Model constructor container bindings changed before "
+                    "canonical declaration preparation."
+                )
+
+    def prepare(
+        self,
+        *,
+        model: Model,
+        dated: bool = False,
+        materializer: SimulationEntryAllocations | None = None,
+        hardware: ExecutionHardware | None = None,
+    ) -> _ModelDeclarationPreparation:
+        """Check retained inputs before the common declaration factory reads them."""
+        self.check_retained(dated=dated)
+        return model._prepare_declarations(  # noqa: SLF001 - canonical generation owns this private lifecycle handoff
+            materializer=materializer,
+            hardware=hardware,
+            dated_constructor=self if dated else None,
+            description=self.description,
+            ages=self.ages,
+            n_periods=self.n_periods,
+            regimes=self.regimes,
+            regime_id_class=self.regime_id_class,
+            shocks=self.shocks,
+            enable_jit=self.enable_jit,
+            durable_identity=self.durable_identity,
+            fixed_params=self.fixed_params,
+            derived_categoricals=self.derived_categoricals,
+            functions=self.functions,
+            constraints=self.constraints,
+            output_only_functions=self.output_only_functions,
+            states=self.states,
+            state_transitions=self.state_transitions,
+            actions=self.actions,
+            koopmans_aggregator=self.koopmans_aggregator,
+            certainty_equivalent=self.certainty_equivalent,
+            execution_config=self.execution_config,
+            initial_nodes=self.initial_nodes,
+            edges=self.edges,
+            composite_states=self.composite_states,
+        )
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _ModelDeclarationPreparation:
+    """One normalized declaration's genuine program-build inputs."""
+
+    prepared_structure: PreparedModelStructure
+    fixed_params: UserParams
+    params_already_consumed: frozenset[str]
+    targets_by_regime: Mapping[RegimeName, frozenset[RegimeName]]
+    execution_config: ExecutionConfig
+    enable_jit: bool
+    state_utility_obligations: StateUtilityObligations
+    euler_grid_obligations: EulerGridObligations
+
+
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class _SolutionPreparation:
     """The authority and identities one solve's result is bound to."""
@@ -703,10 +990,12 @@ class _SolutionPreparation:
     """Post-solve artifacts the result keeps."""
     declared_authority: SolutionAuthority
     """The model's declared solution authority for the solve's grid support."""
+    generation: CanonicalModelGeneration
+    """The exact canonical programs retained independently of the cache."""
     retain_all_persistable: bool
     """Whether every independently persistable artifact is kept."""
     persistable_artifact_refs: frozenset[ArtifactRef]
-    """Addresses the persistence-oriented retention selects."""
+    """Durable addresses selected by retention and actual forward demands."""
     model_fingerprint: str
     """Durable identity of the model and its solution parameters."""
     program_fingerprint: str
@@ -724,8 +1013,9 @@ _VALUES_RETAINED_ON_THE_HOST = BackwardInductionResult(
 class Model:
     """A model which is created from a regime.
 
-    Upon initialization, internal regimes will be created which contain all
-    the functions needed to solve and simulate the model.
+    Parameter-independent programs are installed at construction. Supported scalar
+    current-IID declarations retain real metadata until solve or simulation supplies
+    the parameters needed to acquire an installed execution.
 
     """
 
@@ -823,13 +1113,31 @@ class Model:
     Private: `execution_devices` is the public view of the device selection.
     """
 
-    _simulate_runtime_regimes: dict[int, MappingProxyType[RegimeName, Regime]]
+    _constructor_inputs: _ModelConstructorInputs | None
+    _declaration_preparation: _ModelDeclarationPreparation | None
+    _dated_parameters: PreparedDatedParameters | None
+    _dated_generation: PreparedDatedGeneration | None
+    _generation_cache: CanonicalGenerationCache
+    _active_generation: weakref.ReferenceType[CanonicalModelGeneration] | None
+    _initial_generation_key: str | None
+    _declaration_fingerprint: str
+    _sealed_numeric_roots: tuple[jax.Array, ...]
+    """Actual device arrays consumed by the existing durable semantic walk."""
+
+    _prepared_declaration_seal: str | None
+    """Runtime-only declaration custody before a genuine execution is installed."""
+
+    _simulate_runtime_regimes: dict[
+        tuple[str, int], MappingProxyType[RegimeName, Regime]
+    ]
     """Program executors shared by calls with the same outer subject shape."""
 
     _shock_path_runtime_regimes: dict[
         tuple[
+            str,
             int,
             frozenset[StateName],
+            str,
             frozenset[tuple[RegimeName, frozenset[QualifiedName]]],
         ],
         MappingProxyType[RegimeName, Regime],
@@ -856,7 +1164,7 @@ class Model:
     program and extents; released with the model."""
 
     @beartype(conf=MODEL_CONF)
-    def __init__(  # noqa: PLR0915
+    def __init__(
         self,
         *,
         description: str = "",
@@ -964,6 +1272,234 @@ class Model:
                 conditions name the members. At most one composite state.
 
         """
+        self._constructor_inputs = _ModelConstructorInputs(
+            description=description,
+            ages=ages,
+            n_periods=n_periods,
+            regimes=regimes,
+            regime_id_class=regime_id_class,
+            shocks=shocks,
+            enable_jit=enable_jit,
+            durable_identity=durable_identity,
+            fixed_params=fixed_params,
+            derived_categoricals=derived_categoricals,
+            functions=functions,
+            constraints=constraints,
+            output_only_functions=output_only_functions,
+            states=states,
+            state_transitions=state_transitions,
+            actions=actions,
+            koopmans_aggregator=koopmans_aggregator,
+            certainty_equivalent=certainty_equivalent,
+            execution_config=execution_config,
+            initial_nodes=initial_nodes,
+            edges=edges,
+            composite_states=composite_states,
+        )
+        dated = bool(shocks) and any(
+            (
+                bool(regime.shocks.solve or regime.shocks.simulate)
+                if isinstance(regime.shocks, Phased)
+                else bool(regime.shocks)
+            )
+            and type(regime.solver) is not GridSearch
+            for regime in regimes.values()
+        )
+        hardware = None
+        if dated:
+            hardware = resolve_execution_hardware(
+                config=execution_config,
+                visible_device_ids=visible_device_ids(),
+                device_pool_limit_bytes=visible_device_pool_limits(),
+            )
+            if hardware.device_memory_bytes is not None:
+                raise UnsupportedOperationError(
+                    "Public call-owned current-IID construction requires an "
+                    "unbudgeted execution; finite-budget producer admission "
+                    "remains required."
+                )
+        prepared = self._constructor_inputs.prepare(
+            model=self, dated=dated, hardware=hardware
+        )
+        self._dated_parameters = None
+        self._dated_generation = None
+        self._declaration_preparation = prepared
+        if dated:
+            self._prepare_public_dated_declaration(prepared=prepared)
+            return
+        built_regimes, template = build_regimes_and_template(
+            ages=self._time,
+            user_regimes=self.user_regimes,
+            regime_names_to_ids=self.regime_names_to_ids,
+            enable_jit=prepared.enable_jit,
+            fixed_params=prepared.fixed_params,
+            params_already_consumed=prepared.params_already_consumed,
+            prepared_structure=prepared.prepared_structure,
+            phase_transitions=self.declared_transitions,
+            execution=self._execution,
+        )
+        self._install_programs(
+            regimes=built_regimes, template=template, prepared=prepared
+        )
+
+    @property
+    def _is_prepared_dated(self) -> bool:
+        """Whether this object has genuine metadata but no installed programs."""
+        return self._dated_parameters is not None and self._dated_generation is None
+
+    def _prepare_public_dated_declaration(
+        self, *, prepared: _ModelDeclarationPreparation
+    ) -> None:
+        """Retain the supported scalar declaration until actual parameters arrive."""
+        from _lcm.solution.dcegm import (  # noqa: PLC0415 - avoid solver import cycles
+            _BoundDCEGM,
+        )
+
+        if (
+            self._execution.device_memory_bytes is not None
+            or self._composite_states
+            or not prepared.prepared_structure.current_iid_bindings
+        ):
+            raise UnsupportedOperationError(
+                "Public call-owned construction requires unbudgeted scalar "
+                "current-IID DCEGM declarations."
+            )
+        representatives = prepared.prepared_structure.representative_user_regimes
+        for name, regime in representatives.items():
+            law = prepared.prepared_structure.laws[name]
+            if law.terminal:
+                if (
+                    type(regime.solver) is not GridSearch
+                    or regime.actions
+                    or len(regime.states) != 1
+                    or not all(
+                        isinstance(grid, ContinuousGrid)
+                        for grid in regime.states.values()
+                    )
+                ):
+                    raise UnsupportedOperationError(
+                        f"Public call-owned terminal {name!r} requires its "
+                        "ordinary scalar action-free publisher."
+                    )
+                continue
+            solver = regime.solver
+            if (
+                type(solver) is not _BoundDCEGM
+                or tuple(regime.states) != (solver.continuous_state,)
+                or tuple(regime.actions) != (solver.continuous_action,)
+                or not isinstance(
+                    regime.states[solver.continuous_state], ContinuousGrid
+                )
+                or not isinstance(
+                    regime.actions[solver.continuous_action], ContinuousGrid
+                )
+            ):
+                raise UnsupportedOperationError(
+                    f"Public call-owned source {name!r} requires original "
+                    "one-state one-action DCEGM declarations."
+                )
+        self._dated_parameters = self._prepare_dated_metadata(prepared=prepared)
+        self._params_template = self._dated_parameters.fixed.remaining_template
+        self.enable_jit = prepared.enable_jit
+        self.stakeholder_names_to_ids = build_role_vocabulary(
+            {name: regime.stakeholders for name, regime in representatives.items()}
+        )
+        self.simulation_output_dtypes = _get_output_dtypes(
+            user_regimes=self.user_regimes,
+            shocks=self.shocks,
+            regime_names_to_ids=self.regime_names_to_ids,
+        )
+        recorder = BindingRecorder()
+        numeric_roots: list[jax.Array] = []
+        self._prepared_declaration_seal = self._fingerprint_constructor_inputs(
+            recorder=recorder, numeric_roots=numeric_roots
+        )
+        self._sealed_bindings = recorder.sealed()
+        self._sealed_numeric_roots = tuple(numeric_roots)
+        self._declaration_fingerprint = self._fingerprint_declarations()
+
+    def _fingerprint_constructor_inputs(
+        self,
+        *,
+        recorder: BindingRecorder | None = None,
+        numeric_roots: list[jax.Array] | None = None,
+    ) -> str:
+        """Seal retained init fields without treating them as compiled programs."""
+        declarations = self._constructor_inputs
+        if declarations is None:
+            raise TypeError("Prepared declarations lost their original constructor.")
+        declarations.check_retained(dated=True)
+        hasher = _SemanticHasher(
+            binding_recorder=recorder,
+            array_recorder=None if numeric_roots is None else numeric_roots.append,
+        )
+        hasher.visit(
+            value=tuple(
+                (
+                    item.name,
+                    get_category_codes(declarations.regime_id_class)
+                    if item.name == "regime_id_class"
+                    else getattr(declarations, item.name),
+                )
+                for item in dataclasses.fields(declarations)
+                if item.init
+            )
+        )
+        return hasher.hexdigest()
+
+    def _fail_if_prepared_helper(self, *, operation: str) -> None:
+        """Refuse helpers that have no selected call-owned execution."""
+        if self._is_prepared_dated:
+            raise UnsupportedOperationError(
+                f"Call-owned {operation} requires an acquired execution; "
+                "this helper is not yet admitted for prepared public Models."
+            )
+
+    def _prepare_declarations(  # noqa: PLR0915
+        self,
+        *,
+        description: str = "",
+        ages: AgeGrid | None = None,
+        n_periods: int | None = None,
+        regimes: Mapping[RegimeName, UserRegime],
+        regime_id_class: type[DataclassInstance],
+        shocks: Mapping[ShockGroupName, ShockGroup] = MappingProxyType({}),
+        enable_jit: bool = True,
+        durable_identity: bool = True,
+        fixed_params: UserParams = MappingProxyType({}),
+        derived_categoricals: Mapping[FunctionName, DiscreteGrid] = MappingProxyType(
+            {}
+        ),
+        functions: Mapping[FunctionName, FunctionEntry] = MappingProxyType({}),
+        constraints: Mapping[FunctionName, ConstraintEntry] = MappingProxyType({}),
+        output_only_functions: tuple[FunctionName, ...] = (),
+        states: Mapping[StateName, StateEntry] = MappingProxyType({}),
+        state_transitions: Mapping[StateName, StateTransitionEntry] = MappingProxyType(
+            {}
+        ),
+        actions: Mapping[ActionName, ActionEntry] = MappingProxyType({}),
+        koopmans_aggregator: UserFunction = LinearAggregator(),
+        certainty_equivalent: CertaintyEquivalent = LinearExpectation(),
+        execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
+        initial_nodes: UserInitialNodes,
+        edges: DeclaredModelEdges,
+        composite_states: Mapping[StateName, CompositeState] = MappingProxyType({}),
+        materializer: SimulationEntryAllocations | None = None,
+        hardware: ExecutionHardware | None = None,
+        dated_constructor: _ModelConstructorInputs | None = None,
+    ) -> _ModelDeclarationPreparation:
+        """Normalize real declarations; this boundary publishes no Model programs."""
+        if dated_constructor is not None:
+            if dated_constructor is not self._constructor_inputs:
+                raise TypeError(
+                    "Deferred U validation requires the retained constructor."
+                )
+            dated_constructor.check_retained(dated=True)
+        if materializer is not None and composite_states:
+            raise ExecutionPlanningError(
+                "Cold composite declarations require admission before the "
+                "nested dense Model."
+            )
         # A composite state replaces its members by one generated state before
         # anything reads the regimes; a dense build supplies the member laws.
         regimes, self._composite_states, composite_consumed_params = (
@@ -1000,8 +1536,14 @@ class Model:
         self.description = description
         self.durable_identity = durable_identity
         self._identity_process_id = os.getpid()
+        self._prepared_declaration_seal = None
         self.ages = ages
         self._time = ModelTime.from_inputs(ages=ages, n_periods=n_periods)
+        if materializer is not None and ages is None:
+            raise UnsupportedOperationError(
+                "Cold dated period clocks require admitted construction of their "
+                "original coordinate array before declaration readers."
+            )
         self.n_periods = self._time.n_periods
         self.fixed_params = ensure_containers_are_immutable(fixed_params)
         # The graph declares every regime transition: bind each source's law
@@ -1030,6 +1572,7 @@ class Model:
             factored_functions,
             self._fixed_component_splits,
         ) = factor_fixed_components(
+            materializer=materializer,
             regimes=regimes,
             laws=laws,
             fixed_params={
@@ -1056,7 +1599,11 @@ class Model:
         )
         self._simulate_runtime_regimes = {}
         self._shock_path_runtime_regimes = {}
-        self._simulate_entry_operations = ProfiledSimulationOperations()
+        self._simulate_entry_operations = (
+            ProfiledSimulationOperations()
+            if materializer is None
+            else materializer.operations
+        )
         self._simulate_compile_lock = threading.Lock()
         self._kept_parts_programs = {}
         self._action_extent_programs = {}
@@ -1064,10 +1611,11 @@ class Model:
         # result round-tripped together remain compatible, but deliberately not
         # presented as a durable model-content fingerprint.
         self._solution_model_instance_id = uuid.uuid4().hex
-        self._declared_authority_cache: OrderedDict[str, SolutionAuthority] = (
-            OrderedDict()
+        self._generation_cache = CanonicalGenerationCache(
+            capacity=_DECLARED_AUTHORITY_CACHE_SIZE
         )
-        self._declared_authority_lock = threading.Lock()
+        self._active_generation = None
+        self._initial_generation_key = None
         # Digests of full canonical params whose regime selection validated.
         # Validation is a pure function of the sealed model and these params,
         # so a repeat with identical params cannot raise; failures are never
@@ -1138,6 +1686,7 @@ class Model:
         )
         self._declared_edge_vocabulary = declared_edge_vocabulary
         prepared_graph = prepare_graph(
+            materializer=materializer,
             regimes=merged_regimes,
             laws=laws,
             edges=graph_edges,
@@ -1183,6 +1732,14 @@ class Model:
         discrete_names = declared_discrete_names(
             regimes=merged_regimes, derived_categoricals=derived_categoricals
         ) | frozenset(self._shock_registry.discrete_grids)
+        if materializer is not None and any(
+            schedules.context_periods_by_regime[name] and _regime_has_markers(regime)
+            for name, regime in merged_regimes.items()
+        ):
+            raise ExecutionPlanningError(
+                "Cold temporal declarations require admission before pruning "
+                "resolves build(age)."
+            )
         pruned_regimes, self.pruned_variables = prune_broadcast_variables(
             current_iid_state_inputs=self._shock_registry.state_inputs_by_regime,
             user_regimes=merged_regimes,
@@ -1221,6 +1778,7 @@ class Model:
             residual_fixed_params,
             params_consumed_by_binder,
         ) = bind_fixed_process_laws(
+            array_writer=materializer,
             user_regimes=pruned_regimes,
             fixed_params={
                 name: value
@@ -1231,7 +1789,9 @@ class Model:
         value_grids_by_regime = bind_reading_regimes(
             value_grids={
                 **collect_adapter_grids(
-                    regimes=pruned_regimes, derived_categoricals=derived_categoricals
+                    materializer=materializer,
+                    regimes=pruned_regimes,
+                    derived_categoricals=derived_categoricals,
                 ),
                 **self._shock_registry.discrete_grids,
             },
@@ -1256,7 +1816,9 @@ class Model:
             value_grids_by_regime=value_grids_by_regime, adapters=adapters
         )
         fail_if_a_fixed_entry_is_off_a_read_node(
-            regimes=finalized_regimes, process_code_reads=self._process_code_reads
+            materializer=materializer,
+            regimes=finalized_regimes,
+            process_code_reads=self._process_code_reads,
         )
         # Runs on the finalized regimes, since a conditioner's law may arrive as
         # a model-level broadcast, and against the resolved graph support: the
@@ -1268,7 +1830,26 @@ class Model:
         )
         self.user_regimes = finalized_regimes
         validate_regimes(regimes=self.user_regimes, laws=laws)
+        state_utility_obligations: StateUtilityObligations = (
+            MappingProxyType({})
+            if dated_constructor is None
+            else dated_state_utility_obligations(
+                user_regimes=self.user_regimes,
+                periods=schedules.context_periods_by_regime,
+            )
+        )
+        euler_grid_obligations: EulerGridObligations = (
+            MappingProxyType({})
+            if dated_constructor is None
+            else dated_euler_grid_obligations(
+                user_regimes=self.user_regimes,
+                periods=schedules.context_periods_by_regime,
+            )
+        )
         validate_model_inputs(
+            materializer=materializer,
+            euler_grid_obligations=euler_grid_obligations,
+            state_utility_obligations=state_utility_obligations,
             current_iid_helpers=self._shock_registry.helper_inputs_by_regime,
             current_iid_state_inputs=self._shock_registry.state_inputs_by_regime,
             user_regimes=self.user_regimes,
@@ -1295,8 +1876,15 @@ class Model:
         self.regime_names_to_ids = get_category_codes(regime_id_class)
         self._execution = resolve_execution_config(
             config=execution_config,
-            visible_device_ids=visible_device_ids(),
-            device_pool_limit_bytes=visible_device_pool_limits(),
+            visible_device_ids=(
+                visible_device_ids() if hardware is None else hardware.device_ids
+            ),
+            device_pool_limit_bytes=(
+                visible_device_pool_limits()
+                if hardware is None
+                else hardware.device_pool_limit_bytes
+            ),
+            hardware=hardware,
             state_names=frozenset(factored_states)
             | frozenset(
                 name for regime in self.user_regimes.values() for name in regime.states
@@ -1330,7 +1918,10 @@ class Model:
         prepared_structure = prepare_model_structure(
             original_periods_by_regime=schedules.visited_periods_by_regime,
             exit_function_demand=demanded_exit_function_paths(
-                regimes=self.user_regimes, schedules=schedules, ages=self._time
+                materializer=materializer,
+                regimes=self.user_regimes,
+                schedules=schedules,
+                ages=self._time,
             ),
             value_periods_by_regime=schedules.coverage_by_regime,
             query_periods_by_phase=schedules.query_periods_by_phase,
@@ -1378,30 +1969,76 @@ class Model:
         prepared_structure = dataclasses.replace(
             prepared_structure, current_iid_bindings=self._shock_registry.bindings
         )
-        self._regimes, self._params_template = build_regimes_and_template(
-            ages=self._time,
-            user_regimes=self.user_regimes,
-            regime_names_to_ids=self.regime_names_to_ids,
-            enable_jit=enable_jit,
-            fixed_params={
-                name: value
-                for name, value in residual_fixed_params.items()
-                if name not in self.shocks
-            },
+        return _ModelDeclarationPreparation(
+            prepared_structure=prepared_structure,
+            state_utility_obligations=state_utility_obligations,
+            euler_grid_obligations=euler_grid_obligations,
+            fixed_params=MappingProxyType(
+                {
+                    name: value
+                    for name, value in residual_fixed_params.items()
+                    if name not in self.shocks
+                }
+            ),
             params_already_consumed=(
                 params_consumed_by_binder
                 | prepared_graph.consumed_param_keys
                 | composite_consumed_params
                 | shock_consumed_params
             ),
-            prepared_structure=prepared_structure,
-            phase_transitions=self.declared_transitions,
-            execution=self._execution,
+            targets_by_regime=schedules.targets_by_regime,
+            execution_config=execution_config,
+            enable_jit=enable_jit,
         )
+
+    def _install_programs(
+        self,
+        *,
+        regimes: MappingProxyType[RegimeName, Regime],
+        template: ParamsTemplate,
+        prepared: _ModelDeclarationPreparation,
+    ) -> None:
+        """Install and seal real programs after the shared declaration preparation."""
+        if prepared.euler_grid_obligations:
+            dated = self._dated_generation
+            metadata = self._dated_parameters
+            if (
+                dated is None
+                or metadata is None
+                or metadata.euler_grid_obligations
+                is not prepared.euler_grid_obligations
+                or regimes is not dated.regimes
+            ):
+                raise TypeError(
+                    "Runtime Euler validation lost its installed generation."
+                )
+            dated.preparation.numerical.validate_euler_grids(
+                expected=prepared.euler_grid_obligations
+            )
+        if prepared.state_utility_obligations:
+            dated = self._dated_generation
+            metadata = self._dated_parameters
+            if (
+                dated is None
+                or metadata is None
+                or (
+                    dated.preparation.numerical.state_utility_obligations
+                    is not prepared.state_utility_obligations
+                    or regimes is not dated.regimes
+                )
+            ):
+                raise TypeError(
+                    "Unresolved direct-state utility cannot install Model programs."
+                )
+            dated.preparation.numerical.validate_state_utility(
+                installed_regimes=regimes, fixed_flat_params=metadata.fixed.granular
+            )
+        self._regimes = regimes
+        self._params_template = template
         self._regimes = admit_invariant_blocking(
             user_regimes=self.user_regimes,
             regimes=self._regimes,
-            laws=laws,
+            laws=self._graph.laws,
             reachability=self.reachability,
             initial_nodes=self._resolved_initial_nodes,
             ages=self._time,
@@ -1415,20 +2052,20 @@ class Model:
                 name: (*regime.solution.grids.items(), *regime.simulation.grids.items())
                 for name, regime in self._regimes.items()
             },
-            targets_by_regime=schedules.targets_by_regime,
+            targets_by_regime=prepared.targets_by_regime,
         )
         # The axis names a width may fix are what the core programs declare, so
         # this is the first point at which the declaration can be checked at all.
         # Each phase contributes one collection of programs.
         fail_if_axis_widths_name_undeclared_axes(
-            axis_widths=execution_config.axis_widths,
+            axis_widths=prepared.execution_config.axis_widths,
             program_collections=(
                 _solve_programs(regimes=self._regimes),
                 _simulation_programs(regimes=self._regimes),
             ),
         )
         fail_if_axis_widths_name_undeclared_axes(
-            axis_widths=execution_config.axis_width_ceilings,
+            axis_widths=prepared.execution_config.axis_width_ceilings,
             program_collections=(
                 _solve_programs(regimes=self._regimes),
                 _simulation_programs(regimes=self._regimes),
@@ -1436,7 +2073,7 @@ class Model:
             label="axis_width_ceilings",
         )
         fail_if_axis_widths_name_undeclared_axes(
-            axis_widths=execution_config.covered_axes,
+            axis_widths=prepared.execution_config.covered_axes,
             program_collections=(
                 _solve_programs(regimes=self._regimes),
                 _simulation_programs(regimes=self._regimes),
@@ -1451,7 +2088,7 @@ class Model:
             (regime.stakeholder_names_to_ids for regime in self._regimes.values()),
             MappingProxyType({}),
         )
-        self.enable_jit = enable_jit
+        self.enable_jit = prepared.enable_jit
         self.simulation_output_dtypes = _get_output_dtypes(
             user_regimes=self.user_regimes,
             shocks=self.shocks,
@@ -1461,6 +2098,533 @@ class Model:
             solution_param_projection(self._regimes)
         )
         self._seal()
+        self._declaration_fingerprint = self._fingerprint_declarations()
+
+    def _fingerprint_declarations(self) -> str:
+        """Hash declared economics independently of call-owned program schemas."""
+        if not self.durable_identity:
+            return hashlib.sha256(
+                (
+                    "pylcm-ephemeral-declarations:" + self._solution_model_instance_id
+                ).encode()
+            ).hexdigest()
+        metadata = self._dated_parameters
+        return fingerprint_model_declarations(
+            ages=self._time,
+            user_regimes=self.user_regimes,
+            laws=self._graph.laws,
+            regime_names_to_ids=self.regime_names_to_ids,
+            fixed_params=MappingProxyType(
+                {
+                    name: regime_kernel_params(
+                        metadata.fixed.granular, regime_name=name
+                    )
+                    for name in self.user_regimes
+                }
+                if metadata is not None and self._dated_generation is None
+                else {
+                    name: regime.resolved_fixed_params
+                    for name, regime in self._regimes.items()
+                }
+            ),
+        )
+
+    @classmethod
+    def _from_call_owned_params(
+        cls,
+        *,
+        params: UserParams,
+        declarations: _ModelConstructorInputs,
+    ) -> Model:
+        """Immediately finalize real declarations with supplied call parameters.
+
+        No Model escapes this private adapter until actual canonical
+        parameters, support, dated programs and the common installation seal exist.
+        """
+        model = cls.__new__(cls)
+        model._constructor_inputs = declarations  # noqa: SLF001 - canonical generation owns this private lifecycle handoff
+        declarations.check_retained(dated=True)
+        hardware = resolve_execution_hardware(
+            config=declarations.execution_config,
+            visible_device_ids=visible_device_ids(),
+            device_pool_limit_bytes=visible_device_pool_limits(),
+        )
+        materializer = open_declaration_allocations(
+            hardware=hardware,
+            declarations=(*declarations._input_bindings, params),  # noqa: SLF001 - retained actual constructor ownership
+            regime_id_class=declarations.regime_id_class,
+        )
+        try:
+            prepared = declarations.prepare(
+                model=model, dated=True, materializer=materializer, hardware=hardware
+            )
+            model._declaration_preparation = prepared  # noqa: SLF001 - canonical generation owns this private lifecycle handoff
+            # The owned path checks its exact covered metadata route before the
+            # first original builder, then retains every admitted preparation.
+            model._dated_parameters = model._prepare_dated_metadata(  # noqa: SLF001 - actual canonical Model generation owns this handoff
+                prepared=prepared, materializer=materializer
+            )
+            model._retain_prepared_generation_roots(  # noqa: SLF001 - same owner retains completed preparation before params publication
+                array_writer=materializer,
+                trees=(prepared, model._dated_parameters),  # noqa: SLF001 - actual canonical Model generation owns this handoff
+            )
+            model._params_template = model._dated_parameters.fixed.remaining_template  # noqa: SLF001 - canonical generation owns this private lifecycle handoff
+            flat_params = model._canonicalize_params(  # noqa: SLF001 - canonical generation owns this private lifecycle handoff
+                params,
+                array_writer=materializer,
+                metadata=model._dated_parameters.builder.parameter_metadata(),  # noqa: SLF001 - canonical generation owns this private lifecycle handoff
+            )
+            model._finalize_dated_programs(  # noqa: SLF001 - actual canonical generation handoff
+                prepared=prepared,
+                flat_params=flat_params,
+                array_writer=materializer,
+                process_grid_resolver=(
+                    None if materializer is None else materializer.process_grid_resolver
+                ),
+            )
+            model._validate_canonical_params(  # noqa: SLF001 - canonical generation owns this private lifecycle handoff
+                flat_params=flat_params, array_writer=materializer, runtime_checks=True
+            )
+            model._validate_owned_generation_selection(  # noqa: SLF001 - original check through existing admitted route
+                flat_params=flat_params, array_writer=materializer, runtime_checks=True
+            )
+            model._acquire_generation(  # noqa: SLF001 - actual canonical Model generation owns this handoff
+                flat_params=flat_params,
+                array_writer=materializer,
+                process_grid_resolver=(
+                    None if materializer is None else materializer.process_grid_resolver
+                ),
+            )
+            return model
+        finally:
+            if materializer is not None:
+                materializer.close()
+
+    def _finalize_dated_programs(
+        self,
+        *,
+        prepared: _ModelDeclarationPreparation,
+        flat_params: FlatParams,
+        array_writer: SimulationEntryAllocations | None,
+        process_grid_resolver: ProcessGridResolver | None,
+    ) -> None:
+        """Install real dated programs while retaining each completed producer."""
+        metadata = self._dated_parameters
+        if metadata is None:
+            raise TypeError("Dated finalization requires prepared parameter metadata.")
+        support = prepare_dated_call_support(
+            prepared=metadata,
+            flat_params=flat_params,
+            process_grid_resolver=process_grid_resolver,
+        )
+        self._retain_prepared_generation_roots(
+            array_writer=array_writer, trees=(support,)
+        )
+        self._dated_generation = build_private_dated_balanced_regimes(
+            prepared=metadata,
+            call_contexts=support.contexts,
+            materializer=array_writer,
+        )
+        self._retain_prepared_generation_roots(
+            array_writer=array_writer, trees=(self._dated_generation,)
+        )
+        self._install_programs(
+            regimes=self._dated_generation.regimes,
+            template=self._dated_generation.params_template,
+            prepared=prepared,
+        )
+
+    def _prepare_dated_metadata(
+        self,
+        *,
+        prepared: _ModelDeclarationPreparation,
+        materializer: DatedGenerationMaterializer | None = None,
+    ) -> PreparedDatedParameters:
+        """Share the original fixed normalizer before projected finalization."""
+        if materializer is not None:
+            self._require_cold_dated_route(prepared=prepared)
+        return prepare_dated_parameters(
+            ages=self._time,
+            user_regimes=self.user_regimes,
+            regime_names_to_ids=self.regime_names_to_ids,
+            enable_jit=prepared.enable_jit,
+            fixed_params=prepared.fixed_params,
+            params_already_consumed=prepared.params_already_consumed,
+            prepared_structure=prepared.prepared_structure,
+            phase_transitions=self.declared_transitions,
+            euler_grid_obligations=prepared.euler_grid_obligations,
+            state_utility_obligations=prepared.state_utility_obligations,
+            execution=self._execution,
+            materializer=materializer,
+        )
+
+    def _require_cold_dated_route(
+        self, *, prepared: _ModelDeclarationPreparation
+    ) -> None:
+        """Require original scalar dated producers covered by entry admission."""
+        from _lcm.solution.dcegm import (  # noqa: PLC0415 - runtime-only private Model lifecycle
+            ExactEnvelope,
+            _BoundDCEGM,
+        )
+        from _lcm.solution.nbegm import _BoundNBEGM  # noqa: PLC0415
+
+        if (
+            self.ages is None
+            or self._execution.device_ids != (visible_device_ids()[0],)
+            or not prepared.enable_jit
+            or self._execution.sharded_states
+            or self._execution.invariant_block_widths
+        ):
+            raise UnsupportedOperationError(
+                "Cold dated admission requires an age clock, the default device "
+                "and the original unsharded compiled scalar producers; other "
+                "terminal template placements require their admitted producer."
+            )
+        if any(type(group.nodes) is not UserNodes for group in self.shocks.values()):
+            raise UnsupportedOperationError(
+                "Cold dated generated quadrature rules require admission before "
+                "their original host node factories; supplied UserNodes are supported."
+            )
+        concrete_grids = (
+            LinSpacedGrid,
+            LogSpacedGrid,
+            IrregSpacedGrid,
+            PiecewiseLinSpacedGrid,
+            PiecewiseLogSpacedGrid,
+        )
+        structure = prepared.prepared_structure
+        for name, regime in structure.representative_user_regimes.items():
+            law = structure.laws[name]
+            if (
+                regime.exits
+                or regime.same_period_refs
+                or regime.value_constraints
+                or regime.stakeholders is not None
+                or regime.taste_shocks is not None
+                or regime.derived_categoricals
+                or law.arrivals
+                or law.gated_edges
+                or any(
+                    type(grid) not in concrete_grids
+                    for grid in (*regime.states.values(), *regime.actions.values())
+                )
+            ):
+                raise UnsupportedOperationError(
+                    f"Cold dated source {name!r} requires admitted original "
+                    "categorical/process/collective/exit/query producers."
+                )
+            if law.terminal:
+                if (
+                    type(regime.solver) is not GridSearch
+                    or regime.actions
+                    or len(regime.states) > 1
+                ):
+                    raise UnsupportedOperationError(
+                        f"Cold ordinary child {name!r} requires its original "
+                        "scalar terminal publisher without actions."
+                    )
+                continue
+            solver = regime.solver
+            if (
+                not isinstance(solver, (_BoundDCEGM, _BoundNBEGM))
+                or type(solver) not in (_BoundDCEGM, _BoundNBEGM)
+                or (
+                    type(solver) is _BoundDCEGM
+                    and type(solver.envelope) is not ExactEnvelope
+                )
+                or tuple(regime.states) != (solver.continuous_state,)
+                or tuple(regime.actions) != (solver.continuous_action,)
+                or not isinstance(
+                    regime.states[solver.continuous_state], ContinuousGrid
+                )
+                or not isinstance(
+                    regime.actions[solver.continuous_action], ContinuousGrid
+                )
+                or (
+                    solver.post_decision_bound is not None
+                    and solver.post_decision_bound.kind != "literal"
+                )
+            ):
+                raise UnsupportedOperationError(
+                    f"Cold dated source {name!r} requires its genuine one-state "
+                    "one-action literal-floor DCEGM/ExactEnvelope or NB producers."
+                )
+
+    @staticmethod
+    def _retain_prepared_generation_roots(
+        *,
+        array_writer: SimulationEntryAllocations | None,
+        trees: tuple[PytreeValue, ...],
+    ) -> None:
+        """Keep completed actual preparation owners beside subsequent producers."""
+        if array_writer is not None:
+            array_writer.model_roots = (
+                *array_writer.model_roots,
+                *canonical_generation_roots(declarations=trees),
+            )
+
+    def _retained_generation_hardware(
+        self, *, config: ExecutionConfig
+    ) -> ExecutionHardware:
+        """Project original resolved facts, without applying another budget policy."""
+        return ExecutionHardware(
+            config=config,
+            device_ids=self._execution.device_ids,
+            device_memory_bytes=self._execution.device_memory_bytes,
+            requested_device_memory_bytes=self._execution.requested_device_memory_bytes,
+            budget_source=self._execution.budget_source,
+            device_pool_limit_bytes=self._execution.device_pool_limit_bytes,
+        )
+
+    def _validate_owned_generation_selection(
+        self,
+        *,
+        flat_params: FlatParams,
+        array_writer: SimulationEntryAllocations | None,
+        runtime_checks: bool,
+    ) -> None:
+        """Use the existing admitted selection-law route after genuine installation."""
+        if array_writer is None:
+            return
+        self._retain_prepared_generation_roots(
+            array_writer=array_writer, trees=self._generation_roots()
+        )
+        resolver = array_writer.process_grid_resolver
+        for regime_name, regime in self._regimes.items():
+            regime.solution.resolve_process_grids(
+                regime_params=regime_kernel_params(
+                    flat_params, regime_name=regime_name
+                ),
+                process_grid_resolver=resolver,
+            )
+        resolver.seal()
+        memory = self._transition_memory(
+            flat_params=flat_params, array_writer=array_writer
+        )
+        if runtime_checks:
+            with naming_cells_without_edges(self._cells_without_edges):
+                validate_regime_selection(
+                    regimes=self._regimes,
+                    flat_params=flat_params,
+                    ages=self._time,
+                    process_grid_resolver=resolver,
+                    memory=memory,
+                )
+
+    def _generation_roots(self) -> tuple[PytreeValue, ...]:
+        """Retain actual static roots from both phases and dated continuation data."""
+        return canonical_generation_roots(
+            declarations=(
+                self._time.values,  # noqa: PD011 - TimeAxis numeric values
+                self.regime_names_to_ids,
+                self.fixed_params,
+                self._declaration_preparation
+                if self._is_prepared_dated
+                else self._regimes,
+                self._dated_parameters,
+                self._dated_generation,
+                self._sealed_numeric_roots,
+            )
+        )
+
+    def _acquire_generation(  # noqa: C901 - one single-flight owner for prepared and installed executions
+        self,
+        *,
+        flat_params: FlatParams,
+        array_writer: SimulationEntryAllocations | None = None,
+        process_grid_resolver: ProcessGridResolver | None = None,
+    ) -> CanonicalModelGeneration:
+        """Acquire programs, authority and seal together under one cold-build lock."""
+        self._check_identity_runtime()
+        schema = canonical_parameter_schema(flat_params=flat_params)
+        if self._is_prepared_dated:
+            if self._dated_parameters is None:
+                raise TypeError("Prepared Model lost its dated parameter metadata.")
+            resolved = prepare_dated_call_support(
+                prepared=self._dated_parameters,
+                flat_params=flat_params,
+                process_grid_resolver=process_grid_resolver,
+            )
+            support = fingerprint_prepared_solution_support(
+                support=resolved.support, flat_params=flat_params
+            )
+        else:
+            support = fingerprint_solution_support(
+                regimes=self._regimes,
+                flat_params=flat_params,
+                process_grid_resolver=process_grid_resolver,
+            )
+        key = _semantic_fingerprint(
+            (
+                "pylcm-canonical-generation-v1",
+                self._declaration_fingerprint,
+                schema,
+                support,
+            )
+        )
+        current = None if self._active_generation is None else self._active_generation()
+        if current is not None and current.key == key:
+            current.execution._check_identity_runtime()  # noqa: SLF001 - canonical generation owns this private lifecycle handoff
+            return current
+
+        def build() -> CanonicalModelGeneration:
+            # Check the original execution again after single-flight acquisition,
+            # before any cold constructor or support factory can read callbacks.
+            self._check_identity_runtime()
+            execution = self
+            if self._dated_parameters is not None and (
+                self._is_prepared_dated or self._initial_generation_key != key
+            ):
+                if (
+                    self._execution.device_memory_bytes is not None
+                    and array_writer is None
+                ):
+                    raise UnsupportedOperationError(
+                        "Cold budgeted dated preparation requires its receiving "
+                        "call's entry owner before constructor or support effects."
+                    )
+                if self._constructor_inputs is None:
+                    raise UnsupportedOperationError(
+                        "A restored dated Model requires genuine constructor "
+                        "declarations."
+                    )
+                execution = type(self).__new__(type(self))
+                execution._constructor_inputs = self._constructor_inputs  # noqa: SLF001 - canonical generation owns this private lifecycle handoff
+                prepared = self._constructor_inputs.prepare(
+                    model=execution,
+                    dated=True,
+                    materializer=array_writer,
+                    hardware=(
+                        None
+                        if array_writer is None
+                        else self._retained_generation_hardware(
+                            config=self._constructor_inputs.execution_config
+                        )
+                    ),
+                )
+                execution._declaration_preparation = prepared  # noqa: SLF001 - canonical generation owns this private lifecycle handoff
+                execution._solution_model_instance_id = self._solution_model_instance_id  # noqa: SLF001 - canonical generation owns this private lifecycle handoff
+                execution._dated_parameters = execution._prepare_dated_metadata(  # noqa: SLF001 - canonical generation owns this private lifecycle handoff
+                    prepared=prepared, materializer=array_writer
+                )
+                execution._retain_prepared_generation_roots(  # noqa: SLF001 - actual canonical Model generation owns this handoff
+                    array_writer=array_writer,
+                    trees=(prepared, execution._dated_parameters),  # noqa: SLF001 - actual canonical Model generation owns this handoff
+                )
+                execution._finalize_dated_programs(  # noqa: SLF001 - canonical generation owns this private lifecycle handoff
+                    prepared=prepared,
+                    flat_params=flat_params,
+                    array_writer=array_writer,
+                    process_grid_resolver=process_grid_resolver,
+                )
+                execution._generation_cache = self._generation_cache  # noqa: SLF001 - canonical generation owns this private lifecycle handoff
+                execution._initial_generation_key = key  # noqa: SLF001 - canonical generation owns this private lifecycle handoff
+                if self._is_prepared_dated and (
+                    fingerprint_solution_support(
+                        regimes=execution._regimes,  # noqa: SLF001 - compare genuine installed support before publication
+                        flat_params=flat_params,
+                        process_grid_resolver=process_grid_resolver,
+                    )
+                    != support
+                ):
+                    raise RuntimeError(
+                        "Prepared and installed generation support disagree."
+                    )
+            if execution._declaration_fingerprint != self._declaration_fingerprint:  # noqa: SLF001 - actual canonical generation handoff
+                raise RuntimeError("Call-owned generation changed its declarations.")
+            generation = CanonicalModelGeneration(
+                declaration_fingerprint=self._declaration_fingerprint,
+                key=key,
+                execution=execution,
+                roots=execution._generation_roots(),  # noqa: SLF001 - canonical generation owns this private lifecycle handoff
+            )
+            execution._active_generation = weakref.ref(generation)  # noqa: SLF001 - canonical generation owns this private lifecycle handoff
+            return generation
+
+        if self._initial_generation_key is None:
+            self._initial_generation_key = key
+        generation = self._generation_cache.acquire(key=key, factory=build)
+        self._check_identity_runtime()
+        return generation
+
+    @contextlib.contextmanager
+    def _dated_entry_allocations(
+        self, *, params: UserParams
+    ) -> Generator[SimulationEntryAllocations | None]:
+        """Own direct dated preparation through its receiving call's lifetime."""
+        if (
+            self._dated_parameters is None
+            or self._execution.device_memory_bytes is None
+        ):
+            yield None
+            return
+        entry = self._open_entry_allocations(params=params, inputs={}, solution=None)
+        if entry is None:
+            raise RuntimeError("A budgeted private generation lost its entry owner.")
+        try:
+            yield entry
+        finally:
+            entry.close()
+
+    def _prepare_call(
+        self,
+        *,
+        params: UserParams,
+        array_writer: SimulationEntryAllocations | None = None,
+        runtime_checks: bool = True,
+        use_categorical_codes: bool = False,
+    ) -> tuple[FlatParams, CanonicalModelGeneration]:
+        """Canonicalize once, acquire once, then validate the same real programs."""
+        self._check_identity_runtime()
+        if (
+            array_writer is None
+            and self._dated_parameters is not None
+            and self._execution.device_memory_bytes is not None
+        ):
+            with self._dated_entry_allocations(params=params) as owned:
+                flat_params, generation = self._prepare_call(
+                    params=params,
+                    array_writer=owned,
+                    runtime_checks=runtime_checks,
+                    use_categorical_codes=use_categorical_codes,
+                )
+                generation.execution._validate_owned_generation_selection(  # noqa: SLF001 - actual canonical Model generation owns this handoff
+                    flat_params=flat_params,
+                    array_writer=owned,
+                    runtime_checks=runtime_checks,
+                )
+                return flat_params, generation
+        metadata = (
+            None
+            if self._dated_parameters is None
+            else self._dated_parameters.builder.parameter_metadata()
+        )
+        flat_params = self._canonicalize_params(
+            params,
+            array_writer=array_writer,
+            metadata=metadata,
+            use_categorical_codes=use_categorical_codes,
+        )
+        if self._dated_parameters is None:
+            self._validate_canonical_params(
+                flat_params=flat_params,
+                array_writer=array_writer,
+                runtime_checks=runtime_checks,
+            )
+        generation = self._acquire_generation(
+            flat_params=flat_params,
+            array_writer=array_writer,
+            process_grid_resolver=(
+                None if array_writer is None else array_writer.process_grid_resolver
+            ),
+        )
+        if self._dated_parameters is not None:
+            generation.execution._validate_canonical_params(  # noqa: SLF001 - canonical generation owns this private lifecycle handoff
+                flat_params=flat_params,
+                array_writer=array_writer,
+                runtime_checks=runtime_checks,
+            )
+        return flat_params, generation
 
     @property
     def edges(self) -> ModelEdges:
@@ -1544,8 +2708,10 @@ class Model:
                 identity.encode()
             ).hexdigest()
             self._sealed_bindings = SealedBindings(bindings=())
+            self._sealed_numeric_roots = ()
             return
         recorder = BindingRecorder()
+        numeric_roots: list[jax.Array] = []
         try:
             self._model_structure_fingerprint: str = fingerprint_model_structure(
                 ages=self._time,
@@ -1554,6 +2720,7 @@ class Model:
                 laws=self._graph.laws,
                 regime_names_to_ids=self.regime_names_to_ids,
                 binding_recorder=recorder,
+                array_recorder=numeric_roots.append,
                 shock_groups=self.shocks,
                 shock_fixed_params={
                     name: value
@@ -1569,6 +2736,7 @@ class Model:
             )
             raise ModelInitializationError(msg) from error
         self._sealed_bindings: SealedBindings = recorder.sealed()
+        self._sealed_numeric_roots = tuple(numeric_roots)
 
     def _check_identity_runtime(self) -> None:
         """Check the binding seal or the ephemeral model's originating process."""
@@ -1578,6 +2746,20 @@ class Model:
                 "Build a new model and solve it there."
             )
         self._sealed_bindings.fail_if_moved()
+        if self._is_prepared_dated:
+            try:
+                unchanged = (
+                    self._fingerprint_constructor_inputs()
+                    == self._prepared_declaration_seal
+                )
+            except (TypeError, ValueError) as error:
+                raise ModelSealError(
+                    "Prepared Model declaration semantics changed before execution."
+                ) from error
+            if not unchanged:
+                raise ModelSealError(
+                    "Prepared Model declaration semantics changed before execution."
+                )
 
     def _fail_if_ephemeral_operation(self, *, operation: str) -> None:
         """Require durable identity for public period archives."""
@@ -1611,6 +2793,8 @@ class Model:
         them. The attributes an archive may lack are written only when the model
         holds them.
         """
+        if self._is_prepared_dated:
+            self._check_identity_runtime()
         state = _PickledModel(
             description=self.description,
             ages=self.ages,
@@ -1635,11 +2819,21 @@ class Model:
             _shock_registry=self._shock_registry,
             _params_template=self._params_template,
             _param_name_candidates=self._param_name_candidates,
-            _regimes=self._regimes,
             stakeholder_names_to_ids=self.stakeholder_names_to_ids,
             enable_jit=self.enable_jit,
             simulation_output_dtypes=self.simulation_output_dtypes,
         )
+        if not self._is_prepared_dated:
+            state["_regimes"] = self._regimes
+        else:
+            if self._prepared_declaration_seal is None:
+                raise TypeError("Prepared Model lost its declaration seal.")
+            state["_prepared_declaration_seal"] = self._prepared_declaration_seal
+        state["_constructor_inputs"] = self._constructor_inputs
+        state["_declaration_preparation"] = self._declaration_preparation
+        state["_dated_parameters"] = self._dated_parameters
+        state["_dated_generation"] = self._dated_generation
+        state["_initial_generation_key"] = self._initial_generation_key
         held = vars(self)
         if "durable_identity" in held:
             state["durable_identity"] = self.durable_identity
@@ -1651,13 +2845,51 @@ class Model:
             state["_model_structure_fingerprint"] = self._model_structure_fingerprint
         return state
 
-    def __setstate__(self, state: _PickledModel) -> None:
+    def __setstate__(self, state: _PickledModel) -> None:  # noqa: C901, PLR0915 - restore genuine prepared or installed lifecycle state
         """Restore transient state and reseal the model in this process.
 
         Durable models retain their saved structure digest and result compatibility.
         Ephemeral models receive a fresh identity for results made in this process.
         Resealing records the bindings read by this process's copies of the callables.
         """
+        if (
+            state.get("_dated_parameters") is not None
+            and state.get("_dated_generation") is None
+        ):
+            declarations = state.get("_constructor_inputs")
+            if declarations is None:
+                raise ModelInitializationError(
+                    "A prepared Model archive requires original declarations."
+                )
+            hardware = resolve_execution_hardware(
+                config=declarations.execution_config,
+                visible_device_ids=visible_device_ids(),
+                device_pool_limit_bytes=visible_device_pool_limits(),
+            )
+            if hardware.device_memory_bytes is not None:
+                raise UnsupportedOperationError(
+                    "Restoring a prepared public Model requires unbudgeted execution."
+                )
+            # Container witnesses are process-local identities. Rebind them to
+            # the restored true init fields, then verify their complete saved
+            # semantics before any declaration or metadata factory can run.
+            declarations = dataclasses.replace(declarations)
+            self._constructor_inputs = declarations
+            expected_seal = state.get("_prepared_declaration_seal")
+            if (
+                expected_seal is None
+                or self._fingerprint_constructor_inputs() != expected_seal
+            ):
+                raise ModelSealError(
+                    "Prepared Model archive declaration semantics changed."
+                )
+            prepared = declarations.prepare(model=self, dated=True, hardware=hardware)
+            self._dated_generation = None
+            self._declaration_preparation = prepared
+            if self.durable_identity and "_solution_model_instance_id" in state:
+                self._solution_model_instance_id = state["_solution_model_instance_id"]
+            self._prepare_public_dated_declaration(prepared=prepared)
+            return
         self.__dict__.update(state)
         self._shock_registry = state.get("_shock_registry") or create_shock_registry(
             shocks={},
@@ -1698,21 +2930,30 @@ class Model:
         )
         if not self.durable_identity or "_solution_model_instance_id" not in state:
             self._solution_model_instance_id = uuid.uuid4().hex
+        self._dated_parameters = state.get("_dated_parameters")
+        self._dated_generation = state.get("_dated_generation")
+        self._declaration_preparation = state.get("_declaration_preparation")
+        self._constructor_inputs = state.get("_constructor_inputs")
         self._identity_process_id = os.getpid()
+        self._prepared_declaration_seal = None
         self._simulate_runtime_regimes = {}
         self._shock_path_runtime_regimes = {}
         self._simulate_entry_operations = ProfiledSimulationOperations()
         self._simulate_compile_lock = threading.Lock()
         self._kept_parts_programs = {}
         self._action_extent_programs = {}
-        self._declared_authority_cache = OrderedDict()
-        self._declared_authority_lock = threading.Lock()
+        self._generation_cache = CanonicalGenerationCache(
+            capacity=_DECLARED_AUTHORITY_CACHE_SIZE
+        )
+        self._active_generation = None
+        self._initial_generation_key = state.get("_initial_generation_key")
         self._gather_checks = {}
         self._structural_blueprints = StructuralBlueprintCache()
         self._validated_selection_params = set()
         self._solution_param_projection = solution_param_projection(self._regimes)
         stored_structure = state.get("_model_structure_fingerprint")
         self._seal()
+        self._declaration_fingerprint = self._fingerprint_declarations()
         if self.durable_identity and type(stored_structure) is str:
             self._model_structure_fingerprint = stored_structure
 
@@ -1729,27 +2970,13 @@ class Model:
         support and shared by every solve and every consumed result with that
         support. The few most recently used supports stay cached.
         """
-        support = fingerprint_solution_support(
-            regimes=self._regimes,
+        return self._acquire_generation(
+            flat_params=flat_params,
+            process_grid_resolver=process_grid_resolver,
+        ).declared_authority(
             flat_params=flat_params,
             process_grid_resolver=process_grid_resolver,
         )
-        with self._declared_authority_lock:
-            cached = self._declared_authority_cache.get(support)
-            if cached is not None:
-                self._declared_authority_cache.move_to_end(support)
-                return cached
-        authority = build_solution_authority(
-            regimes=self._regimes,
-            flat_params=flat_params,
-            ages=self._time,
-            process_grid_resolver=process_grid_resolver,
-        )
-        with self._declared_authority_lock:
-            self._declared_authority_cache[support] = authority
-            while len(self._declared_authority_cache) > _DECLARED_AUTHORITY_CACHE_SIZE:
-                self._declared_authority_cache.popitem(last=False)
-        return authority
 
     def _params_fingerprint(self, *, flat_params: FlatParams) -> str:
         """Digest the canonical parameters a solution depends on."""
@@ -1878,9 +3105,11 @@ class Model:
             its lowering and compile walls, and its compiler memory report.
 
         """
+        flat_params, generation = self._prepare_call(params=params)
+        self = generation.execution  # noqa: PLW0642 - bind the remaining call to its acquired real programs
         return compile_declared_period_cores(
             regimes=self._regimes,
-            flat_params=self._process_params(params),
+            flat_params=flat_params,
             ages=self._time,
             regime_name=regime_name,
             period=period,
@@ -1911,9 +3140,10 @@ class Model:
                 `values`.
         """
         self._check_identity_runtime()
-        flat_params = self._process_params(
-            params, use_categorical_codes=use_categorical_codes
+        flat_params, generation = self._prepare_call(
+            params=params, use_categorical_codes=use_categorical_codes
         )
+        self = generation.execution  # noqa: PLW0642 - bind the remaining call to its acquired real programs
         with naming_cells_without_edges(self._cells_without_edges):
             validate_transitions(
                 regimes=self._regimes,
@@ -1925,8 +3155,24 @@ class Model:
                 producers=self._simulate_entry_operations,
             )
 
-    def _transition_memory(self, *, flat_params: FlatParams) -> SimulationMemory | None:
+    def _transition_memory(
+        self,
+        *,
+        flat_params: FlatParams,
+        array_writer: SimulationEntryAllocations | None = None,
+    ) -> SimulationMemory | None:
         """Return the budgeted owner admitting this call's transition checks."""
+        if array_writer is not None:
+            memory = SimulationMemory(
+                budget_bytes=array_writer.budget_bytes,
+                devices=array_writer.devices,
+                subject_devices=array_writer.devices[:1],
+                operations=array_writer.operations,
+                producers=self._simulate_entry_operations,
+                inputs=array_writer.snapshot(),
+            )
+            memory.check_resident()
+            return memory
         return transition_preflight_memory(
             execution=self._execution,
             producers=self._simulate_entry_operations,
@@ -2003,12 +3249,27 @@ class Model:
             raise ExecutionPlanningError(msg)
         log = get_logger(log_level=log_level, runtime_checks=runtime_checks)
         call_id = new_call_id()
-        with solve_phase(name="public_solve", logger=log, call_id=call_id):
+        with (
+            self._dated_entry_allocations(params=params) as entry_allocations,
+            solve_phase(name="public_solve", logger=log, call_id=call_id),
+        ):
             with solve_phase(name="params_validation", logger=log, call_id=call_id):
-                flat_params = self._process_params(
-                    params,
+                flat_params, generation = self._prepare_call(
+                    params=params,
+                    array_writer=entry_allocations,
                     runtime_checks=runtime_checks,
                     use_categorical_codes=use_categorical_codes,
+                )
+                self = generation.execution  # noqa: PLW0642 - bind the remaining call to its acquired real programs
+                self._validate_owned_generation_selection(
+                    flat_params=flat_params,
+                    array_writer=entry_allocations,
+                    runtime_checks=runtime_checks,
+                )
+                process_grid_resolver = (
+                    None
+                    if entry_allocations is None
+                    else entry_allocations.process_grid_resolver
                 )
                 with naming_cells_without_edges(self._cells_without_edges):
                     validate_transitions(
@@ -2016,19 +3277,40 @@ class Model:
                         flat_params=flat_params,
                         ages=self._time,
                         logger=log,
-                        process_grid_resolver=None,
-                        memory=self._transition_memory(flat_params=flat_params),
+                        process_grid_resolver=process_grid_resolver,
+                        memory=self._transition_memory(
+                            flat_params=flat_params, array_writer=entry_allocations
+                        ),
                         producers=self._simulate_entry_operations,
                     )
+            solve_params = (
+                flat_params
+                if entry_allocations is None
+                else entry_allocations.place_solve_parameters(
+                    flat_params=flat_params, regimes=self._regimes
+                )
+            )
             result = self._solve_from_flat_params(
-                flat_params=flat_params,
+                flat_params=solve_params,
+                solve_parameter_views=(
+                    MappingProxyType({})
+                    if entry_allocations is None
+                    else entry_allocations.solve_parameter_views
+                ),
+                retained_input_arrays=(
+                    ()
+                    if entry_allocations is None
+                    else entry_allocations.solve_input_roots()
+                ),
+                validation_materializer=entry_allocations,
+                generation=generation,
                 params=params,
                 log=log,
                 retention=retention,
                 max_compilation_workers=max_compilation_workers,
                 log_path=log_path,
                 log_keep_n_latest=log_keep_n_latest,
-                process_grid_resolver=None,
+                process_grid_resolver=process_grid_resolver,
                 call_id=call_id,
                 period_capture=None
                 if period_capture is None
@@ -2074,7 +3356,10 @@ class Model:
         self._check_identity_runtime()
         # Keep parameter schema validation here. Replay applies optional
         # numerical selection checks only after binding the captured policy.
-        flat_params = self._process_params(params, runtime_checks=False)
+        flat_params, generation = self._prepare_call(
+            params=params, runtime_checks=False
+        )
+        self = generation.execution  # noqa: PLW0642 - bind the remaining call to its acquired real programs
         return replay_public_period(
             directory=Path(directory),
             flat_params=flat_params,
@@ -2129,7 +3414,8 @@ class Model:
                 "Candidate lowering requires the period-major JIT solve schedule."
             )
         log = get_logger(log_level=log_level)
-        flat_params = self._process_params(params)
+        flat_params, generation = self._prepare_call(params=params)
+        self = generation.execution  # noqa: PLW0642 - bind the remaining call to its acquired real programs
         validate_transitions(
             regimes=self._regimes,
             flat_params=flat_params,
@@ -2141,6 +3427,7 @@ class Model:
         )
         preparation = self._prepare_solution(
             flat_params=flat_params,
+            generation=generation,
             log=log,
             retention=retention,
             process_grid_resolver=None,
@@ -2177,6 +3464,7 @@ class Model:
         self,
         *,
         flat_params: FlatParams,
+        generation: CanonicalModelGeneration | None = None,
         solve_parameter_views: Mapping[RegimeName, FlatParams] = MappingProxyType({}),
         params: UserParams,
         log: logging.Logger,
@@ -2185,6 +3473,7 @@ class Model:
         log_path: str | Path | None,
         log_keep_n_latest: int,
         retained_input_arrays: _RetainedInputArrays = (),
+        validation_materializer: SimulationEntryAllocations | None = None,
         process_grid_resolver: ProcessGridResolver | None = None,
         call_id: CallId | None = None,
         period_capture: CaptureContext | None = None,
@@ -2212,6 +3501,7 @@ class Model:
         try:
             result = self._solve_into(
                 flat_params=flat_params,
+                generation=generation,
                 solve_parameter_views=solve_parameter_views,
                 params=params,
                 log=log,
@@ -2220,6 +3510,7 @@ class Model:
                 log_path=log_path,
                 log_keep_n_latest=log_keep_n_latest,
                 retained_input_arrays=retained_input_arrays,
+                validation_materializer=validation_materializer,
                 process_grid_resolver=process_grid_resolver,
                 call_id=call_id,
                 period_capture=period_capture,
@@ -2255,6 +3546,7 @@ class Model:
         self,
         *,
         flat_params: FlatParams,
+        generation: CanonicalModelGeneration | None = None,
         solve_parameter_views: Mapping[RegimeName, FlatParams] = MappingProxyType({}),
         params: UserParams,
         log: logging.Logger,
@@ -2263,6 +3555,7 @@ class Model:
         log_path: str | Path | None,
         log_keep_n_latest: int,
         retained_input_arrays: _RetainedInputArrays = (),
+        validation_materializer: SimulationEntryAllocations | None = None,
         process_grid_resolver: ProcessGridResolver | None = None,
         call_id: CallId | None = None,
         period_capture: CaptureContext | None = None,
@@ -2278,6 +3571,7 @@ class Model:
         """
         preparation = self._prepare_solution(
             flat_params=flat_params,
+            generation=generation,
             log=log,
             retention=retention,
             process_grid_resolver=process_grid_resolver,
@@ -2295,6 +3589,7 @@ class Model:
                 process_grid_resolver=process_grid_resolver,
                 call_id=call_id,
                 value_archive=cast("BlockedSolutionArchive | None", value_archive),
+                validation_materializer=validation_materializer,
             ).run()
             return self._finish_solution(
                 preparation=preparation,
@@ -2320,6 +3615,7 @@ class Model:
             persistable_artifact_refs=preparation.persistable_artifact_refs,
             collect_solver_diagnostics=True,
             retained_input_arrays=retained_input_arrays,
+            validation_materializer=validation_materializer,
             process_grid_resolver=process_grid_resolver,
             call_id=call_id,
             period_capture=period_capture,
@@ -2346,6 +3642,7 @@ class Model:
         self,
         *,
         flat_params: FlatParams,
+        generation: CanonicalModelGeneration | None = None,
         log: logging.Logger,
         retention: ResultRetention,
         process_grid_resolver: ProcessGridResolver | None,
@@ -2353,27 +3650,30 @@ class Model:
     ) -> _SolutionPreparation:
         """Resolve the authority and identities one solve's result is bound to."""
         with solve_phase(name="authority_fingerprint", logger=log, call_id=call_id):
-            declared_authority = self._declared_solution_authority(
+            if generation is None:
+                generation = self._acquire_generation(
+                    flat_params=flat_params,
+                    process_grid_resolver=process_grid_resolver,
+                )
+            if generation.execution is not self:
+                raise RuntimeError("Solution preparation received different programs.")
+            generation.execution._check_identity_runtime()  # noqa: SLF001 - canonical generation owns this private lifecycle handoff
+            declared_authority = generation.declared_authority(
                 flat_params=flat_params, process_grid_resolver=process_grid_resolver
             )
             retain_all_persistable = (
                 retention is ResultRetention.ALL_PERSISTABLE_ARTIFACTS
             )
-            persistable_artifact_refs = (
-                frozenset(
-                    ref
-                    for ref, artifact_authority in declared_authority.artifacts.items()
-                    if artifact_authority.applicable
-                    and artifact_authority.descriptor.persistence
-                    is PersistencePolicy.MODEL_VERIFIABLE
-                )
-                if retain_all_persistable
-                else frozenset()
+            persistable_artifact_refs = selected_persistable_artifact_refs(
+                regimes=self._regimes,
+                authority=declared_authority,
+                retention=retention,
             )
             model_fingerprint = self._model_fingerprint(
                 flat_params=flat_params, process_grid_resolver=process_grid_resolver
             )
         return _SolutionPreparation(
+            generation=generation,
             retention=retention,
             declared_authority=declared_authority,
             retain_all_persistable=retain_all_persistable,
@@ -2414,6 +3714,7 @@ class Model:
                 model_fingerprint=preparation.model_fingerprint,
                 durable_identity=self.durable_identity,
                 authority=authority,
+                generation=preparation.generation,
                 component_values=component_values,
                 flat_params=flat_params,
                 process_grid_resolver=process_grid_resolver,
@@ -2431,6 +3732,7 @@ class Model:
         process_grid_resolver: ProcessGridResolver | None,
         call_id: CallId | None,
         value_archive: BlockedSolutionArchive | None = None,
+        validation_materializer: SimulationEntryAllocations | None = None,
     ) -> ComponentSchedule:
         """Prepare the block-major schedule of one solve; nothing is solved yet.
 
@@ -2445,7 +3747,11 @@ class Model:
         alone, and the scope records its retention.
         """
         with solve_phase(name="solver_param_checks", logger=log, call_id=call_id):
-            check_solver_params(regimes=self._regimes, flat_params=flat_params)
+            check_solver_params(
+                regimes=self._regimes,
+                flat_params=flat_params,
+                materializer=validation_materializer,
+            )
             check_pareto_weights(
                 regimes=self._regimes,
                 flat_params=flat_params,
@@ -2510,6 +3816,7 @@ class Model:
         persistable_artifact_refs: frozenset[ArtifactRef] = frozenset(),
         collect_solver_diagnostics: bool = False,
         retained_input_arrays: _RetainedInputArrays = (),
+        validation_materializer: SimulationEntryAllocations | None = None,
         process_grid_resolver: ProcessGridResolver | None = None,
         call_id: CallId | None = None,
         period_capture: CaptureContext | None = None,
@@ -2534,12 +3841,21 @@ class Model:
         `_enforce_retention` caps snapshots at `log_keep_n_latest`.
         """
         with solve_phase(name="solver_param_checks", logger=log, call_id=call_id):
-            check_solver_params(regimes=self._regimes, flat_params=flat_params)
+            check_solver_params(
+                regimes=self._regimes,
+                flat_params=flat_params,
+                materializer=validation_materializer,
+            )
             check_pareto_weights(
                 regimes=self._regimes,
                 flat_params=flat_params,
                 ages=self._time,
                 process_grid_resolver=process_grid_resolver,
+            )
+        if validation_materializer is not None:
+            retained_input_arrays = (
+                *retained_input_arrays,
+                *validation_materializer.solve_input_roots(),
             )
         try:
             internal_result = solve(
@@ -2588,19 +3904,26 @@ class Model:
         return internal_result
 
     def _runtime_regimes_for_shape(
-        self, *, compile_batch_size: int
+        self,
+        *,
+        compile_batch_size: int,
+        generation_key: str | None = None,
     ) -> MappingProxyType[RegimeName, Regime]:
         """Return the call-local regime copies sharing this shape's executor."""
+        key = (
+            self._model_structure_fingerprint
+            if generation_key is None
+            else generation_key,
+            compile_batch_size,
+        )
         with self._simulate_compile_lock:
-            if compile_batch_size not in self._simulate_runtime_regimes:
-                self._simulate_runtime_regimes[compile_batch_size] = (
-                    bind_simulation_runtime(
-                        regimes=self._regimes,
-                        execution=self._execution,
-                        enable_jit=self.enable_jit,
-                    )
+            if key not in self._simulate_runtime_regimes:
+                self._simulate_runtime_regimes[key] = bind_simulation_runtime(
+                    regimes=self._regimes,
+                    execution=self._execution,
+                    enable_jit=self.enable_jit,
                 )
-            return self._simulate_runtime_regimes[compile_batch_size]
+            return self._simulate_runtime_regimes[key]
 
     def _shock_path_regimes_for_shape(
         self,
@@ -2608,17 +3931,26 @@ class Model:
         compile_batch_size: int,
         supplied: frozenset[StateName],
         flat_params: FlatParams,
+        generation: CanonicalModelGeneration,
     ) -> MappingProxyType[RegimeName, Regime]:
         """Return the runtime regimes with transitions reading the supplied shocks.
 
         Bound once per shape, supplied shock names and parameter names, so calls
         differing only in path values reuse one set of compiled programs.
         """
-        regimes = self._runtime_regimes_for_shape(compile_batch_size=compile_batch_size)
+        regimes = self._runtime_regimes_for_shape(
+            compile_batch_size=compile_batch_size, generation_key=generation.key
+        )
         if not supplied:
             return regimes
         param_names = kernel_param_names(regimes=regimes, params=flat_params)
-        key = (compile_batch_size, supplied, frozenset(param_names.items()))
+        key = (
+            generation.key,
+            compile_batch_size,
+            supplied,
+            canonical_parameter_schema(flat_params=flat_params),
+            frozenset(param_names.items()),
+        )
         with self._simulate_compile_lock:
             if key not in self._shock_path_runtime_regimes:
                 self._shock_path_runtime_regimes[key] = bind_shock_path_programs(
@@ -2654,20 +3986,8 @@ class Model:
             operations=self._simulate_entry_operations,
             original_inputs=entry_inputs,
             solution=solution,
-            model_roots=(
-                self._time.values,  # noqa: PD011
-                self.regime_names_to_ids,
-                tuple(
-                    (
-                        regime.resolved_fixed_params,
-                        regime.solution.resolved_fixed_params,
-                        regime.solution._base_state_action_space.states,  # noqa: SLF001
-                        regime.solution._base_state_action_space.actions,  # noqa: SLF001
-                        regime.derived_categorical_code_arrays,
-                    )
-                    for regime in self._regimes.values()
-                ),
-            ),
+            model_roots=self._generation_roots(),
+            retained_generation_roots=self._generation_cache.roots,
             devices=placed_devices_for_ids(
                 submesh_device_ids=(), visible_device_ids=self._execution.device_ids
             ),
@@ -2709,7 +4029,17 @@ class Model:
                 "An ephemeral solution belongs to its originating model and runtime."
             )
         expected_fingerprint = self._params_fingerprint(flat_params=flat_params)
-        memo_key = (self._solution_model_instance_id, expected_fingerprint)
+        selected_generation = self._acquire_generation(
+            flat_params=flat_params,
+            array_writer=entry_allocations,
+            process_grid_resolver=process_grid_resolver,
+        )
+        memo_key = (
+            _semantic_fingerprint(
+                (self._solution_model_instance_id, selected_generation.key)
+            ),
+            expected_fingerprint,
+        )
         consumed_views = solution._consumed_views  # noqa: SLF001
         remembered = consumed_views.get(memo_key)
         if remembered is not None:
@@ -2727,6 +4057,16 @@ class Model:
                     "params."
                 )
                 raise InvalidSimulationInputError(msg)
+            producing = engine_view.generation
+            if producing is not None:
+                selected = selected_generation
+                if producing.key != selected.key:
+                    raise InvalidSimulationInputError(
+                        "Owned solution canonical generation does not match this "
+                        "call's parameter schemas and support."
+                    )
+                producing.execution._check_identity_runtime()  # noqa: SLF001 - canonical generation owns this private lifecycle handoff
+                self = producing.execution  # noqa: PLW0642 - bind the remaining call to its acquired real programs
             resolved = self._consume_owned_solution(
                 solution=solution,
                 engine_view=engine_view,
@@ -2803,6 +4143,12 @@ class Model:
             engine_view.simulation_policies,
             engine_view.dissolution_flags,
             external_readers,
+            self._build_current_iid_replay_inputs(
+                authority=engine_view.authority, replay_payload=owned_payload
+            ),
+            self._build_projected_forward_inputs(
+                solution=solution, authority=engine_view.authority
+            ),
         )
 
     def _consume_foreign_solution(
@@ -2880,6 +4226,12 @@ class Model:
             policies,
             dissolution_flags,
             external_readers,
+            self._build_current_iid_replay_inputs(
+                authority=authority, replay_payload=validated_payload
+            ),
+            self._build_projected_forward_inputs(
+                solution=solution, authority=authority
+            ),
         )
 
     def _check_solution_result_structure(
@@ -2962,15 +4314,20 @@ class Model:
             expected_coverage=expected_coverage,
             authority=authority,
         )
+        persistable_artifact_refs = selected_persistable_artifact_refs(
+            regimes=self._regimes, authority=authority, retention=metadata.retention
+        )
         self._check_solution_result_present_artifact_semantics(
             solution=solution,
             metadata=metadata,
             authority=authority,
+            persistable_artifact_refs=persistable_artifact_refs,
         )
         self._check_solution_result_omission_semantics(
             solution=solution,
             metadata=metadata,
             authority=authority,
+            persistable_artifact_refs=persistable_artifact_refs,
         )
         try:
             solution = SolutionResult(
@@ -3313,6 +4670,7 @@ class Model:
         solution: _SolutionResultBoundary,
         metadata: SolutionMetadata,
         authority: SolutionAuthority,
+        persistable_artifact_refs: frozenset[ArtifactRef],
     ) -> None:
         """Require each present model artifact to be applicable and selected.
 
@@ -3337,7 +4695,10 @@ class Model:
                 descriptor.channel is ArtifactChannel.DIAGNOSTIC
                 or (
                     metadata.retention is ResultRetention.VALUES_AND_REPLAY
-                    and descriptor.channel is ArtifactChannel.REPLAY
+                    and (
+                        descriptor.channel is ArtifactChannel.REPLAY
+                        or ref in persistable_artifact_refs
+                    )
                 )
                 or (
                     metadata.retention is ResultRetention.ALL_PERSISTABLE_ARTIFACTS
@@ -3360,6 +4721,7 @@ class Model:
         solution: _SolutionResultBoundary,
         metadata: SolutionMetadata,
         authority: SolutionAuthority,
+        persistable_artifact_refs: frozenset[ArtifactRef],
     ) -> None:
         """Require every omission to agree with model authority and retention."""
         defects: list[str] = []
@@ -3373,7 +4735,10 @@ class Model:
                 metadata.retention is ResultRetention.ALL_PERSISTABLE_ARTIFACTS
                 or (
                     metadata.retention is ResultRetention.VALUES_AND_REPLAY
-                    and descriptor.channel is ArtifactChannel.REPLAY
+                    and (
+                        descriptor.channel is ArtifactChannel.REPLAY
+                        or ref in persistable_artifact_refs
+                    )
                 )
             )
             if not artifact_authority.applicable:
@@ -3511,6 +4876,190 @@ class Model:
             cast("PeriodToRegimeToSimulationPolicy", policies),
             cast("PeriodToRegimeToDissolutionFlags", dissolution_flags),
         )
+
+    def _build_projected_forward_inputs(
+        self, *, solution: _SolutionResultBoundary, authority: SolutionAuthority
+    ) -> ProjectedForwardInputs:
+        """Authenticate demanded actual stored carries before any forward profile."""
+        from _lcm.continuation import ProjectedContinuationSpec  # noqa: PLC0415
+        from _lcm.execution.value_transfer import ValueArtifactKind  # noqa: PLC0415
+
+        for regime in self._regimes.values():
+            for program in regime.simulation.programs.forward_decision.values():
+                if any(
+                    read.target.kind is ValueArtifactKind.REGIME_VALUE
+                    and isinstance(
+                        self._regimes[read.target.regime].solution.continuation_spec,
+                        ProjectedContinuationSpec,
+                    )
+                    for read in program.requirements.value_reads
+                ):
+                    raise UnsupportedOperationError(
+                        "This projected child requires its separately supported "
+                        "ordinary-parent forward reader."
+                    )
+        result: dict[int, dict[RegimeName, ProjectedEGMCarry]] = {}
+        store = solution.retained_continuations
+        for regime in self._regimes.values():
+            for (
+                readers
+            ) in regime.simulation.projected_forward_readers_by_period.values():
+                for reader in readers.values():
+                    ref = ArtifactRef(
+                        period=reader.date.authority.period,
+                        regime=reader.target,
+                        key=reader.date.authority.artifact_key,
+                    )
+                    declared = authority.artifacts.get(ref)
+                    if (
+                        declared is None
+                        or not declared.applicable
+                        or not declared.required
+                        or declared.descriptor.channel
+                        is not ArtifactChannel.CONTINUATION
+                        or declared.descriptor.persistence
+                        is not PersistencePolicy.MODEL_VERIFIABLE
+                        or ref not in solution.retained_continuations
+                    ):
+                        raise InvalidSimulationInputError(
+                            "Projected forward requires its authenticated retained "
+                            "dated continuation."
+                        )
+                    if ref.regime in result.get(ref.period, {}):
+                        require_projected_carry(
+                            date=reader.date,
+                            target=reader.target,
+                            carry=result[ref.period][ref.regime],
+                            passive_shape=tuple(
+                                grid.shape[0] for grid in reader.passive_grids
+                            ),
+                        )
+                        continue
+                    payload = store._materialize_from_template_snapshot(  # noqa: SLF001
+                        ref,
+                        template_snapshot=snapshot_artifact_template_declaration(
+                            declared
+                        ),
+                    )
+                    payload = _canonicalize_artifact_payload(
+                        payload=payload, authority=declared
+                    )
+                    if not isinstance(payload, ProjectedEGMCarry):
+                        raise InvalidSimulationInputError(
+                            "Projected forward has a foreign retained payload."
+                        )
+                    require_projected_carry(
+                        date=reader.date,
+                        target=reader.target,
+                        carry=payload,
+                        passive_shape=tuple(
+                            grid.shape[0] for grid in reader.passive_grids
+                        ),
+                    )
+                    result.setdefault(ref.period, {})[ref.regime] = payload
+        return MappingProxyType(
+            {period: MappingProxyType(entries) for period, entries in result.items()}
+        )
+
+    def _build_current_iid_replay_inputs(
+        self, *, authority: SolutionAuthority, replay_payload: _ReplayPayloadSource
+    ) -> CurrentIIDReplayInputs:
+        """Resolve original row artifacts after model/parameter authentication."""
+        from _lcm.egm.current_iid_resources_artifact import (  # noqa: PLC0415
+            restore_resources_row,
+        )
+
+        rows: dict[int, dict[RegimeName, CurrentIIDReplayInput]] = {}
+        for regime_name, regime in self._regimes.items():
+            u_spec = regime.simulation.case_u_replay_spec
+            if u_spec is not None and u_spec.reconstructs_candidates:
+                for period in u_spec.periods:
+                    rows.setdefault(period, {})[regime_name] = (
+                        self._build_case_u_replay_input(
+                            regime_name=regime_name,
+                            period=period,
+                            authority=authority,
+                            replay_payload=replay_payload,
+                        )
+                    )
+                continue
+            spec = regime.simulation.case_r_replay_spec
+            if spec is None:
+                continue
+            for period in spec.periods:
+                ref = ArtifactRef(
+                    period=period, regime=regime_name, key=spec.artifact_key
+                )
+                declared = authority.artifacts.get(ref)
+                if (
+                    declared is None
+                    or not declared.required
+                    or not declared.applicable
+                    or declared.consumer_route != spec.identity
+                ):
+                    raise InvalidSimulationInputError(
+                        "Case-R replay requires its model-owned row authority."
+                    )
+                payload = _canonicalize_artifact_payload(
+                    payload=replay_payload(ref=ref, authority=declared),
+                    authority=declared,
+                )
+                if type(payload) is not tuple:
+                    raise InvalidSimulationInputError(
+                        "Case-R replay requires its closed original row leaf tuple."
+                    )
+                declaration = spec.periods[period]
+                row = restore_resources_row(
+                    payload=payload,
+                    tree=declaration.row_tree,
+                    leaf_specs=declaration.row_leaf_specs,
+                )
+                entry = CaseRReplayInput(
+                    regime=regime_name, period=period, key=spec.artifact_key, row=row
+                )
+                entry.require(spec=spec, period=period)
+                rows.setdefault(period, {})[regime_name] = entry
+        return MappingProxyType(
+            {period: MappingProxyType(entries) for period, entries in rows.items()}
+        )
+
+    def _build_case_u_replay_input(
+        self,
+        *,
+        regime_name: RegimeName,
+        period: int,
+        authority: SolutionAuthority,
+        replay_payload: _ReplayPayloadSource,
+    ) -> CaseUReplayInput:
+        """Authenticate the real dated future bundle before any forward profile."""
+        u_spec = self._regimes[regime_name].simulation.case_u_replay_spec
+        if u_spec is None:
+            raise InvalidSimulationInputError("Case-U reconstruction route is absent.")
+        ref = ArtifactRef(period=period, regime=regime_name, key=u_spec.artifact_key)
+        declared = authority.artifacts.get(ref)
+        if (
+            declared is None
+            or not declared.required
+            or not declared.applicable
+            or declared.consumer_route != u_spec.identity
+        ):
+            raise InvalidSimulationInputError(
+                "Case-U reconstruction lacks its original future authority."
+            )
+        try:
+            raw = replay_payload(ref=ref, authority=declared)
+        except KeyError as error:
+            raise InvalidSimulationInputError(
+                "Case-U reconstruction needs its retained future artifact."
+            ) from error
+        payload = _canonicalize_artifact_payload(payload=raw, authority=declared)
+        if not isinstance(payload, CaseUReplayChildren):
+            raise InvalidSimulationInputError(
+                "Case-U reconstruction has a foreign future payload."
+            )
+        entry = CaseUReplayInput(payload=payload)
+        entry.require(spec=u_spec, period=period)
+        return entry
 
     def _build_external_replay_readers(  # noqa: C901, PLR0912, PLR0915
         self,
@@ -4020,7 +5569,9 @@ class Model:
         call_id = new_call_id()
         with solve_phase(name="public_simulate", logger=log, call_id=call_id):
             with solve_phase(name="params_validation", logger=log, call_id=call_id):
-                self._fail_if_simulation_is_unsupported()
+                prepared_dated = self._is_prepared_dated
+                if not prepared_dated:
+                    self._fail_if_simulation_is_unsupported()
                 # A block-major result, or an automatic block-major solve, is
                 # read one code at a time; every other solution is read whole.
                 retained_components = self._owned_component_values(solution=solution)
@@ -4035,12 +5586,15 @@ class Model:
                 # The canonical parameters bind both the supplied result preflight
                 # and an automatic solve. Process them once and keep one
                 # model-authoritative seam.
-                flat_params = self._process_params(
-                    params,
+                flat_params, generation = self._prepare_call(
+                    params=params,
                     array_writer=entry_allocations,
                     runtime_checks=runtime_checks,
                     use_categorical_codes=use_categorical_codes,
                 )
+                self = generation.execution  # noqa: PLW0642 - bind the remaining call to its acquired real programs
+                if prepared_dated:
+                    self._fail_if_simulation_is_unsupported()
                 process_grid_resolver = (
                     None
                     if entry_allocations is None
@@ -4083,6 +5637,8 @@ class Model:
                         period_to_regime_to_sim_policy,
                         period_to_regime_to_dissolution_flags,
                         period_to_regime_to_replay_reader,
+                        current_iid_replay_inputs,
+                        projected_forward_inputs,
                     ) = self._resolve_solution_result(
                         solution=solution,
                         flat_params=flat_params,
@@ -4094,6 +5650,8 @@ class Model:
                 period_to_regime_to_sim_policy = None
                 period_to_regime_to_dissolution_flags = None
                 period_to_regime_to_replay_reader = None
+                current_iid_replay_inputs = None
+                projected_forward_inputs = None
             with solve_phase(name="simulation_inputs", logger=log, call_id=call_id):
                 if entry_allocations is not None:
                     entry_allocations.update_solution(
@@ -4103,6 +5661,8 @@ class Model:
                             period_to_regime_to_sim_policy,
                             period_to_regime_to_dissolution_flags,
                             period_to_regime_to_replay_reader,
+                            current_iid_replay_inputs,
+                            projected_forward_inputs,
                         ),
                     )
                 initial_conditions = split_initial_conditions(
@@ -4247,6 +5807,7 @@ class Model:
                 # so no complete solution exists before the simulation runs.
                 preparation = self._prepare_solution(
                     flat_params=flat_params,
+                    generation=generation,
                     log=log,
                     retention=ResultRetention.VALUES_AND_REPLAY,
                     process_grid_resolver=process_grid_resolver,
@@ -4270,12 +5831,15 @@ class Model:
                         process_grid_resolver=process_grid_resolver,
                         call_id=call_id,
                         value_archive=combined_archive,
+                        validation_materializer=entry_allocations,
                     )
                 )
                 period_to_regime_to_V_arr = MappingProxyType({})
                 period_to_regime_to_sim_policy = MappingProxyType({})
                 period_to_regime_to_dissolution_flags = MappingProxyType({})
                 period_to_regime_to_replay_reader = MappingProxyType({})
+                current_iid_replay_inputs = MappingProxyType({})
+                projected_forward_inputs = MappingProxyType({})
             elif solution is None:
                 solve_params = (
                     flat_params
@@ -4286,6 +5850,7 @@ class Model:
                 )
                 solution = self._solve_from_flat_params(
                     flat_params=solve_params,
+                    generation=generation,
                     solve_parameter_views=(
                         MappingProxyType({})
                         if entry_allocations is None
@@ -4302,6 +5867,7 @@ class Model:
                         if entry_allocations is None
                         else entry_allocations.solve_input_roots()
                     ),
+                    validation_materializer=entry_allocations,
                     process_grid_resolver=process_grid_resolver,
                     call_id=call_id,
                 )
@@ -4313,6 +5879,8 @@ class Model:
                         period_to_regime_to_sim_policy,
                         period_to_regime_to_dissolution_flags,
                         period_to_regime_to_replay_reader,
+                        current_iid_replay_inputs,
+                        projected_forward_inputs,
                     ) = self._resolve_solution_result(
                         solution=solution,
                         flat_params=flat_params,
@@ -4325,6 +5893,8 @@ class Model:
                     or period_to_regime_to_sim_policy is None
                     or period_to_regime_to_dissolution_flags is None
                     or period_to_regime_to_replay_reader is None
+                    or current_iid_replay_inputs is None
+                    or projected_forward_inputs is None
                 ):
                     raise AssertionError(
                         "Simulation solution inputs were not resolved."
@@ -4337,6 +5907,8 @@ class Model:
                             period_to_regime_to_sim_policy,
                             period_to_regime_to_dissolution_flags,
                             period_to_regime_to_replay_reader,
+                            current_iid_replay_inputs,
+                            projected_forward_inputs,
                         ),
                     )
                     entry_allocations.publish(stage="initial", tree=initial_conditions)
@@ -4367,6 +5939,7 @@ class Model:
                 )
                 if entry_allocations is not None:
                     simulate_regimes = self._shock_path_regimes_for_shape(
+                        generation=generation,
                         compile_batch_size=padded_n_subjects,
                         supplied=frozenset(resolved_shock_paths),
                         flat_params=flat_params,
@@ -4377,6 +5950,8 @@ class Model:
                         values=period_to_regime_to_V_arr,
                         flags=period_to_regime_to_dissolution_flags,
                         policies=period_to_regime_to_sim_policy,
+                        current_iid_replay_inputs=current_iid_replay_inputs,
+                        projected_forward_inputs=projected_forward_inputs,
                         ages=self._time,
                         initial_conditions=initial_conditions,
                         regime_names_to_ids=self.regime_names_to_ids,
@@ -4420,6 +5995,7 @@ class Model:
                             multiple=compile_batch_size,
                         )
                     simulate_regimes = self._shock_path_regimes_for_shape(
+                        generation=generation,
                         compile_batch_size=compile_batch_size,
                         supplied=frozenset(resolved_shock_paths),
                         flat_params=flat_params,
@@ -4436,6 +6012,8 @@ class Model:
                 ),
                 period_to_regime_to_sim_policy=period_to_regime_to_sim_policy,
                 period_to_regime_to_replay_reader=period_to_regime_to_replay_reader,
+                current_iid_replay_inputs=current_iid_replay_inputs,
+                projected_forward_inputs=projected_forward_inputs,
                 ages=self._time,
                 simulation_output_dtypes=self.simulation_output_dtypes,
                 seed=seed,
@@ -4629,7 +6207,10 @@ class Model:
                 process is given either by its physical shocks, as
                 `initial_state_names` lists them, or by its complete set of
                 internal coordinates, as `state_names` lists them, whose nodes
-                `state_grid` returns; one process cannot mix the two.
+                `state_grid` returns; one process cannot mix the two. A
+                composite state is given by its generated code under the name
+                `state_names` lists, not by the members `initial_state_names`
+                lists.
             action_grids: Optional replacement grids for some actions, e.g. a
                 single code of a discrete action to obtain the conditional argmax
                 and value of that branch. Values must lie on the declared grid; a
@@ -4677,6 +6258,7 @@ class Model:
 
         """
         self._check_identity_runtime()
+        self._fail_if_prepared_helper(operation="policy lookup")
         regime = self._regimes.get(regime_name)
         if regime is None:
             msg = f"Unknown regime {regime_name!r}; known: {tuple(self._regimes)}."
@@ -4796,7 +6378,7 @@ class Model:
             if allocations is not None:
                 allocations.close()
 
-    def _lookup_policy(  # noqa: PLR0915
+    def _lookup_policy(  # noqa: C901, PLR0915 - preserve original replay routing and explicit projected refusal
         self,
         *,
         params: UserParams,
@@ -4844,7 +6426,14 @@ class Model:
         )
         if allocations is not None:
             allocations.update_solution(solution=solution, resolved_inputs=resolved)
-        V_arrs, sim_policies, _, replay_readers = resolved
+        V_arrs, sim_policies, _, replay_readers, case_r_inputs, projected_inputs = (
+            resolved
+        )
+        if projected_inputs and regime.simulation.projected_forward_readers_by_period:
+            raise UnsupportedOperationError(
+                "Projected parent policy lookup requires its separate "
+                "addressed query owner."
+            )
         if self._owned_component_values(solution=solution) is not None:
             # A block-major result keeps its values on the host; its value
             # store assembles each value the lookup reads, when it reads it.
@@ -4852,6 +6441,7 @@ class Model:
         if (
             sim_policies.get(period, {}).get(regime_name) is not None
             or replay_readers.get(period, {}).get(regime_name) is not None
+            or case_r_inputs.get(period, {}).get(regime_name) is not None
         ):
             msg = (
                 f"Regime {regime_name!r} replays a published policy in period "
@@ -4967,6 +6557,7 @@ class Model:
                         period=period,
                         n_subjects=n_rows,
                         arguments=decision_arguments(
+                            active_subjects=np.ones(n_rows, dtype=np.bool_),
                             states=space.states,
                             discrete_actions={
                                 n: grids[n] for n in space.discrete_actions
@@ -5079,9 +6670,6 @@ class Model:
         form, including `Phased` and joint-normal coordinates. This is not
         a mapping of value-array axes: use `state_names` and `state_grid` for
         those, and `initial_state_names` for physical per-subject names.
-
-        A composite model restored from an archive without original member-grid
-        metadata must be rebuilt to use this inspection method.
         """
         regime = self.user_regimes.get(regime_name)
         if regime is None:
@@ -5092,11 +6680,6 @@ class Model:
         for name, lowering in self._composite_states.items():
             if name not in grids:
                 continue
-            if not lowering.member_grids:
-                raise InvalidSimulationInputError(
-                    "Composite member-grid metadata is unavailable in this "
-                    "archive; rebuild the model to inspect initial-state grids."
-                )
             grids.pop(name)
             grids.update(lowering.member_grids[regime_name])
         return MappingProxyType(grids)
@@ -5108,6 +6691,14 @@ class Model:
         by their declared physical names and composite codes by their members;
         value-array axes remain `state_names`.
         """
+        if self._is_prepared_dated:
+            declaration = self.user_regimes.get(regime_name)
+            if declaration is None:
+                raise InvalidSimulationInputError(
+                    f"Unknown regime {regime_name!r}; "
+                    f"known: {tuple(self.user_regimes)}."
+                )
+            return tuple(declaration.states)
         regime = self._regimes.get(regime_name)
         if regime is None:
             raise InvalidSimulationInputError(
@@ -5141,6 +6732,7 @@ class Model:
         Joint intervals are marginal extents of the transformed product support,
         not Cartesian joint grids or truncation bounds for continuous draws.
         """
+        self._fail_if_prepared_helper(operation="initial state bounds")
         names = self.initial_state_names(regime_name=regime_name)
         regime = self._regimes[regime_name]
         if state_name not in names:
@@ -5174,8 +6766,9 @@ class Model:
                 )
                 row = np.asarray(bounds)[process.states.index(state_name)]
                 return float(row[0]), float(row[1])
-        grid = regime.simulation.grids[state_name]
-        if isinstance(grid, DiscreteGrid):
+        # Composite members have no engine grid of their own and are discrete.
+        grid = regime.simulation.grids.get(state_name)
+        if grid is None or isinstance(grid, DiscreteGrid):
             raise InvalidSimulationInputError(
                 f"State {state_name!r} is discrete; continuous bounds do not apply."
             )
@@ -5198,6 +6791,17 @@ class Model:
         `solution.values[period][regime_name]` has one axis per state, in this
         order; `state_grid` gives each axis's node values.
         """
+        if self._is_prepared_dated:
+            metadata = self._dated_parameters
+            if metadata is None:
+                raise TypeError("Prepared Model lost its parameter metadata.")
+            space = metadata.builder.state_action_spaces.get(regime_name)
+            if space is None:
+                raise InvalidSimulationInputError(
+                    f"Unknown regime {regime_name!r}; "
+                    f"known: {tuple(self.user_regimes)}."
+                )
+            return tuple(space.states)
         regime = self._regimes.get(regime_name)
         if regime is None:
             msg = f"Unknown regime {regime_name!r}; known: {tuple(self._regimes)}."
@@ -5225,6 +6829,7 @@ class Model:
         value-only node is valid even when it is never physically visited.
         `state_names` gives the order of the state axes.
         """
+        self._fail_if_prepared_helper(operation="state grid")
         regime = self._regimes.get(regime_name)
         if regime is None:
             msg = f"Unknown regime {regime_name!r}; known: {tuple(self._regimes)}."
@@ -5650,6 +7255,33 @@ class Model:
         runtime_checks: bool = True,
         use_categorical_codes: bool = False,
     ) -> FlatParams:
+        """Keep ordinary helper callers on their original canonical checks."""
+        if self._dated_parameters is not None:
+            raise UnsupportedOperationError(
+                "Private call-owned helpers must select their actual generation "
+                "through _prepare_call before reading programs."
+            )
+        flat_params = self._canonicalize_params(
+            params,
+            array_writer=array_writer,
+            use_categorical_codes=use_categorical_codes,
+        )
+        self._validate_canonical_params(
+            flat_params=flat_params,
+            array_writer=array_writer,
+            runtime_checks=runtime_checks,
+        )
+        return flat_params
+
+    # keyword-only-exempt: primary-argument=params
+    def _canonicalize_params(
+        self,
+        params: UserParams,
+        *,
+        array_writer: SimulationEntryAllocations | None = None,
+        metadata: Mapping[RegimeName, RegimeParameterMetadata] | None = None,
+        use_categorical_codes: bool = False,
+    ) -> FlatParams:
         """Broadcast, convert Series, dtype-cast, and validate user params.
 
         Step order matters: `convert_series_in_params` runs *between*
@@ -5683,21 +7315,25 @@ class Model:
             reachability=self.reachability,
             use_categorical_codes=use_categorical_codes,
             query_periods_by_phase=self._query_periods_by_phase,
-            required_periods_by_regime={
-                name: tuple(
-                    sorted(
-                        set(regime.active_periods)
-                        | {
-                            period
-                            for period, active in enumerate(
-                                regime.simulation.reachability.active_regimes_by_period
-                            )
-                            if name in active
-                        }
+            required_periods_by_regime=(
+                {
+                    name: tuple(
+                        sorted(
+                            set(regime.active_periods)
+                            | {
+                                period
+                                for period, active in enumerate(
+                                    regime.simulation.reachability.active_regimes_by_period
+                                )
+                                if name in active
+                            }
+                        )
                     )
-                )
-                for name, regime in self._regimes.items()
-            },
+                    for name, regime in self._regimes.items()
+                }
+                if metadata is None
+                else {name: item.required_periods for name, item in metadata.items()}
+            ),
         )
         if array_writer is not None:
             # The completed mapping takes ownership of any admitted Series leaves
@@ -5708,10 +7344,17 @@ class Model:
         )
         flat_params = materialize_granular_transition_params(
             flat_params=flat_params,
-            expansions={
-                regime_name: regime.granular_param_expansions
-                for regime_name, regime in self._regimes.items()
-            },
+            expansions=(
+                {
+                    regime_name: regime.granular_param_expansions
+                    for regime_name, regime in self._regimes.items()
+                }
+                if metadata is None
+                else {
+                    name: item.granular_param_expansions
+                    for name, item in metadata.items()
+                }
+            ),
         )
         ordinary_flat_params = flat_params
         if self.shocks:
@@ -5729,6 +7372,13 @@ class Model:
                     },
                 ),
             )
+            if array_writer is not None and any(
+                self.shocks[name].correlation is None for name in group_flat_params
+            ):
+                raise UnsupportedOperationError(
+                    "Cold dated runtime correlation requires admission of the "
+                    "original covariance validation before law preparation."
+                )
             correlation_support = {
                 name: self.shocks[name].validate_runtime_correlation(
                     correlation=cast("Float2D | np.ndarray", slots["corr"])
@@ -5766,6 +7416,20 @@ class Model:
             flat_params = MappingProxyType({**flat_params, **group_flat_params})
         _validate_param_types(flat_params)
         fail_if_nonpositive_taste_shock_scale(ordinary_flat_params)
+        return flat_params
+
+    def _validate_canonical_params(
+        self,
+        *,
+        flat_params: FlatParams,
+        array_writer: SimulationEntryAllocations | None,
+        runtime_checks: bool,
+    ) -> None:
+        """Run the original numeric phase checks against genuine selected programs."""
+        if self._dated_parameters is not None:
+            self._retain_prepared_generation_roots(
+                array_writer=array_writer, trees=self._generation_roots()
+            )
         for regime_name, regime in self._regimes.items():
             if not regime.active_periods:
                 continue
@@ -5800,8 +7464,6 @@ class Model:
                 self._validate_regime_selection(flat_params=flat_params)
         else:
             array_writer.publish(stage="params", tree=flat_params)
-
-        return flat_params
 
 
 # The output role each intermediate a policy lookup can keep is published under.

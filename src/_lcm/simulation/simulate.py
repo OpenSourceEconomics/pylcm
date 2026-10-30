@@ -23,6 +23,12 @@ import numpy as np
 import pandas as pd
 from jax import vmap
 
+from _lcm.egm.current_iid_case_u_replay import CaseUReplayInput
+from _lcm.egm.current_iid_replay import CaseRReplayInput
+from _lcm.egm.current_iid_replay_inputs import (
+    CurrentIIDReplayInput,
+    CurrentIIDReplayInputs,
+)
 from _lcm.egm.interp import interp_on_padded_grid
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.outer_interpolation import LocalCubicOuterInterpolant
@@ -49,6 +55,10 @@ from _lcm.params.edges import regime_kernel_params
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.ndimage import map_coordinates
+from _lcm.regime_building.projected_forward import (
+    ProjectedForwardInputs,
+    consume_projected_forward_outputs,
+)
 from _lcm.regime_building.Q_and_F import (
     EDGE_REF_PARAMS_ARG,
     EDGE_REF_V_ARG,
@@ -121,6 +131,7 @@ from _lcm.simulation.plan_summary import (
 from _lcm.simulation.policy_diagnostics import dropped_candidate_counts
 from _lcm.simulation.policy_programs import ReplayPayload
 from _lcm.simulation.program_arguments import (
+    ACTIVE_SUBJECTS_ARGUMENT,
     current_iid_arguments,
     decision_arguments,
     gate_fold_arguments,
@@ -254,6 +265,8 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
     ages: TimeAxis,
     simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
     period_to_regime_to_sim_policy: PeriodToRegimeToSimulationPolicy | None = None,
+    current_iid_replay_inputs: CurrentIIDReplayInputs = MappingProxyType({}),
+    projected_forward_inputs: ProjectedForwardInputs = MappingProxyType({}),
     period_to_regime_to_replay_reader: _PeriodToRegimeToReplayReader = (
         MappingProxyType({})
     ),
@@ -730,6 +743,8 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
                             period_to_regime_to_dissolution_flags
                         ),
                         period_to_regime_to_sim_policy=period_to_regime_to_sim_policy,
+                        current_iid_replay_inputs=current_iid_replay_inputs,
+                        projected_forward_inputs=projected_forward_inputs,
                         period_to_regime_to_replay_reader=(
                             period_to_regime_to_replay_reader
                         ),
@@ -1074,6 +1089,8 @@ def _subject_chunk_periods(  # noqa: PLR0915
     logger: logging.Logger,
     initial_own_stakeholder: Int1D,
     period_to_regime_to_sim_policy: PeriodToRegimeToSimulationPolicy | None = None,
+    current_iid_replay_inputs: CurrentIIDReplayInputs = MappingProxyType({}),
+    projected_forward_inputs: ProjectedForwardInputs = MappingProxyType({}),
     period_to_regime_to_replay_reader: _PeriodToRegimeToReplayReader = (
         MappingProxyType({})
     ),
@@ -1235,6 +1252,9 @@ def _subject_chunk_periods(  # noqa: PLR0915
                     flags=period_to_regime_to_dissolution_flags,
                     policy=period_policies.get(name),
                     reader=period_readers.get(name),
+                    current_iid_replay_input=current_iid_replay_inputs.get(
+                        period, {}
+                    ).get(name),
                 )
                 for name, active in active_regimes.items()
             },
@@ -1328,6 +1348,10 @@ def _subject_chunk_periods(  # noqa: PLR0915
                 sim_policy=(period_to_regime_to_sim_policy or {})
                 .get(period, {})
                 .get(regime_name),
+                projected_forward_inputs=projected_forward_inputs,
+                current_iid_replay_input=current_iid_replay_inputs.get(period, {}).get(
+                    regime_name
+                ),
                 replay_reader=period_to_regime_to_replay_reader.get(period, {}).get(
                     regime_name
                 ),
@@ -1754,6 +1778,7 @@ def _read_external_replay(
         referenced_value_kwargs=referenced_value_kwargs,
         period=period,
         age=age,
+        active_subjects=subject_ids_in_regime,
     )
     if bool(jnp.any(subject_ids_in_regime & ~replay_feasible)):
         raise InvalidSimulationInputError(
@@ -1976,6 +2001,8 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
         EGMSimPolicy | NBEGMGridPolicy | NNBEGMSimPolicy | NestedEGMSimPolicy | None
     ) = None,
     replay_reader: PreparedReplayReader | ReplayReader | None = None,
+    current_iid_replay_input: CurrentIIDReplayInput | None = None,
+    projected_forward_inputs: ProjectedForwardInputs = MappingProxyType({}),
     taste_key: PRNGKeyND | None = None,
     taste_address: tuple[int, ...] | None = None,
     supplied_shocks: Mapping[str, np.ndarray] = MappingProxyType({}),
@@ -2205,6 +2232,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
         next_values=next_regime_to_V_arr,
         referenced=referenced_value_kwargs,
         stored_values=period_to_regime_to_V_arr,
+        projected_forward_inputs=projected_forward_inputs,
     )
     if sim_policy is not None and replay_reader is None:
         sim_policy = place_replay_payload(
@@ -2227,6 +2255,13 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
         isinstance(sim_policy, NNBEGMSimPolicy)
     )
     current_shocks: Mapping[str, FloatND | IntND] = MappingProxyType({})
+    if (
+        regime.simulation.case_r_replay_spec is not None
+        or regime.simulation.uses_case_u_reconstruction
+    ) and current_iid_replay_input is None:
+        raise InvalidSimulationInputError(
+            "Case-R replay requires its retained original resources artifact."
+        )
     if prepared_decision is not None:
         # The immutable original-source pass already made the one Full choice
         # and revealed a mover's final Participating action. Only this final
@@ -2255,8 +2290,187 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             next_regime_to_V_arr=next_regime_to_V_arr,
             flat_params=regime_kernel_params(flat_params, regime_name=regime_name),
             referenced_value_kwargs=referenced_value_kwargs,
-            subject_ids_in_regime=subject_ids_in_regime,
+            subject_ids_in_regime=run_simulation_operation(
+                memory=memory,
+                function=_active_subjects,
+                arguments={"in_regime": subject_ids_in_regime, "genuine": genuine},
+                subject_arg_names=("in_regime", "genuine"),
+                subject_outputs=True,
+            ),
         )
+        nested_fallback = None
+    elif isinstance(current_iid_replay_input, CaseUReplayInput):
+        from _lcm.egm.current_iid_case_u_replay import (  # noqa: PLC0415
+            CASE_U_REPLAY_PROGRAM,
+        )
+        from _lcm.simulation.case_u_replay import (  # noqa: PLC0415
+            CaseUReplayOutput,
+            case_u_arguments,
+            case_u_status,
+        )
+
+        plan = regime.simulation.current_iid_draw_plan
+        if plan is None or not isinstance(subject_slice, slice):
+            raise ExecutionPlanningError(
+                "Case-U replay requires original ungrouped subject addresses."
+            )
+        keys = prepare_current_iid_keys(
+            plan=plan,
+            key=key,
+            period=period,
+            subject_slice=subject_slice,
+            original_n_subjects=n_subjects
+            if original_n_subjects is None
+            else original_n_subjects,
+            memory=memory,
+        )
+        future = current_iid_replay_input.acquire(
+            core=CASE_U_REPLAY_PROGRAM, owner=value_owner
+        )
+        decision = cast(
+            "CaseUReplayOutput",
+            execute_simulation_program(
+                programs=regime.simulation.programs,
+                family="decision",
+                period=period,
+                n_subjects=n_chunk_subjects,
+                arguments=case_u_arguments(
+                    regime=regime,
+                    replay=current_iid_replay_input,
+                    future=future,
+                    states=states[regime_name],
+                    keys=keys,
+                    overrides=gather_current_iid_overrides(
+                        bank=current_iid_overrides,
+                        names=plan.physical_names,
+                        period=period,
+                        subject_slice=subject_slice,
+                    ),
+                    flat_params=flat_params,
+                    period=period,
+                    period_value=jnp.int32(period)
+                    if memory is None
+                    else np.int32(period),
+                    age=age,
+                ),
+            ),
+        )
+        if memory is not None:
+            memory.hold(tree=decision)
+        bad_law, bad_row, empty = run_simulation_operation(
+            memory=memory,
+            function=case_u_status,
+            arguments={
+                "law_invalid": decision.law_invalid,
+                "invalid": decision.invalid,
+                "feasible": decision.feasible,
+                "in_regime": subject_ids_in_regime,
+            },
+            subject_arg_names=("law_invalid", "invalid", "feasible", "in_regime"),
+        )
+        if bool(bad_law):
+            raise ShockDeclarationError(
+                "Case-U physical replay has invalid law status."
+            )
+        if bool(bad_row):
+            raise ExecutionPlanningError(
+                "Case-U original candidate replay has unresolved row integrity."
+            )
+        if bool(empty):
+            raise NoFeasibleActionError(
+                f"Regime '{regime_name}', period {period} "
+                "has no feasible Case-U action."
+            )
+        optimal_actions = MappingProxyType(dict(decision.actions))
+        V_arr = decision.value
+        current_shocks = decision.physical
+        nested_fallback = None
+    elif isinstance(current_iid_replay_input, CaseRReplayInput):
+        from _lcm.egm.current_iid_replay import (  # noqa: PLC0415
+            CASE_R_REPLAY_PROGRAM,
+            CaseRReplayOutput,
+        )
+        from _lcm.simulation.case_r_replay import (  # noqa: PLC0415
+            case_r_arguments,
+            case_r_status,
+        )
+
+        plan = regime.simulation.current_iid_draw_plan
+        spec = regime.simulation.case_r_replay_spec
+        if plan is None or spec is None or not isinstance(subject_slice, slice):
+            raise ExecutionPlanningError(
+                "Case-R replay requires original ungrouped subject addresses."
+            )
+        keys = prepare_current_iid_keys(
+            plan=plan,
+            key=key,
+            period=period,
+            subject_slice=subject_slice,
+            original_n_subjects=n_subjects
+            if original_n_subjects is None
+            else original_n_subjects,
+            memory=memory,
+        )
+        row = current_iid_replay_input.acquire(
+            core=CASE_R_REPLAY_PROGRAM, owner=value_owner, spec=spec
+        )
+        decision = cast(
+            "CaseRReplayOutput",
+            execute_simulation_program(
+                programs=regime.simulation.programs,
+                family="decision",
+                period=period,
+                n_subjects=n_chunk_subjects,
+                arguments=case_r_arguments(
+                    regime=regime,
+                    replay=current_iid_replay_input,
+                    row=row,
+                    states=states[regime_name],
+                    keys=keys,
+                    overrides=gather_current_iid_overrides(
+                        bank=current_iid_overrides,
+                        names=plan.physical_names,
+                        period=period,
+                        subject_slice=subject_slice,
+                    ),
+                    flat_params=flat_params,
+                    period=period,
+                    period_value=jnp.int32(period)
+                    if memory is None
+                    else np.int32(period),
+                    age=age,
+                ),
+            ),
+        )
+        if memory is not None:
+            memory.hold(tree=decision)
+        bad_law, bad_row, empty = run_simulation_operation(
+            memory=memory,
+            function=case_r_status,
+            arguments={
+                "law_invalid": decision.law_invalid,
+                "invalid": decision.invalid,
+                "feasible": decision.feasible,
+                "in_regime": subject_ids_in_regime,
+            },
+            subject_arg_names=("law_invalid", "invalid", "feasible", "in_regime"),
+        )
+        if bool(bad_law):
+            raise ShockDeclarationError(
+                "Case-R physical replay has invalid law status."
+            )
+        if bool(bad_row):
+            raise ExecutionPlanningError(
+                "Case-R original candidate replay has unresolved row integrity."
+            )
+        if bool(empty):
+            raise NoFeasibleActionError(
+                f"Regime '{regime_name}', period {period} "
+                "has no feasible Case-R action."
+            )
+        optimal_actions = MappingProxyType(dict(decision.actions))
+        V_arr = decision.value
+        current_shocks = decision.physical
         nested_fallback = None
     elif direct_nnbegm_replay:
         # The payload names the complete finite candidate set, so the unrelated
@@ -2315,6 +2529,18 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             *, space: StateActionSpace, in_regime: Bool1D
         ) -> tuple[IntND, FloatND, int]:
             nonlocal current_shocks
+            active_subjects = (
+                run_simulation_operation(
+                    memory=memory,
+                    function=_active_subjects,
+                    arguments={"in_regime": in_regime, "genuine": genuine},
+                    subject_arg_names=("in_regime", "genuine"),
+                    subject_outputs=True,
+                )
+                if regime.simulation.post_decision_bounds
+                or regime.simulation.projected_forward_readers_by_period.get(period)
+                else None
+            )
             decision_outputs = execute_simulation_program(
                 programs=regime.simulation.programs,
                 family="decision",
@@ -2355,6 +2581,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                     params=regime_kernel_params(flat_params, regime_name=regime_name),
                     period=jnp.int32(period) if memory is None else np.int32(period),
                     age=age,
+                    active_subjects=active_subjects,
                 ),
             )
             if regime.simulation.current_iid_draw_plan is not None:
@@ -2387,8 +2614,14 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                         "otherwise supply named base innovations."
                     )
                 decision_outputs = (indices, values)
-            indices, values = consume_runtime_bound_outputs(
+            decision_outputs = consume_projected_forward_outputs(
                 outputs=cast("tuple[QAndFArg, ...]", decision_outputs),
+                readers=regime.simulation.projected_forward_readers_by_period.get(
+                    period, {}
+                ),
+            )
+            indices, values = consume_runtime_bound_outputs(
+                outputs=decision_outputs,
                 bound_specs=regime.simulation.post_decision_bounds,
                 regime_name=regime_name,
                 period=period,
@@ -2513,7 +2746,15 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 next_regime_to_V_arr=next_regime_to_V_arr,
                 referenced_value_kwargs=referenced_value_kwargs,
                 grid_values=V_arr,
-                in_regime=subject_ids_in_regime,
+                in_regime=run_simulation_operation(
+                    memory=memory,
+                    function=_active_subjects,
+                    arguments={"in_regime": subject_ids_in_regime, "genuine": genuine},
+                    subject_arg_names=("in_regime", "genuine"),
+                    subject_outputs=True,
+                )
+                if sim_policy is not None
+                else subject_ids_in_regime,
                 logger=logger,
             )
         )
@@ -3266,6 +3507,7 @@ def _replace_continuous_action_with_policy_read(  # noqa: PLR0911
         referenced_value_kwargs=referenced_value_kwargs,
         period=period,
         age=age,
+        active_subjects=in_regime,
     )
 
     if sim_policy.row_discrete_action_names:
@@ -5066,6 +5308,7 @@ def _canonical_Q_at_actions(
     period: int,
     age: ScalarFloat | ScalarInt,
     referenced_value_kwargs: QAndFKwargs = MappingProxyType({}),
+    active_subjects: BoolND | None = None,
 ) -> tuple[FloatND, BoolND]:
     """Score one action value per subject with the canonical state-action value.
 
@@ -5090,8 +5333,22 @@ def _canonical_Q_at_actions(
         period=period,
         age=age,
         referenced_value_kwargs=referenced_value_kwargs,
+        active_subjects=active_subjects,
     )
     if type(evaluated) is BoundedResult:
+        from _lcm.solution.feasibility import (  # noqa: PLC0415 - avoid numerical declaration import cycles
+            validate_query_input_status,
+        )
+
+        readers = regime.simulation.projected_forward_readers_by_period.get(period, {})
+        if readers:
+            validate_query_input_status(
+                statuses=evaluated.query_status,
+                authorities=tuple(
+                    (reader.target, reader.date.authority.period, reader.date.authority)
+                    for reader in readers.values()
+                ),
+            )
         validate_runtime_bound_status(
             statuses=evaluated.bound_status,
             bound_specs=tuple(
@@ -5117,9 +5374,22 @@ def _evaluate_canonical_Q_at_actions(
     period: int,
     age: ScalarFloat | ScalarInt,
     referenced_value_kwargs: QAndFKwargs = MappingProxyType({}),
+    active_subjects: BoolND | None = None,
 ) -> tuple[FloatND, BoolND] | BoundedResult[tuple[FloatND, BoolND]]:
     """Evaluate canonical actions once, retaining integrity through transformations."""
-    evaluated = regime.simulation.Q_and_F[period](
+    from _lcm.regime_building.processing import (  # noqa: PLC0415 - completed model's pointwise owner
+        _SubjectPointwiseQAndF,
+    )
+
+    function = regime.simulation.Q_and_F[period]
+    owner = function
+    while isinstance(owner, functools.partial):
+        if owner.args:
+            raise TypeError(
+                "Pointwise integrity requires keyword-only parameter bindings."
+            )
+        owner = owner.func
+    evaluated = function(
         **canonical_states,
         **{name: jnp.asarray(candidate_actions[name]) for name in action_names},
         next_regime_to_V_arr=next_regime_to_V_arr,
@@ -5127,6 +5397,11 @@ def _evaluate_canonical_Q_at_actions(
         **flat_params,
         period=jnp.int32(period),
         age=age,
+        **(
+            {ACTIVE_SUBJECTS_ARGUMENT: active_subjects}
+            if active_subjects is not None and isinstance(owner, _SubjectPointwiseQAndF)
+            else {}
+        ),
     )
     if type(evaluated) is BoundedResult:
         if len(evaluated.bound_status) != sum(
@@ -5139,6 +5414,7 @@ def _evaluate_canonical_Q_at_actions(
         return BoundedResult(
             output=(jnp.asarray(values), jnp.asarray(feasible).astype(bool)),
             bound_status=evaluated.bound_status,
+            query_status=evaluated.query_status,
         )
     if any(bound.kind == "dag" for bound in regime.simulation.post_decision_bounds):
         raise TypeError(
@@ -5249,6 +5525,15 @@ def _genuine_rows(*, subject_slice: slice | SubjectRows, n_real: int) -> np.ndar
 def _current_iid_invalid(*, invalid: BoolND, in_regime: BoolND) -> BoolND:
     """Consume native law status only for occupant rows, independently of logging."""
     return jnp.any(invalid & in_regime)
+
+
+def _active_subjects(
+    *,
+    in_regime: BoolND,
+    genuine: BoolND | np.ndarray[tuple[int], np.dtype[np.bool_]],
+) -> BoolND:
+    """Own integrity only for real subjects acting in this source regime."""
+    return in_regime & genuine
 
 
 def _first_empty_action_row(*, indices: IntND, in_regime: BoolND) -> IntND:

@@ -22,13 +22,14 @@ from dags import concatenate_functions
 from _lcm.grids import DiscreteGrid
 from _lcm.grids.categorical import categorical
 from _lcm.identity_transition import _IdentityTransition
+from _lcm.materialization import DatedGenerationMaterializer
 from _lcm.regime_building.broadcast import merge_model_slots
 from _lcm.regime_law import RegimeLaws
 from _lcm.simulation.initial_conditions import MISSING_CAT_CODE
 from _lcm.transition_plans import OriginalLotteryLayout, signature_with_state
 from _lcm.typing import DataclassInstance, EconFunctionArg, RegimeNamesToIds
 from lcm.collective import CollectiveUtility
-from lcm.exceptions import RegimeInitializationError
+from lcm.exceptions import ExecutionPlanningError, RegimeInitializationError
 from lcm.phased import Phased
 from lcm.regime import (
     ActionEntry,
@@ -181,6 +182,7 @@ def factor_fixed_components(
     constraints: Mapping[FunctionName, ConstraintEntry],
     actions: Mapping[ActionName, ActionEntry],
     derived_categoricals: Mapping[FunctionName, DiscreteGrid],
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> tuple[
     Mapping[str, Regime],
     UserParams,
@@ -232,6 +234,10 @@ def factor_fixed_components(
             | set(regime.constraints)
             | set(regime.derived_categoricals)
             | set(regime.state_transitions)
+        )
+    if materializer is not None:
+        raise ExecutionPlanningError(
+            "Cold factored declarations require admitted category/table factories."
         )
     splits, parts = _create_splits(regimes=merged, groups=groups, occupied=occupied)
     next_outputs = {
