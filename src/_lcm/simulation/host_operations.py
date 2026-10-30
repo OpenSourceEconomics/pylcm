@@ -303,11 +303,9 @@ class ProfiledSimulationOperations:
         accounting are reused for the same program, operands and placement.
         """
         static = MappingProxyType({})
-        key = _operation_key(
+        key = _producer_key(
             function=function,
             arguments=arguments,
-            static_arguments=static,
-            subject_outputs=False,
             devices=devices,
             output_sharding=output_sharding,
         )
@@ -325,6 +323,32 @@ class ProfiledSimulationOperations:
             memory_for=_operation_memory,
         )
         return plan.compiled.executable
+
+    def prepare_producer(
+        self,
+        *,
+        function: Callable[..., PytreeValue],
+        arguments: Mapping[ReferenceName, ShapeDtypePytree],
+        devices: tuple[jax.Device, ...],
+        output_sharding: jax.sharding.Sharding | None = None,
+    ) -> _ProfiledOperation:
+        """Profile a producer over placed abstract operands without admitting it.
+
+        The executable is cached under the key `admit_producer` dispatches, so a
+        profiled producer is not compiled again when it runs.
+        """
+        return self.compile_candidate(
+            key=_producer_key(
+                function=function,
+                arguments=arguments,
+                devices=devices,
+                output_sharding=output_sharding,
+            ),
+            function=function,
+            arguments=arguments,
+            static_arguments=MappingProxyType({}),
+            output_sharding=output_sharding,
+        )
 
     def built[T: Callable[..., PytreeValue]](
         self, *, builder: Callable[..., T], **inputs: _BuilderInput
@@ -580,6 +604,24 @@ def _operation_key(
         ),
         layout_key=("simulation_host_operation", subject_outputs, output_sharding),
         placement_key=devices,
+    )
+
+
+def _producer_key(
+    *,
+    function: Callable[..., PytreeValue],
+    arguments: Mapping[ReferenceName, ShapeDtypePytree],
+    devices: tuple[jax.Device, ...],
+    output_sharding: jax.sharding.Sharding | None,
+) -> Hashable:
+    """Identify a producer's executable at profiling and at admission."""
+    return _operation_key(
+        function=function,
+        arguments=arguments,
+        static_arguments=MappingProxyType({}),
+        subject_outputs=False,
+        devices=devices,
+        output_sharding=output_sharding,
     )
 
 

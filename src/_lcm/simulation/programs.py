@@ -546,6 +546,12 @@ def attach_gated_simulation_programs(
     return attached
 
 
+# Payload consumer routes whose forward reads chunk admission profiles: the finite
+# NNBEGM bank runs as declared programs, and the flat EGM policy-first read
+# (`egm_off_grid`) as one compiled producer beside the grid-argmax fallback.
+PROFILED_POLICY_ROUTES = frozenset({"nnbegm_finite", "egm_off_grid"})
+
+
 def budgeted_simulation_programs_ready(
     *, regimes: Mapping[RegimeName, Regime], n_periods: int, enable_jit: bool
 ) -> bool:
@@ -563,7 +569,8 @@ def budgeted_simulation_programs_ready(
         )
         and not (
             regime.simulation.replay_route.policy_applicable
-            and regime.simulation.replay_route.consumer_route != "nnbegm_finite"
+            and regime.simulation.replay_route.consumer_route
+            not in PROFILED_POLICY_ROUTES
         )
         and regime.simulation.external_replay_route is None
         for period, active in enumerate(

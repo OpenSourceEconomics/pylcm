@@ -16,7 +16,7 @@ import numpy as np
 
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.current_iid_replay_inputs import CurrentIIDReplayInputs
-from _lcm.egm.published_policy import NNBEGMSimPolicy
+from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
 from _lcm.engine import Regime, StateActionSpace
 from _lcm.execution.core_program import ValueRead
 from _lcm.execution.value_transfer import (
@@ -191,6 +191,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     """
     # `simulate` reaches this module through chunk admission, so import lazily.
     from _lcm.simulation.simulate import (  # noqa: PLC0415
+        _active_subjects,
         _current_iid_invalid,
         _first_empty_action_row,
     )
@@ -567,6 +568,18 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                 )
                 actions, value, fallback = cast("_FiniteRankOutput", rank_outputs[:3])
             else:
+                if "policy_first" in cores:
+                    inventory.operation(
+                        function=_active_subjects,
+                        arguments={"in_regime": mask, "genuine": mask},
+                        subject_arg_names=("in_regime", "genuine"),
+                        subject_outputs=True,
+                    )
+                    _record_core(
+                        inventory=inventory,
+                        profile=cores["policy_first"],
+                        family="policy_first",
+                    )
                 decision = cores["decision"]
                 decision_outputs = cast(
                     "tuple[jax.ShapeDtypeStruct, ...]",
@@ -1581,9 +1594,9 @@ def _policy_read_sources(
     """Index canonical retained finite leaves by the actual period-owner addresses."""
     sources = {}
     for name, policy in policies.items():
-        if not isinstance(policy, NNBEGMSimPolicy):
+        if not isinstance(policy, NNBEGMSimPolicy | EGMSimPolicy):
             raise ExecutionPlanningError(
-                "Chunk policy copies require a finite retained payload schema."
+                "Chunk policy copies require a finite or flat EGM payload schema."
             )
         leaves = jax.tree.leaves(policy)
         if not all(isinstance(leaf, jax.Array) for leaf in leaves):
