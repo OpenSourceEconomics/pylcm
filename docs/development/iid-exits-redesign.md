@@ -86,6 +86,10 @@ solve's. `DCEGM(replay="grid")` restores the action-grid argmax for plain DC-EGM
 Case-U regimes. The [solver reference](../reference/solvers.md#api-dcegm) lists where
 policy-first applies.
 
+A DC-EGM regime followed by a finite NNBEGM regime has no replay route and is refused at
+`Model(...)`; see
+[unsupported combinations](../reference/solvers.md#unsupported-solver-combinations).
+
 ### Batch 4 compact acceptance set
 
 The S10 closing set reuses existing tests, one per distinct implementation mechanism.

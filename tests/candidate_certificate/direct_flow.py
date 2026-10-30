@@ -598,7 +598,7 @@ _SOURCE_SEALS = {
     "src/_lcm/egm/regime_introspection.py": "e1268a84eb34d1377c1fdf4672ccca73353190e0a77ebec405b7846fea11bbd0",
     "src/_lcm/egm/step.py": "220e68c78ab20c3f16d6f3f1b72b5429a5ac1694b3e3c1a374ba979cf87c126e",
     "src/_lcm/egm/step_core.py": "4e231dd2ba0ae20f62ce0ffc24fd36f487f9538da8c51eb0285422a22fbfa57a",
-    "src/_lcm/solution/dcegm.py": "3ca93843fc7f58ccc015203247f90a89ccb7b1102d590af569e5942310033439",
+    "src/_lcm/solution/dcegm.py": "bbee7402cb857fcef7b6633ddefd353ecf9e63fe1d5d8f1c9e8cc74462e16b3b",
     DECOUPLED_BOUND_SOURCE: "f86bcae9805cf3c72cb3be638d20070dc80b5cd3b94fcfdd2dfe85a0da4757cf",
     S03_EULER_SOURCE: "a5e95cde939adcefdf3d8310f6617df4f203ae3479bc318cd92ac51c020d0f55",
     S03_DECLARED_LAW_SOURCE: "635329b1a16ebe7b80ae57acfcc3fa3fd2c1b65a7b6778d1f72dc985f47e0e69",
