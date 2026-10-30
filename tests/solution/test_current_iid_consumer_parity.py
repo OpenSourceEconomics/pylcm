@@ -1046,9 +1046,10 @@ def test_declared_shock_reproduces_node_state_model_for_aca_egm_shapes(
 
 
 _UTILITY_SHOCK_REFUSAL = (
-    r"(?s){solver} regime '{regime}' reads the IID shock\(s\) \['{shock}'\] other "
-    r"than through resources \('{resources}'\).*Move the shock into "
-    r"resources \('{resources}'\), or use GridSearch for this regime\."
+    r"(?s){solver} regime '{regime}' reads the process state\(s\) \['{shock}'\] "
+    r"other than through resources \('{resources}'\).*Move the process into "
+    r"resources \('{resources}'\), declare it with `simulate_draws=\"nodes\"`, or "
+    r"use GridSearch for this regime\."
 )
 
 

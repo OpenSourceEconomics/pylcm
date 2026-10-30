@@ -40,7 +40,7 @@ from _lcm.egm.validation import (
     _resolve_solve_functions,
     _transition_variants,
     _without,
-    fail_if_iid_process_enters_utility,
+    fail_if_off_node_process_enters_utility,
 )
 from _lcm.solution.nnbegm import NNBEGM, _BoundNNBEGM
 from _lcm.typing import FunctionName, RegimeName, TransitionFunctionName
@@ -70,7 +70,7 @@ def validate_nnbegm_regime(
 ) -> None:
     """Reject an outer transition coupled to the inner solved margin."""
     solver = cast("_BoundNNBEGM", user_regime.solver)
-    fail_if_iid_process_enters_utility(
+    fail_if_off_node_process_enters_utility(
         regime_name=regime_name,
         user_regime=user_regime,
         resources=solver.inner.budget_target,
