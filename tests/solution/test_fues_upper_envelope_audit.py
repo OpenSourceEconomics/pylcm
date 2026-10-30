@@ -302,6 +302,7 @@ def test_carry_value_row_is_the_unfloored_envelope_while_published_v_is_floored(
         n_kept=jnp.int32(3),
         n_pad=n_pad,
         publish_resources=jnp.array([2.0]),
+        lowest_euler_point=refined_grid[0],
         borrowing_limit=jnp.asarray(0.0),
         utility_of_action=jnp.log,
         discounted_expected_value_at_limit=jnp.asarray(0.0),
