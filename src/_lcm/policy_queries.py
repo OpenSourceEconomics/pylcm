@@ -1246,13 +1246,22 @@ def query_parameter_namespaces(*, builder: CoreArgumentBuilder) -> frozenset[str
         )
     if isinstance(builder, _IntegratedArguments):
         return frozenset({builder.owner}) if builder.helper_names else frozenset()
-    if not isinstance(builder, _QueryArguments):
-        return frozenset()
-    return _query_node_parameter_namespaces(
-        node=builder.node, information=False
+    # The chunk loop runs every query of the period with its own arguments.
+    queries = (
+        tuple(builder.builders.values())
+        if isinstance(builder, _ChunkArguments)
+        else (builder,)
+        if isinstance(builder, _QueryArguments)
+        else ()
+    )
+    return frozenset(
+        name
+        for query in queries
+        for name in _query_node_parameter_namespaces(node=query.node, information=False)
     ) | frozenset(
         name
-        for node in builder.information_nodes.values()
+        for query in queries
+        for node in query.information_nodes.values()
         for name in _query_node_parameter_namespaces(node=node, information=True)
     )
 
