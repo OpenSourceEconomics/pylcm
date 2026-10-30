@@ -44,6 +44,7 @@ from _lcm.egm.published_policy import (
 )
 from _lcm.engine import (
     EGMPolicyRead,
+    NBEGMPolicyRead,
     NNBEGMPolicyRead,
     PeriodRegimeSimulationData,
     Regime,
@@ -2378,9 +2379,10 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             ).item()
             return indices, values, int(first_empty)
 
-        # Policy-first: a plain DC-EGM regime decides from its published rows,
-        # and the dense grid argmax runs only if some subject's read is
-        # rejected (off support, non-finite, outside the budget, infeasible).
+        # Policy-first: a plain DC-EGM or NB-EGM regime decides from its
+        # published policy, and the dense grid argmax runs only if some
+        # subject's read is rejected (off support, non-finite, outside the
+        # budget, infeasible).
         # ponytail: one host sync per regime-period decides whether the grid
         # argmax runs at all; when it does, it covers the whole chunk and only
         # the rejected subjects take its decision. Gathering the rejected rows
@@ -2400,7 +2402,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             )
             policy_first = _read_egm_policy_first(
                 regime=regime,
-                sim_policy=cast("EGMSimPolicy", sim_policy),
+                sim_policy=cast("EGMSimPolicy | NBEGMGridPolicy", sim_policy),
                 states=states[regime_name],
                 canonical_states=state_action_space.states,
                 action_names=state_action_space.action_names,
@@ -3216,22 +3218,28 @@ def _reads_egm_policy_first(
     ),
     action_names: tuple[ActionName, ...],
 ) -> bool:
-    """Whether this regime-period decides from the flat EGM policy rows.
+    """Whether this regime-period decides from the flat EGM or NB-EGM policy.
 
-    The rows must carry every action the regime declares (the EGM continuous
-    action plus the discrete-action row axes) and no passive continuous-state
-    axis: each passive row is the envelope policy conditional on one passive
-    node, so blending across a passive-dimension branch switch would read
-    neither branch.
+    The policy must carry every action the regime declares (the EGM continuous
+    action plus the discrete actions). Flat EGM rows must carry no passive
+    continuous-state axis: each passive row is the envelope policy conditional
+    on one passive node, so blending across a passive-dimension branch switch
+    would read neither branch.
     """
     read = regime.simulation.egm_policy_read
+    if regime.has_taste_shocks or regime.simulation.current_iid_draw_plan is not None:
+        return False
+    if isinstance(sim_policy, NBEGMGridPolicy):
+        return (
+            isinstance(read, NBEGMPolicyRead)
+            and regime.simulation.replay_route.consumer_route == "nbegm_grid"
+            and set(action_names) == {read.action_name, *read.discrete_action_names}
+        )
     return (
         isinstance(sim_policy, EGMSimPolicy)
         and isinstance(read, EGMPolicyRead)
         and regime.simulation.replay_route.consumer_route == "egm_off_grid"
         and not sim_policy.row_passive_state_names
-        and not regime.has_taste_shocks
-        and regime.simulation.current_iid_draw_plan is None
         and set(action_names)
         == {read.action_name, *sim_policy.row_discrete_action_names}
     )
@@ -3240,7 +3248,7 @@ def _reads_egm_policy_first(
 def _read_egm_policy_first(
     *,
     regime: Regime,
-    sim_policy: EGMSimPolicy,
+    sim_policy: EGMSimPolicy | NBEGMGridPolicy,
     states: Mapping[StateOrActionName, FloatND | IntND],
     canonical_states: Mapping[StateName, FloatND | IntND],
     action_names: tuple[ActionName, ...],
@@ -3264,6 +3272,9 @@ def _read_egm_policy_first(
     is the reported value, so value, actions and transitions all belong to the
     same (branch, action) pair. A process state between its nodes reads each
     branch from the blend of its two bracketing node rows (`_row_selections`).
+    An NB-EGM regime reads its state-grid policy instead
+    (`_read_nbegm_grid_policy`) and reports the canonical value of the emitted
+    actions.
 
     Returns the actions, the reported value, and the per-subject acceptance.
     A subject is accepted when every live branch read lies inside its row
@@ -3336,7 +3347,7 @@ def _policy_first_program(
     *,
     held_regime: _HeldObject,
     held_Q_and_F: _HeldObject,
-    sim_policy: EGMSimPolicy,
+    sim_policy: EGMSimPolicy | NBEGMGridPolicy,
     states: Mapping[StateOrActionName, FloatND | IntND],
     canonical_states: Mapping[StateName, FloatND | IntND],
     action_names: tuple[ActionName, ...],
@@ -3391,7 +3402,7 @@ def _policy_first_body(
     *,
     regime: Regime,
     Q_and_F: QAndFFunction,
-    sim_policy: EGMSimPolicy,
+    sim_policy: EGMSimPolicy | NBEGMGridPolicy,
     states: Mapping[StateOrActionName, FloatND | IntND],
     canonical_states: Mapping[StateName, FloatND | IntND],
     action_names: tuple[ActionName, ...],
@@ -3406,8 +3417,62 @@ def _policy_first_body(
     """Body of `_read_egm_policy_first`, before canonical feasibility.
 
     Returns the actions, the winner's value, the read-side acceptance and the
-    unvalidated canonical evaluation of the emitted actions.
+    unvalidated canonical evaluation of the emitted actions. An NB-EGM policy
+    publishes no value at the realized state, so its winner's value is the
+    canonical value of the emitted actions.
     """
+    if isinstance(sim_policy, NBEGMGridPolicy):
+        actions, winner_value, read_ok = _read_nbegm_grid_policy(
+            regime=regime,
+            sim_policy=sim_policy,
+            states=states,
+            flat_params=flat_params,
+            period=period,
+            age=age,
+        )
+    else:
+        actions, winner_value, read_ok = _read_egm_policy_rows(
+            regime=regime,
+            sim_policy=sim_policy,
+            states=states,
+            flat_params=flat_params,
+            period=period,
+            age=age,
+        )
+    dtypes = dict(action_dtypes)
+    actions = {name: actions[name].astype(dtypes[name]) for name in action_names}
+    evaluated = _evaluate_canonical_Q_at_actions(
+        candidate_actions=actions,
+        regime=regime,
+        canonical_states=canonical_states,
+        action_names=action_names,
+        next_regime_to_V_arr=MappingProxyType(dict(next_regime_to_V_arr)),
+        flat_params=flat_params,
+        referenced_value_kwargs=referenced_value_kwargs,
+        period=period,
+        age=age,
+        active_subjects=in_regime,
+        Q_and_F=Q_and_F,
+    )
+    if winner_value is None:
+        winner_value, _ = cast(
+            "tuple[FloatND, BoolND]",
+            evaluated.output if type(evaluated) is BoundedResult else evaluated,
+        )
+        read_ok &= jnp.isfinite(winner_value)
+    return MappingProxyType(actions), winner_value, read_ok, evaluated
+
+
+def _read_egm_policy_rows(
+    *,
+    regime: Regime,
+    sim_policy: EGMSimPolicy,
+    states: Mapping[StateOrActionName, FloatND | IntND],
+    flat_params: FlatRegimeParams,
+    period: IntND,
+    age: ScalarFloat | ScalarInt,
+) -> tuple[dict[ActionName, FloatND | IntND], FloatND, BoolND]:
+    """Read the flat EGM rows: the winning branch's actions, value and acceptance."""
     read = cast("EGMPolicyRead", regime.simulation.egm_policy_read)
     n_subjects = next(iter(states.values())).shape[0]
     selections = _row_selections(
@@ -3486,21 +3551,6 @@ def _policy_first_body(
         )
     }
     actions[read.action_name] = action
-    dtypes = dict(action_dtypes)
-    actions = {name: actions[name].astype(dtypes[name]) for name in action_names}
-    evaluated = _evaluate_canonical_Q_at_actions(
-        candidate_actions=actions,
-        regime=regime,
-        canonical_states=canonical_states,
-        action_names=action_names,
-        next_regime_to_V_arr=MappingProxyType(dict(next_regime_to_V_arr)),
-        flat_params=flat_params,
-        referenced_value_kwargs=referenced_value_kwargs,
-        period=period,
-        age=age,
-        active_subjects=in_regime,
-        Q_and_F=Q_and_F,
-    )
     read_ok = (
         jnp.all(~live | jnp.stack(in_support), axis=0)
         & jnp.isfinite(winner_value)
@@ -3508,7 +3558,138 @@ def _policy_first_body(
         & (action > 0.0)
         & within_budget
     )
-    return MappingProxyType(actions), winner_value, read_ok, evaluated
+    return actions, winner_value, read_ok
+
+
+def _read_nbegm_grid_policy(
+    *,
+    regime: Regime,
+    sim_policy: NBEGMGridPolicy,
+    states: Mapping[StateOrActionName, FloatND | IntND],
+    flat_params: FlatRegimeParams,
+    period: IntND,
+    age: ScalarFloat | ScalarInt,
+) -> tuple[dict[ActionName, FloatND | IntND], None, BoolND]:
+    """Read the published NB-EGM state-grid policy at each subject's state.
+
+    The liquid state reads linearly between its two bracketing grid nodes. Every
+    other state axis selects its rows as `_row_selections` does, so a process
+    state between its nodes blends its two bracketing node rows. With discrete
+    actions, the branch whose conditional value reads largest wins and its
+    conditional policy supplies the continuous action; a smooth solve publishes
+    the collapsed policy alone.
+
+    Returns the actions, no read value, and the read-side acceptance: the liquid
+    state lies inside its grid, a branch is live, and the action is finite,
+    positive and within the intrinsic budget
+    (`action <= resources - savings_lower_bound`, up to rounding, to which the
+    emitted action is clipped).
+    """
+    read = cast("NBEGMPolicyRead", regime.simulation.egm_policy_read)
+    n_subjects = next(iter(states.values())).shape[0]
+    liquid = jnp.asarray(states[read.liquid_state_name])
+    nodes = jnp.asarray(regime.simulation.grids[read.liquid_state_name].to_jax())
+    lo, weight = _node_bracket(nodes=nodes, values=liquid)
+    surface_read = functools.partial(
+        _state_grid_read,
+        liquid_axis=sim_policy.state_names.index(read.liquid_state_name),
+        selections=_row_selections(
+            regime=regime,
+            names=tuple(
+                name
+                for name in sim_policy.state_names
+                if name != read.liquid_state_name
+            ),
+            states=states,
+        ),
+        lo=lo,
+        weight=weight,
+    )
+    actions: dict[ActionName, FloatND | IntND] = {}
+    live = jnp.ones((n_subjects,), dtype=bool)
+    if sim_policy.branch_value is None or sim_policy.branch_inner_action is None:
+        action = surface_read(surface=sim_policy.action)
+    else:
+        values = jax.vmap(lambda surface: surface_read(surface=surface))(
+            sim_policy.branch_value
+        )
+        ranked = jnp.where(jnp.isfinite(values), values, -jnp.inf)
+        winner = jnp.argmax(ranked, axis=0).astype(jnp.int32)
+        live = jnp.isfinite(_take_at_winner(stacked=ranked, winner=winner))
+        action = _take_at_winner(
+            stacked=jax.vmap(lambda surface: surface_read(surface=surface))(
+                sim_policy.branch_inner_action
+            ),
+            winner=winner,
+        )
+        codes = jnp.asarray(sim_policy.branch_discrete_actions)[winner]
+        actions = {
+            name: codes[:, column]
+            for column, name in enumerate(sim_policy.discrete_action_names)
+        }
+    resources = jnp.reshape(
+        jnp.asarray(
+            _compute_targets(
+                data={
+                    **dict(states),
+                    **actions,
+                    "period": jnp.full(n_subjects, period, dtype=jnp.int32),
+                    "age": jnp.full(n_subjects, age),
+                },
+                targets=[read.resources_target],
+                regime=regime,
+                regime_params=flat_params,
+            )[read.resources_target]
+        ),
+        (n_subjects,),
+    )
+    budget = resources - read.savings_lower_bound
+    rounding = 8 * jnp.finfo(action.dtype).eps * jnp.maximum(1.0, jnp.abs(budget))
+    within_budget = action <= budget + rounding
+    actions[read.action_name] = jnp.minimum(action, budget)
+    read_ok = (
+        jnp.isfinite(liquid)
+        & (liquid >= nodes[0])
+        & (liquid <= nodes[-1])
+        & live
+        & jnp.isfinite(action)
+        & (action > 0.0)
+        & within_budget
+    )
+    return actions, None, read_ok
+
+
+def _state_grid_read(
+    *,
+    surface: FloatND,
+    liquid_axis: int,
+    selections: tuple[_RowSelection, ...],
+    lo: IntND,
+    weight: FloatND,
+) -> FloatND:
+    """Read one state-grid surface at the subjects' liquid brackets and rows.
+
+    Each selected row is read linearly between the liquid nodes `lo` and
+    `lo + 1` and blended by its coefficient. A term whose coefficient is zero
+    contributes nothing, not even a non-finite surface value.
+    """
+    rows = jnp.moveaxis(surface, liquid_axis, -1)
+    reads = []
+    for index, coefficient in selections:
+        row_read = _weighted(coefficient=1.0 - weight, value=rows[(*index, lo)]) + (
+            _weighted(coefficient=weight, value=rows[(*index, lo + 1)])
+        )
+        reads.append(
+            row_read
+            if coefficient is None
+            else _weighted(coefficient=coefficient, value=row_read)
+        )
+    return functools.reduce(jnp.add, reads)
+
+
+def _weighted(*, coefficient: FloatND, value: FloatND) -> FloatND:
+    """Weight a read, letting a zero weight discard even a non-finite read."""
+    return jnp.where(coefficient == 0.0, 0.0, coefficient * value)
 
 
 def _interp_across_outer_axis(

@@ -16,7 +16,7 @@ import numpy as np
 
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.current_iid_replay_inputs import CurrentIIDReplayInputs
-from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
+from _lcm.egm.published_policy import EGMSimPolicy, NBEGMGridPolicy, NNBEGMSimPolicy
 from _lcm.engine import Regime, StateActionSpace
 from _lcm.execution.core_program import ValueRead
 from _lcm.execution.value_transfer import (
@@ -1578,9 +1578,10 @@ def _policy_read_sources(
     """Index canonical retained finite leaves by the actual period-owner addresses."""
     sources = {}
     for name, policy in policies.items():
-        if not isinstance(policy, NNBEGMSimPolicy | EGMSimPolicy):
+        if not isinstance(policy, NNBEGMSimPolicy | EGMSimPolicy | NBEGMGridPolicy):
             raise ExecutionPlanningError(
-                "Chunk policy copies require a finite or flat EGM payload schema."
+                "Chunk policy copies require a finite, flat EGM or NB-EGM payload "
+                "schema."
             )
         leaves = jax.tree.leaves(policy)
         if not all(isinstance(leaf, jax.Array) for leaf in leaves):

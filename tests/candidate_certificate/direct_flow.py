@@ -629,7 +629,7 @@ _SOURCE_SEALS = {
     SUPPORT_TRANSITION_CHECKS_SOURCE: "ace7cc6b2d5a820ad1401912c0a744a67a849cf8c6bd050480412a9cbca75601",
     SUPPORT_DIAGNOSTICS_SOURCE: "477761e6556a83fd2e271e4ab6c258cf4799d62d10d3a2d46dbf31f69b7161d8",
     SUPPORT_PRECONDITIONS_SOURCE: "5df8b182b8cb3c37f6ab76719386cc809052bcc00cda63772d698c75071f4092",
-    SUPPORT_AUTHORITY_SOURCE: "491b1cf2af3e40f7dad198ef2e91c6ee8a510518aed4b0d2457abec8cd9d91f9",
+    SUPPORT_AUTHORITY_SOURCE: "f6ae9418572cc3abc58ecb9e27cc2578c66cab9d56ecd2025807af83dc94cd2d",
     SUPPORT_FINGERPRINT_SOURCE: "6ec013715e6faac2d13f7a27cd34c9c4dd10199379cfd4db4030aade3df39b75",
     UNIFORM_PROCESS_GRID_SOURCE: "f03298f080dfe4bace2e3affc82e0ca8e5d7adf20fe58978433c19305667b299",
     EAGER_STAGE_SOURCE: "d0a52778e4966ecf9bbac4ecaee87f85f49df0aeb4bf7c390f8599bf7d97efa8",
@@ -647,7 +647,7 @@ _SOURCE_SEALS = {
     COMBINED_CHUNK_OPERATIONS_SOURCE: "481b768fc97b134c671c386336a25e9e3e78b631a0a3bc4643d9e74d0ba47e54",
     COMBINED_CHUNK_PLANNING_SOURCE: "807378c7ac745eb7fc3d42c27020f6b40d10d40da3041dcdb647e7e2d3e0d90a",
     COMBINED_CHUNK_PROFILE_INVENTORY_SOURCE: "85070e5f57210e201be248c1f2deae8068dce674112f13efdb0eb94c1dd7f7b4",
-    COMBINED_CHUNK_PROFILES_SOURCE: "e3abad2ac2a24f915c628e69cf757bc6bfb60d25ef9d214f558f3f46f3107ceb",
+    COMBINED_CHUNK_PROFILES_SOURCE: "6aaa09c1e8fae207982e691b5828a6888298352e5a82dab5fd01c6e29ff34c8f",
     COMBINED_DIAGNOSTIC_OPERATIONS_SOURCE: "477f39609fff5371d88d941cc5c4a0c9ab9fe3692ad2845a3fc3a6befb633f42",
     COMBINED_FORWARD_PROGRAM_PROFILES_SOURCE: "3de803b460cfe27032f99666fd5cb18dc8daab73074dcd79b7d87463968a534c",
     COMBINED_POPULATION_OPERATIONS_SOURCE: "a9fdd59887462abc4e2f4321730bcfb397f69ba5f44f3db08001288773082ab8",
@@ -660,7 +660,7 @@ _SOURCE_SEALS = {
     COMBINED_ENTRIES_SOURCE: "0c27d42858dde4a34b5e82a3622dee9c7b240c0c9c3284a2ba4a898bbf9a6510",
     COMBINED_STORES_SOURCE: "032482548248851cc53c7105a107bd9bde3aa110e1ca4e44f1d32460e7d47630",
     SIMULATION_POLICY_PROGRAMS_SOURCE: "46cbbf762052c1fe42b4c589c9ea0f486cea9edae1cb92043733a1a1c4d1e27e",
-    PUBLISHED_POLICY_SOURCE: "2b0b81073a686bf4055f56e916eb481af0ac398e38cf65c696052401e60e5989",
+    PUBLISHED_POLICY_SOURCE: "6e0e77a3e47cec4690b9e3d917159c5a2503efd1a6e7239fcc72f74ae0146316",
     SIMULATION_ENTRY_ALLOCATIONS_SOURCE: "6dc03b15db62330699e3037df2af49d7e5e2b8ee7a5f0c2eddf2c212bedc8782",
     NBEGM_SOURCE: "eea43dd08c6b9242e75b323e6eb3e7f2826298f49d2c2fdfd74f7852b78fa4fa",
     CONTINUATION_ARGUMENTS_SOURCE: "2bfffbd49e5a2e267fcfdefadd21cf4249dcc6979a6ff4889098c37a06dcc0e1",
@@ -685,14 +685,14 @@ _SOURCE_SEALS = {
     LIVENESS_SOURCE: "056bda4d48f26768ed8615925ce8ff89665bb8eed94b59d69f02701a95943dff",
     CONTINUATION_READS_SOURCE: "e512fe5403d78d23a330e3ebf5142457333ffcae94c5ad32f6973bc6e3993078",
     WORKSPACE_PLANNING_SOURCE: "31ca5578da208e786d82a99bd167acd76267380f3fcd169766f080a0a042d990",
-    SIMULATION_PROGRAMS_SOURCE: "f65b0679b220d882b6fa559394f1e5345080412bd5a0c43acbaedaf957130b76",
+    SIMULATION_PROGRAMS_SOURCE: "3852cad51b967aa6a92903fd29049e2a2512e3296d1bb4a20155209f9d5dac8a",
     SIMULATION_PROGRAM_TYPES_SOURCE: "43c381884a3475516bd25d1463e83a6560e0d2ba3c697a290fad1d005d8dbf30",
     SIMULATION_RUNTIME_SOURCE: "88c9757287b5c16607becef498c1cc52cbaa809bbfd0269d337811ed31d858e7",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
     ARGMAX_SOURCE: "b508d4e10350de8b54707db238d01c7de6c73b4ca6b0176e0c6c12ec762952dc",
     COLLECTIVE_SOURCE: "4cc0683d493f597684f5801909d297145d8bade0aa752c3e35cf8af2cb55edd9",
     MAX_Q_SOURCE: "274859ca8f33be8e6d8204cfc5bd968977c5648d6f9e0b673467c6f7e145aaf8",
-    PROCESSING_SOURCE: "5826fc370c3760b35ff6713f9d833f35dce5105541157a35324376732989027a",
+    PROCESSING_SOURCE: "eedbdf7b26ea4f275534689adab9f65ed614da2de4e00c4a1485ecfb759b9670",
     GRID_SEARCH_SOURCE: "6f051a6a85b3914060069e39aa036c6922ced9e33080841fbf32bd5141cec5f6",
     CORE_PROGRAM_SOURCE: "7d8197a3d2607a3380be63408ae4cf2b8d8ebbe68b043cc3aff76bf1f5c6b78a",
     OUTPUT_LAYOUT_SOURCE: "515b2ba9c622053fb51f4711201b489efe12e1739114135f91038f1bedd0067a",
@@ -708,13 +708,13 @@ _SOURCE_SEALS = {
     ZERO_SAFE_SOURCE: "8d54492b73e33461f750420eef45ba8c8281c467acd0c77ba2eb90281793c8d3",
     LOGSUMEXP_ACTION_REDUCTION_SOURCE: "4799ad9bfbc02ae1e5d5270a18ed81fe682f1004d63ae6cf796ff48ac5699445",
     PROBABILITY_SOURCE: "60ccd04b143c714360388fcce2730804a4ca729ea4db82e4a0100732e155e53f",
-    ENGINE_SOURCE: "e6d6905dd6248041dbede531537d82cf441117b8a821fcf7ba8b340f4bb1c988",
+    ENGINE_SOURCE: "5c8093f7987425de7d6bf83b8a93008c7c44b815bc23d67943a1683b2a4ac38b",
     STATE_ACTION_SPACE_SOURCE: "3c6a3a1111abd0889d9af97e0e88c0cf7dc27f07b5381746a5011cf4d8b423e7",
-    SIMULATION_SOURCE: "20bea032bf4a656ae687bb3e9cf84f7d9ae85e72b0b70d00ed0c598909f6fbba",
+    SIMULATION_SOURCE: "e149c583e2b337365723f9958e87c6acd4ba0451690dd68fd070ace423b597f9",
     SIMULATION_TRANSITIONS_SOURCE: "5cef83cc6d594d6d7004dee5cfc82dec5be33d669ac7779d3f9a393058e548da",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
-    MODEL_SOURCE: "ba776ab7312e7c94a4b88e7948e1d224cfb64b8e81f348de2ff03c99a4044710",
-    SOLVER_API_SOURCE: "dee76933a640b4e9086abf89244e21b6e63a72244209f93fbaa39bb74dc08450",
+    MODEL_SOURCE: "1682ea1fc5d7aabbd81d80a3c27c8d15e61438751eb1b820d64ce3aed725d9a1",
+    SOLVER_API_SOURCE: "6e6ce8ea13d16205eee5a463794f57bcccf04b2be1f6f70e36da99f2d7915579",
     BACKWARD_INDUCTION_SOURCE: "eee6b2b9eb72695b2024f4c75096a3dd5d052a108eeb698f7bcd3ecbdd683a4b",
     PERIOD_REPLAY_SOURCE: "ce332a3cf77a3d6c2344298b65234263006025de9d21b120d00941f7549f9965",
     INITIAL_CONDITIONS_SOURCE: "bb8e072ad4981e03f4a6980a1745d4b6ea78578529e041789576d5c6e3f156bb",
@@ -1509,11 +1509,11 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     COMBINED_CHUNK_PROFILES_SOURCE: (
-        "7a1df1f31278d5d891fcbfdd0dabe0184ed58fbdf239a08e43cb1746dbea4877",
+        "3d813102587dc39e96fb6cb4cf4fedb5fe45833592aefe34f60a7a76afcfa83b",
         {
             "profile_simulation_chunk": "db1eda925b7818e9d776858b34cbdd1a1bb284a1cd644fb4f2033b8d0a769738",
             "_period_copy_reservation": "d475408b6e2b7e06c8902aa0794b1cfe7dff629aed69c3c90b15b9d348bf2671",
-            "_policy_read_sources": "c6a1175eb04bf64833a8a8ac696863b939d03dd33c6a77c446bf6d052249f5d2",
+            "_policy_read_sources": "f9982979e85d425d6665973bd34090ebcbab2f7e1524a6ea6dc772ac32bf4f7b",
             "_retained_read_source": "912831130d635edf421c563393476c6bc8458ab3aba612579d630471c2b28776",
             "_profile_next_subjects": "3529b79cb6c3dea43d9add23a6b96138343b523b79888d3f86fe4c0412b5da32",
             "_profile_population_roles": "99510aeb32383e09d2b2972ef0ac6354dd0259aa494d77cefd9aa43d9fecad8e",
@@ -1554,10 +1554,10 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SIMULATION_SOURCE: (
-        "9d1077c47d0210cd21e419cd0e223d92b4b10a59315a6e5d7fdac6ceaa225d93",
+        "a0a53468aa4d5bc01ddbfafd04c2389dd6b7b7a94d8e8c597610f4077547e79e",
         {
             "simulate": "e821c0d629ebfe40d41c49c38246db112164db1a750047086f3b9afa1c7a2e95",
-            "_simulate_regime_in_period": "59446c495c889640a609655ae18883f60959eb394fb782dde7afba76b2e32ff1",
+            "_simulate_regime_in_period": "7656e218a7c2f9fd2f0c993a04f7ca6b1463da3e6a1d90bcd5422597f491d115",
             "_execute_finite_replay": "6ded3ff0186eeba07f2880caf5c21a9d08c6396d9806d49afd7985d8e10cab21",
             "_compute_starting_periods": "f50f6f3c87b21bdf082f3f3d71793c03574dfb93f1aad875d8689b8f773b65a4",
             "_concatenate_chunk_results": "e1217d0e707ef6a8b3d00dcef6abce948d065e125fc2886336bf537d276c1a41",
@@ -1576,7 +1576,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     MODEL_SOURCE: (
-        "6b6ab40181912acdf3a2339f1483356a0ab53a6fd5e532f01f83020a864392c5",
+        "f9b777553974cfe072f4f0392d47c7a1b1a27d2ba892bdc3d3c1e9327448578d",
         {
             "_validate_sharded_state_capability": "ee8b7e8a97fd413d2376a655558ea7b2a2ab61589a0ddd624ed44b69dfe5fa8d",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
@@ -1601,7 +1601,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "Model._canonicalize_params": "85e45144d2b8188b46b095e46d5c229e08f6c98f5919b18a9cd2265723ecdb72",
             "Model._validate_canonical_params": "2dc4199f507ab9aee966ee503409f81da63ff1a0411d428ec3593bd9fb105f56",
             "_simulation_programs": "d90b290c2d54c4e305a413267ff02bfc62c018b7fd8675aecd6fa403de914c85",
-            "Model._lookup_policy": "b5385df19a25dc3f638498b83897de6dd85374a0d62a6b927df71e80b6f8ca5a",
+            "Model._lookup_policy": "1f1a7e40c1c55f8f858851051d363b7f7a5fd889b3ae29af67b72a630c635a2c",
         },
     ),
     OUTPUT_LAYOUT_SOURCE: (
@@ -2105,7 +2105,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     ENGINE_SOURCE: (
-        "0e08b01fcf618042c8b116f2236073cc44ac7e0b6b0ecaac31db8d6022a4aac2",
+        "4e06175d7a8e712e4e0cf0c62d42093bb0dfe6d955156d996c9df28bfcb9baf8",
         {
             "SolutionPhase.resolve_process_grids": "433e871004a339428068e27d0e414e035eb8d1789fd73dc8b9cd85328362a045",
             "SolutionPhase.state_action_space": "c54e576769c9c3addaf2dc961cf604747d2fb3d6b29b5b3ec9a80c3b4f3a692e",
@@ -2150,7 +2150,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SUPPORT_AUTHORITY_SOURCE: (
-        "5a40b2b6cb544ff4f9023c1f84227b711d2975e21cf292b63275040243ddc381",
+        "b401329fe84df82330178c2fb1812c0652b11f4ee6713f234e181b383e533393",
         {
             "supports_owned_negm_u_artifacts": "dcc3df548f590dac6b6a71ad8d41d079fa1e27c84e028ac27ff8031fb81f9d3b",
             "_is_installed_negm_u_continuation": "3e7e2b1b438e8ee67887ee733434bf702e1d1b4e94f8be1c008d086b2e7b2782",
@@ -2460,7 +2460,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     PROCESSING_SOURCE: (
-        "2723c7fbb3d16696dc2ae32e061057ceea48cf821b85e2d9ee926c5c7ffc4ff8",
+        "d82ad6f47347cef73ba83ed379fd490a6f7df5434fb9ec03a64505bcf3efa4de",
         {
             "_build_per_subject_decisions_per_period": "b04fb50baadb61f7a5301b2ec1af99a6c53e10355574f1bddf3da94f606ac67a",
             "process_regimes": "288b4375dff6c1f924dc3e646f38e3c4471887ce440c6b99f9528bf26129c67f",
@@ -2481,11 +2481,11 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_nbegm_query_function_pools": "3d5549c36db6f139068d67a76c0234a3055f84989391576fe5615658ba39ce1b",
             "_nbegm_query_row_state_names": "f398c3a4c47b01a2fe7811f0c76f4ed01618129e38e7e86d703743fa24dea2ca",
             "_solver_with_query_authority": "0eb2703b05650da0b98779c17f9401b9d948debeed46d27068215ba1fe1a6385",
-            "_build_simulation_phase": "22e011bf99f1f4cf5f14a157b56c6e4d8c16ea26eceb260c419e2e4fa38384c2",
+            "_build_simulation_phase": "a56cf8a894e17182a7c8553c75057bd707b45d298c2efb8a1c108831e27993ea",
         },
     ),
     SIMULATION_PROGRAMS_SOURCE: (
-        "75d3b70d40164bdcb996de79ab77bbdd32b5c5e26d6be9cd6e559d822b251d32",
+        "36232b8fb600f5e1f6c0f8cdba9b797d09ff7a94d6b930af595e7bfe5a08f9b1",
         {
             "build_simulation_programs": "783ca11c3cd92f66030c82cb8f83f703f0741e8b6d612df4091f5c53cf7cc203",
             "_decision_programs": "55e9564c10ff69ef2048e460e1560eb8e5d7b530c8ff7689376e32c59b890d18",
@@ -2964,7 +2964,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/lcm/_solver_api/replay.py": (
-        "58a16d058c4e5e342bd83b5f267ec69cdd4e828a80fb45db9698bf593cc37f2e",
+        "50dab3dda63ebd2422c326438519b998d60cc2d39563c52588d5f9f083770f52",
         {},
     ),
     "src/_lcm/egm/ez_kernel.py": (
@@ -7030,7 +7030,7 @@ def _processing_caller_errors(tree: ast.Module) -> list[str]:
             expected_imports=[
                 "from types import MappingProxyType",
                 (
-                    "from _lcm.engine import CaseRReplaySpec, CaseUReplaySpec, EGMPolicyRead, FeasibilityPoolsByPeriod, NNBEGMPolicyRead, Regime, SimulationPhase, SolutionPhase, StateActionSpace, Variables, _fail_if_template_is_misplaced, placed_devices_for_ids"
+                    "from _lcm.engine import CaseRReplaySpec, CaseUReplaySpec, EGMPolicyRead, FeasibilityPoolsByPeriod, NBEGMPolicyRead, NNBEGMPolicyRead, Regime, SimulationPhase, SolutionPhase, StateActionSpace, Variables, _fail_if_template_is_misplaced, placed_devices_for_ids"
                 ),
                 "from _lcm.regime_building.max_Q_over_a import BoundedArgmaxOutput, get_argmax_and_max_Q_over_a",
                 "from _lcm.simulation.programs import attach_gated_simulation_programs, build_simulation_programs",

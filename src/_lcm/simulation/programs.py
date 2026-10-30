@@ -547,9 +547,10 @@ def attach_gated_simulation_programs(
 
 
 # Payload consumer routes whose forward reads chunk admission profiles: the finite
-# NNBEGM bank runs as declared programs, and the flat EGM policy-first read
-# (`egm_off_grid`) as one compiled producer beside the grid-argmax fallback.
-PROFILED_POLICY_ROUTES = frozenset({"nnbegm_finite", "egm_off_grid"})
+# NNBEGM bank runs as declared programs, and the flat EGM and NB-EGM state-grid
+# policy-first reads (`egm_off_grid`, `nbegm_grid`) as one compiled producer
+# beside the grid-argmax fallback.
+PROFILED_POLICY_ROUTES = frozenset({"nnbegm_finite", "egm_off_grid", "nbegm_grid"})
 
 
 def budgeted_simulation_programs_ready(

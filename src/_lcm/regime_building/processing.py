@@ -79,6 +79,7 @@ from _lcm.engine import (
     CaseUReplaySpec,
     EGMPolicyRead,
     FeasibilityPoolsByPeriod,
+    NBEGMPolicyRead,
     NNBEGMPolicyRead,
     Regime,
     SimulationPhase,
@@ -347,6 +348,7 @@ from lcm.solver_api import (
 )
 from lcm.solvers import (
     DCEGM,
+    NBEGM,
     NNBEGM,
     AdaptiveOuterMesh,
     FiniteOuterGrid,
@@ -7462,7 +7464,8 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     # process row axes only with fixed, unconditioned nodes, a scalar savings
     # floor, and the single-post-state kernel. Every upper-envelope backend
     # qualifies; a read that leaves its row support falls back to the grid
-    # argmax per subject.
+    # argmax per subject. A ride-along NB-EGM regime reads its state-grid policy
+    # under the same conditions.
     phase_invariant = (
         not regime_declares_phased(user_regime, law=law)
         and not spec.carried_only_state_names
@@ -7671,6 +7674,57 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
                 grid_schedule=grid_schedule,
             ),
             float_dtype=str(np.dtype(canonical_float_dtype())),
+        )
+    elif (
+        isinstance(solver, NBEGM)
+        and case_r_replay_spec is None
+        and case_u_replay_spec is None
+        and external_replay_route is None
+        and not replay_unsupported
+        and not any(bound.kind == "dag" for bound in post_decision_bounds)
+        and phase_invariant
+        and not has_taste_shocks
+        and not _regime_has_unread_process_state(own_v_info)
+        and not _regime_has_passive_state(
+            v_interpolation_info=own_v_info,
+            euler_state_name=cast("_BoundNBEGM", solver).continuous_state,
+        )
+        # Only the ride-along kernel, built for a state besides the liquid one,
+        # publishes the policy on the state grid.
+        and any(
+            name != cast("_BoundNBEGM", solver).continuous_state
+            for name in state_action_space.states
+        )
+    ):
+        bound_nbegm = cast("_BoundNBEGM", solver)
+        state_names = tuple(state_action_space.states)
+        discrete_action_names = tuple(state_action_space.discrete_actions)
+        egm_policy_read = NBEGMPolicyRead(
+            action_name=bound_nbegm.continuous_action,
+            resources_target=bound_nbegm.budget_target,
+            savings_lower_bound=float(bound_nbegm.savings_grid.to_jax()[0]),
+            liquid_state_name=bound_nbegm.continuous_state,
+            state_names=state_names,
+            state_axis_lengths_by_period=_replay_axis_lengths_by_period(
+                axis_names=state_names,
+                regime_name=regime_name,
+                active_periods=simulated_periods[regime_name],
+                grids=all_grids[regime_name],
+                grid_schedule=grid_schedule,
+            ),
+            discrete_action_names=discrete_action_names,
+            branch_discrete_action_codes=tuple(
+                product(
+                    *(
+                        cast("DiscreteGrid", all_grids[regime_name][name]).codes
+                        for name in discrete_action_names
+                    )
+                )
+            )
+            if discrete_action_names
+            else (),
+            float_dtype=str(np.dtype(canonical_float_dtype())),
+            integer_dtype=str(np.dtype(jnp.int32)),
         )
 
     # Inventory the periodized nodes the additional-target guard must reject —

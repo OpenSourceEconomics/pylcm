@@ -47,9 +47,10 @@ from _lcm.egm.current_iid_replay_inputs import (
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.projected_child import require_projected_carry
 from _lcm.egm.projected_continuation import ProjectedEGMCarry
-from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
+from _lcm.egm.published_policy import EGMSimPolicy, NBEGMGridPolicy, NNBEGMSimPolicy
 from _lcm.engine import (
     EGMPolicyRead,
+    NBEGMPolicyRead,
     NNBEGMPolicyRead,
     UnsupportedReplayRoute,
     placed_devices_for_ids,
@@ -335,6 +336,7 @@ from _lcm.solution.public_period_capture import (
 from _lcm.solution.public_period_replay import replay_public_period
 from _lcm.solution.replay_validation import (
     validate_egm_sim_policy,
+    validate_nbegm_grid_policy,
     validate_nested_egm_sim_policy,
     validate_nnbegm_sim_policy,
 )
@@ -640,7 +642,7 @@ def _built_in_policy_payload_defect(  # noqa: PLR0911
 ) -> str | None:
     """Return a model-authority defect for one built-in simulation policy."""
     policy_read = descriptor.route
-    if not isinstance(policy_read, EGMPolicyRead | NNBEGMPolicyRead):
+    if not isinstance(policy_read, EGMPolicyRead | NBEGMPolicyRead | NNBEGMPolicyRead):
         return None
     if descriptor.payload_type is None or type(supplied) is not descriptor.payload_type:
         expected_name = getattr(
@@ -660,6 +662,12 @@ def _built_in_policy_payload_defect(  # noqa: PLR0911
             policy_read=policy_read,
             period=period,
             expected_node_count=descriptor.egm_node_count,
+        )
+    if isinstance(policy_read, NBEGMPolicyRead):
+        if not isinstance(supplied, NBEGMGridPolicy):
+            return "model authority expects an NB-EGM state-grid policy"
+        return validate_nbegm_grid_policy(
+            policy=supplied, policy_read=policy_read, period=period
         )
     if policy_read.replay_policy_is_nested:
         if (
@@ -5279,7 +5287,9 @@ class Model:
                 )
                 descriptor = authority.replay[ref]
                 policy_read = descriptor.route
-                if not isinstance(policy_read, EGMPolicyRead | NNBEGMPolicyRead):
+                if not isinstance(
+                    policy_read, EGMPolicyRead | NBEGMPolicyRead | NNBEGMPolicyRead
+                ):
                     continue
                 if (
                     not descriptor.applicable
@@ -6493,7 +6503,7 @@ class Model:
                 ),
             )
             executor = unit
-        # A regime `simulate` decides from its published EGM rows is looked up
+        # A regime `simulate` decides from its published EGM policy is looked up
         # the same way; the grid argmax below answers only the rows whose read
         # is rejected. Restricted action grids and kept intermediates take the
         # grid argmax over the requested grid instead.
@@ -6501,7 +6511,7 @@ class Model:
         if reads_policy_first and not keep_intermediates and action_grids is None:
             policy_first = _read_egm_policy_first(
                 regime=runtime_regime,
-                sim_policy=cast("EGMSimPolicy", sim_policy),
+                sim_policy=cast("EGMSimPolicy | NBEGMGridPolicy", sim_policy),
                 states=MappingProxyType(
                     {name: jnp.asarray(s) for name, s in states.items()}
                 ),
