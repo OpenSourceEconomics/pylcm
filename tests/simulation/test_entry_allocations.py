@@ -153,7 +153,6 @@ def _copy_resolved_values(
     (
         values,
         policies,
-        flags,
         readers,
         current_iid_replay,
         projected_forward,
@@ -174,7 +173,6 @@ def _copy_resolved_values(
     return (
         copied,
         policies,
-        flags,
         readers,
         current_iid_replay,
         projected_forward,

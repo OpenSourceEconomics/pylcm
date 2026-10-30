@@ -24,7 +24,7 @@ from _lcm.simulation.replay_inputs import PreparedReplayReader, replay_payload_r
 from _lcm.simulation.value_reads import PeriodSimulationReads
 from _lcm.solution.continuation_reads import rekeyed_value_reads
 from _lcm.typing import QAndFArg, QAndFKwargs, SimulationPolicy
-from lcm.solver_api import DISSOLUTION_FLAG, SIMULATION_POLICY, ReplayReader
+from lcm.solver_api import SIMULATION_POLICY, ReplayReader
 from lcm.typing import FloatND, ReferenceName, RegimeName
 
 GATE_FOLD = "simulation_gate_fold"
@@ -68,7 +68,6 @@ def unit_value_reads(
     name: str,
     period: int,
     values: Mapping[int, Mapping[str, jax.Array]],
-    flags: Mapping[int, Mapping[str, jax.Array]],
     policy: SimulationPolicy | None,
     reader: PreparedReplayReader | ReplayReader | None,
     current_iid_replay_input: CurrentIIDReplayInput | None = None,
@@ -94,9 +93,7 @@ def unit_value_reads(
     ):
         if period in family:
             reads.extend(family[period].requirements.value_reads)
-    reads.extend(
-        gate_reads(regime=regime, name=name, period=period, values=values, flags=flags)
-    )
+    reads.extend(gate_reads(regime=regime, name=name, period=period, values=values))
     if policy is not None and reader is None:
         for family in (
             regime.simulation.programs.policy_prepare,
@@ -142,16 +139,13 @@ def gate_reads(
     name: str,
     period: int,
     values: Mapping[int, Mapping[str, jax.Array]],
-    flags: Mapping[int, Mapping[str, jax.Array]],
 ) -> tuple[ValueRead, ...]:
-    """Declare raw V and stored Boolean D for the fold and realized gate.
+    """Declare the raw target and reference V the fold and realized gate read.
 
-    Wbar belongs to the decision input. The realized gate instead consumes the
-    raw target/reference values and D, with D converted to the interpolation
-    dtype only after its Boolean stored artifact has been transferred.
+    Wbar belongs to the decision input. The realized gate consumes the raw
+    target/reference values.
     """
     landing_values = values.get(period + 1, {})
-    landing_flags = flags.get(period + 1, {})
     reads: list[ValueRead] = []
     for target, edge in regime.gated_edges.items():
         if not edge_may_fold_at_period(
@@ -181,25 +175,6 @@ def gate_reads(
                 )
                 for reference in dict.fromkeys((target, *edge.reference_regimes))
             )
-            if target in landing_flags:
-                reads.append(
-                    ValueRead(
-                        target=ValueArtifactAddress(
-                            kind=ValueArtifactKind.REPLAY_ARTIFACT_LEAF,
-                            period=period + 1,
-                            regime=target,
-                            artifact_key=DISSOLUTION_FLAG,
-                        ),
-                        source=ValueConsumerAddress(
-                            source_period=period,
-                            source_regime=name,
-                            core_key=core,
-                            channel=ValueInputChannel.NEXT_REPLAY_ARTIFACT,
-                            argument="edge_flags",
-                            path=(target,),
-                        ),
-                    )
-                )
     return tuple(reads)
 
 
@@ -209,33 +184,23 @@ def acquire_gate_inputs(
     owner: PeriodSimulationReads,
     name: str,
     values: Mapping[int, Mapping[str, jax.Array]],
-    flags: Mapping[int, Mapping[str, jax.Array]],
-) -> tuple[Mapping[str, Mapping[str, jax.Array]], Mapping[str, jax.Array]]:
+) -> Mapping[str, Mapping[str, jax.Array]]:
     """Acquire raw leaves into the exact argument paths the adapters consume.
 
     Every occurrence reads the original stored artifact. The owner shares its
     destination copy across edge references, fold/route families, and units.
     """
     placed_values: dict[str, dict[str, jax.Array]] = {}
-    placed_flags: dict[str, jax.Array] = {}
     for read in reads:
         target = read.target
-        is_flag = target.kind is ValueArtifactKind.REPLAY_ARTIFACT_LEAF
-        source = flags if is_flag else values
         array = owner.read(
-            unit=name, read=read, value=source[target.period][target.regime]
+            unit=name, read=read, value=values[target.period][target.regime]
         )
         edge_target = cast("str", read.source.path[0])
-        if is_flag:
-            placed_flags[edge_target] = array
-        else:
-            reference = cast("str", read.source.path[1])
-            placed_values.setdefault(edge_target, {})[reference] = array
-    return (
-        MappingProxyType(
-            {target: MappingProxyType(row) for target, row in placed_values.items()}
-        ),
-        MappingProxyType(placed_flags),
+        reference = cast("str", read.source.path[1])
+        placed_values.setdefault(edge_target, {})[reference] = array
+    return MappingProxyType(
+        {target: MappingProxyType(row) for target, row in placed_values.items()}
     )
 
 

@@ -360,7 +360,6 @@ from _lcm.typing import (
     ParamsLeaf,
     ParamsTemplate,
     PeriodToRegimeToArrivalSurfaces,
-    PeriodToRegimeToDissolutionFlags,
     PeriodToRegimeToSimulationPolicy,
     PeriodToRegimeToVArr,
     PytreeByPeriod,
@@ -531,7 +530,6 @@ type _PeriodToRegimeToReplayReader = MappingProxyType[
 type _ResolvedSolution = tuple[
     PeriodToRegimeToVArr,
     PeriodToRegimeToSimulationPolicy,
-    PeriodToRegimeToDissolutionFlags,
     _PeriodToRegimeToReplayReader,
     CurrentIIDReplayInputs,
     ProjectedForwardInputs,
@@ -3589,7 +3587,6 @@ class Model:
             log_path=log_path,
             log_keep_n_latest=log_keep_n_latest,
             max_compilation_workers=max_compilation_workers,
-            retain_dissolution_flags=preparation.retention.retains_replay,
             retain_replay=preparation.retention is ResultRetention.VALUES_AND_REPLAY,
             retain_all_artifacts=preparation.retain_all_persistable,
             persistable_artifact_refs=preparation.persistable_artifact_refs,
@@ -3770,7 +3767,6 @@ class Model:
                 execution=self._execution,
                 collect_solver_diagnostics=True,
                 max_compilation_workers=max_compilation_workers,
-                retain_dissolution_flags=preparation.retention.retains_replay,
                 retain_replay=preparation.retention
                 is ResultRetention.VALUES_AND_REPLAY,
                 retain_all_artifacts=preparation.retain_all_persistable,
@@ -3797,7 +3793,6 @@ class Model:
         log_path: str | Path | None,
         log_keep_n_latest: int,
         max_compilation_workers: int | None,
-        retain_dissolution_flags: bool = False,
         retain_replay: bool = True,
         retain_all_artifacts: bool = False,
         persistable_artifact_refs: frozenset[ArtifactRef] = frozenset(),
@@ -3814,14 +3809,10 @@ class Model:
         its solve-time parameter values, and enters every executable's
         compilation key.
 
-        Returns the named backward-induction outputs: value-function arrays,
-        each regime's published per-period simulation policy, and the
-        per-period, per-COLLECTIVE-regime dissolution-flag arrays. Simulation
+        Returns the named backward-induction outputs: value-function arrays and
+        each regime's published per-period simulation policy. Simulation
         policies are retained only when `retain_replay` is true, and only for
-        regimes whose declared simulation route reads one.
-        The dissolution flags are empty for models without collective regimes,
-        and for a collective model whose gates never read `D_target` unless
-        `retain_dissolution_flags` asks for them. With `log_path` set, a
+        regimes whose declared simulation route reads one. With `log_path` set, a
         snapshot is written at `log_level="debug"` for every completed solve.
         Checked NaN failures save a partial snapshot at any output level.
         `_enforce_retention` caps snapshots at `log_keep_n_latest`.
@@ -3855,7 +3846,6 @@ class Model:
                 execution=self._execution,
                 collect_solver_diagnostics=collect_solver_diagnostics,
                 max_compilation_workers=max_compilation_workers,
-                retain_dissolution_flags=retain_dissolution_flags,
                 retain_replay=retain_replay,
                 retain_all_artifacts=retain_all_artifacts,
                 persistable_artifact_refs=persistable_artifact_refs,
@@ -4112,11 +4102,6 @@ class Model:
             policies=engine_view.simulation_policies,
             values=engine_view.values,
         )
-        self._check_solution_result_dissolution_flags(
-            solution=solution,
-            authority=engine_view.authority,
-            dissolution_flags=engine_view.dissolution_flags,
-        )
         replay_artifacts = engine_view.replay_artifacts
 
         def owned_payload(
@@ -4136,7 +4121,6 @@ class Model:
         return (
             engine_view.values,  # noqa: PD011
             engine_view.simulation_policies,
-            engine_view.dissolution_flags,
             external_readers,
             self._build_current_iid_replay_inputs(
                 authority=engine_view.authority, replay_payload=owned_payload
@@ -4200,7 +4184,7 @@ class Model:
             process_grid_resolver=process_grid_resolver,
             validation_materializer=validation_materializer,
         )
-        policies, dissolution_flags = self._check_solution_result_artifacts(
+        policies = self._check_solution_result_artifacts(
             solution=solution,
             authority=authority,
             values=values,
@@ -4239,7 +4223,6 @@ class Model:
         return (
             values,
             policies,
-            dissolution_flags,
             external_readers,
             self._build_current_iid_replay_inputs(
                 authority=authority,
@@ -4880,10 +4863,7 @@ class Model:
         values: PeriodToRegimeToVArr,
         array_copier: _ArrayCopier | None = None,
         validation_materializer: SimulationEntryAllocations | None = None,
-    ) -> tuple[
-        PeriodToRegimeToSimulationPolicy,
-        PeriodToRegimeToDissolutionFlags,
-    ]:
+    ) -> PeriodToRegimeToSimulationPolicy:
         """Require every replay artifact the labelled solution's routes consume."""
         policies = _materialize_artifact_projection(
             store=solution.replay_artifacts,
@@ -4892,29 +4872,13 @@ class Model:
             array_writer=validation_materializer,
             array_copier=array_copier,
         )
-        dissolution_flags = _materialize_artifact_projection(
-            store=solution.replay_artifacts,
-            key=DISSOLUTION_FLAG,
-            authority=authority,
-            required_only=True,
-            array_copier=array_copier,
-            array_writer=validation_materializer,
-        )
         self._check_solution_result_replay_policies(
             solution=solution,
             authority=authority,
             policies=policies,
             values=values,
         )
-        self._check_solution_result_dissolution_flags(
-            solution=solution,
-            authority=authority,
-            dissolution_flags=dissolution_flags,
-        )
-        return (
-            cast("PeriodToRegimeToSimulationPolicy", policies),
-            cast("PeriodToRegimeToDissolutionFlags", dissolution_flags),
-        )
+        return cast("PeriodToRegimeToSimulationPolicy", policies)
 
     def _build_projected_forward_inputs(
         self,
@@ -5355,68 +5319,6 @@ class Model:
                 )
             )
 
-    def _check_solution_result_dissolution_flags(
-        self,
-        *,
-        solution: _SolutionResultBoundary,
-        authority: SolutionAuthority,
-        dissolution_flags: Mapping[int, Mapping[RegimeName, ArtifactPayload]],
-    ) -> None:
-        """Validate and require only flags consumed by model-declared gates."""
-        missing_dissolution_flags = list(
-            self._find_malformed_dissolution_flags(
-                dissolution_flags=dissolution_flags,
-                authority=authority,
-            )
-        )
-        for ref, descriptor in authority.replay.items():
-            if ref.key != DISSOLUTION_FLAG or not descriptor.required:
-                continue
-            supplied = dissolution_flags.get(ref.period, {}).get(ref.regime)
-            if supplied is not None:
-                continue
-            omission = solution.omissions.get(ref)
-            reason = omission.value if omission is not None else "unrecorded"
-            missing_dissolution_flags.append((ref.period, ref.regime, reason))
-        if missing_dissolution_flags:
-            msg = (
-                f"Required artifact {DISSOLUTION_FLAG.type_id!r} is absent or "
-                "invalid at "
-                "(period, regime, reason): "
-                f"{tuple(dict.fromkeys(missing_dissolution_flags))}. Re-solve with "
-                "retention=ResultRetention.VALUES_AND_REPLAY."
-            )
-            raise InvalidSimulationInputError(msg)
-
-    def _find_malformed_dissolution_flags(
-        self,
-        *,
-        dissolution_flags: Mapping[int, Mapping[RegimeName, ArtifactPayload]],
-        authority: SolutionAuthority,
-    ) -> tuple[tuple[int, RegimeName, str], ...]:
-        """Return structural defects among materialized required flags."""
-        malformed: list[tuple[int, RegimeName, str]] = []
-        for period, regime_to_flag in dissolution_flags.items():
-            for regime_name, supplied in regime_to_flag.items():
-                ref = ArtifactRef(
-                    period=period,
-                    regime=regime_name,
-                    key=DISSOLUTION_FLAG,
-                )
-                descriptor = authority.replay[ref]
-                supplied_shape = tuple(getattr(supplied, "shape", ()))
-                supplied_dtype = getattr(supplied, "dtype", None)
-                if (
-                    not descriptor.applicable
-                    or descriptor.payload_type is None
-                    or not isinstance(supplied, descriptor.payload_type)
-                    or supplied_shape != descriptor.shape
-                    or supplied_dtype is None
-                    or str(np.dtype(supplied_dtype)) != descriptor.dtype
-                ):
-                    malformed.append((period, regime_name, "mismatched_payload"))
-        return tuple(malformed)
-
     def _fail_if_simulation_is_unsupported(self) -> None:
         """Refuse model configurations whose solved decision cannot be replayed.
 
@@ -5702,7 +5604,6 @@ class Model:
                     (
                         period_to_regime_to_V_arr,
                         period_to_regime_to_sim_policy,
-                        period_to_regime_to_dissolution_flags,
                         period_to_regime_to_replay_reader,
                         current_iid_replay_inputs,
                         projected_forward_inputs,
@@ -5717,7 +5618,6 @@ class Model:
             else:
                 period_to_regime_to_V_arr = None
                 period_to_regime_to_sim_policy = None
-                period_to_regime_to_dissolution_flags = None
                 period_to_regime_to_replay_reader = None
                 current_iid_replay_inputs = None
                 projected_forward_inputs = None
@@ -5729,7 +5629,6 @@ class Model:
                         resolved_inputs=(
                             period_to_regime_to_V_arr,
                             period_to_regime_to_sim_policy,
-                            period_to_regime_to_dissolution_flags,
                             period_to_regime_to_replay_reader,
                             current_iid_replay_inputs,
                             projected_forward_inputs,
@@ -5897,7 +5796,6 @@ class Model:
                 )
                 period_to_regime_to_V_arr = MappingProxyType({})
                 period_to_regime_to_sim_policy = MappingProxyType({})
-                period_to_regime_to_dissolution_flags = MappingProxyType({})
                 period_to_regime_to_replay_reader = MappingProxyType({})
                 current_iid_replay_inputs = MappingProxyType({})
                 projected_forward_inputs = MappingProxyType({})
@@ -5939,7 +5837,6 @@ class Model:
                     (
                         period_to_regime_to_V_arr,
                         period_to_regime_to_sim_policy,
-                        period_to_regime_to_dissolution_flags,
                         period_to_regime_to_replay_reader,
                         current_iid_replay_inputs,
                         projected_forward_inputs,
@@ -5955,7 +5852,6 @@ class Model:
                 if (
                     period_to_regime_to_V_arr is None
                     or period_to_regime_to_sim_policy is None
-                    or period_to_regime_to_dissolution_flags is None
                     or period_to_regime_to_replay_reader is None
                     or current_iid_replay_inputs is None
                     or projected_forward_inputs is None
@@ -5970,7 +5866,6 @@ class Model:
                         resolved_inputs=(
                             period_to_regime_to_V_arr,
                             period_to_regime_to_sim_policy,
-                            period_to_regime_to_dissolution_flags,
                             period_to_regime_to_replay_reader,
                             current_iid_replay_inputs,
                             projected_forward_inputs,
@@ -6014,7 +5909,6 @@ class Model:
                         regimes=simulate_regimes,
                         flat_params=flat_params,
                         values=period_to_regime_to_V_arr,
-                        flags=period_to_regime_to_dissolution_flags,
                         policies=period_to_regime_to_sim_policy,
                         current_iid_replay_inputs=current_iid_replay_inputs,
                         projected_forward_inputs=projected_forward_inputs,
@@ -6074,9 +5968,6 @@ class Model:
                 regime_names_to_ids=self.regime_names_to_ids,
                 logger=log,
                 period_to_regime_to_V_arr=period_to_regime_to_V_arr,
-                period_to_regime_to_dissolution_flags=(
-                    period_to_regime_to_dissolution_flags
-                ),
                 period_to_regime_to_sim_policy=period_to_regime_to_sim_policy,
                 period_to_regime_to_replay_reader=period_to_regime_to_replay_reader,
                 current_iid_replay_inputs=current_iid_replay_inputs,
@@ -6497,7 +6388,7 @@ class Model:
         )
         if allocations is not None:
             allocations.update_solution(solution=solution, resolved_inputs=resolved)
-        V_arrs, sim_policies, _, replay_readers, case_r_inputs, projected_inputs, _ = (
+        V_arrs, sim_policies, replay_readers, case_r_inputs, projected_inputs, _ = (
             resolved
         )
         if projected_inputs and regime.simulation.projected_forward_readers_by_period:

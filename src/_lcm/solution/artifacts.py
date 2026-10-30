@@ -25,7 +25,6 @@ from _lcm.typing import (
     HostArray,
     ParamsLeaf,
     PeriodToRegimeToArrivalSurfaces,
-    PeriodToRegimeToDissolutionFlags,
     PeriodToRegimeToSimulationPolicy,
     PeriodToRegimeToVArr,
     RegimeName,
@@ -33,7 +32,6 @@ from _lcm.typing import (
 from lcm._solver_api.authority import _ArrayCopier
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import (
-    DISSOLUTION_FLAG,
     EGM_CONTINUATION,
     SIMULATION_POLICY,
     SOLVER_DIAGNOSTICS,
@@ -72,7 +70,7 @@ class OwnedSolutionView:
     """The engine's by-reference view of a result it built in this process.
 
     The producing model consumes its own result through this view: the value
-    arrays, published replay policies, and dissolution flags are the objects the
+    arrays and published replay policies are the objects the
     solve returned, and the authority is the one bound to that solve, generated
     adaptive facts included. Nothing is copied and nothing is re-validated; the
     consumer only checks that it is the producing instance and that the
@@ -87,8 +85,6 @@ class OwnedSolutionView:
     """The solve's value arrays, by reference."""
     simulation_policies: PeriodToRegimeToSimulationPolicy
     """The published replay policies consumed by a declared route."""
-    dissolution_flags: PeriodToRegimeToDissolutionFlags
-    """The retained per-period, per-collective-regime dissolution flags."""
     replay_artifacts: MappingProxyType[ArtifactRef, ArtifactPayload]
     """Every retained replay-channel payload, by reference, for plugin routes."""
     authority: SolutionAuthority
@@ -244,11 +240,6 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
             nested=declared_replay_policies,
             key=SIMULATION_POLICY,
         )
-        _add_nested_artifacts(
-            target=replay,
-            nested=internal_result.dissolution_flags,
-            key=DISSOLUTION_FLAG,
-        )
 
     if retention is ResultRetention.ALL_PERSISTABLE_ARTIFACTS:
         for store in (retained_continuations, replay, auxiliary):
@@ -309,27 +300,6 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
                 raise RuntimeError(msg)
             else:
                 omissions[policy_ref] = OmissionReason.UNSUPPORTED
-
-        if regime.stakeholders is not None:
-            dissolution_ref = ArtifactRef(
-                period=period,
-                regime=regime_name,
-                key=DISSOLUTION_FLAG,
-            )
-            if dissolution_ref not in replay:
-                dissolution_descriptor = authority.replay[dissolution_ref]
-                if not retention.retains_replay:
-                    omissions[dissolution_ref] = OmissionReason.NOT_REQUESTED
-                elif dissolution_descriptor.required:
-                    msg = (
-                        "A model-authoritative replay route published no "
-                        "required artifact at "
-                        f"({period}, {regime_name!r}, "
-                        f"{DISSOLUTION_FLAG.type_id!r})."
-                    )
-                    raise RuntimeError(msg)
-                else:
-                    omissions[dissolution_ref] = OmissionReason.UNSUPPORTED
 
     persistable_artifact_refs = selected_persistable_artifact_refs(
         regimes=regimes, authority=authority, retention=retention
@@ -471,11 +441,6 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
             values=internal_result.value_functions,
             simulation_policies=(
                 declared_replay_policies
-                if retention.retains_replay
-                else MappingProxyType({})
-            ),
-            dissolution_flags=(
-                internal_result.dissolution_flags
                 if retention.retains_replay
                 else MappingProxyType({})
             ),
@@ -623,7 +588,6 @@ def _add_nested_artifacts[Payload](
 
 
 __all__ = [
-    "DISSOLUTION_FLAG",
     "EGM_CONTINUATION",
     "SIMULATION_POLICY",
     "SOLVER_DIAGNOSTICS",

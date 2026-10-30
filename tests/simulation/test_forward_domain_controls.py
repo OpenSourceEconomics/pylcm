@@ -206,9 +206,6 @@ class _ForwardProfileInputs(TypedDict):
     values: forward_profiles.Mapping[
         int, forward_profiles.Mapping[str, forward_profiles.jax.Array]
     ]
-    flags: forward_profiles.Mapping[
-        int, forward_profiles.Mapping[str, forward_profiles.jax.Array]
-    ]
     ages: forward_profiles.TimeAxis
     n_subjects: int
     widths: forward_profiles.Mapping[str, int]
@@ -239,9 +236,6 @@ class _RegimeSimulationInputs(TypedDict):
     new_subject_regime_ids: simulate.Int1D
     period_to_regime_to_V_arr: simulate.MappingProxyType[
         int, simulate.MappingProxyType[simulate.RegimeName, simulate.FloatND]
-    ]
-    period_to_regime_to_dissolution_flags: simulate.MappingProxyType[
-        int, simulate.MappingProxyType[simulate.RegimeName, simulate.BoolND]
     ]
     flat_params: simulate.FlatParams
     regime_names_to_ids: simulate.RegimeNamesToIds

@@ -404,10 +404,10 @@ class Regime:
       constraint's name).
 
     The final action mask is the AND of ordinary constraints and all value
-    constraints; the household argmax runs over the masked set, and a state
-    cell whose mask is empty publishes the dissolution flag `D = True` (returned by
-    the solve alongside V — never conflated with a numeric `-inf` value, which
-    can occur on-path). A participation constraint takes the form
+    constraints; the household argmax runs over the masked set. A state cell
+    whose mask is empty holds no viable household; where its members go is
+    declared by a participation `Exit` or by an `ArrivalDecision` reading the
+    household's policy support. A participation constraint takes the form
     `Q_j >= V_single_j(pi_j(x)) - Delta_j` for each stakeholder `j`.
 
     A TERMINAL collective regime may declare them too — a household's last

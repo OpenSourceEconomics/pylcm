@@ -461,7 +461,7 @@ def test_consent_counterparty_is_a_coherent_declared_policy_context(kind: str) -
     )
     message = (
         r"a Raw simulation policy query requires 'other' at age 0, .*"
-        r"no simulationedge out of 'other' at that age"
+        r"no simulate edge out of 'other' at that age"
         if kind == "inactive"
         else r"[Cc]ounterparty"
     )

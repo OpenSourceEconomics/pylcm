@@ -710,12 +710,12 @@ def root_functions(
     - every value-constraint predicate;
     - every Pareto weight declared as a function;
     - every `same_period_refs` projection;
-    - for each gated edge *whose target is this regime*, the edge's gate, its
-      gate-reference projections, and its legs' fallback projections.
+    - for each gated edge *whose target is this regime*, the edge's gate and
+      its legs' fallback projections.
 
     That last group is why every regime's law is an argument: a gated edge is
-    declared on the SOURCE's law but gate, gate references and fallbacks are
-    all evaluated on the TARGET regime's grid, so nothing in the target's own
+    declared on the SOURCE's law but its gate and fallbacks are all
+    evaluated on the TARGET regime's grid, so nothing in the target's own
     slots mentions them and a walk over one regime in isolation cannot see the
     read.
 
@@ -884,11 +884,6 @@ def _incoming_edge_roots(
         if edge is None:
             continue
         roots[f"__incoming_gate__{source_name}"] = edge.gate
-        roots |= {
-            f"__incoming_gate_ref__{source_name}__{ref_name}__{state_name}": projection
-            for ref_name, ref in edge.gate_refs.items()
-            for state_name, projection in ref.projection.items()
-        }
         # Both phases of a `Phased` fallback are rooted: a state read only by
         # the settlement projection is still read, and pruning it would leave
         # the simulate leg with a coordinate it cannot form.
@@ -1275,7 +1270,7 @@ def _needed_names(
     The roots are `root_functions`' — utility, derived categoricals,
     constraints, the Koopmans aggregator, the regime transition, the
     value-constraint predicates, the `same_period_refs` projections and the
-    incoming gated edges' gates, gate references and fallbacks — plus the laws
+    incoming gated edges' gates and fallbacks — plus the laws
     of motion toward candidate targets that keep the law's state, which are
     pruning's own: whatever such a law reads has to stay alive here so the
     target can be handed its value.

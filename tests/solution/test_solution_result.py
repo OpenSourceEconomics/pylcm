@@ -151,12 +151,6 @@ class _SimulationKwargs(TypedDict):
     taste_shock_seed: NotRequired[int | None]
     subject_batch_size: NotRequired[int]
     original_n_subjects: NotRequired[int | None]
-    period_to_regime_to_dissolution_flags: NotRequired[
-        MappingProxyType[
-            int,
-            MappingProxyType[simulation_module.RegimeName, simulation_module.BoolND],
-        ]
-    ]
     device_ids: NotRequired[tuple[int, ...]]
     retained_footprint: NotRequired[simulation_module.DeviceBufferFootprint | None]
     prepared_chunks: NotRequired[simulation_module.PreparedSimulationChunks | None]
@@ -480,8 +474,13 @@ def test_model_rejects_a_present_inapplicable_artifact() -> None:
 
 def test_model_rejects_a_present_artifact_not_selected_by_retention() -> None:
     """The metadata retention label constrains every present artifact channel."""
-    model = _make_dissolution_model()
-    solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="off")
+    model = _build("adaptive")
+    solution = model.solve(
+        params=_PARAMS,
+        log_level="off",
+        retention=ResultRetention.VALUES_AND_REPLAY,
+    )
+    assert _policy_refs(solution)
     malformed = replace(
         solution,
         metadata=replace(solution.metadata, retention=ResultRetention.VALUES),
@@ -492,7 +491,7 @@ def test_model_rejects_a_present_artifact_not_selected_by_retention() -> None:
         match=r"present artifacts.*not selected by retention 'values'",
     ):
         model.simulate(
-            params=_DISSOLUTION_PARAMS,
+            params=_PARAMS,
             initial_conditions={},
             solution=malformed,
             log_level="off",
@@ -638,7 +637,6 @@ def test_builtin_artifact_keys_are_stably_versioned() -> None:
 def test_private_artifact_key_aliases_are_the_public_singletons() -> None:
     assert private_artifacts.EGM_CONTINUATION is EGM_CONTINUATION
     assert private_artifacts.SIMULATION_POLICY is SIMULATION_POLICY
-    assert private_artifacts.DISSOLUTION_FLAG is DISSOLUTION_FLAG
     assert private_artifacts.SOLVER_DIAGNOSTICS is SOLVER_DIAGNOSTICS
 
 
@@ -1532,73 +1530,6 @@ def test_policy_at_an_undeclared_coordinate_is_refused_before_forward(
         model.simulate(
             params=params,
             initial_conditions=initial_conditions,
-            solution=malformed,
-            log_level="off",
-        )
-
-
-@pytest.mark.parametrize("defect", ["type", "dtype", "shape"])
-def test_malformed_dissolution_flag_is_refused_before_forward(
-    *, defect: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    model = _make_dissolution_model()
-    solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="off")
-    flag_ref = next(
-        ref for ref in solution.replay_artifacts if ref.key == DISSOLUTION_FLAG
-    )
-    flag = solution.replay_artifacts[flag_ref]
-    if defect == "type":
-        malformed_flag = np.asarray(flag, dtype=np.bool_)
-    elif defect == "dtype":
-        malformed_flag = jnp.asarray(flag, dtype=jnp.float32)
-    else:
-        malformed_flag = jnp.reshape(jnp.asarray(flag), (*jnp.asarray(flag).shape, 1))
-    entries = dict(solution.replay_artifacts)
-    entries[flag_ref] = malformed_flag
-    malformed = replace(solution, replay_artifacts=ArtifactStore(entries))
-
-    def _forward_loop_must_not_run(**_kwargs: Unpack[_SimulationKwargs]) -> NoReturn:
-        raise AssertionError("forward simulation ran before dissolution preflight")
-
-    monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
-    with pytest.raises(
-        InvalidSimulationInputError,
-        match=r"mismatched_payload|artifact payloads cannot be detached",
-    ):
-        model.simulate(
-            params=_DISSOLUTION_PARAMS,
-            initial_conditions={},
-            solution=malformed,
-            log_level="off",
-        )
-
-
-def test_dissolution_flag_is_refused_from_the_wrong_artifact_channel(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    model = _make_dissolution_model()
-    solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="off")
-    flag_ref = next(
-        ref for ref in solution.replay_artifacts if ref.key == DISSOLUTION_FLAG
-    )
-    replay_entries = dict(solution.replay_artifacts)
-    flag = replay_entries.pop(flag_ref)
-    malformed = replace(
-        solution,
-        replay_artifacts=ArtifactStore(replay_entries),
-        auxiliary_artifacts=ArtifactStore(
-            dict(solution.auxiliary_artifacts) | {flag_ref: flag}
-        ),
-    )
-
-    def _forward_loop_must_not_run(**_kwargs: Unpack[_SimulationKwargs]) -> NoReturn:
-        raise AssertionError("forward simulation ran before dissolution preflight")
-
-    monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
-    with pytest.raises(InvalidSimulationInputError, match="wrong channels"):
-        model.simulate(
-            params=_DISSOLUTION_PARAMS,
-            initial_conditions={},
             solution=malformed,
             log_level="off",
         )

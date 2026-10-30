@@ -65,7 +65,6 @@ from lcm.exceptions import ExecutionPlanningError, PyLCMError
 from lcm.model import Model
 from lcm.regime import Regime as UserRegime
 from lcm.result import SimulationResult
-from lcm.solver_api import DISSOLUTION_FLAG
 from lcm.typing import RegimeName, ScalarFloat, ScalarInt
 from tests.simulation._profile_comparison import (
     assert_values_agree as assert_agrees_to_ulp,
@@ -1079,16 +1078,20 @@ def test_collective_grid_search_value_and_dissolution_have_planned_state_layout(
     )
     single_model = _make_one_axis_collective_model(distributed=False)
 
-    distributed_values = distributed_model.solve(
-        log_level="off",
-        params={"discount_factor": 0.95},
-    )
-    distributed_flags = distributed_values.replay_artifacts.project(DISSOLUTION_FLAG)
-    single_values = single_model.solve(
-        log_level="off",
-        params={"discount_factor": 0.95},
-    )
-    single_flags = single_values.replay_artifacts.project(DISSOLUTION_FLAG)
+    # Imported here: the fixture module creates arrays at import, which would
+    # initialize JAX before this module pins its CPU topology.
+    from tests.collective_fixtures import recorded_dissolution_flags  # noqa: PLC0415
+
+    with recorded_dissolution_flags() as distributed_flags:
+        distributed_values = distributed_model.solve(
+            log_level="off",
+            params={"discount_factor": 0.95},
+        )
+    with recorded_dissolution_flags() as single_flags:
+        single_values = single_model.solve(
+            log_level="off",
+            params={"discount_factor": 0.95},
+        )
 
     for period, regime_to_value in distributed_values.values.items():
         for regime_name, value in regime_to_value.items():

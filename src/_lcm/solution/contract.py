@@ -83,7 +83,6 @@ from _lcm.typing import (
     FlatParams,
     FunctionName,
     PeriodToRegimeToArrivalSurfaces,
-    PeriodToRegimeToDissolutionFlags,
     PeriodToRegimeToSimulationPolicy,
     PeriodToRegimeToVArr,
     PytreeValue,
@@ -562,9 +561,9 @@ class SolverBuildContext:
     edge_reference_regimes: tuple[RegimeName, ...] = ()
     """Regimes a gated edge reads a projected value from, or empty.
 
-    A gate reference and a leg fallback both name another regime's value at
-    coordinates a projection produces. Neither is tabulated on the target's
-    grid, so both are read where the source lands — inside the source's own
+    A leg fallback names another regime's value at coordinates a projection
+    produces. It is not tabulated on the target's grid, so it is read where the
+    source lands — inside the source's own
     kernel — at the value of the period the source lands in. The rolled V
     mapping already carries that array; these names are what pick it out and
     thread each reference regime's OWN grid params beside it.
@@ -665,21 +664,6 @@ class BackwardInductionResult:
         int, MappingProxyType[RegimeName, GeneratedReplayAuthority]
     ] = MappingProxyType({})
     """Trusted dynamic facts kept outside the public replay payload store."""
-
-    dissolution_flags: PeriodToRegimeToDissolutionFlags = MappingProxyType({})
-    """Immutable mapping of period to each COLLECTIVE regime's dissolution flag `D`.
-
-    `True` on the state cells whose action mask is empty
-    (distinct from a numeric `-inf` value); empty inner mappings for models
-    without collective regimes, so the default (singleton) path is unchanged.
-
-    Carries arrays only where something reads them: a gate declaring the
-    `D_target` operand, which forward simulation recomputes from the flag, or a
-    caller asking backward induction to retain them. A collective model whose
-    gates read only value operands gets the same period keys with empty inner
-    mappings, and its flags are freed period by period rather than held for the
-    whole induction.
-    """
 
     diagnostics: MappingProxyType[
         int, MappingProxyType[RegimeName, SolverDiagnostics]

@@ -570,12 +570,12 @@ dissolution-flag inputs are not accepted.
 How a `SolutionResult` is consumed follows its provenance. A result the same model
 instance solved in this process, for the same canonical parameters, is consumed by
 reference: the engine reads the arrays the solve allocated without copying or
-re-validating them, and only checks the replay payloads and dissolution flags it is
-about to read. Every other result — restored from an archive, unpickled, or produced by
-another model instance — is validated in full and materialized into private buffers once
-per consuming model and parameter vector; a second simulation from the same result
-reuses that validated view. The consumed result stays reachable as
-`SimulationResult.solution` until the simulation result is saved.
+re-validating them, and only checks the replay payloads it is about to read. Every other
+result — restored from an archive, unpickled, or produced by another model instance — is
+validated in full and materialized into private buffers once per consuming model and
+parameter vector; a second simulation from the same result reuses that validated view.
+The consumed result stays reachable as `SimulationResult.solution` until the simulation
+result is saved.
 
 Before consuming such a result, simulation checks its durable model and
 solution-parameter fingerprints, exact solver/plugin and replay-route identities, schema

@@ -110,12 +110,16 @@ def _repeat_gate(V_target: FloatND) -> BoolND:
     return V_target > _REPEAT_GATE_THRESHOLD
 
 
+def _repeat_at_high_wage(wage: ContinuousState) -> BoolND:
+    return wage > 1.5
+
+
 def _src_transition() -> Transition:
     """Return `src`'s transition: a gated self-loop until age 2, then `src_exit`.
 
-    Legacy value-gate fixture kept only for
-    `tests/regime_building/test_invariant_components.py`; it retires with that
-    consumer. The public test below declares the same edge as an arrival decision.
+    `tests/regime_building/test_invariant_components.py` reads it as a gated edge
+    touching a carrier. The gate states on the wage what the public test's arrival
+    decision computes from the value: the repeat stays open at wage 2 only.
     """
     exit_cell = StochasticTransition(func=_prob_exit_boundary)
     return Transition(
@@ -126,7 +130,7 @@ def _src_transition() -> Transition:
         ),
         gates={
             "src": Gate(
-                predicate=_repeat_gate,
+                predicate=_repeat_at_high_wage,
                 routes={
                     "only": StakeholderRoute(
                         fallback=ProjectedRegimeValue(

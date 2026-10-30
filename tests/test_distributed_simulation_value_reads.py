@@ -357,7 +357,7 @@ def test_external_reader_consumes_the_exact_validated_placed_cell(
     solution = _solve(model=model)
     prepared = model._resolve_solution_result(
         solution=solution, flat_params=model._process_params(_PARAMS)
-    )[3][0]["active"]
+    )[2][0]["active"]
     devices = tuple(jax.devices()[index] for index in subject_ids)
     owner = PeriodSimulationReads(
         period=0,

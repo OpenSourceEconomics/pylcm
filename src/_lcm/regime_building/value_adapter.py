@@ -290,8 +290,8 @@ def process_code_reads(
 ]:
     """Return, per regime, the process states some adapter reads the position of.
 
-    A regime's code readers are its own functions and the gates, fallbacks and
-    references of the gated edges landing in it; each binds that regime's copy.
+    A regime's code readers are its own functions and the gates and fallbacks
+    of the gated edges landing in it; each binds that regime's copy.
     """
     # An age-specialized marker's built functions read no position.
     read = {
@@ -619,8 +619,8 @@ def adapt_regime_laws(
 
     A law still returns a regime code or probabilities over regimes, so nothing
     it returns is encoded. A regime name and a terminal law read nothing. The
-    transition reads the source regime's states; a gated edge's gate, fallbacks
-    and references read the states of the target it lands in.
+    transition reads the source regime's states; a gated edge's gate and
+    fallbacks read the states of the target it lands in.
     """
     adapters = {} if adapters is None else adapters
     return MappingProxyType(
@@ -842,7 +842,7 @@ def _adapt_gated_edge(
     value_grids: Mapping[StateOrActionName, AdapterGrid],
     adapters: AdapterMemo,
 ) -> GatedEdge:
-    """Adapt a gated edge's gate, its routes' fallbacks and its references.
+    """Adapt a gated edge's gate and its routes' fallbacks.
 
     The edge is kept as declared if none of them changes.
     """
@@ -855,19 +855,8 @@ def _adapt_gated_edge(
         )
         for name, route in edge.legs.items()
     }
-    gate_refs = {
-        name: cast(
-            "ProjectedRegimeValue",
-            _adapt_reference(
-                reference=reference, value_grids=value_grids, adapters=adapters
-            ),
-        )
-        for name, reference in edge.gate_refs.items()
-    }
-    if (
-        gate is edge.gate
-        and all(fallbacks[name] is route.fallback for name, route in edge.legs.items())
-        and all(gate_refs[name] is ref for name, ref in edge.gate_refs.items())
+    if gate is edge.gate and all(
+        fallbacks[name] is route.fallback for name, route in edge.legs.items()
     ):
         return edge
     return dataclasses.replace(
@@ -879,7 +868,6 @@ def _adapt_gated_edge(
                 for name, route in edge.legs.items()
             }
         ),
-        gate_refs=MappingProxyType(gate_refs),
     )
 
 

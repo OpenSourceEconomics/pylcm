@@ -1568,7 +1568,7 @@ class _CanonicalRegimeBuilder:
         same_period_ref_regimes = tuple(
             dict.fromkeys(ref.regime for ref in user_regime.same_period_refs.values())
         )
-        # A gated edge's gate references and leg fallbacks are read where
+        # A gated edge's leg fallbacks are read where
         # the SOURCE lands, inside the source's own kernel — but the value
         # they name belongs to the period the source lands IN. Backward
         # induction has already solved that period, so these regimes need
@@ -3203,7 +3203,7 @@ def _gated_continuation_specs(
 
     Each target's specs are keyed by the FOLD period, for the reason
     `folds_by_period` is: the combiner carries this edge's projected readers,
-    and a gate reference on an `AgeSpecializedGrid` is read on its own regime's
+    and a leg fallback on an `AgeSpecializedGrid` is read on its own regime's
     nodes, which move with age. A source period must therefore take the
     combiner compiled for the period it LANDS in.
 
@@ -3284,8 +3284,8 @@ def _attach_gated_edge_folds(
     Which grids each closes over differs, so they group separately
     (`_edge_grid_group_key`):
 
-    - the fold interpolates the gate references' and leg fallbacks' own grids,
-      and takes the target's value array as a runtime argument;
+    - the fold interpolates the leg fallbacks' own grids, and takes the
+      target's value array as a runtime argument;
     - the gate evaluator interpolates those AND the target's own grid, because
       it re-evaluates the predicate at a realized target-state point.
 
@@ -3315,30 +3315,6 @@ def _attach_gated_edge_folds(
                 transitions=target_solution.transitions,
                 transition_plans=target_solution.transition_plans,
             )
-            # The simulate-side
-            # router needs its own gate re-evaluated at a REALIZED (candidate
-            # target-state) point, rather than by interpolating the fold's
-            # baked boolean `gate` array and thresholding it (which does not
-            # commute with a nonlinear predicate), but by recomputing the
-            # predicate from interpolated VALUE operands
-            # (`get_edge_simulate_gate_evaluator`). The candidate target
-            # state fed in at simulate is a genuine (possibly off-grid) VALUE
-            # for every target state — including a non-folded process state
-            # (`_ContinuousStochasticProcess`, classified `discrete_states`
-            # for the Markov-chain solve path but never fed an exact on-grid
-            # index here). Mirror `_build_same_period_ref_reader`'s
-            # (`Q_and_F.py`) auto-select of `get_V_interpolator`'s
-            # process-aware mode so that axis is linearly interpolated
-            # instead of integer-looked-up; a target without a process state
-            # takes the ordinary integer-lookup path. A process state is never
-            # age-specialized, so this is a property of the edge, not of one
-            # period.
-            target_has_process_axis = any(
-                isinstance(grid, _ContinuousStochasticProcess)
-                for grid in regime_to_v_interpolation_info[
-                    target_name
-                ].discrete_states.values()
-            )
             # The periods the edge can ever fold at: those after a source
             # period whose selected law declares this gate, where the target
             # holds a value. Backward induction folds at the target's own
@@ -3357,9 +3333,8 @@ def _attach_gated_edge_folds(
             # The fold takes the target's value array as a RUNTIME argument and
             # needs only its state names, so it groups on the grids its own
             # readers interpolate -- `interpolated_regimes`, which names the
-            # target when a reference names it and omits it otherwise. The gate
-            # evaluator interpolates that array at a realized point, so the
-            # target's grid enters it whether or not a reference names it.
+            # target when a fallback names it and omits it otherwise. The gate
+            # evaluator is grouped over the target's grid as well.
             fold_read_regimes = resolved_edge.interpolated_regimes
             grouped_fold_periods = group_periods_by_key(
                 active_periods=fold_periods,
@@ -3415,9 +3390,7 @@ def _attach_gated_edge_folds(
                     target_v_info=v_info[target_name],
                     target_functions=target_solution.functions,
                     target_deterministic_transitions=target_deterministic_transitions,
-                    reference_v_info=v_info,
                     target_stakeholders=user_regimes[target_name].stakeholders,
-                    target_has_process_axis=target_has_process_axis,
                 )
             folds_by_period = expand_groups_to_periods(
                 grouped_periods=grouped_fold_periods, built_by_group=folds_by_group
@@ -3631,8 +3604,7 @@ def _resolve_gated_edge(
                 ),
             )
         )
-    gate_refs = {name: _resolve_ref(ref) for name, ref in edge.gate_refs.items()}
-    # The target is excluded even when a fallback or gate ref names it (a
+    # The target is excluded even when a fallback names it (a
     # self-referencing edge): every consumer already carries the target's own
     # same-period V and params under the target's key
     # (`build_same_period_mapping_for_fold` seeds it, and both the solve-side
@@ -3641,16 +3613,12 @@ def _resolve_gated_edge(
     # re-derive what those consumers hold.
     reference_regimes = tuple(
         regime_name
-        for regime_name in dict.fromkeys(
-            [leg.fallback.regime for leg in legs]
-            + [ref.regime for ref in gate_refs.values()]
-        )
+        for regime_name in dict.fromkeys(leg.fallback.regime for leg in legs)
         if regime_name != target_name
     )
     return ResolvedGatedEdge(
         target=target_name,
         gate=edge.gate,
-        gate_refs=MappingProxyType(gate_refs),
         legs=tuple(legs),
         reference_regimes=reference_regimes,
     )
@@ -3661,10 +3629,9 @@ def _edge_reference_regimes(
 ) -> tuple[RegimeName, ...]:
     """Return the regimes one regime's gated edges read a projected value from.
 
-    Both a gate reference and a leg fallback name another regime's CURRENT
-    period value at projected coordinates. Neither is tabulated on the target's
-    grid, so both are read where the source lands, and the reading happens in
-    the source's own kernel.
+    A leg fallback names another regime's CURRENT period value at projected
+    coordinates. It is not tabulated on the target's grid, so it is read where
+    the source lands, and the reading happens in the source's own kernel.
 
     Args:
         law: The regime's law, bound from `Model(edges=...)`.
@@ -4018,11 +3985,11 @@ def _fail_if_gated_edges_invalid(
 
     Checks, per edge: the target regime exists; each
     leg's OPEN-branch target component names a target stakeholder (or is `None`
-    for a singleton target); each fallback and gate reference names an existing
+    for a singleton target); each fallback names an existing
     regime, with a stakeholder iff that regime is collective, and a projection
     covering exactly the states that reference's own consumer needs
     (`_fail_if_ref_invalid`); and every regime the edge reads
-    (fallbacks + gate references) is active in every period its target is active
+    (its fallbacks) is active in every period its target is active
     (co-activity: the edge's Wbar reads those same-period Vs whenever the
     target is solved, so a reference that was never solved cannot be read).
 
@@ -4080,15 +4047,6 @@ def _fail_if_gated_edges_invalid(
                         projection_phase="simulate",
                     )
             _fail_if_duplicate_fallback_regimes(prefix=prefix, edge=edge)
-            for ref_name, ref in edge.gate_refs.items():
-                _fail_if_ref_invalid(
-                    prefix=f"{prefix}gate_refs['{ref_name}'] ",
-                    ref=ref,
-                    user_regimes=user_regimes,
-                    representative_user_regimes=representative_user_regimes,
-                    regime_to_v_interpolation_info=regime_to_v_interpolation_info,
-                    projection_phase="solve",
-                )
             _fail_if_gated_edge_references_inactive(
                 prefix=prefix,
                 source_name=regime_name,
@@ -4121,8 +4079,9 @@ def _fail_if_arrivals_invalid(
 ) -> None:
     """Validate one source's arrival fallbacks and reads like a gated edge's.
 
-    An arrival's fallbacks and reads are the same two consumers as a gated
-    edge's leg fallbacks and gate references, and owe the same coverage.
+    An arrival's fallbacks are the same consumer as a gated edge's leg
+    fallbacks, and its reads project from the same target grid; both owe the
+    same coverage.
 
     Raises:
         ModelInitializationError: On the first violated declaration.
@@ -4205,12 +4164,12 @@ def _fail_if_gated_edge_references_inactive(
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
     gated_periods: tuple[int, ...],
 ) -> None:
-    """Reject a gated edge whose fallback / gate reference is not co-active with
-    its target on every period whose `Wbar` is actually consumed.
+    """Reject a gated edge whose fallback is not co-active with its target on
+    every period whose `Wbar` is actually consumed.
 
     `_roll_gated_edges` folds the edge's `Wbar`
-    in each period $t$ the TARGET regime is solved, reading each fallback's and
-    gate reference's SAME-PERIOD V, and that `Wbar` is consumed by the SOURCE
+    in each period $t$ the TARGET regime is solved, reading each fallback's
+    SAME-PERIOD V, and that `Wbar` is consumed by the SOURCE
     one period earlier (at $t-1$). If a referenced regime is inactive in a
     period whose `Wbar` is consumed, its V does not exist and silently rolling
     the previous period's `Wbar` would feed the source a STALE later-period value.
@@ -4224,11 +4183,9 @@ def _fail_if_gated_edge_references_inactive(
     active on every consumed period, so the roll is well defined wherever its
     result is used.
     """
-    reference_regime_names = (
-        {leg.solve_fallback.regime for leg in edge.legs.values()}
-        | {leg.simulate_fallback.regime for leg in edge.legs.values()}
-        | {ref.regime for ref in edge.gate_refs.values()}
-    )
+    reference_regime_names = {
+        leg.solve_fallback.regime for leg in edge.legs.values()
+    } | {leg.simulate_fallback.regime for leg in edge.legs.values()}
     source_active_periods = set(gated_periods)
     consumed_periods = {
         period
@@ -4335,13 +4292,13 @@ def _fail_if_ref_invalid(
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     projection_phase: Literal["solve", "simulate"],
 ) -> None:
-    """Reject an edge fallback / gate reference with an invalid endpoint.
+    """Reject an edge fallback / arrival read with an invalid endpoint.
 
     `projection_phase` says which of the reference regime's state sets the
     projection owes a coordinate function for, and the two consumers of a
     `ProjectedRegimeValue` answer that differently:
 
-    - `"solve"` — a GATE REFERENCE only reads the reference regime's value
+    - `"solve"` — an ARRIVAL READ only reads the reference regime's value
       function, whose axes are that regime's solve states. A coordinate on a
       state the solve grid has no axis for would have nothing to index.
     - `"simulate"` — a LEG FALLBACK additionally writes the dissolved
@@ -4505,8 +4462,7 @@ def _fail_if_folded_regime_is_same_period_endpoint(
       target grid node, BEFORE any integration — the same ordering hazard as
       the edge target itself; or
     - a same-period REFERENCE — named by the `regime` of another regime's
-      `same_period_refs` entry, or of a `gated_edges[...].gate_refs` entry —
-      so its per-node V would be read through a projection.
+      `same_period_refs` entry — so its per-node V would be read through a projection.
 
     This applies regardless of stakeholder cardinality: gate-then-integrate
     is violated whether the folding regime is collective or a SINGLETON — a
@@ -4532,9 +4488,9 @@ def _fail_if_folded_regime_is_same_period_endpoint(
         target_name for law in laws.values() for target_name in law.gated_edges
     }
     # Build the reference set from each resolved edge's COMPLETE reference
-    # set (fallbacks + gate_refs), rather than re-enumerating `edge.legs` /
-    # `edge.gate_refs` by hand here — `_resolve_gated_edge` is the single
-    # source of truth for "which regimes does this edge read nodewise", and
+    # set (its fallbacks), rather than re-enumerating `edge.legs` by hand
+    # here — `_resolve_gated_edge` is the single source of truth for "which
+    # regimes does this edge read nodewise", and
     # every named regime is already known to exist
     # (`_fail_if_gated_edges_invalid` runs before this).
     same_period_reference_regimes: set[RegimeName] = {
@@ -4569,7 +4525,7 @@ def _fail_if_folded_regime_is_same_period_endpoint(
         if regime_name in same_period_reference_regimes:
             roles.append(
                 "a same-period REFERENCE (named by another regime's "
-                "`same_period_refs`, `gated_edges[...].gate_refs`, or "
+                "`same_period_refs`, or "
                 "`gated_edges[...].legs[...].fallback`)"
             )
         if not roles:
@@ -6466,8 +6422,8 @@ def _gated_edge_group_components(
 
     The evaluator half is fingerprinted here because one grouping produces both,
     so a period pair this component merges is a pair that shares each object.
-    The read set passed for either is the edge's declared gate references and leg
-    fallbacks, a superset of the regimes the compiled objects interpolate, which
+    The read set passed for either is the edge's declared leg fallbacks, a
+    superset of the regimes the compiled objects interpolate, which
     keeps the component at least as fine as the grouping it stands for.
 
     Args:
@@ -9399,7 +9355,7 @@ def _engine_flat_param_names(
 def _law_param_names(*, edge_params_template: EdgeParamsTemplate) -> frozenset[str]:
     """Return the flat names of a source's regime-transition law parameters.
 
-    These are the edge slots outside a gate's predicate, references and routes:
+    These are the edge slots outside a gate's predicate and routes:
     a law over all targets and a per-target cell.
 
     Args:

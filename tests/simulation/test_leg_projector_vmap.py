@@ -271,7 +271,6 @@ def _fold_output(*, regimes, flat_params, solution):
         next_regime_to_V_arr=solution[1],
         base_state_action_spaces=base_state_action_spaces,
         period_to_regime_to_V_arr=solution,
-        period_to_regime_to_dissolution_flags=MappingProxyType({}),
         flat_params=flat_params,
     )
     edge = regimes["src"].gated_edges["target"]

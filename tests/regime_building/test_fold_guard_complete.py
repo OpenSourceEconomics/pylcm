@@ -8,7 +8,7 @@ negative controls that bound the prohibition:
 - A gated-edge leg FALLBACK. `get_edge_fold` reads each leg's fallback
   nodewise (`jnp.where(gate, V_target, V_fallback)`) BEFORE integration, so a
   folded fallback regime violates gate-then-integrate exactly like a folded
-  target or `gate_refs` reference, and is rejected the same way.
+  target, and is rejected the same way.
 - A SINGLETON endpoint. Gate-then-integrate does not depend on stakeholder
   count, so a folded singleton target/reference is as unsafe as a collective
   one and is rejected too.
@@ -19,7 +19,7 @@ negative controls that bound the prohibition:
   nonlinear CE unconditionally, so only singletons can reach this rule.
 - The negative control on name reuse: a SOURCE regime folding a state whose
   name the TARGET's gate happens to reuse stays legal. A source's outbound
-  `gated_edges[...].gate` / `gate_refs` are compiled and evaluated on the
+  `gated_edges[...].gate` is compiled and evaluated on the
   TARGET regime's grid (`_attach_gated_edge_folds`), not the source's, so a
   shared argument name says nothing about the safety of the source's own
   fold; cross-regime safety rests on the endpoint guard
@@ -346,7 +346,7 @@ def test_folded_gated_edge_leg_fallback_is_rejected():
 
     The edge routing reads the fallback nodewise
     (`jnp.where(gate, V_target, V_fallback)`) before any integration, exactly
-    like a folded target or `gate_refs` reference, so a fallback whose node
+    like a folded target, so a fallback whose node
     axis is already averaged away cannot supply what the route needs.
     """
     with pytest.raises(ModelInitializationError, match="gated_edges"):

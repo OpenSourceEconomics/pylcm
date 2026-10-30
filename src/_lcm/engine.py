@@ -1252,7 +1252,7 @@ class SimulationPhase:
     )
     """Per period, the regimes whose landing values the decision program reads.
 
-    A gate reference and a leg fallback are read inside the source's own
+    A leg fallback is read inside the source's own
     decision function — but only where that function carries the gated
     continuation. A regime whose gate is applied by the simulate router
     instead never names them, a period whose edge targets are all inactive has
@@ -1533,9 +1533,9 @@ class Regime:
     edge_reference_regimes: tuple[RegimeName, ...] = ()
     """Regimes a gated edge reads a projected value from, or empty.
 
-    A gate reference and a leg fallback both name another regime's value at
-    coordinates a projection produces. Neither is tabulated on the target's
-    grid, so both are read where the source lands — inside the source's own
+    A leg fallback names another regime's value at coordinates a projection
+    produces. It is not tabulated on the target's grid, so it is read where the
+    source lands — inside the source's own
     kernel — at the value of the period the source lands in. The rolled V
     mapping already carries that array; these names are what pick it out and
     thread each reference regime's OWN grid params beside it.

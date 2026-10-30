@@ -21,8 +21,15 @@ never co-occur here: a collective regime may not declare a folded state, so
 built model.
 """
 
-import jax.numpy as jnp
+from collections.abc import Generator
+from contextlib import contextmanager
+from typing import Unpack, cast
 
+import jax.numpy as jnp
+import pytest
+
+from _lcm.solution import backward_induction
+from _lcm.typing import RegimeName
 from lcm import (
     AgeGrid,
     CollectiveUtility,
@@ -34,13 +41,47 @@ from lcm import (
     categorical,
 )
 from lcm.regime import RegimeReplacement
-from lcm.typing import ContinuousState, DiscreteAction, FloatND, IntND, ScalarInt
+from lcm.solver_api import DISSOLUTION_FLAG, KernelOutput
+from lcm.typing import (
+    BoolND,
+    ContinuousState,
+    DiscreteAction,
+    FloatND,
+    IntND,
+    ScalarInt,
+)
+from tests.solution.test_solution_result import _KernelKwargs
 
 # Nested `{regime: {function: {parameter: value}}}` params, as `solve` takes them.
 type ParamsDict = dict[str, dict[str, dict[str, float]]]
 
 # Flat `{state_name: column}` initial conditions, plus the `regime_id` column.
 type InitialConditions = dict[str, FloatND | IntND]
+
+
+@contextmanager
+def recorded_dissolution_flags() -> Generator[dict[int, dict[RegimeName, BoolND]]]:
+    """Record each collective kernel's dissolution flag while a solve runs.
+
+    A collective regime's kernel publishes, on its solve-time channel, the flag
+    `D` that is `True` on the state cells whose household action set is empty.
+    The yielded mapping fills in, by period and regime, as the solve runs.
+    """
+    flags: dict[int, dict[RegimeName, BoolND]] = {}
+    original = backward_induction._run_period_kernel
+
+    def recording(**kwargs: Unpack[_KernelKwargs]) -> KernelOutput:
+        output = original(**kwargs)
+        flag = output.solve_time_artifacts.get(DISSOLUTION_FLAG)
+        if flag is not None:
+            flags.setdefault(kwargs["period"], {})[kwargs["regime_name"]] = cast(
+                "BoolND", flag
+            )
+        return output
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(backward_induction, "_run_period_kernel", recording)
+        yield flags
 
 
 @categorical(ordered=True)

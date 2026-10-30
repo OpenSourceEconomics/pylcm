@@ -85,6 +85,7 @@ from lcm.typing import (
     ScalarInt,
     StateName,
 )
+from tests.collective_fixtures import recorded_dissolution_flags
 from tests.conftest import bind_laws, build_prepared_structure
 
 
@@ -334,18 +335,19 @@ def _solve_ir_model(
         regime_names_to_ids=_IR_REGIME_IDS,
         enable_jit=False,
     )
-    _bi_result = solve(
-        program_fingerprint="test_value_constraints_collective_solve",
-        flat_params=MappingProxyType(flat_params),
-        ages=ages,
-        regimes=regimes,
-        logger=get_logger(log_level="off"),
-        enable_jit=False,
-    )
+    with recorded_dissolution_flags() as dissolution_flags:
+        _bi_result = solve(
+            program_fingerprint="test_value_constraints_collective_solve",
+            flat_params=MappingProxyType(flat_params),
+            ages=ages,
+            regimes=regimes,
+            logger=get_logger(log_level="off"),
+            enable_jit=False,
+        )
     return (
         _bi_result.value_functions,
         _bi_result.simulation_policies,
-        _bi_result.dissolution_flags,
+        dissolution_flags,
     )
 
 
@@ -570,30 +572,30 @@ def test_projection_maps_states_and_reference_v_is_interpolated_off_grid():
         ),
         enable_jit=False,
     )
-    _bi_result = solve(
-        program_fingerprint="test_value_constraints_collective_solve",
-        flat_params=MappingProxyType(
-            {
-                "single_f": MappingProxyType(
-                    {"koopmans_aggregator__discount_factor": jnp.asarray(0.95)}
-                ),
-                "single_f_terminal": MappingProxyType({}),
-                "married": MappingProxyType(
-                    {
-                        "koopmans_aggregator__discount_factor": jnp.asarray(0.95),
-                        "ir_f__delta_f": jnp.asarray(0.0),
-                    }
-                ),
-                "married_terminal": MappingProxyType({}),
-            }
-        ),
-        ages=ages,
-        regimes=regimes,
-        logger=get_logger(log_level="off"),
-        enable_jit=False,
-    )
+    with recorded_dissolution_flags() as dissolution_flags:
+        _bi_result = solve(
+            program_fingerprint="test_value_constraints_collective_solve",
+            flat_params=MappingProxyType(
+                {
+                    "single_f": MappingProxyType(
+                        {"koopmans_aggregator__discount_factor": jnp.asarray(0.95)}
+                    ),
+                    "single_f_terminal": MappingProxyType({}),
+                    "married": MappingProxyType(
+                        {
+                            "koopmans_aggregator__discount_factor": jnp.asarray(0.95),
+                            "ir_f__delta_f": jnp.asarray(0.0),
+                        }
+                    ),
+                    "married_terminal": MappingProxyType({}),
+                }
+            ),
+            ages=ages,
+            regimes=regimes,
+            logger=get_logger(log_level="off"),
+            enable_jit=False,
+        )
     solution = _bi_result.value_functions
-    dissolution_flags = _bi_result.dissolution_flags
 
     np.testing.assert_allclose(
         np.asarray(solution[0]["single_f"]), np.array([1.0, 5.0]), rtol=1e-6
@@ -686,23 +688,23 @@ def test_on_path_minus_inf_value_is_not_dissolution():
         ),
         enable_jit=False,
     )
-    _bi_result = solve(
-        program_fingerprint="test_value_constraints_collective_solve",
-        flat_params=MappingProxyType(
-            {
-                "couple": MappingProxyType(
-                    {"koopmans_aggregator__discount_factor": jnp.asarray(0.95)}
-                ),
-                "couple_terminal": MappingProxyType({}),
-            }
-        ),
-        ages=ages,
-        regimes=regimes,
-        logger=get_logger(log_level="off"),
-        enable_jit=False,
-    )
+    with recorded_dissolution_flags() as dissolution_flags:
+        _bi_result = solve(
+            program_fingerprint="test_value_constraints_collective_solve",
+            flat_params=MappingProxyType(
+                {
+                    "couple": MappingProxyType(
+                        {"koopmans_aggregator__discount_factor": jnp.asarray(0.95)}
+                    ),
+                    "couple_terminal": MappingProxyType({}),
+                }
+            ),
+            ages=ages,
+            regimes=regimes,
+            logger=get_logger(log_level="off"),
+            enable_jit=False,
+        )
     solution = _bi_result.value_functions
-    dissolution_flags = _bi_result.dissolution_flags
 
     V = np.asarray(solution[0]["couple"])
     D = np.asarray(dissolution_flags[0]["couple"])

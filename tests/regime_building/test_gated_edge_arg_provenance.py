@@ -62,7 +62,6 @@ from _lcm.regime_building.gated_edges import (
     SOURCE_PARAMS,
     ResolvedProjectedRegimeValue,
     _fence_edge_consumer,
-    _reject_gate_operand_state_name_collision,
     _with_qualified_params,
 )
 from _lcm.regime_building.processing import process_regimes
@@ -218,7 +217,6 @@ def _solve_fixture(*, spec: _Spec, flat_params):
     )
     solution = _bi_result.value_functions
     _sim_policies = _bi_result.simulation_policies
-    _dissolution_flags = _bi_result.dissolution_flags
     return regimes, regime_names_to_ids, solution
 
 
@@ -235,7 +233,6 @@ def _same_period_mappings(*, regimes, flat_params, solution):
         next_regime_to_V_arr=solution[1],
         base_state_action_spaces=base_state_action_spaces,
         period_to_regime_to_V_arr=solution,
-        period_to_regime_to_dissolution_flags=MappingProxyType({}),
         flat_params=flat_params,
     )
     return mappings
@@ -504,7 +501,6 @@ def _same_period_channels(*, regimes, flat_params, solution):
             for name, regime in regimes.items()
         },
         period_to_regime_to_V_arr=solution,
-        period_to_regime_to_dissolution_flags=MappingProxyType({}),
         flat_params=flat_params,
     )
     return substituted["target"]
@@ -1343,55 +1339,6 @@ def test_gate_arg_shadowed_by_state_only_target_node_is_rejected():
         match=r"threshold.*TARGET regime's own function",
     ):
         _solve_fixture(spec=_make_threshold_shadow_regimes(), flat_params=flat_params)
-
-
-# The gate-operand namespace must be disjoint from target STATE names.
-# `_assemble_gate_kwargs` resolves target value component(s) and gate-ref
-# values BEFORE the target state mesh, so a target state named `V_target` (or a
-# gate-ref key equal to a target state name) is silently preempted -- the gate reads
-# the injected value / reference instead of the realized state, reversing routing
-# with no error. `_reject_gate_operand_state_name_collision` closes both.
-
-
-def test_reject_gate_operand_state_name_collision_flags_a_value_operand_alias():
-    """Unit: a target state named like a built-in value/D operand is rejected."""
-    with pytest.raises(
-        ModelInitializationError,
-        match=r"alias a built-in injected value/D operand",
-    ):
-        _reject_gate_operand_state_name_collision(
-            state_names=("V_target", "x"),
-            reserved_operand_names=frozenset({"V_target", "D_target"}),
-            gate_ref_names=(),
-            edge_target="target",
-            context="unit",
-        )
-
-
-def test_reject_gate_operand_state_name_collision_flags_a_gate_ref_alias():
-    """Unit: a gate-ref key equal to a target state name is rejected."""
-    with pytest.raises(
-        ModelInitializationError,
-        match=r"alias a gate-ref key",
-    ):
-        _reject_gate_operand_state_name_collision(
-            state_names=("x", "z"),
-            reserved_operand_names=frozenset({"V_target", "D_target"}),
-            gate_ref_names=("x",),
-            edge_target="target",
-            context="unit",
-        )
-
-
-def test_reject_gate_operand_state_name_collision_passes_when_disjoint():
-    """Unit: disjoint operand/gate-ref/state namespaces raise nothing."""
-    _reject_gate_operand_state_name_collision(
-        state_names=("x", "z"),
-        reserved_operand_names=frozenset({"V_target", "D_target"}),
-        gate_ref_names=("ref_v",),
-        edge_target="target",
-        context="unit",
-    )
 
 
 # A gate argument named like a target state reads that state. A source function's

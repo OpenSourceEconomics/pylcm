@@ -74,6 +74,7 @@ from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import ProjectedRegimeValue, Regime
 from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, DiscreteAction, FloatND, RegimeName, ScalarInt
+from tests.collective_fixtures import recorded_dissolution_flags
 from tests.conftest import bind_laws, build_prepared_structure
 from tests.simulation.test_runtime_helpers import bind_eager_simulation
 
@@ -200,7 +201,6 @@ def _solve_shock_ref_only() -> tuple[np.ndarray, np.ndarray]:
     )
     solution = _bi_result.value_functions
     _sim_policies = _bi_result.simulation_policies
-    _dissolution = _bi_result.dissolution_flags
     nodes = np.asarray(_SHOCK.get_gridpoints())
     V_ref = np.asarray(solution[0]["shock_ref"])
     return nodes, V_ref
@@ -330,17 +330,17 @@ def _build_and_solve():
         enable_jit=False,
     )
     flat_params = _flat_params()
-    _bi_result = solve(
-        program_fingerprint="test_same_period_ref_process_state_interpolation",
-        flat_params=flat_params,
-        ages=_AGES,
-        regimes=regimes,
-        logger=get_logger(log_level="off"),
-        enable_jit=False,
-    )
+    with recorded_dissolution_flags() as dissolution_flags:
+        _bi_result = solve(
+            program_fingerprint="test_same_period_ref_process_state_interpolation",
+            flat_params=flat_params,
+            ages=_AGES,
+            regimes=regimes,
+            logger=get_logger(log_level="off"),
+            enable_jit=False,
+        )
     solution = _bi_result.value_functions
     _sim_policies = _bi_result.simulation_policies
-    dissolution_flags = _bi_result.dissolution_flags
     return regimes, flat_params, solution, dissolution_flags
 
 
@@ -393,7 +393,7 @@ def test_same_period_ref_process_interpolation_reproduced_at_simulate():
     simulated `V_arr` must reproduce the identical hand-computed
     interpolated values the solve-side assertion above checks.
     """
-    regimes, flat_params, solution, dissolution_flags = _build_and_solve()
+    regimes, flat_params, solution, _dissolution_flags = _build_and_solve()
 
     initial_conditions = MappingProxyType(
         {
@@ -411,7 +411,6 @@ def test_same_period_ref_process_interpolation_reproduced_at_simulate():
         regime_names_to_ids=_REGIME_NAMES_TO_IDS,
         logger=get_logger(log_level="off"),
         period_to_regime_to_V_arr=solution,
-        period_to_regime_to_dissolution_flags=dissolution_flags,
         ages=_AGES,
         simulation_output_dtypes={},
         seed=0,

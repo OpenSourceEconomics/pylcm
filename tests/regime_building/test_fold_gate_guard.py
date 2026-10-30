@@ -6,8 +6,8 @@ in `regime_building/max_Q_over_a.py`). Gated-edge routing and same-period
 reads both require gate-THEN-integrate: each realized shock node must be
 routed through its own gate / consent decision before any node is averaged
 away. If the folding regime is itself read nodewise by ANOTHER regime's gate
-(as a gated-edge target) or same-period reference (`same_period_refs` / a
-gate's `gate_refs`), that ordering is violated — the reader only ever sees
+(as a gated-edge target) or same-period reference (`same_period_refs` / an
+arrival decision's read), that ordering is violated — the reader only ever sees
 the already-averaged V.
 
 `_validate_fold_declarations` (regime-local) rejects a regime's own

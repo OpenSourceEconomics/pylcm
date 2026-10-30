@@ -107,9 +107,7 @@ def test_target_absent_at_next_period_is_still_a_legitimate_no_op():
     This kernel control supplies an empty `period_to_regime_to_V_arr` for
     period+1 (no target, hence no references either), which must not raise.
     """
-    _ages, regimes, _ids, flat_params, solution, _dissolution_flags = (
-        _solve_dissolution()
-    )
+    _ages, regimes, _ids, flat_params, solution = _solve_dissolution()
     married = regimes["married"]
     base_state_action_spaces = {
         name: regime.solution.state_action_space(regime_params=flat_params[name])
@@ -123,7 +121,6 @@ def test_target_absent_at_next_period_is_still_a_legitimate_no_op():
         next_regime_to_V_arr=solution[1],
         base_state_action_spaces=base_state_action_spaces,
         period_to_regime_to_V_arr=MappingProxyType({}),  # period+1 wholly absent
-        period_to_regime_to_dissolution_flags=MappingProxyType({}),
         flat_params=flat_params,
     )
     assert dict(gate_arrays) == {}
@@ -533,8 +530,7 @@ def _solve_all_collective():
     )
     solution = _bi_result.value_functions
     _sim_policies = _bi_result.simulation_policies
-    dissolution_flags = _bi_result.dissolution_flags
-    return ages, regimes, regime_names_to_ids, flat_params, solution, dissolution_flags
+    return ages, regimes, regime_names_to_ids, flat_params, solution
 
 
 def test_to_dataframe_all_collective_result_has_no_scalar_value_column():
@@ -544,9 +540,7 @@ def test_to_dataframe_all_collective_result_has_no_scalar_value_column():
     a scalar `value` column and `_reorder_columns` must not name one.
     `to_dataframe()` returns `value_f`/`value_m` and no `value`.
     """
-    ages, regimes, regime_names_to_ids, flat_params, solution, dissolution_flags = (
-        _solve_all_collective()
-    )
+    ages, regimes, regime_names_to_ids, flat_params, solution = _solve_all_collective()
     initial_conditions = MappingProxyType(
         {
             "wage": jnp.array([8.0, 40.0]),
@@ -564,7 +558,6 @@ def test_to_dataframe_all_collective_result_has_no_scalar_value_column():
         regime_names_to_ids=regime_names_to_ids,
         logger=get_logger(log_level="off"),
         period_to_regime_to_V_arr=solution,
-        period_to_regime_to_dissolution_flags=dissolution_flags,
         ages=ages,
         simulation_output_dtypes={},
         seed=0,
@@ -635,7 +628,6 @@ def test_stateless_collective_regime_simulate_carries_subject_axis():
     )
     solution = _bi_result.value_functions
     _sim_policies = _bi_result.simulation_policies
-    _dissolution_flags = _bi_result.dissolution_flags
     assert solution[0]["stateless_couple"].shape == (2,)  # solve: no subject axis
 
     n_subjects = 3
@@ -707,9 +699,7 @@ def test_stateful_collective_regime_simulate_shape_is_byte_identical():
     from its per-subject state arrays, and the stateless-collective branch
     leaves it alone. Reuses `_make_all_collective_regimes` (has a `wage` state).
     """
-    ages, regimes, regime_names_to_ids, flat_params, solution, dissolution_flags = (
-        _solve_all_collective()
-    )
+    ages, regimes, regime_names_to_ids, flat_params, solution = _solve_all_collective()
     initial_conditions = MappingProxyType(
         {
             "wage": jnp.array([8.0, 40.0]),
@@ -727,7 +717,6 @@ def test_stateful_collective_regime_simulate_shape_is_byte_identical():
         regime_names_to_ids=regime_names_to_ids,
         logger=get_logger(log_level="off"),
         period_to_regime_to_V_arr=solution,
-        period_to_regime_to_dissolution_flags=dissolution_flags,
         ages=ages,
         simulation_output_dtypes={},
         seed=0,

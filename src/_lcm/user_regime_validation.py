@@ -334,7 +334,7 @@ def validate_regime_law(regime: Regime, *, law: RegimeLaw) -> None:
     if law.gated_edges:
         _validate_gated_edges(regime=regime, law=law)
     # An arrival's route and read keys become parameter-path segments, as a
-    # gated edge's leg and gate-reference keys do.
+    # gated edge's route keys do.
     if errors := [
         error
         for target_name, decision in law.arrivals.items()
@@ -651,8 +651,8 @@ def _validate_gated_edges(*, regime: Regime, law: RegimeLaw) -> None:
     regimes: the gate is a plain boolean callable (a stochastic, probabilistic
     gate — a `StochasticTransition` — is not implemented); the legs cover the
     SOURCE's stakeholder structure (exactly one leg for a singleton source, one
-    per stakeholder for a collective source); route and gate-reference keys are
-    valid parameter-path segments. Cross-regime properties — the
+    per stakeholder for a collective source); route keys are valid
+    parameter-path segments. Cross-regime properties — the
     target and fallback regimes exist, the stakeholder names resolve, the
     projections cover the reference states — are validated at model processing.
 
@@ -681,11 +681,6 @@ def _validate_gated_edges(*, regime: Regime, law: RegimeLaw) -> None:
             error_messages.append(f"{prefix}the gate must be a callable.")
         error_messages.extend(
             path_segment_name_errors(kind=f"{prefix}route", names=edge.legs)
-        )
-        error_messages.extend(
-            path_segment_name_errors(
-                kind=f"{prefix}gate-reference", names=edge.gate_refs
-            )
         )
         if not edge.legs:
             error_messages.append(f"{prefix}must declare at least one leg.")
@@ -2236,9 +2231,8 @@ def _fold_same_period_roots(regime: Regime) -> tuple[tuple[str, UserFunction], .
     """Named same-period gate / value-constraint / reference-projection roots.
 
     Deliberately EXCLUDES this regime's own OUTBOUND `gated_edges[...].gate`
-    and `gated_edges[...].gate_refs[...]` projections: a
-    `GatedEdge`'s `gate` and its `gate_refs` projections are compiled and
-    evaluated on the TARGET regime's grid/DAG
+    and route-fallback projections: a `GatedEdge`'s `gate` and its fallback
+    projections are compiled and evaluated on the TARGET regime's grid/DAG
     (`_attach_gated_edge_folds`/`_resolve_gated_edge`), never on this
     (source) regime's own — so an argument name they declare has no
     relationship to a state THIS regime folds, even when the names happen to

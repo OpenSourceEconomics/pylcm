@@ -280,9 +280,6 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
     taste_shock_seed: int | PRNGKey | None = None,
     subject_batch_size: int = 0,
     original_n_subjects: int | None = None,
-    period_to_regime_to_dissolution_flags: MappingProxyType[
-        int, MappingProxyType[RegimeName, BoolND]
-    ] = MappingProxyType({}),
     device_ids: tuple[int, ...] = (),
     retained_footprint: DeviceBufferFootprint | None = None,
     prepared_chunks: PreparedSimulationChunks | None = None,
@@ -338,14 +335,6 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
             by `pad_initial_conditions_to_multiple`. When set, RNG keys are sized to it
             and the trailing pad rows are trimmed from the results before they are
             returned. `None` means no padding was applied.
-        period_to_regime_to_dissolution_flags: Immutable mapping of periods to each
-            COLLECTIVE regime's dissolution flag `D`, as returned in
-            `BackwardInductionResult.dissolution_flags`. Empty (the default)
-            for models without gated edges reading `D_target`, or when the
-            caller does not have it at hand. Public ``Model.solve`` stores each
-            flag as an addressed replay artifact in ``SolutionResult``;
-            ``Model.simulate(solution=...)`` validates and projects those artifacts,
-            and its automatic-solve path threads them through directly.
         device_ids: The model's device ids, ascending. Empty names every
             device JAX reports.
         process_code_reads: Per regime, the process states whose node position
@@ -471,7 +460,6 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
                             flat_params,
                             ages.values,  # noqa: PD011
                             period_to_regime_to_V_arr,
-                            period_to_regime_to_dissolution_flags,
                             period_to_regime_to_sim_policy,
                         )
                     ),
@@ -656,9 +644,6 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
                         regime_names_to_ids=regime_names_to_ids,
                         regime_ids_to_names=regime_ids_to_names,
                         period_to_regime_to_V_arr=values,
-                        period_to_regime_to_dissolution_flags=(
-                            period_to_regime_to_dissolution_flags
-                        ),
                         period_to_regime_to_sim_policy=period_to_regime_to_sim_policy,
                         current_iid_replay_inputs=current_iid_replay_inputs,
                         projected_forward_inputs=projected_forward_inputs,
@@ -872,9 +857,6 @@ def _simulate_subject_chunk(  # noqa: PLR0915
     period_to_regime_to_V_arr: MappingProxyType[
         int, MappingProxyType[RegimeName, FloatND]
     ],
-    period_to_regime_to_dissolution_flags: MappingProxyType[
-        int, MappingProxyType[RegimeName, BoolND]
-    ],
     flat_params: FlatParams,
     ages: TimeAxis,
     seed: int | PRNGKey,
@@ -1034,7 +1016,6 @@ def _simulate_subject_chunk(  # noqa: PLR0915
                     name=name,
                     period=period,
                     values=period_to_regime_to_V_arr,
-                    flags=period_to_regime_to_dissolution_flags,
                     policy=period_policies.get(name),
                     reader=period_readers.get(name),
                     current_iid_replay_input=current_iid_replay_inputs.get(
@@ -1130,7 +1111,6 @@ def _simulate_subject_chunk(  # noqa: PLR0915
                 subject_regime_ids=subject_regime_ids,
                 new_subject_regime_ids=new_subject_regime_ids,
                 period_to_regime_to_V_arr=period_to_regime_to_V_arr,
-                period_to_regime_to_dissolution_flags=period_to_regime_to_dissolution_flags,
                 base_state_action_spaces=base_state_action_spaces,
                 sim_policy=(period_to_regime_to_sim_policy or {})
                 .get(period, {})
@@ -1442,7 +1422,7 @@ def _referenced_value_kwargs(
     read one operator:
 
     - a value constraint's same-period reference, at THIS period's value;
-    - a gated edge's gate references and leg fallbacks, read where the row
+    - a gated edge's leg fallbacks, read where the row
       lands and therefore at the value of the period it lands IN.
 
     Args:
@@ -1755,9 +1735,6 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
     period_to_regime_to_V_arr: MappingProxyType[
         int, MappingProxyType[RegimeName, FloatND]
     ],
-    period_to_regime_to_dissolution_flags: MappingProxyType[
-        int, MappingProxyType[RegimeName, BoolND]
-    ],
     flat_params: FlatParams,
     regime_names_to_ids: RegimeNamesToIds,
     decision_targets_next_period: tuple[RegimeName, ...],
@@ -1822,8 +1799,6 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
         subject_regime_ids: Current regime membership for all subjects.
         new_subject_regime_ids: Array to populate with next period's regime memberships.
         period_to_regime_to_V_arr: Value function arrays for all periods and regimes.
-        period_to_regime_to_dissolution_flags: Each COLLECTIVE regime's dissolution
-            flag `D` per period; empty for models without one.
         flat_params: Model parameters for all regimes.
         regime_names_to_ids: Mapping from regime names to integer IDs.
         decision_targets_next_period: This source's retained *solution*-graph
@@ -1931,16 +1906,14 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
         name=regime_name,
         period=period,
         values=period_to_regime_to_V_arr,
-        flags=period_to_regime_to_dissolution_flags,
     )
-    gate_values, gate_flags = acquire_gate_inputs(
+    gate_values = acquire_gate_inputs(
         reads=tuple(
             read for read in raw_gate_reads if read.source.core_key == GATE_FOLD
         ),
         owner=value_owner,
         name=regime_name,
         values=period_to_regime_to_V_arr,
-        flags=period_to_regime_to_dissolution_flags,
     )
     if period in regime.simulation.programs.gate_fold:
         folded_gate_values = cast(
@@ -1952,7 +1925,6 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 arguments={
                     **gate_fold_arguments(
                         edge_values=gate_values,
-                        edge_flags=gate_flags,
                         flat_params=flat_params,
                         fold_age=jnp.asarray(
                             0.0 if gated_edge_fold_age is None else gated_edge_fold_age
@@ -2709,7 +2681,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
         # its own projected states) when closed — for every subject in this
         # regime. No-op for a regime without gated edges.
         if period in regime.simulation.programs.gate_route:
-            route_values, route_flags = acquire_gate_inputs(
+            route_values = acquire_gate_inputs(
                 reads=tuple(
                     read
                     for read in raw_gate_reads
@@ -2718,7 +2690,6 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 owner=value_owner,
                 name=regime_name,
                 values=period_to_regime_to_V_arr,
-                flags=period_to_regime_to_dissolution_flags,
             )
             route_delta, new_subject_regime_ids, new_own_stakeholder = cast(
                 "tuple[Mapping[RegimeName, GatedRouteDelta], Int1D, Int1D]",
@@ -2728,7 +2699,6 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                     period=period,
                     arguments=gate_route_arguments(
                         edge_values=route_values,
-                        edge_flags=route_flags,
                         next_states=gated_route_candidates(
                             regime=regime, next_states=next_states
                         ),

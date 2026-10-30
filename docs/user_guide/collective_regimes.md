@@ -13,10 +13,12 @@ cover that, and each goes in a slot an ordinary model already has.
 | -------------------------- | ----------------------- | -------------------------------------------------------------------- |
 | `CollectiveUtility`        | `functions["utility"]`  | who the stakeholders are, and how their action values are traded off |
 | `ValueDependentConstraint` | `constraints`           | where the cell is feasible, reading values as well as states         |
-| `Gate`                     | `Transition(gates=...)` | which branch within a target, once there                             |
+| `Gate`                     | `Transition(gates=...)` | which branch within a target, from the landing state                 |
 
-`ProjectedRegimeValue` is what the last two share: a reading of another regime's value
-in the *same* period.
+`ProjectedRegimeValue` reads another regime's value in the *same* period, for a value
+constraint's comparison and for a route's fallback. A move decided by comparing values
+is not a `Gate`: it is a participation `Exit` of the source regime, or an
+`ArrivalDecision` evaluated on landing.
 
 The complete worked model is `lcm_examples.collective_household`. This page walks
 through the pieces; the exact declaration contracts are in
@@ -123,15 +125,16 @@ that is checked when the `Regime` is constructed, naming the reference, the proj
 and the offending argument.
 
 The regime's mask is the AND of the ordinary constraints and the value-dependent ones. A
-cell whose mask is empty publishes the regime's **dissolution flag** and the `-inf`
-sentinel: there is no viable household there.
+cell whose mask is empty carries the `-inf` sentinel: there is no viable household
+there. Where its members go instead is declared on the regime as a participation `Exit`,
+or on the incoming edge as an `ArrivalDecision` reading the household's policy support.
 
-A value constraint, or a gate that reads a value, cannot excuse a discrete law that
-leaves its grid. Such a law sends a state to a code outside `0..n-1`, and an off-grid
-code has no value to compare with. The transition check therefore counts every cell the
-ordinary constraints allow, in the solve and the simulation, and raises
-`InvalidStateTransitionError` where a law leaves its grid there. When a restriction does
-not read a value, declare it as an ordinary constraint beside the value-dependent one:
+A value constraint cannot excuse a discrete law that leaves its grid. Such a law sends a
+state to a code outside `0..n-1`, and an off-grid code has no value to compare with. The
+transition check therefore counts every cell the ordinary constraints allow, in the
+solve and the simulation, and raises `InvalidStateTransitionError` where a law leaves
+its grid there. When a restriction does not read a value, declare it as an ordinary
+constraint beside the value-dependent one:
 
 ```python
 def rest_only(*, work):
@@ -151,20 +154,18 @@ constraints = {
 Written as one predicate, `(work == 0) & (Q_f >= 0.0)`, the same restriction is refused
 when only `work == 1` sends a discrete state off its grid.
 
-`solve()` stores those flags as addressed replay artifacts in `SolutionResult`. Pass the
-complete result to `simulate(solution=...)`; a gate reading `D_target` consumes the flag
-from there. Letting `simulate` solve automatically retains and threads it directly.
-
-## Marrying and dissolving: a transition with a gate
+## Marrying and dissolving: a decision on arrival
 
 A raw transition between regimes with different stakeholder structure stays rejected —
-there is no rule that would say who the arriving row is. A `Gate` supplies one. It lives
-on the source's edges in `Model(edges=...)`, in the `Transition`'s `gates`, keyed by the
-destination it gates:
+there is no rule that would say who the arriving row is. An `ArrivalDecision` supplies
+one. It lives on the source's edges in `Model(edges=...)`, in the `Transition`'s
+`arrivals`, keyed by the destination it decides on. Its `reads` name every value the
+predicate compares, each an `ArrivalRead` of a regime at projected coordinates:
 
 ```python
 from lcm import (
-    Gate,
+    ArrivalDecision,
+    ArrivalRead,
     ProjectedRegimeValue,
     StakeholderRoute,
     StochasticTransition,
@@ -184,8 +185,8 @@ edges = {
             "couple": StochasticTransition(func=meets_a_partner),
             "single_f": StochasticTransition(func=meets_nobody),
         },
-        gates={
-            "couple": Gate(
+        arrivals={
+            "couple": ArrivalDecision(
                 predicate=mutual_consent,
                 routes={
                     "her": StakeholderRoute(
@@ -196,12 +197,18 @@ edges = {
                         ),
                     )
                 },
-                references={
-                    "V_alone_f": ProjectedRegimeValue(
-                        regime="single_f", projection=...
+                reads={
+                    "V_couple_f": ArrivalRead(
+                        kind="IntegratedFull", regime="couple", stakeholder="f"
                     ),
-                    "V_alone_m": ProjectedRegimeValue(
-                        regime="single_m", projection=...
+                    "V_couple_m": ArrivalRead(
+                        kind="IntegratedFull", regime="couple", stakeholder="m"
+                    ),
+                    "V_alone_f": ArrivalRead(
+                        kind="IntegratedFull", regime="single_f", projection=...
+                    ),
+                    "V_alone_m": ArrivalRead(
+                        kind="IntegratedFull", regime="single_m", projection=...
                     ),
                 },
             ),
@@ -212,13 +219,22 @@ edges = {
 ```
 
 The law names its targets, so the `Transition` derives its destinations from it: each
-key at every non-final age, and each route's fallback regime wherever its gated target
+key at every non-final age, and each route's fallback regime wherever its decided target
 is reached. Supplying `targets` as well is allowed only if it says exactly the same.
 
-The law and the gate are two distinct operations. The law's `"couple"` cell decides
-whether this target edge is attempted at all, like any other per-target cell. The gate
-decides, having arrived at the target's coordinates, whether the row keeps that target
-or takes its route's fallback.
+The law and the decision are two distinct operations. The law's `"couple"` cell decides
+whether this target edge is attempted at all, like any other per-target cell. The
+decision, having arrived at the target's coordinates, says whether the row keeps that
+target or takes its route's fallback. A move decided in the current period instead — the
+household dissolving because a partner walks out now — is a participation `Exit` in the
+source's `Regime(exits=...)`; see the [migration guide](migrating_dated_regimes.md).
+
+### A gate routes on states
+
+A `Gate` in `Transition(gates=...)` takes the same `routes` as an arrival decision, but
+its `predicate` decides from the landing state alone: a **Boolean** function on the
+*target* regime's grid that reads ordinary target states and params and the target
+fold's `period` / `age`.
 
 One `Gate` per target holds at every age the target is reached and in both phases; it is
 never wrapped in `ByAge` or `Phased`. When the source's law is `Phased`, only the law
@@ -228,33 +244,39 @@ are `Phased` with a `Transition` in each phase, a target reached in both carries
 equal `Gate` in both or none. A route's `fallback` is the one part of a gate that may be
 `Phased`.
 
-The gate's `predicate` is a **Boolean** function on the *target* regime's grid. It may
-read the target's value — `V_target` for a singleton target, `V_target_<s>` per
-stakeholder for a collective one — the target's dissolution flag `D_target`, each key of
-the gate's `references`, ordinary target states and params, and the target fold's
-`period` / `age`.
+A gate never reads a value. A predicate naming `V_target`, `V_target_<s>` or `D_target`
+raises `GateReadsValueError` when the `Gate` is declared, and a `Gate` takes no
+`references`. Write a comparison of values as an `ArrivalDecision` with named reads, or
+as an `Exit` of the source regime.
 
-Two of those carry a timing that is worth keeping straight, because they are checked in
-different places. `D_target` exists only for a collective target, and a gate that names
-it on a singleton target is refused **while the model is built**. The Boolean
-requirement is not a build-time check: the dtype is examined where the gate is actually
-evaluated, so a gate returning a probability is refused on the first `solve()` rather
-than at construction. The branch is selected with a strict `where`, in which every
-nonzero value is true, so a `0.25` would otherwise open the edge for every row.
+The Boolean requirement is not a build-time check: the dtype is examined where the gate
+is actually evaluated, so a gate returning a probability is refused on the first
+`solve()` rather than at construction. The branch is selected with a strict `where`, in
+which every nonzero value is true, so a `0.25` would otherwise open the edge for every
+row.
 
-### The key is always the gate-open target
+### The key is always the open branch
 
 This is the rule that decides how a dissolution edge is written. A couple that stays
-together continues in the couple regime, so **that** is the key, under
-`predicate = ~D_target`:
+together continues in the couple regime, so **that** is the key, with a predicate that
+holds where the household still has a feasible action:
 
 ```python
 edges = {
     "couple": Transition(
         law={"couple": StochasticTransition(func=stays_married)},
-        gates={
-            "couple": Gate(
-                predicate=no_dissolution,  # ~D_target
+        arrivals={
+            "couple": ArrivalDecision(
+                predicate=has_policy_support,  # target_support
+                reads={
+                    "target_support": ArrivalRead(
+                        kind="Participating",
+                        regime="couple",
+                        stakeholder="f",
+                        field="support",
+                        projection=...,
+                    )
+                },
                 routes={
                     "f": StakeholderRoute(
                         target_stakeholder="f",
@@ -279,10 +301,10 @@ edges = {
 Keying it by `single_f` instead would send *both* partners to `single_f` whenever the
 couple stays together, because the key is where the open branch goes.
 
-Each route owns four destinations, and simulation carries all four: the open branch's
-regime (the key) and role (`target_stakeholder`), and the closed branch's regime and
-role (`fallback.regime` and `fallback.stakeholder`). A row landing in a singleton regime
-carries no role.
+The same rule holds for a `Gate`. Each route owns four destinations, and simulation
+carries all four: the open branch's regime (the key) and role (`target_stakeholder`),
+and the closed branch's regime and role (`fallback.regime` and `fallback.stakeholder`).
+A row landing in a singleton regime carries no role.
 
 ### Entering on the target's own terms
 
@@ -301,18 +323,18 @@ state_transitions = {
 ```
 
 Without it every bride lands at the bottom of the couple's grid, where the household is
-infeasible — and the consent gate then shuts for a reason that is an artifact of the law
-rather than an economic decision.
+infeasible — and the consent decision then shuts for a reason that is an artifact of the
+law rather than an economic decision.
 
 ### Landing between grid nodes
 
 A gate's `off_grid` says what the edge promises when the realized target coordinate
 falls between the target's nodes:
 
-- `"pointwise"` (the default) reads every operand at the landing point and applies the
-  predicate there, in both phases. The operands are interpolated, so the value carries
-  the ordinary interpolation error of any continuation — but it is a value one branch
-  really delivers, and the branch the solve priced is the branch simulation routes down.
+- `"pointwise"` (the default) applies the predicate at the landing point, in both
+  phases, and interpolates each branch's value there. That value carries the ordinary
+  interpolation error of any continuation — but it is a value one branch really
+  delivers, and the branch the solve priced is the branch simulation routes down.
 - `"reject"` demands that no such point exists: the model refuses to build unless the
   target regime's grid is reached exactly, i.e. it carries no continuous state. Declare
   it where a straddled gate would be an economic error rather than an approximation.
@@ -362,8 +384,8 @@ template["edges"]["single_f"]["couple"]["predicate"]["bonus"]  # one gate's pred
 
 Edge parameters belong to the edges, not to the source regime: each sits at its
 declaration path under `params["edges"][source][target]` and is discovered from that
-edge's own target states and injected operands — never from a union over unrelated
-regimes. See [Edge parameter paths](../reference/transitions.md#api-edge-parameters).
+edge's own target states — never from a union over unrelated regimes. See
+[Edge parameter paths](../reference/transitions.md#api-edge-parameters).
 
 ## What this costs
 

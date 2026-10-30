@@ -130,7 +130,7 @@ from _lcm.typing import (
 )
 from _lcm.utils.logging import LogLevel, get_logger
 from lcm.exceptions import ExecutionPlanningError
-from lcm.solver_api import DISSOLUTION_FLAG, SIMULATION_POLICY
+from lcm.solver_api import SIMULATION_POLICY
 
 type _FiniteRankOutput = tuple[
     Mapping[str, jax.ShapeDtypeStruct], jax.ShapeDtypeStruct, jax.ShapeDtypeStruct
@@ -151,7 +151,6 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     flat_params: FlatParams,
     base_spaces: Mapping[str, StateActionSpace],
     values: Mapping[int, Mapping[str, jax.Array]],
-    flags: Mapping[int, Mapping[str, jax.Array]] = MappingProxyType({}),
     ages: TimeAxis,
     initial_conditions: Mapping[str, jax.Array],
     regime_names_to_ids: RegimeNamesToIds,
@@ -285,7 +284,6 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                     base=base_spaces[name],
                     base_spaces=base_spaces,
                     values=values,
-                    flags=flags,
                     ages=ages,
                     n_subjects=n_subjects,
                     widths=widths,
@@ -399,7 +397,6 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                 base=base_spaces[name],
                 base_spaces=base_spaces,
                 values=values,
-                flags=flags,
                 ages=ages,
                 n_subjects=n_subjects,
                 widths=widths,
@@ -667,7 +664,6 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                     own_roles=own_roles,
                     flat_params=flat_params,
                     values=values,
-                    flags=flags,
                     age=jax.ShapeDtypeStruct((), ages.values.dtype, sharding=shared),
                     widths=widths,
                     scalar_int=scalar_int,
@@ -710,7 +706,6 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
             source=_period_copy_reservation(
                 regimes=forward_regimes[period],
                 values=values,
-                flags=flags,
                 policies=policies,
                 current_iid_replay_inputs=current_iid_replay_inputs,
                 projected_forward_inputs=projected_forward_inputs,
@@ -767,7 +762,6 @@ def _profile_next_subjects(
     own_roles: jax.ShapeDtypeStruct,
     flat_params: FlatParams,
     values: Mapping[int, Mapping[str, jax.Array]],
-    flags: Mapping[int, Mapping[str, jax.Array]] = MappingProxyType({}),
     age: jax.ShapeDtypeStruct,
     widths: Mapping[str, int],
     scalar_int: jax.ShapeDtypeStruct,
@@ -934,19 +928,11 @@ def _profile_next_subjects(
                 if target in values.get(period + 1, {})
             }
         )
-        edge_flags = MappingProxyType(
-            {
-                target: flags[period + 1][target]
-                for target in edge_values
-                if target in flags.get(period + 1, {})
-            }
-        )
         gate_profile = _profile_program(
             runtime=inventory.runtime,
             program=regime.simulation.programs.gate_route[period],
             arguments=gate_route_arguments(
                 edge_values=abstract_tree(tree=edge_values, sharding=shared),
-                edge_flags=abstract_tree(tree=edge_flags, sharding=shared),
                 next_states=gated_route_candidates(regime=regime, next_states=carrier),
                 new_subject_regime_ids=new_ids,
                 subjects_in_regime=mask,
@@ -1466,7 +1452,6 @@ def _period_copy_reservation(
     *,
     regimes: Mapping[str, Regime],
     values: Mapping[int, Mapping[str, jax.Array]],
-    flags: Mapping[int, Mapping[str, jax.Array]] = MappingProxyType({}),
     period: int,
     devices: tuple[jax.Device, ...],
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None = None,
@@ -1525,7 +1510,6 @@ def _period_copy_reservation(
         source = _retained_read_source(
             read=read,
             values=values,
-            flags=flags,
             policy_sources=policy_sources,
             projected_forward_inputs=projected_forward_inputs,
             arrival_surfaces=arrival_surfaces,
@@ -1620,7 +1604,6 @@ def _retained_read_source(
     *,
     read: ValueRead,
     values: Mapping[int, Mapping[str, jax.Array]],
-    flags: Mapping[int, Mapping[str, jax.Array]],
     policy_sources: Mapping[ValueArtifactAddress, jax.Array],
     projected_forward_inputs: ProjectedForwardInputs = MappingProxyType({}),
     arrival_surfaces: PeriodToRegimeToArrivalSurfaces = MappingProxyType({}),
@@ -1654,11 +1637,6 @@ def _retained_read_source(
         and read.target in policy_sources
     ):
         return policy_sources[read.target]
-    if (
-        read.target.kind is ValueArtifactKind.REPLAY_ARTIFACT_LEAF
-        and read.target.artifact_key == DISSOLUTION_FLAG
-    ):
-        return flags[read.target.period][read.target.regime]
     raise ExecutionPlanningError(
         "Chunk copies require an explicit retained artifact schema for "
         f"{read.target!r}."

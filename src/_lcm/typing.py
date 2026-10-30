@@ -517,15 +517,6 @@ type SimulationPolicy = (
 type PeriodToRegimeToSimulationPolicy = MappingProxyType[
     int, MappingProxyType[RegimeName, SimulationPolicy]
 ]
-# Sparse over regimes: the inner mapping carries an entry only for COLLECTIVE
-# regimes. `True` on the state cells whose action mask is empty
-# (distinct from a numeric `-inf` value); empty inner mappings for models
-# without collective regimes. Returned as `backward_induction.solve`'s third
-# element and consumed by `simulate` to route a dissolution-gated edge whose gate
-# reads `D_target`.
-type PeriodToRegimeToDissolutionFlags = MappingProxyType[
-    int, MappingProxyType[RegimeName, BoolND]
-]
 # Stored arrival surfaces by period, publishing regime and payload leaf name.
 type PeriodToRegimeToArrivalSurfaces = MappingProxyType[
     int, MappingProxyType[RegimeName, MappingProxyType[str, FloatND]]

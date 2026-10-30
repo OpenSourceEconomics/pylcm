@@ -1,7 +1,5 @@
 """The public solve interface returns one labelled result for every model."""
 
-from types import MappingProxyType
-
 from lcm.solver_api import DISSOLUTION_FLAG, SolutionResult, ValueStore
 from tests.regime_building.test_collective_regime_simulate import (
     _DISSOLUTION_PARAMS,
@@ -31,12 +29,11 @@ def test_singleton_solve_returns_one_labelled_result() -> None:
     assert not result.replay_artifacts.project(DISSOLUTION_FLAG)
 
 
-def test_collective_solve_addresses_dissolution_flags_in_the_result() -> None:
+def test_collective_solve_publishes_no_dissolution_flag() -> None:
+    """Infeasibility routing is realized in simulation, so no flag is retained."""
     model = _make_dissolution_model()
 
     result = model.solve(params=_DISSOLUTION_PARAMS, log_level="off")
-    dissolution_flags = result.replay_artifacts.project(DISSOLUTION_FLAG)
 
     assert isinstance(result, SolutionResult)
-    assert isinstance(dissolution_flags, MappingProxyType)
-    assert any(dissolution_flags.values())
+    assert not result.replay_artifacts.project(DISSOLUTION_FLAG)

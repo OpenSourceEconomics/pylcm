@@ -92,7 +92,6 @@ def test_terminal_collective_regime_solves_with_stakeholder_axis():
     )
     solution = _bi_result.value_functions
     _sim_policies = _bi_result.simulation_policies
-    _dissolution_flags = _bi_result.dissolution_flags
 
     V = solution[0]["couple"]
     # V carries a trailing stakeholder axis: (wage grid = 2) x (stakeholders = 2).

@@ -172,7 +172,6 @@ from _lcm.regime_building.gated_edges import (
     build_reference_params_mapping_for_fold,
     build_same_period_mapping_for_fold,
     edge_may_fold_at_period,
-    gate_reads_dissolution_flag,
     source_reads_folded_wbar,
 )
 from _lcm.regime_building.Q_and_F import (
@@ -311,9 +310,6 @@ from lcm.typing import (
 )
 
 
-# Stands in for a period's flag mapping when the model retains no dissolution
-# flags, so every period key is present with nothing behind it. One shared
-# instance: it is immutable and carries no arrays.
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class _GatherCheck:
     """One executable's fusion verdict, small enough to keep as long as its model."""
@@ -406,9 +402,6 @@ class ExecutableCache:
     """Compiler memory reservation of every lowering key admitted under a budget."""
 
 
-_NO_DISSOLUTION_FLAGS: MappingProxyType[RegimeName, BoolND] = MappingProxyType({})
-
-
 def solve(  # noqa: C901, PLR0912, PLR0915
     *,
     flat_params: FlatParams,
@@ -421,7 +414,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     execution: ResolvedExecution | None = None,
     collect_solver_diagnostics: bool = False,
     max_compilation_workers: int | None = None,
-    retain_dissolution_flags: bool = True,
     retain_replay: bool = True,
     retain_all_artifacts: bool = False,
     persistable_artifact_refs: frozenset[ArtifactRef] = frozenset(),
@@ -458,10 +450,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             retained. Internal callers may disable collection.
         max_compilation_workers: Maximum number of threads for parallel XLA compilation.
             Defaults to `os.cpu_count()`.
-        retain_dissolution_flags: Whether a caller wants the per-period
-            dissolution flags on the result for their own sake. A model whose
-            gates read `D_target` retains them regardless — the flags are a
-            simulate-side input there, not an inspection artifact.
         retain_replay: Whether replay artifacts are retained. Selects, per
             period kernel, the scoped programs that are dispatched (a kernel may
             publish a values-only and a replay variant of one body) and whether
@@ -497,11 +485,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         regime's published simulation policy (the off-grid policy artifact
         simulation can interpolate; regimes whose kernels publish none, or whose
         simulation route does not read one, have no entry, and the whole
-        mapping is empty when `retain_replay` is false), and the immutable mapping of
-        periods to each COLLECTIVE regime's dissolution flag `D` — `True` on the
-        state cells whose action mask is empty, distinct from a numeric `-inf`
-        value; empty inner mappings for models without collective regimes, so
-        the default path only gains an empty dissolution mapping.
+        mapping is empty when `retain_replay` is false).
 
     """
     resolved_execution = (
@@ -669,7 +653,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     generated_replay_authorities: dict[
         int, MappingProxyType[RegimeName, GeneratedReplayAuthority]
     ] = {}
-    dissolution_flags: dict[int, MappingProxyType[RegimeName, BoolND]] = {}
     solver_diagnostics: dict[int, MappingProxyType[RegimeName, SolverDiagnostics]] = {}
     retained_continuations: dict[ArtifactRef, ArtifactPayload] = {}
     replay_artifacts: dict[ArtifactRef, ArtifactPayload] = {}
@@ -677,20 +660,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     arrival_surfaces: dict[
         int, MappingProxyType[RegimeName, MappingProxyType[str, FloatND]]
     ] = {}
-
-    # Every collective kernel publishes `D`, but only two things read the
-    # ACCUMULATED per-period mapping: forward simulation, for a gate that
-    # declares the `D_target` operand, and a caller that asked for the flags.
-    # A gate's own signature settles the first, so the answer is known before
-    # the first kernel runs; where it is `False` and nobody asked, each period's
-    # flags go out of scope with the period that produced them instead of
-    # staying live for the whole induction. The per-period flags themselves are
-    # built either way — the edge fold below reads them while they are current.
-    publish_dissolution_flags = retain_dissolution_flags or any(
-        gate_reads_dissolution_flag(edge=edge)
-        for regime in regimes.values()
-        for edge in regime.gated_edges.values()
-    )
 
     # Async diagnostics accumulators: per-period NaN/Inf flags (and the
     # debug min/max/mean trio) live here as device-side scalars during
@@ -781,7 +750,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 period_generated_replay_authorities: dict[
                     RegimeName, GeneratedReplayAuthority
                 ] = {}
-                period_dissolution_flags: dict[RegimeName, BoolND] = {}
                 period_solver_diagnostics: dict[RegimeName, SolverDiagnostics] = {}
                 period_retained_continuations: dict[
                     tuple[RegimeName, ArtifactKey], ArtifactPayload
@@ -1099,11 +1067,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                                     in persistable_artifact_refs
                                 }
                             )
-                        # A collective regime publishes its
-                        # empty-mask dissolution flag D alongside V; singleton regimes
-                        # leave it None and never touch this mapping.
-                        if result.dissolution is not None:
-                            period_dissolution_flags[regime_name] = result.dissolution
                         if (
                             collect_solver_diagnostics
                             and diagnostics_enabled
@@ -1172,7 +1135,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                         )
                         # The result keeps these payloads, and what would make them
                         # independent runs only once the period is finished — after the
-                        # releases below, and for the dissolution flags not at all. Two
+                        # releases below. Two
                         # channels carrying one array is enough for a release
                         # addressed at one of them to reach the other, so every
                         # retained channel is declared before this period's first
@@ -1183,7 +1146,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                                 period_replay_artifacts,
                                 period_auxiliary_artifacts,
                                 period_simulation_policies,
-                                period_dissolution_flags,
                                 result.feasibility_counts,
                                 result.continuation_read_counts,
                                 _diagnostic_arrays(
@@ -1276,16 +1238,15 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 # Fold each declared gated edge whose target
                 # was solved this period onto the target grid, and roll the resulting
                 # Wbar into the edge continuation the source reads next period. Reads
-                # only the still-live period-t arrays (`period_solution`,
-                # `period_dissolution_flags`). The node fold is streamed to cap peak
-                # memory; parents then read Wbar in place of the raw target V via the
-                # existing next_regime_to_V_arr threading.
+                # only the still-live period-t arrays (`period_solution`). The node
+                # fold is streamed to cap peak memory; parents then read Wbar in
+                # place of the raw target V via the existing next_regime_to_V_arr
+                # threading.
                 folded_edge_to_V_arr = _roll_gated_edges(
                     regimes=regimes,
                     ages=ages,
                     period=period,
                     period_solution=period_solution,
-                    period_dissolution_flags=period_dissolution_flags,
                     base_state_action_spaces=base_state_action_spaces,
                     flat_params=flat_params,
                     edge_templates=input_templates.next_edge_to_V_arr,
@@ -1299,7 +1260,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                     inputs=(
                         next_edge_to_V_arr,
                         period_solution,
-                        period_dissolution_flags,
                     ),
                     outputs=folded_edge_to_V_arr,
                 )
@@ -1354,18 +1314,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 # root-derived domain, as persisted archives do.
                 if period_solution:
                     solution[period] = MappingProxyType(period_solution)
-                    # Publish each collective regime's dissolution flag D alongside
-                    # V, where a reader exists. Kept as a plain per-period mapping
-                    # (not rolled like `next_regime_to_V_arr`): nothing consumes a
-                    # NEXT-period D — a gated edge's gate reads the still-live
-                    # per-period flags at each period's end, before the roll
-                    # (above). The period keys match `solution`'s either way; only
-                    # the arrays behind them differ.
-                    dissolution_flags[period] = (
-                        MappingProxyType(period_dissolution_flags)
-                        if publish_dissolution_flags
-                        else _NO_DISSOLUTION_FLAGS
-                    )
                 if period_solution and (retain_replay or period_simulation_policies):
                     assert host_device is not None  # noqa: S101
                     simulation_policies[period] = MappingProxyType(
@@ -1478,7 +1426,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 except InvalidValueFunctionError as error:
                     raise_or_warn(logger=logger, error=error)
 
-            _drain_V_arr_shards(solution=solution, dissolution_flags=dissolution_flags)
+            _drain_V_arr_shards(solution=solution)
             input_liveness.assert_solve_complete()
 
         finally:
@@ -1493,7 +1441,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         value_functions=MappingProxyType(solution),
         simulation_policies=MappingProxyType(simulation_policies),
         generated_replay_authorities=MappingProxyType(generated_replay_authorities),
-        dissolution_flags=MappingProxyType(dissolution_flags),
         diagnostics=MappingProxyType(solver_diagnostics),
         retained_continuations=ArtifactStore(retained_continuations),
         replay_artifacts=ArtifactStore(replay_artifacts),
@@ -2158,7 +2105,6 @@ def _roll_gated_edges(
     ages: TimeAxis,
     period: int,
     period_solution: dict[RegimeName, FloatND],
-    period_dissolution_flags: dict[RegimeName, BoolND],
     base_state_action_spaces: dict[RegimeName, StateActionSpace],
     flat_params: FlatParams,
     edge_templates: MappingProxyType[_EdgeKey, ValueTemplate],
@@ -2193,15 +2139,13 @@ def _roll_gated_edges(
         solved_regimes=period_solution,
     ):
         edge = regimes[source_name].gated_edges[target_name]
-        # The fold compiled for THIS period: the gate references and leg
-        # fallbacks are interpolated on their own regimes' grids as of the
-        # period being folded, which an `AgeSpecializedGrid` moves without
-        # changing their shape.
+        # The fold compiled for THIS period: the leg fallbacks are interpolated
+        # on their own regimes' grids as of the period being folded, which an
+        # `AgeSpecializedGrid` moves without changing their shape.
         fold = edge.fold_at(period=period)
         same_period_mapping = build_same_period_mapping_for_fold(
             edge=edge,
             period_solution=period_solution,
-            period_dissolution_flags=period_dissolution_flags,
         )
         wbar = _evaluate_edge_fold(
             fold=fold,
@@ -2233,7 +2177,7 @@ def _reject_edge_fold_state_param_collisions(
 ) -> None:
     """Reject a gated edge whose source params or target states shadow an engine name.
 
-    A gate, gate reference or route projection is folded on the target's grid,
+    A gate or route projection is folded on the target's grid,
     where the engine binds its own value and params mappings and the period
     context under reserved argument names. A source edge parameter or target state
     spelled like one of them would be bound as the engine object on one side of
@@ -2724,9 +2668,8 @@ def _build_base_state_action_spaces(
 def _drain_V_arr_shards(
     *,
     solution: dict[int, MappingProxyType[RegimeName, FloatND]],
-    dissolution_flags: dict[int, MappingProxyType[RegimeName, BoolND]] | None = None,
 ) -> None:
-    """Block until every V_arr (and dissolution-flag) shard is materialised.
+    """Block until every V_arr shard is materialised.
 
     Solve → simulate barrier: backward induction returns sharded V_arrs,
     but the simulate phase must consume materialised arrays rather than
@@ -2736,14 +2679,11 @@ def _drain_V_arr_shards(
     should depend on global pytree registration. The batched barrier blocks
     per-shard (no host transfer, no cross-device collective); free when kernels
     are already done, the minimum necessary sync when they are not. V stays
-    sharded across devices. The collective dissolution flags ride along in the
-    same barrier.
+    sharded across devices.
     """
     array_leaves = tuple(
         array
-        for period_mapping in (solution, dissolution_flags)
-        if period_mapping is not None
-        for regime_mapping in period_mapping.values()
+        for regime_mapping in solution.values()
         for array in regime_mapping.values()
     )
     jax.block_until_ready(array_leaves)

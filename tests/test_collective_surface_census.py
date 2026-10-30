@@ -41,6 +41,7 @@ _ENGINE_LEVEL_MODULES = frozenset(
         "tests/regime_building/test_fold_gate_guard.py",
         "tests/regime_building/test_fold_guard_complete.py",
         "tests/regime_building/test_fold_iid_shocks.py",
+        "tests/regime_building/test_gate_reads_value_error.py",
         "tests/regime_building/test_same_period_ref_process_state_interpolation.py",
         "tests/regime_building/test_same_period_ref_projection_free_params.py",
         "tests/regime_building/test_simulate_gate_param_and_leg_selection.py",
