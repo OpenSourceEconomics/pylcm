@@ -88,8 +88,10 @@ The native current-IID route that solved such shocks without the node axis (Case
 resources rows and banks, Case-U candidate reconstruction, the projected continuation
 and its private frontiers) is removed; the node-state axis is the only EGM route for
 named shocks. A DC-EGM draw between nodes blends the two neighbouring node rows
-linearly, which is exact when the shock enters only through resources and approximate
-when it enters utility. Continuous NBEGM replay between nodes is not yet on that route.
+linearly, which is exact because the shock enters only through resources: an
+endogenous-grid regime whose utility reads an IID shock otherwise is refused at
+`Model(...)` (decision 82). Continuous NBEGM replay between nodes is not yet on that
+route.
 
 A DC-EGM regime followed by a finite NNBEGM regime has no replay route and is refused at
 `Model(...)`; see

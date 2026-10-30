@@ -19,6 +19,7 @@ from lcm import (
     Transition,
     fixed_transition,
 )
+from lcm.exceptions import ModelInitializationError
 from lcm.solvers import FUESEnvelope
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 from lcm_examples.iskhakov_et_al_2017 import WEALTH_GRID, next_wealth_from_savings
@@ -84,43 +85,51 @@ def test_grid_replay_keeps_the_grid_argmax():
     assert model._regimes["retirement"].simulation.egm_policy_read is None
 
 
-@pytest.mark.parametrize(
-    ("sigma", "qualifies"), [(0.3, True), (None, False)], ids=["fixed", "runtime"]
-)
-def test_process_state_regime_qualifies_only_with_fixed_nodes(
-    *, sigma: float | None, qualifies: bool
-):
-    """A process-state regime reads the policy when its nodes are fixed.
+def test_fixed_node_process_state_regime_qualifies_for_the_policy_read():
+    """A process-state regime whose shock enters resources reads the policy.
 
     A process state is a node-valued row axis whose simulated value may fall
     between nodes; the read blends the two bracketing node rows, which needs the
-    nodes at build time. A process whose law arrives as runtime params keeps the
-    grid path. Build-time EGM validation evaluates `resources` at the nodes, so
-    the runtime law's shock enters utility, not resources.
+    nodes at build time.
     """
-    shock = NormalIIDProcess(n_points=5, gauss_hermite=True, mu=0.0, sigma=sigma)
-    alive = (
-        _PORTABLE_DCEGM_RETIREMENT.replace(
-            liquid=dataclasses.replace(LIQUID_MARGIN, resources="resources"),
-            states={"wealth": WEALTH_GRID, "wage_shock": shock},
-            functions={
-                **dict(dcegm_retirement.functions),
-                "resources": _resources_with_shock,
-                "savings": _savings_from_resources,
-            },
-        )
-        if sigma is not None
-        else _PORTABLE_DCEGM_RETIREMENT.replace(
-            states={"wealth": WEALTH_GRID, "wage_shock": shock},
-            functions={
-                **dict(dcegm_retirement.functions),
-                "utility": _utility_with_shock,
-            },
-        )
+    shock = NormalIIDProcess(n_points=5, gauss_hermite=True, mu=0.0, sigma=0.3)
+    alive = _PORTABLE_DCEGM_RETIREMENT.replace(
+        liquid=dataclasses.replace(LIQUID_MARGIN, resources="resources"),
+        states={"wealth": WEALTH_GRID, "wage_shock": shock},
+        functions={
+            **dict(dcegm_retirement.functions),
+            "resources": _resources_with_shock,
+            "savings": _savings_from_resources,
+        },
     )
     model = _model_from_alive(alive=alive)
-    read = model._regimes["retirement"].simulation.egm_policy_read
-    assert (read is not None) is qualifies
+    assert model._regimes["retirement"].simulation.egm_policy_read is not None
+
+
+@pytest.mark.parametrize("sigma", [0.3, None], ids=["fixed", "runtime"])
+def test_process_state_entering_utility_is_refused(sigma: float | None):
+    """An IID shock read by `utility` outside resources refuses the DC-EGM build.
+
+    The refusal holds for a fixed-node law, which the read would blend, and for
+    a law whose parameters arrive at runtime, which would keep the grid path.
+    """
+    shock = NormalIIDProcess(n_points=5, gauss_hermite=True, mu=0.0, sigma=sigma)
+    alive = _PORTABLE_DCEGM_RETIREMENT.replace(
+        states={"wealth": WEALTH_GRID, "wage_shock": shock},
+        functions={
+            **dict(dcegm_retirement.functions),
+            "utility": _utility_with_shock,
+        },
+    )
+    with pytest.raises(
+        ModelInitializationError,
+        match=(
+            r"(?s)DCEGM regime 'retirement' reads the IID shock\(s\) \['wage_shock'\]"
+            r" other than through resources\..*Move the shock into resources, or "
+            r"use GridSearch for this regime\."
+        ),
+    ):
+        _model_from_alive(alive=alive)
 
 
 def test_asset_row_regime_does_not_qualify_for_the_policy_read():
