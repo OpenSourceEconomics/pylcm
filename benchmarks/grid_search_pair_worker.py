@@ -510,7 +510,6 @@ def _kernel_execution_metadata(kernel: PeriodKernel) -> _KernelExecution:
 
 def _route_metadata(model: Model) -> _RouteMetadata:
     rows: list[_KernelRow] = []
-    folded_regimes: list[str] = []
     distributed_regimes: list[str] = []
     collective_regimes: list[str] = []
     taste_shock_regimes: list[str] = []
@@ -518,15 +517,12 @@ def _route_metadata(model: Model) -> _RouteMetadata:
     declarations = getattr(model, "user_regimes", {})
     transitions = getattr(model, "declared_transitions", {}).get("solve", {})
     for regime_name, regime in sorted(model._regimes.items()):  # noqa: SLF001
-        fold_names = tuple(regime.fold_state_names)
         action_names = tuple(regime.solution.action_names)
         action_extents = tuple(
             _grid_extent(regime.solution.grids[name]) for name in action_names
         )
         collective = regime.stakeholders is not None
         has_taste_shocks = bool(regime.has_taste_shocks)
-        if fold_names:
-            folded_regimes.append(regime_name)
         if has_taste_shocks:
             taste_shock_regimes.append(regime_name)
         if collective:
@@ -579,13 +575,11 @@ def _route_metadata(model: Model) -> _RouteMetadata:
                     **execution,
                     "collective": collective,
                     "has_taste_shocks": has_taste_shocks,
-                    "fold_state_names": list(fold_names),
                 }
             )
     return {
         "kernels": rows,
         "streamed_kernel_count": sum(row["streamed"] for row in rows),
-        "folded_regimes": sorted(set(folded_regimes)),
         "distributed_regimes": sorted(set(distributed_regimes)),
         "collective_regimes": sorted(set(collective_regimes)),
         "taste_shock_regimes": sorted(set(taste_shock_regimes)),
@@ -611,14 +605,12 @@ def _scenario_dimensions(model: Model) -> _Dimensions:
 
 def _assert_scenario_identity(*, spec: ScenarioSpec, routes: _RouteMetadata) -> None:
     observed = {
-        "folded": bool(routes["folded_regimes"]),
         "collective": bool(routes["collective_regimes"]),
         "distributed": bool(routes["distributed_regimes"]),
         "taste_shocks": bool(routes["taste_shock_regimes"]),
         "gs_vd": bool(routes["gs_vd_regimes"]),
     }
     expected = {
-        "folded": spec.expected_folded,
         "collective": spec.expected_collective,
         "distributed": spec.expected_distributed,
         "taste_shocks": spec.expected_taste_shocks,

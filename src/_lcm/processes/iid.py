@@ -6,9 +6,9 @@ depend on the current node.
 """
 
 from abc import abstractmethod
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, fields
 from types import MappingProxyType
-from typing import ClassVar, Self
+from typing import Self
 
 import jax
 import jax.numpy as jnp
@@ -40,14 +40,6 @@ FOLD_REMOVED = (
 class _IIDProcess(_ContinuousStochasticProcess):
     """Base for IID processes — draw does not depend on previous value."""
 
-    fold: bool = field(default=False, init=False, repr=False)
-    """Engine-internal; always `False`. No declaration sets it.
-
-    Whether a shock carries an axis is inferred from how it is read: a regime
-    that reads only its draw `next_<shock>` integrates it out of the
-    continuation; one that reads its current value keeps an ordinary axis.
-    """
-
     def __new__(
         cls,
         *args: object,  # noqa: ARG004, PAN001 - refuses removed keywords first
@@ -56,10 +48,6 @@ class _IIDProcess(_ContinuousStochasticProcess):
         if "fold" in kwargs:
             raise TypeError(FOLD_REMOVED)
         return super().__new__(cls)
-
-    _NON_PARAM_FIELDS: ClassVar[frozenset[str]] = (
-        _ContinuousStochasticProcess._NON_PARAM_FIELDS | {"fold"}  # noqa: SLF001
-    )
 
     @abstractmethod
     def draw_shock(

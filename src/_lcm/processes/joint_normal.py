@@ -52,8 +52,6 @@ class JointNormalIIDProcess:
     """Symmetric positive-semidefinite covariance; `None` leaves it at runtime."""
     n_std: float | int | None = None
     """Equally spaced support halfwidth, required without Gauss-Hermite."""
-    fold: bool = field(default=False, init=False, repr=False)
-    """Engine-internal; always `False`. No declaration sets it."""
     exact_zero_pivots: tuple[tuple[str, tuple[bool, ...] | None], ...] = field(
         init=False, default=(), repr=False, compare=False
     )

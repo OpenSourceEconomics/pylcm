@@ -427,7 +427,6 @@ def validate_supplied_V_shapes(
             f"{detail}\n"
             "A regime's value function has one axis per solve state it keeps as "
             "a grid axis, in declaration order, plus a trailing stakeholder axis "
-            "when the regime is collective. A folded state is integrated out by "
-            "quadrature when the value is stored and contributes no axis."
+            "when the regime is collective."
         )
         raise InvalidValueFunctionError(msg)

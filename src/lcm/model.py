@@ -340,7 +340,6 @@ from _lcm.typing import (
     StateName,
 )
 from _lcm.user_regime_validation import (
-    fail_if_a_folded_conditioner_can_move,
     validate_exit_targets,
     validate_regimes,
 )
@@ -1646,14 +1645,6 @@ class Model:
         fail_if_a_fixed_entry_is_off_a_read_node(
             regimes=finalized_regimes,
             process_code_reads=self._process_code_reads,
-        )
-        # Runs on the finalized regimes, since a conditioner's law may arrive as
-        # a model-level broadcast, and against the resolved graph support: the
-        # targets each source reaches after fixed-zero pruning, at the pairs the
-        # model values or visits.
-        fail_if_a_folded_conditioner_can_move(
-            user_regimes=finalized_regimes,
-            targets_by_regime=schedules.targets_by_regime,
         )
         self._user_regimes = finalized_regimes
         validate_regimes(regimes=self._user_regimes, laws=laws)
@@ -4430,7 +4421,7 @@ class Model:
             shock_paths: Given realised shock values indexed by computational period:
                 `(periods,)` for a common path or `(subjects, periods)` in original
                 initial-condition row order. Overrides the entry value and later
-                draws, including folded IID and persistent processes. Continuous
+                draws, including IID and persistent processes. Continuous
                 values must be in the distribution's support; discrete values are
                 exact category codes. This holds for a state declared with
                 `values` too, whatever `use_categorical_codes` says, while every
@@ -6740,9 +6731,9 @@ def _validate_sharded_state_capability(
         "nodes (linear, log, piecewise or fixed-point irregular) as "
         "the sole sharded state, retained in every regime, with singleton hard-max "
         "GridSearch. Unsharded states may include one static piecewise-linear "
-        "coordinate, concrete discrete grids, fixed unfolded Gauss-Hermite "
+        "coordinate, concrete discrete grids, fixed Gauss-Hermite "
         "normal/log-normal processes, fixed Rouwenhorst/Tauchen processes and "
-        "carried linear grids. Runtime state grids, folded processes, "
+        "carried linear grids. Runtime state grids, "
         "mixed solvers, collective/gated/same-period routes, taste shocks and "
         "`Decoupled` Koopmans aggregators are unsupported."
     )
@@ -6831,7 +6822,7 @@ def _supports_continuous_sharding_vocabulary(
 def _supports_unsharded_continuous_process(grid: Grid) -> bool:
     """Accept fixed node laws that stay replicated discrete solve axes.
 
-    - `NormalIIDProcess` / `LogNormalIIDProcess`: unfolded Gauss-Hermite nodes
+    - `NormalIIDProcess` / `LogNormalIIDProcess`: Gauss-Hermite nodes
     - `RouwenhorstAR1Process` / `TauchenAR1Process`: any fixed node law
 
     Every accepted process is fully specified and not state-conditioned, so its
@@ -6839,7 +6830,7 @@ def _supports_unsharded_continuous_process(grid: Grid) -> bool:
     """
     if type(grid) in (NormalIIDProcess, LogNormalIIDProcess):
         iid = cast("NormalIIDProcess | LogNormalIIDProcess", grid)
-        if iid.fold or not iid.gauss_hermite:
+        if not iid.gauss_hermite:
             return False
     elif type(grid) not in (
         RouwenhorstAR1Process,

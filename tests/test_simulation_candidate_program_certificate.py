@@ -1494,8 +1494,6 @@ def test_supplemental_sources_complete_the_pinned_registry_coverage() -> None:
         "s02_status:bounded_aux_executable",
         "s02_status:bounded_keyed_leaf_swapped",
         "s02_status:bounded_reconstruction_status_swapped",
-        "s02_status:fold_weight_call_seam_replaced",
-        "s02_status:fold_weight_helper_changes_row",
         "s02_status:initial_host_call_seam_replaced",
         "s02_status:initial_host_helper_omits_status",
         "s02_status:landing_reducer_status_omitted",

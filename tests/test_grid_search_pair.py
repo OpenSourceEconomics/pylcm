@@ -24,7 +24,6 @@ from _lcm.typing import (
     JSONValue,
     PytreeValue,
     RegimeName,
-    StateName,
 )
 from benchmarks.grid_search_pair import (
     _ArrayManifest,
@@ -65,7 +64,6 @@ from benchmarks.grid_search_pair_worker import (
 
 
 class _RouteArguments(TypedDict, total=False):
-    folded_regimes: tuple[str, ...]
     collective_regimes: tuple[str, ...]
     distributed_regimes: tuple[str, ...]
     taste_shock_regimes: tuple[str, ...]
@@ -98,7 +96,6 @@ def _kernel(
     disposition_reason: str | None = "legacy_adapter",
     collective: bool = False,
     has_taste_shocks: bool = False,
-    fold_state_names: tuple[StateName, ...] = (),
     action_extent: int = 10,
 ) -> _KernelRow:
     return {
@@ -111,7 +108,6 @@ def _kernel(
         "disposition_reason": disposition_reason,
         "collective": collective,
         "has_taste_shocks": has_taste_shocks,
-        "fold_state_names": list(fold_state_names),
     }
 
 
@@ -130,7 +126,6 @@ def _set_execution(
 def _routes(
     *,
     kernels: list[_KernelRow],
-    folded_regimes: tuple[str, ...] = (),
     collective_regimes: tuple[str, ...] = (),
     distributed_regimes: tuple[str, ...] = (),
     taste_shock_regimes: tuple[str, ...] = (),
@@ -139,7 +134,6 @@ def _routes(
     return {
         "kernels": kernels,
         "streamed_kernel_count": sum(row["streamed"] for row in kernels),
-        "folded_regimes": list(folded_regimes),
         "collective_regimes": list(collective_regimes),
         "distributed_regimes": list(distributed_regimes),
         "taste_shock_regimes": list(taste_shock_regimes),

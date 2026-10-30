@@ -43,13 +43,11 @@ support. Eligible JIT solve-value routes—ordinary singleton hard max, collecti
 max, and singleton EV1 expected max—evaluate bounded C-order action blocks. Same-period
 value references, gated-target continuations, and edge-reference mappings are supported
 unchanged inputs to those blocks. Ordinary co-mapped state routes stream while
-preserving device-local continuation reads. Eligible singleton folded-state routes
-stream the action product at each shock node before the unchanged full-axis quadrature
-reduction. The classifier deliberately keeps co-map intersections with separate
-same-period or edge-reference channels, trivial action products, JIT-disabled and raw
-execution, and all simulation-policy construction dense. Collective EV1, EV1 with a
-fold, collective hard max with a fold, and EV1 without a discrete action are unsupported
-by the streamed program. See the canonical
+preserving device-local continuation reads. The classifier deliberately keeps co-map
+intersections with separate same-period or edge-reference channels, trivial action
+products, JIT-disabled and raw execution, and all simulation-policy construction dense.
+Collective EV1 and EV1 without a discrete action are unsupported by the streamed
+program. See the canonical
 [GridSearch route matrix](../reference/solvers.md#gridsearch-jit-route-matrix). Streamed
 programs publish solve-time values (and collective dissolution flags), not replay or
 policy artifacts. The blockwise route does not establish a runtime or peak-memory

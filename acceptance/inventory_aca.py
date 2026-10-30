@@ -154,14 +154,11 @@ def _construct(packet_root: Path) -> dict[str, Any]:
     for name, regime in model._regimes.items():
         space = regime.solution.state_action_space(regime_params=flat_params[name])
         state_names = list(space.states)
-        stored_names = [
-            state for state in state_names if state not in regime.fold_state_names
-        ]
+        stored_names = state_names
         shape = list(topology[name].shape)
         assert shape == [len(space.states[state]) for state in stored_names]
         assert len(space.states["assets"]) == 24
         assert len(space.states["pref_type"]) == 3
-        assert not regime.fold_state_names
         assert "pension_wealth" not in state_names
         if name == "dead":
             assert set(state_names) == {"assets", "pref_type"}
@@ -214,7 +211,6 @@ def _construct(packet_root: Path) -> dict[str, Any]:
                 "stored_value_bytes": math.prod(shape) * np.dtype(np.float32).itemsize,
                 "simulation_state_names": list(regime.simulation.state_names),
                 "carried_simulation_names": list(regime.simulation.carried_grids),
-                "folded_names": list(regime.fold_state_names),
                 "state_coordinates": {
                     state: _array(value) for state, value in space.states.items()
                 },

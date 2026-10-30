@@ -254,9 +254,9 @@ corresponding integrated producer and otherwise refuse explicitly. An unlowered 
 shock cannot silently become a free parameter.
 
 Legacy IID state processes retain their public classes, state layouts, phase-specific
-laws, transition timing, fold flags and simulation draw modes. Compatibility records
-retain the original joint declaration and physical-grid rule. In particular, legacy
-normal-mixture CDF bins on a physical equally spaced grid are not a standard-normal base
-rule transformed through mixture quantiles. Persistent processes and transition-local
-state laws keep their existing consumers. An empty registry and empty regime references
-leave feature-free durable fingerprints unchanged.
+laws, transition timing and simulation draw modes. Compatibility records retain the
+original joint declaration and physical-grid rule. In particular, legacy normal-mixture
+CDF bins on a physical equally spaced grid are not a standard-normal base rule
+transformed through mixture quantiles. Persistent processes and transition-local state
+laws keep their existing consumers. An empty registry and empty regime references leave
+feature-free durable fingerprints unchanged.

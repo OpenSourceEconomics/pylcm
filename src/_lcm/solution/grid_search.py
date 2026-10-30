@@ -7,10 +7,8 @@ before lowering. Collective and EV1 kernels deliberately retain their canonical 
 reduction order. Each streamed period program also names its exact value-input artifacts
 and argument paths so the engine can resolve their transfers.
 Fixed distributed states co-map ordinary continuation leaves with the streamed state
-cell. Singleton folded-state routes stream actions before
-the unchanged quadrature reduction; the fold axis itself remains materialized. Co-map
-routes with separate same-period or edge-reference value channels retain the dense
-kernel. The adapter assembles the resulting `KernelOutput` outside JIT.
+cell. Co-map routes with separate same-period or edge-reference value channels retain
+the dense kernel. The adapter assembles the resulting `KernelOutput` outside JIT.
 
 The max-Q kernel-building imports are function-local so
 the public `lcm.solvers` façade stays a thin re-export that pulls in no
@@ -76,7 +74,6 @@ from _lcm.execution.value_transfer import (
     ValueInputChannel,
 )
 from _lcm.params.edges import regime_kernel_params
-from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.solution.action_reduction import HARD_MAX_REDUCTION
 from _lcm.solution.continuation_reads import rekeyed_value_reads
 from _lcm.solution.contract import (
@@ -151,8 +148,6 @@ class _ActionStreamingDisposition(StrEnum):
     DENSE_OFF_GRID_RAISE_COUNT = "deliberately_dense:off_grid_raise_count"
     DENSE_DECOUPLED = "deliberately_dense:decoupled"
     UNSUPPORTED_COLLECTIVE_EV1 = "unsupported:collective_ev1"
-    UNSUPPORTED_EV1_FOLD = "unsupported:ev1_fold"
-    UNSUPPORTED_COLLECTIVE_FOLD = "unsupported:collective_fold"
     UNSUPPORTED_EV1_WITHOUT_DISCRETE_ACTION = "unsupported:ev1_without_discrete_action"
 
     @property
@@ -282,9 +277,6 @@ class GridSearch(Solver):
             get_max_Q_over_a,
             get_streaming_max_Q_over_a,
         )
-        from _lcm.regime_building.processing import (  # noqa: PLC0415
-            get_conditioned_fold_weights_by_code,
-        )
         from _lcm.regime_building.Q_and_F import (  # noqa: PLC0415
             has_objective_profile,
             runtime_bound_specs,
@@ -298,20 +290,6 @@ class GridSearch(Solver):
         program_functions: dict[int, Callable[..., PytreeValue]] = {}
         broadcast_extents: dict[int, int] = {}
         result: dict[int, PeriodKernel] = {}
-        # Fold weights are the folded process's own marginal distribution, a
-        # plain constant computed once here at kernel-build time and never
-        # inside the traced core (`_validate_fold_declarations` rejects a
-        # runtime-parameterized process). Two shapes, by declaration:
-        # - an unconditioned process contributes one row. Its
-        #   `compute_transition_probs` returns an `(n_points, n_points)` matrix
-        #   whose every row is that marginal — the "IID" part — so row 0 is it.
-        # - a `StateConditioned` `sigma` contributes one row per category of
-        #   the conditioning state, ordered by that categorical's integer code,
-        #   which the fold reduction gathers along the conditioning axis.
-        fold_weights, fold_conditioning = _grid_search_fold_weights(
-            context=context,
-            get_conditioned_fold_weights_by_code=get_conditioned_fold_weights_by_code,
-        )
         action_streaming = _classify_action_streaming(context=context)
         stream_actions = action_streaming is _ActionStreamingDisposition.STREAMED
         action_partition_mesh = _action_partition_mesh(
@@ -397,9 +375,6 @@ class GridSearch(Solver):
                     ),
                     "stakeholders": context.stakeholders,
                     "pareto_weights": context.pareto_weights,
-                    "fold_state_names": context.fold_state_names,
-                    "fold_weights": MappingProxyType(fold_weights),
-                    "fold_conditioning": MappingProxyType(fold_conditioning),
                     "return_feasibility": True,
                 }
                 if has_objective_profile(Q_and_F=Q_and_F):
@@ -418,9 +393,6 @@ class GridSearch(Solver):
                             context.state_action_space.discrete_actions
                         ),
                         has_taste_shocks=context.has_taste_shocks,
-                        fold_state_names=context.fold_state_names,
-                        fold_weights=MappingProxyType(fold_weights),
-                        fold_conditioning=MappingProxyType(fold_conditioning),
                     )
                 elif landing_checks_of(Q_and_F):
                     program_functions[q_id] = get_landing_counting_max_Q_over_a(
@@ -625,7 +597,7 @@ def _action_partition_mesh(
     """Return the regime's mesh when its action product is shared, else `None`.
 
     Model construction admits a partition request only on the ordinary
-    streamed singleton route without folded processes or co-mapped states;
+    streamed singleton route without co-mapped states;
     reaching here with anything else is an internal planning error.
     """
     if context.action_partitions == 1:
@@ -637,7 +609,6 @@ def _action_partition_mesh(
                 action_streaming is not _ActionStreamingDisposition.STREAMED,
                 f"its actions are not streamed ({action_streaming.value})",
             ),
-            (bool(context.fold_state_names), "it folds a process"),
             (bool(context.co_map_state_names), "it co-maps a sharded state"),
         )
         if failed
@@ -704,27 +675,7 @@ def _fail_if_decoupled_route_is_unsupported(
         raise ExecutionPlanningError(msg)
 
 
-def _grid_search_fold_weights(
-    *,
-    context: SolverBuildContext,
-    get_conditioned_fold_weights_by_code: Callable[..., FloatND],
-) -> tuple[dict[StateName, FloatND], dict[StateName, StateName]]:
-    """Build each folded process's marginal rows and conditioning names."""
-    fold_weights: dict[StateName, FloatND] = {}
-    fold_conditioning: dict[StateName, StateName] = {}
-    for name in context.fold_state_names:
-        process = cast("_ContinuousStochasticProcess", context.grids[name])
-        if process.state_conditioned is None:
-            fold_weights[name] = process.get_transition_probs()[0]
-        else:
-            fold_weights[name] = get_conditioned_fold_weights_by_code(
-                name=name, grid=process, grids=context.grids
-            )
-            fold_conditioning[name] = process.state_conditioned.on
-    return fold_weights, fold_conditioning
-
-
-def _classify_action_streaming(  # noqa: C901
+def _classify_action_streaming(
     *, context: SolverBuildContext
 ) -> _ActionStreamingDisposition:
     """Classify one solve route without conflating dense and unsupported cases."""
@@ -734,10 +685,6 @@ def _classify_action_streaming(  # noqa: C901
     action_extents = context.state_action_space.actions_grid_shapes
     if context.has_taste_shocks and context.stakeholders is not None:
         disposition = _ActionStreamingDisposition.UNSUPPORTED_COLLECTIVE_EV1
-    elif context.has_taste_shocks and context.fold_state_names:
-        disposition = _ActionStreamingDisposition.UNSUPPORTED_EV1_FOLD
-    elif context.stakeholders is not None and context.fold_state_names:
-        disposition = _ActionStreamingDisposition.UNSUPPORTED_COLLECTIVE_FOLD
     elif context.has_taste_shocks and not context.state_action_space.discrete_actions:
         disposition = (
             _ActionStreamingDisposition.UNSUPPORTED_EV1_WITHOUT_DISCRETE_ACTION

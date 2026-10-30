@@ -96,7 +96,7 @@ class LegacyIIDAdapter:
     """Describe a legacy process without changing its type, timing or rule."""
 
     declaration: _IIDProcess | JointNormalIIDProcess
-    """Original physical-grid declaration, including fold and draw mode."""
+    """Original physical-grid declaration, including its draw mode."""
     physical_names: tuple[ShockName, ...]
     """Physical outputs; a joint declaration stays joint."""
     phase: Phase

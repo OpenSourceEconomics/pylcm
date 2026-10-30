@@ -43,7 +43,6 @@ class ScenarioSpec:
     name: ScenarioName
     description: str
     topology: Literal["selected-backend", "cpu-4"]
-    expected_folded: bool = False
     expected_collective: bool = False
     expected_distributed: bool = False
     expected_head_disposition: Literal["planned", "dense"] = "planned"

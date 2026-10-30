@@ -530,15 +530,6 @@ class SolverBuildContext:
     mapping it reads and lowers against. Empty for every other regime.
     """
 
-    fold_state_names: tuple[StateName, ...] = ()
-    """IID-process states declared `fold=True`, or empty (the default).
-
-    Only `GridSearch` consumes this: the grid-search kernel weighted-averages
-    each named state's axis out of the stored value immediately after the
-    max-over-actions / collective readout, using the process's own
-    quadrature weights. Empty keeps the default path byte-identical.
-    """
-
     edge_reference_regimes: tuple[RegimeName, ...] = ()
     """Regimes a gated edge reads a projected value from, or empty.
 
@@ -566,8 +557,8 @@ class SolverBuildContext:
         """Return a continuation template placed like this regime's stored values.
 
         Array leaves whose leading shape matches the stored-value state axes
-        are partitioned along the regime's sharded states. Folded states are
-        omitted from that shape; trailing axes stay unsharded. Other array
+        are partitioned along the regime's sharded states; trailing axes stay
+        unsharded. Other array
         leaves replicate across the same devices. An unsharded regime places
         every array on its assigned single device. Non-array leaves and the
         pytree structure are preserved.
@@ -577,7 +568,6 @@ class SolverBuildContext:
             grids=self.grids,
             sharded_state_names=self.sharded_state_names,
             states=self.state_action_space.states,
-            fold_state_names=self.fold_state_names,
             submesh_device_ids=self.submesh_device_ids,
             action_partitions=self.action_partitions,
         )
