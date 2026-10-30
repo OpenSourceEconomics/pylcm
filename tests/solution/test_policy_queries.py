@@ -796,6 +796,42 @@ def test_query_closure_narrows_by_halving_the_chunk() -> None:
     assert narrowed.narrow_workspace() is None
 
 
+def test_narrowed_chunk_with_an_unchanged_bank_compiles_its_own_program(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A budget that admits only the halved chunk solves at the halved chunk.
+
+    Four source cells pad to one bank shape at chunks 2 and 1, so the narrowed
+    program has the same arguments as the refused one. It must still be compiled
+    and admitted as its own executable, not stand in for the refused width.
+    """
+    records = []
+    log_record = backward._log_core_plan_record
+
+    def record(**kwargs):
+        records.append(kwargs)
+        return log_record(**kwargs)
+
+    monkeypatch.setattr(backward, "_log_core_plan_record", record)
+    _native_model(enable_jit=True, chunk_size=1, source_size=4, budget=2**30).solve(
+        params={}, log_level="debug", runtime_checks=False
+    )
+    budget = max(
+        item["memory"].reservation_bytes + item["resident_bytes"] for item in records
+    )
+    records.clear()
+    model = _native_model(enable_jit=True, chunk_size=2, source_size=4, budget=budget)
+    result = model.solve(params={}, log_level="debug", runtime_checks=False)
+    (chunks,) = (item for item in records if item["triple"][2] == "_chunks")
+    assert chunks["memory"].reservation_bytes + chunks["resident_bytes"] <= budget
+    np.testing.assert_array_equal(
+        result.values[0]["root"],
+        _native_model(enable_jit=True, chunk_size=1, source_size=4)
+        .solve(params={}, log_level="off", runtime_checks=False)
+        .values[0]["root"],
+    )
+
+
 def test_exhausted_common_chunk_refuses_without_dispatch(*, monkeypatch) -> None:
     """A genuine fixed bank floor cannot be hidden by narrowing a query chunk."""
     model = _native_model(enable_jit=True, chunk_size=2, budget=1)
