@@ -68,7 +68,15 @@ from _lcm.utils.dispatchers import productmap, vary_carry_like_body
 from lcm.exceptions import ExecutionPlanningError, UnsupportedOperationError
 from lcm.shocks import ShockGroupName
 from lcm.solver_api import KernelOutput
-from lcm.typing import BoolND, FloatND, IntND, RegimeName, StateName, UserFunction
+from lcm.typing import (
+    BoolND,
+    FloatND,
+    IntND,
+    LoopIndex,
+    RegimeName,
+    StateName,
+    UserFunction,
+)
 
 _SOURCE = "_lcm_query_source"
 _LIVE = "_lcm_query_live"
@@ -1050,10 +1058,11 @@ class _QueryChunks:
         query_arguments: Mapping[str, Mapping[str, PytreeValue]],
     ) -> _ChunkOutput:
         # keyword-only-exempt: library-callback=jax.lax.fori_loop
-        def run(index: jax.Array, carry: _ChunkOutput) -> _ChunkOutput:
+        def run(index: LoopIndex, carry: _ChunkOutput) -> _ChunkOutput:
             bank, statuses, totals = carry
-            # The loop index is int64 under x64; the source offset is int32.
-            start = (index * self.source.width).astype(jnp.int32)
+            # The loop index is a Python int eagerly and int64 under x64 when
+            # traced; the source offset is int32.
+            start = jnp.asarray(index * self.source.width, dtype=jnp.int32)
             source, live = self.source(states=states, start=start)
             answers: dict[tuple[str, int], PolicyAnswer] = {}
             for step in self.schedule:
