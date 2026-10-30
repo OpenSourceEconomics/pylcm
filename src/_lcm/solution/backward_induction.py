@@ -3393,8 +3393,6 @@ def _regime_retains_replay(*, regime: Regime, retain_replay: bool) -> bool:
     return retain_replay and (
         regime.simulation.egm_policy_read is not None
         or regime.simulation.external_replay_route is not None
-        or regime.simulation.case_r_replay_spec is not None
-        or regime.simulation.uses_case_u_reconstruction
     )
 
 

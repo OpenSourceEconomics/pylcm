@@ -83,14 +83,11 @@ from _lcm.egm.validation import (
     _savings_stage_candidates,
     _solve_grids,
     _transition_variants,
-    _validation_point,
-    _validation_unstack,
     _without,
     fail_if_declared_lower_bound_disagrees_with_the_grid,
     fail_if_grid_withholds_its_points,
 )
 from _lcm.grids import ContinuousGrid
-from _lcm.materialization import DatedGenerationMaterializer
 from _lcm.regime_law import RegimeLaw, RegimeLaws
 from _lcm.solution.dcegm import _BoundDCEGM
 from _lcm.solution.negm import _BoundNEGM
@@ -145,7 +142,6 @@ def validate_negm_regime(
     regime_name: RegimeName,
     user_regime: UserRegime,
     law: RegimeLaw,
-    materializer: DatedGenerationMaterializer | None = None,
 ) -> None:
     """Run all NEGM contract checks for a single regime, in order."""
     solver = cast("_BoundNEGM", user_regime.solver)
@@ -166,7 +162,6 @@ def validate_negm_regime(
         law=law,
         functions=functions,
         solver=solver,
-        materializer=materializer,
     )
     _fail_if_taste_shock_ordering_violated(
         regime_name=regime_name, user_regime=user_regime
@@ -195,7 +190,6 @@ def validate_negm_regime(
         user_regime=user_regime,
         solver=inner,
         solver_name="NEGM",
-        materializer=materializer,
     )
 
 
@@ -310,7 +304,6 @@ def _fail_if_outer_margin_euler_coupled(
     law: RegimeLaw,
     functions: dict[FunctionName, UserFunction],
     solver: _BoundNEGM,
-    materializer: DatedGenerationMaterializer | None = None,
 ) -> None:
     """The outer margin must not enter the inner differentiated-Euler pool.
 
@@ -384,7 +377,6 @@ def _fail_if_outer_margin_euler_coupled(
         user_regime=user_regime,
         functions=functions,
         solver=solver,
-        materializer=materializer,
     )
 
 
@@ -503,7 +495,6 @@ def _fail_if_utility_couples_action_and_outer_margin(
     user_regime: UserRegime,
     functions: dict[FunctionName, UserFunction],
     solver: _BoundNEGM,
-    materializer: DatedGenerationMaterializer | None = None,
 ) -> None:
     """Require additive separability across the complete utility DAG.
 
@@ -531,79 +522,36 @@ def _fail_if_utility_couples_action_and_outer_margin(
         **_solve_grids(slot=user_regime.states),
         **_solve_grids(slot=user_regime.actions),
     }
-    fixed = _fixed_kwargs(
-        func=utility_func, grids=grids, varied=varied, materializer=materializer
-    )
+    fixed = _fixed_kwargs(func=utility_func, grids=grids, varied=varied)
     if fixed is None:
         return
-    action_sample = _grid_sample(
-        grid=grids[inner.continuous_action], materializer=materializer
-    )
-    outer_sample = _grid_sample(grid=solver.outer_grid, materializer=materializer)
+    action_sample = _grid_sample(grid=grids[inner.continuous_action])
+    outer_sample = _grid_sample(grid=solver.outer_grid)
     too_few_points = (
         action_sample.shape[0] < _MIN_CROSS_DIFFERENCE_POINTS
         or outer_sample.shape[0] < _MIN_CROSS_DIFFERENCE_POINTS
     )
     if too_few_points:
         return
-    c0 = (
-        action_sample[0]
-        if materializer is None
-        else materializer.evaluate_validation(
-            function=functools.partial(_validation_point, index=0),
-            arguments={"points": action_sample},
-        )
-    )
-    z0 = (
-        outer_sample[0]
-        if materializer is None
-        else materializer.evaluate_validation(
-            function=functools.partial(_validation_point, index=0),
-            arguments={"points": outer_sample},
-        )
-    )
+    c0 = action_sample[0]
+    z0 = outer_sample[0]
     value = functools.partial(
         _utility_at_action_and_outer,
         utility_func=utility_func,
         fixed=fixed,
         action_name=inner.continuous_action,
         outer_name=solver.outer_post_decision,
-        materializer=materializer,
     )
     baseline = value(consumption=c0, outer=z0)
-    baseline_dtype = (
-        jnp.asarray(baseline).dtype if materializer is None else baseline.dtype
-    )
+    baseline_dtype = jnp.asarray(baseline).dtype
     tolerance = 1e-8 if baseline_dtype == jnp.float64 else 1e-4
-    for consumption in (
-        action_sample
-        if materializer is None
-        else materializer.evaluate_validation(
-            function=_validation_unstack, arguments={"sample": action_sample}
-        )
-    ):
-        for outer in (
-            outer_sample
-            if materializer is None
-            else materializer.evaluate_validation(
-                function=_validation_unstack, arguments={"sample": outer_sample}
-            )
-        ):
+    for consumption in action_sample:
+        for outer in outer_sample:
             cross_difference = (
                 value(consumption=consumption, outer=outer)
                 - value(consumption=consumption, outer=z0)
                 - value(consumption=c0, outer=outer)
                 + baseline
-                if materializer is None
-                else materializer.evaluate_validation(
-                    function=_negm_utility_cross_difference,
-                    arguments={
-                        "value": value(consumption=consumption, outer=outer),
-                        "same_action": value(consumption=consumption, outer=z0),
-                        "same_outer": value(consumption=c0, outer=outer),
-                        "baseline": baseline,
-                    },
-                )
             )
             scale = max(
                 1.0,
@@ -615,7 +563,6 @@ def _fail_if_utility_couples_action_and_outer_margin(
                 expected=0.0,
                 rtol=tolerance,
                 atol=tolerance * scale,
-                materializer=materializer,
             ):
                 msg = (
                     f"The complete utility DAG of NEGM regime '{regime_name}' is "
@@ -631,17 +578,6 @@ def _fail_if_utility_couples_action_and_outer_margin(
                 raise ModelInitializationError(msg)
 
 
-def _negm_utility_cross_difference(
-    *,
-    value: FloatND | IntND,
-    same_action: FloatND | IntND,
-    same_outer: FloatND | IntND,
-    baseline: FloatND | IntND,
-) -> FloatND | IntND:
-    """Original separately rounded additive cross-difference stages."""
-    return value - same_action - same_outer + baseline
-
-
 def _utility_at_action_and_outer(
     *,
     utility_func: UserFunction,
@@ -650,14 +586,12 @@ def _utility_at_action_and_outer(
     outer_name: FunctionName,
     consumption: ScalarFloat,
     outer: ScalarFloat,
-    materializer: DatedGenerationMaterializer | None = None,
 ) -> FloatND | IntND:
     """Evaluate the composed utility at one action and outer post-decision pair."""
     return _call_with_varied(
         func=utility_func,
         fixed=fixed,
         varied={action_name: consumption, outer_name: outer},
-        materializer=materializer,
     )
 
 

@@ -850,7 +850,6 @@ def exit_policy_program(
     # Imports stay below engine construction: programs imports the engine's
     # forward declarations, while this builder runs only after contexts exist.
     from _lcm.current_iid import CORRELATION_SUPPORT_ARGUMENT  # noqa: PLC0415
-    from _lcm.regime_building.Q_and_F import projected_forward_readers  # noqa: PLC0415
     from _lcm.simulation.arrival_values import (  # noqa: PLC0415 - canonical query contexts must exist
         arrival_replay_value_reads,
     )
@@ -858,18 +857,7 @@ def exit_policy_program(
         _ArgumentsBoundAtDispatch,
         _SubjectTiled,
     )
-    from lcm.exceptions import UnsupportedOperationError  # noqa: PLC0415
 
-    if any(
-        projected_forward_readers(function=function)
-        for node in queries.definitions.values()
-        if (function := node.context.Q_and_F_functions.get(node.read.period))
-        is not None
-    ):
-        raise UnsupportedOperationError(
-            "Projected mapped/exit forward requires its original receiving "
-            "query context."
-        )
     name = program_name or (
         "simulate_exit_full" if original else "simulate_exit_participating"
     )

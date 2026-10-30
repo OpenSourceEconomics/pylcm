@@ -32,7 +32,6 @@ from _lcm.constraints.ir import Condition
 from _lcm.gated_edge import GatedEdge
 from _lcm.grids import DiscreteGrid, Grid
 from _lcm.identity_transition import _IdentityTransition
-from _lcm.materialization import DatedGenerationMaterializer
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.processes.joint_normal import JointNormalIIDProcess
 from _lcm.regime_building.schedules import RegimeTransitionLaw
@@ -47,7 +46,6 @@ from lcm.collective import (
 )
 from lcm.decoupled import Decoupled
 from lcm.exceptions import (
-    ExecutionPlanningError,
     ModelInitializationError,
     RegimeInitializationError,
 )
@@ -138,7 +136,6 @@ def collect_value_grids(
     *,
     regimes: Mapping[RegimeName, UserRegime],
     derived_categoricals: Mapping[FunctionName, DiscreteGrid],
-    materializer: DatedGenerationMaterializer | None = None,
 ) -> MappingProxyType[StateOrActionName, DiscreteGrid]:
     """Return the value grid of every variable a model declares by its values.
 
@@ -193,11 +190,6 @@ def collect_value_grids(
             )
         # A grid built at another precision holds its nodes at the model's
         # from here on; values that do not survive that precision raise now.
-        if materializer is not None and value_grid.materialized_values is None:
-            raise ExecutionPlanningError(
-                "Cold value-grid precision-cache construction requires admitted "
-                "node/midpoint factories."
-            )
         value_grid.values_to_jax()
     if value_grids:
         _fail_if_unsupported_reader(regimes=regimes, value_grids=value_grids)
@@ -208,7 +200,6 @@ def collect_adapter_grids(
     *,
     regimes: Mapping[RegimeName, UserRegime],
     derived_categoricals: Mapping[FunctionName, DiscreteGrid],
-    materializer: DatedGenerationMaterializer | None = None,
 ) -> MappingProxyType[StateOrActionName, AdapterGrid]:
     """Return the grid of every discrete variable a user function can read.
 
@@ -225,7 +216,6 @@ def collect_adapter_grids(
 
     """
     value_grids = collect_value_grids(
-        materializer=materializer,
         regimes=regimes,
         derived_categoricals=derived_categoricals,
     )
@@ -321,7 +311,6 @@ def fail_if_a_fixed_entry_is_off_a_read_node(
     process_code_reads: Mapping[
         RegimeName, Mapping[StateOrActionName, _ContinuousStochasticProcess]
     ],
-    materializer: DatedGenerationMaterializer | None = None,
 ) -> None:
     """Refuse an entry law that names one value off the nodes its target reads.
 
@@ -348,11 +337,6 @@ def fail_if_a_fixed_entry_is_off_a_read_node(
                     or [arg for arg in get_annotations(law) if arg != "return"]
                 ):
                     continue
-                if materializer is not None:
-                    raise ExecutionPlanningError(
-                        "Cold fixed-entry validation requires admitted support, law "
-                        "and equality stages."
-                    )
                 nodes = jnp.asarray(process.to_jax())
                 value = jnp.asarray(law(), dtype=nodes.dtype)
                 if not bool(jnp.any(value == nodes)):

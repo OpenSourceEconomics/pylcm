@@ -22,7 +22,6 @@ from jax import Array
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.continuation import ContinuationPayload, ContinuationSpec, EGMQuerySpec
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
-from _lcm.egm.projected_continuation import ProjectedChildAuthority
 from _lcm.egm.published_policy import EGMSimPolicy, NBEGMGridPolicy, NNBEGMSimPolicy
 from _lcm.execution.execution_plan import visible_devices
 from _lcm.execution.placement import ACTION_PARTITION_AXIS
@@ -78,10 +77,7 @@ from lcm.typing import (
 )
 
 if TYPE_CHECKING:
-    import _lcm.regime_building.projected_forward
     from _lcm.current_iid import CurrentIIDDrawPlan, CurrentIIDPlan
-    from _lcm.egm.current_iid_case_u_replay import CaseUReplaySpec
-    from _lcm.egm.current_iid_replay import CaseRReplaySpec
     from _lcm.regime_building.gated_edges import ResolvedGatedEdge
     from _lcm.simulation.exits import ExitSimulationPlan
     from _lcm.solution.contract import PeriodKernel
@@ -92,9 +88,6 @@ if TYPE_CHECKING:
     # (see the runtime alias below).
     type PeriodKernelsMapping = Mapping[int, PeriodKernel]
 else:
-    # These replay declarations import engine while their numerical modules load.
-    type CaseRReplaySpec = object
-    type CaseUReplaySpec = object
     # Current-IID declarations reach the solver facade while it imports engine.
     type CurrentIIDPlan = object
     type CurrentIIDDrawPlan = object
@@ -441,13 +434,13 @@ class SolutionPhase:
         Mapping[
             int,
             tuple[
-                tuple[RegimeName, int, PostDecisionBoundSpec | ProjectedChildAuthority],
+                tuple[RegimeName, int, PostDecisionBoundSpec],
                 ...,
             ],
         ]
         | None
     ) = dataclasses.field(default=None, metadata={"fingerprint_omit_if_default": True})
-    """Canonical child/date and bound or projected authority for each query slot."""
+    """Canonical child/date and bound authority for each query slot."""
 
     has_compiled_constraint_boundaries: bool = False
     """Whether the solve route compiles any constraint boundary into its kernel."""
@@ -519,12 +512,6 @@ class SolutionPhase:
 
     continuation_spec: ContinuationSpec | None = None
     """Template and identity of the continuation this regime's kernels publish."""
-
-    case_r_replay_spec: CaseRReplaySpec | None = None
-    """Model-owned dated action-valued reader of the original resources row."""
-
-    case_u_replay_spec: CaseUReplaySpec | None = None
-    """Original dated U constructor and retained ordinary future authority."""
 
     external_replay_route: ExecutableReplayRoute | None = None
     """Plugin-owned replay implementation, or ``None`` for a built-in adapter."""
@@ -723,22 +710,6 @@ class PhaseSupport(Protocol):
     def placed_devices(self) -> tuple[jax.Device, ...]:
         """Return the declaration's actual admitted placement."""
         ...
-
-
-@dataclasses.dataclass(frozen=True, kw_only=True)
-class PreparedPhaseSupport:
-    """The same support declaration used before a solution phase has programs."""
-
-    grids: MappingProxyType[StateOrActionName, Grid]
-    _base_state_action_space: StateActionSpace
-    resolved_fixed_params: FlatRegimeParams
-    sharded_state_names: frozenset[StateName]
-    action_partitions: int
-    submesh_device_ids: tuple[int, ...]
-
-    def placed_devices(self) -> tuple[jax.Device, ...]:
-        """Use the original canonical placement resolver."""
-        return placed_devices_for_ids(submesh_device_ids=self.submesh_device_ids)
 
 
 def resolve_phase_process_grids(
@@ -1306,14 +1277,6 @@ class SimulationPhase:
     choice rather than a regime-builder one.
     """
 
-    projected_forward_readers_by_period: Mapping[
-        int,
-        Mapping[
-            RegimeName, "_lcm.regime_building.projected_forward.ProjectedForwardRead"  # noqa: UP037 - precise lazy class avoids the engine import cycle
-        ],
-    ] = dataclasses.field(default_factory=lambda: MappingProxyType({}))
-    """Actual dated readers shared by forward programs and receiving ownership."""
-
     edge_reference_regimes_by_period: MappingProxyType[int, tuple[RegimeName, ...]] = (
         MappingProxyType({})
     )
@@ -1373,26 +1336,12 @@ class SimulationPhase:
     `None` keeps the grid-argmax decision path for the continuous action.
     """
 
-    case_r_replay_spec: CaseRReplaySpec | None = None
-    """Internal original-row action family, separate from plugin readers."""
-
-    case_u_replay_spec: CaseUReplaySpec | None = None
-    """Internal original-node construction over retained dated future inputs."""
-
     external_replay_route: ExecutableReplayRoute | None = None
     """Plugin route used in place of the engine's built-in replay adapters."""
 
     replay_unsupported: bool = False
     """Whether the solver declared its decision unreplayable, so the regime
     declares the unsupported route and simulation refuses it."""
-
-    @property
-    def uses_case_u_reconstruction(self) -> bool:
-        """Whether the declared U route consumes its original future replay bank."""
-        return (
-            self.case_u_replay_spec is not None
-            and self.case_u_replay_spec.reconstructs_candidates
-        )
 
     @property
     def replay_route(self) -> ReplayRoute:
@@ -1402,10 +1351,6 @@ class SimulationPhase:
         replay payload declares the grid-recomputation route, so simulation
         and the pre-simulation payload check never test for a missing read.
         """
-        if self.case_r_replay_spec is not None:
-            return self.case_r_replay_spec
-        if self.case_u_replay_spec is not None:
-            return self.case_u_replay_spec
         if self.external_replay_route is not None:
             return self.external_replay_route
         if self.replay_unsupported:

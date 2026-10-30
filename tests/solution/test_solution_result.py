@@ -22,7 +22,6 @@ import lcm.model as model_module
 import lcm.solver_api as solver_api_module
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
-from _lcm.regime_building.processing import RegimeParameterMetadata
 from _lcm.simulation import simulate as simulation_module
 from _lcm.simulation.entry_allocations import SimulationEntryAllocations
 from _lcm.solution import artifacts as private_artifacts
@@ -678,7 +677,6 @@ def test_direct_solution_simulation_processes_params_once(
         raw_params: UserParams,
         *,
         array_writer: SimulationEntryAllocations | None = None,
-        metadata: Mapping[RegimeName, RegimeParameterMetadata] | None = None,
         use_categorical_codes: bool = False,
     ) -> FlatParams:
         nonlocal call_count
@@ -686,7 +684,6 @@ def test_direct_solution_simulation_processes_params_once(
         return original(
             raw_params,
             array_writer=array_writer,
-            metadata=metadata,
             use_categorical_codes=use_categorical_codes,
         )
 

@@ -40,7 +40,6 @@ from _lcm.regime_building.Q_and_F import (
     EvaluatedQAndF,
     LandingCheck,
     has_objective_profile,
-    has_projected_queries,
     runtime_bound_specs,
 )
 from _lcm.solution.contract import ContinuationPayload, PeriodKernel, SolverBuildContext
@@ -1909,12 +1908,9 @@ def _query_action(
         raise TypeError("Canonical query feasibility must be boolean.")
     if ordinary.ndim != 0:
         raise ValueError("Canonical query feasibility must be scalar per action.")
-    checked_valid = (
-        continuation_valid
-        if has_projected_queries(function=function)
-        else (~ordinary | continuation_valid)
+    valid = (~ordinary | continuation_valid) & ~jnp.any(
+        ordinary & jnp.any(jnp.isnan(q))
     )
-    valid = checked_valid & ~jnp.any(ordinary & jnp.any(jnp.isnan(q)))
     for status in evaluated.bound_status:
         for flag in status:
             valid &= ~jnp.any(flag)

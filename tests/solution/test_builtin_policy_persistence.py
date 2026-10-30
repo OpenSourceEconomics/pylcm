@@ -15,7 +15,6 @@ import numpy as np
 import pytest
 from pandas.testing import assert_frame_equal
 
-from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import NNBEGMSimPolicy
 from _lcm.simulation.current_iid_overrides import SimulationInitialConditionsInput
@@ -23,7 +22,6 @@ from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from lcm import ExecutionConfig, Model
 from lcm.exceptions import ExecutionPlanningError, InvalidSimulationInputError
 from lcm.persistence import load_solution, save_solution
-from lcm.shocks import PhysicalValues
 from lcm.solver_api import (
     EGM_CONTINUATION,
     SIMULATION_POLICY,
@@ -48,8 +46,6 @@ from lcm.solver_api import (
 )
 from lcm.solvers import EGMContinuationSpec
 from lcm.typing import RegimeName, UserParams
-from tests.conftest import EXACT_KERNEL_SKIP_REASON
-from tests.egm.test_current_iid_nbegm_model import _nb_params, _r_declarations
 from tests.simulation.test_nnbegm_split_workflow_parity import (
     _INITIAL,
     _N_PERIODS,
@@ -797,33 +793,11 @@ def _plain_nbegm() -> tuple[Model, UserParams, SimulationInitialConditionsInput]
     return model, nbegm_tax_toy.build_params(), initial
 
 
-def _nb_case_r() -> tuple[Model, UserParams, SimulationInitialConditionsInput]:
-    """Build the current-IID NB Case-R child with realized physical draws."""
-    params = _nb_params()
-    model = Model._from_call_owned_params(declarations=_r_declarations(), params=params)
-    initial = {
-        "wealth": jnp.asarray([0.375, 1.0, 1.0, 2.0]),
-        "age": jnp.ones(4),
-        "regime_id": jnp.full(4, model.regime_names_to_ids["child"], dtype=jnp.int32),
-        "eps": PhysicalValues(
-            values=np.asarray([0.0, 0.0, 0.5, 1.0], dtype=canonical_float_dtype())
-        ),
-    }
-    return model, params, initial
-
-
 @pytest.mark.parametrize(
     "build",
     [
         pytest.param(_plain_dcegm, id="dcegm"),
         pytest.param(_plain_nbegm, id="nbegm"),
-        pytest.param(
-            _nb_case_r,
-            id="nbegm-case-r",
-            marks=pytest.mark.requires_exact_affine_kernel(
-                reason=EXACT_KERNEL_SKIP_REASON
-            ),
-        ),
     ],
 )
 def test_a_saved_egm_solution_simulates_identically_in_a_fresh_model(

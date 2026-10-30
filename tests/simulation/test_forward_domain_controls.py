@@ -212,7 +212,6 @@ class _ForwardProfileInputs(TypedDict):
     columns: forward_profiles.Mapping[str, forward_profiles.jax.ShapeDtypeStruct]
     ordinary_key: forward_profiles.jax.ShapeDtypeStruct
     taste_key: forward_profiles.jax.ShapeDtypeStruct | None
-    current_iid_replay_input: NotRequired[forward_profiles.CaseRReplayInput | None]
     policy: NotRequired[forward_profiles.SimulationPolicy | None]
     wave: NotRequired[forward_profiles.CompilationWave | None]
     current_iid_override_schema: NotRequired[forward_profiles.CurrentIIDOverrideSchema]
@@ -256,7 +255,6 @@ class _RegimeSimulationInputs(TypedDict):
         | simulate.NestedEGMSimPolicy
         | None
     ]
-    current_iid_replay_input: NotRequired[simulate.CaseRReplayInput | None]
     replay_reader: NotRequired[
         simulate.PreparedReplayReader | simulate.ReplayReader | None
     ]

@@ -100,17 +100,13 @@ from _lcm.egm.nbegm_probe_stages import (
 )
 from _lcm.egm.nbegm_query import NBEGMQuery
 from _lcm.egm.nbegm_query_model import NBEGMIntervalRecipe, NBEGMQueryModel
-from _lcm.egm.nbegm_resources import NBEGMResourcesBank
 from _lcm.egm.nbegm_step import (
     JumpPosition,
     _NBEGMDiscreteQueryStep,
     _NBEGMIntervalRows,
     _NBEGMQueryStep,
     _OwnedNBEGMQueryStep,
-    nbegm_continuous_resources_bank,
     nbegm_multi_interval_step,
-    nbegm_multi_interval_step_certified,
-    nbegm_multi_interval_step_ordinary,
     nbegm_one_asset_step,
     nbegm_recurring_jump_step,
     nbegm_unified_step,
@@ -772,7 +768,6 @@ class NBEGM(OneMarginSolver):
             user_regime=user_regime,
             solver=bound,
             solver_name="NBEGM",
-            materializer=context.materializer,
         )
         _validate_nbegm_case_piece_declarations(context=context, solver=self)
 
@@ -2768,10 +2763,6 @@ def _validate_nbegm_case_piece_declarations(
     bound = cast("_BoundNBEGM", solver)
     functions = context.solve_functions
     registry = collect_nbegm_metadata(functions=functions)
-    if context.materializer is not None and registry.piece_sets:
-        raise UnsupportedOperationError(
-            "Cold NB case-piece smoothness probes require original admission."
-        )
     discrete_actions = frozenset(
         name
         for name, grid in user_regime.actions.items()
@@ -6075,130 +6066,6 @@ def _solve_cliffed_budget(
     )
 
 
-def _solve_certified_continuous_budget(
-    *,
-    next_value: Float1D,
-    next_marginal: Float1D,
-    liquid: Float1D,
-    next_liquid_grid: Float1D,
-    savings_grid: Float1D,
-    discount_factor: FloatND,
-    preferences: Preferences,
-    next_liquid: Float1D,
-    marginal_return: Float1D,
-    coh_slopes: Float1D,
-    coh_intercepts: Float1D,
-    breakpoints: Float1D,
-    is_single_jump: bool,
-    is_multi_jump: bool,
-    is_mixed: bool,
-    jump_mask: tuple[bool, ...],
-    flat_mask: tuple[bool, ...] | None,
-    feasibility_partition: ResolvedAxisPartition | None = None,
-    feasible_interval_mask: BoolND | None = None,
-    boundary_savings_targets: Float1D | None = None,
-    boundary_next_liquid: Float1D | None = None,
-    arithmetic: ComparisonArithmetic = "certified",
-    retain_query: bool = False,
-    return_owner: bool = False,
-    source_query: Float1D | None = None,
-    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
-    | None = None,
-) -> _NBEGMStepChannels | _OwnedNBEGMQueryStep:
-    """Bind the original continuous certified bank before callback capture."""
-    if is_single_jump or is_multi_jump or is_mixed or (arithmetic != "certified"):
-        raise UnsupportedOperationError(
-            "Selected NB source requires continuous certified arithmetic."
-        )
-    del jump_mask
-    return nbegm_multi_interval_step_certified(
-        next_value=next_value,
-        next_marginal=next_marginal,
-        liquid_grid=liquid,
-        next_liquid_grid=next_liquid_grid,
-        savings_grid=savings_grid,
-        discount_factor=discount_factor,
-        preferences=preferences,
-        next_liquid=next_liquid,
-        marginal_return=marginal_return,
-        coh_slopes=coh_slopes,
-        coh_intercepts=coh_intercepts,
-        breakpoints=breakpoints,
-        flat_interval_mask=flat_mask,
-        arithmetic=arithmetic,
-        retain_query=retain_query,
-        return_owner=return_owner,
-        query_grid=source_query,
-        continuation_read=continuation_read,
-        feasibility_partition=feasibility_partition,
-        feasible_interval_mask=feasible_interval_mask,
-        boundary_savings_targets=boundary_savings_targets,
-        boundary_next_liquid=boundary_next_liquid,
-    )
-
-
-def _solve_ordinary_continuous_budget(
-    *,
-    next_value: Float1D,
-    next_marginal: Float1D,
-    liquid: Float1D,
-    next_liquid_grid: Float1D,
-    savings_grid: Float1D,
-    discount_factor: FloatND,
-    preferences: Preferences,
-    next_liquid: Float1D,
-    marginal_return: Float1D,
-    coh_slopes: Float1D,
-    coh_intercepts: Float1D,
-    breakpoints: Float1D,
-    is_single_jump: bool,
-    is_multi_jump: bool,
-    is_mixed: bool,
-    jump_mask: tuple[bool, ...],
-    flat_mask: tuple[bool, ...] | None,
-    feasibility_partition: ResolvedAxisPartition | None = None,
-    feasible_interval_mask: BoolND | None = None,
-    boundary_savings_targets: Float1D | None = None,
-    boundary_next_liquid: Float1D | None = None,
-    arithmetic: ComparisonArithmetic = "ordinary",
-    retain_query: bool = False,
-    return_owner: bool = False,
-    source_query: Float1D | None = None,
-    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
-    | None = None,
-) -> _NBEGMStepChannels | _OwnedNBEGMQueryStep:
-    """Bind the original continuous ordinary bank before callback capture."""
-    if is_single_jump or is_multi_jump or is_mixed or (arithmetic != "ordinary"):
-        raise UnsupportedOperationError(
-            "Selected NB source requires continuous ordinary arithmetic."
-        )
-    del jump_mask
-    return nbegm_multi_interval_step_ordinary(
-        next_value=next_value,
-        next_marginal=next_marginal,
-        liquid_grid=liquid,
-        next_liquid_grid=next_liquid_grid,
-        savings_grid=savings_grid,
-        discount_factor=discount_factor,
-        preferences=preferences,
-        next_liquid=next_liquid,
-        marginal_return=marginal_return,
-        coh_slopes=coh_slopes,
-        coh_intercepts=coh_intercepts,
-        breakpoints=breakpoints,
-        flat_interval_mask=flat_mask,
-        arithmetic=arithmetic,
-        retain_query=retain_query,
-        return_owner=return_owner,
-        query_grid=source_query,
-        continuation_read=continuation_read,
-        feasibility_partition=feasibility_partition,
-        feasible_interval_mask=feasible_interval_mask,
-        boundary_savings_targets=boundary_savings_targets,
-        boundary_next_liquid=boundary_next_liquid,
-    )
-
-
 class _NBEGMSourcePoint(NamedTuple):
     """Original source result beside its separate native envelope owner."""
 
@@ -6383,41 +6250,6 @@ class _NBEGMContinuousCore:
             return BoundedResult(output=result, bound_status=(source_bound_status,))
         return result
 
-    def construct_resources_bank(
-        self,
-        *,
-        resources_support: Float1D,
-        next_liquid_grid: Float1D,
-        next_value: Float1D,
-        next_marginal: Float1D,
-        next_liquid: Float1D,
-        marginal_return: Float1D,
-        effective_savings_grid: Float1D,
-        **params: ValueND,
-    ) -> NBEGMResourcesBank:
-        """Retain the original NB bank before any resource-to-liquid inversion."""
-        if (
-            self.schedule_spec.breakpoint_kinds
-            or self.schedule_spec.threshold_param_names
-            or self.interval_recipe is not None
-            or self.feasibility_constraints
-            or self.schedule_spec.discount_factor_dag is not None
-        ):
-            raise UnsupportedOperationError(
-                "Original NB resources banks require global affine resource topology."
-            )
-        return nbegm_continuous_resources_bank(
-            next_value=next_value,
-            next_marginal=next_marginal,
-            next_liquid_grid=next_liquid_grid,
-            savings_grid=effective_savings_grid,
-            discount_factor=params["koopmans_aggregator__discount_factor"],
-            preferences=self.build_preferences(params),
-            next_liquid=next_liquid,
-            marginal_return=marginal_return,
-            resources_support=resources_support,
-        )
-
     def __call__(
         self,
         *,
@@ -6467,7 +6299,6 @@ def _build_nbegm_continuous_core(
     schedule_spec: _NBEGMScheduleSpec,
     feasibility_constraints: tuple[_NBEGMFeasibilityConstraint, ...] = (),
     envelope_arithmetic: ComparisonArithmetic = "ordinary",
-    materializer: DatedGenerationMaterializer | None = None,
 ) -> _NBEGMContinuousCore:
     """Build the jittable continuous-schedule EGM core for one continuation target.
 
@@ -6481,13 +6312,7 @@ def _build_nbegm_continuous_core(
         newton_action_ceiling,
     )
 
-    action_upper = (
-        newton_action_ceiling(savings_grid)
-        if materializer is None
-        else materializer.evaluate_validation(
-            function=newton_action_ceiling, arguments={"scale_grid": savings_grid}
-        )
-    )
+    action_upper = newton_action_ceiling(savings_grid)
     return _NBEGMContinuousCore(
         savings_grid=savings_grid,
         build_preferences=get_preferences_builder(
@@ -9322,56 +9147,6 @@ class _NBEGMCellSolver:
     inverse_eis: FloatND | None
     """`1/psi` under Epstein-Zin, else `None` for the additive step."""
 
-    def construct_owned_query_row(
-        self,
-        *,
-        ride_values: tuple[_RideCoordinate, ...],
-        query: Float1D,
-        cont_value: FloatND,
-        cont_marginal: FloatND,
-    ) -> _OwnedNBEGMQueryStep:
-        """Keep the original continuous branch's full query and native-owner data.
-
-        Candidate geometry stays on the original liquid support. The separate
-        query operand supplies publication coordinates, including an exact
-        requested node; it never replaces that geometry.
-        """
-        binder = self.binder
-        statics = binder.statics
-        if (
-            binder.schedule_spec.discrete_actions
-            or statics.has_jump
-            or statics.continuation_reads_liquid
-            or self.inverse_eis is not None
-            or binder.current_predicates is not None
-            or binder.feasibility_constraints
-            or binder.n_published_boundaries
-            or binder.current_floor is not None
-        ):
-            raise UnsupportedOperationError(
-                "Owned nested NB rows require original continuous additive "
-                "literal-floor ordinary-child cells."
-            )
-        branch = _NBEGMBranchSolver(
-            cell_solver=self,
-            cell=MappingProxyType(
-                dict(zip(statics.ride_names, ride_values, strict=True))
-            ),
-            query_grid=self.liquid,
-            feasibility_partition=None,
-            feasible_interval_mask=None,
-            interval_continuation=None,
-        )
-        return branch.solve(
-            action_binding={},
-            branch_cont_value=cont_value,
-            branch_cont_marginal=cont_marginal,
-            branch_extra_cont_value=None,
-            branch_cliff_savings=None,
-            source_query=query,
-            return_owner=True,
-        )
-
     def construct_point(
         self,
         *,
@@ -10724,7 +10499,6 @@ def _build_nbegm_single_axis_group(
     variable_names: frozenset[StateOrActionName],
     savings_grid: Float1D,
     feasibility_constraints: tuple[_NBEGMFeasibilityConstraint, ...],
-    materializer: DatedGenerationMaterializer | None = None,
 ) -> tuple[
     _NBEGMSingleAxisCore,
     Callable[..., tuple[Float1D, Float1D]],
@@ -10772,7 +10546,6 @@ def _build_nbegm_single_axis_group(
             consumption_action_name=solver.continuous_action,
             probe_failure=solver.probe_failure,
             probe_schedule=solver.probe_schedule,
-            materializer=materializer,
         )
         core = _build_nbegm_continuous_core(
             savings_grid=savings_grid,
@@ -10781,7 +10554,6 @@ def _build_nbegm_single_axis_group(
             schedule_spec=spec,
             feasibility_constraints=resolved_feasibility_constraints,
             envelope_arithmetic=solver.envelope_arithmetic,
-            materializer=materializer,
         )
         checks = spec.param_checks
     elif route == "discrete":

@@ -40,6 +40,15 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   pylcm is planned in
   [issue #632](https://github.com/OpenSourceEconomics/pylcm/issues/632).
 
+### Native current-IID EGM route removed
+
+- Named current-IID shocks in `DCEGM`, `NBEGM`, `NEGM` and `NNBEGM` regimes are solved
+  only on the node-state axis. The native route that solved them without it (Case-R
+  resources rows and banks, Case-U candidate reconstruction and the projected
+  continuation) is removed, together with its environment switch.
+- `DCEGM(current_iid_projection_capacity=...)` is removed; it sized only the native
+  route's projected continuation.
+
 ### Stochastic-volatility example
 
 - The shipped example now declares current Normal income with positive base

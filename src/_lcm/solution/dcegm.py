@@ -32,15 +32,8 @@ from _lcm.constraints.routes import (
     ConstraintRouteKey,
     ConstraintSite,
 )
-from _lcm.continuation import (
-    EGMContinuationSpec,
-    ProjectedContinuationSpec,
-    ProjectedProducerDate,
-)
+from _lcm.continuation import EGMContinuationSpec
 from _lcm.egm.carry import EGMCarry, egm_carry_role_tree, egm_query_role_tree
-from _lcm.egm.current_iid_envelope import DatedCaseUStepAuthority
-from _lcm.egm.current_iid_euler_grid import ResolvedDatedEulerGrid
-from _lcm.egm.projected_continuation import ProjectedChildAuthority, ProjectedEGMCarry
 from _lcm.egm.published_policy import EGMSimPolicy, egm_sim_policy_role_tree
 from _lcm.engine import StateActionSpace
 from _lcm.execution.core_program import (
@@ -57,7 +50,6 @@ from _lcm.execution.core_program import (
 from _lcm.execution.output_layout import VALUE, OutputRoleTree, StateAxesLeading
 from _lcm.execution.reductions import WEIGHTED_EXPECTATION_REDUCTION
 from _lcm.grids import ContinuousGrid
-from _lcm.materialization import DatedGenerationMaterializer
 from _lcm.post_decision_bound import PostDecisionBoundSpec, grid_origin_bound_spec
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.solution.continuation_reads import (
@@ -86,12 +78,8 @@ from _lcm.solution.feasibility import (
     FeasibilityCounts,
     FeasibilityKernelOutput,
     QueryInputStatus,
-    _unflatten_bound_status,
-    _unflatten_bounded_result,
     _unflatten_continuation_read_counts,
-    _unflatten_query_input_status,
 )
-from _lcm.solution.preparation_clock import prepare_case_u_clock
 from _lcm.time import TimeAxis
 from _lcm.transition_plans import SupportOrigin
 from _lcm.typing import (
@@ -135,10 +123,7 @@ type _DCEGMStepOutput = (
 type _NestedDCEGMStepChannels = tuple[
     FloatND, EGMCarry, EGMSimPolicy, FeasibilityCounts | None, BoolND
 ]
-type _DCEGMQuerySlots = tuple[
-    tuple[RegimeName, int, PostDecisionBoundSpec | ProjectedChildAuthority], ...
-]
-_MIN_PROJECTION_RECORDS = 2
+type _DCEGMQuerySlots = tuple[tuple[RegimeName, int, PostDecisionBoundSpec], ...]
 _DCEGM_VALUES_FIELD_COUNT = 3
 _DCEGM_REPLAY_FIELD_COUNT = 4
 _NESTED_DCEGM_STEP_FIELD_COUNT = 5
@@ -352,21 +337,10 @@ class DCEGM(OneMarginSolver):
     supplied finite candidate set, not for the unsampled continuous branch.
     """
 
-    current_iid_projection_capacity: int = field(
-        default=4096, metadata={"fingerprint_omit_if_default": True}
-    )
-    """Bounded pre-shock projection records for the native current-IID path.
-
-    Incoming/outgoing records and refinement consume this same capacity.
-    Exhaustion invalidates publication; the solver never truncates topology or
-    relaxes its value/economic-marginal error contract to fit the allocation.
-    Ordinary shock-free DCEGM rows do not allocate or consume this bank.
-    """
-
     replay: EGMReplay = field(
         default="candidate", metadata={"fingerprint_omit_if_default": True}
     )
-    """Case-U reconstruction, or explicit approximate Cartesian replay.
+    """Policy-first replay, or explicit approximate Cartesian replay.
 
     For a plain DC-EGM regime, `"candidate"` simulates policy-first (the solved
     policy rows are read at each subject's resources) and `"grid"` re-maximizes
@@ -383,13 +357,6 @@ class DCEGM(OneMarginSolver):
         if self.accuracy == "certified" and self.replay == "grid":
             raise UnsupportedOperationError(
                 "The certified EGM profile refuses grid replay."
-            )
-        if (
-            type(self.current_iid_projection_capacity) is not int
-            or self.current_iid_projection_capacity < _MIN_PROJECTION_RECORDS
-        ):
-            raise ValueError(
-                "DCEGM current projection capacity must represent an interval."
             )
         _fail_if_savings_grid_is_stochastic(self.savings_grid)
         _fail_if_refined_grid_factor_too_small(self.refined_grid_factor)
@@ -438,9 +405,6 @@ class DCEGM(OneMarginSolver):
             user_regimes=context.user_regimes,
             laws=context.laws,
             solution_reachability=context.solution_reachability,
-            materializer=context.materializer,
-            state_utility_obligation=context.state_utility_obligation,
-            euler_grid_obligation=context.euler_grid_obligation,
         )
 
     def validate_build(self, *, context: SolverBuildContext) -> None:
@@ -530,37 +494,10 @@ class DCEGM(OneMarginSolver):
         self,
         *,
         context: SolverBuildContext,
-        periods: tuple[int, ...] | None = None,
-        projected_dates: Mapping[
-            RegimeName, ProjectedContinuationSpec | ProjectedProducerDate
-        ]
-        | None = None,
-        materializer: DatedGenerationMaterializer | None = None,
-        case_u_source: DatedCaseUStepAuthority | None = None,
-        resolved_euler_grid: ResolvedDatedEulerGrid | None = None,
     ) -> EGMStepBuild:
         """Prepare real numerical pieces without constructing any CoreProgram."""
         from _lcm.egm.step import build_egm_step_functions  # noqa: PLC0415
 
-        if resolved_euler_grid is not None:
-            resolved_euler_grid.require()
-            if (
-                periods != (resolved_euler_grid.call.period,)
-                or resolved_euler_grid.call.ages is not context.ages
-                or resolved_euler_grid.obligation.regime_name != context.regime_name
-                or resolved_euler_grid.obligation.user_regime.solver is not self
-            ):
-                raise TypeError("Dated pieces require their original Euler support.")
-        if case_u_source is not None:
-            if periods != (case_u_source.period,):
-                raise TypeError(
-                    "Native U pieces require their exact single source date."
-                )
-            case_u_source.require(
-                context=context,
-                solver=cast("_BoundDCEGM", self),
-                period=periods[0],
-            )
         assert context.compute_regime_transition_probs is not None  # noqa: S101
         assert context.koopmans_aggregator is not None  # noqa: S101
         query_model = context.dcegm_source_query_model or (
@@ -569,8 +506,6 @@ class DCEGM(OneMarginSolver):
             else None
         )
         return build_egm_step_functions(
-            resolved_euler_grid=resolved_euler_grid,
-            materializer=materializer,
             solver=cast("_BoundDCEGM", self),
             regime_name=context.regime_name,
             user_regimes=context.user_regimes,
@@ -596,13 +531,6 @@ class DCEGM(OneMarginSolver):
             query_model=query_model,
             dcegm_query_models=context.dcegm_query_models,
             nbegm_query_models=context.nbegm_query_models,
-            projected_specs=(
-                context.projected_continuation_declarations
-                if projected_dates is None
-                else projected_dates
-            ),
-            periods=periods,
-            case_u_source=case_u_source,
         )
 
     def finish_period_kernels(
@@ -610,61 +538,15 @@ class DCEGM(OneMarginSolver):
         *,
         context: SolverBuildContext,
         build: EGMStepBuild,
-        materializer: DatedGenerationMaterializer | None = None,
     ) -> SolutionKernels:
         """Assemble programs from the original prepared numerical steps."""
-        build.require_ordinary_publication()
-        if any(plan is not None for plan in context.current_iid_plans.values()):
-            from _lcm.solution.current_iid_case_r_build import (  # noqa: PLC0415
-                build_native_case_r_kernels,
-            )
-
-            return build_native_case_r_kernels(
-                materializer=materializer,
-                context=context,
-                solver=cast("_BoundDCEGM", self),
-                build=build,
-            )
-        return self._assemble_period_kernels(
-            context=context, build=build, materializer=materializer
-        )
-
-    def finish_nested_current_u_period_kernels(
-        self,
-        *,
-        context: SolverBuildContext,
-        build: EGMStepBuild,
-        authority: DatedCaseUStepAuthority,
-        materializer: DatedGenerationMaterializer | None = None,
-    ) -> SolutionKernels:
-        """Assemble original inner programs only for their exact nested owner.
-
-        Ordinary publication remains forbidden for these numerical pieces. The
-        enclosing original NEGM builder consumes this graph transiently; its
-        current-U point owns the only installed integrated publisher.
-        """
-        if authority.nested_origin is None:
-            raise TypeError("Nested U assembly requires its genuine NEGM branch.")
-        authority.require(
-            context=context, solver=cast("_BoundDCEGM", self), period=authority.period
-        )
-        authority.nested_origin.require_prepared_build(build=build)
-        if (
-            tuple(build.steps) != (authority.period,)
-            or tuple(build.native_case_u_sources) != (authority.period,)
-            or build.native_case_u_sources[authority.period] is not authority
-        ):
-            raise TypeError("Nested U assembly lost its original prepared build.")
-        return self._assemble_period_kernels(
-            context=context, build=build, materializer=materializer
-        )
+        return self._assemble_period_kernels(context=context, build=build)
 
     def _assemble_period_kernels(
         self,
         *,
         context: SolverBuildContext,
         build: EGMStepBuild,
-        materializer: DatedGenerationMaterializer | None = None,
     ) -> SolutionKernels:
         """Construct the unchanged original graph after its owning entry check."""
         from _lcm.egm.step import _EGMStep  # noqa: PLC0415
@@ -757,14 +639,12 @@ class DCEGM(OneMarginSolver):
                     tiled_axes=_tiled_axes(build=build),
                 )
                 main_roles = _dcegm_output_roles(
-                    materializer=materializer,
                     build=build,
                     publish_replay=False,
                     own_bound_specs=own_bound_specs,
                     query_slots=query_slots,
                 )
                 replay_roles = _dcegm_output_roles(
-                    materializer=materializer,
                     build=build,
                     publish_replay=True,
                     own_bound_specs=own_bound_specs,
@@ -946,21 +826,10 @@ def _dcegm_query_slots_and_capabilities(
         for target in plan.query_targets
         if (query := plan.child_reads[target].query) is not None
     }
-    projected = {
-        target: read.projected_date
-        for target, read in plan.child_reads.items()
-        if read.projected_date is not None
-    }
-    if len(child_queries) + len(projected) != len(plan.query_targets):
+    if len(child_queries) != len(plan.query_targets):
         raise TypeError("DC child slots require actual installed query readers.")
     child_slots = tuple(
-        (
-            target,
-            period + 1,
-            projected[target].authority
-            if target in projected
-            else child_queries[target].model.authority.bound,
-        )
+        (target, period + 1, child_queries[target].model.authority.bound)
         for target in plan.query_targets
     )
     own_slot = tuple((regime_name, period, bound) for bound in own_bound_specs)
@@ -968,16 +837,7 @@ def _dcegm_query_slots_and_capabilities(
     capabilities = (
         MappingProxyType(
             {
-                target: ContinuationCapabilities(
-                    value=True,
-                    marginal_states=frozenset(
-                        {projected[target].authority.liquid_state}
-                    ),
-                    exact_candidate_identity=False,
-                    discontinuities=False,
-                )
-                if target in projected
-                else child_queries[target].capabilities
+                target: child_queries[target].capabilities
                 for target in plan.query_targets
             }
         )
@@ -1125,17 +985,6 @@ class EGMStepBuild:
     envelope_cell_extent: int
     """Number of exact-envelope node cells, or `0` for another backend."""
 
-    native_case_u_sources: Mapping[int, DatedCaseUStepAuthority] = MappingProxyType({})
-    """Original source bindings reserved for final native-U publication."""
-
-    def require_ordinary_publication(self) -> None:
-        """Reserve native-U numerical pieces for their authenticated publisher."""
-        if self.native_case_u_sources:
-            raise UnsupportedOperationError(
-                "Native U numerical pieces cannot publish ordinary "
-                "or resources-only kernels."
-            )
-
 
 def _counted_dcegm_output_roles(*, roles: OutputRoleTree) -> OutputRoleTree:
     """Describe optional counts using role placeholders, without numeric allocation."""
@@ -1161,7 +1010,6 @@ def _dcegm_output_roles(
     publish_replay: bool,
     own_bound_specs: tuple[PostDecisionBoundSpec, ...] = (),
     query_slots: _DCEGMQuerySlots | None = None,
-    materializer: DatedGenerationMaterializer | None = None,
 ) -> OutputRoleTree:
     """Describe the step's outputs by the state axes that lead them.
 
@@ -1205,23 +1053,6 @@ def _dcegm_output_roles(
     if query_slots is None:
         return output
     count = StateAxesLeading(state_names=(), shape=(), dtype=jnp.int32)
-    if materializer is not None:
-        # The existing registered reconstruction represents roles as well as
-        # numerical records. No placeholder output/status array is produced.
-        flag = StateAxesLeading(state_names=(), shape=(), dtype=jnp.bool_)
-        return _unflatten_bounded_result(
-            None,
-            (
-                (*output, (count, count)),
-                tuple(
-                    _unflatten_bound_status(None, (flag, flag)) for _ in own_bound_specs
-                ),
-                tuple(
-                    _unflatten_query_input_status(None, (flag, flag, flag))
-                    for _ in query_slots
-                ),
-            ),
-        )
     template = _dcegm_role_template(
         build=build,
         publish_replay=publish_replay,
@@ -1379,15 +1210,6 @@ def dcegm_kernel_with_declared_reads(
     rolling mapping. The replay variant runs the same reads under its own core
     name. Shared with the composite solvers that embed this adapter.
     """
-    from _lcm.solution.current_iid_case_r import (  # noqa: PLC0415
-        NativeCaseRPeriodKernel,
-        case_r_kernel_with_declared_reads,
-    )
-
-    if isinstance(kernel, NativeCaseRPeriodKernel):
-        return case_r_kernel_with_declared_reads(
-            kernel=kernel, context=context, period=period
-        )
     if not isinstance(kernel, _DCEGMPeriodKernel):
         return kernel
     reachable_targets = (
@@ -1483,20 +1305,6 @@ class _DCEGMArgumentBuilder:
             }
 
         return self.with_clock(context=context, clock=clock)
-
-    def prepare(
-        self, *, context: CoreBuildContext, materializer: DatedGenerationMaterializer
-    ) -> Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]:
-        """Read original operands before admitting the original final clock stage."""
-        if context.ages is None:
-            raise TypeError("Dated preparation requires its actual clock.")
-        ages = context.ages
-        return self.with_clock(
-            context=context,
-            clock=lambda: prepare_case_u_clock(
-                period=context.period, ages=ages, materializer=materializer
-            ),
-        )
 
     def with_clock(
         self,
@@ -1758,9 +1566,9 @@ def _consume_bounded_dcegm_output[Output: PytreeValue](
     )
 
 
-def _typed_child_carry(*, payload: ContinuationPayload) -> EGMCarry | ProjectedEGMCarry:
+def _typed_child_carry(*, payload: ContinuationPayload) -> EGMCarry:
     """Retain original child arrays under their actual native payload schema."""
-    if not isinstance(payload, EGMCarry | ProjectedEGMCarry):
+    if not isinstance(payload, EGMCarry):
         raise TypeError("DC child input has no installed continuation reader.")
     return payload
 
@@ -1769,7 +1577,7 @@ def _carry_subset(
     *,
     next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
     stateful_targets: frozenset[RegimeName],
-) -> MappingProxyType[RegimeName, EGMCarry | ProjectedEGMCarry]:
+) -> MappingProxyType[RegimeName, EGMCarry]:
     """Return the carries a regime's EGM core actually reads.
 
     Each core only ever indexes `next_regime_to_continuation[target]` for its
