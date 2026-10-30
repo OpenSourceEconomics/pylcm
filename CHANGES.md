@@ -5,14 +5,17 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
-### EGM regimes refuse IID shocks entering utility
+### EGM regimes refuse fixed-node processes entering utility
 
 - An endogenous-grid regime (`DCEGM`, `NBEGM`, `NEGM`, `NNBEGM`) whose `utility` reads
-  an IID process state or a `shocks=` draw other than through its resources function
-  now raises `ModelInitializationError` at `Model(...)`. Simulation used to blend the
-  bracketing node policies for such a draw, an approximation for a shock that changes
-  preferences. Move the shock into resources, or solve the regime with `GridSearch`;
-  see [DC-EGM](docs/reference/solvers.md#api-dcegm).
+  a process state (IID or AR(1), such as Tauchen, Rouwenhorst or `on_nodes`) or a
+  `shocks=` draw other than through its resources function now raises
+  `ModelInitializationError` at `Model(...)`, unless the process is declared with
+  `simulate_draws="nodes"`. Simulation used to blend the bracketing node policies for a
+  draw between nodes, an approximation for a process that changes preferences; node
+  draws read one node row exactly. Move the process into resources, declare it with
+  `simulate_draws="nodes"`, or solve the regime with `GridSearch`; see
+  [DC-EGM](docs/reference/solvers.md#api-dcegm).
 
 ### Dissolution-flag artifact key removed
 
