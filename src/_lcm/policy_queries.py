@@ -85,6 +85,13 @@ _INFORMATION = "_lcm_query_information"
 _ACTING = "_lcm_query_acting"
 _TASTE = "_lcm_query_taste"
 _QUERY_ARGUMENTS = "query_arguments"
+# Support rows evaluated together per step, inside every lane of the cell batch.
+# A step evaluates chunk-times-row-batch lanes. Holding that product at
+# `_STEP_LANES` lets a narrowed chunk widen its rows: the per-step workspace stays
+# put while the step count, and with it the launch count, does not grow.
+# ponytail: a fixed lane target; derive it from the budget if a step outgrows it.
+_ROW_BATCH = 64
+_STEP_LANES = 32768
 _FLAT_OPERAND_PATH_LENGTH = 2
 
 
@@ -775,7 +782,11 @@ def build_policy_query_kernel(
             },
         )
         cores[name] = _QueryCore(
-            node=node, period=period, name=name, definitions=definitions
+            node=node,
+            period=period,
+            name=name,
+            definitions=definitions,
+            row_batch=_row_batch(chunk_size=chunk_size),
         )
         reads.extend(
             replace(
@@ -825,6 +836,9 @@ def build_policy_query_kernel(
                 host_buffers=host_buffers,
                 host_axis_names=("query_cell",),
             ),
+            # The chunk is bound by the function, not its arguments: halved chunks
+            # can pad to one bank shape and must not share one executable.
+            compiler_options=(("query_chunk", chunk_size),),
             output_roles=(
                 StateAxesLeading(state_names=(), shape=bank_shape, dtype=dtype),
                 StateAxesLeading(
@@ -1367,6 +1381,8 @@ class _QueryCore:
         default=MappingProxyType({}), repr=False
     )
     """Whole query graph; omitted from the repr `jax.jit` takes of this callable."""
+    row_batch: int = _ROW_BATCH
+    """Information support rows evaluated together per step."""
 
     def __call__(self, **arguments: PytreeValue) -> PolicyAnswer:
         """Select target actions at mapped coordinates, retaining common tuples."""
@@ -1401,6 +1417,7 @@ class _QueryCore:
                     "Mapping[str, Mapping[str, PytreeValue]]",
                     arguments.get(_INFORMATION, {}),
                 ),
+                row_batch=self.row_batch,
             )
         else:
             cell = functools.partial(
@@ -1446,6 +1463,11 @@ class _QueryCore:
             jnp.all(answer[3]),
             _query_landing_totals(counts=answer[4]),
         )
+
+
+def _row_batch(*, chunk_size: int) -> int:
+    """Support rows per step for a chunk of `chunk_size` source cells."""
+    return max(_ROW_BATCH, _STEP_LANES // chunk_size)
 
 
 def map_lanes[T: PytreeValue, R: PytreeValue](

@@ -23,7 +23,7 @@ from _lcm.current_iid import (
     CurrentIIDPlan,
     NodeOperands,
 )
-from _lcm.policy_queries import PolicyAnswer, QueryNode
+from _lcm.policy_queries import _ROW_BATCH, PolicyAnswer, QueryNode
 from _lcm.probability import is_represented_zero
 from _lcm.shock_registry import ShockBinding
 from _lcm.typing import PytreeValue, QAndFKwargs
@@ -47,10 +47,6 @@ type SourceStates = Mapping[str, FloatND | IntND]
 type Frames = Mapping[str, CurrentIIDDrawFrame]
 type QueryArguments = Mapping[str, PytreeValue]
 type Dependencies = Mapping[str, PolicyAnswer]
-
-# Support rows evaluated together per step, inside every lane of the cell batch.
-# ponytail: one fixed width; expose it as a planner axis if memory or speed needs.
-_ROW_BATCH = 64
 
 
 def support_size(*, node: QueryNode, period: int) -> int:
@@ -303,6 +299,8 @@ class InformationQueryCell:
     information_arguments: Mapping[str, QueryArguments]
     realised_root: str | None = None
     root_frame: CurrentIIDDrawFrame | None = None
+    row_batch: int = _ROW_BATCH
+    """Support rows evaluated together per step."""
 
     def _size(self, *, name: str, node: QueryNode) -> int:
         return (
@@ -326,12 +324,14 @@ class InformationQueryCell:
             return map_lanes(
                 function=point,
                 operands=jnp.arange(self._size(name=name, node=node), dtype=jnp.int32),
-                batch_size=_ROW_BATCH,
+                batch_size=self.row_batch,
             )
         representatives, gather = pinned
         return jax.tree.map(
             lambda leaf: leaf[gather],
-            map_lanes(function=point, operands=representatives, batch_size=_ROW_BATCH),
+            map_lanes(
+                function=point, operands=representatives, batch_size=self.row_batch
+            ),
         )
 
     def __call__(
@@ -553,7 +553,7 @@ class InformationQueryCell:
         frame, weights = map_lanes(
             function=point,
             operands=jnp.arange(math.prod(extents), dtype=jnp.int32),
-            batch_size=_ROW_BATCH,
+            batch_size=self.row_batch,
         )
         return frame, weights.T
 
