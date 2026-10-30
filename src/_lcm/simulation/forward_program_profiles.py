@@ -51,6 +51,7 @@ from _lcm.simulation.program_arguments import (
     process_node_arguments,
     transition_arguments,
 )
+from _lcm.simulation.programs import PROFILED_POLICY_ROUTES
 from _lcm.simulation.random_address import scalar_draw_axis
 from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.shock_paths import supplied_shock_argument_names
@@ -217,7 +218,11 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
     and no profile is returned.
     """
     # The dispatch module imports the complete chunk-profile constructor.
-    from _lcm.simulation.simulate import _lookup_values_from_indices  # noqa: PLC0415
+    from _lcm.simulation.simulate import (  # noqa: PLC0415
+        _lookup_values_from_indices,
+        _reads_egm_policy_first,
+        policy_first_operation,
+    )
 
     for descriptor in (ordinary_key, taste_key):
         if descriptor is not None and (
@@ -230,7 +235,7 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
             )
     if (
         regime.simulation.replay_route.policy_applicable
-        and regime.simulation.replay_route.consumer_route != "nnbegm_finite"
+        and regime.simulation.replay_route.consumer_route not in PROFILED_POLICY_ROUTES
     ) or regime.simulation.external_replay_route is not None:
         raise ExecutionPlanningError(
             "Forward profiles require compiled decision routes."
@@ -627,6 +632,54 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
             feeds_forward=regime.simulation.current_iid_draw_plan is not None,
         )
         indices = cast("tuple[jax.ShapeDtypeStruct, ...]", prepared_outputs)[0]
+        if wave is None and _reads_egm_policy_first(
+            regime=regime, sim_policy=policy, action_names=base.action_names
+        ):
+            # Policy-first runs its read before the grid argmax, which still
+            # runs whenever some subject's read is rejected; both are profiled.
+            # Containers mirror `_read_egm_policy_first`'s operands, so dispatch
+            # finds this executable under the same producer key.
+            policy_first_arguments = {
+                "sim_policy": jax.tree.map(
+                    partial(_abstract_policy_leaf, devices=devices), policy
+                ),
+                "states": MappingProxyType(
+                    dict(_shared_tree(tree=current, devices=devices))
+                ),
+                "canonical_states": MappingProxyType(
+                    dict(_shared_tree(tree=states, devices=devices))
+                ),
+                "next_regime_to_V_arr": _shared_tree(
+                    tree=decision_values, devices=devices
+                ),
+                "flat_params": params,
+                "period": period_value,
+                "age": age,
+                "in_regime": jax.ShapeDtypeStruct(
+                    (n_subjects,), jnp.bool_, sharding=shared
+                ),
+                "referenced_value_kwargs": MappingProxyType(
+                    dict(_shared_tree(tree=references, devices=devices))
+                ),
+            }
+            policy_first = runtime.operations.prepare_producer(
+                function=policy_first_operation(
+                    regime=regime,
+                    period=period,
+                    action_names=base.action_names,
+                    action_dtypes=tuple(
+                        (action, jnp.asarray(base.actions[action]).dtype.name)
+                        for action in base.action_names
+                    ),
+                ),
+                arguments=policy_first_arguments,
+                devices=devices,
+            )
+            profiles["policy_first"] = ForwardProgramProfile(
+                executable=policy_first.executable,
+                memory=policy_first.memory,
+                arguments=MappingProxyType(policy_first_arguments),
+            )
         if regime.simulation.current_iid_draw_plan is not None:
             current_shocks = cast(
                 "tuple[Mapping[str, jax.ShapeDtypeStruct], ...]", prepared_outputs

@@ -114,7 +114,11 @@ from _lcm.simulation.membership import (
     activate_subject_membership,
     initialize_subject_membership,
 )
-from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
+from _lcm.simulation.memory import (
+    SimulationMemory,
+    run_simulation_operation,
+    run_simulation_producer,
+)
 from _lcm.simulation.operand_placement import place_simulation_arguments
 from _lcm.simulation.period_inputs import (
     GATE_FOLD,
@@ -2433,6 +2437,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 age=age,
                 in_regime=active_in_regime,
                 referenced_value_kwargs=referenced_value_kwargs,
+                memory=memory,
             )
         policy_accepted = None if policy_first is None else policy_first[2]
         grid_owns_empty = sim_policy is None or policy_first is not None
@@ -3271,6 +3276,7 @@ def _read_egm_policy_first(
     age: ScalarFloat | ScalarInt,
     in_regime: BoolND,
     referenced_value_kwargs: QAndFKwargs = MappingProxyType({}),
+    memory: SimulationMemory | None = None,
 ) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND, BoolND]:
     """Decide from the published EGM rows instead of the action-grid argmax.
 
@@ -3295,27 +3301,55 @@ def _read_egm_policy_first(
     period is traced, so the periods that share one `Q_and_F` kernel and the
     same input shapes share that program.
     """
-    actions, winner_value, read_ok, evaluated = _policy_first_program(
-        held_regime=_HeldObject(regime),
-        held_Q_and_F=_HeldObject(regime.simulation.Q_and_F[period]),
-        sim_policy=sim_policy,
-        states=MappingProxyType(dict(states)),
-        canonical_states=MappingProxyType(dict(canonical_states)),
-        action_names=action_names,
-        action_dtypes=tuple(
-            (name, jnp.dtype(action_dtypes[name])) for name in action_names
-        ),
-        next_regime_to_V_arr=next_regime_to_V_arr,
-        flat_params=flat_params,
-        period=jnp.asarray(period, dtype=jnp.int32),
-        age=age,
-        in_regime=in_regime,
-        referenced_value_kwargs=MappingProxyType(dict(referenced_value_kwargs)),
-    )
+    dtypes = tuple((name, jnp.dtype(action_dtypes[name]).name) for name in action_names)
+    operands = {
+        "sim_policy": sim_policy,
+        "states": MappingProxyType(dict(states)),
+        "canonical_states": MappingProxyType(dict(canonical_states)),
+        "next_regime_to_V_arr": next_regime_to_V_arr,
+        "flat_params": flat_params,
+        "period": jnp.asarray(period, dtype=jnp.int32),
+        "age": age,
+        "in_regime": in_regime,
+        "referenced_value_kwargs": MappingProxyType(dict(referenced_value_kwargs)),
+    }
+    if memory is None:
+        output = _policy_first_program(
+            held_regime=_HeldObject(regime),
+            held_Q_and_F=_HeldObject(regime.simulation.Q_and_F[period]),
+            action_names=action_names,
+            action_dtypes=dtypes,
+            **operands,
+        )
+    else:
+        # Budgeted: admitted against current residency like every producer.
+        # Chunk admission profiles the same producer for each candidate width.
+        output = run_simulation_producer(
+            memory=memory,
+            function=policy_first_operation(
+                regime=regime,
+                period=period,
+                action_names=action_names,
+                action_dtypes=dtypes,
+            ),
+            arguments=operands,
+            owner=memory.operations,
+        )
+    actions, winner_value, read_ok, evaluated = cast("_PolicyFirstOutput", output)
     _, feasible = _validated_canonical_Q(
         evaluated=evaluated, regime=regime, period=period
     )
     return actions, winner_value, read_ok & feasible
+
+
+# Actions, winner value, read-side acceptance and the unvalidated canonical
+# evaluation of the emitted actions.
+type _PolicyFirstOutput = tuple[
+    MappingProxyType[ActionName, FloatND | IntND],
+    FloatND,
+    BoolND,
+    tuple[FloatND, BoolND] | BoundedResult[tuple[FloatND, BoolND]],
+]
 
 
 @functools.partial(
@@ -3327,28 +3361,77 @@ def _policy_first_program(
     held_regime: _HeldObject,
     held_Q_and_F: _HeldObject,
     sim_policy: EGMSimPolicy,
-    states: MappingProxyType[StateOrActionName, FloatND | IntND],
-    canonical_states: MappingProxyType[StateName, FloatND | IntND],
+    states: Mapping[StateOrActionName, FloatND | IntND],
+    canonical_states: Mapping[StateName, FloatND | IntND],
     action_names: tuple[ActionName, ...],
-    action_dtypes: tuple[tuple[ActionName, jnp.dtype], ...],
-    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+    action_dtypes: tuple[tuple[ActionName, str], ...],
+    next_regime_to_V_arr: Mapping[RegimeName, FloatND],
     flat_params: FlatRegimeParams,
     period: IntND,
     age: ScalarFloat | ScalarInt,
     in_regime: BoolND,
     referenced_value_kwargs: QAndFKwargs,
-) -> tuple[
-    MappingProxyType[ActionName, FloatND | IntND],
-    FloatND,
-    BoolND,
-    tuple[FloatND, BoolND] | BoundedResult[tuple[FloatND, BoolND]],
-]:
-    """Compiled body of `_read_egm_policy_first`, before canonical feasibility.
+) -> _PolicyFirstOutput:
+    """Unbudgeted `_policy_first_body`, jitted per regime and `Q_and_F` kernel."""
+    return _policy_first_body(
+        regime=cast("Regime", held_regime.value),
+        Q_and_F=cast("QAndFFunction", held_Q_and_F.value),
+        sim_policy=sim_policy,
+        states=states,
+        canonical_states=canonical_states,
+        action_names=action_names,
+        action_dtypes=action_dtypes,
+        next_regime_to_V_arr=next_regime_to_V_arr,
+        flat_params=flat_params,
+        period=period,
+        age=age,
+        in_regime=in_regime,
+        referenced_value_kwargs=referenced_value_kwargs,
+    )
+
+
+def policy_first_operation(
+    *,
+    regime: Regime,
+    period: int,
+    action_names: tuple[ActionName, ...],
+    action_dtypes: tuple[tuple[ActionName, str], ...],
+) -> Callable[..., _PolicyFirstOutput]:
+    """Bind the policy-first read to its model-owned inputs, as one producer.
+
+    Equal bindings resolve to one producer identity, so the runtime's
+    operations reuse one executable per regime, kernel and operand shape.
+    """
+    return functools.partial(
+        _policy_first_body,
+        regime=regime,
+        Q_and_F=cast("QAndFFunction", regime.simulation.Q_and_F[period]),
+        action_names=action_names,
+        action_dtypes=action_dtypes,
+    )
+
+
+def _policy_first_body(
+    *,
+    regime: Regime,
+    Q_and_F: QAndFFunction,
+    sim_policy: EGMSimPolicy,
+    states: Mapping[StateOrActionName, FloatND | IntND],
+    canonical_states: Mapping[StateName, FloatND | IntND],
+    action_names: tuple[ActionName, ...],
+    action_dtypes: tuple[tuple[ActionName, str], ...],
+    next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+    flat_params: FlatRegimeParams,
+    period: IntND,
+    age: ScalarFloat | ScalarInt,
+    in_regime: BoolND,
+    referenced_value_kwargs: QAndFKwargs,
+) -> _PolicyFirstOutput:
+    """Body of `_read_egm_policy_first`, before canonical feasibility.
 
     Returns the actions, the winner's value, the read-side acceptance and the
     unvalidated canonical evaluation of the emitted actions.
     """
-    regime = cast("Regime", held_regime.value)
     read = cast("EGMPolicyRead", regime.simulation.egm_policy_read)
     n_subjects = next(iter(states.values())).shape[0]
     state_positions = tuple(
@@ -3434,13 +3517,13 @@ def _policy_first_program(
         regime=regime,
         canonical_states=canonical_states,
         action_names=action_names,
-        next_regime_to_V_arr=next_regime_to_V_arr,
+        next_regime_to_V_arr=MappingProxyType(dict(next_regime_to_V_arr)),
         flat_params=flat_params,
         referenced_value_kwargs=referenced_value_kwargs,
         period=period,
         age=age,
         active_subjects=in_regime,
-        Q_and_F=cast("QAndFFunction", held_Q_and_F.value),
+        Q_and_F=Q_and_F,
     )
     read_ok = (
         jnp.all(~live | jnp.stack(in_support), axis=0)

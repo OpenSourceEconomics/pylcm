@@ -18,7 +18,7 @@ import pytest
 
 import _lcm.simulation.simulate as simulation
 import lcm_examples.iskhakov_et_al_2017 as iskhakov
-from lcm import AgeGrid, Model
+from lcm import AgeGrid, ExecutionConfig, Model
 from lcm_examples.iskhakov_et_al_2017 import CONSUMPTION_GRID, dead, get_edges
 from tests.conftest import invariance_tolerances
 from tests.test_models.deterministic import base
@@ -35,7 +35,7 @@ _N_PERIODS = 4
 _EGM_REGIMES = ("working_life", "retirement")
 
 
-def _model(*, replay: str) -> Model:
+def _model(*, replay: str, execution_config: ExecutionConfig | None = None) -> Model:
     solver = dataclasses.replace(DCEGM_SOLVER, replay=replay)
     ages = AgeGrid(start=40, inclusive_stop=40 + (_N_PERIODS - 1) * 10, step="10Y")
     return Model(
@@ -48,6 +48,9 @@ def _model(*, replay: str) -> Model:
         ages=ages,
         regime_id_class=base.RegimeId,
         initial_nodes=((40, "working_life"), (40, "retirement")),
+        execution_config=ExecutionConfig()
+        if execution_config is None
+        else execution_config,
     )
 
 
@@ -129,6 +132,41 @@ def _per_period_means(frame) -> Mapping[int, tuple[float, float]]:
         int(period): (float(group["consumption"].mean()), float(group["value"].mean()))
         for period, group in grouped
     }
+
+
+def test_budgeted_simulate_reads_the_policy_first_and_matches_unbudgeted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A device-memory budget admits the policy-first route and changes no result.
+
+    The last subject starts beyond the published rows, so its period-0 read is
+    rejected and the budgeted grid-argmax fallback runs as well.
+    """
+    wealth = np.append(_IN_SUPPORT_WEALTH, 1000.0)
+    unbudgeted = _simulate(
+        model=_model(
+            replay="candidate",
+            execution_config=ExecutionConfig(device_memory_bytes=None),
+        ),
+        wealth=wealth,
+    )
+    budgeted_model = _model(
+        replay="candidate",
+        execution_config=ExecutionConfig(device_memory_bytes=2**30),
+    )
+    executed = _decision_program_owners(monkeypatch=monkeypatch)
+
+    budgeted = _simulate(model=budgeted_model, wealth=wealth)
+
+    assert "working_life" in executed
+    assert list(budgeted.columns) == list(unbudgeted.columns)
+    for column in budgeted.columns:
+        got, expected = budgeted[column].to_numpy(), unbudgeted[column].to_numpy()
+        if np.issubdtype(expected.dtype, np.floating):
+            rtol, atol = invariance_tolerances(expected)
+            np.testing.assert_allclose(got, expected, rtol=rtol, atol=atol)
+        else:
+            np.testing.assert_array_equal(got, expected)
 
 
 def test_policy_first_tracks_the_grid_route_within_the_action_grid_step() -> None:

@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "e0281a140811a490a4176b339ccba7230d7e6beb33d9356129397fcb4480d9b0",
+  "source_inventory_sha256": "c9986addc742c5e3447b814af7f004af90de0a564958824aa909d79e1b726a09",
   "sources": [
     {
       "path": "src/_lcm/constraints/bounds.py",
@@ -390,7 +390,7 @@
     },
     {
       "path": "src/_lcm/simulation/chunk_profiles.py",
-      "sha256": "1a811c7145be58e14feb46ee9d69f89852bcd15940fd66c5c70f7f9642b03646"
+      "sha256": "1b0dd0e0b3aef291b0b01373bd77a890ffbd2b7eca369ebb2bc9d2c50a284908"
     },
     {
       "path": "src/_lcm/simulation/compile.py",
@@ -422,7 +422,7 @@
     },
     {
       "path": "src/_lcm/simulation/forward_program_profiles.py",
-      "sha256": "448b64d1a4df3f04b14ef39e54a597fb88f7092cb8fa94350e6b91778addeb2f"
+      "sha256": "44fcf687143efefbda1c29327f19433527ad63f92ef582920a75aeb94f93a0e6"
     },
     {
       "path": "src/_lcm/simulation/gated_routing.py",
@@ -430,7 +430,7 @@
     },
     {
       "path": "src/_lcm/simulation/host_operations.py",
-      "sha256": "0ed475e243f84ad12bdca9a7d1c034c2d839450b0028f165d7744fcaf336da1f"
+      "sha256": "8e1198104cdb99c2e785cac9f7193d022b96029b58b90d35e9f5983f2e3f5074"
     },
     {
       "path": "src/_lcm/simulation/initial_conditions.py",
@@ -442,7 +442,7 @@
     },
     {
       "path": "src/_lcm/simulation/memory.py",
-      "sha256": "73afaf80ed73b07f9aeb4e727c9c1edd2f4ebce5b72816274144f69da99c37c8"
+      "sha256": "26856b23317124b6221b00a04f8d7b52c1071644f4a4e026d42ca7da09ccbed5"
     },
     {
       "path": "src/_lcm/simulation/operand_placement.py",
@@ -474,7 +474,7 @@
     },
     {
       "path": "src/_lcm/simulation/programs.py",
-      "sha256": "43948016027cd88ffb28bea6556f0b6280e6dd995cb8d5b6b0cdc31e8cf0b6a1"
+      "sha256": "a7940b560b305a810286e1b06f8dff1b291efa93f78bf2b25bca0013ffb21f40"
     },
     {
       "path": "src/_lcm/simulation/random.py",
@@ -506,7 +506,7 @@
     },
     {
       "path": "src/_lcm/simulation/simulate.py",
-      "sha256": "6f0f6b9c5fbefb4363d1fa1164bfdf04367af37b5e916a852f50b8f1e959ca11"
+      "sha256": "df7cef0d01c1d75ad916ffb34e804dce4306bd5060d2580becc539ab5c2d0143"
     },
     {
       "path": "src/_lcm/simulation/solution_copies.py",
