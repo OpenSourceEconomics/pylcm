@@ -478,6 +478,92 @@ class CaseUExactFunction:
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
+class PassiveCellsPublisher:
+    """The exact scalar publisher mapped over flattened passive-state cells."""
+
+    point: NBCaseUProgram | NEGMCaseUProgram
+    capacity: int
+    demands: tuple[ParentResourcesDemand, ...]
+
+    def traced(self, **arguments: PytreeValue) -> BoundedResult[CaseUExactOutput]:
+        """Run this same object through `jax.jit`, reusing its cached trace."""
+        return jax.jit(self, inline=True)(**arguments)
+
+    def __call__(
+        self,
+        *,
+        cells: Mapping[StateName, FloatND | IntND],
+        _lcm_parent_demand_pools: tuple[EconFunctionKwargs, ...],
+        _lcm_parent_demand_savings: tuple[Float1D, ...],
+        next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
+        _lcm_current_iid: AdmittedGroupParams,
+        _lcm_current_iid_nodes: NodeOperands,
+        _lcm_current_iid_rows: IntND,
+        _lcm_case_u_savings_nodes: FloatND,
+        _lcm_case_u_borrowing_limit: ScalarFloat,
+        _lcm_case_u_floor_status: BoundInputStatus | None,
+        _lcm_case_u_child_node_values: tuple[tuple[FloatND | IntND, ...], ...],
+        **arguments: EconFunctionArg,
+    ) -> BoundedResult[CaseUExactOutput]:
+        scalar = CaseUExactFunction(
+            point=self.point, capacity=self.capacity, demands=self.demands
+        )
+
+        def one(
+            cell: Mapping[StateName, ScalarFloat | ScalarInt],
+        ) -> BoundedResult[CaseUExactOutput]:
+            return scalar(
+                _lcm_parent_demand_pools=_lcm_parent_demand_pools,
+                _lcm_parent_demand_savings=_lcm_parent_demand_savings,
+                next_regime_to_continuation=next_regime_to_continuation,
+                _lcm_current_iid=_lcm_current_iid,
+                _lcm_current_iid_nodes=_lcm_current_iid_nodes,
+                _lcm_current_iid_rows=_lcm_current_iid_rows,
+                _lcm_case_u_savings_nodes=_lcm_case_u_savings_nodes,
+                _lcm_case_u_borrowing_limit=_lcm_case_u_borrowing_limit,
+                _lcm_case_u_floor_status=_lcm_case_u_floor_status,
+                _lcm_case_u_child_node_values=_lcm_case_u_child_node_values,
+                **{**arguments, **cell},
+            )
+
+        return jax.vmap(one)(cells)
+
+
+def _same_numerical_publisher(
+    *, retained: PassiveCellsPublisher, current: PassiveCellsPublisher
+) -> bool:
+    """Whether two publishers differ at most in their point's projected declarations.
+
+    Installing a producer's own projected declaration rebuilds its point around
+    a context that differs only in `projected_continuation_declarations`, which
+    the numerical body never reads. Every other attribute must be the same object.
+    """
+    if (
+        retained.capacity != current.capacity
+        # Demands compare by identity.
+        or retained.demands != current.demands
+    ):
+        return False
+    old, new = retained.point, current.point
+    if type(old) is not type(new) or old.plan is not new.plan:
+        return False
+    if old.period != new.period or type(old.pieces) is not type(new.pieces):
+        return False
+    for declaration in fields(old.pieces):
+        before = getattr(old.pieces, declaration.name)
+        after = getattr(new.pieces, declaration.name)
+        if before is after:
+            continue
+        if declaration.name != "context" or any(
+            getattr(before, item.name) is not getattr(after, item.name)
+            for item in fields(before)
+            if item.name != "projected_continuation_declarations"
+        ):
+            return False
+    return True
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
 class CaseURideExactFunction:
     """Original exact U publisher mapped over authentic passive-state support."""
 
@@ -488,6 +574,19 @@ class CaseURideExactFunction:
     demands: tuple[ParentResourcesDemand, ...] = ()
     replay_source: RegimeName | None = None
     replay_child_names: tuple[RegimeName, ...] = ()
+    publisher: PassiveCellsPublisher | None = dataclass_field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+    """The traced cell body; a variant built by `replace` keeps its predecessor's."""
+
+    def __post_init__(self) -> None:
+        current = PassiveCellsPublisher(
+            point=self.point, capacity=self.capacity, demands=self.demands
+        )
+        if self.publisher is None or not _same_numerical_publisher(
+            retained=self.publisher, current=current
+        ):
+            object.__setattr__(self, "publisher", current)
 
     def __call__(
         self,
@@ -531,30 +630,26 @@ class CaseURideExactFunction:
             name: values.reshape(-1)
             for name, values in zip(self.passive_names, mesh, strict=True)
         }
-        scalar = CaseUExactFunction(
-            point=self.point, capacity=self.capacity, demands=self.demands
+        if self.publisher is None:
+            raise TypeError("Passive U publication lost its traced cell publisher.")
+        # One jit around the same publisher object: the template shape trace and
+        # the lowered values or replay variant reuse JAX's cached trace of it.
+        published = self.publisher.traced(
+            cells=cells,
+            _lcm_parent_demand_pools=_lcm_parent_demand_pools,
+            _lcm_parent_demand_savings=_lcm_parent_demand_savings,
+            next_regime_to_continuation=next_regime_to_continuation,
+            _lcm_current_iid=_lcm_current_iid,
+            _lcm_current_iid_nodes=_lcm_current_iid_nodes,
+            _lcm_current_iid_rows=_lcm_current_iid_rows,
+            _lcm_case_u_savings_nodes=_lcm_case_u_savings_nodes,
+            _lcm_case_u_borrowing_limit=_lcm_case_u_borrowing_limit,
+            _lcm_case_u_floor_status=_lcm_case_u_floor_status,
+            _lcm_case_u_child_node_values=_lcm_case_u_child_node_values,
+            **arguments,
         )
-
-        def one(
-            cell: Mapping[StateName, ScalarFloat | ScalarInt],
-        ) -> BoundedResult[CaseUExactOutput]:
-            return scalar(
-                _lcm_parent_demand_pools=_lcm_parent_demand_pools,
-                _lcm_parent_demand_savings=_lcm_parent_demand_savings,
-                next_regime_to_continuation=next_regime_to_continuation,
-                _lcm_current_iid=_lcm_current_iid,
-                _lcm_current_iid_nodes=_lcm_current_iid_nodes,
-                _lcm_current_iid_rows=_lcm_current_iid_rows,
-                _lcm_case_u_savings_nodes=_lcm_case_u_savings_nodes,
-                _lcm_case_u_borrowing_limit=_lcm_case_u_borrowing_limit,
-                _lcm_case_u_floor_status=_lcm_case_u_floor_status,
-                _lcm_case_u_child_node_values=_lcm_case_u_child_node_values,
-                **{**arguments, **cell},
-            )
-
         mapped = jax.tree.map(
-            lambda leaf: leaf.reshape((*shape, *leaf.shape[1:])),
-            jax.vmap(one)(cells),
+            lambda leaf: leaf.reshape((*shape, *leaf.shape[1:])), published
         )
         output = mapped.output
         active = jnp.ones(shape, dtype=jnp.bool_)
@@ -1189,6 +1284,7 @@ _ORIGINAL_CASE_U_PUBLISHER_METHODS = tuple(
     for owner, names in (
         (CaseUExactFunction, ("__post_init__", "__call__")),
         (CaseURideExactFunction, ("__call__",)),
+        (PassiveCellsPublisher, ("__call__", "traced")),
     )
     for name in names
     for method in (getattr(owner, name),)

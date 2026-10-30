@@ -2,13 +2,17 @@
 
 import functools
 from collections.abc import Callable
+from dataclasses import fields
+from types import ModuleType
 
 import jax
 import numpy as np
 import pytest
 
+from _lcm.egm import current_iid_native
 from _lcm.egm.current_iid_envelope import DatedCaseUStepAuthority
 from _lcm.egm.step import _EGMStep
+from _lcm.egm.step_core import _SolveOneCombo
 from _lcm.execution.core_program import CoreBuildContext
 from _lcm.solution.current_iid_case_r import (
     CaseRArguments,
@@ -17,6 +21,7 @@ from _lcm.solution.current_iid_case_r import (
     case_r_native_inputs,
     trace_native_case_r,
 )
+from _lcm.solution.current_iid_case_u_native import CaseUExactFunction
 from _lcm.solution.dcegm import _dcegm_output_roles, _dcegm_query_slots_and_capabilities
 from _lcm.typing import PytreeValue, ShapeDtypePytree
 from lcm import Model
@@ -31,6 +36,8 @@ from tests.egm.test_current_iid_call_owned_generation import (
 from tests.egm.test_current_iid_case_u_installation import _model_u
 from tests.egm.test_current_iid_case_u_owned_core import _params
 from tests.egm.test_current_iid_generation_materialization import _owner
+from tests.egm.test_current_iid_negm_model import _declarations as _declarations_u
+from tests.egm.test_current_iid_negm_model import _params as _params_u
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
@@ -231,3 +238,68 @@ def test_cold_case_r_build_traces_each_native_date_once(
     model._prepare_call(params=_params_r())
     # The child's single date installs its balanced schema by one shape trace.
     assert len(traced) == 1
+
+
+def _count_calls(
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    owner: ModuleType | type[_SolveOneCombo | CaseUExactFunction],
+    name: str,
+    calls: list[str],
+) -> None:
+    """Record each call of `owner.name`; under JAX each call is one trace."""
+    function = getattr(owner, name)
+
+    def counting(*args: PytreeValue, **kwargs: PytreeValue) -> PytreeValue:
+        calls.append(name)
+        return function(*args, **kwargs)
+
+    monkeypatch.setattr(owner, name, counting)
+
+
+def test_cold_case_r_solve_traces_the_native_body_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The template shape trace and the lowered core share one native body trace."""
+    traced: list[str] = []
+    for owner, name in (
+        (current_iid_native, "publish_balanced_resources"),
+        (current_iid_native, "assemble_exact_resources_samples"),
+        (_SolveOneCombo, "owned_resources_row"),
+    ):
+        _count_calls(monkeypatch=monkeypatch, owner=owner, name=name, calls=traced)
+    model = Model(
+        **{
+            field.name: getattr(_declarations(), field.name)
+            for field in fields(_declarations())
+            if field.init
+        }
+    )
+    model.solve(params=_params_r(), log_level="off")
+    # The child's single date: one trace at installation, reused by lowering.
+    assert sorted(traced) == [
+        "assemble_exact_resources_samples",
+        "owned_resources_row",
+        "publish_balanced_resources",
+    ]
+
+
+def test_cold_case_u_solve_traces_the_native_body_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The template shape trace and the lowered replay share one publisher trace."""
+    traced: list[str] = []
+    _count_calls(
+        monkeypatch=monkeypatch, owner=CaseUExactFunction, name="__call__", calls=traced
+    )
+    declarations = _declarations_u()
+    model = Model(
+        **{
+            field.name: getattr(declarations, field.name)
+            for field in fields(declarations)
+            if field.init
+        }
+    )
+    model.solve(params=_params_u(), log_level="off")
+    # The source's single date: one trace at installation, reused by lowering.
+    assert traced == ["__call__"]

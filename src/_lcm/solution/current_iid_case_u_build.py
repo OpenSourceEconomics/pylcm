@@ -258,6 +258,7 @@ def guard_case_u_shape(  # noqa: C901, PLR0912, PLR0915 - keep exact roles and p
         _ORIGINAL_CASE_U_PUBLISHER_METHODS,
         CaseUExactFunction,
         CaseURideExactFunction,
+        PassiveCellsPublisher,
     )
     from _lcm.solution.dcegm import _DCEGMPeriodKernel  # noqa: PLC0415
     from _lcm.solution.nbegm import (  # noqa: PLC0415
@@ -279,6 +280,8 @@ def guard_case_u_shape(  # noqa: C901, PLR0912, PLR0915 - keep exact roles and p
         )
         else None
     )
+    # The ride publisher's traced cell body reads the same point and demands.
+    publisher = function.publisher if type(function) is CaseURideExactFunction else None
 
     # A missing ModelTime cache would create its clock array here, before admission.
     ages = context.ages
@@ -391,6 +394,11 @@ def guard_case_u_shape(  # noqa: C901, PLR0912, PLR0915 - keep exact roles and p
                 CaseUExactFunction.__call__
                 if type(function) is CaseUExactFunction
                 else CaseURideExactFunction.__call__,
+            ),
+            *(
+                ((publisher, PassiveCellsPublisher.__call__),)
+                if publisher is not None
+                else ()
             ),
             *((nested, original[1]) for original in nested_methods),
             *((nested, original[2]) for original in nested_properties),
@@ -877,6 +885,15 @@ def guard_case_u_shape(  # noqa: C901, PLR0912, PLR0915 - keep exact roles and p
                 # captured data.
                 self.frame(label="original-canonical-float-dtype-config-read")
                 return
+            if (
+                publisher is not None
+                and method.__self__ is publisher
+                and method.__func__ is vars(PassiveCellsPublisher)["traced"]
+            ):
+                # `traced` only wraps the publisher's own call in one inlined jit.
+                self.frame(label="original-traced-passive-cells")
+                self.visit(value=publisher)
+                return
             super()._visit_referenced_bound_method(method)
 
         def _visit_object_reference(  # noqa: C901, PLR0912 - exact original engine receiver boundary
@@ -941,7 +958,9 @@ def guard_case_u_shape(  # noqa: C901, PLR0912, PLR0915 - keep exact roles and p
                 ):
                     self.visit(value=value.sources)
                 elif (
-                    nested is not None and value is function and path[:1] == ("point",)
+                    nested is not None
+                    and (value is function or value is publisher)
+                    and path[:1] == ("point",)
                 ):
                     if path == ("point",):
                         self.visit(value=point)
@@ -949,6 +968,12 @@ def guard_case_u_shape(  # noqa: C901, PLR0912, PLR0915 - keep exact roles and p
                         self._visit_program_reference(path=path[1:])
                 elif nested is not None and value is point:
                     self._visit_program_reference(path=path)
+                elif (
+                    publisher is not None
+                    and value is function
+                    and path == ("publisher",)
+                ):
+                    self.visit(value=publisher)
                 elif nested is not None and value is nested:
                     self._visit_nested_reference(path=path)
                 elif (point is not None and value is point and path == ("plan",)) or (
@@ -962,7 +987,7 @@ def guard_case_u_shape(  # noqa: C901, PLR0912, PLR0915 - keep exact roles and p
                         type(function) is CaseUExactFunction
                         or type(function) is CaseURideExactFunction
                     )
-                    and value is function
+                    and (value is function or value is publisher)
                     and path == ("demands",)
                 ):
                     self.visit(value=function.demands)
