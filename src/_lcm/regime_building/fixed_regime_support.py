@@ -173,7 +173,7 @@ def prune_fixed_regime_support(
         pruned_laws[name] = bind_regime_law(
             transition,
             gated_edges=laws[name].gated_edges,
-            arrivals=laws[name].arrivals,
+            participation=laws[name].participation,
         )
     return FixedRegimeSupport(
         user_regimes=MappingProxyType(result),

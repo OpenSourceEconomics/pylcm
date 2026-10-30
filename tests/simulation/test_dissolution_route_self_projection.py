@@ -1,11 +1,11 @@
-"""Every route of an arrival projects from the household's original landing.
+"""Every route of a participation check projects from the household's original landing.
 
-A collective source decides its arrival in `a` with two routes: `f` falls back
-to `a` itself at a projected coordinate, `m` falls back to the singleton `b` at
-its own coordinate. Rows landing where `a` has no policy support take their own
-route. The `m` route must read the state the household arrived with, not the
-state the `f` route just wrote back into `a`, so the outcome does not depend on
-the order the routes or the regimes are declared in.
+A collective source decides its participation check in `a` with two routes: `f` falls
+back to `a` itself at a projected coordinate, `m` falls back to the singleton `b` at its
+own coordinate. Rows landing where `a` has no policy support take their own route. The
+`m` route must read the state the household arrived with, not the state the `f` route
+just wrote back into `a`, so the outcome does not depend on the order the routes or the
+regimes are declared in.
 
 The reference is a scalar enumeration over the discrete coordinates and the two
 work choices. It imports no project, JAX or NumPy code.
@@ -16,12 +16,12 @@ import pytest
 
 from lcm import (
     AgeGrid,
-    ArrivalDecision,
-    ArrivalRead,
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -130,11 +130,11 @@ def _build_model(
         edges={
             "source": Transition(
                 law=ByAge(cases={0: {"a": StochasticTransition(func=_certain)}}),
-                arrivals={
-                    "a": ArrivalDecision(
+                participation={
+                    "a": ParticipationCheck(
                         predicate=_has_policy_support,
                         reads={
-                            "target_support": ArrivalRead(
+                            "target_support": ParticipationRead(
                                 regime="a",
                                 stakeholder="f",
                                 kind="Participating",

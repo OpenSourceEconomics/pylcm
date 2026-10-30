@@ -315,8 +315,8 @@ class Gate:
     different stakeholder structure stays rejected.
 
     A gate never reads a value. A move decided by comparing values is an `Exit`
-    declared in the source regime's `exits=`, or an `ArrivalDecision` in the
-    `Transition`'s `arrivals` when the comparison is made on landing.
+    declared in the source regime's `exits=`, or a `ParticipationCheck` in the
+    `Transition`'s `participation` when the comparison is made on landing.
     """
 
     predicate: UserFunction
@@ -365,8 +365,9 @@ class Gate:
                 "in the current period as an `Exit` in the source regime's "
                 "`exits=`, priced at the target's participating policy. Keep "
                 "a comparison made on landing in the next period at that "
-                "landing date with an `ArrivalDecision` in the `Transition`'s "
-                "`arrivals`, which reads values through explicit `ArrivalRead`s."
+                "landing date with a `ParticipationCheck` in the `Transition`'s "
+                "`participation`, which reads values through explicit "
+                "`ParticipationRead`s."
             )
             raise GateReadsValueError(msg)
         object.__setattr__(self, "routes", ensure_containers_are_immutable(self.routes))

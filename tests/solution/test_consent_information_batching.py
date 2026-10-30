@@ -167,6 +167,7 @@ def _model(
     couple_projection: Callable[..., IntND] = _experience,
     couple_f: Callable[..., FloatND] = _couple_f,
     wage_level: bool = False,
+    width: int = _WIDTH,
 ) -> Model:
     """Singles may marry by consent, observing every shock of the couple.
 
@@ -298,7 +299,7 @@ def _model(
             for name in ("couple", "single_f", "single_m")
         },
         execution_config=ExecutionConfig(
-            device_memory_bytes=None, axis_widths={"query_cell": _WIDTH}
+            device_memory_bytes=None, axis_widths={"query_cell": width}
         ),
     )
 
@@ -342,6 +343,18 @@ def test_cells_of_a_chunk_run_as_one_batch(monkeypatch: pytest.MonkeyPatch) -> N
     trips = _chunk_loop_trips(model=_model(), monkeypatch=monkeypatch)
     assert _WIDTH not in trips
     assert 2 in trips
+
+
+def test_halving_the_chunk_doubles_the_support_rows_per_step(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A step keeps its chunk-times-row lane count, so the row loop halves too."""
+    monkeypatch.setattr(policy_queries, "_ROW_BATCH", 1)
+    monkeypatch.setattr(policy_queries, "_STEP_LANES", _WIDTH)
+    wide = _chunk_loop_trips(model=_model(width=_WIDTH), monkeypatch=monkeypatch)
+    narrow = _chunk_loop_trips(model=_model(width=_WIDTH // 2), monkeypatch=monkeypatch)
+    assert max(wide) > _WIDTH
+    assert max(narrow) == max(wide) // 2
 
 
 def _scalar_lanes(

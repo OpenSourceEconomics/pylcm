@@ -74,7 +74,7 @@ from _lcm.typing import (
     EconFunctionsMapping,
     FlatParams,
     FunctionName,
-    PeriodToRegimeToArrivalSurfaces,
+    PeriodToRegimeToParticipationSurfaces,
     PeriodToRegimeToSimulationPolicy,
     PeriodToRegimeToVArr,
     PytreeValue,
@@ -125,21 +125,26 @@ from lcm.typing import Float1D, FloatND, UserFunction
 # enumerates the payload classes the shipped routes declare.
 
 if TYPE_CHECKING:
-    from _lcm.arrival_queries import ArrivalPublication, ArrivalQueryPlan
     from _lcm.current_iid import CurrentIIDDrawPlan, CurrentIIDPlan
+    from _lcm.participation_queries import (
+        ParticipationPublication,
+        ParticipationQueryPlan,
+    )
     from _lcm.regime_building.finalize import FinalizedUserRegime
     from _lcm.regime_building.V import VInterpolationInfo
     from _lcm.regime_law import RegimeLaw
 
     type RegimeLawsMapping = Mapping[RegimeName, RegimeLaw]
-    type ArrivalQueriesMapping = Mapping[int, Mapping[RegimeName, ArrivalQueryPlan]]
-    type ArrivalPublicationsMapping = Mapping[int, ArrivalPublication]
+    type ParticipationQueriesMapping = Mapping[
+        int, Mapping[RegimeName, ParticipationQueryPlan]
+    ]
+    type ParticipationPublicationsMapping = Mapping[int, ParticipationPublication]
 
     type UserRegimesMapping = Mapping[RegimeName, FinalizedUserRegime]
     type RegimeToVInterpolationInfo = MappingProxyType[RegimeName, VInterpolationInfo]
 else:
-    ArrivalQueriesMapping = Mapping
-    ArrivalPublicationsMapping = Mapping
+    ParticipationQueriesMapping = Mapping
+    ParticipationPublicationsMapping = Mapping
     # The innovation plan imports the solver facade through its law registry.
     type CurrentIIDPlan = object
     type CurrentIIDDrawPlan = object
@@ -269,28 +274,28 @@ class SolverBuildContext:
     template yet; filled for the `declare_continuation_reads` call that follows
     once every regime is built.
     """
-    arrival_queries: ArrivalQueriesMapping = field(
+    participation_queries: ParticipationQueriesMapping = field(
         default_factory=lambda: MappingProxyType({})
     )
     """Actual next-date policy/value read graphs inside this source's Q/F."""
 
-    arrival_surfaces: ArrivalQueriesMapping = field(
+    participation_surfaces: ParticipationQueriesMapping = field(
         default_factory=lambda: MappingProxyType({}),
         metadata={"fingerprint_omit_if_default": True},
     )
-    """Arrival plan whose stored surface each arrival target's continuation reads.
+    """Participation plan whose stored surface each participation target's value reads.
 
-    Set only on the contexts an arrival plan rebuilds an action problem from.
-    There the action problem's next-date arrivals read the source's stored
+    Set only on the contexts a participation plan rebuilds an action problem from.
+    There the action problem's next-date participation checks read the source's stored
     surface -- the plan's branches and decision operands, interpolated and
     decided again at the landing -- instead of nesting another plan.
     """
 
-    arrival_publications: ArrivalPublicationsMapping = field(
+    participation_publications: ParticipationPublicationsMapping = field(
         default_factory=lambda: MappingProxyType({}),
         metadata={"fingerprint_omit_if_default": True},
     )
-    """Dated arrival payload this regime publishes: borrowed values and surfaces."""
+    """Dated participation payload this regime publishes: borrowed values, surfaces."""
 
     scalar_query_models: Mapping[RegimeName, ScalarEGMQueryModel] | None = None
     """Trusted scalar query pools prepared once before numerical kernel factories."""
@@ -650,12 +655,12 @@ class BackwardInductionResult:
     auxiliary_artifacts: ArtifactStore = field(default_factory=ArtifactStore)
     """Addressed solver-defined inspection/persistence artifacts."""
 
-    arrival_surfaces: PeriodToRegimeToArrivalSurfaces = MappingProxyType({})
-    """Stored arrival surfaces, by period, publishing regime and payload leaf.
+    participation_surfaces: PeriodToRegimeToParticipationSurfaces = MappingProxyType({})
+    """Stored participation surfaces, by period, publishing regime and payload leaf.
 
-    Arrival replay rebuilds the same plans the solve priced with, so it reads
+    Participation replay rebuilds the same plans the solve priced with, so it reads
     the same surfaces. Retained on the host beside the values, whatever the
-    retention, because every simulated arrival price needs them.
+    retention, because every simulated participation price needs them.
     """
 
 

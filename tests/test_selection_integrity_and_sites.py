@@ -30,13 +30,13 @@ from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
     AgeRange,
-    ArrivalDecision,
-    ArrivalRead,
     ByAge,
     DeterministicTransition,
     LinSpacedGrid,
     Model,
     NormalIIDProcess,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -286,8 +286,8 @@ def _numeric_gate_model() -> Model:
             "source": Transition(
                 targets={"target": 40, "fallback": 40},
                 law=ByAge(cases={40: {"target": StochasticTransition(func=_prob_one)}}),
-                arrivals={
-                    "target": ArrivalDecision(
+                participation={
+                    "target": ParticipationCheck(
                         predicate=_numeric_gate,
                         routes={
                             "self": StakeholderRoute(
@@ -298,12 +298,12 @@ def _numeric_gate_model() -> Model:
                             )
                         },
                         reads={
-                            "V_target": ArrivalRead(
+                            "V_target": ParticipationRead(
                                 kind="Raw",
                                 regime="target",
                                 projection={"wealth": _identity},
                             ),
-                            "V_reference": ArrivalRead(
+                            "V_reference": ParticipationRead(
                                 kind="Raw",
                                 regime="reference",
                                 projection={"wealth": _identity},
@@ -329,7 +329,7 @@ def test_a_numeric_gate_output_fails_with_logging_off() -> None:
     """A gate returning floats instead of booleans is refused."""
     with pytest.raises(
         ValueError,
-        match=r"^An arrival predicate must return a scalar Boolean\.(?:\n|$)",
+        match=r"^A participation predicate must return a scalar Boolean\.(?:\n|$)",
     ):
         _numeric_gate_model().solve(params=_PARAMS, log_level="off")
 

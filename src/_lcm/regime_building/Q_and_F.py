@@ -209,12 +209,12 @@ def _continuation_evaluation(
     return result, None
 
 
-def has_arrival_queries(*, function: QAndFFunction) -> bool:
-    """Identify canonical Q/F with an independently checked arrival continuation."""
+def has_participation_queries(*, function: QAndFFunction) -> bool:
+    """Identify canonical Q/F with an independently checked participation value."""
     return (
         isinstance(function, _QAndF | _CollectiveQAndF)
         and isinstance(function.compute_CE, _ComputeCE)
-        and function.compute_CE.has_arrival_queries
+        and function.compute_CE.has_participation_queries
     )
 
 
@@ -248,7 +248,7 @@ class QAndFParts(NamedTuple):
     or `None` when the Koopmans aggregator also chooses."""
 
     continuation_valid: BoolND | None = None
-    """Mandatory arrival-read integrity, independent of discounting or utility."""
+    """Mandatory participation-read integrity, independent of discounting or utility."""
 
 
 class EvaluatedQAndF(NamedTuple):
@@ -3156,28 +3156,29 @@ class _ComputeCE:
         tuple[RegimeName, tuple[LandingCheck, ...]], ...
     ] = field(default=(), metadata={"fingerprint_omit_if_default": True})
     """Per gated stateless target with counted fallbacks, those fallbacks' checks."""
-    arrival_scalar_readers: Mapping[
+    participation_scalar_readers: Mapping[
         RegimeName,
         Callable[..., tuple[FloatND, BoolND] | tuple[tuple[FloatND, BoolND], IntND]],
     ] = field(
         default_factory=lambda: MappingProxyType({}),
         metadata={"fingerprint_omit_if_default": True},
     )
-    """Boolean arrival readers for actual stateless target landings."""
-    arrival_scalar_landing_checks: tuple[
+    """Boolean participation readers for actual stateless target landings."""
+    participation_scalar_landing_checks: tuple[
         tuple[RegimeName, tuple[LandingCheck, ...]], ...
     ] = field(default=(), metadata={"fingerprint_omit_if_default": True})
-    """Actual nested query identities in the scalar arrival count order."""
-    arrival_scalar_arg_names: Mapping[RegimeName, tuple[str, ...]] = field(
+    """Actual nested query identities in the scalar participation check count order."""
+    participation_scalar_arg_names: Mapping[RegimeName, tuple[str, ...]] = field(
         default_factory=lambda: MappingProxyType({}),
         metadata={"fingerprint_omit_if_default": True},
     )
 
     @property
-    def has_arrival_queries(self) -> bool:
+    def has_participation_queries(self) -> bool:
         """Whether this continuation must report independent reader integrity."""
-        return bool(self.arrival_scalar_readers) or any(
-            continuation.arrival_query for continuation in self.continuations.values()
+        return bool(self.participation_scalar_readers) or any(
+            continuation.participation_query
+            for continuation in self.continuations.values()
         )
 
     @property
@@ -3188,7 +3189,7 @@ class _ComputeCE:
                 check
                 for _, checks in (
                     *self.gated_scalar_landing_checks,
-                    *self.arrival_scalar_landing_checks,
+                    *self.participation_scalar_landing_checks,
                 )
                 for check in checks
             ),
@@ -3290,10 +3291,12 @@ class _ComputeCE:
         # The accumulators are seeded with the stateless targets, which carry no
         # node axis of their own but do carry mass, a sign, and — under a
         # nonlinear certainty equivalent — one lottery node each.
-        gated_scalar_values, landing_counts, arrival_valid = self._read_scalar_targets(
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            active_regime_probs=active_regime_probs,
-            states_actions_params=states_actions_params,
+        gated_scalar_values, landing_counts, participation_valid = (
+            self._read_scalar_targets(
+                next_regime_to_V_arr=next_regime_to_V_arr,
+                active_regime_probs=active_regime_probs,
+                states_actions_params=states_actions_params,
+            )
         )
         (
             mixture_terms,
@@ -3386,11 +3389,11 @@ class _ComputeCE:
                 landing_counts.append(
                     _live_landing_counts(
                         node_counts=node_counts.reshape((-1, node_counts.shape[-1]))
-                        if continuation.arrival_query
+                        if continuation.participation_query
                         else node_counts,
                         target_probability=active_regime_probs[target_regime_name],
                         node_weights=(joint_next_stochastic_states_weights.reshape(-1),)
-                        if continuation.arrival_query
+                        if continuation.participation_query
                         else continuation.node_weights_at(
                             marginals=target_marginals[target_regime_name],
                             next_states=next_states,
@@ -3398,13 +3401,13 @@ class _ComputeCE:
                     )
                 )
 
-            next_V_at_stochastic_states_arr, valid = _arrival_value_and_integrity(
+            next_V_at_stochastic_states_arr, valid = _participation_value_and_integrity(
                 continuation=continuation,
                 result=next_V_at_stochastic_states_arr,
                 probability=active_regime_probs[target_regime_name],
                 weights=joint_next_stochastic_states_weights,
             )
-            arrival_valid &= valid
+            participation_valid &= valid
             # A node the target's own lottery gives zero probability is never
             # realized, so whatever a law names there -- a value off the target's
             # support, and so a NaN out of the interpolator -- is not part of the
@@ -3543,13 +3546,13 @@ class _ComputeCE:
 
         return self._checked_result(
             aggregate=(CE, active_regime_probs, *_concatenated(landing_counts)),
-            valid=arrival_valid,
+            valid=participation_valid,
         )
 
     def _checked_result(
         self, *, aggregate: _PlainContinuationAggregate, valid: BoolND
     ) -> ContinuationAggregate:
-        if self.has_arrival_queries:
+        if self.has_participation_queries:
             return CheckedContinuationEvaluation(aggregate=aggregate, valid=valid)
         return aggregate
 
@@ -3561,20 +3564,20 @@ class _ComputeCE:
         active_regime_probs: MappingProxyType[RegimeName, FloatND],
         states_actions_params: QAndFKwargs,
     ) -> tuple[dict[RegimeName, FloatND], list[IntND], BoolND]:
-        """Read actual scalar landings and retain any arrival integrity separately."""
+        """Read scalar landings; retain any participation integrity separately."""
         values, counts = self._read_gated_scalar_targets(
             next_regime_to_V_arr=next_regime_to_V_arr,
             active_regime_probs=active_regime_probs,
             states_actions_params=states_actions_params,
         )
         valid = jnp.asarray(a=True)
-        counted = dict(self.arrival_scalar_landing_checks)
-        for target, reader in self.arrival_scalar_readers.items():
+        counted = dict(self.participation_scalar_landing_checks)
+        for target, reader in self.participation_scalar_readers.items():
             result = reader(
                 next_V_arr=next_regime_to_V_arr[target],
                 **{
                     name: states_actions_params[name]
-                    for name in self.arrival_scalar_arg_names[target]
+                    for name in self.participation_scalar_arg_names[target]
                 },
             )
             if counted.get(target):
@@ -3621,7 +3624,7 @@ class _ComputeCE:
         return values, landing_counts
 
 
-def _arrival_value_and_integrity(
+def _participation_value_and_integrity(
     *,
     continuation: _TargetContinuation,
     result: FloatND | tuple[FloatND, BoolND],
@@ -3629,7 +3632,7 @@ def _arrival_value_and_integrity(
     weights: FloatND,
 ) -> tuple[FloatND, BoolND]:
     """Read the status at precisely the represented live landing nodes."""
-    if not continuation.arrival_query:
+    if not continuation.participation_query:
         return cast("FloatND", result), jnp.asarray(a=True)
     value, valid = cast("tuple[FloatND, BoolND]", result)
     return value, jnp.all(~is_live(probability) | ~is_live(weights) | valid)
@@ -3722,10 +3725,10 @@ class _TargetContinuation:
 
     Set only beside `landing_checks`: a node counts only where it is live.
     """
-    arrival_query: bool = field(
+    participation_query: bool = field(
         default=False, metadata={"fingerprint_omit_if_default": True}
     )
-    """The mapped reader returns value plus mandatory arrival integrity."""
+    """The mapped reader returns value plus mandatory participation integrity."""
 
     def node_weights_at(
         self,
@@ -4071,7 +4074,7 @@ def _build_target_continuation(
     restore_original_layout: bool = False,
     allowed_shock_inputs: frozenset[str] | None = None,
     count_raise_landings: bool = False,
-    arrival_reader: Callable[..., FloatND] | None = None,
+    participation_reader: Callable[..., FloatND] | None = None,
 ) -> _TargetContinuation:
     """Build one target's continuation machinery.
 
@@ -4169,7 +4172,7 @@ def _build_target_continuation(
         v_interpolation_info.continuous_states
         or basis_variables
         or gated_continuation is not None
-        or arrival_reader is not None
+        or participation_reader is not None
     )
     original_axes = tuple(
         (axis, original_layouts[name].rest_of_code)
@@ -4179,8 +4182,8 @@ def _build_target_continuation(
 
     V_arr_name = "next_V_arr"
     next_V_interpolator = (
-        arrival_reader
-        if arrival_reader is not None
+        participation_reader
+        if participation_reader is not None
         else get_V_interpolator(
             v_interpolation_info=v_interpolation_info,
             state_prefix="next_",
@@ -4275,7 +4278,7 @@ def _build_target_continuation(
         co_map_state_names=co_map_state_names,
     )
     # Validate the additive declaration even when its averaging route is ineligible.
-    if not allow_shock_average or arrival_reader is not None:
+    if not allow_shock_average or participation_reader is not None:
         shock_average = None
     averaged_inputs: tuple[str, ...] = ()
     integrated_weight_names: tuple[str, ...] = ()
@@ -4392,7 +4395,7 @@ def _build_target_continuation(
                 ),
             ),
         )
-    elif n_stakeholders is None or arrival_reader is not None:
+    elif n_stakeholders is None or participation_reader is not None:
         mapped_interpolator = landing_counting.paired_with(next_V_interpolator)
     else:
         mapped_interpolator = landing_counting.paired_with(
@@ -4455,7 +4458,7 @@ def _build_target_continuation(
         ),
         landing_checks=landing_counting.checks,
         node_weight_names=landing_counting.node_weight_names,
-        arrival_query=arrival_reader is not None,
+        participation_query=participation_reader is not None,
     )
 
 

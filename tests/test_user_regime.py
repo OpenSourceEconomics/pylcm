@@ -23,8 +23,6 @@ from _lcm.user_regime_validation import validate_regime_law
 from _lcm.utils.error_messages import path_segment_name_errors
 from lcm import (
     AgeRange,
-    ArrivalDecision,
-    ArrivalRead,
     CollectiveUtility,
     DeterministicTransition,
     DiscreteGrid,
@@ -34,6 +32,8 @@ from lcm import (
     LinearExpectation,
     LinSpacedGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     Phased,
     ProjectedRegimeValue,
     StakeholderRoute,
@@ -265,10 +265,10 @@ def test_route_key_must_be_a_valid_path_segment(name):
 
 
 @pytest.mark.parametrize("name", INVALID_SEGMENT_NAMES)
-def test_arrival_read_key_must_be_a_valid_path_segment(name):
-    """An arrival-read key with `__` or a leading/trailing `_` is rejected."""
+def test_participation_read_key_must_be_a_valid_path_segment(name):
+    """A participation-read key with `__` or a leading/trailing `_` is rejected."""
     with pytest.raises(RegimeInitializationError, match=re.escape(repr(name))):
-        _arrival_model(read_key=name)
+        _participation_model(read_key=name)
 
 
 @pytest.mark.parametrize(
@@ -278,8 +278,8 @@ def test_arrival_read_key_must_be_a_valid_path_segment(name):
         "regime_transition_law",
         "probability",
         "gate",
-        "arrival_predicate",
-        "arrival_read_projection",
+        "participation_predicate",
+        "participation_read_projection",
         "fallback_projection",
     ],
 )
@@ -304,7 +304,7 @@ def test_parameter_argument_name_must_be_a_valid_path_segment(
     "name",
     [
         "predicate",
-        "references",
+        "reads",
         "routes",
         "fallback",
         "solve",
@@ -338,7 +338,7 @@ def _gate_open(*, wage: ContinuousState, scale: float) -> BoolND:
     return wage >= scale
 
 
-def _arrival_open(*, V_target: FloatND, scale: float) -> BoolND:
+def _participation_open(*, V_target: FloatND, scale: float) -> BoolND:
     return V_target >= scale
 
 
@@ -371,24 +371,24 @@ def _gated_edge_model(
     )
 
 
-def _arrival_model(
+def _participation_model(
     *,
     read_key: str = "outside_value",
-    predicate: UserFunction = _arrival_open,
+    predicate: UserFunction = _participation_open,
     read_projection: UserFunction = _project_wage,
 ) -> Model:
-    """Build a singleton source whose arrival in `target` reads two values."""
+    """Build a singleton source whose check into `target` reads two values."""
     return _edge_model(
-        arrivals={
-            "target": ArrivalDecision(
+        participation={
+            "target": ParticipationCheck(
                 predicate=predicate,
                 reads={
-                    "V_target": ArrivalRead(
+                    "V_target": ParticipationRead(
                         kind="IntegratedFull",
                         regime="target",
                         projection={"wage": _identity_wage},
                     ),
-                    read_key: ArrivalRead(
+                    read_key: ParticipationRead(
                         kind="IntegratedFull",
                         regime="outside",
                         projection={"wage": read_projection},
@@ -411,7 +411,7 @@ def _edge_model(
     utility: UserFunction = _wage_utility,
     probability: Callable[..., FloatND] = _probability_one,
     gates: dict[str, Gate] | None = None,
-    arrivals: dict[str, ArrivalDecision] | None = None,
+    participation: dict[str, ParticipationCheck] | None = None,
 ) -> Model:
     source = UserRegime(
         states={"wage": _WAGE_GRID},
@@ -431,7 +431,7 @@ def _edge_model(
                 targets={"target": 0, "outside": 0},
                 law={"target": StochasticTransition(func=probability)},
                 gates=gates or {},
-                arrivals=arrivals or {},
+                participation=participation or {},
             )
         },
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
@@ -484,10 +484,13 @@ _PARAMETER_CARRIERS: dict[
         lambda func: _gated_edge_model(probability=func),
     ),
     "gate": (_gate_open, lambda func: _gated_edge_model(gate=func)),
-    "arrival_predicate": (_arrival_open, lambda func: _arrival_model(predicate=func)),
-    "arrival_read_projection": (
+    "participation_predicate": (
+        _participation_open,
+        lambda func: _participation_model(predicate=func),
+    ),
+    "participation_read_projection": (
         _project_wage,
-        lambda func: _arrival_model(read_projection=func),
+        lambda func: _participation_model(read_projection=func),
     ),
     "fallback_projection": (
         _project_wage,

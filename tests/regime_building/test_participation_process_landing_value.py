@@ -1,8 +1,8 @@
-"""An arrival reads a process landing as the node's value, not its position.
+"""A participation reads a process landing as the node's value, not its position.
 
 Source, target and fallback carry one process on nodes [-1, 0, 1]. Target utility
 is `z**3 + 2z + 5` (2, 5, 8 at the nodes), fallback utility is `6 + z` (5, 6, 7).
-Every arrival below keeps the target only at node 1, so the source value is
+Every participation check below keeps the target only at node 1, so the source value is
 `p(-1) * 5 + p(0) * 6 + p(1) * 8`. A landing read at its position 0, 1, 2 instead
 keeps the target at positions 1 and 2 and pays a cubic at 2.
 """
@@ -15,10 +15,10 @@ import pytest
 
 from lcm import (
     AgeGrid,
-    ArrivalDecision,
-    ArrivalRead,
     ByAge,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -96,12 +96,12 @@ def _model(*, process, case: str, enable_jit: bool = False) -> Model:
     elif case in {"code-read", "integrated-read"}:
         predicate = _read_predicate
         reads = {
-            "V_target": ArrivalRead(
+            "V_target": ParticipationRead(
                 kind="IntegratedFull" if case == "integrated-read" else "Raw",
                 regime="target",
                 projection={"z": _identity},
             ),
-            "V_alt": ArrivalRead(
+            "V_alt": ParticipationRead(
                 kind="Raw", regime="fallback", projection={"z": _node_at}
             ),
         }
@@ -115,8 +115,8 @@ def _model(*, process, case: str, enable_jit: bool = False) -> Model:
             "source": Transition(
                 targets={"target": 0, "fallback": 0},
                 law=ByAge(cases={0: {"target": StochasticTransition(func=_one)}}),
-                arrivals={
-                    "target": ArrivalDecision(
+                participation={
+                    "target": ParticipationCheck(
                         predicate=predicate,
                         reads=reads,
                         routes={
@@ -167,7 +167,7 @@ _PARAMS = {
     [(_uniform, (1 / 3, 1 / 3, 1 / 3)), (_tauchen, _tauchen_weights())],
     ids=["uniform-iid", "tauchen-ar1"],
 )
-def test_arrival_reads_the_landing_process_node_value(
+def test_participation_reads_the_landing_process_node_value(
     *, process, weights: tuple[float, float, float], case: str, enable_jit: bool
 ) -> None:
     model = _model(process=process, case=case, enable_jit=enable_jit)
@@ -178,7 +178,7 @@ def test_arrival_reads_the_landing_process_node_value(
     )
 
 
-def test_arrival_into_a_runtime_parameterized_process_is_refused() -> None:
+def test_participation_into_a_runtime_parameterized_process_is_refused() -> None:
     def runtime() -> UniformIIDProcess:
         return UniformIIDProcess(n_points=3, start=-1.0, simulate_draws="nodes")
 

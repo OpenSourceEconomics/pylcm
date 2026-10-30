@@ -2,9 +2,12 @@
 
 The liquid law `next_liquid = R * savings + s * exp(y')` reads the income draw
 toward both targets, where `y'` is the node of a process or the level of a
-Markov state's code. `alive` carries `income`, so toward `alive` the draw
-persists; `dead` does not, so toward `dead` the draw is taken from the source's
-process or Markov law inside the transition and then discarded.
+Markov state's code. Under a persistent process or Markov state `alive` carries
+`income`, so toward `alive` the draw persists; `dead` does not, so toward `dead`
+the draw is taken from the source's process or Markov law inside the transition
+and then discarded. An IID `income` read only as its draw is no state of
+`alive` at all: toward either target the draw is taken inside the transition,
+and the value has no income axis.
 
 With CRRA utility, a linear bequest `V_dead(l) = l` and resources never binding,
 every period's consumption is a constant and every value function is affine in
@@ -24,9 +27,9 @@ V_0(l, y) = u(c_0) + \\beta\\,E[V_1(R (l + b - c_0) + s e^{y'}, y') \\mid y].
 ```
 
 `V_1` is reached through the transition-local draw toward `dead`, `V_0` through the
-draw `alive` persists. Under a persistent process or Markov state both vary with
-the lagged node, so a solver that ignored or misplaced the draw would miss by that
-spread.
+draw `alive` persists or, for IID income, draws again. Under a persistent process
+or Markov state both vary with the lagged node, so a solver that ignored or
+misplaced the draw would miss by that spread.
 """
 
 from typing import Literal, cast
@@ -203,8 +206,20 @@ def _closed_form(process: Process) -> dict[int, np.ndarray]:
 
 
 def _alive_values(model: Model) -> dict[int, np.ndarray]:
+    """`alive`'s value per period, indexed `(income, liquid)`.
+
+    An integrated-out IID income has no axis; the value is repeated along one here,
+    to meet the closed form, which is constant across the lagged IID node.
+    """
     solution = model.solve(params=_PARAMS, log_level="off")
     order = model.state_names(regime_name="alive")
+    if "income" not in order:
+        n_nodes = len(_income_nodes_and_probs("iid")[0])
+        return {
+            period: np.tile(np.asarray(values["alive"]), (n_nodes, 1))
+            for period, values in solution.values.items()
+            if "alive" in values
+        }
     axes = [order.index(name) for name in ("income", "liquid")]
     return {
         period: np.transpose(np.asarray(values["alive"]), axes)
@@ -221,6 +236,29 @@ def test_the_non_carrying_target_keeps_only_its_own_states(
     model = _model(solver=solver, process=process)
 
     assert model.state_names(regime_name="dead") == ("liquid",)
+
+
+@pytest.mark.parametrize("process", ["iid", "ar1", "markov"])
+@pytest.mark.parametrize("solver", ["brute", "dcegm", "nbegm"])
+def test_the_source_keeps_income_unless_it_is_iid_and_integrable(
+    *, solver: Solver, process: Process
+) -> None:
+    """NBEGM keeps an IID income read only as its draw; the others integrate it."""
+    model = _model(solver=solver, process=process)
+    integrated = process == "iid" and solver != "nbegm"
+
+    assert set(model.state_names(regime_name="alive")) == (
+        {"liquid"} if integrated else {"income", "liquid"}
+    )
+
+
+@pytest.mark.parametrize("solver", ["brute", "dcegm", "nbegm"])
+def test_the_repr_names_the_solver_dependent_timing_of_iid_income(
+    solver: Solver,
+) -> None:
+    timing = "axis" if solver == "nbegm" else "integrated"
+
+    assert f"alive: {timing}=[income]" in repr(_model(solver=solver, process="iid"))
 
 
 @pytest.mark.parametrize("process", ["iid", "ar1", "markov"])

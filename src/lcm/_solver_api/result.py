@@ -44,9 +44,9 @@ if TYPE_CHECKING:
     # that model's instance and the parameter fingerprint it consumed under. The
     # model fills this memo as it consumes the result, so it is a mutable dict.
     type _ConsumedViews = dict[tuple[str, str], _ResolvedSolution]
-    # Stored arrival surfaces by period, publishing regime and leaf name: arrays
+    # Stored participation surfaces by period, publishing regime and leaf name: arrays
     # for a solve in this process, lazy archive entries for a loaded result.
-    type _ArrivalSurfaces = Mapping[
+    type _ParticipationSurfaces = Mapping[
         int, Mapping[RegimeName, Mapping[str, FloatND | _LazyEntry]]
     ]
 else:
@@ -63,7 +63,7 @@ else:
     # API.
     type _ConsumedViews = object
     # Lazy archive entries validate on explicit materialization, as values do.
-    type _ArrivalSurfaces = object
+    type _ParticipationSurfaces = object
 
 
 @beartype(conf=SOLVER_API_CONF)
@@ -108,15 +108,16 @@ class SolutionResult:
     )
     """Validated engine views keyed by the consuming model and parameters, so a
     result from elsewhere is validated and materialized once per consumer."""
-    _arrival_surfaces: _ArrivalSurfaces = field(
+    _participation_surfaces: _ParticipationSurfaces = field(
         default=MappingProxyType({}),
         init=False,
         repr=False,
         compare=False,
     )
-    """Stored arrival surfaces arrival replay reads, persisted beside the values;
-    empty for a model without nested arrivals and for any `dataclasses.replace`
-    copy."""
+    """Stored participation surfaces that participation replay reads, persisted beside
+    the values;
+    empty for a model without nested participation checks and for any
+    `dataclasses.replace` copy."""
 
     def __post_init__(self) -> None:
         for field_name, store in (

@@ -124,9 +124,11 @@ def test_process_state_entering_utility_is_refused(sigma: float | None):
     with pytest.raises(
         ModelInitializationError,
         match=(
-            r"(?s)DCEGM regime 'retirement' reads the IID shock\(s\) \['wage_shock'\]"
-            r" other than through resources\..*Move the shock into resources, or "
-            r"use GridSearch for this regime\."
+            r"(?s)DCEGM regime 'retirement' reads the process state\(s\) "
+            r"\['wage_shock'\] other than through resources\..*Move the process "
+            r"into resources, "
+            r"declare it with `simulate_draws=\"nodes\"`, or use GridSearch for "
+            r"this regime\."
         ),
     ):
         _model_from_alive(alive=alive)

@@ -184,7 +184,7 @@ type UserParams = Mapping[str, UserParamsNode]
 # User-facing templates keep the first regime and function/target levels
 # structurally visible to type checkers; below them a branch nests as deep as its
 # declaration path does — a joint kernel's `support`/`probabilities` role, or an
-# `edges` slot's target, arrival read or route — before rendered annotation
+# `edges` slot's target, participation read or route — before rendered annotation
 # leaves. The `edges` branch maps each source regime to its slots.
 type _UserFacingTemplateNode = str | dict[str, _UserFacingTemplateNode]
 type UserFacingRegimeParamsTemplate = dict[

@@ -1233,7 +1233,7 @@ def install_exit_policy_queries(
             ):
                 continue
             if (
-                context.arrival_queries.get(period)
+                context.participation_queries.get(period)
                 or context.user_regimes_at(period=period)[owner].exits
                 or (
                     context.stakeholders is not None

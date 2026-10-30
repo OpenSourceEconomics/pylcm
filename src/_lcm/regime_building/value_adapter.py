@@ -38,7 +38,6 @@ from _lcm.regime_building.schedules import RegimeTransitionLaw
 from _lcm.regime_law import RegimeLaw, RegimeLaws
 from _lcm.typing import EconFunctionArg, FunctionName, RegimeName
 from _lcm.utils.ast_inspection import value_indexed_arrays
-from lcm.arrivals import ArrivalDecision, ArrivalRead
 from lcm.collective import (
     CollectiveUtility,
     ProjectedRegimeValue,
@@ -49,6 +48,7 @@ from lcm.exceptions import (
     ModelInitializationError,
     RegimeInitializationError,
 )
+from lcm.participation import ParticipationCheck, ParticipationRead
 from lcm.phased import Phased
 from lcm.regime import (
     ConstraintEntry,
@@ -629,7 +629,7 @@ def _adapt_regime_law(
     value_grids_by_regime: Mapping[RegimeName, Mapping[StateOrActionName, AdapterGrid]],
     adapters: AdapterMemo,
 ) -> RegimeLaw:
-    """Adapt the source law and target-dated gate and arrival callbacks."""
+    """Adapt the source law and target-dated gate and participation callbacks."""
     transition = (
         law.transition
         if isinstance(law.transition, str)
@@ -651,20 +651,20 @@ def _adapt_regime_law(
         )
         for target, edge in law.gated_edges.items()
     }
-    arrivals = {
-        target: _adapt_arrival(
+    participation = {
+        target: _adapt_participation(
             declaration=declaration,
             value_grids=value_grids_by_regime[target],
             adapters=adapters,
         )
-        for target, declaration in law.arrivals.items()
+        for target, declaration in law.participation.items()
     }
     if (
         transition is law.transition
         and all(gated_edges[target] is edge for target, edge in law.gated_edges.items())
         and all(
-            arrivals[target] is declaration
-            for target, declaration in law.arrivals.items()
+            participation[target] is declaration
+            for target, declaration in law.participation.items()
         )
     ):
         return law
@@ -672,16 +672,16 @@ def _adapt_regime_law(
         law,
         transition=transition,
         gated_edges=MappingProxyType(gated_edges),
-        arrivals=MappingProxyType(arrivals),
+        participation=MappingProxyType(participation),
     )
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
-class _AdaptedArrivalPredicate:
+class _AdaptedParticipationPredicate:
     """Canonical predicate reader plus the private names of its declared reads.
 
-    The declaration keeps its public read keys. Only the callback's input channel
-    is renamed before value adaptation, and the arrival lowerer reconnects that
+    The declaration keeps its public read keys. Only the callback's input channel is
+    renamed before value adaptation, and the participation check lowerer reconnects that
     channel to its query operands without rebuilding the retained adapter.
     """
 
@@ -702,12 +702,12 @@ class _AdaptedArrivalPredicate:
         return self.function(**kwargs)
 
 
-def _adapt_arrival(
+def _adapt_participation(
     *,
-    declaration: ArrivalDecision,
+    declaration: ParticipationCheck,
     value_grids: Mapping[StateOrActionName, AdapterGrid],
     adapters: AdapterMemo,
-) -> ArrivalDecision:
+) -> ParticipationCheck:
     """Read landing values and encode projected read and settlement states."""
     predicate = declaration.predicate
     # Keep explicit read operands separate from same-spelled physical inputs.
@@ -723,12 +723,12 @@ def _adapt_arrival(
         occupied = set(inspect.signature(predicate).parameters) | set(value_grids)
         aliases = {}
         for index, name in enumerate(declaration.reads):
-            alias = f"_lcm_arrival_declared_read_{index}"
+            alias = f"_lcm_participation_declared_read_{index}"
             while alias in occupied:
                 alias += "_"
             aliases[name] = alias
             occupied.add(alias)
-        predicate = _AdaptedArrivalPredicate(
+        predicate = _AdaptedParticipationPredicate(
             function=adapt_user_function(
                 func=rename_arguments(predicate, mapper=aliases),
                 value_grids=value_grids,
@@ -746,7 +746,7 @@ def _adapt_arrival(
         )
     reads = {
         name: cast(
-            "ArrivalRead",
+            "ParticipationRead",
             _adapt_reference(
                 reference=read, value_grids=value_grids, adapters=adapters
             ),

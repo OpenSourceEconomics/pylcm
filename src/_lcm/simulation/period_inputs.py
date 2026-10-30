@@ -69,7 +69,7 @@ def unit_value_reads(
     for family in (
         regime.simulation.programs.exit_full,
         regime.simulation.programs.exit_participating,
-        *regime.simulation.programs.arrival_families,
+        *regime.simulation.programs.participation_families,
     ):
         if period in family:
             reads.extend(family[period].requirements.value_reads)

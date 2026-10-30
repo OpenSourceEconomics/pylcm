@@ -307,14 +307,19 @@ fall between nodes. Each branch then reads the two bracketing node rows at the s
 resources and blends them linearly in the node coordinate, extrapolating along the edge
 segment beyond the outer nodes. The process's transition weights follow the same rule
 off node, so the blended continuation is the one the grid argmax scores. A value on a
-node reads that node's row alone. The shock enters only resources, so every node row is
-the same function of resources and the read is the continuous optimum.
+node reads that node's row alone. When the process enters only resources, every node
+row is the same function of resources and the read is the continuous optimum.
 
-An IID shock may enter an endogenous-grid regime (`DCEGM`, `NBEGM`, `NEGM`, `NNBEGM`)
-only through its resources function. `Model(...)` raises a `ModelInitializationError`
-when `utility` reads an IID process state or a `shocks=` draw any other way, directly or
-through a helper function, even if it also enters resources and whatever the law's
-parameters. Move the shock into resources, or solve the regime with `GridSearch`.
+A process state drawn off its nodes may enter an endogenous-grid regime (`DCEGM`,
+`NBEGM`, `NEGM`, `NNBEGM`) only through its resources function. `Model(...)` raises a
+`ModelInitializationError` when `utility` reads such a process (IID or AR(1), for example
+`TauchenAR1Process`, `RouwenhorstAR1Process` or `TauchenAR1Process.on_nodes`) or a
+`shocks=` draw any other way, directly or through a helper function, even if it also
+enters resources and whatever the law's parameters. Every process simulates continuous
+draws by default. A process declared with `simulate_draws="nodes"` is drawn only at its
+nodes, so each read takes one node row and is exact; it may enter utility freely. Move the
+process into resources, declare it with `simulate_draws="nodes"`, or solve the regime
+with `GridSearch`.
 
 Policy-first needs a regime whose actions are the EGM action plus discrete actions, with
 a scalar savings floor and process states with fixed, unconditioned nodes. It does not

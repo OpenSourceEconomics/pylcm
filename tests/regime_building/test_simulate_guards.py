@@ -52,7 +52,6 @@ from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
     AgeRange,
-    ArrivalDecision,
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
@@ -61,6 +60,7 @@ from lcm import (
     LinearExpectation,
     LinSpacedGrid,
     Model,
+    ParticipationCheck,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -102,8 +102,8 @@ def test_target_absent_at_next_period_is_still_a_legitimate_no_op():
     a silent no-op -- the legitimate repeating/one-shot boundary case, which
     the missing-reference guard must leave alone. Mirrors
     the occupied boundary in the public counterpart
-    `test_repeating_arrival_boundary.py`,
-    `test_public_repeating_arrival_stops_at_the_sources_last_supported_date`.
+    `test_repeating_participation_boundary.py`,
+    `test_public_repeating_participation_stops_at_the_sources_last_supported_date`.
     This kernel control supplies an empty `period_to_regime_to_V_arr` for
     period+1 (no target, hence no references either), which must not raise.
     """
@@ -264,12 +264,12 @@ def _never_arrives(wage: ContinuousState) -> BoolND:
     return wage < 0.0
 
 
-def test_two_arrival_routes_sharing_a_fallback_regime_each_land_their_own_row():
-    """Arrival routes may share a fallback: each member lands at its own projection.
+def test_two_participation_routes_sharing_a_fallback_regime_each_land_their_own_row():
+    """Participation routes may share a fallback: each member lands at its projection.
 
-    An arrival's fallback landing is keyed by the route a row's role selects,
-    not written per fallback regime, so the guard a gated edge needs does not
-    apply. With the arrival always rejected, `f` lands in `single_shared` at its
+    A participation check's fallback landing is keyed by the route a row's role selects,
+    not written per fallback regime, so the guard a gated edge needs does not apply.
+    With the participation check always rejected, `f` lands in `single_shared` at its
     wage and `m` at `4 - wage`, in solve and in simulation.
     """
     routes = {
@@ -298,8 +298,8 @@ def test_two_arrival_routes_sharing_a_fallback_regime_each_land_their_own_row():
                     }
                 ),
                 targets={"married_ir": 0, "single_shared": 0},
-                arrivals={
-                    "married_ir": ArrivalDecision(
+                participation={
+                    "married_ir": ParticipationCheck(
                         predicate=_never_arrives, routes=routes
                     )
                 },
@@ -339,11 +339,11 @@ def test_dissolution_fixture_has_distinct_fallbacks_and_still_constructs():
     ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
     regimes_dict = _make_dissolution_regimes()
     laws = _dissolution_laws()
-    married_arrival = bind_laws({"married": laws["married"]})["married"].arrivals[
-        "married_ir"
-    ]
+    married_participation = bind_laws({"married": laws["married"]})[
+        "married"
+    ].participation["married_ir"]
     fallback_regimes = [
-        route.solve_fallback.regime for route in married_arrival.routes.values()
+        route.solve_fallback.regime for route in married_participation.routes.values()
     ]
     assert len(fallback_regimes) == len(set(fallback_regimes))
     # Must not raise.

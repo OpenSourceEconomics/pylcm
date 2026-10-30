@@ -752,8 +752,8 @@ def bind_laws(
 ) -> RegimeLaws:
     """Bind each regime's declared law the way `Model(edges=...)` binds it.
 
-    `declared` maps every regime to its law between regimes, `None` for a
-    terminal regime, or to a `Transition` whose gates and arrivals travel with it.
+    `declared` maps every regime to its law between regimes, `None` for a terminal
+    regime, or to a `Transition` whose gates and participation checks travel with it.
     """
     return MappingProxyType(
         {
@@ -764,7 +764,7 @@ def bind_laws(
                         target: gated_edge_from_gate(gate)
                         for target, gate in law.gates.items()
                     },
-                    arrivals=law.arrivals,
+                    participation=law.participation,
                 )
                 if isinstance(law, Transition)
                 else bind_regime_law(law)
@@ -796,13 +796,13 @@ def build_prepared_structure(
         declared_transitions={name: law.transition for name, law in laws.items()},
         code_by_name={name: code for code, name in enumerate(laws)},
     )
-    # Lowering keeps the law; source-owned gates and arrivals stay attached.
+    # Lowering keeps the law; source-owned gates and participation checks stay attached.
     bound = MappingProxyType(
         {
             name: bind_regime_law(
                 transition,
                 gated_edges=laws[name].gated_edges,
-                arrivals=laws[name].arrivals,
+                participation=laws[name].participation,
             )
             for name, transition in lowered.items()
         }
@@ -833,7 +833,7 @@ def build_prepared_structure(
                         )
                         for target, edge in law.gated_edges.items()
                     },
-                    arrivals=law.arrivals,
+                    participation=law.participation,
                 ),
             )
             for name, law in bound.items()

@@ -1,13 +1,13 @@
-"""Arrival pricing reads later arrival dates from stored surfaces.
+"""Participation pricing reads later participation dates from stored surfaces.
 
-An arrival reader rebuilds the target's action problem exactly at its landing.
-That action problem's own arrivals, one date later, read the stored arrival
-surface of that edge: each branch value and each operand of the arrival decision,
-tabulated on the target's grid, interpolated separately at the landing and
-decided again there. So each period's query program prices one arrival level,
-whatever the number of later arrival dates; on grid nodes the values are those
-of reading every later arrival at its landing, and between nodes a member whose
-value jumps where the decision switches is priced on the right side of it.
+A participation reader rebuilds the target's action problem exactly at its landing. That
+action problem's own participation checks, one date later, read the stored participation
+surface of that edge: each branch value and each operand of the participation check,
+tabulated on the target's grid, interpolated separately at the landing and decided again
+there. So each period's query program prices one participation level, whatever the
+number of later participation dates; on grid nodes the values are those of reading every
+later participation check at its landing, and between nodes a member whose value jumps
+where the decision switches is priced on the right side of it.
 """
 
 import hashlib
@@ -25,13 +25,13 @@ from numpy.testing import assert_array_almost_equal as aaae
 from _lcm import policy_queries
 from lcm import (
     AgeGrid,
-    ArrivalDecision,
-    ArrivalRead,
     ByAge,
     CollectiveUtility,
     ExecutionConfig,
     LinSpacedGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -51,11 +51,11 @@ from lcm_examples import collective_household as household
 from tests.conftest import DECIMAL_PRECISION, X64_ENABLED
 from tests.solution import _discrete_household as discrete
 
-_FIXTURES = Path(__file__).parents[1] / "data" / "arrival_pricing_depth"
+_FIXTURES = Path(__file__).parents[1] / "data" / "participation_pricing_depth"
 
 
 def _nested_values(name: str) -> Mapping[int, Mapping[str, np.ndarray]]:
-    """Values captured from pricing every later arrival at its exact landing."""
+    """Values captured by pricing each later participation check at its landing."""
     path = _FIXTURES / f"{name}_x{int(X64_ENABLED)}.json"
     stored = json.loads(path.read_text())["values"]
     return {
@@ -90,20 +90,20 @@ def _query_flops(
     return flops
 
 
-def test_query_programs_do_not_grow_with_remaining_arrival_dates(
+def test_query_programs_do_not_grow_with_remaining_participation_dates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """More later arrival dates leave the query program flat; one costs a constant.
+    """More later participation dates keep the query program flat; one costs a constant.
 
-    Flatness is the guard: at five periods, period 1 prices two later arrival
+    Flatness is the guard: at five periods, period 1 prices two later participation
     dates and period 0 three, and both programs must cost the same up to 1.1x.
     Nesting would multiply the program by the target's actions times its reads
     and lottery nodes for every extra date.
 
-    The constant: at four periods, period 1 prices one arrival date and period 0
+    The constant: at four periods, period 1 prices one participation date and period 0
     two, so period 0 adds one stored-surface read to each rebuilt action problem.
     That read interpolates every channel of the surface (the couple's branches
-    and decision operands, eight channels) and takes the arrival decision again
+    and decision operands, eight channels) and takes the participation check again
     at the landing, which keeps it under 4x the one-date program.
     """
     deep = _query_flops(monkeypatch=monkeypatch, n_periods=5)
@@ -117,9 +117,9 @@ def test_query_programs_do_not_grow_with_remaining_arrival_dates(
 def test_query_program_cost_is_the_same_for_every_earlier_period(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Once every target is reachable, one more later arrival date costs nothing.
+    """Once every target is reachable, one more later participation date costs nothing.
 
-    At five periods, period 1 prices two later arrival dates and period 0 three.
+    At five periods, period 1 prices two later participation dates and period 0 three.
     Each rebuilt action problem reads the next date's stored surface, so both
     programs do the same work.
     """
@@ -128,7 +128,7 @@ def test_query_program_cost_is_the_same_for_every_earlier_period(
         assert flops[regime, 0] == pytest.approx(flops[regime, 1], rel=0.05), regime
 
 
-def test_grid_aligned_arrivals_price_like_reads_at_every_landing() -> None:
+def test_grid_aligned_participation_price_like_reads_at_every_landing() -> None:
     """Where every landing is a node, a stored surface reads the exact value there."""
     model = discrete.get_model(n_periods=4)
     result = model.solve(params=discrete.get_params(), log_level="off")
@@ -144,10 +144,10 @@ def test_grid_aligned_arrivals_price_like_reads_at_every_landing() -> None:
             )
 
 
-def test_periods_pricing_one_arrival_date_keep_their_values() -> None:
-    """Off-grid landings change values only where a second arrival date is priced.
+def test_periods_pricing_one_participation_date_keep_their_values() -> None:
+    """Off-grid landings change values only where a second participation date is priced.
 
-    With four periods only period 0 prices two arrival dates; every later
+    With four periods only period 0 prices two participation dates; every later
     period's value is the one an exact read at every landing gives.
     """
     model = household.get_model(n_periods=4, wealth_n_points=4, consumption_n_points=3)
@@ -162,7 +162,9 @@ def test_periods_pricing_one_arrival_date_keep_their_values() -> None:
             )
 
 
-def test_a_saved_solution_replays_its_stored_arrival_surfaces(tmp_path: Path) -> None:
+def test_a_saved_solution_replays_its_stored_participation_surfaces(
+    tmp_path: Path,
+) -> None:
     """A loaded archive simulates exactly like the solution that wrote it."""
     model = household.get_model(n_periods=4, wealth_n_points=4, consumption_n_points=3)
     params = household.get_params()
@@ -266,16 +268,16 @@ def _overruled_partner_model(*, n_points: int) -> Model:
             utility=_linear_utility(slope=slope, level=level), transitions=transitions
         )
 
-    check = ArrivalDecision(
+    check = ParticipationCheck(
         predicate=_her_consent_at_the_last_check,
         reads={
-            "V_target_f": ArrivalRead(
+            "V_target_f": ParticipationRead(
                 regime="couple",
                 stakeholder="f",
                 kind="Participating",
                 projection={"wealth": _identity},
             ),
-            "V_alone_f": ArrivalRead(
+            "V_alone_f": ParticipationRead(
                 regime="single_f", kind="Raw", projection={"wealth": _identity}
             ),
         },
@@ -294,7 +296,7 @@ def _overruled_partner_model(*, n_points: int) -> Model:
         edges={
             "couple": Transition(
                 law=law(stays="couple", terminal="couple_terminal"),
-                arrivals={"couple": check},
+                participation={"couple": check},
             ),
             "single_f": Transition(
                 law=law(stays="single_f", terminal="single_f_terminal")
@@ -424,8 +426,8 @@ def test_an_archive_of_another_surface_layout_is_refused(tmp_path: Path) -> None
     path = solution.save(path=tmp_path / "solution.h5")
     with h5py.File(path, "r+") as archive:
         manifest = json.loads(bytes(archive["manifest"][()]))
-        assert manifest["arrival_surfaces"]
-        for entry in manifest["arrival_surfaces"]:
+        assert manifest["participation_surfaces"]
+        for entry in manifest["participation_surfaces"]:
             entry["layout"] = "value-after-decision"
         encoded = json.dumps(
             manifest, sort_keys=True, separators=(",", ":"), ensure_ascii=True

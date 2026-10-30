@@ -753,6 +753,6 @@ def _copy_result(
         omissions=result.omissions,
         diagnostics=result.diagnostics,
     )
-    for name in ("_artifact_authority", "_arrival_surfaces"):
+    for name in ("_artifact_authority", "_participation_surfaces"):
         object.__setattr__(copied, name, getattr(result, name))
     return copied

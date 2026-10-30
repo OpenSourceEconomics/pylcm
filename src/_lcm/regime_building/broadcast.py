@@ -81,7 +81,7 @@ from lcm.regime import (
     StateTransitionEntry,
 )
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import OneMarginSolver, TwoMarginSolver
+from lcm.solvers import NBEGM, NNBEGM, OneMarginSolver, TwoMarginSolver
 from lcm.transition import (
     AgeSpecializedFunction,
     JointTransition,
@@ -536,6 +536,9 @@ def split_transition_only_shocks(
     A regime that reads the current value keeps the shock as an ordinary state,
     so a source law reading the draw toward it hands over that state's value.
 
+    A regime solved by `NBEGM` or `NNBEGM` keeps every IID process state: those
+    solvers read a draw only off a kept state axis.
+
     Args:
         user_regimes: Mapping of regime names to pruned `Regime` instances.
         discrete_names: Pre-adaptation discrete names, including model-level
@@ -560,6 +563,14 @@ def split_transition_only_shocks(
     }
     transition_only: dict[RegimeName, dict[StateName, _IIDProcess]] = {}
     for name, regime in user_regimes.items():
+        # ponytail: NBEGM's single-liquid kernels tabulate a deterministic landing
+        # law and cannot read a draw, and NNBEGM's inner NB solve and child read
+        # enumerate no transition-local draw; both read it only off a kept
+        # (ride-along) state axis. They keep the axis, along which the value is
+        # constant. Upgrade path: integrate law draws in the single-liquid NBEGM
+        # kernels, then drop this exclusion.
+        if isinstance(regime.solver, (NBEGM, NNBEGM)):
+            continue
         candidates = {
             state: grid
             for state, grid in regime.states.items()
@@ -822,23 +833,22 @@ def _incoming_edge_roots(
             )
             for state_name, projection in ref.projection.items()
         }
-    # An arrival into this regime is evaluated at its landing on this regime's
-    # states, like a gated edge: its predicate, read projections and fallback
+    # A participation check into this regime is evaluated at its landing on this
+    # regime's states, like a gated edge: its predicate, read projections and fallback
     # projections read them.
     for source_name, law in laws.items():
-        decision = law.arrivals.get(regime_name)
+        decision = law.participation.get(regime_name)
         if decision is None:
             continue
-        roots[f"__incoming_arrival__{source_name}"] = decision.predicate
+        roots[f"__incoming_participation__{source_name}"] = decision.predicate
         roots |= {
-            f"__incoming_arrival_read__{source_name}__{read_name}__{state_name}": (
-                projection
-            )
+            f"__incoming_participation_read__{source_name}__{read_name}__"
+            f"{state_name}": projection
             for read_name, read in decision.reads.items()
             for state_name, projection in read.projection.items()
         }
         roots |= {
-            f"__incoming_arrival_fallback__{source_name}__{route_name}__{phase}__"
+            f"__incoming_participation_fallback__{source_name}__{route_name}__{phase}__"
             f"{state_name}": projection
             for route_name, route in decision.routes.items()
             for phase, ref in (

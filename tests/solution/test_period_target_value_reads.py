@@ -17,7 +17,7 @@ The NB-EGM and nested models have one living regime that stays alive or dies,
 except at its last active period, where it only dies.
 
 The gated model's `src` stays in `src` at periods 0 and 1 and at period 2 enters
-`tgt` through an arrival whose refused branch pays the fallback regime `fb`;
+`tgt` through a participation check whose refused branch pays the fallback regime `fb`;
 both are terminal at period 3.
 """
 
@@ -33,12 +33,12 @@ from _lcm.typing import PytreeValue, RegimeName
 from lcm import (
     AgeGrid,
     AgeRange,
-    ArrivalDecision,
-    ArrivalRead,
     DeterministicTransition,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     StakeholderRoute,
     Transition,
@@ -174,11 +174,11 @@ def _gated_model() -> Model:
             "src": Transition(
                 targets={"src": AgeRange(exclusive_stop=2), "tgt": 2, "fb": 2},
                 law=DeterministicTransition(func=_next_gated_regime),
-                arrivals={
-                    "tgt": ArrivalDecision(
+                participation={
+                    "tgt": ParticipationCheck(
                         predicate=_open_when_rich,
                         reads={
-                            "V_target": ArrivalRead(
+                            "V_target": ParticipationRead(
                                 kind="IntegratedFull",
                                 regime="tgt",
                                 projection={

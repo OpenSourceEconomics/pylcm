@@ -1125,7 +1125,7 @@ def _project_user_regime_declaration(
                     and not (
                         name in {"output_only_functions", "shocks"} and value == ()
                     )
-                    and not (name == "arrivals" and not value)
+                    and not (name == "participation" and not value)
                 }
             ),
         }

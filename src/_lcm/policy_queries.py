@@ -85,16 +85,23 @@ _INFORMATION = "_lcm_query_information"
 _ACTING = "_lcm_query_acting"
 _TASTE = "_lcm_query_taste"
 _QUERY_ARGUMENTS = "query_arguments"
+# Support rows evaluated together per step, inside every lane of the cell batch.
+# A step evaluates chunk-times-row-batch lanes. Holding that product at
+# `_STEP_LANES` lets a narrowed chunk widen its rows: the per-step workspace stays
+# put while the step count, and with it the launch count, does not grow.
+# ponytail: a fixed lane target; derive it from the budget if a step outgrows it.
+_ROW_BATCH = 64
+_STEP_LANES = 32768
 _FLAT_OPERAND_PATH_LENGTH = 2
 
 
 class QueryKind(StrEnum):
-    """Action problems and explicitly distinct nonpublishing arrival readers."""
+    """Action problems and explicitly distinct nonpublishing participation readers."""
 
     RAW = "Raw"
     PARTICIPATING = "Participating"
     FULL = "Full"
-    ARRIVAL = "Arrival"
+    PARTICIPATION = "Participation"
     INTEGRATED_FULL = "IntegratedFull"
 
 
@@ -190,9 +197,11 @@ def demanded_query_order(
                 raise ValueError(f"Query {name!r} cannot read Full query {upstream!r}.")
             if (
                 reads[upstream].kind is QueryKind.INTEGRATED_FULL
-                and reads[name].kind is not QueryKind.ARRIVAL
+                and reads[name].kind is not QueryKind.PARTICIPATION
             ):
-                raise ValueError("Only an arrival comparison may read IntegratedFull.")
+                raise ValueError(
+                    "Only a participation comparison may read IntegratedFull."
+                )
         graph[name] = dependencies[name]
         pending.extend(reversed(dependencies[name]))
     try:
@@ -234,7 +243,7 @@ class QueryNode:
     observation_counts: tuple[int, ...] = ()
     """Declared original row count of each target-only observation group."""
     operand_builder: CoreArgumentBuilder | None = None
-    """Explicit numeric operands for a nonpublishing arrival/value reader."""
+    """Explicit numeric operands for a nonpublishing participation/value reader."""
     operand_value_reads: tuple[ValueRead, ...] = ()
     """Absolute native value authority of that reader's dynamic operands."""
     answer_shape: tuple[int, ...] | None = None
@@ -292,15 +301,18 @@ class QueryNode:
 
     def _validate_reader_contract(self) -> None:
         """Keep nonpublishing numeric readers out of policy action entrypoints."""
-        consumer = self.read.kind in {QueryKind.ARRIVAL, QueryKind.INTEGRATED_FULL}
+        consumer = self.read.kind in {
+            QueryKind.PARTICIPATION,
+            QueryKind.INTEGRATED_FULL,
+        }
         if consumer:
             if self.operand_builder is None or self.decision is None:
                 raise ValueError(
-                    "An arrival reader needs explicit operands and a rule."
+                    "A participation reader needs explicit operands and a rule."
                 )
             if self.participation is not None:
                 raise ValueError(
-                    "An arrival reader cannot define action participation."
+                    "A participation reader cannot define action participation."
                 )
             if self.read.kind is QueryKind.INTEGRATED_FULL and self.inputs:
                 raise ValueError("An integrated value reader cannot read policies.")
@@ -350,7 +362,7 @@ type PolicyAnswer = tuple[FloatND, IntND, BoolND, BoolND, IntND]
 
 
 def _query_landing_checks(*, node: QueryNode) -> tuple[LandingCheck, ...]:
-    if node.read.kind in {QueryKind.ARRIVAL, QueryKind.INTEGRATED_FULL}:
+    if node.read.kind in {QueryKind.PARTICIPATION, QueryKind.INTEGRATED_FULL}:
         return ()
     return getattr(
         node.context.Q_and_F_functions[node.read.period], "landing_checks", ()
@@ -581,7 +593,7 @@ class ScalarPolicyQueries:
     def _node_value_reads(self) -> tuple[tuple[str, ValueRead], ...]:
         """Each node's continuation reads, walked once per graph for every core key.
 
-        Nested arrival graphs share query instances, so the walk is linear in the
+        Nested participation graphs share query instances, so the walk is linear in the
         distinct graphs rather than in the paths through them.
         """
         return tuple(
@@ -775,7 +787,11 @@ def build_policy_query_kernel(
             },
         )
         cores[name] = _QueryCore(
-            node=node, period=period, name=name, definitions=definitions
+            node=node,
+            period=period,
+            name=name,
+            definitions=definitions,
+            row_batch=_row_batch(chunk_size=chunk_size),
         )
         reads.extend(
             replace(
@@ -825,6 +841,9 @@ def build_policy_query_kernel(
                 host_buffers=host_buffers,
                 host_axis_names=("query_cell",),
             ),
+            # The chunk is bound by the function, not its arguments: halved chunks
+            # can pad to one bank shape and must not share one executable.
+            compiler_options=(("query_chunk", chunk_size),),
             output_roles=(
                 StateAxesLeading(state_names=(), shape=bank_shape, dtype=dtype),
                 StateAxesLeading(
@@ -1212,12 +1231,12 @@ class _QueryArguments:
 
 
 def query_parameter_namespaces(*, builder: CoreArgumentBuilder) -> frozenset[str]:
-    """Name fixed parameter roots read by native queries, including arrivals."""
-    from _lcm.arrival_publication import _PublicationArguments  # noqa: PLC0415
-    from _lcm.arrival_queries import (  # noqa: PLC0415
-        ArrivalSourceArguments,
-        _ArrivalArguments,
+    """Name fixed parameter roots read by native and participation queries."""
+    from _lcm.participation_publication import _PublicationArguments  # noqa: PLC0415
+    from _lcm.participation_queries import (  # noqa: PLC0415
+        ParticipationSourceArguments,
         _IntegratedArguments,
+        _ParticipationArguments,
     )
 
     while isinstance(builder, _PublicationArguments):
@@ -1225,22 +1244,22 @@ def query_parameter_namespaces(*, builder: CoreArgumentBuilder) -> frozenset[str
     if isinstance(builder, _GridSearchArgumentBuilder):
         return frozenset(
             name
-            for plan in builder.arrival_queries.values()
+            for plan in builder.participation_queries.values()
             for node in plan.queries.definitions.values()
             for name in _query_node_parameter_namespaces(node=node, information=False)
         ) | (
             frozenset(name for name, _, _ in builder.current_iid_plan.bindings)
-            if builder.arrival_queries and builder.current_iid_plan is not None
+            if builder.participation_queries and builder.current_iid_plan is not None
             else frozenset()
         )
-    if isinstance(builder, ArrivalSourceArguments):
+    if isinstance(builder, ParticipationSourceArguments):
         return query_parameter_namespaces(builder=builder.base) | frozenset(
             name
             for plan in builder.plans.values()
             for node in plan.queries.definitions.values()
             for name in _query_node_parameter_namespaces(node=node, information=False)
         )
-    if isinstance(builder, _ArrivalArguments):
+    if isinstance(builder, _ParticipationArguments):
         return frozenset(
             name
             for name, _, _ in (() if builder.plan is None else builder.plan.bindings)
@@ -1271,13 +1290,13 @@ def _query_node_parameter_namespaces(
     *, node: QueryNode, information: bool
 ) -> frozenset[str]:
     """Mirror the node's action/law and exact producing projection operands."""
-    from _lcm.arrival_queries import _ArrivalArguments  # noqa: PLC0415
+    from _lcm.participation_queries import _ParticipationArguments  # noqa: PLC0415
 
     plan = (
         node.context.current_iid_plans.get(node.read.period)
         if node.operand_builder is None
         else node.operand_builder.plan
-        if isinstance(node.operand_builder, _ArrivalArguments)
+        if isinstance(node.operand_builder, _ParticipationArguments)
         else None
     )
     names = {name for name, _, _ in (() if plan is None else plan.bindings)} | {
@@ -1290,7 +1309,7 @@ def _query_node_parameter_namespaces(
             names.add(node.context.regime_name)
             names.update(
                 name
-                for plan in node.context.arrival_queries.get(
+                for plan in node.context.participation_queries.get(
                     node.read.period, {}
                 ).values()
                 for child in plan.queries.definitions.values()
@@ -1366,6 +1385,8 @@ class _QueryCore:
         default=MappingProxyType({}), repr=False
     )
     """Whole query graph; omitted from the repr `jax.jit` takes of this callable."""
+    row_batch: int = _ROW_BATCH
+    """Information support rows evaluated together per step."""
 
     def __call__(self, **arguments: PytreeValue) -> PolicyAnswer:
         """Select target actions at mapped coordinates, retaining common tuples."""
@@ -1400,6 +1421,7 @@ class _QueryCore:
                     "Mapping[str, Mapping[str, PytreeValue]]",
                     arguments.get(_INFORMATION, {}),
                 ),
+                row_batch=self.row_batch,
             )
         else:
             cell = functools.partial(
@@ -1445,6 +1467,11 @@ class _QueryCore:
             jnp.all(answer[3]),
             _query_landing_totals(counts=answer[4]),
         )
+
+
+def _row_batch(*, chunk_size: int) -> int:
+    """Support rows per step for a chunk of `chunk_size` source cells."""
+    return max(_ROW_BATCH, _STEP_LANES // chunk_size)
 
 
 def map_lanes[T: PytreeValue, R: PytreeValue](
@@ -1655,11 +1682,11 @@ def _active_query_cell(
     arguments = {**fixed, **projection_operands, **mapped}
     arguments.setdefault(_PHYSICAL_CONTEXTS, {})
     context = node.context
-    if node.read.kind in {QueryKind.ARRIVAL, QueryKind.INTEGRATED_FULL}:
+    if node.read.kind in {QueryKind.PARTICIPATION, QueryKind.INTEGRATED_FULL}:
         operands = {**arguments, **dependencies}
         decision = node.decision
         if decision is None:
-            raise ValueError("An arrival reader needs its declared decision rule.")
+            raise ValueError("A participation reader needs its declared decision rule.")
         answer = decision(
             **{name: operands[name] for name in inspect.signature(decision).parameters}
         )
@@ -1959,7 +1986,7 @@ def _shared_evaluation(
 ) -> EvaluatedQAndF:
     """Trace one action problem once per abstract signature, however often read.
 
-    An arrival continuation prices the target's own action problem at the
+    A participation continuation prices the target's own action problem at the
     landing date, so a query's Q/F contains the next date's queries, whose Q/F
     contains the date after. Inlined, every read re-traces that whole subtree.
     A nested `jax.jit` keys the trace on the function and its abstract inputs:

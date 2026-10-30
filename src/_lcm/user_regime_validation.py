@@ -331,14 +331,14 @@ def validate_regime_law(regime: Regime, *, law: RegimeLaw) -> None:
     """
     if law.gated_edges:
         _validate_gated_edges(regime=regime, law=law)
-    # An arrival's route and read keys become parameter-path segments, as a
+    # A participation check's route and read keys become parameter-path segments, as a
     # gated edge's route keys do.
     if errors := [
         error
-        for target_name, decision in law.arrivals.items()
+        for target_name, decision in law.participation.items()
         for kind, names in (("route", decision.routes), ("read", decision.reads))
         for error in path_segment_name_errors(
-            kind=f"the arrival into {target_name!r}: {kind}", names=names
+            kind=f"the participation check into {target_name!r}: {kind}", names=names
         )
     ]:
         raise RegimeInitializationError(format_messages(errors))

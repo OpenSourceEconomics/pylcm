@@ -11,14 +11,30 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   set it since `fold=` was removed, so it was always empty. A custom solver that read it
   must drop the read.
 
-### EGM regimes refuse IID shocks entering utility
+### Arrival decisions are participation checks
+
+- Breaking API: `lcm.ArrivalDecision` is renamed `lcm.ParticipationCheck`,
+  `lcm.ArrivalRead` is `lcm.ParticipationRead`, and `Transition(arrivals=...)` is
+  `Transition(participation=...)`. The construct also re-checks continuing couples
+  (couple → couple, where failure means divorce); it is the per-period limited-commitment
+  participation constraint. There are no aliases; see
+  [Arrival → participation check](docs/user_guide/migrating_dated_regimes.md#arrival-participation-check).
+- The read-projection parameter path `params["edges"][source][target]["references"]`
+  is now `["reads"]`, named after `ParticipationCheck.reads`.
+- `SOLUTION_FORMAT_VERSION` is 3: archives store participation surfaces under renamed
+  manifest keys, and version-2 archives no longer load.
+
+### EGM regimes refuse fixed-node processes entering utility
 
 - An endogenous-grid regime (`DCEGM`, `NBEGM`, `NEGM`, `NNBEGM`) whose `utility` reads
-  an IID process state or a `shocks=` draw other than through its resources function
-  now raises `ModelInitializationError` at `Model(...)`. Simulation used to blend the
-  bracketing node policies for such a draw, an approximation for a shock that changes
-  preferences. Move the shock into resources, or solve the regime with `GridSearch`;
-  see [DC-EGM](docs/reference/solvers.md#api-dcegm).
+  a process state (IID or AR(1), such as Tauchen, Rouwenhorst or `on_nodes`) or a
+  `shocks=` draw other than through its resources function now raises
+  `ModelInitializationError` at `Model(...)`, unless the process is declared with
+  `simulate_draws="nodes"`. Simulation used to blend the bracketing node policies for a
+  draw between nodes, an approximation for a process that changes preferences; node
+  draws read one node row exactly. Move the process into resources, declare it with
+  `simulate_draws="nodes"`, or solve the regime with `GridSearch`; see
+  [DC-EGM](docs/reference/solvers.md#api-dcegm).
 
 ### Dissolution-flag artifact key removed
 
@@ -65,8 +81,8 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - A `Gate` predicate naming `V_target`, `V_target_<s>` or `D_target` raises the new
   `lcm.exceptions.GateReadsValueError` when the gate is declared, and
   `Gate(references=...)` raises `TypeError`. Declare a value comparison made in the
-  current period as an `Exit` in `Regime(exits=...)`, and one made on landing as an
-  `ArrivalDecision` with named `ArrivalRead`s in `Transition(arrivals=...)`; see
+  current period as an `Exit` in `Regime(exits=...)`, and one made on landing as a
+  `ParticipationCheck` with named `ParticipationRead`s in `Transition(participation=...)`; see
   [Gates route on states only](docs/user_guide/migrating_dated_regimes.md#gates-route-on-states-only).
 - `solve()` no longer publishes a `DISSOLUTION_FLAG` replay artifact, and
   `simulate(solution=...)` reads none. A household landing in a gated target cell where

@@ -2,12 +2,12 @@
 
 The first model isolates the household's shared argmax with stakeholder-specific
 values, declared as a single `CollectiveUtility`. The second adds same-period outside
-options through a current `Exit` participation rule, and an `ArrivalDecision`
+options through a current `Exit` participation rule, and a `ParticipationCheck`
 that reads actual participating-policy support. The participation thresholds
 allow slack without deducting it from the single payoff on dissolution. The
 state and action spaces remain hand-checkable.
 
-The arrival decision belongs to the incoming married edge. Its admitted branch
+The participation check belongs to the incoming married edge. Its admitted branch
 is the continuing collective regime; each stakeholder's fallback is that
 stakeholder's own singleton regime.
 """
@@ -20,13 +20,13 @@ import jax.numpy as jnp
 from lcm import (
     AgeGrid,
     AgeRange,
-    ArrivalDecision,
-    ArrivalRead,
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -244,7 +244,7 @@ def get_dissolution_model(
     """Build a three-period collective model with participation and dissolution.
 
     At wage two, neither household action satisfies both participation constraints.
-    The arrival decision reads the couple's participating policy support on
+    The participation check reads the couple's participating policy support on
     landing, and routes each stakeholder to their own singleton fallback where it
     is empty.
     """
@@ -290,11 +290,11 @@ def get_dissolution_model(
             }
         }
     )
-    married_arrivals = {
-        "married_with_participation": ArrivalDecision(
+    married_participation = {
+        "married_with_participation": ParticipationCheck(
             predicate=_has_policy_support,
             reads={
-                "target_support": ArrivalRead(
+                "target_support": ParticipationRead(
                     regime="married_with_participation",
                     stakeholder="f",
                     kind="Participating",
@@ -341,7 +341,7 @@ def get_dissolution_model(
     )
     return Model(
         edges={
-            "married": Transition(law=married_law, arrivals=married_arrivals),
+            "married": Transition(law=married_law, participation=married_participation),
             "married_with_participation": {"married_terminal": 1},
         },
         regimes={
@@ -354,6 +354,7 @@ def get_dissolution_model(
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=DissolutionRegimeId,
         initial_nodes={0: "married"},
-        description="Participation constraints and an arrival dissolution decision.",
+        description="Participation constraints and a participation check dissolution "
+        "decision.",
         execution_config=execution_config,
     )
