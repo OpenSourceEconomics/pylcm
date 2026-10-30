@@ -66,7 +66,6 @@ from _lcm.engine import (
     Variables,
     place_template_on_regime_devices,
 )
-from _lcm.execution.value_transfer import ValueArtifactAddress
 from _lcm.grids import Grid
 from _lcm.materialization import DatedGenerationMaterializer
 from _lcm.post_decision_bound import PostDecisionBoundSpec
@@ -299,15 +298,16 @@ class SolverBuildContext:
     )
     """Actual next-date policy/value read graphs inside this source's Q/F."""
 
-    arrival_surfaces: Mapping[int, Mapping[RegimeName, ValueArtifactAddress]] = field(
+    arrival_surfaces: ArrivalQueriesMapping = field(
         default_factory=lambda: MappingProxyType({}),
         metadata={"fingerprint_omit_if_default": True},
     )
-    """Stored arrival surface each arrival target's continuation reads, by period.
+    """Arrival plan whose stored surface each arrival target's continuation reads.
 
     Set only on the contexts an arrival plan rebuilds an action problem from.
     There the action problem's next-date arrivals read the source's stored
-    surface by ordinary value interpolation instead of nesting another plan.
+    surface -- the plan's branches and decision operands, interpolated and
+    decided again at the landing -- instead of nesting another plan.
     """
 
     arrival_publications: ArrivalPublicationsMapping = field(

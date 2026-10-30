@@ -46,8 +46,11 @@ def stored_arrival_surface(
         return surfaces[address.period][address.regime][address.leaf_path[-1]]
     except KeyError as error:
         raise ExecutionPlanningError(
-            "Arrival replay is missing its stored arrival surface; simulate from "
-            "a solution this model produced in this process."
+            "Arrival replay is missing its stored arrival surface for "
+            f"{address.leaf_path[-1]!r} at period {address.period}, published by "
+            f"{address.regime!r}. Simulate from a solution of this model, as "
+            "solved or as loaded from its saved archive; a copy that dropped its "
+            "arrival surfaces cannot replay."
         ) from error
 
 

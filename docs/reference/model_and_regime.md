@@ -334,6 +334,12 @@ functions and target helpers retain their own regime parameter namespaces; tempo
 values are selected for the arrival date, rather than the incoming source's decision
 date.
 
+A source prices its next arrival decision exactly at every landing. An arrival decision
+at a later date is taken again at each landing from a stored per-period surface of its
+branches and operands, each interpolated between grid nodes: exact where landings fall
+on nodes, approximate between them; see
+[Participation checks over several periods](../user_guide/collective_regimes.md#participation-check-depth).
+
 (api-arrival-reads)=
 
 ### `ArrivalRead`
