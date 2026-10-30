@@ -5,6 +5,10 @@ log felicity, terminal utility `log(wealth)`, no discounting, and a savings floo
 1.5 at the savings-grid origin. Saving `R / 2` is optimal while that clears the floor,
 so the value is `2 log(R / 2)` for `R >= 3` and `log(R - 1.5) + log(1.5)` below it,
 where the floor binds and the agent consumes everything above it.
+
+The same model is solved on both DC-EGM kernel routes: once with a wealth law that reads
+only savings, and once with a law that also reads current wealth (with a zero
+coefficient), which moves the solve to the per-asset-node route.
 """
 
 import jax.numpy as jnp
@@ -61,6 +65,12 @@ def _next_wealth(*, savings: FloatND) -> ContinuousState:
     return savings
 
 
+def _next_wealth_reading_wealth(
+    *, savings: FloatND, wealth: ContinuousState
+) -> ContinuousState:
+    return savings + 0.0 * wealth
+
+
 def _terminal_utility(*, wealth: ContinuousState) -> FloatND:
     return jnp.log(wealth)
 
@@ -73,7 +83,7 @@ _MARGIN = LiquidMargin(
 )
 
 
-def _model(*, n_savings: int) -> Model:
+def _model(*, n_savings: int, asset_rows: bool) -> Model:
     savings_grid = IrregSpacedGrid(points=np.linspace(_FLOOR, 6.0, n_savings))
     alive = ConsumptionSavingsRegime(
         states={"wealth": _WEALTH},
@@ -84,7 +94,11 @@ def _model(*, n_savings: int) -> Model:
             "savings": _savings,
             "inverse_marginal_utility": _inverse_marginal_utility,
         },
-        state_transitions={"wealth": {"done": _next_wealth}},
+        state_transitions={
+            "wealth": {
+                "done": _next_wealth_reading_wealth if asset_rows else _next_wealth
+            }
+        },
         constraints={
             "borrowing_limit": post_decision_lower_bound(margin=_MARGIN, lower=_FLOOR)
         },
@@ -104,10 +118,13 @@ def _model(*, n_savings: int) -> Model:
     )
 
 
+@pytest.mark.parametrize("asset_rows", [False, True], ids=["pooled", "asset_rows"])
 @pytest.mark.parametrize("n_savings", [12, 96])
-def test_binding_floor_cells_publish_the_closed_form_value(n_savings: int) -> None:
+def test_binding_floor_cells_publish_the_closed_form_value(
+    *, n_savings: int, asset_rows: bool
+) -> None:
     """Below the kink the published value is `log(R - 1.5) + log(1.5)`."""
-    model = _model(n_savings=n_savings)
+    model = _model(n_savings=n_savings, asset_rows=asset_rows)
     published = np.asarray(model.solve(params={}, log_level="off").values[0]["alive"])
     resources = np.asarray(_WEALTH.to_jax()) + 1.0
     binding = resources < 2 * _FLOOR
