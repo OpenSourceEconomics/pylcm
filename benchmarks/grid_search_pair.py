@@ -752,8 +752,6 @@ def _is_scenario_target(
 ) -> bool:
     if scenario == "singleton-ev1":
         return bool(row["has_taste_shocks"])
-    if scenario == "folded-hard-max":
-        return bool(row["fold_state_names"])
     if scenario == "collective-gs-vd":
         return bool(row["collective"]) and row["regime"] in routes["gs_vd_regimes"]
     if scenario == "distributed-co-map":
