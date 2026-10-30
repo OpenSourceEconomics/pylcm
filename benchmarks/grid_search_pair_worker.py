@@ -472,7 +472,14 @@ def _kernel_execution_metadata(kernel: PeriodKernel) -> _KernelExecution:
                 or getattr(answer, "producer", None) != root
                 or getattr(answer, "label", None) != "answer"
                 or set(programs)
-                != {*definitions, "_initialize", "_source", "_publish", "_finish"}
+                != {
+                    *definitions,
+                    "_initialize",
+                    "_source",
+                    "_publish",
+                    "_chunks",
+                    "_finish",
+                }
             ):
                 raise RuntimeError(
                     "GridSearch benchmark expected native 'main' or the declared "

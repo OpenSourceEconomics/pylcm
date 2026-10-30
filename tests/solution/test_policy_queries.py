@@ -541,7 +541,7 @@ def _keep_both(*, q: FloatND, left: PolicyAnswer, right: PolicyAnswer) -> FloatN
 
 
 def test_recomputation_reruns_the_identical_native_producer(*, monkeypatch) -> None:
-    """A shared Raw query can be evicted and replayed byte for byte per chunk."""
+    """Retained and recomputed schedules publish identical bits in one loop."""
     model = _native_model(enable_jit=True)
     original = model._regimes["root"]
     initial = original.solution.period_kernels[0]
@@ -618,14 +618,9 @@ def test_recomputation_reruns_the_identical_native_producer(*, monkeypatch) -> N
 
     install(kernel)
     result = model.solve(params={}, log_level="off", runtime_checks=False)
-    retained_raw = [item for item in runs[0] if item[0] == "raw"]
-    recomputed_raw = [item for item in runs[1] if item[0] == "raw"]
-    assert len(retained_raw) == 2
-    assert len(recomputed_raw) == 4
-    assert [item[2] for item in recomputed_raw] == [
-        item[2] for item in retained_raw for _ in range(2)
-    ]
-    assert {item[1] for item in retained_raw} == {item[1] for item in recomputed_raw}
+    assert [item[0] for item in runs[0]] == ["_initialize", "_chunks", "_finish"]
+    assert [item[0] for item in runs[1]] == [item[0] for item in runs[0]]
+    assert [item[2] for item in runs[1]] == [item[2] for item in runs[0]]
     np.testing.assert_array_equal(
         result.values[0]["root"], [[2, 0.5], [3, 1.5], [2, 5]]
     )
@@ -634,11 +629,17 @@ def test_recomputation_reruns_the_identical_native_producer(*, monkeypatch) -> N
 def test_native_query_bank_is_owned_and_published_by_native_programs(
     *, monkeypatch
 ) -> None:
-    """Host-loop output banks have declared storage and compiled write/read owners."""
+    """The chunk loop's bank has declared storage and compiled write/read owners."""
     model = _native_model(enable_jit=True)
     kernel = model._regimes["root"].solution.period_kernels[0]
     assert isinstance(kernel, queries._PolicyQueryKernel)
-    assert {"_initialize", "_source", "_publish", "_finish"} <= kernel.programs.keys()
+    assert {
+        "_initialize",
+        "_source",
+        "_publish",
+        "_chunks",
+        "_finish",
+    } <= kernel.programs.keys()
     for program in kernel.programs.values():
         banks = program.requirements.host_buffers["query_banks"]
         assert isinstance(banks, jax.ShapeDtypeStruct)
@@ -662,13 +663,68 @@ def test_native_query_bank_is_owned_and_published_by_native_programs(
 
     monkeypatch.setattr(type(kernel), "__call__", observe)
     result = model.solve(params={}, log_level="off", runtime_checks=False)
-    assert calls.count("_initialize") == 1
-    assert calls.count("_source") == 2
-    assert calls.count("_publish") == 2
-    assert calls.count("_finish") == 1
+    assert calls == ["_initialize", "_chunks", "_finish"]
     np.testing.assert_array_equal(
         result.values[0]["root"], [[2, 0.5], [3, 1.5], [2, 5]]
     )
+
+
+def _solve_counting_dispatches(*, model: Model) -> tuple[list[str], FloatND]:
+    """Solve, returning every compiled query core dispatch and the root value."""
+    kernel = model._regimes["root"].solution.period_kernels[0]
+    calls = []
+    invoke = type(kernel).__call__
+
+    def record(*, name, compiled, arguments):
+        calls.append(name)
+        return compiled(**arguments)
+
+    def observe(self, **arguments):
+        cores = arguments["compiled_cores"]
+        arguments["compiled_cores"] = {
+            name: lambda _name=name, _compiled=compiled, **kwargs: record(
+                name=_name, compiled=_compiled, arguments=kwargs
+            )
+            for name, compiled in cores.items()
+        }
+        return invoke(self, **arguments)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(type(kernel), "__call__", observe)
+        result = model.solve(params={}, log_level="off", runtime_checks=False)
+    return calls, result.values[0]["root"]
+
+
+def test_query_dispatches_do_not_grow_with_the_number_of_chunks() -> None:
+    """One period's query closure dispatches a fixed number of executables."""
+    dispatches = {
+        chunk_size: _solve_counting_dispatches(
+            model=_native_model(enable_jit=True, source_size=8, chunk_size=chunk_size)
+        )[0]
+        for chunk_size in (1, 3, 8)
+    }
+    assert dispatches[1] == dispatches[3] == dispatches[8]
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_query_chunk_width_keeps_values_bitwise(*, enable_jit: bool) -> None:
+    """Unit, ragged-tail and whole-domain chunks publish identical value bits."""
+    values = {
+        chunk_size: np.asarray(
+            _solve_counting_dispatches(
+                model=_native_model(
+                    enable_jit=enable_jit, source_size=8, chunk_size=chunk_size
+                )
+            )[1]
+        )
+        for chunk_size in (1, 3, 8)
+    }
+    expected = [
+        [wealth + 2, wealth + 0.5] if wealth < 2 else [wealth, wealth + 3]
+        for wealth in range(8)
+    ]
+    np.testing.assert_array_equal(values[8], expected)
+    assert values[1].tobytes() == values[3].tobytes() == values[8].tobytes()
 
 
 def test_compiler_budget_selects_a_complete_smaller_common_chunk(
@@ -716,23 +772,15 @@ def test_compiler_budget_selects_a_complete_smaller_common_chunk(
 
 
 @pytest.mark.parametrize("failure", ["exception", "status"])
-def test_failed_query_reader_keeps_inputs_uncommitted_and_drains(
+def test_failed_query_chunks_never_publish_and_drain(
     *, monkeypatch, failure: str
 ) -> None:
-    """A failed reader neither releases its producer nor publishes a value bank."""
+    """A failed chunk loop or reader status publishes no value bank and drains."""
     model = _native_model(enable_jit=True)
     kernel = model._regimes["root"].solution.period_kernels[0]
-    ledgers = []
     events = []
-    held = []
-    ledger_type = queries.PlannedInputLiveness
     invoke = type(kernel).__call__
     close = queries.PendingSolveWork.close
-
-    def ledger(**kwargs):
-        instance = ledger_type(**kwargs)
-        ledgers.append(instance)
-        return instance
 
     def drain(self):
         events.append("drain")
@@ -740,45 +788,43 @@ def test_failed_query_reader_keeps_inputs_uncommitted_and_drains(
 
     def observe(self, **arguments):
         cores = dict(arguments["compiled_cores"])
-        target = cores["target"]
-        root = cores["root"]
-
-        def produce(**kwargs):
-            answer = target(**kwargs)
-            held.append(answer)
-            return answer
+        chunks = cores["_chunks"]
 
         def reject(**kwargs):
-            events.append("reader")
+            events.append("chunks")
             if failure == "exception":
                 raise RuntimeError("seeded query reader failure")
-            answer = root(**kwargs)
-            return (*answer[:3], jnp.zeros_like(answer[3]), answer[4])
+            bank, statuses, totals = chunks(**kwargs)
+            return bank, statuses.at[-1].set(False), totals
 
         def publish(**kwargs):
             del kwargs
             pytest.fail("A failed reader must never publish.")
 
-        arguments["compiled_cores"] = {
-            **cores,
-            "target": produce,
-            "root": reject,
-            "_publish": publish,
-        }
+        arguments["compiled_cores"] = {**cores, "_chunks": reject, "_finish": publish}
         return invoke(self, **arguments)
 
-    monkeypatch.setattr(queries, "PlannedInputLiveness", ledger)
     monkeypatch.setattr(queries.PendingSolveWork, "close", drain)
     monkeypatch.setattr(type(kernel), "__call__", observe)
     with pytest.raises(
-        (RuntimeError, backward.ExecutionPlanningError), match=r"failure|status"
+        (RuntimeError, backward.ExecutionPlanningError), match=r"failure|'root'.*status"
     ):
         model.solve(params={}, log_level="off", runtime_checks=False)
-    assert events == ["reader", "drain"]
-    assert not ledgers[0].is_release_eligible(artifact=(0, "target", 0, "answer"))
-    assert all(not array.is_deleted() for array in jax.tree.leaves(held))
-    with pytest.raises(RuntimeError, match="uncommitted"):
-        ledgers[0].assert_solve_complete()
+    assert events == ["chunks", "drain"]
+
+
+def test_single_reader_closure_narrows_by_halving_the_chunk() -> None:
+    """Recomputing an answer read once frees nothing, so narrowing halves at once."""
+    kernel = (
+        _native_model(enable_jit=True, chunk_size=2)
+        ._regimes["root"]
+        .solution.period_kernels[0]
+    )
+    assert isinstance(kernel, queries._PolicyQueryKernel)
+    narrowed = kernel.narrow_workspace()
+    assert isinstance(narrowed, queries._PolicyQueryKernel)
+    assert (narrowed.recompute, narrowed.chunk_size) == (False, 1)
+    assert narrowed.narrow_workspace() is None
 
 
 def test_exhausted_common_chunk_refuses_without_dispatch(*, monkeypatch) -> None:

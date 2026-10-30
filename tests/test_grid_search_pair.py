@@ -634,6 +634,7 @@ def _full_metadata_kernel() -> _MetadataKernel:
             "raw": decoy,
             "full": _metadata_program(disposition="planned", action_reduction=False),
             "_publish": publisher,
+            "_chunks": decoy,
             "_finish": decoy,
         }
     )
