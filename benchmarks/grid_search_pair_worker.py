@@ -461,31 +461,27 @@ def _kernel_execution_metadata(kernel: PeriodKernel) -> _KernelExecution:
             definitions = getattr(authority, "definitions", {})
             read = getattr(definitions.get(root), "read", None)
             context = getattr(authority, "root_context", None)
-            publisher = programs.get("_publish")
-            requirements = getattr(publisher, "requirements", None)
-            answer = getattr(requirements, "internal_inputs", {}).get("answer")
+            program = programs.get("_chunks")
+            schedule = getattr(getattr(program, "function", None), "schedule", ())
             if (
-                root not in programs
-                or getattr(read, "kind", None) != "Full"
+                getattr(read, "kind", None) != "Full"
                 or getattr(read, "target", None)
                 != getattr(context, "regime_name", None)
-                or getattr(answer, "producer", None) != root
-                or getattr(answer, "label", None) != "answer"
-                or set(programs)
-                != {
-                    *definitions,
+                or not schedule
+                or getattr(schedule[-1], "name", None) != root
+                or not {"_initialize", "_chunks", "_finish"}
+                <= set(programs)
+                <= {
                     "_initialize",
-                    "_source",
-                    "_publish",
                     "_chunks",
                     "_finish",
+                    *(() if authority is kernel else ("_arrival_surfaces",)),
                 }
             ):
                 raise RuntimeError(
                     "GridSearch benchmark expected native 'main' or the declared "
                     "occupant Full publication graph."
                 )
-            program = programs[root]
         raw_disposition = program.disposition
         disposition = getattr(raw_disposition, "value", raw_disposition)
         reduced_axes = getattr(program.requirements, "reduced_axes", None)

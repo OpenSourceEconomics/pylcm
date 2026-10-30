@@ -26,8 +26,6 @@ from _lcm.execution.core_program import (
     CoreExecutionRequirements,
     CoreProgram,
     InternalDispatch,
-    InternalInputRef,
-    InternalOutputSpec,
     ValueRead,
 )
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
@@ -704,19 +702,10 @@ def build_policy_query_kernel(
     definitions: Mapping[str, QueryNode],
     root: str,
     chunk_size: int,
-    recompute: bool = False,
 ) -> _PolicyQueryKernel:
-    """Expand one genuine occupant root into a common-chunk native query graph."""
+    """Expand one genuine occupant root into a common-chunk native query loop."""
     if isinstance(chunk_size, bool) or chunk_size < 1:
         raise ValueError("A native query chunk must be positive.")
-    if {
-        "_initialize",
-        "_source",
-        "_publish",
-        "_finish",
-        "_chunks",
-    } & definitions.keys():
-        raise ValueError("Query keys collide with native publication programs.")
     _admit_query_solver(context=root_context, period=period)
     root_space = root_context.state_action_space
     size = math.prod(value.size for value in root_space.states.values())
@@ -729,20 +718,7 @@ def build_policy_query_kernel(
     bank_shape = (math.ceil(size / chunk_size) * chunk_size, *stakeholder_shape)
     dtype = jnp.asarray(0.0).dtype
     host_buffers = MappingProxyType(
-        {
-            "query_banks": jax.ShapeDtypeStruct((2, *bank_shape), dtype),
-            "query_source_live": jax.ShapeDtypeStruct((chunk_size,), jnp.bool_),
-        }
-        | (
-            {
-                "query_source_states": {
-                    name: jax.ShapeDtypeStruct((chunk_size,), value.dtype)
-                    for name, value in root_space.states.items()
-                }
-            }
-            if root_space.states
-            else {}
-        )
+        {"query_banks": jax.ShapeDtypeStruct((2, *bank_shape), dtype)}
     )
     order = demanded_query_order(
         reads={name: node.read for name, node in definitions.items()},
@@ -756,48 +732,14 @@ def build_policy_query_kernel(
         or definitions[root].read.target != root_context.regime_name
     ):
         raise ValueError("Only the occupant root's own Full query may publish.")
-    programs = {
-        "_initialize": CoreProgram(
-            name="_initialize",
-            function=_initialize_bank(shape=bank_shape, dtype=dtype),
-            argument_builder=_EmptyArguments(),
-            requirements=CoreExecutionRequirements(
-                host_buffers=host_buffers, host_axis_names=("query_cell",)
-            ),
-            output_roles=StateAxesLeading(
-                state_names=(), shape=bank_shape, dtype=dtype
-            ),
-            disposition=CoreExecutionDisposition.PLANNED,
-        )
-    }
-    programs["_source"] = CoreProgram(
-        name="_source",
-        function=_source_chunk(width=chunk_size),
-        argument_builder=_SourceArguments(regime=root_context.regime_name),
-        requirements=CoreExecutionRequirements(
-            host_buffers=host_buffers, host_axis_names=("query_cell",)
-        ),
-        output_roles=(
-            {
-                name: StateAxesLeading(
-                    state_names=(), shape=(chunk_size,), dtype=value.dtype
-                )
-                for name, value in root_space.states.items()
-            },
-            StateAxesLeading(state_names=(), shape=(chunk_size,), dtype=jnp.bool_),
-        ),
-        internal_outputs=(
-            InternalOutputSpec(label="states", path=(0,)),
-            InternalOutputSpec(label="live", path=(1,)),
-        ),
-        disposition=CoreExecutionDisposition.PLANNED,
-    )
     builders: dict[str, _QueryArguments] = {}
+    cores: dict[str, _QueryCore] = {}
+    reads: list[ValueRead] = []
     for name in order:
         node = definitions[name]
         _admit_node(node=node, period=period)
         base, value_reads = _node_inputs(node=node, period=period)
-        builder = _QueryArguments(
+        builders[name] = _QueryArguments(
             node=node,
             base=base,
             information_nodes={
@@ -822,160 +764,83 @@ def build_policy_query_kernel(
                 )
             },
         )
-        builders[name] = builder
-        reads = tuple(
+        cores[name] = _QueryCore(
+            node=node, period=period, name=name, definitions=definitions
+        )
+        reads.extend(
             replace(
                 read,
                 source=replace(
-                    read.source, source_regime=root_context.regime_name, core_key=name
+                    read.source,
+                    source_regime=root_context.regime_name,
+                    core_key="_chunks",
+                    argument=_QUERY_ARGUMENTS,
+                    path=(
+                        name,
+                        read.source.argument or read.source.channel.value,
+                        *read.source.path,
+                    ),
                 ),
             )
             for read in value_reads
         )
-        from _lcm.query_information import (  # noqa: PLC0415 - keep information policy beside query core
-            has_information,
-            support_shape,
-        )
-
-        information = has_information(node=node, definitions=definitions, period=period)
-        information_shape = (
-            support_shape(node=node, definitions=definitions, period=period)
-            if information
-            else ()
-        )
-        shape = (chunk_size, *information_shape, *node.value_shape)
-        programs[name] = CoreProgram(
-            name=name,
-            function=_QueryCore(
-                node=node, period=period, name=name, definitions=definitions
-            ),
-            argument_builder=builder,
+    bank_arguments = _BankArguments(
+        regime=root_context.regime_name, shape=bank_shape, dtype=dtype
+    )
+    schedule = _query_schedule(definitions={name: definitions[name] for name in order})
+    programs = {
+        "_initialize": CoreProgram(
+            name="_initialize",
+            function=_initialize_bank(shape=bank_shape, dtype=dtype),
+            argument_builder=_EmptyArguments(),
             requirements=CoreExecutionRequirements(
-                value_reads=reads,
-                internal_inputs={
-                    operand: InternalInputRef(producer=producer, label="answer")
-                    for operand, producer in node.inputs.items()
-                }
-                | {
-                    _SOURCE: InternalInputRef(producer="_source", label="states"),
-                    _LIVE: InternalInputRef(producer="_source", label="live"),
-                },
-                host_axis_names=("query_cell",),
+                host_buffers=host_buffers, host_axis_names=("query_cell",)
+            ),
+            output_roles=StateAxesLeading(
+                state_names=(), shape=bank_shape, dtype=dtype
+            ),
+            disposition=CoreExecutionDisposition.PLANNED,
+        ),
+        "_chunks": CoreProgram(
+            name="_chunks",
+            function=_QueryChunks(
+                source=_source_chunk(width=chunk_size),
+                cores=MappingProxyType(cores),
+                schedule=schedule,
+                chunks=bank_shape[0] // chunk_size,
+            ),
+            argument_builder=_ChunkArguments(bank=bank_arguments, builders=builders),
+            requirements=CoreExecutionRequirements(
+                value_reads=tuple(reads),
                 host_buffers=host_buffers,
+                host_axis_names=("query_cell",),
             ),
             output_roles=(
+                StateAxesLeading(state_names=(), shape=bank_shape, dtype=dtype),
                 StateAxesLeading(
-                    state_names=(), shape=shape, dtype=jnp.asarray(0.0).dtype
+                    state_names=(), shape=(len(schedule),), dtype=jnp.bool_
                 ),
-                StateAxesLeading(
-                    state_names=(),
-                    shape=(chunk_size,),
-                    dtype=jnp.int32,
-                ),
-                StateAxesLeading(
-                    state_names=(),
-                    shape=(chunk_size, *information_shape),
-                    dtype=jnp.bool_,
-                ),
-                StateAxesLeading(state_names=(), shape=(), dtype=jnp.bool_),
-                StateAxesLeading(
-                    state_names=(),
-                    shape=(len(_query_landing_checks(node=node)),),
-                    dtype=jnp.int32,
+                tuple(
+                    StateAxesLeading(
+                        state_names=(),
+                        shape=(len(_query_landing_checks(node=cores[step.name].node)),),
+                        dtype=jnp.int32,
+                    )
+                    for step in schedule
                 ),
             ),
             disposition=CoreExecutionDisposition.PLANNED,
-            internal_outputs=(InternalOutputSpec(label="answer", path=()),),
-        )
-    bank_arguments = _BankArguments(
-        regime=root_context.regime_name,
-        shape=bank_shape,
-        dtype=dtype,
-    )
-    programs["_publish"] = CoreProgram(
-        name="_publish",
-        function=_write_query_chunk,
-        argument_builder=bank_arguments,
-        requirements=CoreExecutionRequirements(
-            internal_inputs={"answer": InternalInputRef(producer=root, label="answer")},
-            host_buffers=host_buffers,
-            host_axis_names=("query_cell",),
         ),
-        output_roles=StateAxesLeading(state_names=(), shape=bank_shape, dtype=dtype),
-        disposition=CoreExecutionDisposition.PLANNED,
-    )
-    programs["_finish"] = CoreProgram(
-        name="_finish",
-        function=_finish_bank(shape=value_shape, size=size),
-        argument_builder=replace(bank_arguments, write=False),
-        requirements=CoreExecutionRequirements(
-            host_buffers=host_buffers, host_axis_names=("query_cell",)
-        ),
-        output_roles=VALUE,
-        disposition=CoreExecutionDisposition.PLANNED,
-    )
-    retained = _query_schedule(
-        definitions={name: definitions[name] for name in order},
-        root=root,
-        recompute=False,
-    )
-    programs["_chunks"] = CoreProgram(
-        name="_chunks",
-        function=_QueryChunks(
-            source=_source_chunk(width=chunk_size),
-            cores={name: cast("_QueryCore", programs[name].function) for name in order},
-            schedule=retained,
-            chunks=bank_shape[0] // chunk_size,
-        ),
-        argument_builder=_ChunkArguments(
-            bank=replace(bank_arguments, write=False), builders=builders
-        ),
-        requirements=CoreExecutionRequirements(
-            value_reads=tuple(
-                replace(
-                    read,
-                    source=replace(
-                        read.source,
-                        core_key="_chunks",
-                        argument=_QUERY_ARGUMENTS,
-                        path=(
-                            name,
-                            read.source.argument or read.source.channel.value,
-                            *read.source.path,
-                        ),
-                    ),
-                )
-                for name in order
-                for read in programs[name].requirements.value_reads
+        "_finish": CoreProgram(
+            name="_finish",
+            function=_finish_bank(shape=value_shape, size=size),
+            argument_builder=bank_arguments,
+            requirements=CoreExecutionRequirements(
+                host_buffers=host_buffers, host_axis_names=("query_cell",)
             ),
-            host_buffers=host_buffers,
-            host_axis_names=("query_cell",),
+            output_roles=VALUE,
+            disposition=CoreExecutionDisposition.PLANNED,
         ),
-        output_roles=(
-            StateAxesLeading(state_names=(), shape=bank_shape, dtype=dtype),
-            StateAxesLeading(state_names=(), shape=(len(retained),), dtype=jnp.bool_),
-            tuple(
-                StateAxesLeading(
-                    state_names=(),
-                    shape=(len(_query_landing_checks(node=definitions[step.name])),),
-                    dtype=jnp.int32,
-                )
-                for step in retained
-            ),
-        ),
-        disposition=CoreExecutionDisposition.PLANNED,
-    )
-    schedule = _closed_query_schedule(
-        definitions={name: definitions[name] for name in order},
-        root=root,
-        recompute=recompute,
-    )
-    programs = {
-        name: replace(
-            program,
-            requirements=replace(program.requirements, internal_schedule=schedule),
-        )
-        for name, program in programs.items()
     }
     return _PolicyQueryKernel(
         programs=MappingProxyType(programs),
@@ -983,7 +848,6 @@ def build_policy_query_kernel(
         definitions=MappingProxyType({name: definitions[name] for name in order}),
         root=root,
         chunk_size=chunk_size,
-        recompute=recompute,
         root_context=root_context,
         period=period,
     )
@@ -1022,7 +886,6 @@ class _BankArguments:
     regime: RegimeName
     shape: tuple[int, ...]
     dtype: jnp.dtype
-    write: bool = True
 
     def __call__(
         self, context: CoreBuildContext
@@ -1030,12 +893,9 @@ class _BankArguments:
         sharding = context.next_regime_to_V_arr[self.regime].sharding
         if isinstance(sharding, jax.NamedSharding):
             sharding = jax.NamedSharding(sharding.mesh, jax.P())
-        arguments = {
-            "bank": jax.ShapeDtypeStruct(self.shape, self.dtype, sharding=sharding)
-        }
-        if self.write:
-            arguments["start"] = jax.ShapeDtypeStruct((), jnp.int32, sharding=sharding)
-        return MappingProxyType(arguments)
+        return MappingProxyType(
+            {"bank": jax.ShapeDtypeStruct(self.shape, self.dtype, sharding=sharding)}
+        )
 
 
 def _write_query_chunk(*, bank: FloatND, start: IntND, answer: PolicyAnswer) -> FloatND:
@@ -1233,26 +1093,6 @@ class _QueryChunks:
                     for step in self.schedule
                 ),
             ),
-        )
-
-
-@dataclass(frozen=True, kw_only=True)
-class _SourceArguments:
-    """Pass real source grids and an abstract scalar offset to native gathering."""
-
-    regime: RegimeName
-
-    def __call__(
-        self, context: CoreBuildContext
-    ) -> Mapping[str, PytreeValue | ShapeDtypePytree]:
-        sharding = context.next_regime_to_V_arr[self.regime].sharding
-        if isinstance(sharding, jax.NamedSharding):
-            sharding = jax.NamedSharding(sharding.mesh, jax.P())
-        return MappingProxyType(
-            {
-                "states": cast("StateActionSpace", context.state_action_space).states,
-                "start": jax.ShapeDtypeStruct((), jnp.int32, sharding=sharding),
-            }
         )
 
 
@@ -2171,7 +2011,6 @@ class _PolicyQueryKernel:
     definitions: Mapping[str, QueryNode]
     root: str
     chunk_size: int
-    recompute: bool
     root_context: SolverBuildContext
     period: int
     fixed_flat_params: FlatParams = MappingProxyType({})
@@ -2180,35 +2019,8 @@ class _PolicyQueryKernel:
         """Publish the sole native declaration authority."""
         return self.programs
 
-    def with_recomputation(self) -> Self:
-        """Change only the closed dispatch schedule, retaining producer functions."""
-        schedule = _closed_query_schedule(
-            definitions=self.definitions, root=self.root, recompute=True
-        )
-        return replace(
-            self,
-            recompute=True,
-            programs=MappingProxyType(
-                {
-                    name: replace(
-                        program,
-                        requirements=replace(
-                            program.requirements, internal_schedule=schedule
-                        ),
-                    )
-                    for name, program in self.programs.items()
-                }
-            ),
-        )
-
     def narrow_workspace(self) -> PeriodKernel | None:
-        """Recompute when that lowers the answer peak, else halve the common chunk."""
-        if not self.recompute:
-            recomputed = self.with_recomputation()
-            if _answer_peak(programs=recomputed.programs) < _answer_peak(
-                programs=self.programs
-            ):
-                return recomputed
+        """Halve the common chunk, refusing below one source cell."""
         if self.chunk_size == 1:
             return None
         candidate = build_policy_query_kernel(
@@ -2217,7 +2029,6 @@ class _PolicyQueryKernel:
             definitions=self.definitions,
             root=self.root,
             chunk_size=max(1, self.chunk_size // 2),
-            recompute=self.recompute,
         )
         return candidate.with_fixed_params(fixed_flat_params=self.fixed_flat_params)
 
@@ -2241,9 +2052,7 @@ class _PolicyQueryKernel:
             builders=builders,
             programs=MappingProxyType(
                 {
-                    name: replace(program, argument_builder=builders[name])
-                    if name in builders
-                    else replace(
+                    name: replace(
                         program,
                         argument_builder=replace(
                             cast("_ChunkArguments", program.argument_builder),
@@ -2324,96 +2133,17 @@ class _PolicyQueryKernel:
             owner.close()
 
 
-def _answer_peak(*, programs: Mapping[str, CoreProgram]) -> int:
-    """Largest sum of declared answer bytes held at once by the closed schedule."""
-    schedule = programs["_source"].requirements.internal_schedule
-    last_reads = {
-        producer: index
-        for index, step in enumerate(schedule)
-        for producer in step.inputs.values()
-    }
-    live: dict[tuple[str, int], int] = {}
-    peak = 0
-    for index, step in enumerate(schedule):
-        live[step.identity] = sum(
-            math.prod(cast("tuple[int, ...]", role.shape))
-            * jnp.dtype(role.dtype).itemsize
-            for role in jax.tree.leaves(programs[step.name].output_roles)
-        )
-        peak = max(peak, sum(live.values()))
-        for producer, last in last_reads.items():
-            if last == index:
-                live.pop(producer, None)
-    return peak
-
-
-def _closed_query_schedule(
-    *, definitions: Mapping[str, QueryNode], root: str, recompute: bool
-) -> tuple[InternalDispatch, ...]:
-    """One immutable order shared by admission and the actual native driver."""
-    steps = _query_schedule(definitions=definitions, root=root, recompute=recompute)
-    return (
-        InternalDispatch(name="_source", generation=0),
-        *(
-            replace(
-                step,
-                inputs={**step.inputs, _SOURCE: ("_source", 0), _LIVE: ("_source", 0)},
-            )
-            for step in steps
-        ),
-        InternalDispatch(
-            name="_publish", generation=0, inputs={"answer": steps[-1].identity}
-        ),
-    )
-
-
 def _query_schedule(
-    *,
-    definitions: Mapping[str, QueryNode],
-    root: str,
-    recompute: bool,
+    *, definitions: Mapping[str, QueryNode]
 ) -> tuple[InternalDispatch, ...]:
-    """Retain shared answers or replay the same producer for each actual reader."""
-    if not recompute:
-        return tuple(
-            InternalDispatch(
-                name=name,
-                generation=0,
-                inputs=MappingProxyType(
-                    {key: (producer, 0) for key, producer in node.inputs.items()}
-                ),
-            )
-            for name, node in definitions.items()
+    """Evaluate each query once, in demand order, retaining its answer for readers."""
+    return tuple(
+        InternalDispatch(
+            name=name,
+            generation=0,
+            inputs=MappingProxyType(
+                {key: (producer, 0) for key, producer in node.inputs.items()}
+            ),
         )
-    result: list[InternalDispatch] = []
-    generations = {root: 1}
-    pending: list[tuple[str, int, Mapping[str, tuple[str, int]] | None]] = [
-        (root, 0, None)
-    ]
-    while pending:
-        name, generation, inputs = pending.pop()
-        if inputs is not None:
-            result.append(
-                InternalDispatch(name=name, generation=generation, inputs=inputs)
-            )
-            continue
-        node = definitions[name]
-        upstream = {}
-        for producer in dict.fromkeys(node.inputs.values()):
-            child_generation = generations.get(producer, 0)
-            generations[producer] = child_generation + 1
-            upstream[producer] = (producer, child_generation)
-        pending.append(
-            (
-                name,
-                generation,
-                MappingProxyType(
-                    {key: upstream[producer] for key, producer in node.inputs.items()}
-                ),
-            )
-        )
-        pending.extend(
-            (producer, child_generation, None)
-            for producer, child_generation in reversed(tuple(upstream.values()))
-        )
-    return tuple(result)
+        for name, node in definitions.items()
+    )
