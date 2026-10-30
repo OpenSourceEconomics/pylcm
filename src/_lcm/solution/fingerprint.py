@@ -1124,9 +1124,7 @@ def _project_user_regime_declaration(
                     # An empty reporting declaration adds no semantic facts to
                     # the pre-existing feature-free model identity.
                     and not (
-                        name
-                        in {"output_only_functions", "shocks", "post_choice_shocks"}
-                        and value == ()
+                        name in {"output_only_functions", "shocks"} and value == ()
                     )
                     and not (name == "arrivals" and not value)
                 }

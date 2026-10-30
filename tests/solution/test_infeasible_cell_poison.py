@@ -704,7 +704,7 @@ def _post_choice_model() -> Model:
     health_grid = DiscreteGrid(_Health)
     alive = Regime(
         states={"wealth": wealth_grid, "health": health_grid},
-        post_choice_shocks=("bill_shock",),
+        shocks=("bill_shock",),
         actions={
             "consumption": IrregSpacedGrid(points=np.array([-1.0, 0.0, 1.0, 2.0, 3.0]))
         },

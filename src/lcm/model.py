@@ -118,6 +118,7 @@ from _lcm.regime_building.broadcast import (
     ModelSlots,
     merge_model_slots,
     prune_broadcast_variables,
+    split_transition_only_shocks,
     validate_model_slots,
 )
 from _lcm.regime_building.composite_states import (
@@ -537,6 +538,8 @@ class _PickledModel(TypedDict):
     _solution_model_instance_id: NotRequired[str]
     _declared_edge_vocabulary: MappingProxyType[RegimeName, EdgeVocabulary]
     _cells_without_edges: MappingProxyType[tuple[RegimeName, int], DroppedCells]
+    _transition_only_shock_names: NotRequired[frozenset[str]]
+    _shock_timing: NotRequired[Mapping[RegimeName, ShockTiming]]
     _draw_only_processes: NotRequired[
         Mapping[RegimeName, Mapping[StateName, _IIDProcess]]
     ]
@@ -1072,6 +1075,14 @@ class Model:
     ]
     """Declared names and their categories, retained before variable pruning."""
 
+    _transition_only_shock_names: frozenset[str]
+    """IID process states some regime reads only as their draw `next_<state>`.
+
+    They are no states of that regime; an initial value given for one is dropped
+    unless another regime keeps the state.
+    """
+    _shock_timing: Mapping[RegimeName, ShockTiming]
+    """Per regime, which shocks carry an axis and which are integrated out."""
     _draw_only_processes: Mapping[RegimeName, Mapping[StateName, _IIDProcess]]
     """Each regime's post-choice shocks, retained for path validation."""
     _process_code_reads: Mapping[
@@ -1176,8 +1187,9 @@ class Model:
                 zero. This mode has no age grid.
             description: Description of the model.
             regime_id_class: Dataclass mapping regime names to integer indices.
-            shocks: Named IID shock groups, referenced by `Regime.shocks` or
-                `Regime.post_choice_shocks`.
+            shocks: Named IID shock groups, referenced by `Regime.shocks`. A
+                regime that reads a group only as its draw `next_<shock>`
+                integrates it out of the continuation and stores no axis for it.
                 Runtime law slots use `params[group][slot]`, independently of
                 ordinary regime parameters. Singleton GridSearch integrates the
                 nodewise decision and replays fresh physical realizations.
@@ -1468,7 +1480,7 @@ class Model:
             model_slots=model_slots,
             output_only_functions=output_only_functions,
         )
-        post_choice_shocks = lower_post_choice_shocks(
+        merged_regimes, post_choice_shocks = lower_post_choice_shocks(
             regimes=merged_regimes, laws=laws, groups=shocks
         )
         self._shock_registry = create_shock_registry(
@@ -1551,7 +1563,38 @@ class Model:
             visited_periods_by_regime=schedules.simulation_context_periods_by_regime,
             discrete_names=discrete_names,
         )
-        self._draw_only_processes = post_choice_shocks
+        pruned_regimes, transition_only = split_transition_only_shocks(
+            user_regimes=pruned_regimes,
+            discrete_names=discrete_names,
+            laws=laws,
+            koopmans_aggregator=koopmans_aggregator,
+            ages=self._time,
+            active_periods_by_regime=schedules.context_periods_by_regime,
+        )
+        # Removal is regime-local; initialization preserves names another regime keeps.
+        self._transition_only_shock_names = frozenset(
+            name for unread in transition_only.values() for name in unread
+        )
+        draw_only_processes: MappingProxyType[
+            RegimeName, MappingProxyType[StateName, _IIDProcess]
+        ] = MappingProxyType(
+            {
+                name: MappingProxyType(
+                    {
+                        **post_choice_shocks.get(name, {}),
+                        **transition_only.get(name, {}),
+                    }
+                )
+                for name in post_choice_shocks.keys() | transition_only.keys()
+            }
+        )
+        self._draw_only_processes = draw_only_processes
+        self._shock_timing = _shock_timing(
+            regimes=pruned_regimes,
+            groups=shocks,
+            post_choice_shocks=post_choice_shocks,
+            transition_only=transition_only,
+        )
         # A regime law reads the values of value grids as every user function
         # does; it still returns regime codes or probabilities.
         # A process law named in `fixed_params` means exactly what the same
@@ -1692,7 +1735,7 @@ class Model:
             visited_periods_by_regime=schedules.acting_periods_by_regime,
             declared_transitions=self._declared_transitions,
             declared_edge_vocabulary=declared_edge_vocabulary,
-            draw_only_processes=post_choice_shocks,
+            draw_only_processes=draw_only_processes,
             # The pruning candidates combine state and action names. Only the
             # model state slot establishes a state's diagnostic provenance.
             broadcast_variables={
@@ -2075,16 +2118,32 @@ class Model:
             raise UnsupportedOperationError(msg)
 
     def __repr__(self) -> str:
-        """Summarize the model; mention pruning when any regime was pruned."""
+        """Summarize the model; mention pruning when any regime was pruned.
+
+        Per regime with shocks, name those carrying an axis because something
+        reads their current value, and those read only as their draw
+        `next_<shock>` and integrated out of the continuation.
+        """
         n_pruned = sum(1 for names in self.pruned_variables.values() if names)
         pruned_part = (
             f", {n_pruned} regimes with pruned variables (see `.pruned_variables`)"
             if n_pruned
             else ""
         )
+        timing = "; ".join(
+            f"{regime_name}: "
+            + ", ".join(
+                f"{kind}=[{', '.join(names)}]"
+                for kind, names in (("axis", axis), ("integrated", integrated))
+                if names
+            )
+            for regime_name, (axis, integrated) in self._shock_timing.items()
+            if axis or integrated
+        )
+        shock_part = f", shocks={{{timing}}}" if timing else ""
         return (
             f"Model(n_regimes={len(self._user_regimes)}, "
-            f"n_periods={self.n_periods}{pruned_part})"
+            f"n_periods={self.n_periods}{pruned_part}{shock_part})"
         )
 
     def __getstate__(self) -> _PickledModel:
@@ -2108,6 +2167,8 @@ class Model:
             _composite_states=self._composite_states,
             _declared_edge_vocabulary=self._declared_edge_vocabulary,
             _cells_without_edges=self._cells_without_edges,
+            _transition_only_shock_names=self._transition_only_shock_names,
+            _shock_timing=self._shock_timing,
             _draw_only_processes=self._draw_only_processes,
             _process_code_reads=self._process_code_reads,
             pruned_variables=self.pruned_variables,
@@ -2158,6 +2219,10 @@ class Model:
         self._param_name_candidates = state.get(
             "_param_name_candidates", _get_param_name_candidates(self._user_regimes)
         )
+        self._transition_only_shock_names = state.get(
+            "_transition_only_shock_names", frozenset()
+        )
+        self._shock_timing = state.get("_shock_timing", MappingProxyType({}))
         self._draw_only_processes = state.get(
             "_draw_only_processes", MappingProxyType({})
         )
@@ -4600,6 +4665,7 @@ class Model:
                     regimes=self._regimes,
                     array_writer=entry_allocations,
                     ages=self._time,
+                    unread_names=self._transition_only_shock_names,
                 )
                 self._fail_if_entry_is_not_permitted(
                     initial_conditions=initial_conditions
@@ -5963,6 +6029,7 @@ class Model:
             initial_conditions=initial_conditions,
             regimes=self._regimes,
             ages=self._time,
+            unread_names=self._transition_only_shock_names,
         )
         self._fail_if_entry_is_not_permitted(initial_conditions=canonical)
         overrides = resolve_current_iid_overrides(
@@ -6580,6 +6647,38 @@ def _note_near_miss_params(
             template[arg_name] = (
                 f"{node}  [close to {candidates[closest]} {closest!r}; typo?]"
             )
+
+
+# Shock groups and IID process states with an axis, then those integrated out.
+type ShockTiming = tuple[tuple[str, ...], tuple[str, ...]]
+
+
+def _shock_timing(
+    *,
+    regimes: Mapping[RegimeName, UserRegime],
+    groups: Mapping[ShockGroupName, ShockGroup],
+    post_choice_shocks: Mapping[RegimeName, Mapping[ShockName, _IIDProcess]],
+    transition_only: Mapping[RegimeName, Mapping[StateName, _IIDProcess]],
+) -> MappingProxyType[RegimeName, ShockTiming]:
+    """Name, per regime, the shocks carrying an axis and those integrated out."""
+    group_of = {shock: name for name, group in groups.items() for shock in group.shocks}
+    timing: dict[RegimeName, ShockTiming] = {}
+    for name, regime in regimes.items():
+        listed = (
+            (*regime.shocks.solve, *regime.shocks.simulate)
+            if isinstance(regime.shocks, Phased)
+            else regime.shocks
+        )
+        axis = tuple(dict.fromkeys(listed)) + tuple(
+            state
+            for state, grid in regime.states.items()
+            if isinstance(grid, _IIDProcess)
+        )
+        integrated = tuple(
+            dict.fromkeys(group_of[shock] for shock in post_choice_shocks.get(name, {}))
+        ) + tuple(transition_only.get(name, {}))
+        timing[name] = (axis, integrated)
+    return MappingProxyType(timing)
 
 
 def _get_param_name_candidates(

@@ -13,7 +13,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from functools import cached_property
 from types import MappingProxyType
-from typing import ClassVar, Literal, TypedDict, Unpack, cast
+from typing import ClassVar, Literal, Self, TypedDict, Unpack, cast
 
 from beartype import beartype
 
@@ -96,7 +96,6 @@ class _SlotsBesideFunctions(TypedDict, total=False):
     solver: _solvers.Solver
     taste_shocks: ExtremeValueTasteShocks | None
     shocks: tuple[ShockGroupName, ...]
-    post_choice_shocks: tuple[ShockGroupName, ...]
     exits: Mapping[str, Exit]
     koopmans_aggregator: UserFunction | Phased | Decoupled | None
     certainty_equivalent: CertaintyEquivalent | None
@@ -150,8 +149,8 @@ class Regime:
     `state_transitions` entry.
     `Phased(solve=process, simulate=process)` keeps the perceived process for
     values and decisions and draws from the separate simulation process. Distinct
-    phase laws use continuous draws and cannot fold; runtime parameter names shared
-    by both declarations share one value, while constructor parameters may differ.
+    phase laws use continuous draws; runtime parameter names shared by both
+    declarations share one value, while constructor parameters may differ.
     An `AgeSpecializedGrid` value is a continuous state whose grid bounds vary
     with age (fixed `n_points`); it is resolved to a concrete grid per period at
     model build.
@@ -277,9 +276,8 @@ class Regime:
     `{"taste_shocks": {"scale": ...}}` and must be strictly positive; omit
     `taste_shocks` for a hard maximum. At least one discrete action is required.
     Taste shocks are currently supported by `GridSearch` and `DCEGM`. They are
-    rejected on a collective regime, on the source of a `Gate`, with a folded
-    IID state or nonlinear certainty equivalent, and with `NEGM`, `NBEGM`, or
-    `NNBEGM`.
+    rejected on a collective regime, on the source of a `Gate`, with a
+    nonlinear certainty equivalent, and with `NEGM`, `NBEGM`, or `NNBEGM`.
     """
 
     koopmans_aggregator: UserFunction | Phased | Decoupled | None = None
@@ -312,18 +310,14 @@ class Regime:
     """
 
     shocks: tuple[ShockGroupName, ...] = ()
-    """Model-level current-IID group references, separate from state processes."""
+    """Model-level IID shock-group references, separate from state processes.
 
-    post_choice_shocks: tuple[ShockGroupName, ...] = ()
-    """Model-level IID groups drawn after this regime's choice.
-
-    Each name references a `Model(shocks=...)` group. Its shocks are realised
-    between the action and next period's state, so only this regime's state
-    transitions read them, as `next_<shock>`, directly or through regime
-    functions that nothing else reads. Utility, constraints and the regime
-    transition are evaluated before the draw and cannot read a post-choice shock.
-    The solve integrates the transitions over the group's nodes and weights;
-    simulation draws one node per subject from those weights.
+    Each name references a `Model(shocks=...)` group. Reading a shock `x` reads
+    this period's realization, known at the choice, and gives the group a node
+    axis. A group the regime reads only as `next_x`, the draw after the choice,
+    has no axis: the solve integrates it out of the continuation. Utility and
+    constraints cannot read `next_x`. `repr(model)` lists, per regime, which
+    groups carry an axis and which are integrated out.
     """
 
     exits: Mapping[str, Exit] = field(default_factory=lambda: MappingProxyType({}))
@@ -358,13 +352,9 @@ class Regime:
     shocks, nonlinear certainty equivalents, and non-GridSearch solvers on a
     collective regime raise `NotImplementedError`.
 
-    A shock declared `fold=True` is refused when the model is built, naming the
-    regime and the state. A collective regime writes `-inf` where no action
-    satisfies every stakeholder's participation constraint — a sentinel a gated
-    edge resolves to the outside option, not a value on the household's own
-    scale — and quadrature over that sentinel is not an expectation: a
-    household dissolving at one node would be stored as dissolving at all of
-    them. The same shock folds normally in a singleton regime.
+    A collective regime writes `-inf` where no action satisfies every
+    stakeholder's participation constraint — a sentinel a gated edge resolves
+    to the outside option, not a value on the household's own scale.
 
     Three things to know before simulating one:
 
@@ -458,27 +448,32 @@ class Regime:
     references.
     """
 
+    def __new__(
+        cls,
+        *args: object,  # noqa: ARG004, PAN001 - refuses removed keywords first
+        **kwargs: object,  # noqa: PAN001 - refuses removed keywords before any check
+    ) -> Self:
+        if "post_choice_shocks" in kwargs:
+            raise TypeError(
+                "Regime(post_choice_shocks=...) was removed. List the group in "
+                "`Regime(shocks=...)`: pylcm integrates out a group the regime "
+                "reads only as its draw `next_<shock>`."
+            )
+        return super().__new__(cls)
+
     def _make_field_immutable(self, *, name: str) -> None:
         """Replace the named mapping field with its immutable form."""
         value = ensure_containers_are_immutable(getattr(self, name))
         object.__setattr__(self, name, value)
 
     def __post_init__(self) -> None:
-        for slot in ("shocks", "post_choice_shocks"):
-            names = getattr(self, slot)
-            if len(set(names)) != len(names) or any(
-                not name.isidentifier()
-                or path_segment_name_errors(kind="Shock group", names=(name,))
-                for name in names
-            ):
-                raise RegimeInitializationError(
-                    f"{slot} must contain unique ordinary group names."
-                )
-        if both := sorted(set(self.shocks) & set(self.post_choice_shocks)):
+        if len(set(self.shocks)) != len(self.shocks) or any(
+            not name.isidentifier()
+            or path_segment_name_errors(kind="Shock group", names=(name,))
+            for name in self.shocks
+        ):
             raise RegimeInitializationError(
-                f"Shock groups {both!r} are declared in both `shocks` and "
-                "`post_choice_shocks`. A group is realised either before the "
-                "choice or after it; declare it in one of the two."
+                "shocks must contain unique ordinary group names."
             )
         self._lower_value_dependent_declarations()
         self._fail_if_egm_solver_has_no_margin_declaration()

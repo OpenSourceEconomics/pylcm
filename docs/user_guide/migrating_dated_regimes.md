@@ -213,45 +213,39 @@ Published values integrate the shock's nodes, and simulation draws and overrides
 the rules above. The supported laws and rules are listed in
 [Named current-IID shocks in endogenous-grid regimes](../reference/solvers.md#current-iid-egm).
 
-### Declare shocks drawn after the choice
+### Shock timing is inferred
 
-A `fold=True` IID state that a regime reads only through its draw `next_<shock>` is
-refused when the regime is built. Such a shock is drawn after the choice, so it is no
-state: declare it as a group and list the group in `Regime(post_choice_shocks=...)`.
+`Regime(post_choice_shocks=...)` and the `fold=` argument of IID processes are removed;
+both raise `TypeError`. Timing is read off the functions: reading `x` reads this
+period's realization, reading `next_x` reads the draw after the choice. A shock a regime
+reads only as `next_x` carries no axis there and is integrated in the continuation.
 
 ```python
-# Removed: raises RegimeInitializationError.
-alive = Regime(
-    states={
-        "wealth": wealth_grid,
-        "xi": NormalIIDProcess(
-            n_points=5, gauss_hermite=True, mu=0.0, sigma=1.0, fold=True
-        ),
-    },
-    state_transitions={"wealth": next_wealth},
-    functions={"utility": utility, "medical_bill": medical_bill},
-)
-
-# Current declaration fragment.
-shocks = {
-    "bill_shock": ShockGroup(
-        shocks={"xi": Normal(mu=0.0, sigma=1.0)},
-        nodes=Product(xi=GaussHermite(5)),
-    )
-}
+# Removed: raises TypeError.
 alive = Regime(
     states={"wealth": wealth_grid},
     state_transitions={"wealth": next_wealth},
     functions={"utility": utility, "medical_bill": medical_bill},
     post_choice_shocks=("bill_shock",),
 )
+
+# Current declaration fragment.
+alive = Regime(
+    states={"wealth": wealth_grid},
+    state_transitions={"wealth": next_wealth},
+    functions={"utility": utility, "medical_bill": medical_bill},
+    shocks=("bill_shock",),
+)
 ```
 
-`medical_bill` keeps reading `next_xi`. The same Gauss-Hermite rule reproduces the
-former solution. Drop the shock from initial conditions; a `shock_paths` entry for it is
-still a plain array. Utility, constraints and the regime transition may not read a
-post-choice shock; see
-[Shocks realized after choices](continuous_stochastic_processes.md#shocks-realized-after-choices-and-used-only-by-a-transition).
+For an IID process state, drop `fold=`. A state read only as `next_<state>`, which
+`fold=True` used to mark, is integrated out without it, and so is one formerly declared
+with the default `fold=False`: its stored value never varied along that axis, so the
+solution is unchanged while the axis disappears. A state whose current value is read
+keeps its axis; `fold=True` no longer averages that axis out of the stored value.
+`repr(model)` lists, per regime, which shocks carry an axis and which are integrated
+out. See
+[Shock timing](continuous_stochastic_processes.md#shock-timing-is-read-off-the-model).
 
 (migrating-gates)=
 

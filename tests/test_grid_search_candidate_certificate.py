@@ -154,13 +154,6 @@ type _SuppliedModelParams = dict[
 ]
 
 
-class _AverageArguments(TypedDict, closed=True):
-    a: FloatND
-    weights: FloatND
-    shifts: IntND | None
-    axis: NotRequired[int | None]
-
-
 class _KernelOutputArguments(TypedDict, closed=True):
     value: FloatND
     solve_time_artifacts: NotRequired[Mapping[ArtifactKey, ArtifactPayload]]
@@ -2368,7 +2361,7 @@ def _folded_terminal_utility(*, folded_shock: FloatND, work: DiscreteAction) -> 
 
 
 def _build_zero_weight_fold_model() -> Model:
-    """Build a folded process whose quadrature weights are exactly ``[0, 1, 0]``."""
+    """Build an IID process whose quadrature weights are exactly ``[0, 1, 0]``."""
     src = Regime(
         states={"wealth": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         state_transitions={"wealth": fixed_transition("wealth")},
@@ -2383,7 +2376,6 @@ def _build_zero_weight_fold_model() -> Model:
                 mu=0.0,
                 sigma=1.0,
                 n_std=100.0,
-                fold=True,
             )
         },
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -2437,26 +2429,9 @@ def _simulate_zero_weight_fold(model: Model) -> tuple[list[int], list[int], list
 
 
 def test_zero_weight_fold_average_preserves_the_public_candidate():
-    """The zero-mass fold nodes contribute nothing to the selected policy."""
+    """The zero-mass shock nodes contribute nothing to the selected policy."""
     observed = _simulate_zero_weight_fold(_build_zero_weight_fold_model())
     assert observed == ([1], [1], [1])
-
-
-def test_negating_the_fold_average_reverses_the_public_candidate(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    """The synchronized folded-average mutation is behaviorally live."""
-    baseline = _simulate_zero_weight_fold(_build_zero_weight_fold_model())
-    original = max_Q_over_a_module.zero_safe_average
-
-    def negated_average(**kwargs: Unpack[_AverageArguments]) -> FloatND:
-        return -original(**kwargs)
-
-    monkeypatch.setattr(max_Q_over_a_module, "zero_safe_average", negated_average)
-    shifted = _simulate_zero_weight_fold(_build_zero_weight_fold_model())
-
-    assert baseline == ([1], [1], [1])
-    assert shifted == ([0], [0], [0])
 
 
 def test_negating_kernel_output_reverses_the_public_candidate(

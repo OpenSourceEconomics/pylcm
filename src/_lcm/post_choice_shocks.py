@@ -1,10 +1,11 @@
-"""Lower `Regime(post_choice_shocks=...)` onto transition-local draws.
+"""Infer which `Model(shocks=...)` groups a regime reads only as their draw.
 
-A post-choice group is realised between a regime's choice and its next states, so
-only the regime's state transitions read it, as `next_<shock>`. Each shock becomes
-a fixed node set: the solve sums the source's continuation over its nodes with
-its weights, and simulation samples one node per subject from the same weights.
-The regime stores no axis for it.
+A regime lists a group in `Regime(shocks=...)`. Reading a shock `x` means this
+period's realization, known at the choice; reading `next_x` means the draw after
+the choice. A group whose shocks the regime reads only as `next_x` is integrated
+out: each shock becomes a fixed node set, the solve sums the source's
+continuation over its nodes with its weights, and simulation samples one node
+per subject from the same weights. The regime stores no axis for it.
 """
 
 import inspect
@@ -39,7 +40,6 @@ from lcm.typing import (
     Float1D,
     FloatND,
     FunctionName,
-    ReferenceName,
     RegimeName,
     ScalarFloat,
     ScalarInt,
@@ -56,38 +56,144 @@ def lower_post_choice_shocks(
     regimes: Mapping[RegimeName, Regime],
     laws: RegimeLaws,
     groups: Mapping[ShockGroupName, ShockGroup],
-) -> PostChoiceShocks:
-    """Validate every regime's post-choice groups and lower each shock to its nodes.
+) -> tuple[MappingProxyType[RegimeName, Regime], PostChoiceShocks]:
+    """Take every group a regime reads only as its draw out of `Regime.shocks`.
 
     Returns:
-        Immutable mapping of regime names to that regime's post-choice shocks.
+        Tuple of the regimes without their draw-only groups and, per regime that
+        has any, its draw-only shocks lowered to their nodes.
 
     Raises:
-        ModelInitializationError: If a group is unknown, also realised before a
-            choice, not lowerable to one fixed node set per shock, or read by
-            something evaluated before the draw.
+        ModelInitializationError: If a regime reads a group both as its value and
+            as its draw, or a draw-only group is unusable: also read as a value
+            in another regime, not lowerable to one fixed node set per shock, or
+            declared on a regime whose solver cannot integrate it.
 
     """
-    _fail_if_groups_are_unusable(regimes=regimes, groups=groups)
-    _fail_if_read_before_the_draw(regimes=regimes, laws=laws, groups=groups)
+    draw_only = {
+        name: _draw_only_groups(
+            regime_name=name, regime=regime, laws=laws, groups=groups
+        )
+        for name, regime in regimes.items()
+    }
+    _fail_if_groups_are_unusable(regimes=regimes, groups=groups, draw_only=draw_only)
     lowered = {
         group_name: _lower_group(group_name=group_name, group=groups[group_name])
-        for regime in regimes.values()
-        for group_name in regime.post_choice_shocks
+        for names in draw_only.values()
+        for group_name in names
     }
-    return MappingProxyType(
+    stripped = {
+        name: regime.replace(
+            shocks=_without(declared=regime.shocks, removed=draw_only[name])
+        )
+        if draw_only[name]
+        else regime
+        for name, regime in regimes.items()
+    }
+    return MappingProxyType(stripped), MappingProxyType(
         {
             regime_name: MappingProxyType(
                 {
                     shock: process
-                    for group_name in regime.post_choice_shocks
+                    for group_name in names
                     for shock, process in lowered[group_name].items()
                 }
             )
-            for regime_name, regime in regimes.items()
-            if regime.post_choice_shocks
+            for regime_name, names in draw_only.items()
+            if names
         }
     )
+
+
+def _without(
+    *, declared: tuple[ShockGroupName, ...], removed: tuple[ShockGroupName, ...]
+) -> tuple[ShockGroupName, ...]:
+    if isinstance(declared, Phased):
+        return cast(
+            "tuple[ShockGroupName, ...]",
+            Phased(
+                solve=_without(declared=declared.solve, removed=removed),
+                simulate=_without(declared=declared.simulate, removed=removed),
+            ),
+        )
+    return tuple(name for name in declared if name not in removed)
+
+
+def _draw_only_groups(
+    *,
+    regime_name: RegimeName,
+    regime: Regime,
+    laws: RegimeLaws,
+    groups: Mapping[ShockGroupName, ShockGroup],
+) -> tuple[ShockGroupName, ...]:
+    """Name the listed groups the regime reads as `next_<shock>` and never as a value.
+
+    Raises:
+        ModelInitializationError: If a group is read both ways.
+
+    """
+    names = (
+        (*regime.shocks.solve, *regime.shocks.simulate)
+        if isinstance(regime.shocks, Phased)
+        else regime.shocks
+    )
+    listed = {name: groups[name] for name in dict.fromkeys(names) if name in groups}
+    if not listed:
+        return ()
+    reads: set[str] = set()
+    for phase in ("solve", "simulate"):
+        functions = _phase_functions(regime=regime, phase=phase)
+        roots = dict(
+            root_functions(
+                regime_name=regime_name, regime=regime, laws=laws, phase=phase
+            )
+        ) | _law_roots(regime=regime, phase=phase)
+        for root_name, root in roots.items():
+            reads |= _reads(root_name=root_name, root=root, functions=functions)
+    draw_only: list[ShockGroupName] = []
+    errors: list[str] = []
+    for group_name, group in listed.items():
+        values = sorted(shock for shock in group.shocks if shock in reads)
+        draws = sorted(
+            f"next_{shock}" for shock in group.shocks if f"next_{shock}" in reads
+        )
+        if values and draws:
+            errors.append(
+                f"Regime '{regime_name}' reads {values} and {draws} of shock group "
+                f"'{group_name}'. A group's value is integrated within the period "
+                "it is realized in, so no later period can condition on the draw. "
+                "To carry the realization into the next period, declare the shock "
+                "as an IID process state, such as `NormalIIDProcess`, in "
+                "`states=`; reading both its value and its draw keeps its axis."
+            )
+        elif draws:
+            draw_only.append(group_name)
+    if errors:
+        raise ModelInitializationError(format_messages(errors))
+    return tuple(draw_only)
+
+
+def _law_roots(
+    *, regime: Regime, phase: Literal["solve", "simulate"]
+) -> dict[str, UserFunction]:
+    """Key every law of motion the regime declares, toward any target."""
+    roots: dict[str, UserFunction] = {}
+    for state, raw in regime.state_transitions.items():
+        entry = (
+            (raw.solve if phase == "solve" else raw.simulate)
+            if isinstance(raw, Phased)
+            else raw
+        )
+        cells = entry.items() if isinstance(entry, Mapping) else (("", entry),)
+        for target, cell in cells:
+            law = (
+                (cell.solve if phase == "solve" else cell.simulate)
+                if isinstance(cell, Phased)
+                else cell
+            )
+            if callable(law):
+                roots[f"__law_{state}_{target}"] = cast("UserFunction", law)
+    return roots
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -125,42 +231,40 @@ def _fail_if_groups_are_unusable(
     *,
     regimes: Mapping[RegimeName, Regime],
     groups: Mapping[ShockGroupName, ShockGroup],
+    draw_only: Mapping[RegimeName, tuple[ShockGroupName, ...]],
 ) -> None:
-    """Refuse a non-GridSearch regime, and a group that is unknown, current
-    elsewhere, or has no fixed node set."""
+    """Refuse a draw-only group on a non-GridSearch regime, read as a value in
+    another regime, or without a fixed node set."""
     current = {
         name
-        for regime in regimes.values()
+        for regime_name, regime in regimes.items()
         for name in (
             (*regime.shocks.solve, *regime.shocks.simulate)
             if isinstance(regime.shocks, Phased)
             else regime.shocks
         )
+        if name not in draw_only[regime_name]
     }
     errors: list[str] = []
     for regime_name, regime in regimes.items():
-        if regime.post_choice_shocks and not isinstance(regime.solver, GridSearch):
+        if draw_only[regime_name] and not isinstance(regime.solver, GridSearch):
             errors.append(
-                f"Regime '{regime_name}' declares post-choice shocks, which only "
-                "the `GridSearch` solver supports."
+                f"Regime '{regime_name}' reads shock group(s) "
+                f"{list(draw_only[regime_name])} only as their draw `next_<shock>`. "
+                "Only the `GridSearch` solver integrates such a draw."
             )
-        for group_name in regime.post_choice_shocks:
-            group = groups.get(group_name)
-            if group is None:
+        for group_name in draw_only[regime_name]:
+            group = groups[group_name]
+            if group_name in current:
                 errors.append(
-                    f"Regime '{regime_name}' declares post-choice shock group "
-                    f"'{group_name}', which `Model(shocks=...)` does not define."
-                )
-            elif group_name in current:
-                errors.append(
-                    f"Shock group '{group_name}' is post-choice in regime "
-                    f"'{regime_name}' and current in another regime. Declare a "
+                    f"Shock group '{group_name}' is read only as its draw in regime "
+                    f"'{regime_name}' and as its value in another regime. Declare a "
                     "separate group for each timing."
                 )
             elif problem := _unlowerable(group):
                 errors.append(
-                    f"Post-choice shock group '{group_name}' of regime "
-                    f"'{regime_name}' {problem}"
+                    f"Shock group '{group_name}', read only as its draw in regime "
+                    f"'{regime_name}', {problem}"
                 )
     if errors:
         raise ModelInitializationError(format_messages(sorted(set(errors))))
@@ -172,7 +276,7 @@ def _unlowerable(group: ShockGroup) -> str | None:
     problems = (
         (
             any(isinstance(law, Discrete) for law in laws),
-            "declares a discrete law; post-choice shocks must be continuous.",
+            "declares a discrete law; a draw-only shock must be continuous.",
         ),
         (
             any(
@@ -182,12 +286,12 @@ def _unlowerable(group: ShockGroup) -> str | None:
             ),
             (
                 "has a runtime or state-dependent law parameter; every "
-                "post-choice law parameter must be a fixed number."
+                "draw-only law parameter must be a fixed number."
             ),
         ),
         (
             group.correlation is not _Independence.DEFAULT,
-            "declares a correlation; post-choice shocks must be independent.",
+            "declares a correlation; draw-only shocks must be independent.",
         ),
         (
             isinstance(group.nodes, MonteCarlo | QuasiMonteCarlo),
@@ -232,59 +336,6 @@ def _lower_group(
     return lowered
 
 
-def _fail_if_read_before_the_draw(
-    *,
-    regimes: Mapping[RegimeName, Regime],
-    laws: RegimeLaws,
-    groups: Mapping[ShockGroupName, ShockGroup],
-) -> None:
-    """Refuse a read of a post-choice shock from anything evaluated before the draw.
-
-    The roots are what the regime evaluates within its period (utility,
-    constraints, the regime transition, ...); every regime function they reach is
-    walked, so a helper that reads the shock is caught as well.
-    """
-    errors: list[str] = []
-    for regime_name, regime in regimes.items():
-        shock_args = {
-            arg: (shock, group_name)
-            for group_name in regime.post_choice_shocks
-            for shock in groups[group_name].shocks
-            for arg in (shock, f"next_{shock}")
-        }
-        if not shock_args:
-            continue
-        for phase in ("solve", "simulate"):
-            functions = _phase_functions(regime=regime, phase=phase)
-            for key, root in root_functions(
-                regime_name=regime_name, regime=regime, laws=laws, phase=phase
-            ).items():
-                root_name = _root_name(key)
-                for func_name, arg in _reads(
-                    root_name=root_name,
-                    root=root,
-                    functions=functions,
-                    names=shock_args,
-                ):
-                    shock, group_name = shock_args[arg]
-                    via = (
-                        ""
-                        if func_name == root_name
-                        else f", and '{root_name}' depends on '{func_name}'"
-                    )
-                    errors.append(
-                        f"Regime '{regime_name}': '{func_name}' reads '{arg}', the "
-                        f"post-choice shock '{shock}' of group '{group_name}'{via}. "
-                        "A post-choice shock is drawn after the choice, so only "
-                        f"state transitions may read it, as 'next_{shock}'. Read it "
-                        "in a state transition or a function only state transitions "
-                        "use, or declare the group in `shocks=` to realise it "
-                        "before the choice."
-                    )
-    if errors:
-        raise ModelInitializationError(format_messages(sorted(set(errors))))
-
-
 def _phase_functions(
     *, regime: Regime, phase: Literal["solve", "simulate"]
 ) -> dict[FunctionName, UserFunction]:
@@ -299,31 +350,20 @@ def _phase_functions(
     }
 
 
-def _root_name(key: str) -> str:
-    """Name a root by the user's slot name where it has one."""
-    kind, _, name = key.removeprefix("__").partition("__")
-    if name and kind in {"utility", "constraint", "derived_categorical", "output_only"}:
-        return name
-    return key.removeprefix("__")
-
-
 def _reads(
     *,
     root_name: str,
     root: UserFunction,
     functions: Mapping[FunctionName, UserFunction],
-    names: Mapping[ReferenceName, tuple[ShockName, ShockGroupName]],
-) -> list[tuple[str, ReferenceName]]:
-    """List `(function, argument)` pairs where `root`'s closure reads one of `names`."""
-    found: list[tuple[str, ReferenceName]] = []
-    frontier: list[tuple[str, UserFunction]] = [(root_name, root)]
+) -> set[str]:
+    """Collect every argument name `root`'s closure through regime functions reads."""
+    found: set[str] = set()
+    frontier: list[UserFunction] = [root]
     visited = {root_name}
     while frontier:
-        func_name, func = frontier.pop()
-        for arg in inspect.signature(func).parameters:
-            if arg in names:
-                found.append((func_name, arg))
-            elif arg in functions and arg not in visited:
+        for arg in inspect.signature(frontier.pop()).parameters:
+            found.add(arg)
+            if arg in functions and arg not in visited:
                 visited.add(arg)
-                frontier.append((arg, functions[arg]))
+                frontier.append(functions[arg])
     return found

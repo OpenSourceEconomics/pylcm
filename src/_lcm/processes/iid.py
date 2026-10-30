@@ -6,9 +6,9 @@ depend on the current node.
 """
 
 from abc import abstractmethod
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 from types import MappingProxyType
-from typing import ClassVar
+from typing import ClassVar, Self
 
 import jax
 import jax.numpy as jnp
@@ -28,39 +28,34 @@ from _lcm.processes.base import (
 from _lcm.typing import PRNGKeyND
 from lcm.typing import Float1D, FloatND, ScalarFloat, ScalarInt
 
+FOLD_REMOVED = (
+    "The `fold=` argument was removed. Drop it: pylcm infers whether a shock "
+    "carries an axis from how it is read. A shock read only as its draw "
+    "`next_<shock>` by state transitions is integrated out of the continuation; "
+    "one whose current value is read keeps its axis."
+)
+
 
 @dataclass(frozen=True, kw_only=True)
 class _IIDProcess(_ContinuousStochasticProcess):
     """Base for IID processes — draw does not depend on previous value."""
 
-    fold: bool = False
-    """Integrate this shock into the stored value instead of keeping its axis.
+    fold: bool = field(default=False, init=False, repr=False)
+    """Engine-internal; always `False`. No declaration sets it.
 
-    `False` (the default) is today's behavior, byte-identical: the shock's
-    discretization nodes stay a materialized axis of every stored value
-    function, exactly like an ordinary state. `True` folds the shock out of
-    storage — the solve still evaluates every node (the max-over-actions /
-    collective readout runs per node, unchanged), but immediately
-    weighted-averages the node axis away with the process's own quadrature
-    weights *before* the result is written into the stored value, so the
-    published `V` has one fewer axis. Only an IID process may set this (a
-    persistent process has no `fold` field at all — the type system rejects
-    it). Further restrictions (no same-period gate / value-constraint reads
-    the realized node, no next-period transition or continuation depends on
-    it, `GridSearch` only, not combined with `taste_shocks`, not combined
-    with a nonlinear `certainty_equivalent` — the fold average is exact only
-    for the linear expectation, and only a fully-specified process — no
-    runtime-supplied distribution params) are enforced by
-    `Regime.__post_init__` / model processing; see
-    `_validate_fold_declarations`.
-
-    A fold reduces a shock that is drawn, used, and discarded inside the period
-    that folds it, and the same shock may be redrawn in every period the regime
-    is active. The saving is then per period: no reachable regime's continuation
-    places a coordinate on a folded axis, because the stored value it would read
-    has already integrated that axis out, so the shock's node count leaves the
-    stored value everywhere rather than in one period only.
+    Whether a shock carries an axis is inferred from how it is read: a regime
+    that reads only its draw `next_<shock>` integrates it out of the
+    continuation; one that reads its current value keeps an ordinary axis.
     """
+
+    def __new__(
+        cls,
+        *args: object,  # noqa: ARG004, PAN001 - refuses removed keywords first
+        **kwargs: object,  # noqa: PAN001 - refuses removed keywords before any check
+    ) -> Self:
+        if "fold" in kwargs:
+            raise TypeError(FOLD_REMOVED)
+        return super().__new__(cls)
 
     _NON_PARAM_FIELDS: ClassVar[frozenset[str]] = (
         _ContinuousStochasticProcess._NON_PARAM_FIELDS | {"fold"}  # noqa: SLF001

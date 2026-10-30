@@ -484,13 +484,6 @@ machinery, which a DC-EGM, taste-shock or certainty-equivalent source does not h
 source restriction raises at model build, when the edge law is bound to its source,
 since a `Regime` on its own declares no edge.
 
-A `fold=True` IID process is a further restriction, and a different one: a fold
-integrates the shock's node axis away immediately after the period's collective readout,
-so no same-period gate, value-constraint predicate or reference projection may read the
-shock's realized value. That is rejected at `Regime` construction for a regime's own
-declarations, and at model build for a folded regime read as another regime's
-same-period endpoint.
-
 Finally, an ungated transition between regimes of different stakeholder structure stays
 rejected at model build. Mixed singleton/collective topologies go through a `Gate`,
 which is what lets a row change household structure without mixing values across it.

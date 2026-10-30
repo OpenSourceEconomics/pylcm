@@ -100,7 +100,6 @@ def _next_aime(aime: FloatND) -> FloatND:
 def _model(
     *,
     sharded: bool = True,
-    fold: bool = False,
     widths: tuple[int, int] = (1, 1),
     state_overrides: Mapping[str, StateEntry] | None = None,
     extra_shard: bool = False,
@@ -138,7 +137,6 @@ def _model(
                 gauss_hermite=True,
                 mu=0.0,
                 sigma=1.0,
-                fold=fold,
             ),
             "persistent": RouwenhorstAR1Process(
                 n_points=3,
@@ -196,7 +194,6 @@ def test_assets_sharding_keeps_effective_phase_axes() -> None:
     )
     shock_grid = model.user_regimes["working"].states["shock"]
     assert isinstance(shock_grid, NormalIIDProcess)
-    assert shock_grid.fold is False
 
 
 TAUCHEN_AND_LOG_NORMAL = {
@@ -232,17 +229,15 @@ def test_fixed_tauchen_and_log_normal_processes_admit_continuous_sharding(
 @pytest.mark.parametrize(
     "unsupported",
     [
-        "fold",
         "runtime_process",
         "runtime_tauchen",
-        "folded_log_normal",
         "binned_log_normal",
         "extra_linear",
         "second_shard",
     ],
 )
 def test_unsupported_compositions_refuse_before_solve(*, unsupported: str) -> None:
-    """Unvalidated folded, runtime and multiple-shard compositions stay refused."""
+    """Unvalidated runtime and multiple-shard compositions stay refused."""
 
     overrides = {}
     if unsupported == "runtime_process":
@@ -250,10 +245,6 @@ def test_unsupported_compositions_refuse_before_solve(*, unsupported: str) -> No
     if unsupported == "runtime_tauchen":
         overrides["persistent"] = TauchenAR1Process(
             n_points=3, gauss_hermite=False, rho=0.5, mu=0.0, n_std=2.0
-        )
-    if unsupported == "folded_log_normal":
-        overrides["shock"] = LogNormalIIDProcess(
-            n_points=3, gauss_hermite=True, mu=0.0, sigma=0.5, fold=True
         )
     if unsupported == "binned_log_normal":
         overrides["shock"] = LogNormalIIDProcess(
@@ -263,7 +254,6 @@ def test_unsupported_compositions_refuse_before_solve(*, unsupported: str) -> No
         overrides["aime"] = LinSpacedGrid(start=0, stop=4, n_points=4)
     with pytest.raises(ExecutionPlanningError, match="Continuous sharding"):
         _model(
-            fold=unsupported == "fold",
             state_overrides=overrides,
             extra_shard=unsupported == "second_shard",
         )

@@ -153,15 +153,13 @@ def test_phased_ar1_keeps_solve_law_and_uses_distinct_forward_law() -> None:
     )
 
 
-@pytest.mark.parametrize("fold", [False, True])
-def test_native_iid_node_simulation_and_repeat_seed(*, fold: bool) -> None:
+def test_native_iid_node_simulation_and_repeat_seed() -> None:
     process = NormalIIDProcess(
         n_points=3,
         gauss_hermite=True,
         mu=0.0,
         sigma=0.7,
         simulate_draws="nodes",
-        fold=fold,
     )
     model = _model(process)
     initial = {
@@ -210,13 +208,11 @@ def test_runtime_supplied_node_markov_rows_and_support() -> None:
     np.testing.assert_allclose(observed, expected, rtol=0.0, atol=0.04)
 
 
-@pytest.mark.parametrize("invalid", ["fold", "nodes", "nonprocess"])
+@pytest.mark.parametrize("invalid", ["nodes", "nonprocess"])
 def test_unsupported_phased_process_forms_fail_at_declaration(invalid: str) -> None:
     process = NormalIIDProcess(n_points=3, gauss_hermite=True, mu=0.0, sigma=1.0)
     other = (
-        replace(process, fold=True)
-        if invalid == "fold"
-        else replace(process, mu=1.0, simulate_draws="nodes")
+        replace(process, mu=1.0, simulate_draws="nodes")
         if invalid == "nodes"
         else lambda: 0.0
     )
@@ -686,23 +682,10 @@ def test_node_draw_from_beyond_the_top_node_follows_the_top_node_row() -> None:
     np.testing.assert_array_equal(realized(top + 5.0), realized(top))
 
 
-@pytest.mark.parametrize(
-    "simulate_change",
-    [{"simulate_draws": "nodes"}, {"fold": True}],
-    ids=["draw-mode", "fold"],
-)
-def test_phased_process_with_one_law_is_accepted(
-    simulate_change: dict[str, str | bool],
-) -> None:
+def test_phased_process_with_one_law_is_accepted() -> None:
     """Phase declarations sharing one law are not distinct laws."""
-    base = NormalIIDProcess(
-        n_points=3,
-        gauss_hermite=True,
-        mu=0.0,
-        sigma=1.0,
-        fold="fold" in simulate_change,
-    )
-    process = Phased(solve=base, simulate=replace(base, **simulate_change))
+    base = NormalIIDProcess(n_points=3, gauss_hermite=True, mu=0.0, sigma=1.0)
+    process = Phased(solve=base, simulate=replace(base, simulate_draws="nodes"))
     assert isinstance(
         Regime(states={"income": process}, functions={"utility": _utility}), Regime
     )

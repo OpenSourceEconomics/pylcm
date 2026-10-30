@@ -47,7 +47,6 @@ from lcm import (
 )
 from lcm.exceptions import (
     ModelInitializationError,
-    RegimeInitializationError,
     ShockDeclarationError,
 )
 from lcm.shocks import GaussHermite, Normal, Product, ShockGroup
@@ -183,7 +182,7 @@ def _model(
             "wealth": _wealth_grid(off_grid=off_grid),
             "health": DiscreteGrid(_Health),
         },
-        post_choice_shocks=("bill_shock",),
+        shocks=("bill_shock",),
         state_transitions={
             "wealth": {"alive": law, "dead": law},
             "health": StochasticTransition(func=_next_health),
@@ -581,7 +580,6 @@ def _ce_model(
     ce_at_model: bool = True,
     live_terminal_shock: bool = False,
     shock_reads_wealth: bool = False,
-    alive_reads_xi: bool = False,
 ) -> Model:
     grid = LinSpacedGrid(start=0.0, stop=4.0, n_points=5)
     ce = {
@@ -592,39 +590,18 @@ def _ce_model(
         "default": None,
     }[ce_kind]
     alive = Regime(
-        states={"wealth": grid}
-        | (
-            {
-                "xi": NormalIIDProcess(
-                    n_points=3, gauss_hermite=True, mu=0.0, sigma=1.0, fold=True
-                )
-            }
-            if alive_reads_xi
-            else {}
-        ),
-        post_choice_shocks=() if alive_reads_xi else ("bill_shock",),
+        states={"wealth": grid},
+        shocks=("bill_shock",),
         state_transitions={
-            "wealth": _wealth_base
-            if alive_reads_xi
-            else (
-                AdditiveShockTransition(base="base", shock="shock")
-                if additive
-                else _additive_law
-            )
+            "wealth": AdditiveShockTransition(base="base", shock="shock")
+            if additive
+            else _additive_law
         },
         functions={
-            "utility": _terminal_value_with_xi if alive_reads_xi else _constant_utility,
-        }
-        | (
-            {}
-            if alive_reads_xi
-            else {
-                "base": _wealth_base,
-                "shock": _cost_reading_wealth
-                if shock_reads_wealth
-                else _identity_shock,
-            }
-        ),
+            "utility": _constant_utility,
+            "base": _wealth_base,
+            "shock": _cost_reading_wealth if shock_reads_wealth else _identity_shock,
+        },
         certainty_equivalent=None if ce_at_model else ce,
     )
     dead = Regime(
@@ -646,7 +623,7 @@ def _ce_model(
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={0: ("alive", "dead")},
-        shocks={} if alive_reads_xi else {"bill_shock": _xi(3)},
+        shocks={"bill_shock": _xi(3)},
         **({"certainty_equivalent": ce} if ce_at_model and ce is not None else {}),
     )
 
@@ -716,35 +693,3 @@ def test_nonlinear_fallback_still_validates_the_additive_decomposition(
     """An undeclared source-state dependency is refused even without averaging."""
     with pytest.raises(ModelInitializationError, match="reads the source's"):
         _ce_model(additive=True, ce_kind=ce_kind, shock_reads_wealth=True)
-
-
-@pytest.mark.parametrize("ce_kind", ["power", "quasi", "subclass", "linear", "default"])
-@pytest.mark.parametrize("ce_at_model", [False, True], ids=["regime-ce", "model-ce"])
-def test_within_period_folding_requires_the_exact_linear_expectation(
-    *, ce_kind: str, ce_at_model: bool
-) -> None:
-    """Within-period averaging admits only an absent or exact linear mean."""
-    if ce_kind in {"power", "quasi", "subclass"}:
-        with pytest.raises(RegimeInitializationError, match="certainty_equivalent"):
-            _ce_model(
-                additive=False,
-                ce_kind=ce_kind,
-                ce_at_model=ce_at_model,
-                alive_reads_xi=True,
-            )
-    else:
-        model = _ce_model(
-            additive=False,
-            ce_kind=ce_kind,
-            ce_at_model=ce_at_model,
-            alive_reads_xi=True,
-        )
-        assert "xi" in model.state_names(regime_name="alive")
-        solution = model.solve(
-            params={"discount_factor": DISCOUNT_FACTOR}, log_level="off"
-        )
-        np.testing.assert_array_almost_equal(
-            solution.values[0]["alive"],
-            (1.0 + DISCOUNT_FACTOR) * (10.0 + np.arange(5)),
-            decimal=DECIMAL_PRECISION,
-        )
