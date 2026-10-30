@@ -1886,6 +1886,7 @@ def test_original_optional_callbacks_survive_construction_and_replace() -> None:
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
+@pytest.mark.usefixtures("native_current_iid")
 def test_public_nbegm_u_model_lifecycle(  # noqa: PLR0915 - complete original public solve, native tuple, physical and archive scenario
     *, tmp_path: Path
 ) -> None:

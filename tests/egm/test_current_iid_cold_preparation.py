@@ -39,7 +39,12 @@ from tests.egm.test_current_iid_generation_materialization import _owner
 from tests.egm.test_current_iid_negm_model import _declarations as _declarations_u
 from tests.egm.test_current_iid_negm_model import _params as _params_u
 
-pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
+# Tests of the native current-IID route itself, which named shocks of EGM regimes
+# no longer take by default.
+pytestmark = [
+    pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON),
+    pytest.mark.usefixtures("native_current_iid"),
+]
 
 
 def test_actual_dated_steps_admit_original_carry_without_changing_bits() -> None:

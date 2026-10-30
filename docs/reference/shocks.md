@@ -231,9 +231,14 @@ from `params[group]`, bind correlation support and enforce per-invocation exact 
 correlation admission, numerical validity and signed ancestry.
 
 Registry declarations can be inspected and persisted. Ordinary GridSearch consumers bind
-the current law inside their node decision and fresh simulation draw. Solver/query
-intersections require their corresponding integrated producer and otherwise refuse
-explicitly. An unlowered physical shock cannot silently become a free parameter.
+the current law inside their node decision and fresh simulation draw. A group that an
+endogenous-grid regime reads is solved on the node-state axis instead, for every reader
+of the group; `model.shocks` still lists it, published values integrate its nodes, and
+simulation draws and overrides keep the rules above. See
+[Named current-IID shocks in endogenous-grid regimes](solvers.md#current-iid-egm) for
+the supported laws and rules. Other solver/query intersections require their
+corresponding integrated producer and otherwise refuse explicitly. An unlowered physical
+shock cannot silently become a free parameter.
 
 Legacy IID state processes retain their public classes, state layouts, phase-specific
 laws, transition timing, fold flags and simulation draw modes. Compatibility records

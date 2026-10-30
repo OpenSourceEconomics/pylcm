@@ -24,7 +24,12 @@ from lcm.solvers import NBEGM, NEGM, NNBEGM, FiniteOuterGrid
 from lcm.typing import UserParams
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 
-pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
+# Tests of the native current-IID route itself, which named shocks of EGM regimes
+# no longer take by default.
+pytestmark = [
+    pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON),
+    pytest.mark.usefixtures("native_current_iid"),
+]
 
 _EXACT_READ = "_exact_affine_read_impl"
 _CERTIFIED_REDUCER = "_reduce_envelope_exact"

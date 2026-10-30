@@ -14,6 +14,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.current_iid_node_adapter import NATIVE_CURRENT_IID_SWITCH
 from _lcm.egm.current_iid_case_u_balanced import (
     BalancedCaseUCarry,
     SaturatedCaseUProgram,
@@ -39,17 +40,22 @@ pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_R
 def hoisted_case(
     *, request: pytest.FixtureRequest
 ) -> tuple[BalancedCaseUCarry, SaturatedCaseUProgram]:
-    """Reuse the routing cache and solve the genuine-U fixture once per module."""
-    if request.param == "routing":
-        model, carry = _solved_child(utility_reads_eps=True)
-        _, program = _case_u_program(model=model)
-    else:
-        model = _model()
-        carry = _carry(solution=_solved(model=model))
-        _, generation = model._prepare_call(params={"discount_factor": 1.0})
-        program = acquire_installed_case_u_date(
-            generation=generation, regime_name="child", period=0
-        ).date.guard_program
+    """Reuse the routing cache and solve the genuine-U fixture once per module.
+
+    Both fixtures are built on the native current-IID route, whose rows this tests.
+    """
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv(NATIVE_CURRENT_IID_SWITCH, "1")
+        if request.param == "routing":
+            model, carry = _solved_child(utility_reads_eps=True)
+            _, program = _case_u_program(model=model)
+        else:
+            model = _model()
+            carry = _carry(solution=_solved(model=model))
+            _, generation = model._prepare_call(params={"discount_factor": 1.0})
+            program = acquire_installed_case_u_date(
+                generation=generation, regime_name="child", period=0
+            ).date.guard_program
     assert isinstance(carry, BalancedCaseUCarry)
     assert isinstance(program, SaturatedCaseUProgram)
     return carry, program

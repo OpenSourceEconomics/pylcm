@@ -37,7 +37,12 @@ from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.egm.test_current_iid_call_owned_generation import _declarations, _params
 from tests.egm.test_current_iid_parent_demands import _terminal
 
-pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
+# Tests of the native current-IID route itself, which named shocks of EGM regimes
+# no longer take by default.
+pytestmark = [
+    pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON),
+    pytest.mark.usefixtures("native_current_iid"),
+]
 
 _BORROWING_LIMIT = 1.0
 _LOW, _HIGH = -0.75, 1.0

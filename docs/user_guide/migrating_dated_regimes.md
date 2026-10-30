@@ -206,10 +206,12 @@ unsupported. A wholly hidden group retains its joint law; supported overrides us
 complete physical frame or named base innovations. Independent hidden shocks remain
 available.
 
-The new current-shock path is qualified for the focused `GridSearch` cases. Its
-endogenous-grid publication and reconstruction are not implemented yet; that work
-remains gated on the production cost diagnostic. This migration does not establish
-support for those solver combinations.
+A group read by an endogenous-grid regime (`DCEGM`, `NBEGM`, `NEGM`, `NNBEGM`) is solved
+on the node-state axis, so the migrated model solves every shape its node-state version
+did: several states, discrete states and actions, and chains of endogenous-grid regimes.
+Published values integrate the shock's nodes, and simulation draws and overrides follow
+the rules above. The supported laws and rules are listed in
+[Named current-IID shocks in endogenous-grid regimes](../reference/solvers.md#current-iid-egm).
 
 (migrating-gates)=
 

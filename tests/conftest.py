@@ -22,6 +22,7 @@ from numpy.typing import ArrayLike
 from typing_extensions import TypedDict
 from xdist.workermanage import WorkerController
 
+from _lcm.current_iid_node_adapter import NATIVE_CURRENT_IID_SWITCH
 from _lcm.egm.upper_envelope._exact_affine.ffi import (
     kernel_built_for_current_backend,
 )
@@ -848,6 +849,16 @@ def _fixture_x64_disabled() -> Iterator[None]:
         yield
     finally:
         jax_config.update("jax_enable_x64", val=previous)
+
+
+@pytest.fixture(name="native_current_iid")
+def _fixture_native_current_iid(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep endogenous-grid readers of `shocks=` groups on the current-IID route.
+
+    Models built inside the test then solve those groups natively instead of on the
+    node-state axis; for tests of that route's own internals.
+    """
+    monkeypatch.setenv(NATIVE_CURRENT_IID_SWITCH, "1")
 
 
 @pytest.fixture(name="x64_enabled")

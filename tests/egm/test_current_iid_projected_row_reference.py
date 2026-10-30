@@ -42,7 +42,12 @@ from tests.egm.test_current_iid_call_owned_generation import (
     _utility_reading_eps,
 )
 
-pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
+# Tests of the native current-IID route itself, which named shocks of EGM regimes
+# no longer take by default.
+pytestmark = [
+    pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON),
+    pytest.mark.usefixtures("native_current_iid"),
+]
 
 _SAVINGS = np.array(
     [

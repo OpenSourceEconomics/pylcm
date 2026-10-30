@@ -7,12 +7,15 @@ subject whose draw is supplied at a node takes the node-state model's policy.
 """
 
 from collections.abc import Callable
+from dataclasses import fields, replace
+from pathlib import Path
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
 from numpy.testing import assert_array_almost_equal
 
+from _lcm.current_iid_node_adapter import NATIVE_CURRENT_IID_SWITCH
 from lcm import (
     ConsumptionSavingsRegime,
     DiscreteGrid,
@@ -21,6 +24,7 @@ from lcm import (
     LinSpacedGrid,
     LiquidMargin,
     Model,
+    NestedConsumptionSavingsRegime,
     NormalIIDProcess,
     Periods,
     Regime,
@@ -29,16 +33,24 @@ from lcm import (
     fixed_transition,
     post_decision_lower_bound,
 )
+from lcm._solver_api.result import SolutionResult
+from lcm.exceptions import InvalidSimulationInputError, ShockDeclarationError
+from lcm.persistence import load_solution
 from lcm.shocks import (
+    BaseInnovations,
+    Discrete,
     EqualSpacedUniform,
     GaussHermite,
+    MonteCarlo,
     Normal,
     PhysicalValues,
     Product,
     ShockGroup,
+    Smolyak,
     Uniform,
+    UserNodes,
 )
-from lcm.solvers import DCEGM, NBEGM
+from lcm.solvers import DCEGM, NBEGM, NEGM, NNBEGM, FiniteOuterGrid
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -346,12 +358,15 @@ def _assert_reproduces_node_state_model(*, solver: str, bound: str | None) -> No
     )
 
 
+@pytest.mark.usefixtures("native_current_iid")
 @pytest.mark.parametrize("cost_scale", [1 / np.sqrt(3.0), 0.5])
 def test_nbegm_health_cost_simulates_fresh_period_zero_draws(cost_scale: float) -> None:
     """Omitted draws are realised fresh, including beyond the outermost nodes.
 
     Resources `wealth + 2 - cost` then leave the range the quadrature nodes span on
     the wealth grid; the policy is still the interior Euler solution `resources / 2`.
+    The node-state axis replays its policy on the declared action grid, so this
+    continuous-policy check runs on the current-IID route.
     """
     params = {"alive": {"total_costs": {"cost_scale": cost_scale}}}
     model = _health_cost_model(solver="nbegm", declared=True)
@@ -709,3 +724,646 @@ def test_nbegm_carries_passive_discrete_state_into_terminal() -> None:
         resources - consumption,
         decimal=DECIMAL_PRECISION,
     )
+
+
+@categorical(ordered=False)
+class _ChainRegimeId:
+    a: ScalarInt
+    b: ScalarInt
+    done: ScalarInt
+
+
+@categorical(ordered=True)
+class _Work:
+    no: ScalarInt
+    yes: ScalarInt
+
+
+def _log_normal_costs(*, hcc_transitory: FloatND) -> FloatND:
+    return 0.5 * jnp.exp(0.3 * hcc_transitory)
+
+
+def _scaled_log_normal_costs(*, hcc_transitory: FloatND, hcc_scale: FloatND) -> FloatND:
+    return hcc_scale * 0.5 * jnp.exp(0.3 * hcc_transitory)
+
+
+def _health_costs(*, hcc_transitory: FloatND, good_health: DiscreteState) -> FloatND:
+    return (0.7 - 0.3 * good_health) * jnp.exp(0.3 * hcc_transitory)
+
+
+def _working_resources(
+    *, wealth: ContinuousState, total_costs: FloatND, work: DiscreteAction
+) -> FloatND:
+    return wealth + 1.0 + work - total_costs
+
+
+def _work_utility(*, consumption: ContinuousAction, work: DiscreteAction) -> FloatND:
+    return jnp.log(consumption) - 0.2 * work
+
+
+def _hcc_shocked_utility(
+    *, consumption: ContinuousAction, hcc_transitory: FloatND
+) -> FloatND:
+    return (1.0 + 0.2 * hcc_transitory) * jnp.log(consumption)
+
+
+def _hcc_shocked_inverse_marginal_utility(
+    *, marginal_continuation: FloatND, hcc_transitory: FloatND
+) -> FloatND:
+    return (1.0 + 0.2 * hcc_transitory) / marginal_continuation
+
+
+_HCC = ShockGroup(
+    shocks={"hcc_transitory": Normal(mu=0.0, sigma=1.0)},
+    nodes=Product(hcc_transitory=GaussHermite(n=_N_HCC_NODES)),
+)
+_SCALE_NODES = 3
+_EGM_SHAPES = (
+    "multi_date",
+    "chain",
+    "passive_state",
+    "discrete_action",
+    "utility_shock",
+    "aca",
+)
+_SOLVERS = (
+    pytest.param(
+        "dcegm",
+        marks=pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON),
+    ),
+    "nbegm",
+)
+
+
+def _aca_shaped_model(
+    *,
+    solver: str,
+    declared: bool,
+    shape: str,
+    group: ShockGroup = _HCC,
+    scaled: bool = False,
+) -> Model:
+    """Three-period savings model whose EGM sources read the health cost at each date.
+
+    `shape` selects one feature of the ACA model's EGM regimes:
+
+    - `multi_date`: one source at dates 0 and 1;
+    - `chain`: two sources, `a -> b -> done`;
+    - `passive_state`: a deterministic health state carried into the terminal;
+    - `discrete_action`: a work choice;
+    - `utility_shock`: the draw enters utility, beside the carried health state;
+    - `aca`: the carried health state, the work choice and a literal savings floor
+      at the savings grid's origin together.
+
+    `scaled` multiplies the cost by a second, uniform shock of the same group.
+    """
+    carried = shape in {"passive_state", "utility_shock", "aca"}
+    states: dict[
+        StateName,
+        LinSpacedGrid | DiscreteGrid | NormalIIDProcess | UniformIIDProcess,
+    ] = {"wealth": LinSpacedGrid(start=1.0, stop=5.0, n_points=5)}
+    if carried:
+        states["good_health"] = DiscreteGrid(category_class=_Health)
+    if not declared:
+        states["hcc_transitory"] = NormalIIDProcess(
+            n_points=_N_HCC_NODES, gauss_hermite=True, mu=0.0, sigma=1.0
+        )
+        if scaled:
+            states["hcc_scale"] = UniformIIDProcess(
+                n_points=_SCALE_NODES, start=0.8, stop=1.2
+            )
+    functions = {
+        "utility": _log_consumption,
+        "total_costs": _scaled_log_normal_costs if scaled else _log_normal_costs,
+        "resources": _resources,
+        "savings": _savings,
+        "inverse_marginal_utility": _inverse_marginal_utility,
+    }
+    actions: dict[str, LinSpacedGrid | DiscreteGrid] = {
+        "consumption": LinSpacedGrid(start=0.5, stop=6.0, n_points=12)
+    }
+    if shape in {"passive_state", "aca"}:
+        functions["total_costs"] = _health_costs
+    if shape in {"discrete_action", "aca"}:
+        actions["work"] = DiscreteGrid(category_class=_Work)
+        functions["utility"] = _work_utility
+        functions["resources"] = _working_resources
+    if shape == "utility_shock":
+        del functions["total_costs"]
+        functions["utility"] = _hcc_shocked_utility
+        functions["inverse_marginal_utility"] = _hcc_shocked_inverse_marginal_utility
+        functions["resources"] = _health_resources
+    sources, targets = (
+        ({"a": ("b",), "b": ("done",)}, {"a": (0,), "b": (1,)})
+        if shape == "chain"
+        else ({"alive": ("alive", "done")}, {"alive": (0, 1)})
+    )
+
+    def source(name: RegimeName) -> Regime:
+        transitions = {
+            "wealth": dict.fromkeys(sources[name], _next_wealth_from_savings)
+        }
+        if carried:
+            transitions["good_health"] = dict.fromkeys(
+                sources[name], fixed_transition("good_health")
+            )
+        return ConsumptionSavingsRegime(
+            states=states,
+            actions=actions,
+            functions=functions,
+            state_transitions=transitions,
+            constraints={
+                "borrowing_limit": post_decision_lower_bound(
+                    margin=_MARGIN, lower=_SAVINGS_FLOOR
+                )
+            }
+            if shape == "aca"
+            else {},
+            liquid=_MARGIN,
+            solver=(DCEGM if solver == "dcegm" else NBEGM)(savings_grid=_SAVINGS_GRID),
+            shocks=("hcc",) if declared else (),
+        )
+
+    done = Regime(
+        states={"wealth": _SAVINGS_GRID}
+        | ({"good_health": DiscreteGrid(category_class=_Health)} if carried else {}),
+        functions={"utility": _health_bequest if carried else _log_wealth},
+    )
+    edges = (
+        {"a": {"b": Periods(values=(0,))}, "b": {"done": Periods(values=(1,))}}
+        if shape == "chain"
+        else {"alive": {"alive": Periods(values=(0,)), "done": Periods(values=(1,))}}
+    )
+    first = "a" if shape == "chain" else "alive"
+    return Model(
+        regimes={**{name: source(name) for name in targets}, "done": done},
+        n_periods=3,
+        initial_nodes=InitialNodes(by_period={0: first}),
+        edges=edges,
+        regime_id_class=_ChainRegimeId if shape == "chain" else _CostRegimeId,
+        fixed_params={"discount_factor": 0.95},
+        shocks={"hcc": group} if declared else {},
+    )
+
+
+def _assert_parity(*, actual: FloatND, expected: FloatND, label: str) -> None:
+    """Equal at float64 bit for bit, and to the precision's decimals at float32."""
+    if jnp.asarray(actual).dtype == jnp.float64:
+        np.testing.assert_array_equal(
+            np.asarray(actual), np.asarray(expected), err_msg=label
+        )
+    else:
+        assert_array_almost_equal(
+            actual, expected, decimal=DECIMAL_PRECISION, err_msg=label
+        )
+
+
+def _assert_values_integrate_node_state_values(
+    *, legacy: Model, declared: Model, nodes: dict[StateName, FloatND]
+) -> tuple[SolutionResult, SolutionResult]:
+    legacy_solution = legacy.solve(params={}, log_level="off")
+    declared_solution = declared.solve(params={}, log_level="off")
+    for period, regimes in legacy_solution.values.items():
+        for regime_name, value in regimes.items():
+            expected = value
+            for shock in reversed(legacy.state_names(regime_name=regime_name)):
+                if shock in nodes:
+                    expected = _integrate_node_axis(
+                        model=legacy,
+                        values=expected,
+                        regime_name=regime_name,
+                        shock=shock,
+                        weights=nodes[shock],
+                    )
+            _assert_parity(
+                actual=declared_solution.values[period][regime_name],
+                expected=expected,
+                label=f"V period={period} regime={regime_name}",
+            )
+            assert not set(nodes) & set(
+                declared_solution.value_array(period=period, regime=regime_name).dims
+            )
+    return legacy_solution, declared_solution
+
+
+def _node_paths(
+    *, model: Model, n_subjects: int, shock: StateName = "hcc_transitory"
+) -> FloatND:
+    """Node values cycling over subjects and periods, as a (subjects, periods) path."""
+    grid = jnp.asarray(
+        NormalIIDProcess(
+            n_points=_N_HCC_NODES, gauss_hermite=True, mu=0.0, sigma=1.0
+        ).get_gridpoints()
+        if shock == "hcc_transitory"
+        else UniformIIDProcess(
+            n_points=_SCALE_NODES, start=0.8, stop=1.2
+        ).get_gridpoints()
+    )
+    codes = (jnp.arange(n_subjects)[:, None] + jnp.arange(model.n_periods)) % len(grid)
+    return grid[codes]
+
+
+def _start_frame(*, shape: str, n_subjects: int) -> dict[StateName, FloatND]:
+    wealth = jnp.tile(jnp.arange(1.0, 6.0), n_subjects // 5)
+    common = {
+        "wealth": wealth,
+        "period": jnp.zeros(wealth.shape, dtype=jnp.int32),
+        "regime_id": jnp.zeros(wealth.shape, dtype=jnp.int32),
+    }
+    if shape in {"passive_state", "utility_shock", "aca"}:
+        common["good_health"] = jnp.arange(n_subjects, dtype=jnp.int32) % 2
+    return common
+
+
+@pytest.mark.parametrize("shape", _EGM_SHAPES)
+@pytest.mark.parametrize("solver", _SOLVERS)
+def test_declared_shock_reproduces_node_state_model_for_aca_egm_shapes(
+    *, solver: str, shape: str
+) -> None:
+    """Each ACA-shaped EGM source solves and simulates like its node-state model.
+
+    Every published value is the node-weighted node-state value, without a node
+    axis, and subjects given node draws at every date take the node-state policy.
+    """
+    legacy = _aca_shaped_model(solver=solver, declared=False, shape=shape)
+    declared = _aca_shaped_model(solver=solver, declared=True, shape=shape)
+    weights = NormalIIDProcess(
+        n_points=_N_HCC_NODES, gauss_hermite=True, mu=0.0, sigma=1.0
+    ).get_transition_probs()[0]
+    legacy_solution, declared_solution = _assert_values_integrate_node_state_values(
+        legacy=legacy, declared=declared, nodes={"hcc_transitory": weights}
+    )
+
+    n_subjects = 30
+    paths = _node_paths(model=legacy, n_subjects=n_subjects)
+    common = _start_frame(shape=shape, n_subjects=n_subjects)
+    legacy_panel = legacy.simulate(
+        params={},
+        solution=legacy_solution,
+        initial_conditions={**common, "hcc_transitory": paths[:, 0]},
+        shock_paths={"hcc_transitory": paths},
+        seed=3,
+        log_level="off",
+        use_categorical_codes=True,
+    ).to_dataframe(use_categorical_codes=True)
+    declared_panel = declared.simulate(
+        params={},
+        solution=declared_solution,
+        initial_conditions=common,
+        shock_paths={"hcc_transitory": PhysicalValues(values=paths)},
+        seed=3,
+        log_level="off",
+        use_categorical_codes=True,
+    ).to_dataframe(use_categorical_codes=True)
+    for panel in (legacy_panel, declared_panel):
+        panel.sort_values(["subject_id", "period"], inplace=True)
+    assert len(declared_panel) == len(legacy_panel) == 3 * n_subjects
+    for column in legacy_panel.columns:
+        if column in {"regime", "regime_name"}:
+            np.testing.assert_array_equal(
+                declared_panel[column].to_numpy(), legacy_panel[column].to_numpy()
+            )
+            continue
+        _assert_parity(
+            actual=declared_panel[column].to_numpy(dtype=float),
+            expected=legacy_panel[column].to_numpy(dtype=float),
+            label=column,
+        )
+
+
+@pytest.mark.parametrize("rule", ["user_nodes", "smolyak", "product"])
+def test_declared_node_rule_reproduces_node_state_model(rule: str) -> None:
+    """Supplied nodes, a one-dimensional sparse rule and a product of two laws.
+
+    Supplied Gauss-Hermite nodes and weights reproduce the Gauss-Hermite node state
+    exactly. The level-one sparse normal rule is the three-point Gauss-Hermite rule.
+    A product rule over a normal and a uniform shock is the two node states'
+    tensor product.
+    """
+    process = NormalIIDProcess(
+        n_points=_N_HCC_NODES, gauss_hermite=True, mu=0.0, sigma=1.0
+    )
+    nodes = {"hcc_transitory": process.get_transition_probs()[0]}
+    group = {
+        "user_nodes": ShockGroup(
+            shocks={"hcc_transitory": Normal(mu=0.0, sigma=1.0)},
+            nodes=UserNodes(
+                nodes=np.asarray(process.get_gridpoints())[:, None],
+                weights=np.asarray(nodes["hcc_transitory"]),
+            ),
+        ),
+        "smolyak": ShockGroup(
+            shocks={"hcc_transitory": Normal(mu=0.0, sigma=1.0)},
+            nodes=Smolyak(level=1),
+        ),
+        "product": ShockGroup(
+            shocks={
+                "hcc_transitory": Normal(mu=0.0, sigma=1.0),
+                "hcc_scale": Uniform(start=0.8, stop=1.2),
+            },
+            nodes=Product(
+                hcc_transitory=GaussHermite(n=_N_HCC_NODES),
+                hcc_scale=EqualSpacedUniform(n=_SCALE_NODES),
+            ),
+        ),
+    }[rule]
+    scaled = rule == "product"
+    if scaled:
+        nodes["hcc_scale"] = UniformIIDProcess(
+            n_points=_SCALE_NODES, start=0.8, stop=1.2
+        ).get_transition_probs()[0]
+    legacy = _aca_shaped_model(
+        solver="nbegm", declared=False, shape="multi_date", scaled=scaled
+    )
+    declared = _aca_shaped_model(
+        solver="nbegm", declared=True, shape="multi_date", group=group, scaled=scaled
+    )
+    if rule == "smolyak":
+        legacy_solution = legacy.solve(params={}, log_level="off")
+        declared_solution = declared.solve(params={}, log_level="off")
+        assert_array_almost_equal(
+            declared_solution.values[0]["alive"],
+            _integrate_node_axis(
+                model=legacy,
+                values=legacy_solution.values[0]["alive"],
+                regime_name="alive",
+                shock="hcc_transitory",
+                weights=nodes["hcc_transitory"],
+            ),
+            decimal=DECIMAL_PRECISION,
+        )
+        return
+    _assert_values_integrate_node_state_values(
+        legacy=legacy, declared=declared, nodes=nodes
+    )
+
+
+@pytest.mark.parametrize(
+    ("group", "feature"),
+    [
+        (
+            ShockGroup(
+                shocks={"hcc_transitory": Normal(mu=0.0, sigma=1.0)},
+                nodes=UserNodes(
+                    nodes=np.asarray([[-1.0], [0.0], [1.0]]),
+                    weights=np.asarray([-0.1, 1.2, -0.1]),
+                    signed=True,
+                ),
+            ),
+            "signed node weights",
+        ),
+        (
+            ShockGroup(
+                shocks={
+                    "hcc_transitory": Normal(mu=0.0, sigma=1.0),
+                    "hcc_other": Normal(mu=0.0, sigma=1.0),
+                },
+                nodes=Product(
+                    hcc_transitory=GaussHermite(n=3), hcc_other=GaussHermite(n=3)
+                ),
+                correlation=((1.0, 0.5), (0.5, 1.0)),
+            ),
+            "correlated shocks",
+        ),
+        (
+            ShockGroup(
+                shocks={"hcc_transitory": Normal(mu=0.0, sigma=1.0)},
+                nodes=MonteCarlo(n=4, seed=1),
+            ),
+            "Monte Carlo rules",
+        ),
+        (
+            ShockGroup(
+                shocks={
+                    "hcc_transitory": Normal(mu=0.0, sigma=1.0),
+                    "hcc_other": Normal(mu=0.0, sigma=1.0),
+                },
+                nodes=UserNodes(
+                    nodes=np.asarray([[-1.0, 0.0], [1.0, 0.0]]),
+                    weights=np.asarray([0.5, 0.5]),
+                ),
+            ),
+            "joint node rule",
+        ),
+        (
+            ShockGroup(
+                shocks={
+                    "hcc_transitory": Normal(mu=0.0, sigma=1.0),
+                    "hcc_state": Discrete(categories=_Health, probs=(0.5, 0.5)),
+                },
+                nodes=Product(hcc_transitory=GaussHermite(n=3)),
+            ),
+            "discrete laws",
+        ),
+        (
+            ShockGroup(
+                shocks={"hcc_transitory": Normal(mu=None, sigma=1.0)},
+                nodes=Product(hcc_transitory=GaussHermite(n=3)),
+            ),
+            "runtime slots",
+        ),
+    ],
+)
+def test_node_state_axis_refuses_unrepresented_declarations(
+    *, group: ShockGroup, feature: str
+) -> None:
+    """A group the node-state axis cannot represent is refused at model build."""
+    with pytest.raises(ShockDeclarationError, match=feature):
+        _aca_shaped_model(
+            solver="nbegm", declared=True, shape="multi_date", group=group
+        )
+
+
+def test_saved_declared_solution_publishes_and_replays_integrated_values(
+    tmp_path: Path,
+) -> None:
+    """An archive holds the published values and simulates like the solve it saved."""
+    model = _aca_shaped_model(solver="nbegm", declared=True, shape="passive_state")
+    solution = model.solve(params={}, log_level="off")
+    loaded = load_solution(path=solution.save(path=tmp_path / "solution.lcm"))
+    for period, regimes in solution.values.items():
+        for regime_name, value in regimes.items():
+            np.testing.assert_array_equal(
+                np.asarray(loaded.values[period][regime_name]), np.asarray(value)
+            )
+            assert (
+                "hcc_transitory"
+                not in loaded.metadata.value_schemas[period, regime_name].axis_names
+            )
+    common = _start_frame(shape="passive_state", n_subjects=20)
+    panels = [
+        model.simulate(
+            params={},
+            solution=result,
+            initial_conditions=common,
+            seed=11,
+            log_level="off",
+            use_categorical_codes=True,
+        ).to_dataframe(use_categorical_codes=True)
+        for result in (solution, loaded)
+    ]
+    for panel in panels:
+        panel.sort_values(["subject_id", "period"], inplace=True)
+    for column in ("consumption", "wealth", "hcc_transitory", "value"):
+        assert_array_almost_equal(
+            panels[1][column].to_numpy(dtype=float),
+            panels[0][column].to_numpy(dtype=float),
+            decimal=DECIMAL_PRECISION,
+            err_msg=column,
+        )
+
+
+def test_declared_fresh_draws_follow_the_current_iid_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A seed realises the same draws on the node-state axis as on the native route."""
+    params = {"alive": {"total_costs": {"cost_scale": 0.5}}}
+    initial = {
+        "wealth": jnp.tile(jnp.arange(1.0, 6.0), 8),
+        "period": jnp.zeros(40, dtype=jnp.int32),
+        "regime_id": jnp.zeros(40, dtype=jnp.int32),
+    }
+    monkeypatch.setenv(NATIVE_CURRENT_IID_SWITCH, "1")
+    native = _health_cost_model(solver="nbegm", declared=True)
+    monkeypatch.delenv(NATIVE_CURRENT_IID_SWITCH)
+    adapted = _health_cost_model(solver="nbegm", declared=True)
+    draws = [
+        model.simulate(
+            params=params, initial_conditions=initial, seed=17, log_level="off"
+        )
+        .to_dataframe()
+        .sort_values(["subject_id", "period"])
+        .query("period == 0")["hcc_transitory"]
+        .to_numpy(dtype=float)
+        for model in (native, adapted)
+    ]
+    assert np.unique(draws[0]).size == 40
+    assert_array_almost_equal(draws[1], draws[0], decimal=DECIMAL_PRECISION)
+
+
+def test_declared_shock_inputs_keep_their_tags() -> None:
+    """A base entry maps through the law at entry; a physical path wins everywhere."""
+    group = ShockGroup(
+        shocks={"hcc_transitory": Normal(mu=0.2, sigma=0.5)},
+        nodes=Product(hcc_transitory=GaussHermite(n=_N_HCC_NODES)),
+    )
+    model = _aca_shaped_model(
+        solver="nbegm", declared=True, shape="multi_date", group=group
+    )
+    solution = model.solve(params={}, log_level="off")
+    common = _start_frame(shape="multi_date", n_subjects=10)
+    base = jnp.linspace(-1.5, 1.5, 10)
+    path = jnp.stack([jnp.linspace(-0.4, 0.6, 10), jnp.linspace(0.3, -0.9, 10)], 1)
+
+    entry = {"hcc_transitory": BaseInnovations(values=base)}
+
+    def shocks(*, path_record: PhysicalValues | None) -> np.ndarray:
+        panel = model.simulate(
+            params={},
+            solution=solution,
+            initial_conditions={**common, **entry},
+            shock_paths=None
+            if path_record is None
+            else {"hcc_transitory": path_record},
+            seed=5,
+            log_level="off",
+        ).to_dataframe()
+        panel = panel.sort_values(["subject_id", "period"])
+        return np.stack(
+            [
+                panel.query(f"period == {period}")["hcc_transitory"].to_numpy(float)
+                for period in (0, 1)
+            ],
+            axis=1,
+        )
+
+    entered = shocks(path_record=None)
+    assert_array_almost_equal(
+        entered[:, 0], 0.2 + 0.5 * base, decimal=DECIMAL_PRECISION
+    )
+    assert np.all(entered[:, 1] != 0.2 + 0.5 * base)
+    supplied = shocks(path_record=PhysicalValues(values=path))
+    assert_array_almost_equal(supplied, path, decimal=DECIMAL_PRECISION)
+
+
+def test_declared_physical_value_outside_its_support_is_refused() -> None:
+    """A supplied uniform draw outside the law's interval is not simulated."""
+    group = ShockGroup(
+        shocks={"hcc_transitory": Uniform(start=0.0, stop=1.0)},
+        nodes=Product(hcc_transitory=EqualSpacedUniform(n=3)),
+    )
+    model = _aca_shaped_model(
+        solver="nbegm", declared=True, shape="multi_date", group=group
+    )
+    common = _start_frame(shape="multi_date", n_subjects=5)
+    with pytest.raises(InvalidSimulationInputError, match="outside the law's support"):
+        model.simulate(
+            params={},
+            initial_conditions={
+                **common,
+                "hcc_transitory": PhysicalValues(values=jnp.full(5, 2.0)),
+            },
+            seed=5,
+            log_level="off",
+        )
+
+
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
+@pytest.mark.parametrize("solver", ["negm", "nnbegm"])
+def test_declared_shock_solves_nested_egm_on_the_node_axis(*, solver: str) -> None:
+    """Keeper and adjuster are chosen per shock node before the published average."""
+    from tests.egm.test_current_iid_negm_model import (  # noqa: PLC0415
+        _declarations,
+        _oracle,
+        _params,
+    )
+
+    declarations = _declarations()
+    child = declarations.regimes["child"]
+    assert isinstance(child, NestedConsumptionSavingsRegime)
+    assert isinstance(child.solver, NEGM)
+    if solver == "nnbegm":
+        child = replace(
+            child,
+            solver=NNBEGM(
+                inner=NBEGM(
+                    savings_grid=child.solver.inner.savings_grid, jump_read="bridged"
+                ),
+                outer_search=FiniteOuterGrid(grid=child.solver.outer_grid),
+            ),
+        )
+    model = Model(
+        **{
+            field.name: getattr(declarations, field.name)
+            for field in fields(declarations)
+            if field.init and field.name != "regimes"
+        },
+        regimes={**declarations.regimes, "child": child},
+    )
+    solution = model.solve(params=_params(), log_level="off")
+    assert _oracle(wealth=2.0, housing=1.0, shock=0.0)[6] == 0
+    assert _oracle(wealth=2.0, housing=1.0, shock=3.0)[6] == 1
+    expected = np.mean(
+        [_oracle(wealth=2.0, housing=1.0, shock=z)[0] for z in (0.0, 3.0)]
+    )
+    assert np.shape(solution.values[1]["child"]) == (3, 3)
+    np.testing.assert_almost_equal(
+        solution.values[1]["child"][1, 1], expected, decimal=DECIMAL_PRECISION
+    )
+    physical = jnp.asarray([0.0, 2.0, 3.0])
+    result = model.simulate(
+        params=_params(),
+        solution=solution,
+        log_level="off",
+        seed=31,
+        initial_conditions={
+            "wealth": jnp.full((3,), 2.0),
+            "housing": jnp.ones((3,)),
+            "age": jnp.ones((3,)),
+            "regime_id": jnp.full((3,), model.regime_names_to_ids["child"], jnp.int32),
+            "eps": PhysicalValues(values=physical),
+        },
+    )
+    panel = result.to_dataframe().query("period == 1")
+    assert_array_almost_equal(panel["eps"], physical, decimal=DECIMAL_PRECISION)
+    assert np.all(np.isfinite(panel["value"]))
