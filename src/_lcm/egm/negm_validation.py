@@ -86,6 +86,7 @@ from _lcm.egm.validation import (
     _without,
     fail_if_declared_lower_bound_disagrees_with_the_grid,
     fail_if_grid_withholds_its_points,
+    fail_if_iid_process_enters_utility,
 )
 from _lcm.grids import ContinuousGrid
 from _lcm.regime_law import RegimeLaw, RegimeLaws
@@ -156,6 +157,12 @@ def validate_negm_regime(
         solver=solver,
     )
     _fail_if_margins_not_distinct(regime_name=regime_name, solver=solver, inner=inner)
+    fail_if_iid_process_enters_utility(
+        regime_name=regime_name,
+        user_regime=user_regime,
+        resources=inner.resources,
+        solver_name="NEGM",
+    )
     _fail_if_outer_margin_euler_coupled(
         regime_name=regime_name,
         user_regime=user_regime,

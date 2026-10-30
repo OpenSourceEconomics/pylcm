@@ -5,6 +5,15 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### EGM regimes refuse IID shocks entering utility
+
+- An endogenous-grid regime (`DCEGM`, `NBEGM`, `NEGM`, `NNBEGM`) whose `utility` reads
+  an IID process state or a `shocks=` draw other than through its resources function
+  now raises `ModelInitializationError` at `Model(...)`. Simulation used to blend the
+  bracketing node policies for such a draw, an approximation for a shock that changes
+  preferences. Move the shock into resources, or solve the regime with `GridSearch`;
+  see [DC-EGM](docs/reference/solvers.md#api-dcegm).
+
 ### Consent pricing evaluates observed target rows once
 
 - An exit that observes every shock of a target group prices that group's rows from one

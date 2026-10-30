@@ -1,8 +1,9 @@
-"""A nested housing-and-savings regime whose utility reads a current-period shock.
+"""A nested housing-and-savings regime whose resources read a current-period shock.
 
 The `child` regime chooses consumption and a housing investment after drawing
-`eps`, then moves to a terminal `done` regime. `_oracle` solves its decision in
-closed form, so tests can check a simulated decision against an exact one.
+`eps`, a cost that lowers its resources, then moves to a terminal `done` regime.
+`_oracle` solves its decision in closed form, so tests can check a simulated
+decision against an exact one.
 """
 
 import math
@@ -43,16 +44,19 @@ class ReplayRegime:
     done: ScalarInt
 
 
-def _utility(*, consumption: ContinuousAction, eps: FloatND) -> FloatND:
-    return (1 + eps) * jnp.log(consumption)
+_COST_PER_SHOCK = 0.4
 
 
-def _inverse(*, marginal_continuation: FloatND, eps: FloatND) -> FloatND:
-    return (1 + eps) / marginal_continuation
+def _utility(*, consumption: ContinuousAction) -> FloatND:
+    return jnp.log(consumption)
 
 
-def _base_resources(*, wealth: ContinuousState) -> FloatND:
-    return wealth
+def _inverse(*, marginal_continuation: FloatND) -> FloatND:
+    return 1 / marginal_continuation
+
+
+def _base_resources(*, wealth: ContinuousState, eps: FloatND) -> FloatND:
+    return wealth - _COST_PER_SHOCK * eps
 
 
 def _new_housing(*, housing: ContinuousState, investment: ContinuousAction) -> FloatND:
@@ -85,8 +89,11 @@ def _params() -> UserParams:
 
 def _declarations() -> _ModelConstructorInputs:
     """Declare the NEGM `child` at age 1 and its terminal `done` at age 2."""
+    # The terminal value is linear between savings nodes, so every saving the
+    # tests' oracle cases choose is a node: 0.4 and 0.9 are the optima at the
+    # high shock node.
     savings = IrregSpacedGrid(
-        points=np.asarray([0.25, 0.4, 0.5, 0.6, 0.75, 1.0, 1.5, 2.0, 3.0])
+        points=np.asarray([0.25, 0.4, 0.5, 0.6, 0.75, 0.9, 1.0, 1.5, 2.0, 3.0])
     )
     housing = IrregSpacedGrid(points=np.asarray([0.0, 1.0, 2.0]))
     child = NestedConsumptionSavingsRegime(
@@ -158,22 +165,18 @@ def _oracle(*, wealth: float, housing: float, shock: float) -> tuple[float, ...]
     """Solve the liquid Euler equation and enumerate keeper then declared nodes."""
     candidates = []
     for index, target in enumerate((housing, 0.0, 2.0)):
-        resources = wealth + housing - target
-        saving = max(0.25, resources / (2 + shock))
+        resources = wealth - _COST_PER_SHOCK * shock + housing - target
+        saving = max(0.25, resources / 2)
         consumption = resources - saving
         value = (
-            (
-                (1 + shock) * math.log(consumption)
-                + math.log(saving)
-                + 2 * math.log1p(target)
-            )
+            (math.log(consumption) + math.log(saving) + 2 * math.log1p(target))
             if consumption > 0
             else -math.inf
         )
         candidates.append(
             (
                 value,
-                (1 + shock) / consumption if consumption > 0 else 0.0,
+                1 / consumption if consumption > 0 else 0.0,
                 consumption,
                 saving,
                 target - housing,

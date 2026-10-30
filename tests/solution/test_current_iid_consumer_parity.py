@@ -36,6 +36,7 @@ from lcm import (
 from lcm._solver_api.result import SolutionResult
 from lcm.exceptions import (
     InvalidSimulationInputError,
+    ModelInitializationError,
     OffGridStateError,
     ShockDeclarationError,
 )
@@ -611,16 +612,10 @@ class _Health:
     good: ScalarInt
 
 
-def _shocked_log_consumption(
-    *, consumption: ContinuousAction, taste: FloatND
+def _health_resources_less_cost(
+    *, wealth: ContinuousState, good_health: DiscreteState, cost: FloatND
 ) -> FloatND:
-    return (1.0 + 0.2 * taste) * jnp.log(consumption)
-
-
-def _shocked_inverse_marginal_utility(
-    *, marginal_continuation: FloatND, taste: FloatND
-) -> FloatND:
-    return (1.0 + 0.2 * taste) / marginal_continuation
+    return wealth + 1.5 + 0.5 * good_health - 0.2 * cost
 
 
 def _health_resources(
@@ -644,17 +639,17 @@ def _carried_health_model(*, declared: bool) -> Model:
         "good_health": DiscreteGrid(category_class=_Health),
     }
     if not declared:
-        states["taste"] = NormalIIDProcess(
+        states["cost"] = NormalIIDProcess(
             n_points=_N_HCC_NODES, gauss_hermite=True, mu=0.0, sigma=1.0
         )
     alive = ConsumptionSavingsRegime(
         states=states,
         actions={"consumption": LinSpacedGrid(start=0.5, stop=6.0, n_points=12)},
         functions={
-            "utility": _shocked_log_consumption,
-            "resources": _health_resources,
+            "utility": _log_consumption,
+            "resources": _health_resources_less_cost,
             "savings": _savings,
-            "inverse_marginal_utility": _shocked_inverse_marginal_utility,
+            "inverse_marginal_utility": _inverse_marginal_utility,
         },
         state_transitions={
             "wealth": {"done": _next_wealth_from_savings},
@@ -667,7 +662,7 @@ def _carried_health_model(*, declared: bool) -> Model:
             post_decision_state="savings",
         ),
         solver=NBEGM(savings_grid=_SAVINGS_GRID),
-        shocks=("taste",) if declared else (),
+        shocks=("cost",) if declared else (),
     )
     done = Regime(
         states={
@@ -685,9 +680,9 @@ def _carried_health_model(*, declared: bool) -> Model:
         fixed_params={"discount_factor": 1.0},
         shocks=(
             {
-                "taste": ShockGroup(
-                    shocks={"taste": Normal(mu=0.0, sigma=1.0)},
-                    nodes=Product(taste=GaussHermite(n=_N_HCC_NODES)),
+                "cost": ShockGroup(
+                    shocks={"cost": Normal(mu=0.0, sigma=1.0)},
+                    nodes=Product(cost=GaussHermite(n=_N_HCC_NODES)),
                 )
             }
             if declared
@@ -711,7 +706,7 @@ def test_nbegm_carries_passive_discrete_state_into_terminal() -> None:
             model=legacy,
             values=legacy_solution.values[0]["alive"],
             regime_name="alive",
-            shock="taste",
+            shock="cost",
             weights=weights,
         ),
         decimal=DECIMAL_PRECISION,
@@ -737,7 +732,12 @@ def test_nbegm_carries_passive_discrete_state_into_terminal() -> None:
     last = panel[panel["period"] == 1]
     np.testing.assert_array_equal(last["good_health"].to_numpy(), good_health)
     consumption = first["consumption"].to_numpy(dtype=float)
-    resources = np.asarray(wealth) + 1.5 + 0.5 * np.asarray(good_health)
+    resources = (
+        np.asarray(wealth)
+        + 1.5
+        + 0.5 * np.asarray(good_health)
+        - 0.2 * first["cost"].to_numpy(dtype=float)
+    )
     assert np.all(consumption > 0)
     assert_array_almost_equal(
         last["wealth"].to_numpy(dtype=float),
@@ -798,14 +798,7 @@ _HCC = ShockGroup(
     nodes=Product(hcc_transitory=GaussHermite(n=_N_HCC_NODES)),
 )
 _SCALE_NODES = 3
-_EGM_SHAPES = (
-    "multi_date",
-    "chain",
-    "passive_state",
-    "discrete_action",
-    "utility_shock",
-    "aca",
-)
+_EGM_SHAPES = ("multi_date", "chain", "passive_state", "discrete_action", "aca")
 _SOLVERS = (
     pytest.param(
         "dcegm",
@@ -831,7 +824,8 @@ def _aca_shaped_model(
     - `chain`: two sources, `a -> b -> done`;
     - `passive_state`: a deterministic health state carried into the terminal;
     - `discrete_action`: a work choice;
-    - `utility_shock`: the draw enters utility, beside the carried health state;
+    - `utility_shock`: the draw enters utility, beside the carried health state,
+      which an EGM regime refuses;
     - `aca`: the carried health state, the work choice and a literal savings floor
       at the savings grid's origin together.
 
@@ -990,7 +984,7 @@ def _start_frame(*, shape: str, n_subjects: int) -> dict[StateName, FloatND]:
         "period": jnp.zeros(wealth.shape, dtype=jnp.int32),
         "regime_id": jnp.zeros(wealth.shape, dtype=jnp.int32),
     }
-    if shape in {"passive_state", "utility_shock", "aca"}:
+    if shape in {"passive_state", "aca"}:
         common["good_health"] = jnp.arange(n_subjects, dtype=jnp.int32) % 2
     return common
 
@@ -1048,6 +1042,75 @@ def test_declared_shock_reproduces_node_state_model_for_aca_egm_shapes(
             actual=declared_panel[column].to_numpy(dtype=float),
             expected=legacy_panel[column].to_numpy(dtype=float),
             label=column,
+        )
+
+
+_UTILITY_SHOCK_REFUSAL = (
+    r"(?s){solver} regime '{regime}' reads the IID shock\(s\) \['{shock}'\] other "
+    r"than through resources \('{resources}'\).*Move the shock into "
+    r"resources \('{resources}'\), or use GridSearch for this regime\."
+)
+
+
+@pytest.mark.parametrize("declared", [False, True], ids=["node_state", "shocks"])
+@pytest.mark.parametrize("solver", ["dcegm", "nbegm"])
+def test_egm_source_refuses_a_shock_entering_utility(
+    *, solver: str, declared: bool
+) -> None:
+    """An EGM source whose utility reads an IID shock is refused at build.
+
+    The refusal names the way forward: move the shock into resources, or solve
+    the regime with GridSearch. It holds for an IID process state and for a
+    `shocks=` group alike.
+    """
+    with pytest.raises(
+        ModelInitializationError,
+        match=_UTILITY_SHOCK_REFUSAL.format(
+            solver=solver.upper(),
+            regime="alive",
+            shock="hcc_transitory",
+            resources="resources",
+        ),
+    ):
+        _aca_shaped_model(solver=solver, declared=declared, shape="utility_shock")
+
+
+def _taste_utility(*, consumption: ContinuousAction, eps: FloatND) -> FloatND:
+    return (1 + eps) * jnp.log(consumption)
+
+
+def _taste_inverse(*, marginal_continuation: FloatND, eps: FloatND) -> FloatND:
+    return (1 + eps) / marginal_continuation
+
+
+@pytest.mark.parametrize("solver", ["negm", "nnbegm"])
+def test_nested_egm_refuses_a_shock_entering_utility(*, solver: str) -> None:
+    """A nested EGM regime whose utility reads a `shocks=` draw is refused."""
+    declarations = _declarations()
+    child = (
+        _finite_nnbegm_child() if solver == "nnbegm" else declarations.regimes["child"]
+    )
+    child = replace(
+        child,
+        functions={
+            **child.functions,
+            "utility": _taste_utility,
+            "inverse_marginal_utility": _taste_inverse,
+        },
+    )
+    with pytest.raises(
+        ModelInitializationError,
+        match=_UTILITY_SHOCK_REFUSAL.format(
+            solver=solver.upper(), regime="child", shock="eps", resources="resources"
+        ),
+    ):
+        Model(
+            **{
+                field.name: getattr(declarations, field.name)
+                for field in fields(declarations)
+                if field.init and field.name != "regimes"
+            },
+            regimes={**declarations.regimes, "child": child},
         )
 
 
@@ -1393,7 +1456,11 @@ def test_declared_physical_value_outside_its_support_is_refused() -> None:
 @pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 @pytest.mark.parametrize("solver", ["negm", "nnbegm"])
 def test_declared_shock_solves_nested_egm_on_the_node_axis(*, solver: str) -> None:
-    """Keeper and adjuster are chosen per shock node before the published average."""
+    """Keeper and adjuster are chosen per shock node before the published average.
+
+    The cost shock lowers resources: at the low node the household keeps its
+    housing, at the high node it sells.
+    """
     declarations = _declarations()
     child = declarations.regimes["child"]
     assert isinstance(child, NestedConsumptionSavingsRegime)

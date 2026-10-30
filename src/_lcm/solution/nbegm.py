@@ -747,11 +747,18 @@ class NBEGM(OneMarginSolver):
         """Validate grids the kernel reads and the declared borrowing limit."""
         from _lcm.egm.validation import (  # noqa: PLC0415
             fail_if_declared_lower_bound_disagrees_with_the_grid,
+            fail_if_iid_process_enters_utility,
             fail_if_kernel_grids_withhold_their_points,
         )
 
         user_regime = context.user_regimes[context.regime_name]
         bound = cast("_BoundNBEGM", self)
+        fail_if_iid_process_enters_utility(
+            regime_name=context.regime_name,
+            user_regime=user_regime,
+            resources=bound.budget_target,
+            solver_name="NBEGM",
+        )
         liquid = bound.continuous_state
         fail_if_kernel_grids_withhold_their_points(
             grids={
