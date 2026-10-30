@@ -683,12 +683,15 @@ def test_nbegm_u_model_integrates_and_reconstructs_original_candidates(
         "period": jnp.int32(1),
         "age": jnp.asarray(1.0),
     }
+    # The solve retains replay artifacts on the host; the point's own arrays are
+    # committed to the planned device, so bring the children there as replay does.
+    children = jax.device_put(future.children, actual.point.savings_nodes.sharding)
     for index in range(4):
         original = actual.point.node(
             liquid=jnp.asarray(wealth[index]),
             physical={"eps": jnp.asarray(physical[index])},
             pool=pool,
-            children=future.children,
+            children=children,
         )
         assert bool(original.output.valid & original.output.feasible)
         assert int(original.output.native_owner) >= 0

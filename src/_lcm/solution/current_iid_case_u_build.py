@@ -259,6 +259,7 @@ def guard_case_u_shape(  # noqa: C901, PLR0912, PLR0915 - keep exact roles and p
         CaseUExactFunction,
         CaseURideExactFunction,
         PassiveCellsPublisher,
+        _same_numerical_publisher,
     )
     from _lcm.solution.dcegm import _DCEGMPeriodKernel  # noqa: PLC0415
     from _lcm.solution.nbegm import (  # noqa: PLC0415
@@ -281,7 +282,8 @@ def guard_case_u_shape(  # noqa: C901, PLR0912, PLR0915 - keep exact roles and p
         else None
     )
     # The ride publisher's traced cell body reads the same point and demands.
-    publisher = function.publisher if type(function) is CaseURideExactFunction else None
+    ride = function if type(function) is CaseURideExactFunction else None
+    publisher = None if ride is None else ride.publisher
 
     # A missing ModelTime cache would create its clock array here, before admission.
     ages = context.ages
@@ -595,6 +597,27 @@ def guard_case_u_shape(  # noqa: C901, PLR0912, PLR0915 - keep exact roles and p
                     self.frame(label="nested-field", payload=declaration.name.encode())
                     self.visit(value=getattr(nested, declaration.name))
                 self._visit_referenced_bound_method(nested.__post_init__)
+                return
+            if (
+                not function_depth
+                and ride is not None
+                and publisher is not None
+                and value is publisher
+            ):
+                # A retained publisher's point differs from the function's only in
+                # projected declarations its body never reads; capture the latter.
+                if not _same_numerical_publisher(
+                    retained=publisher,
+                    current=PassiveCellsPublisher(
+                        point=ride.point, capacity=ride.capacity, demands=ride.demands
+                    ),
+                ):
+                    raise TypeError("Passive U publisher lost its function's point.")
+                self.frame(label="abstract-original-ride-publisher")
+                self.visit(value=ride.point)
+                self.visit(value=ride.capacity)
+                self.visit(value=ride.demands)
+                self._visit_referenced_bound_method(publisher.__call__)
                 return
             if function_depth or point is None or value is not point:
                 super()._visit_dataclass(value)
