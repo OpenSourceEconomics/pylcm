@@ -136,10 +136,11 @@ def surface_address(
 ) -> ValueArtifactAddress:
     """Address the stored arrival surface `source` publishes at `period`.
 
-    The surface is the value an arrival from `source` into `target` collects,
-    tabulated on `target`'s grid one period later. It is a leaf of `source`'s
-    own dated arrival payload, so it is transported, admitted and released
-    like that payload.
+    The surface holds what the arrival decision from `source` into `target`
+    reads -- each branch's value and each operand's support -- tabulated on
+    `target`'s grid one period later (see `surface_channels`). It is a leaf of
+    `source`'s own dated arrival payload, so it is transported, admitted and
+    released like that payload.
     """
     return ValueArtifactAddress(
         kind=ValueArtifactKind.CONTINUATION_LEAF,
@@ -479,6 +480,391 @@ def _landing_process_nodes(
     return MappingProxyType(nodes)
 
 
+# The operand carrying each surfaced arrival decision's own date and parameters.
+ARRIVAL_SURFACE_ARGUMENTS = "arrival_surface_arguments"
+
+_ACTING_TARGET = "_lcm_arrival_acting_target"
+
+_SUPPORT = "support"
+
+# One component of a policy answer the arrival decision consumes: the answer's
+# operand name and either `_SUPPORT` or the index of the value it reads (`None`
+# for a scalar value).
+type SurfaceChannel = tuple[str, str | int | None]
+
+
+def _arrival_reducer(*, plan: ArrivalQueryPlan) -> _ArrivalReducer:
+    decision = plan.queries.definitions[plan.queries.root].decision
+    reducer = None if decision is None else inspect.unwrap(decision)
+    if not isinstance(reducer, _ArrivalReducer):
+        raise ExecutionPlanningError("An arrival plan lost its decision rule.")
+    return reducer
+
+
+def surface_channels(*, plan: ArrivalQueryPlan) -> tuple[SurfaceChannel, ...]:
+    """The branch operands a stored arrival surface holds, in trailing-axis order.
+
+    Every policy answer the arrival decision consumes -- the acting target, each
+    declared read and each member's fallback -- is stored through the components
+    the decision reads: its support indicator, NaN where the answer fails its
+    integrity check, and each value it reads, zero where the answer has no
+    support.
+    """
+    reducer = _arrival_reducer(plan=plan)
+    channels: list[SurfaceChannel] = [
+        (_ACTING_TARGET, _SUPPORT),
+        *((_ACTING_TARGET, index) for index in reducer.target_indices),
+    ]
+    for producer, read_field, index in reducer.reads.values():
+        channels.append((producer, _SUPPORT))
+        if read_field != _SUPPORT:
+            channels.append((producer, index))
+    for producer, index in reducer.fallbacks:
+        channels.extend(((producer, _SUPPORT), (producer, index)))
+    return tuple(dict.fromkeys(channels))
+
+
+@dataclass(frozen=True, kw_only=True)
+class _ArrivalChannels:
+    """Report the decision's operands at one node instead of deciding there."""
+
+    channels: tuple[SurfaceChannel, ...]
+
+    def __call__(self, **operands: PytreeValue) -> PolicyAnswer:
+        dtype = canonical_float_dtype()
+        values = []
+        for producer, component in self.channels:
+            answer = cast("PolicyAnswer", operands[producer])
+            if component == _SUPPORT:
+                values.append(jnp.where(answer[3], answer[2].astype(dtype), jnp.nan))
+            else:
+                value = answer[0] if component is None else answer[0][component]
+                values.append(jnp.where(answer[2], value, 0).astype(dtype))
+        return (
+            jnp.stack(values),
+            jnp.asarray(-1, jnp.int32),
+            jnp.asarray(a=True),
+            jnp.asarray(a=True),
+            jnp.zeros((0,), jnp.int32),
+        )
+
+
+def surface_queries(*, plan: ArrivalQueryPlan) -> ScalarPolicyQueries:
+    """The plan's query graph, answering with its surface channels at a landing."""
+    channels = surface_channels(plan=plan)
+    root = plan.queries.definitions[plan.queries.root]
+    return replace(
+        plan.queries,
+        definitions=MappingProxyType(
+            {
+                **plan.queries.definitions,
+                plan.queries.root: replace(
+                    root,
+                    decision=with_signature(
+                        _ArrivalChannels(channels=channels),
+                        args=list(dict.fromkeys(name for name, _ in channels)),
+                        enforce=False,
+                    ),
+                    answer_shape=(len(channels),),
+                ),
+            }
+        ),
+    )
+
+
+def plan_surface_address(*, plan: ArrivalQueryPlan) -> ValueArtifactAddress:
+    """Address the stored surface tabulated from `plan`'s answers."""
+    return surface_address(
+        source=plan.source, target=plan.target, period=plan.period - 1
+    )
+
+
+def surface_reader_arguments(
+    *, plans: Mapping[RegimeName, ArrivalQueryPlan], context: CoreBuildContext
+) -> MappingProxyType[RegimeName, Mapping[str, PytreeValue]]:
+    """Each surfaced decision's own date, age and parameters, as its root reads them."""
+    from _lcm.policy_queries import _projection_operands  # noqa: PLC0415
+
+    if context.ages is None:
+        raise ValueError("An arrival surface reader needs its actual economic age.")
+    ages = context.ages
+    return MappingProxyType(
+        {
+            target: MappingProxyType(
+                {
+                    "period": jnp.int32(plan.period),
+                    "age": ages.values[plan.period],
+                    **_projection_operands(
+                        node=plan.queries.definitions[plan.queries.root],
+                        source_state_names=frozenset(),
+                        flat_params=cast("FlatParams", context.flat_params),
+                    ),
+                }
+            )
+            for target, plan in plans.items()
+            if decides_between_nodes(plan=plan)
+        }
+    )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _ArrivalSurfaceValue:
+    """Read a stored arrival surface at a landing: interpolate, then decide there.
+
+    Each channel is interpolated like a value function, by the target's own
+    continuation reader. A support indicator reads as support where it is at
+    least one half: exact on nodes, and inside a cell whose corners disagree the
+    switch falls on the indicator's half level set. A value is the
+    support-weighted mean of the supported corners, so a corner without support
+    neither enters it nor makes it infinite. The arrival decision is then re-run
+    on the interpolated operands at the landing, and each member takes the
+    branch it selects. On a node every channel is that node's own, so the read
+    equals the decision the plan takes there.
+    """
+
+    plan: ArrivalQueryPlan
+    channels: tuple[SurfaceChannel, ...]
+    interpolate: Callable[..., FloatND] | None
+    """The target's continuation reader of one stored array; `None` for a target
+    without states, whose surface is its one landing."""
+    lottery_names: tuple[str, ...] = ()
+    """Landing coordinates the reader maps over, one node per call here."""
+    width: int | None = None
+    """Trailing value axis the reader carries per call; `None` for none."""
+    process_nodes: Mapping[StateName, Float1D] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    """Nodes of each process state the continuation enumerates by position."""
+
+    def __call__(self, **operands: PytreeValue) -> tuple[FloatND, BoolND]:
+        from _lcm.policy_queries import (  # noqa: PLC0415
+            _mapped_query_states,
+            _mapped_query_valid,
+        )
+
+        stored = cast("FloatND", operands["next_V_arr"])
+        if stored.shape[-1:] != (len(self.channels),):
+            raise ExecutionPlanningError(
+                "A stored arrival surface does not hold this arrival's branches."
+            )
+        read = (
+            stored
+            if self.interpolate is None
+            else self._interpolated(stored=stored, operands=operands)
+        )
+        states = {
+            name.removeprefix("next_"): value
+            for name, value in operands.items()
+            if name.startswith("next_") and name != "next_V_arr"
+        }
+        for name, nodes in self.process_nodes.items():
+            states[name] = nodes[jnp.asarray(states[name]).astype(jnp.int32)]
+        root = self.plan.queries.definitions[self.plan.queries.root]
+        frame = cast(
+            "Mapping[RegimeName, Mapping[str, PytreeValue]]",
+            operands[ARRIVAL_SURFACE_ARGUMENTS],
+        )[self.plan.target]
+        mapped = _mapped_query_states(node=root, available={**frame, **states})
+        decision = cast("Callable[..., PolicyAnswer]", root.decision)
+        available = {**frame, **mapped, **self._answers(read=read)}
+        answer = decision(
+            **{name: available[name] for name in inspect.signature(decision).parameters}
+        )
+        return answer[0], answer[3] & _mapped_query_valid(node=root, mapped=mapped)
+
+    def _interpolated(
+        self, *, stored: FloatND, operands: Mapping[str, PytreeValue]
+    ) -> FloatND:
+        """Every channel at this one landing, read like the target's value."""
+        interpolate = cast("Callable[..., FloatND]", self.interpolate)
+        coordinates = {
+            name: operands[name]
+            for name in inspect.signature(interpolate).parameters
+            if name != "next_V_arr"
+        }
+        for name in self.lottery_names:
+            coordinates[name] = jnp.reshape(
+                cast("FloatND | IntND", coordinates[name]), (1,)
+            )
+        width = 1 if self.width is None else self.width
+        if padding := -len(self.channels) % width:
+            stored = jnp.concatenate(
+                (stored, jnp.zeros((*stored.shape[:-1], padding), stored.dtype)),
+                axis=-1,
+            )
+        blocks = []
+        for start in range(0, stored.shape[-1], width):
+            block = stored[..., start : start + width]
+            values = interpolate(
+                **coordinates,
+                next_V_arr=block if self.width is not None else block[..., 0],
+            )
+            blocks.append(jnp.reshape(values, (width,)))
+        return jnp.concatenate(blocks)[: len(self.channels)]
+
+    def _answers(self, *, read: FloatND) -> dict[str, PolicyAnswer]:
+        """Rebuild each consumed policy answer from its interpolated channels."""
+        position = {channel: index for index, channel in enumerate(self.channels)}
+        answers = {}
+        for producer in dict.fromkeys(name for name, _ in self.channels):
+            indicator = read[position[producer, _SUPPORT]]
+            support = indicator >= 0.5  # noqa: PLR2004 - the indicator's half level
+            weight = jnp.where(support, indicator, 1)
+            components = {
+                component: jnp.where(
+                    support, read[position[producer, component]] / weight, -jnp.inf
+                )
+                for name, component in self.channels
+                if name == producer and component != _SUPPORT
+            }
+            empty = jnp.asarray(-jnp.inf, read.dtype)
+            if set(components) <= {None}:
+                value = components.get(None, empty)
+            else:
+                indices = cast("dict[int, FloatND]", components)
+                value = jnp.stack(
+                    tuple(
+                        indices.get(index, empty) for index in range(max(indices) + 1)
+                    )
+                )
+            answers[producer] = (
+                value,
+                jnp.asarray(-1, jnp.int32),
+                support,
+                ~jnp.isnan(indicator),
+                jnp.zeros((0,), jnp.int32),
+            )
+        return answers
+
+
+def _surface_action_problem(
+    *,
+    context: SolverBuildContext,
+    period: int,
+    plans: Mapping[RegimeName, ArrivalQueryPlan],
+) -> _QAndF | _CollectiveQAndF:
+    """Read each surfaced arrival target by its branches, decided at the landing."""
+    function = context.Q_and_F_functions[period]
+    if not isinstance(function, _QAndF | _CollectiveQAndF) or not isinstance(
+        function.compute_CE, _ComputeCE
+    ):
+        raise UnsupportedOperationError(
+            "Arrival pricing needs its canonical GridSearch Q/F continuation; "
+            "endogenous-grid arrival reconstruction is an S10 dependency."
+        )
+    compute = function.compute_CE
+    continuations = dict(compute.continuations)
+    scalar_readers = dict(compute.arrival_scalar_readers)
+    scalar_names = dict(compute.arrival_scalar_arg_names)
+    scalar_checks = dict(compute.arrival_scalar_landing_checks)
+    for target, plan in plans.items():
+        if not decides_between_nodes(plan=plan):
+            continue
+        channels = surface_channels(plan=plan)
+        root = plan.queries.definitions[plan.queries.root]
+        if target in compute.scalar_targets:
+            scalar_readers[target] = with_signature(
+                _ArrivalSurfaceValue(plan=plan, channels=channels, interpolate=None),
+                args=["next_V_arr", ARRIVAL_SURFACE_ARGUMENTS],
+                enforce=False,
+            )
+            scalar_names[target] = (ARRIVAL_SURFACE_ARGUMENTS,)
+            scalar_checks[target] = ()
+            continue
+        original = continuations[target]
+        if (
+            original.next_V is None
+            or original.integrated_weight_names
+            or original.draw_dependent_names
+            or original.landing_checks
+            or original.arrival_query
+        ):
+            raise UnsupportedOperationError(
+                "This arrival continuation needs its declared draw/landing "
+                "reader adapter."
+            )
+        names = list(
+            dict.fromkeys(
+                (
+                    *inspect.signature(original.next_V).parameters,
+                    *(f"next_{name}" for name in root.read.projection),
+                    "next_V_arr",
+                    ARRIVAL_SURFACE_ARGUMENTS,
+                )
+            )
+        )
+        reader = with_signature(
+            _ArrivalSurfaceValue(
+                plan=plan,
+                channels=channels,
+                interpolate=cast("Callable[..., FloatND]", original.next_V),
+                lottery_names=original.lottery_axis_names,
+                width=root.value_shape[0] if root.value_shape else None,
+                process_nodes=_landing_process_nodes(
+                    target=target,
+                    info=context.regime_to_v_interpolation_info[target],
+                    lottery_axis_names=original.lottery_axis_names,
+                ),
+            ),
+            args=names,
+            enforce=False,
+        )
+        continuations[target] = replace(
+            original,
+            next_V=productmap(
+                func=reader,
+                variables=original.lottery_axis_names,
+                batch_sizes=dict.fromkeys(original.lottery_axis_names, 0),
+            ),
+            extra_param_names=original.extra_param_names | {ARRIVAL_SURFACE_ARGUMENTS},
+            original_node_axes=original.original_node_axes
+            or original.original_value_axes,
+            original_value_axes=(),
+            arrival_query=True,
+            landing_checks=(),
+        )
+    compute = replace(
+        compute,
+        continuations=MappingProxyType(continuations),
+        arrival_scalar_readers=MappingProxyType(scalar_readers),
+        arrival_scalar_arg_names=MappingProxyType(scalar_names),
+        arrival_scalar_landing_checks=tuple(scalar_checks.items()),
+    )
+    return replace(
+        function,
+        compute_CE=compute,
+        landing_checks=compute.landing_checks,
+        arg_names=(*function.arg_names, ARRIVAL_SURFACE_ARGUMENTS),
+        continuation_reads=None
+        if function.continuation_reads is None
+        else function.continuation_reads | {ARRIVAL_SURFACE_ARGUMENTS},
+    )
+
+
+def decides_between_nodes(*, plan: ArrivalQueryPlan) -> bool:
+    """Whether `plan`'s surface stores branches, decided again at each landing.
+
+    Between nodes the decision is re-run on interpolated answers, the landing
+    state, its date, its age and its parameters. A decision that observes
+    realized physical information has no stored counterpart for it there: its
+    surface stores the value after the decision, integrated over that
+    information at each node, and is read like a value function.
+    """
+    root = plan.queries.definitions[plan.queries.root]
+    decision = cast("Callable[..., PolicyAnswer]", root.decision)
+    supplied = {
+        "period",
+        "age",
+        *root.read.operand_paths,
+        *root.read.projection,
+        *root.inputs,
+    }
+    return (
+        not root.read.physical_inputs
+        and set(inspect.signature(decision).parameters) <= supplied
+    )
+
+
 def _bind_transport_templates(
     *,
     plans_by_source: Mapping[RegimeName, Mapping[RegimeName, ArrivalQueryPlan]],
@@ -604,7 +990,10 @@ def _surface_template(
     target_context: SolverBuildContext,
     plan: ArrivalQueryPlan,
 ) -> ArrivalOperand:
-    """Shape a stored surface like the target's value, one answer per node."""
+    """Shape a stored surface on the target's grid, one channel vector per node.
+
+    A surface read like a value function holds the plan's own answer per node.
+    """
     shape = (
         *(
             nodes.size
@@ -612,7 +1001,11 @@ def _surface_template(
                 context=target_context, period=plan.period
             ).values()
         ),
-        *plan.queries.definitions[plan.queries.root].value_shape,
+        *(
+            (len(surface_channels(plan=plan)),)
+            if decides_between_nodes(plan=plan)
+            else plan.queries.definitions[plan.queries.root].value_shape
+        ),
     )
     return context.place_on_regime_devices(
         template=jnp.zeros(shape, dtype=canonical_float_dtype())
@@ -681,8 +1074,10 @@ def install_arrival_source_queries(
     A source's own action problem reads every arrival at its exact landing. The
     plan behind that read rebuilds the target's action problem there, from a
     pricing context: the canonical action problem, whose own next-date arrivals
-    read the stored surface of that arrival by ordinary interpolation. So no
-    plan contains another plan, whatever the number of later arrival dates.
+    read the stored surface of that arrival. The surface holds the decision's
+    branches and operands, interpolated separately and decided again at each
+    landing. So no plan contains another plan, whatever the number of later
+    arrival dates.
     """
     updated = dict(contexts)
     pricing = dict(contexts)
@@ -765,18 +1160,16 @@ def install_arrival_source_queries(
             reader = pricing[source]
             pricing[source] = replace(
                 reader,
-                arrival_surfaces=MappingProxyType(
+                Q_and_F_functions=MappingProxyType(
                     {
-                        **reader.arrival_surfaces,
-                        period: MappingProxyType(
-                            {
-                                target: surface_address(
-                                    source=source, target=target, period=period
-                                )
-                                for target in plans
-                            }
+                        **reader.Q_and_F_functions,
+                        period: _surface_action_problem(
+                            context=reader, period=period, plans=plans
                         ),
                     }
+                ),
+                arrival_surfaces=MappingProxyType(
+                    {**reader.arrival_surfaces, period: MappingProxyType(plans)}
                 ),
             )
     return MappingProxyType(updated)
@@ -838,7 +1231,7 @@ class _ArrivalReducer:
         )
         if accepted.shape != () or accepted.dtype != jnp.bool_:
             raise ValueError("An arrival predicate must return a scalar Boolean.")
-        target = cast("PolicyAnswer", operands["_lcm_arrival_acting_target"])
+        target = cast("PolicyAnswer", operands[_ACTING_TARGET])
         accepted &= target[2]
         valid &= target[3]
         routed = []
@@ -1265,7 +1658,7 @@ def _bind_arrival(
     physical_names = frozenset() if target_plan is None else target_plan.physical_names
     information = frozenset(declaration.observes)
     inputs = {
-        "_lcm_arrival_acting_target": builder.make(
+        _ACTING_TARGET: builder.make(
             kind=QueryKind.PARTICIPATING,
             owner=target,
             projection=projection,
@@ -1466,7 +1859,7 @@ def _bind_arrival(
         ),
         inputs=inputs,
         exit_targets={
-            0: dict.fromkeys(members, inputs["_lcm_arrival_acting_target"]),
+            0: dict.fromkeys(members, inputs[_ACTING_TARGET]),
             1: {
                 member: inputs[fallbacks[index][0]]
                 for index, member in enumerate(members)

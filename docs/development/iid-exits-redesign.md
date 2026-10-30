@@ -602,22 +602,105 @@ outcomes need oracle evidence, not a claim of legacy bitwise parity.
 
 ### Arrival pricing depth
 
-An arrival is priced exactly one level deep. A source reading an arrival at date `d`
-rebuilds the target's action problem exactly at the realized landing, as above. That
-rebuilt action problem does not rebuild its own later arrivals in turn: for an arrival
-from regime `R` into `U` at `d + 1` it reads a stored arrival surface `A_{R->U}`,
-interpolated like any continuation value. `A_{R->U}` holds, at every node of `U`'s grid
-at `d + 1`, the value the level-1 arrival reader reports for a landing on that node, and
-is NaN where that reader reports a failed integrity. The surface is a leaf of `R`'s
-dated `ArrivalContinuation` payload, so it is published by `R`'s period program,
-transported to `d - 1` with that payload, and counted by the same admission.
+An arrival is priced exactly one level deep. The user-facing statement of this
+approximation, with its error pattern and the advice to refine grids near participation
+thresholds, is
+[Participation checks over several periods](../user_guide/collective_regimes.md#participation-check-depth).
 
-On grid nodes the nested values equal the fully nested recursion. Off grid, levels below
-the first differ by the interpolation error of `A`, which is first order where the
-arrival decision switches (accept versus fallback) and second order on smooth pieces. In
-exchange, the program cost of a period no longer grows with the number of remaining
-arrival dates. Simulation replays the same plans and therefore reads the retained
-surfaces; a solution that does not carry them (a loaded one) refuses replay loudly.
+- **Level 1 is exact.** A source reading an arrival at date `d` rebuilds the target's
+  action problem exactly at the realized landing, as above. Simulation decides each
+  realized arrival the same way.
+- **Below level 1 a stored surface replaces the rebuild.** The rebuilt action problem
+  does not rebuild its own later arrivals: for an arrival from regime `R` into `U` at
+  `d + 1` it reads the stored surface `A_{R->U}`. `A_{R->U}` holds, at every node of
+  `U`'s grid at `d + 1`, the operands the level-1 decision consumes there rather than
+  its verdict: each policy answer it reads (the acting target, every declared read,
+  every member's fallback) through its support indicator, NaN where that answer fails
+  its integrity, and each value component the decision reads, zero where the answer has
+  no support. A node whose whole answer fails its integrity is NaN in every channel.
+- **Off a node the decision is taken again.** Each channel is interpolated by `U`'s own
+  continuation reader, as `V_U` would be. A support indicator reads as support where it
+  is at least one half; a value is the support-weighted mean of the supported corners.
+  The arrival decision is re-run on those answers with the landing state and its own
+  date, age and parameters, and each member takes the branch it selects. On a node the
+  rebuilt answers are the node's own, so the read equals the level-1 decision there.
+
+Where each piece lives:
+
+- `install_arrival_source_queries` (`src/_lcm/arrival_queries.py`) binds every plan
+  against pricing contexts: the canonical action problems, carrying no plans of their
+  own. Each surfaced target's continuation in a pricing context is replaced by
+  `_ArrivalSurfaceValue` (`_surface_action_problem`), and the context names the plan
+  whose surface it reads in `SolverBuildContext.arrival_surfaces`. No plan contains a
+  plan, so depth one holds by construction.
+- `surface_channels` fixes the channel order of one plan, from its `_ArrivalReducer`;
+  `surface_queries` is the same query graph with the root answering those channels. The
+  publisher and every reader derive the layout from the same plan.
+- `_GridSearchArgumentBuilder.arrival_surfaces` (`src/_lcm/solution/grid_search.py`)
+  substitutes the surface for the target's entry in `next_regime_to_V_arr` and supplies
+  `arrival_surface_arguments`: each surfaced decision's own period, age and parameters.
+- The `_arrival_surfaces` core program of `_BorrowedArrivalKernel`
+  (`src/_lcm/arrival_publication.py`) tabulates the surfaces over `U`'s grid with a
+  bounded `lax.map` after `R`'s period kernel. Each surface is a leaf of `R`'s dated
+  `ArrivalContinuation` payload, so it is published by `R`'s period program, transported
+  to `d - 1` with that payload, and counted by the same admission.
+- Backward induction retains the surfaces on `SolutionResult`, simulation replays the
+  same plans against them (`src/_lcm/simulation/arrival_values.py`), and
+  `src/_lcm/persistence/solution.py` saves and verifies them under the archive manifest
+  field `"arrival_surfaces"`, each entry tagged `"layout": "decision-branches"`; an
+  archive of another layout is refused on load. A solution without them, such as a
+  `dataclasses.replace` copy, refuses replay where a plan reads one.
+- A decision reading anything beyond its declared reads, the landing state, `period`,
+  `age` and its parameters — realized physical information — cannot be re-run between
+  nodes (`decides_between_nodes`). Its surface keeps the value after the decision per
+  node, integrated over that information, shaped like the plan's answer, and the pricing
+  context reads it through the target's ordinary continuation reader.
+
+Cost. A period's program prices one arrival level whatever the number of remaining
+arrival dates, so the solve is linear in the horizon. Full nesting multiplies a period's
+program by the target's actions times its reads and lottery nodes for each further
+arrival date. On the household example with 10 wealth nodes and 5 consumption shares at
+four periods (CPU), the solve went from 84.9 s and 10.9 GB peak RSS under full nesting
+to 19.1 s and 2.6 GB with a stored value after the decision, and takes 37.0 s and 3.8 GB
+with stored branches, compiling from an empty persistent cache (one measurement on a
+shared machine). The household's period-0 query program at 3 wealth nodes and 2 shares
+costs 1.57 times the one with a stored value after the decision, and is the same at four
+and five periods. A surface holds `len(surface_channels(plan))` entries per node: eight
+for the household's continuing couple, against two values after the decision.
+
+Accuracy.
+
+- Where every landing is a grid node the values are bitwise those of full nesting: a
+  discrete-wealth twin of the household example at four periods, fp64 and fp32.
+- Off grid, where the decision does not switch inside a cell, each member's value is a
+  smooth branch read off its interpolant: second order in `h`. Where the decision
+  compares values, the interpolated operands place the switch to second order, so a
+  member who is overruled there carries the jump between his branches only within a band
+  of order `h^2`; the member who decides has a kink and stays second order. Where the
+  decision reads policy support, a Boolean, the switch can only be placed halfway across
+  the cell, and every member whose value jumps there carries the jump over at most
+  `h / 2`.
+- References: a pure-Python two-member reference (`reference_branch.py` in the lane
+  notes; she leaves rich households, he is overruled) gives a read error near the switch
+  of 0.069, 0.015, 0.0036, 0.00084, 0.00026 at `h` = 4.75 to 0.30, against 0.9 to 1.6,
+  not converging, for the stored value after the decision; with support deciding neither
+  converges. A pylcm witness with the same structure gives a max period-0 error of
+  0.048, 0.017, 0.0050, 0.0014 at `h` = 4, 2, 1, 0.5, against 2.45 to 2.48 before.
+- The household example at four periods (fp64, 3 consumption shares) changes only period
+  0, and its only surfaced check is the continuing couple's, on support. The couple's
+  mean absolute error is 0.102, 0.116, 0.075, 0.034 and the max 0.284, 0.241, 0.693,
+  0.548 at 4, 6, 10, 16 wealth nodes. Stored branches change only the nodes whose
+  landings cross a support switch (zero, two, three and two nodes). At 10 and 16 nodes
+  the max is bitwise the one a stored value after the decision gives (at 6 it moves from
+  0.246 to 0.241, at 10 the second-largest error from 0.56 to 0.21): a decision taken on
+  the smooth surface error near a threshold — the household's choice or the exact
+  next-landing check — flips and moves a member's value by a jump.
+
+There is no switch back to full nesting. `tests/solution/test_arrival_pricing_depth.py`
+pins the program-cost bound, the on-grid equality and the unchanged later periods
+against nested-route values in `tests/data/arrival_pricing_depth/`, the second-order
+read of an overruled partner against a closed-form solution, the archive round trip and
+the refusal of another archive layout.
 
 ### Stage gates
 

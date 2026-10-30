@@ -1179,14 +1179,29 @@ def _validate_arrival_replay_identity(
     *, target: ValueArtifactAddress, source: ValueConsumerAddress
 ) -> bool:
     """Admit only explicitly addressed originals beyond an arrival producer date."""
+    from _lcm.arrival_continuation import (  # noqa: PLC0415 - imports this module
+        ARRIVAL_CONTINUATION,
+        ARRIVAL_SURFACE_PREFIX,
+    )
+
     if source.channel is not ValueInputChannel.ARRIVAL_REPLAY_VALUE:
         return False
-    if target.kind is ValueArtifactKind.CONTINUATION_LEAF:
+    is_surface = (
+        target.kind is ValueArtifactKind.CONTINUATION_LEAF
+        and target.artifact_key == ARRIVAL_CONTINUATION
+        and bool(target.leaf_path)
+        and isinstance(name := target.leaf_path[-1], str)
+        and name.startswith(ARRIVAL_SURFACE_PREFIX)
+    )
+    if is_surface:
         # A retained stored arrival surface, read at or after the replay date.
         if target.period < source.source_period:
             raise ValueError("Arrival replay cannot read a past arrival surface.")
     elif target.kind is not ValueArtifactKind.REGIME_VALUE:
-        raise ValueError("Arrival replay reads only original regime values.")
+        raise ValueError(
+            "Arrival replay reads only original regime values or stored arrival "
+            "surfaces."
+        )
     elif target.period <= source.source_period + 1:
         raise ValueError("Arrival replay originals must be later than next period.")
     if source.argument is None or not source.path:

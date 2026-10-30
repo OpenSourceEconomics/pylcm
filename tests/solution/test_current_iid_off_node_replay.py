@@ -71,10 +71,6 @@ _DCEGM_ARCHIVE_XFAIL = pytest.mark.xfail(
         "fp64 ULP in `value` (reported gap)"
     ),
 )
-_NBEGM_REPLAY_XFAIL = pytest.mark.xfail(
-    strict=True,
-    reason="continuous NBEGM replay at off-node draws lands with wip/607-nbreplay",
-)
 
 
 @categorical(ordered=False)
@@ -612,7 +608,6 @@ def _nb_oracle(
     )
 
 
-@_NBEGM_REPLAY_XFAIL
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
 @pytest.mark.parametrize("resource_scale", [1, 2])
 def test_original_nbegm_r_model_retains_one_bank_and_replays_offnode(

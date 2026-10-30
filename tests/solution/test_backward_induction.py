@@ -197,8 +197,6 @@ class MockRegime(Regime):
             SimpleNamespace(
                 egm_policy_read=None,
                 external_replay_route=None,
-                case_r_replay_spec=None,
-                uses_case_u_reconstruction=False,
             ),
         )
 

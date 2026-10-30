@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "88ed47e19de74921c57a1bd49cfaf240f1627c96020c6438afcab589d5e05ed2",
+  "source_inventory_sha256": "04813687458cc3961f25e75c703f48b57cd917494cb48d8fc91300d13575fbd8",
   "sources": [
     {
       "path": "src/_lcm/constraints/bounds.py",
@@ -226,7 +226,7 @@
     },
     {
       "path": "src/_lcm/execution/value_transfer.py",
-      "sha256": "b2782a2962d6edd7acf4f93e2390a45c2fd90c889910116bf77f73f956e5d701"
+      "sha256": "6dccf91ac6fb40dae3ddcc3a887359cc5816985f176c95b2a7162d47d8134162"
     },
     {
       "path": "src/_lcm/execution/workspace_planning.py",
@@ -282,7 +282,7 @@
     },
     {
       "path": "src/_lcm/persistence/solution.py",
-      "sha256": "e603aca78bc285c86ccd66d1ed06db0510a4a35adfe1c05cee9b067398f9d9cc"
+      "sha256": "e70b2ea21990e1dcaffb00a7547ff8afa171346957691b247e8f7ac96e8886df"
     },
     {
       "path": "src/_lcm/post_decision_bound.py",
@@ -562,7 +562,7 @@
     },
     {
       "path": "src/_lcm/solution/contract.py",
-      "sha256": "77c80b2c1f160b3bc25ccb996c479eb5728e7d95224582c5e126cd0f73b7ebee"
+      "sha256": "90be1a7867eeedcea726dc8a93af7d4ff556e216183cca4c929b0ac2e243ba45"
     },
     {
       "path": "src/_lcm/solution/dcegm.py",
@@ -586,7 +586,7 @@
     },
     {
       "path": "src/_lcm/solution/grid_search.py",
-      "sha256": "6f051a6a85b3914060069e39aa036c6922ced9e33080841fbf32bd5141cec5f6"
+      "sha256": "b908ff1825874e20a70706d64e10169a8742fb9c6b0525f718e97ebb13504d9e"
     },
     {
       "path": "src/_lcm/solution/kernel_output.py",
