@@ -24,6 +24,12 @@ from lcm import NormalIIDProcess, TauchenAR1Process
 > EGM-family and collective regimes support narrower combinations than `GridSearch`;
 > build the intended specialized regime early and let model validation check it.
 
+A shock drawn and used within one period can instead be declared as a named `ShockGroup`
+(`Model(shocks=...)`, `Regime(shocks=...)`). In an endogenous-grid regime such a group
+is solved as the IID node states described here, while its published values integrate
+the nodes; see
+[Named current-IID shocks in endogenous-grid regimes](../reference/solvers.md#current-iid-egm).
+
 ## Simulation draws
 
 Continuous process simulation defaults to `simulate_draws="continuous"`: draw from its

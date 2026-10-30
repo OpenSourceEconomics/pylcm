@@ -30,6 +30,7 @@ from beartype import beartype
 from beartype.roar import BeartypeCallHintViolation
 
 from _lcm.beartype_conf import MODEL_CONF, PARAMS_CONF, SIMULATION_INPUT_CONF
+from _lcm.current_iid_node_adapter import NodeAxisAdapter, adapt_declaration
 from _lcm.egm.current_iid_case_u_replay import CaseUReplayChildren, CaseUReplayInput
 from _lcm.egm.current_iid_envelope import (
     StateUtilityObligations,
@@ -592,6 +593,7 @@ class _PickledModel(TypedDict):
         str, MappingProxyType[RegimeName, tuple[int, ...]]
     ]
     _shock_registry: NotRequired[ShockRegistry]
+    _node_axis_adapter: NotRequired[NodeAxisAdapter]
     _params_template: ParamsTemplate
     _param_name_candidates: NotRequired[
         MappingProxyType[RegimeName, MappingProxyType[ReferenceName, str]]
@@ -1055,6 +1057,8 @@ class Model:
     @property
     def shocks(self) -> Mapping[ShockGroupName, ShockGroup]:
         """Return immutable model-level IID shock-group declarations."""
+        if self._node_axis_adapter is not None:
+            return self._node_axis_adapter.declared_groups
         return self._shock_registry.groups
 
     @property
@@ -1066,6 +1070,9 @@ class Model:
 
     _shock_registry: ShockRegistry
     """Named innovation identities and unpruned consumer/legacy declarations."""
+
+    _node_axis_adapter: NodeAxisAdapter | None = None
+    """Groups read by endogenous-grid regimes, solved on the node-state axis."""
 
     @property
     def graph(self) -> ModelGraph:
@@ -1271,6 +1278,9 @@ class Model:
                 conditions name the members. At most one composite state.
 
         """
+        regimes, shocks, self._node_axis_adapter = adapt_declaration(
+            regimes=regimes, shocks=shocks
+        )
         self._constructor_inputs = _ModelConstructorInputs(
             description=description,
             ages=ages,
@@ -2880,6 +2890,8 @@ class Model:
             state["_solution_model_instance_id"] = self._solution_model_instance_id
         if "_model_structure_fingerprint" in held:
             state["_model_structure_fingerprint"] = self._model_structure_fingerprint
+        if self._node_axis_adapter is not None:
+            state["_node_axis_adapter"] = self._node_axis_adapter
         return state
 
     def __setstate__(self, state: _PickledModel) -> None:  # noqa: C901, PLR0915 - restore genuine prepared or installed lifecycle state
@@ -3383,6 +3395,8 @@ class Model:
                 solved = result.values  # noqa: PD011
                 if isinstance(solved, ValueStore):
                     solved._block_until_ready()  # noqa: SLF001
+        if self._node_axis_adapter is not None:
+            return self._node_axis_adapter.present_solution(result=result)
         return result
 
     def replay_period(
@@ -5492,6 +5506,17 @@ class Model:
         taste_shock_seed = canonicalize_simulation_seed(
             seed=taste_shock_seed, name="taste_shock_seed"
         )
+        published_solution = solution
+        if self._node_axis_adapter is not None:
+            initial_conditions, shock_paths, seed = (
+                self._node_axis_adapter.lower_simulation_inputs(
+                    initial_conditions=initial_conditions,
+                    shock_paths=shock_paths,
+                    seed=seed,
+                    ages=self._time,
+                )
+            )
+            solution = self._node_axis_solution(solution=solution)
         entry_allocations = self._open_entry_allocations(
             params=params,
             inputs=initial_conditions,
@@ -6025,7 +6050,26 @@ class Model:
                         log_path=Path(log_path),
                         log_keep_n_latest=log_keep_n_latest,
                     )
+            if self._node_axis_adapter is not None:
+                return self._node_axis_adapter.present_simulation(
+                    result=result, solution=published_solution
+                )
             return result
+
+    def _node_axis_solution[T](self, *, solution: T) -> T:
+        """Return the node-axis result a published result replays, or `solution`."""
+        if self._node_axis_adapter is None or type(solution) is not SolutionResult:
+            return solution
+        return cast(
+            "T",
+            self._node_axis_adapter.node_axis_solution(
+                solution=solution,
+                state_names={
+                    name: self.state_names(regime_name=name)
+                    for name in self.regime_names_to_ids
+                },
+            ),
+        )
 
     def _owned_component_values(
         self, *, solution: _SolutionResultBoundary | None
@@ -6210,6 +6254,7 @@ class Model:
         """
         self._check_identity_runtime()
         self._fail_if_prepared_helper(operation="policy lookup")
+        solution = self._node_axis_solution(solution=solution)
         regime = self._regimes.get(regime_name)
         if regime is None:
             msg = f"Unknown regime {regime_name!r}; known: {tuple(self._regimes)}."

@@ -69,8 +69,43 @@ one of:
 - `NBEGM` or `GridSearch`
 - `NNBEGM`, declaring the regime as a `NestedConsumptionSavingsRegime`
 
-A finite NNBEGM regime with named current-IID shocks does not yet accept a non-terminal
-predecessor under any solver, so none of these alternatives applies to it.
+(current-iid-egm)=
+## Named current-IID shocks in endogenous-grid regimes
+
+A `ShockGroup` named in `Regime(shocks=...)` by a regime solved with `DCEGM`, `NBEGM`,
+`NEGM` or `NNBEGM` is solved on the node-state axis: each shock of the group is an
+internal IID node state of every regime that reads the group, `GridSearch` readers
+included, and the continuation integrates that axis with the rule's weights. Every
+shape the node-state route supports is therefore supported with `shocks=` too: several
+states, deterministic discrete states carried into the terminal, discrete actions,
+chains of endogenous-grid regimes over several dates, shocks in resources or in utility,
+and a literal savings-grid floor. Groups read only by `GridSearch` regimes keep the
+integrated current-IID route. A plain `EGM` regime publishes a one-dimensional
+continuation and refuses named shocks; solve it with `DCEGM` instead.
+
+What users see does not change:
+
+- `solve` publishes values integrated over the shocks; no value array, `value_array`
+  coordinate or saved archive has a shock axis.
+- `simulate` draws each shock from the same addressed stream as the current-IID route
+  (shock name, original subject row and period), and applies `BaseInnovations` and
+  `PhysicalValues` inputs with the same rules: an entry record at the row's entry
+  period, a path at every period it covers, superseding the entry. Every current
+  function reads the realized physical draw.
+- A saved solution simulates like the solve it came from.
+
+The decision at a realized draw is the action-grid argmax of the regime's declared
+action grid, as for node-state models, so the simulated continuous action lies on that
+grid even where the solve's policy is off the grid.
+
+The node-state axis represents fixed scalar laws (`Normal`, `LogNormal`, `Uniform`,
+`NormalMixture`) under an independent `Product` rule, and one-shock groups under any
+age-independent rule (`UserNodes`, `Smolyak`). `Model(...)` raises a
+`ShockDeclarationError` for a group an endogenous-grid regime reads that has signed
+node weights, correlated shocks, a joint non-product rule over several shocks, a
+`MonteCarlo` or `QuasiMonteCarlo` rule, a `Discrete` law, or law parameters that are
+runtime slots, callables or `StateConditioned`. Such a group remains available to
+`GridSearch` regimes.
 
 ## Nonlinear certainty equivalents
 
@@ -212,22 +247,8 @@ It does not require a nontrivial discrete choice: it is also the supported route
 for a smooth liquid problem whose genuine resources node, passive states, or stochastic
 processes make plain `EGM` ineligible.
 
-The initial public named-current-IID route supports scalar problems where current
-shocks enter the action problem through resources. It uses `ExactEnvelope`,
-`accuracy="balanced"`, candidate replay and ordinary scalar,
-action-free terminal regimes. Construct `Model`, obtain its parameter template and
-pass actual parameters to `solve` and `simulate`. With unbudgeted execution, default
-retention supports physical candidate replay and replay of a saved solution through
-an equivalent fresh Model.
-Missing projected support raises explicitly. Policy lookup, state-grid inspection
-and initial-state bounds are not available on this prepared public route. See the
-[current-IID contract](../development/iid-exits-redesign.md#public-scalar-case-r-lifecycle)
-for its acceptance boundary.
-
-The supported cold scalar route also admits declaration preparation and solve under
-an explicit memory budget, using the existing allocation owner before producers run.
-Its original clock, device, JIT and supplied-node restrictions apply. Budgeted foreign
-archive replay still refuses unprofiled authority or payload copies.
+Named current-IID shocks in a DC-EGM regime are solved on the node-state axis; see
+[Named current-IID shocks in endogenous-grid regimes](#current-iid-egm).
 
 The supported typed envelope configurations are `ExactEnvelope`, `FUESEnvelope`,
 `RFCEnvelope`, and `LTMEnvelope`; MSS was removed, and envelopes maintained outside
@@ -302,13 +323,12 @@ With taste shocks, simulated choice frequencies follow the grid-restricted
 choice-specific values. NBEGM regimes, with or without process states, also simulate by
 the action-grid argmax.
 
-Named current-IID regimes replay at the realized shock instead. Case-U reruns the
-period's node solve with the regime's configured envelope; Case-R reads the retained
-resources row or candidate bank. Both use ordinary arithmetic by default. Neither route
-guarantees that the simulated native owner or kink side matches the solve's.
+Regimes reading named current-IID shocks are node-state regimes and simulate by the
+action-grid argmax at the realized draw; see
+[Named current-IID shocks in endogenous-grid regimes](#current-iid-egm).
 
-`DCEGM(replay="grid")` restores the action-grid argmax for plain DC-EGM and Case-U
-regimes. `accuracy="certified"` refuses it.
+`DCEGM(replay="grid")` restores the action-grid argmax for plain DC-EGM regimes.
+`accuracy="certified"` refuses it.
 :::
 
 (api-negm)=
@@ -340,13 +360,8 @@ inner DCEGM solve, but a taste-shocked discrete choice must be the outermost agg
 `max_outer logsumexp_discrete` is not `logsumexp_discrete max_outer`. Use `GridSearch`,
 or remove the taste shocks when the NEGM structure is required.
 
-The unbudgeted public named-current-IID Case-U route uses the original keeper and finite
-adjuster candidates with one source date and an ordinary action-free terminal future.
-Physical replay reruns the inner and outer selection at the realized shock, including
-after default-retention save/load through a fresh Model; its selected owner and side
-need not match the solve's. Original factory prerequisites still
-bind; cold nested admission and resources-only reuse remain separate delivery work.
-See the [current-IID contract](../development/iid-exits-redesign.md#public-finite-negm-case-u-lifecycle).
+Named current-IID shocks in an NEGM regime are solved on the node-state axis; see
+[Named current-IID shocks in endogenous-grid regimes](#current-iid-egm).
 
 (api-nbegm)=
 ### `NBEGM`
@@ -368,15 +383,8 @@ prerequisite. The structural probes run only when `probe_schedule` selects them:
 `"never"` (the default) skips them, `"first_solve"` runs them once per model and
 `"every_solve"` on every parameter draw.
 
-The public scalar named-current-IID Case-U route retains the original conditional
-candidate bank, with one continuous state/action and an ordinary scalar action-free
-terminal target. With unbudgeted execution, default retention supports physical
-reconstruction and replay of a saved solution through an equivalent fresh Model.
-Represented value and economic marginal are associated finite-bank reads; agreement
-of the physical action with a continuous reference does not establish their continuous
-accuracy. See the
-[current-IID contract](../development/iid-exits-redesign.md#public-scalar-nb-case-u-lifecycle)
-for sampled balanced checks and the candidate-omission boundary.
+Named current-IID shocks in an NB-EGM regime are solved on the node-state axis; see
+[Named current-IID shocks in endogenous-grid regimes](#current-iid-egm).
 
 The default `envelope_arithmetic="ordinary"` compares candidates in the working
 floating format. Near a crossing it can choose a different owner or shift the crossing

@@ -27,7 +27,12 @@ from tests.egm.test_current_iid_negm_model import _declarations, _oracle, _param
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
-pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
+# Tests of the native current-IID route itself, which named shocks of EGM regimes
+# no longer take by default.
+pytestmark = [
+    pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON),
+    pytest.mark.usefixtures("native_current_iid"),
+]
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")

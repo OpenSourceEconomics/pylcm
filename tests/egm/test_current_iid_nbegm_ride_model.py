@@ -491,6 +491,7 @@ def _bank_oracle(
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
+@pytest.mark.usefixtures("native_current_iid")
 def test_public_nbegm_ride_u_default_archive_replays_original_physics(
     *, tmp_path: Path
 ) -> None:
