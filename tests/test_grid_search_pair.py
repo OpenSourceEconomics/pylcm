@@ -278,7 +278,6 @@ def test_scenario_registry_contains_closure_and_aca_frontier_rows() -> None:
         "singleton-ev1",
         "collective-gs-vd",
         "distributed-co-map",
-        "folded-hard-max",
         "aca-a3-c16",
         "aca-a3-c64",
         "aca-a3-c256",
@@ -288,11 +287,9 @@ def test_scenario_registry_contains_closure_and_aca_frontier_rows() -> None:
     )
     assert SCENARIOS["distributed-co-map"].topology == "cpu-4"
     assert SCENARIOS["distributed-co-map"].expected_distributed
-    assert SCENARIOS["folded-hard-max"].expected_folded
     assert SCENARIOS["collective-gs-vd"].expected_collective
     assert SCENARIOS["singleton-hard-max"].expected_head_disposition == "planned"
     assert SCENARIOS["distributed-co-map"].expected_head_disposition == "planned"
-    assert SCENARIOS["folded-hard-max"].expected_head_disposition == "planned"
     assert SCENARIOS["singleton-ev1"].expected_head_disposition == "planned"
     assert SCENARIOS["singleton-ev1"].expected_head_disposition_reason is None
     assert not SCENARIOS["singleton-ev1"].expected_head_streamed
@@ -342,12 +339,6 @@ def test_scenario_registry_contains_closure_and_aca_frontier_rows() -> None:
             _kernel(regime="distributed"),
             _kernel(regime="ordinary"),
             {"distributed_regimes": ("distributed",)},
-        ),
-        (
-            "folded-hard-max",
-            _kernel(regime="folded", fold_state_names=("shock",)),
-            _kernel(regime="ordinary"),
-            {"folded_regimes": ("folded",)},
         ),
         (
             "aca-a3-c16",

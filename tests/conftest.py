@@ -407,6 +407,22 @@ def _test_function_key(*, item: pytest.Item, root: pathlib.Path) -> str:
     return f"{relative}::{name}"
 
 
+@pytest.hookimpl(wrapper=True)
+def pytest_collection(session: pytest.Session) -> Iterator[None]:
+    """Hand a worker's collection usage error to the xdist controller.
+
+    Only the workers collect. A `UsageError` there ends each worker with status 4,
+    and the controller would report only an unrelated `assert not crashitem`.
+    xdist forwards `shouldfail` to the controller, which stops with that message.
+    """
+    try:
+        return (yield)
+    except pytest.UsageError as error:
+        if getattr(session.config, "workeroutput", None) is not None:
+            session.shouldfail = f"worker collection failed: {error}"
+        raise
+
+
 def pytest_collection_finish(session: pytest.Session) -> None:
     """Write the execution-policy reconciliation after collection."""
     pytest_policy.write_report(session.config)

@@ -63,11 +63,12 @@ _DCEGM_CORNER_VALUE_XFAIL = pytest.mark.xfail(
     ),
 )
 _DCEGM_ARCHIVE_XFAIL = pytest.mark.xfail(
-    "config.getoption('--precision') == '64'",
     strict=True,
     reason=(
         "DC-EGM node-state archive replay differs from the solve's replay by one "
-        "fp64 ULP in `value` (reported gap)"
+        "ULP in `value` at both precisions: the archive holds only node-integrated "
+        "values, which replay broadcasts along the node axis, while the in-memory "
+        "result replays its per-node values (reported gap)"
     ),
 )
 

@@ -1014,8 +1014,11 @@ def test_fresh_pixi_process_preserves_complete_component_result(
         env=environment,
         capture_output=True,
         text=True,
-        check=True,
+        check=False,
         timeout=120,
+    )
+    assert completed.returncode == 0, (
+        f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
     )
     receipt = json.loads(completed.stdout.splitlines()[-1])
     record_property("child_stdout", completed.stdout)
