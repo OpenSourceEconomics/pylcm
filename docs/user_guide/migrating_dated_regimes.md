@@ -220,16 +220,10 @@ both raise `TypeError`. Timing is read off the functions: reading `x` reads this
 period's realization, reading `next_x` reads the draw after the choice. A shock a regime
 reads only as `next_x` carries no axis there and is integrated in the continuation.
 
-```python
-# Removed: raises TypeError.
-alive = Regime(
-    states={"wealth": wealth_grid},
-    state_transitions={"wealth": next_wealth},
-    functions={"utility": utility, "medical_bill": medical_bill},
-    post_choice_shocks=("bill_shock",),
-)
+A regime that declared `post_choice_shocks=("bill_shock",)` now lists the shock in
+`shocks=`:
 
-# Current declaration fragment.
+```python
 alive = Regime(
     states={"wealth": wealth_grid},
     state_transitions={"wealth": next_wealth},

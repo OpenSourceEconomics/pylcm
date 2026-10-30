@@ -27,7 +27,6 @@ type ScenarioName = Literal[
     "singleton-ev1",
     "collective-gs-vd",
     "distributed-co-map",
-    "folded-hard-max",
     "aca-a3-c16",
     "aca-a3-c64",
     "aca-a3-c256",
@@ -88,12 +87,6 @@ SCENARIOS = MappingProxyType(
             topology="cpu-4",
             expected_distributed=True,
         ),
-        "folded-hard-max": ScenarioSpec(
-            name="folded-hard-max",
-            description="Singleton hard maximum with a full folded IID shock axis.",
-            topology="selected-backend",
-            expected_folded=True,
-        ),
         **{
             f"aca-a{assets}-c{consumption}": ScenarioSpec(
                 name=f"aca-a{assets}-c{consumption}",
@@ -152,7 +145,6 @@ def build_scenario(*, name: ScenarioName) -> tuple[Model, UserParams]:
         "singleton-ev1": _build_singleton_ev1,
         "collective-gs-vd": _build_collective_gs_vd,
         "distributed-co-map": _build_distributed_co_map,
-        "folded-hard-max": _build_folded_hard_max,
     }
     return builders[name]()
 
@@ -296,83 +288,5 @@ def _build_distributed_co_map() -> tuple[Model, UserParams]:
             ),
         },
         **execution_kwargs,
-    )
-    return model, {"discount_factor": 0.95}
-
-
-def _build_folded_hard_max() -> tuple[Model, UserParams]:
-    import jax.numpy as jnp
-
-    from lcm import (
-        AgeGrid,
-        DeterministicTransition,
-        LinSpacedGrid,
-        Model,
-        NormalIIDProcess,
-        Regime,
-        Transition,
-        categorical,
-    )
-    from lcm.typing import ScalarInt
-
-    @categorical(ordered=False)
-    class RegimeId:
-        working: ScalarInt
-        retired: ScalarInt
-
-    def working_utility(*, consumption, wage_shock):
-        return jnp.log(consumption) + wage_shock
-
-    def retired_utility(*, wealth):
-        return jnp.log(wealth)
-
-    def next_wealth(*, wealth, consumption):
-        return wealth - consumption
-
-    def affordable(*, wealth, consumption):
-        return consumption <= wealth
-
-    def next_regime(*, age):
-        return jnp.where(age >= 3, RegimeId.retired, RegimeId.working)
-
-    wealth = LinSpacedGrid(start=1.0, stop=100.0, n_points=500)
-    consumption = LinSpacedGrid(start=0.1, stop=100.0, n_points=500)
-    ages = AgeGrid(start=0, inclusive_stop=4, step="Y")
-    model = Model(
-        regimes={
-            "working": Regime(
-                states={
-                    "wealth": wealth,
-                    "wage_shock": NormalIIDProcess(
-                        n_points=9,
-                        gauss_hermite=True,
-                        mu=0.0,
-                        sigma=0.25,
-                        fold=True,
-                    ),
-                },
-                state_transitions={"wealth": next_wealth},
-                actions={"consumption": consumption},
-                functions={"utility": working_utility},
-                constraints={"affordable": affordable},
-            ),
-            "retired": Regime(
-                states={"wealth": wealth},
-                functions={"utility": retired_utility},
-            ),
-        },
-        ages=ages,
-        regime_id_class=RegimeId,
-        initial_nodes=((0, "working"),),
-        edges={
-            "working": Transition(
-                targets={
-                    "working": ages.exact_values[:-2],
-                    "retired": ages.exact_values[:-1],
-                },
-                law=DeterministicTransition(func=next_regime),
-            ),
-        },
-        **_gpu_mem.default_budget_execution_kwargs(),
     )
     return model, {"discount_factor": 0.95}

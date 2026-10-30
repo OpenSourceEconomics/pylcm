@@ -69,7 +69,7 @@ from _lcm.egm.outer_search import FiniteOuterGrid
 from _lcm.egm.preferences import BoundUtilityOfAction
 from _lcm.grids import ContinuousGrid, Grid, IrregSpacedGrid
 from _lcm.post_decision_bound import _PostDecisionLowerBound
-from _lcm.processes import _ContinuousStochasticProcess, _IIDProcess
+from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.phases import _resolve_solve_functions
 from _lcm.regime_law import DecomposedTransition, RegimeLaw, RegimeLaws
@@ -270,7 +270,7 @@ def validate_dcegm_regime(
     _fail_if_resources_depend_on_continuous_action(
         regime_name=regime_name, functions=functions, solver=solver
     )
-    fail_if_iid_process_enters_utility(
+    fail_if_off_node_process_enters_utility(
         regime_name=regime_name,
         user_regime=user_regime,
         resources=solver.resources,
@@ -628,49 +628,52 @@ def _fail_if_utility_depends_on_continuous_state(
         raise ModelInitializationError(msg)
 
 
-def fail_if_iid_process_enters_utility(
+def fail_if_off_node_process_enters_utility(
     *,
     regime_name: RegimeName,
     user_regime: UserRegime,
     resources: FunctionName,
     solver_name: str,
 ) -> None:
-    """Refuse an IID process state that `utility` reads other than via resources.
+    """Refuse a process drawn off its nodes that `utility` reads but via resources.
 
-    Simulation reads an EGM policy at an off-node draw by blending the policy
-    rows of the two bracketing nodes. That is exact for a shock that only
-    shifts resources, since every node row is then one policy of resources,
-    but only an approximation for a shock that changes preferences. The check
-    removes the resources function from the DAG, so a read of the shock inside
-    it is admitted while every other path into `utility`, through any helper,
-    is refused. It covers fixed-node and runtime-law processes and the node
-    states of `shocks=` alike.
+    Simulation reads an EGM policy at an off-node process value by blending the
+    policy rows of the two bracketing nodes. That is exact for a process that
+    only shifts resources, since every node row is then one policy of
+    resources, but only an approximation for a process that changes
+    preferences. A process declared with `simulate_draws="nodes"` is only ever
+    drawn at its nodes, so its read takes a single node row and is admitted.
+    The check removes the resources function from the DAG, so a read of the
+    process inside it is admitted while every other path into `utility`,
+    through any helper, is refused. It covers IID and AR(1) processes, with
+    fixed or runtime laws, and the node states of `shocks=` alike.
 
     Args:
         regime_name: Name of the regime being validated.
         user_regime: The user-facing regime, with `shocks=` lowered to node
             states.
-        resources: Name of the resources function the shock may enter.
+        resources: Name of the resources function the process may enter.
         solver_name: Name of the solver the message names.
 
     Raises:
-        ModelInitializationError: If `utility` reads an IID process state other
-            than through `resources`.
+        ModelInitializationError: If `utility` reads a process state drawn off
+            its nodes other than through `resources`.
 
     """
-    iid_states = {
+    off_node_states = {
         name
         for name, grid in _solve_grids(slot=user_regime.states).items()
-        if isinstance(grid, _IIDProcess)
+        if isinstance(grid, _ContinuousStochasticProcess)
+        and grid.simulate_draws != "nodes"
     }
-    if not iid_states:
+    if not off_node_states:
         return
     functions = _without(
         functions=_resolve_solve_functions(user_regime=user_regime),
         names={resources},
     )
     readers = sorted(
-        iid_states
+        off_node_states
         & set(get_ancestors(functions, targets=["utility"], include_targets=False))
     )
     if readers:
@@ -678,11 +681,12 @@ def fail_if_iid_process_enters_utility(
         named = "" if resources == _DIRECT_RESOURCES_FUNCTION else f" ('{resources}')"
         msg = (
             f"The utility function of {solver_name} regime '{regime_name}' reads "
-            f"the IID shock(s) {readers} other than through resources{named}. An "
-            "EGM regime solves such a shock on its quadrature nodes and simulates "
-            "a draw between them from the bracketing node policies, which is exact "
-            "only for a shock that enters through resources. Move the shock into "
-            f"resources{named}, or use GridSearch for this regime."
+            f"the process state(s) {readers} other than through resources{named}. "
+            "An EGM regime solves a process on its nodes and simulates a draw "
+            "between them from the bracketing node policies, which is exact only "
+            "for a process that enters through resources. Move the process into "
+            f'resources{named}, declare it with `simulate_draws="nodes"`, or use '
+            "GridSearch for this regime."
         )
         raise ModelInitializationError(msg)
 

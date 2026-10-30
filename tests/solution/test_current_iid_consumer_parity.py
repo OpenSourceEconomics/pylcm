@@ -367,19 +367,7 @@ def _assert_reproduces_node_state_model(*, solver: str, bound: str | None) -> No
 
 @pytest.mark.parametrize(
     "cost_scale",
-    [
-        1 / np.sqrt(3.0),
-        pytest.param(
-            0.5,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason=(
-                    "the NBEGM ride-along solve snaps savings to the grid with a "
-                    "process co-state; lands with wip/607-nbsnap"
-                ),
-            ),
-        ),
-    ],
+    [1 / np.sqrt(3.0), 0.5],
 )
 def test_nbegm_health_cost_simulates_fresh_period_zero_draws(cost_scale: float) -> None:
     """Omitted draws are realised fresh, including beyond the outermost nodes.
@@ -1046,9 +1034,10 @@ def test_declared_shock_reproduces_node_state_model_for_aca_egm_shapes(
 
 
 _UTILITY_SHOCK_REFUSAL = (
-    r"(?s){solver} regime '{regime}' reads the IID shock\(s\) \['{shock}'\] other "
-    r"than through resources \('{resources}'\).*Move the shock into "
-    r"resources \('{resources}'\), or use GridSearch for this regime\."
+    r"(?s){solver} regime '{regime}' reads the process state\(s\) \['{shock}'\] "
+    r"other than through resources \('{resources}'\).*Move the process into "
+    r"resources \('{resources}'\), declare it with `simulate_draws=\"nodes\"`, or "
+    r"use GridSearch for this regime\."
 )
 
 

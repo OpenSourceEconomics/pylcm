@@ -671,7 +671,6 @@ def test_callable_law_identity_uses_captured_semantics() -> None:
     assert not first.has_same_laws_as(different)
 
 
-@pytest.mark.coverage(backends=("cpu",), precisions="both")
 @pytest.mark.parametrize(
     ("nodes", "weights", "match"),
     [

@@ -51,8 +51,10 @@ _SAVINGS_GRID = LinSpacedGrid(start=0.0, stop=18.0, n_points=30)
 
 # Age-20 alive value at the middle income node, at liquid nodes 0, 4 and 9,
 # from the NB-EGM solve with the survival law kept inside the declared support.
+# `power` re-pinned with the savings-node refinement: a dense-savings brute force
+# of period 0 is within 8e-6 of the new values (8.8e-4 of the old ones).
 _EXPECTED_KEPT_V = {
-    "power": (1.6457975835281529, 3.0644089390925022, 4.226684047254188),
+    "power": (1.647599184186326, 3.0647923451165653, 4.226726812040738),
     "linear": (3.666423634429373, 12.33309030109604, 23.16642363442937),
 }
 
