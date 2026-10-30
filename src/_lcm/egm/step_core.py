@@ -338,6 +338,7 @@ class _ConstructedCombo:
     expected_values: FloatND
     publish_resources: FloatND
     candidate_dead: Bool1D
+    lowest_euler_point: ScalarFloat
     refined: (
         tuple[Float1D, Float1D, Float1D, ScalarInt]
         | tuple[Float1D, Float1D, Float1D, ScalarInt, ScalarBool]
@@ -428,6 +429,7 @@ class _SolveOneCombo:
             n_kept=n_kept,
             n_pad=pieces.n_pad,
             publish_resources=publish_resources,
+            lowest_euler_point=constructed.lowest_euler_point,
             borrowing_limit=pieces.borrowing_limit,
             utility_of_action=utility_of_action,
             discounted_expected_value_at_limit=discount_factor * expected_values[0],
@@ -739,6 +741,11 @@ class _SolveOneCombo:
             expected_values=expected_values,
             publish_resources=publish_resources,
             candidate_dead=candidate_dead,
+            # A NaN Euler candidate keeps the minimum NaN, which disables the
+            # closed-form publication rather than reading past the poison.
+            lowest_euler_point=jnp.min(
+                jnp.where(candidate_dead[pieces.n_constrained :], jnp.inf, endog_grid)
+            ),
             refined=refined,
             binding_query=binding_query,
             child_status=child_status,
@@ -1377,6 +1384,7 @@ def _publish_V_and_carry_rows(
     n_kept: ScalarInt,
     n_pad: int,
     publish_resources: FloatND,
+    lowest_euler_point: ScalarFloat,
     borrowing_limit: ScalarFloat,
     utility_of_action: Callable[[ScalarFloat], ScalarFloat],
     discounted_expected_value_at_limit: ScalarFloat,
@@ -1385,16 +1393,21 @@ def _publish_V_and_carry_rows(
 ) -> tuple[FloatND, Float1D, Float1D]:
     """Interpolate V onto the exogenous grid and finish the carry value rows.
 
-    Below the lowest refined envelope point the published value is the
-    closed-form constrained value — the exact value of saving exactly the
-    borrowing limit — substituted outright. It has to be substituted: the
-    interpolant continues the first bracket's secant below its first node
-    rather than clamping, so left to itself it would read the constrained
-    region off an extrapolant. Above that point, the refined
-    envelope is read with the cubic Hermite interpolant (the marginal-utility
-    row is the value row's exact slope by the envelope theorem), floored at
-    the constrained value, which remains a feasible-policy lower bound
-    everywhere.
+    The published value is the closed-form constrained value — the exact value
+    of saving exactly the borrowing limit — substituted outright
+
+    - below the lowest refined envelope point, where the interpolant would
+      continue the first bracket's secant rather than clamp, and
+    - below the lowest live Euler candidate, where the constrained candidates
+      are the only candidates, so the envelope there is the constrained branch
+      itself. A cubic through that fixed handful of candidates would carry an
+      interpolation error that no refinement of the savings or state grid
+      removes.
+
+    Elsewhere the refined envelope is read with the cubic Hermite interpolant
+    (the marginal-utility row is the value row's exact slope by the envelope
+    theorem), floored at the constrained value, which remains a feasible-policy
+    lower bound everywhere.
 
     Envelope overflow is not silent: the outputs are NaN-poisoned so the
     solve loop's NaN diagnostics surface the offending (regime, period).
@@ -1406,6 +1419,8 @@ def _publish_V_and_carry_rows(
         n_kept: Number of envelope points the backend kept.
         n_pad: Static length of the refined rows.
         publish_resources: Resources at the regime's exogenous state grid.
+        lowest_euler_point: Resources of the lowest live Euler candidate; NaN
+            disables the substitution below it.
         borrowing_limit: Lower bound of the savings grid.
         utility_of_action: Utility with everything but the continuous action
             bound.
@@ -1441,19 +1456,22 @@ def _publish_V_and_carry_rows(
         + discounted_expected_value_at_limit,
         -jnp.inf,
     )
-    # Below the lowest refined point the closed-form constrained value (the
-    # exact value of saving exactly the borrowing limit) is published outright,
-    # replacing the interpolant rather than agreeing with it: the interpolant
-    # continues the first bracket's secant below its first node. Everywhere
-    # else the constrained value is a feasible-policy floor under the Hermite
-    # read of the refined envelope:
-    # forcing it further up — e.g. to the first Euler point — would discard
-    # envelope information wherever degenerate inversions push that point
-    # right (a zero-ish marginal continuation makes it ~1/eps), and the
-    # constrained candidates inside the envelope already carry exact slopes.
+    # Below the lowest refined point, and below the lowest live Euler
+    # candidate, the closed-form constrained value (the exact value of saving
+    # exactly the borrowing limit) is published outright, replacing the
+    # interpolant rather than agreeing with it. Everywhere else the constrained
+    # value is a feasible-policy floor under the Hermite read of the refined
+    # envelope. The cut-off is the lowest live Euler candidate, never the first
+    # one: a degenerate inversion can push the first Euler point right (a
+    # zero-ish marginal continuation makes it ~1/eps) past Euler candidates that
+    # fold below it, and those must stay on the envelope read.
     refined_grid_start = refined_grid[0]
     V_row = jnp.where(
-        (closed_form_actions > 0.0) & (publish_resources <= refined_grid_start),
+        (closed_form_actions > 0.0)
+        & (
+            (publish_resources <= refined_grid_start)
+            | (publish_resources < lowest_euler_point)
+        ),
         value_constrained,
         jnp.maximum(value_interpolated, value_constrained),
     )

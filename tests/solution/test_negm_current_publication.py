@@ -27,6 +27,7 @@ class _PublicationInputs(TypedDict, closed=True):
     n_kept: ScalarInt
     n_pad: int
     publish_resources: FloatND
+    lowest_euler_point: ScalarFloat
     borrowing_limit: ScalarFloat
     utility_of_action: Callable[[ScalarFloat], ScalarFloat]
     discounted_expected_value_at_limit: ScalarFloat
@@ -47,6 +48,7 @@ def _publish(
         "n_kept": row.n_kept,
         "n_pad": row.grid.size,
         "publish_resources": jnp.asarray(resources),
+        "lowest_euler_point": row.grid[0],
         "borrowing_limit": jnp.asarray(bound),
         "utility_of_action": jnp.log,
         "discounted_expected_value_at_limit": jnp.asarray(discounted_corner),
