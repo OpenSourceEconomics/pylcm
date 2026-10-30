@@ -6,7 +6,8 @@ period, so its value array equals the node-weighted average of those slices, and
 subject whose draw is supplied at a node takes the node-state model's policy.
 """
 
-from collections.abc import Callable
+import functools
+from collections.abc import Callable, Mapping
 from dataclasses import fields, replace
 from pathlib import Path
 
@@ -34,8 +35,13 @@ from lcm import (
     post_decision_lower_bound,
 )
 from lcm._solver_api.result import SolutionResult
-from lcm.exceptions import InvalidSimulationInputError, ShockDeclarationError
+from lcm.exceptions import (
+    InvalidSimulationInputError,
+    OffGridStateError,
+    ShockDeclarationError,
+)
 from lcm.persistence import load_solution
+from lcm.result import SimulationResult
 from lcm.shocks import (
     BaseInnovations,
     Discrete,
@@ -63,6 +69,7 @@ from lcm.typing import (
     StateName,
 )
 from tests.conftest import DECIMAL_PRECISION, EXACT_KERNEL_SKIP_REASON
+from tests.egm._nnbegm_toy import _declarations, _oracle, _params
 
 _N_HCC_NODES = 3
 
@@ -1213,6 +1220,68 @@ def test_saved_declared_solution_publishes_and_replays_integrated_values(
         )
 
 
+@functools.cache
+def _declared_shock_surfaces(
+    solver: str,
+) -> Mapping[str, tuple[str | tuple[str, ...], ...]]:
+    """Collect what a user reads of the regimes, initial states and panel."""
+    model = _health_cost_model(solver=solver, declared=True)
+    wealth = jnp.linspace(1.0, 5.0, 4)
+    result = model.simulate(
+        params={"alive": {"total_costs": {"cost_scale": 1 / np.sqrt(3.0)}}},
+        initial_conditions={
+            "wealth": wealth,
+            "period": jnp.zeros(wealth.shape, dtype=jnp.int32),
+            "regime_id": jnp.zeros(wealth.shape, dtype=jnp.int32),
+        },
+        seed=3,
+        log_level="off",
+    )
+    names = tuple(model.regime_names_to_ids)
+    return {
+        "state_names": tuple(model.state_names(regime_name=name) for name in names),
+        "initial_state_names": tuple(
+            model.initial_state_names(regime_name=name) for name in names
+        ),
+        "initial_state_grids": tuple(
+            tuple(model.initial_state_grids(regime_name=name)) for name in names
+        ),
+        "regime_states": tuple(
+            tuple(model.user_regimes[name].states) for name in names
+        ),
+        "regime_shocks": tuple(model.user_regimes[name].shocks for name in names),
+        "result_state_names": result.state_names,
+        "panel_columns": tuple(result.to_dataframe().columns),
+    }
+
+
+@pytest.mark.parametrize(
+    "surface",
+    [
+        "state_names",
+        "initial_state_names",
+        "initial_state_grids",
+        "regime_states",
+        "regime_shocks",
+        "result_state_names",
+        "panel_columns",
+    ],
+)
+def test_declared_shock_read_by_nbegm_shows_as_on_the_grid_search_route(
+    surface: str,
+) -> None:
+    """The shock stays a declared shock: no state of its own, a column by the actions.
+
+    The node-state axis that solves it is internal, so the regimes, the state
+    listings, the initial-condition names and the simulated panel read exactly as
+    they do when a GridSearch regime reads the same group.
+    """
+    assert (
+        _declared_shock_surfaces("nbegm")[surface]
+        == _declared_shock_surfaces("grid_search")[surface]
+    )
+
+
 def test_declared_fresh_draws_follow_the_current_iid_stream(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1312,12 +1381,6 @@ def test_declared_physical_value_outside_its_support_is_refused() -> None:
 @pytest.mark.parametrize("solver", ["negm", "nnbegm"])
 def test_declared_shock_solves_nested_egm_on_the_node_axis(*, solver: str) -> None:
     """Keeper and adjuster are chosen per shock node before the published average."""
-    from tests.egm.test_current_iid_negm_model import (  # noqa: PLC0415
-        _declarations,
-        _oracle,
-        _params,
-    )
-
     declarations = _declarations()
     child = declarations.regimes["child"]
     assert isinstance(child, NestedConsumptionSavingsRegime)
@@ -1367,3 +1430,219 @@ def test_declared_shock_solves_nested_egm_on_the_node_axis(*, solver: str) -> No
     panel = result.to_dataframe().query("period == 1")
     assert_array_almost_equal(panel["eps"], physical, decimal=DECIMAL_PRECISION)
     assert np.all(np.isfinite(panel["value"]))
+
+
+def test_finite_nnbegm_extrapolates_a_draw_beyond_its_outer_nodes() -> None:
+    """A draw outside the node hull reads the policy along the shock's edge segment.
+
+    The rule's nodes sit inside the law's support, so a draw can lie beyond the
+    last node. The finite NNBEGM replay reads it as it reads a draw between nodes,
+    linearly in the node coordinate, here extrapolating the last segment: the
+    consumption of a subject at the same wealth and housing continues the line
+    through the consumptions at the two nodes.
+    """
+    declarations = _declarations()
+    model = Model(
+        **{
+            field.name: getattr(declarations, field.name)
+            for field in fields(declarations)
+            if field.init and field.name not in ("regimes", "shocks")
+        },
+        regimes={**declarations.regimes, "child": _finite_nnbegm_child()},
+        shocks={
+            "income": ShockGroup(
+                shocks={"eps": Uniform(start=0.0, stop=3.0)},
+                nodes=UserNodes(
+                    nodes=np.asarray([[0.25], [0.75]]), weights=np.asarray([0.5, 0.5])
+                ),
+            )
+        },
+    )
+    # The base nodes 0.25 and 0.75 of Uniform(0, 3) are the physical nodes 0.75
+    # and 2.25; 2.7 lies beyond the last one.
+    physical = jnp.asarray([0.75, 2.25, 2.7])
+    panel = (
+        model.simulate(
+            params=_params(),
+            log_level="off",
+            seed=31,
+            initial_conditions={
+                "wealth": jnp.full((3,), 2.0),
+                "housing": jnp.zeros((3,)),
+                "age": jnp.ones((3,)),
+                "regime_id": jnp.full(
+                    (3,), model.regime_names_to_ids["child"], jnp.int32
+                ),
+                "eps": PhysicalValues(values=physical),
+            },
+        )
+        .to_dataframe()
+        .query("period == 1")
+        .sort_values("subject_id")
+    )
+    at_nodes = panel["consumption"].to_numpy(dtype=float)
+    np.testing.assert_almost_equal(
+        at_nodes[2],
+        at_nodes[1] + (2.7 - 2.25) / (2.25 - 0.75) * (at_nodes[1] - at_nodes[0]),
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+def _finite_nnbegm_child() -> NestedConsumptionSavingsRegime:
+    """The toy's housing regime solved by NNBEGM over its finite outer grid."""
+    child = _declarations().regimes["child"]
+    assert isinstance(child, NestedConsumptionSavingsRegime)
+    assert isinstance(child.solver, NEGM)
+    return replace(
+        child,
+        solver=NNBEGM(
+            inner=NBEGM(
+                savings_grid=child.solver.inner.savings_grid, jump_read="bridged"
+            ),
+            outer_search=FiniteOuterGrid(grid=child.solver.outer_grid),
+        ),
+    )
+
+
+@categorical(ordered=False)
+class _ParentChildRegimeId:
+    parent: ScalarInt
+    child: ScalarInt
+    done: ScalarInt
+
+
+def _parent_resources(*, wealth: ContinuousState) -> FloatND:
+    return wealth + 5.0
+
+
+def _landing_housing(*, landing_q: FloatND) -> ContinuousState:
+    return landing_q
+
+
+def _finite_nnbegm_model(*, with_parent: bool) -> Model:
+    """The finite NNBEGM housing regime at age 1, optionally after a GridSearch one.
+
+    The GridSearch parent saves at most `wealth + 5 - 0.1`, far above the child's
+    wealth grid, which ends at 3.
+    """
+    declarations = _declarations()
+    regimes = {**declarations.regimes, "child": _finite_nnbegm_child()}
+    edges: dict[RegimeName, dict[RegimeName, tuple[int, ...]]] = {
+        "child": {"done": (1,)}
+    }
+    starts = {1: "child"}
+    if with_parent:
+        regimes["parent"] = Regime(
+            states={"wealth": IrregSpacedGrid(points=np.asarray([0.5, 1.75]))},
+            actions={"consumption": IrregSpacedGrid(points=np.asarray([0.1, 5.0]))},
+            functions={
+                "utility": _log_consumption,
+                "resources": _parent_resources,
+                "savings": _savings,
+            },
+            constraints={"affordable": _affordable},
+            state_transitions={
+                "wealth": {"child": _next_wealth_from_savings},
+                "housing": {"child": _landing_housing},
+            },
+        )
+        edges["parent"] = {"child": (0,)}
+        starts[0] = "parent"
+    return Model(
+        **{
+            field.name: getattr(declarations, field.name)
+            for field in fields(declarations)
+            if field.init
+            and field.name
+            not in ("regimes", "edges", "initial_nodes", "regime_id_class")
+        },
+        regimes=regimes,
+        edges=edges,
+        initial_nodes=InitialNodes(by_age=starts),
+        regime_id_class=_ParentChildRegimeId if with_parent else _ChildRegimeId,
+    )
+
+
+@categorical(ordered=False)
+class _ChildRegimeId:
+    child: ScalarInt
+    done: ScalarInt
+
+
+def _simulate_finite_nnbegm(
+    *, model: Model, regime: RegimeName, wealth: FloatND, eps: FloatND | None
+) -> SimulationResult:
+    """Simulate from `regime`; `eps` is the entry draw of a start in the child."""
+    n_subjects = wealth.shape[0]
+    return model.simulate(
+        params={**_params(), "parent": {"next_housing": {"landing_q": 0.0}}}
+        if "parent" in model.regime_names_to_ids
+        else _params(),
+        log_level="off",
+        seed=3,
+        initial_conditions={
+            "wealth": wealth,
+            "housing": jnp.zeros((n_subjects,)),
+            "age": jnp.full((n_subjects,), 0.0 if regime == "parent" else 1.0),
+            "regime_id": jnp.full(
+                (n_subjects,), model.regime_names_to_ids[regime], jnp.int32
+            ),
+            **({} if eps is None else {"eps": PhysicalValues(values=eps)}),
+        },
+    )
+
+
+def test_finite_nnbegm_replays_a_start_on_its_wealth_grid_exactly() -> None:
+    """A subject inside the solved wealth grid takes the closed-form consumption."""
+    panel = (
+        _simulate_finite_nnbegm(
+            model=_finite_nnbegm_model(with_parent=False),
+            regime="child",
+            wealth=jnp.full((2,), 2.5),
+            eps=jnp.asarray([0.0, 3.0]),
+        )
+        .to_dataframe()
+        .query("period == 1")
+    )
+    assert_array_almost_equal(
+        panel.sort_values("subject_id")["consumption"].to_numpy(dtype=float),
+        [_oracle(wealth=2.5, housing=0.0, shock=z)[2] for z in (0.0, 3.0)],
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+def test_finite_nnbegm_refuses_a_start_off_its_wealth_grid() -> None:
+    """A start above the solved wealth grid is refused, naming the grid to widen."""
+    with pytest.raises(
+        OffGridStateError,
+        match=(
+            r"(?s)Regime 'child', period 1:.*'wealth'.*\[5\.9, 5\.9\].*"
+            r"grid \[1\.5, 3\].*Widen the grid of 'wealth' in regime 'child'"
+        ),
+    ):
+        _simulate_finite_nnbegm(
+            model=_finite_nnbegm_model(with_parent=False),
+            regime="child",
+            wealth=jnp.asarray([2.5, 5.9]),
+            eps=jnp.asarray([0.0, 3.0]),
+        )
+
+
+def test_finite_nnbegm_refuses_a_grid_search_parents_landing_off_its_grid() -> None:
+    """A GridSearch parent saving beyond the child's grid is refused at the child.
+
+    The message points at the predecessor's landings as the cause.
+    """
+    with pytest.raises(
+        OffGridStateError,
+        match=(
+            r"(?s)Regime 'child', period 1:.*'wealth'.*grid \[1\.5, 3\].*"
+            r"predecessor regime.*GridSearch or NBEGM"
+        ),
+    ):
+        _simulate_finite_nnbegm(
+            model=_finite_nnbegm_model(with_parent=True),
+            regime="parent",
+            wealth=jnp.ones((3,)),
+            eps=None,
+        )

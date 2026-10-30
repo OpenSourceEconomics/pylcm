@@ -52,6 +52,7 @@ from _lcm.engine import (
     placed_devices_for_ids,
 )
 from _lcm.grids import ContinuousGrid, DiscreteGrid
+from _lcm.off_grid import count_off_grid
 from _lcm.params.edges import regime_kernel_params
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.processes.grid_resolution import ProcessGridResolver
@@ -235,6 +236,7 @@ from lcm.exceptions import (
     InvalidSimulationInputError,
     InvalidValueFunctionError,
     NoFeasibleActionError,
+    OffGridStateError,
     ShockDeclarationError,
 )
 from lcm.result import SimulationResult
@@ -2199,6 +2201,21 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
         current_shocks = decision.physical
         nested_fallback = None
     elif direct_nnbegm_replay:
+        _fail_if_a_finite_bank_state_is_off_grid(
+            regime_name=regime_name,
+            regime=regime,
+            sim_policy=sim_policy,
+            states=states[regime_name],
+            subjects=run_simulation_operation(
+                memory=memory,
+                function=_active_subjects,
+                arguments={"in_regime": subject_ids_in_regime, "genuine": genuine},
+                subject_arg_names=("in_regime", "genuine"),
+                subject_outputs=True,
+            ),
+            period=period,
+            memory=memory,
+        )
         # The payload names the complete finite candidate set, so the unrelated
         # Cartesian simulation argmax is neither compiled nor executed.
         optimal_actions, V_arr, nested_fallback = _execute_finite_replay(
@@ -3050,6 +3067,67 @@ def _fail_if_rerouted_into_a_regime_that_ran(
         f"Regime '{regime_name}', period {period}, state {state} has no feasible "
         f"action, and its dissolution route leads to regime '{fallback}', which "
         "already ran this period: the gated targets and fallbacks form a cycle."
+    )
+
+
+def _fail_if_a_finite_bank_state_is_off_grid(
+    *,
+    regime_name: RegimeName,
+    regime: Regime,
+    sim_policy: NNBEGMSimPolicy,
+    states: Mapping[StateOrActionName, FloatND | IntND],
+    subjects: BoolND,
+    period: int,
+    memory: SimulationMemory | None,
+) -> None:
+    """Refuse a subject whose continuous state lies outside the finite bank's grid.
+
+    The finite NNBEGM bank holds the solve's candidates on the regime's own state
+    grid. Off that grid a linear read ranks the candidates wrongly: a candidate
+    infeasible at the grid's edge, such as an adjustment that only becomes
+    affordable at higher wealth, cannot be extrapolated into view. Process
+    states are exempt; their draws are read along the node coordinate. One host
+    sync per regime-period decides whether any subject is off its grid.
+    """
+    checked = {
+        name: jnp.asarray(grid.to_jax())
+        for name in sim_policy.state_names
+        if isinstance(grid := regime.simulation.grids[name], ContinuousGrid)
+        and not isinstance(grid, _ContinuousStochasticProcess)
+    }
+    counts = [
+        run_simulation_operation(
+            memory=memory,
+            function=count_off_grid,
+            arguments={"values": states[name], "points": points, "feasible": subjects},
+            subject_arg_names=("values", "feasible"),
+        )
+        for name, points in checked.items()
+    ]
+    if not counts or not int(functools.reduce(jnp.add, counts)):
+        return
+    subject_mask = np.asarray(subjects)
+    found, off_names = [], []
+    for name, points in checked.items():
+        values = np.asarray(states[name])[subject_mask]
+        low, high = float(points[0]), float(points[-1])
+        off = values[(values < low) | (values > high)]
+        if off.size:
+            off_names.append(f"'{name}'")
+            found.append(
+                f"{off.size} subject(s) hold '{name}' in "
+                f"[{off.min():.6g}, {off.max():.6g}], outside its grid "
+                f"[{low:.6g}, {high:.6g}]"
+            )
+    names = ", ".join(off_names)
+    raise OffGridStateError(
+        f"Regime '{regime_name}', period {period}: " + "; ".join(found) + ". "
+        f"The regime is solved by NNBEGM over a FiniteOuterGrid, whose simulation "
+        "reads the solve's candidates on the regime's own state grid and does not "
+        f"extrapolate beyond it. Widen the grid of {names} in regime "
+        f"'{regime_name}' to cover these values. A start must lie inside it, and so "
+        "must every state a predecessor regime's choices land on: a GridSearch or "
+        "NBEGM predecessor can choose actions whose landings lie outside it."
     )
 
 
@@ -4715,7 +4793,8 @@ def _prepare_nnbegm_candidate_bank(
     Returns the inner actions, outer actions and published values of every
     candidate at the subjects' states, and whether each candidate is live (in
     support, finite) and its outer action reaches a stock inside the outer
-    state's domain.
+    state's domain. Support is the grid's extent for an ordinary continuous
+    state; a process state's draw is in support wherever it is finite.
     """
     n_subjects = next(iter(states.values())).shape[0]
     coordinates = []
@@ -4729,6 +4808,12 @@ def _prepare_nnbegm_candidate_bank(
                 jnp.searchsorted(points, values), 0, points.shape[0] - 1
             )
             in_support &= points[coordinate] == values
+        elif isinstance(grid, _ContinuousStochasticProcess):
+            # A process value off its nodes is read linearly in the node
+            # coordinate, extrapolating along the edge segment beyond the outer
+            # nodes, the rule its transition weights follow off node.
+            coordinate = grid.get_coordinate(values)
+            in_support &= jnp.isfinite(values)
         else:
             continuous_grid = cast("ContinuousGrid", grid)
             coordinate = continuous_grid.get_coordinate(values)

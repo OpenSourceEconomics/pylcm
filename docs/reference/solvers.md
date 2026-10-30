@@ -94,9 +94,11 @@ What users see does not change:
   function reads the realized physical draw.
 - A saved solution simulates like the solve it came from.
 
-The decision at a realized draw is the action-grid argmax of the regime's declared
-action grid, as for node-state models, so the simulated continuous action lies on that
-grid even where the solve's policy is off the grid.
+The decision at a realized draw is made as for node-state models of the same solver.
+An `NBEGM` regime takes the argmax over its declared action grid, so its simulated
+continuous action lies on that grid. An `NNBEGM` regime over a `FiniteOuterGrid` reads
+its candidate bank at the draw, linearly in the node coordinate between the two
+bracketing nodes and along the edge segment beyond the outer ones.
 
 The node-state axis represents fixed scalar laws (`Normal`, `LogNormal`, `Uniform`,
 `NormalMixture`) under an independent `Product` rule, and one-shock groups under any
@@ -507,7 +509,11 @@ How the keeper and adjuster branches combine is an economic declaration, not a s
 setting: it lives on [`OuterContinuousMargin.adjustment_cost`](consumption_savings.md).
 
 With `FiniteOuterGrid`, NNBEGM replays the keeper-plus-outer-grid candidates ranked
-during the solve; with `AdaptiveOuterMesh` it republishes the mesh policies and the
+during the solve. That bank lives on the regime's own state grids and is not
+extrapolated: `simulate` raises an `OffGridStateError` for a subject whose continuous
+state (other than a stochastic process) lies outside its grid, whether it started there
+or a predecessor regime's choice landed it there. Widen that grid to cover every start
+and every landing. With `AdaptiveOuterMesh` it republishes the mesh policies and the
 search settings, and re-refines per subject at that subject's own resources. The
 adaptive replay reads the exact generated mesh, whose nodes the result carries as the
 candidate axis of the policy's descriptor, so both the adaptive policy and the finite

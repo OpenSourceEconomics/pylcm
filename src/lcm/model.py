@@ -586,7 +586,7 @@ class _PickledModel(TypedDict):
         Mapping[RegimeName, Mapping[StateName, _ContinuousStochasticProcess]]
     ]
     pruned_variables: MappingProxyType[RegimeName, frozenset[str]]
-    user_regimes: MappingProxyType[RegimeName, FinalizedUserRegime]
+    _user_regimes: MappingProxyType[RegimeName, FinalizedUserRegime]
     regime_names_to_ids: RegimeNamesToIds
     _execution: ResolvedExecution
     reachability: ModelReachability
@@ -1046,10 +1046,29 @@ class Model:
     `initial_conditions["own_stakeholder"]` is written in, and the one the
     published `own_stakeholder` column is labelled from."""
 
-    user_regimes: MappingProxyType[RegimeName, FinalizedUserRegime]
-    """The finalized regimes: plain `lcm.regime.Regime` instances, complete
-    (Koopmans aggregator injected, completeness validated), with model-level slots
-    merged in and broadcast variables pruned, still in user vocabulary."""
+    @property
+    def user_regimes(self) -> MappingProxyType[RegimeName, FinalizedUserRegime]:
+        """Return the finalized regimes, in user vocabulary.
+
+        Plain `lcm.regime.Regime` instances, complete (Koopmans aggregator
+        injected, completeness validated), with model-level slots merged in and
+        broadcast variables pruned. A regime reading a shock group lists the group
+        in `shocks`, as declared, and has no state for its shocks.
+        """
+        if self._node_axis_adapter is None:
+            return self._user_regimes
+        return self._node_axis_adapter.present_regimes(regimes=self._user_regimes)
+
+    _user_regimes: MappingProxyType[RegimeName, FinalizedUserRegime]
+    """The finalized regimes as the model runs them, node states of adapted
+    shock groups included."""
+
+    @property
+    def _node_state_names(self) -> frozenset[StateName]:
+        """Name the internal node states of adapted shocks; empty without them."""
+        if self._node_axis_adapter is None:
+            return frozenset()
+        return frozenset(self._node_axis_adapter.processes)
 
     pruned_variables: MappingProxyType[RegimeName, frozenset[str]]
     """Per regime, the broadcast states and actions pruned because no root
@@ -1211,7 +1230,7 @@ class Model:
 
         Args:
             regimes: Mapping of regime names to user-provided `Regime`
-                instances. Stored as `self.user_regimes` after merging in
+                instances. Exposed as `self.user_regimes` after merging in
                 any model-level `derived_categoricals`; the canonical processed
                 form is exposed as `self._regimes`.
             ages: Age grid for the model. Supply exactly one of `ages` and
@@ -1355,7 +1374,7 @@ class Model:
                 materializer.close()
         built_regimes, template = build_regimes_and_template(
             ages=self._time,
-            user_regimes=self.user_regimes,
+            user_regimes=self._user_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
             enable_jit=prepared.enable_jit,
             fixed_params=prepared.fixed_params,
@@ -1461,7 +1480,7 @@ class Model:
             {name: regime.stakeholders for name, regime in representatives.items()}
         )
         self.simulation_output_dtypes = _get_output_dtypes(
-            user_regimes=self.user_regimes,
+            user_regimes=self._user_regimes,
             shocks=self.shocks,
             regime_names_to_ids=self.regime_names_to_ids,
         )
@@ -1875,13 +1894,13 @@ class Model:
             user_regimes=finalized_regimes,
             targets_by_regime=schedules.targets_by_regime,
         )
-        self.user_regimes = finalized_regimes
-        validate_regimes(regimes=self.user_regimes, laws=laws)
+        self._user_regimes = finalized_regimes
+        validate_regimes(regimes=self._user_regimes, laws=laws)
         state_utility_obligations: StateUtilityObligations = (
             MappingProxyType({})
             if dated_constructor is None
             else dated_state_utility_obligations(
-                user_regimes=self.user_regimes,
+                user_regimes=self._user_regimes,
                 periods=schedules.context_periods_by_regime,
             )
         )
@@ -1889,7 +1908,7 @@ class Model:
             MappingProxyType({})
             if dated_constructor is None
             else dated_euler_grid_obligations(
-                user_regimes=self.user_regimes,
+                user_regimes=self._user_regimes,
                 periods=schedules.context_periods_by_regime,
             )
         )
@@ -1899,7 +1918,7 @@ class Model:
             state_utility_obligations=state_utility_obligations,
             current_iid_helpers=self._shock_registry.helper_inputs_by_regime,
             current_iid_state_inputs=self._shock_registry.state_inputs_by_regime,
-            user_regimes=self.user_regimes,
+            user_regimes=self._user_regimes,
             laws=laws,
             regime_id_class=regime_id_class,
             broadcast_variables=broadcast_variables,
@@ -1915,7 +1934,7 @@ class Model:
                     for name, split in self._fixed_component_splits.items()
                     if regime_name in split.grids
                 )
-                for regime_name in self.user_regimes
+                for regime_name in self._user_regimes
             },
             declared_transitions=self._declared_transitions,
         )
@@ -1934,17 +1953,17 @@ class Model:
             hardware=hardware,
             state_names=frozenset(factored_states)
             | frozenset(
-                name for regime in self.user_regimes.values() for name in regime.states
+                name for regime in self._user_regimes.values() for name in regime.states
             ),
-            regime_names=frozenset(self.user_regimes),
+            regime_names=frozenset(self._user_regimes),
         )
         _fail_if_a_sharded_state_is_pruned(
-            user_regimes=self.user_regimes,
+            user_regimes=self._user_regimes,
             pruned_variables=self.pruned_variables,
             sharded_states=self._execution.sharded_states,
         )
         continuous_sharded_state = _validate_sharded_state_capability(
-            user_regimes=self.user_regimes,
+            user_regimes=self._user_regimes,
             laws=laws,
             model_states=factored_states,
             sharded_states=self._execution.sharded_states,
@@ -1953,26 +1972,26 @@ class Model:
             self._execution, continuous_sharded_state=continuous_sharded_state
         )
         fail_if_invariant_blocking_route_is_unsupported(
-            user_regimes=self.user_regimes,
+            user_regimes=self._user_regimes,
             laws=laws,
             block_widths=self._execution.invariant_block_widths,
             sharded_states=self._execution.sharded_states,
             schedule=self._execution.invariant_block_schedule,
         )
         self._execution = _with_action_partition_ceilings(
-            execution=self._execution, user_regimes=self.user_regimes, laws=laws
+            execution=self._execution, user_regimes=self._user_regimes, laws=laws
         )
         prepared_structure = prepare_model_structure(
             original_periods_by_regime=schedules.visited_periods_by_regime,
             exit_function_demand=demanded_exit_function_paths(
                 materializer=materializer,
-                regimes=self.user_regimes,
+                regimes=self._user_regimes,
                 schedules=schedules,
                 ages=self._time,
             ),
             value_periods_by_regime=schedules.coverage_by_regime,
             query_periods_by_phase=schedules.query_periods_by_phase,
-            user_regimes=self.user_regimes,
+            user_regimes=self._user_regimes,
             laws=laws,
             ages=self._time,
             active_periods_by_regime=schedules.context_periods_by_regime,
@@ -2083,7 +2102,7 @@ class Model:
         self._regimes = regimes
         self._params_template = template
         self._regimes = admit_invariant_blocking(
-            user_regimes=self.user_regimes,
+            user_regimes=self._user_regimes,
             regimes=self._regimes,
             laws=self._graph.laws,
             reachability=self.reachability,
@@ -2094,7 +2113,9 @@ class Model:
             schedule=self._execution.invariant_block_schedule,
         )
         fail_if_endogenous_grid_reads_a_clipped_grid(
-            solvers={name: regime.solver for name, regime in self.user_regimes.items()},
+            solvers={
+                name: regime.solver for name, regime in self._user_regimes.items()
+            },
             grids={
                 name: (*regime.solution.grids.items(), *regime.simulation.grids.items())
                 for name, regime in self._regimes.items()
@@ -2137,7 +2158,7 @@ class Model:
         )
         self.enable_jit = prepared.enable_jit
         self.simulation_output_dtypes = _get_output_dtypes(
-            user_regimes=self.user_regimes,
+            user_regimes=self._user_regimes,
             shocks=self.shocks,
             regime_names_to_ids=self.regime_names_to_ids,
         )
@@ -2158,7 +2179,7 @@ class Model:
         metadata = self._dated_parameters
         return fingerprint_model_declarations(
             ages=self._time,
-            user_regimes=self.user_regimes,
+            user_regimes=self._user_regimes,
             laws=self._graph.laws,
             regime_names_to_ids=self.regime_names_to_ids,
             fixed_params=MappingProxyType(
@@ -2166,7 +2187,7 @@ class Model:
                     name: regime_kernel_params(
                         metadata.fixed.granular, regime_name=name
                     )
-                    for name in self.user_regimes
+                    for name in self._user_regimes
                 }
                 if metadata is not None and self._dated_generation is None
                 else {
@@ -2292,7 +2313,7 @@ class Model:
             self._require_cold_dated_route(prepared=prepared)
         return prepare_dated_parameters(
             ages=self._time,
-            user_regimes=self.user_regimes,
+            user_regimes=self._user_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
             enable_jit=prepared.enable_jit,
             fixed_params=prepared.fixed_params,
@@ -2772,7 +2793,7 @@ class Model:
             self._model_structure_fingerprint: str = fingerprint_model_structure(
                 ages=self._time,
                 regimes=self._regimes,
-                user_regimes=self.user_regimes,
+                user_regimes=self._user_regimes,
                 laws=self._graph.laws,
                 regime_names_to_ids=self.regime_names_to_ids,
                 binding_recorder=recorder,
@@ -2835,7 +2856,7 @@ class Model:
             else ""
         )
         return (
-            f"Model(n_regimes={len(self.user_regimes)}, "
+            f"Model(n_regimes={len(self._user_regimes)}, "
             f"n_periods={self.n_periods}{pruned_part})"
         )
 
@@ -2865,7 +2886,7 @@ class Model:
             _draw_only_processes=self._draw_only_processes,
             _process_code_reads=self._process_code_reads,
             pruned_variables=self.pruned_variables,
-            user_regimes=self.user_regimes,
+            _user_regimes=self._user_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
             _execution=self._execution,
             reachability=self.reachability,
@@ -2961,12 +2982,12 @@ class Model:
         self.__dict__.update(state)
         self._shock_registry = state.get("_shock_registry") or create_shock_registry(
             shocks={},
-            regimes=self.user_regimes,
-            legacy_regimes=self.user_regimes,
+            regimes=self._user_regimes,
+            legacy_regimes=self._user_regimes,
             model_states={},
         )
         self._param_name_candidates = state.get(
-            "_param_name_candidates", _get_param_name_candidates(self.user_regimes)
+            "_param_name_candidates", _get_param_name_candidates(self._user_regimes)
         )
         self._draw_only_processes = state.get(
             "_draw_only_processes", MappingProxyType({})
@@ -3069,7 +3090,7 @@ class Model:
         return fingerprint_model(
             ages=self._time,
             regimes=self._regimes,
-            user_regimes=self.user_regimes,
+            user_regimes=self._user_regimes,
             laws=self._graph.laws,
             regime_names_to_ids=self.regime_names_to_ids,
             flat_params=flat_params,
@@ -3088,7 +3109,7 @@ class Model:
         return fingerprint_model_programs(
             ages=self._time,
             regimes=self._regimes,
-            user_regimes=self.user_regimes,
+            user_regimes=self._user_regimes,
             laws=self._graph.laws,
             regime_names_to_ids=self.regime_names_to_ids,
             flat_params=flat_params,
@@ -3117,8 +3138,8 @@ class Model:
             }
             for regime_name, regime_template in self._params_template.items()
         }
-        finalized_candidates = _get_param_name_candidates(self.user_regimes)
-        for regime_name, regime in self.user_regimes.items():
+        finalized_candidates = _get_param_name_candidates(self._user_regimes)
+        for regime_name, regime in self._user_regimes.items():
             for name, branch in template[regime_name].items():
                 state = regime.states.get(name)
                 is_imputation = isinstance(state, Phased) and callable(state.solve)
@@ -3712,7 +3733,7 @@ class Model:
                 internal_result=internal_result,
                 retention=preparation.retention,
                 regimes=self._regimes,
-                user_regimes=self.user_regimes,
+                user_regimes=self._user_regimes,
                 n_periods=self.n_periods,
                 model_instance_id=self._solution_model_instance_id,
                 params_fingerprint=self._params_fingerprint(flat_params=flat_params),
@@ -4463,11 +4484,11 @@ class Model:
                 f"{type(user_regime.solver).__module__}."
                 f"{type(user_regime.solver).__qualname__}"
             )
-            for regime_name, user_regime in self.user_regimes.items()
+            for regime_name, user_regime in self._user_regimes.items()
         }
         expected_solver_identities = {
             regime_name: user_regime.solver.identity
-            for regime_name, user_regime in self.user_regimes.items()
+            for regime_name, user_regime in self._user_regimes.items()
         }
         expected_replay_routes = {
             regime_name: _replay_route_identity(regime.simulation.replay_route)
@@ -5346,7 +5367,7 @@ class Model:
         if any(
             period not in self._regimes[name].simulation.exit_queries
             or self._regimes[name].simulation.exit_queries[period].full is None
-            for name, declaration in self.user_regimes.items()
+            for name, declaration in self._user_regimes.items()
             if declaration.exits
             for period in self._regimes[name].simulation.programs.decision
             if (self._time.exact_values[period], name) in self._graph.visited_nodes
@@ -5360,7 +5381,7 @@ class Model:
             if route.replay_mode is not ReplayMode.UNSUPPORTED:
                 continue
             if isinstance(route, UnsupportedReplayRoute):
-                solver_name = type(self.user_regimes[regime_name].solver).__name__
+                solver_name = type(self._user_regimes[regime_name].solver).__name__
                 reasons.append(
                     f"'{regime_name}': its solver '{solver_name}' declares that its "
                     "solved decision cannot be reproduced in simulation"
@@ -5663,7 +5684,7 @@ class Model:
                 initial_conditions = split_initial_conditions(
                     initial_conditions=initial_conditions,
                     splits=self._fixed_component_splits,
-                    user_regimes=self.user_regimes,
+                    user_regimes=self._user_regimes,
                     regime_names_to_ids=self.regime_names_to_ids,
                 )
                 initial_conditions = lower_composite_initial_conditions(
@@ -5678,7 +5699,7 @@ class Model:
                 if isinstance(initial_conditions, pd.DataFrame):
                     initial_conditions = initial_conditions_from_dataframe(
                         df=initial_conditions,
-                        user_regimes=self.user_regimes,
+                        user_regimes=self._user_regimes,
                         regime_names_to_ids=self.regime_names_to_ids,
                         array_writer=entry_allocations,
                         ages=self._time,
@@ -6075,7 +6096,7 @@ class Model:
             self._node_axis_adapter.node_axis_solution(
                 solution=solution,
                 state_names={
-                    name: self.state_names(regime_name=name)
+                    name: self._axis_state_names(regime_name=name)
                     for name in self.regime_names_to_ids
                 },
             ),
@@ -6276,13 +6297,13 @@ class Model:
         _fail_if_policy_lookup_unsupported(
             regime=regime,
             regime_name=regime_name,
-            solver=self.user_regimes[regime_name].solver,
+            solver=self._user_regimes[regime_name].solver,
             keep_intermediates=keep_intermediates,
         )
         value_grids = (
             MappingProxyType({})
             if use_categorical_codes
-            else value_grids_by_regime(self.user_regimes)[regime_name]
+            else value_grids_by_regime(self._user_regimes)[regime_name]
         )
         states = _encode_lookup_values(
             given=states, value_grids=value_grids, kind="state"
@@ -6781,7 +6802,7 @@ class Model:
             for name in coordinate_names(group=group, process=process):
                 names.pop(name, None)
             names.update(dict.fromkeys(process.states))
-        return tuple(names)
+        return tuple(name for name in names if name not in self._node_state_names)
 
     @beartype(conf=SIMULATION_INPUT_CONF)
     def initial_state_bounds(
@@ -6857,6 +6878,14 @@ class Model:
         `solution.values[period][regime_name]` has one axis per state, in this
         order; `state_grid` gives each axis's node values.
         """
+        return tuple(
+            name
+            for name in self._axis_state_names(regime_name=regime_name)
+            if name not in self._node_state_names
+        )
+
+    def _axis_state_names(self, *, regime_name: RegimeName) -> tuple[StateName, ...]:
+        """Return a regime's state names in its solve's value-array axis order."""
         if self._is_prepared_dated:
             metadata = self._dated_parameters
             if metadata is None:
@@ -6865,7 +6894,7 @@ class Model:
             if space is None:
                 raise InvalidSimulationInputError(
                     f"Unknown regime {regime_name!r}; "
-                    f"known: {tuple(self.user_regimes)}."
+                    f"known: {tuple(self._user_regimes)}."
                 )
             return tuple(space.states)
         regime = self._regimes.get(regime_name)
@@ -7080,7 +7109,7 @@ class Model:
         initial_conditions = split_initial_conditions(
             initial_conditions=initial_conditions,
             splits=self._fixed_component_splits,
-            user_regimes=self.user_regimes,
+            user_regimes=self._user_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
         )
         initial_conditions = lower_composite_initial_conditions(
@@ -7095,7 +7124,7 @@ class Model:
         if isinstance(initial_conditions, pd.DataFrame):
             initial_conditions = initial_conditions_from_dataframe(
                 df=initial_conditions,
-                user_regimes=self.user_regimes,
+                user_regimes=self._user_regimes,
                 regime_names_to_ids=self.regime_names_to_ids,
                 ages=self._time,
                 use_categorical_codes=use_categorical_codes,
@@ -7139,7 +7168,7 @@ class Model:
             return initial_conditions
         return encode_initial_values(
             initial_conditions=initial_conditions,
-            user_regimes=self.user_regimes,
+            user_regimes=self._user_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
             use_categorical_codes=use_categorical_codes,
             error_type=InvalidInitialConditionsError,
@@ -7370,7 +7399,7 @@ class Model:
         flat_params = convert_series_in_params(
             flat_params=flat_params,
             ages=self._time,
-            user_regimes=self.user_regimes,
+            user_regimes=self._user_regimes,
             laws=self._graph.laws,
             regime_names_to_ids=self.regime_names_to_ids,
             array_writer=array_writer,
