@@ -250,16 +250,37 @@ declaration, so its name is refused for such a model. Grids declare economic sup
 execution widths belong in `ExecutionConfig.axis_widths`.
 
 :::{important} Solved and simulated continuous actions
-A solve can expose an off-grid
-DCEGM policy as an addressed replay artifact in `SolutionResult`. No envelope shipped
-with pylcm currently passes the conservative off-grid policy-read gate, so ordinary
-simulation recomputes the action argmax on the regime's declared action grid. Simulation
-uses that gridded argmax whenever the model declares no off-grid policy-read route.
+With the default `replay="candidate"`, `simulate` reads a plain DC-EGM regime's solved
+policy at each subject's realized state (policy-first). For every discrete-action branch
+it reads the conditional value at that branch's resources; the branch with the largest
+value wins, and its policy row supplies the continuous action. Value, action and
+transitions therefore belong to the same branch.
 
-The simulated continuous action can therefore differ from the off-grid solve policy.
-With taste shocks, simulated choice frequencies follow the grid-restricted
-choice-specific values rather than necessarily matching the solve's off-grid choice
-probabilities. The intrinsic budget is still applied as a simulation feasibility mask.
+A subject keeps that read when it passes cheap acceptance checks:
+
+- every live branch's read lies inside its row support
+- the winning value and action are finite and the action is positive
+- the action is within the intrinsic budget, `resources - savings lower bound`
+- the action is feasible under the regime's constraints
+
+Only rejected subjects take the argmax on the regime's declared action grid. The
+reported value is the read value: the canonical evaluation at the emitted action
+supplies only feasibility, and the default path runs no ownership audit.
+
+Policy-first needs a regime whose actions are the EGM action plus discrete actions, with
+a scalar savings floor. It does not apply with taste shocks, phase-specific declarations,
+carried-only states, process or passive continuous states, or a savings stage that reads
+the Euler state. Such DC-EGM regimes simulate by the action-grid argmax, so their
+continuous action can differ from the off-grid solve policy. With taste shocks,
+simulated choice frequencies follow the grid-restricted choice-specific values.
+
+Named current-IID regimes replay at the realized shock instead. Case-U reruns the
+period's node solve with the regime's configured envelope; Case-R reads the retained
+resources row or candidate bank. Both use ordinary arithmetic by default. Neither route
+guarantees that the simulated native owner or kink side matches the solve's.
+
+`DCEGM(replay="grid")` restores the action-grid argmax for plain DC-EGM and Case-U
+regimes. `accuracy="certified"` refuses it.
 :::
 
 (api-negm)=
@@ -293,8 +314,9 @@ or remove the taste shocks when the NEGM structure is required.
 
 The unbudgeted public named-current-IID Case-U route uses the original keeper and finite
 adjuster candidates with one source date and an ordinary action-free terminal future.
-Physical replay reconstructs the same selected inner and outer policy, including after
-default-retention save/load through a fresh Model. Original factory prerequisites still
+Physical replay reruns the inner and outer selection at the realized shock, including
+after default-retention save/load through a fresh Model; its selected owner and side
+need not match the solve's. Original factory prerequisites still
 bind; cold nested admission and resources-only reuse remain separate delivery work.
 See the [current-IID contract](../development/iid-exits-redesign.md#public-finite-negm-case-u-lifecycle).
 

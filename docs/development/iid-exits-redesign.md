@@ -67,6 +67,25 @@ advertised feature, reinterpreting a model equation or labelling an unsupported 
 supported. A concrete consumer need can bring back a deferred item without bringing back
 the former matrix.
 
+### Default simulation and replay
+
+Default `simulate` decides from the solution rather than re-deriving or auditing it:
+
+- a plain DC-EGM regime reads its solved policy at the realized state (policy-first);
+  only subjects whose read fails the cheap acceptance checks — row support, finite value
+  and action, the intrinsic budget, constraint feasibility — take the action-grid argmax
+- Case-U replay reruns the period's node solve at the realized shock with the regime's
+  configured envelope, and Case-R replay reads the retained resources row or bank; both
+  use ordinary arithmetic by default
+- neither path rescores candidates against a grid baseline or retains owner, side or
+  corner witnesses; Case-R and Case-U integrity is one device-side status code per
+  regime-period
+
+The simulated native owner and kink side are therefore not guaranteed to match the
+solve's. `DCEGM(replay="grid")` restores the action-grid argmax for plain DC-EGM and
+Case-U regimes. The [solver reference](../reference/solvers.md#api-dcegm) lists where
+policy-first applies.
+
 ### Batch 4 compact acceptance set
 
 The S10 closing set reuses existing tests, one per distinct implementation mechanism.
@@ -319,6 +338,10 @@ It does not give every later population an accuracy guarantee. `accuracy="certif
 refuses grid replay. The private publisher does not yet implement the complete certified
 profile and refuses that current-IID declaration. Public EGM admission and the remaining
 family/discrete-branch witnesses remain required.
+
+> Superseded: for a plain DC-EGM regime `replay="candidate"` reads the solved policy
+> first, and replay witnesses are not a default requirement; see
+> [default simulation and replay](#default-simulation-and-replay).
 
 ## What certified means
 
@@ -913,6 +936,10 @@ original transition. It does not interpolate an average policy. Default retentio
 fresh-model save/load preserve that route. Explicit grid replay remains a separate
 approximation with the declared omission and moment requirements.
 
+> Superseded: replay uses ordinary arithmetic and the configured envelope, and its
+> native owner need not match the solve's; see
+> [default simulation and replay](#default-simulation-and-replay).
+
 The connected private families include scalar DC/NB, NB passive cells with discrete
 branches, NB ride with the original PowerMean/CES recursion, and finite NEGM with its
 original DC keeper and adjuster constructors. The recursive NB slice retains the
@@ -1016,6 +1043,9 @@ original conditional candidate bank. Its workload has one continuous state/actio
 ordinary scalar action-free terminal target. Actual physical shocks reconstruct the
 original candidate tuple, including its native owner, policy and saving. Default
 retention supports save/load and replay through an equivalent fresh public Model.
+
+> Superseded: the replayed owner need not match the solve's; see
+> [default simulation and replay](#default-simulation-and-replay).
 
 The represented bank reads value and economic marginal from their associated affine
 endpoints. At an off-Euler query those channels can differ from the continuous optimum,
