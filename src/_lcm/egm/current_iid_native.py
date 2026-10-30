@@ -4,9 +4,10 @@ Public admission remains closed until the solver's graph, statuses, producer
 schemas and replay routes install these callables together.
 """
 
+import functools
 import inspect
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from fractions import Fraction
 from types import MappingProxyType
 from typing import NamedTuple, NotRequired, TypedDict, cast
@@ -30,6 +31,7 @@ from _lcm.egm.current_iid_publication import (
 )
 from _lcm.egm.current_iid_resource_query import OwnedResourcesRead
 from _lcm.egm.current_iid_topology import (
+    CommonResourcesPartition,
     pullback_native_partition,
     require_resources_topology,
 )
@@ -128,50 +130,67 @@ class BoundResourcesMap:
         return self.function(**{name: values[name] for name in self.names})
 
 
-@dataclass(frozen=True, kw_only=True, eq=False)
-class NativeCaseRCore:
-    """A complete invocation of the canonical single-row economic producer.
+_WIDTH_NAMES = ("savings_point_width", "stochastic_node_width", "envelope_cell_width")
 
-    The first supported shape has one liquid state and no other state/action
-    combo axes. Current law banks and child artifacts are dynamic arguments;
-    only canonical callbacks, numerical capacities and the certified rational
-    resources coefficient belong to model statics.
+
+class _CaseRRow(NamedTuple):
+    """Demand-free node realisation and the owned resources row built on it."""
+
+    physical: Mapping[ShockName, FloatND | IntND]
+    factors: FloatND
+    law_valid: ScalarBool
+    live: BoolND
+    row: OwnedResourcesRow
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class CaseRNumerics:
+    """The demand-free numerical body of one native Case-R core.
+
+    Its row and publication stages run through one `jax.jit` each on this same
+    object. The template shape trace and the lowered program, whose cores differ
+    only by the parent demands attached in between, therefore share JAX's cached
+    trace of both stages; only the demand queries and their partition are traced
+    per core.
     """
 
     pieces: _EgmKernelPieces
-    """Canonical producer pieces, including the complete future expectation."""
     plan: CurrentIIDPlan
-    """Actual dated current-node law and joint-row plan."""
     coefficient: Fraction
-    """Positive resources coefficient from structural and rounded-map proofs."""
     refine: Callable[..., OwnedEnvelope]
-    """Existing owned ExactEnvelope backend, without query-authority fabrication."""
     owner_capacity: int
-    """Real monotone-run capacity of that owned backend."""
     projection_capacity: int
-    """Declared bounded output/refinement allocation, never grown after admission."""
+    balanced: BalancedResourcesProgram | None
 
-    parent_demands: tuple[ParentResourcesDemand, ...] | None = None
-    """Closed model consumer population; None retains the full-topology refusal."""
+    def serves(self, core: NativeCaseRCore) -> bool:
+        """Whether `core` computes with exactly these numerical objects."""
+        return (
+            self.pieces is core.pieces
+            and self.plan is core.plan
+            and self.coefficient == core.coefficient
+            and self.refine is core.refine
+            and self.owner_capacity == core.owner_capacity
+            and self.projection_capacity == core.projection_capacity
+            and self.balanced is core.balanced
+        )
 
-    balanced: BalancedResourcesProgram | None = None
-    """Authenticated private balanced class; the public solver guard stays closed."""
+    @functools.cached_property
+    def traced_row(self) -> Callable[..., _CaseRRow]:
+        return jax.jit(self.row, static_argnames=_WIDTH_NAMES, inline=True)
 
-    def __post_init__(self) -> None:
-        if self.pieces.combo_names:
-            raise UnsupportedOperationError(
-                "Case-R passive-state and discrete-action row axes are not installed."
-            )
-        if self.coefficient <= 0:
-            raise UnsupportedOperationError(
-                "Case-R resources require a positive slope."
-            )
-        if self.projection_capacity < _MIN_PROJECTION_CAPACITY:
-            raise ValueError(
-                "Case-R projection capacity cannot represent its endpoints."
-            )
+    @functools.cached_property
+    def traced_publication(self) -> Callable[..., NativeCaseROutput]:
+        return jax.jit(self.publication, inline=True)
 
-    def __call__(
+    def resources(self, *, pool: EconFunctionKwargs) -> BoundResourcesMap:
+        return BoundResourcesMap(
+            function=self.pieces.own_resources_func,
+            liquid_state=self.pieces.euler_state_name,
+            pool=pool,
+            names=tuple(inspect.signature(self.pieces.own_resources_func).parameters),
+        )
+
+    def row(
         self,
         *,
         liquid_grid: Float1D,
@@ -186,24 +205,15 @@ class NativeCaseRCore:
         savings_point_width: int | None,
         stochastic_node_width: int | None,
         envelope_cell_width: int,
-        demand_pools: tuple[EconFunctionKwargs, ...] = (),
-        demand_savings: tuple[Float1D, ...] = (),
-    ) -> NativeCaseROutput:
-        """Construct once, then select current-node policies before integration."""
-        if self.parent_demands is None and self.balanced is None:
-            require_resources_topology()
+    ) -> _CaseRRow:
+        """Realise the current nodes and construct the owned resources row."""
         physical, factors, law_valid = self.plan.realise_nodes(
             arguments=law_arguments,
             group_params=group_params,
             node_operands=node_operands,
             indices=indices,
         )
-        resources = BoundResourcesMap(
-            function=self.pieces.own_resources_func,
-            liquid_state=self.pieces.euler_state_name,
-            pool=pool,
-            names=tuple(inspect.signature(self.pieces.own_resources_func).parameters),
-        )
+        resources = self.resources(pool=pool)
         # This common domain is derived from the declared pre-state grid and
         # every original joint quadrature row, not a row borrowed from node 0.
         live = jnp.all(~is_represented_zero(factors), axis=0)
@@ -235,13 +245,28 @@ class NativeCaseRCore:
         row = construct.owned_resources_row(
             combo_values=(), resources_domain=common_domain, refine=self.refine
         )
+        return _CaseRRow(
+            physical=physical, factors=factors, law_valid=law_valid, live=live, row=row
+        )
+
+    def publication(
+        self,
+        *,
+        liquid_grid: Float1D,
+        pool: EconFunctionKwargs,
+        row: _CaseRRow,
+        partition: CommonResourcesPartition,
+        demands_valid: ScalarBool,
+    ) -> NativeCaseROutput:
+        """Select current-node policies on the partition, then integrate."""
+        resources = self.resources(pool=pool)
         utility = BoundUtilityOfAction(
             utility_func=self.pieces.utility_func,
             action_name=self.pieces.action_name,
             bound=pool,
         )
         evaluator = CurrentResourcesEvaluator(
-            row=row,
+            row=row.row,
             resources=resources,
             resources_slope=jnp.asarray(
                 float(self.coefficient), dtype=liquid_grid.dtype
@@ -249,29 +274,11 @@ class NativeCaseRCore:
             utility_of_action=utility,
             owner_capacity=self.owner_capacity,
         )
-        demanded_queries = jnp.empty((0,), dtype=liquid_grid.dtype)
-        demands_valid = jnp.ones((), dtype=jnp.bool_)
-        if self.parent_demands is not None:
-            demanded_queries, demands_valid = prepare_parent_resources_demands(
-                declarations=self.parent_demands,
-                pools=demand_pools,
-                savings=demand_savings,
-                dtype=liquid_grid.dtype,
-            )
-        partition = pullback_native_partition(
-            row=row,
-            resources=resources,
-            physical=physical,
-            live=live,
-            liquid_grid=liquid_grid,
-            demanded_queries=demanded_queries,
-            capacity=self.projection_capacity,
-        )
         reference = ProjectedResourcesReference(
             evaluator=evaluator,
-            physical=physical,
-            factors=factors,
-            law_valid=law_valid & demands_valid,
+            physical=row.physical,
+            factors=row.factors,
+            law_valid=row.law_valid & demands_valid,
             partition=partition,
         )
         projected, selected = assemble_exact_resources_samples(
@@ -290,24 +297,149 @@ class NativeCaseRCore:
         node_values = jax.vmap(
             lambda liquid: evaluator.integrate(
                 liquid=liquid,
-                physical=physical,
-                factors=factors,
-                law_valid=law_valid,
+                physical=row.physical,
+                factors=row.factors,
+                law_valid=row.law_valid,
             )
         )(liquid_grid)
         valid = projected.valid & jnp.all(node_values.valid)
         return NativeCaseROutput(
             value=node_values.value,
             projected=projected,
-            resources_row=row,
+            resources_row=row.row,
             valid=valid,
-            current_iid_invalid=~law_valid,
+            current_iid_invalid=~row.law_valid,
             empty_count=jnp.sum(node_values.empty, dtype=jnp.int32),
             other_inf_count=jnp.sum(
                 ~node_values.empty & ~jnp.isfinite(node_values.value), dtype=jnp.int32
             ),
-            selection=(selected, live),
+            selection=(selected, row.live),
             projection_records_needed=records_needed,
+        )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class NativeCaseRCore:
+    """A complete invocation of the canonical single-row economic producer.
+
+    The first supported shape has one liquid state and no other state/action
+    combo axes. Current law banks and child artifacts are dynamic arguments;
+    only canonical callbacks, numerical capacities and the certified rational
+    resources coefficient belong to model statics.
+    """
+
+    pieces: _EgmKernelPieces
+    """Canonical producer pieces, including the complete future expectation."""
+    plan: CurrentIIDPlan
+    """Actual dated current-node law and joint-row plan."""
+    coefficient: Fraction
+    """Positive resources coefficient from structural and rounded-map proofs."""
+    refine: Callable[..., OwnedEnvelope]
+    """Existing owned ExactEnvelope backend, without query-authority fabrication."""
+    owner_capacity: int
+    """Real monotone-run capacity of that owned backend."""
+    projection_capacity: int
+    """Declared bounded output/refinement allocation, never grown after admission."""
+
+    parent_demands: tuple[ParentResourcesDemand, ...] | None = None
+    """Closed model consumer population; None retains the full-topology refusal."""
+
+    balanced: BalancedResourcesProgram | None = None
+    """Authenticated private balanced class; the public solver guard stays closed."""
+
+    numerics: CaseRNumerics | None = field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Traced demand-free body; a core built by `replace` keeps its predecessor's."""
+
+    def __post_init__(self) -> None:
+        if self.pieces.combo_names:
+            raise UnsupportedOperationError(
+                "Case-R passive-state and discrete-action row axes are not installed."
+            )
+        if self.coefficient <= 0:
+            raise UnsupportedOperationError(
+                "Case-R resources require a positive slope."
+            )
+        if self.projection_capacity < _MIN_PROJECTION_CAPACITY:
+            raise ValueError(
+                "Case-R projection capacity cannot represent its endpoints."
+            )
+        if self.numerics is None or not self.numerics.serves(self):
+            object.__setattr__(
+                self,
+                "numerics",
+                CaseRNumerics(
+                    pieces=self.pieces,
+                    plan=self.plan,
+                    coefficient=self.coefficient,
+                    refine=self.refine,
+                    owner_capacity=self.owner_capacity,
+                    projection_capacity=self.projection_capacity,
+                    balanced=self.balanced,
+                ),
+            )
+
+    def __call__(
+        self,
+        *,
+        liquid_grid: Float1D,
+        pool: EconFunctionKwargs,
+        next_regime_to_continuation: MappingProxyType[
+            RegimeName, EGMCarry | ProjectedEGMCarry
+        ],
+        law_arguments: Mapping[ReferenceName, QAndFArg],
+        group_params: AdmittedGroupParams,
+        node_operands: NodeOperands,
+        indices: IntND,
+        savings_point_width: int | None,
+        stochastic_node_width: int | None,
+        envelope_cell_width: int,
+        demand_pools: tuple[EconFunctionKwargs, ...] = (),
+        demand_savings: tuple[Float1D, ...] = (),
+    ) -> NativeCaseROutput:
+        """Construct once, then select current-node policies before integration."""
+        if self.parent_demands is None and self.balanced is None:
+            require_resources_topology()
+        numerics = self.numerics
+        if numerics is None:
+            raise TypeError("Native Case-R lost its traced numerical body.")
+        row = numerics.traced_row(
+            liquid_grid=liquid_grid,
+            pool=pool,
+            next_regime_to_continuation=next_regime_to_continuation,
+            law_arguments=law_arguments,
+            group_params=group_params,
+            node_operands=node_operands,
+            indices=indices,
+            savings_point_width=savings_point_width,
+            stochastic_node_width=stochastic_node_width,
+            envelope_cell_width=envelope_cell_width,
+        )
+        demanded_queries = jnp.empty((0,), dtype=liquid_grid.dtype)
+        demands_valid = jnp.ones((), dtype=jnp.bool_)
+        if self.parent_demands is not None:
+            demanded_queries, demands_valid = prepare_parent_resources_demands(
+                declarations=self.parent_demands,
+                pools=demand_pools,
+                savings=demand_savings,
+                dtype=liquid_grid.dtype,
+            )
+        partition = pullback_native_partition(
+            row=row.row,
+            resources=numerics.resources(pool=pool),
+            physical=row.physical,
+            live=row.live,
+            liquid_grid=liquid_grid,
+            demanded_queries=demanded_queries,
+            capacity=self.projection_capacity,
+        )
+        return numerics.traced_publication(
+            liquid_grid=liquid_grid,
+            pool=pool,
+            row=row,
+            partition=partition,
+            demands_valid=demands_valid,
         )
 
 
