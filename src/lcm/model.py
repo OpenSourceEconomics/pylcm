@@ -328,7 +328,7 @@ from _lcm.typing import (
     InitialConditions,
     ParamsLeaf,
     ParamsTemplate,
-    PeriodToRegimeToArrivalSurfaces,
+    PeriodToRegimeToParticipationSurfaces,
     PeriodToRegimeToSimulationPolicy,
     PeriodToRegimeToVArr,
     PytreeByPeriod,
@@ -498,7 +498,7 @@ type _ResolvedSolution = tuple[
     PeriodToRegimeToVArr,
     PeriodToRegimeToSimulationPolicy,
     _PeriodToRegimeToReplayReader,
-    PeriodToRegimeToArrivalSurfaces,
+    PeriodToRegimeToParticipationSurfaces,
 ]
 
 
@@ -591,7 +591,7 @@ def _simulation_programs(
             programs.policy_prepare,
             programs.exit_full,
             programs.exit_participating,
-            *programs.arrival_families,
+            *programs.participation_families,
         ):
             yield from family.values()
 
@@ -1533,7 +1533,7 @@ class Model:
                 name: bind_regime_law(
                     transition,
                     gated_edges=prepared_graph.laws[name].gated_edges,
-                    arrivals=prepared_graph.laws[name].arrivals,
+                    participation=prepared_graph.laws[name].participation,
                 )
                 for name, transition in demanded_transitions.items()
             }
@@ -3338,7 +3338,7 @@ class Model:
             engine_view.values,  # noqa: PD011
             engine_view.simulation_policies,
             external_readers,
-            engine_view.arrival_surfaces,
+            engine_view.participation_surfaces,
         )
 
     def _consume_foreign_solution(
@@ -3367,8 +3367,8 @@ class Model:
                         f"{self._execution.device_memory_cap_note()}"
                     )
             self._fail_if_another_instances_result(solution=solution)
-        arrival_surfaces = _materialize_arrival_surfaces(
-            surfaces=solution._arrival_surfaces  # noqa: SLF001
+        participation_surfaces = _materialize_participation_surfaces(
+            surfaces=solution._participation_surfaces  # noqa: SLF001
         )
         solution = self._snapshot_solution_envelope(
             solution=solution, array_copier=array_copier, native_values=native_values
@@ -3424,7 +3424,7 @@ class Model:
             values,
             policies,
             external_readers,
-            arrival_surfaces,
+            participation_surfaces,
         )
 
     def _check_solution_result_structure(
@@ -4589,7 +4589,7 @@ class Model:
                         period_to_regime_to_V_arr,
                         period_to_regime_to_sim_policy,
                         period_to_regime_to_replay_reader,
-                        arrival_surfaces,
+                        participation_surfaces,
                     ) = self._resolve_solution_result(
                         solution=solution,
                         flat_params=flat_params,
@@ -4601,7 +4601,7 @@ class Model:
                 period_to_regime_to_V_arr = None
                 period_to_regime_to_sim_policy = None
                 period_to_regime_to_replay_reader = None
-                arrival_surfaces = None
+                participation_surfaces = None
             with solve_phase(name="simulation_inputs", logger=log, call_id=call_id):
                 if entry_allocations is not None:
                     entry_allocations.update_solution(
@@ -4610,7 +4610,7 @@ class Model:
                             period_to_regime_to_V_arr,
                             period_to_regime_to_sim_policy,
                             period_to_regime_to_replay_reader,
-                            arrival_surfaces,
+                            participation_surfaces,
                         ),
                     )
                 initial_conditions = split_initial_conditions(
@@ -4775,7 +4775,7 @@ class Model:
                 period_to_regime_to_V_arr = MappingProxyType({})
                 period_to_regime_to_sim_policy = MappingProxyType({})
                 period_to_regime_to_replay_reader = MappingProxyType({})
-                arrival_surfaces = MappingProxyType({})
+                participation_surfaces = MappingProxyType({})
             elif solution is None:
                 solve_params = (
                     flat_params
@@ -4814,7 +4814,7 @@ class Model:
                         period_to_regime_to_V_arr,
                         period_to_regime_to_sim_policy,
                         period_to_regime_to_replay_reader,
-                        arrival_surfaces,
+                        participation_surfaces,
                     ) = self._resolve_solution_result(
                         solution=solution,
                         flat_params=flat_params,
@@ -4827,7 +4827,7 @@ class Model:
                     period_to_regime_to_V_arr is None
                     or period_to_regime_to_sim_policy is None
                     or period_to_regime_to_replay_reader is None
-                    or arrival_surfaces is None
+                    or participation_surfaces is None
                 ):
                     raise AssertionError(
                         "Simulation solution inputs were not resolved."
@@ -4839,7 +4839,7 @@ class Model:
                             period_to_regime_to_V_arr,
                             period_to_regime_to_sim_policy,
                             period_to_regime_to_replay_reader,
-                            arrival_surfaces,
+                            participation_surfaces,
                         ),
                     )
                     entry_allocations.publish(stage="initial", tree=initial_conditions)
@@ -4880,7 +4880,7 @@ class Model:
                         flat_params=flat_params,
                         values=period_to_regime_to_V_arr,
                         policies=period_to_regime_to_sim_policy,
-                        arrival_surfaces=arrival_surfaces,
+                        participation_surfaces=participation_surfaces,
                         ages=self._time,
                         initial_conditions=initial_conditions,
                         regime_names_to_ids=self.regime_names_to_ids,
@@ -4938,7 +4938,7 @@ class Model:
                 period_to_regime_to_V_arr=period_to_regime_to_V_arr,
                 period_to_regime_to_sim_policy=period_to_regime_to_sim_policy,
                 period_to_regime_to_replay_reader=period_to_regime_to_replay_reader,
-                arrival_surfaces=arrival_surfaces,
+                participation_surfaces=participation_surfaces,
                 ages=self._time,
                 simulation_output_dtypes=self.simulation_output_dtypes,
                 seed=seed,
@@ -7187,12 +7187,12 @@ def _leading_rows(*, array: jax.Array, n_rows: int) -> jax.Array:
     return array[:n_rows]
 
 
-def _materialize_arrival_surfaces(
+def _materialize_participation_surfaces(
     *, surfaces: Mapping[int, Mapping[RegimeName, Mapping[str, FloatND | _LazyEntry]]]
-) -> PeriodToRegimeToArrivalSurfaces:
-    """Load a result's stored arrival surfaces, which arrival replay reads.
+) -> PeriodToRegimeToParticipationSurfaces:
+    """Load a result's stored participation surfaces, which participation replay reads.
 
-    A surface the result does not carry stays absent: arrival replay refuses where
+    A surface the result does not carry stays absent: participation replay refuses where
     it would read one.
     """
     # ponytail: surfaces load eagerly outside the budgeted copier; route them

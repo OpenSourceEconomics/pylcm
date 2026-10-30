@@ -8,13 +8,13 @@ from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm import (
     AgeGrid,
-    ArrivalDecision,
-    ArrivalRead,
     ByAge,
     DiscreteGrid,
     Gate,
     LinSpacedGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -139,8 +139,8 @@ def _context_gate_open_without_reference(
 
 def _edge_decision(
     *, gate: UserFunction, action_sensitive: bool, split_context: bool
-) -> tuple[dict[str, Gate], dict[str, ArrivalDecision]]:
-    """Return the edge's state-only gate or its value-reading arrival decision."""
+) -> tuple[dict[str, Gate], dict[str, ParticipationCheck]]:
+    """Return the edge's state-only gate or its value-reading participation check."""
     if action_sensitive:
         return (
             {
@@ -159,7 +159,7 @@ def _edge_decision(
         )
     projection = _age_projection if split_context else _context_projection
     return {}, {
-        "target": ArrivalDecision(
+        "target": ParticipationCheck(
             predicate=gate,
             routes={
                 "only": StakeholderRoute(
@@ -169,7 +169,7 @@ def _edge_decision(
                 )
             },
             reads={
-                "V_reference": ArrivalRead(
+                "V_reference": ParticipationRead(
                     kind="IntegratedFull",
                     regime="reference",
                     projection={"x": projection},
@@ -194,7 +194,7 @@ def _make_model(
         if gate_open
         else _context_gate_closed
     )
-    gates, arrivals = _edge_decision(
+    gates, participation = _edge_decision(
         gate=gate, action_sensitive=action_sensitive, split_context=split_context
     )
     return Model(
@@ -203,7 +203,7 @@ def _make_model(
                 targets={"target": 40, "fallback": 40},
                 law=ByAge(cases={40: {"target": StochasticTransition(func=_prob_one)}}),
                 gates=gates,
-                arrivals=arrivals,
+                participation=participation,
             )
         },
         regimes={

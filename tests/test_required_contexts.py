@@ -19,14 +19,14 @@ import pytest
 from lcm import (
     AgeGrid,
     AgeRange,
-    ArrivalDecision,
-    ArrivalRead,
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
     Gate,
     LinSpacedGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -112,8 +112,8 @@ def _identity(wealth: ContinuousState) -> ContinuousState:
     return wealth
 
 
-def _read(regime: RegimeName) -> ArrivalRead:
-    return ArrivalRead(
+def _read(regime: RegimeName) -> ParticipationRead:
+    return ParticipationRead(
         kind="IntegratedFull", regime=regime, projection={"wealth": _identity}
     )
 
@@ -132,18 +132,18 @@ type Fallback = (
 type GatedStructure = Mapping[RegimeName, Mapping[RegimeName, AgeSelector]]
 
 
-type Decision = Gate | ArrivalDecision
+type Decision = Gate | ParticipationCheck
 
 
 def _target_decision(
     *, fallback: Fallback | None, reads_values: bool
 ) -> dict[RegimeName, Decision]:
-    """Compare target and reference values on arrival, or gate on wealth alone."""
+    """Compare target and reference values on landing, or gate on wealth alone."""
     routes = {"only": StakeholderRoute(fallback=fallback or _projected("fallback"))}
     if not reads_values:
         return {"target": Gate(predicate=_wealth_is_positive, routes=routes)}
     return {
-        "target": ArrivalDecision(
+        "target": ParticipationCheck(
             predicate=_gate,
             reads={"V_target": _read("target"), "V_reference": _read("reference")},
             routes=routes,
@@ -163,8 +163,8 @@ def _with_source_law(
             targets=phase["source"],
             law=law,
             gates={t: d for t, d in decisions.items() if isinstance(d, Gate)},
-            arrivals={
-                t: d for t, d in decisions.items() if isinstance(d, ArrivalDecision)
+            participation={
+                t: d for t, d in decisions.items() if isinstance(d, ParticipationCheck)
             },
         ),
     }
@@ -209,7 +209,7 @@ def _gated_model(
     )
 
 
-def _arrival_reference_without_law(initial_nodes: UserInitialNodes) -> Model:
+def _participation_reference_without_law(initial_nodes: UserInitialNodes) -> Model:
     return _gated_model(
         initial_nodes=initial_nodes,
         reference=_nonterminal(),
@@ -311,9 +311,9 @@ def _same_period_reference_without_law(initial_nodes: UserInitialNodes) -> Model
     ("build", "match"),
     [
         pytest.param(
-            _arrival_reference_without_law,
+            _participation_reference_without_law,
             (
-                r"(?is)(?=.*arrival read)(?=.*\(40, 'source'\))"
+                r"(?is)(?=.*participation read)(?=.*\(40, 'source'\))"
                 r"(?=.*'reference' at age 45)"
             ),
         ),
@@ -322,12 +322,12 @@ def _same_period_reference_without_law(initial_nodes: UserInitialNodes) -> Model
             r"(?is)(?=.*fallback)(?=.*\(40, 'source'\))(?=.*'priced' at age 45)",
         ),
     ],
-    ids=["arrival-reference", "solve-fallback"],
+    ids=["participation-reference", "solve-fallback"],
 )
 def test_a_required_value_read_without_a_law_names_its_kind(
     *, build: Callable[[UserInitialNodes], Model], match: str
 ) -> None:
-    """An arrival read or valuation fallback lacking a law is named as such."""
+    """A participation read or valuation fallback lacking a law is named as such."""
     with pytest.raises(ModelInitializationError, match=match):
         build({40: "source"})
 
@@ -344,10 +344,10 @@ def test_a_same_period_reference_without_a_law_names_its_kind() -> None:
 @pytest.mark.parametrize(
     ("build", "initial_nodes"),
     [
-        (_arrival_reference_without_law, {40: "source", 45: "reference"}),
+        (_participation_reference_without_law, {40: "source", 45: "reference"}),
         (_solve_fallback_without_law, {40: "source", 45: "priced"}),
     ],
-    ids=["arrival-reference", "solve-fallback"],
+    ids=["participation-reference", "solve-fallback"],
 )
 def test_an_added_root_does_not_repair_a_missing_prerequisite(
     *,
@@ -529,8 +529,8 @@ def _gated_move(*, target: RegimeName, stay: RegimeName) -> Transition:
             law={target: StochasticTransition(func=_prob_one)},
             then="dead",
         ),
-        arrivals={
-            target: ArrivalDecision(
+        participation={
+            target: ParticipationCheck(
                 predicate=_marital_gate,
                 reads={"V_target": _read(target), "V_stay": _read(stay)},
                 routes={"only": StakeholderRoute(fallback=_projected(stay))},
@@ -561,7 +561,7 @@ def _marital_model() -> Model:
 
 
 def test_reciprocal_marriage_and_divorce_gates_build_without_a_cycle() -> None:
-    """Arrivals reading each other's next-period value add no same-period order."""
+    """Participation checks reading each other's next value add no period order."""
     assert _marital_model().reachability.nodes == frozenset(
         {(age, name) for age in (0, 1) for name in ("single", "married")}
         | {(2, "dead")}

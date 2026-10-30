@@ -1,12 +1,12 @@
-"""A dissolution arrival is decided at the state a household realises.
+"""A dissolution participation check is decided at the state a household realises.
 
-The arrival reads the target's Participating policy support: whether the target
-regime has a feasible action at the state the household lands on. A landing
-between two nodes can have no feasible action even though both nodes do, and a
-landing next to an empty node can have one, so the support is queried at the
-realised landing itself rather than interpolated from the grid nodes. A
-household left with no feasible action takes its arrival's dissolution route in
-that same period instead of aborting the simulation.
+The participation reads the target's Participating policy support: whether the target
+regime has a feasible action at the state the household lands on. A landing between two
+nodes can have no feasible action even though both nodes do, and a landing next to an
+empty node can have one, so the support is queried at the realised landing itself rather
+than interpolated from the grid nodes. A household left with no feasible action takes
+its participation check's dissolution route in that same period instead of aborting the
+simulation.
 
 The model is the smallest one with that geometry. A source regime carries the
 household's wage unchanged into a two-stakeholder `pair` regime whose wage grid
@@ -28,8 +28,6 @@ import pytest
 from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
-    ArrivalDecision,
-    ArrivalRead,
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
@@ -37,6 +35,8 @@ from lcm import (
     Gate,
     IrregSpacedGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -175,11 +175,11 @@ def _build_model(
             "source": Transition(
                 targets={"pair": 0, "alone_m": 0},
                 law=ByAge(cases={0: {"pair": StochasticTransition(func=_to_pair)}}),
-                arrivals={
-                    "pair": ArrivalDecision(
+                participation={
+                    "pair": ParticipationCheck(
                         predicate=_has_policy_support,
                         reads={
-                            "pair_support": ArrivalRead(
+                            "pair_support": ParticipationRead(
                                 regime="pair",
                                 stakeholder="f",
                                 kind="Participating",
@@ -370,7 +370,7 @@ def test_generated_landings_reach_both_sides_of_the_boundary(*, payoff_name: str
 
 @pytest.mark.xfail(
     strict=True,
-    reason="An arrival fallback is not recorded in `dissolution_fallbacks`.",
+    reason="A participation fallback is not recorded in `dissolution_fallbacks`.",
 )
 def test_every_dissolution_route_is_recorded_with_its_state_and_route():
     """The rerouted household is recorded with subject, period, state and route."""

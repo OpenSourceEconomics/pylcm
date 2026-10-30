@@ -1,4 +1,4 @@
-"""Keep counterfactual arrival prices separate from physical arrival actors."""
+"""Keep counterfactual participation prices apart from physical participation actors."""
 
 from typing import NamedTuple
 
@@ -7,8 +7,6 @@ import numpy as np
 import pytest
 
 from lcm import (
-    ArrivalDecision,
-    ArrivalRead,
     CollectiveUtility,
     Consent,
     Counterparty,
@@ -17,6 +15,8 @@ from lcm import (
     ExitTarget,
     InitialNodes,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     Periods,
     ProjectedRegimeValue,
     Regime,
@@ -42,7 +42,7 @@ class _PhysicalAnswer(NamedTuple):
 
 
 def household_answer(*, target_payoff: int) -> _HouseholdAnswer:
-    """Evaluate the authored arrival and strict bilateral gains directly."""
+    """Evaluate the authored participation check and strict bilateral gains directly."""
     continuation = target_payoff if target_payoff > 2 else 40.0
     source_raw = 1.0 + 5.0
     counterparty_raw = 3.0 + continuation
@@ -124,7 +124,7 @@ def forty() -> float:
     return 40.0
 
 
-def accept_arrival(*, V_target: FloatND) -> BoolND:
+def accept_participation(*, V_target: FloatND) -> BoolND:
     return V_target > 2.0
 
 
@@ -132,11 +132,13 @@ def counterparty_transition() -> Transition:
     return Transition(
         targets={"target": Periods(values=(0,)), "fallback": Periods(values=(0,))},
         law="target",
-        arrivals={
-            "target": ArrivalDecision(
-                predicate=accept_arrival,
+        participation={
+            "target": ParticipationCheck(
+                predicate=accept_participation,
                 reads={
-                    "V_target": ArrivalRead(regime="target", kind="Raw", projection={})
+                    "V_target": ParticipationRead(
+                        regime="target", kind="Raw", projection={}
+                    )
                 },
                 routes={
                     "self": StakeholderRoute(
@@ -198,7 +200,7 @@ def household_model(*, target_payoff: int, budget: int | None) -> Model:
 
 @pytest.mark.parametrize("target_payoff", [1, 5, 30])
 @pytest.mark.parametrize("budget", [None, 2**28])
-def test_counterfactual_arrival_is_priced_without_physical_replay(
+def test_counterfactual_participation_is_priced_without_physical_replay(
     *, target_payoff: int, budget: int | None
 ) -> None:
     """A never-occupied counterparty needs its continuation but no entry actor."""
@@ -256,13 +258,13 @@ def physical_model(*, incoming: bool, target_payoff: int, budget: int | None) ->
 
 @pytest.mark.parametrize("incoming", [False, True])
 @pytest.mark.parametrize("target_payoff", [1, 5])
-def test_real_arrival_from_original_or_participating_actor_is_retained(
+def test_real_participation_from_original_or_participating_actor_is_retained(
     *, incoming: bool, target_payoff: int
 ) -> None:
-    """Incoming-only actor has no Full but must retain its next-period arrival.
+    """Incoming-only actor has no Full but retains its next-period participation check.
 
     A second subject starts at the target at date one and must not borrow the
-    counterparty's arrival rule or fallback.
+    counterparty's participation rule or fallback.
     """
     model = physical_model(incoming=incoming, target_payoff=target_payoff, budget=None)
     expected = physical_answer(target_payoff=target_payoff)

@@ -1,4 +1,4 @@
-"""Bind edge-owned arrival comparisons to actual dated policy/value readers."""
+"""Bind edge-owned participation comparisons to actual dated policy/value readers."""
 
 import hashlib
 import inspect
@@ -12,13 +12,6 @@ from dags import concatenate_functions, with_signature
 from dags.signature import rename_arguments
 from dags.tree import qname_from_tree_path
 
-from _lcm.arrival_continuation import (
-    ARRIVAL_CONTINUATION,
-    ARRIVAL_SURFACE_PREFIX,
-    ArrivalContinuation,
-    ArrivalOperand,
-    arrival_surface_name,
-)
 from _lcm.current_iid import (
     CURRENT_IID_ARGUMENT,
     CURRENT_IID_NODES_ARGUMENT,
@@ -42,6 +35,13 @@ from _lcm.exit_queries import (
 )
 from _lcm.grids.continuous import ContinuousGrid
 from _lcm.params.edges import regime_kernel_params
+from _lcm.participation_continuation import (
+    PARTICIPATION_CONTINUATION,
+    PARTICIPATION_SURFACE_PREFIX,
+    ParticipationContinuation,
+    ParticipationOperand,
+    participation_surface_name,
+)
 from _lcm.policy_queries import (
     PolicyAnswer,
     QueryKind,
@@ -54,12 +54,12 @@ from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.Q_and_F import _CollectiveQAndF, _ComputeCE, _QAndF
 from _lcm.regime_building.V import VInterpolationInfo, get_V_interpolator
 from _lcm.regime_building.value_adapter import (
-    _AdaptedArrivalPredicate,
+    _AdaptedParticipationPredicate,
 )
 from _lcm.solution.contract import SolverBuildContext
 from _lcm.typing import (
-    ArrivalQueryArguments,
     FlatParams,
+    ParticipationQueryArguments,
     PytreeValue,
     QAndFKwargs,
     ShapeDtypePytree,
@@ -67,13 +67,13 @@ from _lcm.typing import (
 )
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import NamedOperand, call_with_declared_arguments
-from lcm.arrivals import ArrivalDecision, ArrivalRead
 from lcm.exceptions import (
     ExecutionPlanningError,
     ModelInitializationError,
     RegimeInitializationError,
     UnsupportedOperationError,
 )
+from lcm.participation import ParticipationCheck, ParticipationRead
 from lcm.shocks import Discrete
 from lcm.typing import (
     BoolND,
@@ -89,7 +89,7 @@ from lcm.typing import (
 
 
 @dataclass(frozen=True, kw_only=True)
-class ArrivalQueryPlan:
+class ParticipationQueryPlan:
     """One incoming edge's exact-date read graph and original source roles."""
 
     source: RegimeName
@@ -98,31 +98,31 @@ class ArrivalQueryPlan:
     phase: Phase
     members: tuple[str, ...]
     queries: ScalarPolicyQueries
-    transport_template: ArrivalContinuation | None = None
+    transport_template: ParticipationContinuation | None = None
     transport_origins: Mapping[str, ValueArtifactAddress] = field(
         default_factory=lambda: MappingProxyType({})
     )
 
 
 @dataclass(frozen=True, kw_only=True)
-class _ArrivalBuildContext(CoreBuildContext):
-    """Call-local demanded leaves used when a future Q itself contains arrivals."""
+class _ParticipationBuildContext(CoreBuildContext):
+    """Call-local demanded leaves for a future Q that holds participation checks."""
 
-    arrival_values: Mapping[ValueArtifactAddress, ValueTemplate] = field(
+    participation_values: Mapping[ValueArtifactAddress, ValueTemplate] = field(
         default_factory=lambda: MappingProxyType({})
     )
 
 
 @dataclass(frozen=True, kw_only=True)
-class ArrivalPublication:
-    """The dated arrival payload one regime publishes, and how each leaf arises.
+class ParticipationPublication:
+    """The dated participation payload one regime publishes, and how each leaf arises.
 
-    `origins` are borrowed stored values a later arrival reader needs; `surfaces`
-    are computed by this regime's own arrival plans: each names the target whose
-    stored arrival surface the leaf holds.
+    `origins` are borrowed stored values a later participation reader needs; `surfaces`
+    are computed by this regime's own participation plans: each names the target whose
+    stored participation surface the leaf holds.
     """
 
-    template: ArrivalContinuation
+    template: ParticipationContinuation
     origins: Mapping[str, ValueArtifactAddress] = field(
         default_factory=lambda: MappingProxyType({})
     )
@@ -134,31 +134,31 @@ class ArrivalPublication:
 def surface_address(
     *, source: RegimeName, target: RegimeName, period: int
 ) -> ValueArtifactAddress:
-    """Address the stored arrival surface `source` publishes at `period`.
+    """Address the stored participation surface `source` publishes at `period`.
 
-    The surface holds what the arrival decision from `source` into `target`
+    The surface holds what the participation check from `source` into `target`
     reads -- each branch's value and each operand's support -- tabulated on
     `target`'s grid one period later (see `surface_channels`). It is a leaf of
-    `source`'s own dated arrival payload, so it is transported, admitted and
+    `source`'s own dated participation payload, so it is transported, admitted and
     released like that payload.
     """
     return ValueArtifactAddress(
         kind=ValueArtifactKind.CONTINUATION_LEAF,
         period=period,
         regime=source,
-        artifact_key=ARRIVAL_CONTINUATION,
-        leaf_path=("operands", arrival_surface_name(target=target)),
+        artifact_key=PARTICIPATION_CONTINUATION,
+        leaf_path=("operands", participation_surface_name(target=target)),
     )
 
 
 def _is_surface(*, address: ValueArtifactAddress, period: int) -> bool:
-    """Whether a plan dated `period` reads `address` as a stored arrival surface."""
+    """Whether a plan dated `period` reads `address` as a stored surface."""
     return (
         address.kind is ValueArtifactKind.CONTINUATION_LEAF
         and address.period == period
-        and address.artifact_key == ARRIVAL_CONTINUATION
+        and address.artifact_key == PARTICIPATION_CONTINUATION
         and isinstance(name := address.leaf_path[-1], str)
-        and name.startswith(ARRIVAL_SURFACE_PREFIX)
+        and name.startswith(PARTICIPATION_SURFACE_PREFIX)
     )
 
 
@@ -175,20 +175,22 @@ def _transport_name(*, origin: ValueArtifactAddress) -> str:
     return hashlib.sha256(repr(identity).encode()).hexdigest()
 
 
-def _transport_alias(*, plan: ArrivalQueryPlan, name: str) -> ValueArtifactAddress:
+def _transport_alias(
+    *, plan: ParticipationQueryPlan, name: str
+) -> ValueArtifactAddress:
     return ValueArtifactAddress(
         kind=ValueArtifactKind.CONTINUATION_LEAF,
         period=plan.period,
         regime=plan.target,
-        artifact_key=ARRIVAL_CONTINUATION,
+        artifact_key=PARTICIPATION_CONTINUATION,
         leaf_path=("operands", name),
     )
 
 
-def _arrival_values(
-    *, context: CoreBuildContext, plan: ArrivalQueryPlan
+def _participation_values(
+    *, context: CoreBuildContext, plan: ParticipationQueryPlan
 ) -> Mapping[ValueArtifactAddress, ValueTemplate]:
-    reads = plan.queries.value_reads(core_key="arrival")
+    reads = plan.queries.value_reads(core_key="participation")
     surfaces = _surface_values(
         context=context,
         addresses={
@@ -203,12 +205,12 @@ def _arrival_values(
     template = plan.transport_template
     if template is None:
         raise UnsupportedOperationError(
-            "This arrival policy requires its declared later-value transport."
+            "This participation policy requires its declared later-value transport."
         )
-    if isinstance(context, _ArrivalBuildContext):
+    if isinstance(context, _ParticipationBuildContext):
         return MappingProxyType(
             {
-                origin: context.arrival_values[
+                origin: context.participation_values[
                     _transport_alias(plan=plan, name=_transport_name(origin=origin))
                 ]
                 for origin in required
@@ -216,14 +218,15 @@ def _arrival_values(
             | surfaces
         )
     payload = context.next_regime_to_continuation.get(plan.target)
-    if not isinstance(payload, ArrivalContinuation) or (
+    if not isinstance(payload, ParticipationContinuation) or (
         payload.regime,
         payload.period,
         payload.schema,
         payload.names,
     ) != (template.regime, template.period, template.schema, template.names):
         raise ExecutionPlanningError(
-            "An arrival requires its exact declared producer-date operand payload."
+            "A participation check requires its exact declared producer-date operand "
+            "payload."
         )
     return MappingProxyType(
         {
@@ -237,38 +240,38 @@ def _arrival_values(
 def _surface_values(
     *, context: CoreBuildContext, addresses: set[ValueArtifactAddress]
 ) -> dict[ValueArtifactAddress, ValueTemplate]:
-    """Read each stored arrival surface from its publisher's dated payload."""
-    if isinstance(context, _ArrivalBuildContext):
-        return {address: context.arrival_values[address] for address in addresses}
+    """Read each stored participation surface from its publisher's dated payload."""
+    if isinstance(context, _ParticipationBuildContext):
+        return {address: context.participation_values[address] for address in addresses}
     values = {}
     for address in addresses:
         payload = context.next_regime_to_continuation.get(address.regime)
-        if not isinstance(payload, ArrivalContinuation) or (
+        if not isinstance(payload, ParticipationContinuation) or (
             payload.regime,
             payload.period,
         ) != (address.regime, address.period):
             raise ExecutionPlanningError(
-                "An arrival requires its exact producer-date stored surface."
+                "A participation check requires its exact producer-date stored surface."
             )
         values[address] = payload.leaves()[address.leaf_path]
     return values
 
 
 @dataclass(frozen=True, kw_only=True)
-class ArrivalSourceArguments:
-    """Actual arrival-date dynamic query operands beside the source's own inputs."""
+class ParticipationSourceArguments:
+    """Actual participation-date query operands beside the source's own inputs."""
 
     base: CoreArgumentBuilder
-    plans: Mapping[RegimeName, ArrivalQueryPlan]
+    plans: Mapping[RegimeName, ParticipationQueryPlan]
 
     def __call__(
         self, context: CoreBuildContext
     ) -> Mapping[str, PytreeValue | ShapeDtypePytree]:
         arguments = dict(self.base(context))
-        arrivals = {}
+        participation = {}
         for target, plan in self.plans.items():
-            transported = _arrival_values(context=context, plan=plan)
-            arrival_context = _ArrivalBuildContext(
+            transported = _participation_values(context=context, plan=plan)
+            participation_context = _ParticipationBuildContext(
                 **{
                     declaration.name: getattr(context, declaration.name)
                     for declaration in fields(CoreBuildContext)
@@ -289,17 +292,24 @@ class ArrivalSourceArguments:
                 },
                 same_period_regime_to_V_arr=context.next_regime_to_V_arr,
                 next_regime_to_continuation={},
-                arrival_values=transported,
+                participation_values=transported,
             )
-            arrivals[target] = plan.queries.arguments(context=arrival_context)
-        arguments["arrival_arguments"] = ArrivalQueryArguments(
-            by_target=cast("Mapping[RegimeName, Mapping[str, QAndFKwargs]]", arrivals)
+            participation[target] = plan.queries.arguments(
+                context=participation_context
+            )
+        arguments["participation_arguments"] = ParticipationQueryArguments(
+            by_target=cast(
+                "Mapping[RegimeName, Mapping[str, QAndFKwargs]]", participation
+            )
         )
         return MappingProxyType(arguments)
 
 
-def arrival_source_value_reads(
-    *, plans: Mapping[RegimeName, ArrivalQueryPlan], source: RegimeName, period: int
+def participation_source_value_reads(
+    *,
+    plans: Mapping[RegimeName, ParticipationQueryPlan],
+    source: RegimeName,
+    period: int,
 ) -> tuple[ValueRead, ...]:
     """Name every stored comparison at its actual date in the source operand tree."""
     return tuple(
@@ -317,20 +327,20 @@ def arrival_source_value_reads(
                 if read.target.period > plan.period
                 or _is_surface(address=read.target, period=plan.period)
                 else ValueInputChannel.NEXT_REGIME_VALUE,
-                argument="arrival_arguments",
+                argument="participation_arguments",
                 path=("by_target", target, *read.source.path),
             ),
         )
         for target, plan in plans.items()
-        for read in plan.queries.value_reads(core_key="arrival")
+        for read in plan.queries.value_reads(core_key="participation")
     )
 
 
 @dataclass(frozen=True, kw_only=True)
-class _ArrivalPolicyValue:
+class _ParticipationPolicyValue:
     """Price the bound Boolean routing at this action's actual target landing."""
 
-    plan: ArrivalQueryPlan
+    plan: ParticipationQueryPlan
     process_nodes: Mapping[StateName, Float1D] = field(
         default_factory=lambda: MappingProxyType({}),
         metadata={"fingerprint_omit_if_default": True},
@@ -340,14 +350,16 @@ class _ArrivalPolicyValue:
     def __call__(
         self, **operands: PytreeValue
     ) -> tuple[FloatND, BoolND] | tuple[tuple[FloatND, BoolND], IntND]:
-        arguments = cast("ArrivalQueryArguments", operands["arrival_arguments"])
+        arguments = cast(
+            "ParticipationQueryArguments", operands["participation_arguments"]
+        )
         states = {
             name.removeprefix("next_"): value
             for name, value in operands.items()
             if name.startswith("next_") and name != "next_V_arr"
         }
         # The continuation enumerates a process landing by its node position,
-        # which indexes stored values; the arrival reads the node's value.
+        # which indexes stored values; the participation reads the node's value.
         for name, nodes in self.process_nodes.items():
             states[name] = nodes[jnp.asarray(states[name]).astype(jnp.int32)]
         answer = self.plan.queries(
@@ -366,7 +378,7 @@ def _source_action_problem(
     *,
     context: SolverBuildContext,
     period: int,
-    plans: Mapping[RegimeName, ArrivalQueryPlan],
+    plans: Mapping[RegimeName, ParticipationQueryPlan],
 ) -> _QAndF | _CollectiveQAndF:
     """Replace only the actual continuation reader; keep canonical flow and laws."""
     function = context.Q_and_F_functions[period]
@@ -374,31 +386,31 @@ def _source_action_problem(
         function.compute_CE, _ComputeCE
     ):
         raise UnsupportedOperationError(
-            "Arrival pricing needs its canonical GridSearch Q/F continuation; "
-            "endogenous-grid arrival reconstruction is an S10 dependency."
+            "Participation pricing needs its canonical GridSearch Q/F continuation; "
+            "endogenous-grid participation reconstruction is an S10 dependency."
         )
     compute = function.compute_CE
     continuations = dict(compute.continuations)
-    scalar_readers = dict(compute.arrival_scalar_readers)
-    scalar_names = dict(compute.arrival_scalar_arg_names)
-    scalar_checks = dict(compute.arrival_scalar_landing_checks)
+    scalar_readers = dict(compute.participation_scalar_readers)
+    scalar_names = dict(compute.participation_scalar_arg_names)
+    scalar_checks = dict(compute.participation_scalar_landing_checks)
     for target, plan in plans.items():
         target_names = plan.queries.definitions[plan.queries.root].read.projection
         names = [
             *(f"next_{name}" for name in target_names),
             "next_V_arr",
-            "arrival_arguments",
+            "participation_arguments",
         ]
         if target in compute.scalar_targets:
             scalar_readers[target] = with_signature(
-                _ArrivalPolicyValue(plan=plan), args=names, enforce=False
+                _ParticipationPolicyValue(plan=plan), args=names, enforce=False
             )
-            scalar_names[target] = ("arrival_arguments",)
+            scalar_names[target] = ("participation_arguments",)
             scalar_checks[target] = plan.queries.landing_checks
             continue
         original = continuations[target]
         reader = with_signature(
-            _ArrivalPolicyValue(
+            _ParticipationPolicyValue(
                 plan=plan,
                 process_nodes=_landing_process_nodes(
                     target=target,
@@ -415,7 +427,7 @@ def _source_action_problem(
             or original.landing_checks
         ):
             raise UnsupportedOperationError(
-                "This arrival continuation needs its declared draw/landing "
+                "This participation continuation needs its declared draw/landing "
                 "reader adapter."
             )
         continuations[target] = replace(
@@ -425,28 +437,28 @@ def _source_action_problem(
                 variables=original.lottery_axis_names,
                 batch_sizes=dict.fromkeys(original.lottery_axis_names, 0),
             ),
-            extra_param_names=frozenset({"arrival_arguments"}),
+            extra_param_names=frozenset({"participation_arguments"}),
             original_node_axes=original.original_node_axes
             or original.original_value_axes,
             original_value_axes=(),
-            arrival_query=True,
+            participation_query=True,
             landing_checks=plan.queries.landing_checks,
         )
     compute = replace(
         compute,
         continuations=MappingProxyType(continuations),
-        arrival_scalar_readers=MappingProxyType(scalar_readers),
-        arrival_scalar_arg_names=MappingProxyType(scalar_names),
-        arrival_scalar_landing_checks=tuple(scalar_checks.items()),
+        participation_scalar_readers=MappingProxyType(scalar_readers),
+        participation_scalar_arg_names=MappingProxyType(scalar_names),
+        participation_scalar_landing_checks=tuple(scalar_checks.items()),
     )
     return replace(
         function,
         compute_CE=compute,
         landing_checks=compute.landing_checks,
-        arg_names=(*function.arg_names, "arrival_arguments"),
+        arg_names=(*function.arg_names, "participation_arguments"),
         continuation_reads=None
         if function.continuation_reads is None
-        else function.continuation_reads | {"arrival_arguments"},
+        else function.continuation_reads | {"participation_arguments"},
     )
 
 
@@ -471,7 +483,8 @@ def _landing_process_nodes(
             continue
         if not grid.is_fully_specified:
             raise ModelInitializationError(
-                f"An arrival into regime '{target}' reads the process '{name}' at "
+                f"A participation check into regime '{target}' reads the process "
+                f"'{name}' at "
                 "its landing, but that process is parameterized at runtime, so its "
                 "nodes are not known while the model builds. Fix its parameters "
                 "through the process constructor or `fixed_params`."
@@ -480,37 +493,37 @@ def _landing_process_nodes(
     return MappingProxyType(nodes)
 
 
-# The operand carrying each surfaced arrival decision's own date and parameters.
-ARRIVAL_SURFACE_ARGUMENTS = "arrival_surface_arguments"
+# The operand carrying each surfaced participation check's own date and parameters.
+PARTICIPATION_SURFACE_ARGUMENTS = "participation_surface_arguments"
 
-_ACTING_TARGET = "_lcm_arrival_acting_target"
+_ACTING_TARGET = "_lcm_participation_acting_target"
 
 _SUPPORT = "support"
 
-# One component of a policy answer the arrival decision consumes: the answer's
+# One component of a policy answer the participation check consumes: the answer's
 # operand name and either `_SUPPORT` or the index of the value it reads (`None`
 # for a scalar value).
 type SurfaceChannel = tuple[str, str | int | None]
 
 
-def _arrival_reducer(*, plan: ArrivalQueryPlan) -> _ArrivalReducer:
+def _participation_reducer(*, plan: ParticipationQueryPlan) -> _ParticipationReducer:
     decision = plan.queries.definitions[plan.queries.root].decision
     reducer = None if decision is None else inspect.unwrap(decision)
-    if not isinstance(reducer, _ArrivalReducer):
-        raise ExecutionPlanningError("An arrival plan lost its decision rule.")
+    if not isinstance(reducer, _ParticipationReducer):
+        raise ExecutionPlanningError("A participation plan lost its decision rule.")
     return reducer
 
 
-def surface_channels(*, plan: ArrivalQueryPlan) -> tuple[SurfaceChannel, ...]:
-    """The branch operands a stored arrival surface holds, in trailing-axis order.
+def surface_channels(*, plan: ParticipationQueryPlan) -> tuple[SurfaceChannel, ...]:
+    """The branch operands a stored participation surface holds, in trailing-axis order.
 
-    Every policy answer the arrival decision consumes -- the acting target, each
+    Every policy answer the participation check consumes -- the acting target, each
     declared read and each member's fallback -- is stored through the components
     the decision reads: its support indicator, NaN where the answer fails its
     integrity check, and each value it reads, zero where the answer has no
     support.
     """
-    reducer = _arrival_reducer(plan=plan)
+    reducer = _participation_reducer(plan=plan)
     channels: list[SurfaceChannel] = [
         (_ACTING_TARGET, _SUPPORT),
         *((_ACTING_TARGET, index) for index in reducer.target_indices),
@@ -525,7 +538,7 @@ def surface_channels(*, plan: ArrivalQueryPlan) -> tuple[SurfaceChannel, ...]:
 
 
 @dataclass(frozen=True, kw_only=True)
-class _ArrivalChannels:
+class _ParticipationChannels:
     """Report the decision's operands at one node instead of deciding there."""
 
     channels: tuple[SurfaceChannel, ...]
@@ -549,7 +562,7 @@ class _ArrivalChannels:
         )
 
 
-def surface_queries(*, plan: ArrivalQueryPlan) -> ScalarPolicyQueries:
+def surface_queries(*, plan: ParticipationQueryPlan) -> ScalarPolicyQueries:
     """The plan's query graph, answering with its surface channels at a landing."""
     channels = surface_channels(plan=plan)
     root = plan.queries.definitions[plan.queries.root]
@@ -561,7 +574,7 @@ def surface_queries(*, plan: ArrivalQueryPlan) -> ScalarPolicyQueries:
                 plan.queries.root: replace(
                     root,
                     decision=with_signature(
-                        _ArrivalChannels(channels=channels),
+                        _ParticipationChannels(channels=channels),
                         args=list(dict.fromkeys(name for name, _ in channels)),
                         enforce=False,
                     ),
@@ -572,7 +585,7 @@ def surface_queries(*, plan: ArrivalQueryPlan) -> ScalarPolicyQueries:
     )
 
 
-def plan_surface_address(*, plan: ArrivalQueryPlan) -> ValueArtifactAddress:
+def plan_surface_address(*, plan: ParticipationQueryPlan) -> ValueArtifactAddress:
     """Address the stored surface tabulated from `plan`'s answers."""
     return surface_address(
         source=plan.source, target=plan.target, period=plan.period - 1
@@ -580,13 +593,15 @@ def plan_surface_address(*, plan: ArrivalQueryPlan) -> ValueArtifactAddress:
 
 
 def surface_reader_arguments(
-    *, plans: Mapping[RegimeName, ArrivalQueryPlan], context: CoreBuildContext
+    *, plans: Mapping[RegimeName, ParticipationQueryPlan], context: CoreBuildContext
 ) -> MappingProxyType[RegimeName, Mapping[str, PytreeValue]]:
     """Each surfaced decision's own date, age and parameters, as its root reads them."""
     from _lcm.policy_queries import _projection_operands  # noqa: PLC0415
 
     if context.ages is None:
-        raise ValueError("An arrival surface reader needs its actual economic age.")
+        raise ValueError(
+            "A participation surface reader needs its actual economic age."
+        )
     ages = context.ages
     return MappingProxyType(
         {
@@ -608,21 +623,21 @@ def surface_reader_arguments(
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
-class _ArrivalSurfaceValue:
-    """Read a stored arrival surface at a landing: interpolate, then decide there.
+class _ParticipationSurfaceValue:
+    """Read a stored participation surface at a landing: interpolate, then decide there.
 
     Each channel is interpolated like a value function, by the target's own
     continuation reader. A support indicator reads as support where it is at
     least one half: exact on nodes, and inside a cell whose corners disagree the
     switch falls on the indicator's half level set. A value is the
     support-weighted mean of the supported corners, so a corner without support
-    neither enters it nor makes it infinite. The arrival decision is then re-run
+    neither enters it nor makes it infinite. The participation check is then re-run
     on the interpolated operands at the landing, and each member takes the
     branch it selects. On a node every channel is that node's own, so the read
     equals the decision the plan takes there.
     """
 
-    plan: ArrivalQueryPlan
+    plan: ParticipationQueryPlan
     channels: tuple[SurfaceChannel, ...]
     interpolate: Callable[..., FloatND] | None
     """The target's continuation reader of one stored array; `None` for a target
@@ -645,7 +660,8 @@ class _ArrivalSurfaceValue:
         stored = cast("FloatND", operands["next_V_arr"])
         if stored.shape[-1:] != (len(self.channels),):
             raise ExecutionPlanningError(
-                "A stored arrival surface does not hold this arrival's branches."
+                "A stored participation surface does not hold this participation "
+                "check's branches."
             )
         read = (
             stored
@@ -662,7 +678,7 @@ class _ArrivalSurfaceValue:
         root = self.plan.queries.definitions[self.plan.queries.root]
         frame = cast(
             "Mapping[RegimeName, Mapping[str, PytreeValue]]",
-            operands[ARRIVAL_SURFACE_ARGUMENTS],
+            operands[PARTICIPATION_SURFACE_ARGUMENTS],
         )[self.plan.target]
         mapped = _mapped_query_states(node=root, available={**frame, **states})
         decision = cast("Callable[..., PolicyAnswer]", root.decision)
@@ -741,22 +757,22 @@ def _surface_action_problem(
     *,
     context: SolverBuildContext,
     period: int,
-    plans: Mapping[RegimeName, ArrivalQueryPlan],
+    plans: Mapping[RegimeName, ParticipationQueryPlan],
 ) -> _QAndF | _CollectiveQAndF:
-    """Read each surfaced arrival target by its branches, decided at the landing."""
+    """Read each surfaced participation target by its branches, decided on landing."""
     function = context.Q_and_F_functions[period]
     if not isinstance(function, _QAndF | _CollectiveQAndF) or not isinstance(
         function.compute_CE, _ComputeCE
     ):
         raise UnsupportedOperationError(
-            "Arrival pricing needs its canonical GridSearch Q/F continuation; "
-            "endogenous-grid arrival reconstruction is an S10 dependency."
+            "Participation pricing needs its canonical GridSearch Q/F continuation; "
+            "endogenous-grid participation reconstruction is an S10 dependency."
         )
     compute = function.compute_CE
     continuations = dict(compute.continuations)
-    scalar_readers = dict(compute.arrival_scalar_readers)
-    scalar_names = dict(compute.arrival_scalar_arg_names)
-    scalar_checks = dict(compute.arrival_scalar_landing_checks)
+    scalar_readers = dict(compute.participation_scalar_readers)
+    scalar_names = dict(compute.participation_scalar_arg_names)
+    scalar_checks = dict(compute.participation_scalar_landing_checks)
     for target, plan in plans.items():
         if not decides_between_nodes(plan=plan):
             continue
@@ -764,11 +780,13 @@ def _surface_action_problem(
         root = plan.queries.definitions[plan.queries.root]
         if target in compute.scalar_targets:
             scalar_readers[target] = with_signature(
-                _ArrivalSurfaceValue(plan=plan, channels=channels, interpolate=None),
-                args=["next_V_arr", ARRIVAL_SURFACE_ARGUMENTS],
+                _ParticipationSurfaceValue(
+                    plan=plan, channels=channels, interpolate=None
+                ),
+                args=["next_V_arr", PARTICIPATION_SURFACE_ARGUMENTS],
                 enforce=False,
             )
-            scalar_names[target] = (ARRIVAL_SURFACE_ARGUMENTS,)
+            scalar_names[target] = (PARTICIPATION_SURFACE_ARGUMENTS,)
             scalar_checks[target] = ()
             continue
         original = continuations[target]
@@ -777,10 +795,10 @@ def _surface_action_problem(
             or original.integrated_weight_names
             or original.draw_dependent_names
             or original.landing_checks
-            or original.arrival_query
+            or original.participation_query
         ):
             raise UnsupportedOperationError(
-                "This arrival continuation needs its declared draw/landing "
+                "This participation continuation needs its declared draw/landing "
                 "reader adapter."
             )
         names = list(
@@ -789,12 +807,12 @@ def _surface_action_problem(
                     *inspect.signature(original.next_V).parameters,
                     *(f"next_{name}" for name in root.read.projection),
                     "next_V_arr",
-                    ARRIVAL_SURFACE_ARGUMENTS,
+                    PARTICIPATION_SURFACE_ARGUMENTS,
                 )
             )
         )
         reader = with_signature(
-            _ArrivalSurfaceValue(
+            _ParticipationSurfaceValue(
                 plan=plan,
                 channels=channels,
                 interpolate=cast("Callable[..., FloatND]", original.next_V),
@@ -816,32 +834,33 @@ def _surface_action_problem(
                 variables=original.lottery_axis_names,
                 batch_sizes=dict.fromkeys(original.lottery_axis_names, 0),
             ),
-            extra_param_names=original.extra_param_names | {ARRIVAL_SURFACE_ARGUMENTS},
+            extra_param_names=original.extra_param_names
+            | {PARTICIPATION_SURFACE_ARGUMENTS},
             original_node_axes=original.original_node_axes
             or original.original_value_axes,
             original_value_axes=(),
-            arrival_query=True,
+            participation_query=True,
             landing_checks=(),
         )
     compute = replace(
         compute,
         continuations=MappingProxyType(continuations),
-        arrival_scalar_readers=MappingProxyType(scalar_readers),
-        arrival_scalar_arg_names=MappingProxyType(scalar_names),
-        arrival_scalar_landing_checks=tuple(scalar_checks.items()),
+        participation_scalar_readers=MappingProxyType(scalar_readers),
+        participation_scalar_arg_names=MappingProxyType(scalar_names),
+        participation_scalar_landing_checks=tuple(scalar_checks.items()),
     )
     return replace(
         function,
         compute_CE=compute,
         landing_checks=compute.landing_checks,
-        arg_names=(*function.arg_names, ARRIVAL_SURFACE_ARGUMENTS),
+        arg_names=(*function.arg_names, PARTICIPATION_SURFACE_ARGUMENTS),
         continuation_reads=None
         if function.continuation_reads is None
-        else function.continuation_reads | {ARRIVAL_SURFACE_ARGUMENTS},
+        else function.continuation_reads | {PARTICIPATION_SURFACE_ARGUMENTS},
     )
 
 
-def decides_between_nodes(*, plan: ArrivalQueryPlan) -> bool:
+def decides_between_nodes(*, plan: ParticipationQueryPlan) -> bool:
     """Whether `plan`'s surface stores branches, decided again at each landing.
 
     Between nodes the decision is re-run on interpolated answers, the landing
@@ -867,19 +886,19 @@ def decides_between_nodes(*, plan: ArrivalQueryPlan) -> bool:
 
 def _bind_transport_templates(
     *,
-    plans_by_source: Mapping[RegimeName, Mapping[RegimeName, ArrivalQueryPlan]],
+    plans_by_source: Mapping[RegimeName, Mapping[RegimeName, ParticipationQueryPlan]],
     contexts: Mapping[RegimeName, SolverBuildContext],
     canonical_regimes: Mapping[RegimeName, Regime],
-    origin_templates: dict[ValueArtifactAddress, ArrivalOperand],
-    dated_templates: dict[tuple[RegimeName, int], ArrivalContinuation],
+    origin_templates: dict[ValueArtifactAddress, ParticipationOperand],
+    dated_templates: dict[tuple[RegimeName, int], ParticipationContinuation],
 ) -> tuple[
-    dict[RegimeName, dict[RegimeName, ArrivalQueryPlan]],
-    dict[RegimeName, ArrivalPublication],
+    dict[RegimeName, dict[RegimeName, ParticipationQueryPlan]],
+    dict[RegimeName, ParticipationPublication],
 ]:
     """Union the actual incoming readers of each one producer-date payload.
 
     A plan borrows the later stored values its rebuilt action problems read
-    through its target's payload, and reads each stored arrival surface from the
+    through its target's payload, and reads each stored participation surface from the
     payload of the regime whose action problem it rebuilds.
     """
     origins, surfaces = _borrowed_reads(
@@ -906,15 +925,15 @@ def _bind_transport_templates(
             operands[name] = _surface_template(
                 context=contexts[owner],
                 target_context=contexts[target],
-                plan=contexts[owner].arrival_queries[period][target],
+                plan=contexts[owner].participation_queries[period][target],
             )
         schema = hashlib.sha256(repr(tuple(operands)).encode()).hexdigest()
-        template = ArrivalContinuation(
+        template = ParticipationContinuation(
             regime=owner, period=period, schema=schema, operands=operands
         )
         dated_templates[owner, period] = template
         origins[owner] = declarations
-        publications[owner] = ArrivalPublication(
+        publications[owner] = ParticipationPublication(
             template=template,
             origins=MappingProxyType(declarations),
             surfaces=MappingProxyType(surfaced),
@@ -937,7 +956,7 @@ def _bind_transport_templates(
 
 def _borrowed_reads(
     *,
-    plans_by_source: Mapping[RegimeName, Mapping[RegimeName, ArrivalQueryPlan]],
+    plans_by_source: Mapping[RegimeName, Mapping[RegimeName, ParticipationQueryPlan]],
     contexts: Mapping[RegimeName, SolverBuildContext],
 ) -> tuple[
     dict[RegimeName, dict[str, ValueArtifactAddress]],
@@ -948,7 +967,7 @@ def _borrowed_reads(
     surfaces: dict[RegimeName, dict[str, RegimeName]] = {}
     for plans in plans_by_source.values():
         for target, plan in plans.items():
-            for read in plan.queries.value_reads(core_key="arrival"):
+            for read in plan.queries.value_reads(core_key="participation"):
                 if _is_surface(address=read.target, period=plan.period):
                     owner = read.target.regime
                     surfaces.setdefault(owner, {})[read.target.leaf_path[-1]] = (
@@ -959,7 +978,8 @@ def _borrowed_reads(
                     continue
                 if read.view is not None:
                     raise UnsupportedOperationError(
-                        "Arrival transport requires a whole stored operand leaf."
+                        "Participation check transport requires a whole stored operand "
+                        "leaf."
                     )
                 origins.setdefault(target, {})[_transport_name(origin=read.target)] = (
                     read.target
@@ -970,8 +990,8 @@ def _borrowed_reads(
 def _surfaced_target(
     *, context: SolverBuildContext, address: ValueArtifactAddress
 ) -> RegimeName:
-    """Recover the arrival target whose stored surface `address` names."""
-    for target in context.arrival_queries.get(address.period, {}):
+    """Recover the participation target whose stored surface `address` names."""
+    for target in context.participation_queries.get(address.period, {}):
         if (
             surface_address(
                 source=context.regime_name, target=target, period=address.period
@@ -980,7 +1000,8 @@ def _surfaced_target(
         ):
             return target
     raise ExecutionPlanningError(
-        "A stored arrival surface names no arrival of its publishing regime."
+        "A stored participation surface names no participation check of its publishing "
+        "regime."
     )
 
 
@@ -988,8 +1009,8 @@ def _surface_template(
     *,
     context: SolverBuildContext,
     target_context: SolverBuildContext,
-    plan: ArrivalQueryPlan,
-) -> ArrivalOperand:
+    plan: ParticipationQueryPlan,
+) -> ParticipationOperand:
     """Shape a stored surface on the target's grid, one channel vector per node.
 
     A surface read like a value function holds the plan's own answer per node.
@@ -1030,8 +1051,8 @@ def _origin_template(
     origin: ValueArtifactAddress,
     context: SolverBuildContext,
     regime: Regime,
-    dated_templates: Mapping[tuple[RegimeName, int], ArrivalContinuation],
-) -> ArrivalOperand:
+    dated_templates: Mapping[tuple[RegimeName, int], ParticipationContinuation],
+) -> ParticipationOperand:
     if origin.kind is ValueArtifactKind.REGIME_VALUE:
         shape = tuple(
             nodes.size for nodes in context.state_action_space.states.values()
@@ -1048,41 +1069,40 @@ def _origin_template(
         spec = regime.solution.continuation_spec
         if (
             spec is None
-            or spec.artifact_key != ARRIVAL_CONTINUATION
+            or spec.artifact_key != PARTICIPATION_CONTINUATION
             or spec.artifact_key != origin.artifact_key
         ):
             raise UnsupportedOperationError(
-                "An arrival needs its declared future arrival schema; "
+                "A participation check needs its declared future participation schema; "
                 "other continuation intersections are an S10 dependency."
             )
         payload = spec.template_at(period=origin.period)
-        if not isinstance(payload, ArrivalContinuation):
-            raise TypeError("An arrival schema needs its typed numeric payload.")
+        if not isinstance(payload, ParticipationContinuation):
+            raise TypeError("A participation schema needs its typed numeric payload.")
         return payload.leaves()[origin.leaf_path]
     raise UnsupportedOperationError(
-        "Arrival custody requires a stored value or continuation leaf."
+        "Participation custody requires a stored value or continuation leaf."
     )
 
 
-def install_arrival_source_queries(
+def install_participation_source_queries(
     *,
     canonical_regimes: Mapping[RegimeName, Regime],
     contexts: Mapping[RegimeName, SolverBuildContext],
 ) -> MappingProxyType[RegimeName, SolverBuildContext]:
-    """Bind each arrival to its target's action problem one level deep.
+    """Bind each participation check to its target's action problem one level deep.
 
-    A source's own action problem reads every arrival at its exact landing. The
-    plan behind that read rebuilds the target's action problem there, from a
-    pricing context: the canonical action problem, whose own next-date arrivals
-    read the stored surface of that arrival. The surface holds the decision's
-    branches and operands, interpolated separately and decided again at each
-    landing. So no plan contains another plan, whatever the number of later
-    arrival dates.
+    A source's own action problem reads every participation check at its exact landing.
+    The plan behind that read rebuilds the target's action problem there, from a pricing
+    context: the canonical action problem, whose own next-date participation checks read
+    the stored surface of that participation check. The surface holds the decision's
+    branches and operands, interpolated separately and decided again at each landing. So
+    no plan contains another plan, whatever the number of later participation dates.
     """
     updated = dict(contexts)
     pricing = dict(contexts)
-    origin_templates: dict[ValueArtifactAddress, ArrivalOperand] = {}
-    dated_templates: dict[tuple[RegimeName, int], ArrivalContinuation] = {}
+    origin_templates: dict[ValueArtifactAddress, ParticipationOperand] = {}
+    dated_templates: dict[tuple[RegimeName, int], ParticipationContinuation] = {}
     periods = sorted(
         {
             period
@@ -1099,7 +1119,7 @@ def install_arrival_source_queries(
             law = context.laws[source]
             if (
                 law.terminal
-                or not law.arrivals
+                or not law.participation
                 or period >= context.solution_reachability.n_periods - 1
             ):
                 continue
@@ -1107,17 +1127,17 @@ def install_arrival_source_queries(
                 period=period, source=source
             )
             plans = {
-                target: bind_arrival_query_graph(
+                target: bind_participation_query_graph(
                     contexts=pricing,
                     canonical_regimes=canonical_regimes,
                     source=source,
                     target=target,
                     period=period + 1,
                     phase="solve",
-                    declaration=law.arrivals[target],
+                    declaration=law.participation[target],
                 )
                 for target in targets
-                if target in law.arrivals
+                if target in law.participation
             }
             if plans:
                 plans_by_source[source] = plans
@@ -1134,8 +1154,8 @@ def install_arrival_source_queries(
             context = updated[owner]
             updated[owner] = replace(
                 context,
-                arrival_publications=MappingProxyType(
-                    {**context.arrival_publications, period + 1: publication}
+                participation_publications=MappingProxyType(
+                    {**context.participation_publications, period + 1: publication}
                 ),
             )
         for source, plans in plans_by_source.items():
@@ -1150,9 +1170,9 @@ def install_arrival_source_queries(
                         ),
                     }
                 ),
-                arrival_queries=MappingProxyType(
+                participation_queries=MappingProxyType(
                     {
-                        **context.arrival_queries,
+                        **context.participation_queries,
                         period: MappingProxyType(plans),
                     }
                 ),
@@ -1168,24 +1188,24 @@ def install_arrival_source_queries(
                         ),
                     }
                 ),
-                arrival_surfaces=MappingProxyType(
-                    {**reader.arrival_surfaces, period: MappingProxyType(plans)}
+                participation_surfaces=MappingProxyType(
+                    {**reader.participation_surfaces, period: MappingProxyType(plans)}
                 ),
             )
     return MappingProxyType(updated)
 
 
-def install_arrival_replay_sources(
+def install_participation_replay_sources(
     *,
     contexts: Mapping[RegimeName, SolverBuildContext],
     pricing_contexts: Mapping[RegimeName, SolverBuildContext],
 ) -> MappingProxyType[RegimeName, SolverBuildContext]:
-    """Keep actual current flow beside the source's perceived arrival continuation."""
+    """Keep actual current flow beside the source's perceived participation value."""
     updated = dict(contexts)
     for source, context in contexts.items():
         plans_by_period = {
             period: plans
-            for period, plans in pricing_contexts[source].arrival_queries.items()
+            for period, plans in pricing_contexts[source].participation_queries.items()
             if period in context.Q_and_F_functions
         }
         if not plans_by_period:
@@ -1198,13 +1218,13 @@ def install_arrival_replay_sources(
         updated[source] = replace(
             context,
             Q_and_F_functions=MappingProxyType(functions),
-            arrival_queries=MappingProxyType(plans_by_period),
+            participation_queries=MappingProxyType(plans_by_period),
         )
     return MappingProxyType(updated)
 
 
 @dataclass(frozen=True, kw_only=True)
-class _ArrivalReducer:
+class _ParticipationReducer:
     """Apply a Boolean comparison, then route each original source member once."""
 
     predicate: Callable[..., PytreeValue]
@@ -1230,7 +1250,7 @@ class _ArrivalReducer:
             call_with_declared_arguments(function=self.predicate, operands=values)
         )
         if accepted.shape != () or accepted.dtype != jnp.bool_:
-            raise ValueError("An arrival predicate must return a scalar Boolean.")
+            raise ValueError("A participation predicate must return a scalar Boolean.")
         target = cast("PolicyAnswer", operands[_ACTING_TARGET])
         accepted &= target[2]
         valid &= target[3]
@@ -1261,7 +1281,7 @@ class _ArrivalReducer:
 
 
 @dataclass(frozen=True, kw_only=True)
-class _ArrivalArguments:
+class _ParticipationArguments:
     """Only current-law numeric operands, without an unrelated target Q bank."""
 
     period: int
@@ -1271,7 +1291,7 @@ class _ArrivalArguments:
         self, context: CoreBuildContext
     ) -> Mapping[str, PytreeValue | ShapeDtypePytree]:
         if context.ages is None:
-            raise ValueError("An arrival reader needs its actual economic age.")
+            raise ValueError("A participation reader needs its actual economic age.")
         arguments: dict[str, PytreeValue | ShapeDtypePytree] = {
             "period": jnp.int32(self.period),
             "age": context.ages.values[self.period],
@@ -1298,9 +1318,13 @@ class _IntegratedArguments:
         self, context: CoreBuildContext
     ) -> Mapping[str, PytreeValue | ShapeDtypePytree]:
         if context.same_period_regime_to_V_arr is None:
-            raise ValueError("An IntegratedFull arrival read needs its dated stored V.")
+            raise ValueError(
+                "An IntegratedFull participation read needs its dated stored V."
+            )
         if context.ages is None:
-            raise ValueError("An IntegratedFull arrival read needs its actual age.")
+            raise ValueError(
+                "An IntegratedFull participation read needs its actual age."
+            )
         params = regime_kernel_params(
             cast("FlatParams", context.flat_params), regime_name=self.owner
         )
@@ -1345,7 +1369,7 @@ class _IntegratedValue:
 def _make_integrated_read(
     *,
     builder: _QueryGraphBuilder,
-    read: ArrivalRead,
+    read: ParticipationRead,
     projection: Mapping[str, Callable[..., PytreeValue]],
     root: str,
 ) -> str:
@@ -1357,7 +1381,8 @@ def _make_integrated_read(
         or context.invariant_bindings
     ):
         raise UnsupportedOperationError(
-            "IntegratedFull arrival interpolation needs an explicit unblocked "
+            "IntegratedFull participation check interpolation needs an explicit "
+            "unblocked "
             "stored schema."
         )
     infos = context.regime_to_v_interpolation_info
@@ -1482,11 +1507,13 @@ def _member_index(*, context: SolverBuildContext, role: str | None) -> int | Non
     members = context.stakeholders
     if members is None:
         if role is not None:
-            raise RegimeInitializationError("A singleton arrival target has no role.")
+            raise RegimeInitializationError(
+                "A singleton participation target has no role."
+            )
         return None
     if role not in members:
         raise RegimeInitializationError(
-            "A collective arrival read needs its exact role."
+            "A collective participation read needs its exact role."
         )
     return members.index(role)
 
@@ -1502,7 +1529,7 @@ def _bound_edge_function(
     read_names: Mapping[ReferenceName, ReferenceName] = MappingProxyType({}),
 ) -> Callable[..., PytreeValue]:
     """Bind source edge params while expanding helpers in landed target vocabulary."""
-    if isinstance(function, _AdaptedArrivalPredicate):
+    if isinstance(function, _AdaptedParticipationPredicate):
         read_names = {
             function.read_aliases.get(name, name): alias
             for name, alias in read_names.items()
@@ -1512,7 +1539,7 @@ def _bound_edge_function(
     for segment in path:
         child = branch.get(segment, {})
         branch = child if isinstance(child, Mapping) else {}
-    _validate_arrival_information(
+    _validate_participation_information(
         builder=builder,
         target=target,
         function=function,
@@ -1534,8 +1561,11 @@ def _bound_edge_function(
         },
     )
     combined = concatenate_functions(
-        functions={**builder.contexts[target].functions, "_arrival_result": callback},
-        targets="_arrival_result",
+        functions={
+            **builder.contexts[target].functions,
+            "_participation_result": callback,
+        },
+        targets="_participation_result",
         enforce_signature=False,
         set_annotations=True,
     )
@@ -1549,7 +1579,7 @@ def _bound_edge_function(
     )
 
 
-def _validate_arrival_information(
+def _validate_participation_information(
     *,
     builder: _QueryGraphBuilder,
     target: RegimeName,
@@ -1585,21 +1615,22 @@ def _validate_arrival_information(
         visited.add(name)
         if name in continuous_codes:
             raise UnsupportedOperationError(
-                f"Arrival input {name!r} cannot read a continuous physical shock's "
+                f"Participation input {name!r} cannot read a continuous physical "
+                "shock's "
                 "code: a physical draw has no quadrature-node position."
             )
         physical_name = discrete_codes.get(name, name)
         if physical_name in physical:
             if physical_name not in information:
                 raise RegimeInitializationError(
-                    f"Arrival callback for {target!r} requires unobserved "
+                    f"Participation callback for {target!r} requires unobserved "
                     f"physical input {physical_name!r}."
                 )
         elif name not in edge_parameters and name in context.functions:
             pending.extend(inspect.signature(context.functions[name]).parameters)
 
 
-def bind_arrival_query_graph(
+def bind_participation_query_graph(
     *,
     contexts: Mapping[RegimeName, SolverBuildContext],
     canonical_regimes: Mapping[RegimeName, Regime],
@@ -1607,11 +1638,11 @@ def bind_arrival_query_graph(
     target: RegimeName,
     period: int,
     phase: Phase,
-    declaration: ArrivalDecision,
-) -> ArrivalQueryPlan:
+    declaration: ParticipationCheck,
+) -> ParticipationQueryPlan:
     """Bind a nonpublishing consumer at the actual target date and physical context."""
     aliases = {
-        (owner, name): f"_lcm_arrival_operand_{index}"
+        (owner, name): f"_lcm_participation_operand_{index}"
         for index, (owner, name) in enumerate(
             (owner, name)
             for owner, context in contexts.items()
@@ -1626,29 +1657,31 @@ def bind_arrival_query_graph(
         aliases=aliases,
         operand_paths={alias: path for path, alias in aliases.items()},
     )
-    return _bind_arrival(
+    return _bind_participation(
         builder=builder, source=source, target=target, declaration=declaration
     )
 
 
-def _bind_arrival(
+def _bind_participation(
     *,
     builder: _QueryGraphBuilder,
     source: RegimeName,
     target: RegimeName,
-    declaration: ArrivalDecision,
-) -> ArrivalQueryPlan:
+    declaration: ParticipationCheck,
+) -> ParticipationQueryPlan:
     """Keep comparison reads and actual acting policy separate in the same frame."""
     context = builder.contexts[target]
     source_members = builder.contexts[source].stakeholders
     members = source_members or tuple(declaration.routes)
     if source_members is None and len(members) != 1:
         raise RegimeInitializationError(
-            "A singleton arrival needs its single source route."
+            "A singleton participation check needs its single source route."
         )
     if set(declaration.routes) != set(members):
-        raise RegimeInitializationError("Arrival routes must name every source role.")
-    root = "arrival"
+        raise RegimeInitializationError(
+            "Participation routes must name every source role."
+        )
+    root = "participation"
     builder.keys.append(root)
     projection = {
         name: with_signature(NamedOperand(name=name), args=[name], enforce=False)
@@ -1683,7 +1716,7 @@ def _bind_arrival(
     }
     read_names = {}
     for index, name in enumerate(declaration.reads):
-        alias = f"_lcm_arrival_read_{index}"
+        alias = f"_lcm_participation_read_{index}"
         while alias in occupied_names:
             alias += "_"
         read_names[name] = alias
@@ -1695,7 +1728,7 @@ def _bind_arrival(
                 builder=builder,
                 source=source,
                 target=target,
-                path=(target, "references", name, state),
+                path=(target, "reads", name, state),
                 function=function,
                 information=information,
             )
@@ -1710,7 +1743,7 @@ def _bind_arrival(
             )
             for state, function in mapped.items()
         }
-        operand = f"_lcm_arrival_comparison_{len(reads)}"
+        operand = f"_lcm_participation_comparison_{len(reads)}"
         inputs[operand] = (
             _make_integrated_read(
                 builder=builder, read=read, projection=projected, root=root
@@ -1781,7 +1814,7 @@ def _bind_arrival(
             context=builder.contexts[fallback.regime],
             period=builder.period,
         )
-        operand = f"_lcm_arrival_fallback_{len(fallbacks)}"
+        operand = f"_lcm_participation_fallback_{len(fallbacks)}"
         inputs[operand] = builder.make(
             kind=QueryKind.PARTICIPATING,
             owner=fallback.regime,
@@ -1813,7 +1846,7 @@ def _bind_arrival(
         information=information,
         read_names=read_names,
     )
-    reducer = _ArrivalReducer(
+    reducer = _ParticipationReducer(
         predicate=predicate,
         reads=reads,
         target_indices=tuple(target_indices),
@@ -1839,7 +1872,7 @@ def _bind_arrival(
     }
     builder.nodes[root] = QueryNode(
         read=QueryRead(
-            kind=QueryKind.ARRIVAL,
+            kind=QueryKind.PARTICIPATION,
             target=target,
             phase=builder.phase,
             period=builder.period,
@@ -1868,7 +1901,7 @@ def _bind_arrival(
         if builder.phase == "simulate"
         else {},
         decision=with_signature(reducer, args=list(names), enforce=False),
-        operand_builder=_ArrivalArguments(period=builder.period, plan=None),
+        operand_builder=_ParticipationArguments(period=builder.period, plan=None),
         answer_shape=()
         if builder.contexts[source].stakeholders is None
         else (len(members),),
@@ -1878,7 +1911,7 @@ def _bind_arrival(
     if builder.phase == "solve":
         for node in builder.nodes.values():
             _admit_node(node=node, period=builder.period, same_period_values=True)
-    return ArrivalQueryPlan(
+    return ParticipationQueryPlan(
         source=source,
         target=target,
         period=builder.period,

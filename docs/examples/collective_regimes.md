@@ -7,10 +7,10 @@ title: Collective regimes
 Two small household models. The first isolates the shared argmax: one action, two
 members who value it differently. The second adds what makes a household more than a
 joint utility function — a participation rule reading each partner's outside option in
-the *same* period, and a decision on arrival routing each partner somewhere different
-when the household ends. Both use two- and three-point grids and one binary action, so
-every value below can be recomputed by hand; the grids are curated for exposition and
-tests, not calibrated.
+the *same* period, and a participation check on landing routing each partner somewhere
+different when the household ends. Both use two- and three-point grids and one binary
+action, so every value below can be recomputed by hand; the grids are curated for
+exposition and tests, not calibrated.
 
 [View source on GitHub](https://github.com/OpenSourceEconomics/pylcm/blob/main/src/lcm_examples/collective_regimes.py)
 
@@ -108,7 +108,7 @@ solution.values[1]["married_with_participation"]
  [6.  3. ]]
 ```
 
-`married` reaches age 1 through an `ArrivalDecision` keyed by
+`married` reaches age 1 through a `ParticipationCheck` keyed by
 `married_with_participation` — the branch where the decision is **open** and the couple
 keeps going. Its predicate reads, on landing, whether the couple's participating policy
 has support at that wage. Each stakeholder's route names the role they take inside the
@@ -127,11 +127,11 @@ edges = {
                 }
             }
         ),
-        arrivals={
-            "married_with_participation": ArrivalDecision(
+        participation={
+            "married_with_participation": ParticipationCheck(
                 predicate=has_policy_support,
                 reads={
-                    "target_support": ArrivalRead(
+                    "target_support": ParticipationRead(
                         regime="married_with_participation",
                         stakeholder="f",
                         kind="Participating",

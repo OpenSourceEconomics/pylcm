@@ -1,4 +1,4 @@
-"""A typed arrival reads a continuous physical offer at its actual landing.
+"""A typed participation reads a continuous physical offer at its actual landing.
 
 Raw evaluates the unchanged cubic at the realized offer. It does not interpolate
 stored values of that cubic, and a positive-offer rule may retain a payoff below
@@ -16,10 +16,10 @@ import pytest
 
 from lcm import (
     AgeGrid,
-    ArrivalDecision,
-    ArrivalRead,
     ByAge,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -114,12 +114,12 @@ def _offer_model(*, shocked_source: bool = False) -> Model:
         edges={
             "source": Transition(
                 law=ByAge(cases={0: "target"}),
-                arrivals={
-                    "target": ArrivalDecision(
+                participation={
+                    "target": ParticipationCheck(
                         predicate=_positive_native_value,
                         observes=("wage_shock_f",),
                         reads={
-                            "V_target": ArrivalRead(
+                            "V_target": ParticipationRead(
                                 kind="Raw",
                                 regime="target",
                                 projection={},
@@ -140,8 +140,8 @@ def _offer_model(*, shocked_source: bool = False) -> Model:
     )
 
 
-def test_an_arrival_from_a_source_drawing_its_own_current_shock() -> None:
-    """The source's own draw pays `E[s^2] = 1` beside the arrival's 153/32."""
+def test_a_participation_check_from_a_source_drawing_its_own_current_shock() -> None:
+    """The source's own draw pays `E[s^2] = 1` beside the check's 153/32."""
     solution = _offer_model(shocked_source=True).solve(
         params={"discount_factor": 0.5}, log_level="off"
     )
@@ -149,7 +149,7 @@ def test_an_arrival_from_a_source_drawing_its_own_current_shock() -> None:
     np.testing.assert_allclose(solution.values[1]["target"], 5.0)
 
 
-def test_observed_continuous_arrival_reads_the_actual_off_node_value() -> None:
+def test_observed_continuous_participation_reads_the_actual_off_node_value() -> None:
     model = _offer_model()
     params = {"discount_factor": 0.5}
     solution = model.solve(
@@ -203,7 +203,7 @@ def test_observed_continuous_arrival_reads_the_actual_off_node_value() -> None:
     )
 
 
-def _arrival_signal(wage_shock_f: FloatND) -> FloatND:
+def _participation_signal(wage_shock_f: FloatND) -> FloatND:
     return wage_shock_f
 
 
@@ -211,8 +211,8 @@ def _direct_observation(*, wage_shock_f: FloatND, V_target: FloatND) -> BoolND:
     return (wage_shock_f > 0.0) & (V_target > -1e6)
 
 
-def _helper_observation(*, arrival_signal: FloatND, V_target: FloatND) -> BoolND:
-    return (arrival_signal > 0.0) & (V_target > -1e6)
+def _helper_observation(*, participation_signal: FloatND, V_target: FloatND) -> BoolND:
+    return (participation_signal > 0.0) & (V_target > -1e6)
 
 
 def _direct_code_observation(*, wage_shock_f_code: ScalarInt) -> BoolND:
@@ -225,7 +225,7 @@ def _information_model(*, predicate: UserFunction, observed: bool) -> Model:
         "target": Regime(
             functions={
                 "utility": _cubic_offer,
-                "arrival_signal": _arrival_signal,
+                "participation_signal": _participation_signal,
             },
             shocks=("innovation",),
         ),
@@ -250,12 +250,12 @@ def _information_model(*, predicate: UserFunction, observed: bool) -> Model:
         edges={
             "source": Transition(
                 law=ByAge(cases={0: "target"}),
-                arrivals={
-                    "target": ArrivalDecision(
+                participation={
+                    "target": ParticipationCheck(
                         predicate=predicate,
                         observes=("wage_shock_f",) if observed else (),
                         reads={
-                            "V_target": ArrivalRead(
+                            "V_target": ParticipationRead(
                                 kind="Raw",
                                 regime="target",
                                 projection={},
@@ -279,17 +279,18 @@ def _information_model(*, predicate: UserFunction, observed: bool) -> Model:
 @pytest.mark.parametrize(
     "predicate", [_direct_observation, _helper_observation], ids=["direct", "helper"]
 )
-def test_an_arrival_callback_cannot_read_a_hidden_physical_input(
+def test_a_participation_callback_cannot_read_a_hidden_physical_input(
     *, predicate: UserFunction
 ) -> None:
     """A read's observed pricing does not reveal its shock to the Boolean callback."""
     with pytest.raises(
-        RegimeInitializationError, match=r"Arrival callback.*unobserved.*wage_shock_f"
+        RegimeInitializationError,
+        match=r"Participation callback.*unobserved.*wage_shock_f",
     ):
         _information_model(predicate=predicate, observed=False)
 
 
-def test_an_arrival_callback_cannot_read_a_continuous_shock_node_code() -> None:
+def test_a_participation_callback_cannot_read_a_continuous_shock_node_code() -> None:
     """A recognized target Normal draw has no quadrature-node position."""
     with pytest.raises(
         UnsupportedOperationError,
@@ -394,12 +395,12 @@ def _discrete_information_model(
         edges={
             "source": Transition(
                 law=ByAge(cases={0: "target"}),
-                arrivals={
-                    "target": ArrivalDecision(
+                participation={
+                    "target": ParticipationCheck(
                         predicate=predicate,
                         observes=("offer",) if observed else (),
                         reads={
-                            read_name: ArrivalRead(
+                            read_name: ParticipationRead(
                                 kind="Raw", regime="fallback", projection={}
                             )
                         }
@@ -430,7 +431,7 @@ def _discrete_information_model(
     ],
     ids=["direct", "helper", "duplicate", "read-offer", "read-offer-code"],
 )
-def test_observed_discrete_arrival_code_keeps_its_physical_and_read_channels(
+def test_observed_discrete_participation_code_keeps_its_physical_and_read_channels(
     *, predicate: UserFunction, read_name: ReferenceName | None
 ) -> None:
     """Named reference10 and actual category0/1 remain distinct Boolean operands."""
@@ -476,12 +477,12 @@ def test_observed_discrete_arrival_code_keeps_its_physical_and_read_channels(
     ],
     ids=["direct", "helper", "read-offer"],
 )
-def test_hidden_discrete_arrival_code_is_not_an_edge_parameter_or_observation(
+def test_hidden_discrete_participation_code_is_not_an_edge_parameter_or_observation(
     *, predicate: UserFunction, read_name: ReferenceName | None
 ) -> None:
     """A physical category, including its code alias, requires declared visibility."""
     with pytest.raises(
-        RegimeInitializationError, match=r"Arrival callback.*unobserved.*offer"
+        RegimeInitializationError, match=r"Participation callback.*unobserved.*offer"
     ):
         _discrete_information_model(
             predicate=predicate, observed=False, read_name=read_name

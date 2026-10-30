@@ -30,8 +30,8 @@ from beartype.roar import BeartypeCallHintViolation
 from h5py import h5o  # ty: ignore[unresolved-import]
 
 from _lcm import version as _version
-from _lcm.arrival_continuation import ARRIVAL_SURFACE_PREFIX
 from _lcm.dtypes import CanonicalArrayWriter
+from _lcm.participation_continuation import PARTICIPATION_SURFACE_PREFIX
 from _lcm.solution.result_snapshot import (
     snapshot_artifact_authorities,
     snapshot_artifact_store,
@@ -109,12 +109,12 @@ class _Unloaded(Enum):
 
 _MANIFEST_DATASET: Final = "manifest"
 _PAYLOAD_GROUP: Final = "payloads"
-# Optional manifest field, written only by a solve that stored arrival surfaces.
-_ARRIVAL_SURFACES: Final = "arrival_surfaces"
-# What each stored arrival surface's trailing axis holds: the branches and
-# decision operands of `_lcm.arrival_queries.surface_channels`, or, where the
+# Optional manifest field, written only by a solve that stored participation surfaces.
+_PARTICIPATION_SURFACES: Final = "participation_surfaces"
+# What each stored participation surface's trailing axis holds: the branches and
+# decision operands of `_lcm.participation_queries.surface_channels`, or, where the
 # decision cannot be re-run between nodes, the value after it.
-_ARRIVAL_SURFACE_LAYOUT: Final = "decision-branches"
+_PARTICIPATION_SURFACE_LAYOUT: Final = "decision-branches"
 _UNLOADED: Final = _Unloaded.UNLOADED
 _PAYLOAD_ADDRESS_LENGTH: Final = 8
 _SHA256_HEX_LENGTH: Final = 64
@@ -278,7 +278,7 @@ class _SaveSnapshot:
     values: tuple[_PreparedPayload, ...]
     artifacts: tuple[_PreparedPayload, ...]
     omissions: tuple[tuple[ArtifactRef, OmissionReason], ...]
-    arrival_surfaces: tuple[_PreparedPayload, ...] = ()
+    participation_surfaces: tuple[_PreparedPayload, ...] = ()
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -521,7 +521,7 @@ def save_solution_archive(*, solution: _SolutionResultBoundary, path: Path) -> P
     # container or mutable array from the object that passed preflight.
     snapshot = replace(
         _prepare_solution_for_save(solution=solution),
-        arrival_surfaces=_prepare_arrival_surfaces(solution=solution),
+        participation_surfaces=_prepare_participation_surfaces(solution=solution),
     )
 
     tmp_path: Path | None = None
@@ -637,7 +637,7 @@ def load_solution_archive(  # noqa: C901, PLR0912, PLR0915
         )
     typed_manifest = cast("dict[str, JSONValue]", manifest)
     _check_archive_versions(manifest=typed_manifest)
-    if set(typed_manifest) - {_ARRIVAL_SURFACES} != {
+    if set(typed_manifest) - {_PARTICIPATION_SURFACES} != {
         "format_version",
         "pylcm_version",
         "solver_api_version",
@@ -866,7 +866,7 @@ def load_solution_archive(  # noqa: C901, PLR0912, PLR0915
         diagnostics=ArtifactStore(stores[ArtifactChannel.DIAGNOSTIC]),
         omissions=omissions,
     )
-    surface_entries = _lazy_arrival_surfaces(
+    surface_entries = _lazy_participation_surfaces(
         path=path,
         manifest=typed_manifest,
         metadata=metadata,
@@ -877,7 +877,7 @@ def load_solution_archive(  # noqa: C901, PLR0912, PLR0915
         nested.setdefault(period, {}).setdefault(regime, {})[name] = entry
     object.__setattr__(
         result,
-        "_arrival_surfaces",
+        "_participation_surfaces",
         MappingProxyType(
             {
                 period: MappingProxyType(
@@ -905,19 +905,19 @@ def _surface_identity(
     *, period: int, regime: RegimeName, name: str
 ) -> dict[str, JSONValue]:
     return {
-        "kind": "arrival_surface",
-        "layout": _ARRIVAL_SURFACE_LAYOUT,
+        "kind": "participation_surface",
+        "layout": _PARTICIPATION_SURFACE_LAYOUT,
         "period": period,
         "regime": regime,
         "name": name,
     }
 
 
-def _prepare_arrival_surfaces(
+def _prepare_participation_surfaces(
     *, solution: _SolutionResultBoundary
 ) -> tuple[_PreparedPayload, ...]:
-    """Copy every stored arrival surface, addressed by date, publisher and leaf."""
-    surfaces = solution._arrival_surfaces  # noqa: SLF001
+    """Copy each stored participation surface, addressed by date, publisher and leaf."""
+    surfaces = solution._participation_surfaces  # noqa: SLF001
     prepared = []
     for period in sorted(surfaces):
         for regime in sorted(surfaces[period]):
@@ -933,69 +933,71 @@ def _prepare_arrival_surfaces(
                 )
                 if entry.payload_kind != "array":
                     raise IncompatibleSolutionError(
-                        f"Arrival surface {name!r} at period={period}, "
+                        f"Participation surface {name!r} at period={period}, "
                         f"regime={regime!r} is not one array."
                     )
                 prepared.append(entry)
     return tuple(prepared)
 
 
-def _lazy_arrival_surfaces(
+def _lazy_participation_surfaces(
     *,
     path: Path,
     manifest: dict[str, JSONValue],
     metadata: SolutionMetadata,
     addresses: set[str],
 ) -> dict[tuple[int, RegimeName, str], _LazyHdf5Entry]:
-    """Read the archive's stored arrival surfaces as lazy, checked entries."""
+    """Read the archive's stored participation surfaces as lazy, checked entries."""
     entries: dict[tuple[int, RegimeName, str], _LazyHdf5Entry] = {}
-    if _ARRIVAL_SURFACES not in manifest:
+    if _PARTICIPATION_SURFACES not in manifest:
         return entries
     for raw_entry in _require_exact_list(
-        value=manifest[_ARRIVAL_SURFACES], label="arrival surface manifest"
+        value=manifest[_PARTICIPATION_SURFACES], label="participation surface manifest"
     ):
         if type(raw_entry) is not dict:
             raise SolutionIntegrityError(
-                "Arrival surface manifest entry is not an object."
+                "Participation surface manifest entry is not an object."
             )
         entry = cast("dict[str, JSONValue]", raw_entry)
         period = _require_nonnegative_exact_int(
-            value=entry.get("period"), label="arrival surface period"
+            value=entry.get("period"), label="participation surface period"
         )
         regime = _require_nonempty_exact_str(
-            value=entry.get("regime"), label="arrival surface regime"
+            value=entry.get("regime"), label="participation surface regime"
         )
         name = _require_nonempty_exact_str(
-            value=entry.get("name"), label="arrival surface name"
+            value=entry.get("name"), label="participation surface name"
         )
         coordinate = (period, regime, name)
-        if entry.get("layout") != _ARRIVAL_SURFACE_LAYOUT:
+        if entry.get("layout") != _PARTICIPATION_SURFACE_LAYOUT:
             raise SolutionIntegrityError(
-                f"Persisted arrival surface {coordinate!r} stores the layout "
-                f"{entry.get('layout')!r}, not {_ARRIVAL_SURFACE_LAYOUT!r}; "
+                f"Persisted participation surface {coordinate!r} stores the layout "
+                f"{entry.get('layout')!r}, not {_PARTICIPATION_SURFACE_LAYOUT!r}; "
                 "re-solve the model and save it again."
             )
         if (
             period >= metadata.n_periods
             or regime not in metadata.regime_names
-            or not name.startswith(ARRIVAL_SURFACE_PREFIX)
+            or not name.startswith(PARTICIPATION_SURFACE_PREFIX)
         ):
             raise SolutionIntegrityError(
-                f"Persisted arrival surface {coordinate!r} has an invalid address."
+                f"Persisted participation surface {coordinate!r} has an invalid "
+                "address."
             )
         if coordinate in entries:
             raise SolutionIntegrityError(
-                f"Solution archive repeats arrival surface {coordinate!r}."
+                f"Solution archive repeats participation surface {coordinate!r}."
             )
         lazy = _lazy_entry(
             path=path,
             entry=entry,
-            label=f"arrival surface {name!r} at period={period}, regime={regime!r}",
+            label=f"participation surface {name!r} at period={period}, "
+            f"regime={regime!r}",
             identity=_surface_identity(period=period, regime=regime, name=name),
         )
         if lazy.payload_kind != "array":
             raise SolutionIntegrityError(
-                f"Persisted arrival surface {coordinate!r} is not one array."
+                f"Persisted participation surface {coordinate!r} is not one array."
             )
         if lazy.address in addresses:
             raise SolutionIntegrityError(
@@ -1725,9 +1727,9 @@ def _write_archive(*, snapshot: _SaveSnapshot, path: Path) -> None:
                 )
             )
 
-        if snapshot.arrival_surfaces:
+        if snapshot.participation_surfaces:
             surface_entries: list[JSONValue] = []
-            for prepared in snapshot.arrival_surfaces:
+            for prepared in snapshot.participation_surfaces:
                 address = f"{counter:08d}"
                 counter += 1
                 surface_entries.append(
@@ -1735,7 +1737,7 @@ def _write_archive(*, snapshot: _SaveSnapshot, path: Path) -> None:
                         payloads=payloads, address=address, prepared=prepared
                     )
                 )
-            manifest[_ARRIVAL_SURFACES] = surface_entries
+            manifest[_PARTICIPATION_SURFACES] = surface_entries
 
         manifest["omissions"] = [
             {
@@ -2202,12 +2204,12 @@ def _verify_result_entries(*, result: _SolutionResultBoundary) -> None:
             raw = store._raw(ref)  # noqa: SLF001
             if isinstance(raw, _LazyHdf5Entry):
                 raw.verify()
-    _verify_arrival_surfaces(result=result)
+    _verify_participation_surfaces(result=result)
 
 
-def _verify_arrival_surfaces(*, result: _SolutionResultBoundary) -> None:
-    """Verify every lazy stored arrival surface without materializing it."""
-    for regimes in result._arrival_surfaces.values():  # noqa: SLF001
+def _verify_participation_surfaces(*, result: _SolutionResultBoundary) -> None:
+    """Verify every lazy stored participation surface without materializing it."""
+    for regimes in result._participation_surfaces.values():  # noqa: SLF001
         for surfaces in regimes.values():
             for surface in surfaces.values():
                 if isinstance(surface, _LazyHdf5Entry):

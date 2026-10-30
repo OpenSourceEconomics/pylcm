@@ -3,7 +3,7 @@
 Both public producer routes create z=0.25 after valid initial inputs:
 
 * an authored entry law from a source that does not carry z;
-* a forced closed arrival decision's fallback projection, after node-valued
+* a forced closed participation check's fallback projection, after node-valued
   candidate draws.
 
 There is no node at 0.25 on (-2, -1, 0, 1, 2). A code-reading destination must
@@ -22,12 +22,12 @@ import pytest
 
 from lcm import (
     AgeGrid,
-    ArrivalDecision,
-    ArrivalRead,
     ByAge,
     DiscreteGrid,
     Model,
     NormalIIDProcess,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -177,11 +177,11 @@ def _model(*, route: str, code: bool, on_node: bool, enable_jit: bool) -> Model:
             "source": Transition(
                 targets={"landing": 0, "fallback": 0},
                 law=ByAge(cases={0: {"landing": StochasticTransition(func=_prob_one)}}),
-                arrivals={
-                    "landing": ArrivalDecision(
+                participation={
+                    "landing": ParticipationCheck(
                         predicate=_closed,
                         reads={
-                            "V_target": ArrivalRead(
+                            "V_target": ParticipationRead(
                                 kind="Raw",
                                 regime="landing",
                                 projection={"z": _landed_z},

@@ -40,7 +40,6 @@ from _lcm.user_regime_validation import (
     fail_if_a_joint_target_is_unreachable,
     validate_regimes,
 )
-from lcm.arrivals import ArrivalDecision
 from lcm.collective import Gate
 from lcm.exceptions import (
     InvalidRegimeTransitionProbabilitiesError,
@@ -48,6 +47,7 @@ from lcm.exceptions import (
     RegimeInitializationError,
 )
 from lcm.exits import Consent
+from lcm.participation import ParticipationCheck
 from lcm.phased import Phased
 from lcm.regime import Regime
 from lcm.transition import (
@@ -580,7 +580,7 @@ def bind_edge_laws(
                 gated_edges=_declared_gated_edges(
                     source=name, declared=declared, resolved=resolved
                 ),
-                arrivals=_declared_arrivals(
+                participation=_declared_participation(
                     source=name, declared=declared, resolved=resolved
                 ),
             )
@@ -707,7 +707,7 @@ def _derived_target_ages(
                 return None
             for name in names:
                 selected.setdefault(name, set()).add(ages.exact_values[period])
-    for target, gate in {**transition.gates, **transition.arrivals}.items():
+    for target, gate in {**transition.gates, **transition.participation}.items():
         for route in gate.routes.values():
             for fallback in {
                 (
@@ -793,23 +793,25 @@ def _declared_gated_edges(
     )
 
 
-def _declared_arrivals(
+def _declared_participation(
     *,
     source: RegimeName,
     declared: Mapping[Side, PhaseEdges],
     resolved: Mapping[Side, ResolvedEdges],
-) -> MappingProxyType[RegimeName, ArrivalDecision]:
+) -> MappingProxyType[RegimeName, ParticipationCheck]:
     """Retain the incoming edge's typed decision through both actual phases."""
     by_side = {}
     for side in _PHASE_SIDES:
         declaration = declared[side].get(source)
-        arrivals = declaration.arrivals if isinstance(declaration, Transition) else {}
+        participation = (
+            declaration.participation if isinstance(declaration, Transition) else {}
+        )
         reached = resolved[side].get(source, {})
-        if set(arrivals) - set(reached):
+        if set(participation) - set(reached):
             raise ModelInitializationError(
-                f"ArrivalDecision of {source!r} names an unscheduled {side} target."
+                f"ParticipationCheck of {source!r} names an unscheduled {side} target."
             )
-        by_side[side] = arrivals
+        by_side[side] = participation
     solve, simulate = by_side["solve"], by_side["simulate"]
     for target in solve.keys() | simulate.keys():
         shared = target in resolved["solve"].get(source, {}) and target in resolved[
@@ -817,7 +819,7 @@ def _declared_arrivals(
         ].get(source, {})
         if shared and solve.get(target) != simulate.get(target):
             raise ModelInitializationError(
-                f"ArrivalDecision of {source!r} into {target!r} differs by phase; "
+                f"ParticipationCheck of {source!r} into {target!r} differs by phase; "
                 "declare differing settlements with Phased fallback projections."
             )
     return MappingProxyType({**simulate, **solve})
@@ -1001,7 +1003,7 @@ def bind_graph_support(
                 )
                 fallbacks = _gate_fallbacks(
                     gated_edges=source_law.gated_edges,
-                    arrivals=source_law.arrivals,
+                    participation=source_law.participation,
                     targets=targets[side],
                     side=side,
                 )
@@ -1073,7 +1075,9 @@ def bind_graph_support(
             )
         )
         result[source] = bind_regime_law(
-            bound, gated_edges=source_law.gated_edges, arrivals=source_law.arrivals
+            bound,
+            gated_edges=source_law.gated_edges,
+            participation=source_law.participation,
         )
     return MappingProxyType(result), MappingProxyType(dropped)
 
@@ -1309,7 +1313,7 @@ def _gate_fallbacks(
     gated_edges: Mapping[RegimeName, GatedEdge],
     targets: tuple[RegimeName, ...],
     side: Side,
-    arrivals: Mapping[RegimeName, ArrivalDecision] = MappingProxyType({}),
+    participation: Mapping[RegimeName, ParticipationCheck] = MappingProxyType({}),
 ) -> tuple[RegimeName, ...]:
     """The gate-closed regimes of the gated targets among `targets`, for one side."""
     return tuple(
@@ -1317,7 +1321,10 @@ def _gate_fallbacks(
             (leg.solve_fallback if side == "solve" else leg.simulate_fallback).regime
             for target, routes in (
                 *((target, edge.legs) for target, edge in gated_edges.items()),
-                *((target, decision.routes) for target, decision in arrivals.items()),
+                *(
+                    (target, decision.routes)
+                    for target, decision in participation.items()
+                ),
             )
             if target in targets
             for leg in routes.values()

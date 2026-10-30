@@ -15,12 +15,12 @@ import pytest
 from lcm import (
     AgeGrid,
     AgeRange,
-    ArrivalDecision,
-    ArrivalRead,
     ByAge,
     CollectiveUtility,
     LinSpacedGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     Phased,
     ProjectedRegimeValue,
     StakeholderRoute,
@@ -193,7 +193,7 @@ def test_gate_fallbacks_join_the_derived_targets_at_the_gated_ages():
                     (1, 2): {"dead": StochasticTransition(func=_certain)},
                 }
             ),
-            arrivals={"couple": _consent_gate()},
+            participation={"couple": _consent_gate()},
         )
     )
     assert dict(model.graph.edges.solve["alive"]) == {
@@ -207,12 +207,12 @@ def test_gate_on_a_target_the_law_never_reaches_is_refused():
     """A gate belongs to a destination of its own `Transition`."""
     with pytest.raises(
         ModelInitializationError,
-        match=r"^ArrivalDecision of 'alive' names an unscheduled solve target\.$",
+        match=r"^ParticipationCheck of 'alive' names an unscheduled solve target\.$",
     ):
         _model(
             Transition(
                 law={"dead": StochasticTransition(func=_certain)},
-                arrivals={"couple": _consent_gate()},
+                participation={"couple": _consent_gate()},
             )
         )
 
@@ -227,7 +227,9 @@ def test_gate_declared_in_one_phase_only_is_refused():
         _model(
             Phased(
                 solve={
-                    "alive": Transition(law=law, arrivals={"couple": _consent_gate()})
+                    "alive": Transition(
+                        law=law, participation={"couple": _consent_gate()}
+                    )
                 },
                 simulate={"alive": Transition(law=law)},
             )
@@ -293,7 +295,7 @@ def _narrowed_edges(case: str) -> dict[str, Transition | dict[str, tuple[int]]]:
                     "couple": StochasticTransition(func=_survive),
                     "dead": StochasticTransition(func=_die),
                 },
-                arrivals={"couple": _consent_gate(fallback="retired")},
+                participation={"couple": _consent_gate(fallback="retired")},
             )
         }
     retired_ages = (1,) if case == "target-active-from-a-later-age" else (0, 1)
@@ -332,12 +334,12 @@ def _retirement_law(form: str) -> dict[str, StochasticTransition] | ByAge:
     )
 
 
-def _consent_gate(fallback: str = "alive") -> ArrivalDecision:
+def _consent_gate(fallback: str = "alive") -> ParticipationCheck:
     """A gate into the couple that sends a refused single to `fallback`."""
-    return ArrivalDecision(
+    return ParticipationCheck(
         predicate=_couple_is_better,
         reads={
-            f"V_target_{member}": ArrivalRead(
+            f"V_target_{member}": ParticipationRead(
                 kind="Raw",
                 regime="couple",
                 stakeholder=member,
@@ -393,7 +395,7 @@ def _always_dead() -> ScalarInt:
 
 
 @categorical(ordered=False)
-class _ComponentArrivalId:
+class _ComponentParticipationId:
     alive: ScalarInt
     couple: ScalarInt
     retired: ScalarInt
@@ -436,10 +438,11 @@ def test_component_comparison_prices_and_replays_less_equal_and_greater() -> Non
         },
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         initial_nodes={0: "alive"},
-        regime_id_class=_ComponentArrivalId,
+        regime_id_class=_ComponentParticipationId,
         edges={
             "alive": Transition(
-                law="couple", arrivals={"couple": _consent_gate(fallback="retired")}
+                law="couple",
+                participation={"couple": _consent_gate(fallback="retired")},
             )
         },
     )
@@ -460,7 +463,9 @@ def test_component_comparison_prices_and_replays_less_equal_and_greater() -> Non
             initial_conditions={
                 "wealth": jnp.asarray([0.0, 1.0, 2.0]),
                 "age": jnp.zeros(3),
-                "regime_id": jnp.full(3, _ComponentArrivalId.alive, dtype=jnp.int32),
+                "regime_id": jnp.full(
+                    3, _ComponentParticipationId.alive, dtype=jnp.int32
+                ),
             },
             seed=0,
             log_level="off",

@@ -553,7 +553,7 @@ The initial source review uses lcm-zoo `ad2658dae4df00aaf53934f9011adc4c60dcc959
 | Declaration                    | Actual source inputs and date                                                                                                           | Migration decision                                                                                                                                                                                                |
 | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `_job_offer_probs`             | Current hours action, current education/health and experience advanced by hours; next-period offer set (`:451`).                        | Retain a persistent offer-set state with its edge law. Do not admit this callable as current IID.                                                                                                                 |
-| `marriage_offer_young_f/m`     | Current school action and an arrival-age logit (`:2120`, `:2168`).                                                                      | Preserve existing transition-local timing. A new current-IID declaration needs a genuine period-current state law; it cannot relabel the school action as a parameter.                                            |
+| `marriage_offer_young_f/m`     | Current school action and a participation-age logit (`:2120`, `:2168`).                                                                 | Preserve existing transition-local timing. A new current-IID declaration needs a genuine period-current state law; it cannot relabel the school action as a parameter.                                            |
 | `_spouse_offer_probs_from_f/m` | Own education and fixed parameters (`:1389`); one partner education draw also determines partner experience (`:2717`).                  | Retain one shared innovation for counterparty and couple reads. Same-period own education is preserved by the inspected single projections (`:2234`, `:2238`); changed-law cases require the joint CDF partition. |
 | `_single_projection`           | Own economic states project identically; young projections also set `married_last_period` and phase-specific schooling years (`:2323`). | Check each adopted law against changed fields. Preserving education does not establish invariance for a callable reading marital history.                                                                         |
 
@@ -576,81 +576,85 @@ holds; a correctness fixture is not that performance receipt.
 
 ### Gate migration map
 
-The legacy gate date is the arrival period, after the scheduled transition has produced
-the landing state and before the destination action. An arrival adapter retains
-`(incoming source, proposed target, source role, arrival period)` provenance; a
-destination-global exit cannot stand in for an edge-specific fallback. An adapter
-retains its declared Boolean comparison, rather than substituting a utility maximum.
+The legacy gate date is the participation period, after the scheduled transition has
+produced the landing state and before the destination action. A participation adapter
+retains `(incoming source, proposed target, source role, participation period)`
+provenance; a destination-global exit cannot stand in for an edge-specific fallback. An
+adapter retains its declared Boolean comparison, rather than substituting a utility
+maximum.
 
-| Legacy behavior                                           | Replacement and preserved contract                                                                                                                         | Baseline witness                                                                             |
-| --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| Strict unanimous formation                                | Consent at the existing arrival date; native current-period Consent for the new household. Both values belong to the target's common participating policy. | `tests/regime_building/test_gated_edges_collective_solve.py`                                 |
-| Collective participation and empty support                | Dissolution exit at arrival; realized participating-query support replaces interpolated dissolution flags. Keep zero-weight vetoes and one final action.   | `tests/simulation/test_realised_dissolution_route.py`                                        |
-| Incoming-edge-specific fallback                           | Arrival adapter with incoming-leg provenance; initial and ungated occupants cannot borrow another leg's fallback.                                          | `tests/simulation/test_dissolution_route_provenance.py`                                      |
-| Moving or retirement comparison                           | Arrival adapter retains the strict comparator, mapped landing and source-period utility/discounting.                                                       | `tests/solution/test_terminal_carry_kernel_edge_kwargs.py`                                   |
-| Target value floor, window or mixed state/value predicate | Arrival adapter retains the entire threshold/window predicate, arrival-age grids and temporal parameter namespace.                                         | `tests/test_discrete_grid_values.py`, `tests/params/test_gate_reads_on_the_target_domain.py` |
-| Reference-only or self-reference hurdle                   | Explicit typed projected reader at arrival; a value dependency is not another move.                                                                        | `tests/solution/test_gated_edge_self_referencing_ref_age_specialized_axes.py`                |
-| Collective component comparison                           | Adapter over one selected joint-policy tuple; do not infer unanimous consent from a one-sided comparator.                                                  | `tests/solution/test_decoupled.py`                                                           |
-| Value threshold on a self-loop                            | Adapter scoped to the edge and arrival date, carrying states once and preventing another same-period move.                                                 | `tests/regime_building/test_carried_state_through_gated_self_loop.py`                        |
-| State-only or layout-only crossing                        | State-only Gate or predicate-free layout route, keeping role mapping, phase settlement and off-grid behavior.                                              | `tests/simulation/test_phased_edge_fallback.py`                                              |
+| Legacy behavior                                           | Replacement and preserved contract                                                                                                                               | Baseline witness                                                                             |
+| --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Strict unanimous formation                                | Consent at the existing participation date; native current-period Consent for the new household. Both values belong to the target's common participating policy. | `tests/regime_building/test_gated_edges_collective_solve.py`                                 |
+| Collective participation and empty support                | Dissolution exit at landing; realized participating-query support replaces interpolated dissolution flags. Keep zero-weight vetoes and one final action.         | `tests/simulation/test_realised_dissolution_route.py`                                        |
+| Incoming-edge-specific fallback                           | Participation adapter with incoming-leg provenance; initial and ungated occupants cannot borrow another leg's fallback.                                          | `tests/simulation/test_dissolution_route_provenance.py`                                      |
+| Moving or retirement comparison                           | Participation adapter retains the strict comparator, mapped landing and source-period utility/discounting.                                                       | `tests/solution/test_terminal_carry_kernel_edge_kwargs.py`                                   |
+| Target value floor, window or mixed state/value predicate | Participation adapter retains the entire threshold/window predicate, participation-age grids and temporal parameter namespace.                                   | `tests/test_discrete_grid_values.py`, `tests/params/test_gate_reads_on_the_target_domain.py` |
+| Reference-only or self-reference hurdle                   | Explicit typed projected reader at landing; a value dependency is not another move.                                                                              | `tests/solution/test_gated_edge_self_referencing_ref_age_specialized_axes.py`                |
+| Collective component comparison                           | Adapter over one selected joint-policy tuple; do not infer unanimous consent from a one-sided comparator.                                                        | `tests/solution/test_decoupled.py`                                                           |
+| Value threshold on a self-loop                            | Adapter scoped to the edge and participation date, carrying states once and preventing another same-period move.                                                 | `tests/regime_building/test_carried_state_through_gated_self_loop.py`                        |
+| State-only or layout-only crossing                        | State-only Gate or predicate-free layout route, keeping role mapping, phase settlement and off-grid behavior.                                                    | `tests/simulation/test_phased_edge_fallback.py`                                              |
 
 Each migrated behavior retains an explicit replacement public-API test before
 retirement. Apply projections to the realized landing before reading a value; apply a
 predicate after reading its operands at the query point. Neither operation commutes with
 interpolation. Preserve source, target, reference and edge parameter namespaces,
-phase-specific settlements and exact arrival-period demand. The new realized policy
-query intentionally replaces the interpolation-of-maxima residual; changed off-grid
-outcomes need oracle evidence, not a claim of legacy bitwise parity.
+phase-specific settlements and exact participation-period demand. The new realized
+policy query intentionally replaces the interpolation-of-maxima residual; changed
+off-grid outcomes need oracle evidence, not a claim of legacy bitwise parity.
 
-### Arrival pricing depth
+### Participation pricing depth
 
-An arrival is priced exactly one level deep. The user-facing statement of this
-approximation, with its error pattern and the advice to refine grids near participation
-thresholds, is
+A participation check is priced exactly one level deep. The user-facing statement of
+this approximation, with its error pattern and the advice to refine grids near
+participation thresholds, is
 [Participation checks over several periods](../user_guide/collective_regimes.md#participation-check-depth).
 
-- **Level 1 is exact.** A source reading an arrival at date `d` rebuilds the target's
-  action problem exactly at the realized landing, as above. Simulation decides each
-  realized arrival the same way.
+- **Level 1 is exact.** A source reading a participation check at date `d` rebuilds the
+  target's action problem exactly at the realized landing, as above. Simulation decides
+  each realized participation check the same way.
 - **Below level 1 a stored surface replaces the rebuild.** The rebuilt action problem
-  does not rebuild its own later arrivals: for an arrival from regime `R` into `U` at
-  `d + 1` it reads the stored surface `A_{R->U}`. `A_{R->U}` holds, at every node of
-  `U`'s grid at `d + 1`, the operands the level-1 decision consumes there rather than
-  its verdict: each policy answer it reads (the acting target, every declared read,
-  every member's fallback) through its support indicator, NaN where that answer fails
-  its integrity, and each value component the decision reads, zero where the answer has
-  no support. A node whose whole answer fails its integrity is NaN in every channel.
+  does not rebuild its own later participation checks: for a participation check from
+  regime `R` into `U` at `d + 1` it reads the stored surface `A_{R->U}`. `A_{R->U}`
+  holds, at every node of `U`'s grid at `d + 1`, the operands the level-1 decision
+  consumes there rather than its verdict: each policy answer it reads (the acting
+  target, every declared read, every member's fallback) through its support indicator,
+  NaN where that answer fails its integrity, and each value component the decision
+  reads, zero where the answer has no support. A node whose whole answer fails its
+  integrity is NaN in every channel.
 - **Off a node the decision is taken again.** Each channel is interpolated by `U`'s own
   continuation reader, as `V_U` would be. A support indicator reads as support where it
   is at least one half; a value is the support-weighted mean of the supported corners.
-  The arrival decision is re-run on those answers with the landing state and its own
+  The participation check is re-run on those answers with the landing state and its own
   date, age and parameters, and each member takes the branch it selects. On a node the
   rebuilt answers are the node's own, so the read equals the level-1 decision there.
 
 Where each piece lives:
 
-- `install_arrival_source_queries` (`src/_lcm/arrival_queries.py`) binds every plan
-  against pricing contexts: the canonical action problems, carrying no plans of their
-  own. Each surfaced target's continuation in a pricing context is replaced by
-  `_ArrivalSurfaceValue` (`_surface_action_problem`), and the context names the plan
-  whose surface it reads in `SolverBuildContext.arrival_surfaces`. No plan contains a
-  plan, so depth one holds by construction.
-- `surface_channels` fixes the channel order of one plan, from its `_ArrivalReducer`;
-  `surface_queries` is the same query graph with the root answering those channels. The
-  publisher and every reader derive the layout from the same plan.
-- `_GridSearchArgumentBuilder.arrival_surfaces` (`src/_lcm/solution/grid_search.py`)
-  substitutes the surface for the target's entry in `next_regime_to_V_arr` and supplies
-  `arrival_surface_arguments`: each surfaced decision's own period, age and parameters.
-- The `_arrival_surfaces` core program of `_BorrowedArrivalKernel`
-  (`src/_lcm/arrival_publication.py`) tabulates the surfaces over `U`'s grid with a
-  bounded `lax.map` after `R`'s period kernel. Each surface is a leaf of `R`'s dated
-  `ArrivalContinuation` payload, so it is published by `R`'s period program, transported
-  to `d - 1` with that payload, and counted by the same admission.
+- `install_participation_source_queries` (`src/_lcm/participation_queries.py`) binds
+  every plan against pricing contexts: the canonical action problems, carrying no plans
+  of their own. Each surfaced target's continuation in a pricing context is replaced by
+  `_ParticipationSurfaceValue` (`_surface_action_problem`), and the context names the
+  plan whose surface it reads in `SolverBuildContext.participation_surfaces`. No plan
+  contains a plan, so depth one holds by construction.
+- `surface_channels` fixes the channel order of one plan, from its
+  `_ParticipationReducer`; `surface_queries` is the same query graph with the root
+  answering those channels. The publisher and every reader derive the layout from the
+  same plan.
+- `_GridSearchArgumentBuilder.participation_surfaces`
+  (`src/_lcm/solution/grid_search.py`) substitutes the surface for the target's entry in
+  `next_regime_to_V_arr` and supplies `participation_surface_arguments`: each surfaced
+  decision's own period, age and parameters.
+- The `_participation_surfaces` core program of `_BorrowedParticipationKernel`
+  (`src/_lcm/participation_publication.py`) tabulates the surfaces over `U`'s grid with
+  a bounded `lax.map` after `R`'s period kernel. Each surface is a leaf of `R`'s dated
+  `ParticipationContinuation` payload, so it is published by `R`'s period program,
+  transported to `d - 1` with that payload, and counted by the same admission.
 - Backward induction retains the surfaces on `SolutionResult`, simulation replays the
-  same plans against them (`src/_lcm/simulation/arrival_values.py`), and
+  same plans against them (`src/_lcm/simulation/participation_values.py`), and
   `src/_lcm/persistence/solution.py` saves and verifies them under the archive manifest
-  field `"arrival_surfaces"`, each entry tagged `"layout": "decision-branches"`; an
-  archive of another layout is refused on load. A solution without them, such as a
+  field `"participation_surfaces"`, each entry tagged `"layout": "decision-branches"`;
+  an archive of another layout is refused on load. A solution without them, such as a
   `dataclasses.replace` copy, refuses replay where a plan reads one.
 - A decision reading anything beyond its declared reads, the landing state, `period`,
   `age` and its parameters — realized physical information — cannot be re-run between
@@ -658,17 +662,18 @@ Where each piece lives:
   node, integrated over that information, shaped like the plan's answer, and the pricing
   context reads it through the target's ordinary continuation reader.
 
-Cost. A period's program prices one arrival level whatever the number of remaining
-arrival dates, so the solve is linear in the horizon. Full nesting multiplies a period's
-program by the target's actions times its reads and lottery nodes for each further
-arrival date. On the household example with 10 wealth nodes and 5 consumption shares at
-four periods (CPU), the solve went from 84.9 s and 10.9 GB peak RSS under full nesting
-to 19.1 s and 2.6 GB with a stored value after the decision, and takes 37.0 s and 3.8 GB
-with stored branches, compiling from an empty persistent cache (one measurement on a
-shared machine). The household's period-0 query program at 3 wealth nodes and 2 shares
-costs 1.57 times the one with a stored value after the decision, and is the same at four
-and five periods. A surface holds `len(surface_channels(plan))` entries per node: eight
-for the household's continuing couple, against two values after the decision.
+Cost. A period's program prices one participation level whatever the number of remaining
+participation dates, so the solve is linear in the horizon. Full nesting multiplies a
+period's program by the target's actions times its reads and lottery nodes for each
+further participation date. On the household example with 10 wealth nodes and 5
+consumption shares at four periods (CPU), the solve went from 84.9 s and 10.9 GB peak
+RSS under full nesting to 19.1 s and 2.6 GB with a stored value after the decision, and
+takes 37.0 s and 3.8 GB with stored branches, compiling from an empty persistent cache
+(one measurement on a shared machine). The household's period-0 query program at 3
+wealth nodes and 2 shares costs 1.57 times the one with a stored value after the
+decision, and is the same at four and five periods. A surface holds
+`len(surface_channels(plan))` entries per node: eight for the household's continuing
+couple, against two values after the decision.
 
 Accuracy.
 
@@ -698,11 +703,12 @@ Accuracy.
   the smooth surface error near a threshold — the household's choice or the exact
   next-landing check — flips and moves a member's value by a jump.
 
-There is no switch back to full nesting. `tests/solution/test_arrival_pricing_depth.py`
-pins the program-cost bound, the on-grid equality and the unchanged later periods
-against nested-route values in `tests/data/arrival_pricing_depth/`, the second-order
-read of an overruled partner against a closed-form solution, the archive round trip and
-the refusal of another archive layout.
+There is no switch back to full nesting.
+`tests/solution/test_participation_pricing_depth.py` pins the program-cost bound, the
+on-grid equality and the unchanged later periods against nested-route values in
+`tests/data/participation_pricing_depth/`, the second-order read of an overruled partner
+against a closed-form solution, the archive round trip and the refusal of another
+archive layout.
 
 ### Stage gates
 
@@ -751,8 +757,8 @@ receipts, rather than forming a Cartesian product of solver features.
 Q1 selects the exit adapter as the minimal generic requirement. Target Participating
 equals Raw because that target has no exits. The adapter remains unfinished until its
 actual EGM target read is served; current GridSearch query admission is not evidence of
-that support. Add an arrival variant only for a distinct named timing or custody
-consumer. Bind faithful EKL's actual solver, dates, mapped states, shared-offer
+that support. Add a participation check variant only for a distinct named timing or
+custody consumer. Bind faithful EKL's actual solver, dates, mapped states, shared-offer
 addresses, lagged-marital context and retained leaves separately; this generic row does
 not assert that EKL has an EGM target.
 

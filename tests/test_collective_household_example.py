@@ -134,8 +134,8 @@ def test_every_subject_ends_in_a_terminal_regime(simulated):
     assert last["regime_name"].str.endswith("terminal").all()
 
 
-def test_arrival_decisions_replay_from_values_without_dissolution_artifacts():
-    """Arrival support and consent do not require retained dissolution flags."""
+def test_participation_checks_replay_from_values_without_dissolution_artifacts():
+    """Participation support and consent do not require retained dissolution flags."""
     model = household.get_model(n_periods=3, wealth_n_points=6, consumption_n_points=6)
     params = household.get_params()
     solution = model.solve(
@@ -179,7 +179,7 @@ def test_participation_rule_keeps_one_common_action_with_threshold_only_slack():
         assert int(selected.action) == expected
 
 
-def test_a_missing_declared_arrival_payload_fails_before_the_period_roll(
+def test_a_missing_declared_participation_payload_fails_before_the_period_roll(
     *,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -198,7 +198,7 @@ def test_a_missing_declared_arrival_payload_fails_before_the_period_roll(
         RuntimeError,
         match=(
             r"Regime 'couple' in period 1.*missing required.*"
-            r"pylcm\.arrival\.query_operands"
+            r"pylcm\.participation\.query_operands"
         ),
     ):
         model.solve(
@@ -214,7 +214,7 @@ def test_each_query_action_problem_is_traced_once_per_solve(
 ) -> None:
     """A query read inside another query's continuation reuses the target's trace.
 
-    An arrival continuation prices the target's action problem at the landing
+    A participation continuation prices the target's action problem at the landing
     date, so the reads nest date by date. Re-tracing that problem at every read
     multiplies the traces by the fan-out of every later date.
     """

@@ -308,25 +308,29 @@ and carry no current-shock axis. This also applies to collective regimes without
 Collective EV1 tastes and custom source selectors combined with source EV1 tastes are
 explicitly refused.
 
-(api-arrival-decisions)=
+(api-participation-checks)=
 
-## Scheduled arrival decisions
+## Scheduled participation checks
 
-Attach `ArrivalDecision(predicate=..., routes=..., reads=..., observes=())` to an
-incoming `Transition(arrivals={target_name: ...})` in `Model(edges=...)`. It belongs to
-that incoming source, scheduled target, original source role and actual arrival period.
-The scheduled transition produces the landing state before the comparison, and the final
-regime acts after it. Initial occupants and subjects arriving through another edge
-cannot borrow this decision or its fallback. A scheduled target cannot declare both a
-`Gate` and an `ArrivalDecision`.
+Attach `ParticipationCheck(predicate=..., routes=..., reads=..., observes=())` to an
+incoming `Transition(participation={target_name: ...})` in `Model(edges=...)`. It
+belongs to that incoming source, scheduled target, original source role and actual
+participation period. The scheduled transition produces the landing state before the
+comparison, and the final regime acts after it. Initial occupants and subjects arriving
+through another edge cannot borrow this decision or its fallback. A scheduled target
+cannot declare both a `Gate` and a `ParticipationCheck`.
+
+The check is the per-period limited-commitment participation constraint. It also
+re-checks a continuing household on its scheduled self-transition: on a couple → couple
+edge, a failed check is a divorce.
 
 `predicate` returns a scalar Boolean from the landed target's states and helpers,
 parameters, and the explicitly named `reads`. Declare every value operand, including
-`V_target`, with an `ArrivalRead`. `D_target` is refused; request typed policy support
-instead. The predicate's threshold, window or other comparison determines acceptance; it
-is not replaced by a maximization over the compared values. Acceptance also requires the
-target's Participating policy to have support. `observes` names the target physical
-shocks visible at this comparison.
+`V_target`, with a `ParticipationRead`. `D_target` is refused; request typed policy
+support instead. The predicate's threshold, window or other comparison determines
+acceptance; it is not replaced by a maximization over the compared values. Acceptance
+also requires the target's Participating policy to have support. `observes` names the
+target physical shocks visible at this comparison.
 
 `routes` maps every original source stakeholder to a
 [`StakeholderRoute`](collective_regimes.md#api-stakeholder-route); a singleton has its
@@ -338,26 +342,26 @@ stakeholder name; a singleton has no stakeholder role. A
 settlement and routes simulation using the simulate settlement. The incoming source and
 role remain attached to this settlement, so another edge's fallback cannot replace it.
 
-Arrival callbacks use the target's actual arrival `period` and `age`. Their runtime
-parameters belong under `params["edges"][source][target]`: the predicate uses
-`["predicate"]`, read projections use `["references"][read_name][state]`, and fallback
+Participation callbacks use the target's actual participation `period` and `age`. Their
+runtime parameters belong under `params["edges"][source][target]`: the predicate uses
+`["predicate"]`, read projections use `["reads"][read_name][state]`, and fallback
 projections use `["routes"][source_role]["fallback"]`, with a phase key for a phased
 fallback. Use `model.get_params_template()` for the complete paths. Queried regime
 functions and target helpers retain their own regime parameter namespaces; temporal
-values are selected for the arrival date, rather than the incoming source's decision
-date.
+values are selected for the participation date, rather than the incoming source's
+decision date.
 
-A source prices its next arrival decision exactly at every landing. An arrival decision
-at a later date is taken again at each landing from a stored per-period surface of its
-branches and operands, each interpolated between grid nodes: exact where landings fall
-on nodes, approximate between them; see
+A source prices its next participation check exactly at every landing. A participation
+check at a later date is taken again at each landing from a stored per-period surface of
+its branches and operands, each interpolated between grid nodes: exact where landings
+fall on nodes, approximate between them; see
 [Participation checks over several periods](../user_guide/collective_regimes.md#participation-check-depth).
 
-(api-arrival-reads)=
+(api-participation-reads)=
 
-### `ArrivalRead`
+### `ParticipationRead`
 
-`ArrivalRead(regime=..., projection=..., kind=..., stakeholder=None, field="value", observes=())`
+`ParticipationRead(regime=..., projection=..., kind=..., stakeholder=None, field="value", observes=())`
 names the represented object supplied to the predicate. `projection` provides every
 state of the referenced regime from the landed target state, and `stakeholder` selects a
 collective reference's exact role. The `reads` mapping key is the argument name the

@@ -11,12 +11,12 @@ import pytest
 from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
-    ArrivalDecision,
-    ArrivalRead,
     ByAge,
     DeterministicTransition,
     LinSpacedGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     Phased,
     ProjectedRegimeValue,
     StakeholderRoute,
@@ -373,8 +373,10 @@ class _DormantGateRegimeId:
     terminal: ScalarInt
 
 
-def test_value_only_source_age_does_not_activate_dormant_simulation_arrival() -> None:
-    """An arrival used at one source age owes no reads at a value-only age."""
+def test_value_only_source_age_does_not_activate_dormant_simulation_participation() -> (
+    None
+):
+    """A participation check at one source age owes no reads at a value-only age."""
     grid = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
 
     def identity(x: ContinuousState) -> ContinuousState:
@@ -385,11 +387,11 @@ def test_value_only_source_age_does_not_activate_dormant_simulation_arrival() ->
 
     one = StochasticTransition(func=lambda: jnp.asarray(1.0))
     zero = StochasticTransition(func=lambda: jnp.asarray(0.0))
-    arrivals = {
-        "target": ArrivalDecision(
+    participation = {
+        "target": ParticipationCheck(
             predicate=gate,
             reads={
-                "V_reference": ArrivalRead(
+                "V_reference": ParticipationRead(
                     kind="IntegratedFull",
                     regime="reference",
                     projection={"x": identity},
@@ -440,7 +442,7 @@ def test_value_only_source_age_does_not_activate_dormant_simulation_arrival() ->
                 "source": Transition(
                     targets={"source": 0, "target": 0, "fallback": 0, "terminal": 1},
                     law=solve_law,
-                    arrivals=arrivals,
+                    participation=participation,
                 ),
                 "other": {"target": 1},
                 "reference": {"terminal": 1},
@@ -449,7 +451,7 @@ def test_value_only_source_age_does_not_activate_dormant_simulation_arrival() ->
                 "source": Transition(
                     targets={"target": 0, "fallback": 0},
                     law=simulate_law,
-                    arrivals=arrivals,
+                    participation=participation,
                 ),
                 "other": {"terminal": 1},
             },

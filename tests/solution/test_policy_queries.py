@@ -19,7 +19,6 @@ import pytest
 
 import lcm
 from _lcm import policy_queries as queries
-from _lcm.arrival_queries import bind_arrival_query_graph
 from _lcm.execution.core_program import (
     CoreArgumentBuilder,
     CoreBuildContext,
@@ -28,6 +27,7 @@ from _lcm.execution.core_program import (
 from _lcm.execution.footprint import ResidentBreakdown
 from _lcm.execution.output_layout import StateAxesLeading, resolve_output_layout
 from _lcm.execution.value_transfer import ValueArtifactAddress, ValueArtifactKind
+from _lcm.participation_queries import bind_participation_query_graph
 from _lcm.policy_queries import (
     PolicyAnswer,
     QueryKind,
@@ -52,8 +52,8 @@ from lcm import (
     Regime,
     categorical,
 )
-from lcm.arrivals import ArrivalDecision, ArrivalRead
 from lcm.collective import ProjectedRegimeValue, StakeholderRoute
+from lcm.participation import ParticipationCheck, ParticipationRead
 from lcm.shocks import Normal, ShockGroup, UserNodes
 from lcm.solvers import EGM, GridSearch
 from lcm.typing import BoolND, FloatND, IntND, RegimeName, ScalarInt
@@ -115,25 +115,27 @@ def test_query_cycles_and_foreign_full_reads_refuse() -> None:
         )
 
 
-def test_integrated_value_reader_is_only_an_arrival_comparison_operand() -> None:
+def test_integrated_value_reader_is_only_a_participation_comparison_operand() -> None:
     """A represented Full payload cannot become a policy/support dependency."""
     reads = {
-        "arrival": _read(kind=QueryKind.ARRIVAL, target="target"),
+        "participation": _read(kind=QueryKind.PARTICIPATION, target="target"),
         "stored": _read(kind=QueryKind.INTEGRATED_FULL, target="target"),
     }
     assert demanded_query_order(
         reads=reads,
-        dependencies={"arrival": ("stored",), "stored": ()},
-        roots=("arrival",),
-    ) == ("stored", "arrival")
-    with pytest.raises(ValueError, match="Only an arrival comparison"):
+        dependencies={"participation": ("stored",), "stored": ()},
+        roots=("participation",),
+    ) == ("stored", "participation")
+    with pytest.raises(ValueError, match="Only a participation comparison"):
         demanded_query_order(
             reads={
                 **reads,
-                "arrival": replace(reads["arrival"], kind=QueryKind.PARTICIPATING),
+                "participation": replace(
+                    reads["participation"], kind=QueryKind.PARTICIPATING
+                ),
             },
-            dependencies={"arrival": ("stored",), "stored": ()},
-            roots=("arrival",),
+            dependencies={"participation": ("stored",), "stored": ()},
+            roots=("participation",),
         )
 
 
@@ -373,8 +375,10 @@ def _native_model(
     return model
 
 
-def test_arrival_consumer_uses_boolean_rule_and_source_owned_answer_shape() -> None:
-    """A singleton arrival on a household context does not rerun its argmax."""
+def test_participation_consumer_uses_boolean_rule_and_source_owned_answer_shape() -> (
+    None
+):
+    """A singleton participation check in a household does not rerun the argmax."""
     _native_model(enable_jit=False)
 
     def decide(*, target: PolicyAnswer, outside: PolicyAnswer) -> PolicyAnswer:
@@ -388,7 +392,7 @@ def test_arrival_consumer_uses_boolean_rule_and_source_owned_answer_shape() -> N
         )
 
     node = QueryNode(
-        read=_read(kind=QueryKind.ARRIVAL, target="target"),
+        read=_read(kind=QueryKind.PARTICIPATION, target="target"),
         context=_CONTEXTS["target"],
         inputs={"target": "part", "outside": "outside"},
         operand_builder=lambda _context: {},
@@ -424,13 +428,15 @@ def test_arrival_consumer_uses_boolean_rule_and_source_owned_answer_shape() -> N
     assert bool(answer[3])
 
 
-def test_bound_arrival_strict_hurdle_uses_one_household_participating_tuple() -> None:
+def test_bound_participation_strict_hurdle_uses_one_household_participating_tuple() -> (
+    None
+):
     """An exact threshold can reject a target even when a member's fallback is worse."""
     model = _native_model(enable_jit=False)
-    declaration = ArrivalDecision(
+    declaration = ParticipationCheck(
         predicate=lambda benchmark: benchmark > 2.0,
         reads={
-            "benchmark": ArrivalRead(
+            "benchmark": ParticipationRead(
                 regime="target",
                 projection={"wealth": _identity},
                 stakeholder="f",
@@ -449,7 +455,7 @@ def test_bound_arrival_strict_hurdle_uses_one_household_participating_tuple() ->
             for member in ("f", "m")
         },
     )
-    plan = bind_arrival_query_graph(
+    plan = bind_participation_query_graph(
         contexts=_CONTEXTS,
         canonical_regimes=model._regimes,
         source="root",

@@ -30,8 +30,6 @@ from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.simulation import (
     population_operations,
 )
-from _lcm.simulation.arrival_routing import record_arrival_entries
-from _lcm.simulation.arrival_values import is_arrival_surface, stored_arrival_surface
 from _lcm.simulation.assembly import (
     _concatenate_arrays,
     _slice_array,
@@ -84,6 +82,11 @@ from _lcm.simulation.membership import (
     _empty_subject_membership,
 )
 from _lcm.simulation.operand_placement import subject_operand_sharding
+from _lcm.simulation.participation_routing import record_participation_entries
+from _lcm.simulation.participation_values import (
+    is_participation_surface,
+    stored_participation_surface,
+)
 from _lcm.simulation.program_arguments import gate_route_arguments
 from _lcm.simulation.programs import forward_regimes_by_period
 from _lcm.simulation.random import (
@@ -120,7 +123,7 @@ from _lcm.transition_checks import (
 )
 from _lcm.typing import (
     FlatParams,
-    PeriodToRegimeToArrivalSurfaces,
+    PeriodToRegimeToParticipationSurfaces,
     RegimeName,
     RegimeNamesToIds,
     ShapeDtypePytree,
@@ -162,7 +165,9 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     log_level: LogLevel,
     runtime_checks: bool = True,
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None = None,
-    arrival_surfaces: PeriodToRegimeToArrivalSurfaces = MappingProxyType({}),
+    participation_surfaces: PeriodToRegimeToParticipationSurfaces = MappingProxyType(
+        {}
+    ),
     max_compilation_workers: int | None = None,
     group_sizes: tuple[int, ...] | None = None,
     current_iid_override_schema: CurrentIIDOverrideSchema = (),
@@ -357,7 +362,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
             regime_names_to_ids=regime_names_to_ids,
             flat_params=flat_params,
             values=values,
-            surfaces=arrival_surfaces,
+            surfaces=participation_surfaces,
             ages=ages,
             key=key,
             taste_key=taste_key,
@@ -617,7 +622,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                 regimes=forward_regimes[period],
                 values=values,
                 policies=policies,
-                arrival_surfaces=arrival_surfaces,
+                participation_surfaces=participation_surfaces,
                 period=period,
                 devices=devices,
             ),
@@ -895,15 +900,15 @@ def _profile_next_subjects(
             },
             subject_outputs=True,
         )
-    arrival_targets = tuple(
+    participation_targets = tuple(
         target
         for target in names
         if period + 1 in regimes[target].simulation.exit_queries
-        and name in regimes[target].simulation.exit_queries[period + 1].arrivals
+        and name in regimes[target].simulation.exit_queries[period + 1].participation
     )
-    if arrival_targets:
+    if participation_targets:
         inventory.operation(
-            function=record_arrival_entries,
+            function=record_participation_entries,
             arguments={
                 "drawn_ids": drawn_arrival_ids,
                 "routed_ids": new_ids,
@@ -913,7 +918,7 @@ def _profile_next_subjects(
             static_arguments={
                 "source_id": int(regime_names_to_ids[name]),
                 "target_ids": tuple(
-                    int(regime_names_to_ids[target]) for target in arrival_targets
+                    int(regime_names_to_ids[target]) for target in participation_targets
                 ),
             },
             subject_arg_names=("drawn_ids", "routed_ids", "holders", "entries"),
@@ -1363,7 +1368,9 @@ def _period_copy_reservation(
     period: int,
     devices: tuple[jax.Device, ...],
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None = None,
-    arrival_surfaces: PeriodToRegimeToArrivalSurfaces = MappingProxyType({}),
+    participation_surfaces: PeriodToRegimeToParticipationSurfaces = MappingProxyType(
+        {}
+    ),
 ) -> dict[jax.Device, int]:
     """Reserve declared nonaligned copies once per period/address/ordered layout."""
     policy_sources = _policy_read_sources(
@@ -1379,7 +1386,7 @@ def _period_copy_reservation(
             regime.simulation.programs.gate_route,
             regime.simulation.programs.exit_full,
             regime.simulation.programs.exit_participating,
-            *regime.simulation.programs.arrival_families,
+            *regime.simulation.programs.participation_families,
         )
         if period in family
         for read in family[period].requirements.value_reads
@@ -1398,7 +1405,7 @@ def _period_copy_reservation(
             read=read,
             values=values,
             policy_sources=policy_sources,
-            arrival_surfaces=arrival_surfaces,
+            participation_surfaces=participation_surfaces,
         )
         required = simulation_value_sharding(
             stored_sharding=source.sharding, devices=devices
@@ -1492,13 +1499,17 @@ def _retained_read_source(
     read: ValueRead,
     values: Mapping[int, Mapping[str, jax.Array]],
     policy_sources: Mapping[ValueArtifactAddress, jax.Array],
-    arrival_surfaces: PeriodToRegimeToArrivalSurfaces = MappingProxyType({}),
+    participation_surfaces: PeriodToRegimeToParticipationSurfaces = MappingProxyType(
+        {}
+    ),
 ) -> jax.Array:
     """Resolve only the declared value and finite-policy storage classes."""
-    if is_arrival_surface(address=read.target):
+    if is_participation_surface(address=read.target):
         return cast(
             "jax.Array",
-            stored_arrival_surface(address=read.target, surfaces=arrival_surfaces),
+            stored_participation_surface(
+                address=read.target, surfaces=participation_surfaces
+            ),
         )
     if read.target.kind is ValueArtifactKind.REGIME_VALUE:
         return values[read.target.period][read.target.regime]

@@ -1,4 +1,4 @@
-"""A CARRIED-ONLY state composes with a repeating self-loop arrival decision.
+"""A CARRIED-ONLY state composes with a repeating self-loop participation check.
 
 The carried-state feature (`Phased(solve=impute, simulate=Grid)`,
 `tests/test_carried_states.py`) is otherwise exercised on ordinary regime
@@ -8,11 +8,11 @@ declined-marriage path is a REPEATING self-loop value decision, so the
 interaction is pinned here in isolation.
 
 Topology (the singleton half of EKL's `single_f`): `src` is covered over ages
-0-1 with a repeating self-arrival back to itself, fallback into a terminal
+0-1 with a repeating self-participation check back to itself, fallback into a terminal
 `src_fallback`; at its last covered age the ordinary transition routes it to
 `src_exit`. The occupied-boundary counterpart is
-`test_repeating_arrival_boundary.py`,
-`test_public_repeating_arrival_stops_at_the_sources_last_supported_date`.
+`test_repeating_participation_boundary.py`,
+`test_public_repeating_participation_stops_at_the_sources_last_supported_date`.
 A carried `career` state accumulates `+1` each period and is read by utility
 with a ZERO coefficient, isolating the carried-state effect on the occupied
 value and routing.
@@ -21,7 +21,7 @@ The decision is OPEN at wage=2 (stays in `src` for the genuine self-loop repeat)
 and CLOSED at wage=1 (routed to `src_fallback`, which does not carry `career`).
 The model builds, solves and simulates with one ordinary target (`src_exit`)
 that does NOT declare the carried state, and the carried value accumulates
-through the kept self-arrival (career 20 -> 21) rather than being frozen or
+through the kept self-participation check (career 20 -> 21) rather than being frozen or
 reset to its solve-phase imputation.
 """
 
@@ -29,13 +29,13 @@ import jax.numpy as jnp
 import numpy as np
 
 from lcm import (
-    ArrivalDecision,
-    ArrivalRead,
     ByAge,
     DiscreteGrid,
     Gate,
     LinSpacedGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     Phased,
     ProjectedRegimeValue,
     Regime,
@@ -118,8 +118,8 @@ def _src_transition() -> Transition:
     """Return `src`'s transition: a gated self-loop until age 2, then `src_exit`.
 
     `tests/regime_building/test_invariant_components.py` reads it as a gated edge
-    touching a carrier. The gate states on the wage what the public test's arrival
-    decision computes from the value: the repeat stays open at wage 2 only.
+    touching a carrier. The gate states on the wage what the public test's participation
+    check computes from the value: the repeat stays open at wage 2 only.
     """
     exit_cell = StochasticTransition(func=_prob_exit_boundary)
     return Transition(
@@ -179,8 +179,10 @@ class _PublicRegimeId:
     src_fallback: ScalarInt
 
 
-def test_public_repeated_arrival_carries_career_once_before_the_ordinary_exit() -> None:
-    """A kept self-arrival increments true career once and then exits ordinarily."""
+def test_public_repeated_participation_carries_career_once_before_ordinary_exit() -> (
+    None
+):
+    """A kept self-loop participation adds one career year, then exits ordinarily."""
     exit_cell = StochasticTransition(func=_prob_exit_boundary)
     model = Model(
         regimes=_make_regimes(),
@@ -198,11 +200,11 @@ def test_public_repeated_arrival_carries_career_once_before_the_ordinary_exit() 
                     },
                     then={"src_exit": exit_cell},
                 ),
-                arrivals={
-                    "src": ArrivalDecision(
+                participation={
+                    "src": ParticipationCheck(
                         predicate=_repeat_gate,
                         reads={
-                            "V_target": ArrivalRead(
+                            "V_target": ParticipationRead(
                                 regime="src",
                                 kind="IntegratedFull",
                                 projection={"wage": _identity_wage},

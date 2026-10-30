@@ -409,7 +409,7 @@ class Regime:
     The final action mask is the AND of ordinary constraints and all value
     constraints; the household argmax runs over the masked set. A state cell
     whose mask is empty holds no viable household; where its members go is
-    declared by a participation `Exit` or by an `ArrivalDecision` reading the
+    declared by a participation `Exit` or by a `ParticipationCheck` reading the
     household's policy support. A participation constraint takes the form
     `Q_j >= V_single_j(pi_j(x)) - Delta_j` for each stakeholder `j`.
 

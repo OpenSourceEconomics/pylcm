@@ -18,18 +18,6 @@ from _lcm.off_grid import count_off_grid, off_grid_message
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.collective import NO_ROLE
 from _lcm.shock_registry import ShockBinding
-from _lcm.simulation.arrival_routing import (
-    arrival_frame_bases,
-    arrival_route_codes,
-    ordinary_exit_rows,
-    pending_arrival_rows,
-)
-from _lcm.simulation.arrival_values import (
-    ArrivalSurfaces,
-    arrival_replay_context,
-    is_arrival_surface,
-    stored_arrival_surface,
-)
 from _lcm.simulation.chunk_operations import regime_mask
 from _lcm.simulation.current_iid import prepare_current_iid_keys
 from _lcm.simulation.current_iid_overrides import (
@@ -42,10 +30,22 @@ from _lcm.simulation.exits import (
     OriginalExitOutput,
     ParticipatingExitOutput,
     PreparedExitDecision,
-    arrival_entry_routes,
+    participation_entry_routes,
     route_original_subjects,
 )
 from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
+from _lcm.simulation.participation_routing import (
+    ordinary_exit_rows,
+    participation_frame_bases,
+    participation_route_codes,
+    pending_participation_rows,
+)
+from _lcm.simulation.participation_values import (
+    ParticipationSurfaces,
+    is_participation_surface,
+    participation_replay_context,
+    stored_participation_surface,
+)
 from _lcm.simulation.runtime import SimulationRuntime, execute_simulation_program
 from _lcm.simulation.shock_paths import fail_if_a_held_process_code_is_off_node
 from _lcm.simulation.subject_groups import SubjectRows
@@ -56,8 +56,8 @@ from _lcm.solution.landing_counts import fail_on_query_landings
 from _lcm.time import TimeAxis
 from _lcm.typing import (
     ArrayTree,
-    ArrivalQueryArguments,
     FlatParams,
+    ParticipationQueryArguments,
     PRNGKeyND,
     PytreeValue,
     QAndFKwargs,
@@ -101,7 +101,7 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
     values: Mapping[int, Mapping[RegimeName, FloatND]],
     owner: PeriodSimulationReads,
     key: PRNGKeyND,
-    surfaces: ArrivalSurfaces = MappingProxyType({}),
+    surfaces: ParticipationSurfaces = MappingProxyType({}),
     subject_slice: slice | SubjectRows,
     original_n_subjects: int,
     memory: SimulationMemory | None,
@@ -170,12 +170,12 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
     routes = []
     pending_entries = {}
     for name, regime in actors.items():
-        for source in regime.simulation.exit_queries[period].arrivals:
+        for source in regime.simulation.exit_queries[period].participation:
             if entered_through is None or source_roles is None:
                 continue
             pending_entries[name, source] = run_simulation_operation(
                 memory=memory,
-                function=pending_arrival_rows,
+                function=pending_participation_rows,
                 arguments={
                     "regime_ids": regime_ids,
                     "entered_through": entered_through,
@@ -288,14 +288,14 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
                     )
                 )
     decisions = {name: record[0][1] for name, record in originals.items()}
-    arrival_frames = {}
-    arrival_pending = {}
+    participation_frames = {}
+    participation_pending = {}
     for (name, source), holders in pending_entries.items():
         regime = actors[name]
         plan = regime.simulation.exit_queries[period]
-        entry = plan.arrivals[source]
+        entry = plan.participation[source]
         queries = entry.queries
-        family = f"arrival_entry:{source}"
+        family = f"participation_entry:{source}"
         output = _dispatch(
             regime=regime,
             family=family,
@@ -339,7 +339,7 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
                 adjustments,
                 overrides,
                 decisions,
-                arrival_frames,
+                participation_frames,
             ),
         )
         answer, frame_payload, entry_projections, entry_adjustments = cast(
@@ -364,8 +364,8 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
                     states=entry_projections[query],
                     processes=process_code_reads[fallback],
                     holders=holders,
-                    where=f"projected by route '{member}' of the arrival from "
-                    f"regime '{source}' into regime '{name}' onto its fallback "
+                    where=f"projected by route '{member}' of the participation check "
+                    f"from regime '{source}' into regime '{name}' onto its fallback "
                     f"regime '{fallback}' at period {period}",
                     memory=memory,
                 )
@@ -380,12 +380,12 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
             states=states[name],
         )
         edge = f"{name}:{source}"
-        arrival_frames[edge], arrival_pending[edge] = frame, holders
+        participation_frames[edge], participation_pending[edge] = frame, holders
         next_code = (
             min((-1, *(route.identifier for route in routes if route.source == name)))
             - 1
         )
-        entry_routes, codes, addresses = arrival_entry_routes(
+        entry_routes, codes, addresses = participation_entry_routes(
             regimes=regimes,
             target=name,
             source=source,
@@ -400,7 +400,7 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
             )
         decisions[name] = run_simulation_operation(
             memory=memory,
-            function=arrival_route_codes,
+            function=participation_route_codes,
             arguments={
                 "original": decisions[name],
                 "incoming": answer[1],
@@ -472,26 +472,27 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
         subject_outputs=True,
     )
     prepared = {}
-    if arrival_frames:
+    if participation_frames:
         bases, produced = run_simulation_operation(
             memory=memory,
-            function=arrival_frame_bases,
+            function=participation_frame_bases,
             arguments={
                 "bases": bases,
                 "produced": produced,
                 "incoming_bases": {
-                    edge: frame.held_bases for edge, frame in arrival_frames.items()
+                    edge: frame.held_bases
+                    for edge, frame in participation_frames.items()
                 },
                 "incoming_available": {
                     edge: frame.information_available
-                    for edge, frame in arrival_frames.items()
+                    for edge, frame in participation_frames.items()
                 },
-                "pending": arrival_pending,
+                "pending": participation_pending,
             },
             static_arguments={
                 "physical_names": tuple(
                     (edge, tuple(frame.physical))
-                    for edge, frame in arrival_frames.items()
+                    for edge, frame in participation_frames.items()
                 )
             },
             subject_arg_names=(
@@ -651,7 +652,9 @@ def exit_bindings(
             *regime.simulation.exit_queries[period].participating.values(),
             *(
                 entry.queries
-                for entry in regime.simulation.exit_queries[period].arrivals.values()
+                for entry in regime.simulation.exit_queries[
+                    period
+                ].participation.values()
             ),
         )
         if queries is not None
@@ -673,7 +676,7 @@ def _query_arguments(
     values: Mapping[int, Mapping[RegimeName, FloatND]],
     owner: PeriodSimulationReads,
     unit: RegimeName,
-    surfaces: ArrivalSurfaces = MappingProxyType({}),
+    surfaces: ParticipationSurfaces = MappingProxyType({}),
     family: str,
     regime: Regime,
 ) -> _QueryArguments:
@@ -683,7 +686,7 @@ def _query_arguments(
         {
             name: dict(row)
             for name, row in queries.arguments(
-                context=arrival_replay_context(
+                context=participation_replay_context(
                     queries=queries,
                     values=values,
                     surfaces=surfaces,
@@ -706,13 +709,15 @@ def _query_arguments(
         },
     )
     program = (
-        regime.simulation.programs.arrival_program(family=family, period=period)
-        if family.startswith("arrival_entry:")
+        regime.simulation.programs.participation_program(family=family, period=period)
+        if family.startswith("participation_entry:")
         else getattr(regime.simulation.programs, family)[period]
     )
     for read in program.requirements.value_reads:
-        if is_arrival_surface(address=read.target):
-            stored = stored_arrival_surface(address=read.target, surfaces=surfaces)
+        if is_participation_surface(address=read.target):
+            stored = stored_participation_surface(
+                address=read.target, surfaces=surfaces
+            )
         elif read.target.kind is ValueArtifactKind.REGIME_VALUE:
             stored = values[read.target.period][read.target.regime]
         else:
@@ -739,8 +744,8 @@ def _replace_query_read(
     if not path:
         return array
     step, *remaining = path
-    if isinstance(node, ArrivalQueryArguments) and step == "by_target":
-        return ArrivalQueryArguments(
+    if isinstance(node, ParticipationQueryArguments) and step == "by_target":
+        return ParticipationQueryArguments(
             by_target=cast(
                 "Mapping[str, Mapping[str, QAndFKwargs]]",
                 _replace_query_read(
@@ -756,7 +761,8 @@ def _replace_query_read(
             ),
         }
     raise ExecutionPlanningError(
-        "A GridSearch query value read needs its declared mapping/arrival field path."
+        "A GridSearch query value read needs its declared mapping/participation field "
+        "path."
     )
 
 
@@ -809,7 +815,7 @@ def _fail_if_a_fallback_lands_off_a_raise_grid(
     states: Mapping[str, FloatND | IntND],
     holders: BoolND,
 ) -> None:
-    """Refuse an arrival fallback landing off a grid declared `off_grid="raise"`.
+    """Refuse a participation fallback landing off a grid declared `off_grid="raise"`.
 
     A `clip_state` grid's landing is clipped where the fallback is projected.
     """
@@ -838,7 +844,7 @@ def _fail_if_a_fallback_lands_off_a_raise_grid(
                     target=fallback_name,
                     period=period,
                     state=state,
-                    phase="arrival fallback",
+                    phase="participation fallback",
                 )
             )
 

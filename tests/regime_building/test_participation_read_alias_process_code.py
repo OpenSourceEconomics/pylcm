@@ -1,6 +1,6 @@
-"""A colliding arrival read retains its actual persistent-process code reader.
+"""A colliding participation read retains its actual persistent-process code reader.
 
-The only code consumer is the arrival predicate: its explicit read ``z`` is 10,
+The only code consumer is the participation predicate: its explicit read ``z`` is 10,
 while landed physical z=0 has ordinal 1 on [-1, 0, 1]. Target utility is 6 and
 fallback utility is 10, so the literal source value is 3 at beta=1/2. A merged
 read/physical channel changes that choice. Off-node entries and paths must use
@@ -14,10 +14,10 @@ import pytest
 
 from lcm import (
     AgeGrid,
-    ArrivalDecision,
-    ArrivalRead,
     ByAge,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     Phased,
     ProjectedRegimeValue,
     Regime,
@@ -96,11 +96,11 @@ def _model(*, off_node: bool = False, continuous_phase: str | None = None) -> Mo
             "source": Transition(
                 targets={"target": 0, "fallback": 0},
                 law=ByAge(cases={0: "target"}),
-                arrivals={
-                    "target": ArrivalDecision(
+                participation={
+                    "target": ParticipationCheck(
                         predicate=_predicate,
                         reads={
-                            "z": ArrivalRead(
+                            "z": ParticipationRead(
                                 kind="Raw", regime="fallback", projection={}
                             )
                         },
@@ -122,7 +122,7 @@ def _model(*, off_node: bool = False, continuous_phase: str | None = None) -> Mo
     )
 
 
-def test_arrival_read_alias_keeps_the_landed_process_node_code() -> None:
+def test_participation_read_alias_keeps_the_landed_process_node_code() -> None:
     model = _model()
     assert "edges" not in model.get_params_template()
     params = {"discount_factor": 0.5}
@@ -145,7 +145,9 @@ def test_arrival_read_alias_keeps_the_landed_process_node_code() -> None:
     np.testing.assert_array_equal(landed["value"], [6.0])
 
 
-def test_arrival_read_alias_preserves_fixed_entry_process_node_admission() -> None:
+def test_participation_read_alias_preserves_fixed_entry_process_node_admission() -> (
+    None
+):
     with pytest.raises(
         ModelInitializationError,
         match=r"entry law of 'z'.*'source'.*'target'.*off the process's nodes",
@@ -153,7 +155,7 @@ def test_arrival_read_alias_preserves_fixed_entry_process_node_admission() -> No
         _model(off_node=True)
 
 
-def test_arrival_read_alias_model_pickle_replays_the_original_solution() -> None:
+def test_participation_read_alias_model_pickle_replays_the_original_solution() -> None:
     model = _model()
     params = {"discount_factor": 0.5}
     solution = model.solve(params=params, log_level="off")
@@ -186,7 +188,7 @@ def test_arrival_read_alias_model_pickle_replays_the_original_solution() -> None
     np.testing.assert_array_equal(landed["value"], [6.0])
 
 
-def test_arrival_read_alias_preserves_process_path_node_admission() -> None:
+def test_participation_read_alias_preserves_process_path_node_admission() -> None:
     model = _model()
     params = {"discount_factor": 0.5}
     solution = model.solve(params=params, log_level="off")
@@ -208,7 +210,7 @@ def test_arrival_read_alias_preserves_process_path_node_admission() -> None:
 
 
 @pytest.mark.parametrize("phase", ["solve", "simulate"])
-def test_arrival_read_alias_uses_both_canonical_process_phase_bindings(
+def test_participation_read_alias_uses_both_canonical_process_phase_bindings(
     phase: str,
 ) -> None:
     with pytest.raises(
