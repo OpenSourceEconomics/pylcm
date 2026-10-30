@@ -309,30 +309,47 @@ class InformationQueryCell:
             else support_size(node=node, period=node.read.period)
         )
 
+    def _pinned(self, *, name: str) -> tuple[IntND, IntND] | None:
+        """The representatives of `name`'s rows and the gather spreading them."""
+        if name == self.realised_root:
+            return None
+        return pinned_support(name=name, definitions=self.definitions)
+
+    def _axis(self, *, name: str, node: QueryNode) -> int:
+        """Rows `name` gives its descendants' answers: one per representative."""
+        pinned = self._pinned(name=name)
+        return self._size(name=name, node=node) if pinned is None else pinned[0].size
+
     def _map_support(
-        self, *, point: Callable[[IntND], PolicyAnswer], name: str, node: QueryNode
+        self,
+        *,
+        point: Callable[[IntND, IntND], PolicyAnswer],
+        name: str,
+        node: QueryNode,
+        spread: bool,
     ) -> PolicyAnswer:
-        """Evaluate each distinct support row once and spread it over its copies."""
+        """Evaluate each distinct support row once, at its row and its axis position.
+
+        With `spread`, the answers are spread over every copy; otherwise they keep
+        one entry per representative, the axis a descendant's answer carries.
+        """
         from _lcm.policy_queries import map_lanes  # noqa: PLC0415
 
-        pinned = (
-            None
-            if name == self.realised_root
-            else pinned_support(name=name, definitions=self.definitions)
-        )
+        pinned = self._pinned(name=name)
+        positions = jnp.arange(self._axis(name=name, node=node), dtype=jnp.int32)
         if pinned is None:
             return map_lanes(
-                function=point,
-                operands=jnp.arange(self._size(name=name, node=node), dtype=jnp.int32),
+                function=lambda row: point(row, row),
+                operands=positions,
                 batch_size=self.row_batch,
             )
         representatives, gather = pinned
-        return jax.tree.map(
-            lambda leaf: leaf[gather],
-            map_lanes(
-                function=point, operands=representatives, batch_size=self.row_batch
-            ),
+        answers = map_lanes(
+            function=lambda position: point(representatives[position], position),
+            operands=positions,
+            batch_size=self.row_batch,
         )
+        return jax.tree.map(lambda leaf: leaf[gather], answers) if spread else answers
 
     def __call__(
         self, *, live: BoolND, source: SourceStates, dependencies: Dependencies
@@ -723,24 +740,33 @@ class InformationQueryCell:
                     dependencies=dependencies,
                 )
 
-            def point(row: IntND) -> PolicyAnswer:
+            # keyword-only-exempt: library-callback=_map_support
+            def point(row: IntND, at: IntND) -> PolicyAnswer:
                 return self._ancestors(
                     position=position + 1,
                     frames={**frames, name: _row(frame=frame, row=row)},
-                    indices=(*indices, row),
+                    indices=(*indices, at),
                     live=live,
                     source=source,
                     dependencies=dependencies,
                 )
 
-            answers = self._map_support(point=point, name=name, node=node)
+            answers = self._map_support(point=point, name=name, node=node, spread=False)
             present = jnp.all(~is_represented_zero(factors), axis=0)
-            landings = answers[4]
+            pinned = self._pinned(name=name)
+            # A representative's landings count once per present row it stands for.
+            copies = (
+                present.astype(jnp.int32)
+                if pinned is None
+                else jax.ops.segment_sum(
+                    present.astype(jnp.int32),
+                    pinned[1],
+                    num_segments=pinned[0].size,
+                )
+            )
             return (
                 *answers[:4],
-                jnp.where(
-                    present.reshape((-1, *((1,) * (landings.ndim - 1)))), landings, 0
-                ),
+                _scaled_counts(counts=answers[4], copies=copies),
             )
 
         absent = vary_carry_like_body(
@@ -750,7 +776,7 @@ class InformationQueryCell:
 
     def _absent(self, *, position: int) -> PolicyAnswer:
         dimensions = tuple(
-            self._size(name=name, node=self.definitions[name])
+            self._axis(name=name, node=self.definitions[name])
             for name in self.node.ancestors[position:]
             if _has_local_information(
                 node=self.definitions[name], period=self.definitions[name].read.period
@@ -797,12 +823,13 @@ class InformationQueryCell:
                 guard=guard,
             )
 
-            def point(row: IntND) -> PolicyAnswer:
+            # keyword-only-exempt: library-callback=_map_support
+            def point(row: IntND, at: IntND) -> PolicyAnswer:
                 local = _has_local_information(
                     node=self.node, period=self.node.read.period
                 )
                 physical = {} if not local else _row(frame=frame, row=row).physical
-                dependency_index = (*indices, row) if local else indices
+                dependency_index = (*indices, at) if local else indices
                 projected = {
                     name: (
                         answer[0][dependency_index],
@@ -830,7 +857,9 @@ class InformationQueryCell:
                     projection_operands=self.projection_operands,
                 )
 
-            answers = self._map_support(point=point, name=self.name, node=self.node)
+            answers = self._map_support(
+                point=point, name=self.name, node=self.node, spread=True
+            )
             values, actions, support, valid, landings = answers
             expanded = jnp.broadcast_to(
                 factors.reshape((*factors.shape, *((1,) * (values.ndim - 1)))),
@@ -852,3 +881,13 @@ class InformationQueryCell:
             carry=self._absent(position=len(self.node.ancestors)),
         )
         return jax.lax.cond(guard, admitted, lambda: absent)
+
+
+def _scaled_counts(*, counts: IntND, copies: IntND) -> IntND:
+    """Each leading-axis entry's counts times its copies, saturating at the int32 cap.
+
+    Zero copies drop an entry, as a zero-mass row's landings are dropped.
+    """
+    cap = jnp.iinfo(jnp.int32).max
+    copies = copies.reshape((-1, *((1,) * (counts.ndim - 1))))
+    return jnp.where(counts > cap // jnp.maximum(copies, 1), cap, counts * copies)

@@ -9,7 +9,7 @@ whose guard is false reads stand-in inputs and its answer is discarded.
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import replace
-from typing import cast
+from typing import ClassVar, cast
 
 import jax
 import jax.numpy as jnp
@@ -30,6 +30,7 @@ from lcm import (
     Model,
     Periods,
     Regime,
+    RuleResult,
     categorical,
 )
 from lcm.exceptions import RegimeInitializationError
@@ -168,11 +169,14 @@ def _model(
     couple_f: Callable[..., FloatND] = _couple_f,
     wage_level: bool = False,
     width: int = _WIDTH,
+    dissolution: bool = False,
 ) -> Model:
     """Singles may marry by consent, observing every shock of the couple.
 
     With `wage_level`, single_f and the couple carry a binary `level` whose value
-    sets the wage spread, and marriage flips it.
+    sets the wage spread, and marriage flips it. With `dissolution`, the couple
+    may dissolve into lone singles: its dissolution queries then sit below the
+    formation's pinned couple rows, each with its own wage rows.
     """
     experience = DiscreteGrid(values=jnp.arange(6))
     work = DiscreteGrid(values=jnp.arange(2))
@@ -247,7 +251,9 @@ def _model(
                 **keep_level,
             },
             shocks=("wage_f", "wage_m", "match"),
+            exits={"dissolve": _dissolve()} if dissolution else {},
         ),
+        **(_alone(experience=experience, work=work) if dissolution else {}),
     }
     for name, regime in tuple(regimes.items()):
         regimes[f"{name}_terminal"] = replace(
@@ -269,6 +275,7 @@ def _model(
                     ),
                 )
                 for key, declaration in regime.exits.items()
+                if isinstance(declaration.rule, Consent)
             },
         )
     law = Normal(mu=0.0, sigma=0.3) if match_law is None else match_law
@@ -292,16 +299,92 @@ def _model(
             "match": match,
         },
         n_periods=2,
-        regime_id_class=_Regimes,
+        regime_id_class=_DissolvingRegimes if dissolution else _Regimes,
         initial_nodes=InitialNodes(by_period={0: ("couple", "single_f", "single_m")}),
         edges={
             name: {f"{name}_terminal": Periods(values=(0,))}
             for name in ("couple", "single_f", "single_m")
+            + (("alone_f", "alone_m") if dissolution else ())
         },
         execution_config=ExecutionConfig(
             device_memory_bytes=None, axis_widths={"query_cell": width}
         ),
     )
+
+
+@categorical(ordered=False)
+class _DissolvingRegimes:
+    single_f: ScalarInt
+    single_m: ScalarInt
+    couple: ScalarInt
+    alone_f: ScalarInt
+    alone_m: ScalarInt
+    single_f_terminal: ScalarInt
+    single_m_terminal: ScalarInt
+    couple_terminal: ScalarInt
+    alone_f_terminal: ScalarInt
+    alone_m_terminal: ScalarInt
+
+
+def _experience_f(experience_f: IntND) -> IntND:
+    return experience_f
+
+
+def _experience_m(experience_m: IntND) -> IntND:
+    return experience_m
+
+
+class _StrictParticipation:
+    """Keep the couple's best action that both spouses prefer to dissolving."""
+
+    reads_outside_values: ClassVar[bool] = True
+
+    def __call__(
+        self,
+        *,
+        Q_f: FloatND,
+        Q_m: FloatND,
+        exit_payoffs: Mapping[str, Mapping[str, FloatND]],
+        alternative_ids: IntND,
+        pareto_weights: Mapping[str, FloatND],
+    ) -> RuleResult:
+        q_f, q_m = Q_f.reshape(-1), Q_m.reshape(-1)
+        outside = exit_payoffs["dissolve"]
+        kept = (q_f > outside["f"]) & (q_m > outside["m"])
+        objective = pareto_weights["f"] * q_f + pareto_weights["m"] * q_m
+        stay = jnp.argmax(jnp.where(kept, objective, -jnp.inf))
+        return RuleResult(
+            action=alternative_ids[jnp.where(jnp.any(kept), stay, q_f.size)]
+        )
+
+
+def _dissolve() -> Exit:
+    return Exit(
+        targets={
+            member: ExitTarget(
+                regime=f"alone_{member}",
+                projection={
+                    "experience": _experience_f if member == "f" else _experience_m
+                },
+            )
+            for member in ("f", "m")
+        },
+        rule=_StrictParticipation(),
+    )
+
+
+def _alone(*, experience: DiscreteGrid, work: DiscreteGrid) -> dict[str, Regime]:
+    """Singles without a formation exit, so dissolving cannot re-marry."""
+    return {
+        f"alone_{member}": Regime(
+            states={"experience": experience},
+            actions={"work": work},
+            functions={"utility": _single_f if member == "f" else _single_m},
+            shocks=(f"wage_{member}",),
+            state_transitions={"experience": _next_experience},
+        )
+        for member in ("f", "m")
+    }
 
 
 def _chunk_loop_trips(*, model: Model, monkeypatch: pytest.MonkeyPatch) -> list[int]:
@@ -343,6 +426,17 @@ def test_cells_of_a_chunk_run_as_one_batch(monkeypatch: pytest.MonkeyPatch) -> N
     trips = _chunk_loop_trips(model=_model(), monkeypatch=monkeypatch)
     assert _WIDTH not in trips
     assert 2 in trips
+
+
+def test_a_default_chunk_steps_through_two_thousand_support_rows() -> None:
+    """A 64-cell chunk evaluates 2048 rows per step, 131072 lanes.
+
+    Steps are launch-bound: on the EKL age-65 singles a step four times wider
+    took 22% less time per chunk, while one sixteen times wider gained nothing
+    more and tripled the compiler workspace.
+    """
+    assert policy_queries._row_batch(chunk_size=64) == 2048
+    assert policy_queries._row_batch(chunk_size=4096) == policy_queries._ROW_BATCH
 
 
 def test_halving_the_chunk_doubles_the_support_rows_per_step(
@@ -433,6 +527,54 @@ def _unpinned_scalar_values(
         patch.setattr(policy_queries, "map_lanes", _scalar_lanes)
         patch.setattr(query_information, "pinned_support", lambda **_: None)
         return _values(model())
+
+
+def test_pinned_ancestor_rows_stay_one_per_representative(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A dissolution query below the pinned couple keeps one couple row, not copies.
+
+    Its answer has an axis per ancestor: the formation's own rows, then the
+    couple's. The couple's eight rows are copies of one representative, and
+    materializing them multiplies the answer that travels to the couple query.
+    """
+    shapes = {}
+    original = query_information.InformationQueryCell.__call__
+
+    def record(self, **kwargs):
+        answer = original(self, **kwargs)
+        if len(self.node.ancestors) == 2:
+            shapes[self.node.read.target] = answer[0].shape
+        return answer
+
+    monkeypatch.setattr(query_information.InformationQueryCell, "__call__", record)
+    _values(_model(dissolution=True))
+    # Formation rows: two own wage rows times four observed couple rows.
+    assert shapes["alone_f"][:2] == (8, 1)
+    assert shapes["alone_m"][:2] == (8, 1)
+
+
+def test_pinned_ancestor_rows_reproduce_the_full_row_reduction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Queries below a pinned ancestor equal the scalar branches over every row."""
+
+    def model() -> Model:
+        return _model(n_match=3, dissolution=True)
+
+    _assert_same_values(
+        got=_values(model()),
+        expected=_unpinned_scalar_values(model=model, monkeypatch=monkeypatch),
+    )
+
+
+def test_representative_landings_count_once_per_present_copy() -> None:
+    """A representative's landing counts stand for each present row it replaces."""
+    counts = jnp.asarray([[2, 1], [3, 0], [2**30, 1]], dtype=jnp.int32)
+    scaled = query_information._scaled_counts(
+        counts=counts, copies=jnp.asarray([2, 0, 4], dtype=jnp.int32)
+    )
+    np.testing.assert_array_equal(scaled, [[4, 2], [0, 0], [2**31 - 1, 4]])
 
 
 def test_partly_observed_group_keeps_its_rows(monkeypatch: pytest.MonkeyPatch) -> None:

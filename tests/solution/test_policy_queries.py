@@ -802,6 +802,32 @@ def test_query_closure_narrows_by_halving_the_chunk() -> None:
     assert narrowed.narrow_workspace() is None
 
 
+@pytest.mark.parametrize(
+    ("reservation", "chunk_size"),
+    [(1_000, 4), (1_001, 2), (2_000, 2), (2_001, 1), (10**9, 1)],
+)
+def test_refused_closure_narrows_to_its_fitting_width_in_one_pass(
+    *, reservation: int, chunk_size: int
+) -> None:
+    """A refusal halves the chunk as often as its reservation exceeds the room.
+
+    A reservation at most proportional to the chunk fits after those halvings, so
+    one planning pass reaches it and no fitting width is skipped.
+    """
+    model = _native_model(enable_jit=True, chunk_size=8, source_size=16)
+    error = backward._CellBudgetError(
+        message="refused",
+        triple=("root", 0, "_chunks"),
+        reservation_bytes=reservation,
+        resident_bytes=100,
+        budget_bytes=600,
+    )
+    regimes = backward._narrow_native_closure(regimes=model._regimes, error=error)
+    kernel = regimes["root"].solution.period_kernels[0]
+    assert isinstance(kernel, queries._PolicyQueryKernel)
+    assert kernel.chunk_size == chunk_size
+
+
 def test_narrowed_chunk_with_an_unchanged_bank_compiles_its_own_program(
     *, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1795,7 +1821,7 @@ def test_budget_refusal_logs_the_resident_split_of_its_busiest_device(
     )
     model = _native_model(enable_jit=True, target_roles=64, budget=budget)
     kernel = _fanout_kernel(model=model)
-    monkeypatch.setattr(type(kernel), "narrow_workspace", lambda _self: None)
+    monkeypatch.setattr(type(kernel), "narrow_workspace", lambda _self, **_: None)
     with (
         caplog.at_level(logging.WARNING, logger="lcm"),
         pytest.raises(backward.ExecutionPlanningError, match="budget") as error,

@@ -431,12 +431,12 @@ class _BorrowedParticipationKernel:
             self, base=self.base.with_fixed_params(fixed_flat_params=fixed_flat_params)
         )
 
-    def narrow_workspace(self) -> PeriodKernel | None:
+    def narrow_workspace(self, *, halvings: int = 1) -> PeriodKernel | None:
         """Preserve the genuine producer's existing bounded-workspace alternatives."""
         narrow = getattr(self.base, "narrow_workspace", None)
         if not callable(narrow):
             return None
-        candidate = narrow()
+        candidate = narrow(halvings=halvings)
         return None if candidate is None else replace(self, base=candidate)
 
     def __call__(

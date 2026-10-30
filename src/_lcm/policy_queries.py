@@ -91,7 +91,7 @@ _QUERY_ARGUMENTS = "query_arguments"
 # put while the step count, and with it the launch count, does not grow.
 # ponytail: a fixed lane target; derive it from the budget if a step outgrows it.
 _ROW_BATCH = 64
-_STEP_LANES = 32768
+_STEP_LANES = 131072
 _FLAT_OPERAND_PATH_LENGTH = 2
 
 
@@ -2079,8 +2079,8 @@ class _PolicyQueryKernel:
         """Publish the sole native declaration authority."""
         return self.programs
 
-    def narrow_workspace(self) -> PeriodKernel | None:
-        """Halve the common chunk, refusing below one source cell."""
+    def narrow_workspace(self, *, halvings: int = 1) -> PeriodKernel | None:
+        """Halve the common chunk `halvings` times, refusing below one source cell."""
         if self.chunk_size == 1:
             return None
         candidate = build_policy_query_kernel(
@@ -2088,7 +2088,7 @@ class _PolicyQueryKernel:
             period=self.period,
             definitions=self.definitions,
             root=self.root,
-            chunk_size=max(1, self.chunk_size // 2),
+            chunk_size=max(1, self.chunk_size >> halvings),
         )
         return candidate.with_fixed_params(fixed_flat_params=self.fixed_flat_params)
 

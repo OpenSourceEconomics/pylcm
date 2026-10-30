@@ -4111,11 +4111,30 @@ def _triples_within_budget(
 
 
 class _CellBudgetError(WorkspaceBudgetError):
-    """A budget-only refusal tied to one actual regime-period core."""
+    """A budget-only refusal tied to one actual regime-period core.
 
-    def __init__(self, *, message: str, triple: _CoreTriple) -> None:
+    With the smallest refused reservation, the resident bytes and the budget,
+    `halvings` is how often a reservation proportional to the workspace width
+    must halve before it fits beside the resident bytes; one otherwise.
+    """
+
+    def __init__(
+        self,
+        *,
+        message: str,
+        triple: _CoreTriple,
+        reservation_bytes: int | None = None,
+        resident_bytes: int = 0,
+        budget_bytes: int = 0,
+    ) -> None:
         super().__init__(message)
         self.triple = triple
+        room = budget_bytes - resident_bytes
+        halvings = 1
+        if reservation_bytes is not None and room > 0:
+            while reservation_bytes > room << halvings:
+                halvings += 1
+        self.halvings = halvings
 
 
 class _CellBudgetRefusalsError(WorkspaceBudgetError):
@@ -4138,7 +4157,7 @@ def _narrow_native_closure(
     regime = regimes[name]
     kernel = regime.solution.period_kernels[period]
     narrow = getattr(kernel, "narrow_workspace", None)
-    replacement = None if narrow is None else narrow()
+    replacement = None if narrow is None else narrow(halvings=error.halvings)
     if replacement is None:
         raise error
     kernels = dict(regime.solution.period_kernels)
@@ -4205,6 +4224,7 @@ def _width_selection_failure(
     execution: ResolvedExecution,
     error: ExecutionPlanningError,
     skipped_fallback_evaluations: int = 0,
+    reservation_bytes: int | None = None,
 ) -> ExecutionPlanningError:
     """Name the cell a workspace refusal belongs to and what it competed with.
 
@@ -4231,7 +4251,13 @@ def _width_selection_failure(
             "budget."
         )
     return (
-        _CellBudgetError(message=msg, triple=triple)
+        _CellBudgetError(
+            message=msg,
+            triple=triple,
+            reservation_bytes=reservation_bytes,
+            resident_bytes=resident_bytes,
+            budget_bytes=budget_bytes,
+        )
         if isinstance(error, WorkspaceBudgetError)
         else ExecutionPlanningError(msg)
     )
@@ -5024,6 +5050,14 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                     error=error,
                     skipped_fallback_evaluations=skipped_fallback_evaluations.get(
                         triple, 0
+                    ),
+                    reservation_bytes=min(
+                        (
+                            memory_by_compiled_id[id(executable)].reservation_bytes
+                            for executable in compiled_by_width.values()
+                            if id(executable) in memory_by_compiled_id
+                        ),
+                        default=None,
                     ),
                 )
                 if not isinstance(failure, _CellBudgetError):
