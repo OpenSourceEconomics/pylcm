@@ -139,7 +139,7 @@ def test_outer_helper_runner_keeps_the_new_population_separate_and_required(
     assert report["admitted_outer_helper_mutations"] == []
     assert report["all_rejected"]
     assert report["mutation_count"] == 422
-    assert report["supplemental_mutation_count"] == 97
+    assert report["supplemental_mutation_count"] == 96
     assert report["retained_prefix_mutation_count"] == 113
     for name, case in cases.items():
         assert case["rejected"]
@@ -273,7 +273,7 @@ def test_outer_helper_failure_prevents_the_actual_runner_aggregate(
     assert report["clean"]["ok"]
     assert report["clean"]["errors"] == []
     assert report["mutation_count"] == 422
-    assert report["supplemental_mutation_count"] == 97
+    assert report["supplemental_mutation_count"] == 96
     assert report["retained_prefix_mutation_count"] == 113
     assert not report["all_rejected"]
     if fault == "admitted":

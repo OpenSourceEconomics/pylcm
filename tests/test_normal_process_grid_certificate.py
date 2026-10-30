@@ -134,16 +134,16 @@ def test_normal_controls_preserve_all_historical_populations() -> None:
     # The engine redesign adds this one canonical-writer dtype control.
     added_engine_controls = {"candidate_materialization:array_writer_dtype_widened"}
     assert added_engine_controls <= historical
-    assert len(historical) == 615
+    assert len(historical) == 614
     historical_before_s1 = historical - added_rng_controls - added_engine_controls
-    assert len(historical_before_s1) == 613
-    assert len(historical_before_s1 - added_initial_controls) == 601
+    assert len(historical_before_s1) == 612
+    assert len(historical_before_s1 - added_initial_controls) == 600
     assert (
         len(historical_before_s1 - added_initial_controls - added_feasibility_controls)
-        == 599
+        == 598
     )
     assert "src/_lcm/solution/feasibility.py" in direct_flow._CERTIFIED_CORRIDOR_SOURCES
-    assert len(direct_flow._CERTIFIED_CORRIDOR_SOURCES) == 179
+    assert len(direct_flow._CERTIFIED_CORRIDOR_SOURCES) == 178
     added_corridor_sources = (
         set(_S1_CORRIDOR_SOURCES)
         | set(_CURRENT_IID_CORRIDOR_SOURCES)
@@ -162,13 +162,14 @@ def test_normal_controls_preserve_all_historical_populations() -> None:
         and relative not in _NESTED_CORRIDOR_SOURCES
         and relative not in added_corridor_sources
     )
-    assert len(original_corridor_sources) == 117
-    # Exact ordered source roster from 0a39539fd628bb60dcae2d3cca601816fe4832f4.
+    assert len(original_corridor_sources) == 116
+    # Exact ordered source roster from 0a39539fd628bb60dcae2d3cca601816fe4832f4,
+    # less src/_lcm/simulation/policy_diagnostics.py, deleted with its control.
     assert (
         hashlib.sha256(
             ("\n".join(original_corridor_sources) + "\n").encode()
         ).hexdigest()
-        == "176867afe4246804efd4231a7a7a8439c6852d2bd099f6f537d3597473d70c85"
+        == "88e96568e7985d187373f1bd1accb4d9dd9b5b0c8176e2695b9d6dbe3f7fb87f"
     )
 
 
