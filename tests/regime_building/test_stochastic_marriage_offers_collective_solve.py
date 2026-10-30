@@ -2,11 +2,11 @@
 
 EKL 2019's marriage market (eqs. 24-26): a single may receive a marriage OFFER
 — a stochastic draw of a potential spouse's attributes, with an offer
-distribution conditioned on the single's own education. Consent (eq. 27, an
-`ArrivalDecision`) then compares the household's married value (given the DRAWN
+distribution conditioned on the single's own education. Consent (eq. 27, a
+`ParticipationCheck`) then compares the household's married value (given the DRAWN
 spouse) against each partner's own outside option.
 
-**What this adds on top of the surrounding machinery.** The arrival decision
+**What this adds on top of the surrounding machinery.** The participation check
 `Wbar = jnp.where(consent, V_target, V_fallback)` is read at the TARGET
 regime's landing, and the continuation already averages a
 non-terminal regime's continuation over any `StochasticTransition`-declared
@@ -19,7 +19,7 @@ states").
 So the marriage-offer mechanism below is closing a GAP IN TESTING, not a gap
 in the engine: a spouse-type offer, drawn via a `StochasticTransition` on a
 target-only state conditioned on the single's own education, feeding a
-mutual-consent arrival decision. `test_stochastic_marriage_offer_*` proves this
+mutual-consent participation check. `test_stochastic_marriage_offer_*` proves this
 composition numerically, hand-computed. `test_job_offer_gates_...` pins the
 adjacent (already-generic) claim that ordinary discrete stochastic states can
 gate action FEASIBILITY, not just shift utility (the mood test in
@@ -53,12 +53,12 @@ from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
     AgeRange,
-    ArrivalDecision,
-    ArrivalRead,
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -81,7 +81,7 @@ from tests.collective_fixtures import recorded_dissolution_flags
 from tests.conftest import bind_laws, build_prepared_structure
 
 # Stochastic marriage offer: single_f (singleton) -> married_terminal (collective),
-# with a spouse-type draw feeding the mutual-consent arrival decision.
+# with a spouse-type draw feeding the mutual-consent participation check.
 
 
 @categorical(ordered=True)
@@ -227,28 +227,28 @@ def _single_f_transition() -> Transition:
                 }
             }
         ),
-        arrivals={
-            "married_terminal": ArrivalDecision(
+        participation={
+            "married_terminal": ParticipationCheck(
                 predicate=_consent_gate,
                 reads={
-                    "V_target_f": ArrivalRead(
+                    "V_target_f": ParticipationRead(
                         regime="married_terminal",
                         stakeholder="f",
                         kind="Participating",
                         projection=_married_projection(),
                     ),
-                    "V_target_m": ArrivalRead(
+                    "V_target_m": ParticipationRead(
                         regime="married_terminal",
                         stakeholder="m",
                         kind="Participating",
                         projection=_married_projection(),
                     ),
-                    "V_single_f_ref": ArrivalRead(
+                    "V_single_f_ref": ParticipationRead(
                         regime="single_f_terminal",
                         kind="Raw",
                         projection={"education": _identity_education},
                     ),
-                    "V_single_m_ref": ArrivalRead(
+                    "V_single_m_ref": ParticipationRead(
                         regime="single_m_terminal",
                         kind="Raw",
                         projection={"education": _spouse_type_as_education},
@@ -429,7 +429,7 @@ class JobRegimeId:
 
 
 def _offer_arrival_probs() -> FloatND:
-    """Unconditional offer arrival: P(offer'=0)=0.4, P(offer'=1)=0.6."""
+    """Unconditional offer participation check: P(offer'=0)=0.4, P(offer'=1)=0.6."""
     return jnp.array([0.4, 0.6])
 
 

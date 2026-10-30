@@ -1,4 +1,4 @@
-"""Global physical names cannot become source arrival parameters.
+"""Global physical names cannot become source participation check parameters.
 
 The landing target holds no current shock. An explicitly queried fallback can
 produce its observed eps; an unrelated regime alone cannot. On nodes [-1, 1],
@@ -12,10 +12,10 @@ import pytest
 
 from lcm import (
     AgeGrid,
-    ArrivalDecision,
-    ArrivalRead,
     ByAge,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -93,11 +93,11 @@ def _model(
             "source": Transition(
                 targets={"target": 0, "fallback": 0},
                 law=ByAge(cases={0: "target"}),
-                arrivals={
-                    "target": ArrivalDecision(
+                participation={
+                    "target": ParticipationCheck(
                         predicate=predicate,
                         reads={
-                            read_name: ArrivalRead(
+                            read_name: ParticipationRead(
                                 kind="Raw",
                                 regime="fallback",
                                 projection={},
@@ -123,9 +123,9 @@ def _model(
     )
 
 
-def test_foreign_physical_input_cannot_become_an_arrival_edge_parameter() -> None:
+def test_foreign_physical_input_cannot_become_a_participation_edge_parameter() -> None:
     with pytest.raises(
-        RegimeInitializationError, match=r"Arrival callback.*unobserved.*eps"
+        RegimeInitializationError, match=r"Participation callback.*unobserved.*eps"
     ):
         _model(observed=False, producer=False)
 
@@ -137,7 +137,7 @@ def test_declared_foreign_observation_requires_an_actual_query_producer() -> Non
         _model(observed=True, producer=False)
 
 
-def test_arrival_observes_physical_input_from_its_actual_read_producer() -> None:
+def test_participation_observes_physical_input_from_its_actual_read_producer() -> None:
     model = _model(observed=True, producer=True)
     assert "edges" not in model.get_params_template()
     solution = model.solve(params={"discount_factor": 0.5}, log_level="off")
@@ -175,7 +175,7 @@ def test_foreign_continuous_physical_code_keeps_its_domain_refusal() -> None:
         _model(observed=True, producer=True, predicate=_physical_code)
 
 
-def test_explicit_arrival_read_shadows_a_global_physical_name() -> None:
+def test_explicit_participation_read_shadows_a_global_physical_name() -> None:
     model = _model(
         observed=False, producer=False, predicate=_read_only, read_name="eps"
     )

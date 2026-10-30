@@ -121,7 +121,7 @@ type ValueTemplate = FloatND | jax.ShapeDtypeStruct
 
 
 @dataclass(frozen=True, kw_only=True)
-class ArrivalQueryArguments:
+class ParticipationQueryArguments:
     """Declared dynamic Q operands for each incoming target's dated query graph."""
 
     by_target: Mapping[RegimeName, Mapping[str, QAndFKwargs]]
@@ -151,7 +151,7 @@ type QAndFArg = (
     EconFunctionArg
     | Mapping[RegimeName, FloatND]
     | Mapping[RegimeName, Mapping[QualifiedName, ParamsLeaf]]
-    | ArrivalQueryArguments
+    | ParticipationQueryArguments
 )
 type QAndFKwargs = Mapping[ReferenceName, QAndFArg]
 
@@ -382,37 +382,37 @@ else:
     type PytreeChild = object
 
 
-def _flatten_arrival_arguments(
-    arguments: ArrivalQueryArguments,
+def _flatten_participation_arguments(
+    arguments: ParticipationQueryArguments,
 ) -> tuple[tuple[PytreeChild, ...], None]:
     """Expose the dynamic query operands under their declared field name."""
     return (cast("PytreeChild", arguments.by_target),), None
 
 
-def _flatten_arrival_arguments_with_keys(
-    arguments: ArrivalQueryArguments,
+def _flatten_participation_arguments_with_keys(
+    arguments: ParticipationQueryArguments,
 ) -> tuple[tuple[tuple[jax.tree_util.GetAttrKey, PytreeChild], ...], None]:
-    children, metadata = _flatten_arrival_arguments(arguments)
+    children, metadata = _flatten_participation_arguments(arguments)
     return ((jax.tree_util.GetAttrKey("by_target"), children[0]),), metadata
 
 
 # keyword-only-exempt: library-callback=jax.tree_util.register_pytree_with_keys
-def _unflatten_arrival_arguments(
+def _unflatten_participation_arguments(
     metadata: None, children: Iterable[PytreeChild]
-) -> ArrivalQueryArguments:
+) -> ParticipationQueryArguments:
     """Rebuild JAX's abstract placeholders outside the checked runtime boundary."""
     del metadata
     (by_target,) = children
-    arguments = object.__new__(ArrivalQueryArguments)
+    arguments = object.__new__(ParticipationQueryArguments)
     object.__setattr__(arguments, "by_target", by_target)
     return arguments
 
 
 jax.tree_util.register_pytree_with_keys(
-    ArrivalQueryArguments,
-    _flatten_arrival_arguments_with_keys,
-    _unflatten_arrival_arguments,
-    _flatten_arrival_arguments,
+    ParticipationQueryArguments,
+    _flatten_participation_arguments_with_keys,
+    _unflatten_participation_arguments,
+    _flatten_participation_arguments,
 )
 
 if TYPE_CHECKING:
@@ -517,8 +517,8 @@ type SimulationPolicy = (
 type PeriodToRegimeToSimulationPolicy = MappingProxyType[
     int, MappingProxyType[RegimeName, SimulationPolicy]
 ]
-# Stored arrival surfaces by period, publishing regime and payload leaf name.
-type PeriodToRegimeToArrivalSurfaces = MappingProxyType[
+# Stored participation surfaces by period, publishing regime and payload leaf name.
+type PeriodToRegimeToParticipationSurfaces = MappingProxyType[
     int, MappingProxyType[RegimeName, MappingProxyType[str, FloatND]]
 ]
 

@@ -1,9 +1,9 @@
-"""An arrival-decision source solves beside an endogenous-grid regime.
+"""A participation-check source solves beside an endogenous-grid regime.
 
 Two independent branches share one lifecycle. On one branch a household chooses
 consumption on a liquid asset and is solved by `EGM`. On the other a household
 holds `wealth`, is solved by `GridSearch`, and reaches its terminal regime
-through an `ArrivalDecision`: it moves only where moving beats staying, and takes the
+through a `ParticipationCheck`: it moves only where moving beats staying, and takes the
 stay value everywhere else.
 
 Nothing connects the two branches — no transition, no same-period reference —
@@ -31,13 +31,13 @@ import numpy as np
 from lcm import (
     AgeGrid,
     AgeRange,
-    ArrivalDecision,
-    ArrivalRead,
     ByAge,
     ConsumptionSavingsRegime,
     LinSpacedGrid,
     LiquidMargin,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -154,8 +154,8 @@ def _mover_transition() -> Transition:
                 }
             }
         ),
-        arrivals={
-            "moved_terminal": ArrivalDecision(
+        participation={
+            "moved_terminal": ParticipationCheck(
                 predicate=_move_gate,
                 routes={
                     "self": StakeholderRoute(
@@ -166,12 +166,12 @@ def _mover_transition() -> Transition:
                     )
                 },
                 reads={
-                    "V_target": ArrivalRead(
+                    "V_target": ParticipationRead(
                         kind="Raw",
                         regime="moved_terminal",
                         projection={"wealth": _identity_wealth},
                     ),
-                    "V_stay_ref": ArrivalRead(
+                    "V_stay_ref": ParticipationRead(
                         kind="Raw",
                         regime="stay_terminal",
                         projection={"wealth": _identity_wealth},

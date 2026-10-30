@@ -20,14 +20,14 @@ import pytest
 from _lcm.simulation.shock_paths import fail_if_a_held_process_code_is_off_node
 from lcm import (
     AgeGrid,
-    ArrivalDecision,
-    ArrivalRead,
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
     Gate,
     Model,
     NormalIIDProcess,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -235,8 +235,8 @@ def _gate_model(*, on_node: bool, enable_jit: bool) -> Model:
 def _dissolution_model(*, on_node: bool, enable_jit: bool) -> Model:
     """Collective source landing in `a`, which has no policy at the middle node.
 
-    The arrival decides the landing by `a`'s policy support; the off-node model's
-    `f` route projects back into `a`, which reads `z_code`.
+    The participation check decides the landing by `a`'s policy support; the off-node
+    model's `f` route projects back into `a`, which reads `z_code`.
     """
     work = DiscreteGrid(category_class=Work)
     routes = {
@@ -253,11 +253,11 @@ def _dissolution_model(*, on_node: bool, enable_jit: bool) -> Model:
             fallback=ProjectedRegimeValue(regime="b", projection={"z": _project_one}),
         ),
     }
-    arrivals = {
-        "a": ArrivalDecision(
+    participation = {
+        "a": ParticipationCheck(
             predicate=_has_policy_support,
             reads={
-                "target_support": ArrivalRead(
+                "target_support": ParticipationRead(
                     regime="a",
                     stakeholder="f",
                     kind="Participating",
@@ -295,7 +295,7 @@ def _dissolution_model(*, on_node: bool, enable_jit: bool) -> Model:
         edges={
             "source": Transition(
                 law=ByAge(cases={0: {"a": StochasticTransition(func=_prob_one)}}),
-                arrivals=arrivals,
+                participation=participation,
             )
         },
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),

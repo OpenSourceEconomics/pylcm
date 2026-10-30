@@ -1309,7 +1309,7 @@ def _initial_own_stakeholder(
             source
             for regime in regimes.values()
             for plan in regime.simulation.exit_queries.values()
-            for source, entry in plan.arrivals.items()
+            for source, entry in plan.participation.items()
             if len(entry.target_roles) > 1
         }
     )

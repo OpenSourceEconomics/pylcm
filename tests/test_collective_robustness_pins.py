@@ -34,9 +34,9 @@ from lcm import (
     categorical,
     fixed_transition,
 )
-from lcm.arrivals import ArrivalDecision
 from lcm.collective import ProjectedRegimeValue, StakeholderRoute
 from lcm.exceptions import PyLCMError
+from lcm.participation import ParticipationCheck
 from lcm.result import SimulationResult
 from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
@@ -57,7 +57,7 @@ GATE_WAGE_GRID = LinSpacedGrid(start=1.0, stop=2.0, n_points=2)
 
 @categorical(ordered=False)
 class GateRegimeId:
-    """Regime ids of the model whose arrival reads a dissolution flag."""
+    """Regime ids of the model whose participation reads a dissolution flag."""
 
     source: ScalarInt  # code 0
     target: ScalarInt  # code 1
@@ -135,10 +135,10 @@ def test_non_integral_categorical_coordinate_is_rejected():
         find_coordinate(health=jnp.asarray(0.5))
 
 
-def test_arrival_reading_a_dissolution_flag_is_rejected_at_build():
-    """An arrival decision reading `D_target` is rejected while it is declared.
+def test_participation_reading_a_dissolution_flag_is_rejected_at_build():
+    """A participation check reading `D_target` is rejected while it is declared.
 
-    No regime publishes a dissolution flag for an arrival to read, and no
+    No regime publishes a dissolution flag for a participation check to read, and no
     argument to `solve` or `simulate` can supply one; a decision about whether
     the target can act reads its typed policy support instead.
     """
@@ -179,7 +179,7 @@ def _drop_stakeholder_metadata(*, directory: Path) -> None:
 
 
 def _make_singleton_target_dissolution_gate_regimes() -> MappingProxyType[str, Regime]:
-    """Build regimes whose arrival reads the dissolution flag of a singleton target.
+    """Build regimes whose participation reads a singleton target's dissolution flag.
 
     Returns:
         Immutable mapping of the three regime names to regimes: the gated
@@ -205,10 +205,10 @@ def _make_singleton_target_dissolution_gate_regimes() -> MappingProxyType[str, R
 
 
 def _make_dissolution_gate_transition() -> Transition:
-    """Build the source's transition: a dissolution-read arrival in `target` at age 0.
+    """Build the source's transition: a dissolution-read participation check at age 0.
 
     Returns:
-        The `Transition` choosing between `target`, through an arrival reading
+        The `Transition` choosing between `target`, through a participation reading
         the target's dissolution flag, and the never-entered `fallback`.
 
     """
@@ -222,8 +222,8 @@ def _make_dissolution_gate_transition() -> Transition:
                 }
             }
         ),
-        arrivals={
-            "target": ArrivalDecision(
+        participation={
+            "target": ParticipationCheck(
                 predicate=_no_dissolution,
                 routes={
                     "only": StakeholderRoute(
@@ -249,7 +249,7 @@ def _husband_payoff(work: DiscreteAction) -> FloatND:
 
 
 def _no_dissolution(D_target: BoolND) -> BoolND:
-    """Arrival accepted exactly where the target regime has not dissolved."""
+    """Participation check accepted exactly where the target has not dissolved."""
     return ~D_target
 
 

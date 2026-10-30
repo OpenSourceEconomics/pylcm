@@ -5,6 +5,19 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Arrival decisions are participation checks
+
+- Breaking API: `lcm.ArrivalDecision` is renamed `lcm.ParticipationCheck`,
+  `lcm.ArrivalRead` is `lcm.ParticipationRead`, and `Transition(arrivals=...)` is
+  `Transition(participation=...)`. The construct also re-checks continuing couples
+  (couple → couple, where failure means divorce); it is the per-period limited-commitment
+  participation constraint. There are no aliases; see
+  [Arrival → participation check](docs/user_guide/migrating_dated_regimes.md#arrival-participation-check).
+- The read-projection parameter path `params["edges"][source][target]["references"]`
+  is now `["reads"]`, named after `ParticipationCheck.reads`.
+- `SOLUTION_FORMAT_VERSION` is 3: archives store participation surfaces under renamed
+  manifest keys, and version-2 archives no longer load.
+
 ### EGM regimes refuse IID shocks entering utility
 
 - An endogenous-grid regime (`DCEGM`, `NBEGM`, `NEGM`, `NNBEGM`) whose `utility` reads
@@ -59,8 +72,8 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - A `Gate` predicate naming `V_target`, `V_target_<s>` or `D_target` raises the new
   `lcm.exceptions.GateReadsValueError` when the gate is declared, and
   `Gate(references=...)` raises `TypeError`. Declare a value comparison made in the
-  current period as an `Exit` in `Regime(exits=...)`, and one made on landing as an
-  `ArrivalDecision` with named `ArrivalRead`s in `Transition(arrivals=...)`; see
+  current period as an `Exit` in `Regime(exits=...)`, and one made on landing as a
+  `ParticipationCheck` with named `ParticipationRead`s in `Transition(participation=...)`; see
   [Gates route on states only](docs/user_guide/migrating_dated_regimes.md#gates-route-on-states-only).
 - `solve()` no longer publishes a `DISSOLUTION_FLAG` replay artifact, and
   `simulate(solution=...)` reads none. A household landing in a gated target cell where

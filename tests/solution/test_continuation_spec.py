@@ -147,7 +147,7 @@ def test_constant_continuation_schema_preserves_its_template():
 
 def test_period_continuation_schema_requires_its_declared_artifact_key():
     """A dated payload cannot change the artifact's represented object."""
-    declared = ArtifactKey(type_id="example_solver.arrival", schema_version=1)
+    declared = ArtifactKey(type_id="example_solver.participation", schema_version=1)
     with pytest.raises(ValueError, match="period 1"):
         ContinuationSpec(
             template=_template(),

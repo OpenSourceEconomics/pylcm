@@ -7,7 +7,7 @@ a caller must supply. It fails closed on a name that shadows a function and on a
 transition-local node read from outside its transition.
 
 `create_edge_params_template` reads the callables a source's `Model(edges=...)`
-declaration holds — its regime-transition law, gates, arrival decisions and
+declaration holds — its regime-transition law, gates, participation checks and
 route fallbacks — and returns that source's branch of `params["edges"]`.
 """
 
@@ -27,7 +27,7 @@ from _lcm.params.edges import (
     EDGES,
     FALLBACK,
     PREDICATE,
-    REFERENCES,
+    READS,
     ROUTES,
     user_path,
 )
@@ -48,13 +48,13 @@ from _lcm.typing import (
 )
 from _lcm.utils.error_messages import path_segment_name_errors
 from _lcm.utils.functools import get_union_of_args, is_user_function
-from lcm.arrivals import ArrivalDecision
 from lcm.collective import Gate
 from lcm.decoupled import (
     koopmans_aggregator_variants,
     resolve_koopmans_aggregator,
 )
 from lcm.exceptions import InvalidNameError, ModelInitializationError
+from lcm.participation import ParticipationCheck
 from lcm.phased import Phased
 from lcm.regime import ProjectedRegimeValue, StateTransitionEntry
 from lcm.regime import Regime as UserRegime
@@ -588,8 +588,8 @@ def create_edge_params_template(
     - a law over all targets ⇒ `[<param>]`;
     - a per-target cell ⇒ `[<target>][<param>]`, gated or not;
     - a target's gate predicate ⇒ `[<target>]["predicate"][<param>]`;
-    - an arrival read's projection of one reference-regime state ⇒
-      `[<target>]["references"][<read>][<state>][<param>]`;
+    - a participation read's projection of one reference-regime state ⇒
+      `[<target>]["reads"][<read>][<state>][<param>]`;
     - a route fallback's projection ⇒
       `[<target>]["routes"][<route>]["fallback"][<state>][<param>]`, with a
       `"solve"` / `"simulate"` level after `"fallback"` when it is `Phased`.
@@ -597,8 +597,8 @@ def create_edge_params_template(
     The template is read off the declared laws, every `ByAge` case and both
     phases included, so its slots do not depend on the horizon or on which cells
     a fixed zero prunes. A law runs on the source regime's grid and reads its
-    variables. A gate, an arrival predicate and a projection run on the target
-    regime's grid and read its states, an arrival's read keys, `period` and
+    variables. A gate, a participation predicate and a projection run on the target
+    regime's grid and read its states, a participation check's read keys, `period` and
     `age`; a name only the source declares is one of their parameters. None of
     the engine-bound names is a parameter. The vocabulary holds what a regime
     declares even where no demanded law reads it, so a variable that only a case
@@ -628,7 +628,7 @@ def create_edge_params_template(
     law_params_by_path: list[tuple[tuple[str, ...], Mapping[ParameterName, str]]] = []
     for transition in declared_transitions:
         for path, func, gate in iter_transition_callables(transition):
-            if isinstance(gate, ArrivalDecision):
+            if isinstance(gate, ParticipationCheck):
                 # Landed callbacks have no transition-local outputs. Other names
                 # are edge parameters, so do not walk same-named regime helpers.
                 _fail_if_a_next_name_is_read(
@@ -642,7 +642,7 @@ def create_edge_params_template(
                 if gate is None
                 else _gated_edge_wired_names(
                     read_names=frozenset(
-                        gate.reads if isinstance(gate, ArrivalDecision) else ()
+                        gate.reads if isinstance(gate, ParticipationCheck) else ()
                     ),
                     target_state_names=(
                         vocabulary_by_regime[path[0]].states
@@ -710,7 +710,7 @@ def iter_transition_callables(
     transition: Transition,
     *,
     phase: Phase | None = None,
-) -> Iterator[tuple[tuple[str, ...], UserFunction, Gate | ArrivalDecision | None]]:
+) -> Iterator[tuple[tuple[str, ...], UserFunction, Gate | ParticipationCheck | None]]:
     """Yield every callable a `Transition` holds, at its declaration path.
 
     Args:
@@ -726,7 +726,7 @@ def iter_transition_callables(
     yield from iter_edge_callables(law=transition.law, path=(), phase=phase)
     for target_regime_name, decision in {
         **transition.gates,
-        **transition.arrivals,
+        **transition.participation,
     }.items():
         yield from _route_decision_callables(
             decision=decision, path=(target_regime_name,), phase=phase
@@ -783,16 +783,16 @@ def iter_edge_callables(
 
 def _route_decision_callables(
     *,
-    decision: Gate | ArrivalDecision,
+    decision: Gate | ParticipationCheck,
     path: tuple[str, ...],
     phase: Phase | None = None,
-) -> Iterator[tuple[tuple[str, ...], UserFunction, Gate | ArrivalDecision | None]]:
+) -> Iterator[tuple[tuple[str, ...], UserFunction, Gate | ParticipationCheck | None]]:
     """Yield landed-domain callbacks at their own edge-parameter paths."""
     yield (*path, PREDICATE), decision.predicate, decision
-    reads = decision.reads if isinstance(decision, ArrivalDecision) else {}
+    reads = decision.reads if isinstance(decision, ParticipationCheck) else {}
     for ref_name, ref in reads.items():
         for state_name, projection in ref.projection.items():
-            yield (*path, REFERENCES, ref_name, state_name), projection, decision
+            yield (*path, READS, ref_name, state_name), projection, decision
     for route_name, route in decision.routes.items():
         for fallback_phase, ref in _fallbacks_by_phase(
             solve=route.solve_fallback,
@@ -828,7 +828,7 @@ def _insert_edge_slot(
 
 
 # The entries a gate's parameters nest under, below its target.
-_CELL_ENTRIES = (PREDICATE, REFERENCES, ROUTES)
+_CELL_ENTRIES = (PREDICATE, READS, ROUTES)
 
 
 def _edge_slot_clash(*, path: tuple[str, ...]) -> str:
@@ -1896,13 +1896,13 @@ def _gated_edge_wired_names(
 ) -> frozenset[ReferenceName]:
     """Return the names ONE edge's landed callables read that the engine binds.
 
-    A gate, an arrival predicate and a projection are evaluated on that edge's
+    A gate, a participation predicate and a projection are evaluated on that edge's
     TARGET regime's grid, so the names no user supplies are those of that
     evaluation, not the source's:
 
     - the target regime's states and the code `<name>_code` of each discrete
       one, which the fold binds from that regime's grids;
-    - each key of THIS edge's arrival `reads`, bound to that read's value;
+    - each key of THIS edge's participation check `reads`, bound to that read's value;
     - `period` and `age` of the fold.
 
     The set is per edge because that is what makes the answer right. A name that
@@ -1912,7 +1912,7 @@ def _gated_edge_wired_names(
     from the template, leaving the callable reading a value nothing can supply.
 
     Args:
-        read_names: The keys of the edge's arrival reads; empty for a gate.
+        read_names: The keys of the edge's participation reads; empty for a gate.
         target_state_names: State names declared by that edge's target regime,
             with the code `<name>_code` of each discrete one.
 

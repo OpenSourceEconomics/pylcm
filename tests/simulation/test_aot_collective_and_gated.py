@@ -21,12 +21,12 @@ from _lcm.typing import PytreeValue, ShapeDtypePytree
 from benchmarks.asv._compile_counters import count_compile_requests
 from lcm import (
     AgeGrid,
-    ArrivalDecision,
-    ArrivalRead,
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -120,12 +120,12 @@ def test_gated_edge_model_simulates_under_the_runtime_program(
     assert tuple(routed) == CONSENT_PERIOD_1_REGIMES
 
 
-def test_arrival_programs_reuse_compilation_for_a_repeated_population(
+def test_participation_programs_reuse_compilation_for_a_repeated_population(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A second forward call reuses the arrival programs the first one built.
+    """A second forward call reuses the participation programs the first one built.
 
-    The arrival decision is evaluated inside the compiled simulation program,
+    The participation check is evaluated inside the compiled simulation program,
     so the first call must compile and the repeated one must dispatch the same
     executables without tracing, lowering or compiling anything.
     """
@@ -243,17 +243,17 @@ def _make_consent_model() -> Model:
     single_law = ByAge(
         cases={0: {"married_terminal": StochasticTransition(func=_certain_transition)}}
     )
-    single_arrivals = {
-        "married_terminal": ArrivalDecision(
+    single_participation = {
+        "married_terminal": ParticipationCheck(
             predicate=_consent_gate,
             reads={
-                "V_target_f": ArrivalRead(
+                "V_target_f": ParticipationRead(
                     regime="married_terminal",
                     stakeholder="f",
                     kind="Participating",
                     projection={"education": _identity_education},
                 ),
-                "V_single_ref": ArrivalRead(
+                "V_single_ref": ParticipationRead(
                     regime="single_terminal",
                     kind="Raw",
                     projection={"education": _identity_education},
@@ -302,7 +302,7 @@ def _make_consent_model() -> Model:
             "single": Transition(
                 targets={"married_terminal": 0, "single_terminal": 0},
                 law=single_law,
-                arrivals=single_arrivals,
+                participation=single_participation,
             )
         },
     )

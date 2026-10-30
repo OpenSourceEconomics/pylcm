@@ -1,9 +1,9 @@
-"""A collective arrival reads its period-`t` operands on period `t`'s axes.
+"""A collective participation reads its period-`t` operands on period `t`'s axes.
 
 A collective source declares one route per stakeholder, and a collective target
 has a Participating policy support that no singleton regime has. Both enlarge
-what one arrival decision closes over: pricing reads every route's own fallback
-grid and every arrival read's, and simulation queries the target's support at
+what one participation check closes over: pricing reads every route's own fallback
+grid and every participation read's, and simulation queries the target's support at
 the realized landing. Each of those grids must be the one its regime was solved
 on in the period whose arrays are being read.
 
@@ -14,11 +14,11 @@ value maps to, and through it the gate, which is a discrete branch.
 
 Two models, one per collective-only object:
 
-- `_build_gate_ref_model` puts the moving grid on an ARRIVAL READ and gives the
+- `_build_gate_ref_model` puts the moving grid on an PARTICIPATION READ and gives the
   two stakeholders different outside options, so a wrongly-aged read moves both
   components of the source's value.
 - `_build_dissolution_model` puts it on the collective TARGET, whose support the
-  arrival reads, so a wrongly-aged read maps the realized state onto a different
+  participation reads, so a wrongly-aged read maps the realized state onto a different
   node and dissolves a household that has a feasible action.
 """
 
@@ -30,13 +30,13 @@ from numpy.testing import assert_array_almost_equal as aaae
 from lcm import (
     AgeGrid,
     AgeSpecializedGrid,
-    ArrivalDecision,
-    ArrivalRead,
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -175,7 +175,9 @@ def test_simulated_collective_gate_routes_the_couple_by_its_own_period_gate() ->
     )
 
 
-def test_collective_dissolution_arrival_routes_by_its_own_period_support() -> None:
+def test_collective_dissolution_participation_routes_by_its_own_period_support() -> (
+    None
+):
     """A couple with a feasible action stays in `pair` rather than dissolving.
 
     `pair` is feasible at age 2 exactly where `w >= 3` on its own `[0, 2, 4]`
@@ -189,11 +191,13 @@ def test_collective_dissolution_arrival_routes_by_its_own_period_support() -> No
     np.testing.assert_array_equal(routed["regime_name"].to_numpy(), np.full(2, "pair"))
 
 
-def test_collective_dissolution_arrival_prices_the_support_at_its_own_period() -> None:
+def test_collective_dissolution_participation_prices_support_at_its_own_period() -> (
+    None
+):
     """Both stakeholders of an age-1 couple are worth `(2, 7)` under a support read.
 
-    The source prices the same age-2 arrival that simulation settles. Pinning
-    the priced value here is what makes the routing assertion above a statement
+    The source prices the same age-2 participation check that simulation settles.
+    Pinning the priced value here is what makes the routing assertion above a statement
     about routing alone rather than about a continuation that moved with it.
     """
     model = _build_dissolution_model()
@@ -230,7 +234,7 @@ def test_empty_counts_use_households_and_the_periods_own_grid(
 
 
 def _build_gate_ref_model() -> Model:
-    r"""Build a couple whose arrival reads an index on an age-varying grid.
+    r"""Build a couple whose participation reads an index on an age-varying grid.
 
     Topology over ages 0-3: `couple` is collective (`stakeholders=("f", "m")`),
     active at ages 0 and 1, and stays put at age 0, so it leaves for `account` at
@@ -248,9 +252,9 @@ def _build_gate_ref_model() -> Model:
     - `annuity_f` pays $100 + \text{principal}$ and `annuity_m` pays
       $200 + \text{principal}$ on `[0, 4, 8]`, so their values are
       `[100, 104, 108]` and `[200, 204, 208]`.
-    - The age-2 arrival reads the index at a level equal to the balance: `0` at
-      balance `0` and `4` at balance `4`. Only the latter clears the hurdle of
-      `3`, so the arrival is refused at balance `0` and accepted at balance `4`.
+    - The age-2 participation reads the index at a level equal to the balance: `0` at
+      balance `0` and `4` at balance `4`. Only the latter clears the hurdle of `3`, so
+      the participation check is refused at balance `0` and accepted at balance `4`.
     - The couple enters at balance `4`, the top node of the account's grid, so
       its age-1 value is $(0, 0) + 0.5 \cdot (4, 14) = (2, 7)$.
 
@@ -317,11 +321,11 @@ def _build_gate_ref_model() -> Model:
                         1: {"account": leaving},
                     }
                 ),
-                arrivals={
-                    "account": ArrivalDecision(
+                participation={
+                    "account": ParticipationCheck(
                         predicate=_index_clears_the_hurdle,
                         reads={
-                            "index_value": ArrivalRead(
+                            "index_value": ParticipationRead(
                                 kind="IntegratedFull",
                                 regime="index",
                                 projection={"level": _level_from_balance},
@@ -351,7 +355,7 @@ def _build_gate_ref_model() -> Model:
 
 
 def _build_dissolution_model() -> Model:
-    r"""Build a couple whose arrival reads a collective target's policy support.
+    r"""Build a couple whose participation reads a collective target's policy support.
 
     Topology over ages 0-3: `couple` is collective, active at ages 0 and 1, and
     leaves for the collective `pair` at age 1 only. `pair` is active at ages 1
@@ -439,11 +443,11 @@ def _build_dissolution_model() -> Model:
                         1: {"pair": leaving},
                     }
                 ),
-                arrivals={
-                    "pair": ArrivalDecision(
+                participation={
+                    "pair": ParticipationCheck(
                         predicate=_household_has_support,
                         reads={
-                            "pair_support": ArrivalRead(
+                            "pair_support": ParticipationRead(
                                 regime="pair",
                                 stakeholder="f",
                                 kind="Participating",
@@ -612,7 +616,7 @@ def _household_has_support(pair_support: BoolND) -> BoolND:
 
 
 def _same_w(w: ContinuousState) -> ContinuousState:
-    """The arrival reads the target household at its landing `w`."""
+    """The participation reads the target household at its landing `w`."""
     return w
 
 

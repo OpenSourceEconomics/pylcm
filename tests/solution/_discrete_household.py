@@ -1,15 +1,14 @@
 """The marriage-market example on value grids, so every landing is a grid node.
 
-`lcm_examples.collective_household` lands between wealth nodes, which is where a
-stored arrival surface and an exact read at the landing differ. This twin keeps
-the example's regimes, laws, exit rule and arrival declarations, but declares
-wealth and the consumption share as `DiscreteGrid(values=...)` and rounds every
-next wealth onto its target's nodes. Couple nodes are exactly twice the single
-nodes. A value grid is shared by every regime declaring it, so couples and
-singles use one wealth grid, and half of a couple's wealth is rounded onto it
-too. Every arrival read, fallback and exit projection therefore lands on a node.
-Shares and nodes are dyadic, so with a zero interest rate every rounding is
-decided exactly at either precision.
+`lcm_examples.collective_household` lands between wealth nodes, which is where a stored
+participation surface and an exact read at the landing differ. This twin keeps the
+example's regimes, laws, exit rule and participation check declarations, but declares
+wealth and the consumption share as `DiscreteGrid(values=...)` and rounds every next
+wealth onto its target's nodes. Couple nodes are exactly twice the single nodes. A value
+grid is shared by every regime declaring it, so couples and singles use one wealth grid,
+and half of a couple's wealth is rounded onto it too. Every participation read, fallback
+and exit projection therefore lands on a node. Shares and nodes are dyadic, so with a
+zero interest rate every rounding is decided exactly at either precision.
 """
 
 from collections.abc import Callable
@@ -19,13 +18,13 @@ import numpy as np
 
 from lcm import (
     AgeGrid,
-    ArrivalDecision,
-    ArrivalRead,
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
     ExecutionConfig,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -52,11 +51,11 @@ def _identity(wealth: DiscreteState) -> DiscreteState:
 
 def _consent(
     *, stakeholder: str, fallback: str, half: Callable[..., DiscreteState]
-) -> dict[str, ArrivalDecision]:
+) -> dict[str, ParticipationCheck]:
     """A single's consent to a household, as in the example."""
     route = "her" if stakeholder == "f" else "his"
     return {
-        "couple": ArrivalDecision(
+        "couple": ParticipationCheck(
             predicate=household._mutual_consent,
             routes={
                 route: StakeholderRoute(
@@ -67,22 +66,22 @@ def _consent(
                 )
             },
             reads={
-                "V_target_f": ArrivalRead(
+                "V_target_f": ParticipationRead(
                     regime="couple",
                     stakeholder="f",
                     kind="Participating",
                     projection={"wealth": _identity},
                 ),
-                "V_target_m": ArrivalRead(
+                "V_target_m": ParticipationRead(
                     regime="couple",
                     stakeholder="m",
                     kind="Participating",
                     projection={"wealth": _identity},
                 ),
-                "V_alone_f": ArrivalRead(
+                "V_alone_f": ParticipationRead(
                     regime="single_f", kind="Raw", projection={"wealth": half}
                 ),
-                "V_alone_m": ArrivalRead(
+                "V_alone_m": ParticipationRead(
                     regime="single_m", kind="Raw", projection={"wealth": half}
                 ),
             },
@@ -90,15 +89,15 @@ def _consent(
     }
 
 
-def _couple_arrivals(
+def _couple_participation(
     *, half: Callable[..., DiscreteState]
-) -> dict[str, ArrivalDecision]:
+) -> dict[str, ParticipationCheck]:
     """A couple's continuation needs a supported household, as in the example."""
     return {
-        "couple": ArrivalDecision(
+        "couple": ParticipationCheck(
             predicate=household._has_policy_support,
             reads={
-                "target_support": ArrivalRead(
+                "target_support": ParticipationRead(
                     regime="couple",
                     stakeholder="f",
                     kind="Participating",
@@ -247,7 +246,7 @@ def get_model(*, n_periods: int, n_points: int = 4) -> Model:
                     },
                     terminal="couple_terminal",
                 ),
-                arrivals=_couple_arrivals(half=half),
+                participation=_couple_participation(half=half),
             ),
             "single_f": Transition(
                 law=law(
@@ -258,7 +257,7 @@ def get_model(*, n_periods: int, n_points: int = 4) -> Model:
                     },
                     terminal="single_f_terminal",
                 ),
-                arrivals=_consent(stakeholder="f", fallback="single_f", half=half),
+                participation=_consent(stakeholder="f", fallback="single_f", half=half),
             ),
             "single_m": Transition(
                 law=law(
@@ -269,7 +268,7 @@ def get_model(*, n_periods: int, n_points: int = 4) -> Model:
                     },
                     terminal="single_m_terminal",
                 ),
-                arrivals=_consent(stakeholder="m", fallback="single_m", half=half),
+                participation=_consent(stakeholder="m", fallback="single_m", half=half),
             ),
         },
         regimes={

@@ -1,7 +1,7 @@
 """The `edges` parameter namespace.
 
 Parameters of the callables `Model(edges=...)` declares — a source's
-regime-transition law, its gates, arrival reads and route fallbacks — live at
+regime-transition law, its gates, participation reads and route fallbacks — live at
 their declaration path under `params["edges"][source]`. The engine keeps them
 there too: `flat_params["edges"][source]` is a flat mapping whose keys are the
 rest of that path joined by `QNAME_DELIMITER`, e.g.
@@ -9,7 +9,7 @@ rest of that path joined by `QNAME_DELIMITER`, e.g.
 - `n_periods` for a law over all targets;
 - `dead__rate` for a per-target cell, gated or not;
 - `dead__predicate__min_wealth` for the gate on `dead`;
-- `dead__references__spouse__wealth__scale` for an arrival read;
+- `dead__references__spouse__wealth__scale` for a participation read;
 - `dead__routes__husband__fallback__solve__wealth__scale` for one phase of a
   route fallback.
 
@@ -30,10 +30,10 @@ from lcm.exceptions import InvalidNameError
 # Root of the edge namespace, in the user's params and in the engine's.
 EDGES = "edges"
 
-# Entries of a target's gate or arrival: its predicate, reads and routes; and of one
-# route's fallback below `ROUTES`.
+# Entries of a target's gate or participation check: its predicate, reads and routes;
+# and of one route's fallback below `ROUTES`.
 PREDICATE = "predicate"
-REFERENCES = "references"
+READS = "reads"
 ROUTES = "routes"
 FALLBACK = "fallback"
 
@@ -113,7 +113,7 @@ def _fail_if_own_and_edge_keys_collide(
 
 
 def is_gated_cell_slot(key: str) -> bool:
-    """Return whether an edge slot belongs to a predicate, arrival read or route.
+    """Return whether an edge slot belongs to a predicate, participation read or route.
 
     Those slots are bound by the edge fold and the simulate router on the
     target's grid; every other slot belongs to the source's regime-transition
@@ -123,14 +123,14 @@ def is_gated_cell_slot(key: str) -> bool:
         key: The slot's key in `flat_params["edges"][source]`.
 
     Returns:
-        Whether the slot's second path segment is `predicate`, `references` or
+        Whether the slot's second path segment is `predicate`, `reads` or
         `routes`, below a target.
 
     """
     path = tree_path_from_qname(key)
     return len(path) >= _MIN_GATED_SLOT_DEPTH and path[1] in (
         PREDICATE,
-        REFERENCES,
+        READS,
         ROUTES,
     )
 

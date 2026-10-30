@@ -16,7 +16,7 @@ The three provenances an edge-side callable mixes, all in one signature:
    preference between two merges — it is what makes simulate evaluate the same
    object solve folded.
 3. Each REFERENCE regime's own interpolation grid, for a leg fallback's,
-   same-period reference's or arrival read's read of that regime's V.
+   same-period reference's or participation read's read of that regime's V.
 
 Covered here:
 
@@ -35,7 +35,7 @@ Covered here:
   (`SAME_PERIOD_PARAMS_ARG`).
 
 Value-reading gates and their references are retired in favour of
-`ArrivalDecision`; their parameter namespaces are pinned in
+`ParticipationCheck`; their parameter namespaces are pinned in
 `tests/params/test_gate_reads_on_the_target_domain.py`.
 
 Fixture discipline: every one of these is only a repro if the two candidate
@@ -88,8 +88,6 @@ from _lcm.utils.functools import get_union_of_args
 from _lcm.utils.logging import get_logger
 from lcm import (
     AgeRange,
-    ArrivalDecision,
-    ArrivalRead,
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
@@ -97,6 +95,8 @@ from lcm import (
     IrregSpacedGrid,
     LinSpacedGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -594,8 +594,8 @@ def _u_zero_x(x: ContinuousState) -> FloatND:
     return 0.0 * x
 
 
-def test_arrival_read_uses_the_reference_regimes_own_runtime_grid() -> None:
-    """An arrival read interpolates on the REFERENCE regime's own runtime points.
+def test_participation_read_uses_the_reference_regimes_own_runtime_grid() -> None:
+    """A participation read interpolates on the REFERENCE regime's own runtime points.
 
     The source declares an identically named runtime grid on (0, 10). Read on the
     reference's own (0, 1), `V_ref(0.6) = 0.6` opens the decision and the source
@@ -624,11 +624,11 @@ def test_arrival_read_uses_the_reference_regimes_own_runtime_grid() -> None:
         edges={
             "src": Transition(
                 law=ByAge(cases={0: {"target": StochasticTransition(func=_prob_one)}}),
-                arrivals={
-                    "target": ArrivalDecision(
+                participation={
+                    "target": ParticipationCheck(
                         predicate=_gate_ref_only,
                         reads={
-                            "ref_v": ArrivalRead(
+                            "ref_v": ParticipationRead(
                                 kind="IntegratedFull",
                                 regime="refregime",
                                 projection={"x": _project_realized},

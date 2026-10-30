@@ -12,13 +12,13 @@ from pandas.testing import assert_frame_equal
 
 from _lcm.simulation.entry_inputs import capture_simulation_entry_inputs
 from lcm import (
-    ArrivalDecision,
-    ArrivalRead,
     DiscreteGrid,
     ExecutionConfig,
     InitialNodes,
     LinSpacedGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     Periods,
     ProjectedRegimeValue,
     Regime,
@@ -651,60 +651,60 @@ def test_discrete_override_labels_codes_and_saved_raw_values(
 
 
 @categorical(ordered=False)
-class _ArrivalRegimes:
+class _ParticipationRegimes:
     source: ScalarInt
     target: ScalarInt
     fallback: ScalarInt
 
 
 @categorical(ordered=True)
-class _ArrivalBinary:
+class _ParticipationBinary:
     low: ScalarInt
     high: ScalarInt
 
 
-def _arrival_source(*, x: FloatND, source_signal: FloatND) -> FloatND:
+def _participation_source(*, x: FloatND, source_signal: FloatND) -> FloatND:
     return x + 0.0 * source_signal
 
 
-def _arrival_target(*, x: FloatND, offer: IntND, choice: IntND) -> FloatND:
+def _participation_target(*, x: FloatND, offer: IntND, choice: IntND) -> FloatND:
     return x + offer + choice * (2.0 * offer - 1.0)
 
 
-def _arrival_fallback(*, x: FloatND) -> FloatND:
+def _participation_fallback(*, x: FloatND) -> FloatND:
     return x - 2.0
 
 
-def _arrival_double(*, x: FloatND) -> FloatND:
+def _participation_double(*, x: FloatND) -> FloatND:
     return 2.0 * x
 
 
-def _arrival_identity(*, x: FloatND) -> FloatND:
+def _participation_identity(*, x: FloatND) -> FloatND:
     return x
 
 
-def _arrival_accept(*, x: FloatND, V_target: FloatND) -> BoolND:
+def _participation_accept(*, x: FloatND, V_target: FloatND) -> BoolND:
     return V_target > x + 0.5
 
 
-def _arrival_model(*, observed: bool) -> Model:
+def _participation_model(*, observed: bool) -> Model:
     return Model(
         regimes={
             "source": Regime(
                 states={"x": LinSpacedGrid(start=1.0, stop=3.0, n_points=3)},
-                state_transitions={"x": _arrival_double},
-                functions={"utility": _arrival_source},
+                state_transitions={"x": _participation_double},
+                functions={"utility": _participation_source},
                 shocks=("source_noise",),
             ),
             "target": Regime(
                 states={"x": LinSpacedGrid(start=2.0, stop=6.0, n_points=3)},
-                functions={"utility": _arrival_target},
-                actions={"choice": DiscreteGrid(category_class=_ArrivalBinary)},
+                functions={"utility": _participation_target},
+                actions={"choice": DiscreteGrid(category_class=_ParticipationBinary)},
                 shocks=("target_offer",),
             ),
             "fallback": Regime(
                 states={"x": LinSpacedGrid(start=2.0, stop=6.0, n_points=3)},
-                functions={"utility": _arrival_fallback},
+                functions={"utility": _participation_fallback},
             ),
         },
         shocks={
@@ -713,12 +713,14 @@ def _arrival_model(*, observed: bool) -> Model:
                 nodes=Product(source_signal=GaussHermite(3)),
             ),
             "target_offer": ShockGroup(
-                shocks={"offer": Discrete(categories=_ArrivalBinary, probs=(0.5, 0.5))}
+                shocks={
+                    "offer": Discrete(categories=_ParticipationBinary, probs=(0.5, 0.5))
+                }
             ),
         },
         n_periods=2,
         initial_nodes=InitialNodes(by_period={0: "source"}),
-        regime_id_class=_ArrivalRegimes,
+        regime_id_class=_ParticipationRegimes,
         edges={
             "source": Transition(
                 targets={
@@ -726,22 +728,22 @@ def _arrival_model(*, observed: bool) -> Model:
                     "fallback": Periods(values=(0,)),
                 },
                 law="target",
-                arrivals={
-                    "target": ArrivalDecision(
-                        predicate=_arrival_accept,
+                participation={
+                    "target": ParticipationCheck(
+                        predicate=_participation_accept,
                         observes=("offer",) if observed else (),
                         reads={
-                            "V_target": ArrivalRead(
+                            "V_target": ParticipationRead(
                                 regime="target",
                                 kind="Raw",
-                                projection={"x": _arrival_identity},
+                                projection={"x": _participation_identity},
                             )
                         },
                         routes={
                             "self": StakeholderRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback",
-                                    projection={"x": _arrival_identity},
+                                    projection={"x": _participation_identity},
                                 )
                             )
                         },
@@ -752,7 +754,7 @@ def _arrival_model(*, observed: bool) -> Model:
     )
 
 
-def _arrival_initial() -> dict[str, jax.Array]:
+def _participation_initial() -> dict[str, jax.Array]:
     return {
         "period": jnp.zeros(3, dtype=jnp.int32),
         "regime_id": jnp.zeros(3, dtype=jnp.int32),
@@ -761,13 +763,13 @@ def _arrival_initial() -> dict[str, jax.Array]:
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
-def test_incoming_arrival_history_refuses_a_missing_consumed_period() -> None:
+def test_incoming_participation_history_refuses_a_missing_consumed_period() -> None:
     """The incoming-only target consumes its offer at the landing date."""
-    model = _arrival_model(observed=True)
+    model = _participation_model(observed=True)
     with pytest.raises(InvalidSimulationInputError, match=r"offer.*cover period 1"):
         model.simulate(
             params={"discount_factor": 0.5},
-            initial_conditions=_arrival_initial(),
+            initial_conditions=_participation_initial(),
             shock_paths={"offer": BaseInnovations(values=jnp.asarray([0.25]))},
             seed=17,
             log_level="off",
@@ -777,15 +779,15 @@ def test_incoming_arrival_history_refuses_a_missing_consumed_period() -> None:
 
 @pytest.mark.parametrize("observed", [False, True])
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
-def test_incoming_arrival_history_keeps_rows_and_declared_information(
+def test_incoming_participation_history_keeps_rows_and_declared_information(
     *, observed: bool
 ) -> None:
     """Low supplied offers affect observed consent, but never hidden pricing."""
     frame = (
-        _arrival_model(observed=observed)
+        _participation_model(observed=observed)
         .simulate(
             params={"discount_factor": 0.5},
-            initial_conditions=_arrival_initial(),
+            initial_conditions=_participation_initial(),
             shock_paths={
                 "offer": PhysicalValues(
                     values=jnp.asarray([[1, 0], [0, 1], [1, 0]], dtype=jnp.int32)
@@ -820,13 +822,13 @@ def test_incoming_arrival_history_keeps_rows_and_declared_information(
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
-def test_unread_arrival_history_prefix_preserves_fresh_target_draws() -> None:
+def test_unread_participation_history_prefix_preserves_fresh_target_draws() -> None:
     """A source-only input must not replace later target named draws."""
-    model = _arrival_model(observed=True)
+    model = _participation_model(observed=True)
     frames = [
         model.simulate(
             params={"discount_factor": 0.5},
-            initial_conditions=_arrival_initial(),
+            initial_conditions=_participation_initial(),
             shock_paths=paths,
             seed=17,
             log_level="off",

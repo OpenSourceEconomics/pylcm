@@ -38,13 +38,13 @@ from lcm import (
     AgeGrid,
     AgeRange,
     AgeSpecializedGrid,
-    ArrivalDecision,
-    ArrivalRead,
     ByAge,
     DiscreteGrid,
     Gate,
     LinSpacedGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     Phased,
     ProjectedRegimeValue,
     Regime,
@@ -362,8 +362,8 @@ def _build_model(
                         }
                     }
                 ),
-                arrivals={
-                    "src_exit": ArrivalDecision(
+                participation={
+                    "src_exit": ParticipationCheck(
                         predicate=_gate,
                         routes={
                             "only": StakeholderRoute(
@@ -374,7 +374,7 @@ def _build_model(
                             )
                         },
                         reads={
-                            "V_fallback_ref": ArrivalRead(
+                            "V_fallback_ref": ParticipationRead(
                                 kind="IntegratedFull",
                                 regime="fallback",
                                 projection=gate_ref_projection,

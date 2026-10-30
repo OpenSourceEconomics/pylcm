@@ -1,7 +1,7 @@
-"""Canonical collective policy, arrival, and own-role simulation fixtures.
+"""Canonical collective policy, participation check, and own-role simulation fixtures.
 
 The joint policy chooses one common action and publishes both member values.
-Source-owned arrival decisions run after the scheduled landing and before the
+Source-owned participation checks run after the scheduled landing and before the
 final actor's action. Current participation exits retain threshold-only slack
 and pay each member's full single payoff when the kept set is empty.
 
@@ -29,13 +29,13 @@ from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
     AgeRange,
-    ArrivalDecision,
-    ArrivalRead,
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -383,8 +383,8 @@ def _consent_laws() -> dict[RegimeName, RegimeLawDeclaration | Transition]:
                     }
                 }
             ),
-            arrivals={
-                "married_terminal": ArrivalDecision(
+            participation={
+                "married_terminal": ParticipationCheck(
                     predicate=_consent_gate,
                     routes={
                         "f": StakeholderRoute(
@@ -396,24 +396,24 @@ def _consent_laws() -> dict[RegimeName, RegimeLawDeclaration | Transition]:
                         )
                     },
                     reads={
-                        "V_target_f": ArrivalRead(
+                        "V_target_f": ParticipationRead(
                             regime="married_terminal",
                             stakeholder="f",
                             kind="Participating",
                             projection={"wage": _identity_wage},
                         ),
-                        "V_target_m": ArrivalRead(
+                        "V_target_m": ParticipationRead(
                             regime="married_terminal",
                             stakeholder="m",
                             kind="Participating",
                             projection={"wage": _identity_wage},
                         ),
-                        "V_single_f_ref": ArrivalRead(
+                        "V_single_f_ref": ParticipationRead(
                             kind="Raw",
                             regime="single_f_terminal",
                             projection={"wage": _identity_wage},
                         ),
-                        "V_single_m_ref": ArrivalRead(
+                        "V_single_m_ref": ParticipationRead(
                             kind="Raw",
                             regime="single_m_terminal",
                             projection={"wage": _identity_wage},
@@ -647,7 +647,7 @@ def _participation_support(*, target_support: BoolND) -> BoolND:
 
 
 def _married_dissolution_transition() -> Transition:
-    """Return the source-owned arrival into `married_ir` after age 0.
+    """Return the source-owned participation check into `married_ir` after age 0.
 
     The edge's stakeholder routes fall back to `single_f` / `single_m`, so
     `married` reaches all three at age 0.
@@ -660,11 +660,11 @@ def _married_dissolution_transition() -> Transition:
                 }
             }
         ),
-        arrivals={
-            "married_ir": ArrivalDecision(
+        participation={
+            "married_ir": ParticipationCheck(
                 predicate=_participation_support,
                 reads={
-                    "target_support": ArrivalRead(
+                    "target_support": ParticipationRead(
                         regime="married_ir",
                         stakeholder="f",
                         kind="Participating",
@@ -1028,8 +1028,8 @@ def _consent_discrete_axis_laws() -> dict[
                     }
                 }
             ),
-            arrivals={
-                "married_terminal": ArrivalDecision(
+            participation={
+                "married_terminal": ParticipationCheck(
                     predicate=_consent_gate,
                     routes={
                         "f": StakeholderRoute(
@@ -1044,19 +1044,19 @@ def _consent_discrete_axis_laws() -> dict[
                         )
                     },
                     reads={
-                        "V_target_f": ArrivalRead(
+                        "V_target_f": ParticipationRead(
                             regime="married_terminal",
                             stakeholder="f",
                             kind="Participating",
                             projection={"wage": _identity_wage, "educ": _identity_educ},
                         ),
-                        "V_target_m": ArrivalRead(
+                        "V_target_m": ParticipationRead(
                             regime="married_terminal",
                             stakeholder="m",
                             kind="Participating",
                             projection={"wage": _identity_wage, "educ": _identity_educ},
                         ),
-                        "V_single_f_ref": ArrivalRead(
+                        "V_single_f_ref": ParticipationRead(
                             kind="Raw",
                             regime="single_f_terminal",
                             projection={
@@ -1064,7 +1064,7 @@ def _consent_discrete_axis_laws() -> dict[
                                 "educ": _identity_educ,
                             },
                         ),
-                        "V_single_m_ref": ArrivalRead(
+                        "V_single_m_ref": ParticipationRead(
                             kind="Raw",
                             regime="single_m_terminal",
                             projection={"wage": _identity_wage},
@@ -1262,7 +1262,7 @@ _DISSOLUTION_PARAMS = {
 
 
 def test_public_model_prices_the_actual_participation_routes() -> None:
-    """Arrival continuation discounts the kept policy or full outside payoff once."""
+    """Participation discounts the kept policy or the full outside payoff once."""
     result = _make_dissolution_model().solve(
         params=_DISSOLUTION_PARAMS, log_level="off"
     )
@@ -1286,7 +1286,7 @@ def test_public_model_solve_returns_labelled_values_for_every_demanded_period():
 
 
 def test_public_model_simulate_routes_dissolution_edge_when_flags_supplied():
-    """End-to-end: a dissolution arrival reading participation support simulates.
+    """End-to-end: a dissolution participation reading participation support simulates.
 
     Reproduces `test_dissolution_edge_routes_the_row_to_its_own_roles_single_regime`
     through the public `Model` API: wage=2 (empty participation) is routed to
@@ -1597,11 +1597,11 @@ def _repeating_self_loop_laws() -> dict[RegimeName, RegimeLawDeclaration | Trans
                 },
                 then={"src_exit": exit_cell},
             ),
-            arrivals={
-                "src": ArrivalDecision(
+            participation={
+                "src": ParticipationCheck(
                     predicate=_repeat_gate,
                     reads={
-                        "V_target": ArrivalRead(
+                        "V_target": ParticipationRead(
                             regime="src",
                             kind="IntegratedFull",
                             projection={"wage": _identity_wage},

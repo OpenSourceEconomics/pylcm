@@ -73,7 +73,7 @@ type ParticipatingExitOutput = tuple[
 
 
 @dataclass(frozen=True, kw_only=True)
-class ArrivalEntryPlan:
+class ParticipationEntryPlan:
     """One incoming edge's source-owned answer and actual target roles."""
 
     queries: ScalarPolicyQueries
@@ -97,7 +97,7 @@ class ExitSimulationPlan:
     """Own physical columns consumed by this actor's Participating policy."""
     fixed_flat_params: FlatParams = MappingProxyType({})
     """All bound query-context operands, retaining their canonical namespace."""
-    arrivals: Mapping[RegimeName, ArrivalEntryPlan] = MappingProxyType({})
+    participation: Mapping[RegimeName, ParticipationEntryPlan] = MappingProxyType({})
     """Incoming-edge rules, separate from this actor's ordinary Full policy."""
 
     @property
@@ -108,7 +108,7 @@ class ExitSimulationPlan:
                 queries.definitions[query].read.target
                 for queries in (
                     *((self.full,) if self.full is not None else ()),
-                    *(entry.queries for entry in self.arrivals.values()),
+                    *(entry.queries for entry in self.participation.values()),
                 )
                 for root in (queries.definitions[queries.root],)
                 for targets in root.exit_targets.values()
@@ -121,7 +121,9 @@ class ExitSimulationPlan:
         object.__setattr__(
             self, "participating", MappingProxyType(dict(self.participating))
         )
-        object.__setattr__(self, "arrivals", MappingProxyType(dict(self.arrivals)))
+        object.__setattr__(
+            self, "participation", MappingProxyType(dict(self.participation))
+        )
 
     def with_fixed_params(self, *, fixed_flat_params: FlatParams) -> Self:
         """Bind target operands without assuming they are ordinary edge targets."""
@@ -147,9 +149,11 @@ def install_exit_simulation_queries(
     This builds genuine forward programs beside the ordinary actor programs. A
     query-only counterparty remains a transient reader, not a simulated occupant.
     """
-    from _lcm.arrival_queries import bind_arrival_query_graph  # noqa: PLC0415
     from _lcm.current_iid import CurrentIIDPlan  # noqa: PLC0415
     from _lcm.exit_queries import bind_exit_query_graph  # noqa: PLC0415
+    from _lcm.participation_queries import (  # noqa: PLC0415
+        bind_participation_query_graph,
+    )
     from _lcm.policy_queries import QueryKind, ScalarPolicyQueries  # noqa: PLC0415
     from _lcm.time import coordinate_kind  # noqa: PLC0415
 
@@ -182,22 +186,22 @@ def install_exit_simulation_queries(
         (owner, period)
         for owner, period in original_actors
         if contexts[owner].user_regimes_at(period=period)[owner].exits
-        or contexts[owner].arrival_queries.get(period)
+        or contexts[owner].participation_queries.get(period)
     }
     full_queries = {}
-    arrivals: dict[tuple[str, int], dict[str, ArrivalEntryPlan]] = {}
+    participation: dict[tuple[str, int], dict[str, ParticipationEntryPlan]] = {}
     for source, context in contexts.items():
         acting = canonical_regimes[source].simulation.programs.decision
-        for source_period, plans in context.arrival_queries.items():
-            # A query-only price can need a future arrival without any subject
-            # taking that edge. Incoming Participating actors still own decision
+        for source_period, plans in context.participation_queries.items():
+            # A query-only price can need a future participation check without any
+            # subject taking that edge. Incoming Participating actors still own decision
             # programs, even when they have no original Full policy.
             if source_period not in acting:
                 continue
             for target in plans:
                 period = source_period + 1
-                declaration = context.laws[source].arrivals[target]
-                entry = bind_arrival_query_graph(
+                declaration = context.laws[source].participation[target]
+                entry = bind_participation_query_graph(
                     contexts=contexts,
                     canonical_regimes=canonical_regimes,
                     source=source,
@@ -206,15 +210,17 @@ def install_exit_simulation_queries(
                     phase="simulate",
                     declaration=declaration,
                 )
-                arrivals.setdefault((target, period), {})[source] = ArrivalEntryPlan(
-                    queries=entry.queries,
-                    target_roles={
-                        member: route.target_stakeholder
-                        for member, route in declaration.routes.items()
-                    },
+                participation.setdefault((target, period), {})[source] = (
+                    ParticipationEntryPlan(
+                        queries=entry.queries,
+                        target_roles={
+                            member: route.target_stakeholder
+                            for member, route in declaration.routes.items()
+                        },
+                    )
                 )
     actors = set(roots)
-    for (target, period), entries in arrivals.items():
+    for (target, period), entries in participation.items():
         actors.add((target, period))
         actors.update(
             (entry.queries.definitions[query].read.target, period)
@@ -275,7 +281,7 @@ def install_exit_simulation_queries(
                 queries or actor_queries,
                 *(
                     entry.queries
-                    for entry in arrivals.get((owner, period), {}).values()
+                    for entry in participation.get((owner, period), {}).values()
                 ),
             )
             for node in reader.definitions.values()
@@ -291,7 +297,7 @@ def install_exit_simulation_queries(
         programs = regime.simulation.programs
         plan = ExitSimulationPlan(
             full=queries,
-            arrivals=arrivals.get((owner, period), {}),
+            participation=participation.get((owner, period), {}),
             participating={
                 actor: query
                 for (actor, p), query in participating.items()
@@ -308,18 +314,18 @@ def install_exit_simulation_queries(
                 ),
                 programs=replace(
                     programs,
-                    arrival_entry=MappingProxyType(
+                    participation_entry=MappingProxyType(
                         {
-                            **programs.arrival_entry,
+                            **programs.participation_entry,
                             **{
                                 (period, source): exit_policy_program(
                                     queries=entry.queries,
                                     draw=draw,
                                     uniform_bases=uniform_bases,
                                     original=True,
-                                    program_name=f"simulate_arrival_entry:{source}",
+                                    program_name=f"simulate_participation_entry:{source}",
                                 )
-                                for source, entry in plan.arrivals.items()
+                                for source, entry in plan.participation.items()
                             },
                         }
                     ),
@@ -850,8 +856,8 @@ def exit_policy_program(
     # Imports stay below engine construction: programs imports the engine's
     # forward declarations, while this builder runs only after contexts exist.
     from _lcm.current_iid import CORRELATION_SUPPORT_ARGUMENT  # noqa: PLC0415
-    from _lcm.simulation.arrival_values import (  # noqa: PLC0415 - canonical query contexts must exist
-        arrival_replay_value_reads,
+    from _lcm.simulation.participation_values import (  # noqa: PLC0415 - canonical query contexts must exist
+        participation_replay_value_reads,
     )
     from _lcm.simulation.programs import (  # noqa: PLC0415
         _ArgumentsBoundAtDispatch,
@@ -965,7 +971,9 @@ def exit_policy_program(
         ),
         requirements=CoreExecutionRequirements(
             tiled_axes=(subject_axis(state_names=()),),
-            value_reads=arrival_replay_value_reads(queries=queries, core_key=name),
+            value_reads=participation_replay_value_reads(
+                queries=queries, core_key=name
+            ),
         ),
         output_roles=roles,
         disposition=CoreExecutionDisposition.PLANNED,
@@ -987,12 +995,12 @@ class ExitRoute(NamedTuple):
 type ExitRouteFields = tuple[RegimeName, RegimeName, int, int | None, int, str]
 
 
-def arrival_entry_routes(
+def participation_entry_routes(
     *,
     regimes: Mapping[RegimeName, Regime],
     target: RegimeName,
     source: RegimeName,
-    entry: ArrivalEntryPlan,
+    entry: ParticipationEntryPlan,
     first_code: int,
 ) -> tuple[
     tuple[ExitRoute, ...], tuple[tuple[int | None, int, int], ...], Mapping[str, str]
@@ -1000,7 +1008,7 @@ def arrival_entry_routes(
     """Bind original roles and edge branches to immutable routing instructions."""
     if first_code >= -1:
         raise ValueError(
-            "Incoming arrival route tags must be below empty support (-1)."
+            "Incoming participation route tags must be below empty support (-1)."
         )
     queries = entry.queries
     root = queries.definitions[queries.root]
@@ -1019,7 +1027,9 @@ def arrival_entry_routes(
             codes.append((role, branch, code))
             target_role = entry.target_roles[member] if branch == 0 else read.role
             if regimes[read.target].stakeholders is not None and target_role is None:
-                raise ValueError("A collective arrival route needs its declared role.")
+                raise ValueError(
+                    "A collective participation route needs its declared role."
+                )
             routes.append(
                 ExitRoute(
                     source=target,

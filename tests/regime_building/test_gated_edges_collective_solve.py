@@ -1,6 +1,6 @@
 """Integration tests for value decisions on mixed singleton/collective edges.
 
-A source regime declares an `ArrivalDecision` (or a state-only `Gate`) beside the
+A source regime declares a `ParticipationCheck` (or a state-only `Gate`) beside the
 law of its `Transition`, keyed by TARGET regime name. After the scheduled landing
 and before the target acts, the decision compares its typed reads, per source
 stakeholder ``s``, and routes the row into the target or into that stakeholder's
@@ -34,14 +34,14 @@ from _lcm.user_regime_validation import validate_regime_law
 from _lcm.utils.logging import get_logger
 from lcm import (
     AgeRange,
-    ArrivalDecision,
-    ArrivalRead,
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
     Gate,
     LinSpacedGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -137,10 +137,10 @@ def _consent_source() -> Regime:
     )
 
 
-def _consent_laws(edge: Gate | ArrivalDecision | None) -> RegimeLaws:
+def _consent_laws(edge: Gate | ParticipationCheck | None) -> RegimeLaws:
     """The consent regimes' laws, the source's move into the couple under `edge`.
 
-    `None` declares the move into the couple without a gate or arrival decision.
+    `None` declares the move into the couple without a gate or participation check.
     """
     return bind_laws(
         {
@@ -153,9 +153,9 @@ def _consent_laws(edge: Gate | ArrivalDecision | None) -> RegimeLaws:
                     }
                 ),
                 gates=({"married_terminal": edge} if isinstance(edge, Gate) else {}),
-                arrivals=(
+                participation=(
                     {"married_terminal": edge}
-                    if isinstance(edge, ArrivalDecision)
+                    if isinstance(edge, ParticipationCheck)
                     else {}
                 ),
             ),
@@ -168,27 +168,27 @@ def _consent_laws(edge: Gate | ArrivalDecision | None) -> RegimeLaws:
 
 def _consent_reads(
     *, target: RegimeName, f_reference: RegimeName, m_reference: RegimeName
-) -> dict[str, ArrivalRead]:
+) -> dict[str, ParticipationRead]:
     """Both partners' values in the couple and each one's single reference."""
     return {
-        "V_target_f": ArrivalRead(
+        "V_target_f": ParticipationRead(
             kind="IntegratedFull",
             regime=target,
             stakeholder="f",
             projection={"wage": _identity_wage},
         ),
-        "V_target_m": ArrivalRead(
+        "V_target_m": ParticipationRead(
             kind="IntegratedFull",
             regime=target,
             stakeholder="m",
             projection={"wage": _identity_wage},
         ),
-        "V_single_f_ref": ArrivalRead(
+        "V_single_f_ref": ParticipationRead(
             kind="IntegratedFull",
             regime=f_reference,
             projection={"wage": _identity_wage},
         ),
-        "V_single_m_ref": ArrivalRead(
+        "V_single_m_ref": ParticipationRead(
             kind="IntegratedFull",
             regime=m_reference,
             projection={"wage": _identity_wage},
@@ -198,9 +198,9 @@ def _consent_reads(
 
 def _consent_edge(
     *, fallback_regime: RegimeName = "single_f_terminal", target_stakeholder: str = "f"
-) -> ArrivalDecision:
+) -> ParticipationCheck:
     """The consent decision into the couple, routing the wife to her own fallback."""
-    return ArrivalDecision(
+    return ParticipationCheck(
         predicate=_consent_gate,
         routes={
             "f": StakeholderRoute(
@@ -426,7 +426,7 @@ class ConsentRegimeId:
     married_terminal: ScalarInt
 
 
-def _consent_model(edge: ArrivalDecision) -> Model:
+def _consent_model(edge: ParticipationCheck) -> Model:
     """The consent regimes as a public model, the move into the couple under `edge`."""
     return Model(
         regimes=_make_consent_regimes(),
@@ -442,7 +442,7 @@ def _consent_model(edge: ArrivalDecision) -> Model:
                         }
                     }
                 ),
-                arrivals={"married_terminal": edge},
+                participation={"married_terminal": edge},
             )
         },
     )
@@ -459,13 +459,13 @@ def test_consent_model_builds_with_valid_routes():
 
 
 def test_edge_fallback_to_unknown_regime_is_rejected():
-    """An arrival decision whose fallback names a missing regime is rejected."""
+    """A participation check whose fallback names a missing regime is rejected."""
     with pytest.raises(ModelInitializationError, match="no_such_regime"):
         _consent_model(_consent_edge(fallback_regime="no_such_regime"))
 
 
 def test_edge_leg_naming_a_missing_target_stakeholder_is_rejected():
-    """An arrival route naming a target stakeholder the target lacks is rejected."""
+    """A participation route naming a stakeholder the target lacks is rejected."""
     with pytest.raises(RegimeInitializationError, match="exact role"):
         _consent_model(_consent_edge(target_stakeholder="not_a_stakeholder"))
 
@@ -679,8 +679,10 @@ def _participation_topology_regimes() -> dict[str, Regime]:
     return regimes
 
 
-def _consent_arrival(*, fallback_regime: RegimeName, stakeholder: str) -> Transition:
-    """A single's mutual-consent arrival into `married` at age 0."""
+def _consent_participation(
+    *, fallback_regime: RegimeName, stakeholder: str
+) -> Transition:
+    """A single's mutual-consent participation check into `married` at age 0."""
     return Transition(
         targets={"married": 0, fallback_regime: 0},
         law=ByAge(
@@ -690,8 +692,8 @@ def _consent_arrival(*, fallback_regime: RegimeName, stakeholder: str) -> Transi
                 }
             }
         ),
-        arrivals={
-            "married": ArrivalDecision(
+        participation={
+            "married": ParticipationCheck(
                 predicate=_consent_gate,
                 routes={
                     stakeholder: StakeholderRoute(
@@ -704,7 +706,7 @@ def _consent_arrival(*, fallback_regime: RegimeName, stakeholder: str) -> Transi
                 },
                 reads={
                     **{
-                        f"V_target_{member}": ArrivalRead(
+                        f"V_target_{member}": ParticipationRead(
                             kind="Participating",
                             regime="married",
                             stakeholder=member,
@@ -713,7 +715,7 @@ def _consent_arrival(*, fallback_regime: RegimeName, stakeholder: str) -> Transi
                         for member in ("f", "m")
                     },
                     **{
-                        f"V_single_{member}_ref": ArrivalRead(
+                        f"V_single_{member}_ref": ParticipationRead(
                             kind="IntegratedFull",
                             regime=f"single_{member}_p1",
                             projection={"wage": _identity_wage},
@@ -727,14 +729,14 @@ def _consent_arrival(*, fallback_regime: RegimeName, stakeholder: str) -> Transi
 
 
 def test_full_ekl_topology_via_public_model_api():
-    """single_f/single_m + married with consent arrival + dissolution exit, one model.
+    """single_f/single_m + married with consent check + dissolution exit, one model.
 
     married (period 1) is the participation miniature (empty participation at
     wage=2). Its continuation into the (zero-valued) terminal couple is zero, so
     its V is the felicity readout where both members participate. At wage=2 no
     common action meets both thresholds and the exit pays each member's full
     single payoff (5.5, 1.0), where the retired dissolution flag left `-inf`.
-    single_f (period 0) reaches married through the CONSENT arrival:
+    single_f (period 0) reaches married through the CONSENT participation check:
 
     decision(wage) = (V_married_f > V_single_f) & (V_married_m > V_single_m):
       w=1: (2>1.5)&(1>1)  -> closed (husband indifferent, strict).
@@ -746,10 +748,10 @@ def test_full_ekl_topology_via_public_model_api():
     model = Model(
         regimes=_participation_topology_regimes(),
         edges={
-            "single_f": _consent_arrival(
+            "single_f": _consent_participation(
                 fallback_regime="single_f_p1", stakeholder="f"
             ),
-            "single_m": _consent_arrival(
+            "single_m": _consent_participation(
                 fallback_regime="single_m_p1", stakeholder="m"
             ),
             "single_f_p1": {"single_f_terminal": 1},
@@ -782,7 +784,7 @@ def test_full_ekl_topology_via_public_model_api():
 def test_singleton_source_with_two_legs_is_rejected():
     """A singleton source must declare exactly one route."""
     edge = _consent_edge()
-    two_routes = ArrivalDecision(
+    two_routes = ParticipationCheck(
         predicate=edge.predicate,
         reads=edge.reads,
         routes={
@@ -888,8 +890,8 @@ def test_gated_edge_reference_uncovered_at_unconsumed_boundary_passes():
     joint coverage across ALL target-covered periods would wrongly reject the
     legitimate repeating self-loop boundary. The public occupied-boundary
     counterpart is
-    `test_repeating_arrival_boundary.py`,
-    `test_public_repeating_arrival_stops_at_the_sources_last_supported_date`;
+    `test_repeating_participation_boundary.py`,
+    `test_public_repeating_participation_stops_at_the_sources_last_supported_date`;
     this kernel control separately checks reference coverage.
     """
     # Self-loop: source == target == "src", solved in periods {0, 1}; the

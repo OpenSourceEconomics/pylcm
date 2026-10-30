@@ -20,12 +20,12 @@ from lcm import (
     AgeGrid,
     AgeRange,
     AgeSpecializedFunction,
-    ArrivalDecision,
-    ArrivalRead,
     ByAge,
     Gate,
     LinSpacedGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -360,14 +360,14 @@ def _gated_fold_model(
     fallback_at_45: bool = False,
     reads_values: bool = True,
 ) -> Model:
-    """Gate the target on wealth, or compare target and reference values on arrival."""
+    """Gate the target on wealth, or compare target and reference values on landing."""
     fallback = ProjectedRegimeValue(regime="fallback", projection={"wealth": _identity})
     target_law = {"target": StochasticTransition(func=_prob_one)}
     routes = {"only": StakeholderRoute(fallback=fallback)}
     gates: dict[RegimeName, Gate] = {}
-    arrivals: dict[RegimeName, ArrivalDecision] = {}
+    participation: dict[RegimeName, ParticipationCheck] = {}
     if reads_values:
-        arrivals["target"] = ArrivalDecision(
+        participation["target"] = ParticipationCheck(
             predicate=_gate,
             reads={"V_target": _read("target"), "V_reference": _read("reference")},
             routes=routes,
@@ -402,7 +402,7 @@ def _gated_fold_model(
                     }
                 ),
                 gates=gates,
-                arrivals=arrivals,
+                participation=participation,
             )
         },
     )
@@ -432,8 +432,8 @@ def _identity(wealth: ContinuousState) -> ContinuousState:
     return wealth
 
 
-def _read(regime: RegimeName) -> ArrivalRead:
-    return ArrivalRead(
+def _read(regime: RegimeName) -> ParticipationRead:
+    return ParticipationRead(
         kind="IntegratedFull", regime=regime, projection={"wealth": _identity}
     )
 

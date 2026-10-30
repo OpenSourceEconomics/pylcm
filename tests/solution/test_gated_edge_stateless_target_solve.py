@@ -1,4 +1,4 @@
-"""An arrival into a stateless target is decided in solve, not just in simulation."""
+"""A participation check into a stateless target is decided in solve, too."""
 
 import jax.numpy as jnp
 import numpy as np
@@ -6,14 +6,14 @@ import pytest
 
 from lcm import (
     AgeGrid,
-    ArrivalDecision,
-    ArrivalRead,
     ByAge,
     DiscreteGrid,
     ExecutionConfig,
     Gate,
     LinSpacedGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     StakeholderRoute,
     StochasticTransition,
@@ -75,19 +75,19 @@ def _closed_by_age(age: FloatND) -> BoolND:
 
 
 def _build_model(*, gate, enable_jit: bool, reads_value: bool = True) -> Model:
-    """Decide the landing on the target's value on arrival, or by a state-only gate."""
+    """Decide the landing on the target's value on landing, or by a state-only gate."""
     routes = {
         "only": StakeholderRoute(
             fallback=ProjectedRegimeValue(regime="stateless_fallback", projection={})
         )
     }
     gates: dict[str, Gate] = {}
-    arrivals: dict[str, ArrivalDecision] = {}
+    participation: dict[str, ParticipationCheck] = {}
     if reads_value:
-        arrivals["stateless_target"] = ArrivalDecision(
+        participation["stateless_target"] = ParticipationCheck(
             predicate=gate,
             reads={
-                "V_target": ArrivalRead(
+                "V_target": ParticipationRead(
                     kind="IntegratedFull", regime="stateless_target", projection={}
                 )
             },
@@ -126,7 +126,7 @@ def _build_model(*, gate, enable_jit: bool, reads_value: bool = True) -> Model:
                         0: {"stateless_target": StochasticTransition(func=_prob_one)}
                     }
                 ),
-                arrivals=arrivals,
+                participation=participation,
                 gates=gates,
             )
         },
@@ -148,9 +148,9 @@ def test_stateless_gated_target_pays_the_branch_its_gate_selects(
 ) -> None:
     """The source's value discounts the target when accepted, else the fallback.
 
-    With zero flow utility, the source's value at every state is the discounted
-    value of the branch selected at the stateless landing: the target's own
-    value when the arrival or gate accepts and the projected fallback otherwise.
+    With zero flow utility, the source's value at every state is the discounted value of
+    the branch selected at the stateless landing: the target's own value when the
+    participation check or gate accepts and the projected fallback otherwise.
     """
     model = _build_model(gate=gate, enable_jit=enable_jit, reads_value=reads_value)
     params = {

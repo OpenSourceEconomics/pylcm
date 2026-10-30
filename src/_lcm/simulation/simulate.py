@@ -60,7 +60,6 @@ from _lcm.regime_building.Q_and_F import (
 )
 from _lcm.simulation import chunk_operations, population_operations
 from _lcm.simulation.additional_targets import _compute_targets
-from _lcm.simulation.arrival_routing import record_arrival_entries
 from _lcm.simulation.assembly import concatenate_arrays, take_rows
 from _lcm.simulation.chunk_admission import PreparedSimulationChunks
 from _lcm.simulation.chunk_inputs import (
@@ -112,6 +111,7 @@ from _lcm.simulation.memory import (
     run_simulation_producer,
 )
 from _lcm.simulation.operand_placement import place_simulation_arguments
+from _lcm.simulation.participation_routing import record_participation_entries
 from _lcm.simulation.period_inputs import (
     GATE_FOLD,
     GATE_ROUTE,
@@ -197,7 +197,7 @@ from _lcm.typing import (
     FlatParams,
     FlatRegimeParams,
     InitialConditions,
-    PeriodToRegimeToArrivalSurfaces,
+    PeriodToRegimeToParticipationSurfaces,
     PeriodToRegimeToSimulationPolicy,
     PRNGKeyND,
     QAndFArg,
@@ -263,7 +263,9 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
     ages: TimeAxis,
     simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
     period_to_regime_to_sim_policy: PeriodToRegimeToSimulationPolicy | None = None,
-    arrival_surfaces: PeriodToRegimeToArrivalSurfaces = MappingProxyType({}),
+    participation_surfaces: PeriodToRegimeToParticipationSurfaces = MappingProxyType(
+        {}
+    ),
     period_to_regime_to_replay_reader: _PeriodToRegimeToReplayReader = (
         MappingProxyType({})
     ),
@@ -636,7 +638,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
                         regime_ids_to_names=regime_ids_to_names,
                         period_to_regime_to_V_arr=values,
                         period_to_regime_to_sim_policy=period_to_regime_to_sim_policy,
-                        arrival_surfaces=arrival_surfaces,
+                        participation_surfaces=participation_surfaces,
                         period_to_regime_to_replay_reader=(
                             period_to_regime_to_replay_reader
                         ),
@@ -852,7 +854,9 @@ def _simulate_subject_chunk(  # noqa: PLR0915
     logger: logging.Logger,
     initial_own_stakeholder: Int1D,
     period_to_regime_to_sim_policy: PeriodToRegimeToSimulationPolicy | None = None,
-    arrival_surfaces: PeriodToRegimeToArrivalSurfaces = MappingProxyType({}),
+    participation_surfaces: PeriodToRegimeToParticipationSurfaces = MappingProxyType(
+        {}
+    ),
     period_to_regime_to_replay_reader: _PeriodToRegimeToReplayReader = (
         MappingProxyType({})
     ),
@@ -1033,7 +1037,7 @@ def _simulate_subject_chunk(  # noqa: PLR0915
                 flat_params=flat_params,
                 ages=ages,
                 values=period_to_regime_to_V_arr,
-                surfaces=arrival_surfaces,
+                surfaces=participation_surfaces,
                 owner=owner,
                 key=key,
                 subject_slice=subject_slice,
@@ -2572,17 +2576,17 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                     },
                     subject_outputs=True,
                 )
-        arrival_targets = tuple(
+        participation_targets = tuple(
             target
             for target in realization_targets_next_period
             if period + 1 in regimes[target].simulation.exit_queries
             and regime_name
-            in regimes[target].simulation.exit_queries[period + 1].arrivals
+            in regimes[target].simulation.exit_queries[period + 1].participation
         )
-        if arrival_targets and new_entered_through is not None:
+        if participation_targets and new_entered_through is not None:
             new_entered_through = run_simulation_operation(
                 memory=memory,
-                function=record_arrival_entries,
+                function=record_participation_entries,
                 arguments={
                     "drawn_ids": drawn_arrival_ids,
                     "routed_ids": new_subject_regime_ids,
@@ -2592,7 +2596,8 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 static_arguments={
                     "source_id": int(regime_names_to_ids[regime_name]),
                     "target_ids": tuple(
-                        int(regime_names_to_ids[target]) for target in arrival_targets
+                        int(regime_names_to_ids[target])
+                        for target in participation_targets
                     ),
                 },
                 subject_arg_names=("drawn_ids", "routed_ids", "holders", "entries"),

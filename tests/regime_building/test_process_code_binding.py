@@ -19,8 +19,6 @@ import pytest
 from lcm import (
     AgeGrid,
     AgeSpecializedFunction,
-    ArrivalDecision,
-    ArrivalRead,
     ByAge,
     CollectiveUtility,
     DeterministicTransition,
@@ -28,6 +26,8 @@ from lcm import (
     Gate,
     Model,
     NormalIIDProcess,
+    ParticipationCheck,
+    ParticipationRead,
     Phased,
     ProjectedRegimeValue,
     Regime,
@@ -546,7 +546,7 @@ def _gate_without_process_read() -> BoolND:
     return jnp.ones((), dtype=bool)
 
 
-def _arrival_on_landing_value(V_target: FloatND) -> BoolND:
+def _participation_on_landing_value(V_target: FloatND) -> BoolND:
     return V_target > 0.0
 
 
@@ -555,12 +555,12 @@ def _landed_z(z: ContinuousState) -> ContinuousState:
 
 
 def _landing_model(
-    *, runtime: bool, edge: Literal["gate-read", "gate-no-read", "arrival"]
+    *, runtime: bool, edge: Literal["gate-read", "gate-no-read", "participation"]
 ) -> Model:
     """Source and target carry one uniform process on nodes [-1, 0, 1].
 
     The edge is a state `Gate` whose predicate reads the landed process or reads
-    nothing, or an `ArrivalDecision` reading the target's value at the landing.
+    nothing, or a `ParticipationCheck` reading the target's value at the landing.
     """
     shock = UniformIIDProcess(
         n_points=3, start=-1.0, stop=None if runtime else 1.0, simulate_draws="nodes"
@@ -585,15 +585,15 @@ def _landing_model(
                 )
             },
         )
-        if edge != "arrival"
+        if edge != "participation"
         else Transition(
             targets=targets,
             law=law,
-            arrivals={
-                "target": ArrivalDecision(
-                    predicate=_arrival_on_landing_value,
+            participation={
+                "target": ParticipationCheck(
+                    predicate=_participation_on_landing_value,
                     reads={
-                        "V_target": ArrivalRead(
+                        "V_target": ParticipationRead(
                             kind="Raw", regime="target", projection={"z": _landed_z}
                         )
                     },
@@ -644,10 +644,10 @@ def test_gate_reading_a_runtime_process_value_at_its_landing_is_refused():
         _landing_model(runtime=True, edge="gate-read")
 
 
-def test_arrival_landing_in_a_runtime_process_is_refused():
-    """An arrival enumerates the landed process by node; a runtime one has none."""
+def test_participation_landing_in_a_runtime_process_is_refused():
+    """A participation check enumerates the landed process by node; runtime has none."""
     with pytest.raises(ModelInitializationError, match="parameterized at runtime"):
-        _landing_model(runtime=True, edge="arrival")
+        _landing_model(runtime=True, edge="participation")
 
 
 def test_gate_not_reading_a_runtime_process_keeps_it_supported():

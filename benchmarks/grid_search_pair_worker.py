@@ -448,8 +448,10 @@ def _kernel_execution_metadata(kernel: PeriodKernel) -> _KernelExecution:
             program = programs["main"]
         else:
             authority = kernel
-            custody_module = sys.modules.get("_lcm.arrival_publication")
-            if type(kernel) is getattr(custody_module, "_BorrowedArrivalKernel", None):
+            custody_module = sys.modules.get("_lcm.participation_publication")
+            if type(kernel) is getattr(
+                custody_module, "_BorrowedParticipationKernel", None
+            ):
                 base = getattr(kernel, "base", None)
                 query_module = sys.modules.get("_lcm.policy_queries")
                 if type(base) is not getattr(query_module, "_PolicyQueryKernel", None):
@@ -475,7 +477,7 @@ def _kernel_execution_metadata(kernel: PeriodKernel) -> _KernelExecution:
                     "_initialize",
                     "_chunks",
                     "_finish",
-                    *(() if authority is kernel else ("_arrival_surfaces",)),
+                    *(() if authority is kernel else ("_participation_surfaces",)),
                 }
             ):
                 raise RuntimeError(
@@ -535,7 +537,7 @@ def _route_metadata(model: Model) -> _RouteMetadata:
             regime.same_period_ref_regimes
             or regime.gated_edges
             or getattr(declaration, "exits", {})
-            or getattr(transition, "arrivals", {})
+            or getattr(transition, "participation", {})
         ):
             gs_vd_regimes.append(regime_name)
         sharded_state_names = getattr(regime.solution, "sharded_state_names", None)
