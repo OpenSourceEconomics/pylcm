@@ -669,3 +669,21 @@ def test_callable_law_identity_uses_captured_semantics() -> None:
     first, same, different = declaration(0.2), declaration(0.2), declaration(0.3)
     assert first.has_same_laws_as(same)
     assert not first.has_same_laws_as(different)
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+@pytest.mark.parametrize(
+    ("nodes", "weights", "match"),
+    [
+        ([[0.0], [1.0]], [1.5, -0.5], "Negative concrete weights"),
+        ([[0.0], [1.0]], [0.5, 0.25], "Weights must sum to unity"),
+        ([[0.0], [np.nan]], [0.5, 0.5], "finite nonempty"),
+        ([[0.0], [np.inf]], [0.5, 0.5], "finite nonempty"),
+    ],
+)
+def test_current_iid_law_refuses_malformed_nodes_before_any_model(
+    *, nodes: list[list[float]], weights: list[float], match: str
+) -> None:
+    """A malformed current-IID law is refused at its declaration."""
+    with pytest.raises(ShockDeclarationError, match=match):
+        sh.UserNodes(nodes=np.array(nodes), weights=np.array(weights))

@@ -154,8 +154,6 @@ def _copy_resolved_values(
         values,
         policies,
         readers,
-        current_iid_replay,
-        projected_forward,
         surfaces,
     ) = original(self, **arguments)
     copied = jax.tree.map(jnp.copy, values)
@@ -174,8 +172,6 @@ def _copy_resolved_values(
         copied,
         policies,
         readers,
-        current_iid_replay,
-        projected_forward,
         surfaces,
     )
 

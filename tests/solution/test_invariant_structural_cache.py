@@ -28,13 +28,12 @@ import numpy as np
 import pytest
 
 from _lcm.execution.workspace_planning import CompilerMemoryReservation
-from _lcm.regime_building.processing import RegimeParameterMetadata
 from _lcm.simulation.entry_allocations import SimulationEntryAllocations
 from _lcm.solution import backward_induction as bi
 from _lcm.typing import ArgumentTree, FlatParams
 from lcm import ExecutionConfig, Model
 from lcm.solver_api import SolutionResult
-from lcm.typing import RegimeName, UserParams
+from lcm.typing import UserParams
 from tests.execution.test_compiler_allocation_reservation import synthetic_memory
 from tests.solution._candidate_census import _CompilationKwargs
 from tests.solution.test_invariant_blocking import _workload
@@ -58,7 +57,6 @@ type _PlanSummary = tuple[
 
 class _CanonicalizeKwargs(TypedDict):
     array_writer: NotRequired[SimulationEntryAllocations | None]
-    metadata: NotRequired[Mapping[RegimeName, RegimeParameterMetadata] | None]
     use_categorical_codes: NotRequired[bool]
 
 

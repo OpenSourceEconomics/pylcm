@@ -49,25 +49,18 @@ from _lcm.continuation import (
     ContinuationPayload,
     ContinuationSpec,
     EGMContinuationLayout,
-    ProjectedContinuationSpec,
 )
 from _lcm.egm.branch_aggregation import OuterBranchAggregator
-from _lcm.egm.current_iid_envelope import DatedStateUtilityObligation
-from _lcm.egm.current_iid_euler_grid import DatedEulerGridObligation
 from _lcm.egm.dcegm_query_model import DCEGMQueryModel
 from _lcm.egm.nbegm_query_model import NBEGMQueryModel
-from _lcm.egm.projected_continuation import ProjectedChildAuthority
 from _lcm.egm.scalar_query import ScalarEGMQueryModel
 from _lcm.engine import (
-    CaseRReplaySpec,
-    CaseUReplaySpec,
     ParamCheck,
     StateActionSpace,
     Variables,
     place_template_on_regime_devices,
 )
 from _lcm.grids import Grid
-from _lcm.materialization import DatedGenerationMaterializer
 from _lcm.post_decision_bound import PostDecisionBoundSpec
 from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.collective import ParetoWeights
@@ -182,15 +175,6 @@ class SolverModelContext:
     phase_variation_paths: tuple[str, ...]
     """Public declaration paths whose solve/simulate objects differ."""
 
-    euler_grid_obligation: DatedEulerGridObligation | None = None
-    """Original private runtime Euler support awaiting actual dated validation."""
-
-    state_utility_obligation: DatedStateUtilityObligation | None = None
-    """Unresolved envelope requirement of an authenticated private dated source."""
-
-    materializer: DatedGenerationMaterializer | None = None
-    """Existing call-owned allocation boundary for private declaration validation."""
-
     solution_reachability: PhaseReachability | None = None
     """Static solution graph when available; `None` during early validation."""
 
@@ -251,13 +235,6 @@ class SolverBuildContext:
         default=MappingProxyType({}), metadata={"fingerprint_omit_if_default": True}
     )
     """Exact-age current innovation support, separate from real state axes."""
-
-    projected_continuation_declarations: Mapping[
-        RegimeName, ProjectedContinuationSpec
-    ] = field(
-        default=MappingProxyType({}), metadata={"fingerprint_omit_if_default": True}
-    )
-    """Actual producer declarations shared by the build and declare-read passes."""
 
     current_iid_draw_plan: CurrentIIDDrawPlan | None = field(
         default=None, metadata={"fingerprint_omit_if_default": True}
@@ -798,10 +775,6 @@ class SolutionKernels:
     period_kernels: Mapping[int, PeriodKernel]
     """Immutable mapping of period to the regime's uniform period adapter."""
 
-    case_r_replay_spec: CaseRReplaySpec | None = None
-    case_u_replay_spec: CaseUReplaySpec | None = None
-    """Engine-owned action-valued resources replay declaration, when installed."""
-
     period_group_keys: Mapping[int, Hashable] = MappingProxyType({})
     """Immutable mapping of period to the key this solver grouped it under.
 
@@ -828,7 +801,7 @@ class SolutionKernels:
         Mapping[
             int,
             tuple[
-                tuple[RegimeName, int, PostDecisionBoundSpec | ProjectedChildAuthority],
+                tuple[RegimeName, int, PostDecisionBoundSpec],
                 ...,
             ],
         ]

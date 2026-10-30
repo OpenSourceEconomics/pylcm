@@ -23,15 +23,8 @@ from _lcm.solution.fingerprint import (
 )
 from _lcm.typing import FlatParams, PytreeValue
 from lcm._solver_api.authority import ArtifactAuthority, _ArrayCopier
-from lcm.exceptions import UnsupportedOperationError
-from lcm.typing import RegimeName
 
 if TYPE_CHECKING:
-    from _lcm.continuation import ProjectedContinuationSpec
-    from _lcm.current_iid import CurrentIIDPlan
-    from _lcm.egm.step import _EGMStep
-    from _lcm.solution.contract import PeriodKernel, SolverBuildContext
-    from _lcm.solution.dcegm import EGMStepBuild, _BoundDCEGM
     from _lcm.solution.model_authority import SolutionAuthority
     from lcm.model import Model
 else:
@@ -39,13 +32,6 @@ else:
     # producer through its seal rather than importing the public class in a cycle.
     type Model = object
     type SolutionAuthority = object
-    type ProjectedContinuationSpec = object
-    type CurrentIIDPlan = object
-    type _EGMStep = object
-    type SolverBuildContext = object
-    type PeriodKernel = object
-    type EGMStepBuild = object
-    type _BoundDCEGM = object
 
 
 def canonical_parameter_schema(*, flat_params: FlatParams) -> str:
@@ -120,55 +106,6 @@ def canonical_generation_roots(
     return tuple(arrays)
 
 
-@dataclass(frozen=True, kw_only=True, eq=False)
-class GenerationSolverPreparation:
-    """Original numerical pieces retained by one real installed Model generation."""
-
-    generation: CanonicalModelGeneration
-    regime_name: RegimeName
-    period: int
-    context: SolverBuildContext
-    build: EGMStepBuild
-    step: _EGMStep
-    plan: CurrentIIDPlan | None
-    declarations: Mapping[RegimeName, ProjectedContinuationSpec]
-    installed_kernel: PeriodKernel
-    solver: _BoundDCEGM
-
-    def validate_owner(self) -> None:
-        """Refuse a substituted context/step/plan instead of accepting a token."""
-        actual = self.generation.solver_preparation(
-            regime_name=self.regime_name, period=self.period
-        )
-        for name in (
-            "context",
-            "build",
-            "step",
-            "plan",
-            "declarations",
-            "installed_kernel",
-            "solver",
-        ):
-            if getattr(self, name) is not getattr(actual, name):
-                raise TypeError(
-                    f"Canonical generation solver preparation substituted {name!r}."
-                )
-
-    @property
-    def code_roots(self) -> tuple[jax.Array, ...]:
-        """Borrow actual source/future grids and plans, without claiming admission."""
-        self.validate_owner()
-        return canonical_generation_roots(
-            declarations=(
-                self.context,
-                self.build,
-                self.step,
-                self.plan,
-                self.declarations,
-            )
-        )
-
-
 type _GenerationState = tuple[
     str, str, Model, tuple[PytreeValue, ...], list[SolutionAuthority]
 ]
@@ -221,53 +158,6 @@ class CanonicalModelGeneration:
                 for authority in authorities
                 for artifact in authority.artifacts.values()
             ),
-        )
-
-    def solver_preparation(
-        self, *, regime_name: RegimeName, period: int
-    ) -> GenerationSolverPreparation:
-        """Acquire genuine dated builder objects, never archive-supplied programs."""
-        from _lcm.egm.step import _EGMStep  # noqa: PLC0415 - Model import closure
-
-        self.execution._check_identity_runtime()  # noqa: SLF001 - actual canonical generation handoff
-        prepared = self.execution._dated_generation  # noqa: SLF001 - actual canonical generation handoff
-        if prepared is None:
-            raise UnsupportedOperationError(
-                "This generation has no genuine retained dated solver preparation."
-            )
-        numerical = prepared.preparation.numerical
-        if regime_name not in numerical.steps:
-            raise UnsupportedOperationError(
-                f"Generation source {regime_name!r} has no genuine DCEGM preparation."
-            )
-        build = numerical.steps[regime_name]
-        if type(period) is not int or period not in build.steps:
-            raise UnsupportedOperationError(
-                f"Generation source {regime_name!r} has no original date {period!r}."
-            )
-        context = numerical.contexts[regime_name]
-        step = build.steps[period]
-        if not isinstance(step, _EGMStep):
-            raise UnsupportedOperationError(
-                "Generation lacks original scalar Euler pieces."
-            )
-        kernel = self.execution._regimes[regime_name].solution.period_kernels[period]  # noqa: SLF001 - actual canonical generation handoff
-        original = prepared.regimes[regime_name].solution.period_kernels[period]
-        if kernel is not original or context.regime_name != regime_name:
-            raise TypeError(
-                "Installed generation substituted its original dated kernel."
-            )
-        return GenerationSolverPreparation(
-            generation=self,
-            regime_name=regime_name,
-            period=period,
-            context=context,
-            build=build,
-            step=step,
-            plan=context.current_iid_plans.get(period),
-            declarations=context.projected_continuation_declarations,
-            installed_kernel=kernel,
-            solver=numerical.solvers[regime_name],
         )
 
     def declared_authority(

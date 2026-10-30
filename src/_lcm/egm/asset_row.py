@@ -31,7 +31,6 @@ from _lcm.egm.interp import (
     interp_on_padded_grid,
 )
 from _lcm.egm.preferences import BoundUtilityOfAction
-from _lcm.egm.projected_continuation import ProjectedEGMCarry
 from _lcm.egm.query_data import EGMLiquidCornerData, EGMQueryData, QueryNodeKind
 from _lcm.egm.step_core import (
     ResourcesOfState,
@@ -47,11 +46,10 @@ from _lcm.egm.step_core import (
     current_node_feasibility,
     tile_block_size,
 )
-from _lcm.egm.upper_envelope import OwnedQueryBracket, _bracket_from_owned_row
+from _lcm.egm.upper_envelope import OwnedQueryBracket
 from _lcm.egm.upper_envelope.fues import (
     QueryBracket,
 )
-from _lcm.egm.upper_envelope.segment_envelope import OwnedEnvelope
 from _lcm.solution.feasibility import (
     BoundedResult,
     ContinuationReadCounts,
@@ -122,9 +120,7 @@ def _get_solve_one_combo_asset_rows(
     pieces: _EgmKernelPieces,
     pool: EconFunctionKwargs,
     state_grid: Float1D,
-    next_regime_to_continuation: MappingProxyType[
-        RegimeName, EGMCarry | ProjectedEGMCarry
-    ],
+    next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
     euler_point_width: int | None,
     savings_point_width: int | None,
     stochastic_node_width: int | None,
@@ -184,9 +180,7 @@ class _SolveOneComboAssetRows:
     state_grid: Float1D
     """The regime's exogenous Euler-state grid."""
 
-    next_regime_to_continuation: MappingProxyType[
-        RegimeName, EGMCarry | ProjectedEGMCarry
-    ]
+    next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry]
     """The next period's EGM carries."""
 
     euler_point_width: int | None
@@ -361,8 +355,6 @@ class _ConstructedAssetNode:
     """Mandatory child summaries from the original construction."""
     read_counts: ContinuationReadCounts | None
     """Original independently eligible continuation read events."""
-    owned_envelope: OwnedEnvelope | None
-    """Same original full envelope, only when its caller requests provenance."""
     discount_factor: ScalarFloat
     """Original discount operand used by the borrowing-corner selector."""
     first_endogenous_point: ScalarFloat
@@ -382,9 +374,7 @@ class _SolveOneNode:
     discount_factor: ScalarFloat
     """The combo's discount factor."""
 
-    next_regime_to_continuation: MappingProxyType[
-        RegimeName, EGMCarry | ProjectedEGMCarry
-    ]
+    next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry]
     """The next period's EGM carries."""
 
     dtype: np.dtype
@@ -541,7 +531,6 @@ class _SolveOneNode:
         self,
         *,
         node_value: ScalarFloat,
-        owned_refine: Callable[..., OwnedEnvelope] | None = None,
     ) -> _ConstructedAssetNode:
         """Construct the original candidates once before selecting output channels."""
         pieces = bind_cell_floor(pieces=self.pieces, pool=self.combo_pool)
@@ -626,30 +615,15 @@ class _SolveOneNode:
         # envelope row and locates the bracketing pair, so the published
         # `(V, policy)` is a full-envelope-then-interpolate. A sub-`n_pad`
         # streamed finder is future work for all backends.
-        owned_envelope = None
-        if owned_refine is None:
-            bracket = pieces.refine_to_bracket(
-                cell_width=self.envelope_cell_width,
-                endog_grid=jnp.where(candidate_dead, jnp.nan, candidate_grid),
-                policy=jnp.where(candidate_dead, jnp.nan, candidate_policy),
-                value=jnp.where(candidate_dead, jnp.nan, candidate_value),
-                marginal_utility=candidate_marginal,
-                savings=jnp.where(candidate_dead, jnp.nan, candidate_savings),
-                x_query=resources_at_node,
-            )
-        else:
-            # The exact bracket finder already builds this same full owned row.
-            owned_envelope = owned_refine(
-                cell_width=self.envelope_cell_width,
-                endog_grid=jnp.where(candidate_dead, jnp.nan, candidate_grid),
-                policy=jnp.where(candidate_dead, jnp.nan, candidate_policy),
-                value=jnp.where(candidate_dead, jnp.nan, candidate_value),
-                marginal_utility=candidate_marginal,
-                savings=jnp.where(candidate_dead, jnp.nan, candidate_savings),
-            )
-            bracket = _bracket_from_owned_row(
-                refined=owned_envelope, x_query=resources_at_node
-            )
+        bracket = pieces.refine_to_bracket(
+            cell_width=self.envelope_cell_width,
+            endog_grid=jnp.where(candidate_dead, jnp.nan, candidate_grid),
+            policy=jnp.where(candidate_dead, jnp.nan, candidate_policy),
+            value=jnp.where(candidate_dead, jnp.nan, candidate_value),
+            marginal_utility=candidate_marginal,
+            savings=jnp.where(candidate_dead, jnp.nan, candidate_savings),
+            x_query=resources_at_node,
+        )
 
         return _ConstructedAssetNode(
             pieces=pieces,
@@ -662,7 +636,6 @@ class _SolveOneNode:
             floor_direct=floor_direct,
             child_status=child_status,
             read_counts=read_counts,
-            owned_envelope=owned_envelope,
             discount_factor=self.discount_factor,
             first_endogenous_point=endog_grid[0],
         )
@@ -1046,9 +1019,7 @@ def _continuation_of_euler_state(
     *,
     pieces: _EgmKernelPieces,
     combo_pool: EconFunctionKwargs,
-    next_regime_to_continuation: MappingProxyType[
-        RegimeName, EGMCarry | ProjectedEGMCarry
-    ],
+    next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
     dtype: np.dtype,
     stochastic_node_width: int | None,
     resolved_process_grids: Mapping[StateName, FloatND],
@@ -1106,9 +1077,7 @@ def _get_expected_continuation_value(
     *,
     pieces: _EgmKernelPieces,
     combo_pool: EconFunctionKwargs,
-    next_regime_to_continuation: MappingProxyType[
-        RegimeName, EGMCarry | ProjectedEGMCarry
-    ],
+    next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
     dtype: np.dtype,
     stochastic_node_width: int | None,
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),

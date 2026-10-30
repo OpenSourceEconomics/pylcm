@@ -9,10 +9,15 @@ import pytest
 
 import lcm.model as model_module
 from _lcm.egm.published_policy import NNBEGMSimPolicy
+from _lcm.params.mapping_leaf import MappingLeaf
 from _lcm.simulation.residency import measure_buffer_footprint, union_buffer_footprints
 from _lcm.solution import model_authority
-from _lcm.solution.generation import canonical_generation_roots
+from _lcm.solution.generation import (
+    canonical_generation_roots,
+    canonical_parameter_schema,
+)
 from _lcm.solution.retained_buffers import retained_artifact_authority_buffers
+from _lcm.typing import FlatParams
 from lcm.exceptions import InvalidSimulationInputError
 from lcm.solver_api import SIMULATION_POLICY, ArtifactRef, ArtifactStore
 from tests.solution.test_solution_result import _small_grid_search_inputs
@@ -243,3 +248,27 @@ def test_published_generation_live_roots_include_lazy_authority_templates() -> N
     assert (
         union_buffer_footprints(footprints=(observed, expected)).spans == observed.spans
     )
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_canonical_group_mapping_leaf_schema_is_not_an_object_scalar() -> None:
+    """Raw namespaces lead to actual nested MappingLeaf dtype/shape signatures."""
+
+    def parameters(*, size: int, value: float) -> FlatParams:
+        return MappingProxyType(
+            {
+                "income": MappingProxyType(
+                    {"law": MappingLeaf({"array": jnp.full((size,), value)})}
+                ),
+                "edges": MappingProxyType(
+                    {"parent": MappingProxyType({"law__scale": jnp.asarray(1.0)})}
+                ),
+            }
+        )
+
+    assert canonical_parameter_schema(
+        flat_params=parameters(size=2, value=1.0)
+    ) == canonical_parameter_schema(flat_params=parameters(size=2, value=9.0))
+    assert canonical_parameter_schema(
+        flat_params=parameters(size=2, value=1.0)
+    ) != canonical_parameter_schema(flat_params=parameters(size=3, value=1.0))

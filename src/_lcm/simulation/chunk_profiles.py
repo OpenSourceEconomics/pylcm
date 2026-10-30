@@ -15,7 +15,6 @@ import jax.numpy as jnp
 import numpy as np
 
 from _lcm.dtypes import canonical_float_dtype
-from _lcm.egm.current_iid_replay_inputs import CurrentIIDReplayInputs
 from _lcm.egm.published_policy import EGMSimPolicy, NBEGMGridPolicy, NNBEGMSimPolicy
 from _lcm.engine import Regime, StateActionSpace
 from _lcm.execution.core_program import ValueRead
@@ -28,7 +27,6 @@ from _lcm.execution.value_transfer import (
 )
 from _lcm.grids import ContinuousGrid, DiscreteGrid
 from _lcm.processes import _ContinuousStochasticProcess
-from _lcm.regime_building.projected_forward import ProjectedForwardInputs
 from _lcm.simulation import (
     population_operations,
 )
@@ -164,8 +162,6 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     log_level: LogLevel,
     runtime_checks: bool = True,
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None = None,
-    current_iid_replay_inputs: CurrentIIDReplayInputs = MappingProxyType({}),
-    projected_forward_inputs: ProjectedForwardInputs = MappingProxyType({}),
     arrival_surfaces: PeriodToRegimeToArrivalSurfaces = MappingProxyType({}),
     max_compilation_workers: int | None = None,
     group_sizes: tuple[int, ...] | None = None,
@@ -291,10 +287,6 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                     ordinary_key=key,
                     taste_key=taste_key,
                     policy=(policies or {}).get(period, {}).get(name),
-                    projected_forward_inputs=projected_forward_inputs,
-                    current_iid_replay_input=current_iid_replay_inputs.get(
-                        period, {}
-                    ).get(name),
                     wave=wave,
                     current_iid_override_schema=current_iid_override_schema,
                 )
@@ -404,10 +396,6 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                 ordinary_key=key,
                 taste_key=taste_key,
                 policy=(policies or {}).get(period, {}).get(name),
-                projected_forward_inputs=projected_forward_inputs,
-                current_iid_replay_input=current_iid_replay_inputs.get(period, {}).get(
-                    name
-                ),
                 current_iid_override_schema=current_iid_override_schema,
                 prepared_decision=prepared_exits.get(name),
             )
@@ -464,84 +452,6 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                     executable=decoder.executable,
                     memory=decoder.memory,
                     arguments=decoder.arguments,
-                )
-                fallback = inventory.operation(
-                    function=_empty_fallback,
-                    arguments={"mask": mask},
-                    subject_arg_names=("mask",),
-                    subject_outputs=True,
-                )
-            elif regime.simulation.uses_case_u_reconstruction:
-                from _lcm.simulation.case_u_replay import (  # noqa: PLC0415
-                    case_u_profile_output,
-                    case_u_status,
-                )
-
-                replayed = case_u_profile_output(
-                    output=_record_core(
-                        inventory=inventory,
-                        profile=cores["decision"],
-                        family="decision",
-                    ),
-                )
-                inventory.operation(
-                    function=case_u_status,
-                    arguments={
-                        "law_invalid": replayed.law_invalid,
-                        "invalid": replayed.invalid,
-                        "feasible": replayed.feasible,
-                        "in_regime": mask,
-                    },
-                    subject_arg_names=(
-                        "law_invalid",
-                        "invalid",
-                        "feasible",
-                        "in_regime",
-                    ),
-                )
-                actions, value, physical = (
-                    replayed.actions,
-                    replayed.value,
-                    replayed.physical,
-                )
-                fallback = inventory.operation(
-                    function=_empty_fallback,
-                    arguments={"mask": mask},
-                    subject_arg_names=("mask",),
-                    subject_outputs=True,
-                )
-            elif regime.simulation.case_r_replay_spec is not None:
-                from _lcm.simulation.case_r_replay import (  # noqa: PLC0415
-                    case_r_profile_output,
-                    case_r_status,
-                )
-
-                replayed = case_r_profile_output(
-                    output=_record_core(
-                        inventory=inventory,
-                        profile=cores["decision"],
-                        family="decision",
-                    ),
-                )
-                inventory.operation(
-                    function=case_r_status,
-                    arguments={
-                        "law_invalid": replayed.law_invalid,
-                        "invalid": replayed.invalid,
-                        "feasible": replayed.feasible,
-                        "in_regime": mask,
-                    },
-                    subject_arg_names=(
-                        "law_invalid",
-                        "invalid",
-                        "feasible",
-                        "in_regime",
-                    ),
-                )
-                actions, value, physical = (
-                    replayed.actions,
-                    replayed.value,
-                    replayed.physical,
                 )
                 fallback = inventory.operation(
                     function=_empty_fallback,
@@ -707,8 +617,6 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                 regimes=forward_regimes[period],
                 values=values,
                 policies=policies,
-                current_iid_replay_inputs=current_iid_replay_inputs,
-                projected_forward_inputs=projected_forward_inputs,
                 arrival_surfaces=arrival_surfaces,
                 period=period,
                 devices=devices,
@@ -1455,33 +1363,12 @@ def _period_copy_reservation(
     period: int,
     devices: tuple[jax.Device, ...],
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None = None,
-    current_iid_replay_inputs: CurrentIIDReplayInputs = MappingProxyType({}),
-    projected_forward_inputs: ProjectedForwardInputs = MappingProxyType({}),
     arrival_surfaces: PeriodToRegimeToArrivalSurfaces = MappingProxyType({}),
 ) -> dict[jax.Device, int]:
     """Reserve declared nonaligned copies once per period/address/ordered layout."""
     policy_sources = _policy_read_sources(
         policies=(policies or {}).get(period, {}), period=period
     )
-    from _lcm.egm.current_iid_replay_inputs import (  # noqa: PLC0415
-        native_replay_payload,
-        native_replay_program,
-    )
-
-    for replay in current_iid_replay_inputs.get(period, {}).values():
-        leaves = jax.tree.leaves(native_replay_payload(replay=replay))
-        if not all(isinstance(leaf, jax.Array) for leaf in leaves):
-            raise ExecutionPlanningError(
-                "Case-R copy profiles require canonical JAX rows."
-            )
-        policy_sources.update(
-            (read.target, leaf)
-            for read, leaf in zip(
-                replay.reads(core=native_replay_program(replay=replay)),
-                leaves,
-                strict=True,
-            )
-        )
     reads = tuple(
         read
         for regime in regimes.values()
@@ -1511,7 +1398,6 @@ def _period_copy_reservation(
             read=read,
             values=values,
             policy_sources=policy_sources,
-            projected_forward_inputs=projected_forward_inputs,
             arrival_surfaces=arrival_surfaces,
         )
         required = simulation_value_sharding(
@@ -1606,7 +1492,6 @@ def _retained_read_source(
     read: ValueRead,
     values: Mapping[int, Mapping[str, jax.Array]],
     policy_sources: Mapping[ValueArtifactAddress, jax.Array],
-    projected_forward_inputs: ProjectedForwardInputs = MappingProxyType({}),
     arrival_surfaces: PeriodToRegimeToArrivalSurfaces = MappingProxyType({}),
 ) -> jax.Array:
     """Resolve only the declared value and finite-policy storage classes."""
@@ -1615,21 +1500,6 @@ def _retained_read_source(
             "jax.Array",
             stored_arrival_surface(address=read.target, surfaces=arrival_surfaces),
         )
-    if read.target.kind is ValueArtifactKind.CONTINUATION_LEAF:
-        if read.target.regime not in projected_forward_inputs.get(
-            read.target.period, {}
-        ):
-            raise ExecutionPlanningError(
-                "Projected copy profile lacks its original source."
-            )
-        leaf = projected_forward_inputs[read.target.period][
-            read.target.regime
-        ].leaves()[read.target.leaf_path]
-        if not isinstance(leaf, jax.Array):
-            raise ExecutionPlanningError(
-                "Projected copy profile requires actual retained arrays."
-            )
-        return leaf
     if read.target.kind is ValueArtifactKind.REGIME_VALUE:
         return values[read.target.period][read.target.regime]
     if (

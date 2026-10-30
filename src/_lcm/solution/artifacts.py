@@ -30,7 +30,6 @@ from _lcm.typing import (
     RegimeName,
 )
 from lcm._solver_api.authority import _ArrayCopier
-from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import (
     EGM_CONTINUATION,
     SIMULATION_POLICY,
@@ -43,7 +42,6 @@ from lcm.solver_api import (
     CategoryDomain,
     OmissionReason,
     PersistencePolicy,
-    ReplayRouteIdentity,
     ResultRetention,
     SolutionMetadata,
     SolutionResult,
@@ -101,43 +99,6 @@ class OwnedSolutionView:
     """
 
 
-def projected_forward_consumer_routes(
-    *, regimes: Mapping[RegimeName, Regime]
-) -> Mapping[ArtifactRef, ReplayRouteIdentity]:
-    """Bind each actual projected child read to its installed forward route."""
-    from _lcm.continuation import ProjectedContinuationSpec  # noqa: PLC0415
-
-    routes = {}
-    for regime in regimes.values():
-        for (
-            period,
-            readers,
-        ) in regime.simulation.projected_forward_readers_by_period.items():
-            for target, reader in readers.items():
-                spec = regimes[target].solution.continuation_spec
-                if (
-                    type(spec) is not ProjectedContinuationSpec
-                    or reader.target != target
-                    or reader.date is not spec.date_at(period=period + 1)
-                ):
-                    raise ExecutionPlanningError(
-                        "Projected forward retention lost its installed child date."
-                    )
-                ref = ArtifactRef(
-                    period=reader.date.authority.period,
-                    regime=target,
-                    key=reader.date.authority.artifact_key,
-                )
-                route = _replay_route_identity(regime.simulation.replay_route)
-                if ref in routes and routes[ref] != route:
-                    raise ExecutionPlanningError(
-                        "Projected forward continuation requires a single durable "
-                        "consumer-route identity."
-                    )
-                routes[ref] = route
-    return MappingProxyType(routes)
-
-
 def selected_persistable_artifact_refs(
     *,
     regimes: Mapping[RegimeName, Regime],
@@ -167,13 +128,6 @@ def selected_persistable_artifact_refs(
         and artifact.descriptor.persistence is PersistencePolicy.MODEL_VERIFIABLE
         and artifact.descriptor.required_for & routes
     }
-    for ref, route in projected_forward_consumer_routes(regimes=regimes).items():
-        artifact = authority.artifacts.get(ref)
-        if ref not in required or artifact is None or artifact.consumer_route != route:
-            raise ExecutionPlanningError(
-                "Projected forward requires its model-verifiable retained "
-                "continuation and actual consumer route."
-            )
     return frozenset(required)
 
 

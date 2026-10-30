@@ -17,15 +17,9 @@ from dags.tree import QNAME_DELIMITER, qname_from_tree_path
 from jax import Array
 
 from _lcm.constraints.processed import ConstraintLike, normalize_constraints
-from _lcm.dtypes import CanonicalArrayWriter
-from _lcm.egm.current_iid_envelope import StateUtilityObligations
-from _lcm.egm.current_iid_euler_grid import EulerGridObligations
-from _lcm.engine import PreparedPhaseSupport, phase_state_action_space
-from _lcm.execution.core_program import CoreBuildContext
 from _lcm.execution.execution_plan import ResolvedExecution
-from _lcm.grids import DiscreteGrid, Grid
+from _lcm.grids import DiscreteGrid
 from _lcm.grids.categorical import get_category_codes
-from _lcm.materialization import DatedGenerationMaterializer
 from _lcm.pandas_utils import convert_series_in_params
 from _lcm.params.edges import (
     EDGES,
@@ -42,7 +36,6 @@ from _lcm.params.processing import (
 from _lcm.params.regime_template import iter_transition_callables
 from _lcm.params.sequence_leaf import SequenceLeaf
 from _lcm.processes.base import _ContinuousStochasticProcess
-from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.reachability import PhaseName
 from _lcm.regime_building.age_normalization import (
     _regime_has_markers,
@@ -65,10 +58,6 @@ from _lcm.regime_building.processing import (
     PreparedModelStructure,
     Regime,
     RegimeParameterMetadata,
-    _CanonicalRegimeBuilder,
-    _DatedCanonicalBuild,
-    _period_to_state_nodes,
-    prepare_regime_builder,
     process_regimes,
 )
 from _lcm.regime_law import RegimeLaws
@@ -82,7 +71,6 @@ from _lcm.typing import (
     EGMCarryProducer,
     FlatParams,
     FlatRegimeParams,
-    FootprintTree,
     FunctionName,
     ParamsLeaf,
     ParamsTemplate,
@@ -96,11 +84,9 @@ from _lcm.typing import (
 from _lcm.utils.error_messages import format_messages, path_segment_name_errors
 from _lcm.utils.functools import is_user_function
 from lcm.exceptions import (
-    ExecutionPlanningError,
     InvalidParamsError,
     ModelInitializationError,
     RegimeInitializationError,
-    UnsupportedOperationError,
 )
 from lcm.params import MappingLeaf
 from lcm.phased import Phased
@@ -295,7 +281,6 @@ def _normalize_fixed_parameters(
     regime_names_to_ids: RegimeNamesToIds,
     prepared_structure: PreparedModelStructure,
     phase_transitions: Mapping[Phase, Mapping[RegimeName, Transition]],
-    array_writer: CanonicalArrayWriter | None = None,
 ) -> NormalizedFixedParameters:
     """Use the existing fixed resolver, clock conversion, casts and expansion."""
     fixed_flat_params = _resolve_fixed_params(
@@ -317,11 +302,8 @@ def _normalize_fixed_parameters(
         required_periods_by_regime={
             name: regime.required_periods for name, regime in metadata.items()
         },
-        array_writer=array_writer,
     )
-    fixed_flat_params = cast_params_to_canonical_dtypes(
-        fixed_flat_params, array_writer=array_writer
-    )
+    fixed_flat_params = cast_params_to_canonical_dtypes(fixed_flat_params)
     _validate_param_types(fixed_flat_params)
 
     # The template trim works on the template-shaped (user-coarse) form;
@@ -341,206 +323,12 @@ def _normalize_fixed_parameters(
     )
 
 
-@dataclasses.dataclass(frozen=True, kw_only=True)
-class PreparedDatedParameters:
-    """Genuine model metadata plus normalized operands, before any core program."""
-
-    builder: _CanonicalRegimeBuilder
-    fixed: NormalizedFixedParameters
-    euler_grid_obligations: EulerGridObligations = MappingProxyType({})
-    state_utility_obligations: StateUtilityObligations = MappingProxyType({})
-
-
-def prepare_dated_parameters(
-    *,
-    ages: TimeAxis,
-    user_regimes: Mapping[RegimeName, FinalizedUserRegime],
-    regime_names_to_ids: RegimeNamesToIds,
-    enable_jit: bool,
-    fixed_params: UserParams,
-    params_already_consumed: frozenset[str],
-    prepared_structure: PreparedModelStructure,
-    phase_transitions: Mapping[Phase, Mapping[RegimeName, Transition]],
-    execution: ResolvedExecution | None = None,
-    materializer: DatedGenerationMaterializer | None = None,
-    euler_grid_obligations: EulerGridObligations = MappingProxyType({}),
-    state_utility_obligations: StateUtilityObligations = MappingProxyType({}),
-) -> PreparedDatedParameters:
-    """Prepare actual namespaces/fixed operands without constructing solver kernels.
-
-    This private boundary supplies no runtime parameter shapes. Its caller must
-    carry actual canonical call-owned operands into dated shape preparation.
-    """
-    builder = prepare_regime_builder(
-        ages=ages,
-        user_regimes=user_regimes,
-        regime_names_to_ids=regime_names_to_ids,
-        enable_jit=enable_jit,
-        prepared_structure=prepared_structure,
-        execution=execution,
-        materializer=materializer,
-        euler_grid_obligations=euler_grid_obligations,
-        state_utility_obligations=state_utility_obligations,
-    )
-    metadata = builder.parameter_metadata()
-    raw_template = create_params_template(
-        regimes=metadata,
-        query_periods_by_phase=prepared_structure.query_periods_by_phase,
-    )
-    fixed = _normalize_fixed_parameters(
-        fixed_params=fixed_params,
-        params_already_consumed=params_already_consumed,
-        raw_params_template=raw_template,
-        metadata=metadata,
-        ages=ages,
-        user_regimes=user_regimes,
-        regime_names_to_ids=regime_names_to_ids,
-        prepared_structure=prepared_structure,
-        phase_transitions=phase_transitions,
-        array_writer=materializer,
-    )
-    return PreparedDatedParameters(
-        builder=builder,
-        fixed=fixed,
-        euler_grid_obligations=euler_grid_obligations,
-        state_utility_obligations=state_utility_obligations,
-    )
-
-
-@dataclasses.dataclass(frozen=True, kw_only=True)
-class DatedCallSupport:
-    """Actual caller-owned support and parameters before dated finalization."""
-
-    contexts: Mapping[tuple[RegimeName, int], CoreBuildContext]
-    support: Mapping[RegimeName, Mapping[str, FootprintTree]]
-
-
-def prepare_dated_call_support(
-    *,
-    prepared: PreparedDatedParameters,
-    flat_params: FlatParams,
-    process_grid_resolver: ProcessGridResolver | None = None,
-) -> DatedCallSupport:
-    """Resolve original support before any final parent CoreProgram is built."""
-    builder = prepared.builder
-    contexts = {}
-    support = {}
-    for name in builder.representative_user_regimes:
-        metadata = PreparedPhaseSupport(
-            grids=builder.all_grids[name],
-            _base_state_action_space=builder.state_action_spaces[name],
-            resolved_fixed_params=regime_kernel_params(
-                prepared.fixed.granular, regime_name=name
-            ),
-            sharded_state_names=builder.sharded_state_names_by_regime[name],
-            action_partitions=builder.action_partitions.get(name, 1),
-            submesh_device_ids=builder.placement.devices_for(regime_name=name),
-        )
-        base = phase_state_action_space(
-            phase=metadata,
-            regime_params=regime_kernel_params(flat_params, regime_name=name),
-            process_grid_resolver=process_grid_resolver,
-        )
-        period_nodes = _period_to_state_nodes(
-            regime_name=name, grid_schedule=builder.grid_schedule
-        )
-        support[name] = {
-            "states": base.states,
-            "discrete_actions": base.discrete_actions,
-            "continuous_actions": base.continuous_actions,
-            "period_states": period_nodes,
-        }
-        # A simulation-only grid that differs from the declared solve support
-        # needs its genuine phase resolver before private admission can expand.
-        simulation_states = builder.phased_specs[name].simulation.grid_states
-        if any(
-            state not in builder.all_grids[name]
-            or grid is not builder.all_grids[name][state]
-            for state, grid in simulation_states.items()
-            if isinstance(grid, Grid)
-        ):
-            raise UnsupportedOperationError(
-                f"Private dated generation requires genuine separate simulation "
-                f"support preparation for source {name!r}."
-            )
-        if builder.laws[name].terminal or not builder.regimes_to_active_periods[name]:
-            continue
-        for period in builder.regimes_to_active_periods[name]:
-            nodes = None if period_nodes is None else period_nodes.get(period)
-            actual = (
-                base
-                if not nodes
-                else base.replace(states=MappingProxyType({**base.states, **nodes}))
-            )
-            contexts[name, period] = CoreBuildContext(
-                state_action_space=actual,
-                # The dated builder replaces this empty pre-publication mapping
-                # with genuinely prepared next-date templates, before reading it.
-                next_regime_to_V_arr=MappingProxyType({}),
-                next_regime_to_continuation=MappingProxyType({}),
-                flat_params=flat_params,
-                period=period,
-                ages=builder.ages,
-            )
-    return DatedCallSupport(
-        contexts=MappingProxyType(contexts), support=MappingProxyType(support)
-    )
-
-
-@dataclasses.dataclass(frozen=True, kw_only=True)
-class PreparedDatedGeneration:
-    """Original numerical owner plus genuinely fixed/replay-installed programs."""
-
-    regimes: MappingProxyType[RegimeName, Regime]
-    params_template: ParamsTemplate
-    preparation: _DatedCanonicalBuild
-
-
-def build_private_dated_balanced_regimes(
-    *,
-    prepared: PreparedDatedParameters,
-    call_contexts: Mapping[tuple[RegimeName, int], CoreBuildContext],
-    materializer: DatedGenerationMaterializer | None = None,
-) -> PreparedDatedGeneration:
-    """Consume normalized fixed operands in the genuine dated preparation path.
-
-    The caller must already own canonical runtime parameters and resolved support.
-    This is deliberately not a public Model constructor option. Runtime shape
-    acquisition and sealed Model authority specialization remain separate.
-    """
-    built = prepared.builder.prepare_balanced_regimes(
-        call_contexts=call_contexts,
-        fixed_flat_params=prepared.fixed.granular,
-        materializer=materializer,
-        euler_grid_obligations=prepared.euler_grid_obligations,
-        state_utility_obligations=prepared.state_utility_obligations,
-    )
-    regimes = _partial_fixed_params_into_regimes(
-        raw_regimes=built.regimes, fixed_flat_params=prepared.fixed.granular
-    )
-    built.numerical.validate_state_utility(
-        installed_regimes=regimes, fixed_flat_params=prepared.fixed.granular
-    )
-    regimes = MappingProxyType(
-        {
-            name: declare_finite_replay_programs(regime)
-            for name, regime in regimes.items()
-        }
-    )
-    return PreparedDatedGeneration(
-        regimes=regimes,
-        params_template=prepared.fixed.remaining_template,
-        preparation=built,
-    )
-
-
 def _validate_borrowing_bound_routes(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
     laws: RegimeLaws,
     ages: TimeAxis,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
-    materializer: DatedGenerationMaterializer | None = None,
 ) -> None:
     """Validate floor identities before admitting a numerical solver route."""
     from _lcm.constraints.dynamic_bound import validate_declared_bounds  # noqa: PLC0415
@@ -552,7 +340,6 @@ def _validate_borrowing_bound_routes(
             law=laws[regime_name],
             ages=ages,
             periods=active_periods_by_regime.get(regime_name, ()),
-            materializer=materializer,
         )
         post_decision = _post_decision_function_of_solver(user_regime.solver)
         if post_decision is not None and len(specs) > 1:
@@ -563,11 +350,6 @@ def _validate_borrowing_bound_routes(
                     and first.dependency_identity == other.dependency_identity
                 )
                 if first.kind == other.kind == "literal":
-                    if materializer is not None:
-                        raise ExecutionPlanningError(
-                            "Cold multiple-bound comparison requires its original "
-                            "admitted equality stages."
-                        )
                     same = bool(
                         jnp.array_equal(
                             jnp.asarray(first.literal_value),
@@ -655,9 +437,6 @@ def validate_model_inputs(
     declared_transitions: Mapping[
         RegimeName, tuple[Transition, ...]
     ] = MappingProxyType({}),
-    materializer: DatedGenerationMaterializer | None = None,
-    euler_grid_obligations: EulerGridObligations = MappingProxyType({}),
-    state_utility_obligations: StateUtilityObligations = MappingProxyType({}),
 ) -> None:
     """Validate model constructor inputs.
 
@@ -679,13 +458,6 @@ def validate_model_inputs(
     that fixed-zero pruning removed with their edges, and those edges' targets.
     Such a variable is unused like any other; the names only explain why.
     """
-
-    if materializer is not None and any(
-        _regime_has_markers(regime) for regime in user_regimes.values()
-    ):
-        raise ExecutionPlanningError(
-            "Cold temporal declaration factories require admission before build(age)."
-        )
     # DC-EGM contract checks run before the generic checks below: a contract
     # violation (e.g. a missing resources function) typically also leaves
     # variables unused, and the contract-specific message is the actionable
@@ -698,7 +470,6 @@ def validate_model_inputs(
     # whereas the raw marker is not a `Grid` at all and would be dropped from every
     # type-filtered collection of continuous states, rejecting a valid model.
     _validate_borrowing_bound_routes(
-        materializer=materializer,
         user_regimes=user_regimes,
         laws=laws,
         ages=ages,
@@ -706,7 +477,6 @@ def validate_model_inputs(
     )
 
     solver_validation_regimes = _representative_for_validation(
-        materializer=materializer,
         user_regimes=user_regimes,
         laws=laws,
         ages=ages,
@@ -723,9 +493,6 @@ def validate_model_inputs(
         user_regime.solver.validate_model(
             context=SolverModelContext(
                 regime_name=regime_name,
-                materializer=materializer,
-                euler_grid_obligation=euler_grid_obligations.get(regime_name),
-                state_utility_obligation=state_utility_obligations.get(regime_name),
                 user_regimes=solver_validation_regimes,
                 laws=laws,
                 solve_functions=solver_validation_phase_specs[
@@ -981,7 +748,6 @@ def _representative_for_validation(
     ages: TimeAxis,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
     visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
-    materializer: DatedGenerationMaterializer | None = None,
 ) -> Mapping[RegimeName, UserRegime]:
     """Resolve age markers to their representatives, for solver-contract validation.
 
@@ -995,10 +761,6 @@ def _representative_for_validation(
     """
     if not any(_regime_has_markers(regime) for regime in user_regimes.values()):
         return user_regimes
-    if materializer is not None:
-        raise ExecutionPlanningError(
-            "Cold temporal factories require admitted original builds."
-        )
     phased_specs = normalize_all_regime_phases(user_regimes=user_regimes, laws=laws)
     return normalize_age_specialization(
         user_regimes=user_regimes,

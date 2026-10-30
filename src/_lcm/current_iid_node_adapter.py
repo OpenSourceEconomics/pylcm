@@ -19,7 +19,6 @@ The adapter keeps the `shocks=` contract at the model boundary:
 """
 
 import dataclasses
-import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
 from types import MappingProxyType
@@ -90,10 +89,6 @@ from lcm.typing import (
     UserInitialConditions,
     UserSeed,
 )
-
-# Environment flag keeping endogenous-grid readers on the current-IID route. Internal:
-# parity tests compare the node-state axis against that route with it.
-NATIVE_CURRENT_IID_SWITCH = "LCM_NATIVE_CURRENT_IID"
 
 # Attribute of a published result that holds the solve's node-axis result.
 _NODE_AXIS_SOLUTION = "_lcm_node_axis_solution"
@@ -425,7 +420,7 @@ def adapt_declaration(
         )
         if name in shocks
     }
-    if not adapted or os.environ.get(NATIVE_CURRENT_IID_SWITCH):
+    if not adapted:
         return regimes, shocks, None
     processes = {
         shock: node_process(group_name=name, group=group, shock=shock)
