@@ -15,6 +15,7 @@ import pandas as pd
 import pytest
 
 from _lcm.simulation.runtime import CompiledSimulationProgram
+from _lcm.simulation.simulate import SubjectChunkKwargs, SubjectChunkResults
 from _lcm.solution.artifacts import OwnedSolutionView
 from _lcm.typing import PytreeValue
 from lcm import (
@@ -34,8 +35,6 @@ from lcm.solver_api import SolutionResult
 from lcm.typing import ContinuousState, ScalarFloat, ScalarInt
 from tests.conftest import (
     PrepareMaterializedKwargs,
-    SubjectChunkKwargs,
-    SubjectChunkResults,
 )
 from tests.simulation._profile_comparison import (
     assert_values_agree as assert_agrees_to_ulp,

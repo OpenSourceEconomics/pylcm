@@ -7,6 +7,7 @@ memory. Every reader instead receives a device copy, so results, reads and panel
 are those of device storage.
 """
 
+import weakref
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -222,7 +223,7 @@ def device_read_view(
     walk.
     """
     copies = _RecentDeviceCopies()
-    return MappingProxyType(
+    view = MappingProxyType(
         {
             period: MappingProxyType(
                 _DeviceReadPeriod(period=period, stored=stored, copies=copies)
@@ -230,3 +231,20 @@ def device_read_view(
             for period, stored in values.items()
         }
     )
+    # Only the view reaches `copies`, so this entry goes with the view and a
+    # later object reusing its id finds nothing.
+    _VIEW_COPIES[id(view)] = copies
+    return view
+
+
+# The copy cache of every live read-through view, by the view's id.
+_VIEW_COPIES: weakref.WeakValueDictionary[int, _RecentDeviceCopies] = (
+    weakref.WeakValueDictionary()
+)
+
+
+def is_device_read_view(
+    values: Mapping[int, Mapping[RegimeName, jax.Array]],
+) -> bool:
+    """Whether `values` is a read-through view of values kept off the device."""
+    return id(values) in _VIEW_COPIES

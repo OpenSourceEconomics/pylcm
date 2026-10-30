@@ -24,6 +24,7 @@ import h5py
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import pytest
 from beartype.roar import BeartypeCallHintParamViolation
 
@@ -31,7 +32,7 @@ from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.execution.value_transfer import ValueArtifactAddress, ValueArtifactKind
 from _lcm.execution.workspace_planning import WorkspaceBudgetError
 from _lcm.persistence.solution import DiskValueEntry
-from _lcm.solution import backward_induction
+from _lcm.solution import backward_induction, host_values
 from _lcm.solution.host_values import HostValueEntry, copy_values_to_host
 from _lcm.solution.result_snapshot import own_value_store
 from _lcm.utils.logging import get_logger
@@ -816,3 +817,165 @@ def test_a_disk_value_entry_carries_the_solve_budget(tmp_path: Path) -> None:
     assert {
         entry.budget_bytes for entry in entries if isinstance(entry, DiskValueEntry)
     } == {model._execution.device_memory_bytes}
+
+
+# One subject per chunk, so every population here runs in several chunks.
+_ONE_SUBJECT_PER_CHUNK = MappingProxyType({"subject": 1})
+
+
+def _value_copies_while_simulating(
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    model: Model,
+    initial_conditions: dict[str, jax.Array],
+) -> tuple[list[tuple[int, RegimeName]], pd.DataFrame]:
+    """Return each stored value copied onto the device, and the panel."""
+    copied: list[tuple[int, RegimeName]] = []
+    read = host_values._RecentDeviceCopies.read
+
+    # keyword-only-exempt: primary-argument=self
+    def _counting_read(
+        self: host_values._RecentDeviceCopies,
+        *,
+        period: int,
+        regime: RegimeName,
+        stored: jax.Array | DiskValueEntry,
+    ) -> jax.Array:
+        if regime not in self._copies.get(period, {}):
+            copied.append((period, regime))
+        return read(self, period=period, regime=regime, stored=stored)
+
+    solution = model.solve(params=_PARAMS, log_level="off")
+    with monkeypatch.context() as patch:
+        patch.setattr(host_values._RecentDeviceCopies, "read", _counting_read)
+        panel = model.simulate(
+            params=_PARAMS,
+            initial_conditions=initial_conditions,
+            solution=solution,
+            seed=3,
+            log_level="off",
+        ).to_dataframe()
+    return copied, panel
+
+
+@pytest.mark.parametrize(
+    ("build_model", "initial_conditions"),
+    [
+        (_three_regime_model, _three_regime_initial_conditions),
+        (_gated_model, _gated_initial_conditions),
+    ],
+    ids=["three-regime", "gated-edge"],
+)
+def test_several_chunks_copy_the_stored_values_a_single_chunk_copies(
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    build_model: Callable[[ExecutionConfig], Model],
+    initial_conditions: Callable[[], dict[str, jax.Array]],
+) -> None:
+    """Chunks run each period in turn, so copies do not grow with the chunks."""
+    copies = [
+        sorted(
+            _value_copies_while_simulating(
+                monkeypatch=monkeypatch,
+                model=build_model(
+                    ExecutionConfig(value_storage="host", axis_widths=widths)
+                ),
+                initial_conditions=initial_conditions(),
+            )[0]
+        )
+        for widths in (MappingProxyType({}), _ONE_SUBJECT_PER_CHUNK)
+    ]
+
+    assert copies[0]
+    assert copies[1] == copies[0]
+
+
+@pytest.mark.parametrize(
+    ("build_model", "initial_conditions"),
+    [
+        (_three_regime_model, _three_regime_initial_conditions),
+        (_gated_model, _gated_initial_conditions),
+    ],
+    ids=["three-regime", "gated-edge"],
+)
+def test_several_chunks_under_host_storage_simulate_the_device_panel(
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    build_model: Callable[[ExecutionConfig], Model],
+    initial_conditions: Callable[[], dict[str, jax.Array]],
+) -> None:
+    """Every subject keeps its keys and row: the panel is the chunked device one."""
+    device = (
+        build_model(ExecutionConfig(axis_widths=_ONE_SUBJECT_PER_CHUNK))
+        .simulate(
+            params=_PARAMS,
+            initial_conditions=initial_conditions(),
+            seed=3,
+            log_level="off",
+        )
+        .to_dataframe()
+    )
+    _, host = _value_copies_while_simulating(
+        monkeypatch=monkeypatch,
+        model=build_model(
+            ExecutionConfig(value_storage="host", axis_widths=_ONE_SUBJECT_PER_CHUNK)
+        ),
+        initial_conditions=initial_conditions(),
+    )
+
+    assert host.equals(device)
+
+
+def test_several_chunks_under_disk_storage_simulate_the_device_panel(
+    *, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    device = (
+        _three_regime_model(ExecutionConfig(axis_widths=_ONE_SUBJECT_PER_CHUNK))
+        .simulate(
+            params=_PARAMS,
+            initial_conditions=_three_regime_initial_conditions(),
+            seed=3,
+            log_level="off",
+        )
+        .to_dataframe()
+    )
+    copied, disk = _value_copies_while_simulating(
+        monkeypatch=monkeypatch,
+        model=_three_regime_model(
+            ExecutionConfig(value_storage=tmp_path, axis_widths=_ONE_SUBJECT_PER_CHUNK)
+        ),
+        initial_conditions=_three_regime_initial_conditions(),
+    )
+
+    assert disk.equals(device)
+    assert copied
+
+
+def test_several_chunks_report_dissolutions_in_the_device_order() -> None:
+    """Rerouted households are reported in the order device storage reports them."""
+    results = []
+    for storage in ("device", "host"):
+        model = _make_dissolution_model(
+            ExecutionConfig(value_storage=storage, axis_widths=_ONE_SUBJECT_PER_CHUNK)
+        )
+        initial_conditions = {
+            "wage": jnp.array([1.0, 2.0, 3.0]),
+            "age": jnp.array([0.0, 0.0, 0.0]),
+            "regime_id": jnp.array(
+                [model.regime_names_to_ids["married"]] * 3, dtype=jnp.int32
+            ),
+            "own_stakeholder": jnp.full(
+                3, model.stakeholder_names_to_ids["f"], dtype=jnp.int32
+            ),
+        }
+        results.append(
+            model.simulate(
+                params=_DISSOLUTION_PARAMS,
+                initial_conditions=initial_conditions,
+                seed=0,
+                log_level="off",
+            )
+        )
+
+    assert results[1].to_dataframe().equals(results[0].to_dataframe())
+    assert results[1]._dissolution_fallbacks == results[0]._dissolution_fallbacks

@@ -42,6 +42,7 @@ from _lcm.simulation import chunk_admission
 from _lcm.simulation.chunk_planning import SimulationChunkProfile
 from _lcm.simulation.operand_placement import _OperandValue
 from _lcm.simulation.residency import DeviceBufferFootprint
+from _lcm.simulation.simulate import SubjectChunkKwargs, SubjectChunkResults
 from _lcm.typing import ArgumentTree, PytreeValue, ShapeDtypePytree
 from _lcm.variables import from_regime
 from lcm import (
@@ -81,8 +82,6 @@ from lcm.typing import (
 from tests.conftest import (
     ApplyValueTransferKwargs,
     ExecuteWithPendingWorkKwargs,
-    SubjectChunkKwargs,
-    SubjectChunkResults,
     assert_agrees_to_ulp,
     assert_general_values_agree,
 )
