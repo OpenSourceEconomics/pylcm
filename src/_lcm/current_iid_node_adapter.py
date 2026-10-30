@@ -12,7 +12,10 @@ The adapter keeps the `shocks=` contract at the model boundary:
   carries a shock axis;
 - simulation realises each shock from the addressed stream of the current-IID route
   and applies `BaseInnovations` / `PhysicalValues` inputs with its override producer,
-  then hands the physical paths to the node-state simulation.
+  then hands the physical paths to the node-state simulation;
+- regimes, state listings and simulated panels show each group as declared: a reader
+  lists the group in `shocks`, has no state for its shocks, and its panel carries the
+  realised shocks beside the actions.
 """
 
 import dataclasses
@@ -28,6 +31,7 @@ import numpy as np
 import pandas as pd
 
 from _lcm.current_iid import CurrentIIDDrawPlan, _draw_base_value
+from _lcm.engine import PeriodRegimeSimulationData
 from _lcm.processes.base import StateConditioned
 from _lcm.processes.iid import (
     LogNormalIIDProcess,
@@ -105,6 +109,28 @@ class NodeAxisAdapter:
     """The groups solved on the node-state axis."""
     processes: Mapping[ShockName, _IIDProcess]
     """Internal node state of each adapted shock, named as the shock."""
+    regime_shocks: Mapping[RegimeName, tuple[ShockGroupName, ...]]
+    """Declared `shocks` of every regime that reads an adapted group."""
+
+    def present_regimes(
+        self, *, regimes: Mapping[RegimeName, Regime]
+    ) -> MappingProxyType[RegimeName, Regime]:
+        """Return the regimes with their declared shock groups and no node states."""
+        return MappingProxyType(
+            {
+                name: regime.replace(
+                    states={
+                        state: grid
+                        for state, grid in regime.states.items()
+                        if state not in self.processes
+                    },
+                    shocks=self.regime_shocks[name],
+                )
+                if name in self.regime_shocks
+                else regime
+                for name, regime in regimes.items()
+            }
+        )
 
     def present_solution(self, *, result: SolutionResult) -> SolutionResult:
         """Return the published result: values integrated over every node axis.
@@ -174,11 +200,36 @@ class NodeAxisAdapter:
     def present_simulation(
         self, *, result: SimulationResult, solution: SolutionResult | None
     ) -> SimulationResult:
-        """Publish the simulation's values and solution without node axes.
+        """Publish the simulation's values, solution and panel without node states.
 
-        `solution` is the published result the caller passed, if any.
+        Each realised shock moves from the states to the shocks of its rows, so
+        the panel carries it beside the actions. `solution` is the published
+        result the caller passed, if any.
         """
-        replayed = result._solution  # noqa: SLF001 - the adapter owns this boundary
+        # The adapter owns this boundary of the result.
+        result._raw_results = MappingProxyType(  # noqa: SLF001
+            {
+                regime_name: MappingProxyType(
+                    {
+                        period: self._shocks_out_of_states(data)
+                        for period, data in periods.items()
+                    }
+                )
+                for regime_name, periods in result.raw_results.items()
+            }
+        )
+        metadata = result._metadata  # noqa: SLF001
+        result._metadata = dataclasses.replace(  # noqa: SLF001
+            metadata,
+            state_names=self._hide(metadata.state_names),
+            regime_to_states=MappingProxyType(
+                {
+                    name: self._hide(states)
+                    for name, states in metadata.regime_to_states.items()
+                }
+            ),
+        )
+        replayed = result._solution  # noqa: SLF001
         if replayed is None:
             return result
         schemas = replayed.metadata.value_schemas
@@ -256,6 +307,29 @@ class NodeAxisAdapter:
                 )
             )
         return initial, MappingProxyType({**state_paths, **physical}), seed
+
+    def _hide(self, names: tuple[StateName, ...]) -> tuple[StateName, ...]:
+        return tuple(name for name in names if name not in self.processes)
+
+    def _shocks_out_of_states(
+        self, data: PeriodRegimeSimulationData
+    ) -> PeriodRegimeSimulationData:
+        moved = {
+            name: value for name, value in data.states.items() if name in self.processes
+        }
+        if not moved:
+            return data
+        return dataclasses.replace(
+            data,
+            states=MappingProxyType(
+                {
+                    name: value
+                    for name, value in data.states.items()
+                    if name not in self.processes
+                }
+            ),
+            shocks=MappingProxyType({**data.shocks, **moved}),
+        )
 
     def _integrate(self, *, value: FloatND, axis_names: tuple[str, ...]) -> FloatND:
         """Integrate the node axes with their rule weights, last axis first."""
@@ -385,6 +459,13 @@ def adapt_declaration(
             declared_groups=MappingProxyType(dict(shocks)),
             groups=MappingProxyType(adapted),
             processes=MappingProxyType(processes),
+            regime_shocks=MappingProxyType(
+                {
+                    name: regimes[name].shocks
+                    for name, regime in internal.items()
+                    if regime is not regimes[name]
+                }
+            ),
         ),
     )
 

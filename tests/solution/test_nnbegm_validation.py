@@ -59,9 +59,9 @@ from lcm.solvers import (
 )
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
+from tests.egm import _nnbegm_toy as nnbegm_toy
 from tests.egm import test_current_iid_case_u_owned_core as case_u_owned_core
 from tests.egm import test_current_iid_nd_parent_demands as nd_parent_demands
-from tests.egm import test_current_iid_negm_model as current_iid_negm
 from tests.test_models import n_nbegm_toy
 
 
@@ -760,7 +760,7 @@ def _dcegm_parent_of_finite_nnbegm_child() -> Model:
 
 def _dcegm_parent_of_current_shock_finite_nnbegm_child() -> Model:
     """The same pairing where the finite NNBEGM child draws current-period shocks."""
-    declarations = current_iid_negm._declarations()
+    declarations = nnbegm_toy._declarations()
     child = declarations.regimes["child"]
     assert isinstance(child, NestedConsumptionSavingsRegime)
     assert isinstance(child.solver, NEGM)
@@ -783,10 +783,10 @@ def _dcegm_parent_of_current_shock_finite_nnbegm_child() -> Model:
             "utility": nd_parent_demands._parent_utility,
             "inverse_marginal_utility": nd_parent_demands._parent_inverse,
             "resources": _young_resources,
-            "savings": current_iid_negm._savings,
+            "savings": nnbegm_toy._savings,
         },
         state_transitions={
-            "wealth": {"child": current_iid_negm._next_wealth},
+            "wealth": {"child": nnbegm_toy._next_wealth},
             "housing": {"child": nd_parent_demands._parent_q},
         },
         solver=DCEGM(
