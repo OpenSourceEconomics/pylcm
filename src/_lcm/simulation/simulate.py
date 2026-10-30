@@ -201,6 +201,7 @@ from _lcm.typing import (
     FlatParams,
     FlatRegimeParams,
     InitialConditions,
+    PeriodToRegimeToArrivalSurfaces,
     PeriodToRegimeToSimulationPolicy,
     PRNGKeyND,
     QAndFArg,
@@ -267,6 +268,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
     period_to_regime_to_sim_policy: PeriodToRegimeToSimulationPolicy | None = None,
     current_iid_replay_inputs: CurrentIIDReplayInputs = MappingProxyType({}),
     projected_forward_inputs: ProjectedForwardInputs = MappingProxyType({}),
+    arrival_surfaces: PeriodToRegimeToArrivalSurfaces = MappingProxyType({}),
     period_to_regime_to_replay_reader: _PeriodToRegimeToReplayReader = (
         MappingProxyType({})
     ),
@@ -656,6 +658,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
                         period_to_regime_to_sim_policy=period_to_regime_to_sim_policy,
                         current_iid_replay_inputs=current_iid_replay_inputs,
                         projected_forward_inputs=projected_forward_inputs,
+                        arrival_surfaces=arrival_surfaces,
                         period_to_regime_to_replay_reader=(
                             period_to_regime_to_replay_reader
                         ),
@@ -876,6 +879,7 @@ def _simulate_subject_chunk(  # noqa: PLR0915
     period_to_regime_to_sim_policy: PeriodToRegimeToSimulationPolicy | None = None,
     current_iid_replay_inputs: CurrentIIDReplayInputs = MappingProxyType({}),
     projected_forward_inputs: ProjectedForwardInputs = MappingProxyType({}),
+    arrival_surfaces: PeriodToRegimeToArrivalSurfaces = MappingProxyType({}),
     period_to_regime_to_replay_reader: _PeriodToRegimeToReplayReader = (
         MappingProxyType({})
     ),
@@ -1060,6 +1064,7 @@ def _simulate_subject_chunk(  # noqa: PLR0915
                 flat_params=flat_params,
                 ages=ages,
                 values=period_to_regime_to_V_arr,
+                surfaces=arrival_surfaces,
                 owner=owner,
                 key=key,
                 subject_slice=subject_slice,

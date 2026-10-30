@@ -1181,9 +1181,13 @@ def _validate_arrival_replay_identity(
     """Admit only explicitly addressed originals beyond an arrival producer date."""
     if source.channel is not ValueInputChannel.ARRIVAL_REPLAY_VALUE:
         return False
-    if target.kind is not ValueArtifactKind.REGIME_VALUE:
+    if target.kind is ValueArtifactKind.CONTINUATION_LEAF:
+        # A retained stored arrival surface, read at or after the replay date.
+        if target.period < source.source_period:
+            raise ValueError("Arrival replay cannot read a past arrival surface.")
+    elif target.kind is not ValueArtifactKind.REGIME_VALUE:
         raise ValueError("Arrival replay reads only original regime values.")
-    if target.period <= source.source_period + 1:
+    elif target.period <= source.source_period + 1:
         raise ValueError("Arrival replay originals must be later than next period.")
     if source.argument is None or not source.path:
         raise ValueError("Arrival replay requires its explicit qualified argument.")

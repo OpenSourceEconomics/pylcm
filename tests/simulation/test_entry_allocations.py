@@ -150,9 +150,15 @@ def _copy_resolved_values(
     original: Callable[..., model_module._ResolvedSolution],
     **arguments: Unpack[SolutionResolution],
 ) -> model_module._ResolvedSolution:
-    values, policies, flags, readers, current_iid_replay, projected_forward = original(
-        self, **arguments
-    )
+    (
+        values,
+        policies,
+        flags,
+        readers,
+        current_iid_replay,
+        projected_forward,
+        surfaces,
+    ) = original(self, **arguments)
     copied = jax.tree.map(jnp.copy, values)
     jax.block_until_ready(copied)
     original_spans = measure_buffer_footprint(tree=values)
@@ -165,7 +171,15 @@ def _copy_resolved_values(
         ).values()
     )
     observed.values = copied
-    return copied, policies, flags, readers, current_iid_replay, projected_forward
+    return (
+        copied,
+        policies,
+        flags,
+        readers,
+        current_iid_replay,
+        projected_forward,
+        surfaces,
+    )
 
 
 # keyword-only-exempt: library-callback=functools.partialmethod

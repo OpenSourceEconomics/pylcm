@@ -11,7 +11,7 @@ from types import MappingProxyType
 
 import jax
 
-from _lcm.continuation import ContinuationSpec
+from _lcm.continuation import ContinuationPayload, ContinuationSpec
 from _lcm.execution.value_transfer import ValueArtifactAddress, ValueArtifactKind
 from _lcm.typing import PytreeChild
 from lcm.exceptions import UnsupportedOperationError
@@ -24,6 +24,33 @@ ARRIVAL_CONTINUATION = ArtifactKey(
 
 type ArrivalOperand = FloatND | IntND | BoolND
 type _ArrivalMetadata = tuple[RegimeName, int, str, tuple[str, ...]]
+
+# Leading part of a payload leaf name holding a stored arrival surface.
+ARRIVAL_SURFACE_PREFIX = "_lcm_arrival_surface:"
+
+
+def arrival_surface_name(*, target: RegimeName) -> str:
+    """Name the payload leaf holding a source's stored surface into `target`."""
+    return f"{ARRIVAL_SURFACE_PREFIX}{target}"
+
+
+def arrival_surface_leaves(
+    payload: ContinuationPayload,
+) -> MappingProxyType[str, ArrivalOperand]:
+    """The stored arrival surfaces a published payload carries, by leaf name.
+
+    Every other leaf of an arrival payload borrows a stored value, so only the
+    surfaces are new arrays a later replay needs retained.
+    """
+    if not isinstance(payload, ArrivalContinuation):
+        return MappingProxyType({})
+    return MappingProxyType(
+        {
+            name: value
+            for name, value in payload.operands.items()
+            if name.startswith(ARRIVAL_SURFACE_PREFIX)
+        }
+    )
 
 
 @dataclass(frozen=True, kw_only=True)

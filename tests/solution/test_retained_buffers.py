@@ -381,6 +381,7 @@ def test_owned_case_u_children_are_inventoried_without_readers(
         empty,
         MappingProxyType({0: MappingProxyType({"parent": consumed})}),
         empty,
+        empty,
     )
 
     def forbidden(_self: CaseUReplayChildren) -> Never:
@@ -404,6 +405,7 @@ def test_owned_case_u_children_are_inventoried_without_readers(
         MappingProxyType(
             {0: MappingProxyType({"parent": ForeignInput(payload=consumed.payload)})}
         ),
+        empty,
         empty,
     )
     with pytest.raises(ExecutionPlanningError, match="ForeignInput"):

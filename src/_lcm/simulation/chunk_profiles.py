@@ -33,6 +33,7 @@ from _lcm.simulation import (
     population_operations,
 )
 from _lcm.simulation.arrival_routing import record_arrival_entries
+from _lcm.simulation.arrival_values import is_arrival_surface, stored_arrival_surface
 from _lcm.simulation.assembly import (
     _concatenate_arrays,
     _slice_array,
@@ -121,6 +122,7 @@ from _lcm.transition_checks import (
 )
 from _lcm.typing import (
     FlatParams,
+    PeriodToRegimeToArrivalSurfaces,
     RegimeName,
     RegimeNamesToIds,
     ShapeDtypePytree,
@@ -165,6 +167,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None = None,
     current_iid_replay_inputs: CurrentIIDReplayInputs = MappingProxyType({}),
     projected_forward_inputs: ProjectedForwardInputs = MappingProxyType({}),
+    arrival_surfaces: PeriodToRegimeToArrivalSurfaces = MappingProxyType({}),
     max_compilation_workers: int | None = None,
     group_sizes: tuple[int, ...] | None = None,
     current_iid_override_schema: CurrentIIDOverrideSchema = (),
@@ -363,6 +366,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
             regime_names_to_ids=regime_names_to_ids,
             flat_params=flat_params,
             values=values,
+            surfaces=arrival_surfaces,
             ages=ages,
             key=key,
             taste_key=taste_key,
@@ -697,6 +701,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                 policies=policies,
                 current_iid_replay_inputs=current_iid_replay_inputs,
                 projected_forward_inputs=projected_forward_inputs,
+                arrival_surfaces=arrival_surfaces,
                 period=period,
                 devices=devices,
             ),
@@ -1454,6 +1459,7 @@ def _period_copy_reservation(
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None = None,
     current_iid_replay_inputs: CurrentIIDReplayInputs = MappingProxyType({}),
     projected_forward_inputs: ProjectedForwardInputs = MappingProxyType({}),
+    arrival_surfaces: PeriodToRegimeToArrivalSurfaces = MappingProxyType({}),
 ) -> dict[jax.Device, int]:
     """Reserve declared nonaligned copies once per period/address/ordered layout."""
     policy_sources = _policy_read_sources(
@@ -1509,6 +1515,7 @@ def _period_copy_reservation(
             flags=flags,
             policy_sources=policy_sources,
             projected_forward_inputs=projected_forward_inputs,
+            arrival_surfaces=arrival_surfaces,
         )
         required = simulation_value_sharding(
             stored_sharding=source.sharding, devices=devices
@@ -1603,8 +1610,14 @@ def _retained_read_source(
     flags: Mapping[int, Mapping[str, jax.Array]],
     policy_sources: Mapping[ValueArtifactAddress, jax.Array],
     projected_forward_inputs: ProjectedForwardInputs = MappingProxyType({}),
+    arrival_surfaces: PeriodToRegimeToArrivalSurfaces = MappingProxyType({}),
 ) -> jax.Array:
     """Resolve only the declared value and finite-policy storage classes."""
+    if is_arrival_surface(address=read.target):
+        return cast(
+            "jax.Array",
+            stored_arrival_surface(address=read.target, surfaces=arrival_surfaces),
+        )
     if read.target.kind is ValueArtifactKind.CONTINUATION_LEAF:
         if read.target.regime not in projected_forward_inputs.get(
             read.target.period, {}

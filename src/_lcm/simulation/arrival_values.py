@@ -22,6 +22,35 @@ else:
     type ScalarPolicyQueries = object
 
 
+# Retained stored arrival surfaces: period, publishing regime, payload leaf name.
+type ArrivalSurfaces = Mapping[int, Mapping[RegimeName, Mapping[str, ValueTemplate]]]
+
+
+def is_arrival_surface(*, address: ValueArtifactAddress) -> bool:
+    """Whether `address` names a stored arrival surface leaf."""
+    from _lcm.arrival_queries import _is_surface  # noqa: PLC0415
+
+    return _is_surface(address=address, period=address.period)
+
+
+def stored_arrival_surface(
+    *, address: ValueArtifactAddress, surfaces: ArrivalSurfaces
+) -> ValueTemplate:
+    """The retained surface `address` names.
+
+    Raises:
+        ExecutionPlanningError: If the solve retained no such surface.
+
+    """
+    try:
+        return surfaces[address.period][address.regime][address.leaf_path[-1]]
+    except KeyError as error:
+        raise ExecutionPlanningError(
+            "Arrival replay is missing its stored arrival surface; simulate from "
+            "a solution this model produced in this process."
+        ) from error
+
+
 def _declared_arrival_origins(
     *, queries: ScalarPolicyQueries
 ) -> Mapping[ValueArtifactAddress, ValueArtifactAddress]:
@@ -105,6 +134,17 @@ def arrival_replay_value_reads(
         ):
             reads.append(read)
             continue
+        if is_arrival_surface(address=read.target):
+            # A stored surface is its own retained array, not an alias of one.
+            reads.append(
+                replace(
+                    read,
+                    source=replace(
+                        read.source, channel=ValueInputChannel.ARRIVAL_REPLAY_VALUE
+                    ),
+                )
+            )
+            continue
         original = _original_value(address=read.target, aliases=aliases)
         reads.append(
             replace(
@@ -123,8 +163,13 @@ def arrival_replay_context(
     queries: ScalarPolicyQueries,
     context: CoreBuildContext,
     values: Mapping[int, Mapping[RegimeName, ValueTemplate]],
+    surfaces: ArrivalSurfaces = MappingProxyType({}),
 ) -> CoreBuildContext:
-    """Borrow demanded numeric operands without capturing the result or its history."""
+    """Borrow demanded numeric operands without capturing the result or its history.
+
+    A transported operand is the original stored value at its absolute date; a
+    stored arrival surface is the solve's retained surface at its date.
+    """
     from _lcm.arrival_queries import _ArrivalBuildContext  # noqa: PLC0415
 
     reads = queries.value_reads(core_key="arrival_replay_context")
@@ -144,6 +189,9 @@ def arrival_replay_context(
         )
     operands = {}
     for alias in addressed:
+        if is_arrival_surface(address=alias):
+            operands[alias] = stored_arrival_surface(address=alias, surfaces=surfaces)
+            continue
         original = _original_value(address=alias, aliases=aliases)
         try:
             operands[alias] = values[original.period][original.regime]

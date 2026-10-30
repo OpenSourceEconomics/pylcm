@@ -359,6 +359,7 @@ from _lcm.typing import (
     InitialConditions,
     ParamsLeaf,
     ParamsTemplate,
+    PeriodToRegimeToArrivalSurfaces,
     PeriodToRegimeToDissolutionFlags,
     PeriodToRegimeToSimulationPolicy,
     PeriodToRegimeToVArr,
@@ -392,6 +393,7 @@ from _lcm.value_grid_inputs import (
 from _lcm.variables import carried_state_grids, from_regime, get_grids
 from lcm._solver_api.authority import _ArrayCopier
 from lcm._solver_api.contract import ArtifactContractValue
+from lcm._solver_api.entries import _LazyEntry
 from lcm.ages import AgeGrid
 from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from lcm.composite_state import CompositeState
@@ -533,6 +535,7 @@ type _ResolvedSolution = tuple[
     _PeriodToRegimeToReplayReader,
     CurrentIIDReplayInputs,
     ProjectedForwardInputs,
+    PeriodToRegimeToArrivalSurfaces,
 ]
 
 
@@ -4141,6 +4144,7 @@ class Model:
             self._build_projected_forward_inputs(
                 solution=solution, authority=engine_view.authority
             ),
+            engine_view.arrival_surfaces,
         )
 
     def _consume_foreign_solution(
@@ -4179,6 +4183,9 @@ class Model:
                         f"{self._execution.device_memory_cap_note()}"
                     )
             self._fail_if_another_instances_result(solution=solution)
+        arrival_surfaces = _materialize_arrival_surfaces(
+            surfaces=solution._arrival_surfaces  # noqa: SLF001
+        )
         solution = self._snapshot_solution_envelope(
             solution=solution, array_copier=array_copier, native_values=native_values
         )
@@ -4246,6 +4253,7 @@ class Model:
                 array_writer=validation_materializer,
                 array_copier=array_copier,
             ),
+            arrival_surfaces,
         )
 
     def _check_solution_result_structure(
@@ -5698,6 +5706,7 @@ class Model:
                         period_to_regime_to_replay_reader,
                         current_iid_replay_inputs,
                         projected_forward_inputs,
+                        arrival_surfaces,
                     ) = self._resolve_solution_result(
                         solution=solution,
                         flat_params=flat_params,
@@ -5712,6 +5721,7 @@ class Model:
                 period_to_regime_to_replay_reader = None
                 current_iid_replay_inputs = None
                 projected_forward_inputs = None
+                arrival_surfaces = None
             with solve_phase(name="simulation_inputs", logger=log, call_id=call_id):
                 if entry_allocations is not None:
                     entry_allocations.update_solution(
@@ -5723,6 +5733,7 @@ class Model:
                             period_to_regime_to_replay_reader,
                             current_iid_replay_inputs,
                             projected_forward_inputs,
+                            arrival_surfaces,
                         ),
                     )
                 initial_conditions = split_initial_conditions(
@@ -5890,6 +5901,7 @@ class Model:
                 period_to_regime_to_replay_reader = MappingProxyType({})
                 current_iid_replay_inputs = MappingProxyType({})
                 projected_forward_inputs = MappingProxyType({})
+                arrival_surfaces = MappingProxyType({})
             elif solution is None:
                 solve_params = (
                     flat_params
@@ -5931,6 +5943,7 @@ class Model:
                         period_to_regime_to_replay_reader,
                         current_iid_replay_inputs,
                         projected_forward_inputs,
+                        arrival_surfaces,
                     ) = self._resolve_solution_result(
                         solution=solution,
                         flat_params=flat_params,
@@ -5946,6 +5959,7 @@ class Model:
                     or period_to_regime_to_replay_reader is None
                     or current_iid_replay_inputs is None
                     or projected_forward_inputs is None
+                    or arrival_surfaces is None
                 ):
                     raise AssertionError(
                         "Simulation solution inputs were not resolved."
@@ -5960,6 +5974,7 @@ class Model:
                             period_to_regime_to_replay_reader,
                             current_iid_replay_inputs,
                             projected_forward_inputs,
+                            arrival_surfaces,
                         ),
                     )
                     entry_allocations.publish(stage="initial", tree=initial_conditions)
@@ -6003,6 +6018,7 @@ class Model:
                         policies=period_to_regime_to_sim_policy,
                         current_iid_replay_inputs=current_iid_replay_inputs,
                         projected_forward_inputs=projected_forward_inputs,
+                        arrival_surfaces=arrival_surfaces,
                         ages=self._time,
                         initial_conditions=initial_conditions,
                         regime_names_to_ids=self.regime_names_to_ids,
@@ -6065,6 +6081,7 @@ class Model:
                 period_to_regime_to_replay_reader=period_to_regime_to_replay_reader,
                 current_iid_replay_inputs=current_iid_replay_inputs,
                 projected_forward_inputs=projected_forward_inputs,
+                arrival_surfaces=arrival_surfaces,
                 ages=self._time,
                 simulation_output_dtypes=self.simulation_output_dtypes,
                 seed=seed,
@@ -6480,7 +6497,7 @@ class Model:
         )
         if allocations is not None:
             allocations.update_solution(solution=solution, resolved_inputs=resolved)
-        V_arrs, sim_policies, _, replay_readers, case_r_inputs, projected_inputs = (
+        V_arrs, sim_policies, _, replay_readers, case_r_inputs, projected_inputs, _ = (
             resolved
         )
         if projected_inputs and regime.simulation.projected_forward_readers_by_period:
@@ -8314,3 +8331,36 @@ def _map_lookup_arrays(
 def _leading_rows(*, array: jax.Array, n_rows: int) -> jax.Array:
     """Return the leading `n_rows` rows of `array`."""
     return array[:n_rows]
+
+
+def _materialize_arrival_surfaces(
+    *, surfaces: Mapping[int, Mapping[RegimeName, Mapping[str, FloatND | _LazyEntry]]]
+) -> PeriodToRegimeToArrivalSurfaces:
+    """Load a result's stored arrival surfaces, which arrival replay reads.
+
+    A surface the result does not carry stays absent: arrival replay refuses where
+    it would read one.
+    """
+    # ponytail: surfaces load eagerly outside the budgeted copier; route them
+    # through `array_copier` if they ever rival a value function in size.
+    return MappingProxyType(
+        {
+            period: MappingProxyType(
+                {
+                    regime: MappingProxyType(
+                        {
+                            name: cast(
+                                "FloatND",
+                                surface.materialize()
+                                if isinstance(surface, _LazyEntry)
+                                else surface,
+                            )
+                            for name, surface in by_name.items()
+                        }
+                    )
+                    for regime, by_name in by_regime.items()
+                }
+            )
+            for period, by_regime in surfaces.items()
+        }
+    )

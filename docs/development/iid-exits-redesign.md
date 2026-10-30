@@ -622,6 +622,25 @@ phase-specific settlements and exact arrival-period demand. The new realized pol
 query intentionally replaces the interpolation-of-maxima residual; changed off-grid
 outcomes need oracle evidence, not a claim of legacy bitwise parity.
 
+### Arrival pricing depth
+
+An arrival is priced exactly one level deep. A source reading an arrival at date `d`
+rebuilds the target's action problem exactly at the realized landing, as above. That
+rebuilt action problem does not rebuild its own later arrivals in turn: for an arrival
+from regime `R` into `U` at `d + 1` it reads a stored arrival surface `A_{R->U}`,
+interpolated like any continuation value. `A_{R->U}` holds, at every node of `U`'s grid
+at `d + 1`, the value the level-1 arrival reader reports for a landing on that node, and
+is NaN where that reader reports a failed integrity. The surface is a leaf of `R`'s
+dated `ArrivalContinuation` payload, so it is published by `R`'s period program,
+transported to `d - 1` with that payload, and counted by the same admission.
+
+On grid nodes the nested values equal the fully nested recursion. Off grid, levels below
+the first differ by the interpolation error of `A`, which is first order where the
+arrival decision switches (accept versus fallback) and second order on smooth pieces. In
+exchange, the program cost of a period no longer grows with the number of remaining
+arrival dates. Simulation replays the same plans and therefore reads the retained
+surfaces; a solution that does not carry them (a loaded one) refuses replay loudly.
+
 ### Stage gates
 
 The child issues of 607 carry the native dependency graph. The implementation PR closes

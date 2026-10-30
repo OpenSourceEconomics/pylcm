@@ -49,6 +49,7 @@ from _lcm.typing import (
     FlatRegimeParams,
     FootprintTree,
     InitialConditions,
+    PeriodToRegimeToArrivalSurfaces,
     PytreeByPeriod,
     PytreeValue,
     RegimeName,
@@ -67,6 +68,7 @@ type _ResolvedInputs = (
         Mapping[int, Mapping[RegimeName, PreparedReplayReader]] | None,
         CurrentIIDReplayInputs | None,
         ProjectedForwardInputs | None,
+        PeriodToRegimeToArrivalSurfaces | None,
     ]
     | tuple[()]
 )
