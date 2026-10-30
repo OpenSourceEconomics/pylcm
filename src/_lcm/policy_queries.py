@@ -91,7 +91,7 @@ _QUERY_ARGUMENTS = "query_arguments"
 # put while the step count, and with it the launch count, does not grow.
 # ponytail: a fixed lane target; derive it from the budget if a step outgrows it.
 _ROW_BATCH = 64
-_STEP_LANES = 32768
+_STEP_LANES = 131072
 _FLAT_OPERAND_PATH_LENGTH = 2
 
 

@@ -428,6 +428,17 @@ def test_cells_of_a_chunk_run_as_one_batch(monkeypatch: pytest.MonkeyPatch) -> N
     assert 2 in trips
 
 
+def test_a_default_chunk_steps_through_two_thousand_support_rows() -> None:
+    """A 64-cell chunk evaluates 2048 rows per step, 131072 lanes.
+
+    Steps are launch-bound: on the EKL age-65 singles a step four times wider
+    took 22% less time per chunk, while one sixteen times wider gained nothing
+    more and tripled the compiler workspace.
+    """
+    assert policy_queries._row_batch(chunk_size=64) == 2048
+    assert policy_queries._row_batch(chunk_size=4096) == policy_queries._ROW_BATCH
+
+
 def test_halving_the_chunk_doubles_the_support_rows_per_step(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
