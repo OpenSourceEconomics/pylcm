@@ -461,6 +461,7 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
         "_artifact_authority",
         MappingProxyType(dict(authority.artifacts)),
     )
+    object.__setattr__(result, "_arrival_surfaces", internal_result.arrival_surfaces)
     object.__setattr__(
         result,
         "_engine_view",

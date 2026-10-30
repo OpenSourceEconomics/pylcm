@@ -13,11 +13,13 @@ from collections.abc import Mapping
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
 from _lcm import policy_queries
-from lcm import ExecutionConfig
+from lcm import ExecutionConfig, load_solution
+from lcm.solver_api import SolutionResult
 from lcm_examples import collective_household as household
 from tests.conftest import DECIMAL_PRECISION, X64_ENABLED
 from tests.solution import _discrete_household as discrete
@@ -122,3 +124,24 @@ def test_periods_pricing_one_arrival_date_keep_their_values() -> None:
                 value,
                 decimal=DECIMAL_PRECISION,
             )
+
+
+def test_a_saved_solution_replays_its_stored_arrival_surfaces(tmp_path: Path) -> None:
+    """A loaded archive simulates exactly like the solution that wrote it."""
+    model = household.get_model(n_periods=4, wealth_n_points=4, consumption_n_points=3)
+    params = household.get_params()
+    solution = model.solve(params=params, log_level="off")
+    loaded = load_solution(path=solution.save(path=tmp_path / "solution.h5"))
+
+    def simulate(solved: SolutionResult) -> pd.DataFrame:
+        return model.simulate(
+            params=params,
+            initial_conditions=household.get_initial_conditions(
+                n_subjects=16, model=model
+            ),
+            solution=solved,
+            log_level="off",
+            seed=0,
+        ).to_dataframe()
+
+    pd.testing.assert_frame_equal(simulate(loaded), simulate(solution))

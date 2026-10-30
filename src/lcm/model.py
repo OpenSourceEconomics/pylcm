@@ -393,6 +393,7 @@ from _lcm.value_grid_inputs import (
 from _lcm.variables import carried_state_grids, from_regime, get_grids
 from lcm._solver_api.authority import _ArrayCopier
 from lcm._solver_api.contract import ArtifactContractValue
+from lcm._solver_api.entries import _LazyEntry
 from lcm.ages import AgeGrid
 from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from lcm.composite_state import CompositeState
@@ -4182,6 +4183,9 @@ class Model:
                         f"{self._execution.device_memory_cap_note()}"
                     )
             self._fail_if_another_instances_result(solution=solution)
+        arrival_surfaces = _materialize_arrival_surfaces(
+            surfaces=solution._arrival_surfaces  # noqa: SLF001
+        )
         solution = self._snapshot_solution_envelope(
             solution=solution, array_copier=array_copier, native_values=native_values
         )
@@ -4249,9 +4253,7 @@ class Model:
                 array_writer=validation_materializer,
                 array_copier=array_copier,
             ),
-            # A result from elsewhere carries no stored arrival surfaces; arrival
-            # replay refuses where it would read one.
-            MappingProxyType({}),
+            arrival_surfaces,
         )
 
     def _check_solution_result_structure(
@@ -8329,3 +8331,36 @@ def _map_lookup_arrays(
 def _leading_rows(*, array: jax.Array, n_rows: int) -> jax.Array:
     """Return the leading `n_rows` rows of `array`."""
     return array[:n_rows]
+
+
+def _materialize_arrival_surfaces(
+    *, surfaces: Mapping[int, Mapping[RegimeName, Mapping[str, FloatND | _LazyEntry]]]
+) -> PeriodToRegimeToArrivalSurfaces:
+    """Load a result's stored arrival surfaces, which arrival replay reads.
+
+    A surface the result does not carry stays absent: arrival replay refuses where
+    it would read one.
+    """
+    # ponytail: surfaces load eagerly outside the budgeted copier; route them
+    # through `array_copier` if they ever rival a value function in size.
+    return MappingProxyType(
+        {
+            period: MappingProxyType(
+                {
+                    regime: MappingProxyType(
+                        {
+                            name: cast(
+                                "FloatND",
+                                surface.materialize()
+                                if isinstance(surface, _LazyEntry)
+                                else surface,
+                            )
+                            for name, surface in by_name.items()
+                        }
+                    )
+                    for regime, by_name in by_regime.items()
+                }
+            )
+            for period, by_regime in surfaces.items()
+        }
+    )

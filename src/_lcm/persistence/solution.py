@@ -30,6 +30,7 @@ from beartype.roar import BeartypeCallHintViolation
 from h5py import h5o  # ty: ignore[unresolved-import]
 
 from _lcm import version as _version
+from _lcm.arrival_continuation import ARRIVAL_SURFACE_PREFIX
 from _lcm.dtypes import CanonicalArrayWriter
 from _lcm.solution.result_snapshot import (
     snapshot_artifact_authorities,
@@ -108,6 +109,8 @@ class _Unloaded(Enum):
 
 _MANIFEST_DATASET: Final = "manifest"
 _PAYLOAD_GROUP: Final = "payloads"
+# Optional manifest field, written only by a solve that stored arrival surfaces.
+_ARRIVAL_SURFACES: Final = "arrival_surfaces"
 _UNLOADED: Final = _Unloaded.UNLOADED
 _PAYLOAD_ADDRESS_LENGTH: Final = 8
 _SHA256_HEX_LENGTH: Final = 64
@@ -271,6 +274,7 @@ class _SaveSnapshot:
     values: tuple[_PreparedPayload, ...]
     artifacts: tuple[_PreparedPayload, ...]
     omissions: tuple[tuple[ArtifactRef, OmissionReason], ...]
+    arrival_surfaces: tuple[_PreparedPayload, ...] = ()
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -511,7 +515,10 @@ def save_solution_archive(*, solution: _SolutionResultBoundary, path: Path) -> P
     # Materialize, validate, and copy the entire result before creating even a
     # temporary archive.  The writer therefore cannot observe a different user
     # container or mutable array from the object that passed preflight.
-    snapshot = _prepare_solution_for_save(solution=solution)
+    snapshot = replace(
+        _prepare_solution_for_save(solution=solution),
+        arrival_surfaces=_prepare_arrival_surfaces(solution=solution),
+    )
 
     tmp_path: Path | None = None
     try:
@@ -626,7 +633,7 @@ def load_solution_archive(  # noqa: C901, PLR0912, PLR0915
         )
     typed_manifest = cast("dict[str, JSONValue]", manifest)
     _check_archive_versions(manifest=typed_manifest)
-    if set(typed_manifest) != {
+    if set(typed_manifest) - {_ARRIVAL_SURFACES} != {
         "format_version",
         "pylcm_version",
         "solver_api_version",
@@ -855,14 +862,137 @@ def load_solution_archive(  # noqa: C901, PLR0912, PLR0915
         diagnostics=ArtifactStore(stores[ArtifactChannel.DIAGNOSTIC]),
         omissions=omissions,
     )
+    surface_entries = _lazy_arrival_surfaces(
+        path=path,
+        manifest=typed_manifest,
+        metadata=metadata,
+        addresses=addresses,
+    )
+    nested: dict[int, dict[RegimeName, dict[str, _LazyHdf5Entry]]] = {}
+    for (period, regime, name), entry in sorted(surface_entries.items()):
+        nested.setdefault(period, {}).setdefault(regime, {})[name] = entry
+    object.__setattr__(
+        result,
+        "_arrival_surfaces",
+        MappingProxyType(
+            {
+                period: MappingProxyType(
+                    {
+                        regime: MappingProxyType(surfaces)
+                        for regime, surfaces in regimes.items()
+                    }
+                )
+                for period, regimes in nested.items()
+            }
+        ),
+    )
     _validate_archive_structure(
         path=path,
         entries=tuple(value_entries.values())
-        + tuple(entry for store in stores.values() for entry in store.values()),
+        + tuple(entry for store in stores.values() for entry in store.values())
+        + tuple(surface_entries.values()),
     )
     if verify_checksums:
         _verify_result_entries(result=result)
     return result
+
+
+def _surface_identity(
+    *, period: int, regime: RegimeName, name: str
+) -> dict[str, JSONValue]:
+    return {
+        "kind": "arrival_surface",
+        "period": period,
+        "regime": regime,
+        "name": name,
+    }
+
+
+def _prepare_arrival_surfaces(
+    *, solution: _SolutionResultBoundary
+) -> tuple[_PreparedPayload, ...]:
+    """Copy every stored arrival surface, addressed by date, publisher and leaf."""
+    surfaces = solution._arrival_surfaces  # noqa: SLF001
+    prepared = []
+    for period in sorted(surfaces):
+        for regime in sorted(surfaces[period]):
+            for name, surface in sorted(surfaces[period][regime].items()):
+                payload = (
+                    surface.materialize()
+                    if isinstance(surface, _LazyHdf5Entry)
+                    else surface
+                )
+                entry = _prepare_payload(
+                    payload=cast("FloatND", payload),
+                    identity=_surface_identity(period=period, regime=regime, name=name),
+                )
+                if entry.payload_kind != "array":
+                    raise IncompatibleSolutionError(
+                        f"Arrival surface {name!r} at period={period}, "
+                        f"regime={regime!r} is not one array."
+                    )
+                prepared.append(entry)
+    return tuple(prepared)
+
+
+def _lazy_arrival_surfaces(
+    *,
+    path: Path,
+    manifest: dict[str, JSONValue],
+    metadata: SolutionMetadata,
+    addresses: set[str],
+) -> dict[tuple[int, RegimeName, str], _LazyHdf5Entry]:
+    """Read the archive's stored arrival surfaces as lazy, checked entries."""
+    entries: dict[tuple[int, RegimeName, str], _LazyHdf5Entry] = {}
+    if _ARRIVAL_SURFACES not in manifest:
+        return entries
+    for raw_entry in _require_exact_list(
+        value=manifest[_ARRIVAL_SURFACES], label="arrival surface manifest"
+    ):
+        if type(raw_entry) is not dict:
+            raise SolutionIntegrityError(
+                "Arrival surface manifest entry is not an object."
+            )
+        entry = cast("dict[str, JSONValue]", raw_entry)
+        period = _require_nonnegative_exact_int(
+            value=entry.get("period"), label="arrival surface period"
+        )
+        regime = _require_nonempty_exact_str(
+            value=entry.get("regime"), label="arrival surface regime"
+        )
+        name = _require_nonempty_exact_str(
+            value=entry.get("name"), label="arrival surface name"
+        )
+        coordinate = (period, regime, name)
+        if (
+            period >= metadata.n_periods
+            or regime not in metadata.regime_names
+            or not name.startswith(ARRIVAL_SURFACE_PREFIX)
+        ):
+            raise SolutionIntegrityError(
+                f"Persisted arrival surface {coordinate!r} has an invalid address."
+            )
+        if coordinate in entries:
+            raise SolutionIntegrityError(
+                f"Solution archive repeats arrival surface {coordinate!r}."
+            )
+        lazy = _lazy_entry(
+            path=path,
+            entry=entry,
+            label=f"arrival surface {name!r} at period={period}, regime={regime!r}",
+            identity=_surface_identity(period=period, regime=regime, name=name),
+        )
+        if lazy.payload_kind != "array":
+            raise SolutionIntegrityError(
+                f"Persisted arrival surface {coordinate!r} is not one array."
+            )
+        if lazy.address in addresses:
+            raise SolutionIntegrityError(
+                f"Solution archive reuses payload address {lazy.address!r}."
+            )
+        addresses.add(lazy.address)
+        entries[coordinate] = lazy
+    return entries
 
 
 def _with_standard_template(
@@ -1584,6 +1714,18 @@ def _write_archive(*, snapshot: _SaveSnapshot, path: Path) -> None:
                 )
             )
 
+        if snapshot.arrival_surfaces:
+            surface_entries: list[JSONValue] = []
+            for prepared in snapshot.arrival_surfaces:
+                address = f"{counter:08d}"
+                counter += 1
+                surface_entries.append(
+                    _write_payload_entry(
+                        payloads=payloads, address=address, prepared=prepared
+                    )
+                )
+            manifest[_ARRIVAL_SURFACES] = surface_entries
+
         manifest["omissions"] = [
             {
                 "period": ref.period,
@@ -2049,6 +2191,16 @@ def _verify_result_entries(*, result: _SolutionResultBoundary) -> None:
             raw = store._raw(ref)  # noqa: SLF001
             if isinstance(raw, _LazyHdf5Entry):
                 raw.verify()
+    _verify_arrival_surfaces(result=result)
+
+
+def _verify_arrival_surfaces(*, result: _SolutionResultBoundary) -> None:
+    """Verify every lazy stored arrival surface without materializing it."""
+    for regimes in result._arrival_surfaces.values():  # noqa: SLF001
+        for surfaces in regimes.values():
+            for surface in surfaces.values():
+                if isinstance(surface, _LazyHdf5Entry):
+                    surface.verify()
 
 
 def _metadata_to_manifest(metadata: SolutionMetadata) -> dict[str, JSONValue]:
