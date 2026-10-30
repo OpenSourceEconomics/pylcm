@@ -18,9 +18,32 @@ import pytest
 
 import _lcm.simulation.simulate as simulation
 import lcm_examples.iskhakov_et_al_2017 as iskhakov
-from lcm import AgeGrid, ExecutionConfig, Model
+from lcm import (
+    AgeGrid,
+    ConsumptionSavingsRegime,
+    DiscreteGrid,
+    ExecutionConfig,
+    InitialNodes,
+    IrregSpacedGrid,
+    LinSpacedGrid,
+    LiquidMargin,
+    Model,
+    NormalIIDProcess,
+    Periods,
+    Regime,
+    categorical,
+    fixed_transition,
+)
+from lcm.solvers import DCEGM, RFCEnvelope
+from lcm.typing import (
+    ContinuousAction,
+    ContinuousState,
+    DiscreteState,
+    FloatND,
+    ScalarInt,
+)
 from lcm_examples.iskhakov_et_al_2017 import CONSUMPTION_GRID, dead, get_edges
-from tests.conftest import invariance_tolerances
+from tests.conftest import DECIMAL_PRECISION, invariance_tolerances
 from tests.test_models.deterministic import base
 from tests.test_models.deterministic.dcegm_variants import (
     DCEGM_SOLVER,
@@ -249,3 +272,272 @@ def test_lookup_policy_on_default_dcegm_returns_the_simulated_decision() -> None
             reference = expected.to_numpy()
             rtol, atol = invariance_tolerances(reference)
             np.testing.assert_allclose(np.asarray(got), reference, rtol=rtol, atol=atol)
+
+
+# Node-state DC-EGM: an IID process declared as a state is a node-valued row axis
+# of the published policy. Simulated draws are continuous, so they fall between
+# nodes; the read blends the two bracketing node rows linearly in the process
+# coordinate, which is how the transition weights of an off-node value are formed.
+
+
+@categorical(ordered=False)
+class _NodeRegimeId:
+    alive: ScalarInt
+    done: ScalarInt
+
+
+@categorical(ordered=True)
+class _NodeHealth:
+    bad: ScalarInt
+    good: ScalarInt
+
+
+_NODE_SAVINGS_GRID = IrregSpacedGrid(points=np.linspace(0.5, 6.0, 12))
+_SHOCK = NormalIIDProcess(n_points=5, gauss_hermite=True, mu=0.0, sigma=1.0)
+
+
+def _cost_resources(*, wealth: ContinuousState, shock: ContinuousState) -> FloatND:
+    return wealth + 2.0 - 0.5 * shock
+
+
+def _plain_resources(*, wealth: ContinuousState) -> FloatND:
+    return wealth + 2.0
+
+
+def _health_resources(*, wealth: ContinuousState, health: DiscreteState) -> FloatND:
+    return wealth + 2.0 + 0.5 * health
+
+
+def _log_utility(*, consumption: ContinuousAction) -> FloatND:
+    return jnp.log(consumption)
+
+
+def _inverse_log_marginal(*, marginal_continuation: FloatND) -> FloatND:
+    return 1.0 / marginal_continuation
+
+
+def _taste(shock: FloatND) -> FloatND:
+    return 1.0 + 0.2 * shock
+
+
+def _taste_utility(*, consumption: ContinuousAction, shock: ContinuousState) -> FloatND:
+    return _taste(shock) * jnp.log(consumption)
+
+
+def _taste_inverse_marginal(
+    *, marginal_continuation: FloatND, shock: ContinuousState
+) -> FloatND:
+    return _taste(shock) / marginal_continuation
+
+
+def _node_savings(*, resources: FloatND, consumption: ContinuousAction) -> FloatND:
+    return resources - consumption
+
+
+def _node_next_wealth(*, savings: FloatND) -> ContinuousState:
+    return savings
+
+
+def _node_bequest(*, wealth: ContinuousState) -> FloatND:
+    return jnp.log(wealth)
+
+
+def _health_bequest(*, wealth: ContinuousState, health: DiscreteState) -> FloatND:
+    # `health` rides along into the terminal without changing the bequest.
+    return jnp.log(wealth) + 0.0 * health
+
+
+def _node_state_model(
+    *,
+    shock_in: str,
+    with_health: bool = False,
+    execution_config: ExecutionConfig | None = None,
+) -> Model:
+    """Two-period DC-EGM source whose IID shock is a process state.
+
+    `shock_in="resources"` subtracts a cost from resources, so every node row is
+    the same function of resources; `shock_in="utility"` scales log utility, so
+    the node rows differ. `with_health` adds an ordinary discrete state raising
+    resources by `0.5 * health`, a second, per-subject row axis. With log bequest
+    utility and no discounting the optimum is `taste * R / (1 + taste)` (taste 1
+    for the cost shock).
+    """
+    if shock_in == "resources":
+        functions = {
+            "utility": _log_utility,
+            "resources": _cost_resources,
+            "inverse_marginal_utility": _inverse_log_marginal,
+        }
+    else:
+        functions = {
+            "utility": _taste_utility,
+            "resources": _health_resources if with_health else _plain_resources,
+            "inverse_marginal_utility": _taste_inverse_marginal,
+        }
+    states: dict[str, LinSpacedGrid | NormalIIDProcess | DiscreteGrid] = {
+        "wealth": LinSpacedGrid(start=1.0, stop=5.0, n_points=5),
+        "shock": _SHOCK,
+    }
+    transitions = {"wealth": {"done": _node_next_wealth}}
+    done_states: dict[str, IrregSpacedGrid | DiscreteGrid] = {
+        "wealth": _NODE_SAVINGS_GRID
+    }
+    if with_health:
+        states["health"] = done_states["health"] = DiscreteGrid(
+            category_class=_NodeHealth
+        )
+        transitions["health"] = {"done": fixed_transition("health")}
+    alive = ConsumptionSavingsRegime(
+        states=states,
+        actions={"consumption": LinSpacedGrid(start=0.5, stop=6.0, n_points=12)},
+        functions={**functions, "savings": _node_savings},
+        state_transitions=transitions,
+        liquid=LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources="resources",
+            post_decision_state="savings",
+        ),
+        solver=DCEGM(savings_grid=_NODE_SAVINGS_GRID, envelope=RFCEnvelope()),
+    )
+    return Model(
+        regimes={
+            "alive": alive,
+            "done": Regime(
+                states=done_states,
+                functions={
+                    "utility": _health_bequest if with_health else _node_bequest
+                },
+            ),
+        },
+        n_periods=2,
+        initial_nodes=InitialNodes(by_period={0: "alive"}),
+        edges={"alive": {"done": Periods(values=(0,))}},
+        regime_id_class=_NodeRegimeId,
+        fixed_params={"discount_factor": 1.0},
+        execution_config=ExecutionConfig()
+        if execution_config is None
+        else execution_config,
+    )
+
+
+def _simulate_node_state(*, model: Model, n_subjects: int = 200):
+    """Period-0 rows of a panel whose shock draws are continuous (off node)."""
+    rng = np.random.default_rng(0)
+    initial_conditions = {
+        "wealth": jnp.asarray(rng.uniform(1.0, 5.0, size=n_subjects)),
+        "shock": jnp.asarray(rng.standard_normal(n_subjects)),
+        "period": jnp.zeros(n_subjects, dtype=jnp.int32),
+        "regime_id": jnp.zeros(n_subjects, dtype=jnp.int32),
+    }
+    if "health" in model.state_names(regime_name="alive"):
+        initial_conditions["health"] = jnp.asarray(
+            rng.integers(0, 2, size=n_subjects), dtype=jnp.int32
+        )
+    frame = model.simulate(
+        params={},
+        initial_conditions=initial_conditions,
+        seed=0,
+        log_level="off",
+    ).to_dataframe(use_categorical_codes=True)
+    frame = frame.sort_values(["subject_id", "period"])
+    return frame[frame["period"] == 0]
+
+
+def test_node_state_dcegm_simulate_does_not_run_the_grid_argmax(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Off-node process draws are decided from the node rows, not the grid argmax."""
+    model = _node_state_model(shock_in="resources")
+    executed = _decision_program_owners(monkeypatch=monkeypatch)
+
+    _simulate_node_state(model=model)
+
+    assert "alive" not in executed, executed
+
+
+def test_node_state_dcegm_reads_the_euler_policy_at_off_node_draws() -> None:
+    """Consumption is the continuous optimum `R / 2`, not an action-grid point.
+
+    The cost shock only shifts resources, so every node row is the same Euler
+    policy of resources, read exactly by the linear row interpolant.
+    """
+    first = _simulate_node_state(model=_node_state_model(shock_in="resources"))
+
+    shock = first["shock"].to_numpy(dtype=float)
+    resources = first["wealth"].to_numpy(dtype=float) + 2.0 - 0.5 * shock
+    assert np.any(np.abs(np.remainder(resources, 1.0)) > 0.1)
+    np.testing.assert_array_almost_equal(
+        first["consumption"].to_numpy(dtype=float),
+        resources / 2.0,
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+@pytest.mark.parametrize("with_health", [False, True])
+def test_off_node_taste_draw_blends_the_bracketing_node_policies(
+    with_health: bool,  # noqa: FBT001
+) -> None:
+    """An off-node draw reads the linear blend of its two bracketing node rows.
+
+    Node `j` publishes the policy `f(taste_j) * R` with `f(t) = t / (1 + t)`.
+    A draw at coordinate `lo + w` between nodes reads
+    `((1 - w) f(taste_lo) + w f(taste_hi)) * R` (extrapolating along the edge
+    segment beyond the outer nodes), the same linear-in-coordinate rule the
+    transition weights of an off-node process value follow. Between nodes this is
+    within the linear-interpolation error `(dt)^2 / 8 * max|f''| * R` of the
+    continuous optimum `f(taste) * R`, `dt` the segment's taste width. A further
+    discrete state selects its own rows per subject alongside the blend.
+    """
+    first = _simulate_node_state(
+        model=_node_state_model(shock_in="utility", with_health=with_health)
+    )
+
+    nodes = np.asarray(_SHOCK.get_gridpoints(), dtype=float)
+    shock = first["shock"].to_numpy(dtype=float)
+    resources = first["wealth"].to_numpy(dtype=float) + 2.0
+    if with_health:
+        resources += 0.5 * first["health"].to_numpy(dtype=float)
+    consumption = first["consumption"].to_numpy(dtype=float)
+    lo = np.clip(np.searchsorted(nodes, shock, side="right") - 1, 0, nodes.size - 2)
+    weight = (shock - nodes[lo]) / (nodes[lo + 1] - nodes[lo])
+    taste_at_nodes = np.asarray(_taste(jnp.asarray(nodes)))
+    share = taste_at_nodes / (1.0 + taste_at_nodes)
+    blended = ((1.0 - weight) * share[lo] + weight * share[lo + 1]) * resources
+
+    np.testing.assert_array_almost_equal(
+        consumption, blended, decimal=DECIMAL_PRECISION
+    )
+
+    interior = (shock >= nodes[0]) & (shock <= nodes[-1])
+    taste = np.asarray(_taste(jnp.asarray(shock)))
+    width = taste_at_nodes[lo + 1] - taste_at_nodes[lo]
+    band = width**2 / 8.0 * 2.0 / (1.0 + taste_at_nodes[lo]) ** 3 * resources
+    error = np.abs(consumption - taste / (1.0 + taste) * resources)
+    assert np.all(error[interior] <= band[interior] + 10.0**-DECIMAL_PRECISION)
+
+
+def test_budgeted_node_state_simulate_reads_the_policy_and_matches_unbudgeted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A device-memory budget admits the node-state policy read; results agree."""
+    unbudgeted = _simulate_node_state(
+        model=_node_state_model(
+            shock_in="utility",
+            execution_config=ExecutionConfig(device_memory_bytes=None),
+        )
+    )
+    budgeted_model = _node_state_model(
+        shock_in="utility", execution_config=ExecutionConfig(device_memory_bytes=2**30)
+    )
+    executed = _decision_program_owners(monkeypatch=monkeypatch)
+
+    budgeted = _simulate_node_state(model=budgeted_model)
+
+    assert "alive" not in executed, executed
+    for column in ("consumption", "value", "wealth", "shock"):
+        expected = unbudgeted[column].to_numpy(dtype=float)
+        rtol, atol = invariance_tolerances(expected)
+        np.testing.assert_allclose(
+            budgeted[column].to_numpy(dtype=float), expected, rtol=rtol, atol=atol
+        )

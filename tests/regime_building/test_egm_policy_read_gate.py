@@ -84,32 +84,43 @@ def test_grid_replay_keeps_the_grid_argmax():
     assert model._regimes["retirement"].simulation.egm_policy_read is None
 
 
-def test_process_state_regime_does_not_qualify_for_the_policy_read():
-    """A regime with a continuous stochastic-process state keeps the grid path.
+@pytest.mark.parametrize(
+    ("sigma", "qualifies"), [(0.3, True), (None, False)], ids=["fixed", "runtime"]
+)
+def test_process_state_regime_qualifies_only_with_fixed_nodes(
+    *, sigma: float | None, qualifies: bool
+):
+    """A process-state regime reads the policy when its nodes are fixed.
 
-    A process state is stored as a node-valued row axis, but its simulation
-    transition draws a genuinely continuous value that need not land on a
-    process node. Selecting one row by nearest node would read the policy of
-    the wrong process-state conditional; interpolating across process rows is
-    the tracked follow-up.
+    A process state is a node-valued row axis whose simulated value may fall
+    between nodes; the read blends the two bracketing node rows, which needs the
+    nodes at build time. A process whose law arrives as runtime params keeps the
+    grid path. Build-time EGM validation evaluates `resources` at the nodes, so
+    the runtime law's shock enters utility, not resources.
     """
-    model = _model_from_alive(
-        alive=_PORTABLE_DCEGM_RETIREMENT.replace(
+    shock = NormalIIDProcess(n_points=5, gauss_hermite=True, mu=0.0, sigma=sigma)
+    alive = (
+        _PORTABLE_DCEGM_RETIREMENT.replace(
             liquid=dataclasses.replace(LIQUID_MARGIN, resources="resources"),
-            states={
-                "wealth": WEALTH_GRID,
-                "wage_shock": NormalIIDProcess(
-                    n_points=5, gauss_hermite=True, mu=0.0, sigma=0.3
-                ),
-            },
+            states={"wealth": WEALTH_GRID, "wage_shock": shock},
             functions={
                 **dict(dcegm_retirement.functions),
                 "resources": _resources_with_shock,
                 "savings": _savings_from_resources,
             },
         )
+        if sigma is not None
+        else _PORTABLE_DCEGM_RETIREMENT.replace(
+            states={"wealth": WEALTH_GRID, "wage_shock": shock},
+            functions={
+                **dict(dcegm_retirement.functions),
+                "utility": _utility_with_shock,
+            },
+        )
     )
-    assert model._regimes["retirement"].simulation.egm_policy_read is None
+    model = _model_from_alive(alive=alive)
+    read = model._regimes["retirement"].simulation.egm_policy_read
+    assert (read is not None) is qualifies
 
 
 def test_asset_row_regime_does_not_qualify_for_the_policy_read():
@@ -193,6 +204,13 @@ def _resources_with_shock(
     *, wealth: ContinuousState, wage_shock: ContinuousState
 ) -> FloatND:
     return wealth + wage_shock
+
+
+def _utility_with_shock(
+    *, consumption: ContinuousAction, wage_shock: ContinuousState
+) -> FloatND:
+    # The shock enters additively, so the consumption optimum is unchanged.
+    return jnp.log(consumption) + wage_shock
 
 
 def _savings_from_resources(
