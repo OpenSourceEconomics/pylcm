@@ -405,22 +405,59 @@ that needs a moving conditioner there must use `fold=False`.
 
 ### Shocks realized after choices and used only by a transition
 
-A folded IID shock without a conditioning state that nothing in a regime reads within
-the period — not utility, constraints, the regime transition or any law — is
-*transition-only* there. Only a law's read of its draw `next_<shock>` remains, for
-example a bill realized after the period's choices and taken off end-of-period wealth.
-Such a shock is no state of that regime: its value carries no axis and the period is not
-evaluated per node. No initial realization is required for that regime. A supplied
-column is ignored only when no simulation regime retains that name as a state; if
-another regime uses it within the period, entrants to that regime must seed it.
+A shock realized after the period's choices, such as a bill taken off end-of-period
+wealth, is no state: nothing chosen in the period can depend on it. Declare it as a
+`ShockGroup` in `Model(shocks=...)` and list the group in the regime's
+`post_choice_shocks`:
 
-Every edge whose laws read the draw takes it from the process's own nodes and weights,
-and the source's continuation enumerates those outcomes. This timing permits the draw to
-change a next state. It also preserves nonlinear certainty equivalents, which apply
-their transform to each realized continuation value before averaging. A law may not read
-the draw toward a target that folds the shock and does read it within its period; model
-construction refuses that combination because the target's averaged value and the
-source's draw would be correlated.
+```python
+from lcm import Regime
+from lcm.shocks import GaussHermite, Normal, Product, ShockGroup
+
+
+def medical_bill(next_xi):
+    return 0.4 * jnp.exp(0.5 * next_xi)
+
+
+def next_wealth(*, wealth, consumption, medical_bill):
+    return wealth - consumption - medical_bill
+
+
+shocks = {
+    "bill_shock": ShockGroup(
+        shocks={"xi": Normal(mu=0.0, sigma=1.0)},
+        nodes=Product(xi=GaussHermite(5)),
+    )
+}
+alive = Regime(
+    states={"wealth": wealth_grid},
+    actions={"consumption": consumption_grid},
+    state_transitions={"wealth": next_wealth},
+    functions={"utility": utility, "medical_bill": medical_bill},
+    post_choice_shocks=("bill_shock",),
+)
+```
+
+Pass `shocks` to the model alongside its regimes. Only the regime's state transitions
+read a post-choice shock, as `next_<shock>`, directly or through functions that only
+they use. Utility, constraints and the regime transition are evaluated before the draw;
+a read of the shock from any of them, under either spelling, is refused when the model
+is built, naming the function and the shock. The regime's value carries no axis for the
+shock, and no initial value is required for it.
+
+The solve takes the expectation over the group's nodes and weights inside the
+continuation, so the draw may change a next state. Nonlinear certainty equivalents apply
+their transform to each realized continuation value before averaging. Simulation draws
+one node per subject and period from the same weights; `shock_paths` accepts a plain
+array of physical values for the shock, dated at the destination period.
+
+A post-choice group is lowered to one fixed node set per shock. Its laws are continuous
+with fixed numeric parameters, its shocks independent, and its rule deterministic and
+unsigned: `Product` of scalar rules, or `UserNodes` and `Smolyak` for a one-shock group.
+Runtime or state-dependent law parameters, `Discrete` laws, correlation and sampled
+(`MonteCarlo`, `QuasiMonteCarlo`) rules are refused when the model is built. A group is
+either current or post-choice across the whole model, never both. Only `GridSearch`
+regimes declare post-choice shocks.
 
 ### Precomputing continuation values for an additive transition
 
@@ -472,10 +509,7 @@ outcome enumeration, including subclasses of `LinearExpectation` that override i
 meaning. The same boundary applies to certainty equivalents supplied on the model or
 regime and survives archiving models built with these rules. Model archives preserve
 their economic closures and continuation logic; rebuild from declarations when adopting
-different solver numerics. This fallback does not relax the regime constructor's
-separate folding restrictions: a folded state combined with an explicit nonlinear regime
-certainty equivalent or custom `LinearExpectation` subclass is rejected before
-transition-only pruning. The additive declaration's dependency checks still run before
+different solver numerics. The additive declaration's dependency checks still run before
 fallback; an invalid decomposition raises a construction error. On the linear averaging
 route, gated, collective, entered or factored continuations are unsupported and raise a
 construction error; use a plain `base + shock` function there.

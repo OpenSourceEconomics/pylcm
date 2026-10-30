@@ -231,6 +231,8 @@ A general regime declares:
 | `derived_categoricals`  | Discrete grids for categorical DAG outputs                                    |
 | `solver`                | `lcm.solvers.GridSearch()` by default                                         |
 | `taste_shocks`          | Optional EV1 taste-shock configuration                                        |
+| `shocks`                | Model-level current-IID shock groups the regime reads before its choice       |
+| `post_choice_shocks`    | Model-level shock groups drawn after the choice, read only by transitions     |
 | `koopmans_aggregator`   | Optional regime-level continuation aggregator, `Phased` or `Decoupled`        |
 | `certainty_equivalent`  | Optional regime-level lottery reduction                                       |
 | `exits`                 | Named current-period moves with mapped policy queries                         |

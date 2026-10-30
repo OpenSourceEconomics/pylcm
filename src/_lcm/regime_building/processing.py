@@ -435,10 +435,10 @@ class PreparedModelStructure:
     draw_only_processes: MappingProxyType[
         RegimeName, MappingProxyType[StateName, _IIDProcess]
     ] = MappingProxyType({})
-    """Per regime, the folded IID shocks only its transitions read.
+    """Per regime, the post-choice shocks its transitions read.
 
     They are no states of the regime; a law toward any target that reads one's
-    draw takes it from these processes as a transition-local lottery.
+    draw takes it from these nodes as a transition-local lottery.
     """
 
     broadcast_variables: MappingProxyType[RegimeName, frozenset[StateOrActionName]] = (
@@ -954,8 +954,8 @@ def prepare_regime_builder(  # noqa: PLR0915 - existing original solver validati
             # from it and needs no age argument of its own. The other regimes'
             # state names are what let a `next_<state>` argument be classified by
             # the role that reads it rather than mistaken for a parameter. A
-            # transition-only shock is no state of any regime, but its draw is
-            # a transition value all the same.
+            # post-choice shock is no state of any regime, but its draw is a
+            # transition value all the same.
             regime_name: create_regime_params_template(
                 exit_helper_roots=_ordinary_query_helper_roots(
                     regime_name=regime_name,
@@ -1398,7 +1398,7 @@ class _CanonicalRegimeBuilder:
     draw_only_processes: MappingProxyType[
         RegimeName, MappingProxyType[StateName, _IIDProcess]
     ]
-    """Per regime, the folded IID shocks only its transitions read."""
+    """Per regime, the post-choice shocks its transitions read."""
 
     grid_schedule: AgeGridSchedule | None
     """Concrete period grids for age-specialized states, or `None`."""
@@ -8075,9 +8075,9 @@ def _process_regime_core(
             (scalar stored V). A reachable target in this set that would otherwise
             get an empty bundle is kept enumerable with an explicit empty
             bundle, so its scalar continuation enters E[V].
-        draw_only_processes: The folded IID shocks of this regime that only its
-            transitions read. They are no states of the regime; a law that reads
-            one's draw takes it from the process as a transition-local lottery.
+        draw_only_processes: The post-choice shocks of this regime. They are no
+            states of the regime; a law that reads one's draw takes it from its
+            nodes as a transition-local lottery.
         phase_reachability: This phase's static regime graph, the sole source
             of which targets need a continuation built.
         phase_name: Phase being built. Only the solution phase reads a target's
@@ -8610,7 +8610,7 @@ def _add_source_draw_functions(
     values, and the weights are the source's law at the source's current value:
 
     - a process: its nodes, and its transition row;
-    - a transition-only shock: its nodes, and its unconditional weights, since
+    - a post-choice shock: its nodes, and its unconditional weights, since
       the source holds no current value of it;
     - a Markov state: its codes, and the probabilities of its law declared once
       for every target, with that law's parameters.

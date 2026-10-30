@@ -5,6 +5,19 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Post-choice shocks
+
+- `Regime(post_choice_shocks=("group", ...))` declares model-level `ShockGroup`s drawn
+  after the regime's choice. Only its state transitions read them, as `next_<shock>`;
+  the solve integrates the transitions over the group's nodes and weights, and
+  simulation samples one node per subject. A utility, constraint or regime transition
+  reading such a shock is refused at model build, naming the function and the shock.
+- This replaces inferring a transition-only shock from a `fold=True` IID state read only
+  as `next_<shock>`. That spelling now raises `RegimeInitializationError` pointing to
+  `post_choice_shocks`; see
+  [Declare shocks drawn after the choice](docs/user_guide/migrating_dated_regimes.md#declare-shocks-drawn-after-the-choice).
+  Initial conditions no longer silently drop a column named after such a shock.
+
 ### Gates route on states only
 
 - Value-reading gates, `Gate.references` and the dissolution-flag artifact are

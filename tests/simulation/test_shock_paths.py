@@ -31,6 +31,7 @@ from lcm import (
     time_varying_params,
 )
 from lcm.exceptions import InvalidInitialConditionsError, InvalidSimulationInputError
+from lcm.shocks import GaussHermite, Normal, Product, ShockGroup
 from lcm.typing import (
     ContinuousState,
     DiscreteState,
@@ -210,22 +211,25 @@ def _next_wealth(*, wealth: ScalarFloat, next_cost: ContinuousState) -> ScalarFl
     return wealth - next_cost
 
 
-def test_transition_only_fold_uses_given_destination_period_draw() -> None:
-    """A folded cost enters terminal wealth without becoming a stored state."""
+def _cost_shock() -> ShockGroup:
+    return ShockGroup(
+        shocks={"cost": Normal(mu=0.0, sigma=1.0)},
+        nodes=Product(cost=GaussHermite(3)),
+    )
+
+
+def test_post_choice_shock_uses_given_destination_period_draw() -> None:
+    """A post-choice cost enters terminal wealth without becoming a stored state."""
     model = Model(
         ages=AgeGrid(start=20, inclusive_stop=21, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={20: "alive"},
         regimes={
             "alive": Regime(
-                states={
-                    "wealth": LinSpacedGrid(start=0.0, stop=4.0, n_points=5),
-                    "cost": NormalIIDProcess(
-                        n_points=3, gauss_hermite=True, mu=0.0, sigma=1.0, fold=True
-                    ),
-                },
+                states={"wealth": LinSpacedGrid(start=0.0, stop=4.0, n_points=5)},
                 state_transitions={"wealth": _next_wealth},
                 functions={"utility": _wealth_utility},
+                post_choice_shocks=("cost_shock",),
             ),
             "dead": Regime(
                 states={"wealth": LinSpacedGrid(start=0.0, stop=4.0, n_points=5)},
@@ -233,6 +237,7 @@ def test_transition_only_fold_uses_given_destination_period_draw() -> None:
             ),
         },
         edges={"alive": {"dead": (20,)}},
+        shocks={"cost_shock": _cost_shock()},
     )
     solution = model.solve(params={"discount_factor": 1.0}, log_level="off")
     initial = {
@@ -988,7 +993,7 @@ def test_phased_history_still_validates_simulated_periods(path: np.ndarray) -> N
 def test_phased_local_draw_is_dated_at_the_destination_period(
     *, budget: int | None
 ) -> None:
-    """A folded transition-only cost from period 0 reads history column 1."""
+    """A post-choice cost from period 0 reads history column 1."""
     wealth_grid = LinSpacedGrid(start=0.0, stop=8.0, n_points=9)
     model = Model(
         ages=AgeGrid(start=20, inclusive_stop=21, step="Y"),
@@ -996,9 +1001,10 @@ def test_phased_local_draw_is_dated_at_the_destination_period(
         initial_nodes={20: "alive"},
         regimes={
             "alive": Regime(
-                states={"wealth": wealth_grid, "cost": _normal_shock(fold=True)},
+                states={"wealth": wealth_grid},
                 state_transitions={"wealth": _next_wealth},
                 functions={"utility": _wealth_utility},
+                post_choice_shocks=("cost_shock",),
             ),
             "believed": Regime(
                 states={"wealth": wealth_grid}, functions={"utility": _wealth_utility}
@@ -1011,6 +1017,7 @@ def test_phased_local_draw_is_dated_at_the_destination_period(
             solve={"alive": {"believed": (20,)}},
             simulate={"alive": {"dead": (20,)}},
         ),
+        shocks={"cost_shock": _cost_shock()},
         enable_jit=True,
         execution_config=ExecutionConfig(
             axis_widths={"subject": 3}, device_memory_bytes=budget
