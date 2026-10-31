@@ -684,7 +684,7 @@ _SOURCE_SEALS = {
     SCHEDULER_SOURCE: "772152206f9e9b8361f276e995123ba1b6109e9a476a455aa322e9c6503197ec",
     LIVENESS_SOURCE: "056bda4d48f26768ed8615925ce8ff89665bb8eed94b59d69f02701a95943dff",
     CONTINUATION_READS_SOURCE: "35dfa6999f53742aa6b824578c5105a22c472884daeed0d33d4aaf195200e8e5",
-    WORKSPACE_PLANNING_SOURCE: "31ca5578da208e786d82a99bd167acd76267380f3fcd169766f080a0a042d990",
+    WORKSPACE_PLANNING_SOURCE: "43fddf0c606fa3dbd64a733b77226f5edb2301aa1ca70b683792058b2dc66e62",
     SIMULATION_PROGRAMS_SOURCE: "766e11decc7a84906267e3770a104e3b6be4ef602a88939acfacc098cf7d0fb2",
     SIMULATION_PROGRAM_TYPES_SOURCE: "bcb973f9696dc13e15320d8dd6c3bd410e69f8402dccc0def5bc54904e481048",
     SIMULATION_RUNTIME_SOURCE: "0b82ff6e54eeb3c952b06f9c3cc28a9657b2a36c2901a1a3fe1ca4faf7df09db",
@@ -1454,7 +1454,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     WORKSPACE_PLANNING_SOURCE: (
-        "c04f016cb268496a273a79896c388bd1e3378c3e9f6f43bcaaef55dd149ff6bc",
+        "5887d3935db1209264271c4e833dfd9de3330dfe6ceb0aa64c3c4452737cd6aa",
         {
             "workspace_width_candidates": "6aa7f1ab2054fabf4f9232447e62b0ee672ef45210639a2be5465873e9326603",
             "plan_workspace": "5d28ec9a75ef889f43f7981036a9fb5d2e4d6edf05357fc1cdff2c5bacdaa239",
@@ -1470,7 +1470,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "bootstrap_width": "7b74ba3484d72f9525e5e3fb978ad813ca6b684e34e5078a6424342e5977983f",
             "_tiled_bootstrap_cap": "d7e16de916ee80f4fb298ec36e65111eca2e971060759897e5e7d401a5cd3907",
             "bootstrap_widths": "b29de7d4573e8f085e3fe83015c2d3ae7f4a111d7cd7bba588fdaf889be5c05a",
-            "_workspace_width_candidates": "fe684819ead8427ad60004be741a697acf76a54b8395ee5c71d28a367262ec53",
+            "_workspace_width_candidates": "e39f45c79e8a910c737ea67abd676a6b2e3f62d62bedccba60b852e6831ecc0a",
             "_candidate_rank": "fb310dfffa04b1180e391907a03e7137950ecb0ff60919efe3e2db626e540e9d",
             "_axis_frontier": "a49f8021fc84bcc1572acba3b8c95276decd31e3dd09eeb99915f7e0add84318",
             "_fixed_width": "ca34e5f5a2c461f15be91a1c7f41ee91de833b37b174ebd3bbdff3b21d4ec8cd",
