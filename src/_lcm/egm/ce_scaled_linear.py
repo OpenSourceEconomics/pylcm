@@ -12,7 +12,7 @@ from typing import Literal, cast
 import jax
 import jax.numpy as jnp
 from jax._src.core import AbstractValue, ShapedArray
-from jax._src.literals import TypedNdArray
+from jax._src.literals import TypedFloat, TypedNdArray
 from jax.extend.core import Primitive
 from jax.interpreters import ad, batching, mlir
 from jaxtyping import Float
@@ -35,7 +35,9 @@ from _lcm.probability import (
 )
 from lcm.typing import BoolND, FloatND, IntND
 
-type _LinearPrimal = FloatND | Float[TypedNdArray, "..."] | ad.UndefinedPrimal
+type _LinearPrimal = (
+    FloatND | Float[TypedNdArray, "..."] | TypedFloat | ad.UndefinedPrimal
+)
 type _CoefficientFormat = Literal["log", "represented"]
 
 

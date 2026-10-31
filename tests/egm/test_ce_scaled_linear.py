@@ -7,14 +7,16 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from beartype.roar import BeartypeCallHintParamViolation
 
 from _lcm.egm.ce_scaled_linear import (
     _coefficient_parts,
+    _transpose,
     join_ce_direction,
     join_represented_ce_direction,
     scale_ce_direction,
 )
-from lcm.typing import FloatND, ScalarFloat
+from lcm.typing import Float1D, FloatND, ScalarFloat
 from tests.conftest import DECIMAL_PRECISION
 
 
@@ -313,3 +315,119 @@ def test_represented_ce_coefficient_keeps_ordinary_and_exceptional_directions(
             np.testing.assert_allclose(
                 float(direction_ct), coefficient, rtol=64 * info.eps, atol=0
             )
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+@pytest.mark.parametrize("kind", ["log", "represented"])
+@pytest.mark.parametrize("compiled", [False, True])
+def test_ce_transport_mixed_second_derivatives_and_differentiated_transpose(
+    *, kind: str, compiled: bool
+) -> None:
+    """Coefficient, base and direction perturbations retain both mixed terms."""
+    point = jnp.asarray([0.25 if kind == "log" else 2.0, 1.0, 1.5])
+    tangent = jnp.asarray([0.2, 0.3, 0.4])
+    other = jnp.asarray([0.5, 0.6, 0.7])
+    coefficient = jnp.exp(point[0]) if kind == "log" else point[0]
+
+    def evaluate(point: Float1D) -> ScalarFloat:
+        factor, base, direction = point
+        if kind == "log":
+            return join_ce_direction(
+                logabs=factor, sign=jnp.asarray(1.0), base=base, direction=direction
+            )
+        return join_represented_ce_direction(
+            coefficient=factor,
+            sign=jnp.asarray(1.0),
+            base=base,
+            direction=direction,
+        )
+
+    def first(point: Float1D) -> ScalarFloat:
+        return jax.jvp(evaluate, (point,), (tangent,))[1]
+
+    def second(point: Float1D) -> ScalarFloat:
+        return jax.jvp(first, (point,), (other,))[1]
+
+    expected_first = tangent[1] + coefficient * tangent[2]
+    if kind == "log":
+        expected_first += coefficient * point[2] * tangent[0]
+        expected_second = coefficient * (
+            point[2] * tangent[0] * other[0]
+            + tangent[2] * other[0]
+            + other[2] * tangent[0]
+        )
+    else:
+        expected_first += point[2] * tangent[0]
+        expected_second = tangent[2] * other[0] + other[2] * tangent[0]
+    run_first, run_second = (
+        (jax.jit(first), jax.jit(second)) if compiled else (first, second)
+    )
+    np.testing.assert_almost_equal(
+        run_first(point), expected_first, decimal=DECIMAL_PRECISION
+    )
+    np.testing.assert_almost_equal(
+        run_second(point), expected_second, decimal=DECIMAL_PRECISION
+    )
+
+    def coefficient_value(factor: ScalarFloat) -> ScalarFloat:
+        return evaluate(point.at[0].set(factor))
+
+    curvature = jax.grad(jax.grad(coefficient_value))
+    expected_curvature = coefficient * point[2] if kind == "log" else 0.0
+    np.testing.assert_almost_equal(
+        (jax.jit(curvature) if compiled else curvature)(point[0]),
+        expected_curvature,
+        decimal=DECIMAL_PRECISION,
+    )
+
+    def transpose(parameters: Float1D) -> Float1D:
+        factor, cotangent = parameters
+
+        def linear(payload: Float1D) -> ScalarFloat:
+            if kind == "log":
+                return join_ce_direction(
+                    logabs=factor,
+                    sign=jnp.asarray(1.0),
+                    base=payload[0],
+                    direction=payload[1],
+                )
+            return join_represented_ce_direction(
+                coefficient=factor,
+                sign=jnp.asarray(1.0),
+                base=payload[0],
+                direction=payload[1],
+            )
+
+        return jax.linear_transpose(linear, jnp.zeros(2))(cotangent)[0]
+
+    derivative = jax.jacfwd(transpose)
+    expected = jnp.asarray(
+        [
+            [0.0, 1.0],
+            [coefficient * 0.8 if kind == "log" else 0.8, coefficient],
+        ]
+    )
+    np.testing.assert_array_almost_equal(
+        (jax.jit(derivative) if compiled else derivative)(jnp.asarray([point[0], 0.8])),
+        expected,
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+@pytest.mark.parametrize("forged", [False, True])
+def test_ce_transpose_refuses_unauthenticated_scalar_metadata(*, forged: bool) -> None:
+    """Only the actual JAX typed scalar may substitute for a callback array."""
+    scalar_class = (
+        type("TypedFloat", (float,), {"__module__": "jax._src.literals"})
+        if forged
+        else float
+    )
+    with pytest.raises(BeartypeCallHintParamViolation, match="parameter sign"):
+        _transpose(
+            cotangent=jnp.asarray(1.0),
+            logabs=jnp.asarray(0.0),
+            sign=scalar_class(1.0),  # ty: ignore[invalid-argument-type]
+            base=jnp.asarray(0.0),
+            direction=jnp.asarray(1.0),
+        )
