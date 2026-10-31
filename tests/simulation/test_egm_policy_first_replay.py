@@ -682,4 +682,7 @@ def test_constrained_segment_below_the_row_is_read_without_the_grid_argmax(
         np.testing.assert_allclose(consumption, (wealth[0] + 1.0) / 2.0)
     else:
         assert work == _Work.no
-        np.testing.assert_allclose(consumption, wealth[0] - 1.0 - 0.5, rtol=1e-6)
+        # The simulated wealth at the active precision: at float32 `1.5 + 1e-6`
+        # rounds, and `R - floor` is exact against the stored value.
+        held = float(near_floor["wealth"].iloc[0])
+        np.testing.assert_allclose(consumption, held - 1.0 - 0.5, rtol=1e-6)
