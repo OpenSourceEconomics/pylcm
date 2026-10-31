@@ -204,24 +204,84 @@ def test_a_crossing_rounding_onto_a_node_still_hands_over():
 
 
 def test_a_chain_folding_past_the_capacity_poisons_the_row():
-    """A chain with more branches than the configured capacity fails loud.
+    """A chain with more branches over one cell than the capacity fails loud.
 
     The fold count is a property of the data, not of the action space, so the
     capacity is validated rather than assumed: exceeding it reports overflow and
     publishes nothing instead of an envelope built from a subset of the branches.
     """
     n_refined = 64
-    # Five upward runs separated by four folds.
+    # Five upward runs separated by four folds; four of them cover (13, 14).
     grid = [10.0, 14.0, 11.0, 17.0, 12.0, 20.0, 13.0, 23.0, 15.0, 26.0]
     out_grid, _out_policy, _out_value, n_kept = refine_envelope_exact(
         endog_grid=jnp.asarray(grid),
         policy=jnp.asarray([1.0] * len(grid)),
         value=jnp.asarray([float(i) for i in range(len(grid))]),
         n_refined=n_refined,
-        max_runs=4,
+        max_runs=3,
     )
     assert int(n_kept) > n_refined
     assert np.all(np.isnan(np.asarray(out_grid)))
+
+
+def _refine_at_capacity(
+    *, grid: list[float], value: list[float], max_runs: int
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
+    out_grid, out_policy, out_value, n_kept = refine_envelope_exact(
+        endog_grid=jnp.asarray(grid),
+        policy=jnp.asarray(grid),
+        value=jnp.asarray(value),
+        n_refined=64,
+        max_runs=max_runs,
+    )
+    keep = int(n_kept)
+    return (
+        np.asarray(out_grid)[:keep],
+        np.asarray(out_policy)[:keep],
+        np.asarray(out_value)[:keep],
+        keep,
+    )
+
+
+def test_many_local_folds_publish_within_a_per_cell_capacity():
+    """The capacity bounds the runs over one cell, not the runs in the chain.
+
+    A fine savings grid resolves every small fold that the continuation's kinks
+    induce, so the chain holds many runs while each stretch of resources is
+    covered by only a few. Six runs here, never more than two over one cell: a
+    capacity of two publishes the envelope a capacity of six publishes.
+    """
+    grid = [0.0, 2.0, 1.0, 4.0, 3.0, 6.0, 5.0, 8.0, 7.0, 10.0, 9.0, 12.0]
+    value = [0.0, 2.0, 1.5, 4.0, 3.5, 6.0, 5.5, 8.0, 7.5, 10.0, 9.5, 12.0]
+
+    narrow = _refine_at_capacity(grid=grid, value=value, max_runs=2)
+    wide = _refine_at_capacity(grid=grid, value=value, max_runs=6)
+
+    assert 0 < wide[3] <= 64
+    assert narrow[3] == wide[3]
+    for got, expected in zip(narrow[:3], wide[:3], strict=True):
+        np.testing.assert_array_equal(got, expected)
+
+
+def test_a_backward_stretch_does_not_crowd_a_later_run_out_of_the_capacity():
+    """Points on a resource-falling stretch never displace a later branch.
+
+    Each point of a backward stretch is a run of its own that spans no interval
+    and carries no line, so it takes no capacity: the branch after the stretch
+    still owns `[2, 4]`, and the row reaches `4` at a capacity of two exactly as
+    it does at the default capacity.
+    """
+    backward = np.linspace(1.95, 1.5, 10).tolist()
+    grid = [0.0, 1.0, 2.0, *backward, 1.4, 3.0, 4.0]
+    value = [0.0, 1.0, 2.0, *([1.0] * 10), 1.0, 3.0, 4.0]
+
+    narrow = _refine_at_capacity(grid=grid, value=value, max_runs=2)
+    wide = _refine_at_capacity(grid=grid, value=value, max_runs=24)
+
+    assert wide[0][-1] == 4.0
+    assert narrow[3] == wide[3]
+    for got, expected in zip(narrow[:3], wide[:3], strict=True):
+        np.testing.assert_array_equal(got, expected)
 
 
 def test_a_chain_within_the_capacity_publishes_an_envelope():
@@ -251,3 +311,23 @@ def test_refinement_is_vmap_compatible():
     )
     _grid, _policy, _value, n_kept = batched(grids, policies, values)
     assert n_kept.tolist()[0] == n_kept.tolist()[1]
+
+
+def test_runs_sharing_a_slot_may_touch_at_an_endpoint():
+    """Two branches that only touch at one abscissa do not overlap.
+
+    The third branch, `[3, 10]`, ends exactly where the first, `[10, 12]`,
+    begins, and the second lies inside the third, so no cell is covered by more
+    than two branches. A capacity of two publishes the envelope a capacity of
+    four publishes.
+    """
+    grid = [10.0, 11.0, 12.0, 5.0, 7.0, 3.0, 10.0]
+    value = [5.0, 5.5, 6.0, 1.0, 2.0, 0.0, 4.9]
+
+    narrow = _refine_at_capacity(grid=grid, value=value, max_runs=2)
+    wide = _refine_at_capacity(grid=grid, value=value, max_runs=4)
+
+    assert 0 < wide[3] <= 64
+    assert narrow[3] == wide[3]
+    for got, expected in zip(narrow[:3], wide[:3], strict=True):
+        np.testing.assert_array_equal(got, expected)

@@ -10,7 +10,7 @@ serves as the reference route.
 """
 
 import dataclasses
-from collections.abc import Mapping
+from collections.abc import Hashable, Mapping
 
 import jax.numpy as jnp
 import numpy as np
@@ -18,6 +18,7 @@ import pytest
 
 import _lcm.simulation.simulate as simulation
 import lcm_examples.iskhakov_et_al_2017 as iskhakov
+from _lcm.simulation import host_operations
 from lcm import (
     AgeGrid,
     ConsumptionSavingsRegime,
@@ -38,6 +39,7 @@ from lcm.solvers import DCEGM, RFCEnvelope
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
+    DiscreteAction,
     DiscreteState,
     FloatND,
     ScalarInt,
@@ -484,3 +486,203 @@ def test_budgeted_node_state_simulate_reads_the_policy_and_matches_unbudgeted(
         np.testing.assert_allclose(
             budgeted[column].to_numpy(dtype=float), expected, rtol=rtol, atol=atol
         )
+
+
+@categorical(ordered=False)
+class _Work:
+    no: ScalarInt
+    yes: ScalarInt
+
+
+def _work_resources(*, wealth: ContinuousState, work: DiscreteAction) -> FloatND:
+    return wealth - 1.0 + 2.0 * work
+
+
+def _work_utility(
+    *, consumption: ContinuousAction, work: DiscreteAction, work_cost: FloatND
+) -> FloatND:
+    return jnp.log(consumption) - work_cost * work
+
+
+def _work_branch_model(*, work_cost: float = 0.1) -> Model:
+    """Two-period DC-EGM source whose `no`-work branch can be unaffordable.
+
+    Not working leaves `wealth - 1` resources, which for `wealth < 1.5` lies
+    below the savings floor `0.5`: no consumption is feasible on that branch.
+    Working adds `2`, so with log bequest utility and no discounting the optimum
+    of a subject left with only the work branch is `R / 2`.
+    """
+    alive = ConsumptionSavingsRegime(
+        states={"wealth": LinSpacedGrid(start=1.0, stop=5.0, n_points=5)},
+        actions={
+            "consumption": LinSpacedGrid(start=0.5, stop=6.0, n_points=12),
+            "work": DiscreteGrid(category_class=_Work),
+        },
+        functions={
+            "utility": _work_utility,
+            "resources": _work_resources,
+            "inverse_marginal_utility": _inverse_log_marginal,
+            "savings": _node_savings,
+        },
+        state_transitions={"wealth": {"done": _node_next_wealth}},
+        liquid=LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources="resources",
+            post_decision_state="savings",
+        ),
+        solver=DCEGM(savings_grid=_NODE_SAVINGS_GRID),
+    )
+    return Model(
+        regimes={
+            "alive": alive,
+            "done": Regime(
+                states={"wealth": _NODE_SAVINGS_GRID},
+                functions={"utility": _node_bequest},
+            ),
+        },
+        n_periods=2,
+        initial_nodes=InitialNodes(by_period={0: "alive"}),
+        edges={"alive": {"done": Periods(values=(0,))}},
+        regime_id_class=_NodeRegimeId,
+        fixed_params={"discount_factor": 1.0, "work_cost": work_cost},
+    )
+
+
+def test_unaffordable_branch_does_not_send_subjects_to_the_grid_argmax(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A branch whose resources lie below the savings floor is dead, not unread.
+
+    Its row read extrapolates below the row's support; that must not reject the
+    subject, whose other branch decides it from the policy.
+    """
+    model = _work_branch_model()
+    executed = _decision_program_owners(monkeypatch=monkeypatch)
+    wealth = np.linspace(1.0, 5.0, 41)
+    assert np.any(wealth - 1.0 < 0.5)
+
+    frame = model.simulate(
+        params={},
+        initial_conditions={
+            "wealth": jnp.asarray(wealth),
+            "period": jnp.zeros(wealth.shape, dtype=jnp.int32),
+            "regime_id": jnp.zeros(wealth.shape, dtype=jnp.int32),
+        },
+        seed=0,
+        log_level="off",
+    ).to_dataframe(use_categorical_codes=True)
+
+    assert "alive" not in executed, executed
+    first = frame[frame["period"] == 0].sort_values("subject_id")
+    poor = first["wealth"].to_numpy(dtype=float) - 1.0 < 0.5
+    assert np.all(first["work"].to_numpy()[poor] == _Work.yes)
+    np.testing.assert_array_almost_equal(
+        first["consumption"].to_numpy(dtype=float)[poor],
+        (first["wealth"].to_numpy(dtype=float)[poor] + 1.0) / 2.0,
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+def test_budgeted_warm_simulate_reuses_the_policy_read_executable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A second budgeted simulate lowers no policy-first read again.
+
+    Each regime-period dispatches a copy of the regime bound to its unit
+    executor; the read's executable must be keyed by the model's regime, the one
+    chunk admission profiles, not by that per-dispatch copy.
+    """
+    model = _node_state_model(
+        with_health=True,
+        execution_config=ExecutionConfig(device_memory_bytes=2**30),
+    )
+    _simulate_node_state(model=model)
+    lowered: list[str] = []
+    lower = host_operations._lower_operation
+
+    def record(*, function, **kwargs):
+        lowered.append(getattr(getattr(function, "func", function), "__name__", ""))
+        return lower(function=function, **kwargs)
+
+    monkeypatch.setattr(host_operations, "_lower_operation", record)
+
+    _simulate_node_state(model=model)
+
+    assert "_policy_first_body" not in lowered, lowered
+
+
+def _producer_identity(regime) -> Hashable:
+    return host_operations._bound_identity(regime)
+
+
+def test_a_regime_bound_to_another_executor_keys_the_same_producer() -> None:
+    """A dispatch copy differing only in its executor shares the producer key.
+
+    `_bind_unit_executor` rebinds every dispatched regime to its unit executor;
+    a producer that binds that copy must still find the model regime's
+    executable. Any other difference keeps the keys apart.
+    """
+    model = _node_state_model()
+    regime = model._regimes["alive"]
+    bound = [
+        model._runtime_regimes_for_shape(compile_batch_size=width)["alive"]
+        for width in (1, 2)
+    ]
+    assert (
+        bound[0].simulation.programs.executor is not regime.simulation.programs.executor
+    )
+    assert (
+        bound[0].simulation.programs.executor
+        is not bound[1].simulation.programs.executor
+    )
+
+    assert _producer_identity(bound[0]) == _producer_identity(regime)
+    assert _producer_identity(bound[1]) == _producer_identity(regime)
+    assert _producer_identity(
+        dataclasses.replace(regime, name="other")
+    ) != _producer_identity(regime)
+
+
+@pytest.mark.parametrize("work_cost", [0.1, 40.0])
+def test_constrained_segment_below_the_row_is_read_without_the_grid_argmax(
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    work_cost: float,
+) -> None:
+    """Resources between the floor and a row's first node decide from the policy.
+
+    Below the row's first (borrowing-constrained) node the branch still consumes
+    everything above the floor, `R - floor`. A subject whose `no`-work branch
+    lands there is decided without the grid argmax: by the work branch when work
+    is cheap, and by the constrained `no`-work choice when work is costly
+    enough to outweigh consuming almost nothing.
+    """
+    model = _work_branch_model(work_cost=work_cost)
+    executed = _decision_program_owners(monkeypatch=monkeypatch)
+    wealth = np.array([1.5 + 1e-6, 3.0])
+
+    frame = model.simulate(
+        params={},
+        initial_conditions={
+            "wealth": jnp.asarray(wealth),
+            "period": jnp.zeros(wealth.shape, dtype=jnp.int32),
+            "regime_id": jnp.zeros(wealth.shape, dtype=jnp.int32),
+        },
+        seed=0,
+        log_level="off",
+    ).to_dataframe(use_categorical_codes=True)
+
+    assert "alive" not in executed, executed
+    near_floor = frame[(frame["period"] == 0) & (frame["subject_id"] == 0)]
+    work = int(near_floor["work"].iloc[0])
+    consumption = float(near_floor["consumption"].iloc[0])
+    if work_cost < 1.0:
+        assert work == _Work.yes
+        np.testing.assert_allclose(consumption, (wealth[0] + 1.0) / 2.0)
+    else:
+        assert work == _Work.no
+        # The simulated wealth at the active precision: at float32 `1.5 + 1e-6`
+        # rounds, and `R - floor` is exact against the stored value.
+        held = float(near_floor["wealth"].iloc[0])
+        np.testing.assert_allclose(consumption, held - 1.0 - 0.5, rtol=1e-6)

@@ -270,6 +270,7 @@ from _lcm.transition_plans import (
     TargetTransitionPlans,
     TransitionLotteryInfo,
     TransitionOutputInfo,
+    draws_transition_local_lottery,
 )
 from _lcm.typing import (
     AnnotationForm,
@@ -6840,11 +6841,15 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
             v_interpolation_info=own_v_info,
             euler_state_name=cast("_BoundNBEGM", solver).continuous_state,
         )
-        # Only the ride-along kernel, built for a state besides the liquid one,
-        # publishes the policy on the state grid.
-        and any(
-            name != cast("_BoundNBEGM", solver).continuous_state
-            for name in state_action_space.states
+        # Only the ride-along kernel, built for a state besides the liquid one
+        # or for a draw local to the transition, publishes the policy on the
+        # state grid.
+        and (
+            any(
+                name != cast("_BoundNBEGM", solver).continuous_state
+                for name in state_action_space.states
+            )
+            or draws_transition_local_lottery(plans=solver_context.transition_plans)
         )
     ):
         bound_nbegm = cast("_BoundNBEGM", solver)

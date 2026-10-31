@@ -12,6 +12,9 @@ fixtures (no production workload uses these producers yet):
 - `nnbegm`: the finite NNBEGM keeper/adjuster housing regime of
   `tests/egm/_nnbegm_toy.py`, whose resources read a declared current shock.
 
+`--solver nbegm` (dc-aca only) solves the `alive` regime with `NBEGM` on the same
+savings grid instead of `DCEGM`.
+
 `--solver gridsearch` keeps the same regimes, state grids, shock nodes, dtype and
 subjects and swaps every EGM solver for `GridSearch()`, which searches the declared
 consumption (and investment) grids. Both arms therefore declare the same
@@ -79,7 +82,7 @@ def _dc_aca(args: argparse.Namespace) -> _Built:
         post_decision_lower_bound,
     )
     from lcm.shocks import EqualSpacedUniform, Product, ShockGroup, Uniform
-    from lcm.solvers import DCEGM
+    from lcm.solvers import DCEGM, NBEGM
     from tests.solution.test_current_iid_consumer_parity import (
         _MARGIN,
         _SAVINGS_FLOOR,
@@ -135,7 +138,7 @@ def _dc_aca(args: argparse.Namespace) -> _Built:
             )
         },
         liquid=_MARGIN,
-        solver=DCEGM(savings_grid=savings),
+        solver=(NBEGM if args.solver == "nbegm" else DCEGM)(savings_grid=savings),
         shocks=("hcc",),
     )
     if args.solver == "gridsearch":
@@ -273,7 +276,9 @@ def _git(*args: str) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--workload", choices=("dc-aca", "nnbegm"), required=True)
-    parser.add_argument("--solver", choices=("egm", "gridsearch"), default="egm")
+    parser.add_argument(
+        "--solver", choices=("egm", "nbegm", "gridsearch"), default="egm"
+    )
     parser.add_argument("--wealth-points", type=int, default=5)
     parser.add_argument("--wealth-top", type=float, default=5.0)
     parser.add_argument("--housing-points", type=int, default=3)
@@ -287,6 +292,8 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=19)
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
+    if args.solver == "nbegm" and args.workload != "dc-aca":
+        parser.error("--solver nbegm applies to the dc-aca workload only")
 
     jax.config.update("jax_enable_x64", args.precision == 64)
 

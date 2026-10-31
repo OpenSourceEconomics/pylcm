@@ -29,7 +29,7 @@ import jax
 import jax.numpy as jnp
 
 from _lcm.zero_safe import zero_safe_weighted_term
-from lcm.typing import BoolND, Float1D, FloatND, IntND, ScalarInt
+from lcm.typing import BoolND, Float1D, FloatND, IntND, LoopIndex, ScalarInt
 
 
 def interp_on_regular_grid(
@@ -625,6 +625,78 @@ def _read_prepared_row(
     # the bracket arithmetic; the degenerate-row constants above would mask it,
     # so re-pin it explicitly — fail-loud on every row shape.
     return jnp.where(jnp.isnan(x_query), jnp.nan, result)
+
+
+def interp_on_indexed_rows(
+    *,
+    x_query: FloatND,
+    rows: IntND,
+    xp: FloatND,
+    fp: FloatND,
+    fp_slopes: FloatND | None = None,
+) -> tuple[FloatND, IntND]:
+    """Read row `rows[i]` of a padded table at `x_query[i]`, without copying rows.
+
+    Equals `interp_on_padded_grid(x_query=x_query[i], xp=xp[rows[i]], ...)` for
+    every `i` (the same bracket and the same `_interp_between_nodes` arithmetic),
+    but locates each bracket by a binary search on the table itself and gathers
+    only the two bracket nodes, so the work is `O(n log L)` instead of copying a
+    length-`L` row per query.
+
+    Args:
+        x_query: One query per lane, shape `(n,)`.
+        rows: The table row each lane reads, shape `(n,)`.
+        xp: Table of weakly ascending, NaN-tail-padded rows, shape `(R, L)`.
+        fp: Function values on `xp`, NaN-padded in lockstep.
+        fp_slopes: Node derivatives, NaN-padded in lockstep; `None` selects
+            linear interpolation.
+
+    Returns:
+        The reads, shape `(n,)`, and each lane's row valid length.
+
+    """
+    search_grid = jnp.where(jnp.isnan(xp), jnp.inf, xp)
+    valid_length = jnp.sum(~jnp.isnan(xp), axis=-1).astype(jnp.int32)[rows]
+    n_columns = xp.shape[-1]
+
+    # Count of row entries `<= x_query`, i.e. `searchsorted(side="right")`.
+    # keyword-only-exempt: library-callback=jax.lax.fori_loop
+    def halve(_: LoopIndex, bounds: tuple[IntND, IntND]) -> tuple[IntND, IntND]:
+        lo, hi = bounds
+        mid = (lo + hi) // 2
+        right = search_grid[rows, jnp.minimum(mid, n_columns - 1)] <= x_query
+        still_open = lo < hi
+        return (
+            jnp.where(still_open & right, mid + 1, lo),
+            jnp.where(still_open & ~right, mid, hi),
+        )
+
+    count, _ = jax.lax.fori_loop(
+        0,
+        n_columns.bit_length(),
+        halve,
+        (jnp.zeros_like(rows), jnp.full_like(rows, n_columns)),
+    )
+    upper = jnp.clip(count, 1, jnp.maximum(valid_length - 1, 1)).astype(jnp.int32)
+    lower = upper - 1
+    degenerate = valid_length < 2  # noqa: PLR2004
+    sanitized = functools.partial(_sanitize_gathered, degenerate=degenerate)
+    result = _interp_between_nodes(
+        x_query=x_query,
+        xp_lower=sanitized(gathered=xp[rows, lower], dummy=0.0),
+        xp_upper=sanitized(gathered=xp[rows, upper], dummy=1.0),
+        fp_lower=sanitized(gathered=fp[rows, lower], dummy=0.0),
+        fp_upper=sanitized(gathered=fp[rows, upper], dummy=0.0),
+        slope_lower=None
+        if fp_slopes is None
+        else sanitized(gathered=fp_slopes[rows, lower], dummy=0.0),
+        slope_upper=None
+        if fp_slopes is None
+        else sanitized(gathered=fp_slopes[rows, upper], dummy=0.0),
+    )
+    result = jnp.where(valid_length == 1, fp[rows, 0], result)
+    result = jnp.where(valid_length == 0, jnp.nan, result)
+    return jnp.where(jnp.isnan(x_query), jnp.nan, result), valid_length
 
 
 def interp_right_germ_on_padded_grid(

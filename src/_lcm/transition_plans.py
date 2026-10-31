@@ -258,3 +258,16 @@ class TargetTransitionPlan:
 
 # Immutable mapping of target regime names to complete target-edge plans.
 type TargetTransitionPlans = MappingProxyType[RegimeName, TargetTransitionPlan]
+
+
+def draws_transition_local_lottery(*, plans: TargetTransitionPlans) -> bool:
+    """Whether a law out of the source reads a draw local to the transition.
+
+    Such a draw, a post-decision shock for one, is no state of the source: the
+    continuation integrates it over its nodes with their weights.
+    """
+    return any(
+        lottery.lifetime is LotteryLifetime.TRANSITION_LOCAL
+        for plan in plans.values()
+        for lottery in plan.lotteries.values()
+    )

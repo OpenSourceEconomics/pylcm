@@ -19,7 +19,7 @@ The adapter keeps the `shocks=` contract at the model boundary:
 """
 
 import dataclasses
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, fields
 from types import MappingProxyType
 from typing import ClassVar, cast
@@ -614,19 +614,6 @@ def _realise_group_paths(
         kinds[name] = (
             BaseInnovations if isinstance(item, BaseInnovations) else PhysicalValues
         )
-    plan = CurrentIIDDrawPlan(
-        bindings={
-            group_name: ShockBinding(
-                group=group,
-                state_inputs=frozenset(),
-                state_domains=MappingProxyType({}),
-                categorical_domains=MappingProxyType({}),
-                functions=MappingProxyType({}),
-                params_template=MappingProxyType({}),
-                callable_parameters=frozenset(),
-            )
-        }
-    )
     keys = {
         name: _addressed_keys(
             key=key, name=name, n_subjects=n_subjects, n_periods=n_periods
@@ -634,26 +621,9 @@ def _realise_group_paths(
         for name in group.shocks
     }
 
-    # keyword-only-exempt: library-callback=jax.vmap
-    def cell(
-        cell_keys: Mapping[ShockName, PRNGKeyND],
-        period: ScalarInt,
-        age: ScalarFloat | ScalarInt,
-        values: Mapping[ShockName, ScalarFloat],
-        enabled: Mapping[ShockName, BoolND],
-    ) -> tuple[Mapping[ShockName, FloatND], BoolND]:
-        frame = plan.realise(
-            keys=cell_keys,
-            group_params={group_name: {}},
-            arguments={"period": period, "age": age},
-            overrides={
-                name: kinds[name](values=value) for name, value in values.items()
-            },
-            override_active=enabled,
-        )
-        return frame.physical, frame.valid
-
-    physical, valid = jax.jit(jax.vmap(jax.vmap(cell)))(
+    physical, valid = _cell_program(
+        group_name=group_name, group=group, kinds=tuple(kinds.items())
+    )(
         keys,
         jnp.broadcast_to(
             jnp.arange(n_periods, dtype=jnp.int32), (n_subjects, n_periods)
@@ -669,6 +639,74 @@ def _realise_group_paths(
             "coordinate is not finite."
         )
     return MappingProxyType(dict(physical))
+
+
+# Realisation programs by shock group and override kinds. A model's groups are
+# few and live as long as the model, so entries are never evicted.
+# ponytail: unbounded per-process cache; key by a weak reference if models churn.
+_CELL_PROGRAMS: dict[
+    tuple[
+        ShockGroupName,
+        int,
+        tuple[tuple[ShockName, type[BaseInnovations | PhysicalValues]], ...],
+    ],
+    tuple[ShockGroup, Callable[..., tuple[Mapping[ShockName, FloatND], BoolND]]],
+] = {}
+
+
+def _cell_program(
+    *,
+    group_name: ShockGroupName,
+    group: ShockGroup,
+    kinds: tuple[tuple[ShockName, type[BaseInnovations | PhysicalValues]], ...],
+) -> Callable[..., tuple[Mapping[ShockName, FloatND], BoolND]]:
+    """Return the compiled per-(subject, period) realisation of one shock group.
+
+    Built once per group and override kinds, so a repeated simulate reuses the
+    traced program instead of wrapping a fresh closure in `jax.jit`.
+    """
+    cache_key = (group_name, id(group), kinds)
+    cached = _CELL_PROGRAMS.get(cache_key)
+    if cached is not None and cached[0] is group:
+        return cached[1]
+    override_kinds = dict(kinds)
+    plan = CurrentIIDDrawPlan(
+        bindings={
+            group_name: ShockBinding(
+                group=group,
+                state_inputs=frozenset(),
+                state_domains=MappingProxyType({}),
+                categorical_domains=MappingProxyType({}),
+                functions=MappingProxyType({}),
+                params_template=MappingProxyType({}),
+                callable_parameters=frozenset(),
+            )
+        }
+    )
+
+    # keyword-only-exempt: library-callback=jax.vmap
+    def cell(
+        cell_keys: Mapping[ShockName, PRNGKeyND],
+        period: ScalarInt,
+        age: ScalarFloat | ScalarInt,
+        values: Mapping[ShockName, ScalarFloat],
+        enabled: Mapping[ShockName, BoolND],
+    ) -> tuple[Mapping[ShockName, FloatND], BoolND]:
+        frame = plan.realise(
+            keys=cell_keys,
+            group_params={group_name: {}},
+            arguments={"period": period, "age": age},
+            overrides={
+                name: override_kinds[name](values=value)
+                for name, value in values.items()
+            },
+            override_active=enabled,
+        )
+        return frame.physical, frame.valid
+
+    program = jax.jit(jax.vmap(jax.vmap(cell)))
+    _CELL_PROGRAMS[cache_key] = (group, program)
+    return program
 
 
 def _addressed_keys(

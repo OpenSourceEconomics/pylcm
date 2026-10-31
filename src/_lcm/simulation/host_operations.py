@@ -30,6 +30,7 @@ import jax
 import numpy as np
 
 from _lcm.current_iid import CurrentIIDDrawPlan, CurrentIIDPlan
+from _lcm.engine import Regime, SimulationPhase
 from _lcm.execution.workspace_planning import (
     CompilerMemoryReservation,
     compiler_memory_reservation,
@@ -41,6 +42,7 @@ from _lcm.simulation.operand_placement import (
     place_simulation_arguments,
     subject_operand_sharding,
 )
+from _lcm.simulation.program_types import SimulationPrograms
 from _lcm.simulation.residency import (
     DeviceBufferFootprint,
     measure_buffer_footprint,
@@ -648,11 +650,45 @@ def _program_identity(function: Callable[..., PytreeValue]) -> Hashable:
 
 
 def _bound_identity(value: object) -> Hashable:  # noqa: PAN001 - any value a dispatched partial binds; one without a typed value is held by identity
-    """Identify a bound value by typed value, else by the object it is."""
+    """Identify a bound value by typed value, else by the object it is.
+
+    A regime is identified by its contents except the program executor, so the
+    executor-bound copy simulation dispatches keys the model regime's
+    executable.
+    """
     try:
         return _static_identity(value)
     except ExecutionPlanningError:
+        if isinstance(value, Regime):
+            return _regime_identity(value)
         return _HeldObject(value)
+
+
+def _regime_identity(regime: Regime) -> Hashable:
+    """Hold every field of a regime but its programs' executor, by identity.
+
+    Rebinding the executor shallow-copies the regime, its simulation phase and
+    its programs; every other field is the same object, so the copies compare
+    equal, while a copy that changes any other field does not.
+    """
+    simulation = regime.simulation
+    return (
+        Regime,
+        _held_fields(owner=regime, skip="simulation"),
+        _held_fields(owner=simulation, skip="programs"),
+        _held_fields(owner=simulation.programs, skip="executor"),
+    )
+
+
+def _held_fields(
+    *, owner: Regime | SimulationPhase | SimulationPrograms, skip: str
+) -> tuple[_HeldObject, ...]:
+    """Hold each dataclass field of `owner` but `skip`, by identity."""
+    return tuple(
+        _HeldObject(getattr(owner, field.name))
+        for field in dataclasses.fields(owner)
+        if field.name != skip
+    )
 
 
 @dataclasses.dataclass(frozen=True, eq=False)

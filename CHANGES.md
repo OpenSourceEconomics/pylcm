@@ -107,8 +107,8 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - A `ShockGroup` listed in `Regime(shocks=...)`, or an IID process declared as a state,
   carries an axis only when some function of the regime reads its current value. A
   shock read only as `next_x` by state transitions has no axis: the solve integrates
-  the transitions over its nodes and weights, and simulation samples one node per
-  subject. An initial value supplied for such a state is dropped.
+  the transitions over its nodes and weights, and simulation draws it from its
+  continuous law. An initial value supplied for such a state is dropped.
 - Utility and constraints reading `next_x` are refused at model build. A group read both
   as `x` and as `next_x` in one regime is refused; declare the shock as an IID process
   state to carry the realization into the next period.

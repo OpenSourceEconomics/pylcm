@@ -23,7 +23,7 @@ import numpy as np
 import pandas as pd
 from jax import vmap
 
-from _lcm.egm.interp import interp_on_padded_grid
+from _lcm.egm.interp import interp_on_indexed_rows, interp_on_padded_grid
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.outer_interpolation import LocalCubicOuterInterpolant
 from _lcm.egm.outer_inversion import (
@@ -3286,6 +3286,7 @@ def _policy_first_body(
     publishes no value at the realized state, so its winner's value is the
     canonical value of the emitted actions.
     """
+    dtypes = dict(action_dtypes)
     if isinstance(sim_policy, NBEGMGridPolicy):
         actions, winner_value, read_ok = _read_nbegm_grid_policy(
             regime=regime,
@@ -3296,6 +3297,31 @@ def _policy_first_body(
             age=age,
         )
     else:
+
+        def score(
+            branch_actions: Mapping[ActionName, FloatND | IntND],
+        ) -> tuple[FloatND, BoolND]:
+            scored = _evaluate_canonical_Q_at_actions(
+                candidate_actions={
+                    name: jnp.asarray(branch_actions[name]).astype(dtypes[name])
+                    for name in action_names
+                },
+                regime=regime,
+                canonical_states=canonical_states,
+                action_names=action_names,
+                next_regime_to_V_arr=MappingProxyType(dict(next_regime_to_V_arr)),
+                flat_params=flat_params,
+                referenced_value_kwargs=referenced_value_kwargs,
+                period=period,
+                age=age,
+                active_subjects=in_regime,
+                Q_and_F=Q_and_F,
+            )
+            return cast(
+                "tuple[FloatND, BoolND]",
+                scored.output if type(scored) is BoundedResult else scored,
+            )
+
         actions, winner_value, read_ok = _read_egm_policy_rows(
             regime=regime,
             sim_policy=sim_policy,
@@ -3303,8 +3329,8 @@ def _policy_first_body(
             flat_params=flat_params,
             period=period,
             age=age,
+            score=score,
         )
-    dtypes = dict(action_dtypes)
     actions = {name: actions[name].astype(dtypes[name]) for name in action_names}
     evaluated = _evaluate_canonical_Q_at_actions(
         candidate_actions=actions,
@@ -3336,8 +3362,18 @@ def _read_egm_policy_rows(
     flat_params: FlatRegimeParams,
     period: IntND,
     age: ScalarFloat | ScalarInt,
+    score: Callable[[Mapping[ActionName, FloatND | IntND]], tuple[FloatND, BoolND]]
+    | None = None,
 ) -> tuple[dict[ActionName, FloatND | IntND], FloatND, BoolND]:
-    """Read the flat EGM rows: the winning branch's actions, value and acceptance."""
+    """Read the flat EGM rows: the winning branch's actions, value and acceptance.
+
+    Resources between the savings floor and a row's first node lie on the
+    borrowing-constrained segment when that node is itself constrained (its
+    policy is `node - floor`): the branch consumes `R - floor`. A subject with
+    such a branch has every live branch scored by `score`, the canonical value
+    of its action, since the row value does not extend below the node; without
+    `score` the read stays unsupported and the caller falls back.
+    """
     read = cast("EGMPolicyRead", regime.simulation.egm_policy_read)
     n_subjects = next(iter(states.values())).shape[0]
     selections = _row_selections(
@@ -3348,8 +3384,9 @@ def _read_egm_policy_rows(
         jnp.asarray(regime.simulation.grids[name].to_jax()) for name in branch_names
     )
     branch_shape = tuple(int(grid.shape[0]) for grid in branch_grids)
-    values, policies, resources, in_support = [], [], [], []
-    for branch in itertools.product(*(range(size) for size in branch_shape)):
+    values, policies, resources, in_support, below = [], [], [], [], []
+    branches = tuple(itertools.product(*(range(size) for size in branch_shape)))
+    for branch in branches:
         data: dict[str, np.ndarray | FloatND | IntND | BoolND | Sequence[str]] = {
             **dict(states),
             **{
@@ -3388,16 +3425,54 @@ def _read_egm_policy_rows(
             resources=branch_resources,
             n_subjects=n_subjects,
         )
+        # Resources at or below the savings floor leave no positive action: the
+        # branch is dead, not an unsupported read that rejects the subject.
+        value = jnp.where(branch_resources > read.savings_lower_bound, value, -jnp.inf)
+        head, head_constrained = _constrained_head(
+            sim_policy=sim_policy,
+            selections=selections,
+            branch=branch,
+            savings_lower_bound=read.savings_lower_bound,
+        )
+        on_segment = (
+            (score is not None)
+            & head_constrained
+            & (branch_resources > read.savings_lower_bound)
+            & (branch_resources < head)
+        )
         values.append(value)
-        policies.append(policy)
+        policies.append(
+            jnp.where(on_segment, branch_resources - read.savings_lower_bound, policy)
+        )
         resources.append(branch_resources)
-        in_support.append(support)
+        in_support.append(support | on_segment)
+        below.append(on_segment)
 
     stacked_values = jnp.stack(values)
     # A dead (constraint-masked) row reads `-inf`, a row without read support
     # reads NaN; neither competes, and only a live branch must be in support.
     live = jnp.isfinite(stacked_values)
     ranked = jnp.where(live, stacked_values, -jnp.inf)
+    if score is not None:
+        rescored = jnp.any(live & jnp.stack(below), axis=0)
+        ranked = jax.lax.cond(
+            jnp.any(rescored),
+            functools.partial(
+                _rescore_branches,
+                score=score,
+                branches=branches,
+                branch_names=branch_names,
+                branch_grids=branch_grids,
+                policies=policies,
+                resources=resources,
+                live=live,
+                rescored=rescored,
+                action_name=read.action_name,
+                savings_lower_bound=read.savings_lower_bound,
+            ),
+            lambda ranked: ranked,
+            ranked,
+        )
     winner = jnp.argmax(ranked, axis=0).astype(jnp.int32)
     winner_value = _take_at_winner(stacked=ranked, winner=winner)
     action = _take_at_winner(stacked=jnp.stack(policies), winner=winner)
@@ -3424,6 +3499,76 @@ def _read_egm_policy_rows(
         & within_budget
     )
     return actions, winner_value, read_ok
+
+
+def _constrained_head(
+    *,
+    sim_policy: EGMSimPolicy,
+    selections: tuple[_RowSelection, ...],
+    branch: tuple[int, ...],
+    savings_lower_bound: float,
+) -> tuple[FloatND, BoolND]:
+    """First node of a subject's contributing rows, and whether all are constrained.
+
+    Returns the lowest first abscissa over the rows a subject reads (a row with
+    blend coefficient zero does not count), and whether each of those rows
+    starts on the borrowing-constrained segment, i.e. its first policy entry is
+    `node - floor` up to rounding.
+    """
+    heads, constrained = [], []
+    for index, coefficient in selections:
+        position = (*index, *branch, 0)
+        node = jnp.asarray(sim_policy.endog_grid[position])
+        policy = jnp.asarray(sim_policy.policy[position])
+        segment = node - savings_lower_bound
+        rounding = 8 * jnp.finfo(node.dtype).eps * jnp.maximum(1.0, jnp.abs(node))
+        on_segment = jnp.abs(policy - segment) <= rounding
+        if coefficient is None:
+            heads.append(node)
+            constrained.append(on_segment)
+        else:
+            contributes = coefficient != 0.0
+            heads.append(jnp.where(contributes, node, jnp.inf))
+            constrained.append(~contributes | on_segment)
+    return (
+        functools.reduce(jnp.minimum, heads),
+        functools.reduce(jnp.logical_and, constrained),
+    )
+
+
+# keyword-only-exempt: library-callback=jax.lax.cond
+def _rescore_branches(
+    ranked: FloatND,
+    *,
+    score: Callable[[Mapping[ActionName, FloatND | IntND]], tuple[FloatND, BoolND]],
+    branches: tuple[tuple[int, ...], ...],
+    branch_names: tuple[ActionName, ...],
+    branch_grids: tuple[FloatND | IntND, ...],
+    policies: list[FloatND],
+    resources: list[FloatND],
+    live: BoolND,
+    rescored: BoolND,
+    action_name: ActionName,
+    savings_lower_bound: float,
+) -> FloatND:
+    """Rank a rescored subject's live branches by their action's canonical value."""
+    scores = []
+    for k, branch in enumerate(branches):
+        n_subjects = resources[k].shape[0]
+        actions = {
+            name: jnp.full((n_subjects,), grid[position], dtype=grid.dtype)
+            for name, grid, position in zip(
+                branch_names, branch_grids, branch, strict=True
+            )
+        }
+        actions[action_name] = jnp.minimum(
+            policies[k], resources[k] - savings_lower_bound
+        )
+        value, feasible = score(actions)
+        scores.append(
+            jnp.where(live[k] & feasible & jnp.isfinite(value), value, -jnp.inf)
+        )
+    return jnp.where(rescored, jnp.stack(scores), ranked)
 
 
 def _read_nbegm_grid_policy(
@@ -4175,6 +4320,17 @@ def _interp_rows_with_support(
     rows_f = getattr(sim_policy, field)
     rows_x = sim_policy.endog_grid
     rows_slope = sim_policy.marginal_utility if field == "value" else None
+    if any(jnp.ndim(position) for position in index):
+        # Per-subject rows: read the table in place rather than copy a row per
+        # subject, which dominated the read at production row lengths.
+        values, in_support = _interp_indexed_rows(
+            rows_x=rows_x,
+            rows_f=rows_f,
+            rows_slope=rows_slope,
+            index=index,
+            resources=resources,
+        )
+        return values, in_support
     if index:
         rows_x = rows_x[index]
         rows_f = rows_f[index]
@@ -4217,6 +4373,39 @@ def _interp_padded_rows(
     valid_length = jnp.sum(jnp.isfinite(rows_x), axis=-1)
     last_live = jnp.take_along_axis(rows_x, (valid_length - 1)[:, None], axis=-1)[:, 0]
     in_support = (resources >= rows_x[:, 0]) & (resources <= last_live)
+    return values, in_support
+
+
+@jax.jit
+def _interp_indexed_rows(
+    *,
+    rows_x: FloatND,
+    rows_f: FloatND,
+    rows_slope: FloatND | None,
+    index: tuple[IntND | int, ...],
+    resources: FloatND,
+) -> tuple[FloatND, BoolND]:
+    """Read the row `rows_x[index]` selects per subject, with the support flag.
+
+    `index` addresses every axis but the last; at least one entry is a
+    per-subject array. Matches `_interp_padded_rows` on the copied rows.
+    """
+    lead_shape = rows_x.shape[:-1]
+    flat_rows = jnp.ravel_multi_index(
+        tuple(jnp.broadcast_arrays(*index)), lead_shape, mode="clip"
+    )
+    flat_rows = jnp.broadcast_to(flat_rows, resources.shape).astype(jnp.int32)
+    table_x = rows_x.reshape(-1, rows_x.shape[-1])
+    values, valid_length = interp_on_indexed_rows(
+        x_query=resources,
+        rows=flat_rows,
+        xp=table_x,
+        fp=rows_f.reshape(table_x.shape),
+        fp_slopes=None if rows_slope is None else rows_slope.reshape(table_x.shape),
+    )
+    in_support = (resources >= table_x[flat_rows, 0]) & (
+        resources <= table_x[flat_rows, valid_length - 1]
+    )
     return values, in_support
 
 

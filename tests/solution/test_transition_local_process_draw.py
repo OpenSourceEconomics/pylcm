@@ -240,12 +240,12 @@ def test_the_non_carrying_target_keeps_only_its_own_states(
 
 @pytest.mark.parametrize("process", ["iid", "ar1", "markov"])
 @pytest.mark.parametrize("solver", ["brute", "dcegm", "nbegm"])
-def test_the_source_keeps_income_unless_it_is_iid_and_integrable(
+def test_the_source_keeps_income_unless_it_is_iid(
     *, solver: Solver, process: Process
 ) -> None:
-    """NBEGM keeps an IID income read only as its draw; the others integrate it."""
+    """Every solver integrates an IID income read only as its draw."""
     model = _model(solver=solver, process=process)
-    integrated = process == "iid" and solver != "nbegm"
+    integrated = process == "iid"
 
     assert set(model.state_names(regime_name="alive")) == (
         {"liquid"} if integrated else {"income", "liquid"}
@@ -253,12 +253,8 @@ def test_the_source_keeps_income_unless_it_is_iid_and_integrable(
 
 
 @pytest.mark.parametrize("solver", ["brute", "dcegm", "nbegm"])
-def test_the_repr_names_the_solver_dependent_timing_of_iid_income(
-    solver: Solver,
-) -> None:
-    timing = "axis" if solver == "nbegm" else "integrated"
-
-    assert f"alive: {timing}=[income]" in repr(_model(solver=solver, process="iid"))
+def test_the_repr_names_iid_income_integrated(solver: Solver) -> None:
+    assert "alive: integrated=[income]" in repr(_model(solver=solver, process="iid"))
 
 
 @pytest.mark.parametrize("process", ["iid", "ar1", "markov"])

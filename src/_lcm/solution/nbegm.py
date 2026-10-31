@@ -214,7 +214,7 @@ from _lcm.solution.periodization import (
     solver_period_group_key,
 )
 from _lcm.time import TimeAxis
-from _lcm.transition_plans import SupportOrigin
+from _lcm.transition_plans import SupportOrigin, draws_transition_local_lottery
 from _lcm.typing import (
     AnnotationForm,
     ArrayTree,
@@ -844,7 +844,12 @@ class NBEGM(OneMarginSolver):
         functions = context.solve_functions
         registry = collect_nbegm_metadata(functions=functions)
         has_discrete = bool(context.state_action_space.discrete_actions)
-        has_ride_along = self._schedule_has_ride_along(context=context)
+        draws_post_decision_shocks = draws_transition_local_lottery(
+            plans=context.transition_plans
+        )
+        has_ride_along = (
+            self._schedule_has_ride_along(context=context) or draws_post_decision_shocks
+        )
         _fail_if_feasibility_composition_is_unsupported(
             constraints=feasibility_constraints,
             registry=registry,
@@ -898,7 +903,9 @@ class NBEGM(OneMarginSolver):
             if is_schedule
             else None
         )
-        if schedule_spec is not None and schedule_spec.ride_along_state_names:
+        if schedule_spec is not None and (
+            schedule_spec.ride_along_state_names or draws_post_decision_shocks
+        ):
             if context.state_action_space.discrete_actions:
                 self._fail_if_unsupported_ride_discrete(
                     context=context, schedule_spec=schedule_spec
@@ -911,6 +918,15 @@ class NBEGM(OneMarginSolver):
                 materializer=materializer,
             )
 
+        if draws_post_decision_shocks:
+            msg = (
+                f"Regime {context.regime_name!r} reads a post-decision shock, "
+                "which NBEGM integrates on its schedule route only. The "
+                "case-piece kernel (`lcm.case_boundary` / `lcm.piece`) reads no "
+                "draw. Declare the budget as a `lcm.piecewise_affine` schedule, "
+                "or use GridSearch() for this regime."
+            )
+            raise RegimeInitializationError(msg)
         if materializer is not None:
             raise UnsupportedOperationError(
                 "Owned nested NB requires its original ride-along schedule."
