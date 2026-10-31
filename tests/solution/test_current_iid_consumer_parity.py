@@ -58,7 +58,7 @@ from lcm.shocks import (
     Uniform,
     UserNodes,
 )
-from lcm.solvers import DCEGM, NBEGM, NEGM, NNBEGM, FiniteOuterGrid
+from lcm.solvers import DCEGM, NBEGM, NEGM, NNBEGM, ExactEnvelope, FiniteOuterGrid
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -1034,6 +1034,92 @@ def test_declared_shock_reproduces_node_state_model_for_aca_egm_shapes(
             actual=declared_panel[column].to_numpy(dtype=float),
             expected=legacy_panel[column].to_numpy(dtype=float),
             label=column,
+        )
+
+
+def _folding_aca_consumer(*, max_runs: int) -> Model:
+    """ACA-shaped consumer whose fine savings grid resolves many small folds.
+
+    Each node of the declared cost shock moves the next period's work kink to its
+    own wealth, so the candidate chain folds once per kink while only a couple of
+    folds ever overlap: eight runs, never more than two over one resource cell.
+    """
+    health = DiscreteGrid(category_class=_Health)
+    savings = IrregSpacedGrid(points=np.linspace(_SAVINGS_FLOOR, 24.0, 500))
+    alive = ConsumptionSavingsRegime(
+        states={
+            "wealth": LinSpacedGrid(start=_SAVINGS_FLOOR, stop=20.0, n_points=20),
+            "good_health": health,
+        },
+        actions={
+            "consumption": LinSpacedGrid(start=0.05, stop=22.0, n_points=20),
+            "work": DiscreteGrid(category_class=_Work),
+        },
+        functions={
+            "utility": _work_utility,
+            "total_costs": _health_costs,
+            "resources": _working_resources,
+            "savings": _savings,
+            "inverse_marginal_utility": _inverse_marginal_utility,
+        },
+        state_transitions={
+            "wealth": dict.fromkeys(("alive", "done"), _next_wealth_from_savings),
+            "good_health": dict.fromkeys(
+                ("alive", "done"), fixed_transition("good_health")
+            ),
+        },
+        constraints={
+            "borrowing_limit": post_decision_lower_bound(
+                margin=_MARGIN, lower=_SAVINGS_FLOOR
+            )
+        },
+        liquid=_MARGIN,
+        solver=DCEGM(savings_grid=savings, envelope=ExactEnvelope(max_runs=max_runs)),
+        shocks=("hcc",),
+    )
+    return Model(
+        regimes={
+            "alive": alive,
+            "done": Regime(
+                states={"wealth": savings, "good_health": health},
+                functions={"utility": _health_bequest},
+            ),
+        },
+        n_periods=5,
+        initial_nodes=InitialNodes(by_period={0: "alive"}),
+        edges={
+            "alive": {
+                "alive": Periods(values=(0, 1, 2)),
+                "done": Periods(values=(3,)),
+            }
+        },
+        regime_id_class=_CostRegimeId,
+        fixed_params={"discount_factor": 0.95},
+        shocks={
+            "hcc": ShockGroup(
+                shocks={
+                    "hcc_transitory": Uniform(start=-np.sqrt(3.0), stop=np.sqrt(3.0))
+                },
+                nodes=Product(hcc_transitory=EqualSpacedUniform(n=7)),
+            )
+        },
+    )
+
+
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
+def test_dcegm_solves_a_chain_with_more_folds_than_runs_per_cell() -> None:
+    """The envelope capacity bounds the runs over one cell, not the chain's folds.
+
+    A capacity of two covers every resource cell of this consumer, so its values
+    equal those of the default capacity, which covers every fold of the chain.
+    """
+    narrow = _folding_aca_consumer(max_runs=2).solve(params={}, log_level="off")
+    wide = _folding_aca_consumer(max_runs=24).solve(params={}, log_level="off")
+    for period in range(4):
+        _assert_parity(
+            actual=narrow.values[period]["alive"],
+            expected=wide.values[period]["alive"],
+            label=f"period {period}",
         )
 
 

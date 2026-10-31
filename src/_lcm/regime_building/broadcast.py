@@ -523,7 +523,7 @@ def split_transition_only_shocks(
 ]:
     """Take IID process states that only a transition reads out of the state space.
 
-    An IID process without a conditioning state is *transition-only* in a regime
+    An IID process without a conditioning state is a *post-decision shock* in a regime
     when nothing the regime computes reads the shock's current value: not its
     utility, constraints, regime transition or any law of motion. Only the draw
     `next_<shock>` is read, by the laws toward the next period. The regime's
@@ -549,8 +549,8 @@ def split_transition_only_shocks(
         active_periods_by_regime: The per-regime coverage.
 
     Returns:
-        Tuple of the regimes without their transition-only shocks and, per
-        regime that has any, its transition-only shocks by state name.
+        Tuple of the regimes without their post-decision shocks and, per
+        regime that has any, its post-decision shocks by state name.
 
     """
     specs = {

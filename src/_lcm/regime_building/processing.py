@@ -416,10 +416,10 @@ class PreparedModelStructure:
     """Per regime, the names it declares before demand prunes any, which the
     declared laws read as variables rather than parameters."""
 
-    draw_only_processes: MappingProxyType[
+    post_decision_shocks: MappingProxyType[
         RegimeName, MappingProxyType[StateName, _IIDProcess]
     ] = MappingProxyType({})
-    """Per regime, the post-choice shocks its transitions read.
+    """Per regime, the post-decision shocks its transitions read.
 
     They are no states of the regime; a law toward any target that reads one's
     draw takes it from these nodes as a transition-local lottery.
@@ -460,7 +460,7 @@ def prepare_model_structure(
         str, Mapping[RegimeName, tuple[int, ...]]
     ] = MappingProxyType({}),
     exit_function_demand: ExitFunctionDemand | None = None,
-    draw_only_processes: Mapping[RegimeName, Mapping[StateName, _IIDProcess]]
+    post_decision_shocks: Mapping[RegimeName, Mapping[StateName, _IIDProcess]]
     | None = None,
     broadcast_variables: Mapping[RegimeName, frozenset[StateOrActionName]]
     | None = None,
@@ -530,10 +530,10 @@ def prepare_model_structure(
         gated_source_periods=gated_source_periods,
         declared_transitions=MappingProxyType(dict(declared_transitions)),
         declared_edge_vocabulary=MappingProxyType(dict(declared_edge_vocabulary)),
-        draw_only_processes=MappingProxyType(
+        post_decision_shocks=MappingProxyType(
             {
                 name: MappingProxyType(dict(processes))
-                for name, processes in (draw_only_processes or {}).items()
+                for name, processes in (post_decision_shocks or {}).items()
             }
         ),
         broadcast_variables=MappingProxyType(dict(broadcast_variables or {})),
@@ -864,7 +864,7 @@ def prepare_regime_builder(
             # from it and needs no age argument of its own. The other regimes'
             # state names are what let a `next_<state>` argument be classified by
             # the role that reads it rather than mistaken for a parameter. A
-            # post-choice shock is no state of any regime, but its draw is a
+            # post-decision shock is no state of any regime, but its draw is a
             # transition value all the same.
             regime_name: create_regime_params_template(
                 exit_helper_roots=_ordinary_query_helper_roots(
@@ -886,7 +886,7 @@ def prepare_regime_builder(
                 )
                 | frozenset(
                     state_name
-                    for shocks in prepared_structure.draw_only_processes.values()
+                    for shocks in prepared_structure.post_decision_shocks.values()
                     for state_name in shocks
                 ),
                 declared_variables=edge_vocabulary[regime_name].variables
@@ -993,7 +993,7 @@ def prepare_regime_builder(
         egm_continuation_targets=egm_continuation_targets,
         continuation_demands=continuation_demands,
         enable_jit=enable_jit,
-        draw_only_processes=prepared_structure.draw_only_processes,
+        post_decision_shocks=prepared_structure.post_decision_shocks,
         grid_schedule=grid_schedule,
         period_regimes=prepared_structure.period_regimes,
         period_to_regime_v_interp=period_to_regime_v_interp,
@@ -1279,10 +1279,10 @@ class _CanonicalRegimeBuilder:
     enable_jit: bool
     """Whether to jit the functions of the canonical regimes."""
 
-    draw_only_processes: MappingProxyType[
+    post_decision_shocks: MappingProxyType[
         RegimeName, MappingProxyType[StateName, _IIDProcess]
     ]
-    """Per regime, the post-choice shocks its transitions read."""
+    """Per regime, the post-decision shocks its transitions read."""
 
     grid_schedule: AgeGridSchedule | None
     """Concrete period grids for age-specialized states, or `None`."""
@@ -1514,7 +1514,7 @@ class _CanonicalRegimeBuilder:
             edge_target_regimes=tuple(self.laws[regime_name].gated_edges),
             invariant_bindings=invariant_bindings,
             action_partitions=self.action_partitions.get(regime_name, 1),
-            draw_only_processes=self.draw_only_processes.get(
+            post_decision_shocks=self.post_decision_shocks.get(
                 regime_name, MappingProxyType({})
             ),
             gated_continuations=gated_continuations,
@@ -1629,7 +1629,7 @@ class _CanonicalRegimeBuilder:
             value_aware_feasibility=value_aware_feasibility,
             stakeholders=stakeholders,
             pareto_weights=pareto_weights,
-            draw_only_processes=self.draw_only_processes.get(
+            post_decision_shocks=self.post_decision_shocks.get(
                 regime_name, MappingProxyType({})
             ),
             gated_continuations=gated_continuations,
@@ -4661,7 +4661,7 @@ def _build_solution_phase(
     edge_target_regimes: tuple[RegimeName, ...] = (),
     invariant_bindings: tuple[StateName, ...] = (),
     action_partitions: int = 1,
-    draw_only_processes: Mapping[StateName, _IIDProcess] = MappingProxyType({}),
+    post_decision_shocks: Mapping[StateName, _IIDProcess] = MappingProxyType({}),
     gated_continuations: Mapping[RegimeName, GatedContinuationSchedule] = (
         MappingProxyType({})
     ),
@@ -4713,7 +4713,7 @@ def _build_solution_phase(
             edge_target_regimes=edge_target_regimes,
             invariant_bindings=invariant_bindings,
             action_partitions=action_partitions,
-            draw_only_processes=draw_only_processes,
+            post_decision_shocks=post_decision_shocks,
             gated_continuations=gated_continuations,
             post_decision_bounds=post_decision_bounds,
             scalar_query_models=scalar_query_models,
@@ -4767,7 +4767,7 @@ def _prepare_solution_phase(
     edge_target_regimes: tuple[RegimeName, ...] = (),
     invariant_bindings: tuple[StateName, ...] = (),
     action_partitions: int = 1,
-    draw_only_processes: Mapping[StateName, _IIDProcess] = MappingProxyType({}),
+    post_decision_shocks: Mapping[StateName, _IIDProcess] = MappingProxyType({}),
     gated_continuations: Mapping[RegimeName, GatedContinuationSchedule] = (
         MappingProxyType({})
     ),
@@ -4863,7 +4863,7 @@ def _prepare_solution_phase(
         edge_target_regimes=edge_target_regimes,
         invariant_bindings=invariant_bindings,
         action_partitions=action_partitions,
-        draw_only_processes=draw_only_processes,
+        post_decision_shocks=post_decision_shocks,
         gated_continuations=gated_continuations,
         post_decision_bounds=post_decision_bounds,
         scalar_query_models=scalar_query_models,
@@ -4916,7 +4916,7 @@ def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
     edge_target_regimes: tuple[RegimeName, ...] = (),
     invariant_bindings: tuple[StateName, ...] = (),
     action_partitions: int = 1,
-    draw_only_processes: Mapping[StateName, _IIDProcess] = MappingProxyType({}),
+    post_decision_shocks: Mapping[StateName, _IIDProcess] = MappingProxyType({}),
     gated_continuations: Mapping[RegimeName, GatedContinuationSchedule] = (
         MappingProxyType({})
     ),
@@ -5023,7 +5023,7 @@ def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
         regime_params_template=regime_params_template,
         edge_params_template=edge_params_template,
         variables=variables,
-        draw_only_processes=draw_only_processes,
+        post_decision_shocks=post_decision_shocks,
         phase_reachability=phase_reachability,
         # `source_regime_name` is already passed above; only `phase_name` is new.
         phase_name="solution",
@@ -6173,7 +6173,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     value_aware_feasibility: _ValueAwareFeasibility,
     stakeholders: tuple[str, ...] | None = None,
     pareto_weights: ParetoWeights | None = None,
-    draw_only_processes: Mapping[StateName, _IIDProcess] = MappingProxyType({}),
+    post_decision_shocks: Mapping[StateName, _IIDProcess] = MappingProxyType({}),
     gated_continuations: Mapping[RegimeName, GatedContinuationSchedule] = (
         MappingProxyType({})
     ),
@@ -6319,7 +6319,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         regime_params_template=regime_params_template,
         edge_params_template=edge_params_template,
         variables=variables,
-        draw_only_processes=draw_only_processes,
+        post_decision_shocks=post_decision_shocks,
         phase_reachability=simulation_reachability,
         # `source_regime_name` is already passed above; only `phase_name` is new.
         phase_name="simulation",
@@ -7229,7 +7229,7 @@ def _process_regime_core(
     regime_params_template: RegimeParamsTemplate,
     edge_params_template: EdgeParamsTemplate,
     variables: Variables,
-    draw_only_processes: Mapping[StateName, _IIDProcess] = MappingProxyType({}),
+    post_decision_shocks: Mapping[StateName, _IIDProcess] = MappingProxyType({}),
     phase_reachability: PhaseReachability,
     phase_name: PhaseName,
     scalar_query_model: ScalarEGMQueryModel
@@ -7265,7 +7265,7 @@ def _process_regime_core(
         state_grids: Immutable mapping of regime names to their state grids.
         regime_params_template: The regime's parameter template.
         variables: States and actions of the regime with kind/topology/process tags.
-        draw_only_processes: The post-choice shocks of this regime. They are no
+        post_decision_shocks: The post-decision shocks of this regime. They are no
             states of the regime; a law that reads one's draw takes it from its
             nodes as a transition-local lottery.
         phase_reachability: This phase's static regime graph, the sole source
@@ -7536,7 +7536,7 @@ def _process_regime_core(
             )
             or state in markov_draw_laws
         }
-        | dict(draw_only_processes),
+        | dict(post_decision_shocks),
         state_grids=state_grids,
     )
     _fail_if_a_law_reads_a_draw_the_edge_lacks(
@@ -7549,7 +7549,7 @@ def _process_regime_core(
         processed_functions=processed_functions,
         source_draw_grids=source_draw_grids,
         source_grids=all_grids[source_regime_name],
-        draw_only_processes=draw_only_processes,
+        post_decision_shocks=post_decision_shocks,
         markov_draw_laws=markov_draw_laws,
         regime_params_template=regime_params_template,
     )
@@ -7618,7 +7618,7 @@ def _process_regime_core(
         phase_name=phase_name,
         original_lottery_layouts=original_lottery_layouts,
         source_draws=frozenset(source_draw_grids),
-        draw_only_processes=draw_only_processes,
+        post_decision_shocks=post_decision_shocks,
     )
 
     fail_if_transition_namespaces_are_mixed(
@@ -7760,7 +7760,7 @@ def _add_source_draw_functions(
     source_grids: Mapping[StateOrActionName, Grid],
     markov_draw_laws: Mapping[StateName, StochasticTransition],
     regime_params_template: RegimeParamsTemplate,
-    draw_only_processes: Mapping[StateName, _IIDProcess] = MappingProxyType({}),
+    post_decision_shocks: Mapping[StateName, _IIDProcess] = MappingProxyType({}),
 ) -> tuple[str, ...]:
     """Add each transition-local draw's node axis, support and weights.
 
@@ -7768,7 +7768,7 @@ def _add_source_draw_functions(
     values, and the weights are the source's law at the source's current value:
 
     - a process: its nodes, and its transition row;
-    - a post-choice shock: its nodes, and its unconditional weights, since
+    - a post-decision shock: its nodes, and its unconditional weights, since
       the source holds no current value of it;
     - a Markov state: its codes, and the probabilities of its law declared once
       for every target, with that law's parameters.
@@ -7787,9 +7787,9 @@ def _add_source_draw_functions(
             )
             processed_functions[f"weight_{axis_name}"] = (
                 _get_entry_weights_for_process(
-                    name=state, grid=draw_only_processes[state]
+                    name=state, grid=post_decision_shocks[state]
                 )
-                if state in draw_only_processes
+                if state in post_decision_shocks
                 else _get_weights_func_for_process(
                     name=state, grid=grid, grids=source_grids
                 )
@@ -7953,14 +7953,14 @@ def _build_transition_plans(
         {}
     ),
     source_draws: frozenset[tuple[RegimeName, ProcessName]] = frozenset(),
-    draw_only_processes: Mapping[StateName, _IIDProcess] = MappingProxyType({}),
+    post_decision_shocks: Mapping[StateName, _IIDProcess] = MappingProxyType({}),
 ) -> TargetTransitionPlans:
     """Lower ordinary and joint declarations into complete target-edge plans.
 
     `source_draws` names the `(target, process)` pairs whose draw is taken from
     the source's process inside the transition: a law toward `target` reads it,
     and `target` does not carry the process. Each is a transition-local lottery
-    on the source's process nodes; a process in `draw_only_processes` is no
+    on the source's process nodes; a process in `post_decision_shocks` is no
     state of the source and supplies its nodes from there.
     """
     plans: dict[RegimeName, TargetTransitionPlan] = {}
@@ -8020,8 +8020,8 @@ def _build_transition_plans(
                 support_provider_name = f"support_{next_state_name}"
                 weight_name = f"weight_{qualified_name}"
                 source_grid = (
-                    draw_only_processes[source_draw[1]]
-                    if source_draw[1] in draw_only_processes
+                    post_decision_shocks[source_draw[1]]
+                    if source_draw[1] in post_decision_shocks
                     else all_grids[source_regime_name][source_draw[1]]
                 )
                 is_process = isinstance(source_grid, _ContinuousStochasticProcess)
