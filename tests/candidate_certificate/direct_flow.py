@@ -744,7 +744,7 @@ _SOURCE_SEALS = {
     PANDAS_UTILS_SOURCE: "f6159fa52ce590f1cccc9cf140da40ca144e5b6bfb72a995d80dd26bb5054055",
     MODEL_PROCESSING_SOURCE: "6af99d966a0a89107ba77b125f4e8e797676c5a51613382f16cfffbe317bcff1",
     "src/_lcm/egm/upper_envelope/__init__.py": "2615b9a364b7ca1c927ca68b752cff17b318268adddbb2c234c145ed59c196d8",
-    "src/_lcm/egm/upper_envelope/segment_envelope.py": "5ca21aefaeb35aad67f301e65756f8f5e1320044b73639bdc95e51c0f3920493",
+    "src/_lcm/egm/upper_envelope/segment_envelope.py": "54be1eb40f33f9176a1732fe9a06c08df957034da98aa01cf7984f8ff3525131",
     "src/_lcm/egm/nested_floor.py": "8983b037774946af7a90aa106268659a69963e2d8f5dd4b55c6f5532dd2dbb72",
     "src/_lcm/egm/finite_negm_query.py": "7ce90cf75e272da35fbe28608c88b2cbd1a93201e5c1b785b480b75f1e311289",
     "src/_lcm/egm/adaptive_nbegm_producer.py": "6e981492ef9f803816a1b6e579818e02c9754395b0dac2a19355c0361b115574",

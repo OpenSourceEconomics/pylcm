@@ -311,3 +311,23 @@ def test_refinement_is_vmap_compatible():
     )
     _grid, _policy, _value, n_kept = batched(grids, policies, values)
     assert n_kept.tolist()[0] == n_kept.tolist()[1]
+
+
+def test_runs_sharing_a_slot_may_touch_at_an_endpoint():
+    """Two branches that only touch at one abscissa do not overlap.
+
+    The third branch, `[3, 10]`, ends exactly where the first, `[10, 12]`,
+    begins, and the second lies inside the third, so no cell is covered by more
+    than two branches. A capacity of two publishes the envelope a capacity of
+    four publishes.
+    """
+    grid = [10.0, 11.0, 12.0, 5.0, 7.0, 3.0, 10.0]
+    value = [5.0, 5.5, 6.0, 1.0, 2.0, 0.0, 4.9]
+
+    narrow = _refine_at_capacity(grid=grid, value=value, max_runs=2)
+    wide = _refine_at_capacity(grid=grid, value=value, max_runs=4)
+
+    assert 0 < wide[3] <= 64
+    assert narrow[3] == wide[3]
+    for got, expected in zip(narrow[:3], wide[:3], strict=True):
+        np.testing.assert_array_equal(got, expected)

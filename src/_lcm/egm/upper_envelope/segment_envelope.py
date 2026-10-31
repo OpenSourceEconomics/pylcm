@@ -507,9 +507,11 @@ def _run_node_order(
     # Candidates in no slot get a block of their own past the last slot, so they
     # are outside every slot's extent and can never be located.
     block = jnp.where(absent, max_runs, slot)
+    # At an abscissa two runs of a slot share, the run starting further left
+    # comes first, so runs that only touch there stay contiguous.
     order = jnp.lexsort(
         (
-            run_id.astype(jnp.float32),
+            jnp.where(absent, jnp.inf, lowest[safe_run]),
             jnp.where(absent, jnp.inf, endog_grid),
             block.astype(jnp.float32),
         )
