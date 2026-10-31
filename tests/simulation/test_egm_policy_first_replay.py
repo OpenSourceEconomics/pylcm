@@ -18,6 +18,7 @@ import pytest
 
 import _lcm.simulation.simulate as simulation
 import lcm_examples.iskhakov_et_al_2017 as iskhakov
+from _lcm.simulation import host_operations
 from lcm import (
     AgeGrid,
     ConsumptionSavingsRegime,
@@ -38,6 +39,7 @@ from lcm.solvers import DCEGM, RFCEnvelope
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
+    DiscreteAction,
     DiscreteState,
     FloatND,
     ScalarInt,
@@ -484,3 +486,125 @@ def test_budgeted_node_state_simulate_reads_the_policy_and_matches_unbudgeted(
         np.testing.assert_allclose(
             budgeted[column].to_numpy(dtype=float), expected, rtol=rtol, atol=atol
         )
+
+
+@categorical(ordered=False)
+class _Work:
+    no: ScalarInt
+    yes: ScalarInt
+
+
+def _work_resources(*, wealth: ContinuousState, work: DiscreteAction) -> FloatND:
+    return wealth - 1.0 + 2.0 * work
+
+
+def _work_utility(*, consumption: ContinuousAction, work: DiscreteAction) -> FloatND:
+    return jnp.log(consumption) - 0.1 * work
+
+
+def _work_branch_model() -> Model:
+    """Two-period DC-EGM source whose `no`-work branch can be unaffordable.
+
+    Not working leaves `wealth - 1` resources, which for `wealth < 1.5` lies
+    below the savings floor `0.5`: no consumption is feasible on that branch.
+    Working adds `2`, so with log bequest utility and no discounting the optimum
+    of a subject left with only the work branch is `R / 2`.
+    """
+    alive = ConsumptionSavingsRegime(
+        states={"wealth": LinSpacedGrid(start=1.0, stop=5.0, n_points=5)},
+        actions={
+            "consumption": LinSpacedGrid(start=0.5, stop=6.0, n_points=12),
+            "work": DiscreteGrid(category_class=_Work),
+        },
+        functions={
+            "utility": _work_utility,
+            "resources": _work_resources,
+            "inverse_marginal_utility": _inverse_log_marginal,
+            "savings": _node_savings,
+        },
+        state_transitions={"wealth": {"done": _node_next_wealth}},
+        liquid=LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources="resources",
+            post_decision_state="savings",
+        ),
+        solver=DCEGM(savings_grid=_NODE_SAVINGS_GRID),
+    )
+    return Model(
+        regimes={
+            "alive": alive,
+            "done": Regime(
+                states={"wealth": _NODE_SAVINGS_GRID},
+                functions={"utility": _node_bequest},
+            ),
+        },
+        n_periods=2,
+        initial_nodes=InitialNodes(by_period={0: "alive"}),
+        edges={"alive": {"done": Periods(values=(0,))}},
+        regime_id_class=_NodeRegimeId,
+        fixed_params={"discount_factor": 1.0},
+    )
+
+
+def test_unaffordable_branch_does_not_send_subjects_to_the_grid_argmax(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A branch whose resources lie below the savings floor is dead, not unread.
+
+    Its row read extrapolates below the row's support; that must not reject the
+    subject, whose other branch decides it from the policy.
+    """
+    model = _work_branch_model()
+    executed = _decision_program_owners(monkeypatch=monkeypatch)
+    wealth = np.linspace(1.0, 5.0, 41)
+    assert np.any(wealth - 1.0 < 0.5)
+
+    frame = model.simulate(
+        params={},
+        initial_conditions={
+            "wealth": jnp.asarray(wealth),
+            "period": jnp.zeros(wealth.shape, dtype=jnp.int32),
+            "regime_id": jnp.zeros(wealth.shape, dtype=jnp.int32),
+        },
+        seed=0,
+        log_level="off",
+    ).to_dataframe(use_categorical_codes=True)
+
+    assert "alive" not in executed, executed
+    first = frame[frame["period"] == 0].sort_values("subject_id")
+    poor = first["wealth"].to_numpy(dtype=float) - 1.0 < 0.5
+    assert np.all(first["work"].to_numpy()[poor] == _Work.yes)
+    np.testing.assert_array_almost_equal(
+        first["consumption"].to_numpy(dtype=float)[poor],
+        (first["wealth"].to_numpy(dtype=float)[poor] + 1.0) / 2.0,
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+def test_budgeted_warm_simulate_reuses_the_policy_read_executable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A second budgeted simulate lowers no policy-first read again.
+
+    Each regime-period dispatches a copy of the regime bound to its unit
+    executor; the read's executable must be keyed by the model's regime, the one
+    chunk admission profiles, not by that per-dispatch copy.
+    """
+    model = _node_state_model(
+        with_health=True,
+        execution_config=ExecutionConfig(device_memory_bytes=2**30),
+    )
+    _simulate_node_state(model=model)
+    lowered: list[str] = []
+    lower = host_operations._lower_operation
+
+    def record(*, function, **kwargs):
+        lowered.append(getattr(getattr(function, "func", function), "__name__", ""))
+        return lower(function=function, **kwargs)
+
+    monkeypatch.setattr(host_operations, "_lower_operation", record)
+
+    _simulate_node_state(model=model)
+
+    assert "_policy_first_body" not in lowered, lowered
