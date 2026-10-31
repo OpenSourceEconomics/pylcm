@@ -509,7 +509,7 @@ def _reachable_targets(
     )
 
 
-def split_transition_only_shocks(
+def split_post_decision_states(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
     discrete_names: frozenset[str],
@@ -562,7 +562,7 @@ def split_transition_only_shocks(
     every_state_kept = {
         name: frozenset(regime.states) for name, regime in user_regimes.items()
     }
-    transition_only: dict[RegimeName, dict[StateName, _IIDProcess]] = {}
+    post_decision_states: dict[RegimeName, dict[StateName, _IIDProcess]] = {}
     for name, regime in user_regimes.items():
         # ponytail: NNBEGM's inner NB solve and child read enumerate no
         # transition-local draw and read it only off a kept (ride-along) state
@@ -601,22 +601,25 @@ def split_transition_only_shocks(
             for state, grid in candidates.items()
             if state not in within_period
         }:
-            transition_only[name] = unread
+            post_decision_states[name] = unread
 
     regimes = {
         name: regime.replace(
             states={
                 state: grid
                 for state, grid in regime.states.items()
-                if state not in transition_only.get(name, {})
+                if state not in post_decision_states.get(name, {})
             }
         )
-        if name in transition_only
+        if name in post_decision_states
         else regime
         for name, regime in user_regimes.items()
     }
     return MappingProxyType(regimes), MappingProxyType(
-        {name: MappingProxyType(shocks) for name, shocks in transition_only.items()}
+        {
+            name: MappingProxyType(shocks)
+            for name, shocks in post_decision_states.items()
+        }
     )
 
 

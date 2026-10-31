@@ -118,7 +118,7 @@ from _lcm.regime_building.broadcast import (
     ModelSlots,
     merge_model_slots,
     prune_broadcast_variables,
-    split_transition_only_shocks,
+    split_post_decision_states,
     validate_model_slots,
 )
 from _lcm.regime_building.composite_states import (
@@ -536,7 +536,7 @@ class _PickledModel(TypedDict):
     _solution_model_instance_id: NotRequired[str]
     _declared_edge_vocabulary: MappingProxyType[RegimeName, EdgeVocabulary]
     _cells_without_edges: MappingProxyType[tuple[RegimeName, int], DroppedCells]
-    _transition_only_shock_names: NotRequired[frozenset[str]]
+    _post_decision_state_names: NotRequired[frozenset[str]]
     _shock_timing: NotRequired[Mapping[RegimeName, ShockTiming]]
     _post_decision_shocks: NotRequired[
         Mapping[RegimeName, Mapping[StateName, _IIDProcess]]
@@ -1073,7 +1073,7 @@ class Model:
     ]
     """Declared names and their categories, retained before variable pruning."""
 
-    _transition_only_shock_names: frozenset[str]
+    _post_decision_state_names: frozenset[str]
     """IID process states some regime reads only as their draw `next_<state>`.
 
     They are no states of that regime; an initial value given for one is dropped
@@ -1561,7 +1561,7 @@ class Model:
             visited_periods_by_regime=schedules.simulation_context_periods_by_regime,
             discrete_names=discrete_names,
         )
-        pruned_regimes, transition_only = split_transition_only_shocks(
+        pruned_regimes, post_decision_states = split_post_decision_states(
             user_regimes=pruned_regimes,
             discrete_names=discrete_names,
             laws=laws,
@@ -1570,8 +1570,8 @@ class Model:
             active_periods_by_regime=schedules.context_periods_by_regime,
         )
         # Removal is regime-local; initialization preserves names another regime keeps.
-        self._transition_only_shock_names = frozenset(
-            name for unread in transition_only.values() for name in unread
+        self._post_decision_state_names = frozenset(
+            name for unread in post_decision_states.values() for name in unread
         )
         post_decision_shock_processes: MappingProxyType[
             RegimeName, MappingProxyType[StateName, _IIDProcess]
@@ -1580,10 +1580,10 @@ class Model:
                 name: MappingProxyType(
                     {
                         **post_decision_shocks.get(name, {}),
-                        **transition_only.get(name, {}),
+                        **post_decision_states.get(name, {}),
                     }
                 )
-                for name in post_decision_shocks.keys() | transition_only.keys()
+                for name in post_decision_shocks.keys() | post_decision_states.keys()
             }
         )
         self._post_decision_shocks = post_decision_shock_processes
@@ -1591,7 +1591,7 @@ class Model:
             regimes=pruned_regimes,
             groups=shocks,
             post_decision_shocks=post_decision_shocks,
-            transition_only=transition_only,
+            post_decision_states=post_decision_states,
         )
         # A regime law reads the values of value grids as every user function
         # does; it still returns regime codes or probabilities.
@@ -2158,7 +2158,7 @@ class Model:
             _composite_states=self._composite_states,
             _declared_edge_vocabulary=self._declared_edge_vocabulary,
             _cells_without_edges=self._cells_without_edges,
-            _transition_only_shock_names=self._transition_only_shock_names,
+            _post_decision_state_names=self._post_decision_state_names,
             _shock_timing=self._shock_timing,
             _post_decision_shocks=self._post_decision_shocks,
             _process_code_reads=self._process_code_reads,
@@ -2210,8 +2210,8 @@ class Model:
         self._param_name_candidates = state.get(
             "_param_name_candidates", _get_param_name_candidates(self._user_regimes)
         )
-        self._transition_only_shock_names = state.get(
-            "_transition_only_shock_names", frozenset()
+        self._post_decision_state_names = state.get(
+            "_post_decision_state_names", frozenset()
         )
         self._shock_timing = state.get("_shock_timing", MappingProxyType({}))
         self._post_decision_shocks = state.get(
@@ -4659,7 +4659,7 @@ class Model:
                     regimes=self._regimes,
                     array_writer=entry_allocations,
                     ages=self._time,
-                    unread_names=self._transition_only_shock_names,
+                    unread_names=self._post_decision_state_names,
                 )
                 self._fail_if_entry_is_not_permitted(
                     initial_conditions=initial_conditions
@@ -6023,7 +6023,7 @@ class Model:
             initial_conditions=initial_conditions,
             regimes=self._regimes,
             ages=self._time,
-            unread_names=self._transition_only_shock_names,
+            unread_names=self._post_decision_state_names,
         )
         self._fail_if_entry_is_not_permitted(initial_conditions=canonical)
         overrides = resolve_current_iid_overrides(
@@ -6652,7 +6652,7 @@ def _shock_timing(
     regimes: Mapping[RegimeName, UserRegime],
     groups: Mapping[ShockGroupName, ShockGroup],
     post_decision_shocks: Mapping[RegimeName, Mapping[ShockName, _IIDProcess]],
-    transition_only: Mapping[RegimeName, Mapping[StateName, _IIDProcess]],
+    post_decision_states: Mapping[RegimeName, Mapping[StateName, _IIDProcess]],
 ) -> MappingProxyType[RegimeName, ShockTiming]:
     """Name, per regime, the shocks carrying an axis and those integrated out."""
     group_of = {shock: name for name, group in groups.items() for shock in group.shocks}
@@ -6672,7 +6672,7 @@ def _shock_timing(
             dict.fromkeys(
                 group_of[shock] for shock in post_decision_shocks.get(name, {})
             )
-        ) + tuple(transition_only.get(name, {}))
+        ) + tuple(post_decision_states.get(name, {}))
         timing[name] = (axis, integrated)
     return MappingProxyType(timing)
 

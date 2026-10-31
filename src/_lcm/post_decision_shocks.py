@@ -72,7 +72,7 @@ def lower_post_decision_shocks(
 
     Only `GridSearch` readers reach this lowering: a group any endogenous-grid
     regime reads was already moved onto its readers' states as node processes,
-    which `split_transition_only_shocks` integrates out per solver.
+    which `split_post_decision_states` integrates out per solver.
 
     """
     post_decision_groups = {

@@ -654,7 +654,7 @@ class _Health:
     unreachable: ScalarInt
 
 
-def _post_choice_cost(
+def _post_decision_cost(
     *, next_xi: ContinuousState, next_health: DiscreteState
 ) -> FloatND:
     return jnp.where(
@@ -689,7 +689,9 @@ def _raw_domain_utility(
     )
 
 
-def _post_choice_bequest(*, wealth: ContinuousState, health: DiscreteState) -> FloatND:
+def _post_decision_bequest(
+    *, wealth: ContinuousState, health: DiscreteState
+) -> FloatND:
     return jnp.sqrt(wealth + 4.0) + 0.1 * health
 
 
@@ -699,7 +701,7 @@ def _bill_shock() -> ShockGroup:
     )
 
 
-def _post_choice_model() -> Model:
+def _post_decision_model() -> Model:
     wealth_grid = LinSpacedGrid(start=3.0, stop=15.0, n_points=13)
     health_grid = DiscreteGrid(_Health)
     alive = Regime(
@@ -717,7 +719,7 @@ def _post_choice_model() -> Model:
         functions={
             "utility": _raw_domain_utility,
             "resources": _resources,
-            "cost": _post_choice_cost,
+            "cost": _post_decision_cost,
             "negative_cost": _negative_cost,
             "before_bill": _before_bill,
         },
@@ -726,7 +728,7 @@ def _post_choice_model() -> Model:
     )
     dead = Regime(
         states={"wealth": wealth_grid, "health": health_grid},
-        functions={"utility": _post_choice_bequest},
+        functions={"utility": _post_decision_bequest},
     )
     return Model(
         regimes={"alive": alive, "dead": dead},
@@ -751,7 +753,7 @@ def _linear_read(*, at: float, nodes: np.ndarray, values: np.ndarray) -> float:
     return float((1.0 - fraction) * values[index] + fraction * values[index + 1])
 
 
-def _post_choice_enumerated_oracle() -> dict[int, np.ndarray]:
+def _post_decision_enumerated_oracle() -> dict[int, np.ndarray]:
     """Literal feasible-action and live-node enumeration with linear reads.
 
     The unreachable health node is omitted before interpolation. The live shock
@@ -795,9 +797,7 @@ def _post_choice_enumerated_oracle() -> dict[int, np.ndarray]:
     return result
 
 
-def test_raw_domain_invalid_utility_matches_native_post_choice_and_literal_oracle() -> (
-    None
-):
+def test_raw_domain_invalid_utility_matches_post_decision_and_literal_oracle() -> None:
     """Invalid primal and marginal cells are harmless outside feasibility."""
     assert np.isnan(
         float(
@@ -815,13 +815,13 @@ def test_raw_domain_invalid_utility_matches_native_post_choice_and_literal_oracl
             )(jnp.asarray(-1.0))
         )
     )
-    model = _post_choice_model()
+    model = _post_decision_model()
     reference_params = {"discount_factor": 0.9, "unsafe": False}
     poisoned_params = {"discount_factor": 0.9, "unsafe": True}
     reference = model.solve(params=reference_params, log_level="off")
     poisoned = model.solve(params=poisoned_params, log_level="off")
     order = model.state_names(regime_name="alive")
-    for period, expected in _post_choice_enumerated_oracle().items():
+    for period, expected in _post_decision_enumerated_oracle().items():
         actual = np.transpose(
             np.asarray(poisoned.values[period]["alive"]),
             [order.index("wealth"), order.index("health")],
