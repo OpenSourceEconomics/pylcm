@@ -405,6 +405,7 @@ class DCEGM(OneMarginSolver):
             user_regimes=context.user_regimes,
             laws=context.laws,
             solution_reachability=context.solution_reachability,
+            shock_node_states=context.shock_node_states,
         )
 
     def validate_build(self, *, context: SolverBuildContext) -> None:

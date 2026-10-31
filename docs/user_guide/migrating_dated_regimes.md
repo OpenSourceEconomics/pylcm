@@ -213,6 +213,28 @@ Published values integrate the shock's nodes, and simulation draws and overrides
 the rules above. The supported laws and rules are listed in
 [Named current-IID shocks in endogenous-grid regimes](../reference/solvers.md#current-iid-egm).
 
+A function may not read `<shock>_code` of a continuous shock in a `shocks=` group:
+`Model(...)` raises `ShockDeclarationError`, because a physical draw has no
+quadrature-node position. Read the physical value `<shock>` instead. The codes of
+`Discrete` shocks and of process states remain readable.
+
+A group read only by `GridSearch` regimes is not yet composed with action partitions, a
+`Decoupled` decision, invariant state blocks, gated or same-period value channels, or
+co-mapped sharded states, and `Model.lookup_policy` refuses a regime that reads it. See
+[Combinations not yet composed with current shocks](../reference/shocks.md#current-iid-refusals)
+for the full list. Keep such a shock as an IID process state where the model needs one
+of these.
+
+### Simulated panels change once
+
+Every simulation draw is addressed by the seed, the subject's original row in the
+initial conditions, the period, and the shock's name and component. Draws no longer
+depend on the regime path, on other shocks, on group membership or on taste-shock
+toggles, and one seed gives the same base draws across parameter values. A panel
+simulated with an earlier version therefore differs once, for the same seed; regenerate
+stored panels and seeded comparisons. Reordering initial-condition rows changes which
+draws a subject receives, so keep each person in the same row across runs.
+
 ### Shock timing is inferred
 
 `Regime(post_choice_shocks=...)` and the `fold=` argument of IID processes are removed;
@@ -325,9 +347,9 @@ projection and fallback, when replacing a value-reading `Gate`.
 
 Custom current exit rules return `RuleResult` with a declared alternative identifier,
 and declare whether they read outside values through `reads_outside_values`. They do not
-return a Boolean participation check verdict. A custom source rule combined with source
-EV1 tastes is explicitly refused; this does not refuse a custom rule pricing a hidden
-EV1 target.
+return a Boolean verdict, as a participation check does. A custom source rule combined
+with source EV1 tastes is explicitly refused; this does not refuse a custom rule pricing
+a hidden EV1 target.
 
 ### Gates route on states only
 

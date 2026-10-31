@@ -758,6 +758,7 @@ class NBEGM(OneMarginSolver):
             user_regime=user_regime,
             resources=bound.budget_target,
             solver_name="NBEGM",
+            shock_node_states=context.shock_node_states,
         )
         liquid = bound.continuous_state
         fail_if_kernel_grids_withhold_their_points(

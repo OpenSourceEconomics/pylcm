@@ -13,6 +13,7 @@ The model below is exactly hand-computable, so every expected number is an
 integer or a half-integer rather than a tolerance-bounded approximation.
 """
 
+import logging
 from collections.abc import Callable
 from typing import Literal
 
@@ -300,14 +301,26 @@ def _project_unknown_category(category: DiscreteState) -> DiscreteState:
 
 
 @pytest.mark.coverage(backends=("cpu", "gpu-small"), precisions="both")
-def test_solve_rejects_unknown_categories_in_a_process_fallback() -> None:
-    """Codes outside the categorical domain cannot publish a finite value."""
+def test_solve_rejects_unknown_categories_in_a_process_fallback(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Codes outside the categorical domain cannot publish a finite value.
+
+    The stored values do not hold the gated continuation the regime read, so the
+    NaN report comes without the U/F/E/Q breakdown rather than from a failed
+    attempt to rebuild it.
+    """
     model = _make_categorical_process_fallback_model(
         category_projection=_project_unknown_category
     )
 
-    with pytest.raises(InvalidValueFunctionError, match="NaN"):
+    with (
+        caplog.at_level(logging.WARNING, logger="lcm"),
+        pytest.raises(InvalidValueFunctionError, match="NaN") as exc_info,
+    ):
         model.solve(params=_params(), log_level="debug")
+    assert exc_info.value.diagnostics is None
+    assert "Diagnostic enrichment failed" not in caplog.text
 
 
 def test_the_action_taken_is_the_one_the_gated_value_ranks_first() -> None:

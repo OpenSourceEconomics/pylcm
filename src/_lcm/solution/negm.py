@@ -299,6 +299,7 @@ class NEGM(TwoMarginSolver):
             regime_name=context.regime_name,
             user_regime=context.user_regimes[context.regime_name],
             law=context.laws[context.regime_name],
+            shock_node_states=context.shock_node_states,
         )
 
     def validate_build(self, *, context: SolverBuildContext) -> None:

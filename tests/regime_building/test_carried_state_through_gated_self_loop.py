@@ -1,4 +1,4 @@
-"""A CARRIED-ONLY state composes with a repeating self-loop participation check.
+"""A CARRIED-ONLY state composes with a repeating participation check on a self-loop.
 
 The carried-state feature (`Phased(solve=impute, simulate=Grid)`,
 `tests/test_carried_states.py`) is otherwise exercised on ordinary regime
@@ -8,9 +8,9 @@ declined-marriage path is a REPEATING self-loop value decision, so the
 interaction is pinned here in isolation.
 
 Topology (the singleton half of EKL's `single_f`): `src` is covered over ages
-0-1 with a repeating self-participation check back to itself, fallback into a terminal
-`src_fallback`; at its last covered age the ordinary transition routes it to
-`src_exit`. The occupied-boundary counterpart is
+0-1 with a self-loop back to itself under a repeating participation check,
+fallback into a terminal `src_fallback`; at its last covered age the ordinary
+transition routes it to `src_exit`. The occupied-boundary counterpart is
 `test_repeating_participation_boundary.py`,
 `test_public_repeating_participation_stops_at_the_sources_last_supported_date`.
 A carried `career` state accumulates `+1` each period and is read by utility
@@ -21,8 +21,8 @@ The decision is OPEN at wage=2 (stays in `src` for the genuine self-loop repeat)
 and CLOSED at wage=1 (routed to `src_fallback`, which does not carry `career`).
 The model builds, solves and simulates with one ordinary target (`src_exit`)
 that does NOT declare the carried state, and the carried value accumulates
-through the kept self-participation check (career 20 -> 21) rather than being frozen or
-reset to its solve-phase imputation.
+through the self-loop the participation check keeps (career 20 -> 21) rather
+than being frozen or reset to its solve-phase imputation.
 """
 
 import jax.numpy as jnp
@@ -182,7 +182,7 @@ class _PublicRegimeId:
 def test_public_repeated_participation_carries_career_once_before_ordinary_exit() -> (
     None
 ):
-    """A kept self-loop participation adds one career year, then exits ordinarily."""
+    """A self-loop the check keeps adds one career year, then exits ordinarily."""
     exit_cell = StochasticTransition(func=_prob_exit_boundary)
     model = Model(
         regimes=_make_regimes(),

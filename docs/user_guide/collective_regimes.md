@@ -344,8 +344,8 @@ falls between the target's nodes:
 
 ## Participation checks over several periods
 
-An [`ParticipationCheck`](../reference/model_and_regime.md#api-participation-checks) is
-a participation check at the date a scheduled transition lands. The transition produces
+A [`ParticipationCheck`](../reference/model_and_regime.md#api-participation-checks) is a
+participation check at the date a scheduled transition lands. The transition produces
 the landing state, the check compares values there, and the row then either takes the
 target or its route's fallback. `lcm_examples.collective_household` declares two:
 

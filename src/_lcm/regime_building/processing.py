@@ -3782,7 +3782,7 @@ def _fail_if_ref_invalid(
     projection owes a coordinate function for, and the two consumers of a
     `ProjectedRegimeValue` answer that differently:
 
-    - `"solve"` — an PARTICIPATION READ only reads the reference regime's value
+    - `"solve"` — a participation read only reads the reference regime's value
       function, whose axes are that regime's solve states. A coordinate on a
       state the solve grid has no axis for would have nothing to index.
     - `"simulate"` — a LEG FALLBACK additionally writes the dissolved

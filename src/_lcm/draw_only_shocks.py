@@ -46,17 +46,17 @@ from lcm.typing import (
     UserFunction,
 )
 
-type PostChoiceShocks = MappingProxyType[
-    RegimeName, MappingProxyType[ShockName, PostChoiceShock]
+type DrawOnlyShocks = MappingProxyType[
+    RegimeName, MappingProxyType[ShockName, DrawOnlyShock]
 ]
 
 
-def lower_post_choice_shocks(
+def lower_draw_only_shocks(
     *,
     regimes: Mapping[RegimeName, Regime],
     laws: RegimeLaws,
     groups: Mapping[ShockGroupName, ShockGroup],
-) -> tuple[MappingProxyType[RegimeName, Regime], PostChoiceShocks]:
+) -> tuple[MappingProxyType[RegimeName, Regime], DrawOnlyShocks]:
     """Take every group a regime reads only as its draw out of `Regime.shocks`.
 
     Returns:
@@ -197,8 +197,8 @@ def _law_roots(
 
 
 @dataclass(frozen=True, kw_only=True)
-class PostChoiceShock(_IIDProcess):
-    """One post-choice shock's physical nodes and weights, fixed at model build."""
+class DrawOnlyShock(_IIDProcess):
+    """One draw-only shock's physical nodes and weights, fixed at model build."""
 
     nodes: tuple[float, ...]
     """Physical values, in the group's node order."""
@@ -311,9 +311,9 @@ def _unlowerable(group: ShockGroup) -> str | None:
 
 def _lower_group(
     *, group_name: ShockGroupName, group: ShockGroup
-) -> dict[ShockName, PostChoiceShock]:
+) -> dict[ShockName, DrawOnlyShock]:
     """Realise each shock of an independent group on its own one-dimensional rule."""
-    lowered: dict[ShockName, PostChoiceShock] = {}
+    lowered: dict[ShockName, DrawOnlyShock] = {}
     for shock, law in group.shocks.items():
         single = (
             group
@@ -328,7 +328,7 @@ def _lower_group(
         )
         realised.raise_if_invalid()
         weights = tuple(float(w) for w in realised.weights)
-        lowered[shock] = PostChoiceShock(
+        lowered[shock] = DrawOnlyShock(
             n_points=len(weights),
             nodes=tuple(float(v) for v in realised.values[shock]),
             weights=weights,

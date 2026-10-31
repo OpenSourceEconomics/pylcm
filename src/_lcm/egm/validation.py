@@ -238,6 +238,7 @@ def validate_dcegm_regime(
     user_regimes: Mapping[RegimeName, UserRegime],
     laws: RegimeLaws,
     solution_reachability: PhaseReachability | None,
+    shock_node_states: frozenset[StateName] = frozenset(),
 ) -> None:
     """Run all DC-EGM contract checks for a single regime, in order."""
     solver = cast("_BoundDCEGM", user_regime.solver)
@@ -275,6 +276,7 @@ def validate_dcegm_regime(
         user_regime=user_regime,
         resources=solver.resources,
         solver_name="DCEGM",
+        shock_node_states=shock_node_states,
     )
     _fail_if_passive_state_invalid(
         regime_name=regime_name,
@@ -634,6 +636,7 @@ def fail_if_off_node_process_enters_utility(
     user_regime: UserRegime,
     resources: FunctionName,
     solver_name: str,
+    shock_node_states: frozenset[StateName],
 ) -> None:
     """Refuse a process drawn off its nodes that `utility` reads but via resources.
 
@@ -654,6 +657,9 @@ def fail_if_off_node_process_enters_utility(
             states.
         resources: Name of the resources function the process may enter.
         solver_name: Name of the solver the message names.
+        shock_node_states: Node states that solve the shocks of `shocks=`
+            groups. A group has no draw mode of its own, so the message points
+            its shocks to an IID process state that simulates on its nodes.
 
     Raises:
         ModelInitializationError: If `utility` reads a process state drawn off
@@ -676,19 +682,37 @@ def fail_if_off_node_process_enters_utility(
         off_node_states
         & set(get_ancestors(functions, targets=["utility"], include_targets=False))
     )
-    if readers:
-        # A liquid state declared as its own resources has no user-named function.
-        named = "" if resources == _DIRECT_RESOURCES_FUNCTION else f" ('{resources}')"
-        msg = (
-            f"The utility function of {solver_name} regime '{regime_name}' reads "
-            f"the process state(s) {readers} other than through resources{named}. "
-            "An EGM regime solves a process on its nodes and simulates a draw "
-            "between them from the bracketing node policies, which is exact only "
-            "for a process that enters through resources. Move the process into "
-            f'resources{named}, declare it with `simulate_draws="nodes"`, or use '
-            "GridSearch for this regime."
+    if not readers:
+        return
+    # A liquid state declared as its own resources has no user-named function.
+    named = "" if resources == _DIRECT_RESOURCES_FUNCTION else f" ('{resources}')"
+    processes = [name for name in readers if name not in shock_node_states]
+    shocks = [name for name in readers if name in shock_node_states]
+    read = " and ".join(
+        [f"the process state(s) {processes}"] * bool(processes)
+        + [f"the shock(s) {shocks} of a `shocks=` group"] * bool(shocks)
+    )
+    on_nodes = '`simulate_draws="nodes"`'
+    if not shocks:
+        remedy = f"Move the process into resources{named}, declare it with {on_nodes}"
+    elif not processes:
+        remedy = (
+            f"Move the shock into resources{named}, declare it as an IID process "
+            f"state with {on_nodes}"
         )
-        raise ModelInitializationError(msg)
+    else:
+        remedy = (
+            f"Move them into resources{named}, declare the process states with "
+            f"{on_nodes} and the shocks as IID process states with it"
+        )
+    msg = (
+        f"The utility function of {solver_name} regime '{regime_name}' reads "
+        f"{read} other than through resources{named}. An EGM regime solves a "
+        "process on its nodes and simulates a draw between them from the "
+        "bracketing node policies, which is exact only for a process that enters "
+        f"through resources. {remedy}, or use GridSearch for this regime."
+    )
+    raise ModelInitializationError(msg)
 
 
 def _fail_if_resources_depend_on_continuous_action(
