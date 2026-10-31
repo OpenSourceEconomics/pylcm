@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+import jax
 import numpy as np
 
 from _lcm.engine import Regime
@@ -18,6 +19,13 @@ from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.solution.contract import BackwardInductionResult
 from _lcm.solution.generation import CanonicalModelGeneration
+from _lcm.solution.host_values import (
+    device_read_view,
+    is_host_value,
+    lazy_read_view,
+    policy_read_view,
+    to_cpu_device,
+)
 from _lcm.solution.result_snapshot import own_artifact_store, own_value_store
 from _lcm.typing import (
     ArtifactPayload,
@@ -29,6 +37,7 @@ from _lcm.typing import (
     PeriodToRegimeToVArr,
     RegimeName,
 )
+from lcm._solver_api.entries import _LazyEntry
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import (
     DISSOLUTION_FLAG,
@@ -193,12 +202,15 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
     generation: CanonicalModelGeneration | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
     component_values: RetainedComponentValues | None = None,
+    device_memory_bytes: int | None = None,
 ) -> SolutionResult:
     """Label existing engine outputs without changing their numerical meaning.
 
     A block-major solve passes its host retention as `component_values`; its
     values then come from there, one lazy entry per solved coordinate, and the
-    engine outputs carry no value array.
+    engine outputs carry no value array. A host-storage solve's values carry
+    `device_memory_bytes`, its per-device budget, so that placing all of them on
+    the devices at once is admitted against it.
     """
     value_coordinates = (
         tuple(
@@ -233,6 +245,7 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
         }
     )
 
+    flags_on_host = _holds_host_arrays(nested=internal_result.dissolution_flags)
     if retention.retains_replay:
         _add_nested_artifacts(
             target=replay,
@@ -241,7 +254,11 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
         )
         _add_nested_artifacts(
             target=replay,
-            nested=internal_result.dissolution_flags,
+            nested=(
+                _on_cpu_device(nested=internal_result.dissolution_flags)
+                if flags_on_host
+                else internal_result.dissolution_flags
+            ),
             key=DISSOLUTION_FLAG,
         )
 
@@ -359,7 +376,10 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
 
     result = SolutionResult(
         values=(
-            own_value_store(internal_result.value_functions)
+            own_value_store(
+                internal_result.value_functions,
+                host_budget_bytes=device_memory_bytes,
+            )
             if component_values is None
             else component_values.value_store()
         ),
@@ -458,24 +478,86 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
         OwnedSolutionView(
             model_instance_id=model_instance_id,
             params_fingerprint=params_fingerprint,
-            values=internal_result.value_functions,
+            values=(
+                device_read_view(values=internal_result.value_functions)
+                if _holds_host_arrays(nested=internal_result.value_functions)
+                else internal_result.value_functions
+            ),
             simulation_policies=(
-                declared_replay_policies
+                (
+                    policy_read_view(policies=declared_replay_policies)
+                    if _stored_off_device(nested=declared_replay_policies)
+                    else declared_replay_policies
+                )
                 if retention.retains_replay
                 else MappingProxyType({})
             ),
             dissolution_flags=(
-                internal_result.dissolution_flags
+                (
+                    device_read_view(values=internal_result.dissolution_flags)
+                    if flags_on_host
+                    else internal_result.dissolution_flags
+                )
                 if retention.retains_replay
                 else MappingProxyType({})
             ),
-            replay_artifacts=MappingProxyType(replay),
+            replay_artifacts=(
+                lazy_read_view(entries=replay)
+                if any(isinstance(entry, _LazyEntry) for entry in replay.values())
+                else MappingProxyType(replay)
+            ),
             authority=authority,
             component_values=component_values,
             generation=generation,
         ),
     )
     return result
+
+
+def _stored_off_device(*, nested: PeriodToRegimeToSimulationPolicy) -> bool:
+    """Whether a solve stored these policies in host memory or on disk."""
+    return any(
+        isinstance(policy, _LazyEntry)
+        or any(
+            is_host_value(leaf)
+            for leaf in jax.tree.leaves(policy)
+            if isinstance(leaf, jax.Array)
+        )
+        for regime_to_policy in nested.values()
+        for policy in regime_to_policy.values()
+    )
+
+
+def _holds_host_arrays(
+    *, nested: Mapping[int, Mapping[RegimeName, jax.Array | _LazyEntry]]
+) -> bool:
+    """Whether a solve stored these per-period arrays off the device.
+
+    A value in pinned host memory or written to disk is read back through a
+    device view.
+    """
+    return any(
+        isinstance(array, _LazyEntry) or is_host_value(array)
+        for regime_to_array in nested.values()
+        for array in regime_to_array.values()
+    )
+
+
+def _on_cpu_device(
+    *, nested: Mapping[int, Mapping[RegimeName, jax.Array]]
+) -> MappingProxyType[int, MappingProxyType[RegimeName, jax.Array]]:
+    """Place host-stored per-period arrays on the CPU device, as policies are."""
+    return MappingProxyType(
+        {
+            period: MappingProxyType(
+                {
+                    regime_name: to_cpu_device(array)
+                    for regime_name, array in regime_to_array.items()
+                }
+            )
+            for period, regime_to_array in nested.items()
+        }
+    )
 
 
 def fingerprint_flat_params(flat_params: FlatParams) -> str:

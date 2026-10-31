@@ -335,6 +335,25 @@ class CandidateResidentKwargs(TypedDict):
 type CandidateResidentResult = int
 
 
+class ResidentInventoryKwargs(TypedDict):
+    regimes: backward_induction.MappingProxyType[
+        backward_induction.RegimeName, backward_induction.Regime
+    ]
+    ledger: backward_induction.PlannedInputLiveness
+    templates: backward_induction.SolveInputMappings[backward_induction.ValueTemplate]
+    program_metadata: backward_induction.Mapping[
+        backward_induction._CoreTriple,
+        backward_induction._ProgramExecutionMetadata,
+    ]
+    device_ids: tuple[int, ...]
+    fixed_bytes: NotRequired[backward_induction.MappingProxyType[int, int]]
+
+
+type ResidentInventoryResult = backward_induction.MappingProxyType[
+    backward_induction._CoreTriple, backward_induction.ResidentInventory
+]
+
+
 class ValidateVKwargs(TypedDict):
     V_arr: value_validation.FloatND
     age: float | value_validation.ScalarInt | value_validation.ScalarFloat

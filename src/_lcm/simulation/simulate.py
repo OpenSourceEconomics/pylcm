@@ -12,10 +12,18 @@ import inspect
 import itertools
 import logging
 import time
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from dataclasses import dataclass, fields, replace
 from types import MappingProxyType
-from typing import Literal, cast
+from typing import (
+    TYPE_CHECKING,
+    Literal,
+    NotRequired,
+    Protocol,
+    TypedDict,
+    Unpack,
+    cast,
+)
 
 import jax
 import jax.numpy as jnp
@@ -122,6 +130,7 @@ from _lcm.simulation.period_inputs import (
     acquire_gate_inputs,
     decision_reads,
     gate_reads,
+    period_read_targets,
     unit_value_reads,
 )
 from _lcm.simulation.plan_summary import (
@@ -190,6 +199,7 @@ from _lcm.solution.feasibility import (
     reduce_bound_input_status,
     validate_runtime_bound_status,
 )
+from _lcm.solution.host_values import is_device_read_view
 from _lcm.solution.solve_phase_records import CallId, solve_phase
 from _lcm.solution.validate_V import validate_V, value_function_nan_error
 from _lcm.time import TimeAxis, coordinate_at, coordinate_kind
@@ -586,8 +596,106 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
                 tree=(initial_conditions, initial_own_stakeholder, starting_periods)
             )
         )
+    # With values kept off the device and several chunks, every chunk runs a
+    # period before any runs the next, so each period's values are copied onto
+    # the device once rather than once per chunk.
+    runs_periods_outside = (
+        len(windows) > 1
+        and group_plan is None
+        and component_values is None
+        and (
+            memory is None
+            or (
+                prepared_chunks is not None
+                and prepared_chunks.reserves_population_carry
+            )
+        )
+        and is_device_read_view(period_to_regime_to_V_arr)
+    )
+    if runs_periods_outside:
+        with solve_phase(
+            name="simulation_chunks_by_period", logger=logger, call_id=call_id
+        ):
+            chunk_records: list[list[DissolutionFallback]] = [[] for _ in windows]
+            chunk_results.extend(
+                _simulate_windows_period_by_period(
+                    chunks=tuple(
+                        _subject_chunk_periods(
+                            initial_states={
+                                name: _population_window(
+                                    array=array, window=window, memory=memory
+                                )
+                                for name, array in initial_states.items()
+                            },
+                            initial_regime_ids=_population_window(
+                                array=initial_conditions["regime_id"],
+                                window=window,
+                                memory=memory,
+                            ),
+                            initial_own_stakeholder=_population_window(
+                                array=initial_own_stakeholder,
+                                window=window,
+                                memory=memory,
+                            ),
+                            starting_periods=_population_window(
+                                array=starting_periods, window=window, memory=memory
+                            ),
+                            n_subjects=n_subjects,
+                            subject_slice=window,
+                            original_n_subjects=original_n_subjects,
+                            regimes=regimes,
+                            regime_names_to_ids=regime_names_to_ids,
+                            regime_ids_to_names=regime_ids_to_names,
+                            period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+                            period_to_regime_to_dissolution_flags=(
+                                period_to_regime_to_dissolution_flags
+                            ),
+                            period_to_regime_to_sim_policy=(
+                                period_to_regime_to_sim_policy
+                            ),
+                            period_to_regime_to_replay_reader=(
+                                period_to_regime_to_replay_reader
+                            ),
+                            flat_params=flat_params,
+                            ages=ages,
+                            seed=seed,
+                            taste_shock_seed=taste_shock_seed,
+                            taste_addresses=taste_addresses,
+                            logger=logger,
+                            device_ids=device_ids,
+                            memory=memory,
+                            call_inputs=call_inputs,
+                            process_grid_resolver=process_grid_resolver,
+                            shock_paths=shock_paths,
+                            current_iid_overrides=current_iid_overrides,
+                            process_code_reads=process_code_reads,
+                            dissolution_records=records,
+                        )
+                        for (window, _), records in zip(
+                            windows, chunk_records, strict=True
+                        )
+                    ),
+                    n_periods=ages.n_periods,
+                    host_device=cast("jax.Device", host_device),
+                    memory=memory,
+                    prepared_chunks=prepared_chunks,
+                    completed_setup=completed_setup,
+                    prefetch=functools.partial(
+                        _prefetch_period_reads,
+                        active_by_period=forward_regimes_by_period(
+                            regimes=regimes, n_periods=ages.n_periods
+                        ),
+                        values=period_to_regime_to_V_arr,
+                        flags=period_to_regime_to_dissolution_flags,
+                        policies=period_to_regime_to_sim_policy or MappingProxyType({}),
+                    ),
+                )
+            )
+            # Reported in the order chunk by chunk would report them.
+            for records in chunk_records:
+                dissolution_records.extend(records)
     for group_code, group_windows in _window_groups(
-        windows=windows,
+        windows=() if runs_periods_outside else windows,
         codes=None if component_values is None else component_values.codes,
     ):
         values = (
@@ -802,6 +910,121 @@ def _log_simulation_plan(
         logger.debug(plan_summary.details())
 
 
+def _simulate_windows_period_by_period(
+    *,
+    chunks: tuple[
+        Generator[tuple[SubjectChunkResults, ArrayTree], None, SubjectChunkResults],
+        ...,
+    ],
+    n_periods: int,
+    host_device: jax.Device,
+    memory: SimulationMemory | None = None,
+    prepared_chunks: PreparedSimulationChunks | None = None,
+    completed_setup: DeviceBufferFootprint | None = None,
+    prefetch: _Prefetch | None = None,
+) -> list[SubjectChunkResults]:
+    """Run every chunk through a period before any chunk starts the next.
+
+    Before a period's chunks run, `prefetch` starts copying what the next period
+    reads, so the copies overlap this period's work. The read-through view keeps
+    each copy for every chunk, so a period's values cross over once, as with a
+    single chunk. Each chunk's results of a period go to the host as soon as the
+    period is done.
+
+    Under a budget the waiting chunks' carries are charged while a chunk runs,
+    and each chunk is admitted against its prepared profile before its first
+    period, as the chunk-by-chunk loop admits it before it starts.
+
+    Returns:
+        Each chunk's results, in chunk order.
+
+    """
+    carries: list[ArrayTree] = [() for _ in chunks]
+    so_far: list[SubjectChunkResults] = [{} for _ in chunks]
+    for period in range(n_periods):
+        if prefetch is not None and period + 1 < n_periods:
+            prefetch(period=period + 1)
+        for index, chunk in enumerate(chunks):
+            if memory is not None:
+                if period == 0 and prepared_chunks is not None:
+                    prepared_chunks.require_chunk(
+                        memory=memory, completed_setup=completed_setup
+                    )
+                memory.parked = tuple(
+                    carry for other, carry in enumerate(carries) if other != index
+                )
+            so_far[index], carries[index] = next(chunk)
+            for by_period in so_far[index].values():
+                if period in by_period:
+                    by_period[period] = offload_chunk(
+                        tree=by_period[period], host_device=host_device, memory=memory
+                    )
+            if memory is not None:
+                memory.close_unit()
+                memory.set_chunk_inputs(tree=())
+                memory.replace_outputs(tree=so_far)
+    if memory is not None:
+        memory.parked = ()
+    return [_finish_chunk(chunk=chunk) for chunk in chunks]
+
+
+class _Prefetch(Protocol):
+    """Starts copying what one period reads; see `_prefetch_period_reads`."""
+
+    def __call__(self, *, period: int) -> None:
+        """Start copying the stored reads of `period`."""
+        ...
+
+
+if TYPE_CHECKING:
+    type _StoredValueMapping = Mapping[int, Mapping[RegimeName, jax.Array]]
+    type _StoredPolicyMapping = PeriodToRegimeToSimulationPolicy
+else:
+    # A runtime check samples one entry, and sampling a read-through view copies
+    # that value onto the device.
+    type _StoredValueMapping = object
+    type _StoredPolicyMapping = object
+
+
+def _prefetch_period_reads(
+    *,
+    period: int,
+    active_by_period: tuple[MappingProxyType[RegimeName, Regime], ...],
+    values: _StoredValueMapping,
+    flags: _StoredValueMapping,
+    policies: _StoredPolicyMapping,
+) -> None:
+    """Start copying the stored values, flags and policies `period` reads.
+
+    Reading through a read-through view dispatches the copy without waiting and
+    keeps it for the period's chunks; a value no program declares is not read.
+    Every regime a subject can occupy at the period counts, so a copy may serve
+    no subject.
+    """
+    active = active_by_period[period]
+    value_targets, flag_targets = period_read_targets(
+        active=active, period=period, values=values, flags=flags
+    )
+    for stored, targets in ((values, value_targets), (flags, flag_targets)):
+        for target_period, regime in targets:
+            stored.get(target_period, MappingProxyType({})).get(regime)
+    for name in active:
+        policies.get(period, MappingProxyType({})).get(name)
+
+
+def _finish_chunk(
+    *,
+    chunk: Generator[tuple[SubjectChunkResults, ArrayTree], None, SubjectChunkResults],
+) -> SubjectChunkResults:
+    """Return the results of a chunk that has run through every period."""
+    try:
+        next(chunk)
+    except StopIteration as finished:
+        return finished.value
+    msg = "A chunk ran more periods than the model has."
+    raise RuntimeError(msg)
+
+
 def _window_groups(
     *,
     windows: tuple[tuple[slice | SubjectRows, int | None], ...],
@@ -848,7 +1071,66 @@ def _initialize_chunk_state(
     return states, regime_ids, own_stakeholder, key
 
 
-def _simulate_subject_chunk(  # noqa: PLR0915
+class SubjectChunkKwargs(TypedDict):
+    """Keywords `_simulate_subject_chunk` and `_subject_chunk_periods` take."""
+
+    initial_states: dict[StateOrActionName, Float1D | IntND]
+    initial_regime_ids: Int1D
+    starting_periods: Int1D
+    n_subjects: int
+    subject_slice: slice | SubjectRows
+    code: NotRequired[int | None]
+    stored_codes: NotRequired[tuple[int, ...] | None]
+    original_n_subjects: NotRequired[int | None]
+    regimes: MappingProxyType[RegimeName, Regime]
+    regime_names_to_ids: RegimeNamesToIds
+    regime_ids_to_names: RegimeIdsToNames
+    period_to_regime_to_V_arr: MappingProxyType[
+        int, MappingProxyType[RegimeName, FloatND]
+    ]
+    period_to_regime_to_dissolution_flags: MappingProxyType[
+        int, MappingProxyType[RegimeName, BoolND]
+    ]
+    flat_params: FlatParams
+    ages: TimeAxis
+    seed: int | PRNGKey
+    logger: logging.Logger
+    initial_own_stakeholder: Int1D
+    period_to_regime_to_sim_policy: NotRequired[PeriodToRegimeToSimulationPolicy | None]
+    period_to_regime_to_replay_reader: NotRequired[_PeriodToRegimeToReplayReader]
+    device_ids: NotRequired[tuple[int, ...]]
+    memory: NotRequired[SimulationMemory | None]
+    call_inputs: NotRequired[SimulationCallInputs | None]
+    taste_shock_seed: NotRequired[int | PRNGKey | None]
+    taste_addresses: NotRequired[Mapping[tuple[int, RegimeName], tuple[int, ...]]]
+    process_grid_resolver: NotRequired[ProcessGridResolver | None]
+    shock_paths: NotRequired[Mapping[StateName, np.ndarray]]
+    current_iid_overrides: NotRequired[CurrentIIDOverrides | None]
+    process_code_reads: NotRequired[
+        Mapping[RegimeName, Mapping[StateName, _ContinuousStochasticProcess]]
+    ]
+    dissolution_records: NotRequired[list[DissolutionFallback] | None]
+
+
+type SubjectChunkResults = dict[RegimeName, dict[int, PeriodRegimeSimulationData]]
+
+
+def _simulate_subject_chunk(
+    **kwargs: Unpack[SubjectChunkKwargs],
+) -> SubjectChunkResults:
+    """Run the full period loop for one chunk of subjects.
+
+    See `_subject_chunk_periods`, which this runs to its end.
+    """
+    periods = _subject_chunk_periods(**kwargs)
+    while True:
+        try:
+            next(periods)
+        except StopIteration as finished:
+            return finished.value
+
+
+def _subject_chunk_periods(  # noqa: PLR0915
     *,
     initial_states: dict[StateOrActionName, Float1D | IntND],
     initial_regime_ids: Int1D,
@@ -892,8 +1174,16 @@ def _simulate_subject_chunk(  # noqa: PLR0915
         RegimeName, Mapping[StateName, _ContinuousStochasticProcess]
     ] = MappingProxyType({}),
     dissolution_records: list[DissolutionFallback] | None = None,
-) -> dict[RegimeName, dict[int, PeriodRegimeSimulationData]]:
-    """Run the full period loop for one chunk of subjects.
+) -> Generator[tuple[SubjectChunkResults, ArrayTree], None, SubjectChunkResults]:
+    """Run the period loop for one chunk of subjects, pausing after each period.
+
+    After each period the generator yields the chunk's results so far, the
+    period's included, with the carry it keeps until its next period, and at the
+    end returns the results. No period reads an earlier
+    period's results, so a caller may offload them as they are yielded. Run to
+    its end, it is the whole loop for one chunk; a caller holding one generator
+    per chunk can instead run every chunk through one period before any starts
+    the next.
 
     `initial_states`, `initial_regime_ids`, and `starting_periods` are already
     sliced to this chunk's subjects; `n_subjects` and `subject_slice` describe the
@@ -1264,6 +1554,20 @@ def _simulate_subject_chunk(  # noqa: PLR0915
 
         elapsed = time.monotonic() - period_start
         log_period_timing(logger=logger, elapsed=elapsed)
+        # What the chunk keeps on the device until its next period, which a
+        # budget charges while other chunks take their turn.
+        yield (
+            simulation_results,
+            (
+                states,
+                subject_regime_ids,
+                own_stakeholder,
+                key,
+                taste_key,
+                source_roles,
+                entered_through,
+            ),
+        )
 
     return simulation_results
 
@@ -1419,7 +1723,7 @@ def _require_next_period_values(
 def _referenced_value_kwargs(
     *,
     regime: Regime,
-    period_to_regime_to_V_arr: Mapping[int, Mapping[RegimeName, FloatND]],
+    period_to_regime_to_V_arr: _StoredValueMapping,
     flat_params: FlatParams,
     period: int,
 ) -> dict[ReferenceName, QAndFArg]:

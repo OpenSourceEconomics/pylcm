@@ -254,8 +254,14 @@ _PROFILED_HELPER_MUTATIONS = {
     ),
     "simulation_entry:compiled_solve_owners_omitted": (
         "src/lcm/model.py",
-        "                retained_input_arrays=retained_input_arrays,",
-        "                retained_input_arrays=(),",
+        (
+            "                persistable_artifact_refs=persistable_artifact_refs,\n"
+            "                retained_input_arrays=retained_input_arrays,"
+        ),
+        (
+            "                persistable_artifact_refs=persistable_artifact_refs,\n"
+            "                retained_input_arrays=(),"
+        ),
     ),
     "simulation_entry:original_solve_inputs_omitted": (
         "src/_lcm/simulation/entry_allocations.py",

@@ -118,7 +118,7 @@ def profile_forward_programs(
     regimes: Mapping[str, Regime],
     flat_params: FlatParams,
     base_spaces: Mapping[str, StateActionSpace],
-    values: Mapping[int, Mapping[str, jax.Array]],
+    values: Mapping[int, Mapping[str, jax.Array | jax.ShapeDtypeStruct]],
     flags: Mapping[int, Mapping[str, jax.Array]] = MappingProxyType({}),
     ages: TimeAxis,
     n_subjects: int,
@@ -189,7 +189,7 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
     flat_params: FlatParams,
     base: StateActionSpace,
     base_spaces: Mapping[str, StateActionSpace],
-    values: Mapping[int, Mapping[str, jax.Array]],
+    values: Mapping[int, Mapping[str, jax.Array | jax.ShapeDtypeStruct]],
     flags: Mapping[int, Mapping[str, jax.Array]],
     ages: TimeAxis,
     n_subjects: int,
@@ -963,7 +963,13 @@ def _shared_leaf(
 
 def _shared_tree(
     *,
-    tree: Mapping[str, PytreeValue | ShapeDtypePytree],
+    tree: Mapping[
+        str,
+        PytreeValue
+        | ShapeDtypePytree
+        | jax.ShapeDtypeStruct
+        | Mapping[str, jax.Array | jax.ShapeDtypeStruct],
+    ],
     devices: tuple[jax.Device, ...],
 ) -> Mapping[str, ShapeDtypePytree]:
     """Project actual retained metadata to the same shared destination layout."""

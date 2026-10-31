@@ -149,7 +149,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     regimes: Mapping[str, Regime],
     flat_params: FlatParams,
     base_spaces: Mapping[str, StateActionSpace],
-    values: Mapping[int, Mapping[str, jax.Array]],
+    values: Mapping[int, Mapping[str, jax.Array | jax.ShapeDtypeStruct]],
     flags: Mapping[int, Mapping[str, jax.Array]] = MappingProxyType({}),
     ages: TimeAxis,
     initial_conditions: Mapping[str, jax.Array],
@@ -758,7 +758,7 @@ def _profile_next_subjects(
     new_ids: jax.ShapeDtypeStruct,
     own_roles: jax.ShapeDtypeStruct,
     flat_params: FlatParams,
-    values: Mapping[int, Mapping[str, jax.Array]],
+    values: Mapping[int, Mapping[str, jax.Array | jax.ShapeDtypeStruct]],
     flags: Mapping[int, Mapping[str, jax.Array]] = MappingProxyType({}),
     age: jax.ShapeDtypeStruct,
     widths: Mapping[str, int],
@@ -937,7 +937,11 @@ def _profile_next_subjects(
             runtime=inventory.runtime,
             program=regime.simulation.programs.gate_route[period],
             arguments=gate_route_arguments(
-                edge_values=abstract_tree(tree=edge_values, sharding=shared),
+                # Values kept off the device arrive as shapes; either kind of
+                # leaf gives only its metadata here.
+                edge_values=abstract_tree(
+                    tree=cast("ShapeDtypePytree", edge_values), sharding=shared
+                ),
                 edge_flags=abstract_tree(tree=edge_flags, sharding=shared),
                 next_states=gated_route_candidates(regime=regime, next_states=carrier),
                 new_subject_regime_ids=new_ids,
@@ -1457,7 +1461,7 @@ def _profile_taste(
 def _period_copy_reservation(
     *,
     regimes: Mapping[str, Regime],
-    values: Mapping[int, Mapping[str, jax.Array]],
+    values: Mapping[int, Mapping[str, jax.Array | jax.ShapeDtypeStruct]],
     flags: Mapping[int, Mapping[str, jax.Array]] = MappingProxyType({}),
     period: int,
     devices: tuple[jax.Device, ...],
@@ -1580,8 +1584,12 @@ def _host_outside_device_ceiling(
 
 def _policy_read_sources(
     *, policies: Mapping[RegimeName, SimulationPolicy], period: int
-) -> dict[ValueArtifactAddress, jax.Array]:
-    """Index canonical retained finite leaves by the actual period-owner addresses."""
+) -> dict[ValueArtifactAddress, jax.Array | jax.ShapeDtypeStruct]:
+    """Index canonical retained finite leaves by the actual period-owner addresses.
+
+    A policy kept off the device arrives as its planning stand-in, with a shape
+    for each leaf on the placement a read copies it to.
+    """
     sources = {}
     for name, policy in policies.items():
         if not isinstance(policy, NNBEGMSimPolicy):
@@ -1589,7 +1597,9 @@ def _policy_read_sources(
                 "Chunk policy copies require a finite retained payload schema."
             )
         leaves = jax.tree.leaves(policy)
-        if not all(isinstance(leaf, jax.Array) for leaf in leaves):
+        if not all(
+            isinstance(leaf, jax.Array | jax.ShapeDtypeStruct) for leaf in leaves
+        ):
             raise ExecutionPlanningError(
                 "Chunk policy copies require canonical JAX leaves."
             )
@@ -1609,12 +1619,15 @@ def _policy_read_sources(
 def _retained_read_source(
     *,
     read: ValueRead,
-    values: Mapping[int, Mapping[str, jax.Array]],
+    values: Mapping[int, Mapping[str, jax.Array | jax.ShapeDtypeStruct]],
     flags: Mapping[int, Mapping[str, jax.Array]],
-    policy_sources: Mapping[ValueArtifactAddress, jax.Array],
+    policy_sources: Mapping[ValueArtifactAddress, jax.Array | jax.ShapeDtypeStruct],
     projected_forward_inputs: ProjectedForwardInputs = MappingProxyType({}),
-) -> jax.Array:
-    """Resolve only the declared value and finite-policy storage classes."""
+) -> jax.Array | jax.ShapeDtypeStruct:
+    """Resolve only the declared value and finite-policy storage classes.
+
+    A value kept off the device arrives as its shape on the device placement.
+    """
     if read.target.kind is ValueArtifactKind.CONTINUATION_LEAF:
         if read.target.regime not in projected_forward_inputs.get(
             read.target.period, {}

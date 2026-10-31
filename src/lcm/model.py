@@ -117,6 +117,11 @@ from _lcm.persistence.snapshots import (
     _save_simulate_snapshot,
     _save_solve_snapshot,
 )
+from _lcm.persistence.solution import (
+    BlockedSolutionArchive,
+    StreamedSolutionArchive,
+    pylcm_commit,
+)
 from _lcm.processes.ar1 import (
     RouwenhorstAR1Process,
     TauchenAR1Process,
@@ -303,6 +308,7 @@ from _lcm.solution.generation import (
     canonical_generation_roots,
     canonical_parameter_schema,
 )
+from _lcm.solution.host_values import stored_form
 from _lcm.solution.lower_candidate import lower_period_candidate
 from _lcm.solution.lowering_descriptors import describe_lowering_value
 from _lcm.solution.model_authority import (
@@ -3476,6 +3482,90 @@ class Model:
     ) -> SolutionResult:
         """Build the canonical public result from processed parameters.
 
+        Under disk value storage the solve writes its values to an archive of
+        its own in the storage directory. The archive is completed once the
+        result is built, and abandoned, with a record of how far the solve got,
+        if anything fails.
+        """
+        value_archive = (
+            (
+                BlockedSolutionArchive
+                if self._solves_block_major
+                else StreamedSolutionArchive
+            )(
+                directory=cast("Path", self._execution.value_storage),
+                name=f"solution-{uuid.uuid4().hex}",
+                budget_bytes=self._execution.device_memory_bytes,
+            )
+            if self._execution.value_storage_kind == "disk"
+            else None
+        )
+        try:
+            result = self._solve_into(
+                flat_params=flat_params,
+                generation=generation,
+                solve_parameter_views=solve_parameter_views,
+                params=params,
+                log=log,
+                retention=retention,
+                max_compilation_workers=max_compilation_workers,
+                log_path=log_path,
+                log_keep_n_latest=log_keep_n_latest,
+                retained_input_arrays=retained_input_arrays,
+                validation_materializer=validation_materializer,
+                process_grid_resolver=process_grid_resolver,
+                call_id=call_id,
+                period_capture=period_capture,
+                value_archive=value_archive,
+            )
+            if value_archive is not None:
+                value_archive.complete(solution=result)
+        except BaseException:
+            if value_archive is not None:
+                value_archive.abandon(
+                    record={
+                        **(
+                            {"completed_codes": list(value_archive.completed_codes)}
+                            if isinstance(value_archive, BlockedSolutionArchive)
+                            else {}
+                        ),
+                        "last_completed_period": value_archive.last_completed_period,
+                        "dtype": (
+                            "float64"
+                            if jax.config.read("jax_enable_x64")
+                            else "float32"
+                        ),
+                        "params_fingerprint": self._params_fingerprint(
+                            flat_params=flat_params
+                        ),
+                        "pylcm_version": PYLCM_VERSION,
+                        "pylcm_commit": pylcm_commit(),
+                    }
+                )
+            raise
+        return result
+
+    def _solve_into(
+        self,
+        *,
+        flat_params: FlatParams,
+        generation: CanonicalModelGeneration | None = None,
+        solve_parameter_views: Mapping[RegimeName, FlatParams] = MappingProxyType({}),
+        params: UserParams,
+        log: logging.Logger,
+        retention: ResultRetention,
+        max_compilation_workers: int | None,
+        log_path: str | Path | None,
+        log_keep_n_latest: int,
+        retained_input_arrays: _RetainedInputArrays = (),
+        validation_materializer: SimulationEntryAllocations | None = None,
+        process_grid_resolver: ProcessGridResolver | None = None,
+        call_id: CallId | None = None,
+        period_capture: CaptureContext | None = None,
+        value_archive: StreamedSolutionArchive | BlockedSolutionArchive | None = None,
+    ) -> SolutionResult:
+        """Solve and assemble the result, writing values to `value_archive` if given.
+
         The declared solution authority is the model's, shared across solves
         with the same grid support; the solve's generated replay facts are
         bound into a copy that belongs to this result alone. Under the
@@ -3490,6 +3580,8 @@ class Model:
             process_grid_resolver=process_grid_resolver,
             call_id=call_id,
         )
+        if value_archive is not None:
+            value_archive.describe(model_fingerprint=preparation.model_fingerprint)
         if self._solves_block_major:
             retained = self._component_schedule(
                 preparation=preparation,
@@ -3499,6 +3591,7 @@ class Model:
                 max_compilation_workers=max_compilation_workers,
                 process_grid_resolver=process_grid_resolver,
                 call_id=call_id,
+                value_archive=cast("BlockedSolutionArchive | None", value_archive),
                 validation_materializer=validation_materializer,
             ).run()
             return self._finish_solution(
@@ -3529,6 +3622,7 @@ class Model:
             process_grid_resolver=process_grid_resolver,
             call_id=call_id,
             period_capture=period_capture,
+            value_archive=cast("StreamedSolutionArchive | None", value_archive),
         )
         return self._finish_solution(
             preparation=preparation,
@@ -3627,6 +3721,7 @@ class Model:
                 component_values=component_values,
                 flat_params=flat_params,
                 process_grid_resolver=process_grid_resolver,
+                device_memory_bytes=self._execution.device_memory_bytes,
             )
 
     def _component_schedule(
@@ -3639,9 +3734,13 @@ class Model:
         max_compilation_workers: int | None,
         process_grid_resolver: ProcessGridResolver | None,
         call_id: CallId | None,
+        value_archive: BlockedSolutionArchive | None = None,
         validation_materializer: SimulationEntryAllocations | None = None,
     ) -> ComponentSchedule:
         """Prepare the block-major schedule of one solve; nothing is solved yet.
+
+        Under disk value storage each code is solved with host storage and the
+        retention writes its blocks to `value_archive`.
 
         Each component runs the solve engine with the arguments the
         period-major solve passes, on the component view of the regimes. No
@@ -3679,7 +3778,11 @@ class Model:
                 program_fingerprint=preparation.program_fingerprint,
                 logger=log,
                 enable_jit=self.enable_jit,
-                execution=self._execution,
+                execution=(
+                    dataclasses.replace(self._execution, value_storage="host")
+                    if self._execution.value_storage_kind == "disk"
+                    else self._execution
+                ),
                 collect_solver_diagnostics=True,
                 max_compilation_workers=max_compilation_workers,
                 retain_dissolution_flags=preparation.retention.retains_replay,
@@ -3693,6 +3796,7 @@ class Model:
             ),
             logger=log,
             codes=None if selection is None else selection.codes,
+            archive=value_archive,
         )
         if selection is not None:
             selection.record(retained=schedule.retained)
@@ -3719,6 +3823,7 @@ class Model:
         process_grid_resolver: ProcessGridResolver | None = None,
         call_id: CallId | None = None,
         period_capture: CaptureContext | None = None,
+        value_archive: StreamedSolutionArchive | None = None,
     ) -> BackwardInductionResult:
         """Run backward induction, persisting a diagnostic snapshot when warranted.
 
@@ -3777,6 +3882,7 @@ class Model:
                 gather_checks=self._gather_checks,
                 period_capture=period_capture,
                 structural_blueprints=self._structural_blueprints,
+                value_archive=value_archive,
             )
         except InvalidValueFunctionError as exc:
             if log_path is not None and exc.partial_solution is not None:
@@ -4011,7 +4117,8 @@ class Model:
         self._check_solution_result_replay_policies(
             solution=solution,
             authority=engine_view.authority,
-            policies=engine_view.simulation_policies,
+            # The check reads the stored policies, not device copies of them.
+            policies=stored_form(engine_view.simulation_policies),
             values=engine_view.values,
         )
         self._check_solution_result_dissolution_flags(
@@ -5698,6 +5805,7 @@ class Model:
                 )
             )
             preparation: _SolutionPreparation | None = None
+            combined_archive: BlockedSolutionArchive | None = None
             if solution is None and reads_components:
                 # Each component is solved as the simulation reaches its code,
                 # so no complete solution exists before the simulation runs.
@@ -5709,6 +5817,15 @@ class Model:
                     process_grid_resolver=process_grid_resolver,
                     call_id=call_id,
                 )
+                combined_archive = (
+                    BlockedSolutionArchive(
+                        directory=cast("Path", self._execution.value_storage),
+                        name=f"solution-{uuid.uuid4().hex}",
+                        budget_bytes=self._execution.device_memory_bytes,
+                    )
+                    if self._execution.value_storage_kind == "disk"
+                    else None
+                )
                 component_values = SolvingComponentValues(
                     schedule=self._component_schedule(
                         preparation=preparation,
@@ -5717,6 +5834,7 @@ class Model:
                         max_compilation_workers=max_compilation_workers,
                         process_grid_resolver=process_grid_resolver,
                         call_id=call_id,
+                        value_archive=combined_archive,
                         validation_materializer=entry_allocations,
                     )
                 )
@@ -5935,6 +6053,8 @@ class Model:
                     component_values=component_values.retained,
                     process_grid_resolver=process_grid_resolver,
                 )
+                if combined_archive is not None:
+                    combined_archive.complete(solution=solution)
             with solve_phase(name="result_finalization", logger=log, call_id=call_id):
                 if entry_allocations is not None:
                     entry_allocations.close()

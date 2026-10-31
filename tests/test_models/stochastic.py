@@ -15,6 +15,7 @@ import jax.numpy as jnp
 from lcm import (
     AgeGrid,
     DiscreteGrid,
+    ExecutionConfig,
     LinSpacedGrid,
     Model,
     StochasticTransition,
@@ -164,6 +165,13 @@ retirement = _base_retirement.replace(
 
 @functools.cache
 def get_model(n_periods: int) -> Model:
+    return build_model(n_periods=n_periods)
+
+
+def build_model(
+    *, n_periods: int, execution_config: ExecutionConfig | None = None
+) -> Model:
+    """Build the model under `execution_config`; `get_model` caches the default."""
     ages = AgeGrid(start=40, inclusive_stop=40 + (n_periods - 1) * 10, step="10Y")
     working_targets = {
         "dead": tuple(ages.exact_values[:-1]),
@@ -197,6 +205,7 @@ def get_model(n_periods: int) -> Model:
         ages=ages,
         regime_id_class=RegimeId,
         initial_nodes=((ages.exact_values[0], "working_life"),),
+        execution_config=execution_config or ExecutionConfig(),
     )
 
 
