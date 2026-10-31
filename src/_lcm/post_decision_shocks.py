@@ -46,47 +46,49 @@ from lcm.typing import (
     UserFunction,
 )
 
-type DrawOnlyShocks = MappingProxyType[
-    RegimeName, MappingProxyType[ShockName, DrawOnlyShock]
+type PostDecisionShocks = MappingProxyType[
+    RegimeName, MappingProxyType[ShockName, PostDecisionShock]
 ]
 
 
-def lower_draw_only_shocks(
+def lower_post_decision_shocks(
     *,
     regimes: Mapping[RegimeName, Regime],
     laws: RegimeLaws,
     groups: Mapping[ShockGroupName, ShockGroup],
-) -> tuple[MappingProxyType[RegimeName, Regime], DrawOnlyShocks]:
+) -> tuple[MappingProxyType[RegimeName, Regime], PostDecisionShocks]:
     """Take every group a regime reads only as its draw out of `Regime.shocks`.
 
     Returns:
-        Tuple of the regimes without their draw-only groups and, per regime that
-        has any, its draw-only shocks lowered to their nodes.
+        Tuple of the regimes without their post-decision groups and, per regime that
+        has any, its post-decision shocks lowered to their nodes.
 
     Raises:
         ModelInitializationError: If a regime reads a group both as its value and
-            as its draw, or a draw-only group is unusable: also read as a value
+            as its draw, or a post-decision group is unusable: also read as a value
             in another regime, not lowerable to one fixed node set per shock, or
             declared on a regime whose solver cannot integrate it.
 
     """
-    draw_only = {
-        name: _draw_only_groups(
+    post_decision_groups = {
+        name: _post_decision_groups(
             regime_name=name, regime=regime, laws=laws, groups=groups
         )
         for name, regime in regimes.items()
     }
-    _fail_if_groups_are_unusable(regimes=regimes, groups=groups, draw_only=draw_only)
+    _fail_if_groups_are_unusable(
+        regimes=regimes, groups=groups, post_decision_groups=post_decision_groups
+    )
     lowered = {
         group_name: _lower_group(group_name=group_name, group=groups[group_name])
-        for names in draw_only.values()
+        for names in post_decision_groups.values()
         for group_name in names
     }
     stripped = {
         name: regime.replace(
-            shocks=_without(declared=regime.shocks, removed=draw_only[name])
+            shocks=_without(declared=regime.shocks, removed=post_decision_groups[name])
         )
-        if draw_only[name]
+        if post_decision_groups[name]
         else regime
         for name, regime in regimes.items()
     }
@@ -99,7 +101,7 @@ def lower_draw_only_shocks(
                     for shock, process in lowered[group_name].items()
                 }
             )
-            for regime_name, names in draw_only.items()
+            for regime_name, names in post_decision_groups.items()
             if names
         }
     )
@@ -119,7 +121,7 @@ def _without(
     return tuple(name for name in declared if name not in removed)
 
 
-def _draw_only_groups(
+def _post_decision_groups(
     *,
     regime_name: RegimeName,
     regime: Regime,
@@ -150,7 +152,7 @@ def _draw_only_groups(
         ) | _law_roots(regime=regime, phase=phase)
         for root_name, root in roots.items():
             reads |= _reads(root_name=root_name, root=root, functions=functions)
-    draw_only: list[ShockGroupName] = []
+    post_decision_groups: list[ShockGroupName] = []
     errors: list[str] = []
     for group_name, group in listed.items():
         values = sorted(shock for shock in group.shocks if shock in reads)
@@ -167,10 +169,10 @@ def _draw_only_groups(
                 "`states=`; reading both its value and its draw keeps its axis."
             )
         elif draws:
-            draw_only.append(group_name)
+            post_decision_groups.append(group_name)
     if errors:
         raise ModelInitializationError(format_messages(errors))
-    return tuple(draw_only)
+    return tuple(post_decision_groups)
 
 
 def _law_roots(
@@ -197,8 +199,8 @@ def _law_roots(
 
 
 @dataclass(frozen=True, kw_only=True)
-class DrawOnlyShock(_IIDProcess):
-    """One draw-only shock's physical nodes and weights, fixed at model build."""
+class PostDecisionShock(_IIDProcess):
+    """One post-decision shock's physical nodes and weights, fixed at model build."""
 
     nodes: tuple[float, ...]
     """Physical values, in the group's node order."""
@@ -231,9 +233,9 @@ def _fail_if_groups_are_unusable(
     *,
     regimes: Mapping[RegimeName, Regime],
     groups: Mapping[ShockGroupName, ShockGroup],
-    draw_only: Mapping[RegimeName, tuple[ShockGroupName, ...]],
+    post_decision_groups: Mapping[RegimeName, tuple[ShockGroupName, ...]],
 ) -> None:
-    """Refuse a draw-only group on a non-GridSearch regime, read as a value in
+    """Refuse a post-decision group on a non-GridSearch regime, read as a value in
     another regime, or without a fixed node set."""
     current = {
         name
@@ -243,17 +245,20 @@ def _fail_if_groups_are_unusable(
             if isinstance(regime.shocks, Phased)
             else regime.shocks
         )
-        if name not in draw_only[regime_name]
+        if name not in post_decision_groups[regime_name]
     }
     errors: list[str] = []
     for regime_name, regime in regimes.items():
-        if draw_only[regime_name] and not isinstance(regime.solver, GridSearch):
+        if post_decision_groups[regime_name] and not isinstance(
+            regime.solver, GridSearch
+        ):
             errors.append(
                 f"Regime '{regime_name}' reads shock group(s) "
-                f"{list(draw_only[regime_name])} only as their draw `next_<shock>`. "
+                f"{list(post_decision_groups[regime_name])} only as their draw "
+                "`next_<shock>`. "
                 "Only the `GridSearch` solver integrates such a draw."
             )
-        for group_name in draw_only[regime_name]:
+        for group_name in post_decision_groups[regime_name]:
             group = groups[group_name]
             if group_name in current:
                 errors.append(
@@ -276,7 +281,7 @@ def _unlowerable(group: ShockGroup) -> str | None:
     problems = (
         (
             any(isinstance(law, Discrete) for law in laws),
-            "declares a discrete law; a draw-only shock must be continuous.",
+            "declares a discrete law; a post-decision shock must be continuous.",
         ),
         (
             any(
@@ -286,12 +291,12 @@ def _unlowerable(group: ShockGroup) -> str | None:
             ),
             (
                 "has a runtime or state-dependent law parameter; every "
-                "draw-only law parameter must be a fixed number."
+                "post-decision law parameter must be a fixed number."
             ),
         ),
         (
             group.correlation is not _Independence.DEFAULT,
-            "declares a correlation; draw-only shocks must be independent.",
+            "declares a correlation; post-decision shocks must be independent.",
         ),
         (
             isinstance(group.nodes, MonteCarlo | QuasiMonteCarlo),
@@ -311,9 +316,9 @@ def _unlowerable(group: ShockGroup) -> str | None:
 
 def _lower_group(
     *, group_name: ShockGroupName, group: ShockGroup
-) -> dict[ShockName, DrawOnlyShock]:
+) -> dict[ShockName, PostDecisionShock]:
     """Realise each shock of an independent group on its own one-dimensional rule."""
-    lowered: dict[ShockName, DrawOnlyShock] = {}
+    lowered: dict[ShockName, PostDecisionShock] = {}
     for shock, law in group.shocks.items():
         single = (
             group
@@ -328,7 +333,7 @@ def _lower_group(
         )
         realised.raise_if_invalid()
         weights = tuple(float(w) for w in realised.weights)
-        lowered[shock] = DrawOnlyShock(
+        lowered[shock] = PostDecisionShock(
             n_points=len(weights),
             nodes=tuple(float(v) for v in realised.values[shock]),
             weights=weights,

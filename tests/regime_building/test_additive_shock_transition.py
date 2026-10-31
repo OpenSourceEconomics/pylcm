@@ -2,7 +2,7 @@
 
 The shock is the negative of a medical bill paid after the period's choices; it
 reads next period's draws: the health draw, which the target carries as a state,
-and a transitory shock drawn after the choice, declared as a post-choice shock group
+and a transitory shock drawn after the choice, declared as a post-decision shock group
 that only the transition reads. Declared through
 `lcm.AdditiveShockTransition`, the solve averages the target's value function over
 the transitory shock once per period, on the merged points `{w_j - shock_k}`, and
@@ -648,7 +648,7 @@ def test_additive_transition_preserves_each_certainty_equivalent(
 ) -> None:
     """Arithmetic averaging is reserved for exact linear expectations.
 
-    The certainty equivalent aggregates over the post-choice draw whether it is
+    The certainty equivalent aggregates over the post-decision draw whether it is
     declared on the model or on the regime. The independent oracle evaluates the
     arithmetic or harmonic mean directly at every wealth node, including landings
     outside the wealth grid.
@@ -680,7 +680,7 @@ def test_additive_transition_preserves_each_certainty_equivalent(
         )
 
 
-def test_a_post_choice_shock_named_like_another_regimes_state_is_refused() -> None:
+def test_a_post_decision_shock_named_like_another_regimes_state_is_refused() -> None:
     """A physical shock name is one model-wide name; a state cannot reuse it."""
     with pytest.raises(ShockDeclarationError, match="'xi' has conflicting"):
         _ce_model(additive=False, live_terminal_shock=True)

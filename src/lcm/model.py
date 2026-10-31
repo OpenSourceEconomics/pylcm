@@ -30,7 +30,6 @@ from beartype.roar import BeartypeCallHintViolation
 
 from _lcm.beartype_conf import MODEL_CONF, PARAMS_CONF, SIMULATION_INPUT_CONF
 from _lcm.current_iid_node_adapter import NodeAxisAdapter, adapt_declaration
-from _lcm.draw_only_shocks import lower_draw_only_shocks
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import EGMSimPolicy, NBEGMGridPolicy, NNBEGMSimPolicy
 from _lcm.engine import (
@@ -94,6 +93,7 @@ from _lcm.persistence.snapshots import (
     _save_simulate_snapshot,
     _save_solve_snapshot,
 )
+from _lcm.post_decision_shocks import lower_post_decision_shocks
 from _lcm.processes.ar1 import (
     RouwenhorstAR1Process,
     TauchenAR1Process,
@@ -538,7 +538,7 @@ class _PickledModel(TypedDict):
     _cells_without_edges: MappingProxyType[tuple[RegimeName, int], DroppedCells]
     _transition_only_shock_names: NotRequired[frozenset[str]]
     _shock_timing: NotRequired[Mapping[RegimeName, ShockTiming]]
-    _draw_only_processes: NotRequired[
+    _post_decision_shocks: NotRequired[
         Mapping[RegimeName, Mapping[StateName, _IIDProcess]]
     ]
     _process_code_reads: NotRequired[
@@ -1031,9 +1031,9 @@ class Model:
 
     @property
     def _current_shock_names(self) -> frozenset[ShockName]:
-        """Name the shocks realised before a choice; post-choice draws are not."""
+        """Name the shocks realised before a choice; post-decision draws are not."""
         return frozenset(self._shock_registry.innovations).difference(
-            *self._draw_only_processes.values()
+            *self._post_decision_shocks.values()
         )
 
     _shock_registry: ShockRegistry
@@ -1081,8 +1081,8 @@ class Model:
     """
     _shock_timing: Mapping[RegimeName, ShockTiming]
     """Per regime, which shocks carry an axis and which are integrated out."""
-    _draw_only_processes: Mapping[RegimeName, Mapping[StateName, _IIDProcess]]
-    """Each regime's post-choice shocks, retained for path validation."""
+    _post_decision_shocks: Mapping[RegimeName, Mapping[StateName, _IIDProcess]]
+    """Each regime's post-decision shocks, retained for path validation."""
     _process_code_reads: Mapping[
         RegimeName, Mapping[StateName, _ContinuousStochasticProcess]
     ]
@@ -1478,7 +1478,7 @@ class Model:
             model_slots=model_slots,
             output_only_functions=output_only_functions,
         )
-        merged_regimes, draw_only_shocks = lower_draw_only_shocks(
+        merged_regimes, post_decision_shocks = lower_post_decision_shocks(
             regimes=merged_regimes, laws=laws, groups=shocks
         )
         self._shock_registry = create_shock_registry(
@@ -1573,24 +1573,24 @@ class Model:
         self._transition_only_shock_names = frozenset(
             name for unread in transition_only.values() for name in unread
         )
-        draw_only_processes: MappingProxyType[
+        post_decision_shock_processes: MappingProxyType[
             RegimeName, MappingProxyType[StateName, _IIDProcess]
         ] = MappingProxyType(
             {
                 name: MappingProxyType(
                     {
-                        **draw_only_shocks.get(name, {}),
+                        **post_decision_shocks.get(name, {}),
                         **transition_only.get(name, {}),
                     }
                 )
-                for name in draw_only_shocks.keys() | transition_only.keys()
+                for name in post_decision_shocks.keys() | transition_only.keys()
             }
         )
-        self._draw_only_processes = draw_only_processes
+        self._post_decision_shocks = post_decision_shock_processes
         self._shock_timing = _shock_timing(
             regimes=pruned_regimes,
             groups=shocks,
-            draw_only_shocks=draw_only_shocks,
+            post_decision_shocks=post_decision_shocks,
             transition_only=transition_only,
         )
         # A regime law reads the values of value grids as every user function
@@ -1726,7 +1726,7 @@ class Model:
             visited_periods_by_regime=schedules.acting_periods_by_regime,
             declared_transitions=self._declared_transitions,
             declared_edge_vocabulary=declared_edge_vocabulary,
-            draw_only_processes=draw_only_processes,
+            post_decision_shocks=post_decision_shock_processes,
             # The pruning candidates combine state and action names. Only the
             # model state slot establishes a state's diagnostic provenance.
             broadcast_variables={
@@ -2160,7 +2160,7 @@ class Model:
             _cells_without_edges=self._cells_without_edges,
             _transition_only_shock_names=self._transition_only_shock_names,
             _shock_timing=self._shock_timing,
-            _draw_only_processes=self._draw_only_processes,
+            _post_decision_shocks=self._post_decision_shocks,
             _process_code_reads=self._process_code_reads,
             pruned_variables=self.pruned_variables,
             _user_regimes=self._user_regimes,
@@ -2214,8 +2214,8 @@ class Model:
             "_transition_only_shock_names", frozenset()
         )
         self._shock_timing = state.get("_shock_timing", MappingProxyType({}))
-        self._draw_only_processes = state.get(
-            "_draw_only_processes", MappingProxyType({})
+        self._post_decision_shocks = state.get(
+            "_post_decision_shocks", MappingProxyType({})
         )
         self._process_code_reads = state.get(
             "_process_code_reads", MappingProxyType({})
@@ -4638,7 +4638,7 @@ class Model:
                     paths=shock_paths,
                     initial=initial_conditions,
                     regimes=self._regimes,
-                    draw_only=self._draw_only_processes,
+                    post_decision_shocks=self._post_decision_shocks,
                     params=flat_params,
                     ages=self._time,
                     regime_names_to_ids=self.regime_names_to_ids,
@@ -6646,7 +6646,7 @@ def _shock_timing(
     *,
     regimes: Mapping[RegimeName, UserRegime],
     groups: Mapping[ShockGroupName, ShockGroup],
-    draw_only_shocks: Mapping[RegimeName, Mapping[ShockName, _IIDProcess]],
+    post_decision_shocks: Mapping[RegimeName, Mapping[ShockName, _IIDProcess]],
     transition_only: Mapping[RegimeName, Mapping[StateName, _IIDProcess]],
 ) -> MappingProxyType[RegimeName, ShockTiming]:
     """Name, per regime, the shocks carrying an axis and those integrated out."""
@@ -6664,7 +6664,9 @@ def _shock_timing(
             if isinstance(grid, _IIDProcess)
         )
         integrated = tuple(
-            dict.fromkeys(group_of[shock] for shock in draw_only_shocks.get(name, {}))
+            dict.fromkeys(
+                group_of[shock] for shock in post_decision_shocks.get(name, {})
+            )
         ) + tuple(transition_only.get(name, {}))
         timing[name] = (axis, integrated)
     return MappingProxyType(timing)
