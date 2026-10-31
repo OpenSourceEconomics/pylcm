@@ -24,7 +24,13 @@ from _lcm.current_iid import (
     CurrentIIDPlan,
     NodeOperands,
 )
-from _lcm.policy_queries import _ROW_BATCH, PolicyAnswer, QueryNode
+from _lcm.policy_queries import (
+    _ROW_BATCH,
+    PolicyAnswer,
+    QueryKind,
+    QueryNode,
+    StayTable,
+)
 from _lcm.probability import is_represented_zero
 from _lcm.shock_registry import ShockBinding
 from _lcm.typing import PytreeValue, QAndFKwargs
@@ -585,28 +591,24 @@ def _support_codes(
     return np.stack(columns, axis=1)
 
 
-def ancestor_classes(
-    *, name: str, ancestor: str, definitions: Mapping[str, QueryNode]
+def _row_classes(
+    *, key: str, shocks: frozenset[ShockName], definitions: Mapping[str, QueryNode]
 ) -> tuple[np.ndarray, np.ndarray] | None:
-    """Classes of an ancestor's rows that a query cannot tell apart.
+    """Classes of a query's row positions that agree on the named frame shocks.
 
-    Over the ancestor's rows as its descendants see them (its pinned
-    representatives, else every support row), two rows share a class when every
-    shock the query reads (`read_columns`) takes the same node. Returns each
-    class's first row position and the class of every row position, or None
-    when every row is its own class.
+    The row positions are those its descendants see: its pinned
+    representatives, else every support row. Returns each class's first row
+    position and the class of every row position, or None when every row
+    position is its own class.
     """
-    node = definitions[ancestor]
-    if not _has_local_information(node=node, period=node.read.period):
-        return None
-    shocks = read_columns(name=name, ancestor=ancestor, definitions=definitions)
-    if shocks == _frame_shocks(key=ancestor, definitions=definitions):
+    node = definitions[key]
+    if shocks >= _frame_shocks(key=key, definitions=definitions):
         return None
     # The cell reads its representatives through `pinned_support`; follow it.
     pinned = (
         None
-        if pinned_support(name=ancestor, definitions=definitions) is None
-        else _pinned_rows(name=ancestor, definitions=definitions)
+        if pinned_support(name=key, definitions=definitions) is None
+        else _pinned_rows(name=key, definitions=definitions)
     )
     rows = (
         np.arange(support_size(node=node, period=node.read.period))
@@ -614,7 +616,7 @@ def ancestor_classes(
         else pinned[0]
     )
     codes = _support_codes(
-        key=ancestor, definitions=definitions, shocks=tuple(sorted(shocks))
+        key=key, definitions=definitions, shocks=tuple(sorted(shocks))
     )[rows]
     if codes.shape[1] == 0:
         return np.zeros(1, dtype=np.int32), np.zeros(rows.size, dtype=np.int32)
@@ -622,6 +624,69 @@ def ancestor_classes(
     if first.size == rows.size:
         return None
     return first.astype(np.int32), classes.ravel().astype(np.int32)
+
+
+def ancestor_classes(
+    *, name: str, ancestor: str, definitions: Mapping[str, QueryNode]
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Classes of an ancestor's rows that a query cannot tell apart.
+
+    Two rows share a class when every shock the query reads (`read_columns`)
+    takes the same node. See `_row_classes` for the result.
+    """
+    node = definitions[ancestor]
+    if not _has_local_information(node=node, period=node.read.period):
+        return None
+    return _row_classes(
+        key=ancestor,
+        shocks=read_columns(name=name, ancestor=ancestor, definitions=definitions),
+        definitions=definitions,
+    )
+
+
+def stay_read_shocks(
+    *, name: str, definitions: Mapping[str, QueryNode]
+) -> frozenset[ShockName] | None:
+    """Own frame shocks a query's action problem reads; None if not attributable.
+
+    The action problem reads shocks by name: through its Q/F function and through
+    projection helpers that take the query's own physical inputs.
+    """
+    from _lcm.policy_queries import _PHYSICAL_CONTEXTS  # noqa: PLC0415
+
+    node = definitions[name]
+    frame = _frame_shocks(key=name, definitions=definitions)
+    function = node.context.Q_and_F_functions[node.read.period]
+    parameters = set(inspect.signature(function).parameters)
+    if _PHYSICAL_CONTEXTS in parameters:
+        return None
+    for helper in node.read.projection.values():
+        parameters |= set(inspect.signature(helper).parameters)
+    return frozenset(parameters) & frame
+
+
+def own_stay_classes(
+    *, name: str, definitions: Mapping[str, QueryNode]
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Classes of a query's own rows its action problem cannot tell apart.
+
+    Only an unguarded policy query qualifies: its stay table is then the same
+    at every row of a class, and its exit decision still runs at every row. A
+    guarded query's guard may read any of its rows. See `_row_classes` for the
+    result.
+    """
+    node = definitions[name]
+    if (
+        node.available is not None
+        or node.read.kind
+        not in {QueryKind.RAW, QueryKind.PARTICIPATING, QueryKind.FULL}
+        or not _has_local_information(node=node, period=node.read.period)
+    ):
+        return None
+    shocks = stay_read_shocks(name=name, definitions=definitions)
+    if shocks is None:
+        return None
+    return _row_classes(key=name, shocks=shocks, definitions=definitions)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -1212,6 +1277,74 @@ class InformationQueryCell:
             ),
         )
 
+    def _stay(
+        self,
+        *,
+        frame: CurrentIIDDrawFrame,
+        frames: Frames,
+        live: BoolND,
+        source: SourceStates,
+    ) -> tuple[StayTable, IntND] | None:
+        """This query's stay table once per class of its own rows, and the class
+        of each row position; None when every row position is its own class.
+
+        The table holds no participation, which reads the row's exit payoffs; the
+        cell adds it at each row.
+        """
+        from _lcm.policy_queries import (  # noqa: PLC0415
+            _PHYSICAL_CONTEXTS,
+            map_lanes,
+            query_arguments,
+            stay_table,
+        )
+
+        if self.name == self.realised_root:
+            return None
+        classes = own_stay_classes(name=self.name, definitions=self.definitions)
+        if classes is None:
+            return None
+        first = classes[0]
+        rows = jnp.asarray(
+            first
+            if pinned_support(name=self.name, definitions=self.definitions) is None
+            else cast(
+                "tuple[np.ndarray, np.ndarray]",
+                _pinned_rows(name=self.name, definitions=self.definitions),
+            )[0][first],
+            dtype=jnp.int32,
+        )
+
+        def evaluate(position: IntND) -> StayTable:
+            physical = _row(frame=frame, row=rows[position]).physical
+            arguments, _ = query_arguments(
+                guard=live,
+                source=source,
+                node=self.node,
+                fixed={
+                    **self.fixed,
+                    **physical,
+                    _PHYSICAL_CONTEXTS: {
+                        **{name: frame.physical for name, frame in frames.items()},
+                        self.name: physical,
+                    },
+                },
+                projection_operands=self.projection_operands,
+            )
+            return stay_table(
+                node=self.node,
+                period=self.node.read.period,
+                arguments=arguments,
+                dependencies={},
+                participate=False,
+            )
+
+        table = map_lanes(
+            function=evaluate,
+            operands=jnp.arange(first.size, dtype=jnp.int32),
+            batch_size=self.row_batch,
+        )
+        return table, jnp.asarray(classes[1])
+
     def _own(
         self,
         *,
@@ -1235,6 +1368,8 @@ class InformationQueryCell:
                 frames=frames,
                 guard=guard,
             )
+
+            stay = self._stay(frame=frame, frames=frames, live=live, source=source)
 
             # keyword-only-exempt: library-callback=_map_support
             def point(row: IntND, at: IntND) -> PolicyAnswer:
@@ -1274,6 +1409,9 @@ class InformationQueryCell:
                         },
                     },
                     projection_operands=self.projection_operands,
+                    stay=None
+                    if stay is None
+                    else jax.tree.map(lambda leaf: leaf[stay[1][at]], stay[0]),
                 )
 
             answers = self._map_support(
