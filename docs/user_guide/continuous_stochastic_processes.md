@@ -353,9 +353,9 @@ AR(1) and Markov states behave this way. For an IID shock the rule decides wheth
 regime stores an axis for it. A regime that reads the current value `x` keeps the
 shock's node axis. A regime whose state transitions read the shock only as `next_x`
 stores no axis for it: nothing chosen in the period can depend on a draw taken after the
-choice, so the regime's value does not depend on it. `NBEGM` and `NNBEGM` regimes
-currently keep the axis for such an IID process state, with the value constant along it,
-and `repr(model)` lists it under `axis=` there.
+choice, so the regime's value does not depend on it. `NNBEGM` regimes currently keep the
+axis for such an IID process state, with the value constant along it, and `repr(model)`
+lists it under `axis=` there.
 
 A shock realized after the period's choices, such as a bill taken off end-of-period
 wealth, is the typical case. Declare it as an IID process state, or as a `ShockGroup` in
@@ -413,11 +413,11 @@ as that state's value.
 
 A group read only as its draw is lowered to one fixed node set per shock. Its laws are
 continuous with fixed numeric parameters, its shocks independent, and its rule
-deterministic and unsigned: `Product` of scalar rules, or `UserNodes` and `Smolyak` for
-a one-shock group. Runtime or state-dependent law parameters, `Discrete` laws,
-correlation and sampled (`MonteCarlo`, `QuasiMonteCarlo`) rules are refused when the
-model is built. A group read as a value in one regime and only as a draw in another is
-refused; declare a separate group for each timing.
+deterministic: `Product` of scalar rules, or `UserNodes` and `Smolyak` for a one-shock
+group. Runtime or state-dependent law parameters, `Discrete` laws, correlation and
+sampled (`MonteCarlo`, `QuasiMonteCarlo`) rules are refused when the model is built. A
+group read as a value in one regime and only as a draw in another is refused; declare a
+separate group for each timing.
 
 ### Precomputing continuation values for an additive transition
 

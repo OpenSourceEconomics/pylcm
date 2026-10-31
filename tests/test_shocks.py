@@ -61,7 +61,6 @@ def test_normal_moments_and_transform(*, rule: sh.ScalarRule) -> None:
             9.0,
             rtol=_tol(),
         )
-    np.testing.assert_allclose(nodes.sum_abs_weights, 1.0, atol=_tol())
 
 
 def test_product_order_and_correlation() -> None:
@@ -195,14 +194,12 @@ def test_random_rules_age_and_parameter_identity(*, rule: sh.NodeRule) -> None:
 
 
 @pytest.mark.parametrize("family", ["normal", "uniform"])
-@pytest.mark.parametrize("level", [0, 1, 2, 3])
+@pytest.mark.parametrize("level", [0, 1])
 def test_smolyak_constant_and_second_moments(*, family: str, level: int) -> None:
     law = (
         sh.Normal(mu=0, sigma=1) if family == "normal" else sh.Uniform(start=0, stop=1)
     )
-    group = sh.ShockGroup(
-        shocks={"a": law, "b": law}, nodes=sh.Smolyak(level, signed=True)
-    )
+    group = sh.ShockGroup(shocks={"a": law, "b": law}, nodes=sh.Smolyak(level))
     nodes = group.resolve_nodes(group_name="joint", age=0)
     result = group.realise(nodes=nodes)
     result.raise_if_invalid()
@@ -215,20 +212,39 @@ def test_smolyak_constant_and_second_moments(*, family: str, level: int) -> None
     assert len(set(map(tuple, np.asarray(nodes.base_nodes)))) == len(nodes.weights)
 
 
-@pytest.mark.parametrize("reader", list(sh.ShockReader))
-def test_signed_reader_admission(*, reader: sh.ShockReader) -> None:
-    nodes = _normal_group(
-        nodes=sh.UserNodes(
-            nodes=np.asarray([[-1.0], [1.0]]),
-            weights=np.asarray([-1.0, 2.0]),
-            signed=True,
+def test_user_nodes_with_negative_weights_are_refused() -> None:
+    """A node rule with a negative weight never reaches a model."""
+    with pytest.raises(ShockDeclarationError, match=r"UserNodes.*negative weights"):
+        sh.UserNodes(
+            nodes=np.asarray([[-1.0], [0.0], [1.0]]),
+            weights=np.asarray([-0.1, 1.2, -0.1]),
         )
-    ).resolve_nodes(group_name="wage", age=0)
-    if reader is sh.ShockReader.LINEAR_EXPECTATION:
-        nodes.admit(reader=reader)
-    else:
-        with pytest.raises(ShockDeclarationError, match="wage"):
-            nodes.admit(reader=reader)
+
+
+@pytest.mark.parametrize(
+    ("family", "dimension", "level"),
+    [
+        ("normal", 1, 3),
+        ("normal", 2, 2),
+        ("normal", 3, 1),
+        ("normal", 4, 1),
+        ("uniform", 2, 2),
+    ],
+)
+def test_smolyak_with_negative_weights_is_refused_at_declaration(
+    *, family: str, dimension: int, level: int
+) -> None:
+    """Higher Smolyak levels have negative weights and are refused by the group."""
+    law = (
+        sh.Normal(mu=0, sigma=1) if family == "normal" else sh.Uniform(start=0, stop=1)
+    )
+    with pytest.raises(
+        ShockDeclarationError, match=rf"Smolyak\(level={level}\).*negative weights"
+    ):
+        sh.ShockGroup(
+            shocks={f"x{i}": law for i in range(dimension)},
+            nodes=sh.Smolyak(level),
+        )
 
 
 @pytest.mark.parametrize(
@@ -307,25 +323,12 @@ def test_runtime_correlation_and_fingerprint_separation() -> None:
 
 def test_smolyak_level_limit() -> None:
     with pytest.raises(ShockDeclarationError, match="level"):
-        _normal_group(nodes=sh.Smolyak(4, signed=True)).resolve_nodes(
-            group_name="wage", age=0
-        )
+        _normal_group(nodes=sh.Smolyak(4))
 
 
-def test_discrete_probability_and_signed_refusals() -> None:
+def test_discrete_probability_refusals() -> None:
     with pytest.raises(ShockDeclarationError):
         sh.Discrete(categories=Offer, probs=np.asarray([0.8, 0.3]))
-    with pytest.raises(ShockDeclarationError):
-        sh.ShockGroup(
-            shocks={
-                "offer": sh.Discrete(categories=Offer, probs=np.asarray([0.5, 0.5]))
-            },
-            nodes=sh.UserNodes(
-                nodes=np.asarray([[0.25], [0.75]]),
-                weights=np.asarray([0.5, 0.5]),
-                signed=True,
-            ),
-        )
     group = sh.ShockGroup(shocks={"offer": sh.Discrete(categories=Offer, probs=None)})
     result = jax.jit(group.realise)(
         nodes=group.resolve_nodes(group_name="offer", age=0),
@@ -576,11 +579,11 @@ def test_runtime_singular_correlation_uses_exact_support() -> None:
         np.testing.assert_array_equal(result.values["b"], result.values["c"])
 
 
-@pytest.mark.parametrize(("level", "degree"), [(0, 1), (1, 5), (2, 15), (3, 29)])
+@pytest.mark.parametrize(("level", "degree"), [(0, 1), (1, 5), (2, 15)])
 def test_genz_keister_analytic_moment_degree(*, level: int, degree: int) -> None:
     """Normal-rule moments agree with the analytic double-factorial identity."""
     group = sh.ShockGroup(
-        shocks={"eps": sh.Normal(mu=0, sigma=1)}, nodes=sh.Smolyak(level, signed=True)
+        shocks={"eps": sh.Normal(mu=0, sigma=1)}, nodes=sh.Smolyak(level)
     )
     result = group.realise(nodes=group.resolve_nodes(group_name="normal", age=0))
     result.raise_if_invalid()
@@ -604,15 +607,6 @@ def test_law_identity_excludes_rule_and_scalar_spelling() -> None:
     )
     assert first.has_same_laws_as(second)
     assert first.fingerprint != second.fingerprint
-
-
-def test_actual_negative_sparse_weights_require_signed() -> None:
-    group = sh.ShockGroup(
-        shocks={name: sh.Normal(mu=0, sigma=1) for name in ("a", "b", "c", "d")},
-        nodes=sh.Smolyak(1),
-    )
-    with pytest.raises(ShockDeclarationError, match="Negative"):
-        group.resolve_nodes(group_name="joint", age=0)
 
 
 def test_full_realisation_is_vmap_pytree() -> None:
@@ -674,7 +668,7 @@ def test_callable_law_identity_uses_captured_semantics() -> None:
 @pytest.mark.parametrize(
     ("nodes", "weights", "match"),
     [
-        ([[0.0], [1.0]], [1.5, -0.5], "Negative concrete weights"),
+        ([[0.0], [1.0]], [1.5, -0.5], "UserNodes has negative weights"),
         ([[0.0], [1.0]], [0.5, 0.25], "Weights must sum to unity"),
         ([[0.0], [np.nan]], [0.5, 0.5], "finite nonempty"),
         ([[0.0], [np.inf]], [0.5, 0.5], "finite nonempty"),

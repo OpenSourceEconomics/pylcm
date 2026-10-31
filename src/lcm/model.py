@@ -424,7 +424,7 @@ from lcm.solver_api import (
     _replay_route_identity,
     _same_exact_artifact_contract,
 )
-from lcm.solvers import GridSearch, Solver
+from lcm.solvers import DCEGM, NEGM, ExactEnvelope, GridSearch, Solver
 from lcm.transition import (
     DeclaredModelEdges,
     ModelEdges,
@@ -3066,6 +3066,11 @@ class Model:
                 structural_blueprints=self._structural_blueprints,
             )
         except InvalidValueFunctionError as exc:
+            regime = self._user_regimes.get(exc.regime_name or "")
+            if regime is not None and (
+                hint := _exact_envelope_capacity_hint(solver=regime.solver)
+            ):
+                exc.add_note(hint)
             if log_path is not None and exc.partial_solution is not None:
                 snap_dir = _save_solve_snapshot(
                     model=self,
@@ -7214,4 +7219,24 @@ def _materialize_participation_surfaces(
             )
             for period, by_regime in surfaces.items()
         }
+    )
+
+
+def _exact_envelope_capacity_hint(*, solver: Solver | None) -> str:
+    """Name the exact envelope's run capacity as a NaN cause, where it solves.
+
+    `ExactEnvelope` NaN-poisons a row whose candidate chain stacks more runs over
+    one resource cell than `max_runs` holds, rather than publish a guess. The
+    kernel does not report which cause poisoned a row, so the hint names the
+    capacity for every DC-EGM or NEGM regime that uses this envelope.
+    """
+    dcegm = solver.inner if isinstance(solver, NEGM) else solver
+    if not isinstance(dcegm, DCEGM) or not isinstance(dcegm.envelope, ExactEnvelope):
+        return ""
+    return (
+        f"This regime's upper envelope is `ExactEnvelope(max_runs="
+        f"{dcegm.envelope.max_runs})`. It NaN-poisons a row whose candidate chain "
+        f"covers one resource cell with more than {dcegm.envelope.max_runs} runs, so "
+        "NaN values (often all of them) can mean that capacity was exceeded. If the "
+        "causes above do not apply, raise `ExactEnvelope(max_runs=...)`."
     )
