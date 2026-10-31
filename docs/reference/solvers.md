@@ -104,7 +104,7 @@ bracketing nodes and along the edge segment beyond the outer ones.
 
 The node-state axis represents fixed scalar laws (`Normal`, `LogNormal`, `Uniform`,
 `NormalMixture`) under an independent `Product` rule, and one-shock groups under any
-age-independent rule (`UserNodes`, `Smolyak`). `Model(...)` raises a
+age-independent rule (`UserNodes`). `Model(...)` raises a
 `ShockDeclarationError` for a group an endogenous-grid regime reads that has
 correlated shocks, a joint non-product rule over several shocks, a
 `MonteCarlo` or `QuasiMonteCarlo` rule, a `Discrete` law, or law parameters that are

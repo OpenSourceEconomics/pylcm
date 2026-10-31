@@ -349,25 +349,6 @@ class QuasiMonteCarlo:
 
 @beartype(conf=SHOCK_CONF)
 @dataclass(frozen=True)
-class Smolyak:
-    """Zero-based sparse rule using Genz-Keister-19 and Clenshaw-Curtis.
-
-    Normal levels zero through three have 1, 3, 9 and 19 nodes. Uniform level zero
-    is the midpoint; subsequent levels have `2**level+1` inclusive unit nodes.
-    Difference products with total component level at most `level` define the rule.
-    A group refuses a level whose weights for its shocks include a negative one.
-    """
-
-    level: int
-    """Nonnegative total difference level."""
-
-    def __post_init__(self) -> None:
-        if isinstance(self.level, bool) or self.level < 0:
-            raise ShockDeclarationError("Smolyak level must be nonnegative.")
-
-
-@beartype(conf=SHOCK_CONF)
-@dataclass(frozen=True)
 class UserNodes:
     """Owned joint base nodes and weights, preserved in caller order."""
 
@@ -397,7 +378,7 @@ class UserNodes:
         object.__setattr__(self, "weights", weights)
 
 
-type NodeRule = Product | MonteCarlo | QuasiMonteCarlo | Smolyak | UserNodes
+type NodeRule = Product | MonteCarlo | QuasiMonteCarlo | UserNodes
 
 
 class Realisation(NamedTuple):
@@ -511,20 +492,6 @@ class ShockGroup:
                     raise ShockDeclarationError(
                         "Uniform-base nodes must lie in the unit interval."
                     )
-        if isinstance(self.nodes, Smolyak):
-            from _lcm.shock_nodes import _smolyak  # noqa: PLC0415 - rules import us
-
-            _validate_weights(
-                weights=_smolyak(
-                    level=self.nodes.level,
-                    uniform=tuple(
-                        isinstance(self.shocks[name], Uniform)
-                        for name in self.shocks
-                        if name in continuous
-                    ),
-                )[1],
-                rule=f"Smolyak(level={self.nodes.level})",
-            )
         if self.correlation is not _Independence.DEFAULT:
             if any(isinstance(law, Uniform | Discrete) for law in self.shocks.values()):
                 raise ShockDeclarationError(
@@ -927,9 +894,9 @@ def _validate_weights(*, weights: HostArray, rule: str) -> None:
         raise ShockDeclarationError("Weights must sum to unity within dtype tolerance.")
     if np.any(weights < 0):
         raise ShockDeclarationError(
-            f"{rule} has negative weights. Node rules with negative weights, such as "
-            "higher Smolyak levels, are not supported: pylcm takes the max over shocks "
-            "and samples nodes by weight, which needs probability weights."
+            f"{rule} has negative weights. Node rules with negative weights are not "
+            "supported: pylcm takes the max over shocks and samples nodes by weight, "
+            "which needs probability weights."
         )
 
 

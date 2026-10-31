@@ -92,23 +92,16 @@ Discrete variables are independently enumerated exactly beside the continuous ru
 - `MonteCarlo(n, seed)` uses equal-weight PCG64 uniforms.
 - `QuasiMonteCarlo(n, seed, sequence="sobol")` uses scrambled Sobol LMS+shift points
   with a fixed bit budget and a power-of-two sample count. It retains every point in
-  sequence order. Unit endpoints are opened before inverse-normal transformation.
-- `Smolyak(level)` uses zero-based difference levels with total component level at most
-  `level`. Its normal family is the bounded Genz-Keister-19 prefix: levels zero through
-  three have orders one, three, nine and nineteen; higher normal levels are refused. The
-  uniform family is Clenshaw-Curtis on the unit interval: level zero is the midpoint,
-  and subsequent orders are `2**level+1`. Shared nodes are merged by master-table
-  identifiers or reduced dyadic angles, never by approximate equality. The group
-  validates the rule's actual combined weights when it is declared and refuses a level
-  whose weights include a negative one: one-shock normal level three, two-shock levels
-  two and above, and three or more shocks from level one.
+  sequence order. Unit endpoints are opened before inverse-normal transformation. It is
+  the rule for thinning a group of several shocks, whose `Product` tensor grows
+  exponentially with the number of shocks.
 - `UserNodes(nodes, weights)` owns a finite `(K,d)` base-coordinate matrix and `(K,)`
   weights. It preserves point order and copies mutable input arrays. Uniform coordinates
   lie in the unit interval. It cannot replace exact category enumeration.
 
-Every rule's weights must be nonnegative. A rule with a negative weight raises
-`ShockDeclarationError` when it is declared, because pylcm takes the max over shocks and
-samples nodes by weight, both of which need probability weights.
+`UserNodes` weights must be nonnegative. Negative weights raise `ShockDeclarationError`
+when the rule is declared, because pylcm takes the max over shocks and samples nodes by
+weight, both of which need probability weights.
 
 MC and QMC regenerate per exact age or explicitly labelled period from a canonical
 versioned seed, time-coordinate and group-name encoding. Parameters do not enter that

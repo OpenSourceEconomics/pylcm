@@ -413,10 +413,10 @@ as that state's value.
 
 A group read only as its draw is lowered to one fixed node set per shock. Its laws are
 continuous with fixed numeric parameters, its shocks independent, and its rule
-deterministic: `Product` of scalar rules, or `UserNodes` and `Smolyak` for a one-shock
-group. Runtime or state-dependent law parameters, `Discrete` laws, correlation and
-sampled (`MonteCarlo`, `QuasiMonteCarlo`) rules are refused when the model is built. A
-group read as a value in one regime and only as a draw in another is refused; declare a
+deterministic: `Product` of scalar rules, or `UserNodes` for a one-shock group. Runtime
+or state-dependent law parameters, `Discrete` laws, correlation and sampled
+(`MonteCarlo`, `QuasiMonteCarlo`) rules are refused when the model is built. A group
+read as a value in one regime and only as a draw in another is refused; declare a
 separate group for each timing.
 
 ### Precomputing continuation values for an additive transition
