@@ -151,6 +151,7 @@ def test_a_winning_nonconcave_interior_value_is_never_capped_at_the_corner() -> 
 
 def test_empty_domain_does_not_hide_native_overflow_poison() -> None:
     """A known empty R<=b cell still surfaces the existing overflow failure."""
+    # Four branches cover (13, 14), one more than the capacity holds.
     grid = [10.0, 14.0, 11.0, 17.0, 12.0, 20.0, 13.0, 23.0, 15.0, 26.0]
     row = _refine(
         grid=grid,
@@ -158,7 +159,7 @@ def test_empty_domain_does_not_hide_native_overflow_poison() -> None:
         value=[float(i) for i in range(len(grid))],
         floor_sources=2,
         queries=[0.0, 0.25],
-        max_runs=4,
+        max_runs=3,
     )
     result = _publish(
         row=row, resources=[0.0, 0.25], bound=0.25, discounted_corner=1.5, active=True
