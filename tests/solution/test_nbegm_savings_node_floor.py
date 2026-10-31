@@ -333,6 +333,55 @@ def test_dense_savings_node_read_matches_the_whole_bank_read(
             np.testing.assert_array_equal(np.asarray(got), np.asarray(expected))
 
 
+@pytest.mark.parametrize(
+    "arithmetic",
+    [
+        "ordinary",
+        pytest.param(
+            "certified",
+            marks=pytest.mark.requires_exact_affine_kernel(
+                reason=EXACT_KERNEL_SKIP_REASON
+            ),
+        ),
+    ],
+)
+@pytest.mark.parametrize("retain_query", [False, True])
+def test_node_bank_beyond_int32_identities_publishes_the_same_envelope(
+    *,
+    arithmetic: ComparisonArithmetic,
+    retain_query: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A node bank whose one-shot identities exceed int32 reads the same envelope.
+
+    Placing the node cells behind a large virtual savings grid of empty rows
+    leaves the order of the candidates at every query unchanged, but pushes the
+    one-shot identities past the int32 maximum, as a dense XL grid does. The
+    channels stay bit for bit those of the small bank at either precision.
+    """
+    kwargs = {"arithmetic": arithmetic, "retain_query": retain_query}
+    small = _multi_interval_step(n_liquid=40, n_savings=30, whole_bank=False, **kwargs)
+    read = nbegm_step._read_euler_and_node_bank
+    n_points, shifted_rows = 40, 30_000_000
+    assert 4 * n_points * shifted_rows > jnp.iinfo(jnp.int32).max
+
+    def shifted(**read_kwargs):
+        return read(
+            **{
+                **read_kwargs,
+                "node_cell": read_kwargs["node_cell"] + shifted_rows * n_points,
+                "n_bank": read_kwargs["n_bank"] + 2 * shifted_rows * n_points,
+            }
+        )
+
+    monkeypatch.setattr(nbegm_step, "_read_euler_and_node_bank", shifted)
+    large = _multi_interval_step(n_liquid=40, n_savings=30, whole_bank=False, **kwargs)
+    for got, expected in zip(
+        jax.tree.leaves(large), jax.tree.leaves(small), strict=True
+    ):
+        np.testing.assert_array_equal(np.asarray(got), np.asarray(expected))
+
+
 def _intermediates(*, jaxpr, found: list[tuple[int, str]]) -> list[tuple[int, str]]:
     for eqn in jaxpr.eqns:
         found.extend(
