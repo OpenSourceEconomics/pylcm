@@ -236,13 +236,24 @@ def _select_reader(*, wealth: ContinuousState) -> ScalarInt:
     return jnp.where(wealth < 1.5, _EntryIds.child, _EntryIds.done)
 
 
-def _transition_model(*, budgeted: bool = False) -> Model:
+def _wealth_after_shock(
+    *, wealth: ContinuousState, next_eps: ContinuousState
+) -> ContinuousState:
+    return wealth + next_eps - 0.5
+
+
+def _transition_model(*, budgeted: bool = False, dependent: bool = False) -> Model:
 
     regimes = _child_regimes()
     regimes["parent"] = Regime(
         states={"wealth": IrregSpacedGrid(points=np.asarray([1.0, 2.0]))},
         functions={"utility": _zero_utility},
-        state_transitions={"wealth": _carry_wealth},
+        state_transitions={
+            "wealth": {
+                "child": _wealth_after_shock if dependent else _carry_wealth,
+                "done": _carry_wealth,
+            }
+        },
     )
     return Model(
         regimes=regimes,

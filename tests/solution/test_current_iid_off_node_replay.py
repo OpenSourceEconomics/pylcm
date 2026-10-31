@@ -488,7 +488,6 @@ def test_public_case_r_corner_row_matches_the_closed_form_off_the_child_grid() -
         )
 
 
-@_DCEGM_CORNER_VALUE_XFAIL
 @pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
 def test_public_case_r_replay_saves_the_floor_exactly_at_the_corner() -> None:

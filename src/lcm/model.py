@@ -4480,15 +4480,8 @@ class Model:
             seed=taste_shock_seed, name="taste_shock_seed"
         )
         published_solution = solution
+        node_axis_inputs = None
         if self._node_axis_adapter is not None:
-            initial_conditions, shock_paths, seed = (
-                self._node_axis_adapter.lower_simulation_inputs(
-                    initial_conditions=initial_conditions,
-                    shock_paths=shock_paths,
-                    seed=seed,
-                    ages=self._time,
-                )
-            )
             solution = self._node_axis_solution(solution=solution)
         entry_allocations = self._open_entry_allocations(
             params=params,
@@ -4508,6 +4501,55 @@ class Model:
                 )
             ),
         )
+        if self._node_axis_adapter is not None:
+            node_input_memory = (
+                None
+                if entry_allocations is None
+                else SimulationMemory(
+                    budget_bytes=entry_allocations.budget_bytes,
+                    devices=entry_allocations.devices,
+                    subject_devices=entry_allocations.devices[:1],
+                    operations=entry_allocations.operations,
+                    producers=self._simulate_entry_operations,
+                    inputs=entry_allocations.snapshot(),
+                )
+            )
+            initial_conditions, shock_paths, seed, node_axis_inputs = (
+                self._node_axis_adapter.lower_simulation_inputs(
+                    initial_conditions=initial_conditions,
+                    shock_paths=shock_paths,
+                    seed=seed,
+                    ages=self._time,
+                    regime_names_to_ids=self.regime_names_to_ids,
+                    memory=node_input_memory,
+                )
+            )
+            if entry_allocations is not None:
+                generated_paths = tuple(
+                    value
+                    for name, value in (shock_paths or {}).items()
+                    if name in self._node_state_names and isinstance(value, jax.Array)
+                )
+                if generated_paths:
+                    original_inputs = entry_allocations.original_inputs
+                    if original_inputs is None:
+                        raise RuntimeError("Simulation entry allocations are closed.")
+                    entry_allocations.original_inputs = dataclasses.replace(
+                        original_inputs,
+                        arrays=(*original_inputs.arrays, *generated_paths),
+                    )
+                entry_allocations.publish(
+                    stage="initial",
+                    tree=tuple(
+                        value
+                        for value in initial_conditions.values()
+                        if isinstance(value, jax.Array)
+                    )
+                    if isinstance(initial_conditions, Mapping)
+                    else (),
+                )
+            if node_input_memory is not None:
+                node_input_memory.close_unit()
         initial_conditions, current_entries, current_paths, shock_paths = (
             split_current_iid_inputs(
                 initial=initial_conditions,
@@ -4872,7 +4914,12 @@ class Model:
                     simulate_regimes = self._shock_path_regimes_for_shape(
                         generation=generation,
                         compile_batch_size=padded_n_subjects,
-                        supplied=frozenset(resolved_shock_paths),
+                        supplied=frozenset(resolved_shock_paths)
+                        | (
+                            self._node_state_names
+                            if node_axis_inputs is not None
+                            else frozenset()
+                        ),
                         flat_params=flat_params,
                     )
                     prepared_chunks = prepare_simulation_chunks(
@@ -4926,7 +4973,12 @@ class Model:
                     simulate_regimes = self._shock_path_regimes_for_shape(
                         generation=generation,
                         compile_batch_size=compile_batch_size,
-                        supplied=frozenset(resolved_shock_paths),
+                        supplied=frozenset(resolved_shock_paths)
+                        | (
+                            self._node_state_names
+                            if node_axis_inputs is not None
+                            else frozenset()
+                        ),
                         flat_params=flat_params,
                     )
             result = simulate(
@@ -4945,6 +4997,7 @@ class Model:
                 taste_shock_seed=taste_shock_seed,
                 shock_paths=resolved_shock_paths,
                 current_iid_overrides=current_iid_overrides,
+                node_axis_inputs=node_axis_inputs,
                 process_code_reads=self._process_code_reads,
                 subject_batch_size=compile_batch_size,
                 original_n_subjects=original_n_subjects,

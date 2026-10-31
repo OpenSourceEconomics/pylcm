@@ -23,6 +23,7 @@ import numpy as np
 import pandas as pd
 from jax import vmap
 
+from _lcm.current_iid_node_adapter import NodeAxisInputs
 from _lcm.egm.interp import interp_on_indexed_rows, interp_on_padded_grid
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.outer_interpolation import LocalCubicOuterInterpolant
@@ -279,6 +280,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
     process_grid_resolver: ProcessGridResolver | None = None,
     shock_paths: Mapping[StateName, np.ndarray] = MappingProxyType({}),
     current_iid_overrides: CurrentIIDOverrides | None = None,
+    node_axis_inputs: NodeAxisInputs | None = None,
     process_code_reads: Mapping[
         RegimeName, Mapping[StateName, _ContinuousStochasticProcess]
     ] = MappingProxyType({}),
@@ -654,6 +656,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
                         process_grid_resolver=process_grid_resolver,
                         shock_paths=shock_paths,
                         current_iid_overrides=current_iid_overrides,
+                        node_axis_inputs=node_axis_inputs,
                         process_code_reads=process_code_reads,
                         dissolution_records=dissolution_records,
                     )
@@ -870,6 +873,7 @@ def _simulate_subject_chunk(  # noqa: PLR0915
     process_grid_resolver: ProcessGridResolver | None = None,
     shock_paths: Mapping[StateName, np.ndarray] = MappingProxyType({}),
     current_iid_overrides: CurrentIIDOverrides | None = None,
+    node_axis_inputs: NodeAxisInputs | None = None,
     process_code_reads: Mapping[
         RegimeName, Mapping[StateName, _ContinuousStochasticProcess]
     ] = MappingProxyType({}),
@@ -1126,14 +1130,19 @@ def _simulate_subject_chunk(  # noqa: PLR0915
                 taste_key=taste_key,
                 taste_address=taste_addresses.get((period, regime_name)),
                 current_iid_overrides=current_iid_overrides,
+                node_axis_inputs=node_axis_inputs,
                 logger=logger,
                 n_subjects=n_subjects,
                 subject_slice=subject_slice,
                 original_n_subjects=original_n_subjects,
                 supplied_shocks=shock_path_values(
                     paths=shock_paths,
-                    argument_names=supplied_shock_argument_names(
-                        regime=regime, period=period
+                    argument_names=tuple(
+                        name
+                        for name in supplied_shock_argument_names(
+                            regime=regime, period=period
+                        )
+                        if name.removeprefix("supplied_shock__") in shock_paths
                     ),
                     period=period + 1,
                     subject_slice=subject_slice,
@@ -1737,8 +1746,9 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
     replay_reader: PreparedReplayReader | ReplayReader | None = None,
     taste_key: PRNGKeyND | None = None,
     taste_address: tuple[int, ...] | None = None,
-    supplied_shocks: Mapping[str, np.ndarray] = MappingProxyType({}),
+    supplied_shocks: Mapping[str, FloatND | np.ndarray] = MappingProxyType({}),
     current_iid_overrides: CurrentIIDOverrides | None = None,
+    node_axis_inputs: NodeAxisInputs | None = None,
     source_roles: Int1D | None = None,
     entered_through: Int1D | None = None,
     new_entered_through: Int1D | None = None,
@@ -2417,6 +2427,49 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
         if memory is not None:
             memory.hold(tree=(simulation_result, next_states_key, next_regime_key, key))
 
+        def draw_next_regimes() -> Int1D:
+            return calculate_next_regime_membership(
+                current_shocks=simulation_result.shocks,
+                regime=regime,
+                state_action_space=state_action_space,
+                optimal_actions=optimal_actions,
+                period=period,
+                age=age,
+                regime_params=regime_kernel_params(
+                    flat_params, regime_name=regime_name
+                ),
+                regime_names_to_ids=regime_names_to_ids,
+                states_per_regime=states,
+                new_subject_regime_ids=new_subject_regime_ids,
+                active_regimes_next_period=realization_targets_next_period,
+                key=next_regime_key,
+                subjects_in_regime=subject_ids_in_regime,
+                n_subjects=n_subjects,
+                subject_slice=subject_slice,
+                original_n_subjects=original_n_subjects,
+                memory=memory,
+                runtime_checks=validation_enabled(logger),
+            )
+
+        if node_axis_inputs is not None:
+            new_subject_regime_ids = draw_next_regimes()
+            supplied_shocks = {
+                **supplied_shocks,
+                **node_axis_inputs.transition_shocks(
+                    key=key,
+                    period=period + 1,
+                    regime_ids=new_subject_regime_ids,
+                    in_source=subject_ids_in_regime,
+                    subject_slice=subject_slice,
+                    regime_names_to_ids=regime_names_to_ids,
+                    argument_names=supplied_shock_argument_names(
+                        regime=regime, period=period
+                    ),
+                    transition_plans=regime.simulation.transition_plans,
+                    memory=memory,
+                ),
+            }
+
         next_states = calculate_next_states(
             current_shocks=simulation_result.shocks,
             regime=regime,
@@ -2445,26 +2498,8 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
         # The realized regime draw reads current-period carried values, so it
         # runs against the pre-advance carrier; only then do the next-period
         # states replace it.
-        new_subject_regime_ids = calculate_next_regime_membership(
-            current_shocks=simulation_result.shocks,
-            regime=regime,
-            state_action_space=state_action_space,
-            optimal_actions=optimal_actions,
-            period=period,
-            age=age,
-            regime_params=regime_kernel_params(flat_params, regime_name=regime_name),
-            regime_names_to_ids=regime_names_to_ids,
-            states_per_regime=states,
-            new_subject_regime_ids=new_subject_regime_ids,
-            active_regimes_next_period=realization_targets_next_period,
-            key=next_regime_key,
-            subjects_in_regime=subject_ids_in_regime,
-            n_subjects=n_subjects,
-            subject_slice=subject_slice,
-            original_n_subjects=original_n_subjects,
-            memory=memory,
-            runtime_checks=validation_enabled(logger),
-        )
+        if node_axis_inputs is None:
+            new_subject_regime_ids = draw_next_regimes()
         drawn_arrival_ids = new_subject_regime_ids
         # A subject's raw codes are checked against the regime it was drawn to
         # before a gate can read a value at them or reroute the subject.

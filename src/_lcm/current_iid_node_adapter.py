@@ -28,6 +28,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
+from jaxtyping import Bool, Float, Int32, UInt32
 
 from _lcm.current_iid import CurrentIIDDrawPlan, _draw_base_value
 from _lcm.engine import PeriodRegimeSimulationData
@@ -45,11 +46,14 @@ from _lcm.simulation.current_iid_overrides import (
     split_current_iid_inputs,
 )
 from _lcm.simulation.initial_conditions import resolve_initial_periods
+from _lcm.simulation.memory import SimulationMemory, run_simulation_producer
 from _lcm.simulation.random import create_simulation_key, draw_random_seed
-from _lcm.simulation.random_address import RandomAddress, draw_row_keys
+from _lcm.simulation.random_address import AddressWords, RandomAddress, draw_row_keys
+from _lcm.simulation.subject_groups import SubjectRows
 from _lcm.simulation.time_inputs import lower_initial_time
 from _lcm.time import TimeAxis
-from _lcm.typing import PRNGKeyND
+from _lcm.transition_plans import TargetTransitionPlans
+from _lcm.typing import PRNGKeyND, RegimeNamesToIds
 from lcm._solver_api.contract import ValueArraySchema
 from lcm._solver_api.identity import AxisDescriptor, AxisRole
 from lcm._solver_api.result import SolutionResult
@@ -82,6 +86,7 @@ from lcm.typing import (
     BoolND,
     Float1D,
     FloatND,
+    IntND,
     RegimeName,
     ScalarFloat,
     ScalarInt,
@@ -92,6 +97,200 @@ from lcm.typing import (
 
 # Attribute of a published result that holds the solve's node-axis result.
 _NODE_AXIS_SOLUTION = "_lcm_node_axis_solution"
+
+
+@dataclass(frozen=True, kw_only=True)
+class NodeAxisInputs:
+    """Original tagged banks for fixed-law node states, gathered at consumption."""
+
+    groups: Mapping[ShockGroupName, ShockGroup]
+    """Fixed producing laws of adapted groups."""
+    regime_shocks: Mapping[RegimeName, tuple[ShockGroupName, ...]]
+    """Groups consumed by each reader."""
+    entries: Mapping[ShockName, ShockOverride]
+    """Original entry-only vectors."""
+    paths: Mapping[ShockName, ShockOverride]
+    """Original common or subject-by-period banks, superseding entries."""
+    starts: np.ndarray
+    """Entry periods in original caller order."""
+    ages: TimeAxis
+    """The original scientific clock, retaining its canonical dtype."""
+
+    def __post_init__(self) -> None:
+        for field_name, dated, inputs in (
+            ("entries", False, self.entries),
+            ("paths", True, self.paths),
+        ):
+            normalized = {}
+            for name, item in inputs.items():
+                values = np.asarray(item.values)
+                valid = (
+                    (
+                        (values.ndim == 1 and values.size > 0)
+                        or (
+                            values.ndim == 2  # noqa: PLR2004 - subject-by-period bank
+                            and values.shape[0] == len(self.starts)
+                            and values.shape[1] > 0
+                        )
+                    )
+                    if dated
+                    else values.shape == (len(self.starts),)
+                )
+                if not valid:
+                    raise InvalidSimulationInputError(
+                        f"Current-IID {'path' if dated else 'entry'} {name!r} "
+                        f"has invalid shape {values.shape}."
+                    )
+                normalized[name] = type(item)(values=values)
+            object.__setattr__(self, field_name, MappingProxyType(normalized))
+
+    def realise(
+        self,
+        *,
+        key: PRNGKeyND,
+        rows: np.ndarray,
+        periods: np.ndarray,
+        regime_ids: np.ndarray,
+        regime_names_to_ids: RegimeNamesToIds,
+        memory: SimulationMemory | None,
+        read_targets: Mapping[ShockName, tuple[int, ...]] | None = None,
+    ) -> Mapping[ShockName, FloatND]:
+        """Realise one actual period per original row, masking before the producer."""
+        rows = np.minimum(rows, len(self.starts) - 1)
+        physical = {}
+        for group_name, group in self.groups.items():
+            readers = tuple(
+                regime_names_to_ids[name]
+                for name, names in self.regime_shocks.items()
+                if group_name in names
+            )
+            supplied, active, kinds = {}, {}, {}
+            for name in group.shocks:
+                consumed = np.isin(
+                    regime_ids,
+                    readers if read_targets is None else read_targets.get(name, ()),
+                )
+                item = self.paths.get(name, self.entries.get(name))
+                if item is None:
+                    continue
+                payload = np.asarray(item.values)
+                if name in self.paths:
+                    covered = periods < payload.shape[-1]
+                    if np.any(consumed & ~covered):
+                        raise InvalidSimulationInputError(
+                            f"Current-IID path {name!r} does not cover "
+                            "a consumed period."
+                        )
+                    columns = np.minimum(periods, payload.shape[-1] - 1)
+                    values = (
+                        payload[columns]
+                        if payload.ndim == 1
+                        else payload[rows, columns]
+                    )
+                    enabled = consumed & covered & (self.starts[rows] <= periods)
+                else:
+                    values = payload[rows]
+                    enabled = consumed & (self.starts[rows] == periods)
+                supplied[name] = values[:, None]
+                active[name] = enabled[:, None]
+                kinds[name] = (
+                    BaseInnovations
+                    if isinstance(item, BaseInnovations)
+                    else PhysicalValues
+                )
+            keys = {
+                name: run_simulation_producer(
+                    memory=memory,
+                    function=_addressed_cell_keys,
+                    arguments={
+                        "key": key,
+                        "address_words": np.asarray(
+                            RandomAddress(kind="shock", name=name).words(),
+                            dtype=np.uint32,
+                        ),
+                        "row_high": (rows.astype(np.uint64) >> np.uint64(32)).astype(
+                            np.uint32
+                        ),
+                        "row_low": (
+                            rows.astype(np.uint64) & np.uint64(0xFFFFFFFF)
+                        ).astype(np.uint32),
+                        "periods": periods.astype(np.uint32),
+                    },
+                )
+                for name in group.shocks
+            }
+            values, valid = run_simulation_producer(
+                memory=memory,
+                function=_cell_program(
+                    group_name=group_name,
+                    group=group,
+                    kinds=tuple(kinds.items()),
+                    flattened=True,
+                ),
+                arguments={
+                    "cell_keys": keys,
+                    "periods": periods[:, None].astype(np.int32),
+                    "ages": np.asarray(self.ages.values)[periods, None],
+                    "supplied": supplied,
+                    "enabled": active,
+                },
+            )
+            if not bool(valid):
+                raise InvalidSimulationInputError(
+                    f"Shock inputs for group {group_name!r} are invalid "
+                    "under its law at a consumed cell."
+                )
+            physical.update(values)
+        return MappingProxyType(physical)
+
+    def transition_shocks(
+        self,
+        *,
+        key: PRNGKeyND,
+        period: int,
+        regime_ids: IntND,
+        in_source: BoolND,
+        subject_slice: slice | SubjectRows,
+        regime_names_to_ids: RegimeNamesToIds,
+        argument_names: tuple[str, ...],
+        transition_plans: TargetTransitionPlans,
+        memory: SimulationMemory | None,
+    ) -> Mapping[str, FloatND]:
+        """Supply destination innovations before dependent state transitions run."""
+        names = tuple(
+            name
+            for name in argument_names
+            if name.startswith("supplied_shock__")
+            and name.removeprefix("supplied_shock__")
+            in {shock for group in self.groups.values() for shock in group.shocks}
+        )
+        if not names:
+            return MappingProxyType({})
+        rows = (
+            subject_slice.rows
+            if isinstance(subject_slice, SubjectRows)
+            else np.arange(subject_slice.start or 0, subject_slice.stop)
+        )
+        physical = self.realise(
+            key=key,
+            rows=rows,
+            periods=np.full(len(rows), period, dtype=np.int32),
+            regime_ids=np.where(np.asarray(in_source), np.asarray(regime_ids), -1),
+            regime_names_to_ids=regime_names_to_ids,
+            memory=memory,
+            read_targets={
+                shock: tuple(
+                    int(regime_names_to_ids[target])
+                    for target, plan in transition_plans.items()
+                    if f"next_{shock}" in plan.lotteries
+                )
+                for name in names
+                for shock in (name.removeprefix("supplied_shock__"),)
+            },
+        )
+        return MappingProxyType(
+            {name: physical[name.removeprefix("supplied_shock__")] for name in names}
+        )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -267,28 +466,38 @@ class NodeAxisAdapter:
         shock_paths: ShockPathsInput | None,
         seed: UserSeed | None,
         ages: TimeAxis,
+        regime_names_to_ids: RegimeNamesToIds,
+        memory: SimulationMemory | None = None,
     ) -> tuple[
-        SimulationInitialConditionsInput | pd.DataFrame, ShockPathsInput, UserSeed
+        SimulationInitialConditionsInput | pd.DataFrame,
+        ShockPathsInput,
+        UserSeed,
+        NodeAxisInputs | None,
     ]:
-        """Realise every adapted shock for every subject row and period.
+        """Keep tagged overrides until their actual node-state readers consume them.
 
-        Fresh draws use the current-IID route's addressed stream: the shock's name,
-        the subject's original row and the period of use. A tagged entry applies at
-        the row's entry period; a tagged path applies at every period it covers and
-        supersedes the entry. Both go through the current-IID override producer.
-        The physical paths become the node states' given shock paths.
-
-        Returns:
-            The initial conditions without adapted shocks, the shock paths with
-            every adapted shock's physical path, and the seed the simulation uses.
+        Fresh paths retain their addressed stream. Original caller buffers are
+        admitted before host-bank normalization; only an entry vector and the
+        active forward chunk are realized.
         """
         initial, entries, paths, state_paths = split_current_iid_inputs(
             initial=initial_conditions,
             paths=shock_paths,
-            names=frozenset(self.processes),
+            names=frozenset(
+                name for group in self.declared_groups.values() for name in group.shocks
+            ),
         )
+        other_entries = {
+            name: item for name, item in entries.items() if name not in self.processes
+        }
+        other_paths = {
+            name: item for name, item in paths.items() if name not in self.processes
+        }
+        entries = {
+            name: item for name, item in entries.items() if name in self.processes
+        }
+        paths = {name: item for name, item in paths.items() if name in self.processes}
         seed = draw_random_seed() if seed is None else seed
-        # Only the entry-time column is read; other columns pass through unread.
         lowered = lower_initial_time(
             initial_conditions=cast("UserInitialConditions | pd.DataFrame", initial),
             ages=ages,
@@ -300,7 +509,37 @@ class NodeAxisAdapter:
         starts, _ = resolve_initial_periods(
             ages=ages, initial_ages=np.asarray(lowered["age"])
         )
-        key = create_simulation_key(seed=seed)
+        key = create_simulation_key(seed=seed, memory=memory)
+        if entries or paths:
+            bank = NodeAxisInputs(
+                groups=self.groups,
+                regime_shocks=self.regime_shocks,
+                entries=entries,
+                paths=paths,
+                starts=np.asarray(starts),
+                ages=ages,
+            )
+            if isinstance(lowered, pd.DataFrame):
+                ids = np.asarray(
+                    [regime_names_to_ids[name] for name in lowered["regime_name"]]
+                )
+            else:
+                ids = np.asarray(lowered["regime_id"])
+            physical = bank.realise(
+                key=key,
+                rows=np.arange(len(starts)),
+                periods=np.asarray(starts),
+                regime_ids=ids,
+                regime_names_to_ids=regime_names_to_ids,
+                memory=memory,
+            )
+            if isinstance(initial, pd.DataFrame):
+                initial = initial.assign(
+                    **{name: np.asarray(value) for name, value in physical.items()}
+                )
+            else:
+                initial = {**initial, **other_entries, **physical}
+            return initial, MappingProxyType({**state_paths, **other_paths}), seed, bank
         physical: dict[ShockName, FloatND] = {}
         for group_name, group in self.groups.items():
             physical.update(
@@ -310,11 +549,16 @@ class NodeAxisAdapter:
                     key=key,
                     starts=np.asarray(starts),
                     ages=ages,
-                    entries={k: v for k, v in entries.items() if k in group.shocks},
-                    paths={k: v for k, v in paths.items() if k in group.shocks},
                 )
             )
-        return initial, MappingProxyType({**state_paths, **physical}), seed
+        if other_entries:
+            initial = {**initial, **other_entries}
+        return (
+            initial,
+            MappingProxyType({**state_paths, **physical, **other_paths}),
+            seed,
+            None,
+        )
 
     def _hide(self, names: tuple[StateName, ...]) -> tuple[StateName, ...]:
         return tuple(name for name in names if name not in self.processes)
@@ -606,6 +850,36 @@ def _is_fixed(law: Law) -> bool:
     )
 
 
+@jax.jit
+def _addressed_cell_keys(
+    *,
+    key: PRNGKeyND,
+    address_words: AddressWords,
+    row_high: UInt32[jax.Array | np.ndarray, " rows"],
+    row_low: UInt32[jax.Array | np.ndarray, " rows"],
+    periods: UInt32[jax.Array | np.ndarray, " rows"],
+) -> PRNGKeyND:
+    """Gather each row's exact named address at its consumed period."""
+
+    # keyword-only-exempt: library-callback=jax.vmap
+    def one(
+        high: UInt32[jax.Array, ""],
+        low: UInt32[jax.Array, ""],
+        period: UInt32[jax.Array, ""],
+    ) -> PRNGKeyND:
+        return draw_row_keys(
+            key=key,
+            address_words=address_words,
+            row_high=high[None],
+            row_low=low[None],
+            period=period,
+        )[0]
+
+    return jax.vmap(one)(
+        jnp.asarray(row_high), jnp.asarray(row_low), jnp.asarray(periods)
+    )[:, None]
+
+
 def _realise_group_paths(
     *,
     group_name: ShockGroupName,
@@ -613,28 +887,9 @@ def _realise_group_paths(
     key: PRNGKeyND,
     starts: np.ndarray,
     ages: TimeAxis,
-    entries: Mapping[ShockName, ShockOverride],
-    paths: Mapping[ShockName, ShockOverride],
 ) -> Mapping[ShockName, FloatND]:
-    """Realise one group's physical values for every subject row and period."""
+    """Realise fresh addressed paths; supplied records use the consumption bank."""
     n_subjects, n_periods = len(starts), ages.n_periods
-    supplied, active, kinds = {}, {}, {}
-    for name in group.shocks:
-        item = paths.get(name, entries.get(name))
-        if item is None:
-            continue
-        values, enabled = _dated_cells(
-            name=name,
-            item=item,
-            dated=name in paths,
-            starts=starts,
-            n_periods=n_periods,
-        )
-        supplied[name] = jnp.asarray(values, dtype=jnp.result_type(0.0))
-        active[name] = jnp.asarray(enabled)
-        kinds[name] = (
-            BaseInnovations if isinstance(item, BaseInnovations) else PhysicalValues
-        )
     keys = {
         name: _addressed_keys(
             key=key, name=name, n_subjects=n_subjects, n_periods=n_periods
@@ -642,16 +897,14 @@ def _realise_group_paths(
         for name in group.shocks
     }
 
-    physical, valid = _cell_program(
-        group_name=group_name, group=group, kinds=tuple(kinds.items())
-    )(
-        keys,
-        jnp.broadcast_to(
+    physical, valid = _cell_program(group_name=group_name, group=group, kinds=())(
+        cell_keys=keys,
+        periods=jnp.broadcast_to(
             jnp.arange(n_periods, dtype=jnp.int32), (n_subjects, n_periods)
         ),
-        jnp.broadcast_to(jnp.asarray(ages.values), (n_subjects, n_periods)),
-        supplied,
-        active,
+        ages=jnp.broadcast_to(jnp.asarray(ages.values), (n_subjects, n_periods)),
+        supplied={},
+        enabled={},
     )
     if not bool(jnp.all(valid)):
         raise InvalidSimulationInputError(
@@ -670,6 +923,7 @@ _CELL_PROGRAMS: dict[
         ShockGroupName,
         int,
         tuple[tuple[ShockName, type[BaseInnovations | PhysicalValues]], ...],
+        bool,
     ],
     tuple[ShockGroup, Callable[..., tuple[Mapping[ShockName, FloatND], BoolND]]],
 ] = {}
@@ -680,13 +934,14 @@ def _cell_program(
     group_name: ShockGroupName,
     group: ShockGroup,
     kinds: tuple[tuple[ShockName, type[BaseInnovations | PhysicalValues]], ...],
+    flattened: bool = False,
 ) -> Callable[..., tuple[Mapping[ShockName, FloatND], BoolND]]:
     """Return the compiled per-(subject, period) realisation of one shock group.
 
     Built once per group and override kinds, so a repeated simulate reuses the
     traced program instead of wrapping a fresh closure in `jax.jit`.
     """
-    cache_key = (group_name, id(group), kinds)
+    cache_key = (group_name, id(group), kinds, flattened)
     cached = _CELL_PROGRAMS.get(cache_key)
     if cached is not None and cached[0] is group:
         return cached[1]
@@ -725,7 +980,31 @@ def _cell_program(
         )
         return frame.physical, frame.valid
 
-    program = jax.jit(jax.vmap(jax.vmap(cell)))
+    mapped = jax.vmap(jax.vmap(cell))
+
+    @jax.jit
+    def program(
+        *,
+        cell_keys: Mapping[ShockName, PRNGKeyND],
+        periods: Int32[jax.Array | np.ndarray, "rows periods"],
+        ages: Float[jax.Array | np.ndarray, "rows periods"]
+        | Int32[jax.Array | np.ndarray, "rows periods"],
+        supplied: Mapping[ShockName, Float[jax.Array | np.ndarray, "rows periods"]],
+        enabled: Mapping[ShockName, Bool[jax.Array | np.ndarray, "rows periods"]],
+    ) -> tuple[Mapping[ShockName, FloatND], BoolND]:
+        physical, valid = mapped(
+            cell_keys,
+            jnp.asarray(periods),
+            jnp.asarray(ages),
+            {name: jnp.asarray(value) for name, value in supplied.items()},
+            {name: jnp.asarray(value) for name, value in enabled.items()},
+        )
+        if flattened:
+            return {name: value[:, 0] for name, value in physical.items()}, jnp.all(
+                valid
+            )
+        return physical, valid
+
     _CELL_PROGRAMS[cache_key] = (group, program)
     return program
 
@@ -747,42 +1026,6 @@ def _addressed_keys(
         )
 
     return jax.vmap(period_keys, out_axes=1)(jnp.arange(n_periods, dtype=jnp.uint32))
-
-
-def _dated_cells(
-    *,
-    name: ShockName,
-    item: ShockOverride,
-    dated: bool,
-    starts: np.ndarray,
-    n_periods: int,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Spread one tagged record over the subject-by-period cells it covers."""
-    values = np.asarray(item.values)
-    n_subjects = len(starts)
-    cells = np.zeros((n_subjects, n_periods), dtype=values.dtype)
-    enabled = np.zeros((n_subjects, n_periods), dtype=bool)
-    if not dated:
-        if values.shape != (n_subjects,):
-            raise InvalidSimulationInputError(
-                f"Current-IID entry {name!r} requires shape (subjects,) in original "
-                f"row order; got {values.shape}."
-            )
-        rows = np.arange(n_subjects)
-        cells[rows, starts] = values
-        enabled[rows, starts] = True
-        return cells, enabled
-    if values.ndim == 1 and values.size:
-        values = np.broadcast_to(values, (n_subjects, values.shape[0]))
-    if values.ndim != 2 or values.shape[0] != n_subjects or not values.shape[1]:  # noqa: PLR2004 - row-by-period path matrix
-        raise InvalidSimulationInputError(
-            f"Current-IID path {name!r} requires shape (periods,) or "
-            f"(subjects, periods) in original row order; got {values.shape}."
-        )
-    covered = min(values.shape[1], n_periods)
-    cells[:, :covered] = values[:, :covered]
-    enabled[:, :covered] = True
-    return cells, enabled
 
 
 def _broadcast(
