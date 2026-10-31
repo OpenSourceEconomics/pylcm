@@ -3388,6 +3388,9 @@ def _read_egm_policy_rows(
             resources=branch_resources,
             n_subjects=n_subjects,
         )
+        # Resources at or below the savings floor leave no positive action: the
+        # branch is dead, not an unsupported read that rejects the subject.
+        value = jnp.where(branch_resources > read.savings_lower_bound, value, -jnp.inf)
         values.append(value)
         policies.append(policy)
         resources.append(branch_resources)
