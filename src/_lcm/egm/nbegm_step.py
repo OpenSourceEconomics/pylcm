@@ -1886,6 +1886,11 @@ def _read_euler_and_node_bank(
     Euler links are folded against every query and each corner column only
     against its own (`merge_query_point_columns`), under the one-shot identities.
     Otherwise the whole bank is read at once.
+
+    Where those identities would pass the int32 maximum, each query's candidates
+    are named in a bank of the Euler points and one corner column instead: the
+    order at every query is unchanged, so are the channels, and only a published
+    owner is then local to its query.
     """
     n_euler = euler[0].shape[0]
     retain = euler_savings is not None
@@ -1915,6 +1920,16 @@ def _read_euler_and_node_bank(
                 if retain
                 else {}
             ),
+        )
+    if 2 * n_bank < jnp.iinfo(jnp.int32).max:
+        first_index = n_euler + 2 * node_cell
+    else:
+        # Column rows ascend in `node_cell` and a column meets its own query only.
+        n_rows = node_cell.shape[0]
+        n_bank = n_euler + 2 * n_rows
+        first_index = jnp.broadcast_to(
+            n_euler + 2 * jnp.arange(n_rows, dtype=jnp.int32)[:, None],
+            node_cell.shape,
         )
     empty = empty_envelope_winner(query=query, retain_savings=retain)
     if arithmetic == "ordinary":
@@ -1955,7 +1970,7 @@ def _read_euler_and_node_bank(
         value=node[2],
         marginal=node[3],
         segment_id=node_segment,
-        first_index=n_euler + 2 * node_cell,
+        first_index=first_index,
         first_self_index=n_bank - 1,
         query=query,
         arithmetic=arithmetic,
@@ -3543,6 +3558,14 @@ class _IntervalWinnerStep:
             layout=layout, indices=indices, n_extra=n_extra
         )
         total_candidates = layout.total_candidates(n_extra=n_extra)
+        if 2 * total_candidates >= jnp.iinfo(jnp.int32).max:
+            msg = (
+                f"The streamed interval bank of {total_candidates} candidates "
+                f"({self.liquid_grid.shape[0]} liquid by "
+                f"{self.savings_grid.shape[0]} savings points) has more link "
+                "identities than int32 can name."
+            )
+            raise ValueError(msg)
         stable_links = jnp.concatenate(
             [positions[:-1], (total_candidates - 1) + positions]
         )

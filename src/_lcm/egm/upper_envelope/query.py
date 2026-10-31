@@ -668,6 +668,12 @@ def _segment_links_from_candidates(
 
     n_link = 2 * n_candidate - 1
     if stable_index is None:
+        if n_link >= jnp.iinfo(jnp.int32).max:
+            msg = (
+                f"A bank of {n_candidate} candidates has {n_link} link identities, "
+                "more than int32 can name; read it in smaller banks."
+            )
+            raise ValueError(msg)
         link_stable_index = jnp.arange(n_link, dtype=jnp.int32)
     else:
         link_stable_index = jnp.asarray(stable_index, dtype=jnp.int32)
