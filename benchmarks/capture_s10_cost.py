@@ -5,8 +5,10 @@ fixtures (no production workload uses these producers yet):
 
 - `dc-aca`: the ACA-shaped DCEGM consumer of
   `tests/solution/test_current_iid_consumer_parity.py` (`shape="aca"`): a carried
-  health state, a work choice, a literal savings floor and a declared Gauss-Hermite
-  health-cost shock, with `alive` repeating until a terminal `done`.
+  health state, a work choice, a literal savings floor and a declared health-cost
+  shock, with `alive` repeating until a terminal `done`. The shock is uniform with
+  unit variance rather than the fixture's normal: simulated draws from a normal tail
+  push the cost of a poor, unhealthy subject past every action's savings floor.
 - `nnbegm`: the finite NNBEGM keeper/adjuster housing regime of
   `tests/egm/_nnbegm_toy.py`, whose resources read a declared current shock.
 
@@ -76,7 +78,7 @@ def _dc_aca(args: argparse.Namespace) -> _Built:
         fixed_transition,
         post_decision_lower_bound,
     )
-    from lcm.shocks import GaussHermite, Normal, Product, ShockGroup
+    from lcm.shocks import EqualSpacedUniform, Product, ShockGroup, Uniform
     from lcm.solvers import DCEGM
     from tests.solution.test_current_iid_consumer_parity import (
         _MARGIN,
@@ -93,9 +95,9 @@ def _dc_aca(args: argparse.Namespace) -> _Built:
         _working_resources,
     )
 
-    # `_aca_shaped_model(shape="aca")` with size knobs and `alive` repeating. The
-    # fixture's proportions: wealth from 1, savings from the floor to a little
-    # above the wealth grid, consumption up to the largest resources.
+    # `_aca_shaped_model(shape="aca")` with size knobs and `alive` repeating. Wealth
+    # and savings start at the floor, so every landing is on the wealth grid;
+    # consumption reaches the largest resources.
     top = args.wealth_top
     savings = IrregSpacedGrid(
         points=np.linspace(_SAVINGS_FLOOR, 1.2 * top, args.savings_points)
@@ -103,7 +105,9 @@ def _dc_aca(args: argparse.Namespace) -> _Built:
     health = DiscreteGrid(category_class=_Health)
     alive = ConsumptionSavingsRegime(
         states={
-            "wealth": LinSpacedGrid(start=1.0, stop=top, n_points=args.wealth_points),
+            "wealth": LinSpacedGrid(
+                start=_SAVINGS_FLOOR, stop=top, n_points=args.wealth_points
+            ),
             "good_health": health,
         },
         actions={
@@ -160,8 +164,10 @@ def _dc_aca(args: argparse.Namespace) -> _Built:
         fixed_params={"discount_factor": 0.95},
         shocks={
             "hcc": ShockGroup(
-                shocks={"hcc_transitory": Normal(mu=0.0, sigma=1.0)},
-                nodes=Product(hcc_transitory=GaussHermite(n=args.shock_nodes)),
+                shocks={
+                    "hcc_transitory": Uniform(start=-np.sqrt(3.0), stop=np.sqrt(3.0))
+                },
+                nodes=Product(hcc_transitory=EqualSpacedUniform(n=args.shock_nodes)),
             )
         },
     )
