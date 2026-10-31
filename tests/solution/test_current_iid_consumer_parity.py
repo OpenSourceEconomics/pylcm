@@ -11,6 +11,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import fields, replace
 from pathlib import Path
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -1740,3 +1741,44 @@ def test_finite_nnbegm_refuses_a_grid_search_parents_landing_off_its_grid() -> N
             wealth=jnp.ones((3,)),
             eps=None,
         )
+
+
+def test_realising_omitted_draws_again_traces_no_new_program(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A second simulate realises the omitted draws with the program it already has.
+
+    The realisation program must be built once per shock group, not wrapped in a
+    fresh `jax.jit` on every call, which retraced it each time.
+    """
+    params = {"alive": {"total_costs": {"cost_scale": 1.0}}}
+    model = _health_cost_model(solver="dcegm", declared=True)
+    solution = model.solve(params=params, log_level="off")
+    wealth = jnp.tile(jnp.arange(1.0, 6.0), 4)
+
+    def simulate() -> None:
+        model.simulate(
+            params=params,
+            solution=solution,
+            initial_conditions={
+                "wealth": wealth,
+                "period": jnp.zeros(wealth.shape, dtype=jnp.int32),
+                "regime_id": jnp.zeros(wealth.shape, dtype=jnp.int32),
+            },
+            seed=3,
+            log_level="off",
+        )
+
+    simulate()
+    jitted: list[str] = []
+    jit = jax.jit
+
+    def spy(function, *args, **kwargs):
+        jitted.append(getattr(function, "__name__", repr(function)))
+        return jit(function, *args, **kwargs)
+
+    monkeypatch.setattr(jax, "jit", spy)
+
+    simulate()
+
+    assert not any("cell" in name for name in jitted), jitted
