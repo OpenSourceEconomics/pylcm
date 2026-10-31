@@ -13,7 +13,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from functools import cached_property
 from types import MappingProxyType
-from typing import ClassVar, Literal, Self, TypedDict, Unpack, cast
+from typing import ClassVar, Literal, TypedDict, Unpack, cast
 
 from beartype import beartype
 
@@ -447,19 +447,6 @@ class Regime:
     Only collective regimes that also declare `value_constraints` may declare
     references.
     """
-
-    def __new__(
-        cls,
-        *args: object,  # noqa: ARG004, PAN001 - refuses removed keywords first
-        **kwargs: object,  # noqa: PAN001 - refuses removed keywords before any check
-    ) -> Self:
-        if "post_choice_shocks" in kwargs:
-            raise TypeError(
-                "Regime(post_choice_shocks=...) was removed. List the group in "
-                "`Regime(shocks=...)`: pylcm integrates out a group the regime "
-                "reads only as its draw `next_<shock>`."
-            )
-        return super().__new__(cls)
 
     def _make_field_immutable(self, *, name: str) -> None:
         """Replace the named mapping field with its immutable form."""

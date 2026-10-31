@@ -97,9 +97,8 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   state to carry the realization into the next period.
 - `repr(model)` lists, per regime, which shocks carry an axis and which are integrated
   out.
-- `Regime(post_choice_shocks=...)` and the `fold=` argument of IID processes are
-  removed; both raise `TypeError` naming the replacement. List the group in
-  `Regime(shocks=...)` and drop `fold=`; see
+- The `fold=` argument of IID processes is removed and raises `TypeError` naming the
+  replacement. Drop `fold=`; see
   [Shock timing is inferred](docs/user_guide/migrating_dated_regimes.md#shock-timing-is-inferred).
 
 ### Gates route on states only

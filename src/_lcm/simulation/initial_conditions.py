@@ -621,7 +621,7 @@ def canonicalize_initial_conditions(
             user-supplied arrays of any integer or floating dtype.
         regimes: Immutable mapping of regime names to internal regime
             instances, used to classify each state as discrete or continuous.
-        unread_names: Names removed as transition-only shocks in at least one
+        unread_names: Names removed as post-decision shocks in at least one
             regime. Drop their supplied columns only when no simulation regime
             retains the name as a state.
 

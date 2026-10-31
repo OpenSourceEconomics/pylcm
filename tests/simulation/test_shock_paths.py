@@ -215,8 +215,8 @@ def _cost_shock() -> ShockGroup:
     )
 
 
-def test_post_choice_shock_uses_given_destination_period_draw() -> None:
-    """A post-choice cost enters terminal wealth without becoming a stored state."""
+def test_post_decision_shock_uses_given_destination_period_draw() -> None:
+    """A post-decision cost enters terminal wealth without becoming a stored state."""
     model = Model(
         ages=AgeGrid(start=20, inclusive_stop=21, step="Y"),
         regime_id_class=RegimeId,
@@ -987,7 +987,7 @@ def test_phased_history_still_validates_simulated_periods(path: np.ndarray) -> N
 def test_phased_local_draw_is_dated_at_the_destination_period(
     *, budget: int | None
 ) -> None:
-    """A post-choice cost from period 0 reads history column 1."""
+    """A post-decision cost from period 0 reads history column 1."""
     wealth_grid = LinSpacedGrid(start=0.0, stop=8.0, n_points=9)
     model = Model(
         ages=AgeGrid(start=20, inclusive_stop=21, step="Y"),

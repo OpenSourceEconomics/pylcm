@@ -368,16 +368,7 @@ def test_fold_is_refused_with_the_inference_rule() -> None:
         )
 
 
-def test_post_choice_shocks_is_refused_with_the_inference_rule() -> None:
-    with pytest.raises(TypeError, match=r"(?s)post_choice_shocks.*removed.*shocks="):
-        Regime(
-            states={"wealth": WEALTH_GRID},
-            functions={"utility": _bequest},
-            post_choice_shocks=("cost_shock",),  # ty: ignore[unknown-argument]
-        )
-
-
-def test_a_draw_only_group_on_an_egm_regime_is_integrated_out() -> None:
+def test_a_post_decision_group_on_an_egm_regime_is_integrated_out() -> None:
     ages = AgeGrid(start=40, inclusive_stop=60, step="10Y")
     retirement = iskhakov.dcegm_retirement
     model = Model(

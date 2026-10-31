@@ -237,22 +237,10 @@ draws a subject receives, so keep each person in the same row across runs.
 
 ### Shock timing is inferred
 
-`Regime(post_choice_shocks=...)` and the `fold=` argument of IID processes are removed;
-both raise `TypeError`. Timing is read off the functions: reading `x` reads this
-period's realization, reading `next_x` reads the draw after the choice. A shock a regime
-reads only as `next_x` carries no axis there and is integrated in the continuation.
-
-A regime that declared `post_choice_shocks=("bill_shock",)` now lists the shock in
-`shocks=`:
-
-```python
-alive = Regime(
-    states={"wealth": wealth_grid},
-    state_transitions={"wealth": next_wealth},
-    functions={"utility": utility, "medical_bill": medical_bill},
-    shocks=("bill_shock",),
-)
-```
+The `fold=` argument of IID processes is removed and raises `TypeError`. Timing is read
+off the functions: reading `x` reads this period's realization, reading `next_x` reads
+the draw after the choice. A shock a regime reads only as `next_x` is a post-decision
+shock there: it carries no axis and is integrated in the continuation.
 
 For an IID process state, drop `fold=`. A state read only as `next_<state>`, which
 `fold=True` used to mark, is integrated out without it, and so is one formerly declared
