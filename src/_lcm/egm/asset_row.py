@@ -26,10 +26,7 @@ from _lcm.egm.carry import EGMCarry
 from _lcm.egm.continuation import (
     bind_continuation,
 )
-from _lcm.egm.interp import (
-    _interp_between_nodes,
-    interp_on_padded_grid,
-)
+from _lcm.egm.interp import _interp_between_nodes
 from _lcm.egm.preferences import BoundUtilityOfAction
 from _lcm.egm.query_data import EGMLiquidCornerData, EGMQueryData, QueryNodeKind
 from _lcm.egm.step_core import (
@@ -331,6 +328,36 @@ class _SolveOneComboAssetRows:
         )
 
 
+@dataclass(frozen=True, kw_only=True)
+class _ConstructedAssetNode:
+    """Keep one original candidate construction local to its query."""
+
+    pieces: _EgmKernelPieces
+    """Actual bound floor and candidate construction statics."""
+    utility_of_action: BoundUtilityOfAction
+    """Current utility with this physical frame and state bound."""
+    expected_values: FloatND
+    """Original savings-stage expectations, including the borrowing floor."""
+    candidate_dead: BoolND
+    """Original economic absence classification before envelope refinement."""
+    bracket: QueryBracket | OwnedQueryBracket
+    """Original configured envelope's selected query bracket."""
+    resources_at_node: ScalarFloat
+    """Actual current resources at the selected physical state."""
+    resources_gradient: ScalarFloat
+    """Current resources derivative holding the physical frame fixed."""
+    floor_direct: ScalarFloat
+    """Existing conditional source's direct floor continuation derivative."""
+    child_status: tuple[QueryInputStatus, ...] | None
+    """Mandatory child summaries from the original construction."""
+    read_counts: ContinuationReadCounts | None
+    """Original independently eligible continuation read events."""
+    discount_factor: ScalarFloat
+    """Original discount operand used by the borrowing-corner selector."""
+    first_endogenous_point: ScalarFloat
+    """Actual first Euler point governing the original constrained span."""
+
+
 @dataclass(frozen=True, kw_only=True, eq=False)
 class _SolveOneNode:
     """The single-post-state pipeline conditional on one exogenous asset node."""
@@ -370,100 +397,27 @@ class _SolveOneNode:
     ]
     """Expected continuation of `(state_value, savings_value)`, combo bound."""
 
+    economic_continuation: (
+        Callable[[ScalarFloat], BoundedResult[tuple[ScalarFloat, ScalarFloat]]] | None
+    ) = None
+    """Actual declared CE reader shared by candidate inversion and source envelope."""
+
     def __call__(
         self,
         node_value: ScalarFloat,
     ) -> _AssetNode | BoundedResult[_AssetNode] | BoundedResult[_OwnedAssetNode]:
-        pieces = bind_cell_floor(pieces=self.pieces, pool=self.combo_pool)
+        constructed = self.construct(node_value=node_value)
+        pieces = constructed.pieces
         discount_factor = self.discount_factor
-        node_pool = {**self.combo_pool, pieces.euler_state_name: node_value}
-        utility_of_action = BoundUtilityOfAction(
-            utility_func=pieces.utility_func,
-            action_name=pieces.action_name,
-            bound=node_pool,
-        )
-        compute_node = _get_compute_node(
-            pieces=pieces,
-            combo_pool=node_pool,
-            discount_factor=discount_factor,
-            utility_of_action=utility_of_action,
-            next_regime_to_continuation=self.next_regime_to_continuation,
-            dtype=self.dtype,
-            stochastic_node_width=self.stochastic_node_width,
-            resolved_process_grids=self.resolved_process_grids,
-        )
-        child_status = None
-        floor_direct = jnp.asarray(0.0, dtype=self.dtype)
-        if pieces.query_spec is not None:
-            candidates, floor_direct, child_status, read_counts = (
-                _asset_candidates_with_direct(
-                    node=self,
-                    pieces=pieces,
-                    node_value=node_value,
-                    utility_of_action=utility_of_action,
-                    compute_node=compute_node,
-                )
-            )
-        else:
-            candidates, child_status, read_counts = _asset_candidates_without_direct(
-                pieces=pieces,
-                compute_node=compute_node,
-                savings_point_width=self.savings_point_width,
-            )
-        actions, endog_grid, values, expected_values = candidates
-
-        resources_at_node, resources_gradient = jax.value_and_grad(
-            self.own_resources_of_state
-        )(node_value)
-
-        constrained_actions, constrained_values = _compute_constrained_candidates(
-            first_endogenous_point=endog_grid[0],
-            publish_resources=resources_at_node,
-            borrowing_limit=pieces.borrowing_limit,
-            n_constrained=pieces.n_constrained,
-            constrained_ratio=pieces.constrained_ratio,
-            utility_of_action=utility_of_action,
-            discounted_expected_value_at_limit=discount_factor * expected_values[0],
-        )
-
-        candidate_grid = jnp.concatenate(
-            [pieces.borrowing_limit + constrained_actions, endog_grid]
-        )
-        candidate_policy = jnp.concatenate([constrained_actions, actions])
-        candidate_value = jnp.concatenate([constrained_values, values])
-        # Exogenous source savings per candidate: the savings node for each
-        # Euler candidate (`endog_grid = savings_node + action`, so the
-        # implied `endog_grid - policy` equals it in exact arithmetic), the
-        # borrowing limit for the constrained candidates (their savings is
-        # pinned there). FUES compares these pristine sources exactly.
-        candidate_savings = jnp.concatenate(
-            [
-                jnp.full_like(constrained_actions, pieces.borrowing_limit),
-                pieces.savings_nodes,
-            ]
-        )
-        # Same `-inf` masking as the default per-combo computation: dead
-        # candidates become the envelope scan's absent form (NaN).
-        candidate_dead = jnp.isneginf(candidate_value)
-        candidate_marginal = _candidate_supgradient(
-            policy=candidate_policy,
-            dead=candidate_dead,
-            utility_of_action=utility_of_action,
-        )
-        # The node reads its refined envelope at one query
-        # (`resources_at_node`): every finder materializes the full refined
-        # envelope row and locates the bracketing pair, so the published
-        # `(V, policy)` is a full-envelope-then-interpolate. A sub-`n_pad`
-        # streamed finder is future work for all backends.
-        bracket = pieces.refine_to_bracket(
-            cell_width=self.envelope_cell_width,
-            endog_grid=jnp.where(candidate_dead, jnp.nan, candidate_grid),
-            policy=jnp.where(candidate_dead, jnp.nan, candidate_policy),
-            value=jnp.where(candidate_dead, jnp.nan, candidate_value),
-            marginal_utility=candidate_marginal,
-            savings=jnp.where(candidate_dead, jnp.nan, candidate_savings),
-            x_query=resources_at_node,
-        )
+        utility_of_action = constructed.utility_of_action
+        expected_values = constructed.expected_values
+        candidate_dead = constructed.candidate_dead
+        bracket = constructed.bracket
+        resources_at_node = constructed.resources_at_node
+        resources_gradient = constructed.resources_gradient
+        floor_direct = constructed.floor_direct
+        child_status = constructed.child_status
+        read_counts = constructed.read_counts
 
         if pieces.query_spec is not None:
             if type(bracket) is not OwnedQueryBracket:
@@ -568,6 +522,119 @@ class _SolveOneNode:
             installed=bool(pieces.continuation_plan.query_targets),
             status=child_status,
             read_counts=read_counts,
+        )
+
+    def construct(
+        self,
+        *,
+        node_value: ScalarFloat,
+    ) -> _ConstructedAssetNode:
+        """Construct the original candidates once before selecting output channels."""
+        pieces = bind_cell_floor(pieces=self.pieces, pool=self.combo_pool)
+        discount_factor = self.discount_factor
+        node_pool = {**self.combo_pool, pieces.euler_state_name: node_value}
+        utility_of_action = BoundUtilityOfAction(
+            utility_func=pieces.utility_func,
+            action_name=pieces.action_name,
+            bound=node_pool,
+        )
+        compute_node = _get_compute_node(
+            pieces=pieces,
+            combo_pool=node_pool,
+            discount_factor=discount_factor,
+            utility_of_action=utility_of_action,
+            next_regime_to_continuation=self.next_regime_to_continuation,
+            dtype=self.dtype,
+            stochastic_node_width=self.stochastic_node_width,
+            resolved_process_grids=self.resolved_process_grids,
+            economic_continuation=self.economic_continuation,
+        )
+        child_status = None
+        floor_direct = jnp.asarray(0.0, dtype=self.dtype)
+        if pieces.query_spec is not None:
+            candidates, floor_direct, child_status, read_counts = (
+                _asset_candidates_with_direct(
+                    node=self,
+                    pieces=pieces,
+                    node_value=node_value,
+                    utility_of_action=utility_of_action,
+                    compute_node=compute_node,
+                )
+            )
+        else:
+            candidates, child_status, read_counts = _asset_candidates_without_direct(
+                pieces=pieces,
+                compute_node=compute_node,
+                savings_point_width=self.savings_point_width,
+            )
+        actions, endog_grid, values, expected_values = candidates
+
+        resources_at_node, resources_gradient = jax.value_and_grad(
+            self.own_resources_of_state
+        )(node_value)
+
+        constrained_actions, constrained_values = _compute_constrained_candidates(
+            first_endogenous_point=endog_grid[0],
+            publish_resources=resources_at_node,
+            borrowing_limit=pieces.borrowing_limit,
+            n_constrained=pieces.n_constrained,
+            constrained_ratio=pieces.constrained_ratio,
+            utility_of_action=utility_of_action,
+            discounted_expected_value_at_limit=discount_factor * expected_values[0],
+        )
+
+        candidate_grid = jnp.concatenate(
+            [pieces.borrowing_limit + constrained_actions, endog_grid]
+        )
+        candidate_policy = jnp.concatenate([constrained_actions, actions])
+        candidate_value = jnp.concatenate([constrained_values, values])
+        # Exogenous source savings per candidate: the savings node for each
+        # Euler candidate (`endog_grid = savings_node + action`, so the
+        # implied `endog_grid - policy` equals it in exact arithmetic), the
+        # borrowing limit for the constrained candidates (their savings is
+        # pinned there). FUES compares these pristine sources exactly.
+        candidate_savings = jnp.concatenate(
+            [
+                jnp.full_like(constrained_actions, pieces.borrowing_limit),
+                pieces.savings_nodes,
+            ]
+        )
+        # Same `-inf` masking as the default per-combo computation: dead
+        # candidates become the envelope scan's absent form (NaN).
+        candidate_dead = jnp.isneginf(candidate_value)
+        candidate_marginal = _candidate_supgradient(
+            policy=candidate_policy,
+            dead=candidate_dead,
+            utility_of_action=utility_of_action,
+        )
+        # The node reads its refined envelope at one query
+        # (`resources_at_node`): every finder materializes the full refined
+        # envelope row and locates the bracketing pair, so the published
+        # `(V, policy)` is a full-envelope-then-interpolate. A sub-`n_pad`
+        # streamed finder is future work for all backends.
+        bracket = pieces.refine_to_bracket(
+            cell_width=self.envelope_cell_width,
+            endog_grid=jnp.where(candidate_dead, jnp.nan, candidate_grid),
+            policy=jnp.where(candidate_dead, jnp.nan, candidate_policy),
+            value=jnp.where(candidate_dead, jnp.nan, candidate_value),
+            marginal_utility=candidate_marginal,
+            savings=jnp.where(candidate_dead, jnp.nan, candidate_savings),
+            x_query=resources_at_node,
+        )
+
+        return _ConstructedAssetNode(
+            pieces=pieces,
+            utility_of_action=utility_of_action,
+            expected_values=expected_values,
+            candidate_dead=candidate_dead,
+            bracket=bracket,
+            resources_at_node=resources_at_node,
+            resources_gradient=resources_gradient,
+            floor_direct=floor_direct,
+            child_status=child_status,
+            read_counts=read_counts,
+            discount_factor=self.discount_factor,
+            first_endogenous_point=endog_grid[0],
         )
 
 
@@ -1077,94 +1144,6 @@ class _ExpectedContinuationValue:
         return result[0]
 
 
-def _publish_node_V_and_policy(
-    *,
-    refined_grid: Float1D,
-    refined_policy: Float1D,
-    refined_value: Float1D,
-    n_kept: ScalarInt,
-    n_pad: int,
-    resources_at_node: ScalarFloat,
-    borrowing_limit: ScalarFloat,
-    utility_of_action: Callable[[ScalarFloat], ScalarFloat],
-    discounted_expected_value_at_limit: ScalarFloat,
-) -> tuple[ScalarFloat, ScalarFloat]:
-    """Publish one asset node's value and optimal action at its single query.
-
-    The scalar-query counterpart of `_publish_V_and_carry_rows`: below the
-    lowest refined envelope point the closed-form constrained value is
-    published outright; everywhere else the Hermite read of the refined
-    envelope is floored at the constrained value, which remains a
-    feasible-policy lower bound. The published action follows the winning
-    branch — the closed-form action `R - borrowing_limit` where the
-    constrained value wins, the interpolated refined policy otherwise.
-    Envelope overflow NaN-poisons both outputs so the solve loop's NaN
-    diagnostics surface the offending (regime, period).
-
-    The production asset-row solve publishes via `_publish_V_and_carry_rows`,
-    which likewise materializes the full refined row and slices the bracket (no
-    streaming); this single-query form is the readable reference the row-path
-    equivalence tests (`test_egm_refine_to_query.py`) check that publisher
-    against.
-
-    Args:
-        refined_grid: Refined endogenous grid row from the envelope backend.
-        refined_policy: Refined policy row.
-        refined_value: Refined value row.
-        n_kept: Number of envelope points the backend kept.
-        n_pad: Static length of the refined rows.
-        resources_at_node: Resources at this exogenous Euler node (the row's
-            single publish query).
-        borrowing_limit: Lower bound of the savings grid.
-        utility_of_action: Utility with everything but the continuous action
-            bound.
-        discounted_expected_value_at_limit: Discounted expected continuation
-            value at the lowest savings node.
-
-    Returns:
-        Tuple of the node's published value and published optimal action.
-
-    """
-    dtype = resources_at_node.dtype
-    overflowed = n_kept > n_pad
-
-    marginal_utility = jax.vmap(jax.grad(utility_of_action))(
-        jnp.where(jnp.isnan(refined_policy), 1.0, refined_policy)
-    )
-    marginal_utility = jnp.where(jnp.isnan(refined_policy), jnp.nan, marginal_utility)
-    marginal_utility = jnp.where(jnp.isneginf(refined_value), 0.0, marginal_utility)
-
-    value_interpolated = interp_on_padded_grid(
-        x_query=resources_at_node,
-        xp=refined_grid,
-        fp=refined_value,
-        fp_slopes=marginal_utility,
-    )
-    policy_interpolated = interp_on_padded_grid(
-        x_query=resources_at_node,
-        xp=refined_grid,
-        fp=refined_policy,
-    )
-    closed_form_action = resources_at_node - borrowing_limit
-    value_constrained = jnp.where(
-        closed_form_action > 0.0,
-        utility_of_action(jnp.maximum(closed_form_action, jnp.finfo(dtype).tiny))
-        + discounted_expected_value_at_limit,
-        -jnp.inf,
-    )
-    below_refined = (closed_form_action > 0.0) & (resources_at_node <= refined_grid[0])
-    constrained_wins = below_refined | (value_constrained >= value_interpolated)
-    V_node = jnp.where(
-        below_refined,
-        value_constrained,
-        jnp.maximum(value_interpolated, value_constrained),
-    )
-    policy_node = jnp.where(constrained_wins, closed_form_action, policy_interpolated)
-    V_node = jnp.where(overflowed, jnp.nan, V_node).astype(dtype)
-    policy_node = jnp.where(overflowed, jnp.nan, policy_node).astype(dtype)
-    return V_node, policy_node
-
-
 def publish_node_from_bracket(
     *,
     bracket: QueryBracket,
@@ -1176,9 +1155,8 @@ def publish_node_from_bracket(
 ) -> tuple[ScalarFloat, ScalarFloat]:
     """Publish one asset node's value and optimal action from its query bracket.
 
-    The single-bracket counterpart of `_publish_node_V_and_policy`: it consumes
-    the two envelope nodes `refine_to_bracket` sliced around `resources_at_node`
-    from the full refined row. The published economics are identical:
+    Reads the two envelope nodes `refine_to_bracket` sliced around
+    `resources_at_node` from the full refined row:
 
     - The value is the cubic-Hermite read of the envelope between the two
       bracket nodes (the value slope at each node is `grad(utility_of_action)`
@@ -1188,6 +1166,11 @@ def publish_node_from_bracket(
       published outright; the winning branch sets the action (the closed-form
       `R - borrowing_limit` where constrained wins, the interpolated policy
       otherwise).
+    - Between the lowest envelope node and the first Euler point nothing needs
+      substituting: the node's constrained candidates span up to
+      `min(first Euler point, resources_at_node)`, so a binding query sits on
+      the top constrained candidate and the Hermite read returns its exact
+      closed-form value.
     - Envelope overflow (`n_kept > n_pad`) NaN-poisons both outputs, identical
       to the row path, so the solve loop's NaN diagnostics surface the offending
       (regime, period).

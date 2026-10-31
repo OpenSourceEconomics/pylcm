@@ -24,11 +24,13 @@ from _lcm.simulation.host_operations import (
     ProfiledSimulationOperations,
     StaticArgument,
 )
+from _lcm.simulation.operand_placement import place_simulation_arguments
 from _lcm.simulation.residency import (
     DeviceBufferFootprint,
     OwnerLedger,
     measure_buffer_footprint,
     require_transfer_headroom,
+    resident_bytes_by_device,
     union_buffer_footprints,
 )
 from _lcm.simulation.value_reads import PeriodSimulationReads
@@ -298,3 +300,55 @@ def run_simulation_operation[T: PytreeValue](
         static_arguments=static_arguments,
         subject_outputs=subject_outputs,
     )
+
+
+def run_simulation_producer[T: PytreeValue](
+    *,
+    memory: SimulationMemory | None,
+    function: Callable[..., T],
+    arguments: Mapping[ReferenceName, PytreeValue],
+    owner: ProfiledSimulationOperations | None = None,
+) -> T:
+    """Admit a model-owned producer with explicit dynamic operands and owners.
+
+    `owner` caches the executable, by default `memory.producers`; a producer that
+    chunk admission profiles passes the runtime's operations, which hold it.
+    """
+    if memory is None:
+        return function(**arguments)
+    placed = place_simulation_arguments(
+        arguments=arguments,
+        # Validation cohorts may have any size, including fewer rows than devices.
+        # Replicate them like the preflight gather, whose output is unpadded.
+        subject_arg_names=(),
+        value_reads=(),
+        devices=memory.subject_devices,
+        budget_bytes=memory.budget_bytes,
+        live_footprint=memory.snapshot(),
+        budget_devices=memory.devices,
+    )
+    argument_buffers = measure_buffer_footprint(tree=placed)
+    live = memory.snapshot(additional=(arguments, placed))
+    external = resident_bytes_by_device(
+        live=live, arguments=argument_buffers, devices=memory.subject_devices
+    )
+    executable = (memory.producers if owner is None else owner).admit_producer(
+        function=function,
+        arguments=jax.tree.map(
+            lambda value: jax.ShapeDtypeStruct(
+                value.shape,
+                value.dtype,
+                sharding=value.sharding,
+                weak_type=getattr(value, "weak_type", False),
+            ),
+            dict(placed),
+        ),
+        devices=memory.subject_devices,
+        output_sharding=None,
+        budget_bytes=memory.budget_bytes,
+        resident_bytes=max(external.values()),
+    )
+    result = executable(**placed)
+    jax.block_until_ready(result)
+    memory.hold(tree=result)
+    return cast("T", result)

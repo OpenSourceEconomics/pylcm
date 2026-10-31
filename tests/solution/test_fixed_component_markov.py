@@ -19,6 +19,7 @@ import pytest
 
 from _lcm.regime_building.fixed_components import _restricted_law
 from _lcm.regime_building.next_state import _DiscreteStochasticNextState
+from _lcm.simulation.transitions import transition_random_addresses
 from lcm import (
     AgeGrid,
     DeterministicTransition,
@@ -119,12 +120,21 @@ def _constant_code_probabilities() -> FloatND:
     return jnp.full(4, 0.25)
 
 
-def _next_health(*, kind: DiscreteState, health: DiscreteState) -> FloatND:
-    return _HEALTH_LAW[kind, health]
+def _next_health(*, kind: DiscreteState, kind_health: DiscreteState) -> FloatND:
+    return _HEALTH_LAW[kind, kind_health]
 
 
-def _kind_health(*, kind: DiscreteState, health: DiscreteState) -> DiscreteState:
-    return 2 * kind + health
+def _original_code(*, kind: DiscreteState, kind_health: DiscreteState) -> DiscreteState:
+    return 2 * kind + kind_health
+
+
+def _split_utility(
+    *,
+    consumption: ContinuousAction,
+    wealth: ContinuousState,
+    original_code: DiscreteState,
+) -> FloatND:
+    return _utility(consumption=consumption, wealth=wealth, kind_health=original_code)
 
 
 def _feasible(*, consumption: ContinuousAction, wealth: ContinuousState) -> BoolND:
@@ -171,11 +181,12 @@ def _model(
         if law_dependency == "chain":
             functions["nested_code_view"] = _nested_code_view
     else:
-        states = {"health": DiscreteGrid(_Health)}
-        laws = {"health": StochasticTransition(func=_next_health)}
+        # Couple the hand split through the same authored state innovation.
+        states = {"kind_health": DiscreteGrid(_Health)}
+        laws = {"kind_health": StochasticTransition(func=_next_health)}
         model_states = {"kind": DiscreteGrid(_Kind)}
         model_laws = {"kind": fixed_transition("kind")}
-        functions = {"kind_health": _kind_health}
+        functions = {"utility": _split_utility, "original_code": _original_code}
     return Model(
         regimes={
             "alive": Regime(
@@ -199,9 +210,11 @@ def _model(
         states=model_states,
         state_transitions=model_laws,
         execution_config=ExecutionConfig(
+            # Eager execution cannot infer compiler-derived memory admission.
+            device_memory_bytes="device" if enable_jit else None,
             sharded_states=(("kind_health_fixed" if factored else "kind"),)
             if sharded
-            else ()
+            else (),
         ),
         initial_nodes={0: ("alive", "dead")},
         edges={
@@ -282,12 +295,14 @@ def _initial(*, factored: bool, as_frame: bool) -> UserInitialConditions | pd.Da
             if factored
             else {
                 "kind": np.array(["k0", "k1"])[code // 2],
-                "health": np.array(["h0", "h1"])[code % 2],
+                "kind_health": np.array(["h0", "h1"])[code % 2],
             }
         )
         return pd.DataFrame(common | parts | {"regime_name": ["alive"] * 8})
     parts = (
-        {"kind_health": code} if factored else {"kind": code // 2, "health": code % 2}
+        {"kind_health": code}
+        if factored
+        else {"kind": code // 2, "kind_health": code % 2}
     )
     return {
         name: jnp.asarray(value)
@@ -446,7 +461,7 @@ def test_fixed_component_initial_labels_are_scoped_to_the_initial_regime(
     pd.testing.assert_frame_equal(frame, original)
     reference_frame = frame.drop(columns="kind_health").assign(
         kind=frame["regime_name"].map({"alive": "k0"}),
-        health=frame["regime_name"].map({"alive": "h1"}),
+        kind_health=frame["regime_name"].map({"alive": "h1"}),
     )
     reference = (
         _model(factored=False)
@@ -1272,3 +1287,25 @@ def test_fixed_component_valid_law_matches_the_unannotated_law_under_validation(
         np.asarray(factored.values[0]["alive"]).reshape(4, 5),
         np.asarray(unannotated.values[0]["alive"]),
     )
+
+
+@pytest.mark.parametrize("law_dependency", ["direct", "helper", "chain"])
+def test_hand_split_and_fixed_component_share_the_authored_innovation(
+    *,
+    law_dependency: Literal["direct", "helper", "chain"],
+) -> None:
+    """Storage factorization and helper paths retain the authored state stream."""
+    for factored in (True, False):
+        model = _model(
+            factored=factored, law_dependency=law_dependency, enable_jit=False
+        )
+        regime = model._regimes["alive"]
+        names = tuple(
+            f"alive__{transition}"
+            for transition in regime.simulation.transition_plans["alive"].lotteries
+        )
+        addresses = transition_random_addresses(
+            regime=regime, regimes=model._regimes, names=names
+        )
+        assert {address.kind for address in addresses.values()} == {"state"}
+        assert {address.name for address in addresses.values()} == {"kind_health"}

@@ -86,6 +86,7 @@ def published_continuation_template(
     *,
     continuation_specs: Mapping[RegimeName, ContinuationSpec],
     target: RegimeName,
+    period: int | None = None,
 ) -> ContinuationReader | None:
     """Return the payload `target` publishes, when it names its own leaves.
 
@@ -95,9 +96,14 @@ def published_continuation_template(
     assuming a shape.
     """
     spec = continuation_specs.get(target)
-    if spec is None or not isinstance(spec.template, ContinuationReader):
+    if spec is None:
         return None
-    return spec.template
+    if period is None and spec.templates_by_period:
+        raise ValueError(
+            f"A continuation read of {target!r} must name its producer period."
+        )
+    template = spec.template if period is None else spec.template_at(period=period)
+    return template if isinstance(template, ContinuationReader) else None
 
 
 def published_continuation_templates(

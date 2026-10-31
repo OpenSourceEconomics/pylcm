@@ -41,6 +41,7 @@ from jax._src.dtypes import ExtendedDType
 from jax._src.lib import xla_client
 from jaxtyping import Float, Int, Scalar
 
+from _lcm.continuation import ContinuationSpec
 from _lcm.engine import (
     Regime,
     StateActionSpace,
@@ -55,6 +56,7 @@ from _lcm.execution.core_program import (
     CoreExecutionDisposition,
     CoreExecutionRequirements,
     CoreProgram,
+    InternalDispatch,
     InvariantBinding,
     MaterializedCoreProgram,
     ProgramScope,
@@ -83,6 +85,7 @@ from _lcm.execution.execution_plan import (
 )
 from _lcm.execution.footprint import (
     ArtifactFootprint,
+    ResidentBreakdown,
     ResidentInventory,
     ScheduledUnit,
     concrete_device_bytes,
@@ -148,6 +151,7 @@ from _lcm.execution.value_transfer import (
 from _lcm.execution.workspace_planning import (
     BoundedWidthSelector,
     CompilerMemoryReservation,
+    WorkspaceBudgetError,
     WorkspacePlan,
     compiler_memory_reservation,
     plan_workspace,
@@ -159,6 +163,7 @@ from _lcm.params.edges import (
     is_gated_cell_slot,
     regime_kernel_params,
 )
+from _lcm.participation_continuation import participation_surface_leaves
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.gated_edges import (
     EDGE_PERIOD_CONTEXT_ARGS,
@@ -167,7 +172,6 @@ from _lcm.regime_building.gated_edges import (
     build_reference_params_mapping_for_fold,
     build_same_period_mapping_for_fold,
     edge_may_fold_at_period,
-    gate_reads_dissolution_flag,
     source_reads_folded_wbar,
 )
 from _lcm.regime_building.Q_and_F import (
@@ -255,6 +259,7 @@ from _lcm.typing import (
     FlatParams,
     FootprintTree,
     HostArray,
+    LandingCheck,
     ParamsLeaf,
     PRNGKeyND,
     PytreeByPeriod,
@@ -283,6 +288,7 @@ from lcm.exceptions import (
     ExecutionPlanningError,
     InvalidValueFunctionError,
     ModelInitializationError,
+    ShockDeclarationError,
 )
 from lcm.execution import WidthSearch
 from lcm.solver_api import (
@@ -304,9 +310,6 @@ from lcm.typing import (
 )
 
 
-# Stands in for a period's flag mapping when the model retains no dissolution
-# flags, so every period key is present with nothing behind it. One shared
-# instance: it is immutable and carries no arrays.
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class _GatherCheck:
     """One executable's fusion verdict, small enough to keep as long as its model."""
@@ -356,7 +359,6 @@ type _DispatchOutputs = tuple[
     Mapping[ArtifactKey, ArtifactPayload],
     Mapping[ArtifactKey, ArtifactPayload],
     SimulationPolicy | None,
-    BoolND | None,
     FeasibilityCounts | None,
     tuple[FloatND | IntND | BoolND | None, ...],
 ]
@@ -399,12 +401,10 @@ class ExecutableCache:
     """Compiler memory reservation of every lowering key admitted under a budget."""
 
 
-_NO_DISSOLUTION_FLAGS: MappingProxyType[RegimeName, BoolND] = MappingProxyType({})
-
-
 def solve(  # noqa: C901, PLR0912, PLR0915
     *,
     flat_params: FlatParams,
+    solve_parameter_views: Mapping[RegimeName, FlatParams] = MappingProxyType({}),
     ages: TimeAxis,
     regimes: MappingProxyType[RegimeName, Regime],
     program_fingerprint: str,
@@ -413,7 +413,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     execution: ResolvedExecution | None = None,
     collect_solver_diagnostics: bool = False,
     max_compilation_workers: int | None = None,
-    retain_dissolution_flags: bool = True,
     retain_replay: bool = True,
     retain_all_artifacts: bool = False,
     persistable_artifact_refs: frozenset[ArtifactRef] = frozenset(),
@@ -450,10 +449,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             retained. Internal callers may disable collection.
         max_compilation_workers: Maximum number of threads for parallel XLA compilation.
             Defaults to `os.cpu_count()`.
-        retain_dissolution_flags: Whether a caller wants the per-period
-            dissolution flags on the result for their own sake. A model whose
-            gates read `D_target` retains them regardless — the flags are a
-            simulate-side input there, not an inspection artifact.
         retain_replay: Whether replay artifacts are retained. Selects, per
             period kernel, the scoped programs that are dispatched (a kernel may
             publish a values-only and a replay variant of one body) and whether
@@ -463,10 +458,10 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             boundary instead of retaining one device-sized artifact per period.
         retain_all_artifacts: Whether independently persistable continuation and
             auxiliary outputs may be retained.
-        persistable_artifact_refs: Exact model-authoritative artifact addresses
-            selected by ``ALL_PERSISTABLE_ARTIFACTS``. Only these addresses are
-            dispatched and copied for that mode; ordinary replay retention keeps
-            its separate in-memory behavior, including ``NOT_PERSISTED`` routes.
+        persistable_artifact_refs: Exact model-authoritative durable addresses
+            selected by retention and actual forward continuation demands. Only
+            these addresses are dispatched and copied; ordinary replay retention
+            keeps its separate in-memory ``NOT_PERSISTED`` routes.
         retained_input_arrays: Caller's already materialized inputs kept alive
             beside this solve, including automatic simulation's original and
             normalized initial conditions. These enter fixed residency by actual
@@ -489,11 +484,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         regime's published simulation policy (the off-grid policy artifact
         simulation can interpolate; regimes whose kernels publish none, or whose
         simulation route does not read one, have no entry, and the whole
-        mapping is empty when `retain_replay` is false), and the immutable mapping of
-        periods to each COLLECTIVE regime's dissolution flag `D` — `True` on the
-        state cells whose action mask is empty, distinct from a numeric `-inf`
-        value; empty inner mappings for models without collective regimes, so
-        the default path only gains an empty dissolution mapping.
+        mapping is empty when `retain_replay` is false).
 
     """
     resolved_execution = (
@@ -537,41 +528,66 @@ def solve(  # noqa: C901, PLR0912, PLR0915
 
     # Resolve every solve program, then compile unique lowerings when enabled.
     diagnostics_enabled = validation_enabled(logger)
-    compiled_programs = _compile_all_functions(
-        regimes=regimes,
-        program_fingerprint=program_fingerprint,
-        flat_params=flat_params,
-        ages=ages,
-        next_regime_to_V_arr=V_templates,
-        next_regime_to_continuation=next_regime_to_continuation,
-        next_edge_to_V_arr=edge_templates,
-        enable_jit=enable_jit,
-        execution=resolved_execution,
-        capture_periods=()
-        if period_capture is None
-        else period_capture.request.periods,
-        retain_replay=retain_replay,
-        retain_all_artifacts=retain_all_artifacts,
-        persistable_artifact_refs=persistable_artifact_refs,
-        max_compilation_workers=max_compilation_workers,
-        logger=logger,
-        fixed_input_arrays=(
-            retained_input_arrays,
-            tuple(
-                (space.states, space.discrete_actions, space.continuous_actions)
-                for space in base_state_action_spaces.values()
-            ),
-        ),
-        process_grid_resolver=process_grid_resolver,
-        call_id=call_id,
-        gather_checks={} if gather_checks is None else gather_checks,
-        executable_cache=ExecutableCache()
-        if executable_cache is None
-        else executable_cache,
-        structural_blueprints=structural_blueprints,
-        base_state_action_spaces=base_state_action_spaces,
-        collect_continuation_read_counts=diagnostics_enabled,
-    )
+    narrowings = 0
+    # A narrowing retry reuses every executable an earlier attempt compiled.
+    if executable_cache is None:
+        executable_cache = ExecutableCache()
+    while True:
+        try:
+            compiled_programs = _compile_all_functions(
+                regimes=regimes,
+                program_fingerprint=program_fingerprint,
+                flat_params=flat_params,
+                solve_parameter_views=solve_parameter_views,
+                ages=ages,
+                next_regime_to_V_arr=V_templates,
+                next_regime_to_continuation=next_regime_to_continuation,
+                next_edge_to_V_arr=edge_templates,
+                enable_jit=enable_jit,
+                execution=resolved_execution,
+                capture_periods=()
+                if period_capture is None
+                else period_capture.request.periods,
+                retain_replay=retain_replay,
+                persistable_artifact_refs=persistable_artifact_refs,
+                max_compilation_workers=max_compilation_workers,
+                logger=logger,
+                fixed_input_arrays=(
+                    retained_input_arrays,
+                    tuple(
+                        (space.states, space.discrete_actions, space.continuous_actions)
+                        for space in base_state_action_spaces.values()
+                    ),
+                ),
+                process_grid_resolver=process_grid_resolver,
+                call_id=call_id,
+                gather_checks={} if gather_checks is None else gather_checks,
+                executable_cache=executable_cache,
+                structural_blueprints=structural_blueprints,
+                base_state_action_spaces=base_state_action_spaces,
+                collect_continuation_read_counts=diagnostics_enabled,
+            )
+            break
+        except _CellBudgetRefusalsError as refusals:
+            # One kernel serves every core of its cell, so a cell is narrowed once
+            # per planning pass however many of its cores were refused. Narrowing
+            # one cell can move another's resident position, so the loop re-plans
+            # until a pass is free of refusals.
+            first_by_cell: dict[tuple[RegimeName, int], _CellBudgetError] = {}
+            for error in refusals.errors:
+                first_by_cell.setdefault(error.triple[:2], error)
+            for error in first_by_cell.values():
+                narrowings += 1
+                regime_name, period, core_key = error.triple
+                logger.info(
+                    "Workspace narrowing %d: %r at %r period %d refused; %s",
+                    narrowings,
+                    core_key,
+                    regime_name,
+                    period,
+                    error,
+                )
+                regimes = _narrow_native_closure(regimes=regimes, error=error)
     compiled_functions = compiled_programs.executables
     replay_dispatches = {
         (regime_name, period)
@@ -588,6 +604,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         next_regime_to_V_arr=V_templates,
         next_regime_to_continuation=next_regime_to_continuation,
         next_edge_to_V_arr=edge_templates,
+        continuation_templates_by_period=_dated_continuation_templates(regimes=regimes),
     )
     # The rolling V and gated-edge mappings hold only values the solve has
     # computed; before the last period there are none.
@@ -610,8 +627,15 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 for regime in regimes.values()
                 if regime.solution.period_state_axes is not None
             ),
+            tuple(
+                (plan.node_operands, plan.indices)
+                for regime in regimes.values()
+                for plan in regime.solution.current_iid_plans.values()
+                if plan is not None
+            ),
             input_templates.next_regime_to_V_arr,
             input_templates.next_regime_to_continuation,
+            input_templates.continuation_templates_by_period,
             input_templates.next_edge_to_V_arr,
         )
     )
@@ -628,25 +652,13 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     generated_replay_authorities: dict[
         int, MappingProxyType[RegimeName, GeneratedReplayAuthority]
     ] = {}
-    dissolution_flags: dict[int, MappingProxyType[RegimeName, BoolND]] = {}
     solver_diagnostics: dict[int, MappingProxyType[RegimeName, SolverDiagnostics]] = {}
     retained_continuations: dict[ArtifactRef, ArtifactPayload] = {}
     replay_artifacts: dict[ArtifactRef, ArtifactPayload] = {}
     auxiliary_artifacts: dict[ArtifactRef, ArtifactPayload] = {}
-
-    # Every collective kernel publishes `D`, but only two things read the
-    # ACCUMULATED per-period mapping: forward simulation, for a gate that
-    # declares the `D_target` operand, and a caller that asked for the flags.
-    # A gate's own signature settles the first, so the answer is known before
-    # the first kernel runs; where it is `False` and nobody asked, each period's
-    # flags go out of scope with the period that produced them instead of
-    # staying live for the whole induction. The per-period flags themselves are
-    # built either way — the edge fold below reads them while they are current.
-    publish_dissolution_flags = retain_dissolution_flags or any(
-        gate_reads_dissolution_flag(edge=edge)
-        for regime in regimes.values()
-        for edge in regime.gated_edges.values()
-    )
+    participation_surfaces: dict[
+        int, MappingProxyType[RegimeName, MappingProxyType[str, FloatND]]
+    ] = {}
 
     # Async diagnostics accumulators: per-period NaN/Inf flags (and the
     # debug min/max/mean trio) live here as device-side scalars during
@@ -737,7 +749,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 period_generated_replay_authorities: dict[
                     RegimeName, GeneratedReplayAuthority
                 ] = {}
-                period_dissolution_flags: dict[RegimeName, BoolND] = {}
                 period_solver_diagnostics: dict[RegimeName, SolverDiagnostics] = {}
                 period_retained_continuations: dict[
                     tuple[RegimeName, ArtifactKey], ArtifactPayload
@@ -866,7 +877,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                             templates=input_templates,
                             registry=buffer_registry,
                         )
-                        output, blocked = _run_dispatch_unit(
+                        output, _blocked = _run_dispatch_unit(
                             value_template=input_templates.next_regime_to_V_arr[
                                 regime_name
                             ],
@@ -892,7 +903,9 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                                 state_action_space=base_state_action_spaces[
                                     regime_name
                                 ],
-                                flat_params=flat_params,
+                                flat_params=solve_parameter_views.get(
+                                    regime_name, flat_params
+                                ),
                                 ages=ages,
                                 next_regime_to_V_arr=next_regime_to_V_arr,
                                 next_regime_to_continuation=next_regime_to_continuation,
@@ -906,6 +919,15 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                                 selected_artifact_keys=selected_artifact_keys,
                             ),
                         )
+                        if (
+                            type(output) is FeasibilityKernelOutput
+                            and output.current_iid_invalid is not None
+                            and bool(output.current_iid_invalid)
+                        ):
+                            raise ShockDeclarationError(
+                                "Current-IID law is invalid or unresolved "
+                                f"in {regime_name!r}, period {period}."
+                            )
                         runtime_bounds = tuple(
                             bound
                             for bound in regime.solution.post_decision_bounds
@@ -951,6 +973,11 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                             continuation_key=(
                                 None
                                 if continuation_spec is None
+                                or (
+                                    continuation_spec.templates_by_period
+                                    and period
+                                    not in continuation_spec.templates_by_period
+                                )
                                 else continuation_spec.artifact_key
                             ),
                             regime_name=regime_name,
@@ -967,35 +994,33 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                         V_arr = _publish_kernel_value(
                             value=V_arr,
                             compiled_cores=compiled_functions[(regime_name, period)],
-                            assembled_template=(
-                                input_templates.next_regime_to_V_arr[regime_name]
-                                if blocked
-                                else None
-                            ),
+                            assembled_template=input_templates.next_regime_to_V_arr[
+                                regime_name
+                            ],
                         )
                         _fail_if_continuation_publisher_returned_none(
                             result=result,
                             regime_name=regime_name,
                             period=period,
                             continuation_publishers=next_regime_to_continuation,
+                            continuation_spec=continuation_spec,
                         )
                         if result.continuation is not None:
                             period_continuations[regime_name] = result.continuation
-                        if retain_all_artifacts:
-                            period_retained_continuations.update(
-                                {
-                                    (regime_name, key): payload
-                                    for key, payload in (
-                                        result.continuation_artifacts.items()
-                                    )
-                                    if ArtifactRef(
-                                        period=period,
-                                        regime=regime_name,
-                                        key=key,
-                                    )
-                                    in persistable_artifact_refs
-                                }
-                            )
+                        period_retained_continuations.update(
+                            {
+                                (regime_name, key): payload
+                                for key, payload in (
+                                    result.continuation_artifacts.items()
+                                )
+                                if ArtifactRef(
+                                    period=period,
+                                    regime=regime_name,
+                                    key=key,
+                                )
+                                in persistable_artifact_refs
+                            }
+                        )
                         # A policy is kept only where the regime's declared
                         # simulation route reads it; replay authority travels
                         # with its policy.
@@ -1041,11 +1066,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                                     in persistable_artifact_refs
                                 }
                             )
-                        # A collective regime publishes its
-                        # empty-mask dissolution flag D alongside V; singleton regimes
-                        # leave it None and never touch this mapping.
-                        if result.dissolution is not None:
-                            period_dissolution_flags[regime_name] = result.dissolution
                         if (
                             collect_solver_diagnostics
                             and diagnostics_enabled
@@ -1082,7 +1102,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                             result.replay_artifacts,
                             result.auxiliary_artifacts,
                             result.simulation_policy,
-                            result.dissolution,
                             result.feasibility_counts,
                             _diagnostic_arrays(
                                 diagnostics=()
@@ -1114,7 +1133,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                         )
                         # The result keeps these payloads, and what would make them
                         # independent runs only once the period is finished — after the
-                        # releases below, and for the dissolution flags not at all. Two
+                        # releases below. Two
                         # channels carrying one array is enough for a release
                         # addressed at one of them to reach the other, so every
                         # retained channel is declared before this period's first
@@ -1125,7 +1144,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                                 period_replay_artifacts,
                                 period_auxiliary_artifacts,
                                 period_simulation_policies,
-                                period_dissolution_flags,
                                 result.feasibility_counts,
                                 result.continuation_read_counts,
                                 _diagnostic_arrays(
@@ -1218,16 +1236,15 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 # Fold each declared gated edge whose target
                 # was solved this period onto the target grid, and roll the resulting
                 # Wbar into the edge continuation the source reads next period. Reads
-                # only the still-live period-t arrays (`period_solution`,
-                # `period_dissolution_flags`). The node fold is streamed to cap peak
-                # memory; parents then read Wbar in place of the raw target V via the
-                # existing next_regime_to_V_arr threading.
+                # only the still-live period-t arrays (`period_solution`). The node
+                # fold is streamed to cap peak memory; parents then read Wbar in
+                # place of the raw target V via the existing next_regime_to_V_arr
+                # threading.
                 folded_edge_to_V_arr = _roll_gated_edges(
                     regimes=regimes,
                     ages=ages,
                     period=period,
                     period_solution=period_solution,
-                    period_dissolution_flags=period_dissolution_flags,
                     base_state_action_spaces=base_state_action_spaces,
                     flat_params=flat_params,
                     edge_templates=input_templates.next_edge_to_V_arr,
@@ -1241,7 +1258,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                     inputs=(
                         next_edge_to_V_arr,
                         period_solution,
-                        period_dissolution_flags,
                     ),
                     outputs=folded_edge_to_V_arr,
                 )
@@ -1284,6 +1300,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 next_regime_to_V_arr, next_regime_to_continuation = (
                     _roll_continuation_inputs(
                         regimes=regimes,
+                        period=period,
                         period_solution=period_solution,
                         period_continuations=period_continuations,
                         V_templates=input_templates.next_regime_to_V_arr,
@@ -1295,18 +1312,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 # root-derived domain, as persisted archives do.
                 if period_solution:
                     solution[period] = MappingProxyType(period_solution)
-                    # Publish each collective regime's dissolution flag D alongside
-                    # V, where a reader exists. Kept as a plain per-period mapping
-                    # (not rolled like `next_regime_to_V_arr`): nothing consumes a
-                    # NEXT-period D — a gated edge's gate reads the still-live
-                    # per-period flags at each period's end, before the roll
-                    # (above). The period keys match `solution`'s either way; only
-                    # the arrays behind them differ.
-                    dissolution_flags[period] = (
-                        MappingProxyType(period_dissolution_flags)
-                        if publish_dissolution_flags
-                        else _NO_DISSOLUTION_FLAGS
-                    )
                 if period_solution and (retain_replay or period_simulation_policies):
                     assert host_device is not None  # noqa: S101
                     simulation_policies[period] = MappingProxyType(
@@ -1336,7 +1341,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                             )
                         }
                     )
-                if retain_all_artifacts:
+                if period_retained_continuations:
                     assert host_device is not None  # noqa: S101
                     for (
                         regime_name,
@@ -1345,6 +1350,32 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                         retained_continuations[
                             ArtifactRef(period=period, regime=regime_name, key=key)
                         ] = jax.block_until_ready(jax.device_put(payload, host_device))
+                period_participation_surfaces = {
+                    regime_name: surfaces
+                    for regime_name, payload in period_continuations.items()
+                    if (surfaces := participation_surface_leaves(payload))
+                }
+                if period_participation_surfaces:
+                    # Replay prices participation checks with the solve's own plans, so
+                    # it reads these surfaces under every retention, like values.
+                    participation_host = jax.devices("cpu")[0]
+                    participation_surfaces[period] = MappingProxyType(
+                        {
+                            regime_name: MappingProxyType(
+                                {
+                                    name: jax.block_until_ready(
+                                        jax.device_put(surface, participation_host)
+                                    )
+                                    for name, surface in surfaces.items()
+                                }
+                            )
+                            for regime_name, surfaces in (
+                                period_participation_surfaces.items()
+                            )
+                        }
+                    )
+                if retain_all_artifacts:
+                    assert host_device is not None  # noqa: S101
                     for (
                         regime_name,
                         key,
@@ -1393,7 +1424,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 except InvalidValueFunctionError as error:
                     raise_or_warn(logger=logger, error=error)
 
-            _drain_V_arr_shards(solution=solution, dissolution_flags=dissolution_flags)
+            _drain_V_arr_shards(solution=solution)
             input_liveness.assert_solve_complete()
 
         finally:
@@ -1408,11 +1439,11 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         value_functions=MappingProxyType(solution),
         simulation_policies=MappingProxyType(simulation_policies),
         generated_replay_authorities=MappingProxyType(generated_replay_authorities),
-        dissolution_flags=MappingProxyType(dissolution_flags),
         diagnostics=MappingProxyType(solver_diagnostics),
         retained_continuations=ArtifactStore(retained_continuations),
         replay_artifacts=ArtifactStore(replay_artifacts),
         auxiliary_artifacts=ArtifactStore(auxiliary_artifacts),
+        participation_surfaces=MappingProxyType(participation_surfaces),
     )
 
 
@@ -1649,9 +1680,9 @@ def _run_period_kernel(
 def _accumulate_landing_totals(
     *,
     landing_totals: IntND | None,
-    landing_checks: tuple[tuple[str, str], ...],
+    landing_checks: tuple[LandingCheck, ...],
     output: FeasibilityKernelOutput,
-) -> tuple[IntND, tuple[tuple[str, str], ...]]:
+) -> tuple[IntND, tuple[LandingCheck, ...]]:
     """Retain the first landing bank, then add identically qualified blocks."""
     if landing_totals is None:
         landing_totals = cast("IntND", output.landing_totals)
@@ -1762,7 +1793,7 @@ def _run_dispatch_unit(
     query_status_initialized = False
     n_query_slots = len((regime.solution.query_input_authorities or {}).get(period, ()))
     landing_totals: IntND | None = None
-    landing_checks: tuple[tuple[str, str], ...] = ()
+    landing_checks: tuple[LandingCheck, ...] = ()
     for name in bound:
         binding = cast("InvariantBinding", graph[name].invariant_binding)
         output = run_kernel(
@@ -2010,6 +2041,7 @@ def _period_shared_transfer_plan(
 def _roll_continuation_inputs(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
+    period: int,
     period_solution: dict[RegimeName, FloatND],
     period_continuations: dict[RegimeName, ContinuationPayload],
     V_templates: MappingProxyType[RegimeName, ValueTemplate],
@@ -2025,12 +2057,9 @@ def _roll_continuation_inputs(
     the next period. A regime inactive this period drops out, and nothing keeps
     its earlier value alive for the roll.
 
-    The carry mapping keeps its full template key set — a carry for every
-    carry-producing regime — and updates only the entries solved this period.
-    A regime *inactive* this period keeps the prior period's entry. That relies
-    on the invariant that every continuation-publishing regime publishes on
-    each of its active periods — the solve loop enforces this before rolling,
-    so an active publisher can never fall through to the stale prior carry.
+    Constant-schema carries keep their template key set and update the entries solved
+    this period. Date-specific carries keep only this period's actual publications, so
+    an undemanded participation check cannot retain another date's operands.
 
     Returns:
         Tuple of the rolled V mapping and the rolled carry mapping.
@@ -2046,18 +2075,19 @@ def _roll_continuation_inputs(
             if regime_name in period_solution
         }
     )
-    rolled_continuation = MappingProxyType(
-        {
-            regime_name: _match_continuation_template_sharding(
+    rolled_continuation = {}
+    for regime_name, regime in regimes.items():
+        spec = regime.solution.continuation_spec
+        if spec is None:
+            continue
+        if regime_name in period_continuations:
+            rolled_continuation[regime_name] = _match_continuation_template_sharding(
                 continuation=period_continuations[regime_name],
-                template=next_regime_to_continuation[regime_name],
+                template=spec.template_at(period=period),
             )
-            if regime_name in period_continuations
-            else next_regime_to_continuation[regime_name]
-            for regime_name in next_regime_to_continuation
-        }
-    )
-    return rolled_V_arr, rolled_continuation
+        elif not spec.templates_by_period:
+            rolled_continuation[regime_name] = next_regime_to_continuation[regime_name]
+    return rolled_V_arr, MappingProxyType(rolled_continuation)
 
 
 # A gated edge's continuation slot is keyed by the
@@ -2073,7 +2103,6 @@ def _roll_gated_edges(
     ages: TimeAxis,
     period: int,
     period_solution: dict[RegimeName, FloatND],
-    period_dissolution_flags: dict[RegimeName, BoolND],
     base_state_action_spaces: dict[RegimeName, StateActionSpace],
     flat_params: FlatParams,
     edge_templates: MappingProxyType[_EdgeKey, ValueTemplate],
@@ -2108,15 +2137,13 @@ def _roll_gated_edges(
         solved_regimes=period_solution,
     ):
         edge = regimes[source_name].gated_edges[target_name]
-        # The fold compiled for THIS period: the gate references and leg
-        # fallbacks are interpolated on their own regimes' grids as of the
-        # period being folded, which an `AgeSpecializedGrid` moves without
-        # changing their shape.
+        # The fold compiled for THIS period: the leg fallbacks are interpolated
+        # on their own regimes' grids as of the period being folded, which an
+        # `AgeSpecializedGrid` moves without changing their shape.
         fold = edge.fold_at(period=period)
         same_period_mapping = build_same_period_mapping_for_fold(
             edge=edge,
             period_solution=period_solution,
-            period_dissolution_flags=period_dissolution_flags,
         )
         wbar = _evaluate_edge_fold(
             fold=fold,
@@ -2148,7 +2175,7 @@ def _reject_edge_fold_state_param_collisions(
 ) -> None:
     """Reject a gated edge whose source params or target states shadow an engine name.
 
-    A gate, gate reference or route projection is folded on the target's grid,
+    A gate or route projection is folded on the target's grid,
     where the engine binds its own value and params mappings and the period
     context under reserved argument names. A source edge parameter or target state
     spelled like one of them would be bound as the engine object on one side of
@@ -2317,9 +2344,9 @@ def _publish_kernel_value(
 ) -> FloatND:
     """Publish a period value after asserting its planned placement.
 
-    A value assembled from invariant blocks is checked against the regime's
-    value template, `assembled_template`, since each compiled core produced
-    only one block of it.
+    The solve loop supplies the canonical regime value template independently
+    of transient program outputs. A query closure may begin with a target tuple
+    on a mapped chunk; that first producer cannot define durable publication.
 
     Every compiled core has already asserted its complete runtime output tree
     against the layout used to lower it at the compiled-core seam; here only the
@@ -2327,7 +2354,8 @@ def _publish_kernel_value(
     unpacked the rest of its tree into channels. The check reads the first
     compiled core the period dispatched, whatever its name, since a
     retention-scoped graph compiles one program under one name and another under
-    another. A core without a resolved layout cannot publish a value: nothing is
+    another. A direct caller without an assembled template checks that layout.
+    A core without a resolved layout cannot publish a value: nothing is
     re-placed here. Continuation rolling keeps its independent placement repair,
     which is a different producer/consumer boundary.
     """
@@ -2393,6 +2421,7 @@ def _fail_if_continuation_publisher_returned_none(
     regime_name: RegimeName,
     period: int,
     continuation_publishers: Mapping[RegimeName, ContinuationPayload],
+    continuation_spec: ContinuationSpec | None = None,
 ) -> None:
     """Fail loud if a continuation-publishing regime published nothing.
 
@@ -2401,7 +2430,12 @@ def _fail_if_continuation_publisher_returned_none(
     silently roll the stale prior period's carry forward — wrong numbers, not a
     crash — so surface the offending (regime, period) instead.
     """
-    if result.continuation is None and regime_name in continuation_publishers:
+    expected = (
+        regime_name in continuation_publishers
+        if continuation_spec is None or not continuation_spec.templates_by_period
+        else period in continuation_spec.templates_by_period
+    )
+    if result.continuation is None and expected:
         msg = (
             f"Regime '{regime_name}' declares a continuation template but its "
             f"kernel returned no continuation in solved period {period}. A "
@@ -2409,6 +2443,20 @@ def _fail_if_continuation_publisher_returned_none(
             f"period it solves."
         )
         raise RuntimeError(msg)
+
+
+def _dated_continuation_templates(
+    *, regimes: Mapping[RegimeName, Regime]
+) -> MappingProxyType[RegimeName, MappingProxyType[int, ContinuationPayload]]:
+    """Inventory every concrete producer schema under its actual date."""
+    return MappingProxyType(
+        {
+            name: MappingProxyType(dict(spec.templates_by_period))
+            for name, regime in regimes.items()
+            if (spec := regime.solution.continuation_spec) is not None
+            and spec.templates_by_period
+        }
+    )
 
 
 def _build_continuation_templates(
@@ -2422,10 +2470,11 @@ def _build_continuation_templates(
     MappingProxyType[RegimeName, ContinuationPayload],
     MappingProxyType[_EdgeKey, jax.ShapeDtypeStruct],
 ]:
-    """Build the period-invariant continuation-input templates.
+    """Build value templates and representative continuation-input templates.
 
-    All mappings keep the same pytree structure (keys and shapes) across all
-    periods, avoiding JIT re-compilation from pytree mismatches. The V and
+    Dated continuation schemas are inventoried separately and selected by actual
+    producer date when lowering a reader. Constant schemas preserve their
+    original pytree structure across periods. The V and
     gated-edge templates occupy no device memory: programs are lowered against
     them but never called with them.
 
@@ -2470,6 +2519,26 @@ def _build_continuation_templates(
         }
     )
     return next_regime_to_V_arr, next_regime_to_continuation, next_edge_to_V_arr
+
+
+def _continuation_templates_for_period(
+    *,
+    regimes: Mapping[RegimeName, Regime],
+    templates: Mapping[RegimeName, ContinuationPayload],
+    period: int,
+) -> MappingProxyType[RegimeName, ContinuationPayload]:
+    """Select actual producer-date schemas before constructing native inputs."""
+    selected = {}
+    for name, regime in regimes.items():
+        spec = regime.solution.continuation_spec
+        if spec is None:
+            continue
+        if spec.templates_by_period:
+            if period in spec.templates_by_period:
+                selected[name] = spec.template_at(period=period)
+        elif name in templates:
+            selected[name] = templates[name]
+    return MappingProxyType(selected)
 
 
 def _edge_kwargs(
@@ -2597,9 +2666,8 @@ def _build_base_state_action_spaces(
 def _drain_V_arr_shards(
     *,
     solution: dict[int, MappingProxyType[RegimeName, FloatND]],
-    dissolution_flags: dict[int, MappingProxyType[RegimeName, BoolND]] | None = None,
 ) -> None:
-    """Block until every V_arr (and dissolution-flag) shard is materialised.
+    """Block until every V_arr shard is materialised.
 
     Solve → simulate barrier: backward induction returns sharded V_arrs,
     but the simulate phase must consume materialised arrays rather than
@@ -2609,14 +2677,11 @@ def _drain_V_arr_shards(
     should depend on global pytree registration. The batched barrier blocks
     per-shard (no host transfer, no cross-device collective); free when kernels
     are already done, the minimum necessary sync when they are not. V stays
-    sharded across devices. The collective dissolution flags ride along in the
-    same barrier.
+    sharded across devices.
     """
     array_leaves = tuple(
         array
-        for period_mapping in (solution, dissolution_flags)
-        if period_mapping is not None
-        for regime_mapping in period_mapping.values()
+        for regime_mapping in solution.values()
         for array in regime_mapping.values()
     )
     jax.block_until_ready(array_leaves)
@@ -2718,7 +2783,9 @@ def _donation_ownership_refusal(
 ) -> str | None:
     """Explain an actual input's ownership conflict without consuming the input."""
     array = locate_artifact(inputs=inputs, artifact=artifact)
-    if array is None or array is locate_artifact(inputs=templates, artifact=artifact):
+    if not isinstance(array, jax.Array) or array is locate_artifact(
+        inputs=templates, artifact=artifact
+    ):
         return f"{artifact!r} is not a solve input of its own"
     if registry.is_not_produced(array=array):
         return f"{artifact!r} has a buffer no compiled executable produced"
@@ -2732,7 +2799,6 @@ def _build_planned_input_liveness(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     program_metadata: Mapping[_CoreTriple, _ProgramExecutionMetadata],
-    retain_all_artifacts: bool,
     persistable_artifact_refs: frozenset[ArtifactRef],
 ) -> PlannedInputLiveness[_InputDispatch, ValueArtifactAddress]:
     """Build one exact-dispatch ledger without authorizing physical release.
@@ -2773,7 +2839,6 @@ def _build_planned_input_liveness(
 
     retained = _retained_solution_artifacts(
         regimes=regimes,
-        retain_all_artifacts=retain_all_artifacts,
         persistable_artifact_refs=persistable_artifact_refs,
     )
     known = {
@@ -2831,7 +2896,8 @@ def _release_closed_period_inputs(
     located: dict[Hashable, jax.Array] = {}
     for artifact in tuple(candidates):
         array = locate_artifact(inputs=inputs, artifact=artifact)
-        if array is None:
+        if not isinstance(array, jax.Array):
+            # Abstract schema descriptors never identify a retireable buffer.
             del candidates[artifact]
             continue
         if array is locate_artifact(inputs=templates, artifact=artifact):
@@ -2942,7 +3008,9 @@ def _locate_donated_input(
 ) -> _DonatedInput:
     """Find one donated array and refuse a buffer the solve does not own."""
     array = locate_artifact(inputs=inputs, artifact=artifact)
-    if array is None or array is locate_artifact(inputs=templates, artifact=artifact):
+    if not isinstance(array, jax.Array) or array is locate_artifact(
+        inputs=templates, artifact=artifact
+    ):
         msg = (
             f"Dispatch {(unit.period, unit.regime)!r} was lowered to donate "
             f"{argument!r}, but {artifact!r} is not a solve input of its own."
@@ -3085,7 +3153,12 @@ def _rolled_aliases(
     """
     n_periods = _model_n_periods(regimes=regimes)
     fold_dispatches = frozenset(_gated_edge_fold_dispatches(regimes=regimes))
-    aliases: dict[ValueArtifactAddress, ValueArtifactAddress] = {}
+    aliases: dict[ValueArtifactAddress, ValueArtifactAddress] = {
+        alias: origin
+        for regime in regimes.values()
+        if (spec := regime.solution.continuation_spec) is not None
+        for alias, origin in spec.stored_value_aliases().items()
+    }
     pending = list(artifacts)
     while pending:
         artifact = pending.pop()
@@ -3117,7 +3190,6 @@ def _unique_value_artifacts(
 def _retained_solution_artifacts(
     *,
     regimes: Mapping[RegimeName, Regime],
-    retain_all_artifacts: bool,
     persistable_artifact_refs: frozenset[ArtifactRef],
 ) -> tuple[ValueArtifactAddress, ...]:
     """Pin every artifact the selected retention keeps in the public result.
@@ -3143,8 +3215,6 @@ def _retained_solution_artifacts(
         for regime_name, regime in regimes.items()
         for period in regime.active_periods
     )
-    if not retain_all_artifacts:
-        return values
     return values + _retained_continuation_leaves(
         regimes=regimes, persistable_artifact_refs=persistable_artifact_refs
     )
@@ -3167,7 +3237,7 @@ def _retained_continuation_leaves(
     for ref in sorted(persistable_artifact_refs):
         spec = continuation_specs.get(ref.regime)
         template = published_continuation_template(
-            continuation_specs=continuation_specs, target=ref.regime
+            continuation_specs=continuation_specs, target=ref.regime, period=ref.period
         )
         if spec is None or template is None or spec.artifact_key != ref.key:
             continue
@@ -3591,17 +3661,31 @@ def _internal_reservations_by_cell(
     output, so charge that destination once per cell, independent of code count
     and width candidates. A one-code value is returned directly and needs none.
     """
-    by_cell: dict[tuple[RegimeName, int], dict[tuple[str, str], int]] = {}
+    by_cell: dict[tuple[RegimeName, int], dict[Hashable, int]] = {}
     assembly_bytes: dict[tuple[RegimeName, int], int] = {}
+    host_templates: dict[tuple[RegimeName, int, str], ShapeDtypePytree] = {}
+    native_by_cell: dict[tuple[RegimeName, int], dict[str, ResolvedCoreProgram]] = {}
     for candidate, program in programs.items():
         cell = candidate[0][:2]
         sizes = by_cell.setdefault(cell, {})
-        if (binding := program.invariant_binding) is not None:
-            value_template = value_templates[cell[0]]
-            axis = value_axis_names[cell[0]].index(binding.state_name)
-            if value_template.shape[axis] > 1:
-                size = per_device_footprint(array=value_template).bytes_per_device
-                assembly_bytes[cell] = max(assembly_bytes.get(cell, 0), size)
+        representative = native_by_cell.setdefault(cell, {}).setdefault(
+            candidate[0][2], program
+        )
+        if (
+            representative.requirements.internal_schedule
+            != program.requirements.internal_schedule
+        ):
+            raise ExecutionPlanningError(
+                "Native candidates disagree on their internal schedule."
+            )
+        if (binding := program.invariant_binding) is not None and (
+            value_templates[cell[0]].shape[
+                value_axis_names[cell[0]].index(binding.state_name)
+            ]
+            > 1
+        ):
+            size = per_device_footprint(array=value_templates[cell[0]]).bytes_per_device
+            assembly_bytes[cell] = max(assembly_bytes.get(cell, 0), size)
         for name, reference in program.requirements.internal_inputs.items():
             size = sum(
                 _internal_leaf_bytes(leaf=leaf)
@@ -3610,12 +3694,167 @@ def _internal_reservations_by_cell(
             )
             key = (reference.producer, reference.label)
             sizes[key] = max(sizes.get(key, 0), size)
+        for label, tree in program.requirements.host_buffers.items():
+            owner = (*cell, label)
+            if owner in host_templates and (
+                jax.tree.structure(host_templates[owner]) != jax.tree.structure(tree)
+                or tuple(jax.tree.leaves(host_templates[owner]))
+                != tuple(jax.tree.leaves(tree))
+            ):
+                raise ExecutionPlanningError(
+                    f"Host buffer {owner!r} has conflicting templates."
+                )
+            host_templates[owner] = tree
+            sizes[("host", label, "template")] = sum(
+                _internal_leaf_bytes(leaf=leaf) for leaf in jax.tree.leaves(tree)
+            )
+    for cell, members in native_by_cell.items():
+        schedules = tuple(
+            program.requirements.internal_schedule for program in members.values()
+        )
+        if not any(schedules):
+            continue
+        schedule = schedules[0]
+        if not schedule or any(other != schedule for other in schedules):
+            raise ExecutionPlanningError(
+                "Every cell core must declare the same closed internal schedule."
+            )
+        sizes = by_cell[cell]
+        peak = _scheduled_internal_peak(
+            programs=members, sizes=sizes, schedule=schedule
+        )
+        host_sizes = {
+            key: value
+            for key, value in sizes.items()
+            if len(cast("tuple[Hashable, ...]", key)) == _HOST_OWNER_KEY_LENGTH
+        }
+        by_cell[cell] = {**host_sizes, ("closed_schedule_peak",): peak}
     return MappingProxyType(
         {
             cell: sum(sizes.values()) + assembly_bytes.get(cell, 0)
             for cell, sizes in by_cell.items()
         }
     )
+
+
+_HOST_OWNER_KEY_LENGTH = 3
+
+
+def _scheduled_internal_peak(
+    *,
+    programs: Mapping[str, ResolvedCoreProgram],
+    sizes: Mapping[Hashable, int],
+    schedule: tuple[InternalDispatch, ...],
+) -> int:
+    """Validate actual graph bindings, then charge output-before-input-release peaks."""
+    required = {
+        name
+        for name, program in programs.items()
+        if program.internal_outputs or program.requirements.internal_inputs
+    }
+    if {step.name for step in schedule} != required:
+        raise ExecutionPlanningError(
+            "Closed internal schedule omits or adds a graph program."
+        )
+    for name in required:
+        program = programs[name]
+        if program.internal_outputs:
+            _require_complete_internal_output_roles(program=program)
+    accesses = _internal_schedule_accesses(
+        programs=programs, sizes=sizes, schedule=schedule
+    )
+    ledger = PlannedInputLiveness(dispatch_accesses=accesses)
+    live: dict[tuple[str, int, str], int] = {}
+    peak = 0
+    for step in schedule:
+        for spec in programs[step.name].internal_outputs:
+            key = step.name, spec.label
+            if key not in sizes:
+                raise ExecutionPlanningError(
+                    "Closed internal output has no inventoried consumer template."
+                )
+            live[(*step.identity, spec.label)] = sizes[key]
+        # A returned output exists while all inputs of its reader still exist.
+        peak = max(peak, sum(live.values()))
+        ledger.commit_successful_dispatch(dispatch=step.identity)
+        for artifact in tuple(live):
+            if ledger.is_release_eligible(artifact=artifact):
+                del live[artifact]
+    ledger.assert_solve_complete()
+    return peak
+
+
+def _require_complete_internal_output_roles(*, program: ResolvedCoreProgram) -> None:
+    """Every held producer leaf must belong to an inventoried internal subtree."""
+    for path, _role in jax.tree.flatten_with_path(program.output_roles)[0]:
+        steps = tuple(
+            key.idx
+            if isinstance(key, jax.tree_util.SequenceKey)
+            else key.key
+            if isinstance(key, jax.tree_util.DictKey)
+            else key.name
+            for key in path
+        )
+        if not any(
+            steps[: len(spec.path)] == spec.path for spec in program.internal_outputs
+        ):
+            raise ExecutionPlanningError(
+                "Closed internal schedule has an unowned producer output leaf."
+            )
+
+
+def _internal_schedule_accesses(
+    *,
+    programs: Mapping[str, ResolvedCoreProgram],
+    sizes: Mapping[Hashable, int],
+    schedule: tuple[InternalDispatch, ...],
+) -> Mapping[tuple[str, int], tuple[tuple[str, int, str], ...]]:
+    """Require every binding to name an actual, preceding output generation."""
+    seen: set[tuple[str, int]] = set()
+    generations: dict[str, set[int]] = {}
+    accesses: dict[tuple[str, int], tuple[tuple[str, int, str], ...]] = {}
+    for step in schedule:
+        if step.identity in seen:
+            raise ExecutionPlanningError(
+                "Closed internal schedule repeats a generation."
+            )
+        program = programs[step.name]
+        refs = program.requirements.internal_inputs
+        if step.inputs.keys() != refs.keys():
+            raise ExecutionPlanningError(
+                "Closed internal schedule has missing or extra reader bindings."
+            )
+        reads = []
+        for operand, producer in step.inputs.items():
+            ref = refs[operand]
+            if producer[0] != ref.producer or producer not in seen:
+                raise ExecutionPlanningError(
+                    "Closed internal schedule has an unresolved producer generation."
+                )
+            labels = {spec.label for spec in programs[ref.producer].internal_outputs}
+            if ref.label not in labels or (ref.producer, ref.label) not in sizes:
+                raise ExecutionPlanningError(
+                    "Closed internal schedule lacks a complete output template."
+                )
+            reads.append((*producer, ref.label))
+        accesses[step.identity] = tuple(reads)
+        seen.add(step.identity)
+        generations.setdefault(step.name, set()).add(step.generation)
+    if any(values != set(range(len(values))) for values in generations.values()):
+        raise ExecutionPlanningError(
+            "Closed internal schedule has missing generation identities."
+        )
+    consumed = {artifact for reads in accesses.values() for artifact in reads}
+    produced = {
+        (*step.identity, spec.label)
+        for step in schedule
+        for spec in programs[step.name].internal_outputs
+    }
+    if produced != consumed:
+        raise ExecutionPlanningError(
+            "Closed internal schedule has an unconsumed output generation."
+        )
+    return MappingProxyType(accesses)
 
 
 def _internal_leaf_bytes(*, leaf: jax.ShapeDtypeStruct) -> int:
@@ -3871,6 +4110,111 @@ def _triples_within_budget(
     )
 
 
+class _CellBudgetError(WorkspaceBudgetError):
+    """A budget-only refusal tied to one actual regime-period core.
+
+    With the smallest refused reservation, the resident bytes and the budget,
+    `halvings` is how often a reservation proportional to the workspace width
+    must halve before it fits beside the resident bytes; one otherwise.
+    """
+
+    def __init__(
+        self,
+        *,
+        message: str,
+        triple: _CoreTriple,
+        reservation_bytes: int | None = None,
+        resident_bytes: int = 0,
+        budget_bytes: int = 0,
+    ) -> None:
+        super().__init__(message)
+        self.triple = triple
+        room = budget_bytes - resident_bytes
+        halvings = 1
+        if reservation_bytes is not None and room > 0:
+            while reservation_bytes > room << halvings:
+                halvings += 1
+        self.halvings = halvings
+
+
+class _CellBudgetRefusalsError(WorkspaceBudgetError):
+    """Every budget-only refusal of one planning pass, in selection order."""
+
+    def __init__(self, errors: Sequence[_CellBudgetError]) -> None:
+        super().__init__(" ".join(str(error) for error in errors))
+        self.errors = tuple(errors)
+
+
+def _narrow_native_closure(
+    *, regimes: MappingProxyType[RegimeName, Regime], error: _CellBudgetError
+) -> MappingProxyType[RegimeName, Regime]:
+    """Rebuild an entire native closure before lowering its smaller candidate.
+
+    Only a measured budget refusal enters this path. Malformed reports, layouts,
+    statuses and other planning errors remain fatal. No candidate has dispatched.
+    """
+    name, period, _core = error.triple
+    regime = regimes[name]
+    kernel = regime.solution.period_kernels[period]
+    narrow = getattr(kernel, "narrow_workspace", None)
+    replacement = None if narrow is None else narrow(halvings=error.halvings)
+    if replacement is None:
+        raise error
+    kernels = dict(regime.solution.period_kernels)
+    kernels[period] = replacement
+    updated = dataclasses.replace(
+        regime,
+        solution=dataclasses.replace(
+            regime.solution, period_kernels=MappingProxyType(kernels)
+        ),
+    )
+    return MappingProxyType({**regimes, name: updated})
+
+
+_RESIDENT_SPLIT_OWNERS = 8
+
+
+def _log_resident_split(
+    *, logger: logging.Logger, triple: _CoreTriple, breakdown: ResidentBreakdown
+) -> None:
+    """Warn with what a refused cell's busiest device holds, summing to its total.
+
+    Live alias groups are aggregated by the kind and owning regime of the stored
+    value they name; groups naming no stored value count as `other`. The largest
+    owners are listed and the rest summed into one remainder.
+    """
+    owners: dict[str, int] = {}
+    for group, size in breakdown.live.items():
+        address = next(
+            (key for key in group if isinstance(key, ValueArtifactAddress)), None
+        )
+        owner = "other" if address is None else f"{address.kind}:{address.regime}"
+        owners[owner] = owners.get(owner, 0) + size
+    ranked = sorted(owners.items(), key=lambda item: item[1], reverse=True)
+    shown = ranked[:_RESIDENT_SPLIT_OWNERS]
+    rest = ranked[_RESIDENT_SPLIT_OWNERS:]
+    live = [f"live[{owner}]={size}" for owner, size in shown]
+    if rest:
+        live.append(
+            f"live[remainder of {len(rest)} owners]={sum(size for _, size in rest)}"
+        )
+    regime_name, period, core_key = triple
+    logger.warning(
+        "Resident split for regime %r period %d core %r on device %d: total=%d = "
+        "%s + internal=%d + peer_outputs=%d + fixed_owners=%d + transfer_scratch=%d",
+        regime_name,
+        period,
+        core_key,
+        breakdown.device_id,
+        breakdown.total,
+        " + ".join(live) if live else "live=0",
+        breakdown.internal_bytes,
+        breakdown.peer_bytes,
+        breakdown.fixed_bytes,
+        breakdown.transfer_scratch_bytes,
+    )
+
+
 def _width_selection_failure(
     *,
     triple: _CoreTriple,
@@ -3880,6 +4224,7 @@ def _width_selection_failure(
     execution: ResolvedExecution,
     error: ExecutionPlanningError,
     skipped_fallback_evaluations: int = 0,
+    reservation_bytes: int | None = None,
 ) -> ExecutionPlanningError:
     """Name the cell a workspace refusal belongs to and what it competed with.
 
@@ -3905,7 +4250,17 @@ def _width_selection_failure(
             "rejected candidate(s) whose donating variant already exceeded the "
             "budget."
         )
-    return ExecutionPlanningError(msg)
+    return (
+        _CellBudgetError(
+            message=msg,
+            triple=triple,
+            reservation_bytes=reservation_bytes,
+            resident_bytes=resident_bytes,
+            budget_bytes=budget_bytes,
+        )
+        if isinstance(error, WorkspaceBudgetError)
+        else ExecutionPlanningError(msg)
+    )
 
 
 def _select_period_programs(
@@ -3961,6 +4316,7 @@ def _prepare_solve_programs(
     regimes: MappingProxyType[RegimeName, Regime],
     program_fingerprint: str,
     flat_params: FlatParams,
+    solve_parameter_views: Mapping[RegimeName, FlatParams] = MappingProxyType({}),
     ages: TimeAxis,
     next_regime_to_V_arr: MappingProxyType[RegimeName, ValueTemplate],
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
@@ -3968,7 +4324,6 @@ def _prepare_solve_programs(
     enable_jit: bool,
     execution: ResolvedExecution,
     retain_replay: bool,
-    retain_all_artifacts: bool,
     persistable_artifact_refs: frozenset[ArtifactRef],
     logger: logging.Logger,
     process_grid_resolver: ProcessGridResolver | None = None,
@@ -4027,6 +4382,7 @@ def _prepare_solve_programs(
             regimes=regimes,
             program_fingerprint=program_fingerprint,
             flat_params=flat_params,
+            solve_parameter_views=solve_parameter_views,
             ages=ages,
             next_regime_to_V_arr=next_regime_to_V_arr,
             next_regime_to_continuation=next_regime_to_continuation,
@@ -4036,7 +4392,6 @@ def _prepare_solve_programs(
             enable_jit=enable_jit,
             continuous_sharded_state=execution.continuous_sharded_state,
             donate_buffers=execution.donate_buffers,
-            retain_all_artifacts=retain_all_artifacts,
             persistable_artifact_refs=persistable_artifact_refs,
             process_grid_resolver=process_grid_resolver,
             structural_blueprints=structural_blueprints,
@@ -4090,6 +4445,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     regimes: MappingProxyType[RegimeName, Regime],
     program_fingerprint: str,
     flat_params: FlatParams,
+    solve_parameter_views: Mapping[RegimeName, FlatParams] = MappingProxyType({}),
     ages: TimeAxis,
     next_regime_to_V_arr: MappingProxyType[RegimeName, ValueTemplate],
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
@@ -4097,7 +4453,6 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     enable_jit: bool,
     execution: ResolvedExecution,
     retain_replay: bool,
-    retain_all_artifacts: bool,
     persistable_artifact_refs: frozenset[ArtifactRef],
     max_compilation_workers: int | None,
     logger: logging.Logger,
@@ -4145,10 +4500,8 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         retain_replay: Whether the solve retains replay artifacts; with the
             regime's declared replay route it selects which scoped programs of
             each kernel's graph are dispatched.
-        retain_all_artifacts: Whether the result keeps every persistable
-            continuation payload, which the ledger retains and never donates.
-        persistable_artifact_refs: Exact model-authoritative addresses whose
-            replay programs are selected for persistence-oriented retention.
+        persistable_artifact_refs: Exact durable addresses selected by retention
+            and actual forward demands; the ledger pins their continuation leaves.
         max_compilation_workers: Maximum threads for parallel compilation.
             Defaults to `os.cpu_count()`.
         logger: Logger for compilation progress.
@@ -4187,6 +4540,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         regimes=regimes,
         program_fingerprint=program_fingerprint,
         flat_params=flat_params,
+        solve_parameter_views=solve_parameter_views,
         ages=ages,
         next_regime_to_V_arr=next_regime_to_V_arr,
         next_regime_to_continuation=next_regime_to_continuation,
@@ -4194,7 +4548,6 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         enable_jit=enable_jit,
         execution=execution,
         retain_replay=retain_replay,
-        retain_all_artifacts=retain_all_artifacts,
         persistable_artifact_refs=persistable_artifact_refs,
         logger=logger,
         process_grid_resolver=process_grid_resolver,
@@ -4283,9 +4636,11 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                 tree=(
                     fixed_input_arrays,
                     flat_params,
+                    solve_parameter_views,
                     ages.values,
                     next_regime_to_V_arr,
                     next_regime_to_continuation,
+                    _dated_continuation_templates(regimes=regimes),
                     next_edge_to_V_arr,
                     tuple(
                         (
@@ -4293,6 +4648,11 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                             regime.solution.resolved_fixed_params,
                             _retained_base_space_arrays(regime=regime),
                             regime.derived_categorical_code_arrays,
+                            tuple(
+                                (plan.node_operands, plan.indices)
+                                for plan in regime.solution.current_iid_plans.values()
+                                if plan is not None
+                            ),
                         )
                         for regime in regimes.values()
                     ),
@@ -4311,6 +4671,9 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                 templates=SolveInputMappings(
                     next_regime_to_V_arr=next_regime_to_V_arr,
                     next_regime_to_continuation=next_regime_to_continuation,
+                    continuation_templates_by_period=_dated_continuation_templates(
+                        regimes=regimes
+                    ),
                     next_edge_to_V_arr=next_edge_to_V_arr,
                 ),
                 program_metadata=representative_metadata,
@@ -4613,6 +4976,9 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         selected_fallbacks: dict[_CoreTriple, PlannedCore] = {}
         if gather_checks is None:
             gather_checks = {}
+        # Budget refusals are collected across every core so the caller narrows
+        # them all before one re-plan; any other planning error stays fatal.
+        budget_refusals: list[_CellBudgetError] = []
         for triple, candidates in candidates_by_triple.items():
             programs_by_width = {
                 candidate[1]: resolved_programs[candidate] for candidate in candidates
@@ -4667,7 +5033,13 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
             except ExecutionPlanningError as error:
                 if budget_bytes is None:
                     raise
-                raise _width_selection_failure(
+                if isinstance(error, WorkspaceBudgetError):
+                    _log_resident_split(
+                        logger=logger,
+                        triple=triple,
+                        breakdown=resident_inventory[triple].resident_breakdown(),
+                    )
+                failure = _width_selection_failure(
                     triple=triple,
                     resident_bytes=resident_bytes_by_triple[triple],
                     transfer_scratch_bytes=resident_inventory[
@@ -4679,7 +5051,20 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                     skipped_fallback_evaluations=skipped_fallback_evaluations.get(
                         triple, 0
                     ),
-                ) from error
+                    reservation_bytes=min(
+                        (
+                            memory_by_compiled_id[id(executable)].reservation_bytes
+                            for executable in compiled_by_width.values()
+                            if id(executable) in memory_by_compiled_id
+                        ),
+                        default=None,
+                    ),
+                )
+                if not isinstance(failure, _CellBudgetError):
+                    raise failure from error
+                failure.__cause__ = error
+                budget_refusals.append(failure)
+                continue
             if execution.halve_on_materialised_gather:
                 plan = _halve_while_gather_materialises(
                     triple=triple,
@@ -4750,6 +5135,9 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                     resident_bytes=resident_bytes_by_candidate.get(selected_candidate),
                     logger=logger,
                 )
+
+        if budget_refusals:
+            raise _CellBudgetRefusalsError(budget_refusals)
 
     capture_admission: dict[
         tuple[str, int], dict[str, MappingProxyType[str, int | None]]
@@ -5216,7 +5604,7 @@ def _bounded_plan(
             "already keeps resident at its position reach the budget, so no "
             "workspace fits beside them."
         )
-        raise ExecutionPlanningError(msg)
+        raise WorkspaceBudgetError(msg)
     widths = source.selected(triple=triple)
     if widths is None:
         selector = source.selectors[triple]
@@ -5226,8 +5614,8 @@ def _bounded_plan(
                 f"{_describe_candidate(candidate=(triple, ()))} admits was refused, "
                 "so its bounded width search had nothing narrower to propose."
             )
-            raise ExecutionPlanningError(msg)
-        raise ExecutionPlanningError(selector.exhaustion_message(budget=budget_bytes))
+            raise WorkspaceBudgetError(msg)
+        raise WorkspaceBudgetError(selector.exhaustion_message(budget=budget_bytes))
     executable = compiled_by_width[_width_key(widths=widths)]
     memory = memory_by_compiled_id[id(executable)]
     return WorkspacePlan(
@@ -6196,6 +6584,7 @@ def _resolve_output_layouts_and_lowering_keys(
     regimes: MappingProxyType[RegimeName, Regime],
     program_fingerprint: str,
     flat_params: FlatParams,
+    solve_parameter_views: Mapping[RegimeName, FlatParams] = MappingProxyType({}),
     ages: TimeAxis,
     next_regime_to_V_arr: MappingProxyType[RegimeName, ValueTemplate],
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
@@ -6205,7 +6594,6 @@ def _resolve_output_layouts_and_lowering_keys(
     enable_jit: bool,
     continuous_sharded_state: StateName | None = None,
     donate_buffers: bool = True,
-    retain_all_artifacts: bool,
     persistable_artifact_refs: frozenset[ArtifactRef],
     process_grid_resolver: ProcessGridResolver | None = None,
     structural_blueprints: StructuralBlueprintCache[_StructuralBlueprint] | None = None,
@@ -6272,7 +6660,9 @@ def _resolve_output_layouts_and_lowering_keys(
     """
     key = (
         None
-        if structural_blueprints is None or base_state_action_spaces is None
+        if structural_blueprints is None
+        or base_state_action_spaces is None
+        or solve_parameter_views
         else _structural_key(
             all_programs=all_programs,
             program_fingerprint=program_fingerprint,
@@ -6303,6 +6693,7 @@ def _resolve_output_layouts_and_lowering_keys(
             all_programs=all_programs,
             regimes=regimes,
             flat_params=flat_params,
+            solve_parameter_views=solve_parameter_views,
             ages=ages,
             next_regime_to_V_arr=next_regime_to_V_arr,
             next_regime_to_continuation=next_regime_to_continuation,
@@ -6328,7 +6719,6 @@ def _resolve_output_layouts_and_lowering_keys(
         program_fingerprint=program_fingerprint,
         enable_jit=enable_jit,
         donate_buffers=donate_buffers,
-        retain_all_artifacts=retain_all_artifacts,
         persistable_artifact_refs=persistable_artifact_refs,
     )
 
@@ -6367,6 +6757,7 @@ def _build_structural_blueprint(
     all_programs: Mapping[_CoreTriple, CoreProgram],
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
+    solve_parameter_views: Mapping[RegimeName, FlatParams] = MappingProxyType({}),
     ages: TimeAxis,
     next_regime_to_V_arr: MappingProxyType[RegimeName, ValueTemplate],
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
@@ -6435,8 +6826,12 @@ def _build_structural_blueprint(
                 else block_state_action_space(space=state_action_space, binding=binding)
             ),
             next_regime_to_V_arr=next_regime_to_V_arr,
-            next_regime_to_continuation=next_regime_to_continuation,
-            flat_params=flat_params,
+            next_regime_to_continuation=_continuation_templates_for_period(
+                regimes=regimes,
+                templates=next_regime_to_continuation,
+                period=period + 1,
+            ),
+            flat_params=solve_parameter_views.get(regime_name, flat_params),
             period=period,
             ages=ages,
             edge_regime_to_V_arr=edge_kwargs.get("edge_regime_to_V_arr"),
@@ -6466,11 +6861,7 @@ def _build_structural_blueprint(
             )
             if family is not None:
                 family_width_candidates[family] = width_candidates
-        state_order = tuple(
-            name
-            for name in state_action_space.states
-            if name not in regime.fold_state_names
-        )
+        state_order = tuple(state_action_space.states)
         consumed = core_key in consumed_names
         # A consumer is lowered against the producer's top-ranked subtree, so a
         # later candidate whose published shape, dtype or weak typing follows the
@@ -6571,7 +6962,6 @@ def _bind_structural_blueprint(
     program_fingerprint: str,
     enable_jit: bool,
     donate_buffers: bool,
-    retain_all_artifacts: bool,
     persistable_artifact_refs: frozenset[ArtifactRef],
 ) -> tuple[
     dict[_CoreTriple, ResolvedOutputLayout],
@@ -6603,7 +6993,6 @@ def _bind_structural_blueprint(
     input_liveness = _build_planned_input_liveness(
         regimes=regimes,
         program_metadata=representative_metadata,
-        retain_all_artifacts=retain_all_artifacts,
         persistable_artifact_refs=persistable_artifact_refs,
     )
     n_periods = _model_n_periods(regimes=regimes)
@@ -6738,14 +7127,7 @@ def _value_axis_names(
 ) -> MappingProxyType[RegimeName, tuple[StateName, ...]]:
     """Name the axes of every regime's stored value, in stored order."""
     return MappingProxyType(
-        {
-            name: tuple(
-                state
-                for state in regime.solution.state_names
-                if state not in regime.fold_state_names
-            )
-            for name, regime in regimes.items()
-        }
+        {name: tuple(regime.solution.state_names) for name, regime in regimes.items()}
     )
 
 
@@ -7667,11 +8049,7 @@ def _log_core_plan_record(
         hlo_text = None
     record = build_core_plan_record(
         triple=triple,
-        state_names=tuple(
-            name
-            for name in regime.solution.state_names
-            if name not in regime.fold_state_names
-        ),
+        state_names=tuple(regime.solution.state_names),
         value_shape=layout.expected_value_shape,
         value_sharding=layout.expected_leaves[0].sharding,
         axis_extents={

@@ -1,18 +1,17 @@
-"""Integration tests for gated edge objects.
+"""Integration tests for value decisions on mixed singleton/collective edges.
 
-A source regime declares a `Gate` beside the law of its `Transition`, keyed by
-TARGET regime name. At the end of each period the engine folds, per
-declared edge and source stakeholder ``s``, a gated continuation object on the
-target regime's grid (EKL 2019 eqs. 9/12/27)::
+A source regime declares a `ParticipationCheck` (or a state-only `Gate`) beside the
+law of its `Transition`, keyed by TARGET regime name. After the scheduled landing
+and before the target acts, the decision compares its typed reads, per source
+stakeholder ``s``, and routes the row into the target or into that stakeholder's
+fallback (EKL 2019 eqs. 9/12/27)::
 
-    Wbar^s(x) = jnp.where(gate(x), V_target^{route_s}(x), V_fallback^s(pi_s(x)))
+    Wbar^s(x) = jnp.where(decision(x), V_target^{route_s}(x), V_fallback^s(pi_s(x)))
 
-The source's continuation reads ``Wbar`` in place of the raw target V. Two edges
-matter for EKL: the singles->married CONSENT edge (a singleton source reaches a
-collective target only by mutual consent, eq. 27) and the married self DISSOLUTION
-edge (a collective source routes per-stakeholder to the single regimes when the
-IR mask empties, ``D=True``). The mixture is the strict ``jnp.where`` — never a
-linear ``kappa*V + (1-kappa)*V`` — so a ``-inf`` target cell never leaks NaN.
+Two moves matter for EKL: the singles->married CONSENT decision (a singleton
+source reaches a collective target only by mutual consent, eq. 27) and the
+married DISSOLUTION, a current-period participation exit routing each member to
+her single regime.
 """
 
 from collections.abc import Mapping
@@ -41,6 +40,8 @@ from lcm import (
     Gate,
     LinSpacedGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -51,6 +52,7 @@ from lcm import (
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
+from lcm.exits import Exit, ExitTarget
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.transition import AgeSelector, StochasticTransition
 from lcm.typing import (
@@ -62,6 +64,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import bind_laws, build_prepared_structure
+from tests.regime_building.test_collective_regime_simulate import _ParticipationRule
 
 
 @categorical(ordered=True)
@@ -116,6 +119,14 @@ def _consent_gate(
     return (V_target_f > V_single_f_ref) & (V_target_m > V_single_m_ref)
 
 
+def _ir_f(*, Q_f: FloatND, V_single_f_ref: FloatND, delta_f: FloatND) -> BoolND:
+    return Q_f >= V_single_f_ref - delta_f
+
+
+def _ir_m(*, Q_m: FloatND, V_single_m_ref: FloatND, delta_m: FloatND) -> BoolND:
+    return Q_m >= V_single_m_ref - delta_m
+
+
 def _consent_source() -> Regime:
     """The consent source, which may move into the couple at age 0."""
     return Regime(
@@ -126,10 +137,10 @@ def _consent_source() -> Regime:
     )
 
 
-def _consent_laws(gate: Gate | None) -> RegimeLaws:
-    """The consent regimes' laws, the source's move into the couple under `gate`.
+def _consent_laws(edge: Gate | ParticipationCheck | None) -> RegimeLaws:
+    """The consent regimes' laws, the source's move into the couple under `edge`.
 
-    `None` declares the move into the couple without a gate.
+    `None` declares the move into the couple without a gate or participation check.
     """
     return bind_laws(
         {
@@ -141,7 +152,12 @@ def _consent_laws(gate: Gate | None) -> RegimeLaws:
                         }
                     }
                 ),
-                gates={} if gate is None else {"married_terminal": gate},
+                gates=({"married_terminal": edge} if isinstance(edge, Gate) else {}),
+                participation=(
+                    {"married_terminal": edge}
+                    if isinstance(edge, ParticipationCheck)
+                    else {}
+                ),
             ),
             "single_f_terminal": None,
             "single_m_terminal": None,
@@ -150,29 +166,56 @@ def _consent_laws(gate: Gate | None) -> RegimeLaws:
     )
 
 
-def _consent_edge() -> Gate:
-    """The consent gate into the couple, routing the wife to her own fallback."""
-    return Gate(
+def _consent_reads(
+    *, target: RegimeName, f_reference: RegimeName, m_reference: RegimeName
+) -> dict[str, ParticipationRead]:
+    """Both partners' values in the couple and each one's single reference."""
+    return {
+        "V_target_f": ParticipationRead(
+            kind="IntegratedFull",
+            regime=target,
+            stakeholder="f",
+            projection={"wage": _identity_wage},
+        ),
+        "V_target_m": ParticipationRead(
+            kind="IntegratedFull",
+            regime=target,
+            stakeholder="m",
+            projection={"wage": _identity_wage},
+        ),
+        "V_single_f_ref": ParticipationRead(
+            kind="IntegratedFull",
+            regime=f_reference,
+            projection={"wage": _identity_wage},
+        ),
+        "V_single_m_ref": ParticipationRead(
+            kind="IntegratedFull",
+            regime=m_reference,
+            projection={"wage": _identity_wage},
+        ),
+    }
+
+
+def _consent_edge(
+    *, fallback_regime: RegimeName = "single_f_terminal", target_stakeholder: str = "f"
+) -> ParticipationCheck:
+    """The consent decision into the couple, routing the wife to her own fallback."""
+    return ParticipationCheck(
         predicate=_consent_gate,
         routes={
             "f": StakeholderRoute(
-                target_stakeholder="f",
+                target_stakeholder=target_stakeholder,
                 fallback=ProjectedRegimeValue(
-                    regime="single_f_terminal",
+                    regime=fallback_regime,
                     projection={"wage": _identity_wage},
                 ),
             )
         },
-        references={
-            "V_single_f_ref": ProjectedRegimeValue(
-                regime="single_f_terminal",
-                projection={"wage": _identity_wage},
-            ),
-            "V_single_m_ref": ProjectedRegimeValue(
-                regime="single_m_terminal",
-                projection={"wage": _identity_wage},
-            ),
-        },
+        reads=_consent_reads(
+            target="married_terminal",
+            f_reference="single_f_terminal",
+            m_reference="single_m_terminal",
+        ),
     )
 
 
@@ -254,11 +297,7 @@ def _solve_consent(*, enable_jit: bool = False):
         logger=get_logger(log_level="off"),
         enable_jit=enable_jit,
     )
-    return (
-        _bi_result.value_functions,
-        _bi_result.simulation_policies,
-        _bi_result.dissolution_flags,
-    )
+    return _bi_result.value_functions, _bi_result.simulation_policies
 
 
 def test_consent_gate_routes_marriage_value_and_fallback():
@@ -272,22 +311,20 @@ def test_consent_gate_routes_marriage_value_and_fallback():
     Wbar = [2, 3]; V_single_f(period 0) = wage + beta*Wbar(wage):
         wage=1: 1 + 0.95*2 = 2.9;  wage=2: 2 + 0.95*3 = 4.85.
     """
-    solution, _sim, _dissolution = _solve_consent()
+    solution, _sim = _solve_consent()
     V_single_f = np.asarray(solution[0]["single_f"])
     np.testing.assert_allclose(V_single_f, np.array([2.9, 4.85]), rtol=1e-6)
 
 
 def test_consent_gate_matches_under_jit():
     """The public (jitted) path folds the same edge."""
-    solution, _sim, _dissolution = _solve_consent(enable_jit=True)
+    solution, _sim = _solve_consent(enable_jit=True)
     np.testing.assert_allclose(
         np.asarray(solution[0]["single_f"]), np.array([2.9, 4.85]), rtol=1e-6
     )
 
 
-# Dissolution edge: married (collective) -> married_ir (collective), ~D gate,
-# per-stakeholder fallback to single_f / single_m (reusing the value-constraint
-# IR miniature)
+# The value-constraint IR miniature's regime payoffs, reused by the full topology.
 
 _WAGE3 = LinSpacedGrid(start=1.0, stop=3.0, n_points=3)  # {1, 2, 3}
 
@@ -315,247 +352,6 @@ def _u_zero(wage: ContinuousState) -> FloatND:
 
 def _u_zero_collective(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     return 0.0 * wage * work
-
-
-def _ir_f(*, Q_f: FloatND, V_single_f_ref: FloatND, delta_f: FloatND) -> BoolND:
-    return Q_f >= V_single_f_ref - delta_f
-
-
-def _ir_m(*, Q_m: FloatND, V_single_m_ref: FloatND, delta_m: FloatND) -> BoolND:
-    return Q_m >= V_single_m_ref - delta_m
-
-
-def _no_dissolution_gate(D_target: BoolND) -> BoolND:
-    return ~D_target
-
-
-def _make_dissolution_regimes() -> dict[str, Regime]:
-    married = Regime(
-        states={"wage": _WAGE3},
-        state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={
-            "utility": CollectiveUtility(
-                utilities={"f": _u_zero_collective, "m": _u_zero_collective}
-            )
-        },
-    )
-    married_ir = Regime(
-        states={"wage": _WAGE3},
-        state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={
-            "utility": CollectiveUtility(
-                utilities={"f": _u_married_ir_f, "m": _u_married_ir_m}
-            )
-        },
-        constraints={
-            "ir_f": ValueDependentConstraint(
-                predicate=_ir_f,
-                references={
-                    "V_single_f_ref": ProjectedRegimeValue(
-                        regime="single_f", projection={"wage": _identity_wage}
-                    )
-                },
-            ),
-            "ir_m": ValueDependentConstraint(
-                predicate=_ir_m,
-                references={
-                    "V_single_m_ref": ProjectedRegimeValue(
-                        regime="single_m", projection={"wage": _identity_wage}
-                    )
-                },
-            ),
-        },
-    )
-    married_terminal = Regime(
-        states={"wage": _WAGE3},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={
-            "utility": CollectiveUtility(
-                utilities={"f": _u_zero_collective, "m": _u_zero_collective}
-            )
-        },
-    )
-    single_f = Regime(
-        states={"wage": _WAGE3},
-        state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": _u_single_f_ir},
-    )
-    single_f_terminal = Regime(
-        states={"wage": _WAGE3},
-        functions={"utility": _u_zero},
-    )
-    single_m = single_f.replace(functions={"utility": _u_single_m_ir})
-    single_m_terminal = single_f_terminal.replace()
-    return {
-        "married": married,
-        "married_ir": married_ir,
-        "married_terminal": married_terminal,
-        "single_f": single_f,
-        "single_f_terminal": single_f_terminal,
-        "single_m": single_m,
-        "single_m_terminal": single_m_terminal,
-    }
-
-
-def _dissolution_laws() -> RegimeLaws:
-    """The dissolution regimes' laws, bound as a model binds them."""
-    return bind_laws(
-        {
-            "married": Transition(
-                law=ByAge(
-                    cases={
-                        AgeRange(exclusive_stop=1): {
-                            "married_ir": StochasticTransition(func=_prob_one)
-                        }
-                    }
-                ),
-                gates={
-                    "married_ir": Gate(
-                        predicate=_no_dissolution_gate,
-                        routes={
-                            "f": StakeholderRoute(
-                                target_stakeholder="f",
-                                fallback=ProjectedRegimeValue(
-                                    regime="single_f",
-                                    projection={"wage": _identity_wage},
-                                ),
-                            ),
-                            "m": StakeholderRoute(
-                                target_stakeholder="m",
-                                fallback=ProjectedRegimeValue(
-                                    regime="single_m",
-                                    projection={"wage": _identity_wage},
-                                ),
-                            ),
-                        },
-                    )
-                },
-            ),
-            "married_ir": ByAge(
-                cases={
-                    AgeRange(start=1, exclusive_stop=2): {
-                        "married_terminal": StochasticTransition(func=_prob_one)
-                    }
-                }
-            ),
-            "married_terminal": None,
-            "single_f": ByAge(
-                cases={
-                    AgeRange(start=1, exclusive_stop=2): {
-                        "single_f_terminal": StochasticTransition(func=_prob_one)
-                    }
-                }
-            ),
-            "single_f_terminal": None,
-            "single_m": {"single_m_terminal": StochasticTransition(func=_prob_one)},
-            "single_m_terminal": None,
-        }
-    )
-
-
-def _solve_dissolution(*, enable_jit: bool = False):
-    laws = _dissolution_laws()
-    ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
-    names = list(_make_dissolution_regimes())
-    regimes = process_regimes(
-        prepared_structure=build_prepared_structure(
-            user_regimes=finalize_regimes(
-                user_regimes=_make_dissolution_regimes(),
-                derived_categoricals={},
-                koopmans_aggregator=LinearAggregator(),
-                certainty_equivalent=LinearExpectation(),
-                laws=laws,
-            ),
-            ages=ages,
-            laws=laws,
-        ),
-        user_regimes=finalize_regimes(
-            user_regimes=_make_dissolution_regimes(),
-            derived_categoricals={},
-            koopmans_aggregator=LinearAggregator(),
-            certainty_equivalent=LinearExpectation(),
-            laws=laws,
-        ),
-        ages=ages,
-        regime_names_to_ids=MappingProxyType(
-            {name: jnp.int32(i) for i, name in enumerate(names)}
-        ),
-        enable_jit=enable_jit,
-    )
-    flat_params = MappingProxyType(
-        {
-            "married": MappingProxyType(
-                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
-            ),
-            "married_ir": MappingProxyType(
-                {
-                    "koopmans_aggregator__discount_factor": jnp.asarray(_BETA),
-                    "ir_f__delta_f": jnp.asarray(0.5),
-                    "ir_m__delta_m": jnp.asarray(0.2),
-                }
-            ),
-            "married_terminal": MappingProxyType({}),
-            "single_f": MappingProxyType(
-                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
-            ),
-            "single_f_terminal": MappingProxyType({}),
-            "single_m": MappingProxyType(
-                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
-            ),
-            "single_m_terminal": MappingProxyType({}),
-        }
-    )
-    _bi_result = solve(
-        program_fingerprint="test_gated_edges_collective_solve",
-        flat_params=flat_params,
-        ages=ages,
-        regimes=regimes,
-        logger=get_logger(log_level="off"),
-        enable_jit=enable_jit,
-    )
-    return (
-        _bi_result.value_functions,
-        _bi_result.simulation_policies,
-        _bi_result.dissolution_flags,
-    )
-
-
-# married_ir period-1 solution (value-constraint IR miniature): D at wage=2, -inf there.
-# Wbar = where(~D, V_married_ir, own single fallback):
-#   wage=1 (D=F): (2, 1);  wage=2 (D=T): (V_single_f=5.5, V_single_m=1.0);
-#   wage=3 (D=F): (6, 3).
-# V_married(period 0) = beta * Wbar (utilities 0, wage fixed).
-_EXPECTED_WBAR = np.array([[2.0, 1.0], [5.5, 1.0], [6.0, 3.0]])
-_EXPECTED_V_MARRIED_0 = _BETA * _EXPECTED_WBAR
-
-
-def test_dissolution_edge_routes_each_stakeholder_to_own_fallback_no_nan():
-    """D=True cell: each stakeholder's continuation reads its OWN single fallback.
-
-    The two components differ at the dissolution cell (wife 5.225 vs husband 0.9025),
-    and NOTHING is NaN despite the target being -inf there (the -inf/where guard).
-    """
-    solution, _sim, dissolution_flags = _solve_dissolution()
-    V_married_0 = np.asarray(solution[0]["married"])
-    assert V_married_0.shape == (3, 2)
-    assert not np.any(np.isnan(V_married_0))
-    np.testing.assert_allclose(V_married_0, _EXPECTED_V_MARRIED_0, rtol=1e-6)
-    # The dissolution cell's two stakeholder continuations differ (own fallbacks).
-    assert not np.isclose(V_married_0[1, 0], V_married_0[1, 1])
-    # The source couple itself has no value constraints -> D all False.
-    np.testing.assert_array_equal(
-        np.asarray(dissolution_flags[0]["married"]), np.array([False, False, False])
-    )
-
-
-def test_dissolution_edge_matches_under_jit():
-    solution, _sim, _dissolution = _solve_dissolution(enable_jit=True)
-    np.testing.assert_allclose(
-        np.asarray(solution[0]["married"]), _EXPECTED_V_MARRIED_0, rtol=1e-6
-    )
 
 
 # Scope fences and build-time validation (pins)
@@ -622,111 +418,65 @@ def test_probabilistic_gate_is_rejected():
         )
 
 
-def test_edge_fallback_to_unknown_regime_is_rejected():
-    """A gated edge whose fallback names a missing regime is rejected at build."""
-    regimes = _make_consent_regimes()
-    bad_edge = Gate(
-        predicate=_consent_gate,
-        routes={
-            "f": StakeholderRoute(
-                target_stakeholder="f",
-                fallback=ProjectedRegimeValue(
-                    regime="no_such_regime", projection={"wage": _identity_wage}
+@categorical(ordered=False)
+class ConsentRegimeId:
+    single_f: ScalarInt
+    single_f_terminal: ScalarInt
+    single_m_terminal: ScalarInt
+    married_terminal: ScalarInt
+
+
+def _consent_model(edge: ParticipationCheck) -> Model:
+    """The consent regimes as a public model, the move into the couple under `edge`."""
+    return Model(
+        regimes=_make_consent_regimes(),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
+        regime_id_class=ConsentRegimeId,
+        initial_nodes={0: "single_f"},
+        edges={
+            "single_f": Transition(
+                law=ByAge(
+                    cases={
+                        AgeRange(exclusive_stop=1): {
+                            "married_terminal": StochasticTransition(func=_prob_one)
+                        }
+                    }
                 ),
+                participation={"married_terminal": edge},
             )
         },
-        references={
-            "V_single_f_ref": ProjectedRegimeValue(
-                regime="single_f_terminal", projection={"wage": _identity_wage}
-            ),
-            "V_single_m_ref": ProjectedRegimeValue(
-                regime="single_m_terminal", projection={"wage": _identity_wage}
-            ),
-        },
     )
-    laws = _consent_laws(bad_edge)
-    ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
+
+
+def test_consent_model_builds_with_valid_routes():
+    """Control for the refusals below: the well-formed decision builds and solves."""
+    solution = _consent_model(_consent_edge()).solve(
+        params={"discount_factor": _BETA}, log_level="off"
+    )
+    np.testing.assert_allclose(
+        np.asarray(solution.values[0]["single_f"]), np.array([2.9, 4.85]), rtol=1e-6
+    )
+
+
+def test_edge_fallback_to_unknown_regime_is_rejected():
+    """A participation check whose fallback names a missing regime is rejected."""
     with pytest.raises(ModelInitializationError, match="no_such_regime"):
-        process_regimes(
-            prepared_structure=build_prepared_structure(
-                user_regimes=finalize_regimes(
-                    user_regimes=regimes,
-                    derived_categoricals={},
-                    koopmans_aggregator=LinearAggregator(),
-                    certainty_equivalent=LinearExpectation(),
-                    laws=laws,
-                ),
-                ages=ages,
-                laws=laws,
-            ),
-            user_regimes=finalize_regimes(
-                user_regimes=regimes,
-                derived_categoricals={},
-                koopmans_aggregator=LinearAggregator(),
-                certainty_equivalent=LinearExpectation(),
-                laws=laws,
-            ),
-            ages=ages,
-            regime_names_to_ids=MappingProxyType(
-                {n: jnp.int32(i) for i, n in enumerate(regimes)}
-            ),
-            enable_jit=False,
-        )
+        _consent_model(_consent_edge(fallback_regime="no_such_regime"))
 
 
 def test_edge_leg_naming_a_missing_target_stakeholder_is_rejected():
-    """An edge leg naming a target stakeholder the target lacks is rejected."""
-    regimes = _make_consent_regimes()
-    bad_edge = Gate(
-        predicate=_consent_gate,
-        routes={
-            "f": StakeholderRoute(
-                target_stakeholder="not_a_stakeholder",
-                fallback=ProjectedRegimeValue(
-                    regime="single_f_terminal", projection={"wage": _identity_wage}
-                ),
-            )
-        },
-        references={
-            "V_single_f_ref": ProjectedRegimeValue(
-                regime="single_f_terminal", projection={"wage": _identity_wage}
-            ),
-            "V_single_m_ref": ProjectedRegimeValue(
-                regime="single_m_terminal", projection={"wage": _identity_wage}
-            ),
-        },
-    )
-    laws = _consent_laws(bad_edge)
-    ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
-    with pytest.raises(ModelInitializationError, match="not_a_stakeholder"):
-        process_regimes(
-            prepared_structure=build_prepared_structure(
-                user_regimes=finalize_regimes(
-                    user_regimes=regimes,
-                    derived_categoricals={},
-                    koopmans_aggregator=LinearAggregator(),
-                    certainty_equivalent=LinearExpectation(),
-                    laws=laws,
-                ),
-                ages=ages,
-                laws=laws,
-            ),
-            user_regimes=finalize_regimes(
-                user_regimes=regimes,
-                derived_categoricals={},
-                koopmans_aggregator=LinearAggregator(),
-                certainty_equivalent=LinearExpectation(),
-                laws=laws,
-            ),
-            ages=ages,
-            regime_names_to_ids=MappingProxyType(
-                {n: jnp.int32(i) for i, n in enumerate(regimes)}
-            ),
-            enable_jit=False,
-        )
+    """A participation route naming a stakeholder the target lacks is rejected."""
+    with pytest.raises(RegimeInitializationError, match="exact role"):
+        _consent_model(_consent_edge(target_stakeholder="not_a_stakeholder"))
 
 
-# Full mini-EKL topology in ONE model via the public API
+# Full mini-EKL topology in ONE model via the public API.
+#
+# `_make_full_topology_regimes` / `_full_topology_transitions` /
+# `_with_full_topology_laws` are the topology tests/solution imports (fold reads,
+# liveness pins, period replay/waves, release log): state-gated consent edges and
+# value constraints in `married`. The test here dissolves `married` through a
+# current-period participation exit instead.
 
 
 @categorical(ordered=False)
@@ -742,7 +492,7 @@ class EKLRegimeId:
 
 
 def _make_full_topology_regimes() -> dict[str, Regime]:
-    """The mini-EKL regimes: consent edges into `married`, a dissolution edge out.
+    """The mini-EKL regimes: consent edges into `married`, a plain edge out.
 
     The regimes carry no law. The sources with several outgoing edges at an age
     (`single_f`, `single_m`, `married`) take theirs from
@@ -817,13 +567,25 @@ def _make_full_topology_regimes() -> dict[str, Regime]:
     }
 
 
+def _consent_where_marriage_pays_both(wage: ContinuousState) -> BoolND:
+    """Mutual consent of the mini-EKL topology, stated on the landing wage.
+
+    On the wage grid {1, 2, 3} marriage pays both partners strictly more than
+    their single references only at wage 3: (V_married_f, V_married_m) is
+    (2, 1), (-inf, -inf), (6, 3) against references (1.5, 1), (5.5, 1),
+    (1.5, 1). A gate routes on states, so the comparison is written as the wage
+    set where it holds.
+    """
+    return wage > 2.5
+
+
 def _full_topology_transitions() -> dict[str, Transition]:
     """The transitions of the mini-EKL sources with several outgoing edges at an age.
 
     - `single_f` / `single_m`: at age 0 a mutual-consent edge into `married`,
       each single's own leg falling back to her `*_p1` regime;
-    - `married`: at age 1 a dissolution edge into `married_terminal`, each
-      stakeholder falling back to her own single terminal regime.
+    - `married`: at age 1 a plain move into `married_terminal`, whose actions are
+      all feasible, so no member ever needs a fallback there.
     """
 
     def _consent_leg(
@@ -838,15 +600,6 @@ def _full_topology_transitions() -> dict[str, Transition]:
             )
         }
 
-    consent_gate_refs = {
-        "V_single_f_ref": ProjectedRegimeValue(
-            regime="single_f_p1", projection={"wage": _identity_wage}
-        ),
-        "V_single_m_ref": ProjectedRegimeValue(
-            regime="single_m_p1", projection={"wage": _identity_wage}
-        ),
-    }
-
     def _consent_transition(
         *, fallback_regime: RegimeName, stakeholder: str
     ) -> Transition:
@@ -860,11 +613,10 @@ def _full_topology_transitions() -> dict[str, Transition]:
             ),
             gates={
                 "married": Gate(
-                    predicate=_consent_gate,
+                    predicate=_consent_where_marriage_pays_both,
                     routes=_consent_leg(
                         fallback_regime=fallback_regime, stakeholder=stakeholder
                     ),
-                    references=consent_gate_refs,
                 )
             },
         )
@@ -879,28 +631,7 @@ def _full_topology_transitions() -> dict[str, Transition]:
                         "married_terminal": StochasticTransition(func=_prob_one)
                     }
                 }
-            ),
-            gates={
-                "married_terminal": Gate(
-                    predicate=_no_dissolution_gate,
-                    routes={
-                        "f": StakeholderRoute(
-                            target_stakeholder="f",
-                            fallback=ProjectedRegimeValue(
-                                regime="single_f_terminal",
-                                projection={"wage": _identity_wage},
-                            ),
-                        ),
-                        "m": StakeholderRoute(
-                            target_stakeholder="m",
-                            fallback=ProjectedRegimeValue(
-                                regime="single_m_terminal",
-                                projection={"wage": _identity_wage},
-                            ),
-                        ),
-                    },
-                )
-            },
+            )
         ),
     }
 
@@ -926,37 +657,107 @@ def _with_full_topology_laws(
     }
 
 
+def _participation_topology_regimes() -> dict[str, Regime]:
+    """The mini-EKL regimes, `married` dissolving through a participation exit."""
+    regimes = _make_full_topology_regimes()
+    regimes["married"] = regimes["married"].replace(
+        constraints={},
+        exits={
+            "dissolve": Exit(
+                targets={
+                    "f": ExitTarget(
+                        regime="single_f_p1", projection={"wage": _identity_wage}
+                    ),
+                    "m": ExitTarget(
+                        regime="single_m_p1", projection={"wage": _identity_wage}
+                    ),
+                },
+                rule=_ParticipationRule(),
+            )
+        },
+    )
+    return regimes
+
+
+def _consent_participation(
+    *, fallback_regime: RegimeName, stakeholder: str
+) -> Transition:
+    """A single's mutual-consent participation check into `married` at age 0."""
+    return Transition(
+        targets={"married": 0, fallback_regime: 0},
+        law=ByAge(
+            cases={
+                AgeRange(exclusive_stop=1): {
+                    "married": StochasticTransition(func=_prob_one)
+                }
+            }
+        ),
+        participation={
+            "married": ParticipationCheck(
+                predicate=_consent_gate,
+                routes={
+                    stakeholder: StakeholderRoute(
+                        target_stakeholder=stakeholder,
+                        fallback=ProjectedRegimeValue(
+                            regime=fallback_regime,
+                            projection={"wage": _identity_wage},
+                        ),
+                    )
+                },
+                reads={
+                    **{
+                        f"V_target_{member}": ParticipationRead(
+                            kind="Participating",
+                            regime="married",
+                            stakeholder=member,
+                            projection={"wage": _identity_wage},
+                        )
+                        for member in ("f", "m")
+                    },
+                    **{
+                        f"V_single_{member}_ref": ParticipationRead(
+                            kind="IntegratedFull",
+                            regime=f"single_{member}_p1",
+                            projection={"wage": _identity_wage},
+                        )
+                        for member in ("f", "m")
+                    },
+                },
+            )
+        },
+    )
+
+
 def test_full_ekl_topology_via_public_model_api():
-    """single_f/single_m + married with consent edge + dissolution edge + IR, one model.
+    """single_f/single_m + married with consent check + dissolution exit, one model.
 
-    married (period 1) is the value-constraint IR miniature (dissolution cell at
-    wage=2). Its dissolution edge routes into the (zero-valued) terminal couple —
-    gate ~D is open there, so its continuation is zero and its V equals the
-    felicity readout.
-    single_f (period 0) reaches married through the CONSENT edge:
+    married (period 1) is the participation miniature (empty participation at
+    wage=2). Its continuation into the (zero-valued) terminal couple is zero, so
+    its V is the felicity readout where both members participate. At wage=2 no
+    common action meets both thresholds and the exit pays each member's full
+    single payoff (5.5, 1.0), where the retired dissolution flag left `-inf`.
+    single_f (period 0) reaches married through the CONSENT participation check:
 
-    gate(wage) = (V_married_f > V_single_f) & (V_married_m > V_single_m):
+    decision(wage) = (V_married_f > V_single_f) & (V_married_m > V_single_m):
       w=1: (2>1.5)&(1>1)  -> closed (husband indifferent, strict).
-      w=2: (-inf>5.5)&...  -> closed.
+      w=2: (5.5>5.5)&...  -> closed (strict; formerly -inf, closed as well).
       w=3: (6>1.5)&(3>1)  -> OPEN.
     Wbar_f = [1.5, 5.5, 6]; V_single_f(0) = wage + 0.95*Wbar_f = [2.425, 7.225, 8.7].
     """
     ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
     model = Model(
-        regimes=_make_full_topology_regimes(),
-        edges=_with_full_topology_laws(
-            {
-                "single_f": {"married": 0, "single_f_p1": 0},
-                "single_m": {"married": 0, "single_m_p1": 0},
-                "single_f_p1": {"single_f_terminal": 1},
-                "single_m_p1": {"single_m_terminal": (0, 1)},
-                "married": {
-                    "married_terminal": 1,
-                    "single_f_terminal": 1,
-                    "single_m_terminal": 1,
-                },
-            }
-        ),
+        regimes=_participation_topology_regimes(),
+        edges={
+            "single_f": _consent_participation(
+                fallback_regime="single_f_p1", stakeholder="f"
+            ),
+            "single_m": _consent_participation(
+                fallback_regime="single_m_p1", stakeholder="m"
+            ),
+            "single_f_p1": {"single_f_terminal": 1},
+            "single_m_p1": {"single_m_terminal": (0, 1)},
+            "married": {"married_terminal": 1},
+        },
         ages=ages,
         regime_id_class=EKLRegimeId,
         initial_nodes={ages.exact_values[0]: "single_f"},
@@ -965,11 +766,11 @@ def test_full_ekl_topology_via_public_model_api():
         params={"discount_factor": 0.95, "delta_f": 0.5, "delta_m": 0.2},
         log_level="off",
     ).values
-    # married period-1: value-constraint IR miniature (continuation zero via the
-    # dissolution edge).
+    # married period-1: participation miniature (continuation zero, the empty
+    # cell paid by the dissolution exit).
     np.testing.assert_allclose(
         np.asarray(solution[1]["married"]),
-        np.array([[2.0, 1.0], [-np.inf, -np.inf], [6.0, 3.0]]),
+        np.array([[2.0, 1.0], [5.5, 1.0], [6.0, 3.0]]),
         rtol=1e-6,
     )
     # single_f period-0: mutual-consent continuation.
@@ -981,52 +782,37 @@ def test_full_ekl_topology_via_public_model_api():
 
 
 def test_singleton_source_with_two_legs_is_rejected():
-    """A singleton source must declare exactly one edge leg."""
-    with pytest.raises(RegimeInitializationError, match="exactly one leg"):
-        validate_regime_law(
-            Regime(
-                states={"wage": _WAGE},
-                state_transitions={"wage": fixed_transition("wage")},
-                actions={"work": DiscreteGrid(category_class=Work)},
-                functions={"utility": _u_single_f},
+    """A singleton source must declare exactly one route."""
+    edge = _consent_edge()
+    two_routes = ParticipationCheck(
+        predicate=edge.predicate,
+        reads=edge.reads,
+        routes={
+            **edge.routes,
+            "extra": StakeholderRoute(
+                target_stakeholder="m",
+                fallback=ProjectedRegimeValue(
+                    regime="single_m_terminal",
+                    projection={"wage": _identity_wage},
+                ),
             ),
-            law=_consent_laws(
-                Gate(
-                    predicate=_consent_gate,
-                    routes={
-                        "f": StakeholderRoute(
-                            target_stakeholder="f",
-                            fallback=ProjectedRegimeValue(
-                                regime="single_f_terminal",
-                                projection={"wage": _identity_wage},
-                            ),
-                        ),
-                        "extra": StakeholderRoute(
-                            target_stakeholder="m",
-                            fallback=ProjectedRegimeValue(
-                                regime="single_m_terminal",
-                                projection={"wage": _identity_wage},
-                            ),
-                        ),
-                    },
-                )
-            )["single_f"],
-        )
+        },
+    )
+    with pytest.raises(RegimeInitializationError, match="single source route"):
+        _consent_model(two_routes)
 
 
-def _always_open_gate(V_target_f: FloatND) -> BoolND:
-    return jnp.ones_like(V_target_f, dtype=bool)
+def _always_open_gate(wage: ContinuousState) -> BoolND:
+    return jnp.ones_like(wage, dtype=bool)
 
 
-def _edge_with_refs(
-    *, fallback_regime: RegimeName, gate_ref_regime: RegimeName
-) -> GatedEdge:
-    """A one-leg gated edge whose fallback and gate reference name given regimes.
+def _edge_with_refs(*, fallback_regime: RegimeName) -> GatedEdge:
+    """A one-leg gated edge whose fallback names the given regime.
 
-    The co-activity guard reads only `.legs[*].fallback.regime` and
-    `.gate_refs[*].regime`, so everything else here is filler that keeps the edge
-    a well-formed `GatedEdge`: the guard runs before any regime graph exists and
-    never evaluates the gate or the projections.
+    The co-activity guard reads only `.legs[*].fallback.regime`, so everything
+    else here is filler that keeps the edge a well-formed `GatedEdge`: the guard
+    runs before any regime graph exists and never evaluates the gate or the
+    projections.
     """
     return GatedEdge(
         gate=_always_open_gate,
@@ -1040,31 +826,20 @@ def _edge_with_refs(
                 )
             }
         ),
-        gate_refs=MappingProxyType(
-            {
-                "g": ProjectedRegimeValue(
-                    regime=gate_ref_regime,
-                    projection={"wage": _identity_wage},
-                )
-            }
-        ),
     )
 
 
 def test_gated_edge_reference_uncovered_in_consumed_period_is_rejected():
-    """A gate reference (or fallback) uncovered in a period whose ``Wbar`` is
+    """A fallback uncovered in a period whose ``Wbar`` is
     actually CONSUMED (target covered at t, source covered at t-1) must be rejected
     at construction, so the solve-side `_roll_gated_edges` never feeds the source
     a stale later-period ``Wbar``.
     """
-    edge = _edge_with_refs(
-        fallback_regime="single_f_terminal", gate_ref_regime="single_m_terminal"
-    )
+    edge = _edge_with_refs(fallback_regime="single_m_terminal")
     regimes_to_active_periods = MappingProxyType(
         {
             "single_f": (0,),  # source solved in period 0
             "married_terminal": (1,),  # target solved in period 1 -> consumed
-            "single_f_terminal": (1,),  # also solved in period 1
             "single_m_terminal": (2,),  # not solved in consumed period 1
         }
     )
@@ -1086,15 +861,12 @@ def test_gated_edge_reference_uncovered_in_consumed_period_is_rejected():
 
 
 def test_gated_edge_references_covered_in_every_consumed_period_pass():
-    """References covered in every consumed period pass the guard."""
-    edge = _edge_with_refs(
-        fallback_regime="single_f_terminal", gate_ref_regime="single_m_terminal"
-    )
+    """A fallback covered in every consumed period passes the guard."""
+    edge = _edge_with_refs(fallback_regime="single_m_terminal")
     regimes_to_active_periods = MappingProxyType(
         {
             "single_f": (0,),
             "married_terminal": (1,),
-            "single_f_terminal": (1,),
             "single_m_terminal": (1,),
         }
     )
@@ -1116,16 +888,16 @@ def test_gated_edge_reference_uncovered_at_unconsumed_boundary_passes():
     target-covered period whose ``Wbar`` is NEVER consumed — the target's earliest
     covered period, where no source exists one period earlier. Requiring
     joint coverage across ALL target-covered periods would wrongly reject the
-    legitimate repeating self-loop model (regression: see
-    ``test_collective_regime_simulate.py::
-    test_repeating_self_loop_gated_edge_simulates_past_the_sources_last_covered_age``).
+    legitimate repeating self-loop boundary. The public occupied-boundary
+    counterpart is
+    `test_repeating_participation_boundary.py`,
+    `test_public_repeating_participation_stops_at_the_sources_last_supported_date`;
+    this kernel control separately checks reference coverage.
     """
     # Self-loop: source == target == "src", solved in periods {0, 1}; the
     # fallback is solved in {1, 2}, i.e. not in target-solved period 0 — but
     # period 0's Wbar is unconsumed (no source at period -1), so it is legal.
-    edge = _edge_with_refs(
-        fallback_regime="src_fallback", gate_ref_regime="src_fallback"
-    )
+    edge = _edge_with_refs(fallback_regime="src_fallback")
     regimes_to_active_periods = MappingProxyType(
         {
             "src": (0, 1),
@@ -1144,14 +916,8 @@ def test_gated_edge_reference_uncovered_at_unconsumed_boundary_passes():
     )
 
 
-@pytest.mark.parametrize("field_name", ["legs", "gate_refs"])
-def test_gated_edge_refuses_a_plain_dict_for_its_mappings(field_name: str) -> None:
+def test_gated_edge_refuses_a_plain_dict_for_its_legs() -> None:
     """A gated edge holds read-only mappings; a plain dict is refused."""
-    edge = _edge_with_refs(fallback_regime="single", gate_ref_regime="single")
-    arguments = {
-        "legs": edge.legs,
-        "gate_refs": edge.gate_refs,
-        field_name: dict(getattr(edge, field_name)),
-    }
-    with pytest.raises(RegimeInitializationError, match=field_name):
-        GatedEdge(gate=_always_open_gate, **arguments)  # ty: ignore[invalid-argument-type]
+    edge = _edge_with_refs(fallback_regime="single")
+    with pytest.raises(RegimeInitializationError, match="legs"):
+        GatedEdge(gate=_always_open_gate, legs=dict(edge.legs))  # ty: ignore[invalid-argument-type]

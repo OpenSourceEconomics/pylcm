@@ -59,6 +59,8 @@ from lcm import (
     LinearAggregator,
     LinearExpectation,
     LinSpacedGrid,
+    Model,
+    ParticipationCheck,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -95,56 +97,17 @@ class Work:
     work: ScalarInt  # code 1
 
 
-def test_missing_reference_regime_at_target_period_raises():
-    """A missing reference regime at the target's period raises, never ungates.
-
-    Dropping `single_f` from period 1's solution while keeping `married_ir`
-    (the edge's target) present must raise `ModelInitializationError` naming the
-    missing reference, rather than returning the substitution UNCHANGED with no
-    gate array -- a silent ungate.
-    """
-    _ages, regimes, _ids, flat_params, solution, dissolution_flags = (
-        _solve_dissolution()
-    )
-    married = regimes["married"]
-    edge = married.gated_edges["married_ir"]
-    assert edge.reference_regimes == ("single_f", "single_m")
-
-    base_state_action_spaces = {
-        name: regime.solution.state_action_space(regime_params=flat_params[name])
-        for name, regime in regimes.items()
-    }
-    period1 = dict(solution[1])
-    del period1["single_f"]
-    filtered_period_to_V = MappingProxyType({1: MappingProxyType(period1)})
-
-    with pytest.raises(ModelInitializationError, match="single_f"):
-        substitute_gated_edge_continuations(
-            regime=married,
-            regime_name="married",
-            regimes=regimes,
-            period=0,
-            next_regime_to_V_arr=solution[1],
-            base_state_action_spaces=base_state_action_spaces,
-            period_to_regime_to_V_arr=filtered_period_to_V,
-            period_to_regime_to_dissolution_flags=MappingProxyType(
-                {1: dissolution_flags[1]}
-            ),
-            flat_params=flat_params,
-        )
-
-
 def test_target_absent_at_next_period_is_still_a_legitimate_no_op():
     """Negative control: the TARGET (not a reference) missing at period+1 stays
     a silent no-op -- the legitimate repeating/one-shot boundary case, which
     the missing-reference guard must leave alone. Mirrors
-    `test_repeating_self_loop_gated_edge_simulates_past_the_sources_last_covered_age`'s
-    scenario at the kernel level: an empty `period_to_regime_to_V_arr` for
-    period+1 (no target, hence no references either) must not raise.
+    the occupied boundary in the public counterpart
+    `test_repeating_participation_boundary.py`,
+    `test_public_repeating_participation_stops_at_the_sources_last_supported_date`.
+    This kernel control supplies an empty `period_to_regime_to_V_arr` for
+    period+1 (no target, hence no references either), which must not raise.
     """
-    _ages, regimes, _ids, flat_params, solution, _dissolution_flags = (
-        _solve_dissolution()
-    )
+    _ages, regimes, _ids, flat_params, solution = _solve_dissolution()
     married = regimes["married"]
     base_state_action_spaces = {
         name: regime.solution.state_action_space(regime_params=flat_params[name])
@@ -158,42 +121,12 @@ def test_target_absent_at_next_period_is_still_a_legitimate_no_op():
         next_regime_to_V_arr=solution[1],
         base_state_action_spaces=base_state_action_spaces,
         period_to_regime_to_V_arr=MappingProxyType({}),  # period+1 wholly absent
-        period_to_regime_to_dissolution_flags=MappingProxyType({}),
         flat_params=flat_params,
     )
     assert dict(gate_arrays) == {}
     np.testing.assert_array_equal(
         np.asarray(substituted["married_ir"]), np.asarray(solution[1]["married_ir"])
     )
-
-
-def test_dissolution_fixture_with_all_references_present_is_unaffected():
-    """Regression pin: the ordinary (fully-solved) dissolution fixture never
-    hits the reference-regime raise --
-    `test_dissolution_edge_routes_the_row_to_its_own_roles_single_regime`
-    (test_collective_regime_simulate.py) still passes end to end through
-    `simulate()`, exercised again here at the kernel level.
-    """
-    _ages, regimes, _ids, flat_params, solution, dissolution_flags = (
-        _solve_dissolution()
-    )
-    married = regimes["married"]
-    base_state_action_spaces = {
-        name: regime.solution.state_action_space(regime_params=flat_params[name])
-        for name, regime in regimes.items()
-    }
-    _substituted, gate_arrays = substitute_gated_edge_continuations(
-        regime=married,
-        regime_name="married",
-        regimes=regimes,
-        period=0,
-        next_regime_to_V_arr=solution[1],
-        base_state_action_spaces=base_state_action_spaces,
-        period_to_regime_to_V_arr=solution,
-        period_to_regime_to_dissolution_flags=dissolution_flags,
-        flat_params=flat_params,
-    )
-    assert "married_ir" in gate_arrays
 
 
 # Two legs of one gated edge sharing a fallback regime must be rejected at
@@ -218,8 +151,9 @@ def _u_zero_collective(*, wage: ContinuousState, work: DiscreteAction) -> FloatN
     return 0.0 * wage * work
 
 
-def _no_dissolution_gate(D_target: BoolND) -> BoolND:
-    return ~D_target
+def _always_open(wage: ContinuousState) -> BoolND:
+    """`married_ir` has no constraint, so no landing dissolves."""
+    return jnp.isfinite(wage)
 
 
 def _u_shared(wage: ContinuousState) -> FloatND:
@@ -274,7 +208,7 @@ def _shared_fallback_laws() -> dict[RegimeName, RegimeLawDeclaration | Transitio
             ),
             gates={
                 "married_ir": Gate(
-                    predicate=_no_dissolution_gate,
+                    predicate=_always_open,
                     routes={
                         "f": StakeholderRoute(
                             target_stakeholder="f",
@@ -319,6 +253,84 @@ def test_two_legs_sharing_a_fallback_regime_is_rejected_at_construction():
         )
 
 
+@categorical(ordered=False)
+class _SharedFallbackId:
+    married: ScalarInt
+    married_ir: ScalarInt
+    single_shared: ScalarInt
+
+
+def _never_arrives(wage: ContinuousState) -> BoolND:
+    return wage < 0.0
+
+
+def test_two_participation_routes_sharing_a_fallback_regime_each_land_their_own_row():
+    """Participation routes may share a fallback: each member lands at its projection.
+
+    A participation check's fallback landing is keyed by the route a row's role selects,
+    not written per fallback regime, so the guard a gated edge needs does not apply.
+    With the participation check always rejected, `f` lands in `single_shared` at its
+    wage and `m` at `4 - wage`, in solve and in simulation.
+    """
+    routes = {
+        "f": StakeholderRoute(
+            target_stakeholder="f",
+            fallback=ProjectedRegimeValue(
+                regime="single_shared", projection={"wage": _identity_wage}
+            ),
+        ),
+        "m": StakeholderRoute(
+            target_stakeholder="m",
+            fallback=ProjectedRegimeValue(
+                regime="single_shared", projection={"wage": _reverse_wage}
+            ),
+        ),
+    }
+    model = Model(
+        regimes=_make_shared_fallback_regimes(),
+        edges={
+            "married": Transition(
+                law=ByAge(
+                    cases={
+                        AgeRange(exclusive_stop=1): {
+                            "married_ir": StochasticTransition(func=_prob_one)
+                        }
+                    }
+                ),
+                targets={"married_ir": 0, "single_shared": 0},
+                participation={
+                    "married_ir": ParticipationCheck(
+                        predicate=_never_arrives, routes=routes
+                    )
+                },
+            )
+        },
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
+        regime_id_class=_SharedFallbackId,
+        initial_nodes={0: "married"},
+    )
+    params = {"discount_factor": 1.0}
+    solution = model.solve(params=params, log_level="off")
+    np.testing.assert_array_equal(
+        solution.values[0]["married"], [[1.0, 3.0], [2.0, 2.0], [3.0, 1.0]]
+    )
+    frame = model.simulate(
+        params=params,
+        solution=solution,
+        initial_conditions={
+            "age": jnp.zeros(4),
+            "wage": jnp.array([1.0, 1.0, 2.0, 2.0]),
+            "own_stakeholder": jnp.array([0, 1, 0, 1], dtype=jnp.int32),
+            "regime_id": jnp.full(4, _SharedFallbackId.married, dtype=jnp.int32),
+        },
+        seed=0,
+        log_level="off",
+    ).to_dataframe()
+    landed = frame.loc[frame["period"] == 1].sort_values("subject_id")
+    assert landed["regime_name"].tolist() == ["single_shared"] * 4
+    np.testing.assert_array_equal(landed["wage"], [1.0, 3.0, 2.0, 2.0])
+
+
 def test_dissolution_fixture_has_distinct_fallbacks_and_still_constructs():
     """Negative control: `_make_dissolution_regimes` (single_f / single_m,
     DISTINCT fallback regimes) is exactly the EKL-shaped topology and must
@@ -327,10 +339,12 @@ def test_dissolution_fixture_has_distinct_fallbacks_and_still_constructs():
     ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
     regimes_dict = _make_dissolution_regimes()
     laws = _dissolution_laws()
-    married_edge = bind_laws({"married": laws["married"]})["married"].gated_edges[
-        "married_ir"
+    married_participation = bind_laws({"married": laws["married"]})[
+        "married"
+    ].participation["married_ir"]
+    fallback_regimes = [
+        route.solve_fallback.regime for route in married_participation.routes.values()
     ]
-    fallback_regimes = [leg.solve_fallback.regime for leg in married_edge.legs.values()]
     assert len(fallback_regimes) == len(set(fallback_regimes))
     # Must not raise.
     _solve_and_process(
@@ -516,8 +530,7 @@ def _solve_all_collective():
     )
     solution = _bi_result.value_functions
     _sim_policies = _bi_result.simulation_policies
-    dissolution_flags = _bi_result.dissolution_flags
-    return ages, regimes, regime_names_to_ids, flat_params, solution, dissolution_flags
+    return ages, regimes, regime_names_to_ids, flat_params, solution
 
 
 def test_to_dataframe_all_collective_result_has_no_scalar_value_column():
@@ -527,9 +540,7 @@ def test_to_dataframe_all_collective_result_has_no_scalar_value_column():
     a scalar `value` column and `_reorder_columns` must not name one.
     `to_dataframe()` returns `value_f`/`value_m` and no `value`.
     """
-    ages, regimes, regime_names_to_ids, flat_params, solution, dissolution_flags = (
-        _solve_all_collective()
-    )
+    ages, regimes, regime_names_to_ids, flat_params, solution = _solve_all_collective()
     initial_conditions = MappingProxyType(
         {
             "wage": jnp.array([8.0, 40.0]),
@@ -547,7 +558,6 @@ def test_to_dataframe_all_collective_result_has_no_scalar_value_column():
         regime_names_to_ids=regime_names_to_ids,
         logger=get_logger(log_level="off"),
         period_to_regime_to_V_arr=solution,
-        period_to_regime_to_dissolution_flags=dissolution_flags,
         ages=ages,
         simulation_output_dtypes={},
         seed=0,
@@ -618,7 +628,6 @@ def test_stateless_collective_regime_simulate_carries_subject_axis():
     )
     solution = _bi_result.value_functions
     _sim_policies = _bi_result.simulation_policies
-    _dissolution_flags = _bi_result.dissolution_flags
     assert solution[0]["stateless_couple"].shape == (2,)  # solve: no subject axis
 
     n_subjects = 3
@@ -690,9 +699,7 @@ def test_stateful_collective_regime_simulate_shape_is_byte_identical():
     from its per-subject state arrays, and the stateless-collective branch
     leaves it alone. Reuses `_make_all_collective_regimes` (has a `wage` state).
     """
-    ages, regimes, regime_names_to_ids, flat_params, solution, dissolution_flags = (
-        _solve_all_collective()
-    )
+    ages, regimes, regime_names_to_ids, flat_params, solution = _solve_all_collective()
     initial_conditions = MappingProxyType(
         {
             "wage": jnp.array([8.0, 40.0]),
@@ -710,7 +717,6 @@ def test_stateful_collective_regime_simulate_shape_is_byte_identical():
         regime_names_to_ids=regime_names_to_ids,
         logger=get_logger(log_level="off"),
         period_to_regime_to_V_arr=solution,
-        period_to_regime_to_dissolution_flags=dissolution_flags,
         ages=ages,
         simulation_output_dtypes={},
         seed=0,

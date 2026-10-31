@@ -43,11 +43,9 @@ class OutputRole(Enum):
     """Logical role of one solve-core output leaf fixed by the value template."""
 
     VALUE = auto()
-    DISSOLUTION_FLAG = auto()
 
 
 VALUE = OutputRole.VALUE
-DISSOLUTION_FLAG = OutputRole.DISSOLUTION_FLAG
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -188,13 +186,20 @@ def resolve_output_layout(
     _validate_output_roles(
         roles=output_roles,
         core_key=core_key,
-        value_template=value_template,
         state_order=state_order,
     )
 
     value_sharding = _require_value_sharding(value_template=value_template)
-    value_shape = getattr(value_template, "shape", None)
-    value_dtype = getattr(value_template, "dtype", None)
+    first_role = jax.tree.leaves(output_roles)[0]
+    # A transient query publishes an explicit chunk prototype, not a durable V
+    # axis. Its placement still comes from the actual occupant's device set.
+    explicit = isinstance(first_role, StateAxesLeading)
+    value_shape = (
+        first_role.shape if explicit else getattr(value_template, "shape", None)
+    )
+    value_dtype = (
+        first_role.dtype if explicit else getattr(value_template, "dtype", None)
+    )
     if value_shape is None or value_dtype is None:
         msg = "A planned value template must expose an absolute shape and dtype."
         raise TypeError(msg)
@@ -289,13 +294,7 @@ def _resolve_output_leaf(
             dtype=value_dtype,
             sharding=value_sharding,
         )
-    if role is DISSOLUTION_FLAG:
-        label = "dissolution"
-        role = StateAxesLeading(
-            state_names=state_order, dtype=jnp.dtype(bool), shape=value_shape[:-1]
-        )
-    else:
-        label = f"leaf {jax.tree_util.keystr(path)}"
+    label = f"leaf {jax.tree_util.keystr(path)}"
     if not isinstance(role, StateAxesLeading):
         msg = f"unreachable output role: {role!r}"
         raise TypeError(msg)
@@ -339,7 +338,6 @@ def _validate_output_roles(
     *,
     roles: OutputRoleTree,
     core_key: str,
-    value_template: ValueTemplate,
     state_order: tuple[StateName, ...],
 ) -> None:
     """Fail closed outside the supported logical output trees."""
@@ -359,19 +357,21 @@ def _validate_output_roles(
         )
         raise TypeError(msg)
     value_positions = [index for index, role in enumerate(role_leaves) if role is VALUE]
-    if value_positions != [0]:
+    if not value_positions:
+        if not all(
+            isinstance(role, StateAxesLeading)
+            and role.shape is not None
+            and role.dtype is not None
+            for role in role_leaves
+        ):
+            raise ValueError(
+                f"Core {core_key!r} transient outputs need explicit shape and dtype "
+                "on every leaf."
+            )
+    elif value_positions != [0]:
         msg = (
             f"Core {core_key!r} must declare exactly one VALUE leaf, in the first "
             f"position of its output-role tree; got {roles!r}."
-        )
-        raise ValueError(msg)
-    if (
-        any(role is DISSOLUTION_FLAG for role in role_leaves)
-        and getattr(value_template, "ndim", None) != len(state_order) + 1
-    ):
-        msg = (
-            f"Core {core_key!r} declared a dissolution output, but its value "
-            "template does not have exactly one trailing stakeholder axis."
         )
         raise ValueError(msg)
     for role in role_leaves:

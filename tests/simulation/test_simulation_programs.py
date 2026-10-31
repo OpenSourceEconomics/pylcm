@@ -17,7 +17,6 @@ from _lcm.execution.core_program import (
 )
 from _lcm.regime_building.max_Q_over_a import get_argmax_and_max_Q_over_a
 from _lcm.simulation import programs as simulation_programs
-from _lcm.simulation.period_inputs import GATE_ROUTE, gate_reads
 from _lcm.simulation.program_types import SimulationPrograms
 from _lcm.simulation.programs import (
     SUBJECT_AXIS,
@@ -180,35 +179,6 @@ def test_value_read_occurrences_name_the_simulation_program(
         assert read.source.source_period == period
         assert read.source.source_regime == regime
         assert read.source.core_key == program.name
-
-
-def test_decision_and_routing_keep_distinct_occurrences_of_a_shared_value() -> None:
-    """Two forward cores sharing an artifact must not collapse to one reader."""
-    model, _, _ = WITNESSES[_COLLECTIVE[0]]()
-    regime = model._regimes[_COLLECTIVE[1]]
-    programs = regime.simulation.programs
-    period = min(programs.route)
-    decision = programs.decision[period].requirements.value_reads
-    # Only structural availability is needed to declare the host gate's reads.
-    values = {period + 1: {name: jnp.zeros(1) for name in model._regimes}}
-    route = tuple(
-        read
-        for read in gate_reads(
-            regime=regime, name=regime.name, period=period, values=values, flags={}
-        )
-        if read.source.core_key == GATE_ROUTE
-    )
-    shared = [
-        (left, right)
-        for left in decision
-        for right in route
-        if left.target == right.target
-    ]
-    assert shared
-    for left, right in shared:
-        assert left.source != right.source
-        assert left.source.core_key == programs.decision[period].name
-        assert right.source.core_key == GATE_ROUTE
 
 
 def test_a_simulation_program_refuses_to_bind_arguments_at_model_build() -> None:

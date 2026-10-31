@@ -69,7 +69,6 @@ from lcm.collective import Gate
 from lcm.transition import Transition, TransitionLaw
 from lcm.tuning import _array_ulp_gap
 from lcm.typing import (
-    BoolND,
     Float1D,
     FloatND,
     Int1D,
@@ -383,11 +382,15 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     """
     slow = pytest.mark.slow
     os_persistence = frozenset(ci_workloads.os_persistence_tests())
+    egm_acceptance = frozenset(ci_workloads.egm_acceptance_tests())
     for item in items:
         if "solution" in item.path.parts:
             item.add_marker(slow)
-        if _test_function_key(item=item, root=config.rootpath) in os_persistence:
+        key = _test_function_key(item=item, root=config.rootpath)
+        if key in os_persistence:
             item.add_marker(pytest.mark.os_persistence)
+        if key in egm_acceptance:
+            item.add_marker(pytest.mark.egm_acceptance)
 
     _validate_exact_kernel_markers(items=items)
     _apply_backend_skips(items=items)
@@ -402,6 +405,22 @@ def _test_function_key(*, item: pytest.Item, root: pathlib.Path) -> str:
         return ""
     name = getattr(item, "originalname", None) or item.name
     return f"{relative}::{name}"
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_collection(session: pytest.Session) -> Iterator[None]:
+    """Hand a worker's collection usage error to the xdist controller.
+
+    Only the workers collect. A `UsageError` there ends each worker with status 4,
+    and the controller would report only an unrelated `assert not crashitem`.
+    xdist forwards `shouldfail` to the controller, which stops with that message.
+    """
+    try:
+        return (yield)
+    except pytest.UsageError as error:
+        if getattr(session.config, "workeroutput", None) is not None:
+            session.shouldfail = f"worker collection failed: {error}"
+        raise
 
 
 def pytest_collection_finish(session: pytest.Session) -> None:
@@ -733,8 +752,8 @@ def bind_laws(
 ) -> RegimeLaws:
     """Bind each regime's declared law the way `Model(edges=...)` binds it.
 
-    `declared` maps every regime to its law between regimes, `None` for a
-    terminal regime, or to a `Transition` whose gates the law carries along.
+    `declared` maps every regime to its law between regimes, `None` for a terminal
+    regime, or to a `Transition` whose gates and participation checks travel with it.
     """
     return MappingProxyType(
         {
@@ -745,6 +764,7 @@ def bind_laws(
                         target: gated_edge_from_gate(gate)
                         for target, gate in law.gates.items()
                     },
+                    participation=law.participation,
                 )
                 if isinstance(law, Transition)
                 else bind_regime_law(law)
@@ -776,10 +796,14 @@ def build_prepared_structure(
         declared_transitions={name: law.transition for name, law in laws.items()},
         code_by_name={name: code for code, name in enumerate(laws)},
     )
-    # Lowering keeps each regime's law only; its gates stay those it declares.
+    # Lowering keeps the law; source-owned gates and participation checks stay attached.
     bound = MappingProxyType(
         {
-            name: bind_regime_law(transition, gated_edges=laws[name].gated_edges)
+            name: bind_regime_law(
+                transition,
+                gated_edges=laws[name].gated_edges,
+                participation=laws[name].participation,
+            )
             for name, transition in lowered.items()
         }
     )
@@ -788,6 +812,11 @@ def build_prepared_structure(
         laws=bound,
         ages=ages,
         active_periods_by_regime=schedules.coverage_by_regime,
+        # This kernel harness permits starts at every pre-existing covered date.
+        # Query demand never widens its original occupants or stored Full bank.
+        original_periods_by_regime=schedules.coverage_by_regime,
+        value_periods_by_regime=schedules.coverage_by_regime,
+        query_periods_by_phase=schedules.query_periods_by_phase,
         support_by_phase=schedules.support_by_phase,
         gated_source_periods=gated_source_periods(schedules=schedules),
         # The bound laws stand in for the declarations a `Model` would hold.
@@ -800,17 +829,17 @@ def build_prepared_structure(
                         target: Gate(
                             predicate=edge.gate,
                             routes=edge.legs,
-                            references=edge.gate_refs,
                             off_grid=edge.off_grid,
                         )
                         for target, edge in law.gated_edges.items()
                     },
+                    participation=law.participation,
                 ),
             )
             for name, law in bound.items()
             if not law.terminal
         },
-        declared_edge_vocabulary=create_edge_vocabulary(user_regimes),
+        declared_edge_vocabulary=create_edge_vocabulary(user_regimes=user_regimes),
     )
 
 
@@ -959,9 +988,6 @@ class SubjectChunkKwargs(TypedDict, closed=True):
     regime_ids_to_names: RegimeIdsToNames
     period_to_regime_to_V_arr: MappingProxyType[
         int, MappingProxyType[RegimeName, FloatND]
-    ]
-    period_to_regime_to_dissolution_flags: MappingProxyType[
-        int, MappingProxyType[RegimeName, BoolND]
     ]
     flat_params: FlatParams
     ages: TimeAxis

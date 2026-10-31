@@ -27,20 +27,24 @@ environment is held fixed and only the source moves. The precision is set with
 JAX's own `JAX_ENABLE_X64` switch, which takes effect when JAX is imported:
 
     git worktree add --detach <old> <sha>
-    cp src/_lcm/version.py <old>/src/_lcm/version.py
+    pixi run -e tests-cpu python -c 'from vcs_versioning._get_version_impl import \
+        get_version; print(get_version(root="<old>", write_to="src/_lcm/version.py"))'
     JAX_ENABLE_X64=1 JAX_PLATFORMS=cpu PYTHONPATH=<old>/src zsh -ic "cd <repo> && \
         cap pixi run -e type-checking python \
         tests/data/regression_tests/generate_representative_model_values.py \
         --source-root <old> --precision 64 \
-        --output tests/data/regression_tests/f64/representative_model_values.npz"
+        --output \
+        tests/data/regression_tests/f64/random-v1/representative_model_values.npz"
 
 and the same with `JAX_ENABLE_X64=0`, `--precision 32` and the `f32` directory.
-The script refuses to write when `lcm` was not imported from `--source-root`, when
-the precision JAX runs at differs from `--precision`, or when the backend is not
-the CPU.
+The script refuses to overwrite an existing archive or host record. It also refuses
+to write when `lcm` was not imported from `--source-root`, when the precision JAX runs
+at differs from `--precision`, or when the backend is not the CPU.
 """
 
 import argparse
+import hashlib
+import json
 import os
 import platform
 import subprocess
@@ -49,10 +53,12 @@ from pathlib import Path
 
 import jax
 import jax.numpy as jnp
+import jaxlib
 import numpy as np
 import pandas as pd
 
 import lcm
+from _lcm.simulation.random_address import RANDOM_ADDRESS_VERSION
 from lcm import Model
 from lcm.typing import FloatND, RegimeName, UserInitialConditions, UserParams
 from lcm_examples import (
@@ -146,6 +152,8 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     source_root = args.source_root.resolve()
+    if args.output.exists() or host_file(args.output).exists():
+        raise FileExistsError(f"A frozen output already exists beside {args.output}.")
     lcm_file = Path(lcm.__file__).resolve()
     _fail_if_not_probing(
         lcm_file=lcm_file, source_root=source_root, precision=args.precision
@@ -160,6 +168,22 @@ def main() -> None:
         "precision": str(args.precision),
         "backend": jax.default_backend(),
         "jax_version": jax.__version__,
+        "jaxlib_version": jaxlib.__version__,
+        "address_version": RANDOM_ADDRESS_VERSION,
+        "prng_impl": "threefry2x32",
+        "source_diff_sha256": hashlib.sha256(
+            _git(source_root, "diff", "--binary").encode("utf-8")
+        ).hexdigest(),
+        "source_files": json.dumps(
+            {
+                str(path.relative_to(source_root)): hashlib.sha256(
+                    path.read_bytes()
+                ).hexdigest()
+                for path in sorted((source_root / "src").rglob("*.py"))
+            },
+            sort_keys=True,
+        ),
+        "recipe_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
     }
     arrays.update(
         {

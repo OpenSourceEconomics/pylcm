@@ -26,6 +26,7 @@ from typing import cast, no_type_check
 
 import jax.numpy as jnp
 from dags import get_annotations, get_free_arguments
+from dags.signature import rename_arguments
 
 from _lcm.constraints.ir import Condition
 from _lcm.gated_edge import GatedEdge
@@ -43,7 +44,11 @@ from lcm.collective import (
     ValueDependentConstraint,
 )
 from lcm.decoupled import Decoupled
-from lcm.exceptions import ModelInitializationError, RegimeInitializationError
+from lcm.exceptions import (
+    ModelInitializationError,
+    RegimeInitializationError,
+)
+from lcm.participation import ParticipationCheck, ParticipationRead
 from lcm.phased import Phased
 from lcm.regime import (
     ConstraintEntry,
@@ -211,7 +216,8 @@ def collect_adapter_grids(
 
     """
     value_grids = collect_value_grids(
-        regimes=regimes, derived_categoricals=derived_categoricals
+        regimes=regimes,
+        derived_categoricals=derived_categoricals,
     )
     grids: dict[StateOrActionName, AdapterGrid] = {
         **_declared_process_grids(regimes=regimes),
@@ -274,8 +280,8 @@ def process_code_reads(
 ]:
     """Return, per regime, the process states some adapter reads the position of.
 
-    A regime's code readers are its own functions and the gates, fallbacks and
-    references of the gated edges landing in it; each binds that regime's copy.
+    A regime's code readers are its own functions and the gates and fallbacks
+    of the gated edges landing in it; each binds that regime's copy.
     """
     # An age-specialized marker's built functions read no position.
     read = {
@@ -419,7 +425,7 @@ def _declared_process_grids(
 
 def _stands_on_nodes(process: _ContinuousStochasticProcess) -> bool:
     """Whether every value the process holds is one of its fixed nodes."""
-    return process.is_fully_specified and process.simulate_draws == "nodes"
+    return process.is_fully_specified and process.simulated_draws == "nodes"
 
 
 def _declared_discrete_grids(
@@ -597,8 +603,8 @@ def adapt_regime_laws(
 
     A law still returns a regime code or probabilities over regimes, so nothing
     it returns is encoded. A regime name and a terminal law read nothing. The
-    transition reads the source regime's states; a gated edge's gate, fallbacks
-    and references read the states of the target it lands in.
+    transition reads the source regime's states; a gated edge's gate and
+    fallbacks read the states of the target it lands in.
     """
     adapters = {} if adapters is None else adapters
     return MappingProxyType(
@@ -623,7 +629,7 @@ def _adapt_regime_law(
     value_grids_by_regime: Mapping[RegimeName, Mapping[StateOrActionName, AdapterGrid]],
     adapters: AdapterMemo,
 ) -> RegimeLaw:
-    """Adapt one law's transition and gated edges; keep the law if neither changes."""
+    """Adapt the source law and target-dated gate and participation callbacks."""
     transition = (
         law.transition
         if isinstance(law.transition, str)
@@ -645,12 +651,131 @@ def _adapt_regime_law(
         )
         for target, edge in law.gated_edges.items()
     }
-    if transition is law.transition and all(
-        gated_edges[target] is edge for target, edge in law.gated_edges.items()
+    participation = {
+        target: _adapt_participation(
+            declaration=declaration,
+            value_grids=value_grids_by_regime[target],
+            adapters=adapters,
+        )
+        for target, declaration in law.participation.items()
+    }
+    if (
+        transition is law.transition
+        and all(gated_edges[target] is edge for target, edge in law.gated_edges.items())
+        and all(
+            participation[target] is declaration
+            for target, declaration in law.participation.items()
+        )
     ):
         return law
     return dataclasses.replace(
-        law, transition=transition, gated_edges=MappingProxyType(gated_edges)
+        law,
+        transition=transition,
+        gated_edges=MappingProxyType(gated_edges),
+        participation=MappingProxyType(participation),
+    )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _AdaptedParticipationPredicate:
+    """Canonical predicate reader plus the private names of its declared reads.
+
+    The declaration keeps its public read keys. Only the callback's input channel is
+    renamed before value adaptation, and the participation check lowerer reconnects that
+    channel to its query operands without rebuilding the retained adapter.
+    """
+
+    function: UserFunction
+    read_aliases: MappingProxyType[str, str]
+
+    def __post_init__(self) -> None:
+        for name in ("__module__", "__name__", "__qualname__", "__doc__"):
+            value = getattr(self.function, name, None)
+            if value is not None:
+                object.__setattr__(self, name, value)
+        object.__setattr__(self, "__signature__", inspect.signature(self.function))
+        object.__setattr__(self, "__annotations__", get_annotations(self.function))
+        object.__setattr__(self, "__lcm_source__", self.function)
+
+    @no_type_check
+    def __call__(self, **kwargs: EconFunctionArg) -> ValueND:
+        return self.function(**kwargs)
+
+
+def _adapt_participation(
+    *,
+    declaration: ParticipationCheck,
+    value_grids: Mapping[StateOrActionName, AdapterGrid],
+    adapters: AdapterMemo,
+) -> ParticipationCheck:
+    """Read landing values and encode projected read and settlement states."""
+    predicate = declaration.predicate
+    # Keep explicit read operands separate from same-spelled physical inputs.
+    # Adapt the actual reader here, with the canonical bindings and shared memo,
+    # so process-code admission sees exactly the adapter the lowerer will use.
+    if any(
+        name in value_grids
+        or (
+            name.endswith(CODE_SUFFIX) and name.removesuffix(CODE_SUFFIX) in value_grids
+        )
+        for name in declaration.reads
+    ):
+        occupied = set(inspect.signature(predicate).parameters) | set(value_grids)
+        aliases = {}
+        for index, name in enumerate(declaration.reads):
+            alias = f"_lcm_participation_declared_read_{index}"
+            while alias in occupied:
+                alias += "_"
+            aliases[name] = alias
+            occupied.add(alias)
+        predicate = _AdaptedParticipationPredicate(
+            function=adapt_user_function(
+                func=rename_arguments(predicate, mapper=aliases),
+                value_grids=value_grids,
+                encode=None,
+                adapters=adapters,
+            ),
+            read_aliases=MappingProxyType(aliases),
+        )
+    else:
+        predicate = adapt_user_function(
+            func=declaration.predicate,
+            value_grids=value_grids,
+            encode=None,
+            adapters=adapters,
+        )
+    reads = {
+        name: cast(
+            "ParticipationRead",
+            _adapt_reference(
+                reference=read, value_grids=value_grids, adapters=adapters
+            ),
+        )
+        for name, read in declaration.reads.items()
+    }
+    fallbacks = {
+        name: _adapt_reference(
+            reference=route.fallback, value_grids=value_grids, adapters=adapters
+        )
+        for name, route in declaration.routes.items()
+    }
+    if (
+        predicate is declaration.predicate
+        and all(reads[name] is read for name, read in declaration.reads.items())
+        and all(
+            fallbacks[name] is route.fallback
+            for name, route in declaration.routes.items()
+        )
+    ):
+        return declaration
+    return dataclasses.replace(
+        declaration,
+        predicate=predicate,
+        reads=reads,
+        routes={
+            name: dataclasses.replace(route, fallback=fallbacks[name])
+            for name, route in declaration.routes.items()
+        },
     )
 
 
@@ -701,7 +826,7 @@ def _adapt_gated_edge(
     value_grids: Mapping[StateOrActionName, AdapterGrid],
     adapters: AdapterMemo,
 ) -> GatedEdge:
-    """Adapt a gated edge's gate, its routes' fallbacks and its references.
+    """Adapt a gated edge's gate and its routes' fallbacks.
 
     The edge is kept as declared if none of them changes.
     """
@@ -714,19 +839,8 @@ def _adapt_gated_edge(
         )
         for name, route in edge.legs.items()
     }
-    gate_refs = {
-        name: cast(
-            "ProjectedRegimeValue",
-            _adapt_reference(
-                reference=reference, value_grids=value_grids, adapters=adapters
-            ),
-        )
-        for name, reference in edge.gate_refs.items()
-    }
-    if (
-        gate is edge.gate
-        and all(fallbacks[name] is route.fallback for name, route in edge.legs.items())
-        and all(gate_refs[name] is ref for name, ref in edge.gate_refs.items())
+    if gate is edge.gate and all(
+        fallbacks[name] is route.fallback for name, route in edge.legs.items()
     ):
         return edge
     return dataclasses.replace(
@@ -738,7 +852,6 @@ def _adapt_gated_edge(
                 for name, route in edge.legs.items()
             }
         ),
-        gate_refs=MappingProxyType(gate_refs),
     )
 
 
@@ -1163,7 +1276,7 @@ def _fail_if_a_position_has_no_node(
         if isinstance(process, UnreadableProcessCode)
         else f"`{name}` (fix the parameters of `{codes[name]}` at construction)"
         if not process.is_fully_specified
-        else f"`{name}` (declare `{codes[name]}` with `simulate_draws='nodes'`)"
+        else f"`{name}` (declare `{codes[name]}` with `simulated_draws='nodes'`)"
         for name, process in positions.items()
         if isinstance(process, UnreadableProcessCode) or not _stands_on_nodes(process)
     ]

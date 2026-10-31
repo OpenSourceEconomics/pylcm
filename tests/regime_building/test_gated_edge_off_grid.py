@@ -13,6 +13,7 @@ The model below is exactly hand-computable, so every expected number is an
 integer or a half-integer rather than a tolerance-bounded approximation.
 """
 
+import logging
 from collections.abc import Callable
 from typing import Literal
 
@@ -23,12 +24,17 @@ import pytest
 from lcm import (
     AgeGrid,
     ByAge,
+    CollectiveUtility,
     DiscreteGrid,
     Gate,
     IrregSpacedGrid,
     LinSpacedGrid,
     Model,
     NormalIIDProcess,
+    ParetoObjective,
+    ParticipationCheck,
+    ParticipationRead,
+    Phased,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -36,6 +42,7 @@ from lcm import (
     categorical,
 )
 from lcm.exceptions import (
+    ExecutionPlanningError,
     InvalidValueFunctionError,
     ModelInitializationError,
     OffGridStateError,
@@ -232,7 +239,6 @@ def _make_categorical_process_fallback_model(
                         mu=0.0,
                         sigma=1.0,
                         n_std=1.0,
-                        fold=False,
                     ),
                 },
                 functions={"utility": _utility_categorical_fallback},
@@ -295,14 +301,26 @@ def _project_unknown_category(category: DiscreteState) -> DiscreteState:
 
 
 @pytest.mark.coverage(backends=("cpu", "gpu-small"), precisions="both")
-def test_solve_rejects_unknown_categories_in_a_process_fallback() -> None:
-    """Codes outside the categorical domain cannot publish a finite value."""
+def test_solve_rejects_unknown_categories_in_a_process_fallback(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Codes outside the categorical domain cannot publish a finite value.
+
+    The stored values do not hold the gated continuation the regime read, so the
+    NaN report comes without the U/F/E/Q breakdown rather than from a failed
+    attempt to rebuild it.
+    """
     model = _make_categorical_process_fallback_model(
         category_projection=_project_unknown_category
     )
 
-    with pytest.raises(InvalidValueFunctionError, match="NaN"):
+    with (
+        caplog.at_level(logging.WARNING, logger="lcm"),
+        pytest.raises(InvalidValueFunctionError, match="NaN") as exc_info,
+    ):
         model.solve(params=_params(), log_level="debug")
+    assert exc_info.value.diagnostics is None
+    assert "Diagnostic enrichment failed" not in caplog.text
 
 
 def test_the_action_taken_is_the_one_the_gated_value_ranks_first() -> None:
@@ -589,8 +607,8 @@ def _witness_model() -> Model:
                 law=ByAge(
                     cases={0: {"target": StochasticTransition(func=_certain_target)}}
                 ),
-                gates={
-                    "target": Gate(
+                participation={
+                    "target": ParticipationCheck(
                         predicate=_witness_gate,
                         routes={
                             "only": StakeholderRoute(
@@ -600,10 +618,17 @@ def _witness_model() -> Model:
                                 )
                             )
                         },
-                        references={
-                            "V_reference": ProjectedRegimeValue(
-                                regime="reference", projection={"x": _identity_x}
-                            )
+                        reads={
+                            "V_target": ParticipationRead(
+                                kind="IntegratedFull",
+                                regime="target",
+                                projection={"x": _identity_x},
+                            ),
+                            "V_reference": ParticipationRead(
+                                kind="IntegratedFull",
+                                regime="reference",
+                                projection={"x": _identity_x},
+                            ),
                         },
                     )
                 },
@@ -643,4 +668,967 @@ def test_a_gate_that_flips_inside_a_cell_does_not_reward_the_risky_action() -> N
         np.asarray(solution[0]["source"]),
         np.full(2, 1.0),
         decimal=DECIMAL_PRECISION,
+    )
+
+
+def _crossing_target(
+    *, x: ContinuousState, risk: DiscreteState, period: ScalarInt, age: FloatND
+) -> FloatND:
+    return jnp.where(risk == Risk.safe, x, 1.0 - x) + (period - 1) + (age - 1)
+
+
+def _crossing_source(risk: DiscreteState) -> FloatND:
+    return jnp.where(risk == Risk.safe, 0.0, 0.25)
+
+
+def _crossing_landing(risk: DiscreteState) -> ContinuousState:
+    return jnp.where(risk == Risk.safe, 0.0, 0.5)
+
+
+def _crossing_floor(V_target: FloatND) -> BoolND:
+    return V_target > 0.75
+
+
+def _negative_fallback(x: ContinuousState) -> FloatND:
+    return -2.0 + 0.0 * x
+
+
+def _nonfinite_risky_landing(risk: DiscreteState) -> ContinuousState:
+    return jnp.where(risk == Risk.safe, 0.0, jnp.nan)
+
+
+def _safe_risk_only(risk: DiscreteState) -> BoolND:
+    return risk == Risk.safe
+
+
+def _risky_risk_only(risk: DiscreteState) -> BoolND:
+    return risk == Risk.risky
+
+
+def _participation_floor_model(
+    *, nonfinite_risky: bool = False, safe_only: bool = False
+) -> Model:
+    """One actual edge and date, with optional impossible source-action landings."""
+    actions = DiscreteGrid(category_class=Risk)
+    return Model(
+        regimes={
+            "source": Regime(
+                actions={"risk": actions},
+                functions={"utility": _crossing_source},
+                state_transitions={
+                    "x": _nonfinite_risky_landing
+                    if nonfinite_risky
+                    else _crossing_landing
+                },
+                constraints={"safe_only": _safe_risk_only} if safe_only else {},
+            ),
+            "target": Regime(
+                states={"x": _WITNESS_X},
+                actions={"risk": actions},
+                functions={"utility": _crossing_target},
+            ),
+            "fallback": Regime(
+                states={"x": _WITNESS_X},
+                functions={"utility": _negative_fallback},
+            ),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        regime_id_class=RegimeId,
+        initial_nodes={0: "source"},
+        edges={
+            "source": Transition(
+                law=ByAge(cases={0: "target"}),
+                participation={
+                    "target": ParticipationCheck(
+                        predicate=_crossing_floor,
+                        reads={
+                            "V_target": ParticipationRead(
+                                kind="Participating",
+                                regime="target",
+                                projection={"x": _identity_x},
+                            )
+                        },
+                        routes={
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="fallback", projection={"x": _identity_x}
+                                )
+                            )
+                        },
+                    )
+                },
+            )
+        },
+    )
+
+
+def test_participation_policy_floor_prices_the_actual_landing_action_problem() -> None:
+    """A target's interior action crossing cannot manufacture a passing floor.
+
+    Direct enumeration gives target action values (0, 1) at the safe landing
+    and (0.5, 0.5) at the risky landing. The strict floor 0.75 therefore opens
+    only for safe. With discount 0.5 the source candidates are 0.5 and -0.75;
+    interpolating target maxima instead gives 0.5 and 0.75 and reverses choice.
+    The rejected destination still beats fallback, so maximization cannot
+    substitute for the declared Boolean rule.
+    Both time terms vanish at landing; borrowing the source's period or age
+    changes the floor decision and therefore the selected source value.
+    """
+    solution = _participation_floor_model().solve(
+        params={"discount_factor": 0.5}, log_level="off"
+    )
+    np.testing.assert_array_equal(np.asarray(solution.values[0]["source"]), 0.5)
+
+
+def test_participation_integrity_ignores_a_genuinely_infeasible_source_action() -> None:
+    """An impossible source action cannot poison the valid action's participation."""
+    solution = _participation_floor_model(nonfinite_risky=True, safe_only=True).solve(
+        params={"discount_factor": 0.5}, log_level="off"
+    )
+    np.testing.assert_array_equal(np.asarray(solution.values[0]["source"]), 0.5)
+
+
+def test_feasible_invalid_participation_remains_mandatory_at_zero_discount() -> None:
+    """Discounting cannot erase a feasible source action's unresolved reader."""
+    with pytest.raises(ExecutionPlanningError, match="unresolved numerical status"):
+        _participation_floor_model(nonfinite_risky=True).solve(
+            params={"discount_factor": 0.0}, log_level="off", runtime_checks=False
+        )
+
+
+@categorical(ordered=False)
+class _FutureParticipationRegimeId:
+    source: ScalarInt
+    target: ScalarInt
+    fallback: ScalarInt
+    future: ScalarInt
+
+
+def _future_crossing_target(
+    *, x: ContinuousState, risk: DiscreteState, period: ScalarInt, age: FloatND
+) -> FloatND:
+    return _crossing_target(x=x, risk=risk, period=period, age=age) - 0.5
+
+
+def _future_participation_value(
+    *, x: ContinuousState, period: ScalarInt, age: FloatND
+) -> FloatND:
+    return 1.0 + 0.0 * x + (period - 2) + (age - 2)
+
+
+def _sloped_negative_fallback(x: ContinuousState) -> FloatND:
+    return -2.0 + x
+
+
+def _settlement_x(x: ContinuousState) -> ContinuousState:
+    return x + 0.25
+
+
+def _future_participation_floor_model(
+    *,
+    force_risky: bool = False,
+    phased_settlement: bool = False,
+    allow_initial_target: bool = False,
+) -> Model:
+    """The participation check's actual Q requires a genuinely later stored value."""
+    actions = DiscreteGrid(category_class=Risk)
+    return Model(
+        regimes={
+            "source": Regime(
+                actions={"risk": actions},
+                functions={"utility": _crossing_source},
+                state_transitions={"x": _crossing_landing},
+                constraints={"risky_only": _risky_risk_only} if force_risky else {},
+            ),
+            "target": Regime(
+                states={"x": _WITNESS_X},
+                actions={"risk": actions},
+                functions={"utility": _future_crossing_target},
+                state_transitions={"x": _identity_x},
+            ),
+            "fallback": Regime(
+                states={"x": _WITNESS_X},
+                functions={
+                    "utility": _sloped_negative_fallback
+                    if phased_settlement
+                    else _negative_fallback
+                },
+            ),
+            "future": Regime(
+                states={"x": _WITNESS_X},
+                functions={"utility": _future_participation_value},
+            ),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
+        regime_id_class=_FutureParticipationRegimeId,
+        initial_nodes={0: "source", 1: "target"}
+        if allow_initial_target
+        else {0: "source"},
+        edges={
+            "source": Transition(
+                law=ByAge(cases={0: "target"}),
+                participation={
+                    "target": ParticipationCheck(
+                        predicate=_crossing_floor,
+                        reads={
+                            "V_target": ParticipationRead(
+                                kind="Participating",
+                                regime="target",
+                                projection={"x": _identity_x},
+                            )
+                        },
+                        routes={
+                            "only": StakeholderRoute(
+                                fallback=Phased(
+                                    solve=ProjectedRegimeValue(
+                                        regime="fallback",
+                                        projection={"x": _identity_x},
+                                    ),
+                                    simulate=ProjectedRegimeValue(
+                                        regime="fallback",
+                                        projection={"x": _settlement_x},
+                                    ),
+                                )
+                                if phased_settlement
+                                else ProjectedRegimeValue(
+                                    regime="fallback", projection={"x": _identity_x}
+                                )
+                            )
+                        },
+                    )
+                },
+            ),
+            "target": Transition(law=ByAge(cases={1: "future"})),
+        },
+    )
+
+
+def test_nonterminal_participation_prices_its_actual_future_continuation() -> None:
+    """Future value at date two restores the crossing at the true participation date."""
+    solution = _future_participation_floor_model().solve(
+        params={"discount_factor": 0.5}, log_level="off"
+    )
+    np.testing.assert_array_equal(np.asarray(solution.values[2]["future"]), 1.0)
+    np.testing.assert_array_equal(np.asarray(solution.values[1]["target"]), 1.0)
+    np.testing.assert_array_equal(np.asarray(solution.values[0]["source"]), 0.5)
+
+
+def test_actual_participation_publisher_borrows_its_declared_future_native_input(
+    *, monkeypatch
+) -> None:
+    """The source really reads the original later buffer through its dated alias."""
+    from _lcm.execution.value_transfer import ValueArtifactKind  # noqa: PLC0415
+    from _lcm.participation_continuation import (  # noqa: PLC0415
+        PARTICIPATION_CONTINUATION,
+        ParticipationContinuation,
+    )
+    from _lcm.participation_publication import (  # noqa: PLC0415
+        _BorrowedParticipationKernel,
+    )
+    from _lcm.policy_queries import _PolicyQueryKernel  # noqa: PLC0415
+
+    published = []
+    consumed = []
+    publish = _BorrowedParticipationKernel.__call__
+    consume = _PolicyQueryKernel.__call__
+
+    def observe_publish(self, **arguments):
+        output = publish(self, **arguments)
+        payload = output.continuations[PARTICIPATION_CONTINUATION]
+        assert isinstance(payload, ParticipationContinuation)
+        original = arguments["next_regime_to_V_arr"]["future"]
+        assert payload.period == 1
+        assert payload.regime == "target"
+        assert all(leaf is original for leaf in payload.leaves().values())
+        published.append((payload, original))
+        return output
+
+    def observe_consume(self, **arguments):
+        if arguments["period"] == 0:
+            payload, original = published[0]
+            source_payload = arguments["next_regime_to_continuation"]["target"]
+            assert isinstance(source_payload, ParticipationContinuation)
+            assert source_payload.schema == payload.schema
+            assert all(leaf is original for leaf in source_payload.leaves().values())
+            assert not original.is_deleted()
+            consumed.append(original)
+        return consume(self, **arguments)
+
+    monkeypatch.setattr(_BorrowedParticipationKernel, "__call__", observe_publish)
+    monkeypatch.setattr(_PolicyQueryKernel, "__call__", observe_consume)
+    model = _future_participation_floor_model()
+    spec = model._regimes["target"].solution.continuation_spec
+    assert spec is not None
+    aliases = spec.stored_value_aliases()
+    assert aliases
+    for alias, origin in aliases.items():
+        assert (alias.kind, alias.period, alias.regime) == (
+            ValueArtifactKind.CONTINUATION_LEAF,
+            1,
+            "target",
+        )
+        assert (origin.kind, origin.period, origin.regime) == (
+            ValueArtifactKind.REGIME_VALUE,
+            2,
+            "future",
+        )
+    source = model._regimes["source"].solution.period_kernels[0]
+    assert isinstance(source, _PolicyQueryKernel)
+    readers = {
+        read.target
+        for program in source.core_programs().values()
+        for read in program.requirements.value_reads
+    }
+    assert set(aliases) <= readers
+    solution = model.solve(params={"discount_factor": 0.5}, log_level="off")
+    assert consumed
+    assert consumed[0] is published[0][1]
+    np.testing.assert_array_equal(np.asarray(solution.values[0]["source"]), 0.5)
+
+
+@pytest.mark.parametrize("corruption", ["missing", "wrong_date"])
+def test_participation_source_refuses_a_missing_or_wrong_date_payload(
+    *, monkeypatch, corruption: str
+) -> None:
+    """A failed actual source reader cannot commit or free its borrowed origin."""
+    from _lcm.participation_continuation import (  # noqa: PLC0415
+        ParticipationContinuation,
+    )
+    from _lcm.policy_queries import _PolicyQueryKernel  # noqa: PLC0415
+
+    invoke = _PolicyQueryKernel.__call__
+    borrowed = []
+
+    def corrupt_source(self, **arguments):
+        if arguments["period"] == 0:
+            payload = arguments["next_regime_to_continuation"]["target"]
+            assert isinstance(payload, ParticipationContinuation)
+            borrowed.extend(payload.leaves().values())
+            arguments["next_regime_to_continuation"] = (
+                {}
+                if corruption == "missing"
+                else {
+                    "target": ParticipationContinuation(
+                        regime=payload.regime,
+                        period=payload.period + 1,
+                        schema=payload.schema,
+                        operands=payload.operands,
+                    )
+                }
+            )
+        return invoke(self, **arguments)
+
+    monkeypatch.setattr(_PolicyQueryKernel, "__call__", corrupt_source)
+    with pytest.raises(ExecutionPlanningError, match="producer-date operand payload"):
+        _future_participation_floor_model().solve(
+            params={"discount_factor": 0.5}, log_level="off"
+        )
+    assert borrowed
+    assert all(not leaf.is_deleted() for leaf in borrowed)
+
+
+def _joint_crossing_f(*, x: ContinuousState, risk: DiscreteState) -> FloatND:
+    return jnp.where(risk == Risk.safe, 2 * x, 2 - 2 * x)
+
+
+def _joint_crossing_m(*, x: ContinuousState, risk: DiscreteState) -> FloatND:
+    return jnp.where(risk == Risk.safe, 2 - x, 1 + x)
+
+
+def _joint_participation_floor(*, V_target_f: FloatND, V_target_m: FloatND) -> BoolND:
+    return (V_target_f > 1.5) & (V_target_m > 0.75)
+
+
+def test_public_collective_participation_prices_one_actual_target_policy_tuple() -> (
+    None
+):
+    """The source receives (1,.5), rather than independently maximized (1,1)."""
+    actions = DiscreteGrid(category_class=Risk)
+    objective = ParetoObjective(weights={"f": 0.75, "m": 0.25})
+    model = Model(
+        regimes={
+            "source": Regime(
+                actions={"risk": actions},
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={"f": _crossing_source, "m": _crossing_source},
+                        objective=objective,
+                    )
+                },
+                state_transitions={"x": _crossing_landing},
+            ),
+            "target": Regime(
+                states={"x": _WITNESS_X},
+                actions={"risk": actions},
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={"f": _joint_crossing_f, "m": _joint_crossing_m},
+                        objective=objective,
+                    )
+                },
+            ),
+            "fallback": Regime(
+                states={"x": _WITNESS_X},
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={"f": _negative_fallback, "m": _negative_fallback},
+                        objective=objective,
+                    )
+                },
+            ),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        regime_id_class=RegimeId,
+        initial_nodes={0: "source"},
+        edges={
+            "source": Transition(
+                law=ByAge(cases={0: "target"}),
+                participation={
+                    "target": ParticipationCheck(
+                        predicate=_joint_participation_floor,
+                        reads={
+                            f"V_target_{member}": ParticipationRead(
+                                kind="Participating",
+                                regime="target",
+                                stakeholder=member,
+                                projection={"x": _identity_x},
+                            )
+                            for member in ("f", "m")
+                        },
+                        routes={
+                            member: StakeholderRoute(
+                                target_stakeholder=member,
+                                fallback=ProjectedRegimeValue(
+                                    regime="fallback",
+                                    stakeholder=member,
+                                    projection={"x": _identity_x},
+                                ),
+                            )
+                            for member in ("f", "m")
+                        },
+                    )
+                },
+            )
+        },
+    )
+    solution = model.solve(params={"discount_factor": 0.5}, log_level="off")
+    np.testing.assert_array_equal(np.asarray(solution.values[0]["source"]), [1.0, 0.5])
+
+
+def test_participation_source_replay_uses_the_same_actual_future_price() -> None:
+    """Simulation selects the safe source action selected by the solved price."""
+    model = _future_participation_floor_model()
+    params = {"discount_factor": 0.5}
+    solution = model.solve(params=params, log_level="off")
+    frame = model.simulate(
+        params=params,
+        solution=solution,
+        initial_conditions={
+            "age": jnp.asarray([0.0]),
+            "regime_id": jnp.asarray([_FutureParticipationRegimeId.source]),
+            "x": jnp.asarray([0.0]),
+        },
+        log_level="off",
+    ).to_dataframe(use_categorical_codes=True)
+    np.testing.assert_array_equal(frame.query("period == 0")["risk"], [int(Risk.safe)])
+    participation = frame.query("period == 1")
+    np.testing.assert_array_equal(participation["regime_name"], ["target"])
+    np.testing.assert_array_equal(participation["x"], [0.0])
+
+
+def test_actual_participation_applies_incoming_phased_settlement_once() -> None:
+    """Solve prices its own law while replay settles the rejected actual landing."""
+    model = _future_participation_floor_model(force_risky=True, phased_settlement=True)
+    params = {"discount_factor": 0.5}
+    solution = model.solve(params=params, log_level="off")
+    np.testing.assert_array_equal(np.asarray(solution.values[0]["source"]), -0.5)
+    frame = model.simulate(
+        params=params,
+        solution=solution,
+        initial_conditions={
+            "age": jnp.asarray([0.0]),
+            "regime_id": jnp.asarray([_FutureParticipationRegimeId.source]),
+            "x": jnp.asarray([0.0]),
+        },
+        log_level="off",
+    ).to_dataframe(use_categorical_codes=True)
+    participation = frame.query("period == 1")
+    np.testing.assert_array_equal(participation["regime_name"], ["fallback"])
+    np.testing.assert_array_equal(participation["x"], [0.75])
+    assert frame.query("period == 2").empty
+
+
+def test_initial_target_does_not_borrow_a_participation_checks_incoming_route() -> None:
+    """An initial target occupant has no incoming edge's fallback entitlement."""
+    model = _future_participation_floor_model(
+        force_risky=True, phased_settlement=True, allow_initial_target=True
+    )
+    params = {"discount_factor": 0.5}
+    solution = model.solve(params=params, log_level="off")
+    frame = model.simulate(
+        params=params,
+        solution=solution,
+        initial_conditions={
+            "age": jnp.asarray([1.0]),
+            "regime_id": jnp.asarray([_FutureParticipationRegimeId.target]),
+            "x": jnp.asarray([0.5]),
+        },
+        log_level="off",
+    ).to_dataframe(use_categorical_codes=True)
+    original = frame.query("period == 1")
+    np.testing.assert_array_equal(original["regime_name"], ["target"])
+    np.testing.assert_array_equal(original["x"], [0.5])
+    np.testing.assert_array_equal(frame.query("period == 2")["regime_name"], ["future"])
+
+
+@categorical(ordered=False)
+class _SharedParticipationRegimeId:
+    single: ScalarInt
+    pair: ScalarInt
+    target: ScalarInt
+    fallback: ScalarInt
+    done: ScalarInt
+
+
+def _shared_participation_landing() -> ContinuousState:
+    return jnp.asarray(0.5)
+
+
+def _shared_participation_target_f(risk: DiscreteState) -> FloatND:
+    return jnp.where(risk == Risk.safe, 2.0, 1.0)
+
+
+def _shared_participation_target_m(risk: DiscreteState) -> FloatND:
+    return jnp.where(risk == Risk.safe, 1.0, 2.0)
+
+
+def _shared_participation_fallback_f(x: ContinuousState) -> FloatND:
+    return 10.0 + x
+
+
+def _shared_participation_fallback_m(x: ContinuousState) -> FloatND:
+    return 20.0 + x
+
+
+def _shared_participation_done_m(x: ContinuousState) -> FloatND:
+    return 2.0 + 0.0 * x
+
+
+def _shared_participation_eighth(x: ContinuousState) -> ContinuousState:
+    return x + 0.125
+
+
+def _shared_participation_pair_floor(V_target_f: FloatND) -> BoolND:
+    return V_target_f > 3.0
+
+
+def test_distinct_incoming_sources_keep_their_own_tuple_routes() -> None:
+    """Shared target/date keeps scalar and household incoming programs distinct."""
+    objective = ParetoObjective(weights={"f": 0.75, "m": 0.25})
+    model = Model(
+        regimes={
+            "single": Regime(
+                functions={"utility": _utility_zero},
+                state_transitions={"x": _shared_participation_landing},
+            ),
+            "pair": Regime(
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={"f": _utility_zero, "m": _utility_zero},
+                        objective=objective,
+                    )
+                },
+                state_transitions={"x": _shared_participation_landing},
+            ),
+            "target": Regime(
+                states={"x": _WITNESS_X},
+                actions={"risk": DiscreteGrid(category_class=Risk)},
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={
+                            "f": _shared_participation_target_f,
+                            "m": _shared_participation_target_m,
+                        },
+                        objective=objective,
+                    )
+                },
+                state_transitions={"x": _settlement_x},
+            ),
+            "fallback": Regime(
+                states={"x": _WITNESS_X},
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={
+                            "f": _shared_participation_fallback_f,
+                            "m": _shared_participation_fallback_m,
+                        },
+                        objective=objective,
+                    )
+                },
+                state_transitions={"x": _shared_participation_eighth},
+            ),
+            "done": Regime(
+                states={"x": _WITNESS_X},
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={
+                            "f": _future_participation_value,
+                            "m": _shared_participation_done_m,
+                        },
+                        objective=objective,
+                    )
+                },
+            ),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
+        regime_id_class=_SharedParticipationRegimeId,
+        initial_nodes={0: ("single", "pair")},
+        edges={
+            "single": Transition(
+                law=ByAge(cases={0: "target"}),
+                participation={
+                    "target": ParticipationCheck(
+                        predicate=_crossing_floor,
+                        reads={
+                            "V_target": ParticipationRead(
+                                kind="Participating",
+                                regime="target",
+                                stakeholder="m",
+                                projection={"x": _identity_x},
+                            )
+                        },
+                        routes={
+                            "only": StakeholderRoute(
+                                target_stakeholder="m",
+                                fallback=ProjectedRegimeValue(
+                                    regime="fallback",
+                                    stakeholder="f",
+                                    projection={"x": _identity_x},
+                                ),
+                            )
+                        },
+                    )
+                },
+            ),
+            "pair": Transition(
+                law=ByAge(cases={0: "target"}),
+                participation={
+                    "target": ParticipationCheck(
+                        predicate=_shared_participation_pair_floor,
+                        reads={
+                            "V_target_f": ParticipationRead(
+                                kind="Participating",
+                                regime="target",
+                                stakeholder="f",
+                                projection={"x": _identity_x},
+                            )
+                        },
+                        routes={
+                            "f": StakeholderRoute(
+                                target_stakeholder="f",
+                                fallback=ProjectedRegimeValue(
+                                    regime="fallback",
+                                    stakeholder="m",
+                                    projection={"x": _settlement_x},
+                                ),
+                            ),
+                            "m": StakeholderRoute(
+                                target_stakeholder="m",
+                                fallback=ProjectedRegimeValue(
+                                    regime="fallback",
+                                    stakeholder="f",
+                                    projection={"x": _shared_participation_eighth},
+                                ),
+                            ),
+                        },
+                    )
+                },
+            ),
+            "target": Transition(law=ByAge(cases={1: "done"})),
+            "fallback": Transition(law=ByAge(cases={1: "done"})),
+        },
+    )
+    params = {"discount_factor": 0.5}
+    solution = model.solve(params=params, log_level="off")
+    np.testing.assert_array_equal(np.asarray(solution.values[0]["single"]), 1.0)
+    np.testing.assert_array_equal(
+        np.asarray(solution.values[0]["pair"]), [10.875, 5.5625]
+    )
+    role = model.stakeholder_names_to_ids
+    frame = (
+        model.simulate(
+            params=params,
+            solution=solution,
+            initial_conditions={
+                "age": jnp.asarray([0.0, 0.0, 0.0]),
+                "regime_id": jnp.asarray(
+                    [
+                        _SharedParticipationRegimeId.single,
+                        _SharedParticipationRegimeId.pair,
+                        _SharedParticipationRegimeId.pair,
+                    ]
+                ),
+                "own_stakeholder": jnp.asarray([-1, role["f"], role["m"]]),
+                "x": jnp.asarray([0.0, 0.0, 0.0]),
+            },
+            log_level="off",
+        )
+        .to_dataframe(use_categorical_codes=True)
+        .sort_values(["period", "subject_id"])
+    )
+    participation = frame.query("period == 1")
+    np.testing.assert_array_equal(participation["subject_id"], [0, 1, 2])
+    np.testing.assert_array_equal(
+        participation["regime_name"], ["target", "fallback", "fallback"]
+    )
+    np.testing.assert_array_equal(
+        participation["own_stakeholder"], [role["m"], role["m"], role["f"]]
+    )
+    np.testing.assert_array_equal(participation["x"], [0.5, 0.75, 0.625])
+    np.testing.assert_array_equal(participation["value_f"], [2.5, 11.25, 11.125])
+    np.testing.assert_array_equal(participation["value_m"], [2.0, 21.75, 21.625])
+    np.testing.assert_array_equal(
+        participation.query("regime_name == 'target'")["risk"], [int(Risk.safe)]
+    )
+    final = frame.query("period == 2")
+    np.testing.assert_array_equal(final["subject_id"], [0, 1, 2])
+    np.testing.assert_array_equal(final["regime_name"], ["done", "done", "done"])
+    np.testing.assert_array_equal(
+        final["own_stakeholder"], [role["m"], role["m"], role["f"]]
+    )
+    np.testing.assert_array_equal(final["x"], [0.75, 0.875, 0.75])
+    np.testing.assert_array_equal(final["value_f"], [1.0, 1.0, 1.0])
+    np.testing.assert_array_equal(final["value_m"], [2.0, 2.0, 2.0])
+
+
+@categorical(ordered=False)
+class _ExtraOriginRegimeId:
+    source: ScalarInt
+    target: ScalarInt
+    fallback: ScalarInt
+    future: ScalarInt
+    fallback_future: ScalarInt
+
+
+def _extra_origin_future_value(
+    *, x: ContinuousState, payoff: FloatND, period: ScalarInt, age: FloatND
+) -> FloatND:
+    return payoff + 0.0 * x + (period - 2) + (age - 2)
+
+
+def _extra_origin_participation_model() -> Model:
+    """The rejected branch reads a later value outside target Full's inputs."""
+    return Model(
+        regimes={
+            "source": Regime(
+                actions={"risk": DiscreteGrid(category_class=Risk)},
+                functions={"utility": _crossing_source},
+                state_transitions={"x": _crossing_landing},
+            ),
+            "target": Regime(
+                states={"x": _WITNESS_X},
+                actions={"risk": DiscreteGrid(category_class=Risk)},
+                functions={"utility": _future_crossing_target},
+                state_transitions={"x": _identity_x},
+            ),
+            "fallback": Regime(
+                states={"x": _WITNESS_X},
+                functions={"utility": _negative_fallback},
+                state_transitions={"x": _identity_x},
+            ),
+            "future": Regime(
+                states={"x": _WITNESS_X},
+                functions={"utility": _future_participation_value},
+            ),
+            "fallback_future": Regime(
+                states={"x": _WITNESS_X},
+                functions={"utility": _extra_origin_future_value},
+            ),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
+        regime_id_class=_ExtraOriginRegimeId,
+        initial_nodes={0: "source"},
+        edges={
+            "source": Transition(
+                law=ByAge(cases={0: "target"}),
+                participation={
+                    "target": ParticipationCheck(
+                        predicate=_crossing_floor,
+                        reads={
+                            "V_target": ParticipationRead(
+                                kind="Participating",
+                                regime="target",
+                                projection={"x": _identity_x},
+                            )
+                        },
+                        routes={
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="fallback",
+                                    projection={"x": _identity_x},
+                                )
+                            )
+                        },
+                    )
+                },
+            ),
+            "target": Transition(law=ByAge(cases={1: "future"})),
+            "fallback": Transition(law=ByAge(cases={1: "fallback_future"})),
+        },
+    )
+
+
+def test_participation_borrows_a_distinct_fallback_future_original(
+    *, monkeypatch
+) -> None:
+    """Extra native custody preserves the original that reverses the source rank."""
+    from _lcm.execution.value_transfer import ValueArtifactKind  # noqa: PLC0415
+    from _lcm.participation_continuation import (  # noqa: PLC0415
+        PARTICIPATION_CONTINUATION,
+        ParticipationContinuation,
+    )
+    from _lcm.participation_publication import (  # noqa: PLC0415
+        _BorrowedParticipationKernel,
+    )
+    from _lcm.policy_queries import _PolicyQueryKernel  # noqa: PLC0415
+
+    published = []
+    consumed = []
+    publish = _BorrowedParticipationKernel.__call__
+    consume = _PolicyQueryKernel.__call__
+
+    def observe_publish(self, **arguments):
+        output = publish(self, **arguments)
+        if self.template.regime == "target" and arguments["period"] == 1:
+            payload = output.continuations[PARTICIPATION_CONTINUATION]
+            assert isinstance(payload, ParticipationContinuation)
+            original = arguments["next_regime_to_V_arr"]["fallback_future"]
+            names = [
+                name
+                for name, origin in self.origins.items()
+                if origin.kind is ValueArtifactKind.REGIME_VALUE
+                and origin.regime == "fallback_future"
+                and origin.period == 2
+            ]
+            assert names
+            for name in names:
+                assert payload.operands[name] is original
+                origin = self.origins[name]
+                reads = [
+                    read
+                    for program in self.core_programs().values()
+                    for read in program.requirements.value_reads
+                    if read.target == origin
+                ]
+                assert reads
+                assert all(
+                    read.source.source_regime == "target"
+                    and read.source.source_period == 1
+                    and read.source.argument is not None
+                    and read.source.path
+                    for read in reads
+                )
+            published.append((payload, original, tuple(names)))
+        return output
+
+    def observe_consume(self, **arguments):
+        if self.root_context.regime_name == "source" and arguments["period"] == 0:
+            published_payload, original, names = published[0]
+            payload = arguments["next_regime_to_continuation"]["target"]
+            assert isinstance(payload, ParticipationContinuation)
+            assert payload.schema == published_payload.schema
+            assert payload.period == 1
+            assert all(payload.operands[name] is original for name in names)
+            assert not original.is_deleted()
+            consumed.append(original)
+        return consume(self, **arguments)
+
+    monkeypatch.setattr(_BorrowedParticipationKernel, "__call__", observe_publish)
+    monkeypatch.setattr(_PolicyQueryKernel, "__call__", observe_consume)
+    model = _extra_origin_participation_model()
+    params = {"discount_factor": 0.5, "fallback_future": {"payoff": 6.0}}
+    solution = model.solve(params=params, log_level="off")
+    np.testing.assert_array_equal(
+        np.stack((solution.values[2]["future"], solution.values[2]["fallback_future"])),
+        [[1.0, 1.0], [6.0, 6.0]],
+    )
+    np.testing.assert_array_equal(np.asarray(solution.values[0]["source"]), 0.75)
+    assert consumed
+    assert consumed[0] is published[0][1]
+    # Public ValueStore reads are independent copies; live custody above uses
+    # the original native array throughout publication and source consumption.
+    np.testing.assert_array_equal(
+        np.asarray(published[0][1]),
+        np.asarray(solution.values[2]["fallback_future"]),
+    )
+    frame = model.simulate(
+        params=params,
+        solution=solution,
+        initial_conditions={
+            "age": jnp.asarray([0.0]),
+            "regime_id": jnp.asarray([_ExtraOriginRegimeId.source]),
+            "x": jnp.asarray([0.0]),
+        },
+        log_level="off",
+    ).to_dataframe(use_categorical_codes=True)
+    np.testing.assert_array_equal(frame.query("period == 0")["risk"], [int(Risk.risky)])
+    participation = frame.query("period == 1")
+    np.testing.assert_array_equal(participation["regime_name"], ["fallback"])
+    np.testing.assert_array_equal(participation["x"], [0.5])
+    np.testing.assert_array_equal(participation["value"], [1.0])
+    np.testing.assert_array_equal(
+        frame.query("period == 2")["regime_name"], ["fallback_future"]
+    )
+
+
+@pytest.mark.parametrize("extra_origin", [False, True])
+def test_participation_publisher_reuses_stable_native_callable_identities(
+    *, extra_origin: bool
+) -> None:
+    """Authority, preparation and dispatch share the same native callables."""
+    from types import MappingProxyType  # noqa: PLC0415
+
+    from _lcm.participation_publication import (  # noqa: PLC0415
+        _BorrowedParticipationKernel,
+    )
+
+    model = (
+        _extra_origin_participation_model()
+        if extra_origin
+        else _future_participation_floor_model()
+    )
+    kernel = model._regimes["target"].solution.period_kernels[1]
+    assert isinstance(kernel, _BorrowedParticipationKernel)
+    graph = kernel.core_programs()
+    assert graph is kernel.core_programs()
+    for name, program in graph.items():
+        repeated = kernel.core_programs()[name]
+        assert repeated is program
+        assert repeated.function is program.function
+        assert type(program.function).__eq__ is object.__eq__
+        assert type(program.function).__hash__ is object.__hash__
+        assert repeated.requirements.value_reads is program.requirements.value_reads
+        if program.checked_variant is not None:
+            assert repeated.checked_variant is program.checked_variant
+            assert type(program.checked_variant.function).__eq__ is object.__eq__
+            assert type(program.checked_variant.function).__hash__ is object.__hash__
+        if not extra_origin:
+            assert program is kernel.base.core_programs()[name]
+    assert set(kernel.origins.values()) <= {
+        read.target
+        for program in graph.values()
+        for read in program.requirements.value_reads
+    }
+    rebound = kernel.with_fixed_params(fixed_flat_params=MappingProxyType({}))
+    assert rebound is not kernel
+    assert rebound.core_programs() is rebound.core_programs()
+    assert rebound.core_programs() is not graph
+    assert tuple(
+        (read.target, read.source)
+        for program in rebound.core_programs().values()
+        for read in program.requirements.value_reads
+    ) == tuple(
+        (read.target, read.source)
+        for program in graph.values()
+        for read in program.requirements.value_reads
     )

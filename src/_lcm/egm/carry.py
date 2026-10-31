@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, NamedTuple, cast
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.interp import (
@@ -776,7 +777,22 @@ def build_template_egm_carry(
         marginal-utility rows, broadcast over `leading_shape`.
 
     """
-    dtype = canonical_float_dtype()
+    return _build_template_egm_carry_at_dtype(
+        n_rows=n_rows,
+        leading_shape=leading_shape,
+        query_data=query_data,
+        dtype=np.dtype(canonical_float_dtype()),
+    )
+
+
+def _build_template_egm_carry_at_dtype(
+    *,
+    n_rows: int,
+    leading_shape: tuple[int, ...],
+    query_data: EGMQueryData | None,
+    dtype: np.dtype[np.generic],
+) -> EGMCarry:
+    """Original allocation stages with their already resolved canonical dtype."""
     shape = (*leading_shape, n_rows)
     return EGMCarry(
         endog_grid=jnp.broadcast_to(jnp.linspace(0.0, 1.0, n_rows, dtype=dtype), shape),

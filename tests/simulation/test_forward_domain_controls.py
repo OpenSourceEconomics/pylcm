@@ -152,7 +152,7 @@ def _multi_root_model(*, budgeted: bool) -> Model:
 
 
 def _gated_value_only_model(*, budgeted: bool) -> Model:
-    """A gate reference and a phased fallback's solve leg are read by value only."""
+    """A participation read is solved by value only; the solve fallback is queried."""
     model = _gated_model(phased_fallback=True)
     if not budgeted:
         return model
@@ -206,9 +206,6 @@ class _ForwardProfileInputs(TypedDict):
     values: forward_profiles.Mapping[
         int, forward_profiles.Mapping[str, forward_profiles.jax.Array]
     ]
-    flags: forward_profiles.Mapping[
-        int, forward_profiles.Mapping[str, forward_profiles.jax.Array]
-    ]
     ages: forward_profiles.TimeAxis
     n_subjects: int
     widths: forward_profiles.Mapping[str, int]
@@ -217,6 +214,7 @@ class _ForwardProfileInputs(TypedDict):
     taste_key: forward_profiles.jax.ShapeDtypeStruct | None
     policy: NotRequired[forward_profiles.SimulationPolicy | None]
     wave: NotRequired[forward_profiles.CompilationWave | None]
+    current_iid_override_schema: NotRequired[forward_profiles.CurrentIIDOverrideSchema]
 
 
 class _RegimeSimulationInputs(TypedDict):
@@ -237,9 +235,6 @@ class _RegimeSimulationInputs(TypedDict):
     new_subject_regime_ids: simulate.Int1D
     period_to_regime_to_V_arr: simulate.MappingProxyType[
         int, simulate.MappingProxyType[simulate.RegimeName, simulate.FloatND]
-    ]
-    period_to_regime_to_dissolution_flags: simulate.MappingProxyType[
-        int, simulate.MappingProxyType[simulate.RegimeName, simulate.BoolND]
     ]
     flat_params: simulate.FlatParams
     regime_names_to_ids: simulate.RegimeNamesToIds
@@ -265,6 +260,7 @@ class _RegimeSimulationInputs(TypedDict):
     ]
     taste_key: NotRequired[simulate.PRNGKeyND | None]
     taste_address: NotRequired[tuple[int, ...] | None]
+    current_iid_overrides: NotRequired[simulate.CurrentIIDOverrides | None]
 
 
 _CASES: Mapping[str, _ForwardCase] = {
@@ -308,11 +304,14 @@ _CASES: Mapping[str, _ForwardCase] = {
         "starts": ((40.0, "source"),),
         "params": {"discount_factor": 0.9},
         "forward": {(0, "source"), (1, "target"), (1, "fallback")},
-        "value_only": {(1, "reference"), (1, "priced")},
-        # Both are terminal and read their utility `w`.
-        "value_only_values": {(1, "reference"): (0.0, 1.0), (1, "priced"): (0.0, 1.0)},
+        # The participation check prices the `priced` solve leg by a query, not a stored
+        # value.
+        "value_only": {(1, "reference")},
+        # It is terminal and reads its utility `w`.
+        "value_only_values": {(1, "reference"): (0.0, 1.0)},
         "source_values": None,
-        # The gate compares equal values, so every subject takes the fallback.
+        # The participation check compares equal values, so every subject takes the
+        # fallback.
         "paths": {"source": 0, "fallback": 1},
     },
 }

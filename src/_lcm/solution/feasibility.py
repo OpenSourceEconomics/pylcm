@@ -11,6 +11,7 @@ import jax.numpy as jnp
 from _lcm.post_decision_bound import PostDecisionBoundSpec
 from _lcm.typing import (
     DataclassInstance,
+    LandingCheck,
     PytreeChild,
     PytreeValue,
     QAndFArg,
@@ -33,7 +34,7 @@ from lcm.typing import (
 
 type FeasibilityCounts = tuple[IntND, IntND]
 type CountedGridSearchOutput = (
-    tuple[FloatND, IntND, IntND] | tuple[FloatND, BoolND, IntND, IntND]
+    tuple[FloatND, IntND, IntND] | tuple[FloatND, IntND, IntND, ScalarBool]
 )
 
 if TYPE_CHECKING:
@@ -639,13 +640,15 @@ class FeasibilityKernelOutput(KernelOutput):
 
     feasibility_counts: FeasibilityCounts
     """Counts of empty-action states and other infinite-valued states."""
+    current_iid_invalid: ScalarBool | None = None
+    """Mandatory unresolved-current-law summary on integrated routes."""
     bound_status: tuple[BoundInputStatus, ...] = ()
     """Mandatory scalar integrity records, independently of economic counts."""
     query_status: tuple[QueryInputStatus, ...] | None = None
     """Mandatory child summaries in independently declared target/period slots."""
     landing_totals: IntND | None = None
     """Reached landing totals retained until mandatory integrity is accepted."""
-    landing_checks: tuple[tuple[str, str], ...] = ()
+    landing_checks: tuple[LandingCheck, ...] = ()
     """Canonical qualified landing checks corresponding to the totals."""
     continuation_read_counts: ContinuationReadCounts | None = None
     """Optional paired-read population, materialized independently of feasibility."""
@@ -714,34 +717,44 @@ class CountedGridSearch:
     """Reduce canonical feasibility and final values inside the admitted program."""
 
     function: Callable[
-        ..., tuple[FloatND, BoolND] | BoundedResult[tuple[FloatND, BoolND]]
+        ...,
+        tuple[FloatND, BoolND]
+        | tuple[FloatND, BoolND, ScalarBool]
+        | BoundedResult[tuple[FloatND, BoolND]],
     ]
     collective: bool
+    current_iid: bool = False
+    """Consume and reduce the current-law integrity leaf independently of F."""
 
     def __call__(
         self, **kwargs: QAndFArg
     ) -> CountedGridSearchOutput | BoundedResult[CountedGridSearchOutput]:
         """Count state cells, treating a household as a single decision."""
         evaluated = self.function(**kwargs)
-        value, empty = cast(
-            "tuple[FloatND, BoolND]",
-            evaluated.output if type(evaluated) is BoundedResult else evaluated,
-        )
+        bounded = evaluated if type(evaluated) is BoundedResult else None
+        if bounded is not None:
+            evaluated = bounded.output
+        current_iid_invalid = None
+        if self.current_iid:
+            value, empty, invalid = cast(
+                "tuple[FloatND, BoolND, ScalarBool]", evaluated
+            )
+            current_iid_invalid = jnp.any(invalid)
+            evaluated = (value, empty)
+        value, empty = cast("tuple[FloatND, BoolND]", evaluated)
         infinite = jnp.isinf(value)
         if self.collective:
             infinite = jnp.any(infinite, axis=-1)
         empty_count = jnp.sum(empty, dtype=jnp.int32)
         other_inf_count = jnp.sum(infinite & ~empty, dtype=jnp.int32)
-        output: CountedGridSearchOutput = (
-            (value, empty, empty_count, other_inf_count)
-            if self.collective
-            else (value, empty_count, other_inf_count)
-        )
+        output: CountedGridSearchOutput = (value, empty_count, other_inf_count)
+        if self.current_iid:
+            output = cast("CountedGridSearchOutput", (*output, current_iid_invalid))
         return (
             BoundedResult[CountedGridSearchOutput](
-                output=output, bound_status=evaluated.bound_status
+                output=output, bound_status=bounded.bound_status
             )
-            if type(evaluated) is BoundedResult
+            if bounded is not None
             else output
         )
 

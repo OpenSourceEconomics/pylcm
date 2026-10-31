@@ -24,20 +24,27 @@ from _lcm.regime_building.Q_and_F import (
     SAME_PERIOD_PARAMS_ARG,
     SAME_PERIOD_V_ARG,
 )
+from _lcm.simulation.current_iid_overrides import (
+    CurrentIIDOverrideSchema,
+    current_iid_override_prototype,
+)
 from _lcm.simulation.operand_placement import subject_operand_sharding
 from _lcm.simulation.policy_programs import ReplayPayload
 from _lcm.simulation.program_arguments import (
+    current_iid_arguments,
     decision_arguments,
+    declares_active_subjects,
     gate_fold_arguments,
     policy_prepare_arguments,
     policy_rank_arguments,
     process_node_arguments,
     transition_arguments,
 )
+from _lcm.simulation.programs import PROFILED_POLICY_ROUTES
+from _lcm.simulation.random_address import scalar_draw_axis
 from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.shock_paths import supplied_shock_argument_names
 from _lcm.simulation.subject_groups import type_local_template
-from _lcm.simulation.taste_stream import scalar_draw_axis
 from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.solution.backward_induction import CompilationWave, _states_for_period
 from _lcm.time import TimeAxis
@@ -57,6 +64,11 @@ type _FiniteDecisionOutput = tuple[
     Mapping[ActionName, jax.ShapeDtypeStruct],
     jax.ShapeDtypeStruct,
     jax.ShapeDtypeStruct,
+]
+type PreparedDecisionProfile = tuple[
+    jax.ShapeDtypeStruct,
+    jax.ShapeDtypeStruct,
+    Mapping[str, jax.ShapeDtypeStruct],
 ]
 
 
@@ -98,7 +110,6 @@ def profile_forward_programs(
     flat_params: FlatParams,
     base_spaces: Mapping[str, StateActionSpace],
     values: Mapping[int, Mapping[str, jax.Array]],
-    flags: Mapping[int, Mapping[str, jax.Array]] = MappingProxyType({}),
     ages: TimeAxis,
     n_subjects: int,
     widths: Mapping[str, int],
@@ -137,7 +148,6 @@ def profile_forward_programs(
                 base=base_spaces[name],
                 base_spaces=base_spaces,
                 values=values,
-                flags=flags,
                 ages=ages,
                 n_subjects=n_subjects,
                 widths=widths,
@@ -163,7 +173,6 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
     base: StateActionSpace,
     base_spaces: Mapping[str, StateActionSpace],
     values: Mapping[int, Mapping[str, jax.Array]],
-    flags: Mapping[int, Mapping[str, jax.Array]],
     ages: TimeAxis,
     n_subjects: int,
     widths: Mapping[str, int],
@@ -172,6 +181,8 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
     taste_key: jax.ShapeDtypeStruct | None,
     policy: SimulationPolicy | None = None,
     wave: CompilationWave | None = None,
+    current_iid_override_schema: CurrentIIDOverrideSchema = (),
+    prepared_decision: PreparedDecisionProfile | None = None,
 ) -> Mapping[str, ForwardProgramProfile]:
     """Bind one actual current carrier to its decision, transition and route.
 
@@ -185,7 +196,11 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
     and no profile is returned.
     """
     # The dispatch module imports the complete chunk-profile constructor.
-    from _lcm.simulation.simulate import _lookup_values_from_indices  # noqa: PLC0415
+    from _lcm.simulation.simulate import (  # noqa: PLC0415
+        _lookup_values_from_indices,
+        _reads_egm_policy_first,
+        policy_first_operation,
+    )
 
     for descriptor in (ordinary_key, taste_key):
         if descriptor is not None and (
@@ -198,7 +213,7 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
             )
     if (
         regime.simulation.replay_route.policy_applicable
-        and regime.simulation.replay_route.consumer_route != "nnbegm_finite"
+        and regime.simulation.replay_route.consumer_route not in PROFILED_POLICY_ROUTES
     ) or regime.simulation.external_replay_route is not None:
         raise ExecutionPlanningError(
             "Forward profiles require compiled decision routes."
@@ -254,17 +269,9 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
                 if target in values.get(period + 1, {})
             }
         )
-        edge_flags = MappingProxyType(
-            {
-                target: flags[period + 1][target]
-                for target in edge_values
-                if target in flags.get(period + 1, {})
-            }
-        )
         fold_arguments = {
             **gate_fold_arguments(
                 edge_values=_shared_tree(tree=edge_values, devices=devices),
-                edge_flags=_shared_tree(tree=edge_flags, devices=devices),
                 flat_params=_shared_tree(tree=flat_params, devices=devices),
                 fold_age=age,
             ),
@@ -324,6 +331,7 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
     subject_key = jax.ShapeDtypeStruct(
         (n_subjects,), ordinary_key.dtype, sharding=subject
     )
+    current_shocks = {}
     decision_key = (
         jax.ShapeDtypeStruct((n_subjects,), ordinary_key.dtype, sharding=subject)
         if taste_key is None
@@ -333,7 +341,25 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
             sharding=subject,
         )
     )
-    if regime.simulation.replay_route.consumer_route == "nnbegm_finite":
+    if prepared_decision is not None:
+        indices, _, current_shocks = prepared_decision
+        decoder_arguments = {
+            "flat_indices": indices,
+            "grids": _shared_tree(tree=base.actions, devices=devices),
+        }
+        decoded = runtime.operations.prepare_abstract(
+            function=_lookup_values_from_indices,
+            arguments=decoder_arguments,
+            subject_arg_names=("flat_indices",),
+            devices=devices,
+        )
+        profiles["action_decode"] = ForwardProgramProfile(
+            executable=decoded.executable,
+            memory=decoded.memory,
+            arguments=MappingProxyType(decoder_arguments),
+        )
+        actions = decoded.executable.out_info
+    elif regime.simulation.replay_route.consumer_route == "nnbegm_finite":
         actions, _, _ = cast(
             "_FiniteDecisionOutput",
             _profile_finite_decision(
@@ -369,7 +395,46 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
             }
         )
         arguments = decision_arguments(
-            states=states,
+            active_subjects=jax.ShapeDtypeStruct(
+                (n_subjects,), jnp.bool_, sharding=subject
+            )
+            if declares_active_subjects(
+                program=regime.simulation.programs.forward_decision[period]
+            )
+            else None,
+            current_iid=current_iid_arguments(
+                regime=regime,
+                flat_params=_shared_tree(tree=flat_params, devices=devices),
+                keys={}
+                if regime.simulation.current_iid_draw_plan is None
+                else {
+                    name: jax.ShapeDtypeStruct(
+                        (n_subjects, *scalar_draw_axis(dtype=ordinary_key.dtype)),
+                        ordinary_key.dtype,
+                        sharding=subject,
+                    )
+                    for name in regime.simulation.current_iid_draw_plan.physical_names
+                },
+                overrides=current_iid_override_prototype(
+                    schema=current_iid_override_schema,
+                    names=()
+                    if regime.simulation.current_iid_draw_plan is None
+                    else regime.simulation.current_iid_draw_plan.physical_names,
+                    n_subjects=n_subjects,
+                    sharding=subject,
+                ),
+            ),
+            states={
+                **states,
+                **(
+                    {
+                        name: current[name]
+                        for name in regime.simulation.current_iid_draw_plan.state_inputs
+                    }
+                    if regime.simulation.current_iid_draw_plan is not None
+                    else {}
+                ),
+            },
             discrete_actions=_shared_tree(tree=base.discrete_actions, devices=devices),
             continuous_actions=_shared_tree(
                 tree=base.continuous_actions, devices=devices
@@ -394,8 +459,61 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
             regime_name=name,
             profiles=profiles,
             wave=wave,
+            feeds_forward=regime.simulation.current_iid_draw_plan is not None,
         )
         indices = cast("tuple[jax.ShapeDtypeStruct, ...]", prepared_outputs)[0]
+        if wave is None and _reads_egm_policy_first(
+            regime=regime, sim_policy=policy, action_names=base.action_names
+        ):
+            # Policy-first runs its read before the grid argmax, which still
+            # runs whenever some subject's read is rejected; both are profiled.
+            # Containers mirror `_read_egm_policy_first`'s operands, so dispatch
+            # finds this executable under the same producer key.
+            policy_first_arguments = {
+                "sim_policy": jax.tree.map(
+                    partial(_abstract_policy_leaf, devices=devices), policy
+                ),
+                "states": MappingProxyType(
+                    dict(_shared_tree(tree=current, devices=devices))
+                ),
+                "canonical_states": MappingProxyType(
+                    dict(_shared_tree(tree=states, devices=devices))
+                ),
+                "next_regime_to_V_arr": _shared_tree(
+                    tree=decision_values, devices=devices
+                ),
+                "flat_params": params,
+                "period": period_value,
+                "age": age,
+                "in_regime": jax.ShapeDtypeStruct(
+                    (n_subjects,), jnp.bool_, sharding=shared
+                ),
+                "referenced_value_kwargs": MappingProxyType(
+                    dict(_shared_tree(tree=references, devices=devices))
+                ),
+            }
+            policy_first = runtime.operations.prepare_producer(
+                function=policy_first_operation(
+                    regime=regime,
+                    period=period,
+                    action_names=base.action_names,
+                    action_dtypes=tuple(
+                        (action, jnp.asarray(base.actions[action]).dtype.name)
+                        for action in base.action_names
+                    ),
+                ),
+                arguments=policy_first_arguments,
+                devices=devices,
+            )
+            profiles["policy_first"] = ForwardProgramProfile(
+                executable=policy_first.executable,
+                memory=policy_first.memory,
+                arguments=MappingProxyType(policy_first_arguments),
+            )
+        if regime.simulation.current_iid_draw_plan is not None:
+            current_shocks = cast(
+                "tuple[Mapping[str, jax.ShapeDtypeStruct], ...]", prepared_outputs
+            )[2]
         if not states and indices.ndim == 0:
             indices = jax.ShapeDtypeStruct(
                 (n_subjects,), indices.dtype, sharding=subject
@@ -470,6 +588,7 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
                         sharding=subject,
                     )
         arguments = transition_arguments(
+            current_shocks=current_shocks,
             states=states,
             carried=carried,
             process_nodes=(

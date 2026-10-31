@@ -1,0 +1,525 @@
+"""Original eager validator arithmetic and ownership under actual admission."""
+
+from functools import partial
+from types import MappingProxyType
+
+import jax
+import jax.numpy as jnp
+import numpy as np
+import pytest
+from jax._src.api import Inline
+
+from _lcm.dtypes import canonical_float_dtype
+from _lcm.egm.nbegm_probe_stages import probe_points
+from _lcm.egm.validation import (
+    validate_dcegm_regime,
+)
+from _lcm.execution.workspace_planning import WorkspaceBudgetError
+from _lcm.typing import PytreeValue
+from lcm.exceptions import ExecutionPlanningError, ModelInitializationError
+from lcm.typing import BoolND, FloatND
+from tests.egm.test_current_iid_generation_materialization import _owner
+from tests.solution.test_post_decision_lower_bound import _model as _bounded_model
+
+pytestmark = pytest.mark.coverage(backends=("cpu",), precisions="both")
+
+
+def _original_minimum(*, values: FloatND) -> FloatND:
+    return jnp.min(values)
+
+
+def test_validator_minimum_name_cannot_authorize_a_foreign_primitive() -> None:
+    """The admitted minimum identity does not grant a same-name primitive access."""
+    from jax.extend.core import Primitive  # noqa: PLC0415
+    from jax.extend.core import primitives as primitive_objects  # noqa: PLC0415
+
+    from _lcm.egm.validation_stages import _stage  # noqa: PLC0415
+
+    graph = jax.make_jaxpr(_original_minimum)(
+        values=jnp.asarray([0.75, -0.0, 0.25], dtype=canonical_float_dtype())
+    )
+    equation = next(
+        equation
+        for equation in graph.eqns
+        if equation.primitive is primitive_objects.reduce_min_p
+    )
+    with pytest.raises(ExecutionPlanningError, match="unsupported eager primitive"):
+        _stage(equation=equation.replace(primitive=Primitive("reduce_min")))
+
+
+@pytest.mark.parametrize("with_grid_samples", [False, True])
+@pytest.mark.parametrize("intervals", [(0.375,), (0.375, 0.625, 1.125)])
+def test_original_probe_stack_keeps_admitted_bytes_and_primitive(
+    *, with_grid_samples: bool, intervals: tuple[float, ...]
+) -> None:
+    """Original singleton and wider stacks retain their actual stage boundary."""
+    from jax._src.lax.lax import stack_p  # noqa: PLC0415
+
+    from _lcm.egm.validation_stages import (  # noqa: PLC0415
+        prepare_validation_recipe,
+    )
+
+    dtype = canonical_float_dtype()
+    liquid_samples = jnp.asarray([0.25, 0.75], dtype=dtype)
+    interval_samples = tuple(jnp.asarray(value, dtype=dtype) for value in intervals)
+    arguments = {
+        "liquid_samples": liquid_samples,
+        "interval_samples": interval_samples,
+    }
+    function = partial(probe_points, with_grid_samples=with_grid_samples, dtype=dtype)
+    expected = function(
+        liquid_samples=liquid_samples, interval_samples=interval_samples
+    )
+    recipe = prepare_validation_recipe(function=function, arguments=arguments)
+    stacks = [
+        stage
+        for stage, _operands, _outputs in recipe.stages
+        if stage.primitive is stack_p
+    ]
+    assert len(stacks) == 1
+    assert stacks[0].parameters["axis"] == 0
+    owner = _owner(roots=(*jax.tree.leaves(arguments), expected))
+    try:
+        actual = owner.evaluate_validation(function=function, arguments=arguments)
+        assert isinstance(actual, jax.Array)
+        assert actual.dtype == expected.dtype
+        assert actual.shape == expected.shape
+        assert actual.weak_type == expected.weak_type
+        assert np.asarray(actual).tobytes() == np.asarray(expected).tobytes()
+    finally:
+        owner.close()
+
+
+def test_validator_stack_name_cannot_authorize_a_foreign_primitive() -> None:
+    """A same-name primitive cannot enter the admitted original recipe."""
+    from jax._src.lax.lax import stack_p  # noqa: PLC0415
+    from jax.extend.core import Primitive  # noqa: PLC0415
+
+    from _lcm.egm.validation_stages import _stage  # noqa: PLC0415
+
+    function = partial(
+        probe_points, with_grid_samples=False, dtype=canonical_float_dtype()
+    )
+    graph = jax.make_jaxpr(function)(
+        liquid_samples=jnp.asarray([0.25, 0.75]),
+        interval_samples=(jnp.asarray(0.375),),
+    )
+    equation = next(
+        equation for equation in graph.eqns if equation.primitive is stack_p
+    )
+    with pytest.raises(ExecutionPlanningError, match="unsupported eager primitive"):
+        _stage(equation=equation.replace(primitive=Primitive("stack")))
+
+
+@jax.jit
+def _opaque_product(*, left: FloatND, right: FloatND) -> FloatND:
+    return left * right
+
+
+def _separate_dispatches(*, left: FloatND, right: FloatND, offset: FloatND) -> FloatND:
+    return _opaque_product(left=left, right=right) + offset
+
+
+def test_original_nested_jit_remains_a_separate_rounding_boundary() -> None:
+    dtype = np.dtype(canonical_float_dtype())
+    eps = np.finfo(dtype).eps
+    arguments = {
+        "left": jnp.asarray(dtype.type(1.0 + eps)),
+        "right": jnp.asarray(dtype.type(1.0 - eps)),
+        "offset": jnp.asarray(dtype.type(-1.0)),
+    }
+    expected = _separate_dispatches(**arguments)
+    owner = _owner(roots=(*arguments.values(), expected))
+    try:
+        actual = owner.evaluate_validation(
+            function=_separate_dispatches, arguments=arguments
+        )
+        assert np.asarray(expected).tobytes() == np.asarray(dtype.type(0.0)).tobytes()
+        assert np.asarray(actual).tobytes() == np.asarray(expected).tobytes()
+    finally:
+        owner.close()
+
+
+def _product_for_origin_control(*, left: FloatND, right: FloatND) -> FloatND:
+    return left * right
+
+
+def _original_nextafter(*, left: FloatND, right: FloatND) -> FloatND:
+    return jnp.nextafter(left, right)
+
+
+@pytest.mark.parametrize("weak", [False, True])
+@pytest.mark.parametrize("direction", [-np.inf, np.inf])
+def test_original_nextafter_keeps_bytes_dtype_and_weak_type(
+    *, weak: bool, direction: float
+) -> None:
+    dtype = np.dtype(canonical_float_dtype())
+    arguments = {
+        "left": jnp.asarray(1.0, dtype=None if weak else dtype),
+        "right": jnp.asarray(direction, dtype=None if weak else dtype),
+    }
+    expected = _original_nextafter(**arguments)
+    owner = _owner(roots=(*arguments.values(), expected))
+    try:
+        actual = owner.evaluate_validation(
+            function=_original_nextafter, arguments=arguments
+        )
+        assert actual.dtype == expected.dtype
+        assert actual.weak_type == expected.weak_type
+        assert np.asarray(actual).tobytes() == np.asarray(expected).tobytes()
+        assert (
+            np.asarray(actual).tobytes()
+            == np.asarray(
+                np.nextafter(dtype.type(1.0), dtype.type(direction))
+            ).tobytes()
+        )
+    finally:
+        owner.close()
+
+
+def test_rebound_nextafter_refuses_before_callback_tracing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from _lcm.egm import validation_stages  # noqa: PLC0415
+
+    replacement = jax.jit(_product_for_origin_control, inline=Inline.JAX_EARLY)
+    monkeypatch.setattr(jnp, "nextafter", replacement)
+
+    def must_not_trace(**_: PytreeValue) -> PytreeValue:
+        raise AssertionError("Callback tracing preceded rebound nextafter refusal.")
+
+    monkeypatch.setattr(validation_stages, "prepare_validation_recipe", must_not_trace)
+    arguments = {"left": jnp.asarray(1.0), "right": jnp.asarray(2.0)}
+    owner = _owner(roots=tuple(arguments.values()))
+    try:
+        with pytest.raises(ExecutionPlanningError, match="JAX_EARLY"):
+            owner.evaluate_validation(function=_original_nextafter, arguments=arguments)
+        assert not owner.operations.cache
+        assert not owner._pending
+    finally:
+        owner.close()
+
+
+@pytest.mark.parametrize("mutation", ["none", "info", "fun", "malformed"])
+def test_early_jit_origin_refuses_before_callback_tracing(
+    *, mutation: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sys  # noqa: PLC0415
+
+    from _lcm.egm import validation_stages  # noqa: PLC0415
+
+    early = jax.jit(_product_for_origin_control, inline=Inline.JAX_EARLY)
+    auto = jax.jit(_product_for_origin_control, inline=Inline.AUTO)
+    if mutation == "info":
+        monkeypatch.setattr(early, "_jit_info", vars(auto)["_jit_info"])
+    elif mutation == "fun":
+        monkeypatch.setattr(early, "_fun", _separate_dispatches)
+    elif mutation == "malformed":
+        monkeypatch.setattr(early, "_jit_info", None)
+    monkeypatch.setattr(sys.modules[__name__], "_opaque_product", early)
+
+    def must_not_trace(**_: PytreeValue) -> PytreeValue:
+        raise AssertionError("Callback tracing preceded the original JIT refusal.")
+
+    monkeypatch.setattr(validation_stages, "prepare_validation_recipe", must_not_trace)
+    arguments = {
+        "left": jnp.asarray(0.5),
+        "right": jnp.asarray(0.25),
+        "offset": jnp.asarray(-1.0),
+    }
+    owner = _owner(roots=tuple(arguments.values()))
+    try:
+        with pytest.raises(ExecutionPlanningError, match=r"JAX_EARLY|Original JIT"):
+            owner.evaluate_validation(
+                function=_separate_dispatches, arguments=arguments
+            )
+        assert not owner.operations.cache
+        assert not owner._pending
+    finally:
+        owner.close()
+
+
+def _multi_operation_canonical_log(*, value: FloatND) -> FloatND:
+    return jnp.log10(value)
+
+
+def test_canonical_multi_operation_early_jit_refuses_before_callback_tracing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from _lcm.egm import validation_stages  # noqa: PLC0415
+
+    def must_not_trace(**_: PytreeValue) -> PytreeValue:
+        raise AssertionError("Callback tracing preceded canonical EARLY refusal.")
+
+    monkeypatch.setattr(validation_stages, "prepare_validation_recipe", must_not_trace)
+    value = jnp.asarray(0.5)
+    owner = _owner(roots=(value,))
+    try:
+        with pytest.raises(ExecutionPlanningError, match="JAX_EARLY"):
+            owner.evaluate_validation(
+                function=_multi_operation_canonical_log, arguments={"value": value}
+            )
+        assert not owner.operations.cache
+        assert not owner._pending
+    finally:
+        owner.close()
+
+
+def _unsupported_after_add(*, value: FloatND) -> FloatND:
+    return jax.lax.sin(value + 1.0)
+
+
+def test_unsupported_later_primitive_refuses_before_any_dispatch() -> None:
+    value = jnp.asarray(0.25)
+    owner = _owner(roots=(value,))
+    try:
+        with pytest.raises(ExecutionPlanningError, match="unsupported eager primitive"):
+            owner.evaluate_validation(
+                function=_unsupported_after_add, arguments={"value": value}
+            )
+        assert not owner.operations.cache
+        assert not owner._pending
+    finally:
+        owner.close()
+
+
+def _eager_trace_escape(*, value: FloatND) -> FloatND:
+    with jax.ensure_compile_time_eval():
+        captured = jnp.ones((4096,))
+    return value + captured
+
+
+def test_eager_trace_escape_refuses_before_callback_tracing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from _lcm.egm import validation_stages  # noqa: PLC0415
+
+    def must_not_trace(**_: PytreeValue) -> PytreeValue:
+        raise AssertionError("Callback tracing preceded the eager-escape refusal.")
+
+    monkeypatch.setattr(validation_stages, "prepare_validation_recipe", must_not_trace)
+    value = jnp.asarray(0.25)
+    owner = _owner(roots=(value,))
+    try:
+        with pytest.raises(ExecutionPlanningError, match="compile-time eager"):
+            owner.evaluate_validation(
+                function=_eager_trace_escape, arguments={"value": value}
+            )
+        assert not owner.operations.cache
+        assert not owner._pending
+    finally:
+        owner.close()
+
+
+_CAPTURED_BIAS: jax.Array | None = None
+
+
+def _captured_array(*, value: FloatND) -> FloatND:
+    if _CAPTURED_BIAS is None:
+        raise ValueError("The captured callback bias is not bound.")
+    return value + _CAPTURED_BIAS
+
+
+def test_referenced_callback_array_survives_unrelated_publish(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys  # noqa: PLC0415
+
+    bias = jnp.ones((4096,))
+    value = jnp.asarray(0.25)
+    monkeypatch.setattr(sys.modules[__name__], "_CAPTURED_BIAS", bias)
+    owner = _owner(roots=(value,))
+    try:
+        actual = owner.evaluate_validation(
+            function=_captured_array, arguments={"value": value}
+        )
+        np.testing.assert_array_equal(actual, np.full(4096, 1.25))
+        del actual
+        owner.publish(stage="params", tree=MappingProxyType({}))
+        assert any(root is bias for root in jax.tree.leaves(owner.solve_input_roots()))
+        owner.budget_bytes = bias.nbytes - 1
+        with pytest.raises(ExecutionPlanningError, match="before allocation"):
+            owner(value=np.ones(1), dtype=np.dtype(bias.dtype), name="next_leaf")
+    finally:
+        owner.close()
+
+
+def _broad_then_add(*, value: FloatND) -> FloatND:
+    broad = jnp.broadcast_to(value, (4096,))
+    return broad + 1.0
+
+
+def test_actual_first_stage_fits_and_later_allocation_refuses() -> None:
+    value = jnp.asarray(0.25)
+    probe = _owner(roots=(value,))
+    result = probe.evaluate_validation(
+        function=_broad_then_add, arguments={"value": value}
+    )
+    records = tuple(probe.operations.cache.values())
+    first = records[0].memory.reservation_bytes
+    assert first < records[-1].memory.reservation_bytes
+    operations = probe.operations
+    del result
+    probe.close()
+    owner = _owner(roots=(value,))
+    owner.operations = operations
+    owner.budget_bytes = first
+    try:
+        with pytest.raises((ExecutionPlanningError, WorkspaceBudgetError)):
+            owner.evaluate_validation(
+                function=_broad_then_add, arguments={"value": value}
+            )
+        assert not owner._pending
+        np.testing.assert_array_equal(value, np.asarray(0.25))
+    finally:
+        owner.close()
+
+
+def _wrong_inverse(*, marginal_continuation: FloatND) -> FloatND:
+    return 2.0 / marginal_continuation
+
+
+@pytest.mark.parametrize("wrong_inverse", [False, True])
+def test_original_real_DCEGM_validator_keeps_outcome_and_diagnostic(
+    *, wrong_inverse: bool
+) -> None:
+    model = _bounded_model(savings_grid_start=-2.0, declared_lower_bound=-2.0)
+    prepared = model._declaration_preparation
+    assert prepared is not None
+    regime = model.user_regimes["saving"]
+    if wrong_inverse:
+        regime = regime.replace(
+            functions={
+                **regime.functions,
+                "inverse_marginal_utility": _wrong_inverse,
+            }
+        )
+    regimes = {**model.user_regimes, "saving": regime}
+    laws = prepared.prepared_structure.laws
+    validate = partial(
+        validate_dcegm_regime,
+        regime_name="saving",
+        user_regime=regime,
+        user_regimes=regimes,
+        laws=laws,
+        solution_reachability=prepared.prepared_structure.reachability.solution,
+    )
+    if wrong_inverse:
+        with pytest.raises(ModelInitializationError, match="inconsistent"):
+            validate()
+    else:
+        assert validate() is None
+
+
+def _original_isnan(*, value: FloatND) -> BoolND:
+    return jnp.isnan(value)
+
+
+@pytest.mark.parametrize("weak", [False, True])
+@pytest.mark.parametrize("value", [0.0, -0.0, np.inf, -np.inf, np.nan])
+def test_original_isnan_keeps_predicate_bytes_dtype_and_weak_type(
+    *, weak: bool, value: float
+) -> None:
+    dtype = np.dtype(canonical_float_dtype())
+    arguments = {"value": jnp.asarray(value, dtype=None if weak else dtype)}
+    expected = jnp.isnan(arguments["value"])
+    owner = _owner(roots=(*arguments.values(), expected))
+    try:
+        actual = owner.evaluate_validation(
+            function=_original_isnan, arguments=arguments
+        )
+        assert isinstance(actual, jax.Array)
+        assert actual.dtype == expected.dtype
+        assert actual.weak_type == expected.weak_type
+        assert np.asarray(actual).tobytes() == np.asarray(expected).tobytes()
+        assert bool(actual) is bool(np.isnan(value))
+    finally:
+        owner.close()
+
+
+@pytest.mark.parametrize("mutation", ["rebound", "code", "info", "nan_policy"])
+def test_original_isnan_origin_refuses_before_callback_tracing(
+    *, mutation: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jax._src import config as jax_config  # noqa: PLC0415
+
+    from _lcm.egm import validation_stages  # noqa: PLC0415
+
+    original = jnp.isnan
+    if mutation == "rebound":
+        monkeypatch.setattr(
+            jnp,
+            "isnan",
+            jax.jit(_product_for_origin_control, inline=Inline.JAX_EARLY),
+        )
+    elif mutation == "code":
+        raw = vars(original)["_fun"]
+        monkeypatch.setattr(raw, "__code__", _product_for_origin_control.__code__)
+    elif mutation == "info":
+        monkeypatch.setattr(original, "_jit_info", None)
+
+    def must_not_trace(**_: PytreeValue) -> PytreeValue:
+        raise AssertionError("Callback tracing preceded original isnan refusal.")
+
+    monkeypatch.setattr(validation_stages, "prepare_validation_recipe", must_not_trace)
+    arguments = {"value": jnp.asarray(0.5)}
+    owner = _owner(roots=tuple(arguments.values()))
+    try:
+        if mutation == "nan_policy":
+            with (
+                jax_config.error_checking_behavior_nan("raise"),
+                pytest.raises(ExecutionPlanningError, match="JAX_EARLY"),
+            ):
+                owner.evaluate_validation(function=_original_isnan, arguments=arguments)
+        else:
+            with pytest.raises(ExecutionPlanningError, match=r"JAX_EARLY|Original JIT"):
+                owner.evaluate_validation(function=_original_isnan, arguments=arguments)
+        assert not owner.operations.cache
+        assert not owner._pending
+    finally:
+        owner.close()
+
+
+def _curved_probe_budget(*, wealth: FloatND, coefficient: FloatND) -> FloatND:
+    return wealth + coefficient * wealth**3
+
+
+def _vector_probe_law(*, wealth: FloatND, coefficient: FloatND) -> FloatND:
+    return jnp.stack((wealth, coefficient * wealth**3))
+
+
+@pytest.mark.parametrize("scalar", [False, True])
+@pytest.mark.parametrize("order", [1, 2])
+def test_original_liquid_probe_transform_bytes_under_admission(
+    *, scalar: bool, order: int
+) -> None:
+    """Inspect model inputs while retaining the original transformed arithmetic."""
+    from _lcm.solution.nbegm import (  # noqa: PLC0415
+        _DynamicLiquidProbe,
+        _evaluate_liquid_probe_program,
+        _make_liquid_probe_program,
+    )
+
+    function = _curved_probe_budget if scalar else _vector_probe_law
+    points = jnp.asarray([0.375, 0.625, 1.125], dtype=canonical_float_dtype())
+    arguments = {"coefficient": jnp.asarray(0.75, dtype=points.dtype)}
+    derivative = _DynamicLiquidProbe(func=function, liquid_name="wealth", scalar=scalar)
+    for _ in range(order):
+        derivative = jax.grad(derivative) if scalar else jax.jacfwd(derivative)
+    expected = jax.jit(jax.vmap(derivative, in_axes=(0, None)))(points, arguments)
+    program = _make_liquid_probe_program(
+        func=function, liquid_name="wealth", order=order, scalar=scalar
+    )
+    owner = _owner(roots=(points, *arguments.values(), expected))
+    try:
+        actual = owner.evaluate_validation(
+            function=partial(_evaluate_liquid_probe_program, program=program),
+            arguments={"points": points, "arguments": arguments},
+        )
+        assert isinstance(actual, jax.Array)
+        assert actual.shape == expected.shape
+        assert actual.dtype == expected.dtype
+        assert actual.weak_type == expected.weak_type
+        assert np.asarray(actual).tobytes() == np.asarray(expected).tobytes()
+    finally:
+        owner.close()

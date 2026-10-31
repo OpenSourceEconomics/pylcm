@@ -78,6 +78,38 @@ def _three_categorical_reader():
     )
 
 
+@pytest.mark.parametrize(
+    "value", [2.5, -jnp.inf, jnp.nan], ids=["finite", "infeasible", "invalid"]
+)
+@pytest.mark.parametrize("co_mapped", [False, True])
+def test_process_aware_scalar_read_matches_ordinary_lookup(
+    *, value: float, co_mapped: bool
+) -> None:
+    """A stored scalar has no interpolation coordinates, including after co-map."""
+    info = VInterpolationInfo(
+        state_names=("cat",) if co_mapped else (),
+        discrete_states=MappingProxyType(
+            {"cat": DiscreteGrid(category_class=Two)} if co_mapped else {}
+        ),
+        continuous_states=MappingProxyType({}),
+    )
+    readers = [
+        get_V_interpolator(
+            v_interpolation_info=info,
+            state_prefix="next_",
+            V_arr_name="V_arr",
+            co_map_state_names=("cat",) if co_mapped else (),
+            interpolate_process_axes=process_aware,
+        )
+        for process_aware in (False, True)
+    ]
+    stored = jnp.asarray(value)
+    ordinary = jax.jit(readers[0])(V_arr=stored)
+    process_aware = jax.jit(readers[1])(V_arr=stored)
+    np.testing.assert_array_equal(process_aware, ordinary)
+    np.testing.assert_array_equal(process_aware, stored)
+
+
 def _V_arr(shape):
     """Deterministic, all-distinct values so a wrong node cannot pass by luck."""
     return jnp.arange(float(np.prod(shape))).reshape(shape) * 0.5 - 3.0

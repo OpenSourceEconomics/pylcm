@@ -7,7 +7,7 @@ builders here carry those counts through the same reductions the value takes:
 
 - over the actions, summed where the feasibility mask keeps an action, value
   constraints included;
-- through the fold and the state product, alongside the value;
+- through the state product, alongside the value;
 - over every state cell, into one saturating int32 total per check, which the period
   kernel reads and raises on.
 
@@ -17,10 +17,10 @@ reduction is the unchanged dense one a regime without counts runs.
 """
 
 import dataclasses
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import ClassVar, cast
+from typing import ClassVar, Literal, cast
 
 import jax
 import jax.numpy as jnp
@@ -30,11 +30,9 @@ from _lcm.off_grid import off_grid_message
 from _lcm.regime_building.collective import ParetoWeights
 from _lcm.regime_building.max_Q_over_a import (
     _fail_if_co_map_states_not_leading,
-    _fail_if_collective,
     _get_extra_param_names,
     _HardMaxQOverA,
     _SmoothedMaxQOverA,
-    _wrap_with_fold_reduction,
 )
 from _lcm.regime_building.Q_and_F import BoundedQAndF, runtime_bound_specs
 from _lcm.solution.feasibility import (
@@ -45,9 +43,11 @@ from _lcm.solution.feasibility import (
 from _lcm.typing import (
     ActionName,
     ArrayTree,
+    LandingCheck,
     MaxQOverAFunction,
     QAndFArg,
     QAndFFunction,
+    QueryLandingCheck,
     RegimeName,
     StateName,
 )
@@ -57,7 +57,40 @@ from _lcm.utils.functools import allow_args, allow_only_kwargs
 from lcm.exceptions import OffGridStateError
 from lcm.typing import BoolND, FloatND, IntND
 
-type LandingCheck = tuple[RegimeName, StateName]
+
+def query_landing_check(
+    *, check: LandingCheck, source: RegimeName, period: int
+) -> QueryLandingCheck:
+    """Bind local checks once while retaining actual nested producer identities."""
+    match check:
+        case (target, state):
+            return source, period, target, state
+        case (nested_source, nested_period, target, state):
+            return nested_source, nested_period, target, state
+    raise TypeError("A reached landing lost its source/target identity.")
+
+
+def fail_on_query_landings(
+    *,
+    totals: IntND,
+    checks: tuple[QueryLandingCheck, ...],
+    phase: Literal["solve", "simulate"],
+) -> None:
+    """Check each typed query's reached landings with its actual producer/date."""
+    for (source, period, target, state), count in zip(
+        checks, jax.device_get(totals), strict=True
+    ):
+        if int(count):
+            raise OffGridStateError(
+                off_grid_message(
+                    count=int(count),
+                    regime=source,
+                    target=target,
+                    period=period,
+                    state=state,
+                    phase=phase,
+                )
+            )
 
 
 def landing_checks_of(Q_and_F: QAndFFunction) -> tuple[LandingCheck, ...]:
@@ -77,9 +110,6 @@ def get_landing_counting_max_Q_over_a(
     co_map_v_arr_in_axes: tuple[MappingProxyType[RegimeName, int | None], ...] = (),
     stakeholders: tuple[str, ...] | None = None,
     pareto_weights: ParetoWeights | None = None,
-    fold_state_names: tuple[StateName, ...] = (),
-    fold_weights: Mapping[StateName, FloatND] = MappingProxyType({}),
-    fold_conditioning: Mapping[StateName, StateName] = MappingProxyType({}),
     cell_width_keyword: str | None = None,
     untiled_state_names: tuple[StateName, ...] = (),
     broadcast_state_names: tuple[StateName, ...] = (),
@@ -88,8 +118,8 @@ def get_landing_counting_max_Q_over_a(
     """Build `get_max_Q_over_a`'s dense reduction for a landing-counting kernel.
 
     The arguments and the composition are `get_max_Q_over_a`'s: the action
-    product, the hard or EV1-smoothed reducer, the state product, the fold and
-    the co-map. The reducer and the fold are wrapped so the landing counts ride
+    product, the hard or EV1-smoothed reducer, the state product and the
+    co-map. The reducer is wrapped so the landing counts ride
     beside the value, and the result returns them after the feasibility output.
 
     Raises:
@@ -157,36 +187,6 @@ def get_landing_counting_max_Q_over_a(
             bound_summary=bounded,
         )
     )
-    if fold_state_names:
-        _fail_if_collective(
-            fold_state_names=fold_state_names, stakeholders=stakeholders
-        )
-        extra_fold_names = [
-            *extra_param_names,
-            *((cell_width_keyword,) if cell_width_keyword is not None else ()),
-        ]
-        folded = _wrap_with_fold_reduction(
-            mapped=cast("Callable[..., FloatND | tuple[FloatND, BoolND]]", mapped),
-            fold_state_names=fold_state_names,
-            fold_weights=fold_weights,
-            fold_conditioning=fold_conditioning,
-            inner_state_names=inner_state_names,
-            return_feasibility=True,
-            action_names=action_names,
-            state_names=state_names,
-            extra_param_names=extra_fold_names,
-        )
-        mapped = with_signature(
-            _LandingCountingFold(fold=folded.__wrapped__),  # ty: ignore[unresolved-attribute]
-            kwargs=[
-                "next_regime_to_V_arr",
-                *action_names,
-                *state_names,
-                *extra_fold_names,
-            ],
-            return_annotation="tuple[FloatND, BoolND, IntND]",
-            enforce=False,
-        )
     if not co_map_state_names:
         return cast("MaxQOverAFunction", mapped)
     mapped = allow_args(mapped)
@@ -249,14 +249,17 @@ def fail_on_reached_landings(
             point of, a grid declaring `off_grid="raise"`.
 
     """
-    for (target, state), count in zip(checks, jax.device_get(totals), strict=True):
+    for check, count in zip(checks, jax.device_get(totals), strict=True):
+        source, source_period, target, state = query_landing_check(
+            check=check, source=regime_name, period=period
+        )
         if int(count):
             raise OffGridStateError(
                 off_grid_message(
                     count=int(count),
-                    regime=regime_name,
+                    regime=source,
                     target=target,
-                    period=period,
+                    period=source_period,
                     state=state,
                     phase="solve",
                 )
@@ -317,44 +320,6 @@ class _LandingCountingReduction:
             feasibility,
             _feasible_landing_counts(F_arr=F_arr, landing_counts=landing_counts),
         )
-        return (
-            BoundedResult(output=output, bound_status=evaluated.bound_status)
-            if isinstance(evaluated, BoundedResult)
-            else output
-        )
-
-
-@dataclass(frozen=True, kw_only=True, eq=False)
-class _LandingCountingFold:
-    """Fold the value and its empty-set cause, passing the landing counts through.
-
-    The counts keep the folded axes: every state cell is counted, and the period
-    kernel totals them over all cells anyway.
-    """
-
-    fold: Callable[..., tuple[FloatND, BoolND]]
-    """The fold reduction, whose `mapped` also returns landing counts."""
-
-    def __call__(
-        self,
-        *,
-        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-        **states_actions_params: QAndFArg,
-    ) -> tuple[FloatND, BoolND, IntND] | BoundedResult[ArrayTree]:
-        """Return the folded value and empty-set cause, then the landing counts."""
-        mapped = self.fold.mapped  # ty: ignore[unresolved-attribute]
-        evaluated = mapped(
-            next_regime_to_V_arr=next_regime_to_V_arr, **states_actions_params
-        )
-        value, empty, landing_counts = cast(
-            "tuple[FloatND, BoolND, IntND]",
-            evaluated.output if isinstance(evaluated, BoundedResult) else evaluated,
-        )
-        folded_value, folded_empty = dataclasses.replace(
-            self.fold,  # ty: ignore[invalid-argument-type]
-            mapped=_Evaluated(outputs=(value, empty)),
-        )(next_regime_to_V_arr=next_regime_to_V_arr, **states_actions_params)
-        output = (folded_value, folded_empty, landing_counts)
         return (
             BoundedResult(output=output, bound_status=evaluated.bound_status)
             if isinstance(evaluated, BoundedResult)

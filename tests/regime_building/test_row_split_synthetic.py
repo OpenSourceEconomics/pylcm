@@ -36,9 +36,7 @@ from tests.simulation.test_runtime_helpers import bind_eager_simulation
 
 def _simulate_dissolution_cohort(*, own_stakeholder: str | None):
     """Simulate the 3-subject dissolution miniature with one role for every row."""
-    ages, regimes, regime_names_to_ids, flat_params, solution, dissolution_flags = (
-        _solve_dissolution()
-    )
+    ages, regimes, regime_names_to_ids, flat_params, solution = _solve_dissolution()
     conditions = {
         "wage": jnp.array([1.0, 2.0, 3.0]),
         "age": jnp.array([0.0, 0.0, 0.0]),
@@ -55,7 +53,6 @@ def _simulate_dissolution_cohort(*, own_stakeholder: str | None):
         regime_names_to_ids=regime_names_to_ids,
         logger=get_logger(log_level="off"),
         period_to_regime_to_V_arr=solution,
-        period_to_regime_to_dissolution_flags=dissolution_flags,
         ages=ages,
         simulation_output_dtypes={},
         seed=0,

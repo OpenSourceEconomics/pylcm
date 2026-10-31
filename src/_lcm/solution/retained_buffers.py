@@ -35,6 +35,7 @@ from _lcm.egm.outer_replay_capability import OuterReplayCapability
 from _lcm.egm.published_policy import EGMSimPolicy, NBEGMGridPolicy, NNBEGMSimPolicy
 from _lcm.solution.artifacts import OwnedSolutionView
 from _lcm.solution.block_major import _ComponentValueEntry
+from _lcm.solution.generation import CanonicalModelGeneration
 from _lcm.solution.model_authority import SolutionAuthority
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from lcm._solver_api import authority as authority_module
@@ -131,6 +132,15 @@ def retained_solution_buffers(*, solution: _SolutionInput) -> tuple[jax.Array, .
     return tuple(collector.arrays.values())
 
 
+def retained_artifact_authority_buffers(
+    *, authority: authority_module.ArtifactAuthority
+) -> tuple[jax.Array, ...]:
+    """Borrow both original identity-bound template banks without copying."""
+    collector = _RetainedBuffers()
+    collector.collect_authority(authority)
+    return tuple(collector.arrays.values())
+
+
 @dataclass(kw_only=True)
 class _RetainedBuffers:
     """One transient traversal; no array-bearing state escapes except its result."""
@@ -175,10 +185,14 @@ class _RetainedBuffers:
         elif type(value) is SolutionAuthority:
             self.collect(value.artifacts)
         elif type(value) is OwnedSolutionView:
+            generation = value.generation
+            if generation is not None:
+                if type(generation) is not CanonicalModelGeneration:
+                    raise _unsupported(generation)
+                self.collect(generation.live_roots())
             for name in (
                 "values",
                 "simulation_policies",
-                "dissolution_flags",
                 "replay_artifacts",
                 "authority",
             ):
@@ -237,10 +251,27 @@ class _RetainedBuffers:
             self.collect(snapshot.leaves)
 
     def collect_reader(self, value: _RetainedValue) -> None:
-        """Read prepared snapshot/context roots without building the route's reader."""
+        """Read built-in future carries and prepared roots without building readers."""
         # Model imports the ownership boundary before simulation readers are complete.
+        from _lcm.egm.upper_envelope.segment_envelope import (  # noqa: PLC0415
+            OwnedEnvelope,
+        )
         from _lcm.simulation.replay_inputs import PreparedReplayReader  # noqa: PLC0415
+        from _lcm.solution.feasibility import (  # noqa: PLC0415
+            BoundInputStatus,
+            ContinuationReadCounts,
+            QueryInputStatus,
+        )
 
+        if type(value) in (
+            OwnedEnvelope,
+            BoundInputStatus,
+            QueryInputStatus,
+            ContinuationReadCounts,
+        ):
+            for child in tuple.__iter__(cast("tuple[_RetainedValue, ...]", value)):
+                self.collect(child)
+            return
         if type(value) is not PreparedReplayReader:
             raise _unsupported(value)
         self.collect(value.snapshot.artifacts)

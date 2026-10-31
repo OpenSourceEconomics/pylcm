@@ -24,6 +24,7 @@ from lcm.exceptions import (
     InvalidSimulationInputError,
     ModelInitializationError,
     RegimeInitializationError,
+    ShockDeclarationError,
 )
 
 
@@ -47,6 +48,8 @@ MODEL_CONF = _conf(ModelInitializationError)
 
 # Used on all grid and process-grid constructors.
 GRID_CONF = _conf(GridInitializationError)
+
+SHOCK_CONF = _conf(ShockDeclarationError)
 
 # Used on the `categorical` decorator factory.
 CATEGORICAL_CONF = _conf(CategoricalDefinitionError)

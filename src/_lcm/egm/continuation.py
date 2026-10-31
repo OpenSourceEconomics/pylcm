@@ -24,6 +24,7 @@ import jax.numpy as jnp
 from dags import concatenate_functions
 from jax.typing import DTypeLike
 
+from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.carry import (
     EGMCarry,
@@ -46,9 +47,7 @@ from _lcm.egm.ez_kernel import (
 )
 from _lcm.egm.interp import (
     interp_and_derivative_on_prepared_grid,
-    interp_left_germ_on_prepared_grid,
     interp_left_record_on_prepared_grid,
-    interp_right_germ_on_prepared_grid,
     locate_on_grid,
     prepare_padded_grid,
 )
@@ -58,7 +57,6 @@ from _lcm.egm.nbegm_query import (
     build_nbegm_query,
 )
 from _lcm.egm.nbegm_query_model import NBEGMQueryModel
-from _lcm.egm.outer_envelope import right_germ_winner
 from _lcm.egm.query_data import EGMQueryData, select_query_data
 from _lcm.egm.regime_introspection import (
     _get_child_discrete_actions,
@@ -122,7 +120,11 @@ from _lcm.typing import (
 )
 from _lcm.utils.counts import sum_counts
 from _lcm.zero_safe import scaled_joint_weight, zero_safe_weighted_term
-from lcm.exceptions import ExecutionPlanningError, ModelInitializationError
+from lcm.exceptions import (
+    ExecutionPlanningError,
+    ModelInitializationError,
+    UnsupportedOperationError,
+)
 from lcm.regime import Regime as UserRegime
 from lcm.typing import (
     BoolND,
@@ -130,7 +132,6 @@ from lcm.typing import (
     FloatND,
     IntND,
     ReferenceName,
-    ScalarBool,
     ScalarFloat,
     ScalarInt,
 )
@@ -413,6 +414,9 @@ class ContinuationPlan:
     query_targets: tuple[RegimeName, ...] = ()
     """Installed child-query slots, in stateful target order."""
 
+    certainty_equivalent: CertaintyEquivalent | None = None
+    """Actual source declaration, shared by its primal and economic tangent readers."""
+
 
 def bind_continuation(
     *,
@@ -459,6 +463,12 @@ def bind_continuation(
     binding them for the child resources from `combo_pool`, so the continuation
     is read from the device-local slice and XLA inserts no all-gather.
     """
+    if plan.certainty_equivalent is not None and not isinstance(
+        plan.certainty_equivalent, LinearExpectation
+    ):
+        raise UnsupportedOperationError(
+            "A declared nonlinear CE requires its economic continuation reader."
+        )
     regime_transition_probs = plan.compute_regime_transition_probs(**combo_pool)
     # Carry rows are indexed here along their whole leading discrete axes (the
     # carry-producing target's combo axes). A target state sharded across devices
@@ -777,6 +787,7 @@ def build_continuation_plan(
     dcegm_query_models: Mapping[RegimeName, DCEGMQueryModel] | None = None,
     nbegm_query_models: Mapping[RegimeName, NBEGMQueryModel] | None = None,
     source_period: int | None = None,
+    certainty_equivalent: CertaintyEquivalent | None = None,
 ) -> ContinuationPlan:
     """Assemble a `ContinuationPlan` from the regime's continuation statics.
 
@@ -812,6 +823,7 @@ def build_continuation_plan(
         compute_regime_transition_probs=compute_regime_transition_probs,
         post_decision_name=post_decision_name,
         risk_aversion_param_name=risk_aversion_param_name,
+        certainty_equivalent=certainty_equivalent,
         query_targets=tuple(
             target
             for target in stateful_targets
@@ -902,39 +914,16 @@ def _get_child_carry_reader(
     build-time NaN placeholder in `read.stochastic_node_values`, so a resources
     function reading the process node integrates over the resolved nodes.
     """
-    stochastic_node_values = tuple(
-        resolved_process_grids[name]
-        if name is not None and name in resolved_process_grids
-        else values
-        for name, values in zip(
-            read.process_grid_names, read.stochastic_node_values, strict=True
-        )
+    stochastic_node_values, weight_vecs = _resolve_child_node_operands(
+        read=read, combo_pool=combo_pool, resolved_process_grids=resolved_process_grids
     )
-    if read.local_support_func is not None:
-        supports = read.local_support_func(**combo_pool)
-        stochastic_node_values = (
-            *stochastic_node_values,
-            *(_local_support_values(supports[key]) for key in read.local_support_keys),
-        )
-    weight_vecs: tuple[Float1D, ...] = ()
-    if read.weights_func is not None:
-        weights = read.weights_func(**combo_pool)
-        weight_vecs = tuple(weights[key] for key in read.weight_keys)
     # Every stochastic row is interpolated before expectation. Monotone Hermite
     # interpolation is nonlinear where its slope limiter binds, so pre-folding
     # rows would compute `interp(E[V])` instead of the required `E[interp(V)]`.
-    # The queries vary over the nodes when the resources function reads a
-    # stochastic state or the Euler-state law reads a draw.
     resources_reads_stochastic = bool(
         set(read.stochastic_state_names) & read.resources_arg_names
     ) or bool(read.euler_draw_names)
 
-    # The child's carry rows are fixed for the period; prepare each row's `+inf`
-    # search key and valid prefix length once here — above the per-savings-node
-    # and per-stochastic-node reads — so the per-query interpolation never
-    # recomputes the row's NaN mask. That mask, recomputed and held for every
-    # query lane, is the grid-length working buffer that dominates `egm_step` at
-    # scale; preparing it once collapses it to a carry-sized array.
     leaves = carry.leaves()
     grid_rows = leaves[("endog_grid",)]
     n_carry_rows = grid_rows.shape[-1]
@@ -958,6 +947,34 @@ def _get_child_carry_reader(
         prepared_valid_length=prepared_valid_length,
         collect_continuation_read_counts=collect_continuation_read_counts,
     )
+
+
+def _resolve_child_node_operands(
+    *,
+    read: _ChildRead,
+    combo_pool: EconFunctionKwargs,
+    resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
+) -> tuple[tuple[FloatND | IntND, ...], tuple[Float1D, ...]]:
+    """Resolve the canonical node supports and original probability factors."""
+    stochastic_node_values = tuple(
+        resolved_process_grids[name]
+        if name is not None and name in resolved_process_grids
+        else values
+        for name, values in zip(
+            read.process_grid_names, read.stochastic_node_values, strict=True
+        )
+    )
+    if read.local_support_func is not None:
+        supports = read.local_support_func(**combo_pool)
+        stochastic_node_values = (
+            *stochastic_node_values,
+            *(_local_support_values(supports[key]) for key in read.local_support_keys),
+        )
+    weight_vecs: tuple[Float1D, ...] = ()
+    if read.weights_func is not None:
+        weights = read.weights_func(**combo_pool)
+        weight_vecs = tuple(weights[key] for key in read.weight_keys)
+    return stochastic_node_values, weight_vecs
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -1459,14 +1476,7 @@ def _expect_over_stochastic_nodes(
         collect_continuation_read_counts=collect_continuation_read_counts,
     )
 
-    node_index_mesh = jnp.meshgrid(
-        *(
-            jnp.arange(values.shape[0], dtype=jnp.int32)
-            for values in stochastic_node_values
-        ),
-        indexing="ij",
-    )
-    flat_node_indices = tuple(mesh.ravel() for mesh in node_index_mesh)
+    flat_node_indices = _node_index_mesh(stochastic_node_values=stochastic_node_values)
     joint_weights, node_shift = _joint_node_weights(
         weight_vecs=weight_vecs, node_indices=flat_node_indices
     )
@@ -1490,11 +1500,8 @@ def _expect_over_stochastic_nodes(
     )
     n_blocks = -(-n_nodes // width)
     pad = n_blocks * width - n_nodes
-    blocked_indices = tuple(
-        jnp.concatenate([indices, jnp.zeros(pad, dtype=indices.dtype)]).reshape(
-            n_blocks, width
-        )
-        for indices in flat_node_indices
+    blocked_indices = _block_node_indices(
+        flat_node_indices=flat_node_indices, width=width
     )
     # Pad weights with 0.0, not the pad slots' real weights: the pad slots
     # reuse node index 0, so their values are read but zero-weighted, and
@@ -1645,7 +1652,6 @@ class _ReadAtNodes:
     ) -> (
         tuple[ScalarFloat, ScalarFloat] | BoundedResult[tuple[ScalarFloat, ScalarFloat]]
     ):
-        read = self.read
         stochastic_values = tuple(
             values[index]
             for values, index in zip(
@@ -1656,6 +1662,27 @@ class _ReadAtNodes:
             queries, gradients = self.queries_and_gradients(stochastic_values)
         else:
             queries, gradients = self.shared_queries_and_gradients
+        return self.read_coordinates(
+            node_indices=node_indices, queries=queries, gradients=gradients
+        )
+
+    def read_coordinates(
+        self,
+        *,
+        node_indices: tuple[ScalarInt, ...],
+        queries: FloatND,
+        gradients: FloatND,
+    ) -> (
+        tuple[ScalarFloat, ScalarFloat] | BoundedResult[tuple[ScalarFloat, ScalarFloat]]
+    ):
+        """Consume explicit coordinate directions through the original node row."""
+        read = self.read
+        stochastic_values = tuple(
+            values[index]
+            for values, index in zip(
+                self.stochastic_node_values, node_indices, strict=True
+            )
+        )
         query_pool, euler_gradient = (
             ({}, jnp.asarray(1.0))
             if self.actual_query is None
@@ -1685,6 +1712,35 @@ class _ReadAtNodes:
             rows_share_state_grid=read.rows_share_state_grid,
             collect_continuation_read_counts=self.collect_continuation_read_counts,
         )
+
+
+def _node_index_mesh(
+    *, stochastic_node_values: tuple[FloatND | IntND, ...]
+) -> tuple[IntND, ...]:
+    """Enumerate the original lottery axes without splitting physical components."""
+    mesh = jnp.meshgrid(
+        *(
+            jnp.arange(values.shape[0], dtype=jnp.int32)
+            for values in stochastic_node_values
+        ),
+        indexing="ij",
+    )
+    return tuple(indices.ravel() for indices in mesh)
+
+
+def _block_node_indices(
+    *, flat_node_indices: tuple[IntND, ...], width: int
+) -> tuple[IntND, ...]:
+    """Pad only index addresses; callers keep padding separate from law activity."""
+    n_nodes = flat_node_indices[0].shape[0]
+    n_blocks = -(-n_nodes // width)
+    pad = n_blocks * width - n_nodes
+    return tuple(
+        jnp.concatenate([indices, jnp.zeros(pad, dtype=indices.dtype)]).reshape(
+            n_blocks, width
+        )
+        for indices in flat_node_indices
+    )
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -2683,14 +2739,9 @@ def _stacked_blend_payloads(
 
     Masks each candidate to `-inf` below its own first finite coh node (so the
     edge clamp cannot hand an infeasible lifted candidate a boundary value that
-    wins the max), reads the right/left germs and the left record, applies the
-    `(-inf, 0)` pin and the composed gradient scaling, and collapses the
-    candidate axis via `_collapse_stacked_candidates`. The germs of each
-    candidate's value read feed the tie rule at the candidate max; they need no
-    support mask of their own — the left germ is dead at or below the first
-    finite node by construction, and a below-support candidate enters the tie
-    set only when every candidate is below support, where all published
-    marginals are exactly zero regardless of the winner.
+    wins the max), reads the left record, applies the `(-inf, 0)` pin and the
+    composed gradient scaling, and collapses the candidate axis via
+    `_collapse_stacked_candidates`.
 
     Under `paired_marginal_read` both side payloads are the value
     interpolant's own one-sided derivatives (the Epstein-Zin transform
@@ -2703,14 +2754,11 @@ def _stacked_blend_payloads(
         payloads `(right_side, left_side, right_alive)` for the passive blend.
 
     """
-    right_germ_at_child, left_germ_at_child, left_marginal_at_child = jax.vmap(
-        _germ_and_left_record_rows
-    )(
+    left_marginal_at_child = jax.vmap(interp_left_record_on_prepared_grid)(
         search_grid=search_rows,
         valid_length=valid_rows,
         xp=grid_rows,
-        fp=value_rows,
-        fp_slopes=marginal_rows,
+        fp=marginal_rows,
         x_query=queries_flat,
     )
     # Only rows with a finite first node have a support to fall below;
@@ -2732,7 +2780,7 @@ def _stacked_blend_payloads(
     left_marginal_at_child = jnp.where(above_row_support, 0.0, left_marginal_at_child)
     # The paired (Epstein-Zin) marginal is the value interpolant's own
     # derivative; its left payload follows the same convention: the derivative
-    # of the value object seen from the LEFT of the query, so a left-owned tie
+    # of the value object seen from the LEFT of the query, so a right-dead winner
     # at a duplicated terminal abscissa publishes the left duplicate's piece
     # slope, not the ordinary right/clamp derivative.
     if paired_marginal_read:
@@ -2768,23 +2816,8 @@ def _stacked_blend_payloads(
         left_marginal_at_child=left_marginal_at_child.reshape(block_shape),
         right_dead_at_child=at_or_above_row_support.reshape(block_shape),
         left_dead_at_child=at_or_below_row_support.reshape(block_shape),
-        right_germ_at_child=_reshaped_germ(germ=right_germ_at_child, shape=block_shape),
-        left_germ_at_child=_reshaped_germ(germ=left_germ_at_child, shape=block_shape),
     )
     return value_at_child, (right_side, left_side, right_alive)
-
-
-def _reshaped_germ(
-    *, germ: tuple[BoolND, FloatND, FloatND, FloatND], shape: tuple[int, ...]
-) -> tuple[BoolND, FloatND, FloatND, FloatND]:
-    """Reshape every component of a value germ to `shape`."""
-    alive, first, second, third = germ
-    return (
-        alive.reshape(shape),
-        first.reshape(shape),
-        second.reshape(shape),
-        third.reshape(shape),
-    )
 
 
 def _choose_blended_side(
@@ -2823,7 +2856,7 @@ def _left_slope_row(
     The paired left payload: an on-node query lands in its LEFT bracket
     (evaluated at the bracket's right edge), so a duplicated terminal abscissa
     publishes the left duplicate's piece slope — the derivative of the value
-    object a left-owned tie selected — instead of the ordinary right/clamp
+    object a right-dead winner owns — instead of the ordinary right/clamp
     derivative.
     """
     return interp_and_derivative_on_prepared_grid(
@@ -2837,49 +2870,6 @@ def _left_slope_row(
     )[1]
 
 
-def _germ_and_left_record_rows(
-    *,
-    search_grid: Float1D,
-    valid_length: ScalarInt,
-    xp: Float1D,
-    fp: Float1D,
-    fp_slopes: Float1D,
-    x_query: ScalarFloat,
-) -> tuple[
-    tuple[ScalarBool, ScalarFloat, ScalarFloat, ScalarFloat],
-    tuple[ScalarBool, ScalarFloat, ScalarFloat, ScalarFloat],
-    ScalarFloat,
-]:
-    """Germs and left-record marginal of one row."""
-    right_germ = interp_right_germ_on_prepared_grid(
-        x_query=x_query,
-        search_grid=search_grid,
-        valid_length=valid_length,
-        xp=xp,
-        fp=fp,
-        fp_slopes=fp_slopes,
-    )
-    left_germ = interp_left_germ_on_prepared_grid(
-        x_query=x_query,
-        search_grid=search_grid,
-        valid_length=valid_length,
-        xp=xp,
-        fp=fp,
-        fp_slopes=fp_slopes,
-    )
-    # The payload companion of the left germ: the marginal row read
-    # left-continuously, so a left-owned tie publishes the record that
-    # justified ownership at a duplicated abscissa.
-    left_marginal = interp_left_record_on_prepared_grid(
-        x_query=x_query,
-        search_grid=search_grid,
-        valid_length=valid_length,
-        xp=xp,
-        fp=fp_slopes,
-    )
-    return right_germ, left_germ, left_marginal
-
-
 def _collapse_stacked_candidates(
     *,
     value_at_child: FloatND,
@@ -2887,23 +2877,13 @@ def _collapse_stacked_candidates(
     left_marginal_at_child: FloatND,
     right_dead_at_child: BoolND,
     left_dead_at_child: BoolND,
-    right_germ_at_child: tuple[BoolND, FloatND, FloatND, FloatND],
-    left_germ_at_child: tuple[BoolND, FloatND, FloatND, FloatND],
 ) -> tuple[FloatND, FloatND, FloatND, FloatND]:
-    """Collapse the candidate axis by the exact hard max at the query.
+    """Collapse the candidate axis by the hard max at the query.
 
     This runs *before* the passive blend, so the blend interpolates the
-    nodewise outer maximum. An exact value tie resolves right-continuously in
-    the value read itself: the tied candidates are compared by the complete
-    right germ of their own value interpolants (`right_germ_winner` —
-    right-finiteness, then the first three one-sided derivatives), so the
-    branch whose read actually wins immediately to the right owns the marginal
-    the parent's Euler inversion consumes; right-identical candidates (a shared
-    terminal abscissa, where every candidate clamps) are separated by their
-    left germs, and only branches identical on both sides fall back to the
-    lowest index. (The germs use the unscaled interpolant derivatives: the
-    composed gradient is shared by all candidates of a cell and positive, so
-    scaling could never reorder them.)
+    nodewise outer maximum. The winner is the `argmax` of the working-dtype
+    value reads; an exact value tie goes to the lowest candidate index. Every
+    published channel is then gathered from that one winner.
 
     Rather than commit the ownership side per cell, the collapse publishes both
     the winner's right-continuous marginal (zero once its right side is dead —
@@ -2913,7 +2893,7 @@ def _collapse_stacked_candidates(
     a single ownership side after interpolation instead of averaging
     independently side-committed marginals. The published payload is always the
     value-winning branch's economic marginal `u'(c)` — the two objects stay
-    separate: the value germ ranks branch ownership, the marginal row supplies
+    separate: the value read ranks branch ownership, the marginal row supplies
     the utility derivative the parent Euler inversion consumes. With no passive
     blend the choice
     reduces to the per-node contract: an interior winner publishes its ordinary
@@ -2932,10 +2912,6 @@ def _collapse_stacked_candidates(
             candidate's last finite node (its right side is a flat clamp).
         left_dead_at_child: Per candidate, whether the query is at or below the
             candidate's first finite node (its left side is a flat clamp).
-        right_germ_at_child: Tuple of the right-finiteness flag and the first
-            three right derivatives of the candidate value reads, same shape.
-        left_germ_at_child: Tuple of the left-finiteness flag and the first
-            three left derivatives of the candidate value reads, same shape.
 
     Returns:
         Tuple of the collapsed value maximum, the winner's right-continuous
@@ -2943,11 +2919,9 @@ def _collapse_stacked_candidates(
         (1.0 where the winner's right side is live, 0.0 where it is dead).
 
     """
-    winner = right_germ_winner(
-        value=value_at_child,
-        right_germ=right_germ_at_child,
-        left_germ=left_germ_at_child,
-    )[0]
+    # int32 winner indices: the candidate axis has at most a few hundred
+    # entries, so the x64-default int64 only doubles the gather-index buffers.
+    winner = jnp.argmax(value_at_child, axis=-1, keepdims=True).astype(jnp.int32)
     ordinary = jnp.take_along_axis(ordinary_marginal_at_child, winner, axis=-1)[..., 0]
     left_record = jnp.take_along_axis(left_marginal_at_child, winner, axis=-1)[..., 0]
     right_dead = jnp.take_along_axis(right_dead_at_child, winner, axis=-1)[..., 0]
@@ -2956,12 +2930,10 @@ def _collapse_stacked_candidates(
     left_side = jnp.where(left_dead, 0.0, left_record)
     right_alive = jnp.where(right_dead, 0.0, 1.0)
     # The published value is the maximum itself: identical to the winner's read
-    # at any tie, and NaN-propagating when a poisoned candidate row (whose NaN
-    # empties the tie set) must surface fail-loud. Both side payloads are
+    # at any tie, and NaN-propagating when a poisoned candidate row must
+    # surface fail-loud. Both side payloads are
     # pinned to NaN alongside so the published pair never looks healthy over a
-    # poisoned cell — the germ selector falls back to a finite competitor's
-    # index when the NaN empties the tie set, and that competitor's marginal
-    # must not ship beside a NaN value.
+    # poisoned cell.
     collapsed_value = jnp.max(value_at_child, axis=-1)
     poisoned = jnp.isnan(collapsed_value)
     return (
@@ -2999,6 +2971,7 @@ def _build_child_reads(
         Immutable mapping of carry-target names to their read statics.
 
     """
+
     functions_without_post = MappingProxyType(
         {name: func for name, func in functions.items() if name != post_decision_name}
     )
@@ -3089,9 +3062,11 @@ def _build_child_reads(
             euler_state_name=euler_state_name,
         )
         passive_grids = tuple(
-            jnp.asarray(
-                target_info.continuous_states[name].to_jax(),
-                dtype=canonical_float_dtype(),
+            (
+                jnp.asarray(
+                    target_info.continuous_states[name].to_jax(),
+                    dtype=canonical_float_dtype(),
+                )
             )
             for name in passive_state_names
         )
@@ -3121,8 +3096,9 @@ def _build_child_reads(
         resources_param_names = resources_arg_names - child_binding_names
         row_grids = passive_grids + action_values
         if row_grids:
-            row_mesh = jnp.meshgrid(*row_grids, indexing="ij")
-            row_values = tuple(mesh.ravel() for mesh in row_mesh)
+            row_values = tuple(
+                mesh.ravel() for mesh in jnp.meshgrid(*row_grids, indexing="ij")
+            )
             row_block_shape = tuple(int(grid.shape[0]) for grid in row_grids)
         else:
             row_values = ()

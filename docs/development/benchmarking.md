@@ -104,13 +104,13 @@ not be the head checkout; all three checkouts must agree on the lock file and
 scenario-owned sources. The output directory must not already exist and must lie outside
 the harness, base, and head checkouts.
 
-The harness measures eleven named scenarios. Five are GridSearch routes: singleton hard
-max, singleton EV1, collective GridSearch with value-dependent inputs, distributed
-co-map, and folded singleton hard max. The other six are the full 18-regime ACA baseline
-at each combination of 3 or 6 asset points and 16, 64, or 256 consumption points, named
+The harness measures ten named scenarios. Four are GridSearch routes: singleton hard
+max, singleton EV1, collective GridSearch with value-dependent inputs, and distributed
+co-map. The other six are the full 18-regime ACA baseline at each combination of 3 or 6
+asset points and 16, 64, or 256 consumption points, named
 `aca-a<assets>-c<consumption>`. Pass `--scenario` once per name to measure a subset;
-omitting it measures all eleven. The distributed row always uses exactly four CPU
-devices; the other rows use the requested backend. Use at least two repeats so execution
+omitting it measures all ten. The distributed row always uses exactly four CPU devices;
+the other rows use the requested backend. Use at least two repeats so execution
 alternates base--head on even repeats and head--base on odd repeats; four repeats are
 the balanced evidence profile.
 
@@ -118,13 +118,13 @@ Every pair must pass numerical value parity and exact output shape, dtype, and s
 parity. The harness also requires non-empty HLO and compiler-memory status for every
 compiled core, host high-water-mark evidence, and measured peak device memory on GPU
 (with an explicit not-applicable record on CPU). It verifies the native execution
-declaration for every named target: singleton hard max, distributed co-map, and folded
-hard max stream `action_product`; EV1 and collective GridSearch keep canonical dense
-action reducers while the planner tiles their state cells. The reported `streamed` flag
-means action reduction, so a planned core can have `streamed=False`. It also rejects
-communication collectives in the distributed co-map head. Raw timings, compiler and
-device memory, HLO files and digests, layout manifests, and the base/head ratios are
-retained under the output directory; `summary.json` is the entry point for review.
+declaration for every named target: singleton hard max and distributed co-map stream
+`action_product`; EV1 and collective GridSearch keep canonical dense action reducers
+while the planner tiles their state cells. The reported `streamed` flag means action
+reduction, so a planned core can have `streamed=False`. It also rejects communication
+collectives in the distributed co-map head. Raw timings, compiler and device memory, HLO
+files and digests, layout manifests, and the base/head ratios are retained under the
+output directory; `summary.json` is the entry point for review.
 
 ## Benchmark Scenarios
 

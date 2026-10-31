@@ -51,13 +51,16 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-try:
+if TYPE_CHECKING:
     from hatchling.builders.hooks.plugin.interface import BuildHookInterface
-except ImportError:
-    # Only the hook class needs hatchling. Keeping this import optional also lets
-    # CI compute the native fingerprint from a runtime environment.
-    BuildHookInterface = object
+else:
+    try:
+        from hatchling.builders.hooks.plugin.interface import BuildHookInterface
+    except ImportError:
+        # Only the hook class needs hatchling. Runtime fingerprinting stays optional.
+        BuildHookInterface = object
 
 # Location of the FFI sources, relative to the project root.
 PACKAGE_DIR = Path("src/_lcm/egm/upper_envelope/_exact_affine")
@@ -72,6 +75,7 @@ def native_source_fingerprint(*, root: Path) -> str:
     inputs = [
         root / "hatch_build.py",
         source_dir / "handler_symbols.py",
+        *sorted(source_dir.glob("*.h")),
         *sorted(source_dir.glob("*.cc")),
         *sorted(source_dir.glob("*.cu")),
     ]

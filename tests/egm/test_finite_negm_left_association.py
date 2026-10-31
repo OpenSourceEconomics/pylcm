@@ -163,8 +163,6 @@ def test_signed_passive_side_choice_uses_recovered_left_tuple() -> None:
         left_marginal_at_child=candidates.left_marginal,
         right_dead_at_child=candidates.right_dead,
         left_dead_at_child=candidates.left_dead,
-        right_germ_at_child=candidates.right_germ,
-        left_germ_at_child=candidates.left_germ,
     )
     np.testing.assert_array_equal(right_alive, [1.0, 0.0])
     np.testing.assert_array_equal(right, [0.5, 0.0])

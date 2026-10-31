@@ -23,6 +23,7 @@ one needs no kernel; nothing here ever compiles.
 """
 
 import ctypes
+import inspect
 import sys
 from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path
@@ -1246,3 +1247,28 @@ def _target_for(*, operands: tuple[FloatND, ...], f32: str, f64: str) -> str:
         return f64
     msg = f"Expected float32 or float64 operands, got {dtype}."
     raise TypeError(msg)
+
+
+# Capture this finite numerical ABI when its defining module finishes loading.
+# The U abstract-kernel guard seals these library primitives, never loader helpers.
+_ORIGINAL_NUMERICAL_EXPORTS = tuple(
+    (name, function, function.__code__, raw, raw.__code__)
+    for name in (
+        "certified_affine_compare",
+        "exact_affine_read",
+        "exact_query_winner",
+        "exact_query_winner_batched",
+        "exact_affine_handover",
+        "exact_cell_hull",
+    )
+    for function in (globals()[name],)
+    for raw in (inspect.unwrap(function),)
+)
+_ORIGINAL_REGISTRATION = (
+    _ensure_registered,
+    _ensure_registered.__code__,
+    inspect.unwrap(_ensure_registered),
+    inspect.unwrap(_ensure_registered).__code__,
+)
+_ORIGINAL_TARGETS = _TARGETS
+_ORIGINAL_FFI_CALL = (jax.ffi.ffi_call, jax.ffi.ffi_call.__code__)

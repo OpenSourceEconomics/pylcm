@@ -23,8 +23,9 @@ is reimplemented here from the written contract:
   partition with its one-sided row publication;
 - the Euler inversion (a bracketed bisection in `log c` run to convergence, not the
   production Newton loop), for the additive and the recursive Euler equation;
-- the candidate families (interior Euler roots, savings-node points, per-case and
-  per-interval corners, and save-to-cliff points);
+- the candidate families (interior Euler roots, savings-node points with their
+  in-bracket Euler refinements, per-case and per-interval corners, and
+  save-to-cliff points);
 - the upper envelope (a brute pointwise maximum over every bracketing link at every
   liquid node, ranked by value, right extension, slope, and stable index) and the
   hard maximum over discrete branches.
@@ -1756,6 +1757,72 @@ def _point_candidate(
     )
 
 
+def _refined_node_candidates(
+    *,
+    budget: _CellBudget,
+    candidates: _Candidates,
+    liquid: float,
+    coh: float,
+    slope: float,
+    savings_grid: np.ndarray,
+    cont_value: np.ndarray,
+    cont_marginal: np.ndarray,
+) -> None:
+    """Add the Euler optimum inside each savings bracket that holds `coh`.
+
+    Between nodes `s_i` and `s_{i+1}` whose Euler roots bracket the point's
+    cash-on-hand, the saving interpolates linearly in cash-on-hand between the
+    two roots. It earns the continuation's cubic Hermite read on the savings
+    nodes, capped by the tangent at either node. Only a bracket whose secant lies
+    between its two positive endpoint marginals is refined.
+    """
+    for node in range(len(savings_grid) - 1):
+        lower_savings, upper_savings = (
+            float(savings_grid[node]),
+            float(savings_grid[node + 1]),
+        )
+        lower_value, upper_value = float(cont_value[node]), float(cont_value[node + 1])
+        lower_marginal = float(cont_marginal[node])
+        upper_marginal = float(cont_marginal[node + 1])
+        step = upper_savings - lower_savings
+        secant = (upper_value - lower_value) / step
+        if not 0.0 < upper_marginal <= secant <= lower_marginal:
+            continue
+        lower_coh = lower_savings + budget.euler_consumption(
+            cont_value=lower_value, cont_marginal=lower_marginal
+        )
+        upper_coh = upper_savings + budget.euler_consumption(
+            cont_value=upper_value, cont_marginal=upper_marginal
+        )
+        if not (
+            math.isfinite(lower_coh)
+            and math.isfinite(upper_coh)
+            and upper_coh > lower_coh
+        ):
+            continue
+        share = (coh - lower_coh) / (upper_coh - lower_coh)
+        if not 0.0 <= share <= 1.0:
+            continue
+        savings = lower_savings + share * step
+        continuation = min(
+            interpolate_row(
+                query=savings, xp=savings_grid, fp=cont_value, slopes=cont_marginal
+            ),
+            lower_value + lower_marginal * (savings - lower_savings),
+            upper_value - upper_marginal * (upper_savings - savings),
+        )
+        if math.isfinite(continuation):
+            _point_candidate(
+                budget=budget,
+                candidates=candidates,
+                liquid=liquid,
+                coh=coh,
+                savings=savings,
+                cont_value=continuation,
+                slope=slope,
+            )
+
+
 def _kink_step_candidates(
     *,
     budget: _CellBudget,
@@ -1795,6 +1862,17 @@ def _kink_step_candidates(
                 cont_value=float(continuation.value[node]),
                 slope=budget.coh_slope(float(liquid)),
             )
+    for point, liquid in enumerate(query_grid):
+        _refined_node_candidates(
+            budget=budget,
+            candidates=candidates,
+            liquid=float(liquid),
+            coh=float(coh_grid[point]),
+            slope=budget.coh_slope(float(liquid)),
+            savings_grid=savings_grid,
+            cont_value=continuation.value,
+            cont_marginal=continuation.marginal,
+        )
     return candidates
 
 
@@ -1986,6 +2064,16 @@ def _per_interval_step_candidates(
                 cont_value=cont_value,
                 slope=float(slopes[interval]),
             )
+        _refined_node_candidates(
+            budget=budget,
+            candidates=candidates,
+            liquid=float(liquid),
+            coh=float(coh_true[point]),
+            slope=float(slopes[interval]),
+            savings_grid=savings_grid,
+            cont_value=continuation.value[interval],
+            cont_marginal=continuation.marginal[interval],
+        )
     return candidates
 
 

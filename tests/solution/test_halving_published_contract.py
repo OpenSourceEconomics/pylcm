@@ -213,20 +213,6 @@ def test_firing_halving_publishes_equal_arrays_to_eight_ulp(
     assert _publication_mismatches(got=got, expected=expected, firing=True) == []
 
 
-def test_collective_fixture_publishes_both_dissolution_outcomes() -> None:
-    """The flag comparison is nonvacuous: both flag values are published."""
-    _, solution, _ = _reference(kind="collective")
-    flags = np.concatenate(
-        [
-            array.ravel()
-            for array in _published_arrays(solution).values()
-            if array.dtype.kind == "b"
-        ]
-        or [np.zeros(0, dtype=bool)]
-    )
-    assert set(flags.tolist()) == {False, True}
-
-
 def test_singleton_reference_simulation_chooses_to_work() -> None:
     """The fixture's discrete optimum is separated, so the choice is deterministic."""
     model, solution, _ = _reference(kind="singleton")

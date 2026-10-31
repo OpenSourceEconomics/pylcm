@@ -6,14 +6,20 @@ one group. A solver's own per-period grouping inside `build_period_kernels` is a
 separate component of a compiled program's identity and is not represented here,
 so a consumer keying a compiled executable on this signature carries that
 component alongside it.
+
+Typed incoming queries wrap that grouping signature with their exact date.
+Their stored-reference checks inspect the bound read and support directly.
 """
 
 from collections.abc import Hashable
 from typing import cast
 
+import numpy as np
+
+from _lcm.policy_queries import QueryKind, _PolicyQueryKernel
 from tests.solution.test_dcegm_age_specialized_function import _twin
 from tests.solution.test_gated_edge_reference_age_specialized_axes import (
-    _build_model as _build_gated_model,
+    _build_model as _build_participation_model,
 )
 from tests.test_models.deterministic.regression import get_model
 
@@ -21,8 +27,11 @@ _N_PERIODS = 5
 
 
 def _component(*, signature: Hashable, name: str) -> Hashable:
-    """Read one named component out of a period signature."""
-    components = cast("tuple[tuple[str, Hashable], ...]", signature)[2:]
+    """Read the underlying grouping component through a typed-query wrapper."""
+    parts = cast("tuple[Hashable, ...]", signature)
+    if len(parts) == 3 and parts[1] == "typed-exit-query":
+        parts = cast("tuple[Hashable, ...]", parts[0])
+    components = cast("tuple[tuple[str, Hashable], ...]", parts[2:])
     return dict(components)[name]
 
 
@@ -83,20 +92,31 @@ def test_signatures_are_hashable() -> None:
     assert isinstance(hash(tuple(regime.solution.period_signatures.values())), int)
 
 
-def test_periods_reading_different_reference_grids_get_distinct_gated_components() -> (
-    None
-):
-    """A gated edge's fingerprint moves with the grids it lands on.
-
-    `saver` folds its edge into `account` at the period it lands in, and the
-    gate reference `index` carries an `AgeSpecializedGrid` whose nodes drop
-    between those two landing periods. The two source periods therefore never
-    share the compiled fold, and their gated components say so.
-    """
-    signatures = _build_gated_model()._regimes["saver"].solution.period_signatures
-    assert _component(signature=signatures[0], name="gated-edges") != _component(
-        signature=signatures[1], name="gated-edges"
-    )
+def test_participation_references_bind_their_dated_stored_support() -> None:
+    """The represented index read uses its actual landing date and grid."""
+    regime = _build_participation_model()._regimes["saver"]
+    for source_period, expected in ((0, [0.0, 4.0, 8.0]), (1, [0.0, 2.0, 4.0])):
+        kernel = regime.solution.period_kernels[source_period]
+        assert isinstance(kernel, _PolicyQueryKernel)
+        plan = kernel.root_context.participation_queries[source_period]["account"]
+        assert plan.period == source_period + 1
+        represented = [
+            node
+            for node in plan.queries.definitions.values()
+            if node.read.kind is QueryKind.INTEGRATED_FULL
+        ]
+        assert len(represented) == 1
+        node = represented[0]
+        assert node.read.target == "index"
+        assert node.read.period == plan.period
+        assert len(node.operand_value_reads) == 1
+        stored = node.operand_value_reads[0].target
+        assert (stored.regime, stored.period) == ("index", plan.period)
+        dated = node.context.period_to_regime_v_interp
+        assert dated is not None
+        np.testing.assert_array_equal(
+            dated[plan.period]["index"].continuous_states["level"].to_jax(), expected
+        )
 
 
 def test_a_regime_declaring_no_gated_edge_has_no_gated_component() -> None:
@@ -107,14 +127,17 @@ def test_a_regime_declaring_no_gated_edge_has_no_gated_component() -> None:
 
 
 def test_a_source_period_losing_a_target_gets_its_own_decision_component() -> None:
-    """Losing a declared target splits a gated source through its decision component.
-
-    `saver` can continue as itself from period 0 but not from period 1. The
-    gated fingerprint knows nothing about which regimes are active, so where two
-    landing periods resolve the same grids it is the decision component's target
-    tuple that keeps the periods apart.
-    """
-    signatures = _build_gated_model()._regimes["saver"].solution.period_signatures
+    """Losing the self target splits the underlying decision grouping."""
+    regime = _build_participation_model()._regimes["saver"]
+    for period in (0, 1):
+        kernel = regime.solution.period_kernels[period]
+        assert isinstance(kernel, _PolicyQueryKernel)
+        graph = kernel.root_context.solution_reachability
+        assert graph.has_edge(period=period, source="saver", target="account")
+        assert graph.has_edge(period=period, source="saver", target="saver") is (
+            period == 0
+        )
+    signatures = regime.solution.period_signatures
     assert _component(signature=signatures[0], name="decision") != _component(
         signature=signatures[1], name="decision"
     )

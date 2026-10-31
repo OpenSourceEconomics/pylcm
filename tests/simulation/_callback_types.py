@@ -93,9 +93,6 @@ class SimulationChunkInputs(TypedDict):
     period_to_regime_to_V_arr: simulation.MappingProxyType[
         int, simulation.MappingProxyType[simulation.RegimeName, simulation.FloatND]
     ]
-    period_to_regime_to_dissolution_flags: simulation.MappingProxyType[
-        int, simulation.MappingProxyType[simulation.RegimeName, simulation.BoolND]
-    ]
     flat_params: simulation.FlatParams
     ages: simulation.TimeAxis
     seed: int
@@ -125,11 +122,6 @@ class ChunkProfileInputs(TypedDict):
     values: chunk_profiles.Mapping[
         int, chunk_profiles.Mapping[str, chunk_profiles.jax.Array]
     ]
-    flags: NotRequired[
-        chunk_profiles.Mapping[
-            int, chunk_profiles.Mapping[str, chunk_profiles.jax.Array]
-        ]
-    ]
     ages: chunk_profiles.TimeAxis
     initial_conditions: chunk_profiles.Mapping[str, chunk_profiles.jax.Array]
     regime_names_to_ids: chunk_profiles.RegimeNamesToIds
@@ -151,6 +143,7 @@ class ChunkProfileInputs(TypedDict):
     ]
     max_compilation_workers: NotRequired[int | None]
     group_sizes: NotRequired[tuple[int, ...] | None]
+    current_iid_override_schema: NotRequired[chunk_profiles.CurrentIIDOverrideSchema]
 
 
 class ChunkProfileKeyInputs(TypedDict):
@@ -158,9 +151,6 @@ class ChunkProfileKeyInputs(TypedDict):
     regimes: chunk_admission.Mapping[chunk_admission.RegimeName, chunk_admission.Regime]
     call_inputs: chunk_admission.SimulationCallInputs
     values: chunk_admission.Mapping[
-        int, chunk_admission.Mapping[str, chunk_admission.jax.Array]
-    ]
-    flags: chunk_admission.Mapping[
         int, chunk_admission.Mapping[str, chunk_admission.jax.Array]
     ]
     policies: (
@@ -183,6 +173,7 @@ class ChunkProfileKeyInputs(TypedDict):
     log_level: chunk_admission.LogLevel
     runtime_checks: NotRequired[bool]
     group_sizes: NotRequired[tuple[int, ...] | None]
+    current_iid_override_schema: NotRequired[chunk_admission.CurrentIIDOverrideSchema]
 
 
 class HostDispatch(TypedDict):
@@ -232,9 +223,6 @@ class ChunkPreparation(TypedDict):
     values: chunk_admission.Mapping[
         int, chunk_admission.Mapping[str, chunk_admission.jax.Array]
     ]
-    flags: chunk_admission.Mapping[
-        int, chunk_admission.Mapping[str, chunk_admission.jax.Array]
-    ]
     ages: chunk_admission.TimeAxis
     initial_conditions: chunk_admission.Mapping[str, chunk_admission.jax.Array]
     regime_names_to_ids: chunk_admission.RegimeNamesToIds
@@ -254,6 +242,7 @@ class ChunkPreparation(TypedDict):
     process_grid_resolver: NotRequired[chunk_admission.ProcessGridResolver | None]
     max_compilation_workers: NotRequired[int | None]
     group_sizes: NotRequired[tuple[int, ...] | None]
+    current_iid_override_schema: NotRequired[chunk_admission.CurrentIIDOverrideSchema]
 
 
 class RuntimePrepare(TypedDict):

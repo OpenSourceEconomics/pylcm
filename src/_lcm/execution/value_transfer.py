@@ -58,6 +58,7 @@ class ValueInputChannel(StrEnum):
     CONTINUATION_LEAF = "next_regime_to_continuation"
     CURRENT_REPLAY_ARTIFACT = "current_replay_artifact"
     NEXT_REPLAY_ARTIFACT = "next_replay_artifact"
+    PARTICIPATION_REPLAY_VALUE = "participation_replay_value"
 
 
 class ValueTransferKind(StrEnum):
@@ -529,6 +530,13 @@ class ValueConsumerAddress:
             raise TypeError(msg)
         for segment in self.path:
             _validate_path_segment(segment=segment)
+        if self.channel is ValueInputChannel.PARTICIPATION_REPLAY_VALUE and (
+            self.argument is None or not self.path
+        ):
+            raise ValueError(
+                "Participation replay requires an explicit argument and qualified leaf "
+                "path."
+            )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -1105,10 +1113,12 @@ def _replace_dataclass_field(
     )
 
 
-def _validate_edge_identity(
+def _validate_edge_identity(  # noqa: C901 - preserve each existing channel's exact guard
     *, target: ValueArtifactAddress, source: ValueConsumerAddress
 ) -> None:
     """Match the source node and input leaf to the stored artifact."""
+    if _validate_participation_replay_identity(target=target, source=source):
+        return
     if source.argument is None:
         expected_regime = (
             target.regime
@@ -1164,6 +1174,47 @@ def _validate_edge_identity(
         )
         msg = f"A regime-value artifact period must be {relation} its source period."
         raise ValueError(msg)
+
+
+def _validate_participation_replay_identity(
+    *, target: ValueArtifactAddress, source: ValueConsumerAddress
+) -> bool:
+    """Admit only explicitly addressed originals past a participation producer date."""
+    from _lcm.participation_continuation import (  # noqa: PLC0415 - imports this module
+        PARTICIPATION_CONTINUATION,
+        PARTICIPATION_SURFACE_PREFIX,
+    )
+
+    if source.channel is not ValueInputChannel.PARTICIPATION_REPLAY_VALUE:
+        return False
+    is_surface = (
+        target.kind is ValueArtifactKind.CONTINUATION_LEAF
+        and target.artifact_key == PARTICIPATION_CONTINUATION
+        and bool(target.leaf_path)
+        and isinstance(name := target.leaf_path[-1], str)
+        and name.startswith(PARTICIPATION_SURFACE_PREFIX)
+    )
+    if is_surface:
+        # A retained stored participation surface, read at or after the replay date.
+        if target.period < source.source_period:
+            raise ValueError(
+                "Participation replay cannot read a past participation surface."
+            )
+    elif target.kind is not ValueArtifactKind.REGIME_VALUE:
+        raise ValueError(
+            "Participation replay reads only original regime values or stored "
+            "participation "
+            "surfaces."
+        )
+    elif target.period <= source.source_period + 1:
+        raise ValueError(
+            "Participation replay originals must be later than next period."
+        )
+    if source.argument is None or not source.path:
+        raise ValueError(
+            "Participation replay requires its explicit qualified argument."
+        )
+    return True
 
 
 def _validate_replay_leaf_identity(

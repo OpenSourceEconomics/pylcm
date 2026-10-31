@@ -30,6 +30,7 @@ from _lcm.time import ModelTime, TimeAxis, coordinate_kind
 from _lcm.typing import EconFunctionArg, PytreeValue, StateName
 from lcm.collective import Gate
 from lcm.exceptions import RegimeInitializationError
+from lcm.participation import ParticipationCheck
 from lcm.phased import Phased
 from lcm.typing import (
     AgeLabel,
@@ -248,6 +249,11 @@ class Transition:
     )
     """One `Gate` per value-dependent destination, keyed by that destination."""
 
+    participation: Mapping[RegimeName, ParticipationCheck] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    """Typed participation checks attached to actual scheduled incoming edges."""
+
     def __post_init__(self) -> None:
         if self.law is None:
             raise RegimeInitializationError(
@@ -272,6 +278,14 @@ class Transition:
             object.__setattr__(self, "targets", MappingProxyType(dict(self.targets)))
         object.__setattr__(self, "law", snapshot_transition_containers(self.law))
         object.__setattr__(self, "gates", MappingProxyType(dict(self.gates)))
+        object.__setattr__(
+            self, "participation", MappingProxyType(dict(self.participation))
+        )
+        if self.gates.keys() & self.participation.keys():
+            raise RegimeInitializationError(
+                "A scheduled target cannot declare both a Gate and a "
+                "ParticipationCheck."
+            )
 
 
 @overload

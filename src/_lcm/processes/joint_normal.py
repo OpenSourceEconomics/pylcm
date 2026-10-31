@@ -3,6 +3,7 @@
 import math
 from dataclasses import dataclass, field
 from fractions import Fraction
+from typing import Self
 
 import jax
 import jax.numpy as jnp
@@ -12,10 +13,10 @@ from jaxtyping import Float
 
 from _lcm.beartype_conf import GRID_CONF
 from _lcm.processes.base import sealed, standard_normal
-from _lcm.processes.iid import NormalIIDProcess
+from _lcm.processes.iid import FOLD_REMOVED, NormalIIDProcess
 from _lcm.typing import PRNGKeyND
 from lcm.exceptions import GridInitializationError
-from lcm.typing import Float1D, Float2D, FloatND, StateName
+from lcm.typing import BoolND, Float1D, Float2D, FloatND, StateName
 
 type NormalMean = tuple[float | int, ...] | Float1D
 type NormalCovariance = tuple[tuple[float | int, ...], ...] | Float2D
@@ -32,7 +33,7 @@ class JointNormalIIDProcess:
     covariance factor. Simulation uses the corresponding continuous Gaussian law.
     Singular positive-semidefinite covariance matrices are supported, including zero
     variances. Parameters set to `None` are supplied under the declaration's key in
-    the regime's parameter mapping. `fold=True` folds all independent coordinates.
+    the regime's parameter mapping.
 
     The engine's value axes are independent normal coordinates: a correlated tensor
     does not have separate Cartesian grids in physical shock coordinates. User DAGs
@@ -51,14 +52,21 @@ class JointNormalIIDProcess:
     """Symmetric positive-semidefinite covariance; `None` leaves it at runtime."""
     n_std: float | int | None = None
     """Equally spaced support halfwidth, required without Gauss-Hermite."""
-    fold: bool = False
-    """Integrate the current-period shock tensor out of stored values."""
     exact_zero_pivots: tuple[tuple[str, tuple[bool, ...] | None], ...] = field(
         init=False, default=(), repr=False, compare=False
     )
     """Exact zero pivots of the fixed covariance rounded to each float dtype name.
 
     `None` where the rounded covariance is not positive semidefinite."""
+
+    def __new__(
+        cls,
+        *args: object,  # noqa: ARG004, PAN001 - refuses removed keywords first
+        **kwargs: object,  # noqa: PAN001 - refuses removed keywords before any check
+    ) -> Self:
+        if "fold" in kwargs:
+            raise TypeError(FOLD_REMOVED)
+        return super().__new__(cls)
 
     def __post_init__(self) -> None:
         if not self.states or len(set(self.states)) != len(self.states):
@@ -129,7 +137,6 @@ class JointNormalIIDProcess:
             mu=0.0,
             sigma=1.0,
             n_std=self.n_std,
-            fold=self.fold,
         )
 
     def validate_mean(self, mean: NormalMean | FloatND | HostNormalArray) -> None:
@@ -311,6 +318,45 @@ def covariance_factor(
 
 # Host consumers share the forward map's compiled factor, and so its rank.
 compiled_covariance_factor = jax.jit(covariance_factor, static_argnames="zero_pivots")
+
+
+def admitted_correlation_factor(
+    *, correlation: Float2D, zero_pivots: BoolND
+) -> tuple[Float2D, BoolND]:
+    """Factor a unit-diagonal matrix with exact host-owned support as data.
+
+    Host admission proves PSD for this invocation. On that fixed support stratum,
+    active pivots still need resolved finite positive arithmetic. A rounded zero
+    residual is not evidence of exact zero support. Safe operands precede each
+    root and division, including inactive columns, so singular support has finite
+    tangents along its admitted stratum.
+    """
+    residual = correlation
+    factor = jnp.zeros_like(correlation)
+    valid = jnp.all(jnp.isfinite(correlation))
+    for column in range(correlation.shape[0]):
+        zero = zero_pivots[column]
+        pivot = residual[column, column]
+        resolved = jnp.isfinite(pivot) & (pivot > 0)
+        valid &= zero | resolved
+        safe_pivot = jnp.where(zero | ~resolved, 1.0, pivot)
+        for row in range(column, correlation.shape[0]):
+            value = jnp.where(zero, 0.0, residual[row, column] / jnp.sqrt(safe_pivot))
+            factor = factor.at[row, column].set(value)
+        for row in range(column + 1, correlation.shape[0]):
+            for other in range(column + 1, correlation.shape[0]):
+                correction = jnp.where(
+                    zero,
+                    0.0,
+                    sealed(
+                        sealed(residual[row, column] * residual[other, column])
+                        / safe_pivot
+                    ),
+                )
+                residual = residual.at[row, other].set(
+                    sealed(residual[row, other] - correction)
+                )
+    return factor, valid & jnp.all(jnp.isfinite(factor))
 
 
 def _rounded_zero_pivots(
