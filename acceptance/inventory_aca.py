@@ -164,8 +164,9 @@ def _construct(packet_root: Path) -> dict[str, Any]:
             assert set(state_names) == {"assets", "pref_type"}
         else:
             assert len(space.states["aime"]) == 38
-            assert "hcc_transitory" in state_names
-            assert model.user_regimes[name].states["hcc_transitory"].fold is False
+            # Read only as `next_hcc_transitory`, the IID state carries no axis.
+            assert "hcc_transitory" not in state_names
+            assert "hcc_transitory" not in model._shock_timing[name][0]
         index_map = topology[name].sharding.devices_indices_map(tuple(shape))
         assets_axis = stored_names.index("assets")
         indices = [index[assets_axis] for index in index_map.values()]
