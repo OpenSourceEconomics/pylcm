@@ -106,6 +106,19 @@ class NodeAxisAdapter:
     """Internal node state of each adapted shock, named as the shock."""
     regime_shocks: Mapping[RegimeName, tuple[ShockGroupName, ...]]
     """Declared `shocks` of every regime that reads an adapted group."""
+    _zero_weight_axes: frozenset[ShockName] = field(init=False, repr=False)
+    """Axes with exact-zero rule weights, resolved once for the fixed laws."""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "_zero_weight_axes",
+            frozenset(
+                name
+                for name, process in self.processes.items()
+                if np.any(np.asarray(process.get_transition_probs()[0]) == 0)
+            ),
+        )
 
     def present_regimes(
         self, *, regimes: Mapping[RegimeName, Regime]
@@ -332,6 +345,16 @@ class NodeAxisAdapter:
             process = self.processes.get(axis_names[index])
             if process is not None:
                 weights = process.get_transition_probs()[0]
+                if axis_names[index] in self._zero_weight_axes:
+                    shape = [1] * value.ndim
+                    shape[index] = weights.shape[0]
+                    # Null events contribute zero even when their value is -inf.
+                    # Positive-mass nonfinite values must still propagate.
+                    value = jnp.where(
+                        weights.reshape(shape) == 0,
+                        jnp.zeros((), dtype=value.dtype),
+                        value,
+                    )
                 value = jnp.tensordot(value, weights, axes=([index], [0]))
         return value
 
