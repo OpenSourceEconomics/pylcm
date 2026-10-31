@@ -395,9 +395,12 @@ no state of `alive`, and an initial value supplied for it is dropped.
 
 The solve takes the expectation over the shock's nodes and weights inside the
 continuation, so the draw may change a next state. Nonlinear certainty equivalents apply
-their transform to each realized continuation value before averaging. Simulation draws
-one node per subject and period from the same weights; `shock_paths` accepts a plain
-array of physical values for the shock, dated at the destination period.
+their transform to each realized continuation value before averaging. The nodes serve
+only that integration: simulation draws each subject's value in each period from the
+shock's continuous law, since the draw enters only next period's state law and indexes
+no policy read. An IID process state declared with `simulated_draws="nodes"` keeps the
+node lottery; a `ShockGroup` has no such option. `shock_paths` accepts a plain array of
+physical values for the shock, on or off the nodes, dated at the destination period.
 
 `repr(model)` lists, per regime, which shocks carry an axis and which are integrated
 out, for example

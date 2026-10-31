@@ -31,6 +31,16 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   same base draws across parameter values. Reordering initial-condition rows changes
   which draws a subject receives.
 
+### Post-decision shocks are simulated with continuous draws
+
+- Post-decision shocks are simulated with continuous draws by default; panels change. A
+  shock read only as `next_<shock>` is still integrated over its nodes in the solve, but
+  simulation now draws it from its law. A `Model(shocks=...)` group always draws
+  continuously; an IID process state integrated out this way honours its
+  `simulated_draws`, whose default is `"continuous"`, and `simulated_draws="nodes"`
+  keeps the node lottery. Process states that carry an axis are unchanged. See
+  [Shock timing is inferred](docs/user_guide/migrating_dated_regimes.md#shock-timing-is-inferred).
+
 ### `simulate_draws` is renamed `simulated_draws`
 
 - Breaking API: the process keyword `simulate_draws=` is now `simulated_draws=`, on

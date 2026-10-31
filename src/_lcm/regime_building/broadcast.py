@@ -531,7 +531,8 @@ def split_transition_only_shocks(
     regime: the value stores no axis for it and the period is not evaluated per
     node. The draw is still taken on every edge whose laws read it, from the
     process's own nodes and weights, as a transition-local lottery the source's
-    continuation sums over.
+    continuation sums over. Simulation draws it as the process's
+    `simulated_draws` asks: from the continuous law by default.
 
     A regime that reads the current value keeps the shock as an ordinary state,
     so a source law reading the draw toward it hands over that state's value.

@@ -367,6 +367,13 @@ def _extend_bundle_for_simulation(
         lottery = plan.lotteries.get(next_state_name)
         if lottery is None:
             continue
+        if lottery.continuous_draw is not None:
+            extended[next_state_name] = _create_iid_next_func(
+                qname=qname_from_tree_path((target_regime_name, next_state_name)),
+                state_name=next_state_name.removeprefix("next_"),
+                grid=lottery.continuous_draw,
+            )
+            continue
         if lottery.lifetime is LotteryLifetime.TRANSITION_LOCAL:
             extended[next_state_name] = _create_joint_stochastic_next_func(
                 target_regime_name=target_regime_name,

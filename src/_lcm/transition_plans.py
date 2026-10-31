@@ -20,6 +20,7 @@ from typing import no_type_check
 import numpy as np
 from jax.tree_util import PyTreeDef
 
+from _lcm.processes.iid import _IIDProcess
 from _lcm.typing import (
     EconFunctionArg,
     QualifiedName,
@@ -202,6 +203,14 @@ class TransitionLotteryInfo:
         default=None, metadata={"fingerprint_omit_if_default": True}
     )
     """Original slots for linear expectations and sampling; absent on ordinary laws."""
+    continuous_draw: _IIDProcess | None = field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+    """The post-decision shock a simulation draws from its law, not from the support.
+
+    Set on a simulation plan's post-decision draw unless its process asks for
+    `simulated_draws="nodes"`; the solve always sums over the support.
+    """
 
 
 @dataclass(frozen=True)

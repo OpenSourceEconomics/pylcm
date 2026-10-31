@@ -17,13 +17,18 @@ either is refused when the model is built. A read of the current value `xi` give
 the shock an axis.
 """
 
+from typing import Literal
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from numpy.testing import assert_array_almost_equal as aaae
+from scipy.stats import kstest
 
 from lcm import (
     AgeGrid,
     ByAge,
+    ExecutionConfig,
     IrregSpacedGrid,
     LinSpacedGrid,
     Model,
@@ -45,7 +50,7 @@ from lcm.typing import (
     UserFunction,
 )
 from lcm_examples import iskhakov_et_al_2017 as iskhakov
-from tests.conftest import X64_ENABLED
+from tests.conftest import DECIMAL_PRECISION, X64_ENABLED
 
 DISCOUNT_FACTOR = 0.9
 LAST_ALIVE_AGE = 2
@@ -69,8 +74,16 @@ def _cost_shock() -> ShockGroup:
     )
 
 
-def _xi_state() -> NormalIIDProcess:
-    return NormalIIDProcess(n_points=N_XI, gauss_hermite=True, mu=0.0, sigma=1.0)
+def _xi_state(
+    simulated_draws: Literal["continuous", "nodes"] = "continuous",
+) -> NormalIIDProcess:
+    return NormalIIDProcess(
+        n_points=N_XI,
+        gauss_hermite=True,
+        mu=0.0,
+        sigma=1.0,
+        simulated_draws=simulated_draws,
+    )
 
 
 def _cost(next_xi: ContinuousState) -> FloatND:
@@ -128,12 +141,15 @@ def _model(
     as_state: bool = False,
     utility: UserFunction = _utility,
     constraints: dict[str, UserFunction] | None = None,
+    simulated_draws: Literal["continuous", "nodes"] = "continuous",
+    execution_config: ExecutionConfig | None = None,
 ) -> Model:
     alive = Regime(
         actions={
             "consumption": IrregSpacedGrid(points=np.array(CONSUMPTION_NODES)),
         },
-        states={"wealth": WEALTH_GRID} | ({"xi": _xi_state()} if as_state else {}),
+        states={"wealth": WEALTH_GRID}
+        | ({"xi": _xi_state(simulated_draws)} if as_state else {}),
         state_transitions={"wealth": _next_wealth},
         functions={"utility": utility, "cost": _cost},
         constraints=constraints or {},
@@ -162,6 +178,9 @@ def _model(
         regime_id_class=_RegimeId,
         initial_nodes={0: "alive"},
         shocks={} if as_state else {"cost_shock": _cost_shock()},
+        execution_config=ExecutionConfig()
+        if execution_config is None
+        else execution_config,
     )
 
 
@@ -287,33 +306,103 @@ def test_the_integrated_policy_does_not_depend_on_the_declaration() -> None:
     np.testing.assert_array_equal(consumption[False], consumption[True])
 
 
-def test_simulated_wealth_lands_on_a_drawn_cost() -> None:
-    """Next wealth is the law evaluated at one of the group's nodes, per subject."""
-    wealth = jnp.asarray([4.0, 6.0, 8.0, 10.0] * 8)
-    n = wealth.shape[0]
+N_SUBJECTS = 400
+START_WEALTH = 8.0
+
+
+def _first_transition(
+    *,
+    model: Model,
+    seed: int = 0,
+    shock_paths: dict[str, np.ndarray] | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Simulate from age 0 at one wealth; return next wealth and the cost it paid."""
     df = (
-        _model()
-        .simulate(
+        model.simulate(
             params=_params(),
             initial_conditions={
-                "wealth": wealth,
-                "age": jnp.zeros(n),
-                "regime_id": jnp.full(n, _RegimeId.alive),
+                "wealth": jnp.full(N_SUBJECTS, START_WEALTH),
+                "age": jnp.zeros(N_SUBJECTS),
+                "regime_id": jnp.full(N_SUBJECTS, _RegimeId.alive),
             },
+            shock_paths=shock_paths,
             log_level="off",
-            seed=0,
+            seed=seed,
         )
         .to_dataframe()
+        .sort_values("subject_id")
     )
     first = df.query("age == 0").set_index("subject_id")
     second = df.query("age == 1").set_index("subject_id")
-    cost = first["wealth"] - first["consumption"] + 1.0 - second["wealth"]
-    raw_nodes, _ = np.polynomial.hermite.hermgauss(N_XI)
-    node_costs = 0.4 * np.exp(0.5 * np.sqrt(2.0) * raw_nodes)
+    next_wealth = second["wealth"].to_numpy()
+    return next_wealth, (first["wealth"] - first["consumption"] + 1.0).to_numpy() - (
+        next_wealth
+    )
 
-    distance = np.abs(cost.to_numpy()[:, None] - node_costs[None, :]).min(axis=1)
-    np.testing.assert_allclose(distance, 0.0, rtol=0, atol=_ATOL * 10)
-    assert len(np.unique(np.round(cost.to_numpy(), 4))) > 1
+
+def _node_costs() -> np.ndarray:
+    raw_nodes, _ = np.polynomial.hermite.hermgauss(N_XI)
+    return 0.4 * np.exp(0.5 * np.sqrt(2.0) * raw_nodes)
+
+
+def _distance_to_nearest_node(cost: np.ndarray) -> np.ndarray:
+    return np.abs(cost[:, None] - _node_costs()[None, :]).min(axis=1)
+
+
+@pytest.mark.parametrize("as_state", [False, True], ids=["group", "iid-state"])
+def test_simulated_cost_is_drawn_from_the_continuous_law(*, as_state: bool) -> None:
+    """The draw feeding next wealth follows N(0, 1), not the quadrature lottery.
+
+    The cost each subject paid is recovered from its wealth step, and the draw
+    from the cost. Under the five-node lottery the Kolmogorov-Smirnov statistic
+    is about 0.2; at 400 draws the 1% critical value is about 0.08.
+    """
+    _, cost = _first_transition(model=_model(as_state=as_state))
+    xi = 2.0 * np.log(cost / 0.4)
+
+    assert np.mean(_distance_to_nearest_node(cost) > _ATOL * 10) > 0.99
+    assert kstest(xi, "norm").pvalue > 0.01
+
+
+def test_simulated_cost_stays_on_the_nodes_when_the_process_asks_for_them() -> None:
+    """`simulated_draws="nodes"` keeps the node lottery for an IID process state."""
+    _, cost = _first_transition(model=_model(as_state=True, simulated_draws="nodes"))
+
+    np.testing.assert_allclose(
+        _distance_to_nearest_node(cost), 0.0, rtol=0, atol=_ATOL * 10
+    )
+    assert len(np.unique(np.round(cost, 4))) > 1
+
+
+@pytest.mark.parametrize("as_state", [False, True], ids=["group", "iid-state"])
+def test_continuous_draws_do_not_depend_on_subject_chunks(*, as_state: bool) -> None:
+    """Each subject's draw is addressed by its row, not by how subjects are split."""
+    whole, _ = _first_transition(model=_model(as_state=as_state))
+    chunked, _ = _first_transition(
+        model=_model(
+            as_state=as_state,
+            execution_config=ExecutionConfig(
+                axis_widths={"subject": 7}, device_memory_bytes=100_000_000
+            ),
+        )
+    )
+
+    np.testing.assert_array_equal(chunked, whole)
+
+
+@pytest.mark.parametrize("as_state", [False, True], ids=["group", "iid-state"])
+def test_continuous_draws_replay_from_given_shock_paths(*, as_state: bool) -> None:
+    """Supplying the recovered draws reproduces next wealth under another seed."""
+    model = _model(as_state=as_state)
+    next_wealth, cost = _first_transition(model=model, seed=0)
+    path = np.zeros((N_SUBJECTS, AGES.n_periods))
+    path[:, 1] = 2.0 * np.log(cost / 0.4)
+
+    other_seed, _ = _first_transition(model=model, seed=1)
+    replayed, _ = _first_transition(model=model, seed=1, shock_paths={"xi": path})
+
+    assert np.abs(other_seed - next_wealth).max() > 1e-3
+    aaae(replayed, next_wealth, decimal=DECIMAL_PRECISION)
 
 
 def test_an_iid_state_read_as_its_value_and_its_draw_keeps_its_axis() -> None:

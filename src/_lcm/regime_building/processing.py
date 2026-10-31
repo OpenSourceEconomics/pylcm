@@ -422,7 +422,8 @@ class PreparedModelStructure:
     """Per regime, the post-decision shocks its transitions read.
 
     They are no states of the regime; a law toward any target that reads one's
-    draw takes it from these nodes as a transition-local lottery.
+    draw takes it from these nodes as a transition-local lottery. Simulation draws
+    it from the shock's law unless its process asks for its nodes.
     """
 
     broadcast_variables: MappingProxyType[RegimeName, frozenset[StateOrActionName]] = (
@@ -7267,7 +7268,8 @@ def _process_regime_core(
         variables: States and actions of the regime with kind/topology/process tags.
         post_decision_shocks: The post-decision shocks of this regime. They are no
             states of the regime; a law that reads one's draw takes it from its
-            nodes as a transition-local lottery.
+            nodes as a transition-local lottery, which simulation draws from the
+            shock's law unless its process asks for its nodes.
         phase_reachability: This phase's static regime graph, the sole source
             of which targets need a continuation built.
         phase_name: Phase being built. Only the solution phase reads a target's
@@ -7938,6 +7940,24 @@ def _literal_joint_support(
     return cast("EconFunction", provide)
 
 
+def _continuous_post_decision_draw(
+    *, process: _IIDProcess | None, phase_name: PhaseName
+) -> _IIDProcess | None:
+    """Return the post-decision shock a simulation draws from its law, else `None`.
+
+    The nodes are the solve's integration rule. The draw enters only next period's
+    state law, so simulation takes it from the continuous law unless the process
+    asks for its nodes.
+    """
+    if (
+        process is None
+        or phase_name != "simulation"
+        or process.simulated_draws == "nodes"
+    ):
+        return None
+    return process
+
+
 def _build_transition_plans(
     *,
     source_regime_name: RegimeName,
@@ -8047,6 +8067,10 @@ def _build_transition_plans(
                     node_annotation="ContinuousState"
                     if is_process
                     else "DiscreteState",
+                    continuous_draw=_continuous_post_decision_draw(
+                        process=post_decision_shocks.get(source_draw[1]),
+                        phase_name=phase_name,
+                    ),
                 )
                 continue
             if next_state_name.startswith("support_next_") and (

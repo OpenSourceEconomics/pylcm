@@ -256,14 +256,17 @@ Timing is read off the regime's functions. A regime whose functions read a group
 `x` sees this period's realization, known at the choice. A regime that reads the group
 only as `next_<shock>`, from its state transitions, sees the draw after the choice: the
 group carries no axis there, and the solve integrates the transitions over its nodes and
-weights while simulation samples one node per subject. Utility and constraints may not
-read `next_<shock>`, and a regime reading both `x` and `next_x` of one group is refused;
-an IID process state carries a realization into the next period. Each post-decision
-shock lowers to one fixed node set, so the group needs continuous laws with fixed
-parameters, independent shocks and a deterministic unsigned rule. A group read as a
-value in one regime and only as a draw in another is refused. A `shock_paths` entry for
-a post-decision shock is a plain array of physical values. `repr(model)` lists, per
-regime, which groups carry an axis and which are integrated out.
+weights. Simulation draws each subject's value from the shock's continuous law,
+addressed like every other draw: the nodes serve only the solve's integration, and the
+draw enters only next period's state law. Utility and constraints may not read
+`next_<shock>`, and a regime reading both `x` and `next_x` of one group is refused; an
+IID process state carries a realization into the next period. Each post-decision shock
+lowers to one fixed node set, so the group needs continuous laws with fixed parameters,
+independent shocks and a deterministic unsigned rule. A group read as a value in one
+regime and only as a draw in another is refused. A `shock_paths` entry for a
+post-decision shock is a plain array of physical values, on or off the nodes, dated at
+the destination period. `repr(model)` lists, per regime, which groups carry an axis and
+which are integrated out.
 
 Registry declarations can be inspected and persisted. Ordinary GridSearch consumers bind
 the current law inside their node decision and fresh simulation draw. A group that an

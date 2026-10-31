@@ -242,6 +242,13 @@ off the functions: reading `x` reads this period's realization, reading `next_x`
 the draw after the choice. A shock a regime reads only as `next_x` is a post-decision
 shock there: it carries no axis and is integrated in the continuation.
 
+Simulation draws a post-decision shock from its continuous law, not from its quadrature
+nodes, so simulated panels of such a model change. A `Model(shocks=...)` group always
+draws continuously. An IID process state integrated out this way honours its
+`simulated_draws`: the default `"continuous"` draws from the law, and
+`simulated_draws="nodes"` keeps the node lottery. To replay a panel exactly, pass its
+draws as `shock_paths`.
+
 For an IID process state, drop `fold=`. A state read only as `next_<state>`, which
 `fold=True` used to mark, is integrated out without it, and so is one formerly declared
 with the default `fold=False`: its stored value never varied along that axis, so the
