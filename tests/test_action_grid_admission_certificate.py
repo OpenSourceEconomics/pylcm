@@ -22,20 +22,24 @@ def test_action_grid_controls_preserve_historical_mutation_populations() -> None
         for name, spec in registered.items()
         if not name.startswith("simulation_adapter:initial_physical_")
     }
-    assert len(historical) == 410
+    # The dissolution-flag removal deleted streaming_collective:published_dissolution_
+    # inverted and native_graph:collective_output_role_dropped with their targets;
+    # the fold-machinery removal deleted ten streaming fold controls and two
+    # supplemental s02_status:fold_weight_* controls with theirs.
+    assert len(historical) == 398
     assert (
         _name_digest(historical)
-        == "0a861eb7ca01cb47fa9d2e5b4b8ead7935f40349678139b9608687f211aa6603"
+        == "a00c2dd641b34fdfa7f618fb19d3e79648c1082583727f15fafbb004d62faf6d"
     )
-    assert len(registered) == 422
+    assert len(registered) == 410
     assert (
         _name_digest(registered)
-        == "e679f793253493d8b2353546edd92c9a927dff19ea2a5814bb5a68b3733ff346"
+        == "c94857b93f5a6254cbda1aa14b3658232da1df482f907578db49540ac23aeb6c"
     )
-    assert len(supplemental) == 96
+    assert len(supplemental) == 94
     assert (
         _name_digest(supplemental)
-        == "ad03251449be9da461e2a82fecfaf92d61b4bfb89465c76f68f506998449238e"
+        == "f8f427f6dbbee3f52840b8e77e9fa36344a5131be9e1ed24e874523b09cf1673"
     )
     assert len(uniform) == 37
     assert (
