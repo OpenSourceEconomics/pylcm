@@ -1898,6 +1898,153 @@ def merge_envelope_winner(
 
 
 @overload
+def merge_query_point_columns(
+    *,
+    held: EnvelopeWinner,
+    endog_grid: FloatND,
+    policy: FloatND,
+    value: FloatND,
+    marginal: FloatND,
+    segment_id: FloatND,
+    first_index: IntND,
+    first_self_index: int,
+    query: Float1D,
+    arithmetic: ComparisonArithmetic,
+    feasibility_partition: ResolvedAxisPartition | None = ...,
+    feasible_interval_mask: BoolND | None = ...,
+    candidate_savings: None = ...,
+) -> EnvelopeWinner: ...
+
+
+@overload
+def merge_query_point_columns(
+    *,
+    held: _SavingsEnvelopeWinner,
+    endog_grid: FloatND,
+    policy: FloatND,
+    value: FloatND,
+    marginal: FloatND,
+    segment_id: FloatND,
+    first_index: IntND,
+    first_self_index: int,
+    query: Float1D,
+    arithmetic: ComparisonArithmetic,
+    feasibility_partition: ResolvedAxisPartition | None = ...,
+    feasible_interval_mask: BoolND | None = ...,
+    candidate_savings: FloatND,
+) -> _SavingsEnvelopeWinner: ...
+
+
+def merge_query_point_columns(
+    *,
+    held: EnvelopeWinner | _SavingsEnvelopeWinner,
+    endog_grid: FloatND,
+    policy: FloatND,
+    value: FloatND,
+    marginal: FloatND,
+    segment_id: FloatND,
+    first_index: IntND,
+    first_self_index: int,
+    query: Float1D,
+    arithmetic: ComparisonArithmetic,
+    feasibility_partition: ResolvedAxisPartition | None = None,
+    feasible_interval_mask: BoolND | None = None,
+    candidate_savings: FloatND | None = None,
+) -> EnvelopeWinner | _SavingsEnvelopeWinner:
+    """Fold zero-width candidate pairs that each sit on one query's abscissa.
+
+    Column `j` of the `(n_points, n_query)` channels holds points stored as
+    zero-width pairs at `query[j]`, or dead. In the one-shot layout point `(i, j)`
+    is the candidate pair starting at `first_index[i, j]`: its pair link carries
+    that identity and its two self-brackets `first_self_index` plus it and plus
+    one. A zero-width link brackets only its own abscissa, so with strictly
+    increasing queries a column is read by its own query alone, and folding each
+    column into that query's standing winner equals the one-shot read over the
+    whole bank at `O(n_points * n_query)` instead of `O(n_points * n_query**2)`.
+
+    Within a column every live pair reads its stored value, extends nowhere
+    right, and has slope zero, so the total order keeps the largest value and,
+    among equal values, the smallest identity. That point alone is folded. A
+    stored subnormal operand anywhere in the bank still refuses every query on a
+    flushing backend, as the one-shot read does.
+    """
+    live = jnp.isfinite(endog_grid) & jnp.isfinite(value)
+    top = jnp.max(jnp.where(live, value, -jnp.inf), axis=0)
+    best = jnp.argmin(
+        jnp.where(live & (value == top), first_index, jnp.iinfo(jnp.int32).max),
+        axis=0,
+    )[None, :]
+
+    def pick(column: FloatND | IntND) -> FloatND | IntND:
+        return jnp.take_along_axis(column, best, axis=0)[0]
+
+    first = pick(first_index).astype(jnp.int32)
+    identities = jnp.stack(
+        [first, first_self_index + first, first_self_index + first + 1], axis=1
+    )
+    point = tuple(pick(c) for c in (endog_grid, policy, value, marginal, segment_id))
+    saving = None if candidate_savings is None else pick(candidate_savings)
+
+    # keyword-only-exempt: library-callback=jax.vmap
+    def fold_one(
+        held_q: EnvelopeWinner | _SavingsEnvelopeWinner,
+        query_q: FloatND,
+        point_q: tuple[FloatND, ...],
+        identity: IntND,
+        saving_q: FloatND | None,
+    ) -> EnvelopeWinner | _SavingsEnvelopeWinner:
+        endog_q, policy_q, value_q, marginal_q, segment_q = (
+            jnp.stack([c, c]) for c in point_q
+        )
+        return merge_envelope_winner(  # ty: ignore[no-matching-overload]
+            held=held_q,
+            endog_grid=endog_q,
+            policy=policy_q,
+            value=value_q,
+            marginal=marginal_q,
+            segment_id=segment_q,
+            stable_index=identity,
+            query=query_q[None],
+            arithmetic=arithmetic,
+            feasibility_partition=feasibility_partition,
+            feasible_interval_mask=feasible_interval_mask,
+            candidate_savings=None
+            if saving_q is None
+            else jnp.stack([saving_q, saving_q]),
+        )
+
+    folded = jax.vmap(fold_one)(
+        jax.tree.map(lambda leaf: leaf.reshape(-1, 1), held),
+        query,
+        point,
+        identities,
+        saving,
+    )
+    folded = jax.tree.map(lambda leaf: leaf.reshape(query.shape), folded)
+    if arithmetic != "ordinary" or not backend_flushes_subnormals(endog_grid.dtype):
+        return folded
+    if feasibility_partition is not None:
+        feasible = cast("BoolND", feasible_interval_mask)[
+            axis_interval_indices(partition=feasibility_partition, values=endog_grid)
+        ]
+        endog_grid, value, policy, marginal = (
+            jnp.where(feasible, c, jnp.nan)
+            for c in (endog_grid, value, policy, marginal)
+        )
+    row = (endog_grid, value, policy, marginal)
+    if candidate_savings is not None:
+        row = (*row, jnp.where(jnp.isfinite(endog_grid), candidate_savings, jnp.nan))
+    refused = _subnormal_operand_present(
+        row=tuple(c.reshape(-1) for c in row), query=query
+    )
+    if isinstance(folded, _SavingsEnvelopeWinner):
+        return folded._replace(
+            winner=folded.winner._replace(unreadable=folded.winner.unreadable | refused)
+        )
+    return folded._replace(unreadable=folded.unreadable | refused)
+
+
+@overload
 def finish_envelope_winner(
     *,
     winner: EnvelopeWinner,

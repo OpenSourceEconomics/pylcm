@@ -756,9 +756,9 @@ _SOURCE_SEALS = {
     "src/_lcm/egm/outer_interpolation.py": "fd68eb3baa62055bf4a92a572fbec5e055a08809be044a647a31ff7982fc92a8",
     "src/_lcm/egm/outer_refinement.py": "7335546f8df6f1981544cca692d29823f4dc7b7af52d737b7df5c62ac62b8368",
     "src/_lcm/optimization/golden_section.py": "9e76572097e0281e76e59c0b7b430929cc9147754354780a6321f500bcd53f85",
-    "src/_lcm/egm/upper_envelope/query.py": "6754d07b78d075c9b407635deea53bcac4f4f1702fb8bc366b3d9e937c6f8dec",
+    "src/_lcm/egm/upper_envelope/query.py": "9f8332f105720d74640a655cfdad732c1aefd11383ce26dd686863cbf40cd9af",
     "src/_lcm/utils/counts.py": "a9087a3c42d32ff0ca82cf24fda2b59ed57cb77efef94714a37a6ca7cf7a3f82",
-    "src/_lcm/egm/nbegm_step.py": "fc4794a953656bc203aa0ad44522acb7979b46b1b26b55ced8e1bc390326d1d1",
+    "src/_lcm/egm/nbegm_step.py": "5f1c51c363f985515a0088ed2eaf7aa83e52c18568e4d32bbf5469910295fb2b",
     "src/_lcm/egm/nbegm_segments.py": "658a74ca40e3da1c025c3d03e0f8bf695feb45953113521a4700f2c1d1890505",
     "src/_lcm/egm/framed_arithmetic.py": "f4b1fa68cc765fc1450222f7370256306d22b92a6488b40c3575e98f44e43877",
     "src/_lcm/egm/ez_kernel.py": "aef102b6dbc73efae7e103e34597948e8e354f3195a33383973bfbd0da112a72",
@@ -2986,7 +2986,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/egm/nbegm_step.py": (
-        "d8de20eaab5e2427bdbc754414fe697814268bdee0b1c08ce1c85d48be989894",
+        "856143fa6197248292c27c295e165b4fadb6ead73b42739fc628e60f1bae45b9",
         {
             "_IntervalCaseSolver.__call__": "9e8e6e6d6fcffbc0cec5c9ad8989131c66e0efd7e7e5ae8cba8e3954723fbf36",
             "_IntervalWinnerStep.__call__": "1f6008b0c1cab809e2383fc93da62ec61bb0c212bfe00b543202b36aa4343c40",
@@ -3018,14 +3018,14 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_streamed_block_candidate_positions": "49b3a334f48b21ed0d219ce6c9c8e8c8b3930ed2dd32e82c2c3482b82e46d3be",
             "_streamed_interval_block_layout": "546fd0a7654e5c10a822336365f9e68af717db20221253aabde819d703abf602",
             "_streamed_interval_continuation_envelope": "fdf5a7a8370a2d21f0ad2ccfd684fa60a81d250379d6daaf6a86b0c1b2332a7e",
-            "nbegm_multi_interval_step_savings": "ddeff5de538f3700e78d7b9f91091beb02e869108e877dd936566c461f2391de",
+            "nbegm_multi_interval_step_savings": "ac0579469b79138057d8022ee70b9311a18edb760b30bf45ddeb2bc8f313075a",
             "nbegm_per_interval_continuation_step_savings": "caf53ad846c3e3cfa477ec1d93deeb61fe0391cf442b8df256e6c0cec9083224",
             "_single_row_nbegm_query_step": "ba4077ee1cdff8f953be04f7f5fae4896243e6513b698fc41d86d872c96819c6",
             "_prepare_nbegm_interval_block": "e13386fc7f5e82024ec0e7b964a49d5f740f2fbc5ed88282b9614797693c881d",
         },
     ),
     "src/_lcm/egm/upper_envelope/query.py": (
-        "207319529445c9b72b98094f3650ecec3df703acfcdb6c15d4ed857cbc00251b",
+        "cbf1c7743dc3c20b94355ae0be73f4e4ad7fccdfca50643ffa7ff82f969739ce",
         {
             "_along_link": "ad185ea9f330db56b8ee89e1ded66042f67a6dcbd103389842b33d931340d071",
             "_batched_link_terms": "5a1f8a56d71c43c7e7f914a52cf7d141b7e56067b6dc5291462581392890a978",
