@@ -134,6 +134,7 @@ from _lcm.solution.periodization import (
 )
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from _lcm.time import TimeAxis
+from _lcm.transition_plans import SupportOrigin
 from _lcm.typing import (
     EconFunction,
     EconFunctionArg,
@@ -242,6 +243,11 @@ class NNBEGM(TwoMarginSolver):
                 _fail_if_outer_grid_is_stochastic(search.initial_grid)
             case _:
                 pass
+
+    @property
+    def transition_local_lottery_origins(self) -> frozenset[SupportOrigin]:
+        """Both nested roles are inner ride-along NB-EGM solves; they read its draws."""
+        return self.inner.transition_local_lottery_origins
 
     def _fail_if_aggregation_is_unsupported(
         self, aggregator: OuterBranchAggregator
