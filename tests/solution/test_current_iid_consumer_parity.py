@@ -54,7 +54,6 @@ from lcm.shocks import (
     PhysicalValues,
     Product,
     ShockGroup,
-    Smolyak,
     Uniform,
     UserNodes,
 )
@@ -1201,13 +1200,12 @@ def test_nested_egm_refuses_a_shock_entering_utility(*, solver: str) -> None:
         )
 
 
-@pytest.mark.parametrize("rule", ["user_nodes", "smolyak", "product"])
+@pytest.mark.parametrize("rule", ["user_nodes", "product"])
 def test_declared_node_rule_reproduces_node_state_model(rule: str) -> None:
-    """Supplied nodes, a one-dimensional sparse rule and a product of two laws.
+    """Supplied nodes and a product of two laws.
 
     Supplied Gauss-Hermite nodes and weights reproduce the Gauss-Hermite node state
-    exactly. The level-one sparse normal rule is the three-point Gauss-Hermite rule.
-    A product rule over a normal and a uniform shock is the two node states'
+    exactly. A product rule over a normal and a uniform shock is the two node states'
     tensor product.
     """
     process = NormalIIDProcess(
@@ -1221,10 +1219,6 @@ def test_declared_node_rule_reproduces_node_state_model(rule: str) -> None:
                 nodes=np.asarray(process.get_gridpoints())[:, None],
                 weights=np.asarray(nodes["hcc_transitory"]),
             ),
-        ),
-        "smolyak": ShockGroup(
-            shocks={"hcc_transitory": Normal(mu=0.0, sigma=1.0)},
-            nodes=Smolyak(level=1),
         ),
         "product": ShockGroup(
             shocks={
@@ -1248,21 +1242,6 @@ def test_declared_node_rule_reproduces_node_state_model(rule: str) -> None:
     declared = _aca_shaped_model(
         solver="nbegm", declared=True, shape="multi_date", group=group, scaled=scaled
     )
-    if rule == "smolyak":
-        legacy_solution = legacy.solve(params={}, log_level="off")
-        declared_solution = declared.solve(params={}, log_level="off")
-        assert_array_almost_equal(
-            declared_solution.values[0]["alive"],
-            _integrate_node_axis(
-                model=legacy,
-                values=legacy_solution.values[0]["alive"],
-                regime_name="alive",
-                shock="hcc_transitory",
-                weights=nodes["hcc_transitory"],
-            ),
-            decimal=DECIMAL_PRECISION,
-        )
-        return
     _assert_values_integrate_node_state_values(
         legacy=legacy, declared=declared, nodes=nodes
     )

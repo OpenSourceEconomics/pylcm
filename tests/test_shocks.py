@@ -193,57 +193,12 @@ def test_random_rules_age_and_parameter_identity(*, rule: sh.NodeRule) -> None:
     assert a.fingerprint != c.fingerprint
 
 
-@pytest.mark.parametrize("family", ["normal", "uniform"])
-@pytest.mark.parametrize("level", [0, 1])
-def test_smolyak_constant_and_second_moments(*, family: str, level: int) -> None:
-    law = (
-        sh.Normal(mu=0, sigma=1) if family == "normal" else sh.Uniform(start=0, stop=1)
-    )
-    group = sh.ShockGroup(shocks={"a": law, "b": law}, nodes=sh.Smolyak(level))
-    nodes = group.resolve_nodes(group_name="joint", age=0)
-    result = group.realise(nodes=nodes)
-    result.raise_if_invalid()
-    np.testing.assert_allclose(jnp.sum(result.weights), 1.0, atol=_tol())
-    if level > 0:
-        expected = 1.0 if family == "normal" else 1 / 3
-        np.testing.assert_allclose(
-            jnp.sum(result.weights * result.values["a"] ** 2), expected, rtol=_tol()
-        )
-    assert len(set(map(tuple, np.asarray(nodes.base_nodes)))) == len(nodes.weights)
-
-
 def test_user_nodes_with_negative_weights_are_refused() -> None:
     """A node rule with a negative weight never reaches a model."""
     with pytest.raises(ShockDeclarationError, match=r"UserNodes.*negative weights"):
         sh.UserNodes(
             nodes=np.asarray([[-1.0], [0.0], [1.0]]),
             weights=np.asarray([-0.1, 1.2, -0.1]),
-        )
-
-
-@pytest.mark.parametrize(
-    ("family", "dimension", "level"),
-    [
-        ("normal", 1, 3),
-        ("normal", 2, 2),
-        ("normal", 3, 1),
-        ("normal", 4, 1),
-        ("uniform", 2, 2),
-    ],
-)
-def test_smolyak_with_negative_weights_is_refused_at_declaration(
-    *, family: str, dimension: int, level: int
-) -> None:
-    """Higher Smolyak levels have negative weights and are refused by the group."""
-    law = (
-        sh.Normal(mu=0, sigma=1) if family == "normal" else sh.Uniform(start=0, stop=1)
-    )
-    with pytest.raises(
-        ShockDeclarationError, match=rf"Smolyak\(level={level}\).*negative weights"
-    ):
-        sh.ShockGroup(
-            shocks={f"x{i}": law for i in range(dimension)},
-            nodes=sh.Smolyak(level),
         )
 
 
@@ -319,11 +274,6 @@ def test_runtime_correlation_and_fingerprint_separation() -> None:
     result = runtime.realise(nodes=nodes, params={"corr": jnp.ones((1, 1))})
     result.raise_if_invalid()
     assert fixed.fingerprint != runtime.fingerprint
-
-
-def test_smolyak_level_limit() -> None:
-    with pytest.raises(ShockDeclarationError, match="level"):
-        _normal_group(nodes=sh.Smolyak(4))
 
 
 def test_discrete_probability_refusals() -> None:
@@ -577,23 +527,6 @@ def test_runtime_singular_correlation_uses_exact_support() -> None:
         result = function(nodes=nodes, params={"corr": jnp.asarray(matrix)})
         result.raise_if_invalid()
         np.testing.assert_array_equal(result.values["b"], result.values["c"])
-
-
-@pytest.mark.parametrize(("level", "degree"), [(0, 1), (1, 5), (2, 15)])
-def test_genz_keister_analytic_moment_degree(*, level: int, degree: int) -> None:
-    """Normal-rule moments agree with the analytic double-factorial identity."""
-    group = sh.ShockGroup(
-        shocks={"eps": sh.Normal(mu=0, sigma=1)}, nodes=sh.Smolyak(level)
-    )
-    result = group.realise(nodes=group.resolve_nodes(group_name="normal", age=0))
-    result.raise_if_invalid()
-    for power in range(0, degree + 1, 2):
-        reference = math.prod(range(1, power, 2))
-        np.testing.assert_allclose(
-            jnp.sum(result.weights * result.values["eps"] ** power),
-            reference,
-            rtol=8 * _tol(),
-        )
 
 
 def test_law_identity_excludes_rule_and_scalar_spelling() -> None:
