@@ -162,6 +162,7 @@ Its fields:
 
 - `device_memory_bytes` declares a per-device ceiling for compiler peak plus accounted
   live residency.
+
   - `"device"` (the default) derives the ceiling from the selected devices: the smallest
     reported allocator pool limit less `device_memory_headroom_fraction`. Where no
     selected device reports a limit, as on CPU, the model is unbudgeted. Routes that
@@ -177,6 +178,7 @@ Its fields:
     budgeted refuses it. It may be the device's whole allocator pool limit: the model
     admits against that limit less `device_memory_headroom_fraction` of it, whichever is
     smaller.
+
 - `device_memory_headroom_fraction` (default `0.15`) is the share of each selected
   device's allocator pool kept out of the ceiling, an operational margin for storage
   outside the represented accounting — collective buffers, library workspaces, the
@@ -193,6 +195,7 @@ Its fields:
   `axis_width_ceilings` or `axis_widths`, shard over more devices with `sharded_states`
   or `devices`, or pass `device_memory_bytes=None` to disable admission at bootstrap
   widths.
+
 - `sharded_states` names supported model-level states whose grid axes are spread over
   the devices their regimes are placed on. Sharding is resolved per regime: a regime
   whose DAG reads the state carries its axis and runs on the mesh that axis defines,
@@ -203,22 +206,61 @@ Its fields:
   leaves no axis to spread and is refused. A continuous grid cannot be sharded merely
   because its extent divides the number of devices, and the continuous route
   additionally requires the state in every regime.
+
 - `axis_widths` fixes the compiled width of one named planner axis, leaving the rest to
   the planner; see [Fix a planner axis width](../user_guide/tuning.md). Every key must
   be an axis some core program declares.
+
 - `devices` names the device ids the model may use, ascending; `None` (the default)
   means every device JAX reports. Every id must be one JAX reports.
+
 - A device-memory budget, derived or explicit, selects the top-first outer-cohort
   planner for simulation regardless of whether `axis_widths["subject"]` is pinned;
   without a pin the planner resolves its own starting anchor. It changes simulation
   planning only and does not enter the economic fingerprint.
+
 - `donate_buffers` is an exact Boolean, defaulting to `True`. `False` disables compiled
   solve input donation without changing the model fingerprint or economic inputs.
+
 - `invariant_block_widths` names an invariant state to solve one code at a time, and
   `invariant_block_schedule` (an `InvariantBlockSchedule`) the order: `PERIOD_MAJOR`
   (the default) solves every code of a period before the next period; `BLOCK_MAJOR`
   solves, simulates and releases one code's whole lifetime at a time, retaining its
   values on the host. See [Solve one invariant code at a time](../user_guide/tuning.md).
+
+- `value_storage` says where a solve keeps each period's values once no period still to
+  be solved reads them. It never changes the values, reads or simulated panels.
+
+  - `"device"` (the default) keeps every solved period's values on the device until the
+    solve returns.
+  - `"host"` copies each period's values, and the simulation policies of the EGM family,
+    to pinned host memory while the next period computes. The device then holds at most
+    three periods' values: the period being solved, the one it reads, and one whose copy
+    is still finishing. The budget planner counts those three only. When stored values
+    fill the device under `"device"`, the planner's refusal names
+    `value_storage="host"`.
+  - A directory (`value_storage=Path(...)`) also writes the values and policies to disk,
+    for when host memory is short too. Each solve writes its own `solution-<id>.h5` in
+    the directory, in the `SolutionResult.save` format. The file is deleted with its
+    result unless `result.save(path=...)` keeps a copy, which another process can load
+    with `load_solution` and simulate on the same devices or on others. A failed solve
+    leaves `solution-<id>.incomplete`, recording the model and parameter fingerprints,
+    the pylcm version and commit, the dtype and the last completed period;
+    `load_solution` refuses it.
+
+  Off the device, reading a value or a policy returns a device copy. A NaN is diagnosed
+  at the end of its period, while that period's values are still on the device, so the
+  error and its breakdown read nothing back from value storage.
+  `ValueStore.materialize()` refuses to place every value on the device at once above
+  the budget. A simulation of several subject chunks runs period by period, with every
+  chunk going through one period before the next, so each period's values and policies
+  are copied to the device once rather than once per chunk. Before a period's chunks
+  run, the values, dissolution flags and policies the next period's programs declare
+  reading start copying, so the copies overlap this period's work; under a budget the
+  planner reserves the largest such set beside every subject's state. Under
+  `BLOCK_MAJOR`, `"host"` and a directory apply to each code's solve; component jobs
+  take `"device"` only. A copy or write that fails raises `ValueStorageError`, naming
+  the period, the regime and the target.
 
 NB-EGM can nominate one marginal leaf on an unsharded, self-carry `main` program.
 Donation requires exclusive solve ownership and a final, unretained read. A physical

@@ -120,6 +120,7 @@ from _lcm.persistence.snapshots import (
 from _lcm.persistence.solution import (
     BlockedSolutionArchive,
     StreamedSolutionArchive,
+    pylcm_commit,
 )
 from _lcm.processes.ar1 import (
     RouwenhorstAR1Process,
@@ -307,6 +308,7 @@ from _lcm.solution.generation import (
     canonical_generation_roots,
     canonical_parameter_schema,
 )
+from _lcm.solution.host_values import stored_form
 from _lcm.solution.lower_candidate import lower_period_candidate
 from _lcm.solution.lowering_descriptors import describe_lowering_value
 from _lcm.solution.model_authority import (
@@ -3537,6 +3539,7 @@ class Model:
                             flat_params=flat_params
                         ),
                         "pylcm_version": PYLCM_VERSION,
+                        "pylcm_commit": pylcm_commit(),
                     }
                 )
             raise
@@ -4114,7 +4117,8 @@ class Model:
         self._check_solution_result_replay_policies(
             solution=solution,
             authority=engine_view.authority,
-            policies=engine_view.simulation_policies,
+            # The check reads the stored policies, not device copies of them.
+            policies=stored_form(engine_view.simulation_policies),
             values=engine_view.values,
         )
         self._check_solution_result_dissolution_flags(

@@ -59,7 +59,11 @@ from _lcm.solution.diagnostics import (
     emit_component_feasibility_warnings,
 )
 from _lcm.solution.grid_search import _GridSearchPeriodKernel
-from _lcm.solution.host_values import is_host_value
+from _lcm.solution.host_values import (
+    is_host_value,
+    value_storage_error,
+    wait_for_host_copies,
+)
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from _lcm.solution.v_topology import (
     _get_regime_V_shapes_and_shardings,
@@ -469,12 +473,15 @@ class RetainedComponentValues:
         coverage = self._coverage.with_code(code=code, entries=frozenset(flat))
         # Under host storage the solve already copied each period to pinned host
         # memory; those copies are the blocks. Device values are copied here.
-        copied: dict[_Coordinate, np.ndarray | jax.Array] = {
-            coordinate: (
-                jax.block_until_ready(block)
+        wait_for_host_copies(
+            copies=tuple(
+                (period, regime, block)
+                for (period, regime), block in flat.items()
                 if is_host_value(block)
-                else jax.device_get(block)
             )
+        )
+        copied: dict[_Coordinate, np.ndarray | jax.Array] = {
+            coordinate: block if is_host_value(block) else jax.device_get(block)
             for coordinate, block in flat.items()
         }
         self._device_to_host_bytes += sum(
@@ -533,16 +540,32 @@ class RetainedComponentValues:
         coordinate: _Coordinate,
         block: np.ndarray | jax.Array,
     ) -> _ArchivedBlock:
-        """Write one block into its value's slice of the archive."""
+        """Write one block into its value's slice of the archive.
+
+        Raises:
+            ValueStorageError: The block could not be written, naming its code,
+                period, regime and file.
+
+        """
         layout = self._layouts[coordinate]
         array = np.asarray(block)
-        archive.write_block(
-            code=code,
-            coordinate=coordinate,
-            block=array,
-            axis=layout.axis,
-            full_shape=layout.shape,
-        )
+        try:
+            archive.write_block(
+                code=code,
+                coordinate=coordinate,
+                block=array,
+                axis=layout.axis,
+                full_shape=layout.shape,
+            )
+        except (OSError, RuntimeError, ValueError) as error:
+            period, regime = coordinate
+            raise value_storage_error(
+                action="write",
+                period=period,
+                regime=regime,
+                destination=str(archive.path),
+                code=code,
+            ) from error
         return _ArchivedBlock(
             archive=archive,
             code=code,

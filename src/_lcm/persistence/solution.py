@@ -15,17 +15,19 @@ import hashlib
 import json
 import math
 import os
+import re
 import shutil
+import subprocess
 import tempfile
 import threading
 import weakref
-from collections.abc import Mapping
+from collections.abc import Generator, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from enum import Enum, auto
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Final, Literal, cast
+from typing import TYPE_CHECKING, Final, Literal, NamedTuple, cast
 
 import h5py
 import jax
@@ -36,7 +38,7 @@ from h5py import h5o  # ty: ignore[unresolved-import]
 
 from _lcm import version as _version
 from _lcm.dtypes import CanonicalArrayWriter
-from _lcm.solution.host_values import admit_values_on_devices
+from _lcm.solution.host_values import admit_values_on_devices, value_storage_error
 from _lcm.solution.result_snapshot import (
     snapshot_artifact_authorities,
     snapshot_artifact_store,
@@ -45,10 +47,21 @@ from _lcm.solution.result_snapshot import (
     snapshot_value_store,
 )
 from _lcm.solution.solver_diagnostics import diagnostics_template_snapshot
-from _lcm.typing import ArtifactPayload, HostArray, JSONValue, ValueND
+from _lcm.typing import (
+    ArtifactPayload,
+    HostArray,
+    JSONValue,
+    SimulationPolicy,
+    ValueND,
+)
 from lcm._solver_api.authority import _ArrayCopier
-from lcm.exceptions import IncompatibleSolutionError, SolutionIntegrityError
+from lcm.exceptions import (
+    IncompatibleSolutionError,
+    SolutionIntegrityError,
+    ValueStorageError,
+)
 from lcm.solver_api import (
+    SIMULATION_POLICY,
     SOLUTION_FORMAT_VERSION,
     SOLUTION_SCHEMA_VERSION,
     SOLVER_API_VERSION,
@@ -277,6 +290,8 @@ class _SaveSnapshot:
     values: tuple[_PreparedPayload, ...]
     artifacts: tuple[_PreparedPayload, ...]
     omissions: tuple[tuple[ArtifactRef, OmissionReason], ...]
+    reused_artifacts: tuple[ArtifactRef, ...] = ()
+    """Artifacts already in the archive that its manifest lists as they are."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -899,12 +914,18 @@ def _prepare_solution_for_save(  # noqa: C901, PLR0912, PLR0915
     *,
     solution: _SolutionResultBoundary,
     written_values: Mapping[tuple[int, RegimeName], jax.ShapeDtypeStruct] | None = None,
+    written_artifacts: Mapping[ArtifactRef, Mapping[str, JSONValue]] = (
+        MappingProxyType({})
+    ),
 ) -> _SaveSnapshot:
     """Validate and copy one complete result before the archive writer runs.
 
     `written_values` are the shape and dtype of each value already in the
     archive, by coordinate; they are checked against their schemas and not
-    prepared again.
+    prepared again. `written_artifacts` are the manifest entries of artifacts
+    already in the archive, by address; each one the result persists is checked
+    against its descriptor and listed in `reused_artifacts` instead of being read
+    back and prepared again.
     """
     envelope = _snapshot_solution_for_save(solution=solution)
     metadata = envelope.metadata
@@ -1035,6 +1056,7 @@ def _prepare_solution_for_save(  # noqa: C901, PLR0912, PLR0915
         omission_entries[ref] = reason
 
     prepared_artifacts: list[_PreparedPayload] = []
+    reused_artifacts: list[ArtifactRef] = []
     present_refs: set[ArtifactRef] = set()
     for channel, store in stores:
         for ref in sorted(store):
@@ -1067,6 +1089,12 @@ def _prepare_solution_for_save(  # noqa: C901, PLR0912, PLR0915
             )
             if descriptor.persistence is PersistencePolicy.NOT_PERSISTED:
                 omission_entries[ref] = OmissionReason.NOT_PERSISTED
+                continue
+            if ref in written_artifacts:
+                _check_written_artifact(
+                    entry=written_artifacts[ref], ref=ref, descriptor=descriptor
+                )
+                reused_artifacts.append(ref)
                 continue
             try:
                 canonical = _canonicalize_artifact_payload_snapshot(
@@ -1129,6 +1157,7 @@ def _prepare_solution_for_save(  # noqa: C901, PLR0912, PLR0915
         values=tuple(prepared_values),
         artifacts=tuple(prepared_artifacts),
         omissions=tuple(sorted(omission_entries.items())),
+        reused_artifacts=tuple(reused_artifacts),
     )
 
 
@@ -1366,7 +1395,9 @@ def _require_save_compatibility(*, metadata: SolutionMetadata) -> None:
 
 
 def _prepare_payload(
-    *, payload: FloatND | HostArray, identity: dict[str, JSONValue]
+    *,
+    payload: FloatND | HostArray | SimulationPolicy,
+    identity: dict[str, JSONValue],
 ) -> _PreparedPayload:
     """Copy a numerical PyTree into independent contiguous NumPy arrays."""
     with_paths, tree = jax.tree_util.tree_flatten_with_path(payload)
@@ -1460,6 +1491,35 @@ def _check_prepared_artifact(
         ):
             raise IncompatibleSolutionError(
                 f"Artifact {ref!r} leaf {index} differs from its descriptor."
+            )
+
+
+def _check_written_artifact(
+    *, entry: Mapping[str, JSONValue], ref: ArtifactRef, descriptor: ArtifactDescriptor
+) -> None:
+    """Ensure an artifact written during the solve is the one its descriptor fixes.
+
+    Raises:
+        IncompatibleSolutionError: Its channel, leaf count, or a leaf's path,
+            shape or dtype differs from the descriptor.
+
+    """
+    leaves = cast("list[dict[str, JSONValue]]", entry["leaves"])
+    declared_leaves = descriptor.leaf_descriptors
+    if entry["channel"] != descriptor.channel.value or len(leaves) != len(
+        declared_leaves
+    ):
+        raise IncompatibleSolutionError(
+            f"Written artifact {ref!r} does not match its descriptor."
+        )
+    for index, (leaf, declared) in enumerate(zip(leaves, declared_leaves, strict=True)):
+        if (
+            tuple(cast("list[str]", leaf["path"])) != declared.path
+            or tuple(cast("list[int]", leaf["shape"])) != declared.shape
+            or np.dtype(cast("str", leaf["dtype"])) != np.dtype(declared.dtype)
+        ):
+            raise IncompatibleSolutionError(
+                f"Written artifact {ref!r} leaf {index} differs from its descriptor."
             )
 
 
@@ -1587,11 +1647,12 @@ def _write_archive_contents(
     snapshot: _SaveSnapshot,
     value_entries: list[JSONValue],
     counter: int,
+    artifact_entries: list[JSONValue] | None = None,
 ) -> None:
     """Write a snapshot's payloads after those already written, then the manifest.
 
-    `value_entries` are the manifest entries of values already in `payloads`, and
-    `counter` the next free payload address.
+    `value_entries` and `artifact_entries` are the manifest entries of values and
+    artifacts already in `payloads`, and `counter` the next free payload address.
     """
     manifest: dict[str, JSONValue] = {
         "format_version": SOLUTION_FORMAT_VERSION,
@@ -1600,7 +1661,7 @@ def _write_archive_contents(
         "solution_schema_version": SOLUTION_SCHEMA_VERSION,
         "metadata": dict(snapshot.metadata),
         "values": value_entries,
-        "artifacts": [],
+        "artifacts": [] if artifact_entries is None else artifact_entries,
         "omissions": [],
     }
     for prepared in snapshot.values:
@@ -2850,6 +2911,12 @@ class DiskValueEntry(_LazyEntry):
             where="disk-stored",
         )
 
+    def device_stand_in(self) -> jax.ShapeDtypeStruct:
+        """Describe the value as the array a read places on its devices."""
+        return jax.ShapeDtypeStruct(
+            self.shape, self.dtype, sharding=self.sharding.with_memory_kind("device")
+        )
+
     def host_value(self) -> np.ndarray:
         """Read the value from the archive and verify it against its checksum.
 
@@ -2877,6 +2944,100 @@ class DiskValueEntry(_LazyEntry):
         return self.materialize()
 
 
+@dataclass(frozen=True, kw_only=True, eq=False)
+class DiskPolicyEntry(_LazyEntry):
+    """One simulation policy a solve wrote to its archive, read back onto devices.
+
+    It is written as `SolutionResult.save` writes the policy artifact, one
+    checksummed leaf per array of the policy, so the completed archive refers to
+    it without writing it again.
+    """
+
+    file: _ArchiveFile
+    """The archive file the policy is in."""
+
+    tree: jax.tree_util.PyTreeDef
+    """Structure of the policy, rebuilt around the leaves read back."""
+
+    leaves: tuple[MappingProxyType[str, JSONValue], ...]
+    """Manifest entry of each leaf: its dataset, identity and checksum."""
+
+    shardings: tuple[jax.sharding.Sharding, ...]
+    """Sharding the solve published each leaf on."""
+
+    @property
+    def load_state(self) -> LoadState:
+        """Nothing of a policy on disk is in memory until it is read."""
+        return LoadState.UNLOADED
+
+    def materialize(
+        self, *, template: ArtifactPayload | None = None
+    ) -> ArtifactPayload:
+        """Read the policy and place each leaf on the devices it was solved on.
+
+        Raises:
+            SolutionIntegrityError: The bytes read differ from those written.
+
+        """
+        del template
+        return jax.tree_util.tree_unflatten(
+            self.tree,
+            [
+                jax.device_put(array, sharding.with_memory_kind("device"))
+                for array, sharding in zip(
+                    self._read_leaves(), self.shardings, strict=True
+                )
+            ],
+        )
+
+    def host_payload(self) -> SimulationPolicy:
+        """Read the policy onto the CPU device, for checks that run on the host.
+
+        Raises:
+            SolutionIntegrityError: The bytes read differ from those written.
+
+        """
+        cpu = jax.sharding.SingleDeviceSharding(
+            jax.devices("cpu")[0], memory_kind="device"
+        )
+        return jax.tree_util.tree_unflatten(
+            self.tree, [jax.device_put(array, cpu) for array in self._read_leaves()]
+        )
+
+    def device_stand_in(self) -> SimulationPolicy:
+        """Describe the policy as the one a read places on its devices."""
+        return jax.tree_util.tree_unflatten(
+            self.tree,
+            [
+                jax.ShapeDtypeStruct(
+                    tuple(cast("list[int]", leaf["shape"])),
+                    np.dtype(cast("str", leaf["dtype"])),
+                    sharding=sharding.with_memory_kind("device"),
+                )
+                for leaf, sharding in zip(self.leaves, self.shardings, strict=True)
+            ],
+        )
+
+    def _read_leaves(self) -> list[np.ndarray]:
+        """Read every leaf from the archive and verify it against its checksum.
+
+        Raises:
+            SolutionIntegrityError: The bytes read differ from those written.
+
+        """
+        arrays = []
+        for leaf in self.leaves:
+            array = self.file.read(dataset=cast("str", leaf["dataset"]))
+            identity = cast("dict[str, JSONValue]", leaf["identity"])
+            if _array_checksum(identity=identity, array=array) != leaf["sha256"]:
+                raise SolutionIntegrityError(
+                    f"Policy leaf {leaf['dataset']!r} in {self.file.path} differs "
+                    "from what the solve wrote."
+                )
+            arrays.append(array)
+        return arrays
+
+
 class _SolutionArchiveFile:
     """A solve's archive file while values are written to it, and how it ends.
 
@@ -2900,6 +3061,11 @@ class _SolutionArchiveFile:
         self._handle = handle
         self._payloads = handle.create_group(_PAYLOAD_GROUP)
         self._counter = 0
+
+    @property
+    def path(self) -> Path:
+        """The file's current path, `<name>.h5.partial` while it is written."""
+        return self._file.path
 
     def describe(self, **fields: JSONValue) -> None:
         """Remember facts about the solve that an abandoned archive records."""
@@ -2927,18 +3093,34 @@ class _SolutionArchiveFile:
         solution: _SolutionResultBoundary,
         value_entries: list[JSONValue],
         written: Mapping[tuple[int, RegimeName], jax.ShapeDtypeStruct],
+        artifact_entries: Mapping[ArtifactRef, dict[str, JSONValue]] = (
+            MappingProxyType({})
+        ),
     ) -> Path:
-        """Add the result's artifacts and manifest beside written values; publish."""
+        """Add the result's artifacts and manifest beside written payloads; publish.
+
+        `artifact_entries` are the manifest entries of artifacts already written.
+        """
         snapshot = _prepare_solution_for_save(
-            solution=solution, written_values=MappingProxyType(dict(written))
+            solution=solution,
+            written_values=MappingProxyType(dict(written)),
+            written_artifacts=MappingProxyType(dict(artifact_entries)),
         )
         with self._file.lock:
+            # A written artifact the result does not persist leaves the file, so
+            # the archive holds exactly what its manifest lists.
+            for ref, entry in artifact_entries.items():
+                if ref not in snapshot.reused_artifacts:
+                    del self._payloads[cast("str", entry["address"])]
             _write_archive_contents(
                 archive=self._handle,
                 payloads=self._payloads,
                 snapshot=snapshot,
                 value_entries=value_entries,
                 counter=self._counter,
+                artifact_entries=[
+                    artifact_entries[ref] for ref in snapshot.reused_artifacts
+                ],
             )
             path = self._close(suffix=_COMPLETE_SUFFIX, deletable=True)
             self._file.completed_for = weakref.ref(solution)
@@ -2966,6 +3148,7 @@ class StreamedSolutionArchive(_SolutionArchiveFile):
         self._written_periods: set[int] = set()
         self._value_entries: list[JSONValue] = []
         self._written: dict[tuple[int, RegimeName], jax.ShapeDtypeStruct] = {}
+        self._artifact_entries: dict[ArtifactRef, dict[str, JSONValue]] = {}
 
     def write_value(
         self,
@@ -3002,6 +3185,40 @@ class StreamedSolutionArchive(_SolutionArchiveFile):
             budget_bytes=self._budget_bytes,
         )
 
+    def write_policy(
+        self, *, period: int, regime: RegimeName, policy: SimulationPolicy
+    ) -> DiskPolicyEntry:
+        """Write one simulation policy as its replay artifact; return its reader."""
+        ref = ArtifactRef(period=period, regime=regime, key=SIMULATION_POLICY)
+        prepared = _prepare_payload(
+            payload=policy,
+            identity={
+                "kind": "artifact",
+                "period": period,
+                "regime": regime,
+                "type_id": SIMULATION_POLICY.type_id,
+                "schema_version": SIMULATION_POLICY.schema_version,
+                "channel": ArtifactChannel.REPLAY.value,
+            },
+        )
+        with self._file.lock:
+            address = f"{self._counter:08d}"
+            self._counter += 1
+            entry = _write_payload_entry(
+                payloads=self._payloads, address=address, prepared=prepared
+            )
+            self._artifact_entries[ref] = entry
+        leaves, tree = jax.tree_util.tree_flatten(policy)
+        return DiskPolicyEntry(
+            file=self._file,
+            tree=tree,
+            leaves=tuple(
+                MappingProxyType(leaf)
+                for leaf in cast("list[dict[str, JSONValue]]", entry["leaves"])
+            ),
+            shardings=tuple(leaf.sharding for leaf in leaves),
+        )
+
     def mark_period_written(self, *, period: int) -> None:
         """Record that every value of `period` is in the file."""
         with self._file.lock:
@@ -3021,7 +3238,10 @@ class StreamedSolutionArchive(_SolutionArchiveFile):
 
         """
         return self._complete(
-            solution=solution, value_entries=self._value_entries, written=self._written
+            solution=solution,
+            value_entries=self._value_entries,
+            written=self._written,
+            artifact_entries=self._artifact_entries,
         )
 
 
@@ -3160,13 +3380,60 @@ class BlockedSolutionArchive(_SolutionArchiveFile):
         )
 
 
+def pylcm_commit() -> str | None:
+    """The git commit of the running pylcm, as an incomplete archive records it.
+
+    A source checkout, as in an editable install, answers from git itself, so a
+    commit made after installing counts; `-dirty` marks changed tracked files.
+    Otherwise the commit the build recorded is used, then the one in the version
+    string; `None` when neither names one.
+    """
+    source = Path(__file__).resolve().parent
+    try:
+        head = subprocess.run(  # noqa: S603
+            ["git", "-C", str(source), "rev-parse", "HEAD"],  # noqa: S607
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        changed = subprocess.run(  # noqa: S603
+            [  # noqa: S607
+                "git",
+                "-C",
+                str(source),
+                "status",
+                "--porcelain",
+                "--untracked-files=no",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    except OSError, subprocess.CalledProcessError:
+        pass
+    else:
+        return head + ("-dirty" if changed else "")
+    if _version.commit_id is not None:
+        return _version.commit_id
+    match = re.search(r"\+g([0-9a-f]+)", PYLCM_VERSION)
+    return None if match is None else match.group(1)
+
+
+class WrittenPeriod(NamedTuple):
+    """One period a writer has put in the archive, with the entries reading it."""
+
+    period: int
+    values: MappingProxyType[RegimeName, DiskValueEntry]
+    policies: MappingProxyType[RegimeName, DiskPolicyEntry]
+
+
 class PeriodValueWriter:
     """Writes a solve's host-stored values to its archive from a background thread.
 
-    Each period's values go in one job, in solve order. A submit returns the
-    periods whose writes have finished, with the entries that read them back, so
-    the caller can drop their host copies; it waits while more than
-    `max_pending` periods are still unwritten, which bounds host memory.
+    Each period's values and simulation policies go in one job, in solve order. A
+    submit returns the periods whose writes have finished, with the entries that
+    read them back, so the caller can drop their host copies; it waits while more
+    than `max_pending` periods are still unwritten, which bounds host memory.
     """
 
     def __init__(
@@ -3177,33 +3444,34 @@ class PeriodValueWriter:
         self._executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="lcm-value-writer"
         )
-        self._pending: collections.deque[
-            tuple[int, Future[MappingProxyType[RegimeName, DiskValueEntry]]]
-        ] = collections.deque()
+        self._pending: collections.deque[Future[WrittenPeriod]] = collections.deque()
+        # Set by the writer thread once a write fails. Later periods are then not
+        # written, so the written periods stay those from the end of the solve.
+        self._failed = False
 
     def submit(
-        self, *, period: int, values: Mapping[RegimeName, jax.Array]
-    ) -> tuple[tuple[int, MappingProxyType[RegimeName, DiskValueEntry]], ...]:
+        self,
+        *,
+        period: int,
+        values: Mapping[RegimeName, jax.Array],
+        policies: Mapping[RegimeName, SimulationPolicy] = MappingProxyType({}),
+    ) -> tuple[WrittenPeriod, ...]:
         """Queue one period's host copies; return the periods now written."""
         self._pending.append(
-            (
-                period,
-                self._executor.submit(self._write, period=period, values=dict(values)),
+            self._executor.submit(
+                self._write, period=period, values=dict(values), policies=dict(policies)
             )
         )
         written = []
         while self._pending and (
-            len(self._pending) > self._max_pending or self._pending[0][1].done()
+            len(self._pending) > self._max_pending or self._pending[0].done()
         ):
-            done_period, future = self._pending.popleft()
-            written.append((done_period, future.result()))
+            written.append(self._pending.popleft().result())
         return tuple(written)
 
-    def drain(
-        self,
-    ) -> tuple[tuple[int, MappingProxyType[RegimeName, DiskValueEntry]], ...]:
+    def drain(self) -> tuple[WrittenPeriod, ...]:
         """Wait for every queued period and return them all."""
-        written = tuple((period, future.result()) for period, future in self._pending)
+        written = tuple(future.result() for future in self._pending)
         self._pending.clear()
         return written
 
@@ -3212,21 +3480,62 @@ class PeriodValueWriter:
         self._executor.shutdown(wait=True)
 
     def _write(
-        self, *, period: int, values: dict[RegimeName, jax.Array]
-    ) -> MappingProxyType[RegimeName, DiskValueEntry]:
-        entries = MappingProxyType(
-            {
-                regime: self._archive.write_value(
+        self,
+        *,
+        period: int,
+        values: dict[RegimeName, jax.Array],
+        policies: dict[RegimeName, SimulationPolicy],
+    ) -> WrittenPeriod:
+        """Write one period, naming the value or policy and file of a failed write.
+
+        Raises:
+            ValueStorageError: A value or policy could not be written, or an
+                earlier period's write failed.
+
+        """
+        if self._failed:
+            msg = f"Did not write period {period}: an earlier period's write failed."
+            raise ValueStorageError(msg)
+        entries: dict[RegimeName, DiskValueEntry] = {}
+        for regime, value in values.items():
+            with self._naming_failure(period=period, regime=regime):
+                entries[regime] = self._archive.write_value(
                     period=period,
                     regime=regime,
                     value=np.asarray(value),
                     sharding=value.sharding,
                 )
-                for regime, value in values.items()
-            }
-        )
+        policy_entries: dict[RegimeName, DiskPolicyEntry] = {}
+        for regime, policy in policies.items():
+            with self._naming_failure(period=period, regime=regime):
+                policy_entries[regime] = self._archive.write_policy(
+                    period=period, regime=regime, policy=policy
+                )
         self._archive.mark_period_written(period=period)
-        return entries
+        return WrittenPeriod(
+            period=period,
+            values=MappingProxyType(entries),
+            policies=MappingProxyType(policy_entries),
+        )
+
+    @contextlib.contextmanager
+    def _naming_failure(self, *, period: int, regime: RegimeName) -> Generator[None]:
+        """Turn a failed write into an error naming its period, regime and file.
+
+        Raises:
+            ValueStorageError: The write in the block failed.
+
+        """
+        try:
+            yield
+        except (OSError, RuntimeError, ValueError) as error:
+            self._failed = True
+            raise value_storage_error(
+                action="write",
+                period=period,
+                regime=regime,
+                destination=str(self._archive.path),
+            ) from error
 
 
 def _settle_archive(fate: _ArchiveFate) -> None:

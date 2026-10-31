@@ -22,6 +22,8 @@ from _lcm.solution.generation import CanonicalModelGeneration
 from _lcm.solution.host_values import (
     device_read_view,
     is_host_value,
+    lazy_read_view,
+    policy_read_view,
     to_cpu_device,
 )
 from _lcm.solution.result_snapshot import own_artifact_store, own_value_store
@@ -482,7 +484,11 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
                 else internal_result.value_functions
             ),
             simulation_policies=(
-                declared_replay_policies
+                (
+                    policy_read_view(policies=declared_replay_policies)
+                    if _stored_off_device(nested=declared_replay_policies)
+                    else declared_replay_policies
+                )
                 if retention.retains_replay
                 else MappingProxyType({})
             ),
@@ -495,13 +501,31 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
                 if retention.retains_replay
                 else MappingProxyType({})
             ),
-            replay_artifacts=MappingProxyType(replay),
+            replay_artifacts=(
+                lazy_read_view(entries=replay)
+                if any(isinstance(entry, _LazyEntry) for entry in replay.values())
+                else MappingProxyType(replay)
+            ),
             authority=authority,
             component_values=component_values,
             generation=generation,
         ),
     )
     return result
+
+
+def _stored_off_device(*, nested: PeriodToRegimeToSimulationPolicy) -> bool:
+    """Whether a solve stored these policies in host memory or on disk."""
+    return any(
+        isinstance(policy, _LazyEntry)
+        or any(
+            is_host_value(leaf)
+            for leaf in jax.tree.leaves(policy)
+            if isinstance(leaf, jax.Array)
+        )
+        for regime_to_policy in nested.values()
+        for policy in regime_to_policy.values()
+    )
 
 
 def _holds_host_arrays(

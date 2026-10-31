@@ -163,9 +163,11 @@ from _lcm.params.edges import (
     regime_kernel_params,
 )
 from _lcm.persistence.solution import (
+    DiskPolicyEntry,
     DiskValueEntry,
     PeriodValueWriter,
     StreamedSolutionArchive,
+    WrittenPeriod,
 )
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.gated_edges import (
@@ -196,6 +198,7 @@ from _lcm.solution.diagnostics import (
     _init_diagnostic_accumulators,
     _materialize_period_feasibility_counts,
     _states_for_period,
+    period_nan_error,
 )
 from _lcm.solution.feasibility import (
     BoundedResult,
@@ -214,7 +217,11 @@ from _lcm.solution.feasibility import (
     validate_runtime_bound_status,
 )
 from _lcm.solution.grid_search import _GridSearchArgumentBuilder
-from _lcm.solution.host_values import copy_values_to_host, device_read_view
+from _lcm.solution.host_values import (
+    copy_policies_to_host,
+    copy_values_to_host,
+    wait_for_host_copies,
+)
 from _lcm.solution.kernel_attribution import (
     log_executed_kernel,
     log_module_fanout,
@@ -266,6 +273,7 @@ from _lcm.typing import (
     HostArray,
     LandingCheck,
     ParamsLeaf,
+    PeriodToRegimeToSimulationPolicy,
     PeriodToRegimeToVArr,
     PRNGKeyND,
     PytreeByPeriod,
@@ -655,7 +663,9 @@ def solve(  # noqa: C901, PLR0912, PLR0915
 
     # A value disk storage has written is a lazy entry that reads it back.
     solution: dict[int, MappingProxyType[RegimeName, FloatND | DiskValueEntry]] = {}
-    simulation_policies: dict[int, MappingProxyType[RegimeName, SimulationPolicy]] = {}
+    simulation_policies: dict[
+        int, MappingProxyType[RegimeName, SimulationPolicy | DiskPolicyEntry]
+    ] = {}
     generated_replay_authorities: dict[
         int, MappingProxyType[RegimeName, GeneratedReplayAuthority]
     ] = {}
@@ -713,6 +723,8 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         running_any_nan,
         running_any_inf,
     ) = _init_diagnostic_accumulators()
+    # The enriched error of the first period with a NaN, built at its barrier.
+    nan_error: InvalidValueFunctionError | None = None
 
     logger.info("Starting solution")
     total_start = time.monotonic()
@@ -752,7 +764,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     # Every copy a period's transfer cache holds belongs to this solve alone.
     transfer_generation = uuid.uuid4().hex
     store_on_host = resolved_execution.value_storage_kind != "device"
-    in_flight_host_copies: tuple[jax.Array, ...] = ()
+    in_flight_host_copies: tuple[tuple[int, RegimeName, jax.Array], ...] = ()
     if (resolved_execution.value_storage_kind == "disk") != (value_archive is not None):
         msg = "A value archive is required with, and only with, disk value storage."
         raise ValueError(msg)
@@ -1267,6 +1279,21 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                     period=period,
                     enabled=logger.isEnabledFor(logging.WARNING),
                 )
+                # The first NaN is diagnosed now, while this period's values and
+                # the next-period values its programs read are on the device.
+                if diagnostics_enabled and nan_error is None:
+                    nan_error = period_nan_error(
+                        logger=logger,
+                        diagnostic_rows=diagnostic_rows,
+                        period=period,
+                        period_values=MappingProxyType(period_solution),
+                        next_values=next_regime_to_V_arr,
+                        stored_values=solution,
+                        store_on_host=store_on_host,
+                        regimes=regimes,
+                        flat_params=flat_params,
+                        process_grid_resolver=process_grid_resolver,
+                    )
 
                 # Fold each declared gated edge whose target
                 # was solved this period onto the target grid, and roll the resulting
@@ -1353,7 +1380,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                     # next period computes. The device copy stays reachable only
                     # through the rolled inputs, which release it once read.
                     host_copies = (
-                        copy_values_to_host(values=period_solution)
+                        copy_values_to_host(period=period, values=period_solution)
                         if store_on_host
                         else None
                     )
@@ -1362,12 +1389,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                         if host_copies is None
                         else host_copies
                     )
-                    # Disk storage writes the host copies from a background thread
-                    # and swaps each written period's copies for disk entries.
-                    if value_writer is not None and host_copies is not None:
-                        solution.update(
-                            value_writer.submit(period=period, values=host_copies)
-                        )
                     # Publish each collective regime's dissolution flag D alongside
                     # V, where a reader exists. Kept as a plain per-period mapping
                     # (not rolled like `next_regime_to_V_arr`): nothing consumes a
@@ -1379,23 +1400,50 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                         dissolution_flags[period] = _NO_DISSOLUTION_FLAGS
                     elif store_on_host:
                         dissolution_flags[period] = copy_values_to_host(
-                            values=period_dissolution_flags
+                            period=period, values=period_dissolution_flags
                         )
                     else:
                         dissolution_flags[period] = MappingProxyType(
                             period_dissolution_flags
                         )
                 if period_solution and (retain_replay or period_simulation_policies):
-                    assert host_device is not None  # noqa: S101
-                    simulation_policies[period] = MappingProxyType(
-                        {
-                            regime_name: jax.block_until_ready(
-                                jax.device_put(simulation_policy, host_device)
-                            )
-                            for regime_name, simulation_policy in (
-                                period_simulation_policies.items()
-                            )
-                        }
+                    # Under host storage policies travel as values do; device
+                    # storage moves them to the CPU device before going on.
+                    if store_on_host:
+                        simulation_policies[period] = copy_policies_to_host(
+                            period=period, policies=period_simulation_policies
+                        )
+                    else:
+                        assert host_device is not None  # noqa: S101
+                        simulation_policies[period] = MappingProxyType(
+                            {
+                                regime_name: jax.block_until_ready(
+                                    jax.device_put(simulation_policy, host_device)
+                                )
+                                for regime_name, simulation_policy in (
+                                    period_simulation_policies.items()
+                                )
+                            }
+                        )
+                # Disk storage writes the period's host copies, values and
+                # policies, from a background thread and swaps each written
+                # period's copies for disk entries.
+                # Until written, the period holds its host copies, not entries.
+                if value_writer is not None and period_solution:
+                    _swap_in_written_periods(
+                        written=value_writer.submit(
+                            period=period,
+                            values=cast(
+                                "MappingProxyType[RegimeName, jax.Array]",
+                                solution[period],
+                            ),
+                            policies=cast(
+                                "MappingProxyType[RegimeName, SimulationPolicy]",
+                                simulation_policies.get(period, MappingProxyType({})),
+                            ),
+                        ),
+                        solution=solution,
+                        simulation_policies=simulation_policies,
                     )
                 if period_generated_replay_authorities:
                     generated_replay_authorities[period] = MappingProxyType(
@@ -1459,40 +1507,38 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 # dispatched, the copy started one period earlier has finished, so
                 # its device values can go once the period reading them is done.
                 if store_on_host:
-                    jax.block_until_ready(in_flight_host_copies)
+                    wait_for_host_copies(copies=in_flight_host_copies)
                     in_flight_host_copies = tuple(
-                        array
-                        for period_mapping in (solution, dissolution_flags)
-                        for array in period_mapping.get(
+                        (period, regime_name, array)
+                        for period_mapping in (
+                            solution,
+                            dissolution_flags,
+                            simulation_policies,
+                        )
+                        for regime_name, stored in period_mapping.get(
                             period, MappingProxyType({})
-                        ).values()
+                        ).items()
+                        for array in jax.tree.leaves(stored)
                         if isinstance(array, jax.Array)
                     )
 
             if value_writer is not None:
-                solution.update(value_writer.drain())
+                _swap_in_written_periods(
+                    written=value_writer.drain(),
+                    solution=solution,
+                    simulation_policies=simulation_policies,
+                )
 
             if diagnostics_enabled or stats_enabled:
                 try:
                     _emit_post_loop_diagnostics(
                         logger=logger,
                         diagnostic_rows=diagnostic_rows,
-                        solution=(
-                            device_read_view(values=solution)
-                            if store_on_host
-                            # Only disk storage puts entries in `solution`.
-                            else cast(
-                                "PeriodToRegimeToVArr", MappingProxyType(solution)
-                            )
-                        ),
-                        regimes=regimes,
-                        flat_params=flat_params,
-                        running_any_nan=running_any_nan,
+                        nan_error=nan_error,
                         running_any_inf=running_any_inf,
                         diagnostic_min=diagnostic_min if stats_enabled else None,
                         diagnostic_max=diagnostic_max if stats_enabled else None,
                         diagnostic_mean=diagnostic_mean if stats_enabled else None,
-                        process_grid_resolver=process_grid_resolver,
                     )
                 except InvalidValueFunctionError as error:
                     raise_or_warn(logger=logger, error=error)
@@ -1514,7 +1560,10 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         # Under disk storage some values are lazy entries reading the archive;
         # the result's value store and device views read them back.
         value_functions=cast("PeriodToRegimeToVArr", MappingProxyType(solution)),
-        simulation_policies=MappingProxyType(simulation_policies),
+        # Under disk storage some policies are lazy entries reading the archive.
+        simulation_policies=cast(
+            "PeriodToRegimeToSimulationPolicy", MappingProxyType(simulation_policies)
+        ),
         generated_replay_authorities=MappingProxyType(generated_replay_authorities),
         dissolution_flags=MappingProxyType(dissolution_flags),
         diagnostics=MappingProxyType(solver_diagnostics),
@@ -3783,7 +3832,6 @@ def _internal_reservations_by_cell(
     assembly_bytes: dict[tuple[RegimeName, int], int] = {}
     host_templates: dict[tuple[RegimeName, int, str], ShapeDtypePytree] = {}
     native_by_cell: dict[tuple[RegimeName, int], dict[str, ResolvedCoreProgram]] = {}
-    assembly_bytes: dict[tuple[RegimeName, int], int] = {}
     for candidate, program in programs.items():
         cell = candidate[0][:2]
         sizes = by_cell.setdefault(cell, {})
@@ -4261,6 +4309,21 @@ def _narrow_native_closure(
         ),
     )
     return MappingProxyType({**regimes, name: updated})
+
+
+def _swap_in_written_periods(
+    *,
+    written: tuple[WrittenPeriod, ...],
+    solution: dict[int, MappingProxyType[RegimeName, FloatND | DiskValueEntry]],
+    simulation_policies: dict[
+        int, MappingProxyType[RegimeName, SimulationPolicy | DiskPolicyEntry]
+    ],
+) -> None:
+    """Replace written periods' host copies by the entries reading them from disk."""
+    for period in written:
+        solution[period.period] = MappingProxyType(dict(period.values))
+        if period.policies:
+            simulation_policies[period.period] = MappingProxyType(dict(period.policies))
 
 
 def _stored_values_note(*, execution: ResolvedExecution) -> str:

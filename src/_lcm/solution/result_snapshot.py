@@ -186,14 +186,17 @@ def own_artifact_store(
 
     Each authority-backed payload is validated against its authority and kept by
     reference rather than copied: nothing outside the engine holds these arrays.
-    A payload without an authority is stored as supplied.
+    A payload without an authority, or one that is a lazy entry, is stored as
+    supplied.
     """
     owned: dict[ArtifactRef, ArtifactPayload | _LazyEntry] = {}
     for ref, payload in entries.items():
         authority = authorities.get(ref)
         owned[ref] = (
             payload
-            if authority is None
+            # A lazy entry, such as a policy a solve wrote to disk, reads its own
+            # payload back when it is looked up.
+            if authority is None or isinstance(payload, _LazyEntry)
             else _canonical_artifact_entry_from_authority(
                 payload=payload,
                 authority=authority,

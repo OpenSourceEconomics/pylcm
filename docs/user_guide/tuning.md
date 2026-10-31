@@ -294,6 +294,12 @@ What moves where:
   them singly; when one value alone does not fit, save the result with
   `SolutionResult.save`, which writes every value from the host, or raise the budget.
 
+`ExecutionConfig(value_storage=...)` applies to each code's solve. Under `"host"`, the
+device holds at most three periods of one code's values, and the result keeps the pinned
+host copies. Under a directory, every code's blocks are written into one archive per
+solve, and no block stays in memory. See `value_storage` in
+[Execution configuration](../reference/runtime_and_results.md).
+
 The schedule is refused at model construction unless a state is named in
 `invariant_block_widths` and every regime carries it on a discrete grid. Simulating a
 block-major solution is refused when the simulate phase does not group subjects by the

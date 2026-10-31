@@ -15,7 +15,15 @@ import time
 from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from dataclasses import dataclass, fields, replace
 from types import MappingProxyType
-from typing import Literal, NotRequired, TypedDict, Unpack, cast
+from typing import (
+    TYPE_CHECKING,
+    Literal,
+    NotRequired,
+    Protocol,
+    TypedDict,
+    Unpack,
+    cast,
+)
 
 import jax
 import jax.numpy as jnp
@@ -122,6 +130,7 @@ from _lcm.simulation.period_inputs import (
     acquire_gate_inputs,
     decision_reads,
     gate_reads,
+    period_read_targets,
     unit_value_reads,
 )
 from _lcm.simulation.plan_summary import (
@@ -671,6 +680,15 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
                     memory=memory,
                     prepared_chunks=prepared_chunks,
                     completed_setup=completed_setup,
+                    prefetch=functools.partial(
+                        _prefetch_period_reads,
+                        active_by_period=forward_regimes_by_period(
+                            regimes=regimes, n_periods=ages.n_periods
+                        ),
+                        values=period_to_regime_to_V_arr,
+                        flags=period_to_regime_to_dissolution_flags,
+                        policies=period_to_regime_to_sim_policy or MappingProxyType({}),
+                    ),
                 )
             )
             # Reported in the order chunk by chunk would report them.
@@ -903,13 +921,15 @@ def _simulate_windows_period_by_period(
     memory: SimulationMemory | None = None,
     prepared_chunks: PreparedSimulationChunks | None = None,
     completed_setup: DeviceBufferFootprint | None = None,
+    prefetch: _Prefetch | None = None,
 ) -> list[SubjectChunkResults]:
     """Run every chunk through a period before any chunk starts the next.
 
-    The first chunk to read a stored value copies it onto the device, and the
-    read-through view keeps the copy for every later chunk of the period, so a
-    period's values cross over once, as with a single chunk. Each chunk's results
-    of a period go to the host as soon as the period is done.
+    Before a period's chunks run, `prefetch` starts copying what the next period
+    reads, so the copies overlap this period's work. The read-through view keeps
+    each copy for every chunk, so a period's values cross over once, as with a
+    single chunk. Each chunk's results of a period go to the host as soon as the
+    period is done.
 
     Under a budget the waiting chunks' carries are charged while a chunk runs,
     and each chunk is admitted against its prepared profile before its first
@@ -922,6 +942,8 @@ def _simulate_windows_period_by_period(
     carries: list[ArrayTree] = [() for _ in chunks]
     so_far: list[SubjectChunkResults] = [{} for _ in chunks]
     for period in range(n_periods):
+        if prefetch is not None and period + 1 < n_periods:
+            prefetch(period=period + 1)
         for index, chunk in enumerate(chunks):
             if memory is not None:
                 if period == 0 and prepared_chunks is not None:
@@ -944,6 +966,50 @@ def _simulate_windows_period_by_period(
     if memory is not None:
         memory.parked = ()
     return [_finish_chunk(chunk=chunk) for chunk in chunks]
+
+
+class _Prefetch(Protocol):
+    """Starts copying what one period reads; see `_prefetch_period_reads`."""
+
+    def __call__(self, *, period: int) -> None:
+        """Start copying the stored reads of `period`."""
+        ...
+
+
+if TYPE_CHECKING:
+    type _StoredValueMapping = Mapping[int, Mapping[RegimeName, jax.Array]]
+    type _StoredPolicyMapping = PeriodToRegimeToSimulationPolicy
+else:
+    # A runtime check samples one entry, and sampling a read-through view copies
+    # that value onto the device.
+    type _StoredValueMapping = object
+    type _StoredPolicyMapping = object
+
+
+def _prefetch_period_reads(
+    *,
+    period: int,
+    active_by_period: tuple[MappingProxyType[RegimeName, Regime], ...],
+    values: _StoredValueMapping,
+    flags: _StoredValueMapping,
+    policies: _StoredPolicyMapping,
+) -> None:
+    """Start copying the stored values, flags and policies `period` reads.
+
+    Reading through a read-through view dispatches the copy without waiting and
+    keeps it for the period's chunks; a value no program declares is not read.
+    Every regime a subject can occupy at the period counts, so a copy may serve
+    no subject.
+    """
+    active = active_by_period[period]
+    value_targets, flag_targets = period_read_targets(
+        active=active, period=period, values=values, flags=flags
+    )
+    for stored, targets in ((values, value_targets), (flags, flag_targets)):
+        for target_period, regime in targets:
+            stored.get(target_period, MappingProxyType({})).get(regime)
+    for name in active:
+        policies.get(period, MappingProxyType({})).get(name)
 
 
 def _finish_chunk(
@@ -1657,7 +1723,7 @@ def _require_next_period_values(
 def _referenced_value_kwargs(
     *,
     regime: Regime,
-    period_to_regime_to_V_arr: Mapping[int, Mapping[RegimeName, FloatND]],
+    period_to_regime_to_V_arr: _StoredValueMapping,
     flat_params: FlatParams,
     period: int,
 ) -> dict[ReferenceName, QAndFArg]:

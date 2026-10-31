@@ -341,21 +341,26 @@ class ExecutionConfig:
 
     - `"device"` (the default) keeps every solved period's values on the device
       until the solve returns.
-    - `"host"` copies each period's values to pinned host memory while the next
-      period computes, and frees the device copy once the period reading it has
-      finished. The device then holds at most the values of three periods: the
-      one being solved, the one it reads and one whose copy is still finishing.
-      Reading a value returns a device copy, so results, reads and simulated
-      panels are those of device storage, bit for bit. The copy runs on every
-      backend, CPU included.
+    - `"host"` copies each period's values, and the simulation policies of the
+      EGM family, to pinned host memory while the next period computes, and
+      frees the device copy once the period reading it has finished. The device
+      then holds at most the values of three periods: the one being solved, the
+      one it reads and one whose copy is still finishing. Reading a value or
+      policy returns a device copy, so results, reads and simulated panels are
+      those of device storage, bit for bit. The copy runs on every backend, CPU
+      included.
     - A directory buffers the values on disk, for when host memory is short too.
-      Values travel as under `"host"` and are then written, from a background
-      thread, to a file of their own per solve, `solution-<id>.h5` in that
-      directory; a written value leaves host memory, and the solve waits while two
-      periods still wait to be written. Reads load a value from the file. The file
-      is in the `SolutionResult.save` format and is deleted with its result unless
-      `SolutionResult.save` keeps a copy. A failed solve leaves
+      Values and policies travel as under `"host"` and are then written, from a
+      background thread, to a file of their own per solve, `solution-<id>.h5` in
+      that directory; a written period leaves host memory, and the solve waits
+      while two periods still wait to be written. Reads load a value from the
+      file. The file is in the `SolutionResult.save` format and is deleted with
+      its result unless `SolutionResult.save` keeps a copy. A failed solve leaves
       `solution-<id>.incomplete` behind, recording how far it got.
+
+    A copy or write that fails raises `ValueStorageError`, naming the period, the
+    regime and the target. A NaN is diagnosed while its period's values are still
+    on the device, so no storage mode reads values back to report it.
 
     Under `InvariantBlockSchedule.BLOCK_MAJOR`, `"device"` keeps each code's
     values on the device through its solve and then copies them to host memory,

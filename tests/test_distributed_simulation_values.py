@@ -6,6 +6,7 @@ Run this module alone so its four-CPU-device topology precedes JAX initializatio
 # Test-model declarations must run after the four-device configuration below.
 # ruff: noqa: PLC0415
 from functools import cache
+from pathlib import Path
 from types import MappingProxyType
 from typing import Literal, Never, cast
 
@@ -253,7 +254,7 @@ def _build_model(
     sharded: bool,
     subject_width: int | None = None,
     budget: int | None = None,
-    value_storage: Literal["device", "host"] = "device",
+    value_storage: Literal["device", "host"] | Path = "device",
 ) -> Model:
     """Build a sharded preference axis beside an unsharded terminal regime."""
     wealth = LinSpacedGrid(start=1, stop=20, n_points=6)

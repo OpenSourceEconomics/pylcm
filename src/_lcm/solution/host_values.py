@@ -18,10 +18,10 @@ import numpy as np
 from jax.sharding import SingleDeviceSharding
 
 from _lcm.execution.footprint import per_device_footprint
-from _lcm.typing import ArtifactPayload
+from _lcm.typing import ArtifactPayload, SimulationPolicy
 from lcm._solver_api.entries import _LazyEntry
 from lcm._solver_api.identity import LoadState
-from lcm.exceptions import ExecutionPlanningError
+from lcm.exceptions import ExecutionPlanningError, ValueStorageError
 from lcm.typing import FloatND, RegimeName
 
 # The memory kind a stored value lives in.
@@ -29,25 +29,119 @@ HOST_MEMORY_KIND: Literal["pinned_host"] = "pinned_host"
 
 # Periods whose device copies a read-through view keeps at once: a simulation
 # step reads its own period, the one its subjects land in and, replaying a
-# same-period exit, the one after that.
-_CACHED_PERIODS = 3
+# same-period exit, the one after that; the next period's reads, copied early
+# while this period runs, add one more.
+_CACHED_PERIODS = 4
+
+# What a read-through view reads from, hands out, and describes to planners: a
+# value array or a simulation policy, kept in host memory or as a lazy entry.
+type _Stored = jax.Array | SimulationPolicy | _LazyEntry
+type _OnDevice = jax.Array | SimulationPolicy
+type _StandIn = jax.ShapeDtypeStruct | SimulationPolicy
+
+
+# Where a host copy goes, as a failed copy names it.
+_HOST_DESTINATION = "pinned host memory"
 
 
 def copy_values_to_host(
-    *, values: Mapping[RegimeName, jax.Array]
+    *, period: int, values: Mapping[RegimeName, jax.Array]
 ) -> MappingProxyType[RegimeName, jax.Array]:
     """Start copying one period's arrays to pinned host memory, without waiting.
 
     Each copy keeps its array's sharding, so every device copies its own slice,
     and runs while the device computes whatever is dispatched after it.
+
+    Raises:
+        ValueStorageError: A copy could not be started, naming its period and
+            regime.
+
     """
-    return MappingProxyType(
-        {
-            regime_name: jax.device_put(
-                value, value.sharding.with_memory_kind(HOST_MEMORY_KIND)
+    copies: dict[RegimeName, jax.Array] = {}
+    for regime_name, value in values.items():
+        try:
+            copies[regime_name] = _to_pinned_host(value)
+        except RuntimeError as error:
+            raise value_storage_error(
+                action="copy",
+                period=period,
+                regime=regime_name,
+                destination=_HOST_DESTINATION,
+            ) from error
+    return MappingProxyType(copies)
+
+
+def copy_policies_to_host(
+    *, period: int, policies: Mapping[RegimeName, SimulationPolicy]
+) -> MappingProxyType[RegimeName, SimulationPolicy]:
+    """Start copying one period's simulation policies to pinned host memory.
+
+    Each array leaf travels as a value does, on its own sharding and without
+    waiting; the policy's structure and any non-array leaf are kept.
+
+    Raises:
+        ValueStorageError: A copy could not be started, naming its period and
+            regime.
+
+    """
+    copies: dict[RegimeName, SimulationPolicy] = {}
+    for regime_name, policy in policies.items():
+        try:
+            copies[regime_name] = jax.tree.map(
+                lambda leaf: (
+                    _to_pinned_host(leaf) if isinstance(leaf, jax.Array) else leaf
+                ),
+                policy,
             )
-            for regime_name, value in values.items()
-        }
+        except RuntimeError as error:
+            raise value_storage_error(
+                action="copy",
+                period=period,
+                regime=regime_name,
+                destination=_HOST_DESTINATION,
+            ) from error
+    return MappingProxyType(copies)
+
+
+def _to_pinned_host(value: jax.Array) -> jax.Array:
+    """Dispatch one array's copy to pinned host memory on its own sharding."""
+    return jax.device_put(value, value.sharding.with_memory_kind(HOST_MEMORY_KIND))
+
+
+def wait_for_host_copies(
+    *, copies: tuple[tuple[int, RegimeName, jax.Array], ...]
+) -> None:
+    """Wait until every `(period, regime, copy)` has arrived in pinned host memory.
+
+    Raises:
+        ValueStorageError: A copy failed, naming its period and regime.
+
+    """
+    for period, regime_name, copy in copies:
+        try:
+            jax.block_until_ready(copy)
+        except RuntimeError as error:
+            raise value_storage_error(
+                action="copy",
+                period=period,
+                regime=regime_name,
+                destination=_HOST_DESTINATION,
+            ) from error
+
+
+def value_storage_error(
+    *,
+    action: Literal["copy", "write"],
+    period: int,
+    regime: RegimeName,
+    destination: str,
+    code: int | None = None,
+) -> ValueStorageError:
+    """Return the error for a value that did not reach its value storage."""
+    of_code = "" if code is None else f"code {code} of "
+    return ValueStorageError(
+        f"Could not {action} {of_code}period {period}, regime {regime!r} to "
+        f"{destination}."
     )
 
 
@@ -161,21 +255,20 @@ class _RecentDeviceCopies:
     def __init__(
         self,
         *,
-        stand_in: MappingProxyType[
-            int, MappingProxyType[RegimeName, jax.ShapeDtypeStruct]
-        ],
+        stand_in: MappingProxyType[int, MappingProxyType[RegimeName, _StandIn]],
+        stored: Mapping[int, Mapping[RegimeName, _Stored]],
     ) -> None:
-        self._copies: dict[int, dict[RegimeName, jax.Array]] = {}
+        self._copies: dict[int, dict[RegimeName, _OnDevice]] = {}
         self.stand_in = stand_in
         """The view's values as shapes on their device placement, for planners."""
+        self.stored = stored
+        """What the view reads from: host-memory arrays or lazy entries."""
 
-    def held(self) -> tuple[dict[RegimeName, jax.Array], ...]:
+    def held(self) -> tuple[dict[RegimeName, _OnDevice], ...]:
         """Return the device copies kept, one mapping per cached period."""
         return tuple(self._copies.values())
 
-    def read(
-        self, *, period: int, regime: RegimeName, stored: jax.Array | _LazyEntry
-    ) -> jax.Array:
+    def read(self, *, period: int, regime: RegimeName, stored: _Stored) -> _OnDevice:
         """Return the device copy of one stored value, copying it on first read.
 
         The period read least recently is dropped first. A reader holds a value
@@ -191,31 +284,41 @@ class _RecentDeviceCopies:
         copies = self._copies[period]
         if regime not in copies:
             copies[regime] = (
-                cast("jax.Array", stored.materialize())
+                cast("_OnDevice", stored.materialize())
                 if isinstance(stored, _LazyEntry)
-                else to_device(stored)
+                else jax.tree.map(
+                    lambda leaf: (
+                        to_device(leaf) if isinstance(leaf, jax.Array) else leaf
+                    ),
+                    stored,
+                )
             )
         return copies[regime]
 
 
-class _DeviceReadPeriod(Mapping[RegimeName, jax.Array]):
-    """One period's stored arrays, each handed out as a device copy."""
+class _DeviceReadPeriod(Mapping[RegimeName, _OnDevice]):
+    """One period's stored arrays or policies, each handed out as a device copy."""
 
     def __init__(
         self,
         *,
         period: int,
-        stored: Mapping[RegimeName, jax.Array | _LazyEntry],
+        stored: Mapping[RegimeName, _Stored],
         copies: _RecentDeviceCopies,
     ) -> None:
         self._period = period
         self._stored = stored
         self._copies = copies
 
-    def __getitem__(self, regime: RegimeName) -> jax.Array:
+    def __getitem__(self, regime: RegimeName) -> _OnDevice:
         return self._copies.read(
             period=self._period, regime=regime, stored=self._stored[regime]
         )
+
+    def __contains__(self, regime: object) -> bool:
+        # Asking whether a regime is stored reads nothing: the mixin's default
+        # would look the value up, copying it onto the device.
+        return regime in self._stored
 
     def __iter__(self) -> Iterator[RegimeName]:
         return iter(self._stored)
@@ -224,8 +327,51 @@ class _DeviceReadPeriod(Mapping[RegimeName, jax.Array]):
         return len(self._stored)
 
 
+def policy_read_view(
+    *, policies: Mapping[int, Mapping[RegimeName, SimulationPolicy | _LazyEntry]]
+) -> MappingProxyType[int, MappingProxyType[RegimeName, SimulationPolicy]]:
+    """Return stored simulation policies as a mapping that hands out device copies.
+
+    It caches as `device_read_view` does, so the chunks of a period share one
+    copy of each policy they read.
+    """
+    return cast(
+        "MappingProxyType[int, MappingProxyType[RegimeName, SimulationPolicy]]",
+        device_read_view(values=policies),
+    )
+
+
+def stored_form[T](
+    values: Mapping[int, Mapping[RegimeName, T]],
+) -> Mapping[int, Mapping[RegimeName, T]]:
+    """Return a read-through view's stored contents for a host-side check.
+
+    Host-memory arrays come as they are; a lazy entry is read onto the CPU device
+    (`host_payload`). Anything that is not a view comes back as it is.
+    """
+    copies = _VIEW_COPIES.get(id(values))
+    if copies is None:
+        return values
+    return MappingProxyType(
+        {
+            period: MappingProxyType(
+                {
+                    regime: cast(
+                        "T",
+                        getattr(stored, "host_payload")()  # noqa: B009
+                        if isinstance(stored, _LazyEntry)
+                        else stored,
+                    )
+                    for regime, stored in regime_to_stored.items()
+                }
+            )
+            for period, regime_to_stored in copies.stored.items()
+        }
+    )
+
+
 def device_read_view(
-    *, values: Mapping[int, Mapping[RegimeName, jax.Array | _LazyEntry]]
+    *, values: Mapping[int, Mapping[RegimeName, _Stored]]
 ) -> MappingProxyType[int, MappingProxyType[RegimeName, jax.Array]]:
     """Return host-stored arrays as a mapping that hands out device copies.
 
@@ -245,7 +391,8 @@ def device_read_view(
                 )
                 for period, stored in values.items()
             }
-        )
+        ),
+        stored=values,
     )
     view = MappingProxyType(
         {
@@ -258,7 +405,56 @@ def device_read_view(
     # Only the view reaches `copies`, so this entry goes with the view and a
     # later object reusing its id finds nothing.
     _VIEW_COPIES[id(view)] = copies
+    # A view of values hands out arrays; `policy_read_view` recasts its own.
+    return cast("MappingProxyType[int, MappingProxyType[RegimeName, jax.Array]]", view)
+
+
+class _LazyReadMapping[K, V](Mapping[K, V]):
+    """A read-only mapping that reads each lazy entry when it is looked up."""
+
+    def __init__(self, entries: Mapping[K, V | _LazyEntry]) -> None:
+        self.entries: MappingProxyType[K, V | _LazyEntry] = MappingProxyType(
+            dict(entries)
+        )
+
+    def __getitem__(self, key: K) -> V:
+        entry = self.entries[key]
+        return (
+            cast("V", entry.materialize()) if isinstance(entry, _LazyEntry) else entry
+        )
+
+    def __contains__(self, key: object) -> bool:
+        # Membership reads nothing; the mixin's default would read the entry.
+        return key in self.entries
+
+    def __iter__(self) -> Iterator[K]:
+        return iter(self.entries)
+
+    def __len__(self) -> int:
+        return len(self.entries)
+
+
+def lazy_read_view[K, V](
+    *, entries: Mapping[K, V | _LazyEntry]
+) -> MappingProxyType[K, V]:
+    """Return a mapping that reads each lazy entry, such as a policy on disk, on lookup.
+
+    Nothing read is kept: each lookup reads the entry again, so the view holds
+    no device memory.
+    """
+    lazy = _LazyReadMapping[K, V](entries)
+    view = MappingProxyType(lazy)
+    # Only the view reaches `lazy`, so this entry goes with the view.
+    _LAZY_VIEWS[id(view)] = lazy
     return view
+
+
+def lazy_entries_of_view(
+    *, view_id: int
+) -> tuple[ArtifactPayload | _LazyEntry, ...] | None:
+    """The stored entries behind a lazy read view, by the view's id; else `None`."""
+    lazy = _LAZY_VIEWS.get(view_id)
+    return None if lazy is None else tuple(lazy.entries.values())
 
 
 if TYPE_CHECKING:
@@ -268,6 +464,11 @@ else:
     # that value onto the device.
     type _StoredValues = object
 
+
+# The mapping behind every live lazy read view, by the view's id.
+_LAZY_VIEWS: weakref.WeakValueDictionary[int, _LazyReadMapping] = (
+    weakref.WeakValueDictionary()
+)
 
 # The copy cache of every live read-through view, by the view's id.
 _VIEW_COPIES: weakref.WeakValueDictionary[int, _RecentDeviceCopies] = (
@@ -280,35 +481,34 @@ def is_device_read_view(values: _StoredValues) -> bool:
     return id(values) in _VIEW_COPIES
 
 
-def _device_stand_in(*, stored: jax.Array | _LazyEntry) -> jax.ShapeDtypeStruct:
-    """Describe a stored value as the array a read would place on the device."""
-    if isinstance(stored, jax.Array):
-        return jax.ShapeDtypeStruct(
-            stored.shape,
-            stored.dtype,
-            sharding=stored.sharding.with_memory_kind("device"),
-        )
-    # A disk entry records the shape, dtype and sharding it was solved on.
-    shape, dtype, sharding = (
-        cast("tuple[int, ...]", getattr(stored, "shape")),  # noqa: B009
-        cast("np.dtype", getattr(stored, "dtype")),  # noqa: B009
-        cast("jax.sharding.Sharding", getattr(stored, "sharding")),  # noqa: B009
-    )
-    return jax.ShapeDtypeStruct(
-        shape, dtype, sharding=sharding.with_memory_kind("device")
+def _device_stand_in(*, stored: _Stored) -> _StandIn:
+    """Describe a stored value as what a read would place on the device."""
+    if isinstance(stored, _LazyEntry):
+        # A disk entry records the shapes, dtypes and shardings it was solved on.
+        return cast("_StandIn", getattr(stored, "device_stand_in")())  # noqa: B009
+    return jax.tree.map(
+        lambda leaf: (
+            jax.ShapeDtypeStruct(
+                leaf.shape,
+                leaf.dtype,
+                sharding=leaf.sharding.with_memory_kind("device"),
+            )
+            if isinstance(leaf, jax.Array)
+            else leaf
+        ),
+        stored,
     )
 
 
-def planning_stand_in(
-    values: _StoredValues,
-) -> Mapping[int, Mapping[RegimeName, jax.Array | jax.ShapeDtypeStruct]]:
+def planning_stand_in[T](values: T) -> T:
     """Return a read-through view as shapes, or any other values as they are.
 
-    Planners need only the shape, dtype and placement of the values; reading a
-    view for them would copy every value onto the device.
+    Planners need only the shape, dtype and placement of stored values or
+    policies; reading a view for them would copy each onto the device. A stand-in
+    keeps a policy's structure with a `jax.ShapeDtypeStruct` for each array.
     """
     copies = _VIEW_COPIES.get(id(values))
-    return values if copies is None else copies.stand_in
+    return values if copies is None else cast("T", copies.stand_in)
 
 
 def device_copies_of_view(*, view_id: int) -> tuple[jax.Array, ...] | None:
@@ -320,5 +520,9 @@ def device_copies_of_view(*, view_id: int) -> tuple[jax.Array, ...] | None:
     if copies is None:
         return None
     return tuple(
-        copy for regime_to_copy in copies.held() for copy in regime_to_copy.values()
+        leaf
+        for regime_to_copy in copies.held()
+        for copy in regime_to_copy.values()
+        for leaf in jax.tree.leaves(copy)
+        if isinstance(leaf, jax.Array)
     )

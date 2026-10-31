@@ -2,7 +2,7 @@
 
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import jax
 
@@ -26,6 +26,15 @@ from _lcm.solution.continuation_reads import rekeyed_value_reads
 from _lcm.typing import QAndFArg, QAndFKwargs, SimulationPolicy
 from lcm.solver_api import DISSOLUTION_FLAG, SIMULATION_POLICY, ReplayReader
 from lcm.typing import FloatND, ReferenceName, RegimeName
+
+if TYPE_CHECKING:
+    # Stored arrays, or their planning stand-ins. Declaring reads only looks up
+    # which `(period, regime)` pairs are stored, so either serves.
+    type _Declared = Mapping[int, Mapping[str, jax.Array | jax.ShapeDtypeStruct]]
+else:
+    # A runtime check samples one entry, and sampling a read-through view copies
+    # that value onto the device.
+    type _Declared = object
 
 GATE_FOLD = "simulation_gate_fold"
 GATE_ROUTE = "simulation_gate_route"
@@ -67,8 +76,8 @@ def unit_value_reads(
     regime: Regime,
     name: str,
     period: int,
-    values: Mapping[int, Mapping[str, jax.Array]],
-    flags: Mapping[int, Mapping[str, jax.Array]],
+    values: _Declared,
+    flags: _Declared,
     policy: SimulationPolicy | None,
     reader: PreparedReplayReader | ReplayReader | None,
     current_iid_replay_input: CurrentIIDReplayInput | None = None,
@@ -136,13 +145,46 @@ def unit_value_reads(
     return tuple(reads)
 
 
+def period_read_targets(
+    *,
+    active: Mapping[RegimeName, Regime],
+    period: int,
+    values: _Declared,
+    flags: _Declared,
+) -> tuple[frozenset[tuple[int, RegimeName]], frozenset[tuple[int, RegimeName]]]:
+    """Return the stored values and dissolution flags `period` declares it reads.
+
+    Every regime a subject can occupy at the period counts, by `(period,
+    regime)`. Which policy or replay reader a regime uses does not change these
+    targets, so none is needed; nothing is read to find them.
+    """
+    value_targets: set[tuple[int, RegimeName]] = set()
+    flag_targets: set[tuple[int, RegimeName]] = set()
+    for name, regime in active.items():
+        for read in unit_value_reads(
+            regime=regime,
+            name=name,
+            period=period,
+            values=values,
+            flags=flags,
+            policy=None,
+            reader=None,
+        ):
+            target = read.target
+            if target.kind is ValueArtifactKind.REGIME_VALUE:
+                value_targets.add((target.period, target.regime))
+            elif target.artifact_key == DISSOLUTION_FLAG:
+                flag_targets.add((target.period, target.regime))
+    return frozenset(value_targets), frozenset(flag_targets)
+
+
 def gate_reads(
     *,
     regime: Regime,
     name: str,
     period: int,
-    values: Mapping[int, Mapping[str, jax.Array]],
-    flags: Mapping[int, Mapping[str, jax.Array]],
+    values: _Declared,
+    flags: _Declared,
 ) -> tuple[ValueRead, ...]:
     """Declare raw V and stored Boolean D for the fold and realized gate.
 

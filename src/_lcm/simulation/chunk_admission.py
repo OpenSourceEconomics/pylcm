@@ -18,6 +18,7 @@ import jax
 from _lcm.egm.current_iid_replay_inputs import CurrentIIDReplayInputs
 from _lcm.engine import Regime, placed_devices_for_ids
 from _lcm.execution.core_program import ReducedAxis, TiledOutputAxis
+from _lcm.execution.footprint import per_device_footprint
 from _lcm.execution.workspace_planning import workspace_width_candidates
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.projected_forward import ProjectedForwardInputs
@@ -37,7 +38,11 @@ from _lcm.simulation.chunk_profile_cache import profile_cache_registry
 from _lcm.simulation.chunk_profiles import profile_simulation_chunk
 from _lcm.simulation.current_iid_overrides import CurrentIIDOverrideSchema
 from _lcm.simulation.memory import SimulationMemory
-from _lcm.simulation.programs import budgeted_simulation_programs_ready
+from _lcm.simulation.period_inputs import period_read_targets
+from _lcm.simulation.programs import (
+    budgeted_simulation_programs_ready,
+    forward_regimes_by_period,
+)
 from _lcm.simulation.residency import (
     DeviceBufferFootprint,
     measure_buffer_footprint,
@@ -243,7 +248,7 @@ def prepare_simulation_chunks(
         # placement; reading values kept off the device would copy them.
         values=planning_stand_in(values),
         flags=flags,
-        policies=policies,
+        policies=planning_stand_in(policies),
         current_iid_replay_inputs=current_iid_replay_inputs,
         projected_forward_inputs=projected_forward_inputs,
         ages=ages,
@@ -276,13 +281,23 @@ def prepare_simulation_chunks(
             initial_conditions=initial_conditions,
             subject_devices=runtime.subject_devices,
         )
+        prefetch = _prefetch_bytes(
+            regimes=regimes,
+            values=planning_stand_in(values),
+            flags=planning_stand_in(flags),
+            policies=planning_stand_in(policies),
+            n_periods=ages.n_periods,
+            devices=devices,
+        )
         try:
             plan = _plan_independent_chunks(
                 profiler=replace(
                     profiler,
                     resident=MappingProxyType(
                         {
-                            device: bytes_ + carry.get(device, 0)
+                            device: bytes_
+                            + carry.get(device, 0)
+                            + prefetch.get(device, 0)
                             for device, bytes_ in resident.items()
                         }
                     ),
@@ -294,8 +309,10 @@ def prepare_simulation_chunks(
                 "Simulating values kept off the device in several chunks runs every "
                 "chunk through a period before the next, so every subject's state "
                 f"stays on the device: about {dict(sorted(carry.items(), key=str))!r} "
-                "bytes beside a chunk's workspace. Simulate fewer subjects per call "
-                "or raise ExecutionConfig.device_memory_bytes."
+                "bytes, and the next period's reads are copied early: about "
+                f"{dict(sorted(prefetch.items(), key=str))!r} bytes, beside a chunk's "
+                "workspace. Simulate fewer subjects per call or raise "
+                "ExecutionConfig.device_memory_bytes."
                 f"{runtime.execution.device_memory_cap_note()}"
             )
             raise ExecutionPlanningError(msg) from error
@@ -326,6 +343,53 @@ def _population_carry_bytes(
     total += 3 * population * 4
     share = math.ceil(total / len(subject_devices))
     return dict.fromkeys(subject_devices, share)
+
+
+def _prefetch_bytes(
+    *,
+    regimes: Mapping[RegimeName, Regime],
+    values: Mapping[int, Mapping[str, jax.Array | jax.ShapeDtypeStruct]],
+    flags: Mapping[int, Mapping[str, jax.Array | jax.ShapeDtypeStruct]],
+    policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None,
+    n_periods: int,
+    devices: tuple[jax.Device, ...],
+) -> dict[jax.Device, int]:
+    """Estimate each device's bytes of the largest read set one period copies early.
+
+    The period-by-period loop starts copying the next period's declared values,
+    flags and policies while a period runs, so they sit beside that period's own
+    reads. Every argument is a planning stand-in: nothing is read.
+    """
+    by_id = {device.id: device for device in devices}
+    active_by_period = forward_regimes_by_period(regimes=regimes, n_periods=n_periods)
+    largest: dict[jax.Device, int] = {}
+    for period in range(1, n_periods):
+        active = active_by_period[period]
+        value_targets, flag_targets = period_read_targets(
+            active=active, period=period, values=values, flags=flags
+        )
+        arrays = [
+            stored[target_period][regime]
+            for stored, targets in ((values, value_targets), (flags, flag_targets))
+            for target_period, regime in targets
+            if regime in stored.get(target_period, {})
+        ]
+        arrays.extend(
+            leaf
+            for name in active
+            for leaf in jax.tree.leaves((policies or {}).get(period, {}).get(name))
+            if isinstance(leaf, jax.Array | jax.ShapeDtypeStruct)
+        )
+        need: dict[jax.Device, int] = {}
+        for array in arrays:
+            footprint = per_device_footprint(array=array)
+            for device_id in footprint.device_ids:
+                if device_id in by_id:
+                    device = by_id[device_id]
+                    need[device] = need.get(device, 0) + footprint.bytes_per_device
+        for device, bytes_ in need.items():
+            largest[device] = max(largest.get(device, 0), bytes_)
+    return largest
 
 
 def _simulation_chunk_profile_key(

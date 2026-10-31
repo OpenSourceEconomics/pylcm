@@ -1584,8 +1584,12 @@ def _host_outside_device_ceiling(
 
 def _policy_read_sources(
     *, policies: Mapping[RegimeName, SimulationPolicy], period: int
-) -> dict[ValueArtifactAddress, jax.Array]:
-    """Index canonical retained finite leaves by the actual period-owner addresses."""
+) -> dict[ValueArtifactAddress, jax.Array | jax.ShapeDtypeStruct]:
+    """Index canonical retained finite leaves by the actual period-owner addresses.
+
+    A policy kept off the device arrives as its planning stand-in, with a shape
+    for each leaf on the placement a read copies it to.
+    """
     sources = {}
     for name, policy in policies.items():
         if not isinstance(policy, NNBEGMSimPolicy):
@@ -1593,7 +1597,9 @@ def _policy_read_sources(
                 "Chunk policy copies require a finite retained payload schema."
             )
         leaves = jax.tree.leaves(policy)
-        if not all(isinstance(leaf, jax.Array) for leaf in leaves):
+        if not all(
+            isinstance(leaf, jax.Array | jax.ShapeDtypeStruct) for leaf in leaves
+        ):
             raise ExecutionPlanningError(
                 "Chunk policy copies require canonical JAX leaves."
             )
@@ -1615,7 +1621,7 @@ def _retained_read_source(
     read: ValueRead,
     values: Mapping[int, Mapping[str, jax.Array | jax.ShapeDtypeStruct]],
     flags: Mapping[int, Mapping[str, jax.Array]],
-    policy_sources: Mapping[ValueArtifactAddress, jax.Array],
+    policy_sources: Mapping[ValueArtifactAddress, jax.Array | jax.ShapeDtypeStruct],
     projected_forward_inputs: ProjectedForwardInputs = MappingProxyType({}),
 ) -> jax.Array | jax.ShapeDtypeStruct:
     """Resolve only the declared value and finite-policy storage classes.

@@ -1,11 +1,13 @@
 """Failure-path and logging diagnostics for backward induction.
 
 The hot loop folds two async NaN/Inf reductions (plus, at debug, a
-min/max/mean trio) into the accumulators initialized here; after the loop,
-`emit_post_loop_diagnostics` decides on one host scalar per flag whether to
-enter the per-row failure path — raising on the first NaN row with the
-enriched `validate_V` breakdown, warning per Inf row, and logging the debug
-stats. A healthy solve materialises nothing per row.
+min/max/mean trio) into the accumulators initialized here and keeps each row's
+own pair of flags, which become host booleans at the period barrier. At the
+first period with a NaN row, the enriched `validate_V` breakdown runs right
+there, while that period's values and the next-period values it read are still
+on the device. After the loop, `emit_post_loop_diagnostics` raises that error,
+warns per Inf row from the row flags, and logs the debug stats, so it reads no
+value back, wherever the solve stores them.
 """
 
 import dataclasses
@@ -15,7 +17,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Literal
+from typing import Literal, cast
 
 import jax
 import jax.numpy as jnp
@@ -24,11 +26,14 @@ from _lcm.engine import Regime, StateActionSpace
 from _lcm.params.edges import regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.solution.feasibility import ContinuationReadCounts, FeasibilityCounts
+from _lcm.solution.host_values import device_read_view
 from _lcm.solution.validate_V import validate_V
 from _lcm.time import TimeAxis, coordinate_kind
 from _lcm.transition_plans import InterpolationBasisInfo
-from _lcm.typing import FlatParams, RegimeName
+from _lcm.typing import FlatParams, PeriodToRegimeToVArr, RegimeName
 from _lcm.utils.logging import v_array_has_inf, v_array_has_nan
+from lcm._solver_api.entries import _LazyEntry
+from lcm.exceptions import InvalidValueFunctionError
 from lcm.typing import BoolND, FloatND, IntND, StateName
 
 
@@ -36,12 +41,11 @@ from lcm.typing import BoolND, FloatND, IntND, StateName
 class _DiagnosticRow:
     """Metadata captured during the backward-induction loop.
 
-    Native scalar counters become host metadata at the period barrier, so
-    completed rows retain no device buffers. State-action space, next-period
-    V mapping, regime params, and
-    the `compute_intermediates` closure are reconstructed lazily on the
-    failure path from `regimes`, `flat_params`, and the
-    partial `solution` built up to that point.
+    Native scalar counters and the NaN/Inf flags become host metadata at the
+    period barrier, so completed rows retain no device buffers. State-action
+    space, regime params and the `compute_intermediates` closure are
+    reconstructed on the failure path from `regimes` and `flat_params`, at the
+    barrier of the first period with a NaN row.
     """
 
     regime_name: RegimeName
@@ -57,6 +61,10 @@ class _DiagnosticRow:
     """Native counts, moved to host metadata at the period's existing barrier."""
     continuation_read_counts: ContinuationReadCounts | tuple[int, int] | None = None
     """One paired-read summary, copied once at the period barrier."""
+    has_nan: BoolND | bool | None = None
+    """Whether the row's V holds a NaN; a host bool once the barrier has passed."""
+    has_inf: BoolND | bool | None = None
+    """Whether the row's V holds an Inf; a host bool once the barrier has passed."""
 
 
 type FeasibilityWarnings = dict[_DiagnosticRow, tuple[int, int]]
@@ -94,7 +102,6 @@ def emit_component_feasibility_warnings(
                 dataclasses.replace(row, feasibility_counts=value)
                 for row, value in counts.items()
             ],
-            solution=MappingProxyType({}),
             scope=scope,
         )
     counts.clear()
@@ -166,6 +173,10 @@ def _fold_period_diagnostics(
         diagnostic_mean.append(
             _place_like(scalar=jnp.mean(V_arr), running=running_any_nan)
         )
+    has_nan = has_inf = None
+    if diagnostics_enabled:
+        has_nan = _place_like(scalar=v_array_has_nan(V_arr), running=running_any_nan)
+        has_inf = _place_like(scalar=v_array_has_inf(V_arr), running=running_any_inf)
     diagnostic_rows.append(
         _DiagnosticRow(
             regime_name=regime_name,
@@ -174,20 +185,19 @@ def _fold_period_diagnostics(
             time_kind=coordinate_kind(ages),
             feasibility_counts=feasibility_counts,
             continuation_read_counts=continuation_read_counts,
+            has_nan=has_nan,
+            has_inf=has_inf,
         )
     )
-    if not diagnostics_enabled:
+    if has_nan is None or has_inf is None:
         return running_any_nan, running_any_inf
-    observed_inf = v_array_has_inf(V_arr)
+    observed_inf = has_inf
     if feasibility_counts is not None:
         # Collective dissolution can produce finite fallback values.
         observed_inf = _fold_flag(
             running=observed_inf, observed=feasibility_counts[0] > 0
         )
-    return (
-        _fold_flag(running=running_any_nan, observed=v_array_has_nan(V_arr)),
-        _fold_flag(running=running_any_inf, observed=observed_inf),
-    )
+    return running_any_nan | has_nan, running_any_inf | observed_inf
 
 
 def _fold_flag(*, running: BoolND, observed: BoolND) -> BoolND:
@@ -206,7 +216,10 @@ def _fold_flag(*, running: BoolND, observed: BoolND) -> BoolND:
 def _materialize_period_feasibility_counts(
     *, diagnostic_rows: list[_DiagnosticRow], period: int, enabled: bool
 ) -> None:
-    """Release native counter roots before starting another period."""
+    """Move a period's counters and NaN/Inf flags to host metadata.
+
+    Releases the native counter roots before another period starts.
+    """
     for index in range(len(diagnostic_rows) - 1, -1, -1):
         row = diagnostic_rows[index]
         if row.period != period:
@@ -219,8 +232,16 @@ def _materialize_period_feasibility_counts(
         if row.continuation_read_counts is not None:
             below, eligible = jax.device_get(row.continuation_read_counts)
             reads = int(below), int(eligible)
+        flags: tuple[bool | None, bool | None] = (None, None)
+        if row.has_nan is not None and row.has_inf is not None:
+            has_nan, has_inf = jax.device_get((row.has_nan, row.has_inf))
+            flags = bool(has_nan), bool(has_inf)
         diagnostic_rows[index] = dataclasses.replace(
-            row, feasibility_counts=counts, continuation_read_counts=reads
+            row,
+            feasibility_counts=counts,
+            continuation_read_counts=reads,
+            has_nan=flags[0],
+            has_inf=flags[1],
         )
 
 
@@ -239,31 +260,24 @@ def _emit_post_loop_diagnostics(
     *,
     logger: logging.Logger,
     diagnostic_rows: list[_DiagnosticRow],
-    solution: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
-    regimes: MappingProxyType[RegimeName, Regime],
-    flat_params: FlatParams,
-    running_any_nan: BoolND,
+    nan_error: InvalidValueFunctionError | None,
     running_any_inf: BoolND,
     diagnostic_min: list[FloatND] | None,
     diagnostic_max: list[FloatND] | None,
     diagnostic_mean: list[FloatND] | None,
-    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> None:
     """Flush async diagnostics: raise on NaN, warn on Inf, log debug stats.
 
-    Only enters the per-row failure path when the running NaN or Inf
-    accumulators are set, so a healthy solve incurs no host-side scalar
-    materialisation here.
+    The NaN error was built at the barrier of its period. Inf warnings are only
+    entered when the running Inf accumulator is set, and read the row flags, so
+    a healthy solve incurs no host-side scalar materialisation here.
+
+    Raises:
+        InvalidValueFunctionError: `nan_error`, when the solve found a NaN.
+
     """
-    if running_any_nan.item():
-        _raise_first_nan_row(
-            logger=logger,
-            diagnostic_rows=diagnostic_rows,
-            solution=solution,
-            regimes=regimes,
-            flat_params=flat_params,
-            process_grid_resolver=process_grid_resolver,
-        )
+    if nan_error is not None:
+        raise nan_error
     if logger.isEnabledFor(logging.WARNING):
         for row in diagnostic_rows:
             if row.continuation_read_counts is not None:
@@ -278,11 +292,7 @@ def _emit_post_loop_diagnostics(
                         eligible,
                     )
     if running_any_inf.item() and logger.isEnabledFor(logging.WARNING):
-        _warn_inf_rows(
-            logger=logger,
-            diagnostic_rows=diagnostic_rows,
-            solution=solution,
-        )
+        _warn_inf_rows(logger=logger, diagnostic_rows=diagnostic_rows)
     if diagnostic_min is not None and diagnostic_max is not None and diagnostic_mean:
         _log_per_period_stats(
             logger=logger,
@@ -293,11 +303,55 @@ def _emit_post_loop_diagnostics(
         )
 
 
+def period_nan_error(
+    *,
+    logger: logging.Logger,
+    diagnostic_rows: list[_DiagnosticRow],
+    period: int,
+    period_values: MappingProxyType[RegimeName, FloatND],
+    next_values: MappingProxyType[RegimeName, FloatND],
+    stored_values: Mapping[int, Mapping[RegimeName, FloatND | _LazyEntry]],
+    store_on_host: bool,
+    regimes: MappingProxyType[RegimeName, Regime],
+    flat_params: FlatParams,
+    process_grid_resolver: ProcessGridResolver | None = None,
+) -> InvalidValueFunctionError | None:
+    """Return the enriched error of the period's first NaN row, if it has one.
+
+    Runs at the period barrier, after the row flags became host booleans, while
+    the period's values and the next-period values its programs read are still
+    on the device. The error's partial solution is the values solved so far,
+    read back from value storage only if someone reads it.
+    """
+    rows = [row for row in diagnostic_rows if row.period == period and row.has_nan]
+    if not rows:
+        return None
+    partial = {**stored_values, period: period_values}
+    try:
+        _raise_first_nan_row(
+            logger=logger,
+            diagnostic_rows=rows,
+            solution=MappingProxyType({period: period_values, period + 1: next_values}),
+            partial_solution=(
+                device_read_view(values=partial)
+                if store_on_host
+                else cast("PeriodToRegimeToVArr", MappingProxyType(partial))
+            ),
+            regimes=regimes,
+            flat_params=flat_params,
+            process_grid_resolver=process_grid_resolver,
+        )
+    except InvalidValueFunctionError as error:
+        return error
+    return None
+
+
 def _raise_first_nan_row(
     *,
     logger: logging.Logger,
     diagnostic_rows: list[_DiagnosticRow],
     solution: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
+    partial_solution: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
     process_grid_resolver: ProcessGridResolver | None = None,
@@ -313,6 +367,7 @@ def _raise_first_nan_row(
                 logger=logger,
                 row=row,
                 solution=solution,
+                partial_solution=partial_solution,
                 regimes=regimes,
                 flat_params=flat_params,
                 process_grid_resolver=process_grid_resolver,
@@ -324,6 +379,7 @@ def _raise_at(
     logger: logging.Logger,
     row: _DiagnosticRow,
     solution: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
+    partial_solution: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
     process_grid_resolver: ProcessGridResolver | None = None,
@@ -376,7 +432,7 @@ def _raise_at(
         V_arr=V_arr,
         age=row.age,
         regime_name=row.regime_name,
-        partial_solution=solution,
+        partial_solution=partial_solution,
         compute_intermediates=compute_intermediates,
         state_action_space=state_action_space,
         next_regime_to_V_arr=next_regime_to_V_arr,
@@ -428,13 +484,12 @@ def _warn_inf_rows(
     *,
     logger: logging.Logger,
     diagnostic_rows: list[_DiagnosticRow],
-    solution: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
     scope: str = "",
 ) -> None:
     """Emit a warning per (regime, period) with Inf values.
 
-    Only invoked on the failure path (`running_any_inf` was True).
-    Materialises one host-side bool per row.
+    Only invoked on the failure path (`running_any_inf` was True). Reads the
+    row flags the period barrier made host booleans.
     """
     for row in diagnostic_rows:
         if row.feasibility_counts is not None:
@@ -443,7 +498,9 @@ def _warn_inf_rows(
             )
             collected = _component_feasibility_warnings.get()
             if collected is not None:
-                key = dataclasses.replace(row, feasibility_counts=None)
+                key = dataclasses.replace(
+                    row, feasibility_counts=None, has_nan=None, has_inf=None
+                )
                 empty, other = collected.get(key, (0, 0))
                 collected[key] = empty + empty_count, other + other_inf_count
                 continue
@@ -470,8 +527,7 @@ def _warn_inf_rows(
                     scope,
                 )
             continue
-        V_arr = solution[row.period][row.regime_name]
-        if jnp.any(jnp.isinf(V_arr)).item():
+        if row.has_inf:
             logger.warning(
                 "Inf in V_arr for regime '%s' at %s %s",
                 row.regime_name,
