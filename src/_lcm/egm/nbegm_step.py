@@ -55,7 +55,11 @@ from _lcm.egm.ez_kernel import (
     ez_period_value,
 )
 from _lcm.egm.framed_arithmetic import binade_exponent, framed_difference
-from _lcm.egm.interp import interp_on_prepared_grid, prepare_padded_grid
+from _lcm.egm.interp import (
+    interp_on_located_grid,
+    interp_on_prepared_grid,
+    prepare_padded_grid,
+)
 from _lcm.egm.nbegm_segments import (
     affords_an_action,
     mask_dead_candidates,
@@ -1854,27 +1858,17 @@ def _read_euler_and_node_bank(
                 else {}
             ),
         )
-    euler_identity = jnp.concatenate(
-        [
-            jnp.arange(n_euler - 1, dtype=jnp.int32),
-            n_bank - 1 + jnp.arange(n_euler, dtype=jnp.int32),
-        ]
-    )
-    held = merge_envelope_winner(  # ty: ignore[no-matching-overload]
+    held = _fold_euler_blocks(
         held=empty_envelope_winner(query=query, retain_savings=retain),
-        endog_grid=euler[0],
-        policy=euler[1],
-        value=euler[2],
-        marginal=euler[3],
-        segment_id=euler_segment,
-        stable_index=euler_identity,
+        euler=(*euler, euler_segment),
+        euler_savings=euler_savings,
+        first_self_index=n_bank - 1,
         query=query,
         arithmetic=arithmetic,
         feasibility_partition=feasibility_partition,
         feasible_interval_mask=feasible_interval_mask,
-        candidate_savings=euler_savings,
     )
-    held = merge_query_point_columns(
+    held = merge_query_point_columns(  # ty: ignore[no-matching-overload]
         held=held,
         endog_grid=node[0],
         policy=node[1],
@@ -1898,6 +1892,75 @@ def _read_euler_and_node_bank(
         feasible_interval_mask=feasible_interval_mask,
     )
     return published if return_owner or not retain else published[:4]
+
+
+# Euler points folded per step: one block reads `(n_query, 2 * block + 1)` links.
+_EULER_FOLD_BLOCK = 512
+
+
+def _fold_euler_blocks(
+    *,
+    held: EnvelopeWinner | _SavingsEnvelopeWinner,
+    euler: tuple[Float1D, Float1D, Float1D, Float1D, Float1D],
+    euler_savings: Float1D | None,
+    first_self_index: int,
+    query: Float1D,
+    arithmetic: ComparisonArithmetic,
+    feasibility_partition: ResolvedAxisPartition | None,
+    feasible_interval_mask: BoolND | None,
+) -> EnvelopeWinner | _SavingsEnvelopeWinner:
+    """Fold the Euler points' links into the standing winner, a block at a time.
+
+    Channels are `(endog, policy, value, marginal, segment)`. Block `k` holds
+    points `k * B` through `k * B + B`, so consecutive blocks share one point and
+    every consecutive link lies in exactly one block; the shared point's
+    self-bracket enters twice under one identity, which a fold leaves unchanged.
+    Links carry their one-shot identities (consecutive link `c` is `c`, the
+    self-bracket of point `c` is `first_self_index + c`), so the winner does not
+    depend on the blocking, and no array pairs every query with every link.
+    """
+    n_euler = euler[0].shape[0]
+    block = max(1, min(_EULER_FOLD_BLOCK, n_euler - 1))
+    n_blocks = max(1, -(-(n_euler - 1) // block))
+    n_padded = n_blocks * block + 1
+    pad = n_padded - n_euler
+    columns = tuple(
+        jnp.concatenate([c, jnp.full((pad,), jnp.nan, dtype=c.dtype)])
+        for c in (*euler, *(() if euler_savings is None else (euler_savings,)))
+    )
+    last = jnp.iinfo(jnp.int32).max
+    point = jnp.arange(n_padded, dtype=jnp.int32)
+    link_identity = jnp.where(point < n_euler - 1, point, last)
+    self_identity = jnp.where(point < n_euler, first_self_index + point, last)
+
+    # keyword-only-exempt: library-callback=jax.lax.scan
+    def step(
+        standing: EnvelopeWinner | _SavingsEnvelopeWinner, start: IntND
+    ) -> tuple[EnvelopeWinner | _SavingsEnvelopeWinner, None]:
+        rows = [jax.lax.dynamic_slice(c, (start,), (block + 1,)) for c in columns]
+        identity = jnp.concatenate(
+            [
+                jax.lax.dynamic_slice(link_identity, (start,), (block,)),
+                jax.lax.dynamic_slice(self_identity, (start,), (block + 1,)),
+            ]
+        )
+        return merge_envelope_winner(  # ty: ignore[no-matching-overload]
+            held=standing,
+            endog_grid=rows[0],
+            policy=rows[1],
+            value=rows[2],
+            marginal=rows[3],
+            segment_id=rows[4],
+            stable_index=identity,
+            query=query,
+            arithmetic=arithmetic,
+            feasibility_partition=feasibility_partition,
+            feasible_interval_mask=feasible_interval_mask,
+            candidate_savings=None if euler_savings is None else rows[5],
+        ), None
+
+    folded, _ = jax.lax.scan(step, held, jnp.arange(n_blocks, dtype=jnp.int32) * block)
+    return folded
 
 
 def _interval_corner_candidates(
@@ -3754,9 +3817,26 @@ def _refine_savings_node_actions(
     inside = smooth & (share >= 0.0) & (share <= 1.0)
     left_node = jnp.broadcast_to(savings_grid[:-1], lower_coh.shape)
     link_saving = jnp.where(inside, left_node + share * node_step, left_node)
+    # A link saving lies in its own bracket `[s_i, s_i + step]`, which can round
+    # onto or just past `s_{i+1}`, so on a strictly increasing grid its
+    # right-sided search position is `i + 1`, or `i + 2` from `s_{i+1}` up.
+    located = jnp.arange(1, shape[1], dtype=jnp.int32) + (
+        link_saving >= savings_grid[1:]
+    ).astype(jnp.int32)
+    search_grid, valid_length = prepare_padded_grid(savings_grid)
     link_continuation = jax.vmap(
-        functools.partial(_hermite_savings_read, savings_grid=savings_grid)
-    )(link_saving, value_rows, marginal_rows)
+        functools.partial(
+            interp_on_located_grid,
+            search_grid=search_grid,
+            valid_length=valid_length,
+            xp=savings_grid,
+        )
+    )(
+        x_query=link_saving,
+        located=located,
+        fp=value_rows,
+        fp_slopes=marginal_rows,
+    )
     # A concave continuation lies below its tangent at either node of the bracket.
     link_continuation = jnp.minimum(
         link_continuation,

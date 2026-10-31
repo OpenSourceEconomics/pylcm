@@ -602,7 +602,7 @@ _SOURCE_SEALS = {
     DECOUPLED_BOUND_SOURCE: "9a78743edda1d4b2cc13b65d42451c0568040cfd8fa4bdbe9f31c3fdba950316",
     S03_EULER_SOURCE: "a5e95cde939adcefdf3d8310f6617df4f203ae3479bc318cd92ac51c020d0f55",
     S03_DECLARED_LAW_SOURCE: "635329b1a16ebe7b80ae57acfcc3fa3fd2c1b65a7b6778d1f72dc985f47e0e69",
-    S03_INTERP_SOURCE: "2d2cd9b43adc3ad72f027f54acc53dc94011ef10be93ab1b8222d632c09d2cdb",
+    S03_INTERP_SOURCE: "6dcb3eba26a508447e6f6c958dfc257dfd95be3aef1bd6dc03e2b279ffa22129",
     S03_NUMERIC_INVERSE_SOURCE: "57b4d9983131c5b4ce102c96372c21517b7d8932e0e5d576a4e95e585a7597ea",
     S03_ONE_ASSET_STEP_SOURCE: "c63df7e9a681def81e2fcf6b578f3f817af7d402b819e674f441989abce403ff",
     S03_PREFERENCES_SOURCE: "12d41ccb73192a7742267ffaa688fff3fe337ae40ef2373f6fe93541b8effcba",
@@ -758,7 +758,7 @@ _SOURCE_SEALS = {
     "src/_lcm/optimization/golden_section.py": "9e76572097e0281e76e59c0b7b430929cc9147754354780a6321f500bcd53f85",
     "src/_lcm/egm/upper_envelope/query.py": "9f8332f105720d74640a655cfdad732c1aefd11383ce26dd686863cbf40cd9af",
     "src/_lcm/utils/counts.py": "a9087a3c42d32ff0ca82cf24fda2b59ed57cb77efef94714a37a6ca7cf7a3f82",
-    "src/_lcm/egm/nbegm_step.py": "5f1c51c363f985515a0088ed2eaf7aa83e52c18568e4d32bbf5469910295fb2b",
+    "src/_lcm/egm/nbegm_step.py": "abe1866f5b19438999edba6c55d4567f22316696ad61ba97cd246291cae0b52b",
     "src/_lcm/egm/nbegm_segments.py": "658a74ca40e3da1c025c3d03e0f8bf695feb45953113521a4700f2c1d1890505",
     "src/_lcm/egm/framed_arithmetic.py": "f4b1fa68cc765fc1450222f7370256306d22b92a6488b40c3575e98f44e43877",
     "src/_lcm/egm/ez_kernel.py": "aef102b6dbc73efae7e103e34597948e8e354f3195a33383973bfbd0da112a72",
@@ -869,7 +869,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     S03_INTERP_SOURCE: (
-        "93b2185340706812ef95c6cbf19d38896e926d14e1a299266ccc5bdba93f420e",
+        "10b8abd87f451741f3cd2c6801b0af72340ec5d525b94cc71dd22e1dc8bdc562",
         {
             "locate_on_grid": "d2efde2d8211f14cce8e9bdafb34e01b96886533e7984a9e3d1f581d1a3701a1",
             "_derivative_between_nodes": "fbdfb439dcb74798763a1765aab150286981237d4e84f3194ea8cd4229102707",
@@ -884,7 +884,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_linear_prepared_read_jvp": "e70cc0af44acacc256a6174cf613210d1bc984582b980d3b089a2383850acaa8",
             "_linear_prepared_read_primal": "53703a429fce004320e58e3ad9965585fa80927d72593a023ee25f291b8bd6d7",
             "_linear_query_derivative": "9d787289a36cda29e41870c2b2f3cb09e5827bd0bd0c193610c32ee3f941872c",
-            "_read_prepared_row": "1006696c73bf21d67ff773527c39d338e97d1597a4181ac24640d19b9b4f8df2",
+            "_read_prepared_row": "5367f08d4a9d98514107f92cf0e30d701ffece4de85679e6fdc0773a4f3e9885",
             "interp_and_derivative_on_prepared_grid": "5b392da953a3d6ec02d45ffd0a832647abc18aff4cf6667adb2c6f64bb4323cc",
             "interp_on_padded_grid": "7bb309d76796ace15cac5dac4fa8364d63a503d45a80a88dff24454c75675ec2",
             "interp_on_prepared_grid": "597ec1e1cc32af27f82969334a6050723504e77de778cfa0e07a9d7a4caba0c7",
@@ -2986,7 +2986,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/egm/nbegm_step.py": (
-        "856143fa6197248292c27c295e165b4fadb6ead73b42739fc628e60f1bae45b9",
+        "058a49a1957bef11963c3995ebd67c3e696f5fc9b6c0c08ff644cb49cbfa4de7",
         {
             "_IntervalCaseSolver.__call__": "9e8e6e6d6fcffbc0cec5c9ad8989131c66e0efd7e7e5ae8cba8e3954723fbf36",
             "_IntervalWinnerStep.__call__": "1f6008b0c1cab809e2383fc93da62ec61bb0c212bfe00b543202b36aa4343c40",
@@ -3010,7 +3010,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_publish_interval_step": "a4a062d3a8dfb61996e5dfd574c0b75bcf129bc21ef07fb61bf7da5025a1af4e",
             "_publish_no_action_carry": "8f392309f414027d1579e3ba64f2121d299d205aa1581f2bd66e17d4cfde7580",
             "_query_node_kind": "444a5e65acc1a48d34bc6c0c0f9f404ec15ca60f8a449ce95265120c5e7e1a3f",
-            "_refine_savings_node_actions": "44b73eb0f57f654e30e306e7721cec278110355f2e79c9dc7e814a19a975ba86",
+            "_refine_savings_node_actions": "ef68ee2f0a2300241ff93ce8ff1c4770be6c772c26e48a41875574cc60b32500",
             "_savings_node_point_candidates": "4d42b740e052ddbdf21a057ae508f3fe327b2859de27551b2863a7cdb73f4e9c",
             "_savings_node_point_candidates_for_interval_block": "bd11731114de8883df893a94ea9d3f7319cce587a6f949b9bc533cb541c180d7",
             "_solve_packed_interval": "39a0f0b595334ee12619f8131ebb97c32e10632869293d1b6a043e1add7ac0af",

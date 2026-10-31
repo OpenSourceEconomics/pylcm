@@ -196,6 +196,34 @@ def interp_on_prepared_grid(
     return _hermite_prepared_read(x_query, search_grid, valid_length, xp, fp, fp_slopes)
 
 
+def interp_on_located_grid(
+    *,
+    x_query: FloatND,
+    located: IntND,
+    search_grid: Float1D,
+    valid_length: ScalarInt,
+    xp: Float1D,
+    fp: Float1D,
+    fp_slopes: Float1D | None = None,
+) -> FloatND:
+    """Read `interp_on_prepared_grid` where the caller already located each query.
+
+    `located` must equal `searchsorted(search_grid, x_query, side="right")`; the
+    read is then the same program without the bracket search, a logarithmic loop
+    per query. The query carries no custom derivative here, so this form serves
+    reads that are not differentiated.
+    """
+    return _read_prepared_row(
+        x_query=x_query,
+        search_grid=search_grid,
+        valid_length=valid_length,
+        xp=xp,
+        fp=fp,
+        fp_slopes=fp_slopes,
+        located=located,
+    )
+
+
 def interp_left_record_on_padded_grid(
     *,
     x_query: FloatND,
@@ -571,6 +599,7 @@ def _read_prepared_row(
     fp: Float1D,
     fp_slopes: Float1D | None,
     side: Literal["left", "right"] = "right",
+    located: IntND | None = None,
 ) -> FloatND:
     """Evaluate the padded-row interpolant (the primal branch program).
 
@@ -578,7 +607,8 @@ def _read_prepared_row(
     (the value read's own convention — at a duplicated abscissa the right
     record applies) or `"left"` (the left record applies; see
     `interp_left_record_on_prepared_grid`). Off-node queries locate the same
-    bracket either way.
+    bracket either way. `located`, when given, is the caller's
+    `searchsorted(search_grid, x_query, side=side)`, which it already knows.
     """
     # The bracket indices span the full query mesh (the dominant egm_step
     # working buffer at scale), and never exceed the grid length (a few
@@ -586,7 +616,9 @@ def _read_prepared_row(
     # would default to int64 and double these gather-index buffers; the cast
     # halves them with no effect on the gathered values.
     upper = jnp.clip(
-        jnp.searchsorted(search_grid, x_query, side=side),
+        jnp.searchsorted(search_grid, x_query, side=side)
+        if located is None
+        else located,
         1,
         jnp.maximum(valid_length - 1, 1),
     ).astype(jnp.int32)
