@@ -1,6 +1,7 @@
 import ctypes
 import ctypes.util
 import functools
+import gc
 import json
 import logging
 import os
@@ -8,7 +9,7 @@ import pathlib
 import platform
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import make_dataclass
-from types import MappingProxyType
+from types import MappingProxyType, ModuleType
 from typing import TYPE_CHECKING, NotRequired, cast
 
 import jax
@@ -720,12 +721,35 @@ def pytest_runtest_teardown(item, nextitem):
     upcoming = getattr(nextitem, "module", None) if nextitem is not None else None
     if upcoming is not None and upcoming is current and not grown:
         return
+    if upcoming is not current and current is not None:
+        _clear_module_caches(module=current)
     jax.clear_caches()
     return_free_heap_to_os()
     # Measured after the release, so a module whose memory is held by something a
     # release cannot reach -- a session fixture, say -- settles at its own level
     # instead of releasing on every test from then on.
     session._lcm_mib_at_last_release = resident_mebibytes() or 0
+
+
+def _clear_module_caches(*, module: ModuleType) -> None:
+    """Drop what a finished test module memoised in its own top-level caches.
+
+    A module that memoises its solutions with `functools.cache` keeps every
+    compiled program those solutions hold alive for the rest of the worker,
+    because the cache outlives the module and JAX's cache release cannot reach
+    it. XLA:CPU maps each program's code into its own memory regions, so such a
+    worker's map count only grows; one past the kernel's `vm.max_map_count`
+    (65530 on the Marvin nodes) aborts the next compile with "LLVM ERROR: Unable
+    to allocate section memory". Clearing the module's caches at its boundary
+    and collecting the cycles they held bounds the count to one module's
+    programs. A module scheduled again later only recomputes what it memoised.
+    """
+    name = module.__name__
+    for value in vars(module).values():
+        clear = getattr(value, "cache_clear", None)
+        if callable(clear) and getattr(value, "__module__", None) == name:
+            clear()
+    gc.collect()
 
 
 class ExecuteWithPendingWorkKwargs(TypedDict, closed=True):

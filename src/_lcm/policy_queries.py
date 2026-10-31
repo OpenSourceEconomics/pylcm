@@ -355,6 +355,9 @@ def _node_inputs(
 # Values at one common action, stable ID, support, integrity, reached-landing counts.
 type PolicyAnswer = tuple[FloatND, IntND, BoolND, BoolND, IntND]
 
+# Q, feasibility, integrity and landing counts over the action grid.
+type StayTable = tuple[FloatND, BoolND, BoolND, IntND]
+
 
 def _query_landing_checks(*, node: QueryNode) -> tuple[LandingCheck, ...]:
     if node.read.kind in {QueryKind.PARTICIPATION, QueryKind.INTEGRATED_FULL}:
@@ -1654,10 +1657,6 @@ def _observation_inputs(
         },
         guard=guard,
     )
-
-
-# Q, feasibility, integrity and landing counts over the action grid.
-type StayTable = tuple[FloatND, BoolND, BoolND, IntND]
 
 
 def query_arguments(
