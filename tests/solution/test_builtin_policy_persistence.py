@@ -766,11 +766,13 @@ def test_budgeted_simulation_from_a_foreign_nnbegm_solution_is_refused(
         )
 
 
-def _plain_dcegm() -> tuple[Model, UserParams, SimulationInitialConditionsInput]:
+def _plain_dcegm(
+    execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
+) -> tuple[Model, UserParams, SimulationInitialConditionsInput]:
     """Build the worker/retiree DC-EGM model outside its shared builder cache."""
     n_periods = 3
     model = dcegm_variants.get_full_model.__wrapped__(
-        solver="dcegm", n_periods=n_periods
+        solver="dcegm", n_periods=n_periods, execution_config=execution_config
     )
     initial = {
         "wealth": jnp.asarray([10.0, 100.0, 300.0]),
@@ -780,6 +782,11 @@ def _plain_dcegm() -> tuple[Model, UserParams, SimulationInitialConditionsInput]
         ),
     }
     return model, dcegm_variants.get_full_params(n_periods=n_periods), initial
+
+
+def _budgeted_dcegm() -> tuple[Model, UserParams, SimulationInitialConditionsInput]:
+    """Build the DC-EGM model under an explicit budget, as a GPU default plans."""
+    return _plain_dcegm(ExecutionConfig(device_memory_bytes=2**31))
 
 
 def _plain_nbegm() -> tuple[Model, UserParams, SimulationInitialConditionsInput]:
@@ -797,6 +804,7 @@ def _plain_nbegm() -> tuple[Model, UserParams, SimulationInitialConditionsInput]
     "build",
     [
         pytest.param(_plain_dcegm, id="dcegm"),
+        pytest.param(_budgeted_dcegm, id="dcegm-budgeted"),
         pytest.param(_plain_nbegm, id="nbegm"),
     ],
 )

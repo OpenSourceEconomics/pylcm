@@ -3346,15 +3346,18 @@ class Model:
         """Copy and validate a result from elsewhere against model authority."""
         if array_copier is not None:
             for regime_name, regime in self._regimes.items():
+                # Built-in EGM and NB-EGM policies admit their templates and
+                # copies; the nested NNBEGM template has no admitted producer.
                 if (
-                    regime.simulation.replay_route.policy_applicable
+                    isinstance(regime.simulation.egm_policy_read, NNBEGMPolicyRead)
                     or regime.simulation.external_replay_route is not None
                     or bool(regime.solution.artifact_authorities)
                 ):
                     raise ExecutionPlanningError(
                         f"Budgeted foreign solution for regime {regime_name!r} "
                         "requires unprofiled artifact authority or payload copies; "
-                        "only canonical eager and admitted native values are supported."
+                        "only canonical eager values, admitted native values and "
+                        "built-in EGM and NB-EGM policies are supported."
                         f"{self._execution.device_memory_cap_note()}"
                     )
             self._fail_if_another_instances_result(solution=solution)

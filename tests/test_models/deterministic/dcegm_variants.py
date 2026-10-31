@@ -18,7 +18,7 @@ from typing import Literal
 
 import numpy as np
 
-from lcm import AgeGrid, DiscreteGrid, IrregSpacedGrid, Model
+from lcm import AgeGrid, DiscreteGrid, ExecutionConfig, IrregSpacedGrid, Model
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.solvers import DCEGM, RFCEnvelope
 from lcm.typing import UserParamsNode
@@ -137,6 +137,7 @@ def get_full_model(
     solver: Literal["brute_force", "dcegm"],
     n_periods: int,
     envelope: Literal["exact", "fues", "rfc", "ltm"] | None = None,
+    execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
 ) -> Model:
     """Build the three-regime worker/retirement/dead model for the requested solver.
 
@@ -165,6 +166,7 @@ def get_full_model(
             (ages.exact_values[0], "working_life"),
             (ages.exact_values[0], "retirement"),
         ),
+        execution_config=execution_config,
     )
 
 
