@@ -192,7 +192,8 @@ def _nnbegm(args: argparse.Namespace) -> _Built:
     assert isinstance(child, NestedConsumptionSavingsRegime)
     savings = IrregSpacedGrid(points=np.geomspace(0.25, 6.0, args.savings_points))
     housing = IrregSpacedGrid(points=np.linspace(0.0, 2.0, args.housing_points))
-    outer = IrregSpacedGrid(points=np.linspace(0.0, 2.0, args.outer_points))
+    outer_points = np.linspace(0.0, 2.0, args.outer_points)
+    outer = IrregSpacedGrid(points=outer_points)
     child = replace(
         child,
         states={
@@ -203,8 +204,10 @@ def _nnbegm(args: argparse.Namespace) -> _Built:
             "consumption": IrregSpacedGrid(
                 points=np.geomspace(0.05, 5.0, args.consumption_points)
             ),
+            # Mirrored rather than `linspace(-2, 2)`, whose middle point misses 0 by
+            # rounding, so keeping the house would be off the GridSearch arm's grid.
             "investment": IrregSpacedGrid(
-                points=np.linspace(-2.0, 2.0, 2 * args.outer_points - 1)
+                points=np.concatenate([-outer_points[:0:-1], outer_points])
             ),
         },
         solver=NNBEGM(
