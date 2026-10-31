@@ -1,4 +1,4 @@
-"""A participation-check source solves beside an endogenous-grid regime.
+"""A source with a participation check solves beside an endogenous-grid regime.
 
 Two independent branches share one lifecycle. On one branch a household chooses
 consumption on a liquid asset and is solved by `EGM`. On the other a household

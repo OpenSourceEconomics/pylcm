@@ -78,10 +78,12 @@ internal IID node state of every regime that reads the group, `GridSearch` reade
 included, and the continuation integrates that axis with the rule's weights. Every
 shape the node-state route supports is therefore supported with `shocks=` too: several
 states, deterministic discrete states carried into the terminal, discrete actions,
-chains of endogenous-grid regimes over several dates, shocks in resources or in utility,
-and a literal savings-grid floor. Groups read only by `GridSearch` regimes keep the
-integrated current-IID route. A plain `EGM` regime publishes a one-dimensional
-continuation and refuses named shocks; solve it with `DCEGM` instead.
+chains of endogenous-grid regimes over several dates, shocks in resources, and a
+literal savings-grid floor. A shock that enters utility other than through resources is
+refused; see [process states in utility](#egm-process-utility). Groups read only by
+`GridSearch` regimes keep the integrated current-IID route. A plain `EGM` regime
+publishes a one-dimensional continuation and refuses named shocks; solve it with `DCEGM`
+instead.
 
 What users see does not change:
 
@@ -262,6 +264,13 @@ envelope row. A row that needs more slots is reported as overflow and NaN-poison
 field does not change the density of the policy read-out grid. `n_constrained_points`
 controls the borrowing-corner segment.
 
+The value DC-EGM publishes at a binding floor is exact: below the lowest Euler candidate
+the constrained branch is the only candidate, and its value is evaluated in closed form.
+A parent regime reads that child through its carry rows, which hold the constrained
+branch as `n_constrained_points` points joined by cubic Hermite interpolation. The
+parent's value near the floor therefore carries an interpolation error. It shrinks as
+the savings grid is refined, and raising `n_constrained_points` reduces it further.
+
 DC-EGM owns no block-size field. Each loop it could stream is an execution axis its
 value and replay programs declare, and the width is fixed with
 `ExecutionConfig(axis_widths=...)`:
@@ -310,6 +319,8 @@ off node, so the blended continuation is the one the grid argmax scores. A value
 node reads that node's row alone. When the process enters only resources, every node
 row is the same function of resources and the read is the continuous optimum.
 
+(egm-process-utility)=
+
 A process state drawn off its nodes may enter an endogenous-grid regime (`DCEGM`,
 `NBEGM`, `NEGM`, `NNBEGM`) only through its resources function. `Model(...)` raises a
 `ModelInitializationError` when `utility` reads such a process (IID or AR(1), for example
@@ -317,9 +328,14 @@ A process state drawn off its nodes may enter an endogenous-grid regime (`DCEGM`
 `shocks=` draw any other way, directly or through a helper function, even if it also
 enters resources and whatever the law's parameters. Every process simulates continuous
 draws by default. A process declared with `simulate_draws="nodes"` is drawn only at its
-nodes, so each read takes one node row and is exact; it may enter utility freely. Move the
-process into resources, declare it with `simulate_draws="nodes"`, or solve the regime
-with `GridSearch`.
+nodes, so each read takes one node row and is exact; it may enter utility freely. The
+remedies are:
+
+- for a process state: move it into resources, declare it with
+  `simulate_draws="nodes"`, or solve the regime with `GridSearch`;
+- for a shock of a `shocks=` group, which has no draw mode of its own: move it into
+  resources, declare it as an IID process state with `simulate_draws="nodes"`, or solve
+  the regime with `GridSearch`.
 
 Policy-first needs a regime whose actions are the EGM action plus discrete actions, with
 a scalar savings floor and process states with fixed, unconditioned nodes. It does not

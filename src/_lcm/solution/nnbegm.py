@@ -444,6 +444,7 @@ class NNBEGM(TwoMarginSolver):
         validate_nnbegm_regime(
             regime_name=context.regime_name,
             user_regime=user_regime,
+            shock_node_states=context.shock_node_states,
         )
         bound = cast("_BoundNNBEGM", self)
         outer_state = bound.outer_state

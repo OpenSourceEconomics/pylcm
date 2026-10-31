@@ -1036,11 +1036,17 @@ def test_declared_shock_reproduces_node_state_model_for_aca_egm_shapes(
         )
 
 
-_UTILITY_SHOCK_REFUSAL = (
+_PROCESS_UTILITY_REFUSAL = (
     r"(?s){solver} regime '{regime}' reads the process state\(s\) \['{shock}'\] "
     r"other than through resources \('{resources}'\).*Move the process into "
     r"resources \('{resources}'\), declare it with `simulate_draws=\"nodes\"`, or "
     r"use GridSearch for this regime\."
+)
+_SHOCK_UTILITY_REFUSAL = (
+    r"(?s){solver} regime '{regime}' reads the shock\(s\) \['{shock}'\] of a "
+    r"`shocks=` group other than through resources \('{resources}'\).*Move the "
+    r"shock into resources \('{resources}'\), declare it as an IID process state "
+    r"with `simulate_draws=\"nodes\"`, or use GridSearch for this regime\."
 )
 
 
@@ -1051,13 +1057,15 @@ def test_egm_source_refuses_a_shock_entering_utility(
 ) -> None:
     """An EGM source whose utility reads an IID shock is refused at build.
 
-    The refusal names the way forward: move the shock into resources, or solve
-    the regime with GridSearch. It holds for an IID process state and for a
-    `shocks=` group alike.
+    The refusal offers only the remedies that apply: move the shock into
+    resources, simulate it on its nodes, or solve the regime with GridSearch. A
+    `shocks=` group has no draw mode of its own, so its shock is pointed to an IID
+    process state that simulates on its nodes.
     """
+    refusal = _SHOCK_UTILITY_REFUSAL if declared else _PROCESS_UTILITY_REFUSAL
     with pytest.raises(
         ModelInitializationError,
-        match=_UTILITY_SHOCK_REFUSAL.format(
+        match=refusal.format(
             solver=solver.upper(),
             regime="alive",
             shock="hcc_transitory",
@@ -1092,7 +1100,7 @@ def test_nested_egm_refuses_a_shock_entering_utility(*, solver: str) -> None:
     )
     with pytest.raises(
         ModelInitializationError,
-        match=_UTILITY_SHOCK_REFUSAL.format(
+        match=_SHOCK_UTILITY_REFUSAL.format(
             solver=solver.upper(), regime="child", shock="eps", resources="resources"
         ),
     ):

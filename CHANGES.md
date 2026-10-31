@@ -5,6 +5,32 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Named current shocks, exits and addressed draws
+
+- Current IID shocks are declared once, as `ShockGroup`s in `Model(shocks=...)`, and
+  each regime that reads a group lists it in `Regime(shocks=...)`. A function reads the
+  physical realization by the shock's name; no state grid or stored value axis is
+  added. See [IID shock declarations](docs/reference/shocks.md) and
+  [Declare current shocks independently of states](docs/user_guide/migrating_dated_regimes.md#declare-current-shocks-independently-of-states).
+- Reading `<shock>_code` of a continuous shock in a `shocks=` group raises
+  `ShockDeclarationError`: a physical draw has no quadrature-node position. Category
+  codes of `Discrete` shocks stay readable.
+- `Regime(exits={name: Exit(...)})` declares a value-dependent move in the current
+  period, before the action, with `ExitTarget` destinations and a `"unilateral"`,
+  `"mutual"`, `Consent` or custom rule; see
+  [Current-period exits](docs/reference/model_and_regime.md#current-period-exits).
+- `simulate(shock_paths=...)` and tagged entries in mapping-form `initial_conditions`
+  override current shocks: `BaseInnovations(values=...)` supplies innovations
+  transformed through the current law, `PhysicalValues(values=...)` supplies physical
+  realizations. A path supersedes the entry value. See
+  [Typed draw inputs](docs/reference/shocks.md#typed-draw-inputs).
+- Simulated panels change once. Every draw is addressed by the seed, the subject's
+  original row in the initial conditions, the period, and the shock's name and
+  component (address version `pylcm.random.v1`). Draws no longer depend on the regime
+  path, other shocks, group membership or taste-shock toggles, and one seed gives the
+  same base draws across parameter values. Reordering initial-condition rows changes
+  which draws a subject receives.
+
 ### Folded-IID machinery removed
 
 - `lcm.solvers.SolverBuildContext.fold_state_names` is removed. No declaration could
@@ -29,11 +55,13 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - An endogenous-grid regime (`DCEGM`, `NBEGM`, `NEGM`, `NNBEGM`) whose `utility` reads
   a process state (IID or AR(1), such as Tauchen, Rouwenhorst or `on_nodes`) or a
   `shocks=` draw other than through its resources function now raises
-  `ModelInitializationError` at `Model(...)`, unless the process is declared with
+  `ModelInitializationError` at `Model(...)`, unless the process state is declared with
   `simulate_draws="nodes"`. Simulation used to blend the bracketing node policies for a
   draw between nodes, an approximation for a process that changes preferences; node
-  draws read one node row exactly. Move the process into resources, declare it with
-  `simulate_draws="nodes"`, or solve the regime with `GridSearch`; see
+  draws read one node row exactly. Move the process into resources or solve the regime
+  with `GridSearch`. Otherwise, declare a process state with `simulate_draws="nodes"`;
+  a `shocks=` group has no draw mode of its own, so declare its shock as an IID process
+  state with `simulate_draws="nodes"`. See
   [DC-EGM](docs/reference/solvers.md#api-dcegm).
 
 ### Dissolution-flag artifact key removed
@@ -395,15 +423,17 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   one leave the solve unchanged. Unsupported requests are refused at model
   construction. See [Share a large action product over
   devices](docs/user_guide/tuning.md).
+
 ### A shock read only through its next-period draw stays in the regime
 
 - A law may read the draw `next_<process>` of a process state, for instance costs
-  realized after the period's choices and paid out of next period's wealth. Reading the
-  draw is now a read of the state: the regime that reads it keeps the state, whether the
-  state is declared at model level (broadcast pruning) or at regime level (the
-  unused-variable check). A persistent process's draw is conditional on the state's
-  current node. An IID process's draw is not, but it is still taken from the carried
-  state, so the state keeps its axis and the value is constant along it.
+  realized after the period's choices and paid out of next period's wealth. A
+  persistent process's draw is conditional on the state's current node, so reading it
+  is a read of the state: the regime that reads it keeps the state, whether the state is
+  declared at model level (broadcast pruning) or at regime level (the unused-variable
+  check). An IID process state read only through its draw carries no axis and is
+  integrated in the continuation; see
+  [Shock timing is read off the model](#shock-timing-is-read-off-the-model).
 - Toward a target that does not carry the process, the draw exists only inside the
   transition: it is taken from the source's process at the source's current node, read
   by the target's laws and discarded. A terminal regime valuing only wealth therefore

@@ -189,6 +189,28 @@ Cross-regime routing and EGM replay must preserve that producing context and bin
 own information/reconstruction contracts; a supplied input does not authorize policy
 conditioning on a hidden value.
 
+(current-iid-refusals)=
+
+### Combinations not yet composed with current shocks
+
+A group read only by `GridSearch` regimes stays on the integrated current-IID route.
+`Model(...)` raises `UnsupportedOperationError` ("Current IID in regime ... is not yet
+composed with ...") when a regime reading such a group also uses:
+
+- action partitions above one (`ExecutionConfig(action_partitions=...)`);
+- a `Decoupled` decision;
+- invariant state blocks (`ExecutionConfig(invariant_block_widths=...)`);
+- a gated value channel: gated edges out of or into the regime, or participation reads
+  of it;
+- a same-period value channel: `same_period_refs` from or to the regime;
+- a sharded discrete state whose law is the identity (a co-mapped state).
+
+`Model.lookup_policy` raises `UnsupportedOperationError` for such a regime: a current
+shock needs an explicit observation or conditional query, which the lookup does not
+take. A group that an endogenous-grid regime reads is solved on the node-state axis
+instead; see
+[Named current-IID shocks in endogenous-grid regimes](solvers.md#current-iid-egm).
+
 ## Validity and signed provenance
 
 `Realisation` is a JAX-compatible tuple of physical values, joint weights and a scalar
