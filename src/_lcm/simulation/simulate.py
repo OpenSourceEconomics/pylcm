@@ -23,7 +23,7 @@ import numpy as np
 import pandas as pd
 from jax import vmap
 
-from _lcm.egm.interp import interp_on_padded_grid
+from _lcm.egm.interp import interp_on_indexed_rows, interp_on_padded_grid
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.outer_interpolation import LocalCubicOuterInterpolant
 from _lcm.egm.outer_inversion import (
@@ -4178,6 +4178,17 @@ def _interp_rows_with_support(
     rows_f = getattr(sim_policy, field)
     rows_x = sim_policy.endog_grid
     rows_slope = sim_policy.marginal_utility if field == "value" else None
+    if any(jnp.ndim(position) for position in index):
+        # Per-subject rows: read the table in place rather than copy a row per
+        # subject, which dominated the read at production row lengths.
+        values, in_support = _interp_indexed_rows(
+            rows_x=rows_x,
+            rows_f=rows_f,
+            rows_slope=rows_slope,
+            index=index,
+            resources=resources,
+        )
+        return values, in_support
     if index:
         rows_x = rows_x[index]
         rows_f = rows_f[index]
@@ -4220,6 +4231,39 @@ def _interp_padded_rows(
     valid_length = jnp.sum(jnp.isfinite(rows_x), axis=-1)
     last_live = jnp.take_along_axis(rows_x, (valid_length - 1)[:, None], axis=-1)[:, 0]
     in_support = (resources >= rows_x[:, 0]) & (resources <= last_live)
+    return values, in_support
+
+
+@jax.jit
+def _interp_indexed_rows(
+    *,
+    rows_x: FloatND,
+    rows_f: FloatND,
+    rows_slope: FloatND | None,
+    index: tuple[IntND | int, ...],
+    resources: FloatND,
+) -> tuple[FloatND, BoolND]:
+    """Read the row `rows_x[index]` selects per subject, with the support flag.
+
+    `index` addresses every axis but the last; at least one entry is a
+    per-subject array. Matches `_interp_padded_rows` on the copied rows.
+    """
+    lead_shape = rows_x.shape[:-1]
+    flat_rows = jnp.ravel_multi_index(
+        tuple(jnp.broadcast_arrays(*index)), lead_shape, mode="clip"
+    )
+    flat_rows = jnp.broadcast_to(flat_rows, resources.shape).astype(jnp.int32)
+    table_x = rows_x.reshape(-1, rows_x.shape[-1])
+    values, valid_length = interp_on_indexed_rows(
+        x_query=resources,
+        rows=flat_rows,
+        xp=table_x,
+        fp=rows_f.reshape(table_x.shape),
+        fp_slopes=None if rows_slope is None else rows_slope.reshape(table_x.shape),
+    )
+    in_support = (resources >= table_x[flat_rows, 0]) & (
+        resources <= table_x[flat_rows, valid_length - 1]
+    )
     return values, in_support
 
 
