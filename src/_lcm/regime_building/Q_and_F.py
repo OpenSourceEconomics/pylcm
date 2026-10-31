@@ -2379,12 +2379,18 @@ def _get_stakeholder_sliced_interpolator(
     The target regime's `next_V_arr` leaf has
     shape `(*target_state_axes, n_stakeholders)`; the base interpolator
     interpolates over the state axes of a plain `(*target_state_axes,)` array.
-    Calling it once per stakeholder on the slice `next_V_arr[..., s]` and
-    re-stacking on a trailing axis keeps the interpolation semantics untouched
-    and puts the stakeholder axis last by construction — no axis bookkeeping
-    can reorder it. The wrapper carries the base interpolator's exact argument
-    names so the stochastic-variable product-map and the extra-param discovery
-    treat it like the singleton interpolator.
+    The base interpolator is mapped over the trailing stakeholder axis of
+    `next_V_arr` alone, so each stakeholder's value is the singleton read of its
+    slice `next_V_arr[..., s]` and the stakeholder axis comes out last by
+    construction — no axis bookkeeping can reorder it. Only the value array is
+    mapped: the landing coordinates, corner indices and weights do not depend on
+    the stakeholder, so they are formed once and every stakeholder is read from
+    the same cells in one gather. Stacking separate per-slice reads instead
+    repeats the whole read per stakeholder and materializes the stack over every
+    lottery node before the expectation can reduce it. The wrapper carries the
+    base interpolator's exact argument names so the stochastic-variable
+    product-map and the extra-param discovery treat it like the singleton
+    interpolator.
 
     Args:
         base_interpolator: The singleton V-interpolator from
@@ -2431,15 +2437,11 @@ class _StakeholderSlicedInterpolator:
     @no_type_check
     def __call__(self, **kwargs: ParamsLeaf) -> FloatND:
         stacked_V_arr = cast("FloatND", kwargs.pop(self.V_arr_name))
-        return jnp.stack(
-            [
-                self.base_interpolator(
-                    **kwargs, **{self.V_arr_name: stacked_V_arr[..., s]}
-                )
-                for s in range(self.n_stakeholders)
-            ],
-            axis=-1,
-        )
+        return jax.vmap(
+            lambda V_arr: self.base_interpolator(**kwargs, **{self.V_arr_name: V_arr}),
+            in_axes=-1,
+            out_axes=-1,
+        )(stacked_V_arr)
 
 
 def evaluate_projected_readers(
