@@ -36,10 +36,10 @@ pytestmark = pytest.mark.usefixtures("x64_enabled")
 
 ALIVE_0 = ("alive", 0, "main")
 DEAD_3 = ("dead", 3, "main")
-# Between the `alive` period-1 pair at width 2 (57092 reservation plus 1576
-# resident bytes, admitted) and the period-0 pair at width 2 (57092 plus 1704,
-# refused); width 1 (35812 plus 1704) fits.
-_PAIR_REJECTS_ALIVE_0 = 58731
+# Between the `alive` period-1 pair at width 2 (34404 reservation plus 1576
+# resident bytes, admitted) and the period-0 pair at width 2 (34404 plus 1704,
+# refused); width 1 (26772 plus 1704) fits.
+_PAIR_REJECTS_ALIVE_0 = 36043
 
 
 class _Captured(TypedDict, total=False):
