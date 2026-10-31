@@ -38,7 +38,6 @@ from lcm.shocks import (
     Uniform,
     _Independence,
 )
-from lcm.solvers import GridSearch
 from lcm.typing import (
     Float1D,
     FloatND,
@@ -69,8 +68,11 @@ def lower_post_decision_shocks(
     Raises:
         ModelInitializationError: If a regime reads a group both as its value and
             as its draw, or a post-decision group is unusable: also read as a value
-            in another regime, not lowerable to one fixed node set per shock, or
-            declared on a regime whose solver cannot integrate it.
+            in another regime, or not lowerable to one fixed node set per shock.
+
+    Only `GridSearch` readers reach this lowering: a group any endogenous-grid
+    regime reads was already moved onto its readers' states as node processes,
+    which `split_transition_only_shocks` integrates out per solver.
 
     """
     post_decision_groups = {
@@ -246,8 +248,8 @@ def _fail_if_groups_are_unusable(
     groups: Mapping[ShockGroupName, ShockGroup],
     post_decision_groups: Mapping[RegimeName, tuple[ShockGroupName, ...]],
 ) -> None:
-    """Refuse a post-decision group on a non-GridSearch regime, read as a value in
-    another regime, or without a fixed node set."""
+    """Refuse a post-decision group read as a value in another regime, or without a
+    fixed node set."""
     current = {
         name
         for regime_name, regime in regimes.items()
@@ -259,16 +261,7 @@ def _fail_if_groups_are_unusable(
         if name not in post_decision_groups[regime_name]
     }
     errors: list[str] = []
-    for regime_name, regime in regimes.items():
-        if post_decision_groups[regime_name] and not isinstance(
-            regime.solver, GridSearch
-        ):
-            errors.append(
-                f"Regime '{regime_name}' reads shock group(s) "
-                f"{list(post_decision_groups[regime_name])} only as their draw "
-                "`next_<shock>`. "
-                "Only the `GridSearch` solver integrates such a draw."
-            )
+    for regime_name in regimes:
         for group_name in post_decision_groups[regime_name]:
             group = groups[group_name]
             if group_name in current:
