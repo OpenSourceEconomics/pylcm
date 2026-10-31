@@ -4,7 +4,7 @@ A young single, a couple and an older single carry the same `NormalIIDProcess` s
 `wage_shock_f`, and the young single moves into the couple through a state-only gate
 that is open at every landing. The older single's value is read through a projection in
 the couple's participation constraint, at the couple's own cell. A value read at the
-participation check itself is an `ParticipationCheck`, covered by
+participation check itself is a `ParticipationCheck`, covered by
 `tests/regime_building/test_continuous_participation_physical_value.py`.
 
 A projection names the shock in either spelling:
