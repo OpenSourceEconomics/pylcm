@@ -178,6 +178,7 @@ def value_function_nan_error[PartialSolution: PeriodToRegimeToVArr](
         "https://pylcm.readthedocs.io/en/latest/user_guide/debugging/"
     )
     exc.partial_solution = partial_solution
+    exc.regime_name = regime_name
     return exc
 
 

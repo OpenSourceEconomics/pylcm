@@ -15,6 +15,8 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - Reading `<shock>_code` of a continuous shock in a `shocks=` group raises
   `ShockDeclarationError`: a physical draw has no quadrature-node position. Category
   codes of `Discrete` shocks stay readable.
+- Every node rule must have nonnegative weights. A `UserNodes` or `Smolyak` rule with a
+  negative weight raises `ShockDeclarationError` when it is declared.
 - `Regime(exits={name: Exit(...)})` declares a value-dependent move in the current
   period, before the action, with `ExitTarget` destinations and a `"unilateral"`,
   `"mutual"`, `Consent` or custom rule; see

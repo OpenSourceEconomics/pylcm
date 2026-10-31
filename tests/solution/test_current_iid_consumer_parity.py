@@ -1273,17 +1273,6 @@ def test_declared_node_rule_reproduces_node_state_model(rule: str) -> None:
     [
         (
             ShockGroup(
-                shocks={"hcc_transitory": Normal(mu=0.0, sigma=1.0)},
-                nodes=UserNodes(
-                    nodes=np.asarray([[-1.0], [0.0], [1.0]]),
-                    weights=np.asarray([-0.1, 1.2, -0.1]),
-                    signed=True,
-                ),
-            ),
-            "signed node weights",
-        ),
-        (
-            ShockGroup(
                 shocks={
                     "hcc_transitory": Normal(mu=0.0, sigma=1.0),
                     "hcc_other": Normal(mu=0.0, sigma=1.0),
