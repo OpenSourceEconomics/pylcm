@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "052229b99f123be9124d1bbe4dbc8e2e04e013c35e6c14e33f042523ef94d0ec",
+  "source_inventory_sha256": "3ac22f14477faeb14854a03dd3c7f0d923051a22372b54e393bf6241dcbcc4b2",
   "sources": [
     {
       "path": "src/_lcm/constraints/bounds.py",
@@ -106,7 +106,7 @@
     },
     {
       "path": "src/_lcm/egm/nbegm_step.py",
-      "sha256": "abe1866f5b19438999edba6c55d4567f22316696ad61ba97cd246291cae0b52b"
+      "sha256": "98b3b3c21ddef896efa53bf6f9bc037c1348b6fcbafaa8c0d984679c86d986d8"
     },
     {
       "path": "src/_lcm/egm/nested_floor.py",
@@ -170,7 +170,7 @@
     },
     {
       "path": "src/_lcm/egm/upper_envelope/query.py",
-      "sha256": "9f8332f105720d74640a655cfdad732c1aefd11383ce26dd686863cbf40cd9af"
+      "sha256": "6a834d13dcd49a78e5c816bbef7643e07c1de5a71370384a086d84dbd7a4affd"
     },
     {
       "path": "src/_lcm/egm/upper_envelope/segment_envelope.py",
