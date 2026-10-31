@@ -681,6 +681,11 @@ restricted `action_grids` values must lie on their grids. `Model.state_names` gi
 axis order of `solution.values[period][regime]`, and `Model.state_grid` gives a state's
 grid nodes after runtime parameters.
 
+A regime that reads a `shocks=` group on the integrated current-IID route, that is a
+group no endogenous-grid regime reads, raises `UnsupportedOperationError`: its decision
+depends on a current shock, which needs an explicit observation or conditional query.
+See [Combinations not yet composed with current shocks](shocks.md#current-iid-refusals).
+
 `keep_intermediates` names the intermediates of the decision to keep, in any order: the
 action values `"Q"`, their feasibility `"F"`, the flow utility `"U"` and the
 certainty-equivalent continuation `"CE"`. Each kept one fills the field of that name
