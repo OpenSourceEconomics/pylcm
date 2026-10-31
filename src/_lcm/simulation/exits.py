@@ -455,7 +455,9 @@ class OriginalExitDecision:
         taste_keys: Mapping[str, jax.Array],
         overrides: Mapping[ShockName, CurrentIIDOverride] = MappingProxyType({}),
     ) -> OriginalExitOutput:
-        """Publish source price/frame and selected destination coordinates."""
+        """Publish the source frame and the destination coordinates replay validates."""
+        from _lcm.policy_queries import QueryKind  # noqa: PLC0415
+
         query_arguments = {
             name: {
                 **row,
@@ -501,8 +503,18 @@ class OriginalExitDecision:
                 node = self.queries.definitions[query]
                 selected = answer[1] == identifier
 
-                # Keep unavailable and unselected projections behind a scalar
-                # condition; vmap's select conversion must not be used here.
+                # Every participation fallback is priced for each arriving row.
+                # Replay validates that actual mapping even when the target accepts;
+                # a neutral routing payload is not a fallback landing. Ordinary
+                # exits still evaluate only their selected destination projection.
+                project_here = (
+                    _holders
+                    if root.read.kind is QueryKind.PARTICIPATION and identifier == 1
+                    else selected
+                )
+
+                # Keep inactive projections behind a scalar condition; vmap's
+                # select conversion must not be used here.
                 def project(*, query: str = query) -> dict[str, FloatND | IntND]:
                     return dict(
                         self.queries.project(
@@ -521,7 +533,7 @@ class OriginalExitDecision:
                     },
                 )
                 projections[query] = jax.lax.cond(
-                    selected,
+                    project_here,
                     project,
                     lambda neutral=neutral: neutral,
                 )
