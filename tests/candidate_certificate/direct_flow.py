@@ -758,7 +758,7 @@ _SOURCE_SEALS = {
     "src/_lcm/optimization/golden_section.py": "9e76572097e0281e76e59c0b7b430929cc9147754354780a6321f500bcd53f85",
     "src/_lcm/egm/upper_envelope/query.py": "6a834d13dcd49a78e5c816bbef7643e07c1de5a71370384a086d84dbd7a4affd",
     "src/_lcm/utils/counts.py": "a9087a3c42d32ff0ca82cf24fda2b59ed57cb77efef94714a37a6ca7cf7a3f82",
-    "src/_lcm/egm/nbegm_step.py": "98b3b3c21ddef896efa53bf6f9bc037c1348b6fcbafaa8c0d984679c86d986d8",
+    "src/_lcm/egm/nbegm_step.py": "30ed67ca5d210106a18e4e3c46867bcddcfb1108a29ad33d7c4a09c9c905c758",
     "src/_lcm/egm/nbegm_segments.py": "658a74ca40e3da1c025c3d03e0f8bf695feb45953113521a4700f2c1d1890505",
     "src/_lcm/egm/framed_arithmetic.py": "f4b1fa68cc765fc1450222f7370256306d22b92a6488b40c3575e98f44e43877",
     "src/_lcm/egm/ez_kernel.py": "aef102b6dbc73efae7e103e34597948e8e354f3195a33383973bfbd0da112a72",
@@ -2986,7 +2986,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/egm/nbegm_step.py": (
-        "33541c70e7f39afbae370912d6b9dd60df570cc856671d0b7af63540c8740a14",
+        "9a5cbc1cb16d92382245e95f287ee4a3c6568cdd62d17045053ad3892dd17e45",
         {
             "_IntervalCaseSolver.__call__": "9e8e6e6d6fcffbc0cec5c9ad8989131c66e0efd7e7e5ae8cba8e3954723fbf36",
             "_IntervalWinnerStep.__call__": "1f6008b0c1cab809e2383fc93da62ec61bb0c212bfe00b543202b36aa4343c40",

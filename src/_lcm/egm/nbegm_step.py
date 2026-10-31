@@ -81,6 +81,7 @@ from _lcm.egm.upper_envelope.query import (
     merge_query_point_columns,
     published_owner,
 )
+from _lcm.regime_building.argmax import max_and_smallest_id
 from _lcm.solution.feasibility import (
     BoundedResult,
     ContinuationReadCounts,
@@ -3970,7 +3971,7 @@ def _refine_savings_node_actions(
     return saving, continuation
 
 
-def _best_savings_node_per_point(
+def _best_savings_node_per_point(  # noqa: PLR0915 - one fused pass, then the bracket visits that read it
     *,
     coh: Float1D,
     savings_grid: Float1D,
@@ -3993,9 +3994,8 @@ def _best_savings_node_per_point(
     action replaces its node only where it is worth more, so the best plain node
     over all `i` and the refined actions that replace their node have the same
     maximum and the same smallest maximizer as the refined family. A node is
-    refined only in a bracket whose endogenous cash-on-hand straddles the point,
-    which is rarely more than one per point, so the refined brackets are visited
-    one per point at a time until none is left.
+    refined only in a bracket whose endogenous cash-on-hand straddles the point;
+    those brackets are found by one search per ascending run of that grid.
     """
     n_nodes = savings_grid.shape[0]
 
@@ -4023,15 +4023,13 @@ def _best_savings_node_per_point(
     plain = published_value(
         saving=savings_grid[None, :], continuation=cont_value[None, :]
     )
-    best_value = jnp.max(plain, axis=1)
     node = jnp.arange(n_nodes, dtype=jnp.int32)
-    best_index = jnp.min(
-        jnp.where(
-            (plain == best_value[:, None]) & jnp.isfinite(plain), node[None, :], n_nodes
-        ),
-        axis=1,
+    best_value, best_index = max_and_smallest_id(
+        values=plain,
+        ids=jnp.broadcast_to(node, plain.shape),
+        initial=-jnp.inf,
     )
-    best_index = jnp.where(best_index == n_nodes, 0, best_index)
+    best_index = jnp.where(jnp.isfinite(best_value), best_index, 0)
     best_saving = savings_grid[best_index]
     best_continuation = cont_value[best_index]
 
@@ -4039,33 +4037,25 @@ def _best_savings_node_per_point(
     lower_coh, upper_coh = endog_coh[:-1], endog_coh[1:]
     node_step = jnp.diff(savings_grid)
     secant = jnp.diff(cont_value) / node_step
+    ascends = (
+        jnp.isfinite(lower_coh) & jnp.isfinite(upper_coh) & (upper_coh > lower_coh)
+    )
     smooth = (
-        jnp.isfinite(lower_coh)
-        & jnp.isfinite(upper_coh)
-        & (upper_coh > lower_coh)
+        ascends
         & (cont_marginal[1:] > 0.0)
         & (cont_marginal[1:] <= secant)
         & (secant <= cont_marginal[:-1])
     )
     width = jnp.where(smooth, upper_coh - lower_coh, 1.0)
     search_grid, valid_length = prepare_padded_grid(savings_grid)
-    bracket = node[:-1]
 
-    def next_inside(after: IntND) -> IntND:
-        share = (coh[:, None] - lower_coh[None, :]) / width[None, :]
-        inside = smooth[None, :] & (share >= 0.0) & (share <= 1.0)
-        return jnp.min(
-            jnp.where(inside & (bracket[None, :] > after[:, None]), bracket, n_nodes),
-            axis=1,
-        )
-
-    def visit(
-        state: tuple[IntND, FloatND, IntND, Float1D, Float1D],
-    ) -> tuple[IntND, FloatND, IntND, Float1D, Float1D]:
-        at, value, index, saving, continuation = state
-        live = at < n_nodes - 1
-        i = jnp.where(live, at, 0)
+    def offer(
+        *, i: IntND, held: tuple[FloatND, IntND, Float1D, Float1D]
+    ) -> tuple[FloatND, IntND, Float1D, Float1D]:
+        """Merge bracket `i`'s refined action at each point that lies inside it."""
+        value, index, saving, continuation = held
         share = (coh - lower_coh[i]) / width[i]
+        live = smooth[i] & (share >= 0.0) & (share <= 1.0)
         left_node = savings_grid[i]
         link_saving = left_node + share * node_step[i]
         located = i + 1 + (link_saving >= savings_grid[i + 1]).astype(jnp.int32)
@@ -4110,25 +4100,47 @@ def _best_savings_node_per_point(
             (offered > value) | ((offered == value) & (i < index))
         )
         return (
-            next_inside(at),
             jnp.where(better, offered, value),
             jnp.where(better, i, index),
             jnp.where(better, link_saving, saving),
             jnp.where(better, link_continuation, continuation),
         )
 
+    # A smooth bracket ascends, so it lies in one maximal ascending run of the
+    # endogenous cash-on-hand, whose brackets tile the run in order. In a run, a
+    # point lies only in the bracket opened by the last node at or below it and
+    # in the bracket closed there; one search per run finds both. A bracket
+    # further below holds the point only where `share` rounds down to 1 across a
+    # whole further bracket, so the visit takes one more below as margin.
+    # ponytail: three brackets per run; widen if a grid ever needs more margin.
+    n_brackets = n_nodes - 1
+    previous = jnp.concatenate([jnp.zeros((1,), dtype=bool), ascends[:-1]])
+    following = jnp.concatenate([ascends[1:], jnp.zeros((1,), dtype=bool)])
+    run_first = jnp.nonzero(ascends & ~previous, size=n_brackets, fill_value=0)[0]
+    run_last = jnp.nonzero(ascends & ~following, size=n_brackets, fill_value=0)[0]
+    n_runs = jnp.sum(ascends & ~previous)
+
+    def visit_run(
+        state: tuple[IntND, FloatND, IntND, Float1D, Float1D],
+    ) -> tuple[IntND, FloatND, IntND, Float1D, Float1D]:
+        k, *_ = state
+        first = run_first[k].astype(jnp.int32)
+        last = run_last[k].astype(jnp.int32)
+        key = jnp.where(
+            node < first, -jnp.inf, jnp.where(node <= last + 1, endog_coh, jnp.inf)
+        )
+        at = jnp.searchsorted(key, coh, side="right").astype(jnp.int32) - 1
+        merged = (state[1], state[2], state[3], state[4])
+        for below in (2, 1, 0):
+            merged = offer(i=jnp.clip(at - below, first, last), held=merged)
+        return (k + 1, *merged)
+
     if n_nodes < 2:  # noqa: PLR2004
         return best_index, best_saving, best_continuation
     _, _, best_index, best_saving, best_continuation = jax.lax.while_loop(
-        lambda state: jnp.any(state[0] < n_nodes - 1),
-        visit,
-        (
-            next_inside(jnp.full(coh.shape, -1, dtype=jnp.int32)),
-            best_value,
-            best_index,
-            best_saving,
-            best_continuation,
-        ),
+        lambda state: state[0] < n_runs,
+        visit_run,
+        (jnp.int32(0), best_value, best_index, best_saving, best_continuation),
     )
     return best_index, best_saving, best_continuation
 

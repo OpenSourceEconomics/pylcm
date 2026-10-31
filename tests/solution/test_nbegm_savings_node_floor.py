@@ -389,3 +389,47 @@ def test_savings_node_refinement_searches_no_bracket_per_point_and_node() -> Non
     ]
     assert searched
     assert max(searched) < n_liquid * (n_savings - 1)
+
+
+def _loop_body_intermediates(*, jaxpr, found: list[int]) -> list[int]:
+    for eqn in jaxpr.eqns:
+        if eqn.primitive.name == "while":
+            body = eqn.params["body_jaxpr"]
+            found.extend(
+                size
+                for size, _ in _intermediates(
+                    jaxpr=getattr(body, "jaxpr", body), found=[]
+                )
+            )
+        for param in eqn.params.values():
+            for sub in param if isinstance(param, (tuple, list)) else (param,):
+                inner = getattr(sub, "jaxpr", None)
+                if inner is not None:
+                    _loop_body_intermediates(
+                        jaxpr=getattr(inner, "jaxpr", inner), found=found
+                    )
+    return found
+
+
+def test_savings_node_brackets_are_found_without_a_point_by_node_pass_per_loop() -> (
+    None
+):
+    """No loop of the step forms a point-by-node array.
+
+    The best node per point visits the brackets a point lies in; locating them
+    must not rescan every point against every node on each visit.
+    """
+    n_liquid, n_savings = 64, 32
+    jaxpr = jax.make_jaxpr(
+        lambda: _multi_interval_step(
+            n_liquid=n_liquid,
+            n_savings=n_savings,
+            whole_bank=False,
+            arithmetic="ordinary",
+            retain_query=True,
+            return_owner=True,
+        )
+    )()
+    in_loops = _loop_body_intermediates(jaxpr=jaxpr.jaxpr, found=[])
+    assert in_loops
+    assert max(in_loops) < n_liquid * (n_savings - 1)
