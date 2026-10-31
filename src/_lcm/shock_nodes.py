@@ -1,10 +1,4 @@
-"""Build joint shock rules outside tracing, merging nested nodes by construction ids.
-
-Genz-Keister table provenance:
-https://chaospy.readthedocs.io/en/master/_modules/chaospy/quadrature/genz_keister.html
-Only the nested 1/3/9/19 prefix is supported. Table coordinates integrate exp(-x*x);
-normal-base coordinates multiply by sqrt(2), weights divide by sqrt(pi).
-"""
+"""Build joint shock rules outside tracing."""
 
 import hashlib
 import itertools
@@ -30,7 +24,6 @@ from lcm.shocks import (
     GaussHermite,
     HostArray,
     MonteCarlo,
-    NodeRule,
     NodeSet,
     Product,
     QuasiMonteCarlo,
@@ -38,55 +31,10 @@ from lcm.shocks import (
     ShockGroup,
     ShockGroupName,
     ShockName,
-    Smolyak,
     Uniform,
     UserNodes,
     _fingerprint,
     _validate_weights,
-)
-
-type _NodeId = int | Fraction
-
-_GK_COORDINATES = (
-    0.0,
-    0.52403354748695763,
-    0.87004089535290285,
-    1.2247448713915889,
-    1.8357079751751868,
-    2.0232301911005157,
-    2.2665132620567876,
-    2.9592107790638380,
-    3.6677742159463378,
-    4.4995993983103881,
-)
-_GK_LEVELS = (
-    ((0,), (1.7724538509055159,)),
-    ((0, 3), (1.1816359006036772, 0.29540897515091930)),
-    (
-        (0, 1, 3, 5, 7),
-        (
-            0.45014700975378197,
-            0.47869428549114124,
-            0.16811892894767771,
-            0.014173117873979098,
-            1.6708826306882348e-4,
-        ),
-    ),
-    (
-        (0, 1, 2, 3, 4, 5, 6, 7, 8, 9),
-        (
-            0.53788160700510168,
-            0.36924643368920851,
-            0.10838861955003017,
-            0.11360729895748269,
-            0.032055243099445879,
-            -0.011232438489069229,
-            5.1133174390883855e-3,
-            1.0656589772852267e-4,
-            1.0802767206624762e-6,
-            1.5295717705322357e-9,
-        ),
-    ),
 )
 
 
@@ -148,13 +96,11 @@ def resolve_nodes(
                 ]
             )
             weights = np.full(rule.n, 1.0 / rule.n)
-    elif isinstance(rule, Smolyak):
-        points, weights = _smolyak(level=rule.level, uniform=uniform)
     elif rule is None and not continuous:
         points, weights = np.zeros((1, 0)), np.ones(1)
     else:
         raise ShockDeclarationError("Unsupported or missing node rule.")
-    _validate_weights(weights=weights, rule=_rule_label(rule))
+    _validate_weights(weights=weights, rule=type(rule).__name__)
     rounded_weights = (
         jnp.asarray(weights)
         if array_writer is None
@@ -164,7 +110,7 @@ def resolve_nodes(
             name=f"{group_name}:validation_weights",
         )
     )
-    _validate_weights(weights=np.asarray(rounded_weights), rule=_rule_label(rule))
+    _validate_weights(weights=np.asarray(rounded_weights), rule=type(rule).__name__)
     del rounded_weights
     points, weights, codes = _enumerate_categories(
         group=group, points=points, weights=weights, continuous=continuous
@@ -233,14 +179,6 @@ def resolve_nodes(
     )
 
 
-def _rule_label(rule: NodeRule | None) -> str:
-    return (
-        f"Smolyak(level={rule.level})"
-        if isinstance(rule, Smolyak)
-        else (type(rule).__name__)
-    )
-
-
 def _scalar_rule(*, rule: ScalarRule) -> tuple[HostArray, HostArray]:
     if isinstance(rule, GaussHermite):
         nodes, weights = np.polynomial.hermite.hermgauss(rule.n)
@@ -267,86 +205,6 @@ def _tensor(axes: list[tuple[HostArray, HostArray]]) -> tuple[HostArray, HostArr
     for _, axis_weights in axes:
         weights = (weights[:, None] * axis_weights[None, :]).reshape(-1)
     return nodes, weights
-
-
-def _nested_rule(*, level: int, uniform: bool) -> dict[_NodeId, float]:
-    if not uniform:
-        if level >= len(_GK_LEVELS):
-            raise ShockDeclarationError(
-                "Genz-Keister-19 supports normal levels 0 through 3 only."
-            )
-        ids, weights = _GK_LEVELS[level]
-        rule = {
-            index: weight / math.sqrt(math.pi)
-            for index, weight in zip(ids, weights, strict=True)
-        }
-        return {**{-index: weight for index, weight in rule.items() if index}, **rule}
-    if level == 0:
-        return {Fraction(1, 2): 1.0}
-    # Integrate the cosine interpolant in the Chebyshev basis; canonical dyadic angles
-    # retain nested identity. https://github.com/chebfun/chebfun/blob/master/@chebtech2/quadwts.m
-    count = 2**level
-    theta = np.arange(count + 1) * math.pi / count
-    interior = np.ones(count - 1)
-    for frequency in range(1, count // 2):
-        interior -= (
-            2 * np.cos(2 * frequency * theta[1:-1]) / (4 * frequency * frequency - 1)
-        )
-    interior -= np.cos(count * theta[1:-1]) / (count * count - 1)
-    weights = np.concatenate(
-        ([0.5 / (count * count - 1)], interior / count, [0.5 / (count * count - 1)])
-    )
-    return {
-        Fraction(index, count): float(weight) for index, weight in enumerate(weights)
-    }
-
-
-def _smolyak(*, level: int, uniform: tuple[bool, ...]) -> tuple[HostArray, HostArray]:
-    dimension = len(uniform)
-    if not dimension:
-        return np.zeros((1, 0)), np.ones(1)
-    if not all(uniform) and level >= len(_GK_LEVELS):
-        raise ShockDeclarationError(
-            "Genz-Keister-19 supports normal levels 0 through 3 only."
-        )
-    terms: dict[tuple[_NodeId, ...], list[float]] = {}
-    for multi in itertools.product(range(level + 1), repeat=dimension):
-        difference = level - sum(multi)
-        if difference < 0 or difference >= dimension:
-            continue
-        coefficient = (-1) ** difference * math.comb(dimension - 1, difference)
-        axes = [
-            _nested_rule(level=order, uniform=kind)
-            for order, kind in zip(multi, uniform, strict=True)
-        ]
-        for indices in itertools.product(*(tuple(axis) for axis in axes)):
-            weight = coefficient * math.prod(
-                axis[index] for axis, index in zip(axes, indices, strict=True)
-            )
-            terms.setdefault(indices, []).append(weight)
-    combined = {
-        key: math.fsum(value)
-        for key, value in sorted(terms.items())
-        if math.fsum(value) != 0.0
-    }
-    nodes = np.asarray(
-        [
-            [
-                _coordinate(index=index, uniform=kind)
-                for index, kind in zip(indices, uniform, strict=True)
-            ]
-            for indices in combined
-        ]
-    )
-    return nodes, np.asarray(tuple(combined.values()))
-
-
-def _coordinate(*, index: _NodeId, uniform: bool) -> float:
-    if uniform:
-        if index == Fraction(1, 2):
-            return 0.5
-        return (1 - math.cos(math.pi * float(index))) * 0.5
-    return math.copysign(_GK_COORDINATES[abs(int(index))] * math.sqrt(2), int(index))
 
 
 def _enumerate_categories(
