@@ -81,7 +81,7 @@ from lcm.regime import (
     StateTransitionEntry,
 )
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import NBEGM, NNBEGM, OneMarginSolver, TwoMarginSolver
+from lcm.solvers import NNBEGM, OneMarginSolver, TwoMarginSolver
 from lcm.transition import (
     AgeSpecializedFunction,
     JointTransition,
@@ -536,8 +536,8 @@ def split_transition_only_shocks(
     A regime that reads the current value keeps the shock as an ordinary state,
     so a source law reading the draw toward it hands over that state's value.
 
-    A regime solved by `NBEGM` or `NNBEGM` keeps every IID process state: those
-    solvers read a draw only off a kept state axis.
+    A regime solved by `NNBEGM` keeps every IID process state: its inner solve
+    and child read take a draw only off a kept state axis.
 
     Args:
         user_regimes: Mapping of regime names to pruned `Regime` instances.
@@ -563,13 +563,11 @@ def split_transition_only_shocks(
     }
     transition_only: dict[RegimeName, dict[StateName, _IIDProcess]] = {}
     for name, regime in user_regimes.items():
-        # ponytail: NBEGM's single-liquid kernels tabulate a deterministic landing
-        # law and cannot read a draw, and NNBEGM's inner NB solve and child read
-        # enumerate no transition-local draw; both read it only off a kept
-        # (ride-along) state axis. They keep the axis, along which the value is
-        # constant. Upgrade path: integrate law draws in the single-liquid NBEGM
-        # kernels, then drop this exclusion.
-        if isinstance(regime.solver, (NBEGM, NNBEGM)):
+        # ponytail: NNBEGM's inner NB solve and child read enumerate no
+        # transition-local draw and read it only off a kept (ride-along) state
+        # axis, along which the value is constant. Upgrade path: enumerate the
+        # draw there as NBEGM's ride-along kernel does, then drop this exclusion.
+        if isinstance(regime.solver, NNBEGM):
             continue
         candidates = {
             state: grid
