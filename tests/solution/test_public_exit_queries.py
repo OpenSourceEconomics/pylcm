@@ -1,9 +1,10 @@
 """Public exits compare actual mapped common policies, with independent anchors."""
 
+import inspect
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
 from typing import ClassVar, cast
 
 import jax
@@ -16,8 +17,9 @@ from beartype.roar import BeartypeCallHintParamViolation
 import lcm
 from _lcm.current_iid import CurrentIIDDrawPlan
 from _lcm.execution.core_program import CoreBuildContext
-from _lcm.exit_queries import bind_exit_query_graph
+from _lcm.exit_queries import _compose, _QueryGraphBuilder, bind_exit_query_graph
 from _lcm.policy_queries import QueryKind, ScalarPolicyQueries, _PolicyQueryKernel
+from _lcm.solution.fingerprint import _semantic_fingerprint
 from _lcm.typing import PytreeValue
 from lcm import (
     CollectiveUtility,
@@ -43,6 +45,7 @@ from lcm.exceptions import (
 from lcm.exits import ExitRule
 from lcm.shocks import Discrete, Normal, PhysicalValues, ShockGroup, UserNodes
 from lcm.taste_shocks import ExtremeValueTasteShocks
+from lcm.transition import fixed_transition
 from lcm.typing import BoolND, FloatND, IntND, Period, ScalarInt, UserFunction
 
 
@@ -2003,3 +2006,85 @@ def test_nested_information_uses_each_ancestors_settlement_operands(
         )
         np.testing.assert_allclose(solution.values[0]["single_f"], expected)
         assert np.all(np.isfinite(solution.values[0]["single_f"]))
+
+
+def test_leaf_exit_projection_does_not_capture_a_dag() -> None:
+    """A projection with no computed inputs retains only its authored callback."""
+
+    builder = cast(
+        "_QueryGraphBuilder",
+        SimpleNamespace(
+            contexts={"owner": SimpleNamespace(functions={"unrelated": _wealth})},
+            canonical_regimes={
+                "owner": SimpleNamespace(
+                    regime_params_template=MappingProxyType(
+                        {"projection": MappingProxyType({})}
+                    )
+                )
+            },
+            aliases={},
+        ),
+    )
+    bound = _QueryGraphBuilder.bound(
+        builder, owner="owner", path=("projection",), function=_wealth
+    )
+    assert bound is _wealth
+    np.testing.assert_array_equal(bound(wealth=jnp.asarray(3.0)), 3.0)
+
+
+def test_exit_projection_keeps_computed_inputs_and_parameter_aliases() -> None:
+    """Computed dependencies and their caller-owned aliases retain their values."""
+
+    def resources(wealth: FloatND) -> FloatND:
+        return 2 * wealth
+
+    def projection(resources: FloatND) -> FloatND:
+        return resources + 1
+
+    builder = cast(
+        "_QueryGraphBuilder",
+        SimpleNamespace(
+            contexts={"owner": SimpleNamespace(functions={"resources": resources})},
+            canonical_regimes={
+                "owner": SimpleNamespace(
+                    regime_params_template=MappingProxyType(
+                        {"projection": MappingProxyType({})}
+                    )
+                )
+            },
+            aliases={("owner", "wealth"): "cash"},
+        ),
+    )
+    bound = _QueryGraphBuilder.bound(
+        builder, owner="owner", path=("projection",), function=projection
+    )
+    np.testing.assert_array_equal(bound(cash=jnp.asarray(3.0)), 7.0)
+
+
+def test_callable_exit_projection_keeps_fingerprint_admission() -> None:
+    """Callable identity declarations keep the existing composed-hash support."""
+
+    builder = cast(
+        "_QueryGraphBuilder",
+        SimpleNamespace(
+            contexts={"owner": SimpleNamespace(functions={})},
+            canonical_regimes={
+                "owner": SimpleNamespace(
+                    regime_params_template=MappingProxyType(
+                        {"projection": MappingProxyType({})}
+                    )
+                )
+            },
+            aliases={},
+        ),
+    )
+    bound = _QueryGraphBuilder.bound(
+        builder,
+        owner="owner",
+        path=("projection",),
+        function=fixed_transition("wealth"),
+    )
+    assert inspect.isfunction(bound)
+    composed = _compose(projection={}, function=bound, source="owner")
+    np.testing.assert_array_equal(composed(wealth=jnp.asarray(3.0)), 3.0)
+    assert _semantic_fingerprint(composed)
