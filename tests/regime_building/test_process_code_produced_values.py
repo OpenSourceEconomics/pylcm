@@ -93,7 +93,7 @@ def _process() -> NormalIIDProcess:
         sigma=1.0,
         n_std=2.0,
         gauss_hermite=False,
-        simulate_draws="nodes",
+        simulated_draws="nodes",
     )
 
 

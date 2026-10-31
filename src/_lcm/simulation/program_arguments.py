@@ -119,7 +119,7 @@ def process_node_arguments(
             process := regimes[target].simulation.grids[state],
             _ContinuousStochasticProcess,
         )
-        and process.simulate_draws == "nodes"
+        and process.simulated_draws == "nodes"
     }
 
 

@@ -97,7 +97,7 @@ def _process(*, mu: float, n_points: int = 5, sigma: float = 1.0, n_std: float =
         mu=mu,
         sigma=sigma,
         n_std=n_std,
-        simulate_draws="nodes",
+        simulated_draws="nodes",
     )
 
 
@@ -413,7 +413,7 @@ def _couple_model(
         mu=0.0,
         sigma=1.0 if binding == "constructor" else None,
         n_std=1.0,
-        simulate_draws="nodes",
+        simulated_draws="nodes",
     )
     couple = Regime(
         states={"z": shock},
@@ -563,7 +563,7 @@ def _landing_model(
     nothing, or a `ParticipationCheck` reading the target's value at the landing.
     """
     shock = UniformIIDProcess(
-        n_points=3, start=-1.0, stop=None if runtime else 1.0, simulate_draws="nodes"
+        n_points=3, start=-1.0, stop=None if runtime else 1.0, simulated_draws="nodes"
     )
     route = StakeholderRoute(
         fallback=ProjectedRegimeValue(regime="fallback", projection={})

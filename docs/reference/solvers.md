@@ -327,14 +327,14 @@ A process state drawn off its nodes may enter an endogenous-grid regime (`DCEGM`
 `TauchenAR1Process`, `RouwenhorstAR1Process` or `TauchenAR1Process.on_nodes`) or a
 `shocks=` draw any other way, directly or through a helper function, even if it also
 enters resources and whatever the law's parameters. Every process simulates continuous
-draws by default. A process declared with `simulate_draws="nodes"` is drawn only at its
+draws by default. A process declared with `simulated_draws="nodes"` is drawn only at its
 nodes, so each read takes one node row and is exact; it may enter utility freely. The
 remedies are:
 
 - for a process state: move it into resources, declare it with
-  `simulate_draws="nodes"`, or solve the regime with `GridSearch`;
+  `simulated_draws="nodes"`, or solve the regime with `GridSearch`;
 - for a shock of a `shocks=` group, which has no draw mode of its own: move it into
-  resources, declare it as an IID process state with `simulate_draws="nodes"`, or solve
+  resources, declare it as an IID process state with `simulated_draws="nodes"`, or solve
   the regime with `GridSearch`.
 
 Policy-first needs a regime whose actions are the EGM action plus discrete actions, with

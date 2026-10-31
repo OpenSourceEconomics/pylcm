@@ -127,7 +127,7 @@ def test_process_state_entering_utility_is_refused(sigma: float | None):
             r"(?s)DCEGM regime 'retirement' reads the process state\(s\) "
             r"\['wage_shock'\] other than through resources\..*Move the process "
             r"into resources, "
-            r"declare it with `simulate_draws=\"nodes\"`, or use GridSearch for "
+            r"declare it with `simulated_draws=\"nodes\"`, or use GridSearch for "
             r"this regime\."
         ),
     ):

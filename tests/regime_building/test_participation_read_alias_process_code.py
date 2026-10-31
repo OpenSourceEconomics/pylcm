@@ -70,7 +70,7 @@ def _process(*, continuous: bool):
         nodes=np.array([-1.0, 0.0, 1.0]),
         rho=0.5,
         sigma=1.0,
-        simulate_draws="continuous" if continuous else "nodes",
+        simulated_draws="continuous" if continuous else "nodes",
     )
 
 
@@ -214,6 +214,6 @@ def test_participation_read_alias_uses_both_canonical_process_phase_bindings(
     phase: str,
 ) -> None:
     with pytest.raises(
-        RegimeInitializationError, match=r"z_code.*simulate_draws='nodes'"
+        RegimeInitializationError, match=r"z_code.*simulated_draws='nodes'"
     ):
         _model(continuous_phase=phase)

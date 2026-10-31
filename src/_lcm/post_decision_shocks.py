@@ -3,20 +3,22 @@
 A regime lists a group in `Regime(shocks=...)`. Reading a shock `x` means this
 period's realization, known at the choice; reading `next_x` means the draw after
 the choice. A group whose shocks the regime reads only as `next_x` is integrated
-out: each shock becomes a fixed node set, the solve sums the source's
-continuation over its nodes with its weights, and simulation samples one node
-per subject from the same weights. The regime stores no axis for it.
+out: each shock becomes a fixed node set, and the solve sums the source's
+continuation over its nodes with its weights. The nodes serve the solve's
+integration only. Simulation draws each subject's value from the shock's
+continuous law, since the draw enters only next period's state law and indexes
+no policy read. The regime stores no axis for it.
 """
 
 import inspect
 from collections.abc import Mapping
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 from types import MappingProxyType
 from typing import ClassVar, Literal, cast
 
-import jax
 import jax.numpy as jnp
 
+from _lcm.current_iid import _draw_base_value
 from _lcm.processes import _IIDProcess
 from _lcm.regime_building.broadcast import root_functions
 from _lcm.regime_law import RegimeLaws
@@ -33,9 +35,9 @@ from lcm.shocks import (
     ShockGroup,
     ShockGroupName,
     ShockName,
+    Uniform,
     _Independence,
 )
-from lcm.solvers import GridSearch
 from lcm.typing import (
     Float1D,
     FloatND,
@@ -66,8 +68,11 @@ def lower_post_decision_shocks(
     Raises:
         ModelInitializationError: If a regime reads a group both as its value and
             as its draw, or a post-decision group is unusable: also read as a value
-            in another regime, not lowerable to one fixed node set per shock, or
-            declared on a regime whose solver cannot integrate it.
+            in another regime, or not lowerable to one fixed node set per shock.
+
+    Only `GridSearch` readers reach this lowering: a group any endogenous-grid
+    regime reads was already moved onto its readers' states as node processes,
+    which `split_transition_only_shocks` integrates out per solver.
 
     """
     post_decision_groups = {
@@ -200,15 +205,21 @@ def _law_roots(
 
 @dataclass(frozen=True, kw_only=True)
 class PostDecisionShock(_IIDProcess):
-    """One post-decision shock's physical nodes and weights, fixed at model build."""
+    """One post-decision shock's physical nodes and weights, fixed at model build.
 
+    The nodes and weights are the solve's integration rule. Simulation draws from
+    the shock's law, mapped from one addressed base innovation per subject.
+    """
+
+    group: ShockGroup = field(compare=False)
+    """One-shock group whose law maps a base draw to the physical value."""
     nodes: tuple[float, ...]
     """Physical values, in the group's node order."""
     weights: tuple[float, ...]
     """Integration weights, one per node, summing to one."""
 
     _NON_PARAM_FIELDS: ClassVar[frozenset[str]] = (
-        _IIDProcess._NON_PARAM_FIELDS | {"nodes", "weights"}  # noqa: SLF001
+        _IIDProcess._NON_PARAM_FIELDS | {"group", "nodes", "weights"}  # noqa: SLF001
     )
 
     def compute_gridpoints(self, **kwargs: ScalarFloat | ScalarInt) -> Float1D:  # noqa: ARG002
@@ -225,8 +236,10 @@ class PostDecisionShock(_IIDProcess):
         params: MappingProxyType[str, ScalarFloat | ScalarInt],  # noqa: ARG002
         key: PRNGKeyND,
     ) -> ScalarFloat:
-        index = jax.random.choice(key, self.n_points, p=jnp.asarray(self.weights))
-        return jnp.asarray(self.nodes)[index]
+        ((name, law),) = self.group.shocks.items()
+        base = _draw_base_value(key=key, uniform=isinstance(law, Uniform))
+        realisation = self.group.transform(base_nodes=jnp.reshape(base, (1, 1)))
+        return realisation.values[name][0]
 
 
 def _fail_if_groups_are_unusable(
@@ -235,8 +248,8 @@ def _fail_if_groups_are_unusable(
     groups: Mapping[ShockGroupName, ShockGroup],
     post_decision_groups: Mapping[RegimeName, tuple[ShockGroupName, ...]],
 ) -> None:
-    """Refuse a post-decision group on a non-GridSearch regime, read as a value in
-    another regime, or without a fixed node set."""
+    """Refuse a post-decision group read as a value in another regime, or without a
+    fixed node set."""
     current = {
         name
         for regime_name, regime in regimes.items()
@@ -248,16 +261,7 @@ def _fail_if_groups_are_unusable(
         if name not in post_decision_groups[regime_name]
     }
     errors: list[str] = []
-    for regime_name, regime in regimes.items():
-        if post_decision_groups[regime_name] and not isinstance(
-            regime.solver, GridSearch
-        ):
-            errors.append(
-                f"Regime '{regime_name}' reads shock group(s) "
-                f"{list(post_decision_groups[regime_name])} only as their draw "
-                "`next_<shock>`. "
-                "Only the `GridSearch` solver integrates such a draw."
-            )
+    for regime_name in regimes:
         for group_name in post_decision_groups[regime_name]:
             group = groups[group_name]
             if group_name in current:
@@ -333,6 +337,7 @@ def _lower_group(
         realised.raise_if_invalid()
         weights = tuple(float(w) for w in realised.weights)
         lowered[shock] = PostDecisionShock(
+            group=single,
             n_points=len(weights),
             nodes=tuple(float(v) for v in realised.values[shock]),
             weights=weights,

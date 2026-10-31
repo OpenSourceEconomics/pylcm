@@ -425,7 +425,7 @@ def _declared_process_grids(
 
 def _stands_on_nodes(process: _ContinuousStochasticProcess) -> bool:
     """Whether every value the process holds is one of its fixed nodes."""
-    return process.is_fully_specified and process.simulate_draws == "nodes"
+    return process.is_fully_specified and process.simulated_draws == "nodes"
 
 
 def _declared_discrete_grids(
@@ -1276,7 +1276,7 @@ def _fail_if_a_position_has_no_node(
         if isinstance(process, UnreadableProcessCode)
         else f"`{name}` (fix the parameters of `{codes[name]}` at construction)"
         if not process.is_fully_specified
-        else f"`{name}` (declare `{codes[name]}` with `simulate_draws='nodes'`)"
+        else f"`{name}` (declare `{codes[name]}` with `simulated_draws='nodes'`)"
         for name, process in positions.items()
         if isinstance(process, UnreadableProcessCode) or not _stands_on_nodes(process)
     ]

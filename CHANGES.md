@@ -34,6 +34,23 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   same base draws across parameter values. Reordering initial-condition rows changes
   which draws a subject receives.
 
+### Post-decision shocks are simulated with continuous draws
+
+- Post-decision shocks are simulated with continuous draws by default; panels change. A
+  shock read only as `next_<shock>` is still integrated over its nodes in the solve, but
+  simulation now draws it from its law. A `Model(shocks=...)` group always draws
+  continuously; an IID process state integrated out this way honours its
+  `simulated_draws`, whose default is `"continuous"`, and `simulated_draws="nodes"`
+  keeps the node lottery. Process states that carry an axis are unchanged. See
+  [Shock timing is inferred](docs/user_guide/migrating_dated_regimes.md#shock-timing-is-inferred).
+
+### `simulate_draws` is renamed `simulated_draws`
+
+- Breaking API: the process keyword `simulate_draws=` is now `simulated_draws=`, on
+  every IID and AR(1) process and on `TauchenAR1Process.on_nodes`. The values stay
+  `"continuous"` and `"nodes"`. Passing the old keyword raises `TypeError` naming the
+  new one.
+
 ### Folded-IID machinery removed
 
 - `lcm.solvers.SolverBuildContext.fold_state_names` is removed. No declaration could
@@ -59,12 +76,12 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   a process state (IID or AR(1), such as Tauchen, Rouwenhorst or `on_nodes`) or a
   `shocks=` draw other than through its resources function now raises
   `ModelInitializationError` at `Model(...)`, unless the process state is declared with
-  `simulate_draws="nodes"`. Simulation used to blend the bracketing node policies for a
+  `simulated_draws="nodes"`. Simulation used to blend the bracketing node policies for a
   draw between nodes, an approximation for a process that changes preferences; node
   draws read one node row exactly. Move the process into resources or solve the regime
-  with `GridSearch`. Otherwise, declare a process state with `simulate_draws="nodes"`;
+  with `GridSearch`. Otherwise, declare a process state with `simulated_draws="nodes"`;
   a `shocks=` group has no draw mode of its own, so declare its shock as an IID process
-  state with `simulate_draws="nodes"`. See
+  state with `simulated_draws="nodes"`. See
   [DC-EGM](docs/reference/solvers.md#api-dcegm).
 
 ### Dissolution-flag artifact key removed
@@ -93,8 +110,8 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - A `ShockGroup` listed in `Regime(shocks=...)`, or an IID process declared as a state,
   carries an axis only when some function of the regime reads its current value. A
   shock read only as `next_x` by state transitions has no axis: the solve integrates
-  the transitions over its nodes and weights, and simulation samples one node per
-  subject. An initial value supplied for such a state is dropped.
+  the transitions over its nodes and weights, and simulation draws it from its
+  continuous law. An initial value supplied for such a state is dropped.
 - Utility and constraints reading `next_x` are refused at model build. A group read both
   as `x` and as `next_x` in one regime is refused; declare the shock as an IID process
   state to carry the realization into the next period.
