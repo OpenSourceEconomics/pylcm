@@ -30,6 +30,7 @@ from beartype.roar import BeartypeCallHintViolation
 
 from _lcm.beartype_conf import MODEL_CONF, PARAMS_CONF, SIMULATION_INPUT_CONF
 from _lcm.current_iid_node_adapter import NodeAxisAdapter, adapt_declaration
+from _lcm.draw_only_shocks import lower_draw_only_shocks
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import EGMSimPolicy, NBEGMGridPolicy, NNBEGMSimPolicy
 from _lcm.engine import (
@@ -93,7 +94,6 @@ from _lcm.persistence.snapshots import (
     _save_simulate_snapshot,
     _save_solve_snapshot,
 )
-from _lcm.post_choice_shocks import lower_post_choice_shocks
 from _lcm.processes.ar1 import (
     RouwenhorstAR1Process,
     TauchenAR1Process,
@@ -1478,7 +1478,7 @@ class Model:
             model_slots=model_slots,
             output_only_functions=output_only_functions,
         )
-        merged_regimes, post_choice_shocks = lower_post_choice_shocks(
+        merged_regimes, draw_only_shocks = lower_draw_only_shocks(
             regimes=merged_regimes, laws=laws, groups=shocks
         )
         self._shock_registry = create_shock_registry(
@@ -1579,18 +1579,18 @@ class Model:
             {
                 name: MappingProxyType(
                     {
-                        **post_choice_shocks.get(name, {}),
+                        **draw_only_shocks.get(name, {}),
                         **transition_only.get(name, {}),
                     }
                 )
-                for name in post_choice_shocks.keys() | transition_only.keys()
+                for name in draw_only_shocks.keys() | transition_only.keys()
             }
         )
         self._draw_only_processes = draw_only_processes
         self._shock_timing = _shock_timing(
             regimes=pruned_regimes,
             groups=shocks,
-            post_choice_shocks=post_choice_shocks,
+            draw_only_shocks=draw_only_shocks,
             transition_only=transition_only,
         )
         # A regime law reads the values of value grids as every user function
@@ -6643,7 +6643,7 @@ def _shock_timing(
     *,
     regimes: Mapping[RegimeName, UserRegime],
     groups: Mapping[ShockGroupName, ShockGroup],
-    post_choice_shocks: Mapping[RegimeName, Mapping[ShockName, _IIDProcess]],
+    draw_only_shocks: Mapping[RegimeName, Mapping[ShockName, _IIDProcess]],
     transition_only: Mapping[RegimeName, Mapping[StateName, _IIDProcess]],
 ) -> MappingProxyType[RegimeName, ShockTiming]:
     """Name, per regime, the shocks carrying an axis and those integrated out."""
@@ -6661,7 +6661,7 @@ def _shock_timing(
             if isinstance(grid, _IIDProcess)
         )
         integrated = tuple(
-            dict.fromkeys(group_of[shock] for shock in post_choice_shocks.get(name, {}))
+            dict.fromkeys(group_of[shock] for shock in draw_only_shocks.get(name, {}))
         ) + tuple(transition_only.get(name, {}))
         timing[name] = (axis, integrated)
     return MappingProxyType(timing)
