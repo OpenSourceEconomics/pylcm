@@ -134,13 +134,17 @@ def test_normal_controls_preserve_all_historical_populations() -> None:
     # The engine redesign adds this one canonical-writer dtype control.
     added_engine_controls = {"candidate_materialization:array_writer_dtype_widened"}
     assert added_engine_controls <= historical
-    assert len(historical) == 614
+    # The dissolution-flag removal deleted streaming_collective:published_dissolution_
+    # inverted and native_graph:collective_output_role_dropped with their targets;
+    # the fold-machinery removal deleted ten streaming fold controls and two
+    # supplemental s02_status:fold_weight_* controls with theirs.
+    assert len(historical) == 600
     historical_before_s1 = historical - added_rng_controls - added_engine_controls
-    assert len(historical_before_s1) == 612
-    assert len(historical_before_s1 - added_initial_controls) == 600
+    assert len(historical_before_s1) == 598
+    assert len(historical_before_s1 - added_initial_controls) == 586
     assert (
         len(historical_before_s1 - added_initial_controls - added_feasibility_controls)
-        == 598
+        == 584
     )
     assert "src/_lcm/solution/feasibility.py" in direct_flow._CERTIFIED_CORRIDOR_SOURCES
     assert len(direct_flow._CERTIFIED_CORRIDOR_SOURCES) == 178

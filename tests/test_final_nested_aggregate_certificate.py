@@ -138,9 +138,9 @@ def test_final_nested_runner_keeps_a_distinct_required_population(
     report = direct_flow_controls.run(repo_root=_ROOT)
     assert report["clean"]["ok"]
     assert report["clean"]["errors"] == []
-    assert report["mutation_count"] == 422
-    assert report["supplemental_mutation_count"] == 96
-    assert report["retained_prefix_mutation_count"] == 113
+    assert report["mutation_count"] == 410
+    assert report["supplemental_mutation_count"] == 94
+    assert report["retained_prefix_mutation_count"] == 116
     assert report["outer_helper_mutation_count"] == 40
     cases = report["final_nested_mutations"]
     assert set(cases) == _EXPECTED_NAMES
@@ -212,9 +212,9 @@ def test_final_nested_failure_prevents_the_actual_runner_aggregate(
     report = direct_flow_controls.run(repo_root=_ROOT)
     assert report["clean"]["ok"]
     assert report["clean"]["errors"] == []
-    assert report["mutation_count"] == 422
-    assert report["supplemental_mutation_count"] == 96
-    assert report["retained_prefix_mutation_count"] == 113
+    assert report["mutation_count"] == 410
+    assert report["supplemental_mutation_count"] == 94
+    assert report["retained_prefix_mutation_count"] == 116
     assert report["outer_helper_mutation_count"] == 40
     assert not report["all_rejected"]
     if fault == "admitted":
