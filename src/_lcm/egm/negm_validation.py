@@ -92,7 +92,12 @@ from _lcm.grids import ContinuousGrid
 from _lcm.regime_law import RegimeLaw, RegimeLaws
 from _lcm.solution.dcegm import _BoundDCEGM
 from _lcm.solution.negm import _BoundNEGM
-from _lcm.typing import FunctionName, RegimeName, TransitionFunctionName
+from _lcm.typing import (
+    FunctionName,
+    RegimeName,
+    StateName,
+    TransitionFunctionName,
+)
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.regime import StateTransitionEntry
@@ -143,6 +148,7 @@ def validate_negm_regime(
     regime_name: RegimeName,
     user_regime: UserRegime,
     law: RegimeLaw,
+    shock_node_states: frozenset[StateName] = frozenset(),
 ) -> None:
     """Run all NEGM contract checks for a single regime, in order."""
     solver = cast("_BoundNEGM", user_regime.solver)
@@ -162,6 +168,7 @@ def validate_negm_regime(
         user_regime=user_regime,
         resources=inner.resources,
         solver_name="NEGM",
+        shock_node_states=shock_node_states,
     )
     _fail_if_outer_margin_euler_coupled(
         regime_name=regime_name,

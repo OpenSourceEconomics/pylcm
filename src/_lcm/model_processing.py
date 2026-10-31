@@ -437,6 +437,7 @@ def validate_model_inputs(
     declared_transitions: Mapping[
         RegimeName, tuple[Transition, ...]
     ] = MappingProxyType({}),
+    shock_node_states: frozenset[StateName] = frozenset(),
 ) -> None:
     """Validate model constructor inputs.
 
@@ -457,6 +458,9 @@ def validate_model_inputs(
     `removed_edge_reads` name, per regime, the variables read by declarations
     that fixed-zero pruning removed with their edges, and those edges' targets.
     Such a variable is unused like any other; the names only explain why.
+
+    `shock_node_states` name the node states that solve the shocks of `shocks=`
+    groups, so a solver refusal names the remedy a shock has.
     """
     # DC-EGM contract checks run before the generic checks below: a contract
     # violation (e.g. a missing resources function) typically also leaves
@@ -501,6 +505,7 @@ def validate_model_inputs(
                 phase_variation_paths=phase_variation_paths(
                     user_regime=user_regime, law=laws[regime_name]
                 ),
+                shock_node_states=shock_node_states,
             )
         )
 

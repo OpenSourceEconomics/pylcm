@@ -11,6 +11,7 @@ savings-node candidate. Where the continuation is smooth, the floor must not
 displace the interior Euler optimum between two nodes.
 """
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -23,7 +24,11 @@ from _lcm.egm.nbegm_step import (
 )
 from _lcm.egm.preferences import Preferences
 from lcm.typing import FloatND
-from tests.conftest import DECIMAL_PRECISION, EXACT_KERNEL_SKIP_REASON
+from tests.conftest import (
+    DECIMAL_PRECISION,
+    EXACT_KERNEL_SKIP_REASON,
+    assert_agrees_to_ulp,
+)
 from tests.solution._crra_preferences import crra_preferences
 
 _CRRA = 3.84
@@ -205,3 +210,115 @@ def test_off_node_query_publishes_the_interior_euler_policy(
     np.testing.assert_array_less(
         node_value.max(axis=1) - 10.0**-DECIMAL_PRECISION, np.asarray(value)
     )
+
+
+def _kinked_continuation(savings_grid: FloatND) -> tuple[FloatND, FloatND]:
+    """A concave child value read linearly on a coarse grid, with its kinks."""
+    child_grid = jnp.array([0.1, 3.0, 6.0, 12.0])
+    child_value = jnp.log(child_grid)
+    next_liquid = _GROSS_RETURN * savings_grid + _INCOME
+    value = jnp.interp(next_liquid, child_grid, child_value)
+    slopes = jnp.diff(child_value) / jnp.diff(child_grid)
+    marginal = _GROSS_RETURN * slopes[jnp.searchsorted(child_grid, next_liquid) - 1]
+    return value, marginal
+
+
+def _multi_interval_step(
+    *, n_liquid: int, n_savings: int, whole_bank: bool, **kwargs
+) -> tuple[FloatND, ...]:
+    savings_grid = jnp.linspace(0.0, 9.0, n_savings)
+    cont_value, cont_marginal = _kinked_continuation(savings_grid)
+    liquid_grid = jnp.linspace(0.1, 10.0, n_liquid)
+    return nbegm_multi_interval_step_savings(
+        cont_value=cont_value,
+        cont_marginal=cont_marginal,
+        liquid_grid=liquid_grid,
+        savings_grid=savings_grid,
+        discount_factor=jnp.asarray(_DISCOUNT),
+        preferences=_taste_log_preferences(taste=1.0),
+        coh_slopes=jnp.array([1.0, 0.7]),
+        coh_intercepts=jnp.array([1.0, 2.5]),
+        breakpoints=jnp.array([5.0]),
+        query_grid=liquid_grid if whole_bank else None,
+        **kwargs,
+    )
+
+
+def _largest_intermediate(jaxpr) -> int:
+    largest = 0
+    for eqn in jaxpr.eqns:
+        for var in eqn.outvars:
+            largest = max(largest, int(np.prod(getattr(var.aval, "shape", ()))))
+        for param in eqn.params.values():
+            for sub in param if isinstance(param, (tuple, list)) else (param,):
+                inner = getattr(sub, "jaxpr", None)
+                if inner is not None:
+                    largest = max(
+                        largest, _largest_intermediate(getattr(inner, "jaxpr", inner))
+                    )
+    return largest
+
+
+@pytest.mark.parametrize("retain_query", [False, True])
+def test_dense_savings_node_read_grows_with_nodes_times_points(
+    *, retain_query: bool
+) -> None:
+    """No intermediate of the step is larger than a few node-by-point arrays.
+
+    Each savings-node candidate at a liquid point sits on that point alone, so
+    reading the dense node family at the liquid grid needs no array that pairs
+    every candidate with every query.
+    """
+    n_liquid, n_savings = 64, 32
+    jaxpr = jax.make_jaxpr(
+        lambda: _multi_interval_step(
+            n_liquid=n_liquid,
+            n_savings=n_savings,
+            whole_bank=False,
+            arithmetic="ordinary",
+            retain_query=retain_query,
+            return_owner=retain_query,
+        )
+    )()
+    assert _largest_intermediate(jaxpr.jaxpr) <= 8 * n_liquid * n_savings
+
+
+@pytest.mark.parametrize(
+    "arithmetic",
+    [
+        "ordinary",
+        pytest.param(
+            "certified",
+            marks=pytest.mark.requires_exact_affine_kernel(
+                reason=EXACT_KERNEL_SKIP_REASON
+            ),
+        ),
+    ],
+)
+@pytest.mark.parametrize("retain_query", [False, True])
+def test_dense_savings_node_read_matches_the_whole_bank_read(
+    *, arithmetic: ComparisonArithmetic, retain_query: bool
+) -> None:
+    """Reading each node column at its own liquid point equals one whole-bank read.
+
+    An explicit query grid equal to the liquid grid reads the complete bank at
+    every query; the default reads each node column only at its own point. Both
+    select the same owner and publish the same channels, to the few units in the
+    last place that separately compiled reads of one link can differ by.
+    """
+    kwargs = {"arithmetic": arithmetic, "retain_query": retain_query}
+    if retain_query:
+        kwargs["return_owner"] = True
+    by_column = _multi_interval_step(
+        n_liquid=40, n_savings=30, whole_bank=False, **kwargs
+    )
+    whole_bank = _multi_interval_step(
+        n_liquid=40, n_savings=30, whole_bank=True, **kwargs
+    )
+    for got, expected in zip(
+        jax.tree.leaves(by_column), jax.tree.leaves(whole_bank), strict=True
+    ):
+        if jnp.issubdtype(got.dtype, jnp.floating):
+            assert_agrees_to_ulp(got=got, expected=expected, n_ulp=4)
+        else:
+            np.testing.assert_array_equal(np.asarray(got), np.asarray(expected))

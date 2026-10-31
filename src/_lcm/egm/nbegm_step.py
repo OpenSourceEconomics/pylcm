@@ -72,6 +72,7 @@ from _lcm.egm.upper_envelope.query import (
     envelope_at_query,
     finish_envelope_winner,
     merge_envelope_winner,
+    merge_query_point_columns,
     published_owner,
 )
 from _lcm.solution.feasibility import (
@@ -1728,36 +1729,19 @@ def nbegm_multi_interval_step_savings(  # noqa: PLR0915 - preserve the original 
         node_consumption.size, dtype=liquid_grid.dtype
     ).reshape(node_consumption.shape)
 
-    endog_parts = [liquid_endog, _as_pairs(node_endog.ravel())]
-    value_parts = [value_endog, _as_pairs(node_value.ravel())]
-    policy_parts = [consumption, _as_pairs(node_consumption_safe.ravel())]
-    marginal_parts = [marginal_endog, _as_pairs(node_marginal.ravel())]
-    segment_parts = [interior_segment, _as_pairs(node_segment.ravel())]
-
     if retain_query:
-        candidate_savings = jnp.concatenate(
-            [
-                jnp.where(degenerate, jnp.nan, savings_grid),
-                _as_pairs(
-                    jnp.where(
-                        node_feasible,
-                        node_savings,
-                        jnp.nan,
-                    ).ravel()
-                ),
-            ]
-        )
-        published = envelope_at_query(
-            endog_grid=jnp.concatenate(endog_parts),
-            policy=jnp.concatenate(policy_parts),
-            value=jnp.concatenate(value_parts),
-            marginal=jnp.concatenate(marginal_parts),
-            segment_id=jnp.concatenate(segment_parts),
-            x_query=query,
+        published = _read_euler_and_node_bank(
+            euler=(liquid_endog, consumption, value_endog, marginal_endog),
+            euler_segment=interior_segment,
+            node=(node_endog, node_consumption_safe, node_value, node_marginal),
+            node_segment=node_segment,
+            euler_savings=jnp.where(degenerate, jnp.nan, savings_grid),
+            node_savings=jnp.where(node_feasible, node_savings, jnp.nan),
+            query=query,
+            nodes_on_query=query_grid is None,
             arithmetic=arithmetic,
             feasibility_partition=feasibility_partition,
             feasible_interval_mask=feasible_interval_mask,
-            candidate_savings=candidate_savings,
             return_owner=return_owner,
         )
         value, policy, marginal, saving = published[:4]
@@ -1796,13 +1780,13 @@ def nbegm_multi_interval_step_savings(  # noqa: PLR0915 - preserve the original 
             value=value, marginal=marginal, policy=policy, query_data=data
         )
 
-    value, policy, marginal = envelope_at_query(
-        endog_grid=jnp.concatenate(endog_parts),
-        policy=jnp.concatenate(policy_parts),
-        value=jnp.concatenate(value_parts),
-        marginal=jnp.concatenate(marginal_parts),
-        segment_id=jnp.concatenate(segment_parts),
-        x_query=query,
+    value, policy, marginal = _read_euler_and_node_bank(
+        euler=(liquid_endog, consumption, value_endog, marginal_endog),
+        euler_segment=interior_segment,
+        node=(node_endog, node_consumption_safe, node_value, node_marginal),
+        node_segment=node_segment,
+        query=query,
+        nodes_on_query=query_grid is None,
         arithmetic=arithmetic,
         feasibility_partition=feasibility_partition,
         feasible_interval_mask=feasible_interval_mask,
@@ -1814,6 +1798,106 @@ def nbegm_multi_interval_step_savings(  # noqa: PLR0915 - preserve the original 
         coh=coh_query,
         lowest_savings=savings_grid[0],
     )
+
+
+def _read_euler_and_node_bank(
+    *,
+    euler: tuple[Float1D, Float1D, Float1D, Float1D],
+    euler_segment: Float1D,
+    node: tuple[FloatND, FloatND, FloatND, FloatND],
+    node_segment: FloatND,
+    query: Float1D,
+    nodes_on_query: bool,
+    arithmetic: ComparisonArithmetic,
+    feasibility_partition: ResolvedAxisPartition | None,
+    feasible_interval_mask: BoolND | None,
+    euler_savings: Float1D | None = None,
+    node_savings: FloatND | None = None,
+    return_owner: bool = False,
+) -> tuple[FloatND | IntND, ...]:
+    """Read the envelope of the Euler points and the dense savings-node family.
+
+    The bank is the Euler points followed by every `(node, liquid point)` corner
+    as a zero-width pair, channels `(endog, policy, value, marginal)`. Where the
+    queries are the liquid grid, each corner column sits on its own query, so the
+    Euler links are folded against every query and each corner column only
+    against its own (`merge_query_point_columns`), under the one-shot identities.
+    Otherwise the whole bank is read at once.
+    """
+    n_euler = euler[0].shape[0]
+    n_bank = n_euler + 2 * node[0].size
+    retain = euler_savings is not None
+    if not nodes_on_query:
+        return envelope_at_query(
+            endog_grid=jnp.concatenate([euler[0], _as_pairs(node[0].ravel())]),
+            policy=jnp.concatenate([euler[1], _as_pairs(node[1].ravel())]),
+            value=jnp.concatenate([euler[2], _as_pairs(node[2].ravel())]),
+            marginal=jnp.concatenate([euler[3], _as_pairs(node[3].ravel())]),
+            segment_id=jnp.concatenate(
+                [euler_segment, _as_pairs(node_segment.ravel())]
+            ),
+            x_query=query,
+            arithmetic=arithmetic,
+            feasibility_partition=feasibility_partition,
+            feasible_interval_mask=feasible_interval_mask,
+            **(
+                {
+                    "candidate_savings": jnp.concatenate(
+                        [
+                            euler_savings,
+                            _as_pairs(cast("FloatND", node_savings).ravel()),
+                        ]
+                    ),
+                    "return_owner": return_owner,
+                }
+                if retain
+                else {}
+            ),
+        )
+    euler_identity = jnp.concatenate(
+        [
+            jnp.arange(n_euler - 1, dtype=jnp.int32),
+            n_bank - 1 + jnp.arange(n_euler, dtype=jnp.int32),
+        ]
+    )
+    held = merge_envelope_winner(  # ty: ignore[no-matching-overload]
+        held=empty_envelope_winner(query=query, retain_savings=retain),
+        endog_grid=euler[0],
+        policy=euler[1],
+        value=euler[2],
+        marginal=euler[3],
+        segment_id=euler_segment,
+        stable_index=euler_identity,
+        query=query,
+        arithmetic=arithmetic,
+        feasibility_partition=feasibility_partition,
+        feasible_interval_mask=feasible_interval_mask,
+        candidate_savings=euler_savings,
+    )
+    held = merge_query_point_columns(
+        held=held,
+        endog_grid=node[0],
+        policy=node[1],
+        value=node[2],
+        marginal=node[3],
+        segment_id=node_segment,
+        first_index=n_euler
+        + 2 * jnp.arange(node[0].size, dtype=jnp.int32).reshape(node[0].shape),
+        first_self_index=n_bank - 1,
+        query=query,
+        arithmetic=arithmetic,
+        feasibility_partition=feasibility_partition,
+        feasible_interval_mask=feasible_interval_mask,
+        candidate_savings=node_savings,
+    )
+    published = finish_envelope_winner(
+        winner=held,
+        query=query,
+        arithmetic=arithmetic,
+        feasibility_partition=feasibility_partition,
+        feasible_interval_mask=feasible_interval_mask,
+    )
+    return published if return_owner or not retain else published[:4]
 
 
 def _interval_corner_candidates(

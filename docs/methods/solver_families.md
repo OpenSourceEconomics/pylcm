@@ -49,10 +49,9 @@ products, JIT-disabled and raw execution, and all simulation-policy construction
 Collective EV1 and EV1 without a discrete action are unsupported by the streamed
 program. See the canonical
 [GridSearch route matrix](../reference/solvers.md#gridsearch-jit-route-matrix). Streamed
-programs publish solve-time values (and collective dissolution flags), not replay or
-policy artifacts. The blockwise route does not establish a runtime or peak-memory
-improvement without measurement. Grid search is exact relative to its action grids, not
-to the underlying continuous choice set.
+programs publish solve-time values, not replay or policy artifacts. The blockwise route
+does not establish a runtime or peak-memory improvement without measurement. Grid search
+is exact relative to its action grids, not to the underlying continuous choice set.
 
 ## EGM replaces search with inversion
 

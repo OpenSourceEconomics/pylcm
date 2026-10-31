@@ -350,9 +350,7 @@ function while subjects start at different ages cannot be evaluated and raises
   Threefry key whatever `jax_default_prng_impl` says; other key implementations are
   refused, because their draws would change with the subject chunk width. Each draw is
   addressed by the subject's original row position in `initial_conditions`, so
-  reordering those rows changes which draws a subject receives. Collective dissolution
-  gates consume their addressed replay artifacts from `solution`; the automatic-solve
-  path retains and threads them itself.
+  reordering those rows changes which draws a subject receives.
 - `taste_shock_seed=None`: Optional independent integer seed or scalar typed key for
   common taste shocks across counterfactual models. Omit it to keep the ordinary `seed`
   behavior.

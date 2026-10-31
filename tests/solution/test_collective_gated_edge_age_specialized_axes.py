@@ -14,7 +14,7 @@ value maps to, and through it the gate, which is a discrete branch.
 
 Two models, one per collective-only object:
 
-- `_build_gate_ref_model` puts the moving grid on an PARTICIPATION READ and gives the
+- `_build_gate_ref_model` puts the moving grid on a participation read and gives the
   two stakeholders different outside options, so a wrongly-aged read moves both
   components of the source's value.
 - `_build_dissolution_model` puts it on the collective TARGET, whose support the
