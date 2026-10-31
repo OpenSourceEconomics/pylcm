@@ -10,7 +10,7 @@ serves as the reference route.
 """
 
 import dataclasses
-from collections.abc import Mapping
+from collections.abc import Hashable, Mapping
 
 import jax.numpy as jnp
 import numpy as np
@@ -498,11 +498,13 @@ def _work_resources(*, wealth: ContinuousState, work: DiscreteAction) -> FloatND
     return wealth - 1.0 + 2.0 * work
 
 
-def _work_utility(*, consumption: ContinuousAction, work: DiscreteAction) -> FloatND:
-    return jnp.log(consumption) - 0.1 * work
+def _work_utility(
+    *, consumption: ContinuousAction, work: DiscreteAction, work_cost: FloatND
+) -> FloatND:
+    return jnp.log(consumption) - work_cost * work
 
 
-def _work_branch_model() -> Model:
+def _work_branch_model(*, work_cost: float = 0.1) -> Model:
     """Two-period DC-EGM source whose `no`-work branch can be unaffordable.
 
     Not working leaves `wealth - 1` resources, which for `wealth < 1.5` lies
@@ -543,7 +545,7 @@ def _work_branch_model() -> Model:
         initial_nodes=InitialNodes(by_period={0: "alive"}),
         edges={"alive": {"done": Periods(values=(0,))}},
         regime_id_class=_NodeRegimeId,
-        fixed_params={"discount_factor": 1.0},
+        fixed_params={"discount_factor": 1.0, "work_cost": work_cost},
     )
 
 
@@ -608,3 +610,79 @@ def test_budgeted_warm_simulate_reuses_the_policy_read_executable(
     _simulate_node_state(model=model)
 
     assert "_policy_first_body" not in lowered, lowered
+
+
+def _producer_identity(regime) -> Hashable:
+    return host_operations._bound_identity(regime)
+
+
+def test_a_regime_bound_to_another_executor_keys_the_same_producer() -> None:
+    """A dispatch copy differing only in its executor shares the producer key.
+
+    `_bind_unit_executor` rebinds every dispatched regime to its unit executor;
+    a producer that binds that copy must still find the model regime's
+    executable. Any other difference keeps the keys apart.
+    """
+    model = _node_state_model()
+    regime = model._regimes["alive"]
+    bound = [
+        model._runtime_regimes_for_shape(compile_batch_size=width)["alive"]
+        for width in (1, 2)
+    ]
+    assert (
+        bound[0].simulation.programs.executor is not regime.simulation.programs.executor
+    )
+    assert (
+        bound[0].simulation.programs.executor
+        is not bound[1].simulation.programs.executor
+    )
+
+    assert _producer_identity(bound[0]) == _producer_identity(regime)
+    assert _producer_identity(bound[1]) == _producer_identity(regime)
+    assert _producer_identity(
+        dataclasses.replace(regime, name="other")
+    ) != _producer_identity(regime)
+
+
+@pytest.mark.parametrize("work_cost", [0.1, 40.0])
+def test_constrained_segment_below_the_row_is_read_without_the_grid_argmax(
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    work_cost: float,
+) -> None:
+    """Resources between the floor and a row's first node decide from the policy.
+
+    Below the row's first (borrowing-constrained) node the branch still consumes
+    everything above the floor, `R - floor`. A subject whose `no`-work branch
+    lands there is decided without the grid argmax: by the work branch when work
+    is cheap, and by the constrained `no`-work choice when work is costly
+    enough to outweigh consuming almost nothing.
+    """
+    model = _work_branch_model(work_cost=work_cost)
+    executed = _decision_program_owners(monkeypatch=monkeypatch)
+    wealth = np.array([1.5 + 1e-6, 3.0])
+
+    frame = model.simulate(
+        params={},
+        initial_conditions={
+            "wealth": jnp.asarray(wealth),
+            "period": jnp.zeros(wealth.shape, dtype=jnp.int32),
+            "regime_id": jnp.zeros(wealth.shape, dtype=jnp.int32),
+        },
+        seed=0,
+        log_level="off",
+    ).to_dataframe(use_categorical_codes=True)
+
+    assert "alive" not in executed, executed
+    near_floor = frame[(frame["period"] == 0) & (frame["subject_id"] == 0)]
+    work = int(near_floor["work"].iloc[0])
+    consumption = float(near_floor["consumption"].iloc[0])
+    if work_cost < 1.0:
+        assert work == _Work.yes
+        np.testing.assert_allclose(consumption, (wealth[0] + 1.0) / 2.0)
+    else:
+        assert work == _Work.no
+        # The simulated wealth at the active precision: at float32 `1.5 + 1e-6`
+        # rounds, and `R - floor` is exact against the stored value.
+        held = float(near_floor["wealth"].iloc[0])
+        np.testing.assert_allclose(consumption, held - 1.0 - 0.5, rtol=1e-6)
