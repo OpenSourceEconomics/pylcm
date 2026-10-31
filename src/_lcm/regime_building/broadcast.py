@@ -81,7 +81,7 @@ from lcm.regime import (
     StateTransitionEntry,
 )
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import NNBEGM, OneMarginSolver, TwoMarginSolver
+from lcm.solvers import OneMarginSolver, TwoMarginSolver
 from lcm.transition import (
     AgeSpecializedFunction,
     JointTransition,
@@ -537,9 +537,6 @@ def split_post_decision_states(
     A regime that reads the current value keeps the shock as an ordinary state,
     so a source law reading the draw toward it hands over that state's value.
 
-    A regime solved by `NNBEGM` keeps every IID process state: its inner solve
-    and child read take a draw only off a kept state axis.
-
     Args:
         user_regimes: Mapping of regime names to pruned `Regime` instances.
         discrete_names: Pre-adaptation discrete names, including model-level
@@ -564,12 +561,6 @@ def split_post_decision_states(
     }
     post_decision_states: dict[RegimeName, dict[StateName, _IIDProcess]] = {}
     for name, regime in user_regimes.items():
-        # ponytail: NNBEGM's inner NB solve and child read enumerate no
-        # transition-local draw and read it only off a kept (ride-along) state
-        # axis, along which the value is constant. Upgrade path: enumerate the
-        # draw there as NBEGM's ride-along kernel does, then drop this exclusion.
-        if isinstance(regime.solver, NNBEGM):
-            continue
         candidates = {
             state: grid
             for state, grid in regime.states.items()

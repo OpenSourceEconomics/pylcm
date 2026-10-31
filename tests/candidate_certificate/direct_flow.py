@@ -751,7 +751,7 @@ _SOURCE_SEALS = {
     "src/_lcm/egm/nbegm_query_model.py": "d57f368e399523c823c3caa2082ae06cdec74a5c5b0da20d8a6a88abdf555ddd",
     "src/_lcm/egm/nbegm_query.py": "594f8e44f7a3ba541dfa35fab59a6e9629e2dee31dd63dff57b2ee07afc32702",
     "src/_lcm/solution/negm.py": "468409fccaef9285d98e57a50485de6d5d4c2a94e730ce9103b84183e92b6782",
-    "src/_lcm/solution/nnbegm.py": "1b227c2ec4af9fb6f61de322ab1882633632c0668ca4fc8be0bcfc9df165a25d",
+    "src/_lcm/solution/nnbegm.py": "0070da8528e01c95340cfae0a37df1640ca3bb348bf48183acc568d2c78a04d8",
     "src/_lcm/egm/outer_candidates.py": "7a30d25c51c0254d2fb20a86d30b1865854f8134954bce5bb7a8c72eac218f2f",
     "src/_lcm/egm/outer_interpolation.py": "fd68eb3baa62055bf4a92a572fbec5e055a08809be044a647a31ff7982fc92a8",
     "src/_lcm/egm/outer_refinement.py": "7335546f8df6f1981544cca692d29823f4dc7b7af52d737b7df5c62ac62b8368",
@@ -3223,7 +3223,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/solution/nnbegm.py": (
-        "341ae8cd3808b4241ed63447f633e685596b9c72b6275419925537bb2d13a493",
+        "609e4b15bdc23538ea1edd49418d7704bd321887347d34cb2664d6040b23eedd",
         {
             "NNBEGM.build_period_kernels": "a85897795278eb8cf6fe20657e186548c1c43b20eece232b462c19fa7962f0c0",
             "_AdaptiveNNBEGMPeriodKernel._solve_outer": "3201a6468622200d903998c56c7d83c638331a924338b609346f0d44f994bdbe",

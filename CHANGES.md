@@ -41,7 +41,10 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   simulation now draws it from its law. A `Model(shocks=...)` group always draws
   continuously; an IID process state integrated out this way honours its
   `simulated_draws`, whose default is `"continuous"`, and `simulated_draws="nodes"`
-  keeps the node lottery. Process states that carry an axis are unchanged. See
+  keeps the node lottery. Process states that carry an axis are unchanged. `NNBEGM` regimes
+  now integrate such a shock out as well, instead of keeping a node axis along which the
+  value was constant; their solve is cheaper and `repr(model)` lists the shock under
+  `integrated=`. See
   [Shock timing is inferred](docs/user_guide/migrating_dated_regimes.md#shock-timing-is-inferred).
 
 ### `simulate_draws` is renamed `simulated_draws`
@@ -456,8 +459,8 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - Toward a target that does not carry the process, the draw exists only inside the
   transition: it is taken from the source's process at the source's current node, read
   by the target's laws and discarded. A terminal regime valuing only wealth therefore
-  carries only wealth. `GridSearch`, `DCEGM` and `NBEGM` solve and simulate such
-  edges.
+  carries only wealth. `GridSearch`, `DCEGM`, `NBEGM` and `NNBEGM` solve and simulate
+  such edges.
 - The same holds for a Markov state (a `DiscreteGrid` with a `StochasticTransition`
   law): reading its draw `next_<state>` keeps the state in the reading regime, and
   toward a target that does not carry it the draw is taken from the source's Markov
@@ -469,8 +472,8 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - A state law that reads `next_<state>` toward a target that neither carries the state
   nor receives a draw of it on that edge is refused when the model is built, naming
   the source, the target, the law and the `next_` argument.
-- `DCEGM` and `NBEGM` accept a liquid law that reads a draw, persisted or local to the
-  edge: the Euler state and its savings derivative are evaluated at every node of the
+- `DCEGM`, `NBEGM` and `NNBEGM` accept a liquid law that reads a draw, persisted or
+  local to the edge: the Euler state and its savings derivative are evaluated at every node of the
   draws the law reads. `NBEGM`'s save-to-cliff targets are inverted per node. Under the
   EGM solvers only the liquid law may read a draw; any other law reading one is refused
   at construction.
