@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 # type checking only.
 if TYPE_CHECKING:
     from _lcm.typing import JSONValue, PeriodToRegimeToVArr
+    from lcm.typing import RegimeName
 
 
 class PyLCMError(Exception):
@@ -30,11 +31,14 @@ class InvalidValueFunctionError(PyLCMError):
             debug snapshots.
         diagnostics: Per-intermediate NaN fraction summary, attached by
             `validate_V` when diagnostic functions are available.
+        regime_name: Regime whose value function holds the NaN, attached by
+            `validate_V`.
 
     """
 
     partial_solution: PeriodToRegimeToVArr | None = None
     diagnostics: Mapping[str, JSONValue] | None = None
+    regime_name: RegimeName | None = None
 
 
 class InvalidRegimeTransitionProbabilitiesError(PyLCMError):
