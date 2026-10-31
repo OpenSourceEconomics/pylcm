@@ -2230,7 +2230,10 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 subject_outputs=True,
             )
             policy_first = _read_egm_policy_first(
-                regime=regime,
+                # The model's regime, not this dispatch's executor-bound copy:
+                # the read's executable is keyed by the regime it binds, and
+                # chunk admission profiled it under the model's regime.
+                regime=regimes[regime_name],
                 sim_policy=cast("EGMSimPolicy | NBEGMGridPolicy", sim_policy),
                 states=states[regime_name],
                 canonical_states=state_action_space.states,

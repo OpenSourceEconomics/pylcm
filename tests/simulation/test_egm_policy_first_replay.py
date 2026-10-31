@@ -18,6 +18,7 @@ import pytest
 
 import _lcm.simulation.simulate as simulation
 import lcm_examples.iskhakov_et_al_2017 as iskhakov
+from _lcm.simulation import host_operations
 from lcm import (
     AgeGrid,
     ConsumptionSavingsRegime,
@@ -579,3 +580,31 @@ def test_unaffordable_branch_does_not_send_subjects_to_the_grid_argmax(
         (first["wealth"].to_numpy(dtype=float)[poor] + 1.0) / 2.0,
         decimal=DECIMAL_PRECISION,
     )
+
+
+def test_budgeted_warm_simulate_reuses_the_policy_read_executable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A second budgeted simulate lowers no policy-first read again.
+
+    Each regime-period dispatches a copy of the regime bound to its unit
+    executor; the read's executable must be keyed by the model's regime, the one
+    chunk admission profiles, not by that per-dispatch copy.
+    """
+    model = _node_state_model(
+        with_health=True,
+        execution_config=ExecutionConfig(device_memory_bytes=2**30),
+    )
+    _simulate_node_state(model=model)
+    lowered: list[str] = []
+    lower = host_operations._lower_operation
+
+    def record(*, function, **kwargs):
+        lowered.append(getattr(getattr(function, "func", function), "__name__", ""))
+        return lower(function=function, **kwargs)
+
+    monkeypatch.setattr(host_operations, "_lower_operation", record)
+
+    _simulate_node_state(model=model)
+
+    assert "_policy_first_body" not in lowered, lowered
