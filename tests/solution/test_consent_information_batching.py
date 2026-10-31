@@ -514,6 +514,7 @@ def test_pinned_rows_reproduce_the_full_row_reduction(
     batched = _values(_model(n_match=3, marry_available=_experienced))
     monkeypatch.setattr(policy_queries, "map_lanes", _scalar_lanes)
     monkeypatch.setattr(query_information, "pinned_support", lambda **_: None)
+    monkeypatch.setattr(query_information, "ancestor_classes", lambda **_: None)
     _assert_same_values(
         got=batched, expected=_values(_model(n_match=3, marry_available=_experienced))
     )
@@ -526,6 +527,7 @@ def _unpinned_scalar_values(
     with monkeypatch.context() as patch:
         patch.setattr(policy_queries, "map_lanes", _scalar_lanes)
         patch.setattr(query_information, "pinned_support", lambda **_: None)
+        patch.setattr(query_information, "ancestor_classes", lambda **_: None)
         return _values(model())
 
 
@@ -534,9 +536,11 @@ def test_pinned_ancestor_rows_stay_one_per_representative(
 ) -> None:
     """A dissolution query below the pinned couple keeps one couple row, not copies.
 
-    Its answer has an axis per ancestor: the formation's own rows, then the
+    Its answer has an axis per ancestor: the formation's rows, then the
     couple's. The couple's eight rows are copies of one representative, and
     materializing them multiplies the answer that travels to the couple query.
+    Of the formation's eight rows (own wage times the observed couple wage and
+    match) each spouse's dissolution reads only that spouse's wage: two classes.
     """
     shapes = {}
     original = query_information.InformationQueryCell.__call__
@@ -549,9 +553,8 @@ def test_pinned_ancestor_rows_stay_one_per_representative(
 
     monkeypatch.setattr(query_information.InformationQueryCell, "__call__", record)
     _values(_model(dissolution=True))
-    # Formation rows: two own wage rows times four observed couple rows.
-    assert shapes["alone_f"][:2] == (8, 1)
-    assert shapes["alone_m"][:2] == (8, 1)
+    assert shapes["alone_f"][:2] == (2, 1)
+    assert shapes["alone_m"][:2] == (2, 1)
 
 
 def test_pinned_ancestor_rows_reproduce_the_full_row_reduction(
