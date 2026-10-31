@@ -238,7 +238,8 @@ class NodeAxisInputs:
             if not bool(valid):
                 raise InvalidSimulationInputError(
                     f"Shock inputs for group {group_name!r} are invalid "
-                    "under its law at a consumed cell."
+                    "under its law at a consumed cell: a supplied physical value lies "
+                    "outside the law's support, or a base coordinate is not finite."
                 )
             physical.update(values)
         return MappingProxyType(physical)
