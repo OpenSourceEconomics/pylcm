@@ -151,24 +151,6 @@ class _Independence(Enum):
     DEFAULT = "independent"
 
 
-class ShockReader(Enum):
-    """Semantic readers, including nonlinear consumers of a stored channel."""
-
-    LINEAR_EXPECTATION = "linear expectation"
-    DECISION = "decision"
-    DISCRETE_LAW = "discrete law"
-    CONSTRAINT = "constraint"
-    REGIME_TRANSITION = "regime transition"
-    EXIT_RULE = "exit rule"
-    AVAILABILITY = "availability"
-    GATE = "gate"
-    SIMULATION_DRAW = "simulation draw"
-    NONLINEAR_CE = "nonlinear certainty equivalent"
-    INVERSE_TRANSFORM = "inverse transform"
-    EULER_INVERSION = "Euler inversion"
-    ROOT = "solver root"
-
-
 @dataclass(frozen=True)
 class _Law:
     """A law's parameters are fixed, runtime-supplied, or current-state callables."""
@@ -373,13 +355,11 @@ class Smolyak:
     Normal levels zero through three have 1, 3, 9 and 19 nodes. Uniform level zero
     is the midpoint; subsequent levels have `2**level+1` inclusive unit nodes.
     Difference products with total component level at most `level` define the rule.
-    Concrete negative weights require `signed=True`, independently of family names.
+    A group refuses a level whose weights for its shocks include a negative one.
     """
 
     level: int
     """Nonnegative total difference level."""
-    signed: bool = False
-    """Declare signed linear quadrature and its reader restrictions."""
 
     def __post_init__(self) -> None:
         if isinstance(self.level, bool) or self.level < 0:
@@ -394,9 +374,7 @@ class UserNodes:
     nodes: Float2D | HostArray
     """Finite matrix with joint nodes on rows and named shocks on columns."""
     weights: Float1D | HostArray
-    """Finite vector summing to unity; probabilities only when nonnegative."""
-    signed: bool = False
-    """Permit signed linear quadrature and propagate its reader restrictions."""
+    """Finite nonnegative vector summing to unity."""
 
     def __post_init__(self) -> None:
         nodes, weights = (
@@ -410,7 +388,7 @@ class UserNodes:
             or not np.isfinite(nodes).all()
         ):
             raise ShockDeclarationError("UserNodes needs finite nonempty (K,d) nodes.")
-        _validate_weights(weights=weights, signed=self.signed)
+        _validate_weights(weights=weights, rule="UserNodes")
         if weights.shape != (nodes.shape[0],):
             raise ShockDeclarationError("UserNodes weights must have shape (K,).")
         nodes.setflags(write=False)
@@ -454,29 +432,15 @@ class NodeSet:
     discrete_codes: Mapping[ShockName, IntND]
     """Exact category codes for discrete coordinates, rather than innovations."""
     group_name: ShockGroupName
-    """Producer used in reader diagnostics and solve random addressing."""
-    signed: bool
-    """Signed provenance, retained even when concrete weights happen to be positive."""
-    sum_abs_weights: float
-    """Sum of absolute concrete weights, a conditioning diagnostic."""
+    """Producer used in diagnostics and solve random addressing."""
     fingerprint: str
     """Versioned rule, coordinate, ordering, algorithm and concrete-support digest."""
-
-    @beartype(conf=SHOCK_CONF)
-    def admit(self, *, reader: ShockReader) -> None:
-        """Refuse nonlinear or probabilistic consumers of signed provenance."""
-        if not isinstance(reader, ShockReader) or (
-            self.signed and reader is not ShockReader.LINEAR_EXPECTATION
-        ):
-            raise ShockDeclarationError(
-                f"Signed shock group {self.group_name!r} cannot feed reader {reader!r}."
-            )
 
 
 jax.tree_util.register_dataclass(
     NodeSet,
     data_fields=("base_nodes", "weights", "discrete_codes"),
-    meta_fields=("group_name", "signed", "sum_abs_weights", "fingerprint"),
+    meta_fields=("group_name", "fingerprint"),
 )
 
 
@@ -547,10 +511,20 @@ class ShockGroup:
                     raise ShockDeclarationError(
                         "Uniform-base nodes must lie in the unit interval."
                     )
-        if self.signed and any(
-            isinstance(law, Discrete) for law in self.shocks.values()
-        ):
-            raise ShockDeclarationError("A signed rule cannot feed a discrete law.")
+        if isinstance(self.nodes, Smolyak):
+            from _lcm.shock_nodes import _smolyak  # noqa: PLC0415 - rules import us
+
+            _validate_weights(
+                weights=_smolyak(
+                    level=self.nodes.level,
+                    uniform=tuple(
+                        isinstance(self.shocks[name], Uniform)
+                        for name in self.shocks
+                        if name in continuous
+                    ),
+                )[1],
+                rule=f"Smolyak(level={self.nodes.level})",
+            )
         if self.correlation is not _Independence.DEFAULT:
             if any(isinstance(law, Uniform | Discrete) for law in self.shocks.values()):
                 raise ShockDeclarationError(
@@ -565,11 +539,6 @@ class ShockGroup:
                     "correlation",
                     tuple(tuple(float(x) for x in row) for row in self.correlation),
                 )
-
-    @property
-    def signed(self) -> bool:
-        """Whether this declaration carries signed integration provenance."""
-        return isinstance(self.nodes, Smolyak | UserNodes) and self.nodes.signed
 
     @property
     def fingerprint(self) -> str:
@@ -945,7 +914,7 @@ def _validate_seed(seed: int) -> None:
         raise ShockDeclarationError("Solve seed must be a nonnegative integer.")
 
 
-def _validate_weights(*, weights: HostArray, signed: bool) -> None:
+def _validate_weights(*, weights: HostArray, rule: str) -> None:
     if weights.ndim != 1 or not len(weights) or not np.isfinite(weights).all():
         raise ShockDeclarationError("Weights must be a finite nonempty vector.")
     tolerance = max(
@@ -956,8 +925,12 @@ def _validate_weights(*, weights: HostArray, signed: bool) -> None:
         math.fsum(float(x) for x in weights), 1.0, rel_tol=0.0, abs_tol=tolerance
     ):
         raise ShockDeclarationError("Weights must sum to unity within dtype tolerance.")
-    if not signed and np.any(weights < 0):
-        raise ShockDeclarationError("Negative concrete weights require signed=True.")
+    if np.any(weights < 0):
+        raise ShockDeclarationError(
+            f"{rule} has negative weights. Node rules with negative weights, such as "
+            "higher Smolyak levels, are not supported: pylcm takes the max over shocks "
+            "and samples nodes by weight, which needs probability weights."
+        )
 
 
 def _arguments(function: LawCallable) -> tuple[ReferenceName, ...]:

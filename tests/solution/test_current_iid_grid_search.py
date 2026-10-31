@@ -1199,33 +1199,6 @@ def test_all_period_node_banks_participate_in_native_budget_admission() -> None:
         )
 
 
-def test_signed_ancestry_cannot_enter_the_native_decision() -> None:
-    """Positive concrete weights do not erase a rule's signed provenance."""
-
-    with pytest.raises(ShockDeclarationError, match=r"Signed|signed"):
-        Model(
-            regimes={
-                "alive": Regime(
-                    functions={"utility": _squared_shock}, shocks=("innovation",)
-                )
-            },
-            n_periods=1,
-            regime_id_class=_TerminalId,
-            initial_nodes=InitialNodes(by_period={0: "alive"}),
-            edges={},
-            shocks={
-                "innovation": ShockGroup(
-                    shocks={"eps": Normal(mu=0, sigma=1)},
-                    nodes=UserNodes(
-                        nodes=np.array([[-1.0], [1.0]]),
-                        weights=np.array([0.5, 0.5]),
-                        signed=True,
-                    ),
-                )
-            },
-        )
-
-
 def test_saved_replay_retains_its_physical_innovations(tmp_path) -> None:
     """A restored simulation has the exact physical data used by its native decision."""
 

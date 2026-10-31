@@ -133,8 +133,6 @@ class QueryRead:
     """Destination stakeholder role in the producing projection context."""
     law_identity: tuple[Hashable, ...] = ()
     """Canonical law, node and information-representation declaration identities."""
-    signed_origins: frozenset[str] = frozenset()
-    """Transitive signed channels, forbidden at a nonlinear policy read."""
 
     def __post_init__(self) -> None:
         """Snapshot caller containers before any closure is constructed."""
@@ -149,12 +147,9 @@ class QueryRead:
             "price_information",
         ):
             object.__setattr__(self, name, frozenset(getattr(self, name)))
-        object.__setattr__(self, "signed_origins", frozenset(self.signed_origins))
         object.__setattr__(self, "law_identity", tuple(self.law_identity))
         if not self.target or isinstance(self.period, bool) or self.period < 0:
             raise ValueError("A query needs an actual target and nonnegative period.")
-        if self.signed_origins:
-            raise ValueError("Signed ancestry cannot feed a policy query.")
 
     @property
     def identity(self) -> tuple[Hashable, ...]:

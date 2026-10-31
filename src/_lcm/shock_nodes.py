@@ -30,6 +30,7 @@ from lcm.shocks import (
     GaussHermite,
     HostArray,
     MonteCarlo,
+    NodeRule,
     NodeSet,
     Product,
     QuasiMonteCarlo,
@@ -153,8 +154,7 @@ def resolve_nodes(
         points, weights = np.zeros((1, 0)), np.ones(1)
     else:
         raise ShockDeclarationError("Unsupported or missing node rule.")
-    conditioning = math.fsum(abs(float(x)) for x in weights)
-    _validate_weights(weights=weights, signed=group.signed)
+    _validate_weights(weights=weights, rule=_rule_label(rule))
     rounded_weights = (
         jnp.asarray(weights)
         if array_writer is None
@@ -164,7 +164,7 @@ def resolve_nodes(
             name=f"{group_name}:validation_weights",
         )
     )
-    _validate_weights(weights=np.asarray(rounded_weights), signed=group.signed)
+    _validate_weights(weights=np.asarray(rounded_weights), rule=_rule_label(rule))
     del rounded_weights
     points, weights, codes = _enumerate_categories(
         group=group, points=points, weights=weights, continuous=continuous
@@ -229,9 +229,15 @@ def resolve_nodes(
             }
         ),
         group_name=group_name,
-        signed=group.signed,
-        sum_abs_weights=conditioning,
         fingerprint=identity,
+    )
+
+
+def _rule_label(rule: NodeRule | None) -> str:
+    return (
+        f"Smolyak(level={rule.level})"
+        if isinstance(rule, Smolyak)
+        else (type(rule).__name__)
     )
 
 

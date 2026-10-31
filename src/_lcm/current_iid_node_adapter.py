@@ -553,9 +553,7 @@ class _ShockNodeProcess(_IIDProcess):
 def _require_supported(*, group_name: ShockGroupName, group: ShockGroup) -> None:
     """Refuse declarations the node-state axis does not represent."""
     unsupported = None
-    if group.signed:
-        unsupported = "signed node weights, which the node-state expectation refuses"
-    elif group.correlation is not _Independence.DEFAULT:
+    if group.correlation is not _Independence.DEFAULT:
         unsupported = "correlated shocks"
     elif isinstance(group.nodes, MonteCarlo | QuasiMonteCarlo):
         unsupported = "Monte Carlo rules, whose nodes change with age"
