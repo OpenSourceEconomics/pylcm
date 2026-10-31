@@ -19,6 +19,7 @@ from numpy.testing import assert_array_almost_equal
 from lcm import (
     ConsumptionSavingsRegime,
     DiscreteGrid,
+    ExecutionConfig,
     InitialNodes,
     IrregSpacedGrid,
     LinSpacedGrid,
@@ -803,6 +804,7 @@ def _aca_shaped_model(
     shape: str,
     group: ShockGroup = _HCC,
     scaled: bool = False,
+    execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
 ) -> Model:
     """Three-period savings model whose EGM sources read the health cost at each date.
 
@@ -905,6 +907,7 @@ def _aca_shaped_model(
         regime_id_class=_ChainRegimeId if shape == "chain" else _CostRegimeId,
         fixed_params={"discount_factor": 0.95},
         shocks={"hcc": group} if declared else {},
+        execution_config=execution_config,
     )
 
 
@@ -1246,11 +1249,25 @@ def test_node_state_axis_refuses_unrepresented_declarations(
         )
 
 
+@pytest.mark.parametrize(
+    "execution_config",
+    [
+        pytest.param(ExecutionConfig(), id="default"),
+        pytest.param(ExecutionConfig(device_memory_bytes=2**31), id="budgeted"),
+    ],
+)
 def test_saved_declared_solution_publishes_and_replays_integrated_values(
+    *,
+    execution_config: ExecutionConfig,
     tmp_path: Path,
 ) -> None:
     """An archive holds the published values and simulates like the solve it saved."""
-    model = _aca_shaped_model(solver="nbegm", declared=True, shape="passive_state")
+    model = _aca_shaped_model(
+        solver="nbegm",
+        declared=True,
+        shape="passive_state",
+        execution_config=execution_config,
+    )
     solution = model.solve(params={}, log_level="off")
     loaded = load_solution(path=solution.save(path=tmp_path / "solution.lcm"))
     for period, regimes in solution.values.items():
