@@ -587,6 +587,21 @@ class _SegmentLinks(NamedTuple):
     """Global stored-link identity used only as the final total-order field."""
 
 
+class _LinkRows(NamedTuple):
+    """`_SegmentLinks` fields gathered per query: each `(n_query, m)`."""
+
+    left_grid: FloatND
+    right_grid: FloatND
+    left_value: FloatND
+    right_value: FloatND
+    left_policy: FloatND
+    right_policy: FloatND
+    left_marginal: FloatND
+    right_marginal: FloatND
+    live: BoolND
+    stable_index: IntND
+
+
 def _segment_links_from_candidates(
     *,
     endog_grid: Float1D,
@@ -1434,11 +1449,16 @@ def _subnormal_operand_present(*, row: tuple[Float1D, ...], query: FloatND) -> B
     return in_row | is_subnormal(query)
 
 
+def _as_link_rows(column: FloatND | BoolND) -> FloatND | BoolND:
+    """Shape a link column as rows against the queries: one shared row, or per query."""
+    return column if column.ndim == 2 else column.reshape(1, -1)  # noqa: PLR2004
+
+
 def _derived_subnormal_possible(
     *,
-    links: _SegmentLinks,
+    links: _SegmentLinks | _LinkRows,
     query: FloatND,
-    associated_channels: tuple[tuple[Float1D, Float1D], ...] = (),
+    associated_channels: tuple[tuple[FloatND, FloatND], ...] = (),
 ) -> BoolND:
     """Report, per query, where the read's own result lands below the range.
 
@@ -1486,8 +1506,8 @@ def _derived_subnormal_possible(
         return jnp.zeros_like(query_arr, dtype=bool)
 
     flat = query_arr.reshape(-1, 1)
-    left_grid = links.left_grid.reshape(1, -1)
-    right_grid = links.right_grid.reshape(1, -1)
+    left_grid = _as_link_rows(links.left_grid)
+    right_grid = _as_link_rows(links.right_grid)
     span = right_grid - left_grid
 
     to_left = jnp.abs(flat - left_grid)
@@ -1496,7 +1516,7 @@ def _derived_subnormal_possible(
     distance_to_near = jnp.minimum(to_left, to_right)
 
     brackets = (
-        links.live.reshape(1, -1)
+        _as_link_rows(links.live)
         & (span != 0.0)
         & (jnp.minimum(left_grid, right_grid) <= flat)
         & (flat <= jnp.maximum(left_grid, right_grid))
@@ -1513,8 +1533,8 @@ def _derived_subnormal_possible(
     )
     refused = jnp.zeros_like(brackets)
     for left_channel, right_channel in channels:
-        left_c = left_channel.reshape(1, -1)
-        right_c = right_channel.reshape(1, -1)
+        left_c = _as_link_rows(left_channel)
+        right_c = _as_link_rows(right_channel)
         near = jnp.where(left_is_near, left_c, right_c)
         far = jnp.where(left_is_near, right_c, left_c)
         refused = refused | (
@@ -1897,6 +1917,171 @@ def merge_envelope_winner(
     return _SavingsEnvelopeWinner(winner, endpoints[0], endpoints[1])
 
 
+def fold_ascending_runs(
+    *,
+    held: EnvelopeWinner | _SavingsEnvelopeWinner,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    marginal: Float1D,
+    segment_id: Float1D,
+    stable_index: IntND,
+    query: Float1D,
+    feasibility_partition: ResolvedAxisPartition | None = None,
+    feasible_interval_mask: BoolND | None = None,
+    candidate_savings: Float1D | None = None,
+) -> EnvelopeWinner | _SavingsEnvelopeWinner:
+    """Fold a candidate path whose segments ascend, reading each query's own links.
+
+    Requires that within every finite `segment_id` the `endog_grid` strictly
+    ascends and that a segment's candidates are contiguous, as
+    `segment_ids_from_folds` labels them. A segment's live links are then
+    disjoint intervals, so at query `q` only the link starting at its last point
+    `p` with `x_p <= q`, the link ending there, and `p`'s self-bracket can bracket
+    `q`. The fold visits the segments in turn, locates `p` by one search, and
+    folds those three links per query under their one-shot identities, in the
+    ordinary arithmetic. The winner equals `merge_envelope_winner` over the whole
+    path at `O(n_segments * (n + n_query * log n))` instead of `O(n * n_query)`.
+    """
+    savings_held = held if isinstance(held, _SavingsEnvelopeWinner) else None
+    if (savings_held is None) != (candidate_savings is None):
+        raise ValueError(
+            "Standing savings and candidate savings must be supplied together"
+        )
+    links, candidate_row = _segment_links_from_candidates(
+        endog_grid=endog_grid,
+        policy=policy,
+        value=value,
+        marginal=marginal,
+        segment_id=segment_id,
+        stable_index=stable_index,
+        feasibility_partition=feasibility_partition,
+        feasible_interval_mask=feasible_interval_mask,
+    )
+    savings_links = _savings_link_endpoints(
+        candidate_savings=candidate_savings, endog_grid=endog_grid
+    )
+    row: tuple[Float1D, ...] = candidate_row
+    if candidate_savings is not None:
+        row = (
+            *row,
+            jnp.where(jnp.isfinite(candidate_row[0]), candidate_savings, jnp.nan),
+        )
+    row_refused = _subnormal_operand_present(row=row, query=query).reshape(-1)
+    n = endog_grid.shape[0]
+    finite = jnp.isfinite(segment_id)
+    starts_segment = finite & jnp.concatenate(
+        [jnp.ones((1,), dtype=bool), segment_id[1:] != segment_id[:-1]]
+    )
+    starts = jnp.nonzero(starts_segment, size=n, fill_value=0)[0].astype(jnp.int32)
+    n_segments = jnp.sum(starts_segment).astype(jnp.int32)
+    position = jnp.arange(n, dtype=jnp.int32)
+
+    def visit(
+        state: tuple[jax.Array, EnvelopeWinner | _SavingsEnvelopeWinner],
+    ) -> tuple[jax.Array, EnvelopeWinner | _SavingsEnvelopeWinner]:
+        k, standing = state
+        start = starts[k]
+        key = jnp.where(
+            position < start,
+            -jnp.inf,
+            jnp.where(segment_id == segment_id[start], endog_grid, jnp.inf),
+        )
+        last = jnp.searchsorted(key, query, side="right").astype(jnp.int32) - 1
+        consecutive = jnp.clip(jnp.stack([last - 1, last], axis=1), 0, max(n - 2, 0))
+        own = jnp.clip(last, 0, n - 1)[:, None] + (n - 1)
+        picked = jnp.concatenate([consecutive, own], axis=1)
+        rows = _LinkRows(*(jnp.take(field, picked) for field in links))
+        savings_rows = (
+            None
+            if savings_links is None
+            else (
+                jnp.take(savings_links[0], picked),
+                jnp.take(savings_links[1], picked),
+            )
+        )
+        return k + 1, _merge_link_rows_ordinary(
+            held=standing,
+            rows=rows,
+            savings_rows=savings_rows,
+            query=query,
+            refused=row_refused,
+        )
+
+    _, folded = jax.lax.while_loop(
+        lambda state: state[0] < n_segments, visit, (jnp.int32(0), held)
+    )
+    return folded
+
+
+def _merge_link_rows_ordinary(
+    *,
+    held: EnvelopeWinner | _SavingsEnvelopeWinner,
+    rows: _LinkRows,
+    savings_rows: tuple[FloatND, FloatND] | None,
+    query: Float1D,
+    refused: BoolND,
+) -> EnvelopeWinner | _SavingsEnvelopeWinner:
+    """`merge_envelope_winner`'s ordinary fold with each query's own link rows.
+
+    `rows` holds `(n_query, m)` links, the self-brackets' channel and identity
+    columns included; `refused` is the bank's stored-subnormal verdict per query.
+    """
+    savings_held = held if isinstance(held, _SavingsEnvelopeWinner) else None
+    standing = cast(
+        "EnvelopeWinner", held if savings_held is None else savings_held.winner
+    )
+    columns = tuple(
+        jnp.concatenate([held_column.reshape(-1, 1), row], axis=1)
+        for held_column, row in zip(standing[:10], rows, strict=True)
+    )
+    left_grid, right_grid, left_value, right_value = columns[:4]
+    live, identities = columns[8], columns[9]
+    rank, brackets = _batched_link_terms(
+        left_grid=left_grid,
+        right_grid=right_grid,
+        left_value=left_value,
+        right_value=right_value,
+        live=live,
+        stable_index=identities,
+        query=query,
+    )
+    index = _ordinary_rank_argmax(rank=rank)
+    resolved = jnp.any(brackets, axis=1)
+    picked = tuple(_pick_column(column=column, index=index) for column in columns[:8])
+    picked_identity = _pick_column(column=identities, index=index)
+    unreadable = (
+        standing.unreadable.reshape(-1)
+        | refused
+        | _derived_subnormal_possible(
+            links=rows,
+            query=query,
+            associated_channels=() if savings_rows is None else (savings_rows,),
+        ).reshape(-1)
+    )
+    shape = query.shape
+    winner = EnvelopeWinner(
+        *(jnp.where(resolved, field, 0).reshape(shape) for field in picked),
+        live=resolved.reshape(shape),
+        stable_index=jnp.where(
+            resolved, picked_identity, jnp.iinfo(jnp.int32).max
+        ).reshape(shape),
+        settled=standing.settled.reshape(shape),
+        unreadable=unreadable.reshape(shape),
+    )
+    if savings_held is None:
+        return winner
+    if savings_rows is None:
+        raise ValueError("Standing savings require candidate savings endpoints")
+    endpoints = tuple(
+        _pick_column(
+            column=jnp.concatenate([old.reshape(-1, 1), new], axis=1), index=index
+        ).reshape(shape)
+        for old, new in zip(savings_held[1:], savings_rows, strict=True)
+    )
+    return _SavingsEnvelopeWinner(winner, endpoints[0], endpoints[1])
+
+
 @overload
 def merge_query_point_columns(
     *,
@@ -1913,6 +2098,7 @@ def merge_query_point_columns(
     feasibility_partition: ResolvedAxisPartition | None = ...,
     feasible_interval_mask: BoolND | None = ...,
     candidate_savings: None = ...,
+    bank: tuple[FloatND, ...] | None = ...,
 ) -> EnvelopeWinner: ...
 
 
@@ -1932,6 +2118,7 @@ def merge_query_point_columns(
     feasibility_partition: ResolvedAxisPartition | None = ...,
     feasible_interval_mask: BoolND | None = ...,
     candidate_savings: FloatND,
+    bank: tuple[FloatND, ...] | None = ...,
 ) -> _SavingsEnvelopeWinner: ...
 
 
@@ -1950,6 +2137,7 @@ def merge_query_point_columns(
     feasibility_partition: ResolvedAxisPartition | None = None,
     feasible_interval_mask: BoolND | None = None,
     candidate_savings: FloatND | None = None,
+    bank: tuple[FloatND, ...] | None = None,
 ) -> EnvelopeWinner | _SavingsEnvelopeWinner:
     """Fold zero-width candidate pairs that each sit on one query's abscissa.
 
@@ -1966,7 +2154,9 @@ def merge_query_point_columns(
     right, and has slope zero, so the total order keeps the largest value and,
     among equal values, the smallest identity. That point alone is folded. A
     stored subnormal operand anywhere in the bank still refuses every query on a
-    flushing backend, as the one-shot read does.
+    flushing backend, as the one-shot read does. Where the columns were already
+    reduced from a larger bank, `bank` passes that bank's channels `(endog,
+    policy, value, marginal[, savings])`, which the refusal then reads instead.
     """
     live = jnp.isfinite(endog_grid) & jnp.isfinite(value)
     top = jnp.max(jnp.where(live, value, -jnp.inf), axis=0)
@@ -2023,6 +2213,9 @@ def merge_query_point_columns(
     folded = jax.tree.map(lambda leaf: leaf.reshape(query.shape), folded)
     if arithmetic != "ordinary" or not backend_flushes_subnormals(endog_grid.dtype):
         return folded
+    if bank is not None:
+        endog_grid, policy, value, marginal = bank[:4]
+        candidate_savings = bank[4] if len(bank) > 4 else None  # noqa: PLR2004
     if feasibility_partition is not None:
         feasible = cast("BoolND", feasible_interval_mask)[
             axis_interval_indices(partition=feasibility_partition, values=endog_grid)

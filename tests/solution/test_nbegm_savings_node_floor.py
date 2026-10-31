@@ -17,6 +17,7 @@ import numpy as np
 import pytest
 from numpy.testing import assert_array_almost_equal
 
+from _lcm.egm import nbegm_step
 from _lcm.egm.comparison_arithmetic import ComparisonArithmetic
 from _lcm.egm.nbegm_step import (
     nbegm_multi_interval_step_savings,
@@ -296,16 +297,24 @@ def test_dense_savings_node_read_grows_with_nodes_times_points(
     ],
 )
 @pytest.mark.parametrize("retain_query", [False, True])
+@pytest.mark.parametrize("euler_block", [None, 7])
 def test_dense_savings_node_read_matches_the_whole_bank_read(
-    *, arithmetic: ComparisonArithmetic, retain_query: bool
+    *,
+    arithmetic: ComparisonArithmetic,
+    retain_query: bool,
+    euler_block: int | None,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Reading each node column at its own liquid point equals one whole-bank read.
 
     An explicit query grid equal to the liquid grid reads the complete bank at
-    every query; the default reads each node column only at its own point. Both
-    select the same owner and publish the same channels, to the few units in the
-    last place that separately compiled reads of one link can differ by.
+    every query; the default reads each node column only at its own point and the
+    Euler links in blocks. Both select the same owner and publish the same
+    channels, to the few units in the last place that separately compiled reads
+    of one link can differ by, however small the Euler blocks are.
     """
+    if euler_block is not None:
+        monkeypatch.setattr(nbegm_step, "_EULER_FOLD_BLOCK", euler_block)
     kwargs = {"arithmetic": arithmetic, "retain_query": retain_query}
     if retain_query:
         kwargs["return_owner"] = True
@@ -322,3 +331,105 @@ def test_dense_savings_node_read_matches_the_whole_bank_read(
             assert_agrees_to_ulp(got=got, expected=expected, n_ulp=4)
         else:
             np.testing.assert_array_equal(np.asarray(got), np.asarray(expected))
+
+
+def _intermediates(*, jaxpr, found: list[tuple[int, str]]) -> list[tuple[int, str]]:
+    for eqn in jaxpr.eqns:
+        found.extend(
+            (int(np.prod(getattr(var.aval, "shape", ()))), eqn.params.get("name", ""))
+            for var in eqn.outvars
+        )
+        for param in eqn.params.values():
+            for sub in param if isinstance(param, (tuple, list)) else (param,):
+                inner = getattr(sub, "jaxpr", None)
+                if inner is not None:
+                    _intermediates(jaxpr=getattr(inner, "jaxpr", inner), found=found)
+    return found
+
+
+def _step_intermediates(*, n_liquid: int, n_savings: int) -> list[tuple[int, str]]:
+    jaxpr = jax.make_jaxpr(
+        lambda: _multi_interval_step(
+            n_liquid=n_liquid,
+            n_savings=n_savings,
+            whole_bank=False,
+            arithmetic="ordinary",
+            retain_query=True,
+            return_owner=True,
+        )
+    )()
+    return _intermediates(jaxpr=jaxpr.jaxpr, found=[])
+
+
+def test_euler_links_are_read_in_blocks_of_queries_by_links() -> None:
+    """No intermediate pairs every query with every Euler link.
+
+    With far more savings nodes than liquid points the step's largest array is a
+    node-by-point array; the Euler links are read against the queries a block at
+    a time.
+    """
+    n_liquid, n_savings = 16, 4096
+    largest = max(
+        size for size, _ in _step_intermediates(n_liquid=n_liquid, n_savings=n_savings)
+    )
+    assert largest <= n_liquid * n_savings
+
+
+def test_savings_node_refinement_searches_no_bracket_per_point_and_node() -> None:
+    """The refined node actions read the continuation in the bracket they open.
+
+    A node's refined saving lies in its own savings bracket, so no bracket search
+    runs over the point-by-node array, only over rows of the grids.
+    """
+    n_liquid, n_savings = 64, 32
+    searched = [
+        size
+        for size, name in _step_intermediates(n_liquid=n_liquid, n_savings=n_savings)
+        if name == "searchsorted"
+    ]
+    assert searched
+    assert max(searched) < n_liquid * (n_savings - 1)
+
+
+def _loop_body_intermediates(*, jaxpr, found: list[int]) -> list[int]:
+    for eqn in jaxpr.eqns:
+        if eqn.primitive.name == "while":
+            body = eqn.params["body_jaxpr"]
+            found.extend(
+                size
+                for size, _ in _intermediates(
+                    jaxpr=getattr(body, "jaxpr", body), found=[]
+                )
+            )
+        for param in eqn.params.values():
+            for sub in param if isinstance(param, (tuple, list)) else (param,):
+                inner = getattr(sub, "jaxpr", None)
+                if inner is not None:
+                    _loop_body_intermediates(
+                        jaxpr=getattr(inner, "jaxpr", inner), found=found
+                    )
+    return found
+
+
+def test_savings_node_brackets_are_found_without_a_point_by_node_pass_per_loop() -> (
+    None
+):
+    """No loop of the step forms a point-by-node array.
+
+    The best node per point visits the brackets a point lies in; locating them
+    must not rescan every point against every node on each visit.
+    """
+    n_liquid, n_savings = 64, 32
+    jaxpr = jax.make_jaxpr(
+        lambda: _multi_interval_step(
+            n_liquid=n_liquid,
+            n_savings=n_savings,
+            whole_bank=False,
+            arithmetic="ordinary",
+            retain_query=True,
+            return_owner=True,
+        )
+    )()
+    in_loops = _loop_body_intermediates(jaxpr=jaxpr.jaxpr, found=[])
+    assert in_loops
+    assert max(in_loops) < n_liquid * (n_savings - 1)
