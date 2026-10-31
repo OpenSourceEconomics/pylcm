@@ -182,6 +182,9 @@ class SolverModelContext:
     solution_reachability: PhaseReachability | None = None
     """Static solution graph when available; `None` during early validation."""
 
+    shock_node_states: frozenset[StateName] = frozenset()
+    """Node states that solve the shocks of `shocks=` groups, named as the shocks."""
+
 
 @dataclass(frozen=True, kw_only=True)
 class ConstraintRouteContext:

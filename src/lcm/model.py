@@ -1670,6 +1670,7 @@ class Model:
                 for regime_name in self._user_regimes
             },
             declared_transitions=self._declared_transitions,
+            shock_node_states=self._node_state_names,
         )
         # A validated category class lists its codes 0, 1, ... in field order.
         self.regime_names_to_ids = get_category_codes(regime_id_class)

@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "a6f3d568b89d64367259bf055b283a95a5c6a3e9e806e626562a5aae2251bd55",
+  "source_inventory_sha256": "ac4b8e6c2ce1b88832bc1485a2396fc9ba5e0d4865980c313fc98a5a42b109dd",
   "sources": [
     {
       "path": "src/_lcm/constraints/bounds.py",
@@ -262,7 +262,7 @@
     },
     {
       "path": "src/_lcm/model_processing.py",
-      "sha256": "6af99d966a0a89107ba77b125f4e8e797676c5a51613382f16cfffbe317bcff1"
+      "sha256": "c438e83f31aafc4f0bf55a6fd826f2aeb122a87e4d5051d92ea9e478a26f9dd1"
     },
     {
       "path": "src/_lcm/optimization/golden_section.py",
@@ -562,11 +562,11 @@
     },
     {
       "path": "src/_lcm/solution/contract.py",
-      "sha256": "289e6f257738f6eb404a282ea14828b34c68a347fdbbad845c2b89b8295e263d"
+      "sha256": "f649bf76181815bd7db3b1a6452849ba6d2922cc963b9dd1c180b30e06d00f15"
     },
     {
       "path": "src/_lcm/solution/dcegm.py",
-      "sha256": "08db6c6ab4aa0b7860177ec54297535ca4a563667f84043f2159efe1e8ba3edd"
+      "sha256": "e783727d261f8ef857fa3aa943c99cebe135aeff18d2bffc03d085959970dc73"
     },
     {
       "path": "src/_lcm/solution/diagnostics.py",
@@ -610,15 +610,15 @@
     },
     {
       "path": "src/_lcm/solution/nbegm.py",
-      "sha256": "24aa40b34935022672286ffd04236963c2ecb4f5f96bdcdbe90d246afdb43f69"
+      "sha256": "0c32185e7f65ef8a09b12e8f186fc4302b79fc6943e982e613124c17c49e187e"
     },
     {
       "path": "src/_lcm/solution/negm.py",
-      "sha256": "90a89bf4a622f97f2a398079e92ba9c71b7bf93996b61d47bf46f4aee420b039"
+      "sha256": "468409fccaef9285d98e57a50485de6d5d4c2a94e730ce9103b84183e92b6782"
     },
     {
       "path": "src/_lcm/solution/nnbegm.py",
-      "sha256": "2879c6534c892260b281fffdb4e7958cfd5e96a5baa4c23c833cdf55d6f0df28"
+      "sha256": "1b227c2ec4af9fb6f61de322ab1882633632c0668ca4fc8be0bcfc9df165a25d"
     },
     {
       "path": "src/_lcm/solution/period_replay.py",
@@ -710,7 +710,7 @@
     },
     {
       "path": "src/lcm/model.py",
-      "sha256": "34486c627075fdee753af1812ed093743f04c6777d25a3587d336a6d908b2724"
+      "sha256": "eab990122e908f36e01fc8ec98532269c3dc7b35f220063cbef8d977fe0933cd"
     },
     {
       "path": "src/lcm/regime.py",
