@@ -546,7 +546,7 @@ def _create_continuous_stochastic_next_func(
     grid: _ContinuousStochasticProcess = all_grids[target_regime_name][state_name]  # ty: ignore [invalid-assignment]
     qname = qname_from_tree_path((target_regime_name, next_state_name))
 
-    if grid.simulate_draws == "nodes":
+    if grid.simulated_draws == "nodes":
         # A process support is an array leaf, unlike a joint lottery's general tree.
         return cast(
             "StochasticNextFunction",

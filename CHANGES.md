@@ -31,6 +31,13 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   same base draws across parameter values. Reordering initial-condition rows changes
   which draws a subject receives.
 
+### `simulate_draws` is renamed `simulated_draws`
+
+- Breaking API: the process keyword `simulate_draws=` is now `simulated_draws=`, on
+  every IID and AR(1) process and on `TauchenAR1Process.on_nodes`. The values stay
+  `"continuous"` and `"nodes"`. Passing the old keyword raises `TypeError` naming the
+  new one.
+
 ### Folded-IID machinery removed
 
 - `lcm.solvers.SolverBuildContext.fold_state_names` is removed. No declaration could
@@ -56,12 +63,12 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   a process state (IID or AR(1), such as Tauchen, Rouwenhorst or `on_nodes`) or a
   `shocks=` draw other than through its resources function now raises
   `ModelInitializationError` at `Model(...)`, unless the process state is declared with
-  `simulate_draws="nodes"`. Simulation used to blend the bracketing node policies for a
+  `simulated_draws="nodes"`. Simulation used to blend the bracketing node policies for a
   draw between nodes, an approximation for a process that changes preferences; node
   draws read one node row exactly. Move the process into resources or solve the regime
-  with `GridSearch`. Otherwise, declare a process state with `simulate_draws="nodes"`;
+  with `GridSearch`. Otherwise, declare a process state with `simulated_draws="nodes"`;
   a `shocks=` group has no draw mode of its own, so declare its shock as an IID process
-  state with `simulate_draws="nodes"`. See
+  state with `simulated_draws="nodes"`. See
   [DC-EGM](docs/reference/solvers.md#api-dcegm).
 
 ### Dissolution-flag artifact key removed

@@ -32,13 +32,13 @@ the nodes; see
 
 ## Simulation draws
 
-Continuous process simulation defaults to `simulate_draws="continuous"`: draw from its
-distribution rather than from the discretization. Set `simulate_draws="nodes"` when
+Continuous process simulation defaults to `simulated_draws="continuous"`: draw from its
+distribution rather than from the discretization. Set `simulated_draws="nodes"` when
 simulation must stay on the solve support:
 
 ```python
 NormalIIDProcess(
-    n_points=7, gauss_hermite=True, mu=0.0, sigma=1.0, simulate_draws="nodes"
+    n_points=7, gauss_hermite=True, mu=0.0, sigma=1.0, simulated_draws="nodes"
 )
 ```
 
@@ -240,7 +240,7 @@ separated by adjacent midpoints; the first and last bins include the tails. `mu`
 defaults to zero. Set `rho`, `sigma`, or `mu` to `None` to supply that law parameter at
 solve or simulation time. The nodes remain fixed as parameters vary, and `rho=1` is
 supported. Simulation defaults to the continuous AR(1) law, as for ordinary Tauchen. Set
-`simulate_draws="nodes"` to sample these physical nodes with the transition rows.
+`simulated_draws="nodes"` to sample these physical nodes with the transition rows.
 
 This factory does not reproduce a row-normalized density-at-nodes rule. Use an explicit
 categorical transition when that discrete law is the intended model.

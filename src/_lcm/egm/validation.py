@@ -644,7 +644,7 @@ def fail_if_off_node_process_enters_utility(
     policy rows of the two bracketing nodes. That is exact for a process that
     only shifts resources, since every node row is then one policy of
     resources, but only an approximation for a process that changes
-    preferences. A process declared with `simulate_draws="nodes"` is only ever
+    preferences. A process declared with `simulated_draws="nodes"` is only ever
     drawn at its nodes, so its read takes a single node row and is admitted.
     The check removes the resources function from the DAG, so a read of the
     process inside it is admitted while every other path into `utility`,
@@ -670,7 +670,7 @@ def fail_if_off_node_process_enters_utility(
         name
         for name, grid in _solve_grids(slot=user_regime.states).items()
         if isinstance(grid, _ContinuousStochasticProcess)
-        and grid.simulate_draws != "nodes"
+        and grid.simulated_draws != "nodes"
     }
     if not off_node_states:
         return
@@ -692,7 +692,7 @@ def fail_if_off_node_process_enters_utility(
         [f"the process state(s) {processes}"] * bool(processes)
         + [f"the shock(s) {shocks} of a `shocks=` group"] * bool(shocks)
     )
-    on_nodes = '`simulate_draws="nodes"`'
+    on_nodes = '`simulated_draws="nodes"`'
     if not shocks:
         remedy = f"Move the process into resources{named}, declare it with {on_nodes}"
     elif not processes:

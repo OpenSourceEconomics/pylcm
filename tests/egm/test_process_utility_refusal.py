@@ -2,7 +2,7 @@
 
 Simulation reads an EGM policy at a process value between nodes by blending the two
 bracketing node rows, which is exact only for a process that shifts resources. A
-process declared with `simulate_draws="nodes"` is only ever drawn at its nodes, so the
+process declared with `simulated_draws="nodes"` is only ever drawn at its nodes, so the
 read takes one node row with coefficient exactly one.
 """
 
@@ -86,7 +86,7 @@ def _log_wealth(*, wealth: ContinuousState) -> FloatND:
     return jnp.log(wealth)
 
 
-def _ar1(*, simulate_draws: Literal["continuous", "nodes"]) -> TauchenAR1Process:
+def _ar1(*, simulated_draws: Literal["continuous", "nodes"]) -> TauchenAR1Process:
     return TauchenAR1Process(
         n_points=3,
         gauss_hermite=False,
@@ -94,7 +94,7 @@ def _ar1(*, simulate_draws: Literal["continuous", "nodes"]) -> TauchenAR1Process
         sigma=0.5,
         mu=0.0,
         n_std=2,
-        simulate_draws=simulate_draws,
+        simulated_draws=simulated_draws,
     )
 
 
@@ -135,7 +135,7 @@ def _model(*, solver: str, shock: _Process, enters: str) -> Model:
 _REFUSAL = (
     r"(?s){solver} regime 'alive' reads the process state\(s\) \['shock'\] other "
     r"than through resources \('resources'\).*Move the process into resources "
-    r"\('resources'\), declare it with `simulate_draws=\"nodes\"`, or use "
+    r"\('resources'\), declare it with `simulated_draws=\"nodes\"`, or use "
     r"GridSearch for this regime\."
 )
 
@@ -143,7 +143,7 @@ _REFUSAL = (
 @pytest.mark.parametrize(
     "shock",
     [
-        _ar1(simulate_draws="continuous"),
+        _ar1(simulated_draws="continuous"),
         RouwenhorstAR1Process(n_points=3, rho=0.8, sigma=0.5, mu=0.0),
         TauchenAR1Process.on_nodes(
             nodes=np.asarray([-1.0, 0.0, 1.0]), rho=0.8, sigma=0.5
@@ -165,9 +165,9 @@ def test_ar1_process_entering_utility_with_continuous_draws_is_refused(
 @pytest.mark.parametrize(
     "shock",
     [
-        _ar1(simulate_draws="nodes"),
+        _ar1(simulated_draws="nodes"),
         NormalIIDProcess(
-            n_points=3, gauss_hermite=True, mu=0.0, sigma=0.5, simulate_draws="nodes"
+            n_points=3, gauss_hermite=True, mu=0.0, sigma=0.5, simulated_draws="nodes"
         ),
     ],
     ids=["ar1", "iid"],
@@ -207,7 +207,7 @@ def test_process_entering_utility_on_node_draws_builds_and_simulates(
 @pytest.mark.parametrize(
     "shock",
     [
-        _ar1(simulate_draws="continuous"),
+        _ar1(simulated_draws="continuous"),
         NormalIIDProcess(n_points=3, gauss_hermite=True, mu=0.0, sigma=0.5),
     ],
     ids=["ar1", "iid"],

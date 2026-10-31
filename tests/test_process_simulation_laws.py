@@ -1,5 +1,6 @@
 """Process simulation uses either solve nodes or its declared phase law."""
 
+from collections.abc import Callable
 from dataclasses import replace
 from types import MappingProxyType
 
@@ -68,7 +69,7 @@ def _draw(process: _ContinuousStochasticProcess) -> StochasticNextFunction:
 def test_iid_nodes_draw_exact_weighted_support() -> None:
     """The finite lottery uses the quadrature weights, including rare tail nodes."""
     process = NormalIIDProcess(
-        n_points=3, gauss_hermite=True, mu=0.0, sigma=1.0, simulate_draws="nodes"
+        n_points=3, gauss_hermite=True, mu=0.0, sigma=1.0, simulated_draws="nodes"
     )
     draw = _draw(process)
     keys = jax.random.split(jax.random.key(193), 20000)
@@ -88,7 +89,7 @@ def test_iid_nodes_draw_exact_weighted_support() -> None:
     np.testing.assert_allclose(frequencies, weights, atol=0.015, rtol=0.0)
     assert not np.isin(
         np.asarray(
-            _draw(replace(process, simulate_draws="continuous"))(
+            _draw(replace(process, simulated_draws="continuous"))(
                 key_alive__next_income=keys[0]
             )
         ),
@@ -97,13 +98,41 @@ def test_iid_nodes_draw_exact_weighted_support() -> None:
 
 
 def test_nodes_is_not_a_distribution_parameter() -> None:
-    process = NormalIIDProcess(n_points=3, gauss_hermite=True, simulate_draws="nodes")
+    process = NormalIIDProcess(n_points=3, gauss_hermite=True, simulated_draws="nodes")
     assert set(process.params_to_pass_at_runtime) == {"mu", "sigma"}
 
 
 def test_invalid_simulation_draw_mode_is_rejected() -> None:
     with pytest.raises(GridInitializationError):
-        NormalIIDProcess(n_points=3, gauss_hermite=True, simulate_draws="nearest")  # ty: ignore[invalid-argument-type]
+        NormalIIDProcess(n_points=3, gauss_hermite=True, simulated_draws="nearest")  # ty: ignore[invalid-argument-type]
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda: NormalIIDProcess(
+            n_points=3,
+            gauss_hermite=True,
+            simulate_draws="nodes",  # ty: ignore[unknown-argument]
+        ),
+        lambda: TauchenAR1Process(
+            n_points=3,
+            gauss_hermite=False,
+            n_std=2.0,
+            simulate_draws="nodes",  # ty: ignore[unknown-argument]
+        ),
+        lambda: TauchenAR1Process.on_nodes(
+            nodes=jnp.array([-1.0, 0.0, 1.0]),
+            simulate_draws="nodes",
+        ),
+    ],
+    ids=["iid", "ar1", "ar1-on-nodes"],
+)
+def test_renamed_draw_mode_keyword_names_its_replacement(
+    build: Callable[[], _ContinuousStochasticProcess],
+) -> None:
+    with pytest.raises(TypeError, match=r"simulate_draws=.*renamed.*simulated_draws="):
+        build()
 
 
 def test_phased_ar1_keeps_solve_law_and_uses_distinct_forward_law() -> None:
@@ -159,7 +188,7 @@ def test_native_iid_node_simulation_and_repeat_seed() -> None:
         gauss_hermite=True,
         mu=0.0,
         sigma=0.7,
-        simulate_draws="nodes",
+        simulated_draws="nodes",
     )
     model = _model(process)
     initial = {
@@ -185,7 +214,7 @@ def test_native_iid_node_simulation_and_repeat_seed() -> None:
 
 def test_runtime_supplied_node_markov_rows_and_support() -> None:
     nodes = (-1.3, 0.1, 2.4)
-    process = TauchenAR1Process.on_nodes(nodes=np.array(nodes), simulate_draws="nodes")
+    process = TauchenAR1Process.on_nodes(nodes=np.array(nodes), simulated_draws="nodes")
     model = _model(process)
     params = {"alive": {"income": {"rho": 0.6, "sigma": 0.4}}}
     initial = {
@@ -212,7 +241,7 @@ def test_runtime_supplied_node_markov_rows_and_support() -> None:
 def test_unsupported_phased_process_forms_fail_at_declaration(invalid: str) -> None:
     process = NormalIIDProcess(n_points=3, gauss_hermite=True, mu=0.0, sigma=1.0)
     other = (
-        replace(process, mu=1.0, simulate_draws="nodes")
+        replace(process, mu=1.0, simulated_draws="nodes")
         if invalid == "nodes"
         else lambda: 0.0
     )
@@ -225,7 +254,7 @@ def test_unsupported_phased_process_forms_fail_at_declaration(invalid: str) -> N
 
 def test_zero_probability_nodes_are_never_drawn() -> None:
     process = NormalIIDProcess(
-        n_points=3, gauss_hermite=True, mu=0.0, sigma=1.0, simulate_draws="nodes"
+        n_points=3, gauss_hermite=True, mu=0.0, sigma=1.0, simulated_draws="nodes"
     )
     nodes = process.get_gridpoints()
     draw = _draw(process)
@@ -321,7 +350,7 @@ def test_node_draws_do_not_depend_on_runtime_checks_or_logging(
     *, runtime_checks: bool, log_level: LogLevel
 ) -> None:
     process = NormalIIDProcess(
-        n_points=3, gauss_hermite=True, mu=0.0, sigma=1.0, simulate_draws="nodes"
+        n_points=3, gauss_hermite=True, mu=0.0, sigma=1.0, simulated_draws="nodes"
     )
     model = _model(process)
     initial = {
@@ -350,7 +379,7 @@ def test_node_draws_do_not_depend_on_runtime_checks_or_logging(
 
 def test_node_kernel_accepts_empty_subject_keys() -> None:
     process = NormalIIDProcess(
-        n_points=3, gauss_hermite=True, mu=0.0, sigma=1.0, simulate_draws="nodes"
+        n_points=3, gauss_hermite=True, mu=0.0, sigma=1.0, simulated_draws="nodes"
     )
     draw = _draw(process)
     got = jax.jit(
@@ -606,7 +635,7 @@ def _work_retired_model(
             Phased(solve=_tauchen(rho=None), simulate=_tauchen(rho=0.9)),
             _tauchen(rho=None),
         ),
-        (_tauchen(rho=None, simulate_draws="nodes"), _tauchen(rho=None)),
+        (_tauchen(rho=None, simulated_draws="nodes"), _tauchen(rho=None)),
     ],
     ids=["phased-source", "draw-mode-only"],
 )
@@ -660,7 +689,7 @@ def test_simulation_conditioning_codes_must_agree_across_regimes() -> None:
 
 def test_node_draw_from_beyond_the_top_node_follows_the_top_node_row() -> None:
     """An off-grid current value draws as from the nearest edge node."""
-    process = _tauchen(rho=0.9, simulate_draws="nodes")
+    process = _tauchen(rho=0.9, simulated_draws="nodes")
     model = _model(process)
     solution = model.solve(params={}, log_level="off")
     top = float(process.get_gridpoints()[-1])
@@ -685,7 +714,7 @@ def test_node_draw_from_beyond_the_top_node_follows_the_top_node_row() -> None:
 def test_phased_process_with_one_law_is_accepted() -> None:
     """Phase declarations sharing one law are not distinct laws."""
     base = NormalIIDProcess(n_points=3, gauss_hermite=True, mu=0.0, sigma=1.0)
-    process = Phased(solve=base, simulate=replace(base, simulate_draws="nodes"))
+    process = Phased(solve=base, simulate=replace(base, simulated_draws="nodes"))
     assert isinstance(
         Regime(states={"income": process}, functions={"utility": _utility}), Regime
     )

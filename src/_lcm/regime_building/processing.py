@@ -7475,7 +7475,7 @@ def _process_regime_core(
                 grid=grid,
                 grids=all_grids[user_regime],
                 clip_coordinate=phase_name == "simulation"
-                and grid.simulate_draws == "nodes",
+                and grid.simulated_draws == "nodes",
             )
             for (user_regime, process), grid in carried_process_grids.items()
         }
@@ -10638,7 +10638,7 @@ def _build_next_state_vmapped(
                 for target, grids in all_grids.items()
                 for state, grid in grids.items()
                 if isinstance(grid, _ContinuousStochasticProcess)
-                and grid.simulate_draws == "nodes"
+                and grid.simulated_draws == "nodes"
             }
         )
         vmap_variables = tuple(arg for arg in sig_args if arg not in non_vmap)

@@ -700,10 +700,10 @@ def _split_states(
             and isinstance(spec.simulate, _ContinuousStochasticProcess)
         ):
             distinct = not spec.solve.has_same_law_as(spec.simulate)
-            if distinct and spec.simulate.simulate_draws == "nodes":
+            if distinct and spec.simulate.simulated_draws == "nodes":
                 errors.append(
                     f"states['{name}']: the solve and simulate laws differ, but "
-                    "simulate_draws='nodes' draws from the solve nodes; use "
+                    "simulated_draws='nodes' draws from the solve nodes; use "
                     "continuous draws for a distinct simulation law."
                 )
             else:

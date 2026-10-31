@@ -78,12 +78,12 @@ def _read_predicate(*, V_target: FloatND, V_alt: FloatND) -> BoolND:
 
 
 def _uniform():
-    return UniformIIDProcess(n_points=3, start=-1.0, stop=1.0, simulate_draws="nodes")
+    return UniformIIDProcess(n_points=3, start=-1.0, stop=1.0, simulated_draws="nodes")
 
 
 def _tauchen():
     return TauchenAR1Process.on_nodes(
-        nodes=np.array(NODES), rho=0.0, sigma=1.0, simulate_draws="nodes"
+        nodes=np.array(NODES), rho=0.0, sigma=1.0, simulated_draws="nodes"
     )
 
 
@@ -180,7 +180,7 @@ def test_participation_reads_the_landing_process_node_value(
 
 def test_participation_into_a_runtime_parameterized_process_is_refused() -> None:
     def runtime() -> UniformIIDProcess:
-        return UniformIIDProcess(n_points=3, start=-1.0, simulate_draws="nodes")
+        return UniformIIDProcess(n_points=3, start=-1.0, simulated_draws="nodes")
 
     with pytest.raises(ModelInitializationError, match="parameterized at runtime"):
         _model(process=runtime, case="value-predicate")

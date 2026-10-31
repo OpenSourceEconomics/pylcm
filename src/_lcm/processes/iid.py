@@ -42,12 +42,12 @@ class _IIDProcess(_ContinuousStochasticProcess):
 
     def __new__(
         cls,
-        *args: object,  # noqa: ARG004, PAN001 - refuses removed keywords first
+        *args: object,  # noqa: PAN001 - forwarded to the base guard
         **kwargs: object,  # noqa: PAN001 - refuses removed keywords before any check
     ) -> Self:
         if "fold" in kwargs:
             raise TypeError(FOLD_REMOVED)
-        return super().__new__(cls)
+        return super().__new__(cls, *args, **kwargs)
 
     @abstractmethod
     def draw_shock(

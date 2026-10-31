@@ -72,7 +72,7 @@ def _shock(*, spelling: Spelling, draws: Draws | None = None) -> NormalIIDProces
         mu=0.0,
         sigma=1.0,
         n_std=2.0,
-        simulate_draws=draws or ("continuous" if spelling == "value" else "nodes"),
+        simulated_draws=draws or ("continuous" if spelling == "value" else "nodes"),
     )
 
 
@@ -274,5 +274,5 @@ def test_node_draws_reach_every_node():
 
 def test_a_code_read_of_a_process_drawn_between_nodes_is_refused():
     """A continuously drawn shock has no node position in simulation."""
-    with pytest.raises(RegimeInitializationError, match="simulate_draws='nodes'"):
+    with pytest.raises(RegimeInitializationError, match="simulated_draws='nodes'"):
         _build_model(enable_jit=False, spelling="code", draws="continuous")
