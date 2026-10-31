@@ -23,6 +23,7 @@ from typing import (
     TypedDict,
     Unpack,
     cast,
+    runtime_checkable,
 )
 
 import jax
@@ -910,6 +911,15 @@ def _log_simulation_plan(
         logger.debug(plan_summary.details())
 
 
+@runtime_checkable
+class _Prefetch(Protocol):
+    """Starts copying what one period reads; see `_prefetch_period_reads`."""
+
+    def __call__(self, *, period: int) -> None:
+        """Start copying the stored reads of `period`."""
+        ...
+
+
 def _simulate_windows_period_by_period(
     *,
     chunks: tuple[
@@ -966,14 +976,6 @@ def _simulate_windows_period_by_period(
     if memory is not None:
         memory.parked = ()
     return [_finish_chunk(chunk=chunk) for chunk in chunks]
-
-
-class _Prefetch(Protocol):
-    """Starts copying what one period reads; see `_prefetch_period_reads`."""
-
-    def __call__(self, *, period: int) -> None:
-        """Start copying the stored reads of `period`."""
-        ...
 
 
 if TYPE_CHECKING:
