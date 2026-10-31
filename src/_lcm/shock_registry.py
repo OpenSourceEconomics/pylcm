@@ -124,8 +124,6 @@ class ShockRegistry:
     """Law input and parameter namespaces for every explicit consumer."""
     legacy: Mapping[tuple[RegimeName, Phase, StateName], LegacyIIDAdapter]
     """Unmodified legacy declarations, with their original ownership."""
-    signed_origins: frozenset[ShockGroupName]
-    """Declared signed ancestry, retained independently of evaluated weight signs."""
 
     @property
     def discrete_grids(self) -> Mapping[ShockName, DiscreteGrid]:
@@ -376,9 +374,6 @@ def create_shock_registry(  # noqa: C901 - bind declarations and phase-specific 
         innovations=MappingProxyType(innovations),
         bindings=MappingProxyType(bindings),
         legacy=legacy,
-        signed_origins=frozenset(
-            name for name, group in groups.items() if group.signed
-        ),
     )
 
 

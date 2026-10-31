@@ -589,7 +589,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 # Source seals and corridor anchors require semantic verification of the combined
 # inventories before refresh; these inherited pins deliberately retain that gate.
 _SOURCE_SEALS = {
-    "src/_lcm/current_iid.py": "e91354ad9c33273fe05d512ee2896455f68d509dfafe865870391090bbaa2cb9",
+    "src/_lcm/current_iid.py": "e518ccdf975b2c1d82082157ce964b2d1a5ecf69360851cba9d86449b2d17507",
     "src/_lcm/simulation/current_iid.py": "c675e9dffaa205b4049bf4c26438a70005766c368bc69a3dbb1d6e35cb66db99",
     "src/_lcm/egm/asset_row.py": "a1754248507153a646157269741645c745b956c916821d592d009e429d97c8fe",
     "src/_lcm/egm/continuation.py": "ecea4e3e177c92abd735e9365edf0578b2dd4795fadfdca5286147123595d5f0",
@@ -764,7 +764,7 @@ _SOURCE_SEALS = {
     "src/_lcm/egm/ez_kernel.py": "aef102b6dbc73efae7e103e34597948e8e354f3195a33383973bfbd0da112a72",
     "src/_lcm/power_mean.py": "cc82199d42488b7619917fcfb3d8112c7c76d99253ca8812cb41b2a79b5e3e59",
     "src/_lcm/simulation/random_address.py": "97264a0a575e5c1a7e3bb978cae5c0a2f28f21b7f5c393bad10930cfcab70af4",
-    "src/lcm/shocks.py": "9a8c5a9d198cff657958d4c516626dd9d44612b7b808182e7498085d27247176",
+    "src/lcm/shocks.py": "5a056db9d1f83c4b5264597cb1d687e2b5731db161fd72584f22a463902c1407",
     "src/_lcm/shock_overrides.py": "89d13b523a6d0270e144ea60077c5e5f7e306a1b9da7878a9a9b565f920f6808",
     "src/_lcm/simulation/current_iid_overrides.py": "c5b8d450cdad4980a694df285502b70cf1238762440f1302d664b2e84d964ced",
 }
@@ -791,7 +791,7 @@ EXPECTED_UNIFORM_PROCESS_MUTATION_NAMES_SHA256 = (
 # that no family selects is a verifier error rather than a silent no-op.
 _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
     "src/lcm/shocks.py": (
-        "2aac63541b42c3a501333b8e952102dea716513a882ff79cea48172b9c317c81",
+        "6d44884abefb02a0738b897b67746b932f275d98baef3b3efed4c153cbcf713b",
         {
             "BaseInnovations.__post_init__": "f881b9a60ffff3c463ce4634482537616c91472d0d6c0738852bd1abe0887525",
             "PhysicalValues.__post_init__": "a7ae8f2100a70874e481e2bab3ed06ba2099ba794e6467a542b0dce42c2e7d22",
@@ -830,7 +830,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/current_iid.py": (
-        "31f79b75d463b4afa3e9460fc235f8578d1e146b4c4a588216cb6909ddc351f7",
+        "63aa3c6c773073f189b2567fd33e13a57b21db6f6394ac4b832bdcf3651d2333",
         {
             "CurrentIIDPlan.wrap": "415ff5f7a33f87b3a4b144f1c8e40fa396647c10eba3f8bd0a4d8f55ac6f9899",
             "CurrentIIDPlan.realise_nodes": "10f8f048fa4869011b54643a8b587a935d5cb357c4fec4d81fbe3b052b91cd49",

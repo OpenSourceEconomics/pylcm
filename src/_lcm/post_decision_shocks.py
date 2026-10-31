@@ -305,7 +305,6 @@ def _unlowerable(group: ShockGroup) -> str | None:
                 "deterministic rule such as `GaussHermite`."
             ),
         ),
-        (group.signed, "has signed weights, which simulation cannot sample."),
         (
             len(laws) > 1 and not isinstance(group.nodes, Product),
             "combines several shocks without a `Product` rule.",

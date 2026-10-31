@@ -93,16 +93,22 @@ Discrete variables are independently enumerated exactly beside the continuous ru
 - `QuasiMonteCarlo(n, seed, sequence="sobol")` uses scrambled Sobol LMS+shift points
   with a fixed bit budget and a power-of-two sample count. It retains every point in
   sequence order. Unit endpoints are opened before inverse-normal transformation.
-- `Smolyak(level, signed=False)` uses zero-based difference levels with total component
-  level at most `level`. Its normal family is the bounded Genz-Keister-19 prefix: levels
-  zero through three have orders one, three, nine and nineteen; higher normal levels are
-  refused. The uniform family is Clenshaw-Curtis on the unit interval: level zero is the
-  midpoint, and subsequent orders are `2**level+1`. Shared nodes are merged by
-  master-table identifiers or reduced dyadic angles, never by approximate equality. The
-  rule validates its actual combined weights.
-- `UserNodes(nodes, weights, signed=False)` owns a finite `(K,d)` base-coordinate matrix
-  and `(K,)` weights. It preserves point order and copies mutable input arrays. Uniform
-  coordinates lie in the unit interval. It cannot replace exact category enumeration.
+- `Smolyak(level)` uses zero-based difference levels with total component level at most
+  `level`. Its normal family is the bounded Genz-Keister-19 prefix: levels zero through
+  three have orders one, three, nine and nineteen; higher normal levels are refused. The
+  uniform family is Clenshaw-Curtis on the unit interval: level zero is the midpoint,
+  and subsequent orders are `2**level+1`. Shared nodes are merged by master-table
+  identifiers or reduced dyadic angles, never by approximate equality. The group
+  validates the rule's actual combined weights when it is declared and refuses a level
+  whose weights include a negative one: one-shock normal level three, two-shock levels
+  two and above, and three or more shocks from level one.
+- `UserNodes(nodes, weights)` owns a finite `(K,d)` base-coordinate matrix and `(K,)`
+  weights. It preserves point order and copies mutable input arrays. Uniform coordinates
+  lie in the unit interval. It cannot replace exact category enumeration.
+
+Every rule's weights must be nonnegative. A rule with a negative weight raises
+`ShockDeclarationError` when it is declared, because pylcm takes the max over shocks and
+samples nodes by weight, both of which need probability weights.
 
 MC and QMC regenerate per exact age or explicitly labelled period from a canonical
 versioned seed, time-coordinate and group-name encoding. Parameters do not enter that
@@ -211,7 +217,7 @@ take. A group that an endogenous-grid regime reads is solved on the node-state a
 instead; see
 [Named current-IID shocks in endogenous-grid regimes](solvers.md#current-iid-egm).
 
-## Validity and signed provenance
+## Validity
 
 `Realisation` is a JAX-compatible tuple of physical values, joint weights and a scalar
 `valid` channel. Every consumer must enforce that status at its runtime boundary.
@@ -219,21 +225,9 @@ instead; see
 into their runtime checks; they must never use an invalid value or silently replace it
 with a finite placeholder.
 
-`NodeSet.sum_abs_weights` records the conditioning of the continuous numerical rule. For
-exact categorical enumeration, `NodeSet.weights` repeats continuous weights; `realise`
-multiplies the cell's categorical probabilities before integration. The completed
-`Realisation.weights` is the joint integration operator.
-
-Negative concrete weights require `signed=True`. Signed provenance persists even when
-one concrete realization happens to have nonnegative weights.
-`NodeSet.admit(reader=...)` accepts only `ShockReader.LINEAR_EXPECTATION` for a signed
-producer. Discrete laws, constraints, regime transitions, exits, availability, gates,
-simulation draws, nonlinear certainty equivalents, inverse transforms, Euler inversion
-and root steps are refused. The producer and every derived stored channel must retain
-this provenance, so an indirect nonlinear reader is subject to the same refusal.
-
-A signed linear integral may lie outside the range of its node values. That is a
-property of the numerical operator. Its weights are not a probability law.
+For exact categorical enumeration, `NodeSet.weights` repeats continuous weights;
+`realise` multiplies the cell's categorical probabilities before integration. The
+completed `Realisation.weights` is the joint integration operator.
 
 ## Model registry and compatibility
 
@@ -250,7 +244,7 @@ before broadcast pruning. Runtime slots such as `eps__sigma`, callable parameter
 `corr` remain group-local metadata; they are not added to `Model.get_params_template()`
 as ordinary regime parameters. Integrated execution must explicitly project those slots
 from `params[group]`, bind correlation support and enforce per-invocation exact host
-correlation admission, numerical validity and signed ancestry.
+correlation admission and numerical validity.
 
 Timing is read off the regime's functions. A regime whose functions read a group's shock
 `x` sees this period's realization, known at the choice. A regime that reads the group

@@ -42,7 +42,6 @@ from lcm.shocks import (
     ShockGroupName,
     ShockName,
     ShockOverride,
-    ShockReader,
     Uniform,
     _resolve_parameter,
 )
@@ -132,16 +131,6 @@ class CurrentIIDDrawPlan:
 
     bindings: Mapping[ShockGroupName, ShockBinding]
     """Phase-specific law/helper bindings, preserving complete joint groups."""
-
-    def __post_init__(self) -> None:
-        """Refuse signed ancestry before it reaches a native decision or draw."""
-        from lcm.exceptions import ShockDeclarationError  # noqa: PLC0415
-
-        for name, binding in self.bindings.items():
-            if binding.group.signed:
-                raise ShockDeclarationError(
-                    f"Signed shock group {name!r} cannot feed a simulation decision."
-                )
 
     @property
     def physical_names(self) -> tuple[ShockName, ...]:
@@ -480,8 +469,6 @@ class CurrentIIDPlan:
             )
             for name, binding in sorted(bindings.items())
         )
-        for _, _, nodes in resolved:
-            nodes.admit(reader=ShockReader.DECISION)
         return cls(
             bindings=resolved,
             indices=(
