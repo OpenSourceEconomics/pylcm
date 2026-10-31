@@ -1515,8 +1515,13 @@ def _query_cell(
     period: int,
     fixed: Mapping[str, PytreeValue],
     projection_operands: Mapping[str, PytreeValue],
+    stay: StayTable | None = None,
 ) -> PolicyAnswer:
-    """Evaluate ordinary feasibility and the kept set before one canonical max."""
+    """Evaluate ordinary feasibility and the kept set before one canonical max.
+
+    A given `stay` is this cell's action table evaluated without participation
+    at a row its action problem cannot tell apart from this one.
+    """
     available = {
         **projection_operands,
         **source,
@@ -1538,6 +1543,7 @@ def _query_cell(
                 period=period,
                 fixed=fixed,
                 projection_operands=projection_operands,
+                stay=stay,
             )
 
         absent = vary_carry_like_body(
@@ -1563,6 +1569,7 @@ def _query_cell(
         period=period,
         fixed=fixed,
         projection_operands=projection_operands,
+        stay=stay,
     )
 
 
@@ -1649,18 +1656,19 @@ def _observation_inputs(
     )
 
 
-def _active_query_cell(
+# Q, feasibility, integrity and landing counts over the action grid.
+type StayTable = tuple[FloatND, BoolND, BoolND, IntND]
+
+
+def query_arguments(
     *,
-    live: BoolND,
     guard: BoolND,
     source: Mapping[str, FloatND | IntND],
-    dependencies: Mapping[str, PolicyAnswer],
     node: QueryNode,
-    period: int,
     fixed: Mapping[str, PytreeValue],
     projection_operands: Mapping[str, PytreeValue],
-) -> PolicyAnswer:
-    """Evaluate only a caller-admitted mapped action problem."""
+) -> tuple[dict[str, PytreeValue], Mapping[str, FloatND | IntND]]:
+    """The action problem's operands at one cell, and its mapped states."""
     available = {
         **projection_operands,
         **source,
@@ -1676,6 +1684,111 @@ def _active_query_cell(
     mapped = _mapped_query_states(node=node, available=available, guard=guard)
     arguments = {**fixed, **projection_operands, **mapped}
     arguments.setdefault(_PHYSICAL_CONTEXTS, {})
+    return arguments, mapped
+
+
+def stay_table(
+    *,
+    node: QueryNode,
+    period: int,
+    arguments: Mapping[str, PytreeValue],
+    dependencies: Mapping[str, PolicyAnswer],
+    participate: bool = True,
+) -> StayTable:
+    """Evaluate the action problem over its whole action grid.
+
+    Without `participate`, feasibility is the ordinary one; `kept_table` adds the
+    declared participation afterwards.
+    """
+    action_names = node.context.state_action_space.action_names
+    action_point = with_signature(
+        functools.partial(
+            _query_action,
+            node=node,
+            period=period,
+            arguments=arguments,
+            dependencies=dependencies,
+            participate=participate,
+        ),
+        args=list(action_names),
+        enforce=False,
+    )
+    evaluate = cast(
+        "Callable[..., StayTable]",
+        productmap(
+            func=action_point,
+            variables=action_names,
+            batch_sizes=dict.fromkeys(action_names, 0),
+        ),
+    )
+    return evaluate(**{name: arguments[name] for name in action_names})
+
+
+def kept_table(
+    *,
+    node: QueryNode,
+    arguments: Mapping[str, PytreeValue],
+    dependencies: Mapping[str, PolicyAnswer],
+    table: StayTable,
+) -> StayTable:
+    """Apply the declared participation to a table evaluated without it."""
+    if node.participation is None:
+        return table
+    participation = node.participation
+    q, ordinary, valid, landings = table
+    names = node.context.state_action_space.action_names
+    grids = jnp.meshgrid(
+        *(jnp.asarray(arguments[name]) for name in names), indexing="ij"
+    )
+    size = math.prod(ordinary.shape)
+
+    # keyword-only-exempt: library-callback=jax.vmap
+    def keep_at(actions: tuple[PytreeValue, ...], q_point: FloatND) -> BoolND:
+        operands = {
+            **arguments,
+            **dict(zip(names, actions, strict=True)),
+            **dependencies,
+            "q": q_point,
+        }
+        keep = participation(
+            **{
+                name: operands[name]
+                for name in inspect.signature(participation).parameters
+            }
+        )
+        if keep.dtype != jnp.bool_:
+            raise TypeError("Query participation must be boolean.")
+        if keep.ndim != 0:
+            raise ValueError("Query participation must be scalar per action.")
+        return keep
+
+    keep = jax.vmap(keep_at)(
+        tuple(grid.reshape(size) for grid in grids),
+        q.reshape((size, *q.shape[ordinary.ndim :])),
+    ).reshape(ordinary.shape)
+    return q, ordinary & keep, valid, landings
+
+
+def _active_query_cell(
+    *,
+    live: BoolND,
+    guard: BoolND,
+    source: Mapping[str, FloatND | IntND],
+    dependencies: Mapping[str, PolicyAnswer],
+    node: QueryNode,
+    period: int,
+    fixed: Mapping[str, PytreeValue],
+    projection_operands: Mapping[str, PytreeValue],
+    stay: StayTable | None = None,
+) -> PolicyAnswer:
+    """Evaluate only a caller-admitted mapped action problem."""
+    arguments, mapped = query_arguments(
+        guard=guard,
+        source=source,
+        node=node,
+        fixed=fixed,
+        projection_operands=projection_operands,
+    )
     context = node.context
     if node.read.kind in {QueryKind.PARTICIPATION, QueryKind.INTEGRATED_FULL}:
         operands = {**arguments, **dependencies}
@@ -1693,27 +1806,14 @@ def _active_query_cell(
             ~live | (answer[3] & _mapped_query_valid(node=node, mapped=mapped)),
             answer[4],
         )
-    action_point = with_signature(
-        functools.partial(
-            _query_action,
-            node=node,
-            period=period,
-            arguments=arguments,
-            dependencies=dependencies,
-        ),
-        args=list(context.state_action_space.action_names),
-        enforce=False,
-    )
-    evaluate = cast(
-        "Callable[..., tuple[FloatND, BoolND, BoolND, IntND]]",
-        productmap(
-            func=action_point,
-            variables=context.state_action_space.action_names,
-            batch_sizes=dict.fromkeys(context.state_action_space.action_names, 0),
-        ),
-    )
-    q, feasible, valid, landing_counts = evaluate(
-        **{name: arguments[name] for name in context.state_action_space.action_names}
+    q, feasible, valid, landing_counts = (
+        stay_table(
+            node=node, period=period, arguments=arguments, dependencies=dependencies
+        )
+        if stay is None
+        else kept_table(
+            node=node, arguments=arguments, dependencies=dependencies, table=stay
+        )
     )
     axes = tuple(range(feasible.ndim))
     support = jnp.any(feasible)
@@ -1914,6 +2014,7 @@ def _query_action(
     period: int,
     arguments: Mapping[str, PytreeValue],
     dependencies: Mapping[str, PolicyAnswer],
+    participate: bool = True,
     **actions: PytreeValue,
 ) -> tuple[FloatND, BoolND, BoolND, IntND]:
     """Preserve the canonical Q/F arrays and add only declared participation."""
@@ -1955,7 +2056,7 @@ def _query_action(
     for status in evaluated.bound_status:
         for flag in status:
             valid &= ~jnp.any(flag)
-    if node.participation is None:
+    if node.participation is None or not participate:
         return q, ordinary, valid, landings
     operands = {**inputs, **dependencies, "q": q}
     keep = node.participation(

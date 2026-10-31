@@ -510,6 +510,7 @@ def _every_row_values(
         patch.setattr(policy_queries, "map_lanes", _scalar_lanes)
         patch.setattr(query_information, "pinned_support", lambda **_: None)
         patch.setattr(query_information, "ancestor_classes", lambda **_: None)
+        patch.setattr(query_information, "own_stay_classes", lambda **_: None)
         return _solve(model())
 
 
@@ -563,3 +564,91 @@ def test_no_query_reads_more_rows_than_its_consumer() -> None:
                 ) <= query_information.read_columns(
                     name=consumer, ancestor=ancestor, definitions=definitions
                 ), (consumer, producer, ancestor)
+
+
+def _root_stay_problems(
+    *, model: Model, monkeypatch: pytest.MonkeyPatch
+) -> dict[RegimeName, int]:
+    """Stay problems each root evaluates per source cell.
+
+    The root's action problem runs inside nested lane maps: the chunk's source
+    cells, then its own rows (or the classes of them it evaluates). The product
+    of the maps inside the cell map is the count per source cell.
+    """
+    sizes: list[int] = []
+    counts: dict[RegimeName, int] = {}
+    map_lanes = policy_queries.map_lanes
+    query_action = policy_queries._query_action
+
+    def counted_map(
+        *,
+        function: Callable[[PytreeValue], PytreeValue],
+        operands: PytreeValue,
+        batch_size: int | None = None,
+    ) -> PytreeValue:
+        size = jax.tree.leaves(operands)[0].shape[0]
+
+        def inner(lane: PytreeValue) -> PytreeValue:
+            sizes.append(size)
+            try:
+                return function(lane)
+            finally:
+                sizes.pop()
+
+        return map_lanes(function=inner, operands=operands, batch_size=batch_size)
+
+    def counted_action(
+        *,
+        node: QueryNode,
+        period: int,
+        arguments: Mapping[str, PytreeValue],
+        dependencies: Mapping[str, policy_queries.PolicyAnswer],
+        participate: bool = True,
+        **actions: PytreeValue,
+    ) -> policy_queries.StayTable:
+        if not node.ancestors and node.read.kind is QueryKind.FULL:
+            counts[node.read.target] = math.prod(sizes[1:])
+        return query_action(
+            node=node,
+            period=period,
+            arguments=arguments,
+            dependencies=dependencies,
+            participate=participate,
+            **actions,
+        )
+
+    monkeypatch.setattr(policy_queries, "map_lanes", counted_map)
+    monkeypatch.setattr(policy_queries, "_query_action", counted_action)
+    _solve(model)
+    return counts
+
+
+def test_a_caller_evaluates_its_own_stay_once_per_class_it_reads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A single's 144 rows differ in shocks its own stay problem never reads: the
+    offer group and the observed couple shocks matter only to its exit. Its stay
+    problem reads its wage and taste, so it runs 6 times; the exit decision still
+    runs at every row."""
+    counts = _root_stay_problems(model=_model(), monkeypatch=monkeypatch)
+    assert counts["single_f"] == 6
+    assert counts["single_m"] == 6
+    # The couple's stay problem reads every couple shock.
+    assert counts["couple"] == 8
+
+
+def test_stay_reads_are_the_stay_problem_s_shocks() -> None:
+    """The own-stay classes follow the stay problem's shocks; a guarded query
+    keeps every row, its guard deciding per row whether it runs at all."""
+    definitions = _definitions(model=_model(dissolution=True), root="single_f")
+    root = _key(definitions=definitions, kind=QueryKind.FULL, target="single_f")
+    assert query_information.stay_read_shocks(name=root, definitions=definitions) == {
+        "wage_f",
+        "taste_f",
+    }
+    couple = _key(
+        definitions=definitions, kind=QueryKind.PARTICIPATING, target="couple"
+    )
+    assert (
+        query_information.own_stay_classes(name=couple, definitions=definitions) is None
+    )

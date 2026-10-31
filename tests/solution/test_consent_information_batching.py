@@ -515,6 +515,7 @@ def test_pinned_rows_reproduce_the_full_row_reduction(
     monkeypatch.setattr(policy_queries, "map_lanes", _scalar_lanes)
     monkeypatch.setattr(query_information, "pinned_support", lambda **_: None)
     monkeypatch.setattr(query_information, "ancestor_classes", lambda **_: None)
+    monkeypatch.setattr(query_information, "own_stay_classes", lambda **_: None)
     _assert_same_values(
         got=batched, expected=_values(_model(n_match=3, marry_available=_experienced))
     )
@@ -528,6 +529,7 @@ def _unpinned_scalar_values(
         patch.setattr(policy_queries, "map_lanes", _scalar_lanes)
         patch.setattr(query_information, "pinned_support", lambda **_: None)
         patch.setattr(query_information, "ancestor_classes", lambda **_: None)
+        patch.setattr(query_information, "own_stay_classes", lambda **_: None)
         return _values(model())
 
 
