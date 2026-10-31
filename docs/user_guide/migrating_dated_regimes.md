@@ -369,10 +369,12 @@ parameter path `["references"][read][state]` is now `["reads"][read][state]`, af
 field it projects. The old names raise `ImportError`, `AttributeError` or `TypeError`;
 there is no alias.
 
-```python
-# Removed: raises TypeError.
+```text
+# Removed: raises TypeError. Shown only to identify code that needs migrating.
 Transition(law=..., arrivals={"couple": ArrivalDecision(...)})
+```
 
+```python
 # Current declaration fragment.
 Transition(law=..., participation={"couple": ParticipationCheck(...)})
 ```
