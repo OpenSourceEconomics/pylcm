@@ -1,5 +1,6 @@
 """Mandatory solve/simulation input integrity and independent feasibility summaries."""
 
+import math
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from enum import Enum
@@ -7,8 +8,9 @@ from typing import TYPE_CHECKING, Literal, NamedTuple, cast
 
 import jax
 import jax.numpy as jnp
+import numpy as np
+from jaxtyping import Int32, Int64
 
-from _lcm.egm.projected_continuation import ProjectedChildAuthority
 from _lcm.post_decision_bound import PostDecisionBoundSpec
 from _lcm.typing import (
     DataclassInstance,
@@ -20,7 +22,7 @@ from _lcm.typing import (
     ShardingTree,
 )
 from _lcm.utils.counts import add_counts, sum_counts
-from lcm.exceptions import InvalidValueFunctionError
+from lcm.exceptions import ExecutionPlanningError, InvalidValueFunctionError
 from lcm.solver_api import KernelOutput
 from lcm.typing import (
     BoolND,
@@ -33,11 +35,11 @@ from lcm.typing import (
     ScalarInt,
 )
 
-type FeasibilityCounts = tuple[IntND, IntND]
+type FeasibilityCount = Int32[jax.Array, "..."] | Int64[jax.Array, "..."]
+type FeasibilityCounts = tuple[FeasibilityCount, FeasibilityCount]
 type CountedGridSearchOutput = (
-    tuple[FloatND, IntND, IntND]
-    | tuple[FloatND, BoolND, IntND, IntND]
-    | tuple[FloatND, IntND, IntND, ScalarBool]
+    tuple[FloatND, FeasibilityCount, FeasibilityCount]
+    | tuple[FloatND, FeasibilityCount, FeasibilityCount, ScalarBool]
 )
 
 if TYPE_CHECKING:
@@ -525,30 +527,10 @@ def validate_runtime_bound_status(
             )
 
 
-def _is_projected_status(
-    *,
-    authority: PostDecisionBoundSpec | ProjectedChildAuthority,
-    target: RegimeName,
-    period: int,
-    nonfinite: bool,
-    invalid_grid: bool,
-) -> bool:
-    """Authenticate projected provenance and prohibit fictitious floor statuses."""
-    if not isinstance(authority, ProjectedChildAuthority):
-        return False
-    if target != authority.producer or period != authority.period:
-        raise TypeError("Projected child status has a different producer/date.")
-    if nonfinite or invalid_grid:
-        raise TypeError("Projected child reads cannot report a floor read.")
-    return True
-
-
 def validate_query_input_status(
     *,
     statuses: tuple[QueryInputStatus, ...] | None,
-    authorities: tuple[
-        tuple[RegimeName, int, PostDecisionBoundSpec | ProjectedChildAuthority], ...
-    ],
+    authorities: tuple[tuple[RegimeName, int, PostDecisionBoundSpec], ...],
 ) -> None:
     """Accept all child arithmetic before interpreting any query coverage failure."""
     if len(statuses or ()) != len(authorities):
@@ -565,15 +547,6 @@ def validate_query_input_status(
     for (target, period, bound), (nonfinite, invalid_grid, _) in zip(
         authorities, flags, strict=True
     ):
-        if isinstance(bound, ProjectedChildAuthority):
-            _is_projected_status(
-                authority=bound,
-                target=target,
-                period=period,
-                nonfinite=bool(nonfinite),
-                invalid_grid=bool(invalid_grid),
-            )
-            continue
         if nonfinite or invalid_grid:
             declarations = ", ".join(bound.declaration_names)
             reason = (
@@ -589,12 +562,6 @@ def validate_query_input_status(
         authorities, flags, strict=True
     ):
         if missing:
-            if isinstance(bound, ProjectedChildAuthority):
-                raise InvalidValueFunctionError(
-                    "Invalid projected continuation or unsupported pre-shock "
-                    f"domain in regime '{target}', period {period}, "
-                    f"liquid state '{bound.liquid_state}'."
-                )
             declarations = ", ".join(bound.declaration_names)
             raise InvalidValueFunctionError(
                 f"query_coverage_missing for borrowing bound '{declarations}' in "
@@ -717,12 +684,10 @@ class FeasibilityKernelOutput(KernelOutput):
                 "Kernel bound integrity must contain scalar Boolean arrays."
             )
         if len(self.feasibility_counts) != 2 or any(  # noqa: PLR2004
-            value.ndim != 0 or value.dtype != jnp.int32
+            value.ndim != 0 or value.dtype not in (jnp.int32, jnp.int64)
             for value in self.feasibility_counts
         ):
-            raise TypeError(
-                "GridSearch feasibility counts must be scalar int32 arrays."
-            )
+            raise TypeError("Feasibility counts must be scalar int32 or int64 arrays.")
 
 
 def _fail_if_invalid_child_summaries(
@@ -769,6 +734,9 @@ class CountedGridSearch:
     ) -> CountedGridSearchOutput | BoundedResult[CountedGridSearchOutput]:
         """Count state cells, treating a household as a single decision."""
         evaluated = self.function(**kwargs)
+        bounded = evaluated if type(evaluated) is BoundedResult else None
+        if bounded is not None:
+            evaluated = bounded.output
         current_iid_invalid = None
         if self.current_iid:
             value, empty, invalid = cast(
@@ -776,27 +744,22 @@ class CountedGridSearch:
             )
             current_iid_invalid = jnp.any(invalid)
             evaluated = (value, empty)
-        value, empty = cast(
-            "tuple[FloatND, BoolND]",
-            evaluated.output if type(evaluated) is BoundedResult else evaluated,
-        )
+        value, empty = cast("tuple[FloatND, BoolND]", evaluated)
+        _fail_if_feasibility_count_exceeds_capacity(n_states=math.prod(empty.shape))
+        count_dtype = get_feasibility_count_dtype()
         infinite = jnp.isinf(value)
         if self.collective:
             infinite = jnp.any(infinite, axis=-1)
-        empty_count = jnp.sum(empty, dtype=jnp.int32)
-        other_inf_count = jnp.sum(infinite & ~empty, dtype=jnp.int32)
-        output: CountedGridSearchOutput = (
-            (value, empty, empty_count, other_inf_count)
-            if self.collective
-            else (value, empty_count, other_inf_count)
-        )
+        empty_count = jnp.sum(empty, dtype=count_dtype)
+        other_inf_count = jnp.sum(infinite & ~empty, dtype=count_dtype)
+        output: CountedGridSearchOutput = (value, empty_count, other_inf_count)
         if self.current_iid:
-            return cast("CountedGridSearchOutput", (*output, current_iid_invalid))
+            output = cast("CountedGridSearchOutput", (*output, current_iid_invalid))
         return (
             BoundedResult[CountedGridSearchOutput](
-                output=output, bound_status=evaluated.bound_status
+                output=output, bound_status=bounded.bound_status
             )
-            if type(evaluated) is BoundedResult
+            if bounded is not None
             else output
         )
 
@@ -805,11 +768,44 @@ class CountedGridSearch:
 def add_feasibility_counts(
     *, total: FeasibilityCounts, block: FeasibilityCounts
 ) -> FeasibilityCounts:
-    """Add one invariant block's counts to the counts of the blocks before it."""
+    """Add disjoint blocks within GridSearch's admitted full-state population.
+
+    Each count is bounded by that population: a state contributes at most one
+    to either channel, and invariant blocks cover different state codes. The
+    full-domain count bound therefore also bounds every partial sum. At int32,
+    other solvers retain their saturating summaries so positive populations
+    cannot overflow to zero; GridSearch's domain bound keeps its totals exact.
+    """
+    if not jax.config.x64_enabled:
+        return (
+            add_counts(left=total[0], right=block[0]),
+            add_counts(left=total[1], right=block[1]),
+        )
+    dtype = get_feasibility_count_dtype()
     return (
-        add_counts(left=total[0], right=block[0]),
-        add_counts(left=total[1], right=block[1]),
+        jnp.asarray(total[0], dtype=dtype) + jnp.asarray(block[0], dtype=dtype),
+        jnp.asarray(total[1], dtype=dtype) + jnp.asarray(block[1], dtype=dtype),
     )
+
+
+def get_feasibility_count_dtype() -> np.dtype[np.int32] | np.dtype[np.int64]:
+    """Return the exact feasibility-counter dtype under the configured x64 policy."""
+    return cast(
+        "np.dtype[np.int32] | np.dtype[np.int64]",
+        np.dtype(np.int64 if jax.config.x64_enabled else np.int32),
+    )
+
+
+def _fail_if_feasibility_count_exceeds_capacity(*, n_states: int) -> None:
+    """Refuse a state population whose exact count cannot fit the working dtype."""
+    dtype = get_feasibility_count_dtype()
+    capacity = int(np.iinfo(dtype).max)
+    if n_states > capacity:
+        raise ExecutionPlanningError(
+            f"GridSearch feasibility count for {n_states} states exceeds the "
+            f"{dtype.name} capacity of {capacity}. Reduce the state population."
+            + (" Enable x64 for int64 counts." if not jax.config.x64_enabled else "")
+        )
 
 
 def count_current_feasibility(

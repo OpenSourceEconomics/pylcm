@@ -29,7 +29,6 @@ from _lcm.execution.core_program import (
     resolve_core_program_candidates,
 )
 from _lcm.execution.output_layout import (
-    DISSOLUTION_FLAG,
     VALUE,
     StateAxesLeading,
     resolve_output_layout,
@@ -622,11 +621,7 @@ def test_collective_grid_search_plans_cells_with_canonical_action_reduction() ->
 
     assert program.disposition is CoreExecutionDisposition.PLANNED
     assert program.disposition_reason is None
-    assert program.output_roles == (
-        VALUE,
-        DISSOLUTION_FLAG,
-        *_FEASIBILITY_COUNT_ROLES,
-    )
+    assert program.output_roles == (VALUE, *_FEASIBILITY_COUNT_ROLES)
     assert program.requirements.reduced_axes == ()
 
     resolved = resolve_core_program(
@@ -643,10 +638,7 @@ def test_collective_grid_search_plans_cells_with_canonical_action_reduction() ->
     assert jax.tree.structure(output) == jax.tree.structure(program.output_roles)
     assert isinstance(output, tuple)
     assert isinstance(output[0], jax.ShapeDtypeStruct)
-    assert isinstance(output[1], jax.ShapeDtypeStruct)
     assert output[0].shape == next_V["couple"].shape
-    assert output[1].shape == next_V["couple"].shape[:-1]
-    assert output[1].dtype == jnp.bool_
 
 
 def test_ev1_grid_search_plans_cells_with_canonical_action_reduction() -> None:

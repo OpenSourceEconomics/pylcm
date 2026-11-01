@@ -38,7 +38,6 @@ from _lcm.constraints.routes import (
 )
 from _lcm.continuation import EGMContinuationLayout, EGMContinuationSpec
 from _lcm.egm.carry import EGMCarry, egm_carry_role_tree, stack_egm_carries
-from _lcm.egm.current_iid_negm_origin import DatedNEGMCaseUSource
 from _lcm.egm.dcegm_query_model import DCEGMQueryModel
 from _lcm.egm.nested_floor import (
     NESTED_FLOOR_INPUT,
@@ -62,6 +61,7 @@ from _lcm.execution.core_program import (
 from _lcm.execution.output_layout import VALUE, OutputRoleTree, StateAxesLeading
 from _lcm.execution.reductions import HARD_MAX_WITH_CARRY_REDUCTION
 from _lcm.grids import ContinuousGrid
+from _lcm.materialization import DatedGenerationMaterializer
 from _lcm.params.edges import regime_kernel_params
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.solution.continuation_reads import rekeyed_value_reads
@@ -115,7 +115,11 @@ from _lcm.typing import (
     ShapeDtypePytree,
 )
 from lcm._solver_api.capabilities import SolverExecutionCapabilities
-from lcm.exceptions import InvalidParamsError, RegimeInitializationError
+from lcm.exceptions import (
+    InvalidParamsError,
+    RegimeInitializationError,
+    UnsupportedOperationError,
+)
 from lcm.solver_api import (
     EGM_CONTINUATION,
     EGM_ENDOGENOUS_COORDINATE,
@@ -295,6 +299,7 @@ class NEGM(TwoMarginSolver):
             regime_name=context.regime_name,
             user_regime=context.user_regimes[context.regime_name],
             law=context.laws[context.regime_name],
+            shock_node_states=context.shock_node_states,
         )
 
     def validate_build(self, *, context: SolverBuildContext) -> None:
@@ -441,7 +446,6 @@ class NEGM(TwoMarginSolver):
         self,
         *,
         context: SolverBuildContext,
-        case_u_source: DatedNEGMCaseUSource | None = None,
     ) -> SolutionKernels:
         """Build one NEGM period adapter per period, wrapping the inner kernels.
 
@@ -455,8 +459,6 @@ class NEGM(TwoMarginSolver):
         per-node candidates and collapses the outer axis by `max`.
         """
         bound_self = cast("_BoundNEGM", self)
-        if case_u_source is not None:
-            case_u_source.require(context=context, solver=bound_self)
         query_model = (context.dcegm_query_models or {}).get(context.regime_name)
         if query_model is not None and query_model.authority.finite_outer is None:
             raise TypeError("Finite NEGM requires its canonical outer query authority.")
@@ -496,14 +498,8 @@ class NEGM(TwoMarginSolver):
         inner_with_child_transport = replace(
             bound_self.inner, _retain_child_feasibility=True
         )
-        adjuster_kernels = (
-            inner_with_child_transport.build_period_kernels(context=adjuster_context)
-            if case_u_source is None
-            else case_u_source.build_inner(
-                context=adjuster_context,
-                solver=inner_with_child_transport,
-                keeper=False,
-            )
+        adjuster_kernels = inner_with_child_transport.build_period_kernels(
+            context=adjuster_context
         )
         # The keeper is a normal passive DC-EGM: the outer post-decision is held
         # at its no-adjustment level (`s_t^post-dec = keep(<durable>_t)`), so the
@@ -597,14 +593,8 @@ class NEGM(TwoMarginSolver):
                         periods=group_periods or (template_period,),
                     ),
                 )
-            group_keeper_kernels = (
-                inner_with_child_transport.build_period_kernels(context=keeper_context)
-                if case_u_source is None
-                else case_u_source.build_inner(
-                    context=keeper_context,
-                    solver=inner_with_child_transport,
-                    keeper=True,
-                )
+            group_keeper_kernels = inner_with_child_transport.build_period_kernels(
+                context=keeper_context
             )
             keeper_param_checks += group_keeper_kernels.param_checks
             keeper_continuation_template = (
@@ -666,6 +656,7 @@ class NEGM(TwoMarginSolver):
             template=keeper_continuation_template,
             n_candidates=outer_grid_values.shape[0] + 1,
         )
+        layout = self.egm_continuation_layout
         # `_stack_carry_template` passes `None` through, and the keeper template
         # was established as present above, so the stacked template is too.
         assert stacked_template is not None  # noqa: S101
@@ -694,11 +685,9 @@ class NEGM(TwoMarginSolver):
             continuation_spec=EGMContinuationSpec(
                 template=stacked_template,
                 layout=(
-                    self.egm_continuation_layout
+                    layout
                     if query_model is None
-                    else replace(
-                        self.egm_continuation_layout, query_spec=query_model.authority
-                    )
+                    else replace(layout, query_spec=query_model.authority)
                 ),
             ),
             # Both inner margins are solved by the inner solver, so both sets of
@@ -1802,6 +1791,38 @@ def _stack_carry_template(
             taste_shock_scale=leaves[("taste_shock_scale",)],
         )
     return stack_egm_carries(candidates=(template,) * n_candidates)
+
+
+def _stack_owned_carry_template(
+    *,
+    template: EGMCarry,
+    n_candidates: int,
+    materializer: DatedGenerationMaterializer,
+) -> EGMCarry:
+    """Reconstruct ordinary carry metadata outside admitted leaf broadcasts."""
+    if (
+        type(template) is not EGMCarry
+        or template.query_data_for_transport() is not None
+    ):
+        raise UnsupportedOperationError(
+            "Owned NEGM carry stacking requires its original query-free template."
+        )
+    leaves = template.leaves()
+    stacked = {
+        name: materializer.evaluate_validation(
+            function=functools.partial(
+                _broadcast_over_candidates, n_candidates=n_candidates
+            ),
+            arguments={"arr": leaves[(name,)]},
+        )
+        for name in ("endog_grid", "value", "marginal_utility")
+    }
+    return EGMCarry(
+        endog_grid=stacked["endog_grid"],
+        value=stacked["value"],
+        marginal_utility=stacked["marginal_utility"],
+        taste_shock_scale=leaves[("taste_shock_scale",)],
+    )
 
 
 def _broadcast_over_candidates(*, arr: FloatND, n_candidates: int) -> FloatND:

@@ -20,9 +20,9 @@ that nest collapses to a single DC-EGM regime with one discrete choice:
 - the own-vs-rent-and-level decision is a single discrete action
   `housing_choice` over the same categorical alphabet as `housing` — exactly the
   role Application 1's work/retire `labor_supply` action plays. The
-  discrete-choice upper envelope (FUES/MSS/LTM) selects the best choice per
+  discrete-choice upper envelope (FUES/LTM) selects the best choice per
   asset-housing-wage cell, and grid search (VFI) does the same by brute force —
-  the four Table 4 methods;
+  the Table 4 methods other than MSS, which pylcm does not ship;
 - the next-period housing stock equals the chosen code (`next_housing =
   housing_choice`), so the discrete action drives the discrete-state transition.
 
@@ -484,7 +484,7 @@ def build_model(
     n_periods: int | None = None,
     asset_max: float = 40.0,
     n_consumption: int = 30,
-    envelope: Literal["fues", "mss", "ltm", "rfc"] = "fues",
+    envelope: Literal["fues", "ltm", "rfc"] = "fues",
     use_taxes: bool = False,
 ) -> Model:
     """Build the DS App.3 discrete-housing model.
@@ -506,8 +506,8 @@ def build_model(
         asset_max: Upper bound of the financial-asset grid `a in [0, asset_max]`.
         n_consumption: Number of consumption-grid points (brute search and the
             DC-EGM simulation draw).
-        envelope: DC-EGM upper-envelope backend (`"fues"`, `"mss"`, `"ltm"`,
-            `"rfc"`); the Table 4 methods are FUES/MSS/LTM.
+        envelope: DC-EGM upper-envelope backend (`"fues"`, `"ltm"`, `"rfc"`);
+            the Table 4 methods pylcm ships are FUES/LTM.
 
     Returns:
         The two-regime (working, dead) discrete-housing model.

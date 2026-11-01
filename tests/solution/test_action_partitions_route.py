@@ -165,16 +165,6 @@ def _collective(**config: Unpack[_ExecutionOptions]) -> Model:
     )
 
 
-def _folded(**config: Unpack[_ExecutionOptions]) -> Model:
-    model, _ = collective_fixtures.make_folding_singleton_model()
-    return _rebuilt(
-        model=model,
-        regime_id_class=collective_fixtures.ShockRegimeId,
-        initial_nodes={0: "shocked"},
-        **config,
-    )
-
-
 def _dcegm(**config: Unpack[_ExecutionOptions]) -> Model:
     return _rebuilt(
         model=dcegm_paper_twin.get_model("dcegm"),
@@ -210,10 +200,6 @@ _REFUSALS = {
     "collective_regime": (
         lambda: _collective(action_partitions={"couple": 2}),
         "regime 'couple' (2 partitions) is a collective regime",
-    ),
-    "folded_process": (
-        lambda: _folded(action_partitions={"shocked": 2}),
-        "regime 'shocked' (2 partitions) folds the processes ['wage_shock']",
     ),
     "discrete_sharded_state": (
         lambda: many_actions.get_model(

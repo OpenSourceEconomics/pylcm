@@ -6,7 +6,7 @@ then needs `E_k[V(base + shock_k, ...)]` at every source point, and every node o
 every draw the shock reads moves the interpolation coordinate.
 
 This module takes the draws the target does not store — transition-local draws,
-such as a folded shock that only the transition reads — out of that per-point
+such as a shock that only the transition reads — out of that per-point
 expectation. Once per call it forms, for every combination of the shock's
 conditioners and of the stored draws the shock reads,
 

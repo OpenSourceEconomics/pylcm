@@ -10,10 +10,11 @@ replicated on every device — in particular no `all-gather` assembling every
 is the reference: it cannot contain a carry gather, and every collective it does
 contain belongs to the program's own output assembly over the ride cells.
 
-The check solves the distributed ride-along toy under NBEGM on two forced host
-devices, records the live arguments the engine hands the ride-along programs,
-and compares the optimized HLO of the program lowered against those arguments
-with the HLO of the same program lowered against a replicated copy of the carry.
+The check solves the distributed ride-along toy under NBEGM, in both envelope
+arithmetics, on two forced host devices, records the live arguments the engine
+hands the ride-along programs, and compares the optimized HLO of the program
+lowered against those arguments with the HLO of the same program lowered against
+a replicated copy of the carry.
 """
 
 import os
@@ -47,18 +48,6 @@ _SCRIPT = textwrap.dedent(
 
     solvers._RideAlongArgumentBuilder.__call__ = record_arguments
 
-    model = toy.build_model(
-        variant="nbegm", n_periods=4, n_liquid=24, n_savings=32, distributed_kind=True
-    )
-    model.solve(params=toy.build_params(), log_level="debug")
-    assert recorded, "no ride-along program was lowered"
-
-    programs_by_builder = {}
-    for kernel in model._regimes["alive"].solution.period_kernels.values():
-        for program in core_program_graph(kernel=kernel).values():
-            programs_by_builder.setdefault(id(program.argument_builder), []).append(
-                program
-            )
 
     collective = re.compile(
         r"= (\\S+) (all-gather|all-reduce|all-to-all|collective-permute"
@@ -89,28 +78,59 @@ _SCRIPT = textwrap.dedent(
 
     compared = 0
     sharded_total = collections.Counter()
-    for builder, arguments in recorded:
-        carry = arguments["next_regime_to_continuation"]
-        carry_shardings = {leaf.sharding for leaf in jax.tree.leaves(carry)}
-        if not any(
-            isinstance(s, jax.NamedSharding) and s.spec != jax.P()
-            for s in carry_shardings
-        ):
-            continue
-        for program in programs_by_builder[id(builder)]:
-            sharded = collectives(function=program.function, arguments=arguments)
-            replicated = collectives(
-                function=program.function, arguments=replicated_carry(arguments)
-            )
-            extra = sharded - replicated
-            if extra:
-                print("EXTRA-COLLECTIVES", program.name, sorted(extra.items()))
-                raise SystemExit(1)
-            sharded_total.update(sharded)
-            compared += 1
-    assert compared, "no program was lowered against a kind-sharded carry"
-    # The instrument has to be shown firing in this run: the program's own output
-    # assembly over the ride cells is where the reference collectives come from.
+    # The default ordinary graph is the one that ships; the certified graph is
+    # checked too because its output assembly over the ride cells is where the
+    # reference collectives come from, so it is what shows the instrument firing.
+    for arithmetic in ("ordinary", "certified"):
+        recorded.clear()
+        model = toy.build_model(
+            variant="nbegm",
+            n_periods=4,
+            n_liquid=24,
+            n_savings=32,
+            distributed_kind=True,
+            nbegm_overrides={"envelope_arithmetic": arithmetic},
+        )
+        model.solve(params=toy.build_params(), log_level="debug")
+        assert recorded, f"no ride-along program was lowered ({arithmetic})"
+
+        programs_by_builder = {}
+        for kernel in model._regimes["alive"].solution.period_kernels.values():
+            for program in core_program_graph(kernel=kernel).values():
+                programs_by_builder.setdefault(
+                    id(program.argument_builder), []
+                ).append(program)
+
+        compared_here = 0
+        for builder, arguments in recorded:
+            carry = arguments["next_regime_to_continuation"]
+            carry_shardings = {leaf.sharding for leaf in jax.tree.leaves(carry)}
+            if not any(
+                isinstance(s, jax.NamedSharding) and s.spec != jax.P()
+                for s in carry_shardings
+            ):
+                continue
+            for program in programs_by_builder[id(builder)]:
+                sharded = collectives(function=program.function, arguments=arguments)
+                replicated = collectives(
+                    function=program.function, arguments=replicated_carry(arguments)
+                )
+                extra = sharded - replicated
+                if extra:
+                    print(
+                        "EXTRA-COLLECTIVES",
+                        arithmetic,
+                        program.name,
+                        sorted(extra.items()),
+                    )
+                    raise SystemExit(1)
+                sharded_total.update(sharded)
+                compared_here += 1
+        assert compared_here, (
+            f"no program was lowered against a kind-sharded carry ({arithmetic})"
+        )
+        compared += compared_here
+    # The instrument has to be shown firing in this run.
     assert sharded_total, "no collective found in any sharded-carry compile"
     print("DEVICE-LOCAL-OK", compared, sorted(sharded_total.items()))
     """

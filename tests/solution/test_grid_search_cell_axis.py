@@ -23,7 +23,6 @@ from lcm import (
     fixed_transition,
 )
 from lcm.regime import FunctionEntry
-from lcm.solver_api import DISSOLUTION_FLAG
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.typing import (
     ActionName,
@@ -39,6 +38,7 @@ from lcm.typing import (
     UserParams,
     UserParamsNode,
 )
+from tests.collective_fixtures import recorded_dissolution_flags
 from tests.conftest import assert_agrees_to_ulp
 
 
@@ -178,12 +178,13 @@ def test_cell_width_preserves_public_values(*, kind: str, width: int) -> None:
 @pytest.mark.parametrize("width", [1, 4, 6])
 def test_cell_width_preserves_exact_dissolution_flags(*, width: int) -> None:
     """The Boolean output keeps its state axes without a stakeholder dimension."""
-    result = _model(kind="collective", width=width).solve(
-        params=_params("collective"), log_level="off"
-    )
-    flags = result.replay_artifacts.project(DISSOLUTION_FLAG)
+    with recorded_dissolution_flags() as flags:
+        _model(kind="collective", width=width).solve(
+            params=_params("collective"), log_level="off"
+        )
     np.testing.assert_array_equal(
-        flags[0]["acting"], np.asarray([[True, True, True], [False, False, False]])
+        np.asarray(flags[0]["acting"]),
+        np.asarray([[True, True, True], [False, False, False]]),
     )
 
 

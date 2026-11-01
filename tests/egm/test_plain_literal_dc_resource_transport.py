@@ -30,7 +30,7 @@ from lcm import (
 )
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.solver_api import KernelOutput
-from lcm.solvers import DCEGM, EGM
+from lcm.solvers import DCEGM, EGM, RFCEnvelope
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -139,6 +139,7 @@ def _model(
                 solver=DCEGM(
                     savings_grid=IrregSpacedGrid(points=np.array([0.5, 1.0, 1.5])),
                     n_constrained_points=4,
+                    envelope=RFCEnvelope(),
                 ),
             ),
             "done": Regime(

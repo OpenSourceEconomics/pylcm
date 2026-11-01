@@ -46,7 +46,6 @@ from lcm import (
     Regime,
     UniformIIDProcess,
     categorical,
-    post_decision_lower_bound,
 )
 from lcm.exceptions import (
     ExecutionPlanningError,
@@ -73,14 +72,12 @@ from lcm.shocks import (
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.typing import ContinuousState, DiscreteAction, FloatND, ScalarInt, UserParams
 from tests.conftest import DECIMAL_PRECISION
-from tests.constraints import test_dynamic_lower_bound as bound
 from tests.simulation import test_aot_same_period_refs as reference
 from tests.simulation._callback_types import ChunkProfileInputs
 from tests.solution import test_decoupled
 from tests.solution import test_gated_edge_stateless_target_solve as gated
 from tests.solution import test_invariant_blocking_scalar as invariant
 from tests.solution._iid_shock_oracles import finite_backward
-from tests.test_models import dcegm_paper_twin
 
 
 @categorical(ordered=False)
@@ -1202,33 +1199,6 @@ def test_all_period_node_banks_participate_in_native_budget_admission() -> None:
         )
 
 
-def test_signed_ancestry_cannot_enter_the_native_decision() -> None:
-    """Positive concrete weights do not erase a rule's signed provenance."""
-
-    with pytest.raises(ShockDeclarationError, match=r"Signed|signed"):
-        Model(
-            regimes={
-                "alive": Regime(
-                    functions={"utility": _squared_shock}, shocks=("innovation",)
-                )
-            },
-            n_periods=1,
-            regime_id_class=_TerminalId,
-            initial_nodes=InitialNodes(by_period={0: "alive"}),
-            edges={},
-            shocks={
-                "innovation": ShockGroup(
-                    shocks={"eps": Normal(mu=0, sigma=1)},
-                    nodes=UserNodes(
-                        nodes=np.array([[-1.0], [1.0]]),
-                        weights=np.array([0.5, 0.5]),
-                        signed=True,
-                    ),
-                )
-            },
-        )
-
-
 def test_saved_replay_retains_its_physical_innovations(tmp_path) -> None:
     """A restored simulation has the exact physical data used by its native decision."""
 
@@ -1250,17 +1220,12 @@ def test_saved_replay_retains_its_physical_innovations(tmp_path) -> None:
     )
 
 
-@pytest.mark.parametrize("family", ["dcegm", "decoupled"])
-def test_new_iid_refuses_uncomposed_native_families(family: str) -> None:
-    """Legacy admitted families retain their routes; new IID requires composition."""
-
-    if family == "dcegm":
-        base = dcegm_paper_twin.get_model(solver="dcegm")
-        regime_id_class = dcegm_paper_twin.TwinRegimeId
-    else:
-        base = test_decoupled._model()
-        regime_id_class = test_decoupled.RegimeId
-    with pytest.raises(UnsupportedOperationError, match=r"Current IID"):
+def test_new_iid_refuses_uncomposed_native_families() -> None:
+    """A legacy admitted family retains its route; new IID requires composition."""
+    base = test_decoupled._model()
+    regime_id_class = test_decoupled.RegimeId
+    message = r"Current IID"
+    with pytest.raises(UnsupportedOperationError, match=message):
         Model(
             regimes={
                 name: regime.replace(shocks=("innovation",))
@@ -1747,7 +1712,6 @@ def test_null_joint_events_do_not_poison_native_values(poison: float) -> None:
     [
         "co-map",
         "invariant blocks",
-        "bound",
         "gated source",
         "gated open target",
         "gated fallback",
@@ -1777,17 +1741,10 @@ def test_current_iid_refuses_actual_uncomposed_reader_intersections(
                 device_memory_bytes=None,
             )
         )
-    elif channel == "bound":
-        base = bound._model(
-            declaration=post_decision_lower_bound(
-                margin=bound.LIQUID, lower=bound.lower
-            )
-        )
-        regime_id_class = bound.RegimeId
-        target = "done"
-        execution = ExecutionConfig(device_memory_bytes=None)
     elif channel.startswith("gated"):
-        base = gated._build_model(gate=gated._closed_gate, enable_jit=False)
+        base = gated._build_model(
+            gate=gated._closed_by_age, enable_jit=False, reads_value=False
+        )
         regime_id_class = gated.RegimeId
         target = {
             "gated source": "src",
@@ -1926,7 +1883,9 @@ class _IslandId:
 
 
 def test_current_iid_preserves_an_unrelated_legacy_gated_component() -> None:
-    base = gated._build_model(gate=gated._closed_gate, enable_jit=False)
+    base = gated._build_model(
+        gate=gated._closed_by_age, enable_jit=False, reads_value=False
+    )
     model = Model(
         regimes={
             **base.user_regimes,
@@ -1957,43 +1916,12 @@ def test_current_iid_preserves_an_unrelated_legacy_gated_component() -> None:
     np.testing.assert_allclose(result.values[0]["iid_island"], 4.0)
 
 
-def _legacy_with_new(*, eps: FloatND, new_iid: FloatND) -> FloatND:
-    return eps**2 + new_iid**2
-
-
-def test_current_iid_refuses_uncomposed_legacy_fold_axis() -> None:
-    with pytest.raises(UnsupportedOperationError, match=r"Current IID.*legacy folded"):
-        Model(
-            regimes={
-                "alive": Regime(
-                    states={
-                        "eps": NormalIIDProcess(
-                            n_points=3, gauss_hermite=True, mu=0.0, sigma=1.0, fold=True
-                        )
-                    },
-                    functions={"utility": _legacy_with_new},
-                    shocks=("innovation",),
-                )
-            },
-            n_periods=1,
-            regime_id_class=_TerminalId,
-            initial_nodes=InitialNodes(by_period={0: "alive"}),
-            edges={},
-            shocks={
-                "innovation": ShockGroup(
-                    shocks={"new_iid": Normal(mu=0, sigma=0)},
-                    nodes=UserNodes(nodes=np.array([[0.0]]), weights=np.ones(1)),
-                )
-            },
-        )
-
-
 @pytest.mark.parametrize(
     "law_name", ["normal-hermite", "normal-spaced", "lognormal", "uniform"]
 )
-def test_affine_legacy_fold_rule_preserves_ordinary_values(law_name: str) -> None:
+def test_current_group_value_averages_the_legacy_state_value(law_name: str) -> None:
     if law_name == "uniform":
-        legacy = UniformIIDProcess(n_points=5, start=-1.0, stop=3.0, fold=True)
+        legacy = UniformIIDProcess(n_points=5, start=-1.0, stop=3.0)
         law = Uniform(start=-1, stop=3)
         rule = EqualSpacedUniform(n=5)
     else:
@@ -2004,7 +1932,6 @@ def test_affine_legacy_fold_rule_preserves_ordinary_values(law_name: str) -> Non
             mu=0.3,
             sigma=1.2,
             n_std=None if gauss_hermite else 2.5,
-            fold=True,
         )
         law = (LogNormal if law_name == "lognormal" else Normal)(mu=0.3, sigma=1.2)
         rule = GaussHermite(n=5) if gauss_hermite else EqualSpaced(n=5, n_std=2.5)
@@ -2033,7 +1960,8 @@ def test_affine_legacy_fold_rule_preserves_ordinary_values(law_name: str) -> Non
     ).solve(params={}, log_level="off", runtime_checks=False)
     assert_array_almost_equal(
         candidate.values[0]["alive"],
-        reference.values[0]["alive"],
+        np.asarray(reference.values[0]["alive"])
+        @ np.asarray(legacy.get_transition_probs()[0]),
         decimal=DECIMAL_PRECISION,
     )
 

@@ -1,7 +1,7 @@
-"""A gated edge's own functions contribute parameters under `params["edges"]`.
+"""A participation check's own functions contribute parameters under `params["edges"]`.
 
-A gated edge is declared with four kinds of user callable: the selection
-probability, the gate predicate, one projection per gate reference, and one
+A participation check is declared with four kinds of user callable: the selection
+probability, the decision predicate, one projection per typed read, and one
 projection per route fallback. Each is an ordinary DAG function, so every scalar
 it reads beyond the values and states the engine wires in is a model parameter.
 Its slot is its declaration path under `params["edges"][source][target]`, it is
@@ -9,8 +9,9 @@ listed by `get_params_template()`, and the value the user supplies for it is
 what the solved model uses.
 
 The topology is a mutual-consent edge. A single woman reaches a married couple
-only if both partners prefer marriage to their own single life (the gate), each
-partner's single life is valued by a gate reference read at a projected wage,
+only if both partners prefer marriage to their own single life (the participation
+predicate), each partner's single life is valued by an `IntegratedFull` read at a
+projected wage,
 and a woman whose proposal is refused falls back to her own single value, also
 read at a projected wage. Wages live on the two-point grid $\\{1, 2\\}$ and every
 value below is exact on it.
@@ -35,9 +36,10 @@ from _lcm.typing import FlatParams
 from lcm import (
     CollectiveUtility,
     DiscreteGrid,
-    Gate,
     LinSpacedGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     Phased,
     ProjectedRegimeValue,
     Regime,
@@ -112,7 +114,7 @@ def test_gate_ref_projection_scalar_parameter_is_a_model_parameter():
     )
     assert (
         *_EDGE,
-        "references",
+        "reads",
         "V_single_m_ref",
         "wage",
         "husband_reference_weight",
@@ -177,7 +179,7 @@ def test_gated_edge_template_holds_each_declaration_path():
         (*_EDGE, "predicate", "marriage_premium"),
         (
             *_EDGE,
-            "references",
+            "reads",
             "V_single_m_ref",
             "wage",
             "husband_reference_weight",
@@ -223,7 +225,7 @@ def test_phased_fallback_template_nests_each_phase_under_its_name():
             {
                 "meeting_rate": 1.0,
                 "predicate": {"marriage_premium": 0.25},
-                "references": {
+                "reads": {
                     "V_single_m_ref": {"wage": {"husband_reference_weight": 0.1}}
                 },
                 "routes": {"f": {"fallback": {"wage": {"wife_fallback_weight": 0.4}}}},
@@ -288,10 +290,7 @@ def test_engine_edge_namespace_holds_exactly_the_template_slots():
     assert set(edge_params(flat_params, source="single_f")) == {
         "married_terminal__meeting_rate",
         "married_terminal__predicate__marriage_premium",
-        (
-            "married_terminal__references__V_single_m_ref__wage__"
-            "husband_reference_weight"
-        ),
+        ("married_terminal__reads__V_single_m_ref__wage__husband_reference_weight"),
         "married_terminal__routes__f__fallback__wage__wife_fallback_weight",
     }
 
@@ -481,18 +480,32 @@ def _build_model(
             func=_marry_for_sure if probability is None else probability
         )
     }
-    single_f_gates = {
-        "married_terminal": Gate(
+    single_f_participation = {
+        "married_terminal": ParticipationCheck(
             predicate=gate,
             routes={
                 "f": StakeholderRoute(target_stakeholder="f", fallback=wife_fallback)
             },
-            references={
-                "V_single_f_ref": ProjectedRegimeValue(
+            reads={
+                "V_target_f": ParticipationRead(
+                    kind="IntegratedFull",
+                    regime="married_terminal",
+                    stakeholder="f",
+                    projection={"wage": _wage_itself},
+                ),
+                "V_target_m": ParticipationRead(
+                    kind="IntegratedFull",
+                    regime="married_terminal",
+                    stakeholder="m",
+                    projection={"wage": _wage_itself},
+                ),
+                "V_single_f_ref": ParticipationRead(
+                    kind="IntegratedFull",
                     regime="single_f_terminal",
                     projection={"wage": _wage_itself},
                 ),
-                "V_single_m_ref": ProjectedRegimeValue(
+                "V_single_m_ref": ParticipationRead(
+                    kind="IntegratedFull",
                     regime="single_m_terminal",
                     projection={"wage": husband_reference_projection},
                 ),
@@ -532,7 +545,11 @@ def _build_model(
         ages=_AGES,
         regime_id_class=_RegimeId,
         initial_nodes={0: "single_f"},
-        edges={"single_f": Transition(law=single_f_law, gates=single_f_gates)},
+        edges={
+            "single_f": Transition(
+                law=single_f_law, participation=single_f_participation
+            )
+        },
     )
 
 
