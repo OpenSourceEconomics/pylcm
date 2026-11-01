@@ -331,7 +331,13 @@ def period_nan_error(
     on the device. The error's partial solution is the values solved so far,
     read back from value storage only if someone reads it.
     """
-    rows = [row for row in diagnostic_rows if row.period == period and row.has_nan]
+    rows = []
+    # The period's rows are the last ones; walk back only through them.
+    for row in reversed(diagnostic_rows):
+        if row.period != period:
+            break
+        if row.has_nan:
+            rows.insert(0, row)
     if not rows:
         return None
     partial = {**stored_values, period: period_values}

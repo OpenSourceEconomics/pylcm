@@ -217,11 +217,7 @@ from _lcm.solution.feasibility import (
     validate_runtime_bound_status,
 )
 from _lcm.solution.grid_search import _GridSearchArgumentBuilder
-from _lcm.solution.host_values import (
-    copy_policies_to_host,
-    copy_values_to_host,
-    wait_for_host_copies,
-)
+from _lcm.solution.host_values import copy_values_to_host, wait_for_host_copies
 from _lcm.solution.kernel_attribution import (
     log_executed_kernel,
     log_module_fanout,
@@ -1410,8 +1406,8 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                     # Under host storage policies travel as values do; device
                     # storage moves them to the CPU device before going on.
                     if store_on_host:
-                        simulation_policies[period] = copy_policies_to_host(
-                            period=period, policies=period_simulation_policies
+                        simulation_policies[period] = copy_values_to_host(
+                            period=period, values=period_simulation_policies
                         )
                     else:
                         assert host_device is not None  # noqa: S101

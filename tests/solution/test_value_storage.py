@@ -18,6 +18,7 @@ import gc
 import importlib
 import json
 import subprocess
+import threading
 import weakref
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -129,6 +130,18 @@ def test_value_storage_takes_an_existing_directory(tmp_path: Path) -> None:
 
     assert config.value_storage == tmp_path
     assert config.value_storage_kind == "disk"
+
+
+def test_value_storage_keeps_a_relative_directory_as_an_absolute_path(
+    *, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A later change of working directory does not move the archive."""
+    (tmp_path / "storage").mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    config = ExecutionConfig(value_storage=Path("storage"))
+
+    assert config.value_storage == tmp_path.resolve() / "storage"
 
 
 def test_value_storage_kind_names_device_and_host_storage() -> None:
@@ -1599,6 +1612,15 @@ def _value_copies_while_simulating(
     copied: list[tuple[int, RegimeName]] = []
     simulating: list[bool] = [False]
     read = host_values._RecentDeviceCopies.read
+    prefetch = host_values._RecentDeviceCopies.prefetch
+
+    def _record(
+        *, copies: host_values._RecentDeviceCopies, period: int, regime: RegimeName
+    ) -> None:
+        if simulating[0] != outside_the_loop and regime not in copies._copies.get(
+            period, {}
+        ):
+            copied.append((period, regime))
 
     # keyword-only-exempt: primary-argument=self
     def _counting_read(
@@ -1608,15 +1630,24 @@ def _value_copies_while_simulating(
         regime: RegimeName,
         stored: _Stored,
     ) -> jax.Array | SimulationPolicy:
-        if simulating[0] != outside_the_loop and regime not in self._copies.get(
-            period, {}
-        ):
-            copied.append((period, regime))
+        _record(copies=self, period=period, regime=regime)
         return read(self, period=period, regime=regime, stored=stored)
+
+    # keyword-only-exempt: primary-argument=self
+    def _counting_prefetch(
+        self: host_values._RecentDeviceCopies,
+        *,
+        period: int,
+        regime: RegimeName,
+        stored: _Stored,
+    ) -> None:
+        _record(copies=self, period=period, regime=regime)
+        prefetch(self, period=period, regime=regime, stored=stored)
 
     solution = model.solve(params=_PARAMS, log_level="off")
     with monkeypatch.context() as patch:
         patch.setattr(host_values._RecentDeviceCopies, "read", _counting_read)
+        patch.setattr(host_values._RecentDeviceCopies, "prefetch", _counting_prefetch)
         patch.setattr(
             model_module,
             "simulate",
@@ -1956,6 +1987,74 @@ def test_the_planner_reserves_every_subjects_state_for_several_chunks() -> None:
     assert reserved[devices[0]] >= columns
 
 
+def test_disk_values_loaded_early_are_read_off_the_simulation_thread(
+    *, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The early load hands disk reads to a reader thread and returns at once.
+
+    The panel is that of device storage all the same.
+    """
+    threads: list[str] = []
+    inside_prefetch = [False]
+    materialize = DiskValueEntry.materialize
+    prefetch = simulate_module._prefetch_period_reads
+
+    # keyword-only-exempt: primary-argument=self
+    def _recording_materialize(
+        self: DiskValueEntry, *, template: ArtifactPayload | None = None
+    ) -> jax.Array:
+        if (
+            inside_prefetch[0]
+            or threading.current_thread() is not threading.main_thread()
+        ):
+            threads.append(threading.current_thread().name)
+        return materialize(self, template=template)
+
+    def _flagged_prefetch(
+        *,
+        period: int,
+        active_by_period: tuple[MappingProxyType[RegimeName, Regime], ...],
+        values: Mapping[int, Mapping[RegimeName, jax.Array]],
+        flags: Mapping[int, Mapping[RegimeName, jax.Array]],
+        policies: PeriodToRegimeToSimulationPolicy,
+    ) -> tuple[jax.Array, ...]:
+        inside_prefetch[0] = True
+        try:
+            return prefetch(
+                period=period,
+                active_by_period=active_by_period,
+                values=values,
+                flags=flags,
+                policies=policies,
+            )
+        finally:
+            inside_prefetch[0] = False
+
+    monkeypatch.setattr(DiskValueEntry, "materialize", _recording_materialize)
+    monkeypatch.setattr(simulate_module, "_prefetch_period_reads", _flagged_prefetch)
+    panels = [
+        _three_regime_model(
+            ExecutionConfig(
+                value_storage=storage,
+                axis_widths=_ONE_SUBJECT_PER_CHUNK,
+                device_memory_bytes=None,
+            )
+        )
+        .simulate(
+            params=_PARAMS,
+            initial_conditions=_three_regime_initial_conditions(),
+            seed=3,
+            log_level="off",
+        )
+        .to_dataframe()
+        for storage in ("device", tmp_path)
+    ]
+
+    assert threads
+    assert threading.main_thread().name not in threads
+    assert panels[0].equals(panels[1])
+
+
 def test_the_planner_reserves_what_one_period_copies_early(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2016,6 +2115,76 @@ def test_the_planner_reserves_what_one_period_copies_early(
 
     assert max(copied_early) > 0
     assert sum(reserved.values()) >= max(copied_early)
+
+
+def test_the_runtime_ledger_charges_the_early_copies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """While chunks run, the copies loaded early count as live device memory."""
+    _one_subject_per_budgeted_chunk(monkeypatch)
+    events: list[tuple[str, frozenset[int]]] = []
+    prefetch = simulate_module._prefetch_period_reads
+    set_attribute = SimulationMemory.__setattr__
+
+    def _recording_prefetch(
+        *,
+        period: int,
+        active_by_period: tuple[MappingProxyType[RegimeName, Regime], ...],
+        values: Mapping[int, Mapping[RegimeName, jax.Array]],
+        flags: Mapping[int, Mapping[RegimeName, jax.Array]],
+        policies: PeriodToRegimeToSimulationPolicy,
+    ) -> tuple[jax.Array, ...]:
+        early = prefetch(
+            period=period,
+            active_by_period=active_by_period,
+            values=values,
+            flags=flags,
+            policies=policies,
+        )
+        copies = host_values.device_copies_of_view(view_id=id(values)) or ()
+        events.append(("early", frozenset(id(copy) for copy in copies)))
+        return early
+
+    # keyword-only-exempt: library-callback=object.__setattr__
+    def _recording_setattr(
+        self: SimulationMemory,
+        name: str,
+        value: object,  # noqa: PAN001 - wraps __setattr__, which takes any value
+    ) -> None:
+        if name == "parked" and value != ():
+            events.append(
+                (
+                    "parked",
+                    frozenset(
+                        id(leaf)
+                        for leaf in jax.tree.leaves(value)
+                        if isinstance(leaf, jax.Array)
+                    ),
+                )
+            )
+        set_attribute(self, name, value)
+
+    monkeypatch.setattr(simulate_module, "_prefetch_period_reads", _recording_prefetch)
+    monkeypatch.setattr(SimulationMemory, "__setattr__", _recording_setattr)
+    model = _three_regime_model(_budgeted(value_storage="host"))
+    solution = model.solve(params=_PARAMS, log_level="off")
+    model.simulate(
+        params=_PARAMS,
+        initial_conditions=_three_regime_initial_conditions(),
+        solution=solution,
+        seed=3,
+        log_level="off",
+    )
+
+    checked = 0
+    early: frozenset[int] = frozenset()
+    for kind, ids in events:
+        if kind == "early":
+            early = ids
+        elif early:
+            assert early <= ids
+            checked += 1
+    assert checked
 
 
 def test_a_budget_without_room_for_the_early_copies_is_refused(

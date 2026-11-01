@@ -16,7 +16,6 @@ from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from dataclasses import dataclass, fields, replace
 from types import MappingProxyType
 from typing import (
-    TYPE_CHECKING,
     Literal,
     NotRequired,
     Protocol,
@@ -200,7 +199,13 @@ from _lcm.solution.feasibility import (
     reduce_bound_input_status,
     validate_runtime_bound_status,
 )
-from _lcm.solution.host_values import is_device_read_view
+from _lcm.solution.host_values import (
+    StoredPolicies,
+    StoredValues,
+    device_copies_of_view,
+    is_device_read_view,
+    prefetch_from_view,
+)
 from _lcm.solution.solve_phase_records import CallId, solve_phase
 from _lcm.solution.validate_V import validate_V, value_function_nan_error
 from _lcm.time import TimeAxis, coordinate_at, coordinate_kind
@@ -915,8 +920,8 @@ def _log_simulation_plan(
 class _Prefetch(Protocol):
     """Starts copying what one period reads; see `_prefetch_period_reads`."""
 
-    def __call__(self, *, period: int) -> None:
-        """Start copying the stored reads of `period`."""
+    def __call__(self, *, period: int) -> tuple[jax.Array, ...]:
+        """Start copying the stored reads of `period`; return the copies held."""
         ...
 
 
@@ -936,7 +941,8 @@ def _simulate_windows_period_by_period(
     """Run every chunk through a period before any chunk starts the next.
 
     Before a period's chunks run, `prefetch` starts copying what the next period
-    reads, so the copies overlap this period's work. The read-through view keeps
+    reads, so the copies overlap this period's work; under a budget they are
+    charged as parked beside the waiting chunks' carries. The read-through view keeps
     each copy for every chunk, so a period's values cross over once, as with a
     single chunk. Each chunk's results of a period go to the host as soon as the
     period is done.
@@ -951,17 +957,22 @@ def _simulate_windows_period_by_period(
     """
     carries: list[ArrayTree] = [() for _ in chunks]
     so_far: list[SubjectChunkResults] = [{} for _ in chunks]
+    # The device copies the read-through views hold, early ones included.
+    early: tuple[jax.Array, ...] = ()
     for period in range(n_periods):
         if prefetch is not None and period + 1 < n_periods:
-            prefetch(period=period + 1)
+            early = prefetch(period=period + 1)
         for index, chunk in enumerate(chunks):
             if memory is not None:
                 if period == 0 and prepared_chunks is not None:
                     prepared_chunks.require_chunk(
                         memory=memory, completed_setup=completed_setup
                     )
-                memory.parked = tuple(
-                    carry for other, carry in enumerate(carries) if other != index
+                memory.parked = (
+                    tuple(
+                        carry for other, carry in enumerate(carries) if other != index
+                    ),
+                    early,
                 )
             so_far[index], carries[index] = next(chunk)
             for by_period in so_far[index].values():
@@ -978,30 +989,25 @@ def _simulate_windows_period_by_period(
     return [_finish_chunk(chunk=chunk) for chunk in chunks]
 
 
-if TYPE_CHECKING:
-    type _StoredValueMapping = Mapping[int, Mapping[RegimeName, jax.Array]]
-    type _StoredPolicyMapping = PeriodToRegimeToSimulationPolicy
-else:
-    # A runtime check samples one entry, and sampling a read-through view copies
-    # that value onto the device.
-    type _StoredValueMapping = object
-    type _StoredPolicyMapping = object
-
-
 def _prefetch_period_reads(
     *,
     period: int,
     active_by_period: tuple[MappingProxyType[RegimeName, Regime], ...],
-    values: _StoredValueMapping,
-    flags: _StoredValueMapping,
-    policies: _StoredPolicyMapping,
-) -> None:
+    values: StoredValues,
+    flags: StoredValues,
+    policies: StoredPolicies,
+) -> tuple[jax.Array, ...]:
     """Start copying the stored values, flags and policies `period` reads.
 
     Reading through a read-through view dispatches the copy without waiting and
     keeps it for the period's chunks; a value no program declares is not read.
     Every regime a subject can occupy at the period counts, so a copy may serve
-    no subject.
+    no subject. A value on disk is read by a background thread.
+
+    Returns:
+        The device copies the three views hold now, early ones included, which a
+        budgeted caller charges as live memory.
+
     """
     active = active_by_period[period]
     value_targets, flag_targets = period_read_targets(
@@ -1009,9 +1015,14 @@ def _prefetch_period_reads(
     )
     for stored, targets in ((values, value_targets), (flags, flag_targets)):
         for target_period, regime in targets:
-            stored.get(target_period, MappingProxyType({})).get(regime)
+            prefetch_from_view(view=stored, period=target_period, regime=regime)
     for name in active:
-        policies.get(period, MappingProxyType({})).get(name)
+        prefetch_from_view(view=policies, period=period, regime=name)
+    return tuple(
+        copy
+        for view in (values, flags, policies)
+        for copy in device_copies_of_view(view_id=id(view)) or ()
+    )
 
 
 def _finish_chunk(
@@ -1725,7 +1736,7 @@ def _require_next_period_values(
 def _referenced_value_kwargs(
     *,
     regime: Regime,
-    period_to_regime_to_V_arr: _StoredValueMapping,
+    period_to_regime_to_V_arr: StoredValues,
     flat_params: FlatParams,
     period: int,
 ) -> dict[ReferenceName, QAndFArg]:

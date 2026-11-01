@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "18ad0b2344f342fbc0f6e540e23d12da69724adfd59a597a2997ae9b6332dc67",
+  "source_inventory_sha256": "04d5083b557cb922facec38e4829bfc917c2de966bbd3a73b7a4f09568f85b3e",
   "sources": [
     {
       "path": "src/_lcm/constraints/bounds.py",
@@ -366,7 +366,7 @@
     },
     {
       "path": "src/_lcm/simulation/chunk_admission.py",
-      "sha256": "ea2198dfb53c825d52c33aaab5a2bd9adbdea5786ca2adba0ca3745813f3a0b8"
+      "sha256": "6dc9ecdb15a148a5c45192180cd29d432278f62fcb61dc1bdf5fc68b6265e058"
     },
     {
       "path": "src/_lcm/simulation/chunk_inputs.py",
@@ -450,7 +450,7 @@
     },
     {
       "path": "src/_lcm/simulation/period_inputs.py",
-      "sha256": "3753d59dbce2c3c1b31625d54c6b9c41b2256d9b60a6f1beb344b88e16e97ac2"
+      "sha256": "7fa909d657f77dfee6f0620a1ae52ec5afeca8fe64210c6f6266dda4536cc0b5"
     },
     {
       "path": "src/_lcm/simulation/policy_diagnostics.py",
@@ -510,7 +510,7 @@
     },
     {
       "path": "src/_lcm/simulation/simulate.py",
-      "sha256": "5ea547c5cca865cf66449aca846de2bb807e46811f606ec58566ea02c481c046"
+      "sha256": "2d841f465a2d4cacd4baeffccbc2584639644d1c9e54d951ceef97e130b80b97"
     },
     {
       "path": "src/_lcm/simulation/solution_copies.py",
@@ -550,7 +550,7 @@
     },
     {
       "path": "src/_lcm/solution/backward_induction.py",
-      "sha256": "fa59ac13c4952bb45e717f03bbf6d4f7d9639a80c7f8197b921f91c6e9163e45"
+      "sha256": "079c2d92cdd8030897bd5fd817e71e729e199a5d670ff6f11ef87428835f6d4e"
     },
     {
       "path": "src/_lcm/solution/collective_action_reduction.py",
@@ -574,7 +574,7 @@
     },
     {
       "path": "src/_lcm/solution/diagnostics.py",
-      "sha256": "07366c39a9af1793420964860ed0bf20a3336b93474724b292530ef696258b94"
+      "sha256": "f21bfbfae4f63c0288c8b75afec2124b0ea811b484dfdf0f070aa2910a7ad6a1"
     },
     {
       "path": "src/_lcm/solution/egm.py",

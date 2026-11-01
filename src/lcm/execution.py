@@ -486,6 +486,9 @@ class ExecutionConfig:
                 "ExecutionConfig.simulation_sharding must be legacy or subjects."
             )
         _fail_if_value_storage_invalid(value_storage=self.value_storage)
+        if isinstance(self.value_storage, Path):
+            # Resolved now, so a later change of working directory cannot move it.
+            object.__setattr__(self, "value_storage", self.value_storage.resolve())
         widths = _normalized_axis_widths(axis_widths=self.axis_widths)
         object.__setattr__(self, "axis_widths", MappingProxyType(widths))
         object.__setattr__(

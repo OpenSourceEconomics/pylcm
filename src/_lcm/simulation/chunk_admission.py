@@ -11,7 +11,6 @@ from dataclasses import dataclass, replace
 from functools import partial
 from time import perf_counter
 from types import MappingProxyType
-from typing import TYPE_CHECKING
 
 import jax
 
@@ -53,18 +52,15 @@ from _lcm.simulation.residency import (
 from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.subject_groups import grouped_extent
 from _lcm.solution.backward_induction import _abstract_value_key, _hashable_metadata
-from _lcm.solution.host_values import is_device_read_view, planning_stand_in
+from _lcm.solution.host_values import (
+    StoredValues,
+    is_device_read_view,
+    planning_stand_in,
+)
 from _lcm.time import TimeAxis
 from _lcm.typing import FlatParams, RegimeName, RegimeNamesToIds, SimulationPolicy
 from _lcm.utils.logging import LogLevel
 from lcm.exceptions import ExecutionPlanningError
-
-if TYPE_CHECKING:
-    type _StoredValues = Mapping[int, Mapping[str, jax.Array]]
-else:
-    # A runtime check samples one entry, and sampling a read-through view of
-    # values kept off the device copies that value onto the device.
-    type _StoredValues = object
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -145,7 +141,7 @@ def prepare_simulation_chunks(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
-    values: _StoredValues,
+    values: StoredValues,
     flags: Mapping[int, Mapping[str, jax.Array]],
     ages: TimeAxis,
     initial_conditions: Mapping[str, jax.Array],
