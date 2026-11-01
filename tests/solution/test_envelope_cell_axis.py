@@ -230,6 +230,7 @@ def test_fues_compiler_option_reaches_actual_lowering_keys(
     """Both solve compilation routes distinguish the fixed FUES compiler option."""
     original = backward_induction._lowering_keys
     observed: list[tuple[Hashable, Hashable, Hashable, Hashable]] = []
+    observed_names: set[str] = set()
     compiled_programs: list[backward_induction._CompiledPrograms] = []
     original_compile = backward_induction._compile_all_functions
 
@@ -260,6 +261,7 @@ def test_fues_compiler_option_reaches_actual_lowering_keys(
             alternatives[options] = original(**alternative_kwargs)
         for candidate, program in programs.items():
             if program.compiler_options == (("scan_unroll", 1),):
+                observed_names.add(program.name)
                 observed.append(
                     (
                         keys[candidate],
@@ -284,10 +286,14 @@ def test_fues_compiler_option_reaches_actual_lowering_keys(
     )
     assert len(compiled_programs) == 1
     cores = compiled_programs[0].executables
+    # Simulation reads the solved policy, so the solve compiles the `replay`
+    # program (which publishes the policy rows) in place of `main`.
+    assert set(cores[("retirement", 0)]) == {"replay"}
     assert (
-        cores[("retirement", 0)]["main"].compiled
-        is cores[("retirement", 1)]["main"].compiled
+        cores[("retirement", 0)]["replay"].compiled
+        is cores[("retirement", 1)]["replay"].compiled
     )
+    assert "replay" in observed_names
     assert observed, "The solve must exercise FUES through the bulk-key boundary."
     for actual, equal_options, changed_options, omitted_options in observed:
         assert actual == equal_options

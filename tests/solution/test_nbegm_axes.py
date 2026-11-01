@@ -4,7 +4,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import replace
 from functools import partial
 from types import MappingProxyType
-from typing import TypedDict
+from typing import TypedDict, cast
 
 import jax
 import jax.numpy as jnp
@@ -12,9 +12,7 @@ import numpy as np
 import pytest
 
 from _lcm.egm.carry import EGMCarry
-from _lcm.egm.projected_continuation import ProjectedEGMCarry
 from _lcm.egm.published_policy import NBEGMGridPolicy
-from _lcm.egm.query_data import QueryNodeKind
 from _lcm.egm.upper_envelope.query import ComparisonArithmetic
 from _lcm.execution.core_program import (
     CoreBuildContext,
@@ -35,7 +33,6 @@ from lcm import ExecutionConfig, LinSpacedGrid, Model, Regime
 from lcm.exceptions import (
     ExecutionPlanningError,
     RegimeInitializationError,
-    UnsupportedOperationError,
 )
 from lcm.solver_api import SolutionResult
 from lcm.solvers import (
@@ -45,7 +42,7 @@ from lcm.solvers import (
     NBEGM,
     STOCHASTIC_NODE_AXIS,
 )
-from lcm.typing import ContinuousState, DiscreteState, StateName, UserParams
+from lcm.typing import UserParams
 from tests.conftest import EXACT_KERNEL_SKIP_REASON, assert_agrees_to_ulp
 from tests.solution._nbegm_direct_oracle import ride_along_kernel
 from tests.test_models import (
@@ -486,10 +483,8 @@ def test_default_interval_stream_preserves_the_dense_period(
     _assert_arrays_agree(actual=streamed, expected=dense)
 
 
-def test_ride_carry_preserves_ordinary_identity_and_refuses_projected_before_placement(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """NB ride inputs retain ordinary rows and require an installed projected reader."""
+def test_ride_carry_preserves_ordinary_identity() -> None:
+    """NB ride inputs retain the ordinary rows of the targets they read."""
     grid = jnp.asarray([1.0, 2.0])
     ordinary = EGMCarry(
         endog_grid=grid,
@@ -497,19 +492,7 @@ def test_ride_carry_preserves_ordinary_identity_and_refuses_projected_before_pla
         marginal_utility=jnp.ones_like(grid),
         taste_shock_scale=jnp.asarray(0.0),
     )
-    projected = ProjectedEGMCarry(
-        grid=grid,
-        value=grid,
-        economic_marginal=jnp.ones_like(grid),
-        owner_id=jnp.zeros((2,), dtype=jnp.int32),
-        side_id=jnp.zeros((2,), dtype=jnp.int32),
-        node_kind=jnp.full((2,), QueryNodeKind.FINITE, dtype=jnp.int32),
-        link_valid=jnp.ones((1,), dtype=jnp.bool_),
-        valid_length=jnp.asarray(2, dtype=jnp.int32),
-        domain_lower=grid[0],
-        domain_upper=grid[-1],
-        valid=jnp.asarray(a=True),
-    )
+    unread = cast("EGMCarry", (grid,))
     builder = _RideAlongArgumentBuilder(
         regime_name="source",
         transition_target_names=("first", "second"),
@@ -517,37 +500,10 @@ def test_ride_carry_preserves_ordinary_identity_and_refuses_projected_before_pla
         co_map_state_names=(),
         n_intervals=0,
     )
-    source = MappingProxyType(
-        {"second": ordinary, "unread": projected, "first": ordinary}
-    )
+    source = MappingProxyType({"second": ordinary, "unread": unread, "first": ordinary})
     retained = builder._co_map_carry(states={}, next_regime_to_continuation=source)
     assert tuple(retained) == ("second", "first")
     for name in retained:
         assert retained[name] is source[name]
         for path, leaf in ordinary.leaves().items():
             assert retained[name].leaves()[path] is leaf
-
-    placement_reached = False
-
-    # keyword-only-exempt: library-callback=monkeypatch.setattr
-    def observe_placement(
-        self: _RideAlongArgumentBuilder,
-        *,
-        states: Mapping[StateName, ContinuousState | DiscreteState],
-    ) -> jax.NamedSharding | None:
-        nonlocal placement_reached
-        del self, states
-        placement_reached = True
-        raise AssertionError("Projected carry reached NB placement.")
-
-    monkeypatch.setattr(
-        _RideAlongArgumentBuilder, "_co_map_sharding", observe_placement
-    )
-    with pytest.raises(UnsupportedOperationError, match=r"NB ride-along.*projected"):
-        builder._co_map_carry(
-            states={},
-            next_regime_to_continuation=MappingProxyType(
-                {"second": ordinary, "first": projected}
-            ),
-        )
-    assert not placement_reached

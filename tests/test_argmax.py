@@ -9,9 +9,11 @@ from jax import Array, grad, jit, make_jaxpr, vmap
 from numpy.testing import assert_array_equal
 
 from _lcm.regime_building.argmax import (
+    NO_ID,
     _flatten_last_n_axes,
     _move_axes_to_back,
     argmax_and_max,
+    max_and_smallest_id,
 )
 from tests.solution._reduced_maximum_probe import (
     count_equalities_with_a_reduced_maximum,
@@ -350,3 +352,212 @@ def test_argmax_and_max_of_one_candidate_differentiates_like_jnp_max(
         lambda x: argmax_and_max(a=x, where=jnp.asarray(feasible), initial=initial)[1]
     )
     assert_array_equal(np.asarray(derivative(jnp.asarray(1.0))), expected)
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+@pytest.mark.parametrize("feasible", [False, True])
+@pytest.mark.parametrize("integer", [False, True], ids=["float", "int"])
+def test_singleton_action_axis_includes_finite_initial(
+    *, compiled: bool, feasible: bool, integer: bool
+) -> None:
+    """A finite floor competes with each singleton action, including masked actions."""
+    dtype = jnp.int32 if integer else None
+    a = jnp.asarray([[-8], [-2], [4]], dtype=dtype)
+    if not integer:
+        a = a.astype(jnp.asarray(0.0).dtype)
+    reduce = jitted_argmax if compiled else argmax_and_max
+    index, maximum = reduce(a=a, axis=1, where=jnp.asarray(feasible), initial=-2.0)
+    expected = [-2, -2, 4] if feasible else [-2, -2, -2]
+    assert_array_equal(maximum, expected)
+    assert_array_equal(index, [0, 0, 0])
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+@pytest.mark.parametrize("feasible", [False, True])
+def test_singleton_action_axis_has_the_maximum_derivative(
+    *, compiled: bool, feasible: bool
+) -> None:
+    """The singleton derivative is zero below the floor and splits a tie equally."""
+    derivative = grad(
+        lambda a: argmax_and_max(
+            a=a, axis=1, where=jnp.asarray(feasible), initial=-2.0
+        )[1].sum()
+    )
+    if compiled:
+        derivative = jit(derivative)
+    a = jnp.asarray([[-8.0], [-2.0], [4.0]])
+    expected = [[0.0], [0.5], [1.0]] if feasible else [[0.0], [0.0], [0.0]]
+    assert_array_equal(derivative(a), expected)
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+def test_empty_action_axis_returns_initial(*, compiled: bool) -> None:
+    """An empty action grid returns the floor and the no-action index zero."""
+    reduce = jitted_argmax if compiled else argmax_and_max
+    index, maximum = reduce(a=jnp.empty((2, 0)), axis=1, initial=-2.0)
+    assert_array_equal(index, [0, 0])
+    assert_array_equal(maximum, [-2.0, -2.0])
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+def test_singleton_pair_keeps_the_identity_of_the_winning_candidate(
+    *, compiled: bool
+) -> None:
+    """The floor has no candidate ID and loses an equal-value tie to a real ID."""
+    reduce = (
+        jit(partial(max_and_smallest_id, initial=-2.0))
+        if compiled
+        else partial(max_and_smallest_id, initial=-2.0)
+    )
+    maximum, index = reduce(
+        values=jnp.asarray([[-8.0], [-2.0], [4.0]]),
+        ids=jnp.asarray([[7], [5], [3]], dtype=jnp.int32),
+    )
+    assert_array_equal(maximum, [-2.0, -2.0, 4.0])
+    assert_array_equal(index, [NO_ID, 5, 3])
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+def test_singleton_floor_preserves_subnormal_bits_and_identity(
+    *, compiled: bool
+) -> None:
+    """The zero floor admits positive subnormals and rejects negative subnormals."""
+    dtype = np.dtype(jnp.asarray(0.0).dtype)
+    width = dtype.itemsize * 8
+    fraction_bits = 23 if width == 32 else 52
+    sign = 1 << (width - 1)
+    uint = np.dtype(f"uint{width}")
+    magnitudes = [1, 2, (1 << fraction_bits) - 1, 1 << fraction_bits]
+    encoded = np.asarray(
+        magnitudes + [sign | value for value in magnitudes] + [sign, 0],
+        dtype=uint,
+    ).reshape(-1, 1)
+    values = jnp.asarray(encoded.view(dtype))
+    ids = jnp.full(values.shape, 7, dtype=jnp.int32)
+    reduce = partial(max_and_smallest_id, initial=0.0)
+    public = partial(argmax_and_max, axis=1, initial=0.0)
+    if compiled:
+        reduce = jit(reduce)
+        public = jit(public)
+    maximum, identity = reduce(values=values, ids=ids)
+    index, public_maximum = public(a=values)
+    expected_bits = np.asarray(magnitudes + [0] * (len(magnitudes) + 2), dtype=uint)
+    assert_array_equal(np.asarray(maximum).view(uint), expected_bits)
+    assert_array_equal(np.asarray(public_maximum).view(uint), expected_bits)
+    assert_array_equal(identity, [7] * 4 + [NO_ID] * 4 + [7, 7])
+    assert_array_equal(index, np.zeros(len(encoded), dtype=np.int32))
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+def test_subnormal_order_and_zero_ties_have_the_maximum_gradient(
+    *, compiled: bool
+) -> None:
+    """Only represented winners receive tangents; signed-zero ties share them."""
+    dtype = np.dtype(jnp.asarray(0.0).dtype)
+    width = dtype.itemsize * 8
+    sign = 1 << (width - 1)
+    uint = np.dtype(f"uint{width}")
+    encoded = np.asarray(
+        [[1, sign | 1], [2, 1], [sign | 1, sign | 2], [1, 1], [sign, 0]],
+        dtype=uint,
+    )
+    values = jnp.asarray(encoded.view(dtype))
+    ids = jnp.broadcast_to(jnp.asarray([7, 3], dtype=jnp.int32), values.shape)
+    reduce = partial(max_and_smallest_id, initial=0.0)
+    derivative = grad(lambda a: reduce(values=a, ids=ids)[0].sum())
+    if compiled:
+        reduce = jit(reduce)
+        derivative = jit(derivative)
+    maximum, identity = reduce(values=values, ids=ids)
+    assert_array_equal(np.asarray(maximum).view(uint), [1, 2, 0, 1, 0])
+    assert_array_equal(identity, [7, 7, NO_ID, 3, 3])
+    assert_array_equal(
+        derivative(values), [[1, 0], [1, 0], [0, 0], [0.5, 0.5], [0.25, 0.25]]
+    )
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+@pytest.mark.parametrize(
+    "floor_index", [1, 2, -1], ids=["minimum", "second", "largest"]
+)
+def test_subnormal_floor_ties_preserve_values_ids_and_derivatives(
+    *, compiled: bool, floor_index: int
+) -> None:
+    """A subnormal floor wins below, shares a tie, and loses above its encoding."""
+    dtype = np.dtype(jnp.asarray(0.0).dtype)
+    width = dtype.itemsize * 8
+    fraction_bits = 23 if width == 32 else 52
+    uint = np.dtype(f"uint{width}")
+    floor_bits = (1 << fraction_bits) - 1 if floor_index < 0 else floor_index
+    initial = np.asarray(floor_bits, dtype=uint).view(dtype).item()
+    encoded = np.asarray([floor_bits - 1, floor_bits, floor_bits + 1], dtype=uint)
+    values = jnp.asarray(encoded.view(dtype).reshape(-1, 1))
+    ids = jnp.full(values.shape, 7, dtype=jnp.int32)
+    reduce = partial(max_and_smallest_id, initial=initial)
+    derivative = grad(lambda a: reduce(values=a, ids=ids)[0].sum())
+    if compiled:
+        reduce = jit(reduce)
+        derivative = jit(derivative)
+    maximum, identity = reduce(values=values, ids=ids)
+    assert_array_equal(
+        np.asarray(maximum).view(uint), [floor_bits, floor_bits, floor_bits + 1]
+    )
+    assert_array_equal(identity, [NO_ID, 7, 7])
+    assert_array_equal(derivative(values), [[0], [0.5], [1]])
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+def test_paired_subnormal_order_without_a_zero_floor(*, compiled: bool) -> None:
+    """Negative subnormals retain their order and winner when the floor is absent."""
+    dtype = np.dtype(jnp.asarray(0.0).dtype)
+    width = dtype.itemsize * 8
+    sign = 1 << (width - 1)
+    uint = np.dtype(f"uint{width}")
+    encoded = np.asarray(
+        [
+            [2, 1],
+            [1, 2],
+            [sign | 1, sign | 2],
+            [sign | 2, sign | 1],
+            [sign | 1, sign | 1],
+            [sign, sign],
+            [sign, 0],
+        ],
+        dtype=uint,
+    )
+    values = jnp.asarray(encoded.view(dtype))
+    ids = jnp.broadcast_to(jnp.asarray([7, 3], dtype=jnp.int32), values.shape)
+    reduce = partial(max_and_smallest_id, initial=-jnp.inf)
+    derivative = grad(lambda a: reduce(values=a, ids=ids)[0].sum())
+    if compiled:
+        reduce = jit(reduce)
+        derivative = jit(derivative)
+    maximum, identity = reduce(values=values, ids=ids)
+    expected_bits = np.asarray(
+        [2, 2, sign | 1, sign | 1, sign | 1, sign, 0], dtype=uint
+    )
+    assert_array_equal(np.asarray(maximum).view(uint), expected_bits)
+    assert_array_equal(identity, [7, 3, 7, 3, 3, 3, 3])
+    assert_array_equal(
+        derivative(values),
+        [[1, 0], [0, 1], [1, 0], [0, 1], [0.5, 0.5], [0.5, 0.5], [0.5, 0.5]],
+    )
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+def test_paired_float_order_retains_nan_mask_and_infinity_conventions(
+    *, compiled: bool
+) -> None:
+    """Masked NaNs do not compete; admitted NaNs poison value and reset index."""
+    values = jnp.asarray([[-jnp.inf, jnp.inf], [jnp.nan, 1.0], [1.0, jnp.nan]])
+    reduce = partial(argmax_and_max, axis=1, initial=-jnp.inf)
+    if compiled:
+        reduce = jit(reduce)
+    index, maximum = reduce(
+        a=values, where=jnp.asarray([[True, True], [False, True], [True, False]])
+    )
+    assert_array_equal(index, [1, 1, 0])
+    assert_array_equal(maximum, [jnp.inf, 1, 1])
+    index, maximum = reduce(a=values)
+    assert_array_equal(index, [1, 0, 0])
+    assert_array_equal(maximum, [jnp.inf, jnp.nan, jnp.nan])

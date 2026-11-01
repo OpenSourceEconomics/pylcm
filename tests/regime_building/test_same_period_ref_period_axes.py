@@ -51,16 +51,18 @@ from lcm import (
     fixed_transition,
 )
 from lcm.regime import ProjectedRegimeValue, Regime
-from lcm.solver_api import DISSOLUTION_FLAG, SolutionResult
+from lcm.solver_api import SolutionResult
 from lcm.transition import StochasticTransition
 from lcm.typing import (
     BoolND,
     ContinuousState,
     DiscreteAction,
     FloatND,
+    RegimeName,
     ScalarInt,
     UserInitialNodes,
 )
+from tests.collective_fixtures import recorded_dissolution_flags
 from tests.conftest import DECIMAL_PRECISION
 
 
@@ -98,8 +100,7 @@ EXPECTED_D_COUPLE = (False, True)
 
 def test_participation_mask_uses_the_reference_regime_period_t_grid():
     """Only the couple whose wife's outside option beats her stake dissolves."""
-    result = _solve(later_ceiling=TIGHTENED_CEILING)
-    dissolution = result.replay_artifacts.project(DISSOLUTION_FLAG)
+    dissolution = _dissolution_flags(later_ceiling=TIGHTENED_CEILING)
     np.testing.assert_array_equal(
         np.asarray(dissolution[0]["couple"]), np.asarray(EXPECTED_D_COUPLE)
     )
@@ -117,12 +118,8 @@ def test_participation_masked_couple_publishes_its_household_argmax_value():
 
 def test_participation_mask_ignores_the_reference_regime_later_grid():
     """Whether the reference grid tightens later leaves period 0's mask alone."""
-    tightening = _solve(later_ceiling=TIGHTENED_CEILING).replay_artifacts.project(
-        DISSOLUTION_FLAG
-    )
-    invariant = _solve(later_ceiling=INITIAL_CEILING).replay_artifacts.project(
-        DISSOLUTION_FLAG
-    )
+    tightening = _dissolution_flags(later_ceiling=TIGHTENED_CEILING)
+    invariant = _dissolution_flags(later_ceiling=INITIAL_CEILING)
     np.testing.assert_array_equal(
         np.asarray(tightening[0]["couple"]), np.asarray(invariant[0]["couple"])
     )
@@ -167,6 +164,18 @@ def _solve(*, later_ceiling: float) -> SolutionResult:
         },
         log_level="debug",
     )
+
+
+@cache
+def _dissolution_flags(*, later_ceiling: float) -> dict[int, dict[RegimeName, BoolND]]:
+    """Record the couple kernel's dissolution flags over a fresh solve.
+
+    `_solve` is cached, so the kernel runs only on its first call; this solve
+    goes around the cache to observe the kernel.
+    """
+    with recorded_dissolution_flags() as flags:
+        _solve.__wrapped__(later_ceiling=later_ceiling)
+    return flags
 
 
 def _make_model(*, later_ceiling: float, initial_nodes: UserInitialNodes) -> Model:

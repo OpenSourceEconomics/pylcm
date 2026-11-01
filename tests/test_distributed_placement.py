@@ -14,6 +14,7 @@ import subprocess
 import sys
 import weakref
 from collections.abc import Callable, Hashable, Mapping, Sequence
+from fractions import Fraction
 from pathlib import Path
 from types import MappingProxyType
 from typing import NoReturn, NotRequired, Protocol, Unpack, cast
@@ -22,6 +23,7 @@ import jax
 import numpy as np
 import pytest
 from jax import numpy as jnp
+from numpy.typing import ArrayLike
 from typing_extensions import TypedDict
 
 import lcm.model as model_module
@@ -1436,7 +1438,7 @@ class _TwoValuedType:
     high: ScalarInt
 
 
-def _make_two_block_model(*, distributed: bool) -> Model:
+def _make_two_block_model(*, distributed: bool, exact_layout: bool = False) -> Model:
     """Two sharded regimes over a two-valued type; the first enters the second.
 
     Both regimes carry the type, so each takes a two-device block, and on four
@@ -1447,6 +1449,8 @@ def _make_two_block_model(*, distributed: bool) -> Model:
     def _utility(
         *, wealth: ContinuousState, consumption: ContinuousAction, type1: DiscreteState
     ) -> ScalarFloat:
+        if exact_layout:
+            return (wealth + consumption) * (type1 + 1)
         return (jnp.log(consumption) + wealth * 0.001) * (type1 + 1)
 
     def _next_wealth(
@@ -1457,16 +1461,28 @@ def _make_two_block_model(*, distributed: bool) -> Model:
     def _worker() -> UserRegime:
         return UserRegime(
             functions={"utility": _utility},
-            states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
+            states={
+                "wealth": LinSpacedGrid(start=8, stop=72, n_points=9)
+                if exact_layout
+                else LinSpacedGrid(start=1, stop=100, n_points=10)
+            },
             state_transitions={"wealth": _next_wealth},
-            actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
+            actions={
+                "consumption": LinSpacedGrid(start=1, stop=9, n_points=9)
+                if exact_layout
+                else LinSpacedGrid(start=1, stop=50, n_points=10)
+            },
         )
 
     first = _worker()
     second = _worker()
     dead = UserRegime(
         functions={"utility": lambda wealth, type1: 0.0 * wealth * type1},
-        states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
+        states={
+            "wealth": LinSpacedGrid(start=8, stop=72, n_points=9)
+            if exact_layout
+            else LinSpacedGrid(start=1, stop=100, n_points=10)
+        },
     )
     return Model(
         regimes={"first": first, "second": second, "dead": dead},
@@ -1490,6 +1506,68 @@ def _make_two_block_model(*, distributed: bool) -> Model:
             ),
         },
     )
+
+
+def _get_exact_two_block_values() -> dict[int, np.ndarray]:
+    """Solve the affine two-block problem with independent rational arithmetic.
+
+    The terminal payoff is zero. For each type the dated value is affine in
+    wealth; enumerate every consumption action with discount one-half. Integer
+    grids, spacing eight and bounded dyadic coefficients keep intermediate
+    interpolation arithmetic exactly representable at both suite precisions.
+    """
+    values = {period: np.empty((2, 9)) for period in range(4)}
+    for type1 in range(2):
+        slope = Fraction(0)
+        intercept = Fraction(0)
+        for period in reversed(range(4)):
+            intercept = intercept / 2 + max(
+                (type1 + 1 - slope / 2) * consumption for consumption in range(1, 10)
+            )
+            slope = type1 + 1 + slope / 2
+            values[period][type1] = [
+                float(slope * wealth + intercept) for wealth in range(8, 73, 8)
+            ]
+    return values
+
+
+def _assert_exact_two_block_values(
+    *, values: Mapping[int, Mapping[RegimeName, ArrayLike]], regime: RegimeName
+) -> None:
+    """Check the type order and every stored cell against the rational solution."""
+    periods = (0, 1) if regime == "first" else (2, 3)
+    assert (
+        tuple(sorted(period for period in values if regime in values[period]))
+        == periods
+    )
+    expected = _get_exact_two_block_values()
+    for period in periods:
+        np.testing.assert_array_equal(values[period][regime], expected[period])
+
+
+@pytest.mark.parametrize("regime", ["first", "second"])
+@pytest.mark.parametrize("mutation", ["type", "copy", "value"])
+def test_two_block_reference_rejects_misordered_copied_or_changed_values(
+    *, regime: RegimeName, mutation: str
+) -> None:
+    """Wrong type order, wrong-period copies and adjacent values remain observable."""
+    expected = _get_exact_two_block_values()
+    values = {
+        period: {"first" if period < 2 else "second": value.copy()}
+        for period, value in expected.items()
+    }
+    _assert_exact_two_block_values(values=values, regime=regime)
+    period = 0 if regime == "first" else 2
+    if mutation == "copy":
+        values[period][regime] = values[period + 1][regime].copy()
+    elif mutation == "type":
+        values[period][regime] = np.roll(values[period][regime], 1, axis=0)
+    else:
+        values[period][regime][0, 0] = np.nextafter(
+            values[period][regime][0, 0], np.inf
+        )
+    with pytest.raises(AssertionError):
+        _assert_exact_two_block_values(values=values, regime=regime)
 
 
 @_skip_pytest_parallel
@@ -1525,12 +1603,25 @@ def test_a_two_block_solve_publishes_the_single_device_values(
     *, regime: RegimeName
 ) -> None:
     """A cross-mesh copy delivers the stored values unchanged."""
-    placed = _make_two_block_model(distributed=True).solve(
-        params=_PARAMS, log_level="off"
+    models = [
+        _make_two_block_model(distributed=distributed, exact_layout=True)
+        for distributed in (True, False)
+    ]
+    for model in models:
+        for name, internal in model._regimes.items():
+            np.testing.assert_array_equal(
+                internal.solution.grids["wealth"].to_jax(), np.arange(8, 73, 8)
+            )
+            if name != "dead":
+                np.testing.assert_array_equal(
+                    internal.solution.grids["consumption"].to_jax(), np.arange(1, 10)
+                )
+    placed, reference = (
+        model.solve(params={"discount_factor": 0.5}, log_level="off")
+        for model in models
     )
-    reference = _make_two_block_model(distributed=False).solve(
-        params=_PARAMS, log_level="off"
-    )
+    _assert_exact_two_block_values(values=placed.values, regime=regime)
+    _assert_exact_two_block_values(values=reference.values, regime=regime)
 
     for period in placed.values:
         if regime in placed.values[period]:
@@ -2186,9 +2277,10 @@ def test_solve_counter_reservation_keeps_every_original_fixed_owner(
     """Counter reserves add to execution devices and keep every original owner.
 
     Each predicted inventory charges every original fixed owner its original
-    bytes, adds two int32 feasibility counters per active regime plus one merge
-    pair on each execution device only, and admits every nonzero owner together
-    with the execution devices. The model keeps 8 bytes of codes on device 0.
+    bytes, adds two native feasibility counters per active regime plus one merge
+    pair at the configured integer precision on each execution device only, and
+    admits every nonzero owner together with the execution devices.
+    The model keeps 8 bytes of codes on device 0.
     """
     from tests.test_transition_checks import (  # noqa: PLC0415
         _health_probs_reading_effort,
@@ -2217,7 +2309,8 @@ def test_solve_counter_reservation_keeps_every_original_fixed_owner(
             n_active = sum(
                 period in regime.active_periods for regime in kwargs["regimes"].values()
             )
-            reserve = 2 * np.dtype(np.int32).itemsize * (n_active + 1)
+            count_dtype = np.int64 if jax.config.x64_enabled else np.int32
+            reserve = 2 * np.dtype(count_dtype).itemsize * (n_active + 1)
             expected.append(
                 (
                     {

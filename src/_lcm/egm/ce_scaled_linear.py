@@ -1,4 +1,4 @@
-"""Private first-order CE coefficient transport with an explicit transpose.
+"""Private CE coefficient transport with an explicit transpose.
 
 Primal coefficient metadata stays separate from the linear operand. IEEE bits
 retain subnormal inputs and final outputs; the transpose uses the same scalar
@@ -12,7 +12,7 @@ from typing import Literal, cast
 import jax
 import jax.numpy as jnp
 from jax._src.core import AbstractValue, ShapedArray
-from jax._src.literals import TypedNdArray
+from jax._src.literals import TypedFloat, TypedNdArray
 from jax.extend.core import Primitive
 from jax.interpreters import ad, batching, mlir
 from jaxtyping import Float
@@ -35,7 +35,9 @@ from _lcm.probability import (
 )
 from lcm.typing import BoolND, FloatND, IntND
 
-type _LinearPrimal = FloatND | Float[TypedNdArray, "..."] | ad.UndefinedPrimal
+type _LinearPrimal = (
+    FloatND | Float[TypedNdArray, "..."] | TypedFloat | ad.UndefinedPrimal
+)
 type _CoefficientFormat = Literal["log", "represented"]
 
 
@@ -48,6 +50,33 @@ def _select_payload(*, predicate: BoolND, left: FloatND, right: FloatND) -> Floa
         jax.lax.bitcast_convert_type(right, integer),
     )
     return jax.lax.bitcast_convert_type(selected, left.dtype)
+
+
+# keyword-only-exempt: library-callback=jax.custom_jvp
+def _select_cotangent(predicate: BoolND, left: FloatND, right: FloatND) -> FloatND:
+    """Select bits exactly, yet differentiate as the selection it is."""
+    return _select_payload(predicate=predicate, left=left, right=right)
+
+
+# keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
+def _select_cotangent_jvp(
+    predicate: BoolND,
+    primals: tuple[FloatND, FloatND],
+    tangents: tuple[FloatND, FloatND],
+) -> tuple[FloatND, FloatND]:
+    # A bitcast has no derivative or transpose, so higher-order transposes would
+    # vanish; the tangent is the ordinary linear selection.
+    left, right = primals
+    left_dot, right_dot = tangents
+    return (
+        _differentiable_select(predicate, left, right),
+        jnp.where(predicate, left_dot, right_dot),
+    )
+
+
+# Construct by call so the method-only import hook retains the JVP registration.
+_differentiable_select = jax.custom_jvp(_select_cotangent, nondiff_argnums=(0,))
+_differentiable_select.defjvp(_select_cotangent_jvp)
 
 
 def _finite_bits(value: FloatND) -> BoolND:
@@ -336,9 +365,20 @@ def _jvp(
     coefficient_format: _CoefficientFormat = "log",
 ) -> tuple[FloatND, FloatND | ad.Zero]:
     logabs, sign, base, direction = primals
-    log_dot, sign_dot, base_dot, direction_dot = tangents
-    if not isinstance(log_dot, ad.Zero) or not isinstance(sign_dot, ad.Zero):
-        raise NotImplementedError("CE transport supports first-order residuals only.")
+    # The sign is piecewise constant, so its tangent vanishes almost everywhere.
+    log_dot, _sign_dot, base_dot, direction_dot = tangents
+    if not isinstance(log_dot, ad.Zero):
+        # A coefficient tangent (higher-order derivatives) folds into the same
+        # transport: d(s e^L d) = s e^L (d dL) in log format, and the represented
+        # coefficient is linear, so d(s R d) = (s d dR) passes through the base.
+        if coefficient_format == "log":
+            scaled = direction * log_dot
+            direction_dot = (
+                scaled if isinstance(direction_dot, ad.Zero) else direction_dot + scaled
+            )
+        else:
+            linear = sign * direction * log_dot
+            base_dot = linear if isinstance(base_dot, ad.Zero) else base_dot + linear
     primal = cast(
         "FloatND",
         _scaled_ce_p.bind(
@@ -393,11 +433,11 @@ def _transpose(
     return (
         None,
         None,
-        _select_payload(
-            predicate=_valid_coefficient(logabs=coefficient_log, sign=sign)
+        _differentiable_select(
+            _valid_coefficient(logabs=coefficient_log, sign=sign)
             & jnp.isfinite(cotangent),
-            left=cotangent,
-            right=jnp.full_like(cotangent, jnp.nan),
+            cotangent,
+            jnp.full_like(cotangent, jnp.nan),
         )
         if isinstance(base, ad.UndefinedPrimal)
         else None,

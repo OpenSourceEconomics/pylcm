@@ -2890,3 +2890,36 @@ def test_density_normalized_derivatives_retain_scaled_weights_and_scores(
     np.testing.assert_allclose(
         actual, expected, rtol=10.0**-DECIMAL_PRECISION, atol=0.0
     )
+
+
+def test_rouwenhorst_simulation_extrapolates_beyond_the_edge_nodes():
+    """A simulated AR(1) value beyond the node range keeps a finite value."""
+    model = get_model(n_periods=4, distribution_type="rouwenhorst")
+    params = get_params("rouwenhorst")
+    solution = model.solve(params=params, log_level="off")
+    top = float(
+        model.user_regimes["alive"]
+        .states["income"]
+        .compute_gridpoints(
+            **{k: jnp.asarray(v) for k, v in params["alive"]["income"].items()}
+        )[-1]
+    )
+    income = jnp.asarray([top, 1.02 * top, 1.5 * top, -1.5 * top])
+    n = income.shape[0]
+    result = model.simulate(
+        params=params,
+        initial_conditions={
+            "health": jnp.zeros(n, dtype=jnp.int32),
+            "income": income,
+            "wealth": jnp.full(n, 3.0),
+            "age": jnp.zeros(n),
+            "regime_id": jnp.array([RegimeId.alive] * n),
+        },
+        solution=solution,
+        seed=42,
+        log_level="off",
+    )
+    first = result.to_dataframe().query("period == 0").sort_values("subject_id")
+
+    assert np.isfinite(first["value"]).all()
+    assert first["consumption"].iloc[1] == first["consumption"].iloc[0]

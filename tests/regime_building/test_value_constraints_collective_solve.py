@@ -85,6 +85,10 @@ from lcm.typing import (
     ScalarInt,
     StateName,
 )
+from tests.collective_fixtures import (
+    recorded_dissolution_flags,
+    recorded_feasibility_counts,
+)
 from tests.conftest import bind_laws, build_prepared_structure
 
 
@@ -334,18 +338,19 @@ def _solve_ir_model(
         regime_names_to_ids=_IR_REGIME_IDS,
         enable_jit=False,
     )
-    _bi_result = solve(
-        program_fingerprint="test_value_constraints_collective_solve",
-        flat_params=MappingProxyType(flat_params),
-        ages=ages,
-        regimes=regimes,
-        logger=get_logger(log_level="off"),
-        enable_jit=False,
-    )
+    with recorded_dissolution_flags() as dissolution_flags:
+        _bi_result = solve(
+            program_fingerprint="test_value_constraints_collective_solve",
+            flat_params=MappingProxyType(flat_params),
+            ages=ages,
+            regimes=regimes,
+            logger=get_logger(log_level="off"),
+            enable_jit=False,
+        )
     return (
         _bi_result.value_functions,
         _bi_result.simulation_policies,
-        _bi_result.dissolution_flags,
+        dissolution_flags,
     )
 
 
@@ -570,30 +575,30 @@ def test_projection_maps_states_and_reference_v_is_interpolated_off_grid():
         ),
         enable_jit=False,
     )
-    _bi_result = solve(
-        program_fingerprint="test_value_constraints_collective_solve",
-        flat_params=MappingProxyType(
-            {
-                "single_f": MappingProxyType(
-                    {"koopmans_aggregator__discount_factor": jnp.asarray(0.95)}
-                ),
-                "single_f_terminal": MappingProxyType({}),
-                "married": MappingProxyType(
-                    {
-                        "koopmans_aggregator__discount_factor": jnp.asarray(0.95),
-                        "ir_f__delta_f": jnp.asarray(0.0),
-                    }
-                ),
-                "married_terminal": MappingProxyType({}),
-            }
-        ),
-        ages=ages,
-        regimes=regimes,
-        logger=get_logger(log_level="off"),
-        enable_jit=False,
-    )
+    with recorded_dissolution_flags() as dissolution_flags:
+        _bi_result = solve(
+            program_fingerprint="test_value_constraints_collective_solve",
+            flat_params=MappingProxyType(
+                {
+                    "single_f": MappingProxyType(
+                        {"koopmans_aggregator__discount_factor": jnp.asarray(0.95)}
+                    ),
+                    "single_f_terminal": MappingProxyType({}),
+                    "married": MappingProxyType(
+                        {
+                            "koopmans_aggregator__discount_factor": jnp.asarray(0.95),
+                            "ir_f__delta_f": jnp.asarray(0.0),
+                        }
+                    ),
+                    "married_terminal": MappingProxyType({}),
+                }
+            ),
+            ages=ages,
+            regimes=regimes,
+            logger=get_logger(log_level="off"),
+            enable_jit=False,
+        )
     solution = _bi_result.value_functions
-    dissolution_flags = _bi_result.dissolution_flags
 
     np.testing.assert_allclose(
         np.asarray(solution[0]["single_f"]), np.array([1.0, 5.0]), rtol=1e-6
@@ -617,7 +622,7 @@ class InfRegimeId:
 
 
 def test_on_path_minus_inf_value_is_not_dissolution():
-    """-inf utility with a NONEMPTY mask has D=False; an EMPTY mask has D=True.
+    """-inf utility with a NONEMPTY mask is not dissolution; an EMPTY mask is.
 
     Wage grid {1, 2, 3}; the non-terminal couple has an ordinary constraint
     `wage < 2.5` (masks every action at w=3) and felicities of -inf for
@@ -626,9 +631,12 @@ def test_on_path_minus_inf_value_is_not_dissolution():
     NEIGHBOURING cell — 0 * inf — which is the raw-V read a gated edge
     replaces with its fold):
 
-    w=1: both actions feasible, finite -> V=(2, 1) (work wins), D=False.
-    w=2: both actions feasible but u = -inf -> V=(-inf, -inf), D=False.
-    w=3: mask empty -> D=True (never inferred from V == -inf).
+    w=1: both actions feasible, finite -> V=(2, 1) (work wins).
+    w=2: both actions feasible but u = -inf -> V=(-inf, -inf), on-path.
+    w=3: mask empty -> V=(-inf, -inf), dissolution.
+
+    Both -inf cells look alike in V; the kernel's own empty-set mask tells them
+    apart, so its counts carry one empty cell and one other -inf cell.
     """
 
     def _utility_f(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
@@ -686,34 +694,31 @@ def test_on_path_minus_inf_value_is_not_dissolution():
         ),
         enable_jit=False,
     )
-    _bi_result = solve(
-        program_fingerprint="test_value_constraints_collective_solve",
-        flat_params=MappingProxyType(
-            {
-                "couple": MappingProxyType(
-                    {"koopmans_aggregator__discount_factor": jnp.asarray(0.95)}
-                ),
-                "couple_terminal": MappingProxyType({}),
-            }
-        ),
-        ages=ages,
-        regimes=regimes,
-        logger=get_logger(log_level="off"),
-        enable_jit=False,
-    )
+    with recorded_feasibility_counts() as feasibility_counts:
+        _bi_result = solve(
+            program_fingerprint="test_value_constraints_collective_solve",
+            flat_params=MappingProxyType(
+                {
+                    "couple": MappingProxyType(
+                        {"koopmans_aggregator__discount_factor": jnp.asarray(0.95)}
+                    ),
+                    "couple_terminal": MappingProxyType({}),
+                }
+            ),
+            ages=ages,
+            regimes=regimes,
+            logger=get_logger(log_level="off"),
+            enable_jit=False,
+        )
     solution = _bi_result.value_functions
-    dissolution_flags = _bi_result.dissolution_flags
 
     V = np.asarray(solution[0]["couple"])
-    D = np.asarray(dissolution_flags[0]["couple"])
     np.testing.assert_allclose(V[0], np.array([2.0, 1.0]), rtol=1e-6)
-    assert np.all(np.isneginf(V[1]))
-    np.testing.assert_array_equal(D, np.array([False, False, True]))
+    assert np.all(np.isneginf(V[1:]))
+    assert feasibility_counts[0]["couple"] == (1, 1)
 
-    # A collective TERMINAL regime publishes D too (here: nothing infeasible).
-    D_terminal = np.asarray(dissolution_flags[1]["couple_terminal"])
-    assert D_terminal.dtype == np.bool_
-    np.testing.assert_array_equal(D_terminal, np.array([False, False, False]))
+    # A collective TERMINAL regime counts too (here: nothing infeasible).
+    assert feasibility_counts[1]["couple_terminal"] == (0, 0)
 
 
 # Scope fences and build-time validation

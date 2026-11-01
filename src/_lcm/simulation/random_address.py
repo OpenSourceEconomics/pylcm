@@ -144,8 +144,10 @@ def draw_categorical_index(*, key: ScalarKey, probabilities: Float1D) -> ScalarI
 
 @functools.cache
 def _threefry_key_dtype() -> ExtendedDType:
+    # An abstract seed keeps this a shape query; a literal one builds a key.
     return jax.eval_shape(
-        functools.partial(jax.random.key, 0, impl="threefry2x32")
+        lambda seed: jax.random.key(seed=seed, impl="threefry2x32"),
+        jax.ShapeDtypeStruct((), jnp.uint32),
     ).dtype
 
 
