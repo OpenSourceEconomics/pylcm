@@ -1,25 +1,33 @@
-"""Column contract of `SimulationResult.to_dataframe`.
+"""Published columns and deferred computation of simulation results.
 
 The published frame names its columns in a fixed order: the columns that
 identify a row, then a collective regime's per-stakeholder values in the order
 the regime declares its stakeholders, then states, actions, and everything else.
-Every claim here is about which name a column carries and where it sits, so the
-assertions are exact rather than toleranced.
+The tests also cover exact published rows and reuse of deferred-target work
+when parameter values change regime membership within a fixed population.
 """
 
+import jax
 import jax.numpy as jnp
+import numpy as np
 import pandas as pd
 import pytest
 
 from _lcm.simulation.result_dataframe import _reorder_columns
 from lcm import (
+    AgeGrid,
     CollectiveUtility,
+    DeterministicTransition,
     DiscreteGrid,
+    ExecutionConfig,
+    IrregSpacedGrid,
     Model,
     Regime,
+    Transition,
     categorical,
 )
 from lcm.exceptions import PyLCMError
+from lcm.solvers import GridSearch
 from lcm.typing import ContinuousState, DiscreteAction, FloatND, ScalarInt
 from tests.collective_fixtures import (
     AGES,
@@ -375,3 +383,228 @@ def _next_colliding_state(work: DiscreteAction) -> ContinuousState:
 def _next_wage(work: DiscreteAction) -> ContinuousState:
     """Deterministic wage law: working today yields the high wage tomorrow."""
     return 40.0 * work + 8.0 * (1.0 - work)
+
+
+@categorical(ordered=False)
+class _PublicationRegimeId:
+    working: ScalarInt
+    retired: ScalarInt
+    staying: ScalarInt
+
+
+@categorical(ordered=False)
+class _RetirementChoice:
+    stay: ScalarInt
+    leave: ScalarInt
+
+
+def _retirement_utility(
+    *, wealth: ContinuousState, retire: DiscreteAction, benefit: FloatND, rates: FloatND
+) -> FloatND:
+    return retire * benefit + (1 - retire) * rates[0] * wealth
+
+
+def _retired_utility(*, wealth: ContinuousState, benefit: FloatND) -> FloatND:
+    return benefit + 0.0 * wealth
+
+
+def _staying_utility(*, wealth: ContinuousState) -> FloatND:
+    return wealth
+
+
+def _carry_publication_wealth(*, wealth: ContinuousState) -> ContinuousState:
+    return wealth
+
+
+def _retirement_destination(*, retire: DiscreteAction) -> ScalarInt:
+    return jnp.where(
+        retire == _RetirementChoice.leave,
+        _PublicationRegimeId.retired,
+        _PublicationRegimeId.staying,
+    )
+
+
+def _reported_income(
+    *, wealth: ContinuousState, benefit: FloatND, rates: FloatND
+) -> FloatND:
+    return rates[(wealth > benefit).astype(jnp.int32)] * wealth + benefit
+
+
+def _publication_capacity_model(*, subject_capacity: int = 64) -> Model:
+    float_dtype = np.float64 if jax.config.x64_enabled else np.float32
+    wealth = IrregSpacedGrid(points=np.asarray([0.0, 0.5, 1.0], dtype=float_dtype))
+    model = Model(
+        regimes={
+            "working": Regime(
+                states={"wealth": wealth},
+                actions={"retire": DiscreteGrid(category_class=_RetirementChoice)},
+                functions={
+                    "utility": _retirement_utility,
+                    "reported_income": _reported_income,
+                },
+                output_only_functions=("reported_income",),
+                state_transitions={"wealth": _carry_publication_wealth},
+                solver=GridSearch(),
+            ),
+            "retired": Regime(
+                states={"wealth": wealth},
+                functions={
+                    "utility": _retired_utility,
+                    "reported_income": _reported_income,
+                },
+                output_only_functions=("reported_income",),
+                solver=GridSearch(),
+            ),
+            "staying": Regime(
+                states={"wealth": wealth},
+                functions={
+                    "utility": _staying_utility,
+                    "reported_income": _reported_income,
+                },
+                output_only_functions=("reported_income",),
+                solver=GridSearch(),
+            ),
+        },
+        ages=AgeGrid(exact_values=(51, 52)),
+        initial_nodes={51: "working"},
+        regime_id_class=_PublicationRegimeId,
+        edges={
+            "working": Transition(
+                targets={"staying": (51,), "retired": (51,)},
+                law=DeterministicTransition(func=_retirement_destination),
+            )
+        },
+        execution_config=ExecutionConfig(
+            axis_widths={"subject": subject_capacity}, device_memory_bytes=None
+        ),
+    )
+    assert all(
+        type(regime.solver) is GridSearch for regime in model.user_regimes.values()
+    )
+    return model
+
+
+def _publication_oracle(*, benefit: float) -> pd.DataFrame:
+    float_dtype = np.float64 if jax.config.x64_enabled else np.float32
+    wealth = (np.arange(64, dtype=float_dtype) + float_dtype(0.5)) / float_dtype(64)
+    row_wealth = np.repeat(wealth, 2)
+    periods = np.tile(np.asarray([0, 1], dtype=np.int32), 64)
+    retired = (periods == 1) & (row_wealth < benefit)
+    actions = np.where(periods == 1, np.nan, (row_wealth < benefit).astype(np.float64))
+    values = np.where(
+        periods == 0,
+        np.maximum(row_wealth, float_dtype(benefit)),
+        np.where(retired, float_dtype(benefit), row_wealth),
+    )
+    rates = np.where(row_wealth > benefit, float_dtype(2), float_dtype(1))
+    return pd.DataFrame(
+        {
+            "subject_id": np.repeat(np.arange(64, dtype=np.int32), 2),
+            "period": periods,
+            "regime_name": np.where(
+                periods == 0, "working", np.where(retired, "retired", "staying")
+            ),
+            "value": values.astype(float_dtype),
+            "wealth": row_wealth,
+            "retire": actions,
+            "age": (51 + periods).astype(np.int32),
+            "reported_income": (rates * row_wealth + float_dtype(benefit)).astype(
+                float_dtype
+            ),
+        }
+    )
+
+
+@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"))
+@pytest.mark.parametrize("subject_capacity", [64, 8])
+@pytest.mark.parametrize("persistent_compilation_cache", [False], indirect=True)
+def test_value_only_policy_changes_reuse_publication_capacity(
+    *, persistent_compilation_cache: bool, subject_capacity: int
+) -> None:
+    """Changing regime occupancy preserves code for one fixed input population."""
+    assert not persistent_compilation_cache
+    float_dtype = np.float64 if jax.config.x64_enabled else np.float32
+    assert str(jnp.asarray(0.0).dtype) == np.dtype(float_dtype).name
+    stage = "setup"
+    events: list[str] = []
+
+    # keyword-only-exempt: library-callback=jax.monitoring
+    def record_compile(
+        event: str, start_time: float, end_time: float, **metadata: str | int
+    ) -> None:
+        del start_time, end_time, metadata
+        if event == "/jax/core/compile/backend_compile_duration":
+            events.append(stage)
+
+    target_counts: dict[str, list[int]] = {}
+    frame_counts: dict[str, list[int]] = {}
+    jax.monitoring.register_event_time_span_listener(record_compile)
+    try:
+        for arm, numerators in (
+            ("same", [17] * 8),
+            ("vary", [17, 19, 21, 23, 25, 27, 29, 19]),
+        ):
+            model = _publication_capacity_model(subject_capacity=subject_capacity)
+            assert str(np.asarray(model._time.values).dtype) == "int32"
+            initial = {
+                "wealth": (np.arange(64, dtype=float_dtype) + float_dtype(0.5))
+                / float_dtype(64),
+                "age": np.full(64, 51, dtype=np.int32),
+                "regime_id": np.full(
+                    64, model.regime_names_to_ids["working"], dtype=np.int32
+                ),
+            }
+            target_counts[arm] = []
+            frame_counts[arm] = []
+            for numerator in numerators:
+                benefit = numerator / 64.0
+                params = {
+                    "discount_factor": 0.0,
+                    "benefit": benefit,
+                    "rates": np.asarray([1.0, 2.0], dtype=float_dtype),
+                }
+                events.clear()
+                stage = "solve"
+                solution = model.solve(params=params, log_level="off")
+                jax.effects_barrier()
+                stage = "simulate"
+                result = model.simulate(
+                    params=params,
+                    solution=solution,
+                    initial_conditions=initial,
+                    seed=0,
+                    log_level="off",
+                )
+                jax.effects_barrier()
+                assert result.n_subjects == 64
+                assert result._subject_batch_size == subject_capacity
+                stage = "plain_frame"
+                plain = result.to_dataframe(use_categorical_codes=True)
+                stage = "targets_frame"
+                frame = result.to_dataframe(
+                    additional_targets=["reported_income"], use_categorical_codes=True
+                )
+                jax.effects_barrier()
+                stage = "oracle"
+                expected = _publication_oracle(benefit=benefit)
+                pd.testing.assert_frame_equal(
+                    frame.sort_values(["subject_id", "period"]).reset_index(drop=True),
+                    expected,
+                    check_exact=True,
+                )
+                pd.testing.assert_frame_equal(
+                    plain.sort_values(["subject_id", "period"]).reset_index(drop=True),
+                    expected.drop(columns="reported_income"),
+                    check_exact=True,
+                )
+                target_counts[arm].append(events.count("targets_frame"))
+                frame_counts[arm].append(events.count("plain_frame"))
+    finally:
+        jax.monitoring.unregister_event_time_span_listener(record_compile)
+    assert target_counts["same"][0] > 0, (
+        "The actual target path must exercise a cold compilation."
+    )
+    assert not any(target_counts["same"][1:]), target_counts
+    assert target_counts["vary"][-1] == 0, target_counts
+    assert not any(target_counts["vary"][1:]), target_counts
+    assert not any(frame_counts["same"][1:] + frame_counts["vary"][1:]), frame_counts

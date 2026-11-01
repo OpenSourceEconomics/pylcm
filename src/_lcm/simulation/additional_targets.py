@@ -251,12 +251,13 @@ def _compute_targets(
 ) -> dict[str, FloatND | IntND | BoolND | np.ndarray]:
     """Compute additional targets for a regime.
 
-    The target DAG is vmapped over the regime's in-regime subject-period rows. When
-    `subject_batch_size` is a positive value below the row count, the rows are
-    processed in chunks and each chunk's outputs are pulled to host before the next
-    runs, so the fused-DAG device workspace is bounded by the chunk rather than the
-    full population. `0`/`None` (or any value at least the row count) evaluates in a
-    single pass. Values are identical to the single-pass evaluation.
+    The target DAG is vmapped over independent in-regime subject-period rows.
+    A positive `subject_batch_size` uses that saved extent for every chunk: a
+    partial chunk repeats its last actual row, then trims its outputs on host.
+    Each chunk's outputs reach host before the next runs. This bounds the row
+    workspace and preserves shapes as regime membership changes; it does not
+    admit the target DAG against a device-byte budget. `0`/`None` and empty data
+    retain the single-pass path. Values are identical on the original rows.
     """
     functions_pool = _build_functions_pool(regime)
     _fail_if_targets_depend_on_age_specialized(
@@ -275,7 +276,7 @@ def _compute_targets(
     inputs = {k: v for k, v in data.items() if k in variables}
     n_rows = len(data["period"])
 
-    if not subject_batch_size or subject_batch_size >= n_rows:
+    if not subject_batch_size or n_rows == 0:
         kwargs = {k: jnp.asarray(v) for k, v in inputs.items()}
         result = vectorized_func(**all_params, **kwargs)
         return {
@@ -284,14 +285,29 @@ def _compute_targets(
 
     # Slice the (host-resident) inputs and move only one chunk to the device at a
     # time, so the fused DAG's workspace is bounded by the chunk.
+    host_inputs = {name: np.asarray(values) for name, values in inputs.items()}
     chunk_outputs: list[dict[str, np.ndarray]] = []
     for start in range(0, n_rows, subject_batch_size):
         stop = min(start + subject_batch_size, n_rows)
-        chunk_kwargs = {k: jnp.asarray(v[start:stop]) for k, v in inputs.items()}
+        chunk_kwargs = {}
+        for name, values in host_inputs.items():
+            chunk = values[start:stop]
+            if stop - start < subject_batch_size:
+                chunk = np.concatenate(
+                    (
+                        chunk,
+                        np.repeat(
+                            chunk[-1:], subject_batch_size - (stop - start), axis=0
+                        ),
+                    )
+                )
+            chunk_kwargs[name] = jnp.asarray(chunk)
         chunk_result = vectorized_func(**all_params, **chunk_kwargs)
         chunk_outputs.append(
             {
-                k: np.asarray(_one_value_per_row(values=v, n_rows=stop - start))
+                k: np.asarray(_one_value_per_row(values=v, n_rows=subject_batch_size))[
+                    : stop - start
+                ]
                 for k, v in chunk_result.items()
             }
         )
