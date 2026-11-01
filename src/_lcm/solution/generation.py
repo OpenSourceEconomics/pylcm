@@ -224,6 +224,11 @@ class CanonicalGenerationCache:
             generation.execution._check_identity_runtime()  # noqa: SLF001 - canonical generation owns this private lifecycle handoff
             return generation
 
+    def keys(self) -> frozenset[str]:
+        """Return the key of every generation still cached or still reachable."""
+        with self._lock:
+            return frozenset(self._cached) | frozenset(self._live.keys())
+
     def roots(self) -> tuple[PytreeValue, ...]:
         """Return actual owners, leaving alias deduplication to buffer accounting."""
         with self._lock:

@@ -3107,12 +3107,28 @@ class Model:
         )
         with self._simulate_compile_lock:
             if key not in self._simulate_runtime_regimes:
+                self._drop_runtimes_of_released_generations()
                 self._simulate_runtime_regimes[key] = bind_simulation_runtime(
                     regimes=self._regimes,
                     execution=self._execution,
                     enable_jit=self.enable_jit,
                 )
             return self._simulate_runtime_regimes[key]
+
+    def _drop_runtimes_of_released_generations(self) -> None:
+        """Release the runtimes bound for generations the model no longer holds.
+
+        A generation key changes whenever the parameters change the solution
+        support, e.g. with every new set of runtime-supplied grid points. Each
+        key binds its own runtimes, and with them compiled programs, so keeping
+        them past their generation grows host memory with every distinct
+        support. Runtimes bound for the model structure are kept.
+        """
+        held = self._generation_cache.keys() | {self._model_structure_fingerprint}
+        for key in [k for k in self._simulate_runtime_regimes if k[0] not in held]:
+            del self._simulate_runtime_regimes[key]
+        for key in [k for k in self._shock_path_runtime_regimes if k[0] not in held]:
+            del self._shock_path_runtime_regimes[key]
 
     def _shock_path_regimes_for_shape(
         self,
