@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING, Literal, cast
 
 import jax
 import numpy as np
-from jax.sharding import SingleDeviceSharding
 
 from _lcm.execution.footprint import per_device_footprint
 from _lcm.typing import ArtifactPayload, SimulationPolicy
@@ -153,20 +152,6 @@ def is_host_value(value: jax.Array) -> bool:
 def to_device(value: jax.Array) -> jax.Array:
     """Copy a stored array back to device memory on its own sharding."""
     return jax.device_put(value, value.sharding.with_memory_kind("device"))
-
-
-def to_cpu_device(value: jax.Array) -> jax.Array:
-    """Place a stored array on the CPU device, where the solve keeps its policies.
-
-    An artifact store copies the arrays it hands out; on the CPU device that copy
-    is an ordinary computation, while on host memory it would be slow host compute
-    leaving its result in host memory.
-    """
-    # Naming the memory kind matters on a CPU backend, where the stored array's
-    # device is this same CPU device and only the memory kind differs.
-    return jax.device_put(
-        value, SingleDeviceSharding(jax.devices("cpu")[0], memory_kind="device")
-    )
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)

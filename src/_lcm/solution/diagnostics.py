@@ -218,30 +218,38 @@ def _materialize_period_feasibility_counts(
 ) -> None:
     """Move a period's counters and NaN/Inf flags to host metadata.
 
-    Releases the native counter roots before another period starts.
+    Every row of the period crosses to the host in one transfer. Releases the
+    native counter roots before another period starts.
     """
+    indices = []
     for index in range(len(diagnostic_rows) - 1, -1, -1):
-        row = diagnostic_rows[index]
-        if row.period != period:
+        if diagnostic_rows[index].period != period:
             break
-        counts: tuple[int, int] | None = None
-        if row.feasibility_counts is not None and enabled:
-            empty, other = jax.device_get(row.feasibility_counts)
-            counts = int(empty), int(other)
-        reads: tuple[int, int] | None = None
-        if row.continuation_read_counts is not None:
-            below, eligible = jax.device_get(row.continuation_read_counts)
-            reads = int(below), int(eligible)
-        flags: tuple[bool | None, bool | None] = (None, None)
-        if row.has_nan is not None and row.has_inf is not None:
-            has_nan, has_inf = jax.device_get((row.has_nan, row.has_inf))
-            flags = bool(has_nan), bool(has_inf)
+        indices.append(index)
+    on_device = [
+        (
+            row.feasibility_counts
+            if row.feasibility_counts is not None and enabled
+            else None,
+            row.continuation_read_counts,
+            None
+            if row.has_nan is None or row.has_inf is None
+            else (row.has_nan, row.has_inf),
+        )
+        for row in (diagnostic_rows[index] for index in indices)
+    ]
+    on_host = jax.device_get(on_device) if jax.tree.leaves(on_device) else on_device
+    for index, (counts, reads, flags) in zip(indices, on_host, strict=True):
         diagnostic_rows[index] = dataclasses.replace(
-            row,
-            feasibility_counts=counts,
-            continuation_read_counts=reads,
-            has_nan=flags[0],
-            has_inf=flags[1],
+            diagnostic_rows[index],
+            feasibility_counts=None
+            if counts is None
+            else (int(counts[0]), int(counts[1])),
+            continuation_read_counts=None
+            if reads is None
+            else (int(reads[0]), int(reads[1])),
+            has_nan=None if flags is None else bool(flags[0]),
+            has_inf=None if flags is None else bool(flags[1]),
         )
 
 

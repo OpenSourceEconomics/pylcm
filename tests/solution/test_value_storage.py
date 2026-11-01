@@ -47,7 +47,7 @@ from _lcm.persistence.solution import (
 from _lcm.simulation import chunk_admission
 from _lcm.simulation import simulate as simulate_module
 from _lcm.simulation.memory import SimulationMemory
-from _lcm.solution import backward_induction, block_major, host_values
+from _lcm.solution import backward_induction, block_major, diagnostics, host_values
 from _lcm.solution.host_values import HostValueEntry, copy_values_to_host
 from _lcm.solution.result_snapshot import own_value_store
 from _lcm.typing import (
@@ -64,6 +64,7 @@ from lcm.exceptions import (
 )
 from lcm.persistence import SolveSnapshot, load_snapshot, load_solution
 from lcm.solver_api import (
+    DISSOLUTION_FLAG,
     SIMULATION_POLICY,
     ArtifactRef,
     SolutionResult,
@@ -757,6 +758,60 @@ def test_host_storage_keeps_dissolution_flags_in_host_memory() -> None:
     assert {flag.sharding.memory_kind for flag in flags} == {"pinned_host"}
 
 
+def test_a_host_storage_result_publishes_its_flags_without_copying_them(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Building the result copies no stored flag; reading one copies it.
+
+    The flags read from the public store are bitwise those of device storage.
+    """
+    published = []
+    copies_while_building = [0]
+    building = [False]
+    device_put = jax.device_put
+
+    # keyword-only-exempt: library-callback=jax.device_put
+    def _counting_device_put(
+        x: ArtifactPayload,
+        device: jax.sharding.Sharding | jax.Device | None = None,
+        **kwargs: bool | jax.sharding.Sharding | None,
+    ) -> ArtifactPayload:
+        if building[0] and any(
+            host_values.is_host_value(leaf)
+            for leaf in jax.tree.leaves(x)
+            if isinstance(leaf, jax.Array)
+        ):
+            copies_while_building[0] += 1
+        return device_put(x, device, **kwargs)
+
+    for config in (ExecutionConfig(), _host()):
+        with monkeypatch.context() as patch:
+            patch.setattr(jax, "device_put", _counting_device_put)
+            patch.setattr(
+                model_module,
+                "build_solution_result",
+                _while_flagged(
+                    function=model_module.build_solution_result, flag=building
+                ),
+            )
+            solution = _make_dissolution_model(config).solve(
+                params=_DISSOLUTION_PARAMS, log_level="off"
+            )
+        published.append(
+            {
+                ref: np.asarray(solution.replay_artifacts[ref])
+                for ref in solution.replay_artifacts
+                if ref.key == DISSOLUTION_FLAG
+            }
+        )
+
+    assert copies_while_building[0] == 0
+    assert published[0]
+    assert published[1].keys() == published[0].keys()
+    for ref, flag in published[0].items():
+        np.testing.assert_array_equal(published[1][ref], flag, strict=True)
+
+
 def test_host_storage_routes_dissolutions_as_device_storage_does() -> None:
     """Flags read back from the host route the panel exactly as on the device."""
     panels = []
@@ -1393,6 +1448,40 @@ def test_a_nan_is_diagnosed_without_reading_stored_values_back(
     assert str(stored.value) == str(device.value)
     assert stored.value.diagnostics == device.value.diagnostics
     assert read_back == []
+
+
+def test_a_period_barrier_fetches_its_diagnostics_in_one_transfer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every regime's NaN/Inf flags of a period cross to the host together."""
+    transfers: list[int] = []
+    device_get = jax.device_get
+    materialize = backward_induction._materialize_period_feasibility_counts
+    inside = [False]
+
+    def _counting_device_get(x: ArtifactPayload) -> ArtifactPayload:
+        if inside[0]:
+            transfers[-1] += 1
+        return device_get(x)
+
+    def _barrier(
+        *, diagnostic_rows: list[diagnostics._DiagnosticRow], period: int, enabled: bool
+    ) -> None:
+        transfers.append(0)
+        inside[0] = True
+        try:
+            materialize(diagnostic_rows=diagnostic_rows, period=period, enabled=enabled)
+        finally:
+            inside[0] = False
+
+    monkeypatch.setattr(jax, "device_get", _counting_device_get)
+    monkeypatch.setattr(
+        backward_induction, "_materialize_period_feasibility_counts", _barrier
+    )
+    _three_regime_model(ExecutionConfig()).solve(params=_PARAMS, log_level="off")
+
+    assert transfers
+    assert max(transfers) == 1
 
 
 def test_a_failed_host_copy_names_its_period_regime_and_target(

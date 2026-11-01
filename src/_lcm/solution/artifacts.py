@@ -24,7 +24,6 @@ from _lcm.solution.host_values import (
     is_host_value,
     lazy_read_view,
     policy_read_view,
-    to_cpu_device,
 )
 from _lcm.solution.result_snapshot import own_artifact_store, own_value_store
 from _lcm.typing import (
@@ -252,13 +251,11 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
             nested=declared_replay_policies,
             key=SIMULATION_POLICY,
         )
+        # Flags kept in host memory are stored as they are; the store hands
+        # out device copies of them.
         _add_nested_artifacts(
             target=replay,
-            nested=(
-                _on_cpu_device(nested=internal_result.dissolution_flags)
-                if flags_on_host
-                else internal_result.dissolution_flags
-            ),
+            nested=internal_result.dissolution_flags,
             key=DISSOLUTION_FLAG,
         )
 
@@ -540,23 +537,6 @@ def _holds_host_arrays(
         isinstance(array, _LazyEntry) or is_host_value(array)
         for regime_to_array in nested.values()
         for array in regime_to_array.values()
-    )
-
-
-def _on_cpu_device(
-    *, nested: Mapping[int, Mapping[RegimeName, jax.Array]]
-) -> MappingProxyType[int, MappingProxyType[RegimeName, jax.Array]]:
-    """Place host-stored per-period arrays on the CPU device, as policies are."""
-    return MappingProxyType(
-        {
-            period: MappingProxyType(
-                {
-                    regime_name: to_cpu_device(array)
-                    for regime_name, array in regime_to_array.items()
-                }
-            )
-            for period, regime_to_array in nested.items()
-        }
     )
 
 
