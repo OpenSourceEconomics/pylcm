@@ -734,13 +734,15 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     # Every copy a period's transfer cache holds belongs to this solve alone.
     transfer_generation = uuid.uuid4().hex
     with solve_phase(name="backward_induction", logger=logger, call_id=call_id):
-        # Planning and compilation leave a large, long-lived object graph behind
-        # (programs, frontiers, executables). Freezing it after one collection
-        # keeps the per-period collection in `_release_rolled_continuations`
-        # from walking it every period; what the loop rolls off is created
-        # after the freeze and is still collected.
-        gc.collect()
-        gc.freeze()
+        # Only declared continuation publishers can reach per-period collection.
+        # Freeze the long-lived planning graph for those collections; rolled
+        # payloads are created after the freeze and remain collectible.
+        has_continuation_publishers = any(
+            regime.solution.continuation_spec is not None for regime in regimes.values()
+        )
+        if has_continuation_publishers:
+            gc.collect()
+            gc.freeze()
         try:
             for period in reversed(range(ages.n_periods)):
                 period_start = time.monotonic()
@@ -1429,7 +1431,8 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             input_liveness.assert_solve_complete()
 
         finally:
-            gc.unfreeze()
+            if has_continuation_publishers:
+                gc.unfreeze()
             if pending_work is not None:
                 pending_work.close()
 
