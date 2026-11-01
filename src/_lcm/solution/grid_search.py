@@ -90,7 +90,10 @@ from _lcm.solution.feasibility import (
     BoundedResult,
     BoundInputStatus,
     CountedGridSearch,
+    FeasibilityCount,
     FeasibilityKernelOutput,
+    _fail_if_feasibility_count_exceeds_capacity,
+    get_feasibility_count_dtype,
 )
 from _lcm.time import TimeAxis
 from _lcm.transition_plans import SupportOrigin
@@ -298,15 +301,12 @@ class GridSearch(Solver):
         action_width_keyword = _select_action_width_keyword(context=context)
         action_names = context.state_action_space.action_names
         action_extents = context.state_action_space.actions_grid_shapes
-        if (
-            math.prod(
+        _fail_if_feasibility_count_exceeds_capacity(
+            n_states=math.prod(
                 grid.shape[0] for grid in context.state_action_space.states.values()
             )
-            > jnp.iinfo(jnp.int32).max
-        ):
-            raise ExecutionPlanningError(
-                "GridSearch state domains must fit an int32 feasibility count."
-            )
+        )
+        count_dtype = get_feasibility_count_dtype()
         untiled_state_names = tuple(
             name
             for name in context.state_action_space.state_names
@@ -497,8 +497,8 @@ class GridSearch(Solver):
                 requirements=requirements,
                 output_roles=(
                     VALUE,
-                    StateAxesLeading(state_names=(), dtype=jnp.int32, shape=()),
-                    StateAxesLeading(state_names=(), dtype=jnp.int32, shape=()),
+                    StateAxesLeading(state_names=(), dtype=count_dtype, shape=()),
+                    StateAxesLeading(state_names=(), dtype=count_dtype, shape=()),
                     *(
                         (StateAxesLeading(state_names=(), dtype=jnp.bool_, shape=()),)
                         if current_iid_plan is not None
@@ -1300,7 +1300,9 @@ class _GridSearchPeriodKernel:
         # A program declaring the value alone publishes no feasibility counts.
         if program.output_roles is VALUE:
             return KernelOutput(value=cast("FloatND", out))
-        V_arr, empty_count, other_inf_count = cast("tuple[FloatND, IntND, IntND]", out)
+        V_arr, empty_count, other_inf_count = cast(
+            "tuple[FloatND, FeasibilityCount, FeasibilityCount]", out
+        )
         return FeasibilityKernelOutput(
             value=V_arr,
             current_iid_invalid=current_iid_invalid,
