@@ -28,7 +28,7 @@ from lcm import (
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import DCEGM, SAVINGS_POINT_AXIS
+from lcm.solvers import DCEGM, SAVINGS_POINT_AXIS, RFCEnvelope
 from lcm.typing import FloatND
 from tests.conftest import EXACT_KERNEL_SKIP_REASON, assert_agrees_to_ulp
 from tests.solution.test_egm_euler_point_axis import (
@@ -85,6 +85,7 @@ def _model(width: int | None = None) -> Model:
         solver=DCEGM(
             savings_grid=LinSpacedGrid(start=0.0, stop=110.0, n_points=N_SAVINGS),
             n_constrained_points=32,
+            envelope=RFCEnvelope(),
         ),
         liquid=LiquidMargin(
             state="wealth",

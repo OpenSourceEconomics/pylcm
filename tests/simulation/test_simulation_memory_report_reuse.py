@@ -52,14 +52,22 @@ def _count_memory_reads(*, monkeypatch: pytest.MonkeyPatch) -> Generator[Counter
     Chunk-profile construction (`chunk_planning.SimulationStageProfile`,
     `chunk_profile_inventory.ChunkProfileInventory`) imports no such name at
     all after this change: it only ever adopts an already-computed record.
+
+    `repeated_reads` counts reads of an executable already read in this
+    context. Identity is checked against held references, so a collected
+    executable cannot donate its `id` to a new one.
     """
     counts: Counter[str] = Counter()
+    read: list[jax.stages.Compiled] = []
     original = workspace_planning.compiler_memory_reservation
 
-    def counted[Compiled](
-        *, compiled: Compiled, widths: Mapping[str, int]
+    def counted(
+        *, compiled: jax.stages.Compiled, widths: Mapping[str, int]
     ) -> CompilerMemoryReservation:
         counts["reservation_reads"] += 1
+        if any(previous is compiled for previous in read):
+            counts["repeated_reads"] += 1
+        read.append(compiled)
         return original(compiled=compiled, widths=widths)
 
     with monkeypatch.context() as observe:
@@ -151,9 +159,8 @@ def test_first_dispatch_reads_the_report_once_per_distinct_executable(
         _simulate(
             model=model, params=params, initial=initial, solution=solution, seed=7
         )
-    n_distinct_executables = _executable_cache_size(model=model)
-    assert n_distinct_executables > 0
-    assert counts["reservation_reads"] == n_distinct_executables
+    assert counts["reservation_reads"] > 0
+    assert counts["repeated_reads"] == 0
 
 
 def test_changed_shape_produces_a_fresh_report(
@@ -221,8 +228,8 @@ def test_dce_and_duplicate_alias_inputs_still_produce_one_report_per_executable(
             solution=solution,
             seed=13,
         )
-    n_distinct_executables = _executable_cache_size(model=model)
-    assert counts["reservation_reads"] == n_distinct_executables
+    assert counts["reservation_reads"] > 0
+    assert counts["repeated_reads"] == 0
 
 
 _CANDIDATE_SEARCH_POPULATION = 64
@@ -384,9 +391,8 @@ def test_candidate_search_reads_the_report_once_per_distinct_executable(
         _simulate(
             model=model, params=params, initial=initial, solution=solution, seed=1
         )
-    n_distinct_executables = _executable_cache_size(model=model)
-    assert n_distinct_executables > 0
-    assert cold_counts["reservation_reads"] == n_distinct_executables
+    assert cold_counts["reservation_reads"] > 0
+    assert cold_counts["repeated_reads"] == 0
     with _count_memory_reads(monkeypatch=monkeypatch) as warm_counts:
         _simulate(
             model=model, params=params, initial=initial, solution=solution, seed=1
@@ -407,9 +413,8 @@ def _assert_single_candidate_plus_refusal_reads_once(
         _simulate(
             model=model, params=params, initial=initial, solution=solution, seed=1
         )
-    n_distinct_executables = _executable_cache_size(model=model)
-    assert n_distinct_executables > 0
-    assert counts["reservation_reads"] == n_distinct_executables
+    assert counts["reservation_reads"] > 0
+    assert counts["repeated_reads"] == 0
 
     tiny_model, tiny_params, _tiny_initial = _inputs(budget=1)
     with pytest.raises(ExecutionPlanningError):

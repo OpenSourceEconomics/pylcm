@@ -6,7 +6,6 @@ under ordinary round-to-nearest arithmetic without overflow. This is not a
 library-transcendental ULP claim or a structural topology certificate.
 """
 
-import math
 from typing import NamedTuple
 
 import jax.numpy as jnp
@@ -108,87 +107,3 @@ def _materialize(*, value: _SignedLog) -> FloatND:
     )
     result = jnp.where(value.sign == 0.0, jnp.zeros_like(result), result)
     return jnp.where(jnp.isnan(value.logabs), jnp.nan, result)
-
-
-def _polynomial(*, argument: FloatND, coefficients: tuple[float, ...]) -> FloatND:
-    result = jnp.full_like(argument, coefficients[-1])
-    for coefficient in reversed(coefficients[:-1]):
-        result = result * argument + coefficient
-    return result
-
-
-def _series_degree(*, argument: FloatND, phi: bool = False) -> int:
-    """Use a fixed dtype-derived, analytically bounded local polynomial.
-
-    Domain A=1/8. exprel/psi degrees 8/14 and phi degrees 10/20 (f32/f64)
-    have tails <= eps/16 by the integral bounds recorded in the private spec.
-    Horner has at most 2m rounded operations and coefficients <=1; on this
-    domain its absolute rounding bound is <(2m+3)*eps/(1-2m*eps)/(1-A),
-    below 64*eps for the admitted dtypes. These bounds include coefficient
-    conversion, assuming ordinary round-to-nearest arithmetic.
-    """
-    if argument.dtype == jnp.float32:
-        return 10 if phi else 8
-    if argument.dtype == jnp.float64:
-        return 20 if phi else 14
-    raise TypeError("PowerMean divided differences require float32 or float64.")
-
-
-def _log_exprel(*, argument: FloatND) -> FloatND:
-    """Log(expm1(t)/t), preserving large derivative-only positive arguments."""
-    small = jnp.abs(argument) <= _SMALL_REGION
-    degree = _series_degree(argument=argument)
-    polynomial = _polynomial(
-        argument=jnp.where(small, argument, 0.0),
-        coefficients=tuple(1.0 / math.factorial(k + 1) for k in range(degree + 1)),
-    )
-    positive = argument > _SMALL_REGION
-    positive_arg = jnp.where(positive, argument, 1.0)
-    negative_arg = jnp.where(~positive & ~small, argument, -1.0)
-    ordinary = jnp.where(
-        positive,
-        positive_arg + jnp.log(-jnp.expm1(-positive_arg)) - jnp.log(positive_arg),
-        jnp.log(-jnp.expm1(negative_arg)) - jnp.log(-negative_arg),
-    )
-    return jnp.where(small, jnp.log(polynomial), ordinary)
-
-
-def _log_psi(*, argument: FloatND) -> FloatND:
-    """Log integral_0^1 u*exp(u*t) du with a safe small-argument branch."""
-    small = jnp.abs(argument) <= _SMALL_REGION
-    degree = _series_degree(argument=argument)
-    polynomial = _polynomial(
-        argument=jnp.where(small, argument, 0.0),
-        coefficients=tuple(
-            1.0 / (math.factorial(k) * (k + 2)) for k in range(degree + 1)
-        ),
-    )
-    high = argument > 1.0
-    high_arg = jnp.where(high, argument, 2.0)
-    ordinary_arg = jnp.where(~high & ~small, argument, -1.0)
-    ordinary = jnp.where(
-        high,
-        high_arg
-        + jnp.log(high_arg - 1.0 + jnp.exp(-high_arg))
-        - 2.0 * jnp.log(high_arg),
-        jnp.log1p((ordinary_arg - 1.0) * jnp.exp(ordinary_arg))
-        - 2.0 * jnp.log(jnp.abs(ordinary_arg)),
-    )
-    return jnp.where(small, jnp.log(polynomial), ordinary)
-
-
-def _phi(*, argument: FloatND) -> FloatND:
-    """Negative normalized log1p divided difference on the primal near regime."""
-    small = jnp.abs(argument) <= _SMALL_REGION
-    degree = _series_degree(argument=argument, phi=True)
-    polynomial = _polynomial(
-        argument=jnp.where(small, argument, 0.0),
-        coefficients=tuple(
-            (-1.0) ** (k + 1) * (k + 1) / (k + 2) for k in range(degree + 1)
-        ),
-    )
-    ordinary_arg = jnp.where(small, -0.25, argument)
-    ordinary = (
-        ordinary_arg / (1.0 + ordinary_arg) - jnp.log1p(ordinary_arg)
-    ) / ordinary_arg**2
-    return jnp.where(small, polynomial, ordinary)

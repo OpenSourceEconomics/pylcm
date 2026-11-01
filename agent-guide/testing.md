@@ -177,6 +177,23 @@ the ones that carry numerical content:
   whole program has many places for that to surface. Do not write cross-device equality
   tests.
 
+### Parity of a performance change
+
+A performance change claims the same numbers, faster. Check that claim against a
+control, not against a tolerance picked to pass:
+
+- **Bitwise where arithmetic should be untouched.** A change that only moves data,
+  caches, reorders dispatch or skips dead work must reproduce base bit for bit, at both
+  precisions.
+- **Otherwise ULP at the array's scale, against an A/A control.** Measure candidate
+  against base with `tests.conftest.assert_agrees_to_ulp`, passing the array's largest
+  magnitude as `operand_magnitude`. The control is base against itself with only an
+  execution-shape knob changed — chunk count, node, width. The control's gap is the
+  noise floor; a candidate gap clearly beyond it is arithmetic the change altered.
+- **Never per-cell relative ULP.** A cell born by cancellation sits near zero, so its own
+  spacing is tiny and an ordinary rounding difference reads as thousands of ULP. The
+  array's scale is what both arithmetics actually round at.
+
 ### Mechanics
 
 - Use plain pytest functions, never test classes (`class TestFoo`)

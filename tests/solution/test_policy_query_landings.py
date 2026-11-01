@@ -14,8 +14,6 @@ from _lcm.execution.core_program import CoreBuildContext
 from _lcm.policy_queries import ScalarPolicyQueries, _PolicyQueryKernel
 from _lcm.typing import PytreeValue
 from lcm import (
-    ArrivalDecision,
-    ArrivalRead,
     ByPeriod,
     CollectiveUtility,
     DiscreteGrid,
@@ -23,6 +21,8 @@ from lcm import (
     InitialNodes,
     LinSpacedGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     Periods,
     ProjectedRegimeValue,
     Regime,
@@ -296,7 +296,7 @@ def test_original_row_reordering_and_equal_mass_splitting_preserve_checked_value
 
 
 @categorical(ordered=False)
-class _ArrivalRegimes:
+class _ParticipationRegimes:
     parent: ScalarInt
     source: ScalarInt
     destination: ScalarInt
@@ -315,15 +315,15 @@ def _square_wealth(wealth: FloatND) -> FloatND:
     return wealth * wealth
 
 
-def _keep_arrival(V_source: FloatND) -> BoolND:
+def _keep_participation(V_source: FloatND) -> BoolND:
     return V_source >= -1000.0
 
 
 @pytest.mark.parametrize("off_grid", [False, True])
-def test_arrival_pricing_preserves_nested_actual_landing_identity(
+def test_participation_pricing_preserves_nested_actual_landing_identity(
     *, off_grid: bool
 ) -> None:
-    """Safe source nodes do not excuse an off-grid actual parent arrival."""
+    """Safe source nodes do not excuse an off-grid actual parent participation check."""
     model = Model(
         regimes={
             "parent": Regime(
@@ -358,7 +358,7 @@ def test_arrival_pricing_preserves_nested_actual_landing_identity(
             ),
             "fallback": Regime(functions={"utility": _zero}),
         },
-        regime_id_class=_ArrivalRegimes,
+        regime_id_class=_ParticipationRegimes,
         n_periods=3,
         initial_nodes=InitialNodes(by_period={0: "parent"}),
         edges={
@@ -368,11 +368,11 @@ def test_arrival_pricing_preserves_nested_actual_landing_identity(
                     "fallback": Periods(values=(0,)),
                 },
                 law=ByPeriod(cases={0: "source"}),
-                arrivals={
-                    "source": ArrivalDecision(
-                        predicate=_keep_arrival,
+                participation={
+                    "source": ParticipationCheck(
+                        predicate=_keep_participation,
                         reads={
-                            "V_source": ArrivalRead(
+                            "V_source": ParticipationRead(
                                 kind="Raw",
                                 regime="source",
                                 projection={"wealth": _wealth},

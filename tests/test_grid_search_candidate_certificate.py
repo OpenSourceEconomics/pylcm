@@ -47,7 +47,7 @@ streamed branch-hard-max then dynamically bound log-sum-exp composition,
 per-discrete-cell mean-zero Gumbel noise, and flat-index reconstruction, including the
 deep shared helper bodies. The construction and correctness of Q/F values
 and feasibility—including user DAGs, constraints, transitions, interpolation,
-continuation arithmetic, and folded-process weights—is outside this certificate
+and continuation arithmetic—is outside this certificate
 and remains owned by its dedicated semantic tests.
 
 The executable sweep remains deliberately finite: two action grids, six
@@ -152,13 +152,6 @@ type _ModelParams = dict[
 type _SuppliedModelParams = dict[
     RegimeName, dict[FunctionName | RegimeName, dict[str, UserParamsNode]]
 ]
-
-
-class _AverageArguments(TypedDict, closed=True):
-    a: FloatND
-    weights: FloatND
-    shifts: IntND | None
-    axis: NotRequired[int | None]
 
 
 class _KernelOutputArguments(TypedDict, closed=True):
@@ -427,8 +420,8 @@ def test_feasibility_summary_rejects_changed_native_values() -> None:
     """Changing only the wrapper's value readout breaks its transport proof."""
     source = (_SRC_ROOT / "_lcm/solution/feasibility.py").read_text(encoding="utf-8")
     changed = source.replace(
-        "else (value, empty_count, other_inf_count)",
-        "else (-value, empty_count, other_inf_count)",
+        "output: CountedGridSearchOutput = (value, empty_count, other_inf_count)",
+        "output: CountedGridSearchOutput = (-value, empty_count, other_inf_count)",
     )
     assert changed != source
     assert _feasibility_summary_errors(ast.parse(changed))
@@ -651,6 +644,7 @@ def test_q_and_f_arrays_reach_full_reducers_without_candidate_transformation():
     assert isinstance(_parse("src/_lcm/params/regime_template.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/params/processing.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/dtypes.py"), ast.Module)
+    assert isinstance(_parse("src/lcm/typing.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/simulation/entry_allocations.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/utils/namespace.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/pandas_utils.py"), ast.Module)
@@ -690,11 +684,6 @@ def test_uniform_process_sources_have_literal_inventory_obligations() -> None:
 def test_action_grid_admission_has_a_literal_inventory_obligation() -> None:
     """Include the call-owned Cartesian preflight producer and its cleanup."""
     assert isinstance(_parse("src/_lcm/simulation/action_grids.py"), ast.Module)
-
-
-def test_finite_policy_diagnostic_is_a_literal_certificate_obligation():
-    """Include the profiled live-versus-represented candidate diagnostic."""
-    assert isinstance(_parse("src/_lcm/simulation/policy_diagnostics.py"), ast.Module)
 
 
 def test_eager_dependencies_are_literal_certificate_obligations():
@@ -779,70 +768,6 @@ def test_structural_blueprint_mutation_is_rejected(*, tmp_path: Path, mutation: 
     result = verify_direct_candidate_flow(repo_root=tmp_path)
 
     assert result["offending_paths"] == [_STRUCTURAL_BLUEPRINT_SOURCE]
-
-
-_MAX_Q_SOURCE = "src/_lcm/regime_building/max_Q_over_a.py"
-_FOLDED_BODY_MUTATIONS = {
-    "width_forwarding_filtered": (
-        (
-            "        out = self.mapped(\n"
-            "            next_regime_to_V_arr=next_regime_to_V_arr, "
-            "**states_actions_params\n"
-            "        )"
-        ),
-        (
-            "        out = self.mapped(\n"
-            "            next_regime_to_V_arr=next_regime_to_V_arr,\n"
-            "            **{\n"
-            "                name: value\n"
-            "                for name, value in states_actions_params.items()\n"
-            "                if name != '_lcm_action_block_width'\n"
-            "            },\n"
-            "        )"
-        ),
-    ),
-    "published_value_changed": (
-        'output=cast("MaxOutput", V_arr if empty is None else (V_arr, empty)),',
-        'output=cast("MaxOutput", -V_arr if empty is None else (-V_arr, empty)),',
-    ),
-    "empty_support_dropped": (
-        "empty = jnp.any(empty & support, axis=axis)",
-        "empty = jnp.any(empty, axis=axis)",
-    ),
-}
-
-
-@pytest.mark.parametrize("mutation", tuple(_FOLDED_BODY_MUTATIONS))
-def test_folded_kernel_mutation_is_rejected_after_byte_reseal(
-    *, mutation: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Resealing the source bytes cannot hide a changed folded-kernel body."""
-    root = _SRC_ROOT.parent
-    marker, replacement = _FOLDED_BODY_MUTATIONS[mutation]
-    source = (root / _MAX_Q_SOURCE).read_text(encoding="utf-8")
-    sources = verify_direct_candidate_flow(repo_root=root)["certified_corridor_sources"]
-    for relative in sources:
-        target = tmp_path / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(
-            source.replace(marker, replacement, 1)
-            if relative == _MAX_Q_SOURCE
-            else (root / relative).read_text(encoding="utf-8"),
-            encoding="utf-8",
-        )
-    monkeypatch.setattr(
-        "tests.candidate_certificate.direct_flow._SOURCE_SEALS",
-        {relative: sha256_file(tmp_path / relative) for relative in sources},
-    )
-
-    result = verify_direct_candidate_flow(repo_root=tmp_path)
-
-    assert (
-        source.count(marker),
-        any("source seal mismatch" in error for error in result["errors"]),
-        result["offending_paths"],
-        any("streamed max-Q builder" in error for error in result["errors"]),
-    ) == (1, False, [_MAX_Q_SOURCE], True)
 
 
 _BACKWARD_SOURCE = "src/_lcm/solution/backward_induction.py"
@@ -1100,7 +1025,6 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
         "native_graph:function_wrapped",
         "native_graph:argument_builder_wrapped",
         "native_graph:requirements_erased",
-        "native_graph:collective_output_role_dropped",
         "native_graph:planned_disposition_forced_dense",
         "native_graph:dense_reason_erased",
         "native_graph:donation_candidates_changed",
@@ -1126,16 +1050,10 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
         "streaming_width_transport:core_program_keyword_desynchronized",
         "streaming_width_transport:colliding_q_argument_filtered",
         "streaming_width_transport:colliding_q_argument_substituted",
-        "streaming_fold:width_keyword_renamed",
         "streaming_width_builder:collision_validation_removed",
-        "streaming_provider:fold_route_disabled",
         "streaming_provider:co_map_route_disabled",
         "streaming_provider:co_map_reference_guard_bypassed",
-        "streaming_fold:rejection_restored",
-        "streaming_fold:productmap_output_filtered",
         "streaming_classifier:collective_ev1_admitted",
-        "streaming_classifier:ev1_fold_admitted",
-        "streaming_classifier:collective_fold_admitted",
         "streaming_classifier:ev1_without_discrete_action_admitted",
         "streaming_classifier:jit_disabled_gate_reintroduced",
         "streaming_classifier:trivial_product_admitted",
@@ -1146,10 +1064,6 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
         "streaming_classifier:collective_resource_gate_bypassed",
         "streaming_classifier:ev1_precedes_trivial_product",
         "streaming_classifier:collective_precedes_co_map",
-        "streaming_fold:reduction_after_co_map",
-        "streaming_fold:signature_positionalized",
-        "streaming_fold:width_signature_dropped",
-        "streaming_fold:width_forwarding_filtered",
         "streaming_co_map:inner_state_reincluded",
         "streaming_co_map:state_order_reversed",
         "streaming_co_map:continuation_axes_broadcast",
@@ -1158,7 +1072,6 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
         "streaming_dispatch:bypass_compiled_core",
         "streaming_collective:builder_dissolution_inverted",
         "streaming_collective:builder_stakeholder_axis_sliced",
-        "streaming_collective:published_dissolution_inverted",
         "streaming_ev1:runtime_scale_constant",
         "streaming_ev1:scale_signature_dropped",
         "streaming_ev1:published_value_negated",
@@ -1276,27 +1189,27 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
     original_names = {
         name for name in names if not name.startswith("simulation_adapter:")
     }
-    assert len(original_names) == 391
+    assert len(original_names) == 380
     assert (
         hashlib.sha256(("\n".join(sorted(original_names)) + "\n").encode()).hexdigest()
-        == "e98342d0cc2f4c7f98d4b3140dc437e1262eed7065612bc965fbf3edfb3a3180"
+        == "73b99cc5e6503e740328b3923fe0684799d8d11030bf9fd6ba6e083159946f15"
     )
     historical_names = {
         name
         for name in names
         if not name.startswith("simulation_adapter:initial_physical_")
     }
-    assert len(historical_names) == 409
+    assert len(historical_names) == 398
     assert (
         hashlib.sha256(
             ("\n".join(sorted(historical_names)) + "\n").encode()
         ).hexdigest()
-        == "3c5fdaf1c4a0eb22ad92ac592d4ca84cef0c97a4b94bc525a7f8592d886880a7"
+        == "a00c2dd641b34fdfa7f618fb19d3e79648c1082583727f15fafbb004d62faf6d"
     )
-    assert len(names) == 421
+    assert len(names) == 410
     assert (
         hashlib.sha256(("\n".join(sorted(names)) + "\n").encode()).hexdigest()
-        == "f58754206b785f05a7dff36c690946024effc931c888c72383fc0bd98be060cd"
+        == "c94857b93f5a6254cbda1aa14b3658232da1df482f907578db49540ac23aeb6c"
     )
 
 
@@ -2372,7 +2285,7 @@ def _folded_terminal_utility(*, folded_shock: FloatND, work: DiscreteAction) -> 
 
 
 def _build_zero_weight_fold_model() -> Model:
-    """Build a folded process whose quadrature weights are exactly ``[0, 1, 0]``."""
+    """Build an IID process whose quadrature weights are exactly ``[0, 1, 0]``."""
     src = Regime(
         states={"wealth": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         state_transitions={"wealth": fixed_transition("wealth")},
@@ -2387,7 +2300,6 @@ def _build_zero_weight_fold_model() -> Model:
                 mu=0.0,
                 sigma=1.0,
                 n_std=100.0,
-                fold=True,
             )
         },
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -2441,26 +2353,9 @@ def _simulate_zero_weight_fold(model: Model) -> tuple[list[int], list[int], list
 
 
 def test_zero_weight_fold_average_preserves_the_public_candidate():
-    """The zero-mass fold nodes contribute nothing to the selected policy."""
+    """The zero-mass shock nodes contribute nothing to the selected policy."""
     observed = _simulate_zero_weight_fold(_build_zero_weight_fold_model())
     assert observed == ([1], [1], [1])
-
-
-def test_negating_the_fold_average_reverses_the_public_candidate(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    """The synchronized folded-average mutation is behaviorally live."""
-    baseline = _simulate_zero_weight_fold(_build_zero_weight_fold_model())
-    original = max_Q_over_a_module.zero_safe_average
-
-    def negated_average(**kwargs: Unpack[_AverageArguments]) -> FloatND:
-        return -original(**kwargs)
-
-    monkeypatch.setattr(max_Q_over_a_module, "zero_safe_average", negated_average)
-    shifted = _simulate_zero_weight_fold(_build_zero_weight_fold_model())
-
-    assert baseline == ([1], [1], [1])
-    assert shifted == ([0], [0], [0])
 
 
 def test_negating_kernel_output_reverses_the_public_candidate(
@@ -2913,7 +2808,6 @@ _S02_IMPORTED_HELPERS = (
     ("src/_lcm/solution/feasibility.py", "_unflatten_bounded_result"),
     ("src/_lcm/transition_checks.py", "_validate_off_grid_bound_status"),
     ("src/_lcm/simulation/initial_conditions.py", "_validate_initial_bound_status"),
-    ("src/_lcm/solution/grid_search.py", "_grid_search_fold_weights"),
     ("src/_lcm/solution/backward_induction.py", "_accumulate_landing_totals"),
     ("src/_lcm/utils/functools.py", "publish_signature"),
     ("src/_lcm/continuation.py", "_query_bound_evaluator_targets"),

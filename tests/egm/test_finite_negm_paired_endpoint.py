@@ -1,4 +1,4 @@
-"""Paired endpoint economics remain independent of finite value-germ ownership."""
+"""Paired endpoint economics remain independent of finite value ownership."""
 
 from dataclasses import replace
 
@@ -60,18 +60,6 @@ def _paired_component(
         left_marginal_at_child=candidate.left_marginal[None],
         right_dead_at_child=candidate.right_dead[None],
         left_dead_at_child=candidate.left_dead[None],
-        right_germ_at_child=(
-            candidate.right_germ[0][None],
-            candidate.right_germ[1][None],
-            candidate.right_germ[2][None],
-            candidate.right_germ[3][None],
-        ),
-        left_germ_at_child=(
-            candidate.left_germ[0][None],
-            candidate.left_germ[1][None],
-            candidate.left_germ[2][None],
-            candidate.left_germ[3][None],
-        ),
     )
     published_value, published_marginal = _blend_passive_axes(
         value_at_child=value,
@@ -107,8 +95,8 @@ def _singleton_owned_record() -> tuple[
     return emitted, singleton_row, singleton_marginal, singleton_data
 
 
-def test_paired_endpoint_marginal_remains_distinct_from_right_clamp_germ() -> None:
-    """Paired M keeps the endpoint slope while clamp germs and exterior M are zero."""
+def test_paired_endpoint_marginal_remains_distinct_from_right_clamp() -> None:
+    """Paired M keeps the endpoint slope while the exterior M is zero."""
     row, marginal, data = _emit(
         coordinates=(1.0, 2.0, 3.0),
         values=(0.0, 1.0, 4.0),
@@ -165,34 +153,7 @@ def test_paired_endpoint_marginal_remains_distinct_from_right_clamp_germ() -> No
     np.testing.assert_array_equal(singleton_value, 0.0)
     np.testing.assert_array_equal(singleton_m, 0.0)
 
-    # Economic endpoint controls qualify before the side-ownership assertions.
-    _assert_paired_germ_ownership(
-        terminal=terminal,
-        terminal_candidate=terminal_candidate,
-        above=above,
-        singleton=singleton,
-    )
-
-
-def _assert_paired_germ_ownership(
-    *,
-    terminal: _FiniteRowRead,
-    terminal_candidate: _FiniteOuterRead,
-    above: _FiniteRowRead,
-    singleton: _FiniteRowRead,
-) -> None:
-    """Require exact side-germ ownership after the economic controls qualify."""
-    assert bool(terminal.right_germ[0])
-    np.testing.assert_array_equal(jnp.stack(terminal.right_germ[1:]), [0.0, 0.0, 0.0])
-    assert bool(terminal_candidate.right_germ[0])
-    np.testing.assert_array_equal(
-        jnp.stack(terminal_candidate.right_germ[1:]), [0.0, 0.0, 0.0]
-    )
-    assert bool(terminal.left_germ[0])
-    np.testing.assert_array_equal(jnp.stack(terminal.left_germ[1:]), [4.0, 2.0, 0.0])
-    assert bool(above.right_germ[0] & above.left_germ[0])
-    np.testing.assert_array_equal(jnp.stack(above.right_germ[1:]), [0.0, 0.0, 0.0])
-    np.testing.assert_array_equal(jnp.stack(above.left_germ[1:]), [0.0, 0.0, 0.0])
-    assert bool(singleton.right_germ[0])
-    assert not bool(singleton.left_germ[0])
-    np.testing.assert_array_equal(jnp.stack(singleton.right_germ[1:]), [0.0, 0.0, 0.0])
+    # The terminal and above-support reads keep a finite left side; the
+    # singleton has none.
+    assert bool(terminal.left_finite & above.left_finite)
+    assert not bool(singleton.left_finite)

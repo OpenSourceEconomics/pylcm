@@ -486,3 +486,24 @@ def test_every_general_leg_matrix_entry_declares_its_own_shard_count():
     for entry in _workflow()["jobs"]["tests"]["strategy"]["matrix"]["include"]:
         assert {"os", "leg", "shard", "shards"} <= set(entry), entry
         assert 1 <= int(entry["shard"]) <= int(entry["shards"])
+
+
+def test_sharded_coverage_contributors_match_the_coverage_enabled_matrix() -> None:
+    """Every Linux fp64 general and solution shard contributes exactly once."""
+    jobs = _workflow()["jobs"]
+    general = {
+        f"coverage-general-{entry['shard']}"
+        for entry in jobs["tests"]["strategy"]["matrix"]["include"]
+        if entry["os"] == "ubuntu-latest"
+    }
+    solution = {
+        f"coverage-solution-{entry['shard']}"
+        for entry in jobs["tests-slow-solution"]["strategy"]["matrix"]["include"]
+        if entry["precision"] == 64
+    }
+    recorded = {
+        name
+        for name in ci_workloads.coverage_contributors()
+        if name.startswith(("coverage-general-", "coverage-solution-"))
+    }
+    assert recorded == general | solution
