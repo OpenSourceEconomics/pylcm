@@ -1128,6 +1128,12 @@ class _QueryChunks:
         bank: FloatND,
         query_arguments: Mapping[str, Mapping[str, PytreeValue]],
     ) -> _ChunkOutput:
+        source_size = math.prod(value.size for value in states.values())
+        full_chunks = (
+            0 < source_size <= jnp.iinfo(jnp.int32).max
+            and source_size == self.chunks * self.source.width
+        )
+
         # keyword-only-exempt: library-callback=jax.lax.fori_loop
         def run(index: LoopIndex, carry: _ChunkOutput) -> _ChunkOutput:
             bank, statuses, totals = carry
@@ -1135,6 +1141,9 @@ class _QueryChunks:
             # traced; the source offset is int32.
             start = jnp.asarray(index * self.source.width, dtype=jnp.int32)
             source, live = self.source(states=states, start=start)
+            # The owner proves every scheduled lane is live without int32 overflow.
+            if full_chunks:
+                live = jnp.ones((self.source.width,), dtype=jnp.bool_)
             answers: dict[tuple[str, int], PolicyAnswer] = {}
             evaluations: dict[str, EvaluatedQAndF] = {}
             for step in self.schedule:
