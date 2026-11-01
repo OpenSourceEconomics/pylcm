@@ -203,6 +203,7 @@ from _lcm.solution.feasibility import (
     FeasibilityKernelOutput,
     QueryInputStatus,
     add_feasibility_counts,
+    get_feasibility_count_dtype,
     merge_bound_input_status,
     merge_continuation_read_counts,
     merge_query_input_status,
@@ -3549,12 +3550,14 @@ def _period_feasibility_counter_reservations(
 ) -> MappingProxyType[int, int]:
     """Reserve the period's native feasibility counters until its barrier.
 
-    Every active regime publishes an int32 pair, and merging invariant blocks
-    holds one more. Each pair is charged on every device an active regime runs
-    on, which conservatively covers wherever a replicated counter is placed;
+    Every active regime can publish a native count pair, and merging invariant
+    blocks holds one more. The configured count dtype covers GridSearch's exact
+    summaries and conservatively covers narrower counters from other solvers.
+    Each pair is charged on every device an active regime runs on, which
+    conservatively covers wherever a replicated counter is placed;
     a device no active regime runs on holds none.
     """
-    size = 2 * np.dtype(np.int32).itemsize * (len(active) + 1)
+    size = 2 * get_feasibility_count_dtype().itemsize * (len(active) + 1)
     return MappingProxyType(
         dict.fromkeys(
             sorted(frozenset().union(*(device_ids_by_regime[name] for name in active))),

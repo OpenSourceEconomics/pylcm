@@ -7,6 +7,7 @@ from contextlib import nullcontext
 from pathlib import Path
 from typing import Literal
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -92,8 +93,8 @@ def test_native_counter_domain_is_bounded_before_cartesian_allocation(
 ) -> None:
     """Real node vectors can declare the boundary without solving their product."""
     outcome = (
-        pytest.raises(exceptions.ExecutionPlanningError, match="int32 feasibility")
-        if overflows
+        pytest.raises(exceptions.ExecutionPlanningError, match="feasibility count")
+        if overflows and not jax.config.x64_enabled
         else nullcontext()
     )
     with outcome:
