@@ -305,18 +305,38 @@ def _place_operand_tree(
             ),
         )
     if dataclasses.is_dataclass(tree) and not isinstance(tree, type):
-        return dataclasses.replace(
-            tree,
-            **{
-                field.name: _place_operand_tree(
-                    tree=getattr(tree, field.name),
-                    sharding=sharding,
-                    protected=_paths_below(paths=protected, segment=field.name),
-                )
-                for field in dataclasses.fields(tree)
-                if field.init
-            },
+        # Replay programs import the argument-name protocol from this module.
+        from _lcm.simulation.policy_programs import (  # noqa: PLC0415
+            ReplayPayload,
+            _unflatten_payload,
         )
+
+        if isinstance(tree, ReplayPayload):
+            placed_tree = _unflatten_payload(
+                structure=tree.structure,
+                arrays=cast(
+                    "tuple[PytreeChild, ...]",
+                    _place_operand_tree(
+                        tree=tree.arrays,
+                        sharding=sharding,
+                        protected=_paths_below(paths=protected, segment="arrays"),
+                    ),
+                ),
+            )
+        else:
+            placed_tree = dataclasses.replace(
+                tree,
+                **{
+                    field.name: _place_operand_tree(
+                        tree=getattr(tree, field.name),
+                        sharding=sharding,
+                        protected=_paths_below(paths=protected, segment=field.name),
+                    )
+                    for field in dataclasses.fields(tree)
+                    if field.init
+                },
+            )
+        return placed_tree
     return _place_operand_leaf(leaf=tree, sharding=sharding)
 
 

@@ -29,6 +29,7 @@ from _lcm.execution.value_transfer import (
     ValueInputChannel,
 )
 from _lcm.simulation.operand_placement import place_simulation_arguments
+from _lcm.simulation.policy_programs import ReplayPayload
 from _lcm.simulation.program_types import subject_axis
 from _lcm.simulation.programs import _ArgumentsBoundAtDispatch, _SubjectTiled
 from _lcm.simulation.residency import measure_buffer_footprint
@@ -346,3 +347,59 @@ def test_abstract_materialization_preserves_container_order_and_value_reads(
     assert placed_query["zeta"] is query["zeta"]
     assert placed_query["alpha"] is query["alpha"]
     assert protected_query_value.sharding.device_set == {devices[0]}
+
+
+def test_replay_payload_placement_preserves_abstract_and_protected_arrays(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Preserve the replay tree, addressed arrays and strict runtime boundary."""
+    devices = tuple(jax.devices())
+    subject_devices = (devices[3], devices[1], devices[2])
+    mesh = jax.make_mesh(
+        (3,), ("X",), (jax.sharding.AxisType.Auto,), devices=subject_devices
+    )
+    shared = jax.NamedSharding(mesh, jax.P())
+    concrete_value = jax.device_put(jnp.arange(6.0), devices[0])
+    value_read = _program().requirements.value_reads[0]
+    replay = ReplayPayload(
+        arrays=(concrete_value, concrete_value),
+        structure=jax.tree_util.tree_structure(
+            {"zeta": concrete_value, "alpha": concrete_value}
+        ),
+    )
+    abstract_replay = jax.tree.map(_describe_array, replay)
+    assert isinstance(abstract_replay, ReplayPayload)
+    with pytest.raises(BeartypeCallHintParamViolation):
+        ReplayPayload(arrays=abstract_replay.arrays, structure=replay.structure)
+    replay_read = replace(
+        value_read,
+        source=replace(value_read.source, argument="payload", path=("arrays", 0)),
+    )
+    with monkeypatch.context() as guard:
+        guard.setattr(jax, "device_put", _refuse_operand_copy)
+        guard.setattr(
+            jax._src.core.EvalTrace, "process_primitive", _refuse_operand_copy
+        )
+        placed_replay = place_simulation_arguments(
+            arguments={"payload": abstract_replay},
+            subject_arg_names=(),
+            value_reads=(replay_read,),
+            devices=subject_devices,
+        )["payload"]
+    assert isinstance(placed_replay, ReplayPayload)
+    assert placed_replay.structure is replay.structure
+    assert all(
+        a is b
+        for a, b in zip(placed_replay.arrays, abstract_replay.arrays, strict=True)
+    )
+    concrete_replay = place_simulation_arguments(
+        arguments={"payload": replay},
+        subject_arg_names=(),
+        value_reads=(replay_read,),
+        devices=subject_devices,
+    )["payload"]
+    assert isinstance(concrete_replay, ReplayPayload)
+    assert concrete_replay.structure is replay.structure
+    assert concrete_replay.arrays[0] is concrete_value
+    assert concrete_replay.arrays[1].sharding == shared
+    np.testing.assert_array_equal(concrete_replay.arrays[1], np.arange(6.0))
