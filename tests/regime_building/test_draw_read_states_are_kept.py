@@ -1,17 +1,17 @@
-"""A shock state whose only reader is its next-period draw stays in the regime.
+"""A process state read only as its next-period draw: AR(1) kept, IID integrated out.
 
 Costs realized *after* the period's choices are computed from the draws
 `next_zeta` / `next_xi` inside the wealth law. Nothing this period reads the
 lagged states `zeta` / `xi` directly, yet the draw of `next_zeta` is conditional
-on `zeta` (an AR(1) row), and the draw of `next_xi` comes from `xi`'s process.
-Reading a process state's draw is therefore a read of the state: the regime
-that reads the draw keeps the state, whether it is declared at model or at
-regime level. A regime that never reads the draw — the terminal `dead` regime,
-valuing only wealth — does not keep it.
+on `zeta` (an AR(1) row): the lagged `zeta` moves the value, so the regime that
+reads the draw keeps `zeta`, whether it is declared at model or at regime level.
+A regime that never reads the draw — the terminal `dead` regime, valuing only
+wealth — does not keep it.
 
-The IID state `xi` is kept too, although its lagged value is uninformative: the
-engine draws `next_xi` from the state's process, so the axis stays, and the
-value is constant along it.
+The IID state `xi` is no state of the reading regime: its lagged value is
+uninformative, so the value would be constant along an `xi` axis. The draw
+`next_xi` is taken from `xi`'s process inside the continuation and summed over
+with the process's weights.
 """
 
 import itertools
@@ -104,7 +104,7 @@ def _params() -> dict[str, UserParamsNode]:
 
 
 def _reference_V() -> np.ndarray:
-    """Scalar-loop value of `active`, indexed `(wealth, zeta, xi)`.
+    """Scalar-loop value of `active`, indexed `(wealth, zeta)`.
 
     Consumption is chosen on its grid; the continuation integrates the next
     `zeta` over the Markov row of the lagged `zeta` and the next `xi` over its
@@ -118,11 +118,9 @@ def _reference_V() -> np.ndarray:
     xi_weights = np.asarray(xi.get_transition_probs())[0]
     wealth_nodes = np.asarray(WEALTH_GRID.to_jax())
     dead_V = np.log(wealth_nodes + 11.0)
-    reference = np.empty((len(wealth_nodes), len(zeta_nodes), len(xi_nodes)))
-    for i_w, i_z, i_x in itertools.product(
-        range(len(wealth_nodes)), range(len(zeta_nodes)), range(len(xi_nodes))
-    ):
-        reference[i_w, i_z, i_x] = max(
+    reference = np.empty((len(wealth_nodes), len(zeta_nodes)))
+    for i_w, i_z in itertools.product(range(len(wealth_nodes)), range(len(zeta_nodes))):
+        reference[i_w, i_z] = max(
             np.log(c)
             + DISCOUNT_FACTOR
             * sum(
@@ -144,20 +142,20 @@ def _reference_V() -> np.ndarray:
 
 
 def _active_V(model: Model) -> np.ndarray:
-    """`active`'s value at period 0, axes reordered to `(wealth, zeta, xi)`."""
+    """`active`'s value at period 0, axes reordered to `(wealth, zeta)`."""
     solution = model.solve(params=_params(), log_level="off")
     V = np.asarray(solution.values[0]["active"])
     order = model.state_names(regime_name="active")
-    return np.transpose(V, [order.index(name) for name in ("wealth", "zeta", "xi")])
+    return np.transpose(V, [order.index(name) for name in ("wealth", "zeta")])
 
 
 @pytest.mark.parametrize("declared_at", ["model", "regime"])
-def test_the_draw_reading_regime_keeps_the_shock_states(
+def test_the_draw_reading_regime_keeps_the_ar1_state_and_integrates_out_the_iid(
     declared_at: Literal["model", "regime"],
 ) -> None:
     model = _model(declared_at=declared_at)
 
-    assert set(model.state_names(regime_name="active")) == {"wealth", "zeta", "xi"}
+    assert set(model.state_names(regime_name="active")) == {"wealth", "zeta"}
 
 
 def test_a_regime_that_never_reads_the_draw_does_not_keep_the_shock_states() -> None:
@@ -183,15 +181,14 @@ def test_value_matches_the_scalar_reference(
 
 
 @pytest.mark.slow
-def test_value_is_constant_in_lagged_xi_and_varies_with_lagged_zeta() -> None:
+def test_value_varies_with_lagged_zeta() -> None:
     V = _active_V(_model(declared_at="model"))
 
-    assert np.abs(V - V[:, :, :1]).max() == 0.0
-    assert np.abs(V - V[:, :1, :]).max() > 0.1
+    assert np.abs(V - V[:, :1]).max() > 0.1
 
 
 @pytest.mark.slow
-def test_simulation_draws_from_the_kept_states() -> None:
+def test_simulation_draws_from_the_kept_state() -> None:
     model = _model(declared_at="model")
     n = 4
     result = model.simulate(
@@ -199,7 +196,6 @@ def test_simulation_draws_from_the_kept_states() -> None:
         initial_conditions={
             "wealth": jnp.array([2.0, 4.0, 6.0, 8.0]),
             "zeta": jnp.zeros(n),
-            "xi": jnp.zeros(n),
             "age": jnp.zeros(n),
             "regime_id": jnp.array([_RegimeId.active] * n),
         },
@@ -208,5 +204,6 @@ def test_simulation_draws_from_the_kept_states() -> None:
     )
     df = result.to_dataframe().query('regime_name == "active"')
 
-    assert {"zeta", "xi"} <= set(df.columns)
+    assert "zeta" in df.columns
+    assert "xi" not in df.columns
     assert len(df) == n

@@ -141,12 +141,10 @@ from typing import cast
 
 import jax
 import jax.numpy as jnp
-import numpy as np
 from dags import concatenate_functions, with_signature
 
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.constraints.processed import ProcessedConstraintsMapping
-from _lcm.continuation import ProjectedContinuationSpec, ProjectedProducerDate
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.asset_row import _get_solve_one_combo_asset_rows
 from _lcm.egm.carry import EGMCarry, build_template_egm_carry
@@ -160,17 +158,11 @@ from _lcm.egm.continuation_grids import (
     continuation_grid_signature,
     continuation_v_interpolation_info,
 )
-from _lcm.egm.current_iid_envelope import DatedCaseUStepAuthority
-from _lcm.egm.current_iid_euler_grid import (
-    ResolvedDatedEulerGrid,
-    materialize_step_euler_grid,
-)
 from _lcm.egm.dcegm_query_model import DCEGMQueryModel
 from _lcm.egm.kernel_scope import _find_unsupported_feature
 from _lcm.egm.nbegm_query_model import NBEGMQueryModel
 from _lcm.egm.nested_floor import PreparedNestedFloor
 from _lcm.egm.preferences import concatenate_regime_function
-from _lcm.egm.preparation import prepare_egm_carry, prepare_egm_query_data
 from _lcm.egm.published_policy import EGMSimPolicy
 from _lcm.egm.query_data import EGMQueryData, build_template_egm_query_data
 from _lcm.egm.regime_introspection import (
@@ -188,10 +180,8 @@ from _lcm.egm.step_core import (
 )
 from _lcm.egm.upper_envelope import get_bracket_finder, get_upper_envelope
 from _lcm.egm.validation import savings_stage_reads_euler_state
-from _lcm.egm.validation_materialization import _validation_grid_first
 from _lcm.engine import StateActionSpace
 from _lcm.logsum import logsum_and_softmax
-from _lcm.materialization import DatedGenerationMaterializer
 from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.age_normalization import (
     periodized_tree_signature,
@@ -231,7 +221,7 @@ from _lcm.typing import (
 from _lcm.utils.dispatchers import map_over_leading_axis, productmap
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import DCEGM, MSSEnvelope
+from lcm.solvers import DCEGM
 from lcm.typing import (
     BoolND,
     DiscreteAction,
@@ -287,13 +277,6 @@ def build_egm_step_functions(
     query_model: DCEGMQueryModel | None = None,
     dcegm_query_models: Mapping[RegimeName, DCEGMQueryModel] | None = None,
     nbegm_query_models: Mapping[RegimeName, NBEGMQueryModel] | None = None,
-    projected_specs: Mapping[
-        RegimeName, ProjectedContinuationSpec | ProjectedProducerDate
-    ] = MappingProxyType({}),
-    periods: tuple[int, ...] | None = None,
-    case_u_source: DatedCaseUStepAuthority | None = None,
-    resolved_euler_grid: ResolvedDatedEulerGrid | None = None,
-    materializer: DatedGenerationMaterializer | None = None,
 ) -> EGMStepBuild:
     """Build per-period DC-EGM kernels and the regime's carry template.
 
@@ -357,14 +340,8 @@ def build_egm_step_functions(
         and policy row.
 
     """
-    n_pad = compute_egm_carry_length(solver=solver, materializer=materializer)
-    n_savings_nodes = int(
-        (
-            solver.savings_grid.to_jax()
-            if materializer is None
-            else materializer.materialize_grid(spec=solver.savings_grid)
-        ).shape[0]
-    )
+    n_pad = compute_egm_carry_length(solver=solver)
+    n_savings_nodes = int((solver.savings_grid.to_jax()).shape[0])
     own_v_info = regime_to_v_interpolation_info[regime_name]
     # Any savings-stage Euler-state read (the Euler law's residual, regime
     # transition probabilities, stochastic transition weights, non-Euler
@@ -383,13 +360,8 @@ def build_egm_step_functions(
     # single-post-state kernel the carry *is* the refined envelope, so its
     # length stays `n_pad`.
     n_carry_rows = n_pad
-    n_euler_nodes = int(
-        materialize_step_euler_grid(
-            spec=own_v_info.continuous_states[solver.continuous_state],
-            resolved=resolved_euler_grid,
-            materializer=materializer,
-        ).shape[0]
-    )
+    euler_grid = own_v_info.continuous_states[solver.continuous_state]
+    n_euler_nodes = int((euler_grid.to_jax()).shape[0])
     if asset_row_mode:
         n_pad = max(n_pad, n_euler_nodes)
         n_carry_rows = n_euler_nodes
@@ -419,67 +391,31 @@ def build_egm_step_functions(
     ).index(solver.continuous_state)
     leading_shape = (
         tuple(
-            int(
-                (
-                    own_v_info.discrete_states[name].to_jax()
-                    if materializer is None
-                    else materializer.materialize_grid(
-                        spec=own_v_info.discrete_states[name]
-                    )
-                ).shape[0]
-            )
+            int((own_v_info.discrete_states[name].to_jax()).shape[0])
             for name in own_discrete_state_names
         )
         + tuple(
-            int(
-                (
-                    own_v_info.continuous_states[name].to_jax()
-                    if materializer is None
-                    else materializer.materialize_grid(
-                        spec=own_v_info.continuous_states[name]
-                    )
-                ).shape[0]
-            )
+            int((own_v_info.continuous_states[name].to_jax()).shape[0])
             for name in own_passive_state_names
         )
         + tuple(int(v.shape[0]) for v in own_discrete_action_values.values())
     )
     n_cell_axes = len(own_discrete_state_names) + len(own_passive_state_names)
-    if materializer is None:
-        carry_template = build_template_egm_carry(
-            n_rows=n_carry_rows,
-            leading_shape=leading_shape,
-            query_data=(
-                None
-                if query_model is None
-                else build_template_egm_query_data(
-                    state_shape=leading_shape[:n_cell_axes],
-                    action_shape=leading_shape[n_cell_axes:],
-                    row_capacity=n_carry_rows,
-                    interval_capacity=len(query_model.authority.interval_ids),
-                    liquid_corner=asset_row_mode,
-                )
-            ),
-        )
-    else:
-        query_data = (
+    carry_template = build_template_egm_carry(
+        n_rows=n_carry_rows,
+        leading_shape=leading_shape,
+        query_data=(
             None
             if query_model is None
-            else prepare_egm_query_data(
+            else build_template_egm_query_data(
                 state_shape=leading_shape[:n_cell_axes],
                 action_shape=leading_shape[n_cell_axes:],
                 row_capacity=n_carry_rows,
                 interval_capacity=len(query_model.authority.interval_ids),
                 liquid_corner=asset_row_mode,
-                materializer=materializer,
             )
-        )
-        carry_template = prepare_egm_carry(
-            n_rows=n_carry_rows,
-            leading_shape=leading_shape,
-            query_data=query_data,
-            materializer=materializer,
-        )
+        ),
+    )
 
     configs: dict[_EGMGroupKey, list[int]] = {}
     stateful_targets_union = frozenset(
@@ -492,10 +428,6 @@ def build_egm_step_functions(
         )
         if regime_name in active_regimes
     )
-    if periods is not None:
-        if len(set(periods)) != len(periods) or not set(periods) <= set(active_periods):
-            raise TypeError("Prepared EGM dates must be unique actual active dates.")
-        active_periods = tuple(period for period in active_periods if period in periods)
     for period in active_periods:
         targets = (
             ()
@@ -544,11 +476,6 @@ def build_egm_step_functions(
                             )
                         )
                         is not None
-                    )
-                    + tuple(
-                        ("projected_pre_shock", target, period + 1)
-                        for target in carry
-                        if target in projected_specs
                     ),
                 ),
             ),
@@ -577,9 +504,6 @@ def build_egm_step_functions(
             resolve_periodized_nodes(mapping=constraints, period=representative_period),
         )
         unsupported = _find_unsupported_feature(
-            case_u_source=case_u_source,
-            source_periods=tuple(group_periods),
-            projected_specs=projected_specs,
             solver=solver,
             regime_name=regime_name,
             user_regimes=user_regimes,
@@ -624,7 +548,6 @@ def build_egm_step_functions(
             else period_to_user_regimes.get(representative_period + 1, user_regimes)
         )
         kernel = _get_egm_step(
-            materializer=materializer,
             solver=solver,
             user_regimes=child_user_regimes,
             laws=laws,
@@ -651,12 +574,9 @@ def build_egm_step_functions(
             query_model=query_model,
             dcegm_query_models=dcegm_query_models,
             nbegm_query_models=nbegm_query_models,
-            projected_specs=projected_specs,
             source_period=representative_period,
         )
-        built[group_key] = _canonical_case_u_step(
-            kernel=kernel, solver=solver, authority=case_u_source
-        )
+        built[group_key] = kernel
         # Each group owns a distinct numerical core and its child mesh. A
         # target active at another age may carry the same state name on a
         # different domain; that does not change this group's expectation.
@@ -672,9 +592,6 @@ def build_egm_step_functions(
             group_keys[period] = key
 
     return EGMStepBuild(
-        native_case_u_sources=MappingProxyType(
-            {} if case_u_source is None else dict.fromkeys(result, case_u_source)
-        ),
         steps=MappingProxyType(dict(sorted(result.items()))),
         step_group_keys=MappingProxyType(dict(sorted(group_keys.items()))),
         carry_template=carry_template,
@@ -696,38 +613,10 @@ def build_egm_step_functions(
     )
 
 
-def _canonical_case_u_step(
-    *,
-    kernel: EGMStepFunction[_DCEGMStepOutput],
-    solver: _BoundDCEGM,
-    authority: DatedCaseUStepAuthority | None,
-) -> EGMStepFunction[_DCEGMStepOutput]:
-    """Mint U's publication pieces before exposing its original dated step."""
-    if authority is None:
-        return kernel
-    if not isinstance(kernel, _EGMStep):
-        raise TypeError("Native U source lost its original Euler step.")
-    return replace(
-        kernel,
-        pieces=replace(
-            kernel.pieces,
-            refine_to_bracket=get_bracket_finder(
-                solver=solver,
-                n_refined=kernel.pieces.n_pad,
-                publish_provenance=True,
-            ),
-            check_query_construction=True,
-            collect_continuation_read_counts=True,
-        ),
-    )
-
-
 type _EGMGroupKey = tuple[tuple[RegimeName, ...], tuple[RegimeName, ...], Hashable]
 
 
-def compute_egm_carry_length(
-    *, solver: DCEGM, materializer: DatedGenerationMaterializer | None = None
-) -> int:
+def compute_egm_carry_length(*, solver: DCEGM) -> int:
     """Static carry-row length for a DC-EGM regime.
 
     Covers the Euler candidates (one per savings node), the closed-form
@@ -741,13 +630,7 @@ def compute_egm_carry_length(
         Number of slots in the regime's carry rows.
 
     """
-    n_savings = int(
-        (
-            solver.savings_grid.to_jax()
-            if materializer is None
-            else materializer.materialize_grid(spec=solver.savings_grid)
-        ).shape[0]
-    )
+    n_savings = int((solver.savings_grid.to_jax()).shape[0])
     n_candidates = n_savings + solver.n_constrained_points
     return math.ceil(solver.refined_grid_factor * n_candidates)
 
@@ -780,11 +663,7 @@ def _get_egm_step(
     query_model: DCEGMQueryModel | None = None,
     dcegm_query_models: Mapping[RegimeName, DCEGMQueryModel] | None = None,
     nbegm_query_models: Mapping[RegimeName, NBEGMQueryModel] | None = None,
-    projected_specs: Mapping[
-        RegimeName, ProjectedContinuationSpec | ProjectedProducerDate
-    ] = MappingProxyType({}),
     source_period: int | None = None,
-    materializer: DatedGenerationMaterializer | None = None,
 ) -> EGMStepFunction[_DCEGMStepOutput]:
     """Build the EGM kernel for one continuation-target configuration.
 
@@ -797,14 +676,7 @@ def _get_egm_step(
     get_solve_one_combo = (
         _get_solve_one_combo_asset_rows if asset_row_mode else _get_solve_one_combo
     )
-    # Only the MSS backend computes a per-row read-support verdict; the other
-    # backends (and the asset-row kernel) report the constant fail-closed
-    # `False` on a channel the policy-read gate never consumes from them.
-    # Masking on that constant would blank every published row, so the gap
-    # mask applies only where the verdict is actually computed.
-    mask_gap_rows = isinstance(solver.envelope, MSSEnvelope) and not asset_row_mode
     pieces = _build_kernel_pieces(
-        materializer=materializer,
         solver=solver,
         user_regimes=user_regimes,
         laws=laws,
@@ -828,7 +700,6 @@ def _get_egm_step(
         query_model=query_model,
         dcegm_query_models=dcegm_query_models,
         nbegm_query_models=nbegm_query_models,
-        projected_specs=projected_specs,
         source_period=source_period,
         asset_row_mode=asset_row_mode,
     )
@@ -836,7 +707,6 @@ def _get_egm_step(
     return _EGMStep(
         pieces=pieces,
         get_solve_one_combo=get_solve_one_combo,
-        mask_gap_rows=mask_gap_rows,
         has_taste_shocks=has_taste_shocks,
         own_discrete_state_names=own_discrete_state_names,
         own_passive_state_names=own_passive_state_names,
@@ -866,9 +736,6 @@ class _EGMStep:
         ],
     ]
     """Builder of the per-combo solve (single-post-state or asset-row)."""
-
-    mask_gap_rows: bool
-    """Whether the backend's read-support verdict masks the simulation rows."""
 
     has_taste_shocks: bool
     """Whether the regime smooths its discrete actions with EV1 taste shocks."""
@@ -1013,7 +880,6 @@ class _EGMStep:
                     rows=mapped,
                     pieces=pieces,
                     taste_shock_scale=own_taste_shock_scale,
-                    mask_gap_rows=self.mask_gap_rows,
                     has_taste_shocks=self.has_taste_shocks,
                     discrete_state_names=self.own_discrete_state_names,
                     passive_state_names=self.own_passive_state_names,
@@ -1025,7 +891,7 @@ class _EGMStep:
                 policy_stack,
                 value_stack,
                 marginal_stack,
-                read_supported_stack,
+                _,
             ) = mapped
             n_state_axes = len(self.own_discrete_state_names) + len(
                 self.own_passive_state_names
@@ -1050,21 +916,11 @@ class _EGMStep:
                 marginal_utility=marginal_stack,
                 taste_shock_scale=own_taste_shock_scale,
             )
-            # A row whose refinement reports a compacted coverage gap is
-            # withheld from the off-grid read (its linear span fabricates
-            # values there): the simulation rows are NaN-poisoned per combo,
-            # so the read's finite/in-support acceptance falls back to the
-            # grid-argmax pair. The solve-side carry keeps the row unchanged.
-            read_ok = (
-                read_supported_stack[..., None]
-                if self.mask_gap_rows
-                else jnp.asarray(True)  # noqa: FBT003
-            )
             sim_policy = EGMSimPolicy(
-                endog_grid=jnp.where(read_ok, grid_stack, jnp.nan),
-                policy=jnp.where(read_ok, policy_stack, jnp.nan),
-                value=jnp.where(read_ok, value_stack, jnp.nan),
-                marginal_utility=jnp.where(read_ok, marginal_stack, jnp.nan),
+                endog_grid=grid_stack,
+                policy=policy_stack,
+                value=value_stack,
+                marginal_utility=marginal_stack,
                 row_discrete_state_names=self.own_discrete_state_names,
                 row_passive_state_names=self.own_passive_state_names,
                 row_discrete_action_names=tuple(self.own_discrete_action_values),
@@ -1075,26 +931,20 @@ class _EGMStep:
                 return _publish_conditional_combo(
                     combo=combo,
                     taste_shock_scale=own_taste_shock_scale,
-                    mask_gap_rows=self.mask_gap_rows,
                     retain_nested_feasibility=pieces._retain_nested_feasibility,  # noqa: SLF001
                 )
-            V_arr, grid_row, policy_row, value_row, marginal_row, read_supported = combo
+            V_arr, grid_row, policy_row, value_row, marginal_row, _ = combo
             carry = EGMCarry(
                 endog_grid=grid_row,
                 value=value_row,
                 marginal_utility=marginal_row,
                 taste_shock_scale=own_taste_shock_scale,
             )
-            # See the combo branch: a gap-compacted row is withheld from the
-            # off-grid read; the carry keeps it.
-            read_ok = (
-                read_supported if self.mask_gap_rows else jnp.asarray(True)  # noqa: FBT003
-            )
             sim_policy = EGMSimPolicy(
-                endog_grid=jnp.where(read_ok, grid_row, jnp.nan),
-                policy=jnp.where(read_ok, policy_row, jnp.nan),
-                value=jnp.where(read_ok, value_row, jnp.nan),
-                marginal_utility=jnp.where(read_ok, marginal_row, jnp.nan),
+                endog_grid=grid_row,
+                policy=policy_row,
+                value=value_row,
+                marginal_utility=marginal_row,
             )
         return V_arr, carry, sim_policy
 
@@ -1104,7 +954,6 @@ def _publish_conditional_product(
     rows: BoundedResult[_MappedConditionalRows],
     pieces: _EgmKernelPieces,
     taste_shock_scale: ScalarFloat,
-    mask_gap_rows: bool,
     has_taste_shocks: bool,
     discrete_state_names: tuple[StateName, ...],
     passive_state_names: tuple[StateName, ...],
@@ -1114,7 +963,7 @@ def _publish_conditional_product(
     | BoundedResult[_NestedDCEGMStepChannels]
 ):
     """Publish conditional choice rows and reduce feasibility on state nodes."""
-    V, grid, policy, value, marginal, read_supported, data, feasible = rows.output
+    V, grid, policy, value, marginal, _, data, feasible = rows.output
     n_state_axes = len(discrete_state_names) + len(passive_state_names)
     action_axes = tuple(range(n_state_axes, len(pieces.combo_names)))
     if action_axes and has_taste_shocks:
@@ -1140,12 +989,11 @@ def _publish_conditional_product(
         taste_shock_scale=taste_shock_scale,
         query_data=data,
     )
-    read_ok = read_supported[..., None] if mask_gap_rows else jnp.asarray(a=True)
     sim_policy = EGMSimPolicy(
-        endog_grid=jnp.where(read_ok, grid, jnp.nan),
-        policy=jnp.where(read_ok, policy, jnp.nan),
-        value=jnp.where(read_ok, value, jnp.nan),
-        marginal_utility=jnp.where(read_ok, marginal, jnp.nan),
+        endog_grid=grid,
+        policy=policy,
+        value=value,
+        marginal_utility=marginal,
         row_discrete_state_names=discrete_state_names,
         row_passive_state_names=passive_state_names,
         row_discrete_action_names=discrete_action_names,
@@ -1211,16 +1059,13 @@ def _publish_conditional_combo(
     *,
     combo: BoundedResult[_ConditionalComboRows],
     taste_shock_scale: ScalarFloat,
-    mask_gap_rows: bool,
     retain_nested_feasibility: bool = False,
 ) -> (
     BoundedResult[tuple[FloatND, EGMCarry, EGMSimPolicy, FeasibilityCounts | None]]
     | BoundedResult[_NestedDCEGMStepChannels]
 ):
     """Publish one conditional row with independent counts and bounded integrity."""
-    value, grid, policy, row_value, marginal, read_supported, data, feasible = (
-        combo.output
-    )
+    value, grid, policy, row_value, marginal, _, data, feasible = combo.output
     carry = EGMCarry(
         endog_grid=grid,
         value=row_value,
@@ -1228,12 +1073,11 @@ def _publish_conditional_combo(
         taste_shock_scale=taste_shock_scale,
         query_data=data,
     )
-    read_ok = read_supported if mask_gap_rows else jnp.asarray(a=True)
     sim_policy = EGMSimPolicy(
-        endog_grid=jnp.where(read_ok, grid, jnp.nan),
-        policy=jnp.where(read_ok, policy, jnp.nan),
-        value=jnp.where(read_ok, row_value, jnp.nan),
-        marginal_utility=jnp.where(read_ok, marginal, jnp.nan),
+        endog_grid=grid,
+        policy=policy,
+        value=row_value,
+        marginal_utility=marginal,
     )
     if retain_nested_feasibility:
         counts = (
@@ -1439,26 +1283,15 @@ def _build_kernel_pieces(
     query_model: DCEGMQueryModel | None = None,
     dcegm_query_models: Mapping[RegimeName, DCEGMQueryModel] | None = None,
     nbegm_query_models: Mapping[RegimeName, NBEGMQueryModel] | None = None,
-    projected_specs: Mapping[
-        RegimeName, ProjectedContinuationSpec | ProjectedProducerDate
-    ] = MappingProxyType({}),
     source_period: int | None = None,
     asset_row_mode: bool = False,
-    materializer: DatedGenerationMaterializer | None = None,
 ) -> _EgmKernelPieces:
     """Assemble the build-time statics of the EGM kernel."""
-    savings_nodes = (
-        jnp.asarray(solver.savings_grid.to_jax(), dtype=canonical_float_dtype())
-        if materializer is None
-        else materializer(
-            value=materializer.materialize_grid(spec=solver.savings_grid),
-            dtype=np.dtype(canonical_float_dtype()),
-            name="egm_savings_nodes",
-        )
+    savings_nodes = jnp.asarray(
+        solver.savings_grid.to_jax(), dtype=canonical_float_dtype()
     )
     n_constrained = solver.n_constrained_points
     continuation_plan = build_continuation_plan(
-        materializer=materializer,
         user_regimes=user_regimes,
         laws=laws,
         functions=functions,
@@ -1473,20 +1306,13 @@ def _build_kernel_pieces(
         certainty_equivalent=certainty_equivalent,
         dcegm_query_models=dcegm_query_models,
         nbegm_query_models=nbegm_query_models,
-        projected_specs=projected_specs,
         source_period=source_period,
     )
     return _EgmKernelPieces(
         euler_state_name=solver.continuous_state,
         action_name=solver.continuous_action,
         savings_nodes=savings_nodes,
-        borrowing_limit=(
-            savings_nodes[0]
-            if materializer is None
-            else materializer.evaluate_validation(
-                function=_validation_grid_first, arguments={"points": savings_nodes}
-            )
-        ),
+        borrowing_limit=(savings_nodes[0]),
         n_constrained=n_constrained,
         # Static geometric ratio: the constrained actions run from
         # `span * CONSTRAINED_OFFSET_FRACTION` up to `span`, so the ratio

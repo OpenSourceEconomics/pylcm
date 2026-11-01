@@ -33,7 +33,7 @@ from lcm.consumption_savings_regime import (
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime
-from lcm.solvers import DCEGM, GridSearch
+from lcm.solvers import DCEGM, GridSearch, RFCEnvelope
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -115,7 +115,8 @@ def _model(
         solver=DCEGM(
             savings_grid=savings_grid
             if savings_grid is not None
-            else LinSpacedGrid(start=savings_grid_start, stop=4.0, n_points=12)
+            else LinSpacedGrid(start=savings_grid_start, stop=4.0, n_points=12),
+            envelope=RFCEnvelope(),
         ),
         liquid=_LIQUID,
     )

@@ -36,7 +36,7 @@ N_HIGH_NODES = 14
 
 @pytest.mark.parametrize("envelope", ["fues"])
 def test_app3_dcegm_matches_vfi_on_wealth_interior(
-    envelope: Literal["fues", "mss", "ltm", "rfc"],
+    envelope: Literal["fues", "ltm", "rfc"],
 ):
     """App.3 DC-EGM matches its VFI twin on the wealth interior, per wage and house.
 

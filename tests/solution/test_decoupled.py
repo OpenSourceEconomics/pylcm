@@ -775,7 +775,7 @@ def shocked_utility(*, choice: DiscreteAction, shock: FloatND) -> FloatND:
 SHOCK_POINTS = 3
 
 
-def _shocked_model(*, fold: bool) -> lcm.Model:
+def _shocked_model() -> lcm.Model:
     return lcm.Model(
         n_periods=3,
         regimes={
@@ -788,7 +788,6 @@ def _shocked_model(*, fold: bool) -> lcm.Model:
                         gauss_hermite=True,
                         mu=0.0,
                         sigma=1.0,
-                        fold=fold,
                     ),
                 },
                 state_transitions={"wealth": next_wealth},
@@ -809,31 +808,6 @@ def _shocked_model(*, fold: bool) -> lcm.Model:
                 "end": lcm.Periods(values=(1,)),
             }
         },
-    )
-
-
-@pytest.mark.parametrize("period", [0, 1])
-def test_folded_state_averages_the_stored_value(*, period: int) -> None:
-    """Folding the shock gives the unfolded stored value averaged over its nodes."""
-    params = _params(beta_tilde=BETA)
-    unfolded = _shocked_model(fold=False)
-    folded = _shocked_model(fold=True)
-    weights = np.asarray(
-        cast(
-            "lcm.NormalIIDProcess", unfolded.user_regimes["decide"].states["shock"]
-        ).get_transition_probs()[0]
-    )
-    assert_array_almost_equal(
-        folded.solve(params=params, log_level="off").value(
-            period=period, regime="decide"
-        ),
-        np.asarray(
-            unfolded.solve(params=params, log_level="off").value(
-                period=period, regime="decide"
-            )
-        )
-        @ weights,
-        decimal=DECIMAL_PRECISION,
     )
 
 
@@ -1387,12 +1361,6 @@ def test_params_template_is_one_namespace_over_all_three_aggregators() -> None:
     }
 
 
-@lcm.categorical(ordered=False)
-class GatedRegimeId:
-    alive: ScalarInt
-    couple: ScalarInt
-
-
 def _stay(wealth: ContinuousState) -> ContinuousState:
     return wealth
 
@@ -1405,61 +1373,13 @@ def _couple_is_better(*, V_target_f: FloatND, V_target_m: FloatND) -> BoolND:
     return V_target_f >= V_target_m
 
 
-def test_a_gated_source_refuses_a_decoupled_aggregator() -> None:
-    """Which of the two values a gate would compare is not defined."""
-    wealth = lcm.LinSpacedGrid(start=1, stop=5, n_points=3)
-    with pytest.raises(
-        (ModelInitializationError, NotImplementedError), match="Decoupled"
-    ):
-        lcm.Model(
-            regimes={
-                "alive": lcm.Regime(
-                    states={"wealth": wealth},
-                    state_transitions={"wealth": _stay},
-                    functions={"utility": _wealth_utility},
-                    koopmans_aggregator=lcm.Decoupled(
-                        objective=additive, value=additive
-                    ),
-                ),
-                "couple": lcm.Regime(
-                    states={"wealth": wealth},
-                    functions={
-                        "utility": lcm.CollectiveUtility(
-                            utilities={"f": _wealth_utility, "m": _wealth_utility}
-                        )
-                    },
-                ),
-            },
-            n_periods=2,
-            regime_id_class=GatedRegimeId,
-            initial_nodes=lcm.InitialNodes(by_period={0: "alive"}),
-            edges={
-                "alive": lcm.Transition(
-                    law="couple",
-                    gates={
-                        "couple": lcm.Gate(
-                            predicate=_couple_is_better,
-                            routes={
-                                "her": lcm.StakeholderRoute(
-                                    target_stakeholder="f",
-                                    fallback=lcm.ProjectedRegimeValue(
-                                        regime="alive", projection={"wealth": _stay}
-                                    ),
-                                )
-                            },
-                        )
-                    },
-                )
-            },
-            enable_jit=False,
-        )
-
-
-def test_a_typed_arrival_source_refuses_unrepresented_decoupled_selection() -> None:
+def test_a_typed_participation_source_refuses_unrepresented_decoupled_selection() -> (
+    None
+):
     """A native source query must not rank actions by the reported value."""
 
     @lcm.categorical(ordered=False)
-    class ArrivalRegimeId:
+    class ParticipationRegimeId:
         alive: ScalarInt
         couple: ScalarInt
         alone: ScalarInt
@@ -1500,23 +1420,23 @@ def test_a_typed_arrival_source_refuses_unrepresented_decoupled_selection() -> N
                 ),
             },
             ages=lcm.AgeGrid(start=0, inclusive_stop=1, step="Y"),
-            regime_id_class=ArrivalRegimeId,
+            regime_id_class=ParticipationRegimeId,
             initial_nodes=lcm.InitialNodes(by_age={0.0: "alive"}),
             edges={
                 "alive": lcm.Transition(
                     law="couple",
-                    arrivals={
-                        "couple": lcm.ArrivalDecision(
+                    participation={
+                        "couple": lcm.ParticipationCheck(
                             predicate=_couple_is_better,
                             reads={
-                                "V_target_f": lcm.ArrivalRead(
+                                "V_target_f": lcm.ParticipationRead(
                                     regime="couple",
                                     stakeholder="f",
                                     kind="Raw",
                                     field="value",
                                     projection={"wealth": _stay},
                                 ),
-                                "V_target_m": lcm.ArrivalRead(
+                                "V_target_m": lcm.ParticipationRead(
                                     regime="couple",
                                     stakeholder="m",
                                     kind="Raw",

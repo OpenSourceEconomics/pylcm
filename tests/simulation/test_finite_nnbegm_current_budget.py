@@ -85,7 +85,7 @@ def test_public_finite_replay_masks_the_higher_value_illegal_keeper() -> None:
     )
     assert model.ages is not None
     age = model.ages.values[0]
-    inner, outer, live, represented = _replay._prepare_nnbegm_candidate_bank(
+    inner, outer, value, represented = _replay._prepare_nnbegm_candidate_bank(
         regime=regime,
         sim_policy=policy,
         states=states,
@@ -93,7 +93,7 @@ def test_public_finite_replay_masks_the_higher_value_illegal_keeper() -> None:
         period=0,
         age=age,
     )
-    np.testing.assert_array_equal(live[:, 0], [True, True, True, False])
+    np.testing.assert_array_equal(np.isfinite(value[:, 0]), [True, True, True, False])
     np.testing.assert_array_equal(represented[:, 0], [True, True, True, False])
     np.testing.assert_array_almost_equal(
         inner[:3, 0], [1.25, 1.0, 1.0], decimal=DECIMAL_PRECISION
@@ -101,28 +101,20 @@ def test_public_finite_replay_masks_the_higher_value_illegal_keeper() -> None:
     np.testing.assert_array_almost_equal(
         outer[:3, 0], [0.0, -0.5, 0.5], decimal=DECIMAL_PRECISION
     )
-    scored = _replay._score_nnbegm_candidate_bank(
+    feasible = _replay._nnbegm_bank_feasibility(
+        candidate_inner=inner,
+        candidate_outer=outer,
         optimal_actions=MappingProxyType({}),
         regime=regime,
         sim_policy=policy,
-        candidate_inner=inner,
-        candidate_outer=outer,
         flat_params=flat,
         period=0,
         age=age,
         canonical_states=states,
         action_names=regime.simulation.action_names,
-        next_regime_to_V_arr=MappingProxyType(dict(solution.values[1])),
-    )
-    assert type(scored) is tuple
-    values, feasible = cast("tuple[FloatND, BoolND]", scored)
-    np.testing.assert_array_almost_equal(
-        values[:3, 0],
-        [np.log(1.25) + np.log(1.5) / 2.0, 0.0, np.log(1.5)],
-        decimal=DECIMAL_PRECISION,
     )
     np.testing.assert_array_equal(feasible[:3, 0], [False, True, True])
-    assert float(values[0, 0]) > float(values[2, 0])
+    assert float(value[0, 0]) > float(value[2, 0])
     result = model.simulate(
         params=_PARAMS,
         solution=solution,
@@ -163,7 +155,7 @@ def test_finite_replay_does_not_replace_an_all_illegal_published_bank() -> None:
     )
     assert model.ages is not None
     age = model.ages.values[0]
-    inner, outer, live, represented = _replay._prepare_nnbegm_candidate_bank(
+    inner, outer, value, represented = _replay._prepare_nnbegm_candidate_bank(
         regime=regime,
         sim_policy=policy,
         states=states,
@@ -171,7 +163,7 @@ def test_finite_replay_does_not_replace_an_all_illegal_published_bank() -> None:
         period=0,
         age=age,
     )
-    np.testing.assert_array_equal(live[:, 0], [True, True, True, False])
+    np.testing.assert_array_equal(np.isfinite(value[:, 0]), [True, True, True, False])
     np.testing.assert_array_equal(represented[:, 0], [True, True, True, False])
     np.testing.assert_array_almost_equal(
         inner[:3, 0], [1.25, 1.0, 1.0], decimal=DECIMAL_PRECISION
@@ -179,6 +171,7 @@ def test_finite_replay_does_not_replace_an_all_illegal_published_bank() -> None:
     ranked = _replay._rank_nnbegm_candidate_bank(
         candidate_inner=inner,
         candidate_outer=outer,
+        candidate_value=value,
         represented=represented,
         optimal_actions=MappingProxyType({}),
         regime=regime,
@@ -307,7 +300,7 @@ def _solve_healthy_status_fixture(
         period=0,
         age=model.ages.values[0],
     )
-    np.testing.assert_array_equal(bank[2][:, 0], [True, True, True, False])
+    np.testing.assert_array_equal(np.isfinite(bank[2][:, 0]), [True, True, True, False])
     np.testing.assert_array_equal(bank[3][:, 0], [True, True, True, False])
     np.testing.assert_array_almost_equal(
         bank[0][:3, 0], [1.25, 1.0, 1.0], decimal=DECIMAL_PRECISION

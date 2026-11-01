@@ -128,9 +128,9 @@ A parameter cannot appear at multiple levels within the same subtree. pylcm rais
 
 ## Edge parameters
 
-The regime-transition law, gates, gate references and route fallbacks are declared in
-`Model(edges=...)`, and their parameters live at their declaration path under
-`params["edges"]` rather than under a regime:
+The regime-transition law, gates and route fallbacks are declared in `Model(edges=...)`,
+and their parameters live at their declaration path under `params["edges"]` rather than
+under a regime:
 
 ```python
 params = {
