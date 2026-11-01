@@ -6,8 +6,7 @@ feasibility, tie-breaking, and global action identity across block boundaries. T
 collective route retains every stakeholder's value at one shared household winner;
 the EV1 route hard-maxes continuous cells within each discrete prefix before logsum.
 Compiler fusion, rematerialization, and allocation still determine measured runtime
-and peak memory. Eligible folded routes stream actions before their unchanged full
-quadrature reduction, and supported co-mapped routes preserve device-local continuation
+and peak memory. Supported co-mapped routes preserve device-local continuation
 reads. Co-map intersections with separate reference-value channels remain dense.
 """
 

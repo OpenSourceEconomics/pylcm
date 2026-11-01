@@ -153,11 +153,11 @@ def _required_specs() -> dict[str, dict[str, str]]:
 
 def _assert_historical_counts(*, report: direct_flow.DirectMutationControls) -> None:
     """Keep every independently declared family population intact."""
-    assert report["mutation_count"] == 421
-    assert report["supplemental_mutation_count"] == 97
-    assert report["retained_prefix_mutation_count"] == 113
+    assert report["mutation_count"] == 410
+    assert report["supplemental_mutation_count"] == 94
+    assert report["retained_prefix_mutation_count"] == 116
     assert report["outer_helper_mutation_count"] == 40
-    assert report["final_nested_mutation_count"] == 104
+    assert report["final_nested_mutation_count"] == 103
 
 
 @pytest.mark.xdist_group("direct_flow_runner")

@@ -56,7 +56,6 @@ from _lcm.typing import (
     PeriodToRegimeToSimulationPolicy,
     SimulationPolicy,
 )
-from _lcm.utils.logging import get_logger
 from lcm import ExecutionConfig, InvariantBlockSchedule, Model
 from lcm.exceptions import (
     ExecutionPlanningError,
@@ -65,7 +64,6 @@ from lcm.exceptions import (
 )
 from lcm.persistence import SolveSnapshot, load_snapshot, load_solution
 from lcm.solver_api import (
-    DISSOLUTION_FLAG,
     SIMULATION_POLICY,
     ArtifactRef,
     SolutionResult,
@@ -745,84 +743,6 @@ def test_several_chunks_read_the_stored_policies_a_single_chunk_reads(
 
     assert reads[0]
     assert reads[1] == reads[0]
-
-
-def test_host_storage_keeps_dissolution_flags_in_host_memory() -> None:
-    """A collective regime's dissolution flags are stored like its values."""
-    model = _make_dissolution_model(_host())
-    assert model.ages is not None
-    result = backward_induction.solve(
-        program_fingerprint="test_value_storage",
-        flat_params=model._process_params(_DISSOLUTION_PARAMS),
-        ages=model.ages,
-        regimes=model._regimes,
-        logger=get_logger(log_level="off"),
-        enable_jit=model.enable_jit,
-        execution=model._execution,
-        retain_dissolution_flags=True,
-    )
-    flags = [
-        flag
-        for regime_to_flag in result.dissolution_flags.values()
-        for flag in regime_to_flag.values()
-    ]
-
-    assert flags
-    assert {flag.sharding.memory_kind for flag in flags} == {"pinned_host"}
-
-
-def test_a_host_storage_result_publishes_its_flags_without_copying_them(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Building the result copies no stored flag; reading one copies it.
-
-    The flags read from the public store are bitwise those of device storage.
-    """
-    published = []
-    copies_while_building = [0]
-    building = [False]
-    device_put = jax.device_put
-
-    # keyword-only-exempt: library-callback=jax.device_put
-    def _counting_device_put(
-        x: ArtifactPayload,
-        device: jax.sharding.Sharding | jax.Device | None = None,
-        **kwargs: bool | jax.sharding.Sharding | None,
-    ) -> ArtifactPayload:
-        if building[0] and any(
-            host_values.is_host_value(leaf)
-            for leaf in jax.tree.leaves(x)
-            if isinstance(leaf, jax.Array)
-        ):
-            copies_while_building[0] += 1
-        return device_put(x, device, **kwargs)
-
-    for config in (ExecutionConfig(), _host()):
-        with monkeypatch.context() as patch:
-            patch.setattr(jax, "device_put", _counting_device_put)
-            patch.setattr(
-                model_module,
-                "build_solution_result",
-                _while_flagged(
-                    function=model_module.build_solution_result, flag=building
-                ),
-            )
-            solution = _make_dissolution_model(config).solve(
-                params=_DISSOLUTION_PARAMS, log_level="off"
-            )
-        published.append(
-            {
-                ref: np.asarray(solution.replay_artifacts[ref])
-                for ref in solution.replay_artifacts
-                if ref.key == DISSOLUTION_FLAG
-            }
-        )
-
-    assert copies_while_building[0] == 0
-    assert published[0]
-    assert published[1].keys() == published[0].keys()
-    for ref, flag in published[0].items():
-        np.testing.assert_array_equal(published[1][ref], flag, strict=True)
 
 
 def test_host_storage_routes_dissolutions_as_device_storage_does() -> None:
@@ -2015,7 +1935,6 @@ def test_disk_values_loaded_early_are_read_off_the_simulation_thread(
         period: int,
         active_by_period: tuple[MappingProxyType[RegimeName, Regime], ...],
         values: Mapping[int, Mapping[RegimeName, jax.Array]],
-        flags: Mapping[int, Mapping[RegimeName, jax.Array]],
         policies: PeriodToRegimeToSimulationPolicy,
     ) -> tuple[jax.Array, ...]:
         inside_prefetch[0] = True
@@ -2024,7 +1943,6 @@ def test_disk_values_loaded_early_are_read_off_the_simulation_thread(
                 period=period,
                 active_by_period=active_by_period,
                 values=values,
-                flags=flags,
                 policies=policies,
             )
         finally:
@@ -2067,7 +1985,6 @@ def test_the_planner_reserves_what_one_period_copies_early(
         period: int,
         active_by_period: tuple[MappingProxyType[RegimeName, Regime], ...],
         values: Mapping[int, Mapping[RegimeName, jax.Array]],
-        flags: Mapping[int, Mapping[RegimeName, jax.Array]],
         policies: PeriodToRegimeToSimulationPolicy,
     ) -> None:
         before = host_values.device_copies_of_view(view_id=id(values))
@@ -2075,7 +1992,6 @@ def test_the_planner_reserves_what_one_period_copies_early(
             period=period,
             active_by_period=active_by_period,
             values=values,
-            flags=flags,
             policies=policies,
         )
         after = host_values.device_copies_of_view(view_id=id(values))
@@ -2107,7 +2023,6 @@ def test_the_planner_reserves_what_one_period_copies_early(
     reserved = chunk_admission._prefetch_bytes(
         regimes=model._regimes,
         values=host_values.planning_stand_in(engine_view.values),
-        flags=host_values.planning_stand_in(engine_view.dissolution_flags),
         policies=None,
         n_periods=model.n_periods,
         devices=tuple(jax.devices()),
@@ -2131,14 +2046,12 @@ def test_the_runtime_ledger_charges_the_early_copies(
         period: int,
         active_by_period: tuple[MappingProxyType[RegimeName, Regime], ...],
         values: Mapping[int, Mapping[RegimeName, jax.Array]],
-        flags: Mapping[int, Mapping[RegimeName, jax.Array]],
         policies: PeriodToRegimeToSimulationPolicy,
     ) -> tuple[jax.Array, ...]:
         early = prefetch(
             period=period,
             active_by_period=active_by_period,
             values=values,
-            flags=flags,
             policies=policies,
         )
         copies = host_values.device_copies_of_view(view_id=id(values)) or ()

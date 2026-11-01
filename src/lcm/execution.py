@@ -298,9 +298,9 @@ class ExecutionConfig:
     before anything is lowered, a state that is not provably invariant, a
     sharded state, a state no regime declares, and regimes the route does not
     serve: another solver, taste shocks, collective regimes, gated edges,
-    same-period references, edge-reference reads, folded processes and a
-    non-discrete grid for the state. Terminal regimes, which read no
-    continuation, are solved unblocked.
+    same-period references, edge-reference reads and a non-discrete grid for
+    the state. Terminal regimes, which read no continuation, are solved
+    unblocked.
 
     When the simulate phase provably keeps the state fixed too, and no regime
     declares taste shocks, gated edges or a policy replay, `simulate` groups
@@ -396,9 +396,8 @@ class ExecutionConfig:
     anything is lowered, a count larger than the visible devices or the
     action product, a regime that does not exist, and regimes the route does
     not serve: terminal regimes, another solver, taste shocks, collective
-    regimes, gated edges, same-period references, folded processes, a
-    discrete sharded state, and a fixed action width that leaves a device
-    without a block.
+    regimes, gated edges, same-period references, a discrete sharded state,
+    and a fixed action width that leaves a device without a block.
     """
 
     devices: tuple[int, ...] | None = None

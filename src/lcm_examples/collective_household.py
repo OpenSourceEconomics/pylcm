@@ -8,7 +8,7 @@ declaration:
 - the household stays only where each partner meets their same-period outside
   option, with the declared participation slack — a current `Exit` rule;
 - a single marries only under mutual consent, and a couple whose feasible set
-  is empty dissolves back to two singles — an `ArrivalDecision` after the
+  is empty dissolves back to two singles — a `ParticipationCheck` after the
   scheduled landing and before its action.
 
 Dissolution reads the continuing couple's actual participating-policy support;
@@ -16,7 +16,7 @@ each partner's fallback is her or his own single regime. Formation compares
 the target's common participating policy with each single's Raw policy at the
 landing. The participation slack changes willingness to stay, while a partner
 who leaves receives the full single payoff. Initial households obey the same
-current dissolution rule as later arrivals.
+current dissolution rule as later participation checks.
 
 The partners differ only in income. Alone, each keeps their own; married, the
 household pools both and splits consumption evenly. Her income is the higher
@@ -41,13 +41,13 @@ import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
-    ArrivalDecision,
-    ArrivalRead,
     ByAge,
     CollectiveUtility,
     ExecutionConfig,
     LinSpacedGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -142,11 +142,11 @@ def get_model(
         terminal="couple_terminal",
         last_age=last_age,
     )
-    couple_arrivals = {
-        "couple": ArrivalDecision(
+    couple_participation = {
+        "couple": ParticipationCheck(
             predicate=_has_policy_support,
             reads={
-                "target_support": ArrivalRead(
+                "target_support": ParticipationRead(
                     regime="couple",
                     stakeholder="f",
                     kind="Participating",
@@ -222,8 +222,8 @@ def get_model(
         terminal="single_f_terminal",
         last_age=last_age,
     )
-    single_f_arrivals = {
-        "couple": ArrivalDecision(
+    single_f_participation = {
+        "couple": ParticipationCheck(
             predicate=_mutual_consent,
             routes={
                 "her": StakeholderRoute(
@@ -235,24 +235,24 @@ def get_model(
                 )
             },
             reads={
-                "V_target_f": ArrivalRead(
+                "V_target_f": ParticipationRead(
                     regime="couple",
                     stakeholder="f",
                     kind="Participating",
                     projection={"wealth": _identity_wealth},
                 ),
-                "V_target_m": ArrivalRead(
+                "V_target_m": ParticipationRead(
                     regime="couple",
                     stakeholder="m",
                     kind="Participating",
                     projection={"wealth": _identity_wealth},
                 ),
-                "V_alone_f": ArrivalRead(
+                "V_alone_f": ParticipationRead(
                     regime="single_f",
                     kind="Raw",
                     projection={"wealth": _half_of_couple_wealth},
                 ),
-                "V_alone_m": ArrivalRead(
+                "V_alone_m": ParticipationRead(
                     regime="single_m",
                     kind="Raw",
                     projection={"wealth": _half_of_couple_wealth},
@@ -266,7 +266,7 @@ def get_model(
         # grid is entered at is not the one her own regime would carry
         # forward. A law that ignored that would land every bride at the
         # bottom of the couple's grid, where the household is infeasible and
-        # the arrival decision refuses for reasons that are an artifact.
+        # the participation check refuses for reasons that are an artifact.
         state_transitions={
             "wealth": {
                 "couple": _pooled_wealth,
@@ -293,8 +293,8 @@ def get_model(
         terminal="single_m_terminal",
         last_age=last_age,
     )
-    single_m_arrivals = {
-        "couple": ArrivalDecision(
+    single_m_participation = {
+        "couple": ParticipationCheck(
             predicate=_mutual_consent,
             routes={
                 "his": StakeholderRoute(
@@ -306,24 +306,24 @@ def get_model(
                 )
             },
             reads={
-                "V_target_f": ArrivalRead(
+                "V_target_f": ParticipationRead(
                     regime="couple",
                     stakeholder="f",
                     kind="Participating",
                     projection={"wealth": _identity_wealth},
                 ),
-                "V_target_m": ArrivalRead(
+                "V_target_m": ParticipationRead(
                     regime="couple",
                     stakeholder="m",
                     kind="Participating",
                     projection={"wealth": _identity_wealth},
                 ),
-                "V_alone_f": ArrivalRead(
+                "V_alone_f": ParticipationRead(
                     regime="single_f",
                     kind="Raw",
                     projection={"wealth": _half_of_couple_wealth},
                 ),
-                "V_alone_m": ArrivalRead(
+                "V_alone_m": ParticipationRead(
                     regime="single_m",
                     kind="Raw",
                     projection={"wealth": _half_of_couple_wealth},
@@ -347,15 +347,15 @@ def get_model(
         edges={
             "couple": Transition(
                 law=couple_law,
-                arrivals=couple_arrivals if staying_can_arrive else {},
+                participation=couple_participation if staying_can_arrive else {},
             ),
             "single_f": Transition(
                 law=single_f_law,
-                arrivals=single_f_arrivals if meeting_can_arrive else {},
+                participation=single_f_participation if meeting_can_arrive else {},
             ),
             "single_m": Transition(
                 law=single_m_law,
-                arrivals=single_m_arrivals if meeting_can_arrive else {},
+                participation=single_m_participation if meeting_can_arrive else {},
             ),
         },
         regimes={

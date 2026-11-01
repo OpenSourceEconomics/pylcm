@@ -10,7 +10,6 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.arrival_queries import ArrivalQueryArguments
 from _lcm.egm.published_policy import NNBEGMSimPolicy
 from _lcm.execution.core_program import ValueRead
 from _lcm.execution.execution_plan import ResolvedExecution
@@ -22,6 +21,7 @@ from _lcm.execution.value_transfer import (
     ValueConsumerAddress,
     ValueInputChannel,
 )
+from _lcm.participation_queries import ParticipationQueryArguments
 from _lcm.simulation.exit_replay import _query_arguments
 from _lcm.simulation.exits import OriginalExitOutput, ParticipatingExitOutput
 from _lcm.simulation.replay_inputs import place_replay_payload, replay_payload_reads
@@ -357,7 +357,7 @@ def test_external_reader_consumes_the_exact_validated_placed_cell(
     solution = _solve(model=model)
     prepared = model._resolve_solution_result(
         solution=solution, flat_params=model._process_params(_PARAMS)
-    )[3][0]["active"]
+    )[2][0]["active"]
     devices = tuple(jax.devices()[index] for index in subject_ids)
     owner = PeriodSimulationReads(
         period=0,
@@ -516,7 +516,7 @@ def _query_copy_leaf(
 ) -> FloatND:
     node: PytreeValue = arguments
     for step in path:
-        if isinstance(node, ArrivalQueryArguments):
+        if isinstance(node, ParticipationQueryArguments):
             assert step == "by_target"
             node = node.by_target
         else:
@@ -530,7 +530,7 @@ def _query_copy_leaf(
 def test_collective_queries_share_original_value_copies_on_an_ordered_submesh(  # noqa: C901, PLR0912, PLR0915 - keep the real read/refusal/copy lifecycle together
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Current and arrival queries share live future-value copies until completion."""
+    """Current and participation queries share live future-value copies until done."""
     declarations = _make_dissolution_regimes()
     declarations["married_terminal"] = declarations["married_terminal"].replace(
         functions={
@@ -585,10 +585,10 @@ def test_collective_queries_share_original_value_copies_on_an_ordered_submesh(  
             regime.simulation.programs.exit_participating[1],
         ),
         (
-            "arrival_entry:married",
-            plan.arrivals["married"].queries,
-            regime.simulation.programs.arrival_program(
-                family="arrival_entry:married", period=1
+            "participation_entry:married",
+            plan.participation["married"].queries,
+            regime.simulation.programs.participation_program(
+                family="participation_entry:married", period=1
             ),
         ),
     )
@@ -734,7 +734,7 @@ def test_collective_queries_share_original_value_copies_on_an_ordered_submesh(  
             assert exits
             rejected = (
                 np.asarray(answer[1]) == 1
-                if family == "arrival_entry:married"
+                if family == "participation_entry:married"
                 else np.isin(np.asarray(answer[1]), exits)
             )
             np.testing.assert_array_equal(rejected, [False, True, False, False])

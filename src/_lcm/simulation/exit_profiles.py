@@ -1,6 +1,7 @@
 """Inventory the actual original-choice, route and revealed-action programs."""
 
 from collections.abc import Callable, Mapping
+from types import MappingProxyType
 from typing import cast
 
 import jax
@@ -8,13 +9,6 @@ import numpy as np
 
 from _lcm.engine import Regime
 from _lcm.execution.core_program import CoreBuildContext
-from _lcm.simulation.arrival_routing import (
-    arrival_frame_bases,
-    arrival_route_codes,
-    ordinary_exit_rows,
-    pending_arrival_rows,
-)
-from _lcm.simulation.arrival_values import arrival_replay_context
 from _lcm.simulation.chunk_operations import _regime_mask
 from _lcm.simulation.chunk_profile_inventory import ChunkProfileInventory, abstract_tree
 from _lcm.simulation.current_iid_overrides import (
@@ -30,12 +24,22 @@ from _lcm.simulation.exit_replay import (
     _query_reached_landing_totals,
     exit_bindings,
 )
-from _lcm.simulation.exits import arrival_entry_routes, route_original_subjects
+from _lcm.simulation.exits import participation_entry_routes, route_original_subjects
 from _lcm.simulation.forward_program_profiles import (
     PreparedDecisionProfile,
     _profile_program,
 )
 from _lcm.simulation.operand_placement import subject_operand_sharding
+from _lcm.simulation.participation_routing import (
+    ordinary_exit_rows,
+    participation_frame_bases,
+    participation_route_codes,
+    pending_participation_rows,
+)
+from _lcm.simulation.participation_values import (
+    ParticipationSurfaces,
+    participation_replay_context,
+)
 from _lcm.simulation.random_address import draw_window_keys
 from _lcm.simulation.taste_stream import draw_taste_shock_keys
 from _lcm.simulation.value_placement import simulation_value_sharding
@@ -69,6 +73,7 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
     regime_names_to_ids: RegimeNamesToIds,
     flat_params: FlatParams,
     values: Mapping[int, Mapping[str, jax.Array | jax.ShapeDtypeStruct]],
+    surfaces: ParticipationSurfaces = MappingProxyType({}),
     ages: TimeAxis,
     key: jax.ShapeDtypeStruct,
     taste_key: jax.ShapeDtypeStruct | None,
@@ -162,8 +167,8 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
         regime = actors[name]
         plan = regime.simulation.exit_queries[period]
         queries = (
-            plan.arrivals[family.removeprefix("arrival_entry:")].queries
-            if family.startswith("arrival_entry:")
+            plan.participation[family.removeprefix("participation_entry:")].queries
+            if family.startswith("participation_entry:")
             else plan.full
             if family == "exit_full"
             else plan.participating[name]
@@ -172,9 +177,10 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
             raise ExecutionPlanningError("An incoming-only actor has no Full program.")
         context = queries.definitions[queries.root].context
         arguments = queries.arguments(
-            context=arrival_replay_context(
+            context=participation_replay_context(
                 queries=queries,
                 values=values,
+                surfaces=surfaces,
                 context=CoreBuildContext(
                     state_action_space=context.state_action_space,
                     next_regime_to_V_arr=values.get(period + 1, {}),
@@ -207,10 +213,10 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
         }
         profile = _profile_program(
             runtime=inventory.runtime,
-            program=regime.simulation.programs.arrival_program(
+            program=regime.simulation.programs.participation_program(
                 family=family, period=period
             )
-            if family.startswith("arrival_entry:")
+            if family.startswith("participation_entry:")
             else getattr(regime.simulation.programs, family)[period],
             arguments=inputs,
             period=period,
@@ -251,7 +257,7 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
     routes = []
     pending_entries = {
         (name, source): inventory.operation(
-            function=pending_arrival_rows,
+            function=pending_participation_rows,
             arguments={
                 "regime_ids": regime_ids,
                 "entered_through": entered_through,
@@ -262,7 +268,7 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
             subject_outputs=True,
         )
         for name, regime in actors.items()
-        for source in regime.simulation.exit_queries[period].arrivals
+        for source in regime.simulation.exit_queries[period].participation
     }
     for name, regime in actors.items():
         queries = regime.simulation.exit_queries[period].full
@@ -329,12 +335,12 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
                     )
                 )
     decisions = {name: answer[1] for name, (answer, _) in originals.items()}
-    arrival_frames, arrival_pending = {}, {}
+    participation_frames, participation_pending = {}, {}
     for (name, source), holders in pending_entries.items():
-        entry = actors[name].simulation.exit_queries[period].arrivals[source]
+        entry = actors[name].simulation.exit_queries[period].participation[source]
         output = native(
             name=name,
-            family=f"arrival_entry:{source}",
+            family=f"participation_entry:{source}",
             columns=states,
             holders=cast("jax.ShapeDtypeStruct", holders),
         )
@@ -346,8 +352,8 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
             landings=bool(entry.queries.landing_checks),
         )
         edge = f"{name}:{source}"
-        arrival_frames[edge], arrival_pending[edge] = frame, holders
-        entry_routes, route_codes, addresses = arrival_entry_routes(
+        participation_frames[edge], participation_pending[edge] = frame, holders
+        entry_routes, route_codes, addresses = participation_entry_routes(
             regimes=regimes,
             target=name,
             source=source,
@@ -366,7 +372,7 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
         decisions[name] = cast(
             "jax.ShapeDtypeStruct",
             inventory.operation(
-                function=arrival_route_codes,
+                function=participation_route_codes,
                 arguments={
                     "original": decisions[name],
                     "incoming": answer[1],
@@ -429,21 +435,21 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
         subject_arg_names=("regime_ids", "availability"),
         subject_outputs=True,
     )
-    if arrival_frames:
+    if participation_frames:
         bases, produced = cast(
             "tuple[ShapeDtypePytree, ShapeDtypePytree]",
             inventory.operation(
-                function=arrival_frame_bases,
+                function=participation_frame_bases,
                 arguments={
                     "bases": bases,
                     "produced": produced,
                     "incoming_bases": {
-                        edge: frame[2] for edge, frame in arrival_frames.items()
+                        edge: frame[2] for edge, frame in participation_frames.items()
                     },
                     "incoming_available": {
-                        edge: frame[7] for edge, frame in arrival_frames.items()
+                        edge: frame[7] for edge, frame in participation_frames.items()
                     },
-                    "pending": arrival_pending,
+                    "pending": participation_pending,
                 },
                 static_arguments={
                     "physical_names": tuple(
@@ -451,7 +457,7 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
                             edge,
                             tuple(cast("Mapping[str, jax.ShapeDtypeStruct]", frame[0])),
                         )
-                        for edge, frame in arrival_frames.items()
+                        for edge, frame in participation_frames.items()
                     )
                 },
                 subject_arg_names=(

@@ -392,17 +392,17 @@ states may include:
 
 - Concrete discrete grids.
 - At most one static `PiecewiseLinSpacedGrid` interpolation coordinate per regime.
-- Fully specified, unconditioned `RouwenhorstAR1Process` nodes and unfolded
-  `NormalIIDProcess` nodes with Gauss-Hermite quadrature.
+- Fully specified, unconditioned `RouwenhorstAR1Process` nodes and `NormalIIDProcess`
+  nodes with Gauss-Hermite quadrature.
 - Carried states declared with a `LinSpacedGrid` simulation domain. Their solve
   imputation does not add a value-array dimension.
 
-Runtime state grids, folded processes, other process families, mixed solvers, collective
-or gated routes, same-period references and taste shocks remain outside this route.
-Runtime action grids keep their ordinary GridSearch semantics. Process nodes retain the
-ordinary index-based continuation read; sharding does not enable process-aware off-grid
-interpolation. Additional continuous coordinates keep their named positions, so the
-sharded axis need not be trailing.
+Runtime state grids, other process families, mixed solvers, collective or gated routes,
+same-period references and taste shocks remain outside this route. Runtime action grids
+keep their ordinary GridSearch semantics. Process nodes retain the ordinary index-based
+continuation read; sharding does not enable process-aware off-grid interpolation.
+Additional continuous coordinates keep their named positions, so the sharded axis need
+not be trailing.
 
 For example, a 24-point assets axis can use eight selected devices, with three assets
 coordinates on each device. Logical value-axis order stays unchanged. Interpolation

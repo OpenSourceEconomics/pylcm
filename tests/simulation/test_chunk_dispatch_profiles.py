@@ -167,7 +167,6 @@ def test_unit_profile_uses_real_merged_carrier_descriptors() -> None:
         base=base_spaces["alive"],
         base_spaces=base_spaces,
         values=engine_view.values,
-        flags=engine_view.dissolution_flags,
         ages=model.ages,
         n_subjects=2,
         widths={"subject": 2},

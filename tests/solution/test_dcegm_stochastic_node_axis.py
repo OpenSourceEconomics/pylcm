@@ -24,7 +24,7 @@ from lcm import (
     Transition,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
-from lcm.solvers import DCEGM, STOCHASTIC_NODE_AXIS
+from lcm.solvers import DCEGM, STOCHASTIC_NODE_AXIS, RFCEnvelope
 from lcm.typing import FloatND
 from tests.conftest import EXACT_KERNEL_SKIP_REASON, assert_agrees_to_ulp
 from tests.solution.test_egm_process_states import (
@@ -76,7 +76,9 @@ def _model(width: int | None = None) -> Model:
             "savings": savings,
             "inverse_marginal_utility": inverse_marginal_utility,
         },
-        solver=DCEGM(savings_grid=SAVINGS_GRID, n_constrained_points=64),
+        solver=DCEGM(
+            savings_grid=SAVINGS_GRID, n_constrained_points=64, envelope=RFCEnvelope()
+        ),
         liquid=LiquidMargin(
             state="wealth",
             action="consumption",

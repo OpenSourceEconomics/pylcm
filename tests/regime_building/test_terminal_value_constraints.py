@@ -29,7 +29,6 @@ from lcm import (
     categorical,
     fixed_transition,
 )
-from lcm.solver_api import DISSOLUTION_FLAG
 from lcm.typing import (
     BoolND,
     ContinuousState,
@@ -37,6 +36,7 @@ from lcm.typing import (
     ScalarInt,
     UserParamsNode,
 )
+from tests.collective_fixtures import recorded_dissolution_flags
 
 _WAGE = IrregSpacedGrid(points=np.array([1.0, 2.0, 3.0]))
 
@@ -182,13 +182,15 @@ def test_terminal_flags_and_sentinels_at_adjacent_outside_options(
         bound = np.nextafter(bound, dtype.type(np.inf if direction > 0 else -np.inf))
     model = _make_model(participation=True)
 
-    solution = model.solve(params=_params(outside_option=float(bound)), log_level="off")
+    with recorded_dissolution_flags() as flags:
+        solution = model.solve(
+            params=_params(outside_option=float(bound)), log_level="off"
+        )
 
     wage = np.asarray([1.0, 2.0, 3.0], dtype=dtype)
     expected_flags = wage < bound
     expected_values = np.column_stack((wage, 2 * wage))
     expected_values[expected_flags] = -np.inf
-    flags = solution.replay_artifacts.project(DISSOLUTION_FLAG)
     np.testing.assert_array_equal(
         np.asarray(flags[1]["couple_terminal"]), expected_flags
     )
@@ -206,8 +208,8 @@ def test_a_terminal_participation_constraint_flags_the_cells_it_empties() -> Non
     """
     model = _make_model(participation=True)
 
-    _solution = model.solve(params=_params(), log_level="off")
-    flags = _solution.replay_artifacts.project(DISSOLUTION_FLAG)
+    with recorded_dissolution_flags() as flags:
+        model.solve(params=_params(), log_level="off")
 
     np.testing.assert_array_equal(
         np.asarray(flags[1]["couple_terminal"]), [True, True, False]
@@ -241,8 +243,8 @@ def test_the_same_terminal_regime_without_the_constraint_keeps_every_cell() -> N
     """
     model = _make_model(participation=False)
 
-    solution = model.solve(params=_params(participation=False), log_level="off")
-    flags = solution.replay_artifacts.project(DISSOLUTION_FLAG)
+    with recorded_dissolution_flags() as flags:
+        solution = model.solve(params=_params(participation=False), log_level="off")
 
     np.testing.assert_array_equal(
         np.asarray(flags[1]["couple_terminal"]), [False, False, False]
@@ -262,11 +264,11 @@ def test_a_terminal_reference_is_read_at_the_referenced_regimes_own_value() -> N
     """
     model = _make_model(participation=True)
 
-    _solution = model.solve(
-        params=_params(outside_option=4.0),
-        log_level="off",
-    )
-    flags = _solution.replay_artifacts.project(DISSOLUTION_FLAG)
+    with recorded_dissolution_flags() as flags:
+        model.solve(
+            params=_params(outside_option=4.0),
+            log_level="off",
+        )
 
     np.testing.assert_array_equal(
         np.asarray(flags[1]["couple_terminal"]), [True, True, True]

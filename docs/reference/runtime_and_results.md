@@ -255,12 +255,12 @@ Its fields:
   the budget. A simulation of several subject chunks runs period by period, with every
   chunk going through one period before the next, so each period's values and policies
   are copied to the device once rather than once per chunk. Before a period's chunks
-  run, the values, dissolution flags and policies the next period's programs declare
-  reading start copying, so the copies overlap this period's work; under a budget the
-  planner reserves the largest such set beside every subject's state. Under
-  `BLOCK_MAJOR`, `"host"` and a directory apply to each code's solve; component jobs
-  take `"device"` only. A copy or write that fails raises `ValueStorageError`, naming
-  the period, the regime and the target.
+  run, the values and policies the next period's programs declare reading start copying,
+  so the copies overlap this period's work; under a budget the planner reserves the
+  largest such set beside every subject's state. Under `BLOCK_MAJOR`, `"host"` and a
+  directory apply to each code's solve; component jobs take `"device"` only. A copy or
+  write that fails raises `ValueStorageError`, naming the period, the regime and the
+  target.
 
 NB-EGM can nominate one marginal leaf on an unsharded, self-carry `main` program.
 Donation requires exclusive solve ownership and a final, unretained read. A physical
@@ -495,9 +495,9 @@ consulted, so a mapping whose keys disagree with its items cannot smuggle a payl
 the checks. Nested `period -> regime -> value` and flat `(period, regime) -> value`
 forms are recognized from the same traversal.
 
-Built-in key identities include `SIMULATION_POLICY`, `DISSOLUTION_FLAG`,
-`EGM_CONTINUATION`, and `SOLVER_DIAGNOSTICS`. The `omissions` mapping distinguishes an
-artifact that is not applicable, not requested, unsupported, or not persisted.
+Built-in key identities include `SIMULATION_POLICY`, `EGM_CONTINUATION`, and
+`SOLVER_DIAGNOSTICS`. The `omissions` mapping distinguishes an artifact that is not
+applicable, not requested, unsupported, or not persisted.
 
 Metadata carries a durable SHA-256 model fingerprint, the exact digest of canonical
 parameters that can affect the solution, solver and replay-route identities, artifact
@@ -612,12 +612,12 @@ dissolution-flag inputs are not accepted.
 How a `SolutionResult` is consumed follows its provenance. A result the same model
 instance solved in this process, for the same canonical parameters, is consumed by
 reference: the engine reads the arrays the solve allocated without copying or
-re-validating them, and only checks the replay payloads and dissolution flags it is
-about to read. Every other result — restored from an archive, unpickled, or produced by
-another model instance — is validated in full and materialized into private buffers once
-per consuming model and parameter vector; a second simulation from the same result
-reuses that validated view. The consumed result stays reachable as
-`SimulationResult.solution` until the simulation result is saved.
+re-validating them, and only checks the replay payloads it is about to read. Every other
+result — restored from an archive, unpickled, or produced by another model instance — is
+validated in full and materialized into private buffers once per consuming model and
+parameter vector; a second simulation from the same result reuses that validated view.
+The consumed result stays reachable as `SimulationResult.solution` until the simulation
+result is saved.
 
 Before consuming such a result, simulation checks its durable model and
 solution-parameter fingerprints, exact solver/plugin and replay-route identities, schema
@@ -723,6 +723,11 @@ Continuous states off the grid extrapolate as in simulate; discrete states and
 restricted `action_grids` values must lie on their grids. `Model.state_names` gives the
 axis order of `solution.values[period][regime]`, and `Model.state_grid` gives a state's
 grid nodes after runtime parameters.
+
+A regime that reads a `shocks=` group on the integrated current-IID route, that is a
+group no endogenous-grid regime reads, raises `UnsupportedOperationError`: its decision
+depends on a current shock, which needs an explicit observation or conditional query.
+See [Combinations not yet composed with current shocks](shocks.md#current-iid-refusals).
 
 `keep_intermediates` names the intermediates of the decision to keep, in any order: the
 action values `"Q"`, their feasibility `"F"`, the flow utility `"U"` and the

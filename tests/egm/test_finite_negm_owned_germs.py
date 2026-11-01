@@ -1,4 +1,4 @@
-"""Owned finite rows keep their analytic germs and independent economic records."""
+"""Owned finite rows keep their side finiteness and independent economic records."""
 
 from dataclasses import replace
 
@@ -8,11 +8,12 @@ import numpy as np
 import pytest
 
 from _lcm.egm.finite_negm_query import (
+    _FiniteOuterProfile,
     _FiniteRowRead,
     _read_finite_native_row,
+    _select_finite_outer_profiles,
     _validate_finite_outer_rows,
 )
-from _lcm.egm.outer_envelope import right_germ_winner
 from _lcm.egm.query_data import EGMQueryData, QueryNodeKind
 from _lcm.egm.upper_envelope.segment_envelope import (
     DEFAULT_MAX_RUNS,
@@ -21,7 +22,6 @@ from _lcm.egm.upper_envelope.segment_envelope import (
 )
 from lcm.typing import FloatND
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
-from tests.egm._finite_selection_component import _FiniteOuterRead, component_view
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
@@ -84,23 +84,22 @@ def _read(
 
 
 @pytest.mark.parametrize(
-    ("coordinate", "expected_value", "expected_marginal", "right", "left"),
+    ("coordinate", "expected_value", "expected_marginal", "left_finite"),
     [
-        (1.0, 0.0, 0.0, (True, 0.0, 2.0, 0.0), (False, 0.0, 0.0, 0.0)),
-        (2.0, 1.0, 2.0, (True, 2.0, 2.0, 0.0), (True, 2.0, 2.0, 0.0)),
-        (3.0, 4.0, 4.0, (True, 0.0, 0.0, 0.0), (True, 4.0, 2.0, 0.0)),
-        (3.5, 4.0, 4.0, (True, 0.0, 0.0, 0.0), (True, 0.0, 0.0, 0.0)),
+        (1.0, 0.0, 0.0, False),
+        (2.0, 1.0, 2.0, True),
+        (3.0, 4.0, 4.0, True),
+        (3.5, 4.0, 4.0, True),
     ],
 )
-def test_owned_quadratic_germs_at_nodes_and_clamp(
+def test_owned_quadratic_sides_at_nodes_and_clamp(
     *,
     coordinate: float,
     expected_value: float,
     expected_marginal: float,
-    right: tuple[bool, float, float, float],
-    left: tuple[bool, float, float, float],
+    left_finite: bool,
 ) -> None:
-    """The exact quadratic's side germs differ from its economic terminal record."""
+    """The exact quadratic's left finiteness is separate from its economic record."""
     row, marginal, data = _emit(
         coordinates=(1.0, 2.0, 3.0), values=(0.0, 1.0, 4.0), marginals=(0.0, 2.0, 4.0)
     )
@@ -109,10 +108,7 @@ def test_owned_quadratic_germs_at_nodes_and_clamp(
     assert not bool(raw.ordinary.invalid_numeric)
     np.testing.assert_array_equal(raw.ordinary.value, expected_value)
     np.testing.assert_array_equal(raw.ordinary.marginal, expected_marginal)
-    assert bool(raw.right_germ[0]) is right[0]
-    assert bool(raw.left_germ[0]) is left[0]
-    np.testing.assert_array_equal(jnp.stack(raw.right_germ[1:]), right[1:])
-    np.testing.assert_array_equal(jnp.stack(raw.left_germ[1:]), left[1:])
+    assert bool(raw.left_finite) is left_finite
 
 
 def test_duplicate_keeps_each_actual_side_record() -> None:
@@ -152,13 +148,10 @@ def test_duplicate_keeps_each_actual_side_record() -> None:
     np.testing.assert_array_equal(raw.ordinary.marginal, 0.5)
     np.testing.assert_array_equal(raw.left.value, 2.0)
     np.testing.assert_array_equal(raw.left.marginal, 2.0)
-    assert bool(raw.right_germ[0])
-    assert bool(raw.left_germ[0])
-    np.testing.assert_array_equal(jnp.stack(raw.right_germ[1:]), [0.5, 0.0, 0.0])
-    np.testing.assert_array_equal(jnp.stack(raw.left_germ[1:]), [2.0, 0.0, 0.0])
+    assert bool(raw.left_finite)
 
 
-def test_invalid_link_is_missing_without_fabricated_germ() -> None:
+def test_invalid_link_is_missing_without_fabricated_side() -> None:
     """A missing owned link cannot contribute a finite neighborhood."""
     row, marginal, data = _emit(
         coordinates=(1.0, 2.0), values=(0.0, 1.0), marginals=(1.0, 1.0)
@@ -171,11 +164,10 @@ def test_invalid_link_is_missing_without_fabricated_germ() -> None:
     )
     assert not bool(raw.ordinary.supported)
     assert not bool(raw.ordinary.invalid_numeric)
-    assert not bool(raw.right_germ[0])
-    assert not bool(raw.left_germ[0])
+    assert not bool(raw.left_finite)
 
 
-def test_single_record_has_clamp_germ_and_independent_economic_marginal() -> None:
+def test_single_record_has_no_left_side_and_independent_economic_marginal() -> None:
     """An isolated authenticated record has no left support and a constant right ray."""
     emitted, marginal, data = _emit(
         coordinates=(1.0, 2.0), values=(0.0, 1.0), marginals=(2.0, 2.0)
@@ -198,36 +190,30 @@ def test_single_record_has_clamp_germ_and_independent_economic_marginal() -> Non
     assert bool(raw.ordinary.supported)
     np.testing.assert_array_equal(raw.ordinary.value, 0.0)
     np.testing.assert_array_equal(raw.ordinary.marginal, 2.0)
-    assert bool(raw.right_germ[0])
-    assert not bool(raw.left_germ[0])
-    np.testing.assert_array_equal(jnp.stack(raw.right_germ[1:]), [0.0, 0.0, 0.0])
+    assert not bool(raw.left_finite)
 
 
-def _validated(raw: _FiniteRowRead) -> _FiniteOuterRead:
-    return component_view(
-        profile=_validate_finite_outer_rows(
-            raw=raw,
-            queries=jnp.asarray(2.0),
-            gradients=jnp.asarray(1.0),
-            floor=jnp.asarray(0.0),
-            upper_saving=jnp.asarray(2.0),
-            resources=jnp.asarray(4.0),
-            eligible=jnp.asarray(a=True),
-            corner_value=jnp.asarray(-10.0),
-            corner_marginal=jnp.asarray(0.0),
-            supported_corner=jnp.asarray(a=False),
-            finite_corner=jnp.asarray(a=False),
-            invalid_corner=jnp.asarray(a=False),
-            paired_marginal_read=False,
-        )
+def _profile(raw: _FiniteRowRead) -> _FiniteOuterProfile:
+    return _validate_finite_outer_rows(
+        raw=raw,
+        queries=jnp.asarray(2.0),
+        gradients=jnp.asarray(1.0),
+        floor=jnp.asarray(0.0),
+        upper_saving=jnp.asarray(2.0),
+        resources=jnp.asarray(4.0),
+        eligible=jnp.asarray(a=True),
+        corner_value=jnp.asarray(-10.0),
+        corner_marginal=jnp.asarray(0.0),
+        supported_corner=jnp.asarray(a=False),
+        finite_corner=jnp.asarray(a=False),
+        invalid_corner=jnp.asarray(a=False),
+        paired_marginal_read=False,
     )
 
 
-@pytest.mark.parametrize(("increasing", "expected_winner"), [(False, 0), (True, 1)])
-def test_clamp_finiteness_is_distinct_from_zero_side_payload(
-    *, increasing: bool, expected_winner: int
-) -> None:
-    """A finite terminal clamp beats a falling tie and loses to a rising tie."""
+@pytest.mark.parametrize("increasing", [False, True])
+def test_exact_value_tie_goes_to_the_lowest_outer_index(*, increasing: bool) -> None:
+    """An exact value tie selects the lowest O, whatever the right-side shapes."""
     clamp, clamp_m, clamp_data = _emit(
         coordinates=(1.0, 2.0), values=(0.0, 1.0), marginals=(1.0, 1.0)
     )
@@ -241,22 +227,19 @@ def test_clamp_finiteness_is_distinct_from_zero_side_payload(
     np.testing.assert_array_equal(raw_clamp.ordinary.value, 1.0)
     np.testing.assert_array_equal(raw_other.ordinary.value, 1.0)
     candidates = jax.tree.map(
-        lambda *leaves: jnp.stack(leaves), _validated(raw_clamp), _validated(raw_other)
+        lambda *leaves: jnp.stack(leaves, axis=-1),
+        _profile(raw_clamp),
+        _profile(raw_other),
     )
-    np.testing.assert_array_equal(candidates.value, [1.0, 1.0])
-    assert bool(candidates.right_dead[0])
-    assert bool(candidates.right_germ[0][0])
-    assert bool(candidates.right_germ[0][1])
-    winner, _ = right_germ_winner(
-        value=candidates.value,
-        right_germ=candidates.right_germ,
-        left_germ=candidates.left_germ,
-    )
-    np.testing.assert_array_equal(winner, [expected_winner])
+    np.testing.assert_array_equal(candidates.right.value, [1.0, 1.0])
+    assert bool(candidates.right.dead[0])
+    selection = _select_finite_outer_profiles(profiles=candidates)
+    np.testing.assert_array_equal(selection.outer_index, [0])
+    np.testing.assert_array_equal(selection.right.ordinary.marginal, [1.0])
 
 
-def test_finite_node_with_economic_right_bracket_has_no_finite_right_germ() -> None:
-    """A finite point cannot lend a finite germ to an economic -inf right interval."""
+def test_finite_node_with_economic_right_bracket_keeps_its_left_side() -> None:
+    """A finite node before an economic -inf right interval keeps its left side."""
     emitted, marginal, data = _emit(
         coordinates=(1.0, 2.0, 3.0), values=(0.0, 1.0, 2.0), marginals=(1.0, 1.0, 1.0)
     )
@@ -272,7 +255,4 @@ def test_finite_node_with_economic_right_bracket_has_no_finite_right_germ() -> N
     assert bool(raw.ordinary.supported)
     np.testing.assert_array_equal(raw.ordinary.value, 1.0)
     np.testing.assert_array_equal(raw.ordinary.marginal, 1.0)
-    assert not bool(raw.right_germ[0])
-    assert bool(raw.left_germ[0])
-    candidates = _validated(raw)
-    assert not bool(candidates.right_germ[0])
+    assert bool(raw.left_finite)

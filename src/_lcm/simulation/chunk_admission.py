@@ -14,13 +14,11 @@ from types import MappingProxyType
 
 import jax
 
-from _lcm.egm.current_iid_replay_inputs import CurrentIIDReplayInputs
 from _lcm.engine import Regime, placed_devices_for_ids
 from _lcm.execution.core_program import ReducedAxis, TiledOutputAxis
 from _lcm.execution.footprint import per_device_footprint
 from _lcm.execution.workspace_planning import workspace_width_candidates
 from _lcm.processes.grid_resolution import ProcessGridResolver
-from _lcm.regime_building.projected_forward import ProjectedForwardInputs
 from _lcm.simulation.chunk_inputs import (
     SimulationCallInputs,
     prepare_simulation_call_inputs,
@@ -58,7 +56,13 @@ from _lcm.solution.host_values import (
     planning_stand_in,
 )
 from _lcm.time import TimeAxis
-from _lcm.typing import FlatParams, RegimeName, RegimeNamesToIds, SimulationPolicy
+from _lcm.typing import (
+    FlatParams,
+    PeriodToRegimeToParticipationSurfaces,
+    RegimeName,
+    RegimeNamesToIds,
+    SimulationPolicy,
+)
 from _lcm.utils.logging import LogLevel
 from lcm.exceptions import ExecutionPlanningError
 
@@ -142,7 +146,6 @@ def prepare_simulation_chunks(
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
     values: StoredValues,
-    flags: Mapping[int, Mapping[str, jax.Array]],
     ages: TimeAxis,
     initial_conditions: Mapping[str, jax.Array],
     regime_names_to_ids: RegimeNamesToIds,
@@ -154,8 +157,9 @@ def prepare_simulation_chunks(
     log_level: LogLevel,
     runtime_checks: bool = True,
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None = None,
-    current_iid_replay_inputs: CurrentIIDReplayInputs = MappingProxyType({}),
-    projected_forward_inputs: ProjectedForwardInputs = MappingProxyType({}),
+    participation_surfaces: PeriodToRegimeToParticipationSurfaces = MappingProxyType(
+        {}
+    ),
     process_grid_resolver: ProcessGridResolver | None = None,
     max_compilation_workers: int | None = None,
     group_sizes: tuple[int, ...] | None = None,
@@ -193,9 +197,8 @@ def prepare_simulation_chunks(
                     flat_params,
                     initial_conditions,
                     values,
-                    flags,
                     ages.values,
-                    projected_forward_inputs,
+                    participation_surfaces,
                 )
             ),
         )
@@ -243,10 +246,8 @@ def prepare_simulation_chunks(
         # Profiles and their cache keys need only the values' shapes and
         # placement; reading values kept off the device would copy them.
         values=planning_stand_in(values),
-        flags=flags,
         policies=planning_stand_in(policies),
-        current_iid_replay_inputs=current_iid_replay_inputs,
-        projected_forward_inputs=projected_forward_inputs,
+        participation_surfaces=participation_surfaces,
         ages=ages,
         initial_conditions=initial_conditions,
         regime_names_to_ids=regime_names_to_ids,
@@ -280,7 +281,6 @@ def prepare_simulation_chunks(
         prefetch = _prefetch_bytes(
             regimes=regimes,
             values=planning_stand_in(values),
-            flags=planning_stand_in(flags),
             policies=planning_stand_in(policies),
             n_periods=ages.n_periods,
             devices=devices,
@@ -345,30 +345,27 @@ def _prefetch_bytes(
     *,
     regimes: Mapping[RegimeName, Regime],
     values: Mapping[int, Mapping[str, jax.Array | jax.ShapeDtypeStruct]],
-    flags: Mapping[int, Mapping[str, jax.Array | jax.ShapeDtypeStruct]],
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None,
     n_periods: int,
     devices: tuple[jax.Device, ...],
 ) -> dict[jax.Device, int]:
     """Estimate each device's bytes of the largest read set one period copies early.
 
-    The period-by-period loop starts copying the next period's declared values,
-    flags and policies while a period runs, so they sit beside that period's own
-    reads. Every argument is a planning stand-in: nothing is read.
+    The period-by-period loop starts copying the next period's declared values
+    and policies while a period runs, so they sit beside that period's own reads.
+    Every argument is a planning stand-in: nothing is read.
     """
     by_id = {device.id: device for device in devices}
     active_by_period = forward_regimes_by_period(regimes=regimes, n_periods=n_periods)
     largest: dict[jax.Device, int] = {}
     for period in range(1, n_periods):
         active = active_by_period[period]
-        value_targets, flag_targets = period_read_targets(
-            active=active, period=period, values=values, flags=flags
-        )
         arrays = [
-            stored[target_period][regime]
-            for stored, targets in ((values, value_targets), (flags, flag_targets))
-            for target_period, regime in targets
-            if regime in stored.get(target_period, {})
+            values[target_period][regime]
+            for target_period, regime in period_read_targets(
+                active=active, period=period, values=values
+            )
+            if regime in values.get(target_period, {})
         ]
         arrays.extend(
             leaf
@@ -394,10 +391,10 @@ def _simulation_chunk_profile_key(
     regimes: Mapping[str, Regime],
     call_inputs: SimulationCallInputs,
     values: Mapping[int, Mapping[str, jax.Array | jax.ShapeDtypeStruct]],
-    flags: Mapping[int, Mapping[str, jax.Array]],
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None,
-    current_iid_replay_inputs: CurrentIIDReplayInputs = MappingProxyType({}),
-    projected_forward_inputs: ProjectedForwardInputs = MappingProxyType({}),
+    participation_surfaces: PeriodToRegimeToParticipationSurfaces = MappingProxyType(
+        {}
+    ),
     ages: TimeAxis,
     initial_conditions: Mapping[str, jax.Array],
     regime_names_to_ids: RegimeNamesToIds,
@@ -459,10 +456,8 @@ def _simulation_chunk_profile_key(
                 for space in call_inputs.base_state_action_spaces.values()
             )
         ),
-        _abstract_value_key(value=current_iid_replay_inputs),
-        _abstract_value_key(value=projected_forward_inputs),
+        _abstract_value_key(value=participation_surfaces),
         _abstract_value_key(value=values),
-        _abstract_value_key(value=flags),
         _abstract_value_key(value=initial_conditions),
         _abstract_value_key(value=ages.values),
     )
@@ -507,7 +502,6 @@ class _ChunkProfiler:
     regimes: Mapping[str, Regime]
     call_inputs: SimulationCallInputs
     values: Mapping[int, Mapping[str, jax.Array | jax.ShapeDtypeStruct]]
-    flags: Mapping[int, Mapping[str, jax.Array]]
     ages: TimeAxis
     initial_conditions: Mapping[str, jax.Array]
     regime_names_to_ids: RegimeNamesToIds
@@ -521,8 +515,7 @@ class _ChunkProfiler:
     resident: Mapping[jax.Device, int]
     devices: tuple[jax.Device, ...]
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None = None
-    current_iid_replay_inputs: CurrentIIDReplayInputs = MappingProxyType({})
-    projected_forward_inputs: ProjectedForwardInputs = MappingProxyType({})
+    participation_surfaces: PeriodToRegimeToParticipationSurfaces = MappingProxyType({})
     max_compilation_workers: int | None = None
     group_sizes: tuple[int, ...] | None = None
     current_iid_override_schema: CurrentIIDOverrideSchema = ()
@@ -586,10 +579,8 @@ class _ChunkProfiler:
             "runtime": self.runtime,
             "regimes": self.regimes,
             "values": self.values,
-            "flags": self.flags,
             "policies": self.policies,
-            "current_iid_replay_inputs": self.current_iid_replay_inputs,
-            "projected_forward_inputs": self.projected_forward_inputs,
+            "participation_surfaces": self.participation_surfaces,
             "ages": self.ages,
             "initial_conditions": self.initial_conditions,
             "regime_names_to_ids": self.regime_names_to_ids,

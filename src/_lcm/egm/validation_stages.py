@@ -114,6 +114,7 @@ _PRIMITIVE_ARITIES: Mapping[Primitive, int | None] = MappingProxyType(
         primitive_objects.scatter_add_p: 3,
         primitive_objects.concatenate_p: None,
         primitive_objects.reduce_max_p: 1,
+        primitive_objects.reduce_min_p: 1,
         primitive_objects.reduce_sum_p: 1,
         primitive_objects.reduce_or_p: 1,
         primitive_objects.is_finite_p: 1,
@@ -175,6 +176,13 @@ _PJIT_INFO_TYPE = pjit.PjitInfo
 _CAPTURED_ELEMENTARY_LOG = jnp.log
 _CAPTURED_ELEMENTARY_NEXTAFTER = jnp.nextafter
 _CAPTURED_ELEMENTARY_ISNAN = jnp.isnan
+# `jnp.maximum` is a ufunc: its hashed static properties are the elementwise
+# `max` and single-primitive `reduce_max` jits.
+_CAPTURED_ELEMENTARY_MAXIMUM = tuple(
+    value
+    for value in vars(jnp.maximum)["_ufunc__static_props"].values()
+    if callable(value)
+)
 
 
 def _original_closure_value(*, function: types.FunctionType, name: str) -> _Reachable:
@@ -243,6 +251,7 @@ def _require_original_jit_policy(
                 value is _CAPTURED_ELEMENTARY_LOG
                 or value is _CAPTURED_ELEMENTARY_NEXTAFTER
                 or value is _CAPTURED_ELEMENTARY_ISNAN
+                or any(value is jit for jit in _CAPTURED_ELEMENTARY_MAXIMUM)
             )
             and _is_captured_jax_pjit(value)
             and jax_config.error_checking_behavior_nan.value == "ignore"

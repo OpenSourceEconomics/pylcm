@@ -431,13 +431,17 @@ def _raise_at(
     next_regime_to_V_arr = _reconstruct_next_regime_to_V_arr(
         period=row.period, solution=solution
     )
-    # The intermediates closure mirrors the brute-force Q evaluation; for a
-    # regime solved from interpolated continuations it cannot reproduce the
-    # failing computation, so the error is raised without the U/F/E/Q
-    # breakdown.
+    # The intermediates closure mirrors the brute-force Q evaluation. It cannot
+    # reproduce the failing computation, so the error is raised without the
+    # U/F/E/Q breakdown, for a regime that:
+    # - is solved from interpolated continuations;
+    # - reads a gated edge's continuation or a leg fallback's reference value,
+    #   which the solve derives per period and the stored values do not hold.
     compute_intermediates = (
         None
         if regime.solution.solves_from_continuation
+        or regime.gated_edges
+        or regime.edge_reference_regimes
         else regime.solution.compute_intermediates.get(row.period)
     )
     V_arr = solution[row.period][row.regime_name]
