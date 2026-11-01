@@ -713,7 +713,7 @@ _SOURCE_SEALS = {
     SIMULATION_SOURCE: "12bb1c0c090ee36c7ebda5ee4c62052c5149e75d0598dba35a2cdc127d45c6a8",
     SIMULATION_TRANSITIONS_SOURCE: "74d8ecfd0726c58d7a33457677079a18f5065b338d29ab14e506bc301456c365",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
-    MODEL_SOURCE: "f9505aae4a9a1095c734823a9604035e18500889e5e2fde2a83b66cfb9c0064d",
+    MODEL_SOURCE: "3d9014e14ea9340e23fadaff6f71fc3c9c05c115ea0c5383f9e5efa0876b03ed",
     SOLVER_API_SOURCE: "65c8235466fdeda91e14b94863e8e8fa84eaa4fefc7b0e0fd30e5efcd514ffc5",
     BACKWARD_INDUCTION_SOURCE: "d4da7b2c1cfb6d00490972696490a09e6379384222d374b527e80fe10a85133a",
     PERIOD_REPLAY_SOURCE: "d504ad8064dd8d7fc127ebd05510dc7ef1abc939627ab3f004b1ee75427e19ae",
@@ -1579,7 +1579,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     MODEL_SOURCE: (
-        "1d0390260457dbaa1701391ad63e7b212d87fb14df804ff2b9bac9cc70e95a90",
+        "779b54cf5f59d8bad2070e5a0ad396c1dd9aae88e8b7188cca620834de2ae245",
         {
             "_validate_sharded_state_capability": "e60cbf29e61c167df80d03b822e100799d7f9be529a8013c6f014be6df0c7233",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
@@ -1600,7 +1600,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "Model._solve_compiled": "37feab70affb91787c76414912f1e58111687f2b4f28abb257aa1dec2824e2b0",
             "Model._consume_owned_solution": "48e4a6aa4c13433e5172fe57b9a32decd54faf68d379fcfe6bd11794dd46ed57",
             "Model._build_external_replay_readers": "62d5d2c5bd473f779ddb81644162279e0a3ca329105b42636220a862391dc771",
-            "Model._runtime_regimes_for_shape": "f524f330e24be0042a19fdd3e877959c5361d2932003854910c23365f90d4902",
+            "Model._runtime_regimes_for_shape": "3b48f8f04a8d100ff4e54fb9618cc3f24198713d239175ede59c5fcba2efbd40",
             "Model._process_params": "5f62619cd04f3a25f58f1fbe6900536a13da260967d9d5d60ba3e3c70d8a94c6",
             "Model._canonicalize_params": "8c0184a8c696bf3bd3059023f0cb9921cf8f474398e2700b367e121bc7127572",
             "Model._validate_canonical_params": "89153bcb94b9aea493b585b8f48918ab6390c5d8ddcfd10c98b5c47ac06c6b12",
