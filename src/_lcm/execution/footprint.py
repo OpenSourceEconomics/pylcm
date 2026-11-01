@@ -81,6 +81,40 @@ class ScheduledUnit:
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
+class ResidentBreakdown:
+    """One device's resident charge split into the owners it is made of."""
+
+    device_id: int
+    """Device the split describes."""
+
+    live: MappingProxyType[frozenset[Hashable], int]
+    """Bytes of each charged live alias group on the device."""
+
+    peer_bytes: int
+    """Outputs of units dispatched concurrently with the cell."""
+
+    internal_bytes: int
+    """The cell's runtime internal-output reservation."""
+
+    fixed_bytes: int
+    """Solve-lifetime owners and the period's counters."""
+
+    transfer_scratch_bytes: int
+    """Declared transfer-operator scratch."""
+
+    @property
+    def total(self) -> int:
+        """Return the sum of every component."""
+        return (
+            sum(self.live.values())
+            + self.peer_bytes
+            + self.internal_bytes
+            + self.fixed_bytes
+            + self.transfer_scratch_bytes
+        )
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class ResidentInventory:
     """Array-free snapshot of the allocations present at one scheduled cell."""
 
@@ -173,6 +207,37 @@ class ResidentInventory:
             )
             for device in self.admission_device_ids
         )
+
+    def resident_breakdown(self) -> ResidentBreakdown:
+        """Split the no-argument `resident_bytes` charge on its busiest device.
+
+        Every declared input and every shared copy is excluded, as in
+        `resident_bytes()` without arguments, so shared copies never appear and
+        the split's `total` equals that number. Ties go to the lowest device id.
+        """
+        consumed = frozenset(self.declared_inputs)
+        workspace = frozenset(self.device_ids)
+        splits = (
+            ResidentBreakdown(
+                device_id=device,
+                live=MappingProxyType(
+                    {
+                        group: _group_bytes(members=members, device=device)
+                        for group, members in self.live.items()
+                        if _group_is_present(members=members, device=device)
+                        and not _group_is_consumed(
+                            members=members, device=device, consumed=consumed
+                        )
+                    }
+                ),
+                peer_bytes=self.peer_bytes[device] if device in workspace else 0,
+                internal_bytes=self.internal_bytes if device in workspace else 0,
+                fixed_bytes=self.fixed_bytes.get(device, 0),
+                transfer_scratch_bytes=self.transfer_scratch_bytes.get(device, 0),
+            )
+            for device in self.admission_device_ids
+        )
+        return max(splits, key=lambda split: split.total)
 
     @property
     def admission_device_ids(self) -> tuple[int, ...]:

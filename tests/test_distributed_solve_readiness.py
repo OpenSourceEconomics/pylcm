@@ -30,7 +30,9 @@ from tests.execution.test_pending_solve_work import _is_ready
 
 
 def _dot(*, operand: jax.Array) -> jax.Array:
-    return operand @ operand
+    # Repeated exact products keep the producer pending on fast many-core hosts.
+    repeated = jax.lax.fori_loop(0, 32, lambda _, value: value @ operand / 128, operand)
+    return repeated @ operand
 
 
 def _increment(*, value: jax.Array) -> jax.Array:

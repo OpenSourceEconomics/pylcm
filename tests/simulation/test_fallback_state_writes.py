@@ -196,7 +196,6 @@ def _route_three_households() -> StatesPerRegime:
             for name, regime in regimes.items()
         },
         period_to_regime_to_V_arr=bi_result.value_functions,
-        period_to_regime_to_dissolution_flags=bi_result.dissolution_flags,
         flat_params=flat_params,
     )
     n_households = len(_HOUSEHOLD_WAGES)

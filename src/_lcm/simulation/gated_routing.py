@@ -18,10 +18,8 @@ built from the ALREADY-SOLVED next-period arrays (no new solve-time work):
    (the states `calculate_next_states` already computed for the target via
    the source's ordinary regime law — a gated edge's target is
    always ALSO an ordinary Markov transition target, so those candidate
-   states already exist): each VALUE operand the gate predicate reads (the
-   target's own value components, every declared `gate_refs` entry) is
-   interpolated at that realized point and the SAME predicate the solve-side
-   fold uses is re-applied — never by interpolating the fold's baked boolean
+   states already exist): the SAME predicate the solve-side fold uses is
+   re-applied at that realized point — never by interpolating the fold's baked boolean
    `gate` array and thresholding the interpolated float, which does not
    commute with a nonlinear predicate (see `_lcm.regime_building.gated_edges
    .get_edge_simulate_gate_evaluator`'s docstring for the full rationale).
@@ -100,7 +98,7 @@ from _lcm.regime_building.gated_edges import (
     build_same_period_mapping_for_fold,
     edge_may_fold_at_period,
 )
-from _lcm.regime_building.Q_and_F import SAME_PERIOD_PARAMS_ARG, SAME_PERIOD_V_ARG
+from _lcm.regime_building.Q_and_F import SAME_PERIOD_V_ARG
 from _lcm.simulation.operand_placement import place_simulation_arguments
 from _lcm.simulation.transitions import _advance_states_for_subjects
 from _lcm.simulation.value_placement import simulation_value_sharding
@@ -122,7 +120,6 @@ from _lcm.typing import (
 )
 from lcm.typing import (
     Bool1D,
-    BoolND,
     ContinuousState,
     DiscreteState,
     Float1D,
@@ -171,13 +168,12 @@ def simulation_gate_fold(
     ]
     | None = None,
     edge_values: Mapping[RegimeName, Mapping[RegimeName, FloatND]],
-    edge_flags: Mapping[RegimeName, BoolND],
     flat_params: FlatParams,
     fold_age: FoldAge = None,
     subject_devices: tuple[jax.Device, ...] = (),
     on_derived: Callable[[DerivedResidency], None] | None = None,
 ) -> MappingProxyType[RegimeName, FloatND]:
-    """Fold raw, already-acquired V and Boolean D at their declared paths.
+    """Fold raw, already-acquired V at its declared paths.
 
     The fold's float interpolation mapping is temporary. An optional call-local
     observer receives replacement snapshots of derived residency, then only the
@@ -198,7 +194,6 @@ def simulation_gate_fold(
         base_state_action_spaces=base_state_action_spaces,
         target_states_by_target=target_states_by_target,
         period_to_regime_to_V_arr={period + 1: landing_values},
-        period_to_regime_to_dissolution_flags={period + 1: edge_flags},
         flat_params=flat_params,
         fold_age=fold_age,
         subject_devices=subject_devices,
@@ -216,7 +211,6 @@ def simulation_gate_route(
     regime: Regime,
     fold_period: int,
     edge_values: Mapping[RegimeName, Mapping[RegimeName, FloatND]],
-    edge_flags: Mapping[RegimeName, BoolND],
     next_states: StatesPerRegime,
     regime_names_to_ids: RegimeNamesToIds,
     new_subject_regime_ids: Int1D,
@@ -229,10 +223,8 @@ def simulation_gate_route(
     subject_width: int | None = None,
     on_derived: Callable[[DerivedResidency], None] | None = None,
 ) -> tuple[StatesPerRegime, Int1D, Int1D, MappingProxyType[RegimeName, Bool1D]]:
-    """Route from raw V and Boolean D, reusing their owned destination copies.
+    """Route from raw V, reusing its owned destination copies.
 
-    It performs its own D-to-float conversion, so the fold mapping
-    need not stay resident throughout the unit. The extra cast is intentional.
     The observer sees replacement mapping snapshots, then an empty snapshot
     after all route outputs are ready; no callback or mapping is cached here.
     """
@@ -243,7 +235,6 @@ def simulation_gate_route(
         mappings[target] = build_same_period_mapping_for_fold(
             edge=edge,
             period_solution=edge_values[target],
-            period_dissolution_flags=edge_flags,
         )
         if on_derived is not None:
             on_derived({"same_period_mappings": MappingProxyType(dict(mappings))})
@@ -286,7 +277,6 @@ def simulation_gate_route_delta(
     regime: Regime,
     fold_period: int,
     edge_values: Mapping[RegimeName, Mapping[RegimeName, FloatND]],
-    edge_flags: Mapping[RegimeName, BoolND],
     candidate_states: StatesPerRegime,
     regime_names_to_ids: RegimeNamesToIds,
     new_subject_regime_ids: Int1D,
@@ -302,7 +292,6 @@ def simulation_gate_route_delta(
         regime=regime,
         fold_period=fold_period,
         edge_values=edge_values,
-        edge_flags=edge_flags,
         next_states=candidate_states,
         regime_names_to_ids=regime_names_to_ids,
         new_subject_regime_ids=new_subject_regime_ids,
@@ -369,7 +358,6 @@ def substitute_gated_edge_continuations(
     ]
     | None = None,
     period_to_regime_to_V_arr: Mapping[int, Mapping[RegimeName, FloatND]],
-    period_to_regime_to_dissolution_flags: Mapping[int, Mapping[RegimeName, BoolND]],
     flat_params: FlatParams,
     fold_age: FoldAge = None,
     subject_devices: tuple[jax.Device, ...] = (),
@@ -398,7 +386,7 @@ def substitute_gated_edge_continuations(
     one backward induction's roll consults. A target not solved at
     `period + 1` skips (no substitution, no gate) — a one-shot edge's target
     is always present there, that being the point of a one-shot edge. A
-    reference regime (a leg's `fallback` or a `gate_refs` entry) missing
+    reference regime (a leg's `fallback`) missing
     while the target is present is rejected rather than silently falling back
     to the raw (ungated) target V, which would leave the edge's routing
     undetectably disabled. Backward induction tolerates that same absence at
@@ -425,8 +413,6 @@ def substitute_gated_edge_continuations(
         base_state_action_spaces: Every regime's params-completed state-action
             space.
         period_to_regime_to_V_arr: Value arrays per period and regime.
-        period_to_regime_to_dissolution_flags: Each collective regime's
-            dissolution flag `D` per period.
         flat_params: Model parameters for all regimes.
         fold_age: Age corresponding to `period + 1`, supplied only to edge
             callables that declare `age`.
@@ -434,25 +420,20 @@ def substitute_gated_edge_continuations(
     Raises:
         ModelInitializationError: A declared edge's target is solved at
             `period + 1` but one or more of its reference regimes
-            (fallbacks / gate refs) are not.
+            (fallbacks) are not.
 
     Returns:
         Tuple `(substituted_next_regime_to_V_arr, same_period_mappings)` —
         the first has every declared edge target's slot replaced by `Wbar`
         (for edges that fired this period); the second maps target regime
         name to the SAME same-period value mapping the fold itself was
-        evaluated on (target V, `D`-as-float, and every reference regime's
-        V — `build_same_period_mapping_for_fold`'s output), consumed by
-        `route_gated_edges` to RECOMPUTE the gate from interpolated value
-        operands at the realized candidate state — only
-        for edges that fired.
+        evaluated on (target V and every reference regime's V —
+        `build_same_period_mapping_for_fold`'s output), whose keys tell
+        `route_gated_edges` which edges fired.
     """
     if not regime.gated_edges:
         return MappingProxyType(dict(next_regime_to_V_arr)), MappingProxyType({})
     next_period_V = period_to_regime_to_V_arr.get(period + 1, MappingProxyType({}))
-    next_period_D = period_to_regime_to_dissolution_flags.get(
-        period + 1, MappingProxyType({})
-    )
     substituted = dict(next_regime_to_V_arr)
     same_period_mappings: dict[RegimeName, MappingProxyType[RegimeName, FloatND]] = {}
     for target_name, edge in regime.gated_edges.items():
@@ -472,7 +453,6 @@ def substitute_gated_edge_continuations(
         same_period_mapping = build_same_period_mapping_for_fold(
             edge=edge,
             period_solution=next_period_V,
-            period_dissolution_flags=next_period_D,
         )
         # Publish the float mapping before the fold can consume it.
         same_period_mappings[target_name] = same_period_mapping
@@ -487,8 +467,8 @@ def substitute_gated_edge_continuations(
             )
         wbar = _evaluate_edge_fold(
             # The fold compiled for `period + 1` — the period whose arrays it
-            # folds, one ahead of the source standing at `period`. The gate
-            # references and leg fallbacks are interpolated on their own
+            # folds, one ahead of the source standing at `period`. The leg
+            # fallbacks are interpolated on their own
             # regimes' grids as of that period, which an `AgeSpecializedGrid`
             # moves without changing their shape.
             fold=edge.fold_at(period=period + 1),
@@ -560,12 +540,9 @@ def route_gated_edges(
     candidate target states `calculate_next_states` already computed for the
     target (the source's ordinary regime law always
     structurally reaches a gated edge's target — see module docstring) via
-    the edge's own `simulate_gate_evaluator` — which
-    interpolates the gate predicate's VALUE operands (the target's own value
-    components, every declared `gate_refs` entry) at that realized point from
-    `same_period_mappings[target_name]` (the target V / `D` / reference-V
-    arrays, from `substitute_gated_edge_continuations`) and re-applies the
-    SAME predicate the solve-side fold uses — never by interpolating the
+    the edge's own `simulate_gate_evaluator` — which re-applies the SAME
+    predicate the solve-side fold uses at that realized point — never by
+    interpolating the
     fold's baked boolean `gate` array and thresholding the result, which does
     not commute with a nonlinear predicate (see
     `_lcm.regime_building.gated_edges.get_edge_simulate_gate_evaluator`'s
@@ -596,12 +573,8 @@ def route_gated_edges(
         fold_period: The period whose value arrays `same_period_mappings`
             holds, i.e. the source's `period + 1` — one AHEAD of the period
             the source is being simulated in, because the gate is decided on
-            the value the subject would enter next period. It selects the
-            edge's gate evaluator, which interpolates the target's and the
-            gate references' value arrays on THEIR grids as of that period;
-            under an `AgeSpecializedGrid` those nodes move with age while
-            their shape does not, so passing the source's own period reads
-            every operand one period's nodes off with no shape error.
+            the state the subject would enter next period. It selects the
+            edge's gate evaluator compiled for that period.
         fold_age: Age corresponding to `fold_period`, supplied only to edge
             callables that declare `age`.
         own_stakeholder: Each subject's role THIS period, as a code in the
@@ -655,27 +628,12 @@ def route_gated_edges(
         if target_name not in same_period_mappings:
             continue
         candidate_target_states = dict(next_states[target_name])
-        reference_params = build_reference_params_mapping_for_fold(
-            edge=edge, flat_params=flat_params
-        )
 
-        # Recompute the gate from interpolated VALUE
-        # operands at the realized candidate state, instead of interpolating
-        # the fold's baked boolean `gate` array and thresholding it.
-        #
-        # Every param the evaluator needs is bound from the regime that
-        # OWNS it, as recorded argument by argument in the evaluator's published
-        # `arg_provenance`. Filtering two dicts by unqualified names and merging
-        # them is not merely untidy but wrong, and no merge ORDER fixes
-        # it: an interpolator's runtime grid helper is named after the STATE
-        # alone (`x__points`), so a source and a target that both declare a state
-        # `x` contribute the same qname, the filtered dicts intersect, and one
-        # keyword cannot carry both regimes' points. Whichever dict is applied
-        # last wins the collision and the other regime's read is silently
-        # resolved on the wrong grid. The evaluator therefore exposes each
-        # namespace's params under distinct, qualified leaves, and the reference
-        # regimes' own grid params never reach this signature at all — they ride
-        # in `SAME_PERIOD_PARAMS_ARG`.
+        # Recompute the gate at the realized candidate state, instead of
+        # interpolating the fold's baked boolean `gate` array and thresholding
+        # it. Every param the evaluator needs is bound from the regime that
+        # OWNS it, as recorded argument by argument in the evaluator's
+        # published `arg_provenance`.
         simulate_gate_evaluator = edge.simulate_gate_evaluator_at(period=fold_period)
         gate_bool = jnp.asarray(
             _call_vmapped_with_accepted_kwargs(
@@ -693,8 +651,6 @@ def route_gated_edges(
                         fold_period=fold_period,
                         fold_age=fold_age,
                     ),
-                    SAME_PERIOD_V_ARG: same_period_mappings[target_name],
-                    SAME_PERIOD_PARAMS_ARG: reference_params,
                 },
                 # A stateless target leaves `batched_kwargs` empty; `vmap`
                 # cannot infer a batch size from nothing.

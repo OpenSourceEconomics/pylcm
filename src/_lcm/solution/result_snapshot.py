@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 import jax
 
+from _lcm.dtypes import CanonicalArrayWriter
 from _lcm.solution.native_values import NativeValueMaterializer
 from _lcm.typing import ArtifactPayload
 from lcm._solver_api.authority import _ArrayCopier
@@ -146,6 +147,8 @@ def snapshot_artifact_store(
     *,
     store: _ArtifactStoreBoundary,
     authorities: _AuthoritiesInput | None = None,
+    array_writer: CanonicalArrayWriter | None = None,
+    array_copier: _ArrayCopier | None = None,
 ) -> _ArtifactStoreBoundary:
     """Copy addresses and detach every authority-backed eager payload."""
     if type(store) is not ArtifactStore:
@@ -163,7 +166,11 @@ def snapshot_artifact_store(
             if authority is None:
                 continue
             if type(payload) is _CanonicalArtifactEntry:
-                owned_payload = payload.materialize()
+                owned_payload = payload.materialize_from_template_snapshot(
+                    template_snapshot=payload.plan_snapshot,
+                    array_writer=array_writer,
+                    array_copier=array_copier,
+                )
             elif isinstance(payload, _LazyEntry):
                 continue
             else:
@@ -171,6 +178,8 @@ def snapshot_artifact_store(
             detached[ref] = _canonical_artifact_entry_from_authority(
                 payload=owned_payload,
                 authority=authority,
+                array_writer=array_writer,
+                array_copier=array_copier,
             )
         entries = MappingProxyType(detached)
     return ArtifactStore(entries)
@@ -180,6 +189,7 @@ def own_artifact_store(
     *,
     entries: Mapping[ArtifactRef, ArtifactPayload],
     authorities: _AuthoritiesInput,
+    array_copier: _ArrayCopier | None = None,
 ) -> _ArtifactStoreBoundary:
     """Build a store around buffers the engine's own solve allocated.
 
@@ -197,6 +207,7 @@ def own_artifact_store(
                 payload=payload,
                 authority=authority,
                 borrow=True,
+                array_copier=array_copier,
             )
         )
     return ArtifactStore(owned)
@@ -404,36 +415,49 @@ def snapshot_artifact_descriptor(
     )
 
 
+# keyword-only-exempt: primary-argument=authorities
 def snapshot_artifact_authorities(
     authorities: _AuthoritiesInput,
+    *,
+    array_copier: _ArrayCopier | None = None,
 ) -> _AuthoritiesSnapshot:
     """Copy private authority wrappers while preserving trusted templates/types."""
     return capture_exact_mapping(
         authorities,
         label="Artifact authority",
         snapshot_key=snapshot_artifact_ref,
-        snapshot_value=_snapshot_artifact_authority,
+        snapshot_value=partial(_snapshot_artifact_authority, array_copier=array_copier),
     )
 
 
+# keyword-only-exempt: primary-argument=authority
 def snapshot_artifact_template_declaration(
     authority: ArtifactAuthority,
+    *,
+    array_copier: _ArrayCopier | None = None,
 ) -> _CanonicalArtifactTemplate | None:
     """Return an owned cached declaration without rerunning its flatten callback."""
     try:
-        return _artifact_authority_template_snapshot(authority)
+        return _artifact_authority_template_snapshot(
+            authority, array_copier=array_copier
+        )
     except TypeError, ValueError:
         raise
     except Exception as error:
         raise TypeError("Artifact template cannot be snapshotted exactly.") from error
 
 
-def _snapshot_artifact_authority(authority: ArtifactAuthority) -> ArtifactAuthority:
+# keyword-only-exempt: primary-argument=authority
+def _snapshot_artifact_authority(
+    authority: ArtifactAuthority, *, array_copier: _ArrayCopier | None = None
+) -> ArtifactAuthority:
     """Rebuild one authority wrapper from its cached PyTree declaration."""
     if type(authority) is not ArtifactAuthority:
         raise TypeError("Artifact authorities must be exact ArtifactAuthority objects.")
     try:
-        template_snapshot = _artifact_authority_template_snapshot(authority)
+        template_snapshot = _artifact_authority_template_snapshot(
+            authority, array_copier=array_copier
+        )
     except TypeError, ValueError:
         raise
     except Exception as error:
@@ -504,6 +528,7 @@ def _snapshot_artifact_authority(authority: ArtifactAuthority) -> ArtifactAuthor
         consumer_route=consumer_route,
         applicable=applicable,
         required=required,
+        array_copier=array_copier,
     )
 
 

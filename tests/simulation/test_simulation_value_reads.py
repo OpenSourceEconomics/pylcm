@@ -24,7 +24,10 @@ from _lcm.execution.value_transfer import (
 from _lcm.simulation.value_reads import PeriodSimulationReads
 from _lcm.typing import ArgumentTree, PytreeValue
 from lcm.exceptions import ExecutionPlanningError
-from lcm.solver_api import DISSOLUTION_FLAG, SIMULATION_POLICY
+from lcm.solver_api import SIMULATION_POLICY, ArtifactKey
+
+# A Boolean replay artifact of a plugin, distinct from the built-in policy key.
+_FLAGS = ArtifactKey(type_id="example.flags")
 
 
 def _read(*, unit: str, core: str = "argmax") -> ValueRead:
@@ -731,9 +734,7 @@ def test_host_replay_preserves_distinct_artifact_keys_for_one_numpy_original() -
     """Publishing one key must not keep another key's temporary copy alive."""
     original = np.array([True, False, True])
     policy = _host_replay_read(unit="alive")
-    flags = replace(
-        policy, target=replace(policy.target, artifact_key=DISSOLUTION_FLAG)
-    )
+    flags = replace(policy, target=replace(policy.target, artifact_key=_FLAGS))
     owner = PeriodSimulationReads(
         period=0,
         devices=(jax.devices()[0],),
@@ -763,9 +764,7 @@ def test_host_replay_copy_lifetimes_are_independent_of_numpy_alignment(
     original[:] = [1, 0, 1]
     assert original.ctypes.data % 64 == offset
     policy = _host_replay_read(unit="alive")
-    flags = replace(
-        policy, target=replace(policy.target, artifact_key=DISSOLUTION_FLAG)
-    )
+    flags = replace(policy, target=replace(policy.target, artifact_key=_FLAGS))
     owner = PeriodSimulationReads(
         period=0,
         devices=(jax.devices()[0],),

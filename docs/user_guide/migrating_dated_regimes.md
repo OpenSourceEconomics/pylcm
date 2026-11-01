@@ -77,19 +77,19 @@ Code that read a regime's law back reads it from the model:
 | Removed                                 | Read instead                                   |
 | --------------------------------------- | ---------------------------------------------- |
 | `Regime.terminal`                       | `model.graph.laws[name].terminal`              |
-| value-reading `Regime.gated_edges`      | explicit `Transition(arrivals=...)`            |
+| value-reading `Regime.gated_edges`      | explicit `Transition(participation=...)`       |
 | `Regime.decomposed_transition`          | `model.graph.laws[name].decomposed_transition` |
 | the law passed as `regime_transitions=` | `model.declared_transitions[phase][name].law`  |
 
 `model.declared_transitions["solve"][name]` and
 `model.declared_transitions["simulate"][name]` are the `Transition` a source declared,
-exactly as declared: its `law`, its `arrivals` and its declared or derived `targets`.
-Edges declared for both phases give both phases the same `Transition`; a `Phased`
-`edges` mapping gives each phase its own. A source without a `Transition` in a phase is
-absent from that phase's mapping. `model.graph.laws[name]` is the law the solver and
-simulator evaluate: bound to the graph, pruned of fixed-zero cells and lowered to the
-ages the starts demand. A regime is terminal when it has no outgoing edge in
-`Model(edges=...)`, and `model.graph.laws[name].terminal` says so:
+exactly as declared: its `law`, its `participation` and its declared or derived
+`targets`. Edges declared for both phases give both phases the same `Transition`; a
+`Phased` `edges` mapping gives each phase its own. A source without a `Transition` in a
+phase is absent from that phase's mapping. `model.graph.laws[name]` is the law the
+solver and simulator evaluate: bound to the graph, pruned of fixed-zero cells and
+lowered to the ages the starts demand. A regime is terminal when it has no outgoing edge
+in `Model(edges=...)`, and `model.graph.laws[name].terminal` says so:
 
 ```python
 assert model.graph.laws["dead"].terminal
@@ -132,12 +132,12 @@ coverage. Replace age activity predicates with graph selectors and explicit star
 
 A law that names its destinations — a per-target mapping, a regime name, or a `ByAge` /
 `Phased` of those — makes `Transition.targets` optional: the destinations are derived
-from the law's keys at the non-final source ages each case covers, plus each arrival's
-route fallback regimes at the source ages of its scheduled target. A `targets` supplied
-with such a law must equal the derived mapping exactly, or `Model(...)` raises a
-`ModelInitializationError` listing both. Where a per-target law reaches more ages than
-the declared `targets`, wrap it in `ByAge(cases={ages: law})` restricted to those ages.
-A law over all targets still requires `targets`.
+from the law's keys at the non-final source ages each case covers, plus each
+participation check's route fallback regimes at the source ages of its scheduled target.
+A `targets` supplied with such a law must equal the derived mapping exactly, or
+`Model(...)` raises a `ModelInitializationError` listing both. Where a per-target law
+reaches more ages than the declared `targets`, wrap it in `ByAge(cases={ages: law})`
+restricted to those ages. A law over all targets still requires `targets`.
 
 When the targets are derived from a `ByAge` law, every source age with an edge needs a
 case: an age no case selects has no edge. At an age with a single certain destination,
@@ -206,10 +206,57 @@ unsupported. A wholly hidden group retains its joint law; supported overrides us
 complete physical frame or named base innovations. Independent hidden shocks remain
 available.
 
-The new current-shock path is qualified for the focused `GridSearch` cases. Its
-endogenous-grid publication and reconstruction are not implemented yet; that work
-remains gated on the production cost diagnostic. This migration does not establish
-support for those solver combinations.
+A group read by an endogenous-grid regime (`DCEGM`, `NBEGM`, `NEGM`, `NNBEGM`) is solved
+on the node-state axis, so the migrated model solves every shape its node-state version
+did: several states, discrete states and actions, and chains of endogenous-grid regimes.
+Published values integrate the shock's nodes, and simulation draws and overrides follow
+the rules above. The supported laws and rules are listed in
+[Named current-IID shocks in endogenous-grid regimes](../reference/solvers.md#current-iid-egm).
+
+A function may not read `<shock>_code` of a continuous shock in a `shocks=` group:
+`Model(...)` raises `ShockDeclarationError`, because a physical draw has no
+quadrature-node position. Read the physical value `<shock>` instead. The codes of
+`Discrete` shocks and of process states remain readable.
+
+A group read only by `GridSearch` regimes is not yet composed with action partitions, a
+`Decoupled` decision, invariant state blocks, gated or same-period value channels, or
+co-mapped sharded states, and `Model.lookup_policy` refuses a regime that reads it. See
+[Combinations not yet composed with current shocks](../reference/shocks.md#current-iid-refusals)
+for the full list. Keep such a shock as an IID process state where the model needs one
+of these.
+
+### Simulated panels change once
+
+Every simulation draw is addressed by the seed, the subject's original row in the
+initial conditions, the period, and the shock's name and component. Draws no longer
+depend on the regime path, on other shocks, on group membership or on taste-shock
+toggles, and one seed gives the same base draws across parameter values. A panel
+simulated with an earlier version therefore differs once, for the same seed; regenerate
+stored panels and seeded comparisons. Reordering initial-condition rows changes which
+draws a subject receives, so keep each person in the same row across runs.
+
+### Shock timing is inferred
+
+The `fold=` argument of IID processes is removed and raises `TypeError`. Timing is read
+off the functions: reading `x` reads this period's realization, reading `next_x` reads
+the draw after the choice. A shock a regime reads only as `next_x` is a post-decision
+shock there: it carries no axis and is integrated in the continuation.
+
+Simulation draws a post-decision shock from its continuous law, not from its quadrature
+nodes, so simulated panels of such a model change. A `Model(shocks=...)` group always
+draws continuously. An IID process state integrated out this way honours its
+`simulated_draws`: the default `"continuous"` draws from the law, and
+`simulated_draws="nodes"` keeps the node lottery. To replay a panel exactly, pass its
+draws as `shock_paths`.
+
+For an IID process state, drop `fold=`. A state read only as `next_<state>`, which
+`fold=True` used to mark, is integrated out without it, and so is one formerly declared
+with the default `fold=False`: its stored value never varied along that axis, so the
+solution is unchanged while the axis disappears. A state whose current value is read
+keeps its axis; `fold=True` no longer averages that axis out of the stored value.
+`repr(model)` lists, per regime, which shocks carry an axis and which are integrated
+out. See
+[Shock timing](continuous_stochastic_processes.md#shock-timing-is-read-off-the-model).
 
 (migrating-gates)=
 
@@ -246,21 +293,21 @@ context; `ExitTarget.projection` does not remap its inputs. When that source is 
 projected household query, its mapped household state is available to the adjustment. A
 lagged marital-status indicator there can make the adjustment zero for newlyweds.
 
-An old edge decision after a scheduled transition belongs in `Transition(arrivals=...)`:
-ordinary transition laws and state laws first produce the next-period landing, then its
-`ArrivalDecision` evaluates, then the selected regime acts. Moving it into a current
-`Exit` would change its economic date.
+An old edge decision after a scheduled transition belongs in
+`Transition(participation=...)`: ordinary transition laws and state laws first produce
+the next-period landing, then its `ParticipationCheck` evaluates, then the selected
+regime acts. Moving it into a current `Exit` would change its economic date.
 
 This fragment, taken from the shipped collective example, reads the continuing
 household's policy support instead of a stored dissolution flag:
 
 ```python
-from lcm import ArrivalDecision, ArrivalRead
+from lcm import ParticipationCheck, ParticipationRead
 
-arrival = ArrivalDecision(
+participation = ParticipationCheck(
     predicate=has_policy_support,
     reads={
-        "target_support": ArrivalRead(
+        "target_support": ParticipationRead(
             regime="married_with_participation",
             stakeholder="f",
             kind="Participating",
@@ -272,43 +319,88 @@ arrival = ArrivalDecision(
 )
 ```
 
-Place it under `Transition(arrivals={"married_with_participation": arrival}, ...)`. Each
+Place it under
+`Transition(participation={"married_with_participation": participation}, ...)`. Each
 source stakeholder's route declares its continuing role and its own projected fallback.
 The decision owns only subjects arriving on that incoming edge; unrelated ordinary draws
 and initial occupants do not borrow its fallback.
 
-`ArrivalRead(kind="Raw")` reads the unconstrained-by-participation action problem;
+`ParticipationRead(kind="Raw")` reads the unconstrained-by-participation action problem;
 `kind="Participating"` reads the actions kept by its exit rule. `field="support"`
 returns Boolean policy support rather than a numeric value. `kind="IntegratedFull"`
 explicitly reads the stored shock-integrated Full value and exposes neither policy
 support nor realized physical information. Name the reads in the predicate's signature;
 `V_target` is not injected implicitly, and `D_target` is unsupported.
 
-The arrival predicate must return a scalar Boolean. Its ordinary inputs and projections
-use the landed target's state and helper vocabulary. An explicit named read binds its
-own value operand, even when a target state or helper has the same name. Declare
-physical information with `ArrivalDecision.observes` or the individual
-`ArrivalRead.observes`; a supplied simulation path never enlarges that information.
-Preserve the original comparison, including its tie rule, target role, projection and
-fallback, when replacing a value-reading `Gate`.
+The participation predicate must return a scalar Boolean. Its ordinary inputs and
+projections use the landed target's state and helper vocabulary. An explicit named read
+binds its own value operand, even when a target state or helper has the same name.
+Declare physical information with `ParticipationCheck.observes` or the individual
+`ParticipationRead.observes`; a supplied simulation path never enlarges that
+information. Preserve the original comparison, including its tie rule, target role,
+projection and fallback, when replacing a value-reading `Gate`.
 
 Custom current exit rules return `RuleResult` with a declared alternative identifier,
 and declare whether they read outside values through `reads_outside_values`. They do not
-return a Boolean arrival verdict. A custom source rule combined with source EV1 tastes
-is explicitly refused; this does not refuse a custom rule pricing a hidden EV1 target.
+return a Boolean verdict, as a participation check does. A custom source rule combined
+with source EV1 tastes is explicitly refused; this does not refuse a custom rule pricing
+a hidden EV1 target.
+
+### Gates route on states only
+
+Value-reading gates, `Gate.references` and the dissolution-flag artifact are removed.
+State-only gate routing keeps its behavior.
+
+- A `Gate` predicate that names `V_target`, `V_target_<s>` or `D_target` raises
+  `GateReadsValueError` when the gate is declared. Declare the comparison as an `Exit`
+  of the source regime when it is made in the current period, or as a
+  `ParticipationCheck` with named `ParticipationRead`s when it is made on landing.
+- `Gate(references=...)` raises `TypeError`. Move each reference into the participation
+  check's `reads`, as a `ParticipationRead(kind="IntegratedFull", ...)` with the same
+  regime, stakeholder and projection.
+- A gate reading `~D_target` becomes a `ParticipationCheck` reading the target's
+  `ParticipationRead(kind="Participating", field="support")`, as in the fragment above.
+- `solve()` publishes no dissolution flag under any `ResultRetention`, and the
+  `DISSOLUTION_FLAG` artifact key is removed from `lcm.solver_api` and `lcm.solvers`. A
+  household that lands in a gated target where no action is feasible takes its route's
+  fallback in simulation; `SimulationResult.dissolution_fallbacks` records those rows
+  when runtime checks are on.
 
 See the executable declaration examples in `lcm_examples.collective_regimes` and
-`tests/simulation/test_current_exits.py`. The uncertainty and collective reference pages
-still describe parts of the former state-grid/value-gate interface; their rewrite is
-pending. Use the declarations above for this migration.
+`tests/simulation/test_current_exits.py`. The uncertainty reference page still describes
+parts of the former state-grid interface; its rewrite is pending. Use the declarations
+above for this migration.
 
 (migrating-edge-parameters)=
 
+(arrival-participation-check)=
+
+## Arrival → participation check
+
+`ArrivalDecision` is now `ParticipationCheck`, `ArrivalRead` is `ParticipationRead`, and
+`Transition(arrivals=...)` is `Transition(participation=...)`. The construct is the
+per-period limited-commitment participation constraint: it also re-checks a continuing
+couple on its couple → couple edge, where a failed check is a divorce, so "arrival"
+described only half of it. The fields and semantics are unchanged; the read-projection
+parameter path `["references"][read][state]` is now `["reads"][read][state]`, after the
+field it projects. The old names raise `ImportError`, `AttributeError` or `TypeError`;
+there is no alias.
+
+```text
+# Removed: raises TypeError. Shown only to identify code that needs migrating.
+Transition(law=..., arrivals={"couple": ArrivalDecision(...)})
+```
+
+```python
+# Current declaration fragment.
+Transition(law=..., participation={"couple": ParticipationCheck(...)})
+```
+
 ## Move transition parameters under `edges`
 
-The regime-transition law, its arrival decisions, reads and route fallbacks are declared
-in `Model(edges=...)`, and their parameters live there too: the parameter path of an
-edge-declared callable is its declaration path under `params["edges"]`. The source
+The regime-transition law, its participation checks, reads and route fallbacks are
+declared in `Model(edges=...)`, and their parameters live there too: the parameter path
+of an edge-declared callable is its declaration path under `params["edges"]`. The source
 regime owns none of them, so its branch of the parameters has no `next_regime` or `gate`
 entry. Per-target state laws (`state_transitions={state: {target: law}}`) belong to the
 source regime and keep their paths, `params[source][target]["next_<state>"]`.
@@ -317,15 +409,15 @@ source regime and keep their paths, `params[source][target]["next_<state>"]`.
 | ----------------------------------------------------------------- | ----------------------------------------------------------------------- |
 | `[source]["next_regime"][arg]` (a law over all targets)           | `[source][arg]`                                                         |
 | `[source][target]["next_regime"][arg]` (a per-target cell)        | `[source][target][arg]`                                                 |
-| the same, for an arrival target's cell                            | `[source][target][arg]`                                                 |
+| the same, for a participation target's cell                       | `[source][target][arg]`                                                 |
 | `[source][target]["leg_fallback_<regime>_<state>"][arg]`          | `[source][target]["routes"][route]["fallback"][state][arg]`             |
 | the same, solve side of a `Phased` fallback                       | `[source][target]["routes"][route]["fallback"]["solve"][state][arg]`    |
 | `[source][target]["simulate_leg_fallback_<regime>_<state>"][arg]` | `[source][target]["routes"][route]["fallback"]["simulate"][state][arg]` |
-| `[source][arg]`, where the law or an arrival reads it             | `[source][arg]`, or the model level                                     |
+| `[source][arg]`, where the law or a participation reads it        | `[source][arg]`, or the model level                                     |
 
 Use `get_params_template()` for the exact predicate, read-projection and route paths of
-arrival decisions. Current `Exit` declarations belong to the regime, so their parameters
-stay in that regime's parameter branch.
+participation checks. Current `Exit` declarations belong to the regime, so their
+parameters stay in that regime's parameter branch.
 
 A law over all targets is a plain function, `DeterministicTransition`, a full-vector
 `StochasticTransition`, or `ByAge` / `Phased` around one; it has no `law` segment
@@ -353,8 +445,8 @@ first:
 
 1. its declaration path, e.g. `params["edges"]["working"]["dead"]["survival_rate"]`;
 1. `params["edges"][source][arg]`, which covers every callable below the source: the law
-   over all targets, each target's cell, arrival predicates, read projections and route
-   fallbacks;
+   over all targets, each target's cell, participation predicates, read projections and
+   route fallbacks;
 1. the model level, `params[arg]`, which also feeds regime functions.
 
 `get_params_template()` lists every slot at its declaration path, the most specific
@@ -380,11 +472,11 @@ functions keep their levels: function, regime, model.
 
 Every user-chosen name that becomes a parameter-path segment contains no `__` and does
 not start or end with `_`: regime (source and target), state, action, function and
-constraint names, arrival `reads` keys, `routes` keys, stakeholder names, and the
-argument names of model functions, which become parameter names. A violation raises when
-the regime or model is built, naming the name and its kind. `edges` is reserved: no
-regime, function or function argument may take that name. A law argument may not share
-its name with a regime.
+constraint names, participation check `reads` keys, `routes` keys, stakeholder names,
+and the argument names of model functions, which become parameter names. A violation
+raises when the regime or model is built, naming the name and its kind. `edges` is
+reserved: no regime, function or function argument may take that name. A law argument
+may not share its name with a regime.
 
 (laws-at-every-horizon)=
 

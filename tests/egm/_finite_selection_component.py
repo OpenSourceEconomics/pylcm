@@ -11,19 +11,15 @@ from _lcm.egm.finite_negm_query import (
 )
 from lcm.typing import BoolND, FloatND
 
-type _Germ = tuple[BoolND, FloatND, FloatND, FloatND]
-
 
 class _FiniteOuterRead(NamedTuple):
-    """Numeric side payloads and genuine ordinary germs for component controls."""
+    """Numeric side payloads for component controls."""
 
     value: FloatND
     right_marginal: FloatND
     left_marginal: FloatND
     right_dead: BoolND
     left_dead: BoolND
-    right_germ: _Germ
-    left_germ: _Germ
     coverage_missing: BoolND
 
 
@@ -53,7 +49,5 @@ def component_view(*, profile: _FiniteOuterProfile) -> _FiniteOuterRead:
         left_dead=jnp.where(
             left.use_corner, ~left.corner.supported, left.ordinary.dead
         )[..., 0],
-        right_germ=profile.right.germ,
-        left_germ=profile.left.germ,
         coverage_missing=profile.coverage_missing,
     )

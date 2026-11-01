@@ -128,6 +128,7 @@ class WorkloadManifest(TypedDict):
     general_shard_universe: list[str]
     linux_only_files: list[str]
     os_persistence_tests: list[str]
+    egm_acceptance_tests: list[str]
     per_test_ceiling_backlog: list[_CeilingBacklog]
     invocations: list[Invocation]
     file_weights: dict[str, _FileWeight]
@@ -284,6 +285,17 @@ def os_persistence_tests(*, path: Path = MANIFEST_PATH) -> tuple[str, ...]:
     return tuple(load_manifest(path=path).get("os_persistence_tests", ()))
 
 
+def egm_acceptance_tests(*, path: Path = MANIFEST_PATH) -> tuple[str, ...]:
+    """Return the compact EGM acceptance set of the S10 speed-first plan.
+
+    Each entry is `<file>::<test function>`, one per distinct implementation
+    mechanism (issue 618, Batch 4). `tests/conftest.py` marks them
+    `egm_acceptance`; they also run in their ordinary legs, so no lane selects
+    them by marker.
+    """
+    return tuple(load_manifest(path=path).get("egm_acceptance_tests", ()))
+
+
 def general_leg_universe(*, leg: str, path: Path = MANIFEST_PATH) -> tuple[str, ...]:
     """Return the general files one leg shards over.
 
@@ -321,6 +333,7 @@ __all__: Sequence[str] = (
     "MANIFEST_PATH",
     "all_manifest_files",
     "coverage_contributors",
+    "egm_acceptance_tests",
     "excluded_files",
     "file_weight_seconds",
     "files_for",

@@ -27,7 +27,7 @@ from lcm.consumption_savings_regime import (
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime
-from lcm.solvers import DCEGM, FUESEnvelope, GridSearch, OneMarginSolver
+from lcm.solvers import DCEGM, FUESEnvelope, GridSearch, OneMarginSolver, RFCEnvelope
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -120,7 +120,10 @@ def _model(*, solver: OneMarginSolver | GridSearch, constraint: UserFunction) ->
 
 
 def _dcegm() -> DCEGM:
-    return DCEGM(savings_grid=LinSpacedGrid(start=-2.0, stop=4.0, n_points=12))
+    return DCEGM(
+        savings_grid=LinSpacedGrid(start=-2.0, stop=4.0, n_points=12),
+        envelope=RFCEnvelope(),
+    )
 
 
 def test_a_constraint_a_dcegm_regime_cannot_read_is_refused() -> None:

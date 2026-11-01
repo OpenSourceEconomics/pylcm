@@ -10,7 +10,7 @@ single 1-D FUES upper envelope over the wealth grid selects the optimal policy
 across housing choices.
 
 In pylcm that pooled-candidate upper envelope is exactly the discrete-choice
-DC-EGM upper envelope (FUES/MSS/LTM): discretise the next-housing choice onto the
+DC-EGM upper envelope (FUES/LTM): discretise the next-housing choice onto the
 housing grid and treat it as a discrete action, and the inner liquid-asset DC-EGM
 plus the discrete-choice envelope reproduces the EGM-FUES solve — the same shape
 as Application 3's discrete-housing model, with Application 2's separable-CES
@@ -25,7 +25,7 @@ converges to the paper's continuous EGM-FUES.
   value-function grid axis over the housing-level alphabet;
 - the next-housing choice is a discrete action `housing_choice` over the same
   alphabet; the discrete-choice upper envelope selects the best `H'` per
-  liquid-housing-wage cell (FUES/MSS/LTM), and grid search (VFI/brute) does the
+  liquid-housing-wage cell (FUES/LTM), and grid search (VFI/brute) does the
   same by brute force — the Table 3 methods;
 - `next_housing = housing_choice`, so the discrete action drives the discrete
   housing transition. Choosing `housing_choice == housing` is the no-trade
@@ -212,7 +212,7 @@ def build_model(
     liquid_max: float = 50.0,
     housing_max: float = 20.0,
     n_periods: int | None = None,
-    envelope: Literal["fues", "mss", "ltm", "rfc"] = "fues",
+    envelope: Literal["fues", "ltm", "rfc"] = "fues",
     execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
 ) -> Model:
     """Build the DS App.2 housing EGM-FUES discrete-housing model.

@@ -44,10 +44,7 @@ from _lcm.regime_building.value_adapter import (
 )
 from _lcm.regime_law import RegimeLaws
 from _lcm.typing import EconFunctionArg, FunctionName, RegimeName
-from _lcm.user_regime_validation import (
-    _fail_if_collective_regime_folds,
-    _validate_completeness,
-)
+from _lcm.user_regime_validation import _validate_completeness
 from _lcm.utils.error_messages import format_messages
 from lcm.case_piece import CaseBoundary
 from lcm.collective import CollectiveUtility
@@ -115,7 +112,6 @@ def finalize_regimes(
             prefixed.
 
     """
-    _fail_if_collective_regime_folds(user_regimes=user_regimes)
     _fail_if_a_joint_coordinate_is_a_discrete_state(user_regimes=user_regimes)
     _fail_if_continuation_slot_is_mixed(
         user_regimes=user_regimes, laws=laws, slot="koopmans_aggregator"

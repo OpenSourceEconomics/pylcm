@@ -81,7 +81,6 @@ class _CompiledSolveInputs(TypedDict):
     log_path: str | model_module.Path | None
     log_keep_n_latest: int
     max_compilation_workers: int | None
-    retain_dissolution_flags: NotRequired[bool]
     retain_replay: NotRequired[bool]
     retain_all_artifacts: NotRequired[bool]
     persistable_artifact_refs: NotRequired[frozenset[model_module.ArtifactRef]]

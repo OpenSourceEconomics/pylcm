@@ -16,12 +16,11 @@ import pytest
 
 from lcm import (
     AgeGrid,
-    ArrivalDecision,
-    ArrivalRead,
     ByAge,
-    Gate,
     LinSpacedGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -35,7 +34,6 @@ from lcm import (
 from lcm.exceptions import (
     InvalidNameError,
     InvalidParamsError,
-    ModelInitializationError,
 )
 from lcm.solver_api import ResultRetention, SolutionResult
 from lcm.typing import (
@@ -67,10 +65,6 @@ def source_utility(z: ContinuousState) -> FloatND:
 
 
 def target_utility() -> FloatND:
-    return jnp.asarray(1.0)
-
-
-def target_h() -> FloatND:
     return jnp.asarray(1.0)
 
 
@@ -138,7 +132,6 @@ def build_model(
     reference_projection: Callable[..., FloatND] | None = None,
     route_projection: Callable[..., FloatND] | None = None,
     law: Callable[..., FloatND] = always,
-    target_functions: Mapping[str, Callable[..., FloatND]] | None = None,
 ) -> Model:
     """Source `src` moves `z` through a helper reading `next_y`; age 1 is gated.
 
@@ -169,9 +162,7 @@ def build_model(
                 },
                 functions=functions,
             ),
-            "target": Regime(
-                functions={"utility": target_utility, **(target_functions or {})}
-            ),
+            "target": Regime(functions={"utility": target_utility}),
             "fallback": (
                 Regime(states={"w": grid}, functions={"utility": fallback_utility_of_w})
                 if projects
@@ -189,19 +180,25 @@ def build_model(
                         1: {"target": StochasticTransition(func=law)},
                     }
                 ),
-                gates={
-                    "target": Gate(
+                participation={
+                    "target": ParticipationCheck(
                         predicate=gate,
-                        references=(
-                            {}
-                            if reference_projection is None
-                            else {
-                                "V_fallback": ProjectedRegimeValue(
-                                    regime="fallback",
-                                    projection={"w": reference_projection},
-                                )
-                            }
-                        ),
+                        reads={
+                            "V_target": ParticipationRead(
+                                kind="IntegratedFull", regime="target", projection={}
+                            ),
+                            **(
+                                {}
+                                if reference_projection is None
+                                else {
+                                    "V_fallback": ParticipationRead(
+                                        kind="IntegratedFull",
+                                        regime="fallback",
+                                        projection={"w": reference_projection},
+                                    )
+                                }
+                            ),
+                        },
                         routes={
                             "only": StakeholderRoute(
                                 fallback=ProjectedRegimeValue(
@@ -298,16 +295,6 @@ def test_gate_reading_a_next_name_directly_is_refused():
         build_model(helper_name="h", helper_depth=1, gate=gate_reading_next_y)
 
 
-def test_gate_reading_a_function_of_its_target_is_refused():
-    """A gate argument named like a target function would be captured by it."""
-    with pytest.raises(ModelInitializationError, match="TARGET regime's own function"):
-        build_model(
-            helper_name="source_helper",
-            helper_depth=1,
-            target_functions={"h": target_h},
-        )
-
-
 @pytest.mark.parametrize(("helper_name", "helper_depth"), HELPER_CASES)
 @pytest.mark.parametrize(
     ("role", "leaf"),
@@ -315,7 +302,7 @@ def test_gate_reading_a_function_of_its_target_is_refused():
         pytest.param(
             "reference",
             {
-                ("src", "target", "references", "V_fallback", "w", "h"),
+                ("src", "target", "reads", "V_fallback", "w", "h"),
                 ("src", "target", "routes", "only", "fallback", "w", "h"),
             },
             id="reference-projection",
@@ -378,106 +365,106 @@ def test_gate_parameter_beside_an_unknown_leaf_is_refused():
 
 
 @categorical(ordered=False)
-class _ArrivalDomainRegimeId:
+class _ParticipationDomainRegimeId:
     source: ScalarInt
     target: ScalarInt
     fallback: ScalarInt
     done: ScalarInt
 
 
-def _arrival_domain_utility(*, x: ContinuousState, y: ContinuousState) -> FloatND:
+def _participation_domain_utility(*, x: ContinuousState, y: ContinuousState) -> FloatND:
     return 1.0 + x + 0.0 * y
 
 
-def _arrival_domain_utility_from_h(
+def _participation_domain_utility_from_h(
     *, h: ContinuousState, y: ContinuousState
 ) -> FloatND:
     return 1.0 + h + 0.0 * y
 
 
-def _arrival_domain_identity_x(x: ContinuousState) -> ContinuousState:
+def _participation_domain_identity_x(x: ContinuousState) -> ContinuousState:
     return x
 
 
-def _arrival_domain_identity_y(y: ContinuousState) -> ContinuousState:
+def _participation_domain_identity_y(y: ContinuousState) -> ContinuousState:
     return y
 
 
-def _arrival_domain_next_y(next_y: ContinuousState) -> FloatND:
+def _participation_domain_next_y(next_y: ContinuousState) -> FloatND:
     return next_y
 
 
-def _arrival_domain_transition_from_h(h: FloatND) -> ContinuousState:
+def _participation_domain_transition_from_h(h: FloatND) -> ContinuousState:
     return h
 
 
-def _arrival_domain_compare(*, V_target: FloatND, h: float) -> BoolND:
+def _participation_domain_compare(*, V_target: FloatND, h: float) -> BoolND:
     return V_target >= h
 
 
-def _arrival_domain_compare_next(*, V_target: FloatND, next_y: FloatND) -> BoolND:
+def _participation_domain_compare_next(*, V_target: FloatND, next_y: FloatND) -> BoolND:
     return V_target >= next_y
 
 
-def _arrival_domain_open(V_target: FloatND) -> BoolND:
+def _participation_domain_open(V_target: FloatND) -> BoolND:
     return V_target >= 2.25
 
 
-def _arrival_domain_fallback_utility(
+def _participation_domain_fallback_utility(
     *, x: ContinuousState, y: ContinuousState
 ) -> FloatND:
     return 0.25 + 2.0 * x + 0.0 * y
 
 
-def _arrival_domain_project_h(h: float) -> ContinuousState:
+def _participation_domain_project_h(h: float) -> ContinuousState:
     return jnp.asarray(h)
 
 
-def _arrival_domain_project_next(next_y: FloatND) -> ContinuousState:
+def _participation_domain_project_next(next_y: FloatND) -> ContinuousState:
     return next_y
 
 
-def _arrival_domain_model(
+def _participation_domain_model(
     *,
     consumer: str,
     bad_name: str,
-    with_arrival: bool = True,
+    with_participation: bool = True,
     temporal_h: bool = False,
     fixed_params: UserParams | None = None,
 ) -> Model:
-    """Valid ordinary law helpers must not leak into an arrival consumer.
+    """Valid ordinary law helpers must not leak into a participation consumer.
 
     Source0 enters target1, which enters done2. The target helper h is either
     its current x or a legitimate next_y input to the target's x state law.
-    An arrival callback's h is its own independent edge parameter, even when
+    A participation callback's h is its own independent edge parameter, even when
     a target or source helper uses that spelling. Exact aliasing must occur
     before target-function concatenation; a direct next_y remains phase-invalid.
     """
     grid = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
-    target_functions = {"utility": _arrival_domain_utility}
+    target_functions = {"utility": _participation_domain_utility}
     target_laws = {"x": fixed_transition("x"), "y": fixed_transition("y")}
-    source_functions = {"utility": _arrival_domain_utility}
+    source_functions = {"utility": _participation_domain_utility}
     source_laws = {"x": fixed_transition("x"), "y": fixed_transition("y")}
     if bad_name == "target_helper":
-        target_functions["h"] = _arrival_domain_identity_x
-        target_functions["utility"] = _arrival_domain_utility_from_h
+        target_functions["h"] = _participation_domain_identity_x
+        target_functions["utility"] = _participation_domain_utility_from_h
     elif bad_name == "transitive_next":
-        target_functions["h"] = _arrival_domain_next_y
-        target_laws["x"] = _arrival_domain_transition_from_h
+        target_functions["h"] = _participation_domain_next_y
+        target_laws["x"] = _participation_domain_transition_from_h
     elif bad_name == "source_helper":
-        source_functions["h"] = _arrival_domain_next_y
-        source_laws["x"] = _arrival_domain_transition_from_h
+        source_functions["h"] = _participation_domain_next_y
+        source_laws["x"] = _participation_domain_transition_from_h
     project = (
-        _arrival_domain_project_next
+        _participation_domain_project_next
         if bad_name == "direct_next"
-        else _arrival_domain_project_h
+        else _participation_domain_project_h
     )
     predicate = (
-        _arrival_domain_compare_next
+        _participation_domain_compare_next
         if consumer == "predicate" and bad_name == "direct_next"
-        else _arrival_domain_compare
+        else _participation_domain_compare
         if consumer == "predicate"
-        else _arrival_domain_open
+        else _participation_domain_open
     )
     if temporal_h:
         predicate = time_varying_params("h")(predicate)
@@ -495,32 +482,32 @@ def _arrival_domain_model(
             ),
             "fallback": Regime(
                 states={"x": grid, "y": grid},
-                functions={"utility": _arrival_domain_fallback_utility},
+                functions={"utility": _participation_domain_fallback_utility},
             ),
             "done": Regime(
                 states={"x": grid, "y": grid},
-                functions={"utility": _arrival_domain_utility},
+                functions={"utility": _participation_domain_utility},
             ),
         },
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
-        regime_id_class=_ArrivalDomainRegimeId,
+        regime_id_class=_ParticipationDomainRegimeId,
         initial_nodes={0: "source"},
         fixed_params=fixed_params or {},
         edges={
             "source": Transition(
                 law=ByAge(cases={0: "target"}),
-                arrivals={
-                    "target": ArrivalDecision(
+                participation={
+                    "target": ParticipationCheck(
                         predicate=predicate,
                         reads={
-                            "V_target": ArrivalRead(
+                            "V_target": ParticipationRead(
                                 kind="IntegratedFull",
                                 regime="target",
                                 projection={
                                     "x": project
                                     if consumer == "read_projection"
-                                    else _arrival_domain_identity_x,
-                                    "y": _arrival_domain_identity_y,
+                                    else _participation_domain_identity_x,
+                                    "y": _participation_domain_identity_y,
                                 },
                             )
                         },
@@ -531,15 +518,15 @@ def _arrival_domain_model(
                                     projection={
                                         "x": project
                                         if consumer == "fallback_projection"
-                                        else _arrival_domain_identity_x,
-                                        "y": _arrival_domain_identity_y,
+                                        else _participation_domain_identity_x,
+                                        "y": _participation_domain_identity_y,
                                     },
                                 )
                             )
                         },
                     )
                 }
-                if with_arrival
+                if with_participation
                 else {},
             ),
             "target": Transition(law=ByAge(cases={1: "done"})),
@@ -551,12 +538,12 @@ def _arrival_domain_model(
     "consumer", ["predicate", "read_projection", "fallback_projection"]
 )
 @pytest.mark.parametrize("bad_name", ["direct_next"])
-def test_arrival_consumer_refuses_reserved_next_names(
+def test_participation_consumer_refuses_reserved_next_names(
     *, consumer: str, bad_name: str
 ) -> None:
-    """A transition-local value is unavailable to the landed arrival decision."""
+    """A transition-local value is unavailable to the landed participation check."""
     with pytest.raises(InvalidNameError, match="next_y"):
-        _arrival_domain_model(consumer=consumer, bad_name=bad_name)
+        _participation_domain_model(consumer=consumer, bad_name=bad_name)
 
 
 @pytest.mark.parametrize(
@@ -569,15 +556,15 @@ def test_arrival_consumer_refuses_reserved_next_names(
         ("fallback_projection", "target_helper"),
     ],
 )
-def test_arrival_own_edge_parameter_precedes_target_helper_concatenation(
+def test_participation_own_edge_parameter_precedes_target_helper_concatenation(
     *, consumer: str, bad_name: str
 ) -> None:
     """The exact edge slot controls the Boolean rule or projected coordinate."""
-    model = _arrival_domain_model(consumer=consumer, bad_name=bad_name)
+    model = _participation_domain_model(consumer=consumer, bad_name=bad_name)
     path = (
         ("predicate",)
         if consumer == "predicate"
-        else ("references", "V_target", "x")
+        else ("reads", "V_target", "x")
         if consumer == "read_projection"
         else ("routes", "only", "fallback", "x")
     )
@@ -612,29 +599,29 @@ def test_arrival_own_edge_parameter_precedes_target_helper_concatenation(
 
 
 @pytest.mark.parametrize("bad_name", ["target_helper", "transitive_next"])
-def test_arrival_admission_fixture_has_valid_ordinary_target_helpers(
+def test_participation_admission_fixture_has_valid_ordinary_target_helpers(
     *, bad_name: str
 ) -> None:
     """The ordinary target payoff/transition owns these helpers legitimately."""
-    model = _arrival_domain_model(
-        consumer="predicate", bad_name=bad_name, with_arrival=False
+    model = _participation_domain_model(
+        consumer="predicate", bad_name=bad_name, with_participation=False
     )
     assert model.get_params_template()["target"]["utility"] == {}
 
 
-def test_arrival_source_only_helper_stays_an_independent_edge_parameter() -> None:
-    """A source's valid next_y helper cannot capture the arrival's free h."""
-    model = _arrival_domain_model(consumer="predicate", bad_name="source_helper")
+def test_participation_source_only_helper_stays_an_independent_edge_parameter() -> None:
+    """A source's valid next_y helper cannot capture the check's free h."""
+    model = _participation_domain_model(consumer="predicate", bad_name="source_helper")
     assert leaf_paths(tree=model.get_params_template()["edges"]) == {
         ("source", "target", "predicate", "h")
     }
 
 
 @pytest.mark.parametrize("fixed", [False, True])
-def test_arrival_edge_parameter_uses_its_actual_date_in_solve_and_replay(
+def test_participation_edge_parameter_uses_its_actual_date_in_solve_and_replay(
     *, fixed: bool
 ) -> None:
-    """Source-date h rejects, but the true arrival-date h accepts the target."""
+    """Source-date h rejects, but the true participation-date h accepts the target."""
     params = {
         "discount_factor": 0.5,
         "edges": {
@@ -649,7 +636,7 @@ def test_arrival_edge_parameter_uses_its_actual_date_in_solve_and_replay(
             }
         },
     }
-    model = _arrival_domain_model(
+    model = _participation_domain_model(
         consumer="predicate",
         bad_name="target_helper",
         temporal_h=True,
@@ -666,15 +653,15 @@ def test_arrival_edge_parameter_uses_its_actual_date_in_solve_and_replay(
         solution=solution,
         initial_conditions={
             "age": jnp.asarray([0.0]),
-            "regime_id": jnp.asarray([_ArrivalDomainRegimeId.source]),
+            "regime_id": jnp.asarray([_ParticipationDomainRegimeId.source]),
             "x": jnp.asarray([0.0]),
             "y": jnp.asarray([0.0]),
         },
         log_level="off",
     ).to_dataframe(use_categorical_codes=True)
-    arrival = frame.query("period == 1")
-    np.testing.assert_array_equal(arrival["regime_name"], ["target"])
-    np.testing.assert_array_equal(arrival["value"], [1.5])
+    participation = frame.query("period == 1")
+    np.testing.assert_array_equal(participation["regime_name"], ["target"])
+    np.testing.assert_array_equal(participation["value"], [1.5])
 
 
 @categorical(ordered=False)
@@ -759,11 +746,11 @@ def _read_priority_replay(
         edges={
             "source": Transition(
                 law=ByAge(cases={0: "target"}),
-                arrivals={
-                    "target": ArrivalDecision(
+                participation={
+                    "target": ParticipationCheck(
                         predicate=predicate,
                         reads={
-                            read_name: ArrivalRead(
+                            read_name: ParticipationRead(
                                 kind="Raw",
                                 regime="reference",
                                 projection={"z": _priority_original_x},
@@ -805,7 +792,7 @@ def _read_priority_replay(
     [(_priority_read_h, "h"), (_priority_read_quote, "quote")],
     ids=["live-target-helper", "disjoint-control"],
 )
-def test_arrival_explicit_read_precedes_its_same_named_target_helper(
+def test_participation_explicit_read_precedes_its_same_named_target_helper(
     *, predicate: UserFunction, read_name: ReferenceName
 ) -> None:
     """The declared reference value admits a target whose own helper would refuse."""
@@ -820,7 +807,7 @@ def test_arrival_explicit_read_precedes_its_same_named_target_helper(
     np.testing.assert_array_equal(landed["value"], [110.0, 111.0])
 
 
-def test_arrival_read_state_alias_preserves_original_projection_inputs() -> None:
+def test_participation_read_state_alias_preserves_original_projection_inputs() -> None:
     """Read x decides routing while fallback w uses the original landing x."""
     solution, frame = _read_priority_replay(predicate=_priority_read_x, read_name="x")
     np.testing.assert_array_equal(solution.values[0]["source"], [5.0, 55.5])
@@ -834,7 +821,7 @@ def test_arrival_read_state_alias_preserves_original_projection_inputs() -> None
     assert landed.iloc[1]["x"] == 1.0
 
 
-def test_arrival_v_target_read_names_the_declared_reference_object() -> None:
+def test_participation_v_target_read_names_the_declared_reference_object() -> None:
     """Explicit V_target reads the reference, independently of the acting target."""
     solution, frame = _read_priority_replay(
         predicate=_priority_read_v_target, read_name="V_target"
@@ -890,10 +877,10 @@ def _collision_keep_acting_target(*, acting_target: FloatND) -> BoolND:
 
 
 @pytest.mark.parametrize("state_name", ["x", "acting_target"])
-def test_arrival_internal_dependency_preserves_the_declared_physical_state(
+def test_participation_internal_dependency_preserves_the_declared_physical_state(
     *, state_name: StateName
 ) -> None:
-    """Renaming a physical state preserves arrival pricing and actual row routes."""
+    """Renaming a physical state keeps participation pricing and the row routes."""
     if state_name == "x":
         source_flow = _collision_source_x
         target_flow = _collision_target_x
@@ -927,8 +914,8 @@ def test_arrival_internal_dependency_preserves_the_declared_physical_state(
         edges={
             "src": Transition(
                 law={"target": StochasticTransition(func=always)},
-                arrivals={
-                    "target": ArrivalDecision(
+                participation={
+                    "target": ParticipationCheck(
                         predicate=predicate,
                         routes={
                             "self": StakeholderRoute(
