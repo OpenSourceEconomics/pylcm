@@ -15,12 +15,24 @@ import pytest
 from beartype.roar import BeartypeCallHintParamViolation
 
 import lcm
+from _lcm import exit_queries, policy_queries
 from _lcm.current_iid import CurrentIIDDrawPlan
 from _lcm.execution.core_program import CoreBuildContext
 from _lcm.exit_queries import _compose, _QueryGraphBuilder, bind_exit_query_graph
-from _lcm.policy_queries import QueryKind, ScalarPolicyQueries, _PolicyQueryKernel
+from _lcm.policy_queries import (
+    PolicyAnswer,
+    QueryKind,
+    ScalarPolicyQueries,
+    _ChunkArguments,
+    _own_raw_evaluation_sources,
+    _PolicyQueryKernel,
+    _QueryChunks,
+    _QueryCore,
+    build_policy_query_kernel,
+)
+from _lcm.regime_building.Q_and_F import CanonicalActionKernel, EvaluatedQAndF
 from _lcm.solution.fingerprint import _semantic_fingerprint
-from _lcm.typing import PytreeValue
+from _lcm.typing import FlatParams, PytreeValue
 from lcm import (
     CollectiveUtility,
     Consent,
@@ -2088,3 +2100,393 @@ def test_callable_exit_projection_keeps_fingerprint_admission() -> None:
     composed = _compose(projection={}, function=bound, source="owner")
     np.testing.assert_array_equal(composed(wealth=jnp.asarray(3.0)), 3.0)
     assert _semantic_fingerprint(composed)
+
+
+@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+def test_own_raw_and_full_evaluate_canonical_problem_once(  # noqa: PLR0915 - keep one graph and runtime population proof together
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Identical conditional single work is shared while both callers still decide."""
+
+    model = _household(
+        newlywed=True, enable_jit=True, source_only=True, outside_lag=True
+    )
+    kernel = model._regimes["single_f"].solution.period_kernels[0]
+    assert isinstance(kernel, _PolicyQueryKernel)
+    root = kernel.definitions[kernel.root]
+    own_key = root.inputs["own_raw_0"]
+    own = kernel.definitions[own_key]
+    couple = kernel.definitions[root.inputs["exit_0_self"]]
+    outside_key = couple.inputs["exit_0_f"]
+    outside = kernel.definitions[outside_key]
+    assert outside.read.kind is QueryKind.PARTICIPATING
+    assert outside.read.target == "single_f"
+    assert not outside.inputs
+    assert outside_key != own_key
+    canonical = root.context.Q_and_F_functions[0]
+    assert root.own_raw == own_key
+    assert kernel.chunk_size == 2
+    assert own.context is root.context
+    assert own.context.Q_and_F_functions[0] is canonical
+    assert own.read.kind is QueryKind.RAW
+    assert own.available is root.available is None
+    assert own.read.operand_paths == root.read.operand_paths
+    assert own.read.phase == root.read.phase == "solve"
+    assert own.read.period == root.read.period == 0
+    assert own.read.role == root.read.role == ""
+    assert all(
+        own.read.projection[name] is helper
+        for name, helper in root.read.projection.items()
+    )
+    numerical_calls: list[float] = []
+    caller_answers: dict[str, tuple[np.ndarray, ...]] = {}
+    consent_calls: list[bool] = []
+    evaluate = policy_queries._shared_evaluation
+    core = _QueryCore.__call__
+    eligible = exit_queries._ExitReducer._eligible
+
+    def record_numerical(value: np.ndarray) -> None:
+        numerical_calls.append(float(value))
+
+    def observed_evaluation(
+        *, function: CanonicalActionKernel, arguments: Mapping[str, PytreeValue]
+    ) -> EvaluatedQAndF:
+        evaluated = evaluate(function=function, arguments=arguments)
+        if function is canonical:
+            jax.debug.callback(record_numerical, evaluated.parts.Q)
+        return evaluated
+
+    def observed_core(self: _QueryCore, **arguments: PytreeValue) -> PolicyAnswer:
+        answer = core(self, **arguments)
+        if self.name in {kernel.root, own_key, outside_key}:
+
+            def record_caller(*leaves: np.ndarray) -> None:
+                caller_answers[self.name] = leaves
+
+            jax.debug.callback(record_caller, *answer)
+        return answer
+
+    # keyword-only-exempt: library-callback=Python.descriptor_binding
+    def observed_eligible(
+        self: exit_queries._ExitReducer,
+        *,
+        name: str,
+        operands: Mapping[str, PytreeValue],
+        payoffs: Mapping[str, Mapping[str, FloatND]],
+        availability: Mapping[str, BoolND],
+    ) -> tuple[BoolND, BoolND]:
+        result = eligible(
+            self,
+            name=name,
+            operands=operands,
+            payoffs=payoffs,
+            availability=availability,
+        )
+        if name == "marry":
+            jax.debug.callback(
+                lambda value: consent_calls.append(bool(value)), result[0]
+            )
+        return result
+
+    monkeypatch.setattr(policy_queries, "_shared_evaluation", observed_evaluation)
+    monkeypatch.setattr(_QueryCore, "__call__", observed_core)
+    monkeypatch.setattr(exit_queries._ExitReducer, "_eligible", observed_eligible)
+    program = kernel.programs["_chunks"]
+    builder = cast("_ChunkArguments", program.argument_builder)
+    operands = builder.operands(
+        CoreBuildContext(
+            state_action_space=kernel.root_context.state_action_space,
+            next_regime_to_V_arr={},
+            next_regime_to_continuation={},
+            flat_params={},
+            period=0,
+            ages=kernel.root_context.ages,
+        )
+    )
+    bank, statuses, counts = jax.jit(program.function)(
+        bank=jnp.zeros((2,)),
+        **operands,
+    )
+    jax.block_until_ready((bank, statuses, counts))
+    jax.effects_barrier()
+    expected = np.asarray([5.0, 7.0], dtype=bank.dtype)
+    assert np.asarray(bank).tobytes() == expected.tobytes()
+    assert set(caller_answers) == {kernel.root, own_key, outside_key}
+    for name, answer in caller_answers.items():
+        caller_expected = (
+            np.asarray([7.0, 7.0], dtype=expected.dtype)
+            if name == outside_key
+            else expected
+        )
+        assert answer[0].dtype == expected.dtype
+        assert answer[0].shape == (2,)
+        assert answer[0].tobytes() == caller_expected.tobytes()
+        np.testing.assert_array_equal(answer[1], np.asarray([0, 0], np.int32))
+        np.testing.assert_array_equal(answer[2], [True, True])
+        assert bool(answer[3])
+        assert answer[4].shape == (0,)
+        assert answer[4].dtype == np.int32
+    assert consent_calls == [False, False]
+    np.testing.assert_array_equal(statuses, np.ones(len(kernel.definitions), bool))
+    assert len(counts) == len(kernel.definitions)
+    assert all(count.shape == (0,) and count.dtype == jnp.int32 for count in counts)
+    # Two own-state lanes and two distinct lagged-history outside-option lanes.
+    assert len(numerical_calls) == 4, numerical_calls
+    np.testing.assert_array_equal(sorted(numerical_calls), [5.0, 7.0, 7.0, 7.0])
+
+
+def _shifted_single(*, wealth: FloatND, level: FloatND) -> FloatND:
+    return level + 2 * wealth
+
+
+def _positive_wealth(wealth: FloatND) -> BoolND:
+    return wealth > 0
+
+
+def _reversed_wealth(wealth: FloatND) -> FloatND:
+    return 1.0 - wealth
+
+
+def _sharing_control_model(
+    *,
+    state_count: int = 2,
+    guarded: bool = False,
+    parameterized: bool = False,
+    constrained: bool = False,
+) -> Model:
+    base = _household(
+        newlywed=True, enable_jit=True, source_only=True, outside_lag=True
+    )
+    source = base.user_regimes["single_f"]
+    return Model(
+        regimes={
+            **base.user_regimes,
+            "single_f": replace(
+                source,
+                constraints={"positive_wealth": _positive_wealth}
+                if constrained
+                else source.constraints,
+                states={"wealth": LinSpacedGrid(start=0, stop=1, n_points=state_count)},
+                functions={
+                    "utility": _shifted_single if parameterized else _school_single
+                },
+                exits={
+                    "marry": replace(
+                        source.exits["marry"],
+                        available=_positive_wealth if guarded else None,
+                    )
+                },
+            ),
+        },
+        regime_id_class=_Household,
+        n_periods=1,
+        initial_nodes=InitialNodes(by_period={0: "single_f"}),
+        edges={},
+        fixed_params=base.fixed_params,
+        enable_jit=True,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
+    )
+
+
+def _sharing_chunk_arguments(
+    *, kernel: _PolicyQueryKernel, level: FloatND | None = None
+) -> Mapping[str, PytreeValue]:
+
+    flat_params: FlatParams = (
+        MappingProxyType({})
+        if level is None
+        else MappingProxyType({"single_f": MappingProxyType({"utility__level": level})})
+    )
+    return cast(
+        "Mapping[str, PytreeValue]",
+        cast("_ChunkArguments", kernel.programs["_chunks"].argument_builder).operands(
+            CoreBuildContext(
+                state_action_space=kernel.root_context.state_action_space,
+                next_regime_to_V_arr={},
+                next_regime_to_continuation={},
+                flat_params=flat_params,
+                period=0,
+                ages=kernel.root_context.ages,
+            )
+        ),
+    )
+
+
+@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.parametrize("state_count", [2, 3])
+@pytest.mark.parametrize("chunk_size", [1, 2])
+@pytest.mark.parametrize("compiled", [False, True])
+@pytest.mark.parametrize("constrained", [False, True])
+def test_static_single_sharing_preserves_uninstrumented_chunks(
+    *, state_count: int, chunk_size: int, compiled: bool, constrained: bool
+) -> None:
+    """Raw sharing preserves bytes, statuses and count slots across padded chunks."""
+
+    model = _sharing_control_model(state_count=state_count, constrained=constrained)
+    source = model._regimes["single_f"].solution.period_kernels[0]
+    assert isinstance(source, _PolicyQueryKernel)
+    definitions = dict(source.definitions)
+    root = definitions[source.root]
+    kernels = []
+    for reuse in (False, True):
+        definitions[source.root] = root if reuse else replace(root, own_raw=None)
+        kernels.append(
+            build_policy_query_kernel(
+                root_context=source.root_context,
+                period=0,
+                definitions=definitions.copy(),
+                root=source.root,
+                chunk_size=chunk_size,
+            ).with_fixed_params(fixed_flat_params=source.fixed_flat_params)
+        )
+    outputs = []
+    for reuse, kernel in zip((False, True), kernels, strict=True):
+        function = cast("_QueryChunks", kernel.programs["_chunks"].function)
+        assert bool(function.raw_sources) is reuse
+        padded = ((state_count + chunk_size - 1) // chunk_size) * chunk_size
+        run = jax.jit(function) if compiled else function
+        arguments = _sharing_chunk_arguments(kernel=kernel)
+        with jax.disable_jit(disable=not compiled):
+            output = run(
+                bank=jnp.zeros((padded,)),
+                states=cast("Mapping[str, FloatND | IntND]", arguments["states"]),
+                query_arguments=cast(
+                    "Mapping[str, Mapping[str, PytreeValue]]",
+                    arguments["query_arguments"],
+                ),
+            )
+        outputs.append(jax.block_until_ready(output))
+    for control, shared in zip(
+        jax.tree.leaves(outputs[0]), jax.tree.leaves(outputs[1]), strict=True
+    ):
+        assert control.shape == shared.shape
+        assert control.dtype == shared.dtype
+        assert np.asarray(control).tobytes() == np.asarray(shared).tobytes()
+    expected = np.asarray(
+        [5.0, 7.0] if state_count == 2 else [5.0, 6.0, 7.0], dtype=outputs[1][0].dtype
+    )
+    if constrained:
+        expected[0] = -np.inf
+    assert np.asarray(outputs[1][0][:state_count]).tobytes() == expected.tobytes()
+    assert np.all(np.isneginf(outputs[1][0][state_count:]))
+    np.testing.assert_array_equal(outputs[1][1], np.ones(len(source.definitions), bool))
+    assert len(outputs[1][2]) == len(source.definitions)
+
+
+@pytest.mark.parametrize(
+    "changed", ["projection", "guard", "context", "bindings", "role", "provenance"]
+)
+def test_static_single_sharing_requires_exact_provenance(changed: str) -> None:
+    """Numerically equal helpers and different binding contexts retain separate work."""
+
+    model = _household(
+        newlywed=True, enable_jit=True, source_only=True, outside_lag=True
+    )
+    kernel = model._regimes["single_f"].solution.period_kernels[0]
+    assert isinstance(kernel, _PolicyQueryKernel)
+    definitions = dict(kernel.definitions)
+    root = definitions[kernel.root]
+    assert root.own_raw is not None
+    raw = definitions[root.own_raw]
+    if changed == "projection":
+        raw = replace(raw, read=replace(raw.read, projection={"wealth": _wealth}))
+    elif changed == "guard":
+        raw = replace(raw, available=_positive_wealth)
+    elif changed == "context":
+        raw = replace(raw, context=replace(raw.context))
+    elif changed == "bindings":
+        raw = replace(
+            raw,
+            read=replace(
+                raw.read, operand_paths={"extra": ("single_f", "utility__level")}
+            ),
+        )
+    elif changed == "role":
+        raw = replace(raw, read=replace(raw.read, role="f"))
+    else:
+        definitions[kernel.root] = replace(root, own_raw=None)
+    definitions[root.own_raw] = raw
+    assert not _own_raw_evaluation_sources(
+        root=kernel.root, definitions=definitions, period=0
+    )
+
+
+@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.parametrize("guarded", [False, True])
+def test_static_single_sharing_retains_guard_and_projection_fallback(
+    *,
+    guarded: bool,
+) -> None:
+    """A guarded or remapped outside option keeps its own support and mapped value."""
+
+    model = _sharing_control_model(guarded=guarded)
+    source = model._regimes["single_f"].solution.period_kernels[0]
+    assert isinstance(source, _PolicyQueryKernel)
+    definitions = dict(source.definitions)
+    root = definitions[source.root]
+    assert root.own_raw is not None
+    if not guarded:
+        own = definitions[root.own_raw]
+        definitions[root.own_raw] = replace(
+            own, read=replace(own.read, projection={"wealth": _reversed_wealth})
+        )
+    kernel = build_policy_query_kernel(
+        root_context=source.root_context,
+        period=0,
+        definitions=definitions,
+        root=source.root,
+        chunk_size=2,
+    ).with_fixed_params(fixed_flat_params=source.fixed_flat_params)
+    function = cast("_QueryChunks", kernel.programs["_chunks"].function)
+    assert not function.raw_sources
+    arguments = _sharing_chunk_arguments(kernel=kernel)
+    bank, statuses, counts = jax.jit(function)(bank=jnp.zeros((2,)), **arguments)
+    np.testing.assert_array_equal(bank, np.asarray([5.0, 7.0], dtype=bank.dtype))
+    np.testing.assert_array_equal(statuses, np.ones(len(definitions), bool))
+    assert len(counts) == len(definitions)
+    own_core = function.cores[root.own_raw]
+    own = jax.jit(own_core)(
+        **cast("Mapping[str, Mapping[str, PytreeValue]]", arguments["query_arguments"])[
+            root.own_raw
+        ],
+        _lcm_query_source={"wealth": jnp.asarray([0.0, 1.0])},
+        _lcm_query_live=jnp.asarray([True, True]),
+    )
+    np.testing.assert_array_equal(own[0], [-np.inf, 7.0] if guarded else [7.0, 5.0])
+    np.testing.assert_array_equal(own[1], [-1, 0] if guarded else [0, 0])
+    np.testing.assert_array_equal(own[2], [False, True] if guarded else [True, True])
+    assert bool(own[3])
+    assert own[4].shape == (0,)
+    assert own[4].dtype == jnp.int32
+
+
+@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+def test_static_single_sharing_reads_changed_params_and_preserves_jvp() -> None:
+    """Level shifts values by three, with unit tangent and fresh-model agreement."""
+    model = _sharing_control_model(parameterized=True)
+    kernel = model._regimes["single_f"].solution.period_kernels[0]
+    assert isinstance(kernel, _PolicyQueryKernel)
+    function = jax.jit(kernel.programs["_chunks"].function)
+
+    def values(level: FloatND) -> FloatND:
+        return function(
+            bank=jnp.zeros((2,)), **_sharing_chunk_arguments(kernel=kernel, level=level)
+        )[0]
+
+    baseline = values(jnp.asarray(5.0))
+    changed, tangent = jax.jvp(values, (jnp.asarray(8.0),), (jnp.asarray(1.0),))
+    fresh = (
+        _sharing_control_model(parameterized=True)
+        .solve(
+            params={"single_f": {"utility": {"level": 8.0}}},
+            log_level="off",
+            runtime_checks=False,
+        )
+        .values[0]["single_f"]
+    )
+    np.testing.assert_array_equal(
+        baseline, np.asarray([5.0, 7.0], dtype=baseline.dtype)
+    )
+    np.testing.assert_array_equal(changed, np.asarray([8.0, 10.0], dtype=changed.dtype))
+    assert np.asarray(changed).tobytes() == np.asarray(fresh).tobytes()
+    np.testing.assert_array_equal(tangent, np.ones(2, dtype=changed.dtype))

@@ -735,6 +735,11 @@ class _QueryGraphBuilder:
             ),
             context=context,
             inputs=inputs,
+            own_raw=(
+                inputs[next(iter(reducer.consent_reads.values()))[0]]
+                if len(reducer.consent_reads) == 1
+                else None
+            ),
             participation=keep if exits else None,
             decision=decide if exits else None,
             available=_guard(guards),
