@@ -93,7 +93,7 @@ _FULL_TOPOLOGY_EDGES = {
     "single_m": {"married": 0, "single_m_p1": 0},
     "single_f_p1": {"single_f_terminal": 1},
     "single_m_p1": {"single_m_terminal": (0, 1, 2)},
-    "married": {"married_terminal": 1, "single_f_terminal": 1, "single_m_terminal": 1},
+    "married": {"married_terminal": 1},
 }
 
 

@@ -95,7 +95,6 @@ from _lcm.variables import (  # noqa: E402
     _bind_forward_refs as _bind_variables_forward_refs,
 )
 from lcm.ages import AgeGrid  # noqa: E402
-from lcm.arrivals import ArrivalDecision, ArrivalRead  # noqa: E402
 from lcm.case_piece import (  # noqa: E402
     affine_breakpoint,
     case_boundary,
@@ -154,6 +153,7 @@ from lcm.initial_nodes import UserInitialNodes as _UserInitialNodes  # noqa: E40
 from lcm.koopmans_aggregation import CESAggregator, LinearAggregator  # noqa: E402
 from lcm.lowering import LoweredPeriodCandidate, PeriodCandidate  # noqa: E402
 from lcm.model import Model  # noqa: E402
+from lcm.participation import ParticipationCheck, ParticipationRead  # noqa: E402
 from lcm.persistence import (  # noqa: E402
     SimulateSnapshot,
     SolveSnapshot,
@@ -242,8 +242,6 @@ __all__ = [
     "AgeRange",
     "AgeSpecializedFunction",
     "AgeSpecializedGrid",
-    "ArrivalDecision",
-    "ArrivalRead",
     "ByAge",
     "ByPeriod",
     "CESAggregator",
@@ -283,6 +281,8 @@ __all__ = [
     "NormalMixtureIIDProcess",
     "OuterContinuousMargin",
     "ParetoObjective",
+    "ParticipationCheck",
+    "ParticipationRead",
     "PeriodCandidate",
     "PeriodRange",
     "PeriodSpecializedFunction",

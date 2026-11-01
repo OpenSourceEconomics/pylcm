@@ -38,7 +38,7 @@ from lcm import (
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import DCEGM, GridSearch
+from lcm.solvers import DCEGM, GridSearch, RFCEnvelope
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -217,6 +217,7 @@ def _ages() -> AgeGrid:
 DCEGM_SOLVER = DCEGM(
     savings_grid=SAVINGS_GRID,
     n_constrained_points=64,
+    envelope=RFCEnvelope(),
 )
 
 

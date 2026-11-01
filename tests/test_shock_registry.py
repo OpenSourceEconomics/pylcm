@@ -6,7 +6,6 @@ from types import MappingProxyType
 
 import cloudpickle
 import jax.numpy as jnp
-import numpy as np
 import pytest
 from dags import with_signature
 
@@ -31,7 +30,7 @@ from lcm.exceptions import (
     ShockDeclarationError,
     UnsupportedOperationError,
 )
-from lcm.shocks import GaussHermite, Normal, Product, ShockGroup, UserNodes
+from lcm.shocks import GaussHermite, Normal, Product, ShockGroup
 from lcm.typing import ContinuousState, FloatND, ScalarInt
 
 
@@ -279,19 +278,6 @@ def test_legacy_joint_declaration_stays_joint_in_registry() -> None:
     )
     record = model._shock_registry.legacy["alive", "solve", "pair"]
     assert (record.declaration, record.physical_names) == (joint, ("female", "male"))
-
-
-def test_signed_ancestry_is_declaration_owned() -> None:
-
-    group = ShockGroup(
-        shocks={"eps": Normal(mu=0.0, sigma=1.0)},
-        nodes=UserNodes(
-            nodes=np.array([[0.0], [1.0]]), weights=np.array([1.5, -0.5]), signed=True
-        ),
-    )
-    assert _model(
-        shocks={"earnings": group}
-    )._shock_registry.signed_origins == frozenset({"earnings"})
 
 
 def _joint_utility(*, female: ContinuousState, male: ContinuousState) -> FloatND:

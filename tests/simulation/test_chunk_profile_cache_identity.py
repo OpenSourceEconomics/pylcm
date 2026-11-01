@@ -201,7 +201,6 @@ def _key_for_initial_conditions(
             base_state_action_spaces=MappingProxyType({}),
         ),
         values={},
-        flags={},
         policies=None,
         ages=model.ages,
         initial_conditions=initial,
@@ -334,7 +333,6 @@ def test_key_is_stable_and_versioned() -> None:
             base_state_action_spaces=MappingProxyType({}),
         ),
         "values": {},
-        "flags": {},
         "policies": None,
         "ages": model.ages,
         "initial_conditions": _initial(n=3),
@@ -352,7 +350,7 @@ def test_key_is_stable_and_versioned() -> None:
     second = _simulation_chunk_profile_key(**key_kwargs)
     assert first == second
     assert hash(first) == hash(second)
-    assert first[0] == ("chunk-profile-key", 3)
+    assert first[0] == ("chunk-profile-key", 4)
 
 
 @pytest.mark.parametrize("role", ["seed", "taste_shock_seed"])

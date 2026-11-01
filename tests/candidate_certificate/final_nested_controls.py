@@ -31,7 +31,6 @@ BODY_OWNERS = {
         "_read_finite_native_row",
         "_read_finite_owned_side",
         "_validate_finite_outer_rows",
-        "_filter_finite_survivors",
         "_select_finite_outer_profiles",
         "_collapse_finite_selection",
     ),
@@ -307,6 +306,6 @@ def final_nested_mutation_specs(
             "path": source,
             "source": ast.unparse(tree) + "\n",
         }
-    if len(specifications) != 104:
+    if len(specifications) != 103:
         raise ValueError("The declared final nested control population changed")
     return specifications

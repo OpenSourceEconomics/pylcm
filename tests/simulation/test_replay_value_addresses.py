@@ -18,16 +18,19 @@ from _lcm.execution.value_transfer import (
 )
 from _lcm.simulation.replay_inputs import place_replay_payload, replay_payload_reads
 from _lcm.simulation.value_reads import PeriodSimulationReads
-from lcm.solver_api import DISSOLUTION_FLAG, SIMULATION_POLICY
+from lcm.solver_api import SIMULATION_POLICY, ArtifactKey
+
+# A Boolean replay artifact of a plugin, distinct from the built-in policy key.
+_FLAGS = ArtifactKey(type_id="example.flags")
 
 
-def _dissolution_read() -> ValueRead:
+def _flag_read() -> ValueRead:
     return ValueRead(
         target=ValueArtifactAddress(
             kind=ValueArtifactKind.REPLAY_ARTIFACT_LEAF,
             period=2,
             regime="couple",
-            artifact_key=DISSOLUTION_FLAG,
+            artifact_key=_FLAGS,
         ),
         source=ValueConsumerAddress(
             source_period=1,
@@ -51,10 +54,10 @@ def _resolve(read: ValueRead) -> ResolvedValueTransfer:
     )
 
 
-def test_dissolution_transfer_keeps_the_stored_boolean_dtype() -> None:
-    transfer = _resolve(_dissolution_read())
+def test_flag_transfer_keeps_the_stored_boolean_dtype() -> None:
+    transfer = _resolve(_flag_read())
     assert transfer.expected_dtype == jnp.dtype(bool)
-    assert transfer.target.artifact_key == DISSOLUTION_FLAG
+    assert transfer.target.artifact_key == _FLAGS
     assert transfer.target.leaf_path == ()
 
 
@@ -62,19 +65,19 @@ def test_dissolution_transfer_keeps_the_stored_boolean_dtype() -> None:
     "channel",
     [ValueInputChannel.NEXT_REGIME_VALUE, ValueInputChannel.CONTINUATION_LEAF],
 )
-def test_dissolution_cannot_masquerade_as_a_value_or_continuation(
+def test_flags_cannot_masquerade_as_a_value_or_continuation(
     channel: ValueInputChannel,
 ) -> None:
-    read = _dissolution_read()
+    read = _flag_read()
     with pytest.raises(ValueError, match="replay-artifact channel"):
         _resolve(replace(read, source=replace(read.source, channel=channel)))
 
 
 @pytest.mark.parametrize("period", [1, 3])
-def test_dissolution_period_is_bound_to_the_declared_landing_period(
+def test_flag_period_is_bound_to_the_declared_landing_period(
     period: int,
 ) -> None:
-    read = _dissolution_read()
+    read = _flag_read()
     with pytest.raises(ValueError, match="period must match"):
         _resolve(replace(read, target=replace(read.target, period=period)))
 

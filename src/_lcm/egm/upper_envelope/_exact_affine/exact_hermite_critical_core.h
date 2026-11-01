@@ -170,7 +170,9 @@ PYLCM_CRITICAL_HD PYLCM_CRITICAL_INLINE int32_t HermiteCriticalBernstein(
   for (const auto& value : p) {
     if (!value.finite) return kUnresolved;
   }
-  if (!ExactGreater(h, T{0}) || !ExactGreater(log_scale, T{0}) ||
+  // Decoded integers keep positivity independent of floating-point flush modes.
+  if (p[1].negative || p[1].significand == 0 ||
+      p[7].negative || p[7].significand == 0 ||
       !ExactGreater(upper, lower) || ExactGreater(x0, lower)) {
     return kUnresolved;
   }

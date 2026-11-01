@@ -649,11 +649,11 @@ declaration is written in.
 
 The two halves of a gated edge use this to split differently:
 
-- The **gate fold** (`_GateFoldBody`) reads the next period's value and dissolution
-  arrays on each target's own regime-level grids and writes the substituted continuation
-  over those same grids. No operand and no output carries a subject axis, so it declares
-  `()` — the empty tuple — and is *replicated* wherever the population is spread over
-  several devices.
+- The **gate fold** (`_GateFoldBody`) reads the next period's value arrays on each
+  target's own regime-level grids and writes the substituted continuation over those
+  same grids. No operand and no output carries a subject axis, so it declares `()` — the
+  empty tuple — and is *replicated* wherever the population is spread over several
+  devices.
 - The **gate route** declares `_GATE_ROUTE_SUBJECT_ARG_NAMES` — `next_states`,
   `new_subject_regime_ids`, `subjects_in_regime`, `own_stakeholder`,
   `new_own_stakeholder` — and is *partitioned* across the subject devices. The grids the

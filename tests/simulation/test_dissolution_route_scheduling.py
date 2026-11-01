@@ -6,9 +6,10 @@ schedules have to hold for that:
 
 - A fallback runs after every target it serves, whatever order the regimes are
   declared in, so any acyclic arrangement of targets and fallbacks simulates.
-- A gate may name its own target as the fallback, at a projected state. The
-  household then decides again in the same regime at the projected state, and
-  its period's row records that decision.
+- A participation check may name its own target as the fallback, at a projected
+  state. A household landing where the target has no policy support then decides
+  in the same regime at the projected state, and its period's row records that
+  decision.
 """
 
 from itertools import permutations
@@ -23,9 +24,10 @@ from lcm import (
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
-    Gate,
     IrregSpacedGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -33,7 +35,6 @@ from lcm import (
     categorical,
 )
 from lcm.exceptions import NoFeasibleActionError
-from lcm.solver_api import DISSOLUTION_FLAG
 from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
 from tests.simulation.test_dissolution_route_provenance import (
@@ -151,8 +152,8 @@ def _feasible_below_the_middle(*, wage: ContinuousState) -> BoolND:
     return wage < 1.5
 
 
-def _no_dissolution(*, D_target: BoolND) -> BoolND:
-    return ~D_target
+def _has_policy_support(*, target_support: BoolND) -> BoolND:
+    return target_support
 
 
 def _certain(*, wage: ContinuousState) -> FloatND:
@@ -175,7 +176,28 @@ def _self_route_model(
     projection=_project_to_three,
     off_grid: Literal["extrapolate", "clip_state"] = "extrapolate",
 ) -> Model:
-    """The gate into `a` falls back to `a` itself, projecting the wage to 3."""
+    """The participation check into `a` falls back to `a`, projecting the wage to 3."""
+    route = StakeholderRoute(
+        target_stakeholder="f",
+        fallback=ProjectedRegimeValue(
+            regime="a", stakeholder="f", projection={"wage": projection}
+        ),
+    )
+    participation = {
+        "a": ParticipationCheck(
+            predicate=_has_policy_support,
+            reads={
+                "target_support": ParticipationRead(
+                    regime="a",
+                    stakeholder="f",
+                    kind="Participating",
+                    field="support",
+                    projection={"wage": _identity},
+                )
+            },
+            routes={"only": route},
+        )
+    }
     grid = IrregSpacedGrid(points=np.array([1.0, 2.0, 3.0]))
     a_grid = IrregSpacedGrid(points=np.array([1.0, 2.0, 3.0]), off_grid=off_grid)
     return Model(
@@ -199,21 +221,7 @@ def _self_route_model(
         edges={
             "source": Transition(
                 law=ByAge(cases={0: {"a": StochasticTransition(func=_certain)}}),
-                gates={
-                    "a": Gate(
-                        predicate=_no_dissolution,
-                        routes={
-                            "only": StakeholderRoute(
-                                target_stakeholder="f",
-                                fallback=ProjectedRegimeValue(
-                                    regime="a",
-                                    stakeholder="f",
-                                    projection={"wage": projection},
-                                ),
-                            )
-                        },
-                    )
-                },
+                participation=participation,
             )
         },
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
@@ -243,13 +251,6 @@ def _simulate_self_route(*, model: Model, runtime_checks: bool):
     return solution, result
 
 
-def test_the_self_route_gate_dissolves_only_at_the_middle_node():
-    model = _self_route_model(enable_jit=True)
-    solution = model.solve(params=_SELF_PARAMS, log_level="off")
-    flags = np.asarray(solution.replay_artifacts.project(DISSOLUTION_FLAG)[1]["a"])
-    assert flags.tolist() == [False, True, False]
-
-
 @pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
 @pytest.mark.parametrize("runtime_checks", [False, True])
 def test_a_self_route_decides_again_at_its_projected_state(
@@ -270,23 +271,6 @@ def test_a_self_route_decides_again_at_its_projected_state(
         list(zip(rows["regime_name"], rows["wage"], rows["work"], strict=True))
         == expected
     )
-
-
-def test_a_self_route_is_recorded_once_at_the_state_it_left():
-    _, result = _simulate_self_route(
-        model=_self_route_model(enable_jit=True), runtime_checks=True
-    )
-    assert [
-        (
-            record.subject_id,
-            record.period,
-            record.regime,
-            dict(record.state),
-            record.source,
-            record.fallback,
-        )
-        for record in result.dissolution_fallbacks
-    ] == [(1, 1, "a", {"wage": 2.0}, "source", "a")]
 
 
 def test_a_self_route_that_is_empty_again_raises():
