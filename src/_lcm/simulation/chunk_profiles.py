@@ -178,10 +178,11 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     host gated or other replay adapters. Diagnostics, retained storage and outer
     assembly profiles feed the selector before any candidate chunk is allocated.
 
-    Every forward unit is first lowered from the entry carrier on the calling
-    thread into one compilation wave, which compiles each program on the worker
-    pool; the ordered walk then finds each executable in the runtime's shared
-    cache under its exact abstract key and compiles only what the wave did not.
+    Ordinary forward units are first lowered from the entry carrier on the
+    calling thread into a compilation wave. Exit units use two ready frontiers
+    per period: original and incoming decisions, then revealed decisions after
+    routing. Each wave compiles on the worker pool; the ordered walk adopts
+    actual compiled layouts and memory reports from the shared exact-key cache.
 
     With `group_sizes`, the subjects of each code of the grouping state form
     chunks of their own: the population is not padded to a chunk multiple, each
@@ -262,11 +263,12 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     forward_regimes = forward_regimes_by_period(
         regimes=regimes, n_periods=ages.n_periods
     )
+    logger = get_logger(log_level=log_level, runtime_checks=runtime_checks)
     with CompilationWave(
         n_workers=_resolve_compilation_workers(
             max_compilation_workers=max_compilation_workers
         ),
-        logger=get_logger(log_level=log_level, runtime_checks=runtime_checks),
+        logger=logger,
         log_kernel_memory=False,
         compiled={},
         compile_phase="simulation_compilation",
@@ -369,6 +371,8 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
             n_subjects=n_subjects,
             widths=widths,
             current_iid_override_schema=current_iid_override_schema,
+            max_compilation_workers=max_compilation_workers,
+            logger=logger,
         )
         pending = payload_bytes(
             tree=(

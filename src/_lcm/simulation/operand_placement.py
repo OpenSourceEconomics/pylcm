@@ -18,7 +18,13 @@ from _lcm.simulation.residency import (
     union_buffer_footprints,
 )
 from _lcm.simulation.value_placement import simulation_value_sharding
-from _lcm.typing import ArgumentTree, HostArray
+from _lcm.typing import (
+    ArgumentTree,
+    HostArray,
+    ParticipationQueryArguments,
+    PytreeChild,
+    _unflatten_participation_arguments,
+)
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import ReferenceName, ValueND
 
@@ -282,6 +288,22 @@ def _place_operand_tree(
             for index, value in enumerate(tree)
         ]
         return tuple(values) if isinstance(tree, tuple) else values
+    if isinstance(tree, ParticipationQueryArguments):
+        # JAX's existing boundary accepts abstract children; the ordinary
+        # constructor deliberately accepts concrete economic operands only.
+        return _unflatten_participation_arguments(
+            metadata=None,
+            children=(
+                cast(
+                    "PytreeChild",
+                    _place_operand_tree(
+                        tree=tree.by_target,
+                        sharding=sharding,
+                        protected=_paths_below(paths=protected, segment="by_target"),
+                    ),
+                ),
+            ),
+        )
     if dataclasses.is_dataclass(tree) and not isinstance(tree, type):
         return dataclasses.replace(
             tree,

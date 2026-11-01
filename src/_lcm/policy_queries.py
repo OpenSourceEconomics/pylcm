@@ -1260,29 +1260,34 @@ class _QueryArguments:
                 CURRENT_IID_NODES_ARGUMENT,
                 CURRENT_IID_ROWS_ARGUMENT,
             }
+            # Freeze the producer's key order before shape-only tree conversion.
             arguments[_INFORMATION] = cast(
                 "ShapeDtypePytree",
-                {
-                    name: {
-                        **{
-                            key: value
-                            for key, value in _node_inputs(
-                                node=node, period=node.read.period
-                            )[0](
-                                replace(
-                                    context,
-                                    period=node.read.period,
-                                    state_action_space=node.context.state_action_space,
-                                )
-                            ).items()
-                            if key in keys
-                        },
-                        _PROJECTION: _query_projection_operands(
-                            node=node, context=context
-                        ),
+                MappingProxyType(
+                    {
+                        name: MappingProxyType(
+                            {
+                                **{
+                                    key: value
+                                    for key, value in _node_inputs(
+                                        node=node, period=node.read.period
+                                    )[0](
+                                        replace(
+                                            context,
+                                            period=node.read.period,
+                                            state_action_space=node.context.state_action_space,
+                                        )
+                                    ).items()
+                                    if key in keys
+                                },
+                                _PROJECTION: _query_projection_operands(
+                                    node=node, context=context
+                                ),
+                            }
+                        )
+                        for name, node in self.information_nodes.items()
                     }
-                    for name, node in self.information_nodes.items()
-                },
+                ),
             )
         return MappingProxyType(arguments)
 
@@ -2217,15 +2222,12 @@ def _shared_evaluation(
 ) -> EvaluatedQAndF:
     """Trace one action problem once per abstract signature, however often read.
 
-    A participation continuation prices the target's own action problem at the
-    landing date, so a query's Q/F contains the next date's queries, whose Q/F
-    contains the date after. Inlined, every read re-traces that whole subtree.
     A nested `jax.jit` keys the trace on the function and its abstract inputs:
-    later reads, the `eval_shape` that sizes a guarded branch, and every other
-    program of the same graph reuse the jaxpr. `inline=True` splices that jaxpr
-    into the caller, so the lowered program is the one the inlined trace gives.
-    Concrete leaves stay closed over, as they were, and an eager evaluation
-    stays eager.
+    later reads, the `eval_shape` that sizes a guarded branch, and other programs
+    of the same graph reuse the jaxpr. Its call boundary also lets lowering share
+    one action-problem body across repeated reads instead of expanding that body
+    at every call site. The backend compiler remains free to inline those calls.
+    Concrete leaves stay closed over, and an eager evaluation stays eager.
     """
     leaves, treedef = jax.tree.flatten(arguments)
     traced = tuple(isinstance(leaf, Tracer) for leaf in leaves)
@@ -2257,7 +2259,7 @@ def _shared_evaluation(
                 )
             )
 
-        variants[key] = jax.jit(evaluate, inline=True)
+        variants[key] = jax.jit(evaluate)
     return variants[key](
         *(leaf for leaf, is_traced in zip(leaves, traced, strict=True) if is_traced)
     )

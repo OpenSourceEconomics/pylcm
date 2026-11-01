@@ -4,13 +4,16 @@ Run this module alone so its four-device CPU topology precedes initialization.
 """
 
 from collections.abc import Mapping
+from dataclasses import replace
 from types import MappingProxyType
 from typing import Never
 
 import jax
+import jax._src.core
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from beartype.roar import BeartypeCallHintParamViolation
 
 from _lcm.execution.core_program import (
     CoreExecutionDisposition,
@@ -29,7 +32,8 @@ from _lcm.simulation.operand_placement import place_simulation_arguments
 from _lcm.simulation.program_types import subject_axis
 from _lcm.simulation.programs import _ArgumentsBoundAtDispatch, _SubjectTiled
 from _lcm.simulation.residency import measure_buffer_footprint
-from _lcm.simulation.runtime import SimulationRuntime
+from _lcm.simulation.runtime import SimulationRuntime, _materialize_abstract
+from _lcm.typing import ParticipationQueryArguments
 from lcm.exceptions import ExecutionPlanningError
 from tests.conftest import assert_agrees_to_ulp
 
@@ -227,3 +231,118 @@ def test_shared_operand_copy_checks_source_destination_and_scratch_first(
             live_footprint=live,
             budget_devices=devices,
         )
+
+
+def _describe_array(array: jax.Array) -> jax.ShapeDtypeStruct:
+    """Preserve the actual leaf's layout and weak type in its shape descriptor."""
+    return jax.ShapeDtypeStruct(
+        array.shape, array.dtype, sharding=array.sharding, weak_type=array.weak_type
+    )
+
+
+def test_abstract_materialization_preserves_container_order_and_value_reads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Shape-only placement keeps dynamic key order and protected value layouts."""
+    devices = tuple(jax.devices())
+    subject_devices = (devices[3], devices[1], devices[2])
+    mesh = jax.make_mesh(
+        (3,), ("X",), (jax.sharding.AxisType.Auto,), devices=subject_devices
+    )
+    subject = jax.NamedSharding(mesh, jax.P("X"))
+    shared = jax.NamedSharding(mesh, jax.P())
+    protected = jax.ShapeDtypeStruct(
+        (6,), float, sharding=jax.sharding.SingleDeviceSharding(devices[0])
+    )
+    weights = jax.ShapeDtypeStruct((6,), float, sharding=shared)
+    scalar = jax.ShapeDtypeStruct((), float, sharding=shared, weak_type=True)
+    arguments = {
+        "state": jax.ShapeDtypeStruct((6,), float, sharding=subject),
+        "action_grid": weights,
+        "params": {"zeta": scalar, "weights": weights, "alpha": scalar},
+        "age": scalar,
+        "period": jax.ShapeDtypeStruct((), jnp.int32, sharding=shared),
+        "reference": {"done": protected},
+    }
+    runtime = SimulationRuntime(
+        execution=ResolvedExecution(
+            device_ids=(1, 2, 3),
+            sharded_states=frozenset({"state"}),
+            axis_widths=MappingProxyType({"subject": 3}),
+            device_memory_bytes=None,
+        ),
+        enable_jit=True,
+        subject_devices=subject_devices,
+    )
+    concrete_value = jax.device_put(jnp.arange(6.0), devices[0])
+    concrete = ParticipationQueryArguments(
+        by_target={
+            "done": {
+                "query": {
+                    "zeta": concrete_value,
+                    "wealth": concrete_value,
+                    "alpha": concrete_value,
+                }
+            }
+        }
+    )
+    carrier = jax.tree.map(_describe_array, concrete)
+    assert isinstance(carrier, ParticipationQueryArguments)
+    query = carrier.by_target["done"]["query"]
+    protected_query_value = query["wealth"]
+    assert isinstance(protected_query_value, jax.ShapeDtypeStruct)
+    with pytest.raises(BeartypeCallHintParamViolation):
+        ParticipationQueryArguments(by_target={"done": {"query": query}})
+    value_read = _program().requirements.value_reads[0]
+    query_read = replace(
+        value_read,
+        source=replace(
+            value_read.source,
+            argument="participation_arguments",
+            path=("by_target", "done", "query", "wealth"),
+        ),
+    )
+    with monkeypatch.context() as guard:
+        guard.setattr(jax, "device_put", _refuse_operand_copy)
+        guard.setattr(
+            jax._src.core.EvalTrace, "process_primitive", _refuse_operand_copy
+        )
+        with pytest.raises(AssertionError, match="before checking headroom"):
+            jnp.zeros(3)
+        placed_carrier = place_simulation_arguments(
+            arguments={"participation_arguments": carrier},
+            subject_arg_names=(),
+            value_reads=(query_read,),
+            devices=subject_devices,
+        )["participation_arguments"]
+        materialized = _materialize_abstract(
+            runtime=runtime,
+            program=_program(),
+            arguments=arguments,
+            period=0,
+            n_subjects=6,
+        )
+    placed = materialized.arguments
+    params = placed["params"]
+    reference = placed["reference"]
+    assert isinstance(params, MappingProxyType)
+    assert tuple(params) == ("zeta", "weights", "alpha")
+    assert all(
+        params[name] is value
+        for name, value in (("weights", weights), ("zeta", scalar), ("alpha", scalar))
+    )
+    assert scalar.weak_type
+    assert isinstance(reference, MappingProxyType)
+    assert reference["done"] is protected
+    assert protected.sharding.device_set == {devices[0]}
+    assert placed["state"] is arguments["state"]
+    assert placed["action_grid"] is weights
+    assert not runtime.cache
+    assert isinstance(placed_carrier, ParticipationQueryArguments)
+    placed_query = placed_carrier.by_target["done"]["query"]
+    assert isinstance(placed_query, MappingProxyType)
+    assert tuple(placed_query) == ("zeta", "wealth", "alpha")
+    assert placed_query["wealth"] is protected_query_value
+    assert placed_query["zeta"] is query["zeta"]
+    assert placed_query["alpha"] is query["alpha"]
+    assert protected_query_value.sharding.device_set == {devices[0]}
