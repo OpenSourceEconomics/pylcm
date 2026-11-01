@@ -730,12 +730,13 @@ def build_policy_query_kernel(
     root_space = root_context.state_action_space
     size = math.prod(value.size for value in root_space.states.values())
     chunk_size = min(chunk_size, size)
+    bank_size = _get_padded_query_bank_size(size=size, chunk_size=chunk_size)
     stakeholders = root_context.stakeholders
     stakeholder_shape = () if stakeholders is None else (len(stakeholders),)
     value_shape = (
         tuple(value.size for value in root_space.states.values()) + stakeholder_shape
     )
-    bank_shape = (math.ceil(size / chunk_size) * chunk_size, *stakeholder_shape)
+    bank_shape = (bank_size, *stakeholder_shape)
     dtype = jnp.asarray(0.0).dtype
     host_buffers = MappingProxyType(
         {"query_banks": jax.ShapeDtypeStruct((2, *bank_shape), dtype)}
@@ -1062,6 +1063,20 @@ def _admit_query_objective(*, context: SolverBuildContext, period: int) -> None:
             "Native policy query does not represent Decoupled objective selection; "
             "the query reduces reported values."
         )
+
+
+def _get_padded_query_bank_size(*, size: int, chunk_size: int) -> int:
+    """Admit int32 source positions and return the exact padded bank extent."""
+    bank_size = ((size + chunk_size - 1) // chunk_size) * chunk_size
+    maximum_index = (1 << 31) - 1
+    # The source live mask also compares int32 positions with the logical size.
+    if size > maximum_index or bank_size - 1 > maximum_index:
+        raise ExecutionPlanningError(
+            f"Policy query source count {size} and padded last position "
+            f"{bank_size - 1} must each be at most {maximum_index} for int32 "
+            "query indices."
+        )
+    return bank_size
 
 
 def _admit_query_solver(*, context: SolverBuildContext, period: int) -> None:
