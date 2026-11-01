@@ -3,7 +3,6 @@ import ctypes.util
 import functools
 import gc
 import json
-import logging
 import os
 import pathlib
 import platform
@@ -26,7 +25,7 @@ from xdist.workermanage import WorkerController
 from _lcm.egm.upper_envelope._exact_affine.ffi import (
     kernel_built_for_current_backend,
 )
-from _lcm.engine import PeriodRegimeSimulationData, Regime
+from _lcm.engine import Regime
 from _lcm.execution.core_program import MaterializedCoreProgram
 from _lcm.execution.output_layout import ResolvedOutputLayout
 from _lcm.execution.pending_work import PendingSolveWork
@@ -37,7 +36,6 @@ from _lcm.execution.value_transfer import (
 )
 from _lcm.gated_edge import gated_edge_from_gate
 from _lcm.params.regime_template import create_edge_vocabulary
-from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.processing import (
     PreparedModelStructure,
@@ -49,20 +47,11 @@ from _lcm.regime_building.schedules import (
     resolve_regime_schedules,
 )
 from _lcm.regime_law import RegimeLawDeclaration, RegimeLaws, bind_regime_law
-from _lcm.simulation.chunk_inputs import SimulationCallInputs
-from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.runtime import SimulationDispatchContext
-from _lcm.simulation.simulate import _PeriodToRegimeToReplayReader
-from _lcm.simulation.subject_groups import SubjectRows
-from _lcm.time import TimeAxis
 from _lcm.typing import (
     ArgumentTree,
-    FlatParams,
-    PeriodToRegimeToSimulationPolicy,
     PytreeValue,
-    RegimeIdsToNames,
     RegimeName,
-    RegimeNamesToIds,
     ShapeDtypePytree,
 )
 from lcm.ages import AgeGrid
@@ -70,13 +59,9 @@ from lcm.collective import Gate
 from lcm.transition import Transition, TransitionLaw
 from lcm.tuning import _array_ulp_gap
 from lcm.typing import (
-    Float1D,
     FloatND,
-    Int1D,
-    IntND,
     ReferenceName,
     ScalarInt,
-    StateOrActionName,
 )
 from tests.ci import ci_workloads, pytest_policy
 from tests.ci.cpu_suite_invocations import ignore_implicit_eight_device_collection
@@ -994,41 +979,6 @@ class PrepareMaterializedKwargs(TypedDict, closed=True):
     program: MaterializedCoreProgram
     n_subjects: int
     residency: NotRequired[SimulationDispatchContext | None]
-
-
-class SubjectChunkKwargs(TypedDict, closed=True):
-    """Keywords received by `_simulate_subject_chunk`."""
-
-    initial_states: dict[StateOrActionName, Float1D | IntND]
-    initial_regime_ids: Int1D
-    starting_periods: Int1D
-    n_subjects: int
-    subject_slice: slice | SubjectRows
-    code: NotRequired[int | None]
-    stored_codes: NotRequired[tuple[int, ...] | None]
-    original_n_subjects: NotRequired[int | None]
-    regimes: MappingProxyType[RegimeName, Regime]
-    regime_names_to_ids: RegimeNamesToIds
-    regime_ids_to_names: RegimeIdsToNames
-    period_to_regime_to_V_arr: MappingProxyType[
-        int, MappingProxyType[RegimeName, FloatND]
-    ]
-    flat_params: FlatParams
-    ages: TimeAxis
-    seed: int
-    logger: logging.Logger
-    initial_own_stakeholder: Int1D
-    period_to_regime_to_sim_policy: NotRequired[PeriodToRegimeToSimulationPolicy | None]
-    period_to_regime_to_replay_reader: NotRequired[_PeriodToRegimeToReplayReader]
-    device_ids: NotRequired[tuple[int, ...]]
-    memory: NotRequired[SimulationMemory | None]
-    call_inputs: NotRequired[SimulationCallInputs | None]
-    taste_shock_seed: NotRequired[int | None]
-    taste_addresses: NotRequired[Mapping[tuple[int, RegimeName], tuple[int, ...]]]
-    process_grid_resolver: NotRequired[ProcessGridResolver | None]
-
-
-type SubjectChunkResults = dict[RegimeName, dict[int, PeriodRegimeSimulationData]]
 
 
 class AttachResolvedOutputLayoutKwargs(TypedDict, closed=True):

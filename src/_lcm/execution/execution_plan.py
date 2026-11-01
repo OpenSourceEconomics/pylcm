@@ -14,6 +14,7 @@ import operator
 import os
 import re
 from collections.abc import Collection, Iterable, Mapping
+from pathlib import Path
 from types import MappingProxyType
 from typing import Literal, Protocol, runtime_checkable
 
@@ -126,6 +127,9 @@ class ResolvedExecution:
     )
     """Whether a blocked solve runs period by period or code by code."""
 
+    value_storage: Literal["device", "host"] | Path = "device"
+    """Where a solve keeps a period's values once no later period reads them."""
+
     action_partitions: MappingProxyType[RegimeName, int] = MappingProxyType({})
     """Regimes whose action product is shared by several devices, with the count."""
 
@@ -213,6 +217,11 @@ class ResolvedExecution:
             f"per-device pool limits: {limits or 'none consulted'}; "
             f"effective {self.device_memory_bytes} bytes{verdict}."
         )
+
+    @property
+    def value_storage_kind(self) -> Literal["device", "host", "disk"]:
+        """Where solved values are kept, naming a directory only as `"disk"`."""
+        return "disk" if isinstance(self.value_storage, Path) else self.value_storage
 
     def device_memory_cap_note(self) -> str:
         """Return the clause a budget refusal appends: the ceiling and the remedies.
@@ -416,6 +425,7 @@ def resolve_execution_config(
         simulation_sharding=config.simulation_sharding,
         invariant_block_widths=MappingProxyType(dict(config.invariant_block_widths)),
         invariant_block_schedule=config.invariant_block_schedule,
+        value_storage=config.value_storage,
         action_partitions=MappingProxyType(dict(config.action_partitions)),
     )
     if requested_bytes is not None:

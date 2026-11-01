@@ -1,0 +1,585 @@
+"""Solved values kept in pinned host memory, read back onto the device.
+
+Under `ExecutionConfig.value_storage="host"` a solve keeps each period's values in
+pinned host memory. Nothing outside the solve computes on those arrays: arithmetic
+on a host-memory array runs as slow host compute and leaves its result in host
+memory. Every reader instead receives a device copy, so results, reads and panels
+are those of device storage.
+"""
+
+import weakref
+from collections.abc import Callable, Iterator, Mapping
+from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Literal, cast
+
+import jax
+import numpy as np
+
+from _lcm.execution.footprint import per_device_footprint
+from _lcm.typing import ArtifactPayload, SimulationPolicy
+from lcm._solver_api.entries import _LazyEntry
+from lcm._solver_api.identity import LoadState
+from lcm.exceptions import ExecutionPlanningError, ValueStorageError
+from lcm.typing import FloatND, RegimeName
+
+# The memory kind a stored value lives in.
+HOST_MEMORY_KIND: Literal["pinned_host"] = "pinned_host"
+
+# Periods whose device copies a read-through view keeps at once: a simulation
+# step reads its own period, the one its subjects land in and, replaying a
+# same-period exit, the one after that; the next period's reads, copied early
+# while this period runs, add one more.
+_CACHED_PERIODS = 4
+
+# What a read-through view reads from, hands out, and describes to planners: a
+# value array or a simulation policy, kept in host memory or as a lazy entry.
+type _Stored = jax.Array | SimulationPolicy | _LazyEntry
+type _OnDevice = jax.Array | SimulationPolicy
+type _StandIn = jax.ShapeDtypeStruct | SimulationPolicy
+
+
+# Annotations for any parameter that may receive a read-through view. A runtime
+# check samples one entry of a mapping, and sampling a view copies that value
+# onto the device, so at runtime they check nothing. Annotate such a parameter
+# with one of these, never with a precise mapping type.
+if TYPE_CHECKING:
+    type StoredValues = Mapping[int, Mapping[RegimeName, jax.Array]]
+    """Stored values by period and regime, or a read-through view of them."""
+    type DeclaredValues = Mapping[
+        int, Mapping[RegimeName, jax.Array | jax.ShapeDtypeStruct]
+    ]
+    """Stored values, a view of them, or their planning stand-ins."""
+    type StoredPolicies = Mapping[int, Mapping[RegimeName, SimulationPolicy]]
+    """Stored simulation policies, or a read-through view of them."""
+else:
+    # A runtime check would sample a view's entry, copying it onto the device.
+    type StoredValues = object
+    type DeclaredValues = object
+    type StoredPolicies = object
+
+
+# Where a host copy goes, as a failed copy names it.
+_HOST_DESTINATION = "pinned host memory"
+
+
+def copy_values_to_host[T: jax.Array | SimulationPolicy](
+    *, period: int, values: Mapping[RegimeName, T]
+) -> MappingProxyType[RegimeName, T]:
+    """Start copying one period's arrays or policies to pinned host memory.
+
+    Each array leaf keeps its sharding, so every device copies its own slice,
+    and its copy runs while the device computes whatever is dispatched after it;
+    a policy's structure and any non-array leaf are kept.
+
+    Raises:
+        ValueStorageError: A copy could not be started, naming its period and
+            regime.
+
+    """
+    copies: dict[RegimeName, T] = {}
+    for regime_name, value in values.items():
+        try:
+            copies[regime_name] = jax.tree.map(
+                lambda leaf: (
+                    _to_pinned_host(leaf) if isinstance(leaf, jax.Array) else leaf
+                ),
+                value,
+            )
+        except RuntimeError as error:
+            raise value_storage_error(
+                action="copy",
+                period=period,
+                regime=regime_name,
+                destination=_HOST_DESTINATION,
+            ) from error
+    return MappingProxyType(copies)
+
+
+def _to_pinned_host(value: jax.Array) -> jax.Array:
+    """Dispatch one array's copy to pinned host memory on its own sharding."""
+    return jax.device_put(value, value.sharding.with_memory_kind(HOST_MEMORY_KIND))
+
+
+def wait_for_host_copies(
+    *, copies: tuple[tuple[int, RegimeName, jax.Array], ...]
+) -> None:
+    """Wait until every `(period, regime, copy)` has arrived in pinned host memory.
+
+    Raises:
+        ValueStorageError: A copy failed, naming its period and regime.
+
+    """
+    for period, regime_name, copy in copies:
+        try:
+            jax.block_until_ready(copy)
+        except RuntimeError as error:
+            raise value_storage_error(
+                action="copy",
+                period=period,
+                regime=regime_name,
+                destination=_HOST_DESTINATION,
+            ) from error
+
+
+def value_storage_error(
+    *,
+    action: Literal["copy", "write"],
+    period: int,
+    regime: RegimeName,
+    destination: str,
+    code: int | None = None,
+) -> ValueStorageError:
+    """Return the error for a value that did not reach its value storage."""
+    of_code = "" if code is None else f"code {code} of "
+    return ValueStorageError(
+        f"Could not {action} {of_code}period {period}, regime {regime!r} to "
+        f"{destination}."
+    )
+
+
+def is_host_value(value: jax.Array) -> bool:
+    """Whether `value` is an array a solve stored in pinned host memory."""
+    return value.sharding.memory_kind == HOST_MEMORY_KIND
+
+
+def to_device(value: jax.Array) -> jax.Array:
+    """Copy a stored array back to device memory on its own sharding."""
+    return jax.device_put(value, value.sharding.with_memory_kind("device"))
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class HostValueEntry(_LazyEntry):
+    """One stored value in pinned host memory, copied to the device when read."""
+
+    value: FloatND
+    """The stored value, in pinned host memory."""
+
+    budget_bytes: int | None = None
+    """Per-device budget of the solve that stored the value; `None` unbudgeted."""
+
+    @property
+    def load_state(self) -> LoadState:
+        """Nothing of a host-stored value is on a device until it is read."""
+        return LoadState.UNLOADED
+
+    def materialize(self, *, template: ArtifactPayload | None = None) -> FloatND:
+        """Copy the value onto its devices."""
+        del template
+        return to_device(self.value)
+
+    def fresh_value(self) -> FloatND:
+        """Copy the value into a device buffer owned by this reader alone."""
+        return to_device(self.value)
+
+    def host_value(self) -> np.ndarray:
+        """Return the value as a host array without placing it on a device."""
+        return np.asarray(self.value)
+
+    @classmethod
+    def _admit_joint_materialization(cls, *, entries: tuple[_LazyEntry, ...]) -> None:
+        """Refuse to place host-stored values on the devices together above budget."""
+        admit_values_on_devices(
+            layouts=tuple(
+                (entry.value, entry.budget_bytes)
+                for entry in entries
+                if isinstance(entry, HostValueEntry)
+            ),
+            where="host-stored",
+        )
+
+
+def admit_values_on_devices(
+    *,
+    layouts: tuple[tuple[jax.Array | jax.ShapeDtypeStruct, int | None], ...],
+    where: str,
+) -> None:
+    """Refuse to place stored values on their devices at once above the budget.
+
+    Each layout is a value's array or shape, on the sharding it is read onto,
+    with the per-device budget of the solve that stored it.
+
+    Raises:
+        ExecutionPlanningError: Naming each device whose need exceeds the
+            budget, with the remedies.
+
+    """
+    budgets = {budget for _, budget in layouts if budget is not None}
+    if not budgets:
+        return
+    budget = min(budgets)
+    need: dict[int, int] = {}
+    for layout, _ in layouts:
+        footprint = per_device_footprint(array=layout)
+        for device in footprint.device_ids:
+            need[device] = need.get(device, 0) + footprint.bytes_per_device
+    over = {device: count for device, count in need.items() if count > budget}
+    if not over:
+        return
+    msg = (
+        f"Materializing {len(layouts)} {where} values at once needs "
+        f"{dict(sorted(over.items()))!r} bytes on devices whose budget is "
+        f"{budget} bytes. The solve kept them off the devices with "
+        "ExecutionConfig.value_storage because they do not fit together. Read "
+        "them one at a time with SolutionResult.value(period=..., regime=...), "
+        "save the result with SolutionResult.save, or raise "
+        "ExecutionConfig.device_memory_bytes."
+    )
+    raise ExecutionPlanningError(msg)
+
+
+class _RecentDeviceCopies:
+    """Device copies of the stored arrays of the most recently read periods."""
+
+    def __init__(
+        self,
+        *,
+        stand_in: MappingProxyType[int, MappingProxyType[RegimeName, _StandIn]],
+        stored: Mapping[int, Mapping[RegimeName, _Stored]],
+    ) -> None:
+        # A value read from disk early is a future until it is first read.
+        self._copies: dict[int, dict[RegimeName, _OnDevice | Future]] = {}
+        self.stand_in = stand_in
+        """The view's values as shapes on their device placement, for planners."""
+        self.stored = stored
+        """What the view reads from: host-memory arrays or lazy entries."""
+
+    def held(self) -> tuple[dict[RegimeName, _OnDevice], ...]:
+        """Return the device copies kept, one mapping per cached period.
+
+        A copy still being read from disk is not held yet and is left out.
+        """
+        return tuple(
+            {
+                regime: copy
+                for regime, copy in copies.items()
+                if not isinstance(copy, Future)
+            }
+            for copies in self._copies.values()
+        )
+
+    def read(self, *, period: int, regime: RegimeName, stored: _Stored) -> _OnDevice:
+        """Return the device copy of one stored value, copying it on first read.
+
+        The period read least recently is dropped first. A reader holds a value
+        to the same object while its period is open, so a period still in use
+        must outlive one that was merely copied earlier.
+        """
+        copies = self._period(period=period)
+        if regime not in copies:
+            copies[regime] = (
+                cast("_OnDevice", stored.materialize())
+                if isinstance(stored, _LazyEntry)
+                else _copy_to_device(stored)
+            )
+        copy = copies[regime]
+        if isinstance(copy, Future):
+            copy = copies[regime] = cast("_OnDevice", copy.result())
+        return copy
+
+    def prefetch(self, *, period: int, regime: RegimeName, stored: _Stored) -> None:
+        """Start copying one stored value onto the device, without waiting for it.
+
+        A host-memory copy is dispatched as a read would; a lazy entry, such as a
+        value on disk, is read by a background thread, so the caller goes on
+        while the file is read. The next read of the value waits for it.
+        """
+        copies = self._period(period=period)
+        if regime in copies:
+            return
+        copies[regime] = (
+            _DISK_READER.submit(stored.materialize)
+            if isinstance(stored, _LazyEntry)
+            else _copy_to_device(stored)
+        )
+
+    def _period(self, *, period: int) -> dict[RegimeName, _OnDevice | Future]:
+        """Return one period's copies, dropping the least recent period for it."""
+        if period in self._copies:
+            self._copies[period] = self._copies.pop(period)
+        else:
+            while len(self._copies) >= _CACHED_PERIODS:
+                del self._copies[next(iter(self._copies))]
+            self._copies[period] = {}
+        return self._copies[period]
+
+
+def _copy_to_device(stored: jax.Array | SimulationPolicy) -> _OnDevice:
+    """Dispatch the copy of every host-memory leaf back onto its devices."""
+    return jax.tree.map(
+        lambda leaf: to_device(leaf) if isinstance(leaf, jax.Array) else leaf,
+        stored,
+    )
+
+
+# Reads lazy entries a read-through view copies early; one at a time, in order.
+_DISK_READER = ThreadPoolExecutor(max_workers=1, thread_name_prefix="lcm-value-read")
+
+
+def prefetch_from_view(
+    *, view: StoredValues | StoredPolicies, period: int, regime: RegimeName
+) -> None:
+    """Start copying one stored value or policy of a read-through view early.
+
+    Anything that is not a view, or a pair it does not store, is left alone.
+    """
+    copies = _copies_of(view_id=id(view))
+    if copies is None or regime not in copies.stored.get(period, {}):
+        return
+    copies.prefetch(period=period, regime=regime, stored=copies.stored[period][regime])
+
+
+class _DeviceReadPeriod(Mapping[RegimeName, _OnDevice]):
+    """One period's stored arrays or policies, each handed out as a device copy."""
+
+    def __init__(
+        self,
+        *,
+        period: int,
+        stored: Mapping[RegimeName, _Stored],
+        copies: _RecentDeviceCopies,
+    ) -> None:
+        self._period = period
+        self._stored = stored
+        self._copies = copies
+
+    def __getitem__(self, regime: RegimeName) -> _OnDevice:
+        return self._copies.read(
+            period=self._period, regime=regime, stored=self._stored[regime]
+        )
+
+    def __contains__(self, regime: object) -> bool:
+        # Asking whether a regime is stored reads nothing: the mixin's default
+        # would look the value up, copying it onto the device.
+        return regime in self._stored
+
+    def __iter__(self) -> Iterator[RegimeName]:
+        return iter(self._stored)
+
+    def __len__(self) -> int:
+        return len(self._stored)
+
+
+def policy_read_view(
+    *, policies: Mapping[int, Mapping[RegimeName, SimulationPolicy | _LazyEntry]]
+) -> MappingProxyType[int, MappingProxyType[RegimeName, SimulationPolicy]]:
+    """Return stored simulation policies as a mapping that hands out device copies.
+
+    It caches as `device_read_view` does, so the chunks of a period share one
+    copy of each policy they read.
+    """
+    return cast(
+        "MappingProxyType[int, MappingProxyType[RegimeName, SimulationPolicy]]",
+        device_read_view(values=policies),
+    )
+
+
+def stored_form[T](
+    values: Mapping[int, Mapping[RegimeName, T]],
+) -> Mapping[int, Mapping[RegimeName, T]]:
+    """Return a read-through view's stored contents for a host-side check.
+
+    Host-memory arrays come as they are; a lazy entry is read onto the CPU device
+    (`host_payload`) when it is looked up, so a check walking the periods holds
+    one at a time. Anything that is not a view comes back as it is.
+    """
+    copies = _copies_of(view_id=id(values))
+    if copies is None:
+        return values
+    return MappingProxyType(
+        {
+            period: MappingProxyType(
+                _LazyReadMapping[RegimeName, T](
+                    # The view stores what it was built from, `T` or lazy entries.
+                    entries=cast(
+                        "Mapping[RegimeName, T | _LazyEntry]", regime_to_stored
+                    ),
+                    read=lambda entry: cast("T", _host_payload(entry)),
+                )
+            )
+            for period, regime_to_stored in copies.stored.items()
+        }
+    )
+
+
+def _host_payload(entry: _LazyEntry) -> ArtifactPayload:
+    """Read a lazy entry onto the CPU device, as a disk policy entry does."""
+    return getattr(entry, "host_payload")()  # noqa: B009
+
+
+def device_read_view(
+    *, values: Mapping[int, Mapping[RegimeName, _Stored]]
+) -> MappingProxyType[int, MappingProxyType[RegimeName, jax.Array]]:
+    """Return host-stored arrays as a mapping that hands out device copies.
+
+    A value is copied when it is first read and kept while its period is one of
+    the four most recently read, so a reader that walks the periods in order holds
+    at most four periods on the device and copies each period once per walk.
+    """
+    copies = _RecentDeviceCopies(
+        stand_in=MappingProxyType(
+            {
+                period: MappingProxyType(
+                    {
+                        regime: _device_stand_in(stored=value)
+                        for regime, value in stored.items()
+                    }
+                )
+                for period, stored in values.items()
+            }
+        ),
+        stored=values,
+    )
+    periods = _ViewPeriods(
+        {
+            period: MappingProxyType(
+                _DeviceReadPeriod(period=period, stored=stored, copies=copies)
+            )
+            for period, stored in values.items()
+        }
+    )
+    periods.copies = copies
+    view = MappingProxyType(periods)
+    # Only the view holds `periods`, so this entry goes with the view even while
+    # one of its periods lives on, and a later object reusing its id finds
+    # nothing.
+    _VIEW_COPIES[id(view)] = periods
+    # A view of values hands out arrays; `policy_read_view` recasts its own.
+    return cast("MappingProxyType[int, MappingProxyType[RegimeName, jax.Array]]", view)
+
+
+class _LazyReadMapping[K, V](Mapping[K, V]):
+    """A read-only mapping that reads each lazy entry when it is looked up.
+
+    `read` reads an entry; `None` materializes it onto its devices.
+    """
+
+    def __init__(
+        self,
+        *,
+        entries: Mapping[K, V | _LazyEntry],
+        read: Callable[[_LazyEntry], V] | None = None,
+    ) -> None:
+        self.entries: MappingProxyType[K, V | _LazyEntry] = MappingProxyType(
+            dict(entries)
+        )
+        self._read = read
+
+    def __getitem__(self, key: K) -> V:
+        entry = self.entries[key]
+        if not isinstance(entry, _LazyEntry):
+            return entry
+        return (
+            cast("V", entry.materialize()) if self._read is None else self._read(entry)
+        )
+
+    def __contains__(self, key: object) -> bool:
+        # Membership reads nothing; the mixin's default would read the entry.
+        return key in self.entries
+
+    def __iter__(self) -> Iterator[K]:
+        return iter(self.entries)
+
+    def __len__(self) -> int:
+        return len(self.entries)
+
+
+def lazy_read_view[K, V](
+    *, entries: Mapping[K, V | _LazyEntry]
+) -> MappingProxyType[K, V]:
+    """Return a mapping that reads each lazy entry, such as a policy on disk, on lookup.
+
+    Nothing read is kept: each lookup reads the entry again, so the view holds
+    no device memory.
+    """
+    lazy = _LazyReadMapping[K, V](entries=entries)
+    view = MappingProxyType(lazy)
+    # Only the view reaches `lazy`, so this entry goes with the view.
+    _LAZY_VIEWS[id(view)] = lazy
+    return view
+
+
+def lazy_entries_of_view(
+    *, view_id: int
+) -> tuple[ArtifactPayload | _LazyEntry, ...] | None:
+    """The stored entries behind a lazy read view, by the view's id; else `None`."""
+    lazy = _LAZY_VIEWS.get(view_id)
+    return None if lazy is None else tuple(lazy.entries.values())
+
+
+# The mapping behind every live lazy read view, by the view's id.
+_LAZY_VIEWS: weakref.WeakValueDictionary[int, _LazyReadMapping] = (
+    weakref.WeakValueDictionary()
+)
+
+
+class _ViewPeriods(dict[int, MappingProxyType[RegimeName, _OnDevice]]):
+    """The periods of one read-through view, which only the view holds."""
+
+    copies: _RecentDeviceCopies
+    """The view's copy cache."""
+
+
+# The periods of every live read-through view, by the view's id.
+_VIEW_COPIES: weakref.WeakValueDictionary[int, _ViewPeriods] = (
+    weakref.WeakValueDictionary()
+)
+
+
+def _copies_of(*, view_id: int) -> _RecentDeviceCopies | None:
+    """The copy cache of the live read-through view with `view_id`, else `None`."""
+    periods = _VIEW_COPIES.get(view_id)
+    return None if periods is None else periods.copies
+
+
+def is_device_read_view(values: StoredValues) -> bool:
+    """Whether `values` is a read-through view of values kept off the device."""
+    return id(values) in _VIEW_COPIES
+
+
+def _device_stand_in(*, stored: _Stored) -> _StandIn:
+    """Describe a stored value as what a read would place on the device."""
+    if isinstance(stored, _LazyEntry):
+        # A disk entry records the shapes, dtypes and shardings it was solved on.
+        return cast("_StandIn", getattr(stored, "device_stand_in")())  # noqa: B009
+    return jax.tree.map(
+        lambda leaf: (
+            jax.ShapeDtypeStruct(
+                leaf.shape,
+                leaf.dtype,
+                sharding=leaf.sharding.with_memory_kind("device"),
+            )
+            if isinstance(leaf, jax.Array)
+            else leaf
+        ),
+        stored,
+    )
+
+
+def planning_stand_in[T](values: T) -> T:
+    """Return a read-through view as shapes, or any other values as they are.
+
+    Planners need only the shape, dtype and placement of stored values or
+    policies; reading a view for them would copy each onto the device. A stand-in
+    keeps a policy's structure with a `jax.ShapeDtypeStruct` for each array.
+    """
+    copies = _copies_of(view_id=id(values))
+    return values if copies is None else cast("T", copies.stand_in)
+
+
+def device_copies_of_view(*, view_id: int) -> tuple[jax.Array, ...] | None:
+    """Return the device copies the read-through view with `view_id` keeps.
+
+    `None` when no live view has that id, so a caller can ask of any object.
+    """
+    copies = _copies_of(view_id=view_id)
+    if copies is None:
+        return None
+    return tuple(
+        leaf
+        for regime_to_copy in copies.held()
+        for copy in regime_to_copy.values()
+        for leaf in jax.tree.leaves(copy)
+        if isinstance(leaf, jax.Array)
+    )

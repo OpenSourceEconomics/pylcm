@@ -31,7 +31,7 @@ from collections.abc import (
 )
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from types import MappingProxyType, TracebackType
-from typing import Self, cast
+from typing import Literal, Self, cast
 
 import jax
 import numpy as np
@@ -164,6 +164,13 @@ from _lcm.params.edges import (
     regime_kernel_params,
 )
 from _lcm.participation_continuation import participation_surface_leaves
+from _lcm.persistence.solution import (
+    DiskPolicyEntry,
+    DiskValueEntry,
+    PeriodValueWriter,
+    StreamedSolutionArchive,
+    WrittenPeriod,
+)
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.gated_edges import (
     EDGE_PERIOD_CONTEXT_ARGS,
@@ -192,6 +199,7 @@ from _lcm.solution.diagnostics import (
     _init_diagnostic_accumulators,
     _materialize_period_feasibility_counts,
     _states_for_period,
+    period_nan_error,
 )
 from _lcm.solution.feasibility import (
     BoundedResult,
@@ -210,6 +218,7 @@ from _lcm.solution.feasibility import (
     validate_runtime_bound_status,
 )
 from _lcm.solution.grid_search import _GridSearchArgumentBuilder
+from _lcm.solution.host_values import copy_values_to_host, wait_for_host_copies
 from _lcm.solution.kernel_attribution import (
     log_executed_kernel,
     log_module_fanout,
@@ -261,6 +270,8 @@ from _lcm.typing import (
     HostArray,
     LandingCheck,
     ParamsLeaf,
+    PeriodToRegimeToSimulationPolicy,
+    PeriodToRegimeToVArr,
     PRNGKeyND,
     PytreeByPeriod,
     PytreeValue,
@@ -423,6 +434,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     executable_cache: ExecutableCache | None = None,
     period_capture: CaptureContext | None = None,
     structural_blueprints: StructuralBlueprintCache | None = None,
+    value_archive: StreamedSolutionArchive | None = None,
 ) -> BackwardInductionResult:
     """Solve a model by backward induction, whatever solver each regime declares.
 
@@ -477,6 +489,9 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         structural_blueprints: The model's store of immutable structural
             blueprints, which a warm solve of the same abstract schema binds
             instead of resolving every program again. `None` resolves afresh.
+        value_archive: The archive disk value storage writes this solve's values
+            to; required with, and only with, a directory as value storage. The
+            returned values then read from it.
 
     Returns:
         The named backward-induction outputs: the immutable mapping of periods
@@ -647,8 +662,11 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             extra={"release_skipped": "eager dispatch"},
         )
 
-    solution: dict[int, MappingProxyType[RegimeName, FloatND]] = {}
-    simulation_policies: dict[int, MappingProxyType[RegimeName, SimulationPolicy]] = {}
+    # A value disk storage has written is a lazy entry that reads it back.
+    solution: dict[int, MappingProxyType[RegimeName, FloatND | DiskValueEntry]] = {}
+    simulation_policies: dict[
+        int, MappingProxyType[RegimeName, SimulationPolicy | DiskPolicyEntry]
+    ] = {}
     generated_replay_authorities: dict[
         int, MappingProxyType[RegimeName, GeneratedReplayAuthority]
     ] = {}
@@ -694,6 +712,8 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         running_any_nan,
         running_any_inf,
     ) = _init_diagnostic_accumulators()
+    # The enriched error of the first period with a NaN, built at its barrier.
+    nan_error: InvalidValueFunctionError | None = None
 
     logger.info("Starting solution")
     total_start = time.monotonic()
@@ -732,6 +752,14 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     )
     # Every copy a period's transfer cache holds belongs to this solve alone.
     transfer_generation = uuid.uuid4().hex
+    store_on_host = resolved_execution.value_storage_kind != "device"
+    in_flight_host_copies: tuple[tuple[int, RegimeName, jax.Array], ...] = ()
+    if (resolved_execution.value_storage_kind == "disk") != (value_archive is not None):
+        msg = "A value archive is required with, and only with, disk value storage."
+        raise ValueError(msg)
+    value_writer = (
+        None if value_archive is None else PeriodValueWriter(archive=value_archive)
+    )
     with solve_phase(name="backward_induction", logger=logger, call_id=call_id):
         # Planning and compilation leave a large, long-lived object graph behind
         # (programs, frontiers, executables). Freezing it after one collection
@@ -1232,6 +1260,21 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                     period=period,
                     enabled=logger.isEnabledFor(logging.WARNING),
                 )
+                # The first NaN is diagnosed now, while this period's values and
+                # the next-period values its programs read are on the device.
+                if diagnostics_enabled and nan_error is None:
+                    nan_error = period_nan_error(
+                        logger=logger,
+                        diagnostic_rows=diagnostic_rows,
+                        period=period,
+                        period_values=MappingProxyType(period_solution),
+                        next_values=next_regime_to_V_arr,
+                        stored_values=solution,
+                        store_on_host=store_on_host,
+                        regimes=regimes,
+                        flat_params=flat_params,
+                        process_grid_resolver=process_grid_resolver,
+                    )
 
                 # Fold each declared gated edge whose target
                 # was solved this period onto the target grid, and roll the resulting
@@ -1311,18 +1354,58 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 # period mappings below, so readers see exactly the periods of the
                 # root-derived domain, as persisted archives do.
                 if period_solution:
-                    solution[period] = MappingProxyType(period_solution)
+                    # Host storage dispatches the copy here, after this period's
+                    # kernels and before the next period's, so it runs while the
+                    # next period computes. The device copy stays reachable only
+                    # through the rolled inputs, which release it once read.
+                    host_copies = (
+                        copy_values_to_host(period=period, values=period_solution)
+                        if store_on_host
+                        else None
+                    )
+                    solution[period] = (
+                        MappingProxyType(period_solution)
+                        if host_copies is None
+                        else host_copies
+                    )
                 if period_solution and (retain_replay or period_simulation_policies):
-                    assert host_device is not None  # noqa: S101
-                    simulation_policies[period] = MappingProxyType(
-                        {
-                            regime_name: jax.block_until_ready(
-                                jax.device_put(simulation_policy, host_device)
-                            )
-                            for regime_name, simulation_policy in (
-                                period_simulation_policies.items()
-                            )
-                        }
+                    # Under host storage policies travel as values do; device
+                    # storage moves them to the CPU device before going on.
+                    if store_on_host:
+                        simulation_policies[period] = copy_values_to_host(
+                            period=period, values=period_simulation_policies
+                        )
+                    else:
+                        assert host_device is not None  # noqa: S101
+                        simulation_policies[period] = MappingProxyType(
+                            {
+                                regime_name: jax.block_until_ready(
+                                    jax.device_put(simulation_policy, host_device)
+                                )
+                                for regime_name, simulation_policy in (
+                                    period_simulation_policies.items()
+                                )
+                            }
+                        )
+                # Disk storage writes the period's host copies, values and
+                # policies, from a background thread and swaps each written
+                # period's copies for disk entries.
+                # Until written, the period holds its host copies, not entries.
+                if value_writer is not None and period_solution:
+                    _swap_in_written_periods(
+                        written=value_writer.submit(
+                            period=period,
+                            values=cast(
+                                "MappingProxyType[RegimeName, jax.Array]",
+                                solution[period],
+                            ),
+                            policies=cast(
+                                "MappingProxyType[RegimeName, SimulationPolicy]",
+                                simulation_policies.get(period, MappingProxyType({})),
+                            ),
+                        ),
+                        solution=solution,
+                        simulation_policies=simulation_policies,
                     )
                 if period_generated_replay_authorities:
                     generated_replay_authorities[period] = MappingProxyType(
@@ -1406,20 +1489,38 @@ def solve(  # noqa: C901, PLR0912, PLR0915
 
                 _release_rolled_continuations(period_continuations=period_continuations)
 
+                # The bound on the device is strict: before the next period is
+                # dispatched, the copy started one period earlier has finished, so
+                # its device values can go once the period reading them is done.
+                if store_on_host:
+                    wait_for_host_copies(copies=in_flight_host_copies)
+                    in_flight_host_copies = tuple(
+                        (period, regime_name, array)
+                        for period_mapping in (solution, simulation_policies)
+                        for regime_name, stored in period_mapping.get(
+                            period, MappingProxyType({})
+                        ).items()
+                        for array in jax.tree.leaves(stored)
+                        if isinstance(array, jax.Array)
+                    )
+
+            if value_writer is not None:
+                _swap_in_written_periods(
+                    written=value_writer.drain(),
+                    solution=solution,
+                    simulation_policies=simulation_policies,
+                )
+
             if diagnostics_enabled or stats_enabled:
                 try:
                     _emit_post_loop_diagnostics(
                         logger=logger,
                         diagnostic_rows=diagnostic_rows,
-                        solution=MappingProxyType(solution),
-                        regimes=regimes,
-                        flat_params=flat_params,
-                        running_any_nan=running_any_nan,
+                        nan_error=nan_error,
                         running_any_inf=running_any_inf,
                         diagnostic_min=diagnostic_min if stats_enabled else None,
                         diagnostic_max=diagnostic_max if stats_enabled else None,
                         diagnostic_mean=diagnostic_mean if stats_enabled else None,
-                        process_grid_resolver=process_grid_resolver,
                     )
                 except InvalidValueFunctionError as error:
                     raise_or_warn(logger=logger, error=error)
@@ -1431,13 +1532,20 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             gc.unfreeze()
             if pending_work is not None:
                 pending_work.close()
+            if value_writer is not None:
+                value_writer.close()
 
     total_elapsed = time.monotonic() - total_start
     logger.info("Solution complete  (%s)", format_duration(seconds=total_elapsed))
 
     return BackwardInductionResult(
-        value_functions=MappingProxyType(solution),
-        simulation_policies=MappingProxyType(simulation_policies),
+        # Under disk storage some values are lazy entries reading the archive;
+        # the result's value store and device views read them back.
+        value_functions=cast("PeriodToRegimeToVArr", MappingProxyType(solution)),
+        # Under disk storage some policies are lazy entries reading the archive.
+        simulation_policies=cast(
+            "PeriodToRegimeToSimulationPolicy", MappingProxyType(simulation_policies)
+        ),
         generated_replay_authorities=MappingProxyType(generated_replay_authorities),
         diagnostics=MappingProxyType(solver_diagnostics),
         retained_continuations=ArtifactStore(retained_continuations),
@@ -2665,7 +2773,7 @@ def _build_base_state_action_spaces(
 
 def _drain_V_arr_shards(
     *,
-    solution: dict[int, MappingProxyType[RegimeName, FloatND]],
+    solution: dict[int, MappingProxyType[RegimeName, FloatND | DiskValueEntry]],
 ) -> None:
     """Block until every V_arr shard is materialised.
 
@@ -2683,6 +2791,8 @@ def _drain_V_arr_shards(
         array
         for regime_mapping in solution.values()
         for array in regime_mapping.values()
+        # A value written to disk is no longer an array in flight.
+        if isinstance(array, jax.Array)
     )
     jax.block_until_ready(array_leaves)
 
@@ -2800,6 +2910,7 @@ def _build_planned_input_liveness(
     regimes: MappingProxyType[RegimeName, Regime],
     program_metadata: Mapping[_CoreTriple, _ProgramExecutionMetadata],
     persistable_artifact_refs: frozenset[ArtifactRef],
+    value_storage: Literal["device", "host"] = "device",
 ) -> PlannedInputLiveness[_InputDispatch, ValueArtifactAddress]:
     """Build one exact-dispatch ledger without authorizing physical release.
 
@@ -2811,6 +2922,14 @@ def _build_planned_input_liveness(
     leaves of the EGM family and every reachable input of a program that
     declares no reads. A rolled entry whose producer does not run at its period
     aliases the same address one period later.
+
+    Under host value storage the result keeps no regime value on the device. A
+    value then stays there through its own period, while its peers run, and
+    through the next one, while the period reading it runs and its copy to the
+    host finishes. Every dispatch of those two periods counts as a reader of
+    it, so a residency walk drops it exactly when the solve does. Only the
+    residency walk reads such a ledger: release and donation keep the device
+    ledger, which never hands a value whose copy is in flight to another owner.
     """
     dispatch_accesses: dict[_InputDispatch, tuple[ValueArtifactAddress, ...]] = dict(
         _gated_edge_fold_dispatches(regimes=regimes)
@@ -2841,6 +2960,27 @@ def _build_planned_input_liveness(
         regimes=regimes,
         persistable_artifact_refs=persistable_artifact_refs,
     )
+    if value_storage == "host":
+        values_by_period: dict[int, list[ValueArtifactAddress]] = {}
+        for artifact in retained:
+            if artifact.kind is ValueArtifactKind.REGIME_VALUE:
+                values_by_period.setdefault(artifact.period, []).append(artifact)
+        retained = tuple(
+            artifact
+            for artifact in retained
+            if artifact.kind is not ValueArtifactKind.REGIME_VALUE
+        )
+        for dispatch, reads in tuple(dispatch_accesses.items()):
+            period = dispatch[0]
+            dispatch_accesses[dispatch] = tuple(
+                dict.fromkeys(
+                    (
+                        *reads,
+                        *values_by_period.get(period, ()),
+                        *values_by_period.get(period + 1, ()),
+                    )
+                )
+            )
     known = {
         *retained,
         *pinned_artifacts,
@@ -4171,6 +4311,36 @@ def _narrow_native_closure(
     return MappingProxyType({**regimes, name: updated})
 
 
+def _swap_in_written_periods(
+    *,
+    written: tuple[WrittenPeriod, ...],
+    solution: dict[int, MappingProxyType[RegimeName, FloatND | DiskValueEntry]],
+    simulation_policies: dict[
+        int, MappingProxyType[RegimeName, SimulationPolicy | DiskPolicyEntry]
+    ],
+) -> None:
+    """Replace written periods' host copies by the entries reading them from disk."""
+    for period in written:
+        solution[period.period] = MappingProxyType(dict(period.values))
+        if period.policies:
+            simulation_policies[period.period] = MappingProxyType(dict(period.policies))
+
+
+def _stored_values_note(*, execution: ResolvedExecution) -> str:
+    """Return the clause naming host storage when solved values count as resident.
+
+    Empty under host storage, which already keeps them off the device. Leading
+    space included, so a caller appends it to a sentence.
+    """
+    if execution.value_storage_kind != "device":
+        return ""
+    return (
+        " The resident bytes include the values of every period solved so far; "
+        "ExecutionConfig(value_storage='host') keeps those in host memory and "
+        "leaves only the periods still being read on the device."
+    )
+
+
 _RESIDENT_SPLIT_OWNERS = 8
 
 
@@ -4242,6 +4412,7 @@ def _width_selection_failure(
         f"resident on its busiest device against a {budget_bytes}-byte budget, "
         f"of which the period's transfer operators reserve up to {scratch} bytes "
         f"on a single device."
+        f"{_stored_values_note(execution=execution)}"
         f"{execution.device_memory_cap_note()} {error}"
     )
     if skipped_fallback_evaluations:
@@ -4667,7 +4838,16 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
             if budget_bytes is None
             else _resident_inventory_by_triple(
                 regimes=regimes,
-                ledger=input_liveness,
+                ledger=(
+                    input_liveness
+                    if execution.value_storage_kind == "device"
+                    else _build_planned_input_liveness(
+                        regimes=regimes,
+                        program_metadata=representative_metadata,
+                        persistable_artifact_refs=persistable_artifact_refs,
+                        value_storage="host",
+                    )
+                ),
                 templates=SolveInputMappings(
                     next_regime_to_V_arr=next_regime_to_V_arr,
                     next_regime_to_continuation=next_regime_to_continuation,
@@ -7109,7 +7289,13 @@ def _structural_key(
             ),
             frozen_policy(
                 {
-                    field.name: getattr(execution, field.name)
+                    # Where values are kept shapes the plan; which directory
+                    # holds them does not.
+                    field.name: (
+                        execution.value_storage_kind
+                        if field.name == "value_storage"
+                        else getattr(execution, field.name)
+                    )
                     for field in dataclasses.fields(execution)
                     if field.name not in _ADMISSION_ONLY_EXECUTION_FIELDS
                 }

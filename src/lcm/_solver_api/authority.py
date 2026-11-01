@@ -735,6 +735,11 @@ def _payload_has_runtime_type(
     )
 
 
+# The memory kind of a value or artifact leaf a solve stored in pinned host
+# memory (`ExecutionConfig.value_storage="host"`).
+_HOST_MEMORY_KIND = "pinned_host"
+
+
 def _copy_artifact_array_leaf(
     *, leaf: ArtifactLeafArray, label: str, array_copier: _ArrayCopier | None = None
 ) -> jax.Array:
@@ -747,8 +752,19 @@ def _copy_artifact_array_leaf(
         source_shape = tuple(leaf.shape)
         source_dtype = np.dtype(leaf.dtype)
         source_sharding = leaf.sharding
+        # A copy computed on host memory would run as slow host compute and stay
+        # there; the reader of a host-stored leaf receives a device copy instead.
+        to_device = (
+            array_copier is None and source_sharding.memory_kind == _HOST_MEMORY_KIND
+        )
+        if to_device:
+            source_sharding = source_sharding.with_memory_kind("device")
         copied = (
-            jax.numpy.array(leaf, copy=True)
+            (
+                jax.device_put(leaf, source_sharding)
+                if to_device
+                else jax.numpy.array(leaf, copy=True)
+            )
             if array_copier is None
             else array_copier(leaf=leaf, label=label)
         )

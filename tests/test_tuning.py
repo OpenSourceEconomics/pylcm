@@ -7,6 +7,7 @@ in the evaluator's AB/BA order (baseline, candidate, candidate, baseline).
 
 import ast
 import inspect
+import json
 from collections.abc import Callable, Sequence
 from types import MappingProxyType
 
@@ -364,6 +365,7 @@ def _x64_precision() -> str:
         ("jax_version", lambda: jax.__version__),
         ("sharded_states", lambda: ()),
         ("device_memory_bytes", lambda: None),
+        ("value_storage", lambda: "device"),
     ],
 )
 def test_tuned_settings_key_carries_the_identity_field(
@@ -373,6 +375,16 @@ def test_tuned_settings_key_carries_the_identity_field(
     expected: Callable[[], int | str | tuple[()] | None],
 ) -> None:
     assert getattr(faster_record.key, field) == expected()
+
+
+def test_a_record_written_before_value_storage_existed_is_a_device_record(
+    faster_record: TunedSettings,
+) -> None:
+    """Every record without the field was taken with values on the device."""
+    raw = json.loads(faster_record.to_json())
+    del raw["key"]["value_storage"]
+
+    assert TunedSettings.from_json(json.dumps(raw)).key.value_storage == "device"
 
 
 def test_tuned_settings_key_carries_the_parameter_shape_signature(

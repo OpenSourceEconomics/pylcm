@@ -475,6 +475,11 @@ from lcm.exceptions import ExecutionPlanningError, PyLCMError
 - **`IncompatibleSolutionError`**: A solution uses an unsupported schema or plugin
   version. pylcm rejects a mismatch rather than migrating it silently.
 
+- **`ValueStorageError`**: A solve could not copy a value to pinned host memory or write
+  it to its archive under `ExecutionConfig(value_storage=...)`. The message names the
+  period, the regime and the target; under a directory, the archive is kept as
+  `solution-<id>.incomplete`.
+
 ## Inspect the resolved execution plan
 
 `model.simulate(...)` reports the execution plan it actually dispatched: the forward

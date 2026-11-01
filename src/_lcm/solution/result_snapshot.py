@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 import jax
 
 from _lcm.dtypes import CanonicalArrayWriter
+from _lcm.solution.host_values import HostValueEntry, is_host_value
 from _lcm.solution.native_values import NativeValueMaterializer
 from _lcm.typing import ArtifactPayload
 from lcm._solver_api.authority import _ArrayCopier
@@ -195,14 +196,17 @@ def own_artifact_store(
 
     Each authority-backed payload is validated against its authority and kept by
     reference rather than copied: nothing outside the engine holds these arrays.
-    A payload without an authority is stored as supplied.
+    A payload without an authority, or one that is a lazy entry, is stored as
+    supplied.
     """
     owned: dict[ArtifactRef, ArtifactPayload | _LazyEntry] = {}
     for ref, payload in entries.items():
         authority = authorities.get(ref)
         owned[ref] = (
             payload
-            if authority is None
+            # A lazy entry, such as a policy a solve wrote to disk, reads its own
+            # payload back when it is looked up.
+            if authority is None or isinstance(payload, _LazyEntry)
             else _canonical_artifact_entry_from_authority(
                 payload=payload,
                 authority=authority,
@@ -213,15 +217,20 @@ def own_artifact_store(
     return ArtifactStore(owned)
 
 
+# keyword-only-exempt: primary-argument=values
 def own_value_store(
     values: Mapping[int, Mapping[RegimeName, FloatND | _LazyEntry]],
+    *,
+    host_budget_bytes: int | None = None,
 ) -> _ValueStoreBoundary:
     """Build a value store around the engine's own value arrays, uncopied.
 
     The public constructor copies every value it admits because it cannot know
     who else holds them; the engine knows nobody does. An entry that is already
     a lazy handle, such as a block-major value assembled when read, is kept as
-    it is.
+    it is. A value a solve stored in pinned host memory becomes a lazy entry
+    that copies it to the device when read; `host_budget_bytes` is the solve's
+    per-device budget, against which such entries admit a full materialization.
     """
     entries: dict[tuple[int, RegimeName], _LazyEntry] = {}
     regimes_by_period: dict[int, tuple[RegimeName, ...]] = {}
@@ -230,11 +239,14 @@ def own_value_store(
         if regime_to_value:
             regimes_by_period[period] = tuple(regime_to_value)
         for regime_name, value in regime_to_value.items():
-            entries[(period, regime_name)] = (
-                value
-                if isinstance(value, _LazyEntry)
-                else _CanonicalValueEntry(value=value)
-            )
+            if isinstance(value, _LazyEntry):
+                entries[(period, regime_name)] = value
+            elif is_host_value(value):
+                entries[(period, regime_name)] = HostValueEntry(
+                    value=value, budget_bytes=host_budget_bytes
+                )
+            else:
+                entries[(period, regime_name)] = _CanonicalValueEntry(value=value)
     store = object.__new__(ValueStore)
     object.__setattr__(store, "_entries", MappingProxyType(entries))
     object.__setattr__(store, "_regimes_by_period", MappingProxyType(regimes_by_period))

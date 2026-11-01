@@ -72,7 +72,7 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
     source_roles: jax.ShapeDtypeStruct,
     regime_names_to_ids: RegimeNamesToIds,
     flat_params: FlatParams,
-    values: Mapping[int, Mapping[str, jax.Array]],
+    values: Mapping[int, Mapping[str, jax.Array | jax.ShapeDtypeStruct]],
     surfaces: ParticipationSurfaces = MappingProxyType({}),
     ages: TimeAxis,
     key: jax.ShapeDtypeStruct,

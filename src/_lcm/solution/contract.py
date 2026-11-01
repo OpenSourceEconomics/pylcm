@@ -624,7 +624,9 @@ class BackwardInductionResult:
     """Immutable mapping of period to each regime's value-function array.
 
     Holds exactly the periods with at least one demanded node; a period outside
-    the root-derived domain has no key rather than an empty mapping.
+    the root-derived domain has no key rather than an empty mapping. Under disk
+    value storage each value is a lazy entry that reads it back from the solve's
+    archive.
     """
 
     simulation_policies: PeriodToRegimeToSimulationPolicy

@@ -36,6 +36,12 @@ from _lcm.egm.published_policy import EGMSimPolicy, NBEGMGridPolicy, NNBEGMSimPo
 from _lcm.solution.artifacts import OwnedSolutionView
 from _lcm.solution.block_major import _ComponentValueEntry
 from _lcm.solution.generation import CanonicalModelGeneration
+from _lcm.solution.host_values import (
+    HostValueEntry,
+    device_copies_of_view,
+    is_host_value,
+    lazy_entries_of_view,
+)
 from _lcm.solution.model_authority import SolutionAuthority
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from lcm._solver_api import authority as authority_module
@@ -151,7 +157,9 @@ class _RetainedBuffers:
     def collect(self, value: _RetainedValue) -> None:  # noqa: C901, PLR0912
         """Read only explicit payload owners, never an arbitrary object's fields."""
         if isinstance(value, jax.Array):
-            self.arrays[id(value)] = value
+            # An array a solve stored in pinned host memory holds no device memory.
+            if not is_host_value(value):
+                self.arrays[id(value)] = value
             return
         if type(value) in (type(None), bool, int, float, complex, str, bytes, Fraction):
             return
@@ -165,6 +173,13 @@ class _RetainedBuffers:
         if type(value) in (ValueStore, ArtifactStore):
             store = cast("ValueStore | ArtifactStore", value)
             self.collect(store._entries)  # noqa: SLF001
+        elif (view_copies := device_copies_of_view(view_id=id(value))) is not None:
+            # A read-through view pins only the device copies it keeps; reading
+            # every entry to inventory it would copy each period onto a device.
+            self.collect(view_copies)
+        elif (lazy_entries := lazy_entries_of_view(view_id=id(value))) is not None:
+            # Reading an entry would load it; the stored entries are what it holds.
+            self.collect(lazy_entries)
         elif type(value) in (dict, MappingProxyType) and isinstance(
             value, dict | MappingProxyType
         ):
@@ -207,13 +222,17 @@ class _RetainedBuffers:
         """Pin a known archive cache without calling its materialization API.
 
         A block-major value entry pins nothing: its retention holds host NumPy
-        blocks, and nothing of the value is on a device until it is read.
+        blocks, and nothing of the value is on a device until it is read. Nor
+        does a value or policy host or disk storage kept: it is in pinned host
+        memory or in an archive until it is read.
         """
-        if type(entry) is _ComponentValueEntry:
+        if type(entry) in (_ComponentValueEntry, HostValueEntry):
             return
         # The archive imports solution ownership; resolve this type only at call time.
         from _lcm.persistence import solution as persistence  # noqa: PLC0415
 
+        if type(entry) in (persistence.DiskValueEntry, persistence.DiskPolicyEntry):
+            return
         if type(entry) is not persistence._LazyHdf5Entry:  # noqa: SLF001
             raise _unsupported(entry)
         with entry._cache.lock:  # noqa: SLF001

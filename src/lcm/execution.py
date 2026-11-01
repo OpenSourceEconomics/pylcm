@@ -4,6 +4,7 @@ import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from types import MappingProxyType
 from typing import Literal
 
@@ -334,6 +335,41 @@ class ExecutionConfig:
     published values and simulated panels are those of the period-major route.
     """
 
+    value_storage: Literal["device", "host"] | Path = "device"
+    """Where a solve keeps each period's values once no period still to be solved
+    reads them.
+
+    - `"device"` (the default) keeps every solved period's values on the device
+      until the solve returns.
+    - `"host"` copies each period's values, and the simulation policies of the
+      EGM family, to pinned host memory while the next period computes, and
+      frees the device copy once the period reading it has finished. The device
+      then holds at most the values of three periods: the one being solved, the
+      one it reads and one whose copy is still finishing. Reading a value or
+      policy returns a device copy, so results, reads and simulated panels are
+      those of device storage, bit for bit. The copy runs on every backend, CPU
+      included.
+    - A directory buffers the values on disk, for when host memory is short too.
+      Values and policies travel as under `"host"` and are then written, from a
+      background thread, to a file of their own per solve, `solution-<id>.h5` in
+      that directory; a written period leaves host memory, and the solve waits
+      while two periods still wait to be written. Reads load a value from the
+      file. The file is in the `SolutionResult.save` format and is deleted with
+      its result unless `SolutionResult.save` keeps a copy. A failed solve leaves
+      `solution-<id>.incomplete` behind, recording how far it got.
+
+    A copy or write that fails raises `ValueStorageError`, naming the period, the
+    regime and the target. A NaN is diagnosed while its period's values are still
+    on the device, so no storage mode reads values back to report it.
+
+    Under `InvariantBlockSchedule.BLOCK_MAJOR`, `"device"` keeps each code's
+    values on the device through its solve and then copies them to host memory,
+    as the schedule always has. `"host"` solves each code with host storage, so
+    the device holds the window of one code, and keeps the pinned copies. A
+    directory does the same and writes each code's blocks into one archive per
+    solve, holding no block in memory. Component jobs take `"device"` only.
+    """
+
     action_partitions: Mapping[RegimeName, int] = field(
         default_factory=lambda: MappingProxyType({})
     )
@@ -422,6 +458,11 @@ class ExecutionConfig:
     instead of from the ranked frontier.
     """
 
+    @property
+    def value_storage_kind(self) -> Literal["device", "host", "disk"]:
+        """Where solved values are kept, naming a directory only as `"disk"`."""
+        return "disk" if isinstance(self.value_storage, Path) else self.value_storage
+
     def __post_init__(self) -> None:
         """Reject ambiguous or unusable values at construction."""
         _fail_if_budget_invalid(device_memory_bytes=self.device_memory_bytes)
@@ -443,6 +484,10 @@ class ExecutionConfig:
             raise ValueError(
                 "ExecutionConfig.simulation_sharding must be legacy or subjects."
             )
+        _fail_if_value_storage_invalid(value_storage=self.value_storage)
+        if isinstance(self.value_storage, Path):
+            # Resolved now, so a later change of working directory cannot move it.
+            object.__setattr__(self, "value_storage", self.value_storage.resolve())
         widths = _normalized_axis_widths(axis_widths=self.axis_widths)
         object.__setattr__(self, "axis_widths", MappingProxyType(widths))
         object.__setattr__(
@@ -472,6 +517,17 @@ class ExecutionConfig:
             devices = tuple(self.devices)
             _fail_if_devices_invalid(devices=devices)
             object.__setattr__(self, "devices", devices)
+
+
+def _fail_if_value_storage_invalid(
+    *, value_storage: Literal["device", "host"] | Path
+) -> None:
+    """Require a value storage directory to exist."""
+    if isinstance(value_storage, Path) and not value_storage.is_dir():
+        raise ValueError(
+            "ExecutionConfig.value_storage must name an existing directory, got "
+            f"{value_storage!r}."
+        )
 
 
 def _fail_if_budget_invalid(

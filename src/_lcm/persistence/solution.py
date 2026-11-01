@@ -9,18 +9,25 @@ plugin object, Python class, or executable code is serialized.
 # public persistence exceptions at its trust boundary.
 # ruff: noqa: TRY301
 
+import collections
 import contextlib
 import hashlib
 import json
 import math
 import os
+import re
+import shutil
+import subprocess
 import tempfile
 import threading
+import weakref
+from collections.abc import Generator, Mapping
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from enum import Enum, auto
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Final, Literal, cast
+from typing import TYPE_CHECKING, Final, Literal, NamedTuple, cast
 
 import h5py
 import jax
@@ -32,6 +39,7 @@ from h5py import h5o  # ty: ignore[unresolved-import]
 from _lcm import version as _version
 from _lcm.dtypes import CanonicalArrayWriter
 from _lcm.participation_continuation import PARTICIPATION_SURFACE_PREFIX
+from _lcm.solution.host_values import admit_values_on_devices, value_storage_error
 from _lcm.solution.result_snapshot import (
     snapshot_artifact_authorities,
     snapshot_artifact_store,
@@ -40,10 +48,21 @@ from _lcm.solution.result_snapshot import (
     snapshot_value_store,
 )
 from _lcm.solution.solver_diagnostics import diagnostics_template_snapshot
-from _lcm.typing import ArtifactPayload, HostArray, JSONValue, ValueND
+from _lcm.typing import (
+    ArtifactPayload,
+    HostArray,
+    JSONValue,
+    SimulationPolicy,
+    ValueND,
+)
 from lcm._solver_api.authority import _ArrayCopier
-from lcm.exceptions import IncompatibleSolutionError, SolutionIntegrityError
+from lcm.exceptions import (
+    IncompatibleSolutionError,
+    SolutionIntegrityError,
+    ValueStorageError,
+)
 from lcm.solver_api import (
+    SIMULATION_POLICY,
     SOLUTION_FORMAT_VERSION,
     SOLUTION_SCHEMA_VERSION,
     SOLVER_API_VERSION,
@@ -278,6 +297,8 @@ class _SaveSnapshot:
     values: tuple[_PreparedPayload, ...]
     artifacts: tuple[_PreparedPayload, ...]
     omissions: tuple[tuple[ArtifactRef, OmissionReason], ...]
+    reused_artifacts: tuple[ArtifactRef, ...] = ()
+    """Artifacts already in the archive that its manifest lists as they are."""
     participation_surfaces: tuple[_PreparedPayload, ...] = ()
 
 
@@ -516,12 +537,18 @@ def save_solution_archive(*, solution: _SolutionResultBoundary, path: Path) -> P
     if not path.parent.is_dir():
         raise FileNotFoundError(f"Parent directory does not exist: {path.parent}")
 
+    # A result whose solve streamed it to disk is already that archive.
+    streamed = _streamed_archive_of(solution=solution)
     # Materialize, validate, and copy the entire result before creating even a
     # temporary archive.  The writer therefore cannot observe a different user
     # container or mutable array from the object that passed preflight.
-    snapshot = replace(
-        _prepare_solution_for_save(solution=solution),
-        participation_surfaces=_prepare_participation_surfaces(solution=solution),
+    snapshot = (
+        None
+        if streamed is not None
+        else replace(
+            _prepare_solution_for_save(solution=solution),
+            participation_surfaces=_prepare_participation_surfaces(solution=solution),
+        )
     )
 
     tmp_path: Path | None = None
@@ -533,7 +560,10 @@ def save_solution_archive(*, solution: _SolutionResultBoundary, path: Path) -> P
         )
         os.close(descriptor)
         tmp_path = Path(tmp_name)
-        _write_archive(snapshot=snapshot, path=tmp_path)
+        if snapshot is None:
+            shutil.copyfile(cast("Path", streamed), tmp_path)
+        else:
+            _write_archive(snapshot=snapshot, path=tmp_path)
         # Opened for writing without truncation: the flush needs a writable
         # handle, since Windows refuses to flush a read-only one.
         with tmp_path.open("r+b") as file_handle:
@@ -1035,9 +1065,22 @@ def _with_standard_template(
 
 
 def _prepare_solution_for_save(  # noqa: C901, PLR0912, PLR0915
-    *, solution: _SolutionResultBoundary
+    *,
+    solution: _SolutionResultBoundary,
+    written_values: Mapping[tuple[int, RegimeName], jax.ShapeDtypeStruct] | None = None,
+    written_artifacts: Mapping[ArtifactRef, Mapping[str, JSONValue]] = (
+        MappingProxyType({})
+    ),
 ) -> _SaveSnapshot:
-    """Validate and copy one complete result before the archive writer runs."""
+    """Validate and copy one complete result before the archive writer runs.
+
+    `written_values` are the shape and dtype of each value already in the
+    archive, by coordinate; they are checked against their schemas and not
+    prepared again. `written_artifacts` are the manifest entries of artifacts
+    already in the archive, by address; each one the result persists is checked
+    against its descriptor and listed in `reused_artifacts` instead of being read
+    back and prepared again.
+    """
     envelope = _snapshot_solution_for_save(solution=solution)
     metadata = envelope.metadata
     values = envelope.values
@@ -1078,7 +1121,19 @@ def _prepare_solution_for_save(  # noqa: C901, PLR0912, PLR0915
             "Solution value entries do not match the declared value schemas."
         )
     prepared_values: list[_PreparedPayload] = []
-    for period, regime in sorted(value_coordinates):
+    if written_values is not None:
+        if set(written_values) != value_coordinates:
+            raise IncompatibleSolutionError(
+                "The values written to the archive do not match the declared value "
+                "schemas."
+            )
+        for coordinate, written in written_values.items():
+            schema = metadata.value_schemas[coordinate]
+            if written.shape != schema.shape or written.dtype != np.dtype(schema.dtype):
+                raise IncompatibleSolutionError(
+                    f"Value at {coordinate!r} does not match its declared schema."
+                )
+    for period, regime in sorted(value_coordinates if written_values is None else ()):
         schema = metadata.value_schemas[(period, regime)]
         identity: dict[str, JSONValue] = {
             "kind": "value",
@@ -1155,6 +1210,7 @@ def _prepare_solution_for_save(  # noqa: C901, PLR0912, PLR0915
         omission_entries[ref] = reason
 
     prepared_artifacts: list[_PreparedPayload] = []
+    reused_artifacts: list[ArtifactRef] = []
     present_refs: set[ArtifactRef] = set()
     for channel, store in stores:
         for ref in sorted(store):
@@ -1187,6 +1243,12 @@ def _prepare_solution_for_save(  # noqa: C901, PLR0912, PLR0915
             )
             if descriptor.persistence is PersistencePolicy.NOT_PERSISTED:
                 omission_entries[ref] = OmissionReason.NOT_PERSISTED
+                continue
+            if ref in written_artifacts:
+                _check_written_artifact(
+                    entry=written_artifacts[ref], ref=ref, descriptor=descriptor
+                )
+                reused_artifacts.append(ref)
                 continue
             try:
                 canonical = _canonicalize_artifact_payload_snapshot(
@@ -1249,6 +1311,7 @@ def _prepare_solution_for_save(  # noqa: C901, PLR0912, PLR0915
         values=tuple(prepared_values),
         artifacts=tuple(prepared_artifacts),
         omissions=tuple(sorted(omission_entries.items())),
+        reused_artifacts=tuple(reused_artifacts),
     )
 
 
@@ -1486,7 +1549,9 @@ def _require_save_compatibility(*, metadata: SolutionMetadata) -> None:
 
 
 def _prepare_payload(
-    *, payload: FloatND | HostArray, identity: dict[str, JSONValue]
+    *,
+    payload: FloatND | HostArray | SimulationPolicy,
+    identity: dict[str, JSONValue],
 ) -> _PreparedPayload:
     """Copy a numerical PyTree into independent contiguous NumPy arrays."""
     with_paths, tree = jax.tree_util.tree_flatten_with_path(payload)
@@ -1580,6 +1645,35 @@ def _check_prepared_artifact(
         ):
             raise IncompatibleSolutionError(
                 f"Artifact {ref!r} leaf {index} differs from its descriptor."
+            )
+
+
+def _check_written_artifact(
+    *, entry: Mapping[str, JSONValue], ref: ArtifactRef, descriptor: ArtifactDescriptor
+) -> None:
+    """Ensure an artifact written during the solve is the one its descriptor fixes.
+
+    Raises:
+        IncompatibleSolutionError: Its channel, leaf count, or a leaf's path,
+            shape or dtype differs from the descriptor.
+
+    """
+    leaves = cast("list[dict[str, JSONValue]]", entry["leaves"])
+    declared_leaves = descriptor.leaf_descriptors
+    if entry["channel"] != descriptor.channel.value or len(leaves) != len(
+        declared_leaves
+    ):
+        raise IncompatibleSolutionError(
+            f"Written artifact {ref!r} does not match its descriptor."
+        )
+    for index, (leaf, declared) in enumerate(zip(leaves, declared_leaves, strict=True)):
+        if (
+            tuple(cast("list[str]", leaf["path"])) != declared.path
+            or tuple(cast("list[int]", leaf["shape"])) != declared.shape
+            or np.dtype(cast("str", leaf["dtype"])) != np.dtype(declared.dtype)
+        ):
+            raise IncompatibleSolutionError(
+                f"Written artifact {ref!r} leaf {index} differs from its descriptor."
             )
 
 
@@ -1690,78 +1784,98 @@ def _retention_selects_artifact(
 
 def _write_archive(*, snapshot: _SaveSnapshot, path: Path) -> None:
     """Write one preflighted complete archive to a path that is not yet public."""
+    with h5py.File(path, "w") as archive:
+        _write_archive_contents(
+            archive=archive,
+            payloads=archive.create_group(_PAYLOAD_GROUP),
+            snapshot=snapshot,
+            value_entries=[],
+            counter=0,
+        )
+
+
+def _write_archive_contents(
+    *,
+    archive: h5py.File,
+    payloads: h5py.Group,
+    snapshot: _SaveSnapshot,
+    value_entries: list[JSONValue],
+    counter: int,
+    artifact_entries: list[JSONValue] | None = None,
+) -> None:
+    """Write a snapshot's payloads after those already written, then the manifest.
+
+    `value_entries` and `artifact_entries` are the manifest entries of values and
+    artifacts already in `payloads`, and `counter` the next free payload address.
+    """
     manifest: dict[str, JSONValue] = {
         "format_version": SOLUTION_FORMAT_VERSION,
         "pylcm_version": PYLCM_VERSION,
         "solver_api_version": SOLVER_API_VERSION,
         "solution_schema_version": SOLUTION_SCHEMA_VERSION,
         "metadata": dict(snapshot.metadata),
-        "values": [],
-        "artifacts": [],
+        "values": value_entries,
+        "artifacts": [] if artifact_entries is None else artifact_entries,
         "omissions": [],
     }
-    with h5py.File(path, "w") as archive:
-        payloads = archive.create_group(_PAYLOAD_GROUP)
-        counter = 0
-        value_entries = cast("list[JSONValue]", manifest["values"])
-        for prepared in snapshot.values:
-            address = f"{counter:08d}"
-            counter += 1
-            value_entries.append(
-                _write_payload_entry(
-                    payloads=payloads,
-                    address=address,
-                    prepared=prepared,
-                )
+    for prepared in snapshot.values:
+        address = f"{counter:08d}"
+        counter += 1
+        value_entries.append(
+            _write_payload_entry(
+                payloads=payloads,
+                address=address,
+                prepared=prepared,
             )
-
-        artifact_entries = cast("list[JSONValue]", manifest["artifacts"])
-        for prepared in snapshot.artifacts:
-            address = f"{counter:08d}"
-            counter += 1
-            artifact_entries.append(
-                _write_payload_entry(
-                    payloads=payloads,
-                    address=address,
-                    prepared=prepared,
-                )
-            )
-
-        if snapshot.participation_surfaces:
-            surface_entries: list[JSONValue] = []
-            for prepared in snapshot.participation_surfaces:
-                address = f"{counter:08d}"
-                counter += 1
-                surface_entries.append(
-                    _write_payload_entry(
-                        payloads=payloads, address=address, prepared=prepared
-                    )
-                )
-            manifest[_PARTICIPATION_SURFACES] = surface_entries
-
-        manifest["omissions"] = [
-            {
-                "period": ref.period,
-                "regime": ref.regime,
-                "type_id": ref.key.type_id,
-                "schema_version": ref.key.schema_version,
-                "reason": reason.value,
-            }
-            for ref, reason in snapshot.omissions
-        ]
-        manifest_bytes = json.dumps(
-            manifest,
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=True,
-            allow_nan=False,
-        ).encode("utf-8")
-        manifest_dataset = archive.create_dataset(
-            _MANIFEST_DATASET,
-            data=np.frombuffer(manifest_bytes, dtype=np.uint8),
         )
-        manifest_dataset.attrs["sha256"] = hashlib.sha256(manifest_bytes).hexdigest()
-        archive.flush()
+
+    artifact_entries = cast("list[JSONValue]", manifest["artifacts"])
+    for prepared in snapshot.artifacts:
+        address = f"{counter:08d}"
+        counter += 1
+        artifact_entries.append(
+            _write_payload_entry(
+                payloads=payloads,
+                address=address,
+                prepared=prepared,
+            )
+        )
+
+    if snapshot.participation_surfaces:
+        surface_entries: list[JSONValue] = []
+        for prepared in snapshot.participation_surfaces:
+            address = f"{counter:08d}"
+            counter += 1
+            surface_entries.append(
+                _write_payload_entry(
+                    payloads=payloads, address=address, prepared=prepared
+                )
+            )
+        manifest[_PARTICIPATION_SURFACES] = surface_entries
+
+    manifest["omissions"] = [
+        {
+            "period": ref.period,
+            "regime": ref.regime,
+            "type_id": ref.key.type_id,
+            "schema_version": ref.key.schema_version,
+            "reason": reason.value,
+        }
+        for ref, reason in snapshot.omissions
+    ]
+    manifest_bytes = json.dumps(
+        manifest,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8")
+    manifest_dataset = archive.create_dataset(
+        _MANIFEST_DATASET,
+        data=np.frombuffer(manifest_bytes, dtype=np.uint8),
+    )
+    manifest_dataset.attrs["sha256"] = hashlib.sha256(manifest_bytes).hexdigest()
+    archive.flush()
 
 
 def _write_payload_entry(
@@ -2865,3 +2979,801 @@ def _check_archive_versions(*, manifest: dict[str, JSONValue]) -> None:
 
 
 __all__ = ["load_solution_archive", "save_solution_archive"]
+
+
+# A streamed archive is written under this suffix until it is complete or abandoned.
+_PARTIAL_SUFFIX: Final = ".h5.partial"
+_COMPLETE_SUFFIX: Final = ".h5"
+_INCOMPLETE_SUFFIX: Final = ".incomplete"
+# The dataset holding an abandoned archive's record, in place of the manifest.
+_INCOMPLETE_DATASET: Final = "incomplete"
+
+
+class _ArchiveFile:
+    """Where one archive's file is, and its handle while it is written.
+
+    A complete archive is deleted once nothing reads it any more: every value
+    entry holds this object, so the file goes with the last of them. An
+    abandoned archive is kept. One that was never finished, because the call
+    writing it failed without abandoning it, is closed and kept as incomplete.
+    """
+
+    def __init__(self, *, path: Path, handle: h5py.File) -> None:
+        self.path = path
+        self.handle: h5py.File | None = handle
+        self.lock = threading.Lock()
+        self.completed_for: weakref.ref[_SolutionResultBoundary] | None = None
+        self._fate = _ArchiveFate(path=path, handle=handle)
+        weakref.finalize(self, _settle_archive, self._fate)
+
+    def publish(self, *, path: Path, deletable: bool) -> None:
+        """Record the archive's final name, and whether it goes with its readers."""
+        self.path = path
+        self.handle = None
+        self._fate.path = path
+        self._fate.handle = None
+        self._fate.delete = deletable
+
+    def read(self, *, dataset: str) -> np.ndarray:
+        """Read one dataset, through the writing handle while the file is open."""
+        with self.lock:
+            if self.handle is not None:
+                return np.asarray(self.handle[dataset][()])
+            with h5py.File(self.path, "r") as archive:
+                return np.asarray(archive[dataset][()])
+
+
+@dataclass(kw_only=True)
+class _ArchiveFate:
+    """What becomes of an archive's file once nothing reads it any more."""
+
+    path: Path
+    """Where the file is now."""
+
+    handle: h5py.File | None
+    """The writing handle while the file was never published."""
+
+    delete: bool = False
+    """Whether the published file goes with its last reader."""
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class DiskValueEntry(_LazyEntry):
+    """One value a solve wrote to its archive, read back onto its sharding."""
+
+    file: _ArchiveFile
+    """The archive file the value is in."""
+
+    dataset: str
+    """Path of the value's dataset in the archive."""
+
+    identity: MappingProxyType[str, JSONValue]
+    """The identity the value's checksum covers."""
+
+    sha256: str
+    """Checksum of the value as written."""
+
+    sharding: jax.sharding.Sharding
+    """Sharding the solve published the value on."""
+
+    shape: tuple[int, ...]
+    """Shape of the value."""
+
+    dtype: np.dtype
+    """Dtype of the value."""
+
+    budget_bytes: int | None = None
+    """Per-device budget of the solve that wrote the value; `None` unbudgeted."""
+
+    @property
+    def load_state(self) -> LoadState:
+        """Nothing of a value on disk is in memory until it is read."""
+        return LoadState.UNLOADED
+
+    @classmethod
+    def _admit_joint_materialization(cls, *, entries: tuple[_LazyEntry, ...]) -> None:
+        """Refuse to place disk-stored values on the devices together above budget."""
+        admit_values_on_devices(
+            layouts=tuple(
+                (
+                    jax.ShapeDtypeStruct(
+                        entry.shape, entry.dtype, sharding=entry.sharding
+                    ),
+                    entry.budget_bytes,
+                )
+                for entry in entries
+                if isinstance(entry, DiskValueEntry)
+            ),
+            where="disk-stored",
+        )
+
+    def device_stand_in(self) -> jax.ShapeDtypeStruct:
+        """Describe the value as the array a read places on its devices."""
+        return jax.ShapeDtypeStruct(
+            self.shape, self.dtype, sharding=self.sharding.with_memory_kind("device")
+        )
+
+    def host_value(self) -> np.ndarray:
+        """Read the value from the archive and verify it against its checksum.
+
+        Raises:
+            SolutionIntegrityError: The bytes read differ from those written.
+
+        """
+        array = self.file.read(dataset=self.dataset)
+        if _array_checksum(identity=dict(self.identity), array=array) != self.sha256:
+            raise SolutionIntegrityError(
+                f"Value {self.dataset!r} in {self.file.path} differs from what the "
+                "solve wrote."
+            )
+        return array
+
+    def materialize(self, *, template: ArtifactPayload | None = None) -> jax.Array:
+        """Read the value onto the devices it was solved on."""
+        del template
+        return jax.device_put(
+            self.host_value(), self.sharding.with_memory_kind("device")
+        )
+
+    def fresh_value(self) -> jax.Array:
+        """Read the value into device buffers owned by this reader alone."""
+        return self.materialize()
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class DiskPolicyEntry(_LazyEntry):
+    """One simulation policy a solve wrote to its archive, read back onto devices.
+
+    It is written as `SolutionResult.save` writes the policy artifact, one
+    checksummed leaf per array of the policy, so the completed archive refers to
+    it without writing it again.
+    """
+
+    file: _ArchiveFile
+    """The archive file the policy is in."""
+
+    tree: jax.tree_util.PyTreeDef
+    """Structure of the policy, rebuilt around the leaves read back."""
+
+    leaves: tuple[MappingProxyType[str, JSONValue], ...]
+    """Manifest entry of each leaf: its dataset, identity and checksum."""
+
+    shardings: tuple[jax.sharding.Sharding, ...]
+    """Sharding the solve published each leaf on."""
+
+    @property
+    def load_state(self) -> LoadState:
+        """Nothing of a policy on disk is in memory until it is read."""
+        return LoadState.UNLOADED
+
+    def materialize(
+        self, *, template: ArtifactPayload | None = None
+    ) -> ArtifactPayload:
+        """Read the policy and place each leaf on the devices it was solved on.
+
+        Raises:
+            SolutionIntegrityError: The bytes read differ from those written.
+
+        """
+        del template
+        return jax.tree_util.tree_unflatten(
+            self.tree,
+            [
+                jax.device_put(array, sharding.with_memory_kind("device"))
+                for array, sharding in zip(
+                    self._read_leaves(), self.shardings, strict=True
+                )
+            ],
+        )
+
+    def host_payload(self) -> SimulationPolicy:
+        """Read the policy onto the CPU device, for checks that run on the host.
+
+        Raises:
+            SolutionIntegrityError: The bytes read differ from those written.
+
+        """
+        cpu = jax.sharding.SingleDeviceSharding(
+            jax.devices("cpu")[0], memory_kind="device"
+        )
+        return jax.tree_util.tree_unflatten(
+            self.tree, [jax.device_put(array, cpu) for array in self._read_leaves()]
+        )
+
+    def device_stand_in(self) -> SimulationPolicy:
+        """Describe the policy as the one a read places on its devices."""
+        return jax.tree_util.tree_unflatten(
+            self.tree,
+            [
+                jax.ShapeDtypeStruct(
+                    tuple(cast("list[int]", leaf["shape"])),
+                    np.dtype(cast("str", leaf["dtype"])),
+                    sharding=sharding.with_memory_kind("device"),
+                )
+                for leaf, sharding in zip(self.leaves, self.shardings, strict=True)
+            ],
+        )
+
+    def _read_leaves(self) -> list[np.ndarray]:
+        """Read every leaf from the archive and verify it against its checksum.
+
+        Raises:
+            SolutionIntegrityError: The bytes read differ from those written.
+
+        """
+        arrays = []
+        for leaf in self.leaves:
+            array = self.file.read(dataset=cast("str", leaf["dataset"]))
+            identity = cast("dict[str, JSONValue]", leaf["identity"])
+            if _array_checksum(identity=identity, array=array) != leaf["sha256"]:
+                raise SolutionIntegrityError(
+                    f"Policy leaf {leaf['dataset']!r} in {self.file.path} differs "
+                    "from what the solve wrote."
+                )
+            arrays.append(array)
+        return arrays
+
+
+class _SolutionArchiveFile:
+    """A solve's archive file while values are written to it, and how it ends.
+
+    The file is `<name>.h5.partial` in `directory` while it is written. Completing
+    it adds the result's artifacts and the manifest, in the format
+    `SolutionResult.save` writes, and renames it to `<name>.h5`. Abandoning it
+    writes a record in place of the manifest and renames it to
+    `<name>.incomplete`, which `load_solution` refuses.
+    """
+
+    def __init__(
+        self, *, directory: Path, name: str, budget_bytes: int | None = None
+    ) -> None:
+        self._directory = directory
+        self._name = name
+        self._budget_bytes = budget_bytes
+        self._description: dict[str, JSONValue] = {}
+        path = directory / f"{name}{_PARTIAL_SUFFIX}"
+        handle = h5py.File(path, "x")
+        self._file = _ArchiveFile(path=path, handle=handle)
+        self._handle = handle
+        self._payloads = handle.create_group(_PAYLOAD_GROUP)
+        self._counter = 0
+
+    @property
+    def path(self) -> Path:
+        """The file's current path, `<name>.h5.partial` while it is written."""
+        return self._file.path
+
+    def describe(self, **fields: JSONValue) -> None:
+        """Remember facts about the solve that an abandoned archive records."""
+        self._description.update(fields)
+
+    def abandon(self, *, record: Mapping[str, JSONValue]) -> Path:
+        """Record how far the solve got in place of a manifest, and close the file.
+
+        Returns:
+            The path of the incomplete archive.
+
+        """
+        encoded = json.dumps(
+            self._description | dict(record), sort_keys=True, allow_nan=False
+        ).encode()
+        with self._file.lock:
+            self._handle.create_dataset(
+                _INCOMPLETE_DATASET, data=np.frombuffer(encoded, dtype=np.uint8)
+            )
+            return self._close(suffix=_INCOMPLETE_SUFFIX, deletable=False)
+
+    def _complete(
+        self,
+        *,
+        solution: _SolutionResultBoundary,
+        value_entries: list[JSONValue],
+        written: Mapping[tuple[int, RegimeName], jax.ShapeDtypeStruct],
+        artifact_entries: Mapping[ArtifactRef, dict[str, JSONValue]] = (
+            MappingProxyType({})
+        ),
+    ) -> Path:
+        """Add the result's artifacts and manifest beside written payloads; publish.
+
+        `artifact_entries` are the manifest entries of artifacts already written.
+        """
+        snapshot = replace(
+            _prepare_solution_for_save(
+                solution=solution,
+                written_values=MappingProxyType(dict(written)),
+                written_artifacts=MappingProxyType(dict(artifact_entries)),
+            ),
+            participation_surfaces=_prepare_participation_surfaces(solution=solution),
+        )
+        with self._file.lock:
+            # A written artifact the result does not persist leaves the file, so
+            # the archive holds exactly what its manifest lists.
+            for ref, entry in artifact_entries.items():
+                if ref not in snapshot.reused_artifacts:
+                    del self._payloads[cast("str", entry["address"])]
+            _write_archive_contents(
+                archive=self._handle,
+                payloads=self._payloads,
+                snapshot=snapshot,
+                value_entries=value_entries,
+                counter=self._counter,
+                artifact_entries=[
+                    artifact_entries[ref] for ref in snapshot.reused_artifacts
+                ],
+            )
+            path = self._close(suffix=_COMPLETE_SUFFIX, deletable=True)
+            self._file.completed_for = weakref.ref(solution)
+            return path
+
+    def _close(self, *, suffix: str, deletable: bool) -> Path:
+        """Flush and close the file, then rename it under `suffix`."""
+        self._handle.flush()
+        self._handle.close()
+        with self._file.path.open("r+b") as file_handle:
+            os.fsync(file_handle.fileno())
+        path = self._directory / f"{self._name}{suffix}"
+        self._file.path.replace(path)
+        self._file.publish(path=path, deletable=deletable)
+        return path
+
+
+class StreamedSolutionArchive(_SolutionArchiveFile):
+    """One period-major solve's archive, written value by value while it runs."""
+
+    def __init__(
+        self, *, directory: Path, name: str, budget_bytes: int | None = None
+    ) -> None:
+        super().__init__(directory=directory, name=name, budget_bytes=budget_bytes)
+        self._written_periods: set[int] = set()
+        self._value_entries: list[JSONValue] = []
+        self._written: dict[tuple[int, RegimeName], jax.ShapeDtypeStruct] = {}
+        self._artifact_entries: dict[ArtifactRef, dict[str, JSONValue]] = {}
+
+    def write_value(
+        self,
+        *,
+        period: int,
+        regime: RegimeName,
+        value: np.ndarray,
+        sharding: jax.sharding.Sharding,
+    ) -> DiskValueEntry:
+        """Write one value and return the entry that reads it back."""
+        prepared = _prepare_payload(
+            payload=value,
+            identity={"kind": "value", "period": period, "regime": regime},
+        )
+        with self._file.lock:
+            address = f"{self._counter:08d}"
+            self._counter += 1
+            entry = _write_payload_entry(
+                payloads=self._payloads, address=address, prepared=prepared
+            )
+            self._value_entries.append(entry)
+            self._written[(period, regime)] = jax.ShapeDtypeStruct(
+                value.shape, value.dtype
+            )
+        leaf = cast("list[dict[str, JSONValue]]", entry["leaves"])[0]
+        return DiskValueEntry(
+            file=self._file,
+            dataset=cast("str", leaf["dataset"]),
+            identity=MappingProxyType(cast("dict[str, JSONValue]", leaf["identity"])),
+            sha256=cast("str", leaf["sha256"]),
+            sharding=sharding,
+            shape=value.shape,
+            dtype=value.dtype,
+            budget_bytes=self._budget_bytes,
+        )
+
+    def write_policy(
+        self, *, period: int, regime: RegimeName, policy: SimulationPolicy
+    ) -> DiskPolicyEntry:
+        """Write one simulation policy as its replay artifact; return its reader."""
+        ref = ArtifactRef(period=period, regime=regime, key=SIMULATION_POLICY)
+        prepared = _prepare_payload(
+            payload=policy,
+            identity={
+                "kind": "artifact",
+                "period": period,
+                "regime": regime,
+                "type_id": SIMULATION_POLICY.type_id,
+                "schema_version": SIMULATION_POLICY.schema_version,
+                "channel": ArtifactChannel.REPLAY.value,
+            },
+        )
+        with self._file.lock:
+            address = f"{self._counter:08d}"
+            self._counter += 1
+            entry = _write_payload_entry(
+                payloads=self._payloads, address=address, prepared=prepared
+            )
+            self._artifact_entries[ref] = entry
+        leaves, tree = jax.tree_util.tree_flatten(policy)
+        return DiskPolicyEntry(
+            file=self._file,
+            tree=tree,
+            leaves=tuple(
+                MappingProxyType(leaf)
+                for leaf in cast("list[dict[str, JSONValue]]", entry["leaves"])
+            ),
+            shardings=tuple(leaf.sharding for leaf in leaves),
+        )
+
+    def mark_period_written(self, *, period: int) -> None:
+        """Record that every value of `period` is in the file."""
+        with self._file.lock:
+            self._written_periods.add(period)
+
+    @property
+    def last_completed_period(self) -> int | None:
+        """Earliest period every value of which is in the file; `None` if none is."""
+        with self._file.lock:
+            return min(self._written_periods, default=None)
+
+    def complete(self, *, solution: _SolutionResultBoundary) -> Path:
+        """Add the result's artifacts and manifest, and publish the archive.
+
+        Returns:
+            The path of the complete archive.
+
+        """
+        return self._complete(
+            solution=solution,
+            value_entries=self._value_entries,
+            written=self._written,
+            artifact_entries=self._artifact_entries,
+        )
+
+
+class BlockedSolutionArchive(_SolutionArchiveFile):
+    """One block-major solve's archive, filled one code's blocks at a time.
+
+    Each value has one dataset of its full shape; a code's block goes into the
+    code's slice along the blocked state's axis. A value's checksum covers the
+    complete value, so it is computed at completion, reading each value back once.
+    """
+
+    def __init__(
+        self, *, directory: Path, name: str, budget_bytes: int | None = None
+    ) -> None:
+        super().__init__(directory=directory, name=name, budget_bytes=budget_bytes)
+        self._codes: tuple[int, ...] = ()
+        self._datasets: dict[tuple[int, RegimeName], tuple[str, int]] = {}
+        self._written_codes: list[int] = []
+
+    def prepare(self, *, codes: tuple[int, ...]) -> None:
+        """Record the codes in the order their blocks sit along the blocked axis."""
+        self._codes = codes
+
+    def write_block(
+        self,
+        *,
+        code: int,
+        coordinate: tuple[int, RegimeName],
+        block: np.ndarray,
+        axis: int,
+        full_shape: tuple[int, ...],
+    ) -> None:
+        """Write one code's block of one value into the value's dataset."""
+        with self._file.lock:
+            if coordinate not in self._datasets:
+                address = f"{self._counter:08d}"
+                self._counter += 1
+                self._payloads.create_group(address).create_dataset(
+                    "leaf_0000", shape=full_shape, dtype=block.dtype
+                )
+                self._datasets[coordinate] = (address, axis)
+            address, _ = self._datasets[coordinate]
+            dataset = self._payloads[address]["leaf_0000"]
+            dataset[self._slice(code=code, axis=axis, ndim=len(full_shape))] = block
+
+    def read_block(
+        self, *, code: int, coordinate: tuple[int, RegimeName]
+    ) -> np.ndarray:
+        """Read one code's block of one value back from the file."""
+        address, axis = self._datasets[coordinate]
+        dataset_path = f"{_PAYLOAD_GROUP}/{address}/leaf_0000"
+        with self._file.lock:
+            if self._file.handle is not None:
+                dataset = self._file.handle[dataset_path]
+                return np.asarray(
+                    dataset[self._slice(code=code, axis=axis, ndim=dataset.ndim)]
+                )
+            with h5py.File(self._file.path, "r") as archive:
+                dataset = archive[dataset_path]
+                return np.asarray(
+                    dataset[self._slice(code=code, axis=axis, ndim=dataset.ndim)]
+                )
+
+    def mark_code_written(self, *, code: int) -> None:
+        """Record that every block of `code` is in the file."""
+        with self._file.lock:
+            self._written_codes.append(code)
+
+    @property
+    def last_completed_period(self) -> int | None:
+        """Block-major completes codes, not periods; see `completed_codes`."""
+        return None
+
+    @property
+    def completed_codes(self) -> tuple[int, ...]:
+        """Codes every block of which is in the file, in the order they were written."""
+        with self._file.lock:
+            return tuple(self._written_codes)
+
+    @property
+    def archive_file(self) -> _ArchiveFile:
+        """The file every block of this archive is read from."""
+        return self._file
+
+    def complete(self, *, solution: _SolutionResultBoundary) -> Path:
+        """Checksum every assembled value, add artifacts and manifest; publish.
+
+        Returns:
+            The path of the complete archive.
+
+        """
+        value_entries: list[JSONValue] = []
+        written: dict[tuple[int, RegimeName], jax.ShapeDtypeStruct] = {}
+        with self._file.lock:
+            handle = cast("h5py.File", self._file.handle)
+            for (period, regime), (address, _) in self._datasets.items():
+                array = np.asarray(handle[f"{_PAYLOAD_GROUP}/{address}/leaf_0000"][()])
+                identity: dict[str, JSONValue] = {
+                    "kind": "value",
+                    "period": period,
+                    "regime": regime,
+                }
+                leaf_identity = identity | {"address": address, "leaf": 0, "path": []}
+                value_entries.append(
+                    identity
+                    | {
+                        "address": address,
+                        "payload_kind": "array",
+                        "leaves": [
+                            {
+                                "dataset": f"{_PAYLOAD_GROUP}/{address}/leaf_0000",
+                                "path": [],
+                                "shape": list(array.shape),
+                                "dtype": array.dtype.str,
+                                "identity": leaf_identity,
+                                "sha256": _array_checksum(
+                                    identity=leaf_identity, array=array
+                                ),
+                            }
+                        ],
+                    }
+                )
+                written[(period, regime)] = jax.ShapeDtypeStruct(
+                    array.shape, array.dtype
+                )
+        return self._complete(
+            solution=solution, value_entries=value_entries, written=written
+        )
+
+    def _slice(self, *, code: int, axis: int, ndim: int) -> tuple[slice, ...]:
+        """Select one code's position along the blocked axis."""
+        position = self._codes.index(code)
+        return tuple(
+            slice(position, position + 1) if dim == axis else slice(None)
+            for dim in range(ndim)
+        )
+
+
+# The repository root of a source checkout of pylcm, this file's fourth parent.
+_PYLCM_CHECKOUT: Final = Path(__file__).resolve().parents[3]
+
+
+def pylcm_commit() -> str | None:
+    """The git commit of the running pylcm, as an incomplete archive records it.
+
+    A source checkout, as in an editable install, answers from git itself, so a
+    commit made after installing counts; `-dirty` marks changed tracked files.
+    Otherwise the commit the build recorded is used, then the one in the version
+    string; `None` when neither names one.
+    """
+    commit = checkout_commit(checkout=_PYLCM_CHECKOUT)
+    if commit is not None:
+        return commit
+    if _version.commit_id is not None:
+        return _version.commit_id
+    match = re.search(r"\+g([0-9a-f]+)", PYLCM_VERSION)
+    return None if match is None else match.group(1)
+
+
+def checkout_commit(*, checkout: Path) -> str | None:
+    """The commit of the repository rooted at `checkout`, `-dirty` if changed.
+
+    `None` without git, or when `checkout` is not a repository's root: inside
+    another repository, as an install in a project's virtual environment is,
+    git would answer for that repository instead.
+    """
+
+    def git(*args: str) -> str:
+        return subprocess.run(  # noqa: S603
+            ["git", "-C", str(checkout), *args],  # noqa: S607
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+
+    try:
+        if Path(git("rev-parse", "--show-toplevel")).resolve() != checkout.resolve():
+            return None
+        head = git("rev-parse", "HEAD")
+        changed = git("status", "--porcelain", "--untracked-files=no")
+    except OSError, subprocess.CalledProcessError:
+        return None
+    return head + ("-dirty" if changed else "")
+
+
+class WrittenPeriod(NamedTuple):
+    """One period a writer has put in the archive, with the entries reading it."""
+
+    period: int
+    values: MappingProxyType[RegimeName, DiskValueEntry]
+    policies: MappingProxyType[RegimeName, DiskPolicyEntry]
+
+
+class PeriodValueWriter:
+    """Writes a solve's host-stored values to its archive from a background thread.
+
+    Each period's values and simulation policies go in one job, in solve order. A
+    submit returns the periods whose writes have finished, with the entries that
+    read them back, so the caller can drop their host copies; it waits while more
+    than `max_pending` periods are still unwritten, which bounds host memory.
+    """
+
+    def __init__(
+        self, *, archive: StreamedSolutionArchive, max_pending: int = 2
+    ) -> None:
+        self._archive = archive
+        self._max_pending = max_pending
+        self._executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="lcm-value-writer"
+        )
+        self._pending: collections.deque[Future[WrittenPeriod]] = collections.deque()
+        # Set by the writer thread once a write fails. Later periods are then not
+        # written, so the written periods stay those from the end of the solve.
+        self._failed = False
+
+    def submit(
+        self,
+        *,
+        period: int,
+        values: Mapping[RegimeName, jax.Array],
+        policies: Mapping[RegimeName, SimulationPolicy] = MappingProxyType({}),
+    ) -> tuple[WrittenPeriod, ...]:
+        """Queue one period's host copies; return the periods now written."""
+        self._pending.append(
+            self._executor.submit(
+                self._write, period=period, values=dict(values), policies=dict(policies)
+            )
+        )
+        written = []
+        while self._pending and (
+            len(self._pending) > self._max_pending or self._pending[0].done()
+        ):
+            written.append(self._pending.popleft().result())
+        return tuple(written)
+
+    def drain(self) -> tuple[WrittenPeriod, ...]:
+        """Wait for every queued period and return them all."""
+        written = tuple(future.result() for future in self._pending)
+        self._pending.clear()
+        return written
+
+    def close(self) -> None:
+        """Let queued writes finish, so the archive records how far they got."""
+        self._executor.shutdown(wait=True)
+
+    def _write(
+        self,
+        *,
+        period: int,
+        values: dict[RegimeName, jax.Array],
+        policies: dict[RegimeName, SimulationPolicy],
+    ) -> WrittenPeriod:
+        """Write one period, naming the value or policy and file of a failed write.
+
+        Raises:
+            ValueStorageError: A value or policy could not be written, or an
+                earlier period's write failed.
+
+        """
+        if self._failed:
+            msg = f"Did not write period {period}: an earlier period's write failed."
+            raise ValueStorageError(msg)
+        entries: dict[RegimeName, DiskValueEntry] = {}
+        for regime, value in values.items():
+            with self._naming_failure(period=period, regime=regime):
+                entries[regime] = self._archive.write_value(
+                    period=period,
+                    regime=regime,
+                    value=np.asarray(value),
+                    sharding=value.sharding,
+                )
+        policy_entries: dict[RegimeName, DiskPolicyEntry] = {}
+        for regime, policy in policies.items():
+            with self._naming_failure(period=period, regime=regime):
+                policy_entries[regime] = self._archive.write_policy(
+                    period=period, regime=regime, policy=policy
+                )
+        self._archive.mark_period_written(period=period)
+        return WrittenPeriod(
+            period=period,
+            values=MappingProxyType(entries),
+            policies=MappingProxyType(policy_entries),
+        )
+
+    @contextlib.contextmanager
+    def _naming_failure(self, *, period: int, regime: RegimeName) -> Generator[None]:
+        """Turn a failed write into an error naming its period, regime and file.
+
+        Raises:
+            ValueStorageError: The write in the block failed.
+
+        """
+        try:
+            yield
+        except (OSError, RuntimeError, ValueError) as error:
+            self._failed = True
+            raise value_storage_error(
+                action="write",
+                period=period,
+                regime=regime,
+                destination=str(self._archive.path),
+            ) from error
+
+
+def _settle_archive(fate: _ArchiveFate) -> None:
+    """Delete a complete archive, or keep a never-finished one as incomplete."""
+    with contextlib.suppress(OSError, ValueError):
+        if fate.handle is not None:
+            fate.handle.close()
+            fate.path.replace(
+                fate.path.with_name(
+                    fate.path.name.removesuffix(_PARTIAL_SUFFIX) + _INCOMPLETE_SUFFIX
+                )
+            )
+        elif fate.delete:
+            fate.path.unlink()
+
+
+def _archive_file_of(*, entry: _LazyEntry | FloatND) -> _ArchiveFile | None:
+    """Return the archive file a value entry reads from, if it reads from one.
+
+    A block-major entry reads through its retention, which knows its archive.
+    """
+    if isinstance(entry, DiskValueEntry):
+        return entry.file
+    owner = getattr(entry, "owner", None)
+    archive_file = getattr(owner, "archive_file", None)
+    return archive_file if isinstance(archive_file, _ArchiveFile) else None
+
+
+def _streamed_archive_of(*, solution: _SolutionResultBoundary) -> Path | None:
+    """Return the archive a solve wrote for exactly this result, if there is one.
+
+    Every value of the result must read from one complete archive that was
+    completed from this very result object, so the file holds what saving the
+    result would write.
+    """
+    values = solution.values if type(solution) is SolutionResult else None
+    if type(values) is not ValueStore:
+        return None
+    files = [
+        _archive_file_of(entry=entry)
+        for entry in values._entries.values()  # noqa: SLF001
+    ]
+    if not files or any(file is None for file in files):
+        return None
+    if len({id(file) for file in files}) != 1:
+        return None
+    file = cast("_ArchiveFile", files[0])
+    if (
+        file.handle is not None
+        or file.completed_for is None
+        or file.completed_for() is not solution
+    ):
+        return None
+    return file.path

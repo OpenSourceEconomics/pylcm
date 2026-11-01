@@ -151,7 +151,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     regimes: Mapping[str, Regime],
     flat_params: FlatParams,
     base_spaces: Mapping[str, StateActionSpace],
-    values: Mapping[int, Mapping[str, jax.Array]],
+    values: Mapping[int, Mapping[str, jax.Array | jax.ShapeDtypeStruct]],
     ages: TimeAxis,
     initial_conditions: Mapping[str, jax.Array],
     regime_names_to_ids: RegimeNamesToIds,
@@ -674,7 +674,7 @@ def _profile_next_subjects(
     new_ids: jax.ShapeDtypeStruct,
     own_roles: jax.ShapeDtypeStruct,
     flat_params: FlatParams,
-    values: Mapping[int, Mapping[str, jax.Array]],
+    values: Mapping[int, Mapping[str, jax.Array | jax.ShapeDtypeStruct]],
     age: jax.ShapeDtypeStruct,
     widths: Mapping[str, int],
     scalar_int: jax.ShapeDtypeStruct,
@@ -845,7 +845,11 @@ def _profile_next_subjects(
             runtime=inventory.runtime,
             program=regime.simulation.programs.gate_route[period],
             arguments=gate_route_arguments(
-                edge_values=abstract_tree(tree=edge_values, sharding=shared),
+                # Values kept off the device arrive as shapes; either kind of
+                # leaf gives only its metadata here.
+                edge_values=abstract_tree(
+                    tree=cast("ShapeDtypePytree", edge_values), sharding=shared
+                ),
                 next_states=gated_route_candidates(regime=regime, next_states=carrier),
                 new_subject_regime_ids=new_ids,
                 subjects_in_regime=mask,
@@ -1364,7 +1368,7 @@ def _profile_taste(
 def _period_copy_reservation(
     *,
     regimes: Mapping[str, Regime],
-    values: Mapping[int, Mapping[str, jax.Array]],
+    values: Mapping[int, Mapping[str, jax.Array | jax.ShapeDtypeStruct]],
     period: int,
     devices: tuple[jax.Device, ...],
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None = None,
@@ -1467,8 +1471,12 @@ def _host_outside_device_ceiling(
 
 def _policy_read_sources(
     *, policies: Mapping[RegimeName, SimulationPolicy], period: int
-) -> dict[ValueArtifactAddress, jax.Array]:
-    """Index canonical retained finite leaves by the actual period-owner addresses."""
+) -> dict[ValueArtifactAddress, jax.Array | jax.ShapeDtypeStruct]:
+    """Index canonical retained finite leaves by the actual period-owner addresses.
+
+    A policy kept off the device arrives as its planning stand-in, with a shape
+    for each leaf on the placement a read copies it to.
+    """
     sources = {}
     for name, policy in policies.items():
         if not isinstance(policy, NNBEGMSimPolicy | EGMSimPolicy | NBEGMGridPolicy):
@@ -1477,7 +1485,9 @@ def _policy_read_sources(
                 "schema."
             )
         leaves = jax.tree.leaves(policy)
-        if not all(isinstance(leaf, jax.Array) for leaf in leaves):
+        if not all(
+            isinstance(leaf, jax.Array | jax.ShapeDtypeStruct) for leaf in leaves
+        ):
             raise ExecutionPlanningError(
                 "Chunk policy copies require canonical JAX leaves."
             )
@@ -1497,13 +1507,16 @@ def _policy_read_sources(
 def _retained_read_source(
     *,
     read: ValueRead,
-    values: Mapping[int, Mapping[str, jax.Array]],
-    policy_sources: Mapping[ValueArtifactAddress, jax.Array],
+    values: Mapping[int, Mapping[str, jax.Array | jax.ShapeDtypeStruct]],
+    policy_sources: Mapping[ValueArtifactAddress, jax.Array | jax.ShapeDtypeStruct],
     participation_surfaces: PeriodToRegimeToParticipationSurfaces = MappingProxyType(
         {}
     ),
-) -> jax.Array:
-    """Resolve only the declared value and finite-policy storage classes."""
+) -> jax.Array | jax.ShapeDtypeStruct:
+    """Resolve only the declared value and finite-policy storage classes.
+
+    A value kept off the device arrives as its shape on the device placement.
+    """
     if is_participation_surface(address=read.target):
         return cast(
             "jax.Array",
