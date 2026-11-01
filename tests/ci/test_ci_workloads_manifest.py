@@ -572,3 +572,76 @@ def test_heavy_certificate_modules_run_on_linux_at_each_general_precision(
     assert heavy
     assert heavy <= selected
     assert heavy.isdisjoint(ci_workloads.general_shard_universe())
+
+
+@pytest.mark.parametrize(
+    ("general_shards", "solution_shards"), [(2, 3), (5, 9), (7, 10)]
+)
+def test_regeneration_derives_coverage_from_sharded_linux_legs(
+    *, general_shards: int, solution_shards: int
+) -> None:
+    """Coverage follows changed shard counts while fixed contributors keep order."""
+    from copy import deepcopy  # noqa: PLC0415
+
+    from tests.ci.generate_ci_workloads import regenerate  # noqa: PLC0415
+
+    manifest = deepcopy(ci_workloads.load_manifest())
+    for group, leg, prefix, count in (
+        ("general", "fp64-linux", "general-shard", general_shards),
+        ("solution", "fp64-solution", "solution-shard", solution_shards),
+    ):
+        manifest["shard_layout"][group][leg]["shards"] = count
+        suffix = "fp64-linux"
+        template = next(
+            inv
+            for inv in manifest["invocations"]
+            if inv["id"] == f"{prefix}-1-{suffix}"
+        )
+        manifest["invocations"] = [
+            inv
+            for inv in manifest["invocations"]
+            if not (inv["id"].startswith(f"{prefix}-") and inv["id"].endswith(suffix))
+        ]
+        for index in range(1, count + 1):
+            invocation = deepcopy(template)
+            invocation["id"] = f"{prefix}-{index}-{suffix}"
+            manifest["invocations"].append(invocation)
+    updated = regenerate(repo_root=_REPO_ROOT, manifest=manifest, additions=())
+    fixed = [
+        name
+        for name in manifest["coverage_contributors"]
+        if not name.startswith(("coverage-general-", "coverage-solution-"))
+    ]
+    assert updated["coverage_contributors"] == [
+        *(f"coverage-general-{index}" for index in range(1, general_shards + 1)),
+        *fixed[:-1],
+        *(f"coverage-solution-{index}" for index in range(1, solution_shards + 1)),
+        fixed[-1],
+    ]
+
+
+@pytest.mark.parametrize(
+    ("defect", "expected_exit"),
+    [("none", 0), ("missing", 1), ("empty", 1), ("unexpected", 1)],
+)
+def test_coverage_manifest_requires_the_exact_nonempty_population(
+    *, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, defect: str, expected_exit: int
+) -> None:
+    """Missing, empty and additional artifacts each block coverage publication."""
+    from tests.ci import check_coverage_manifest  # noqa: PLC0415
+
+    expected = ("coverage-general-1", "coverage-general-5")
+    for name in expected:
+        directory = tmp_path / name
+        directory.mkdir()
+        (directory / "coverage.xml").write_text("<coverage/>\n")
+    if defect == "missing":
+        (tmp_path / expected[-1]).rename(tmp_path.parent / "missing-contributor")
+    elif defect == "empty":
+        (tmp_path / expected[-1] / "coverage.xml").write_text("")
+    elif defect == "unexpected":
+        directory = tmp_path / "coverage-unrecorded"
+        directory.mkdir()
+        (directory / "coverage.xml").write_text("<coverage/>\n")
+    monkeypatch.setattr(ci_workloads, "coverage_contributors", lambda: expected)
+    assert check_coverage_manifest.main([str(tmp_path)]) == expected_exit
